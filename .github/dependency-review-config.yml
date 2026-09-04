@@ -1,0 +1,22 @@
+# Dependency Review configuration
+# https://github.com/actions/dependency-review-action?tab=readme-ov-file#configuration-options
+#
+# The whole dependency surface of this repository is three manifests:
+#   - go.mod                      one direct module, and no transitive ones
+#   - ui/Abom.WebAssembly.csproj  Blazor WebAssembly and MudBlazor
+#   - .github/workflows/*.yml     actions, pinned by commit SHA
+#
+# There is no npm ecosystem here: the browser tests run on node's own test runner with no
+# packages at all. Anything written here about npm would review nothing.
+
+# Matched to the `code_scanning` threshold in the default-branch ruleset, so that one gate
+# cannot block a pull request the other would wave through.
+fail-on-severity: 'high'
+
+# Deliberately no `allow-packages`. An entry there reads as a reviewed and accepted
+# exception, so entries that match nothing turn that signal into noise. Add one only
+# together with the dependency path that forces it.
+
+# Licenses are left to the enterprise License compliance check, which already reports on
+# every pull request here. A second policy in this file would be a second place to keep
+# current, and the two would disagree the first time either one moved.

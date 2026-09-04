@@ -10,9 +10,10 @@ import (
 	"strings"
 )
 
-// DefaultSuite is the broadest upstream suite: every problem and path-problem query in
-// codeql/actions-queries, excluding debug and model-generator helpers.
-const DefaultSuite = "codeql/actions-queries:codeql-suites/actions-all.qls"
+// DefaultSuite selects the upstream queries ABOM attributes findings to. It is a path into
+// this repository, like defaultEdgesQuery, so it resolves only from the repository root;
+// anywhere else, pass --suite.
+const DefaultSuite = "ql/actions/abom/src/codeql-suites/abom-findings.qls"
 
 // AnalyzeDatabase evaluates a whole query suite against one database, writing SARIF.
 //
@@ -27,6 +28,9 @@ func (r *Runner) AnalyzeDatabase(ctx context.Context, dbPath, suite, sarifPath s
 		"database", "analyze", dbPath, suite,
 		"--format=sarif-latest",
 		"--output=" + sarifPath,
+		// The suite lives in a published pack, not in this repository. Without this the CLI
+		// reports it as misspelled rather than as not yet fetched.
+		"--download",
 		// Source snippets would multiply SARIF size across thousands of databases, and ABOM
 		// locates findings by position rather than by content.
 		"--no-sarif-add-file-contents",

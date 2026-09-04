@@ -14,6 +14,8 @@ import (
 
 // findingsSARIF is real `codeql database analyze --format=sarif-latest` output. Regenerate with:
 //
+//	codeql database create --language=actions \
+//	  --source-root=ql/actions/abom/test/AbomEdges /tmp/abom-fixture-db
 //	codeql database analyze /tmp/abom-fixture-db \
 //	  codeql/actions-queries:codeql-suites/actions-all.qls \
 //	  --format=sarif-latest --output=internal/archive/testdata/findings.sarif

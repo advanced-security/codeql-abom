@@ -2,18 +2,8 @@ name: Lint - Go
 
 on:
   pull_request:
-    paths:
-      - '**/*.go'
-      - '.github/workflows/lint-go.yml'
-      - '.golangci.yml'
-      - 'go.mod'
   push:
-    branches: ['main']
-    paths:
-      - '**/*.go'
-      - '.github/workflows/lint-go.yml'
-      - '.golangci.yml'
-      - 'go.mod'
+    branches: ['main', 'next']
 
 permissions:
   contents: read
