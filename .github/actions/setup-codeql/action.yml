@@ -36,10 +36,14 @@ runs:
         gh extension install github/gh-codeql --force
         gh codeql set-version "${{ steps.version.outputs.codeql }}"
         # `make ql` and the selfcheck subcommand invoke `codeql` directly, not through gh.
-        gh codeql install-stub --path /usr/local/bin/codeql
+        # install-stub takes the target directory positionally; it has no --path flag.
+        gh codeql install-stub /usr/local/bin
         codeql version --format=terse
 
     - name: Setup CodeQL - Install query packs
       if: inputs.install-packs == 'true'
       shell: bash
-      run: codeql pack install ql/actions/abom/src ql/actions/abom/test
+      # `pack install` takes a single pack directory; each dependent pack needs its own call.
+      run: |
+        codeql pack install ql/actions/abom/src
+        codeql pack install ql/actions/abom/test

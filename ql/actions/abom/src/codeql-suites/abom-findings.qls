@@ -1,0 +1,16 @@
+- description: Upstream Actions queries whose findings ABOM records and attributes
+
+# ABOM reaches no security conclusion of its own, so this suite may only ever *select*
+# upstream queries. Every result keeps the `@id` of the query that produced it, and that rule
+# id is the whole basis of the verdict downstream. Adding a query written here would make ABOM
+# the author of a finding it also reports, which the model has no way to represent.
+#
+# This is deliberately the same 35 queries as the upstream suite it replaces, so that owning
+# the file changes nothing on the day it lands. Filters belong below, one reviewable diff at a
+# time.
+- import: codeql-suites/actions-all.qls
+  from: codeql/actions-queries
+
+# The nine `experimental/` queries stay in. Precision is a property of the rule, and ABOM
+# attributes rather than adjudicates: a consumer filtering on rule id can always drop them,
+# whereas a finding never collected cannot be recovered.

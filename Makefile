@@ -54,7 +54,7 @@ ql:
 ## path. Not in `verify`: it needs the CodeQL CLI and takes tens of seconds.
 selfcheck:
 	@go run ./cmd/codeql-abom selfcheck \
-		--suite codeql/actions-queries:codeql-suites/actions-security-and-quality.qls
+		--suite ql/actions/abom/src/codeql-suites/abom-selfcheck.qls
 
 build:
 	@go build -o bin/codeql-abom ./cmd/codeql-abom

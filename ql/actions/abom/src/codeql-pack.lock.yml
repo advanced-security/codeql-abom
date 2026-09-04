@@ -3,6 +3,8 @@ lockVersion: 1.0.0
 dependencies:
   codeql/actions-all:
     version: 0.6.0
+  codeql/actions-queries:
+    version: 0.6.34
   codeql/concepts:
     version: 0.0.30
   codeql/controlflow:
@@ -17,6 +19,8 @@ dependencies:
     version: 1.0.56
   codeql/ssa:
     version: 2.0.32
+  codeql/suite-helpers:
+    version: 1.0.56
   codeql/threat-models:
     version: 1.0.56
   codeql/tutorial:
