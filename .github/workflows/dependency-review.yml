@@ -1,0 +1,26 @@
+name: Dependency Review
+
+# No `paths:` filter, and none should be added. This is a required status check, and a
+# workflow skipped by a path filter reports nothing rather than success, so every pull
+# request that missed the filter would wait forever for a result that is never coming.
+
+on:
+  pull_request:
+    branches: ['main']
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Dependency Review - Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Dependency Review - Compare the manifests
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          config-file: '.github/dependency-review-config.yml'

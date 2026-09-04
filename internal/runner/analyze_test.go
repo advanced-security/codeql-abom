@@ -51,6 +51,22 @@ func TestAnalyzeDatabaseToleratesFindings(t *testing.T) {
 	}
 }
 
+// A published suite is named, never vendored. Without this the CLI reports the pack as
+// misspelled rather than as absent, on any machine that has not analyzed Actions before.
+func TestAnalyzeDatabaseFetchesMissingQueryPacks(t *testing.T) {
+	stub, argsFile := stubCodeQL(t, "exit 0\n")
+	r := &Runner{CodeQLPath: stub}
+
+	if err := r.AnalyzeDatabase(context.Background(), "/db", "codeql/actions-queries:codeql-suites/actions-all.qls",
+		filepath.Join(t.TempDir(), "o.sarif")); err != nil {
+		t.Fatalf("AnalyzeDatabase: %v", err)
+	}
+
+	if !strings.Contains(string(mustRead(t, argsFile)), "--download") {
+		t.Error("expected the suite's query pack to be downloaded when absent")
+	}
+}
+
 func TestAnalyzeDatabasePassesResourceLimits(t *testing.T) {
 	stub, argsFile := stubCodeQL(t, "exit 0\n")
 	r := &Runner{CodeQLPath: stub, Threads: 4, RAMMB: 2048}
