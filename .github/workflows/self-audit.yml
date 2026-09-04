@@ -47,6 +47,10 @@ jobs:
         uses: ./.github/actions/setup-codeql
 
       - name: Self Audit - Analyze our own workflows
+        # The suite is fetched from the CodeQL registry (ghcr.io) on first use; the CLI reads
+        # GITHUB_TOKEN itself to authenticate that pull, same as any other registry client.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: make selfcheck
 
       - name: Self Audit - Summary

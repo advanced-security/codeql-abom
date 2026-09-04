@@ -1,12 +1,12 @@
 # Build output
 /dist/
 /bin/
-codeql-abom
 
 # CodeQL
 .codeql/
 *.bqrs
 *.sarif
+!/internal/archive/testdata/findings.sarif
 .cache/
 
 # CodeQL query-test artifacts (.expected files are checked in; these are not)
