@@ -1,7 +1,7 @@
-// Package discover finds which repositories in an organisation have a CodeQL database.
+// Package discover finds which repositories in an organization have a CodeQL database.
 //
 // GitHub's code scanning endpoints are per-repository, so establishing the catalog is itself a
-// large parallel workload: one enumeration pass over the organisation, then one lookup for
+// large parallel workload: one enumeration pass over the organization, then one lookup for
 // every repository it returned. Running it as its own pass means the cost is paid once and
 // ingestion can then work from the catalog.
 package discover
@@ -31,7 +31,7 @@ type Discoverer struct {
 	OnEvent     func(work.Event)
 }
 
-// Run enumerates the organisation and records a catalog entry for every repository.
+// Run enumerates the organization and records a catalog entry for every repository.
 func (d *Discoverer) Run(ctx context.Context, org string) (work.Stats, error) {
 	repos, err := d.Source.ListRepositories(ctx, org)
 	if err != nil {

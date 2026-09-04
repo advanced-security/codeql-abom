@@ -6,7 +6,7 @@ opinion.
 
 ## Encoding
 
-**Colour is never the only channel.** Severity distinguished by hue alone fails for roughly one
+**Color is never the only channel.** Severity distinguished by hue alone fails for roughly one
 in twelve men. Look for a second channel: a label, shape, position or ordering. Judge this by
 imagining the image desaturated, or capture it and check whether the ranking survives.
 
@@ -23,7 +23,7 @@ the large nodes swamp everything.
 - Labels: overlapping, clipped, or dropped without an affordance to recover them?
 - Numbers: does anything appear truncated or rounded such that its meaning changes?
 - Tables: is the most decision-relevant column visible without horizontal scrolling?
-- Graph: can you separate one edge from its neighbours anywhere in the view?
+- Graph: can you separate one edge from its neighbors anywhere in the view?
 
 ## Hierarchy
 
@@ -39,7 +39,7 @@ earns its keep.
 - Does anything imply certainty the data does not carry? An advisory shown without its range and
   the observed refs is the common case.
 - Is absence of evidence distinguishable from evidence of absence? "No findings" and "not
-  analysed" must not look alike.
+  analyzed" must not look alike.
 - Is coverage visible without hunting for it?
 - When the API reported truncation, does the view admit it?
 
@@ -47,13 +47,13 @@ earns its keep.
 
 Only for the live Discovery view.
 
-- Does movement carry information, or decorate? A node migrating from pending to analysed is
+- Does movement carry information, or decorate? A node migrating from pending to analyzed is
   information. A pulsing border is not.
 - Can the eye follow a single node through the transition, or does the layout reshuffle?
 - Does anything animate indefinitely, making the screen unrestful while idle?
 
 ## What is not a finding
 
-Keep these out of the report unless they impede a decision: preference about spacing, colour
+Keep these out of the report unless they impede a decision: preference about spacing, color
 palette taste, font choice, whether a chart would look better as a different chart. The report
 is more useful when everything in it is actionable.

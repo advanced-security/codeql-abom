@@ -169,7 +169,7 @@ func TestRunQueryRespectsContextCancellation(t *testing.T) {
 	cancel()
 
 	if err := r.RunQuery(ctx, "/db", "/q.ql", filepath.Join(t.TempDir(), "o.bqrs")); err == nil {
-		t.Fatal("expected an error for a cancelled context")
+		t.Fatal("expected an error for a canceled context")
 	}
 }
 

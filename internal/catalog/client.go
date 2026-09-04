@@ -21,7 +21,7 @@ import (
 
 // ErrNoDatabase reports that a repository has no CodeQL database for the requested language.
 //
-// In a large organisation this is the common case rather than a failure: most repositories
+// In a large organization this is the common case rather than a failure: most repositories
 // either have code scanning disabled or have never completed an analysis for the language.
 var ErrNoDatabase = errors.New("no codeql database available")
 
@@ -118,7 +118,7 @@ func (c *Client) ListDatabases(ctx context.Context, repository string) ([]Databa
 // FindDatabase returns the database for one language without downloading it.
 //
 // Callers are expected to consult the ingest ledger with the returned CommitOID before
-// deciding to download, which is what keeps an unchanged organisation cheap to re-scan.
+// deciding to download, which is what keeps an unchanged organization cheap to re-scan.
 func (c *Client) FindDatabase(ctx context.Context, repository, language string) (Database, error) {
 	dbs, err := c.ListDatabases(ctx, repository)
 	if err != nil {
@@ -158,7 +158,7 @@ func (c *Client) DownloadDatabase(ctx context.Context, repository, language, des
 		return fmt.Errorf("creating temporary file: %w", err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	defer func() { _ = os.Remove(tmpName) }()
 
 	if _, err := io.Copy(tmp, resp.Body); err != nil {
 		tmp.Close()
@@ -168,7 +168,7 @@ func (c *Client) DownloadDatabase(ctx context.Context, repository, language, des
 		return fmt.Errorf("closing temporary file: %w", err)
 	}
 	if err := os.Rename(tmpName, destPath); err != nil {
-		return fmt.Errorf("finalising download: %w", err)
+		return fmt.Errorf("finalizing download: %w", err)
 	}
 	return nil
 }

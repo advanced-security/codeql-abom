@@ -1,0 +1,37 @@
+name: Query Unit Tests
+
+on:
+  pull_request:
+    paths:
+      - '.codeql-version'
+      - '.github/actions/setup-codeql/action.yml'
+      - '.github/workflows/query-unit-tests.yml'
+      - 'ql/**'
+  push:
+    branches: ['main']
+    paths:
+      - '.codeql-version'
+      - '.github/actions/setup-codeql/action.yml'
+      - '.github/workflows/query-unit-tests.yml'
+      - 'ql/**'
+
+permissions:
+  contents: read
+
+jobs:
+  query-unit-tests:
+    name: Query Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Query Unit Tests - Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Query Unit Tests - Setup CodeQL
+        uses: ./.github/actions/setup-codeql
+
+      - name: Query Unit Tests - Run
+        run: make ql
+
+      - name: Query Unit Tests - Summary
+        run: echo "## Query Unit Tests - all passed" >> "$GITHUB_STEP_SUMMARY"

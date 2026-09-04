@@ -1,4 +1,4 @@
-// Package pipeline orchestrates ABOM's end-to-end processing of an organisation.
+// Package pipeline orchestrates ABOM's end-to-end processing of an organization.
 package pipeline
 
 import (
@@ -46,7 +46,7 @@ type Config struct {
 
 	// KeepArtifacts retains downloaded databases and decoded results for debugging. Left off,
 	// each repository's artifacts are removed as soon as they are ingested, which is what
-	// keeps disk usage bounded across an organisation.
+	// keeps disk usage bounded across an organization.
 	KeepArtifacts bool
 }
 

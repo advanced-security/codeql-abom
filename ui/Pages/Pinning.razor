@@ -70,7 +70,7 @@ else
             yet <code>actions/unpinned-tag</code> flagged @_totals.Flagged.ToString("N0") of them —
             it leaves GitHub-owned actions alone. Whether a reference is <i>safely</i> pinned is that
             query's call, not ABOM's; the commit share reports only how each reference is written.
-            Repositories whose workflows were never analysed are absent from these figures, which is
+            Repositories whose workflows were never analyzed are absent from these figures, which is
             not the same as their being fully pinned.
         </MudText>
     </MudAlert>
@@ -115,7 +115,8 @@ else
         }
     </MudPaper>
 
-    <PinningLevel Scope="owner" Filter="_filter" RowsPerPage="25" />
+    <PinningLevel Scope="owner" Filter="_filter" RowsPerPage="25"
+                  Baseline="@(_totals?.CommitShare ?? 0)" />
 }
 
 @code {

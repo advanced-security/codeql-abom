@@ -16,8 +16,8 @@ type RefUsage struct {
 	Repositories int `json:"repositories"`
 }
 
-// NodeNeighbour is one end of a relationship, as the detail page lists it.
-type NodeNeighbour struct {
+// NodeNeighbor is one end of a relationship, as the detail page lists it.
+type NodeNeighbor struct {
 	Key        string   `json:"key"`
 	Kind       string   `json:"kind"`
 	Repository string   `json:"repository"`
@@ -34,7 +34,7 @@ type NodeDetail struct {
 	Origin     string `json:"origin"`
 	Path       string `json:"path"`
 	IsExternal bool   `json:"isExternal"`
-	Analysed   bool   `json:"analysed"`
+	Analyzed   bool   `json:"analyzed"`
 
 	DependentRepos   int `json:"dependentRepos"`
 	DirectDependents int `json:"directDependents"`
@@ -47,8 +47,8 @@ type NodeDetail struct {
 	// rather than applied to them: whether a reference falls inside a range is not decided here.
 	Advisories []AdvisoryReach `json:"advisories"`
 
-	UsedBy []NodeNeighbour `json:"usedBy"`
-	Uses   []NodeNeighbour `json:"uses"`
+	UsedBy []NodeNeighbor `json:"usedBy"`
+	Uses   []NodeNeighbor `json:"uses"`
 }
 
 // AffectedRepo is one repository that would be touched by a change to a node.
@@ -69,9 +69,9 @@ type BumpImpact struct {
 	Direct     int            `json:"direct"`
 	Transitive int            `json:"transitive"`
 	Repos      []AffectedRepo `json:"repos"`
-	// Unanalysed is how many dependencies have never been expanded. Anything reachable only
+	// Unanalyzed is how many dependencies have never been expanded. Anything reachable only
 	// through one of those cannot appear here at all, and saying so is part of the answer.
-	Unanalysed int `json:"unanalysed"`
+	Unanalyzed int `json:"unanalyzed"`
 }
 
 // BumpImpactOf reports the repositories affected by changing one node.
@@ -136,8 +136,8 @@ func (s *Store) BumpImpactOf(key string) (BumpImpact, error) {
 
 	if err := s.db.QueryRow(
 		`SELECT COUNT(*) FROM abom_frontier WHERE status != 'done'`).
-		Scan(&out.Unanalysed); err != nil {
-		return out, fmt.Errorf("reading unanalysed count: %w", err)
+		Scan(&out.Unanalyzed); err != nil {
+		return out, fmt.Errorf("reading unanalyzed count: %w", err)
 	}
 	if err := s.attachAffectedRefs(key, out.Repos); err != nil {
 		return out, err
@@ -198,7 +198,7 @@ func (s *Store) NodeDetailOf(key string) (NodeDetail, error) {
 		LEFT JOIN abom_blast_radius b ON b.node_row_id = n.row_id
 		WHERE n.node_key = ?`, key).
 		Scan(&d.Key, &d.Kind, &repo, &origin, &path, &d.IsExternal,
-			&d.DependentRepos, &d.DirectDependents, &d.Analysed)
+			&d.DependentRepos, &d.DirectDependents, &d.Analyzed)
 	if err == sql.ErrNoRows {
 		return d, fmt.Errorf("no node %q", key)
 	}
@@ -213,10 +213,10 @@ func (s *Store) NodeDetailOf(key string) (NodeDetail, error) {
 	if d.Rules, err = s.nodeRules(key); err != nil {
 		return d, err
 	}
-	if d.UsedBy, err = s.nodeNeighbours(key, true); err != nil {
+	if d.UsedBy, err = s.nodeNeighbors(key, true); err != nil {
 		return d, err
 	}
-	if d.Uses, err = s.nodeNeighbours(key, false); err != nil {
+	if d.Uses, err = s.nodeNeighbors(key, false); err != nil {
 		return d, err
 	}
 	d.Advisories = []AdvisoryReach{}
@@ -273,9 +273,9 @@ func (s *Store) nodeRules(key string) ([]RuleCount, error) {
 	return out, rows.Err()
 }
 
-// nodeNeighbours lists what uses this node, or what it uses, folded to the container that holds
-// the reference so the list names things a reader recognises.
-func (s *Store) nodeNeighbours(key string, incoming bool) ([]NodeNeighbour, error) {
+// nodeNeighbors lists what uses this node, or what it uses, folded to the container that holds
+// the reference so the list names things a reader recognizes.
+func (s *Store) nodeNeighbors(key string, incoming bool) ([]NodeNeighbor, error) {
 	side, other := "dst_node_row_id", "src_node_row_id"
 	if !incoming {
 		side, other = "src_node_row_id", "dst_node_row_id"
@@ -297,16 +297,16 @@ func (s *Store) nodeNeighbours(key string, incoming bool) ([]NodeNeighbour, erro
 
 	rows, err := s.db.Query(query, key)
 	if err != nil {
-		return nil, fmt.Errorf("reading neighbours of %q: %w", key, err)
+		return nil, fmt.Errorf("reading neighbors of %q: %w", key, err)
 	}
 	defer rows.Close()
 
-	out := []NodeNeighbour{}
+	out := []NodeNeighbor{}
 	for rows.Next() {
-		var n NodeNeighbour
+		var n NodeNeighbor
 		var refs string
 		if err := rows.Scan(&n.Key, &n.Kind, &n.Repository, &n.Origin, &n.Count, &refs); err != nil {
-			return nil, fmt.Errorf("scanning neighbour: %w", err)
+			return nil, fmt.Errorf("scanning neighbor: %w", err)
 		}
 		n.Refs = splitRefs(refs)
 		out = append(out, n)

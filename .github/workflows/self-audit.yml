@@ -1,0 +1,60 @@
+name: Self Audit - Actions
+
+# Runs ABOM against ABOM.
+#
+# Two things at once, deliberately. It audits the workflows this repository ships against the
+# same queries the tool reports on for everyone else, and it exercises the database-creation
+# path every upstream expansion depends on -- a path no unit test can cover, because a real
+# extractor and a real source tree are the only honest fixture for it.
+
+on:
+  pull_request:
+    paths:
+      - '.codeql-version'
+      - '.github/**'
+      - 'cmd/codeql-abom/selfcheck.go'
+      - 'internal/runner/**'
+  push:
+    branches: ['main']
+    paths:
+      - '.codeql-version'
+      - '.github/**'
+      - 'cmd/codeql-abom/selfcheck.go'
+      - 'internal/runner/**'
+  schedule:
+    # Weekly: a query pack update can start flagging a workflow that has not itself changed.
+    - cron: '0 7 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  self-audit:
+    name: Self Audit - Actions
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Self Audit - Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Self Audit - Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Self Audit - Setup CodeQL
+        uses: ./.github/actions/setup-codeql
+
+      - name: Self Audit - Analyze our own workflows
+        run: make selfcheck
+
+      - name: Self Audit - Summary
+        if: always()
+        run: |
+          {
+            echo "## Self Audit"
+            echo ""
+            echo "\`actions-security-and-quality\` run against this repository's own workflows,"
+            echo "using ABOM's own database-creation path."
+          } >> "$GITHUB_STEP_SUMMARY"

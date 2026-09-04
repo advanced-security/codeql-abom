@@ -38,7 +38,7 @@ exists(job.getPermissions().getAPermission())
 
 A trailing YAML comment such as `# v4.2.2` is not in the `uses:` value. Recover it through
 `codeql.actions.ast.internal.Ast::Comment`, matched by same line and `startColumn` beyond the
-uses node's `endColumn`. These are evidence and are stored verbatim — never normalised.
+uses node's `endColumn`. These are evidence and are stored verbatim — never normalized.
 
 ## The VS Code QL extension lies about internal imports
 

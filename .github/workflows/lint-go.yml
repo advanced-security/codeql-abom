@@ -1,0 +1,43 @@
+name: Lint - Go
+
+on:
+  pull_request:
+    paths:
+      - '**/*.go'
+      - '.github/workflows/lint-go.yml'
+      - '.golangci.yml'
+      - 'go.mod'
+  push:
+    branches: ['main']
+    paths:
+      - '**/*.go'
+      - '.github/workflows/lint-go.yml'
+      - '.golangci.yml'
+      - 'go.mod'
+
+permissions:
+  contents: read
+
+jobs:
+  lint-go:
+    name: Lint - Go
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Lint - Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Lint - Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Lint - Run golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          # Matched to what a developer runs, or the two disagree about what "clean" means.
+          version: v2.11.4
+
+      - name: Lint - Summary
+        run: echo "## Lint - golangci-lint clean" >> "$GITHUB_STEP_SUMMARY"

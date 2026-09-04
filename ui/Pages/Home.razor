@@ -6,7 +6,7 @@
 <MudText Typo="Typo.h5"><h1 style="all:unset;">Actions Bill of Materials</h1></MudText>
 <MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">
     Every GitHub Actions dependency reached by the @_summary.SeedRepos repositories in scope —
-    those in the organisation that were analysed with CodeQL. Nothing here is a verdict this tool
+    those in the organization that were analyzed with CodeQL. Nothing here is a verdict this tool
     invented: each claim traces back to the query that produced it.
 </MudText>
 
@@ -31,12 +31,12 @@
 <MudAlert Severity="MudBlazor.Severity.Normal" Variant="Variant.Outlined" Dense="true"
           Class="mt-4" Icon="@Icons.Material.Outlined.HelpOutline">
     <MudText Typo="Typo.body2">
-        @_summary.PendingDependencies dependencies have not been analysed yet, and
+        @_summary.PendingDependencies dependencies have not been analyzed yet, and
         @(_summary.Findings - _summary.LinkedFindings) findings could not be attached to a
         specific reference.
     </MudText>
     <MudText Typo="Typo.caption">
-        Anything downstream of an unanalysed dependency is not represented anywhere in this
+        Anything downstream of an unanalyzed dependency is not represented anywhere in this
         interface. <MudLink Href="/discovery" Typo="Typo.caption">See what is missing</MudLink>.
     </MudText>
 </MudAlert>
@@ -61,9 +61,9 @@
             "/explore", Icons.Material.Outlined.Hub,
             $"{_summary.Nodes:N0} nodes · {_summary.Edges:N0} relationships"),
         new("Discovery",
-            "How complete is this picture, and what has not been analysed yet?",
+            "How complete is this picture, and what has not been analyzed yet?",
             "/discovery", Icons.Material.Outlined.TravelExplore,
-            $"{_summary.AnalysedUpstreams:N0} analysed · {_summary.PendingDependencies:N0} pending"),
+            $"{_summary.AnalyzedUpstreams:N0} analyzed · {_summary.PendingDependencies:N0} pending"),
         new("Actions & Workflows",
             "What do we depend on, and at which exact references?",
             "/inventory", Icons.Material.Outlined.Extension,

@@ -179,7 +179,7 @@ func TestNewCommitIsReprocessed(t *testing.T) {
 	}
 }
 
-// Most repositories in a large organisation have no actions database.
+// Most repositories in a large organization have no actions database.
 func TestRepositoriesWithoutDatabaseAreSkipped(t *testing.T) {
 	src := &fakeSource{notFound: true}
 	p, _ := newPipeline(t, src, &fakeRunner{})
@@ -196,7 +196,7 @@ func TestRepositoriesWithoutDatabaseAreSkipped(t *testing.T) {
 	}
 }
 
-// Artifacts must not accumulate across an organisation.
+// Artifacts must not accumulate across an organization.
 func TestArtifactsAreRemovedAfterIngestion(t *testing.T) {
 	src := &fakeSource{commit: "abc123"}
 	p, _ := newPipeline(t, src, &fakeRunner{})

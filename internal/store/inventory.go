@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 )
@@ -11,7 +12,7 @@ type ActionSummary struct {
 	Kind    string `json:"kind"`
 	Owner   string `json:"owner"`
 	Repo    string `json:"repo"`
-	// Origin separates what the organisation owns from what it merely depends on.
+	// Origin separates what the organization owns from what it merely depends on.
 	Origin string `json:"origin"`
 	// DependentRepos and DirectDependents come from the graph, not from any advisory.
 	DependentRepos   int `json:"dependentRepos"`
@@ -23,9 +24,9 @@ type ActionSummary struct {
 	// Advisories counts live advisories naming this action's repository. It is a count of
 	// published statements, not a judgement that this reference is affected.
 	Advisories int `json:"advisories"`
-	// Analysed reports whether the dependency itself has been expanded, which is what decides
+	// Analyzed reports whether the dependency itself has been expanded, which is what decides
 	// if anything downstream of it is known.
-	Analysed bool `json:"analysed"`
+	Analyzed bool `json:"analyzed"`
 	// Refs are the references observed across the corpus, most used first, verbatim.
 	Refs []string `json:"refs"`
 }
@@ -65,27 +66,14 @@ func (s *Store) SearchNodes(search string, limit int) ([]NodeMatch, error) {
 		args = append(args, limit)
 	}
 
-	rows, err := s.db.Query(query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("searching nodes: %w", err)
-	}
-	defer rows.Close()
-
-	out := []NodeMatch{}
-	for rows.Next() {
+	return queryAll(s, "searching nodes", func(r *sql.Rows) (NodeMatch, error) {
 		var m NodeMatch
-		if err := rows.Scan(&m.Key, &m.Kind, &m.Repository, &m.Origin,
-			&m.DependentRepos); err != nil {
-			return nil, fmt.Errorf("scanning node match: %w", err)
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+		return m, r.Scan(&m.Key, &m.Kind, &m.Repository, &m.Origin, &m.DependentRepos)
+	}, query, args...)
 }
 
-// ActionsInventory lists the actions and workflows in use, widest reach first.
-//
-// Steps and jobs are excluded as implementation detail, and repositories have their own listing.
+// ActionsInventory excludes steps and jobs as implementation detail; repositories have their
+// own listing.
 func (s *Store) ActionsInventory(search string, limit int) ([]ActionSummary, error) {
 	where := `WHERE n.node_kind IN ('action', 'composite_action', 'workflow',
 	                               'reusable_workflow', 'docker_image')`
@@ -121,23 +109,13 @@ func (s *Store) ActionsInventory(search string, limit int) ([]ActionSummary, err
 		args = append(args, limit)
 	}
 
-	rows, err := s.db.Query(query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("listing actions: %w", err)
-	}
-	defer rows.Close()
-
-	var out []ActionSummary
-	for rows.Next() {
+	out, err := queryAll(s, "listing actions", func(r *sql.Rows) (ActionSummary, error) {
 		var a ActionSummary
-		if err := rows.Scan(&a.NodeKey, &a.Kind, &a.Owner, &a.Repo, &a.Origin,
+		return a, r.Scan(&a.NodeKey, &a.Kind, &a.Owner, &a.Repo, &a.Origin,
 			&a.DependentRepos, &a.DirectDependents, &a.DistinctRefs, &a.Findings,
-			&a.Advisories, &a.Analysed); err != nil {
-			return nil, fmt.Errorf("scanning action: %w", err)
-		}
-		out = append(out, a)
-	}
-	if err := rows.Err(); err != nil {
+			&a.Advisories, &a.Analyzed)
+	}, query, args...)
+	if err != nil {
 		return nil, err
 	}
 
@@ -165,7 +143,7 @@ type RepositorySummary struct {
 
 // RepositoriesOverview lists repositories under review, most findings first.
 //
-// Upstream repositories are excluded: they are not the organisation's to remediate, and listing
+// Upstream repositories are excluded: they are not the organization's to remediate, and listing
 // them alongside would imply otherwise.
 func (s *Store) RepositoriesOverview(search string, limit int) ([]RepositorySummary, error) {
 	where := `WHERE r.origin = ?`
@@ -192,22 +170,11 @@ func (s *Store) RepositoriesOverview(search string, limit int) ([]RepositorySumm
 		args = append(args, limit)
 	}
 
-	rows, err := s.db.Query(query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("listing repositories: %w", err)
-	}
-	defer rows.Close()
-
-	var out []RepositorySummary
-	for rows.Next() {
+	return queryAll(s, "listing repositories", func(row *sql.Rows) (RepositorySummary, error) {
 		var r RepositorySummary
-		if err := rows.Scan(&r.FullName, &r.Origin, &r.Workflows, &r.Dependencies,
-			&r.Findings, &r.Exposures, &r.DirectExposures); err != nil {
-			return nil, fmt.Errorf("scanning repository: %w", err)
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
+		return r, row.Scan(&r.FullName, &r.Origin, &r.Workflows, &r.Dependencies,
+			&r.Findings, &r.Exposures, &r.DirectExposures)
+	}, query, args...)
 }
 
 // RuleCount is how often one rule fired within a scope.
@@ -301,7 +268,7 @@ func (s *Store) RepositoryDetailOf(fullName string) (RepositoryDetail, error) {
 	return out, nil
 }
 
-// escapeLike neutralises wildcards so a search for "actions/" cannot match everything.
+// escapeLike neutralizes wildcards so a search for "actions/" cannot match everything.
 func escapeLike(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	return r.Replace(s)

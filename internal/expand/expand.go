@@ -15,11 +15,7 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/work"
 )
 
-// errNoSource is the extractor's "nothing to analyse" answer, aliased so the expander does not
-// have to reach into the runner package to recognise it.
-var errNoSource = runner.ErrNoSourceCode
-
-// Fetcher materialises a repository's source tree.
+// Fetcher materializes a repository's source tree.
 type Fetcher interface {
 	Fetch(ctx context.Context, dest, owner, repo string) (Tree, error)
 }
@@ -49,9 +45,9 @@ type Options struct {
 	KeepArtifacts bool
 }
 
-// Stats summarises a round.
+// Stats summarizes a round.
 type Stats struct {
-	// Processed counts repositories analysed; Items counts the dependencies they settled.
+	// Processed counts repositories analyzed; Items counts the dependencies they settled.
 	Processed   int
 	Items       int
 	Failed      int
@@ -78,7 +74,7 @@ type Expander struct {
 	OnEvent func(work.Event)
 }
 
-// batch is the set of queued dependencies answered by analysing one repository.
+// batch is the set of queued dependencies answered by analyzing one repository.
 type batch struct {
 	owner string
 	repo  string
@@ -89,7 +85,7 @@ type batch struct {
 
 func (b batch) full() string { return b.owner + "/" + b.repo }
 
-// Run claims a round of work, analyses it, and enqueues what it discovers.
+// Run claims a round of work, analyzes it, and enqueues what it discovers.
 func (e *Expander) Run(ctx context.Context, opts Options) (Stats, error) {
 	if opts.QueryPath == "" || opts.WorkDir == "" {
 		return Stats{}, fmt.Errorf("expand: QueryPath and WorkDir are required")
@@ -208,7 +204,7 @@ func (e *Expander) prepare(
 func (e *Expander) consume(
 	_ context.Context, b batch, p work.Prepared, opts Options, stats *Stats,
 ) (int, error) {
-	// The repository is being analysed because something depends on it, not because it is
+	// The repository is being analyzed because something depends on it, not because it is
 	// under review, so its own CI must not register as dependency pressure.
 	if _, err := e.Store.InsertUpstreamRepository(b.full()); err != nil {
 		return 0, err
@@ -257,7 +253,7 @@ func (e *Expander) consume(
 	return rows, nil
 }
 
-// enqueueDiscoveries queues whatever the freshly analysed repository depends on.
+// enqueueDiscoveries queues whatever the freshly analyzed repository depends on.
 //
 // Only dependencies reached through something another repository actually references are
 // pursued. An upstream repository is fetched to learn what its published actions and reusable
@@ -307,11 +303,15 @@ func (e *Expander) enqueueDiscoveries(b batch) (int, error) {
 func (e *Expander) settleFailure(b batch, cause error, stats *Stats) {
 	permanent := IsUnavailable(cause) || runner.IsNoSourceCode(cause)
 	for _, it := range b.items {
+		// Discarded deliberately. This runs from the failure path, where the caller is already
+		// being told about `cause`; returning a second error here would replace the one that
+		// explains what actually went wrong. An item whose state was not recorded stays claimed
+		// and is retried on a later run.
 		if permanent {
-			e.Queue.Unavailable(it.NodeKey, reasonOf(cause))
+			_ = e.Queue.Unavailable(it.NodeKey, reasonOf(cause))
 			continue
 		}
-		e.Queue.Fail(it.NodeKey, reasonOf(cause))
+		_ = e.Queue.Fail(it.NodeKey, reasonOf(cause))
 	}
 	if permanent {
 		stats.Unavailable++

@@ -25,7 +25,7 @@ type Advisory struct {
 	CVSSv3      string
 	CVSSv4Score float64
 	CVSSv4      string
-	// EPSSPercentage is the modelled probability of exploitation in the next 30 days, and
+	// EPSSPercentage is the modeled probability of exploitation in the next 30 days, and
 	// EPSSPercentile its rank among all scored vulnerabilities. Both are absent for recent
 	// advisories, which is meaningful: no model output yet, not a score of zero.
 	EPSSPercentage float64

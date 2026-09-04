@@ -153,7 +153,7 @@ func TestRescoreReflectsNewlyLearnedCommonality(t *testing.T) {
 }
 
 // A cheaper dependency of equal commonality is better value per unit of budget.
-func TestScoreFavoursLowerCost(t *testing.T) {
+func TestScoreFavorsLowerCost(t *testing.T) {
 	q, s := newQueue(t)
 
 	cheap, expensive := item("cheap", 1), item("expensive", 1)
@@ -307,7 +307,7 @@ func TestMutableRefBecomesDueForRecheck(t *testing.T) {
 	if due, err := q.DueForRecheck(24*time.Hour, 10); err != nil {
 		t.Fatalf("DueForRecheck: %v", err)
 	} else if len(due) != 0 {
-		t.Fatalf("freshly analysed item is already due: %v", due)
+		t.Fatalf("freshly analyzed item is already due: %v", due)
 	}
 
 	q.Now = func() time.Time { return time.Now().UTC().Add(48 * time.Hour) }
@@ -342,7 +342,7 @@ func TestImmutableRefIsNeverRechecked(t *testing.T) {
 }
 
 // Rechecking is a cheap probe; only actual drift should buy a full re-analysis.
-func TestTouchDefersWithoutReanalysing(t *testing.T) {
+func TestTouchDefersWithoutReanalyzing(t *testing.T) {
 	q, _ := newQueue(t)
 
 	if _, err := q.Enqueue([]Item{item("a", 1)}); err != nil {
@@ -367,7 +367,7 @@ func TestTouchDefersWithoutReanalysing(t *testing.T) {
 }
 
 // A moved ref returns to the queue and competes on commonality like anything else, so a stale
-// dependency thousands of workflows use is re-analysed before an obscure unanalysed one.
+// dependency thousands of workflows use is re-analyzed before an obscure unanalyzed one.
 func TestStaleRefRequeuesAndOutranksLowValueWork(t *testing.T) {
 	q, s := newQueue(t)
 
@@ -397,8 +397,8 @@ func TestStaleRefRequeuesAndOutranksLowValueWork(t *testing.T) {
 }
 
 // Until re-analysis actually replaces the data, the stored SHA still names the commit the graph
-// describes. Overwriting it early would claim coverage of code that was never analysed.
-func TestMarkStaleKeepsTheAnalysedSHA(t *testing.T) {
+// describes. Overwriting it early would claim coverage of code that was never analyzed.
+func TestMarkStaleKeepsTheAnalyzedSHA(t *testing.T) {
 	q, s := newQueue(t)
 
 	if _, err := q.Enqueue([]Item{item("a", 1)}); err != nil {
@@ -425,7 +425,7 @@ func TestMarkStaleKeepsTheAnalysedSHA(t *testing.T) {
 }
 
 // Re-analysis should be visible as such, so a repeatedly drifting dependency can be told apart
-// from one analysed once.
+// from one analyzed once.
 func TestReanalysisCountsUp(t *testing.T) {
 	q, s := newQueue(t)
 
@@ -455,10 +455,10 @@ func TestReanalysisCountsUp(t *testing.T) {
 
 // seedCommonality records how many workflows and repositories depend on a node, which is what
 // the queue scores by.
-// Analysing a reusable workflow always yields the steps its callers inherit, whereas most
+// Analyzing a reusable workflow always yields the steps its callers inherit, whereas most
 // actions turn out to be JavaScript and yield nothing to an actions database. Between two
 // dependencies of similar commonality, the one that can actually extend the graph is worth more.
-func TestRescoreFavoursDependenciesThatCanYieldEdges(t *testing.T) {
+func TestRescoreFavorsDependenciesThatCanYieldEdges(t *testing.T) {
 	q, s := newQueue(t)
 	if _, err := q.Enqueue([]Item{item("octo/shared", 1), item("octo/plain", 1)}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
@@ -481,7 +481,7 @@ func TestRescoreFavoursDependenciesThatCanYieldEdges(t *testing.T) {
 
 // A composite action is a known container too: its own steps are part of what its callers pull
 // in, so it is worth the same preference.
-func TestRescoreFavoursCompositeActions(t *testing.T) {
+func TestRescoreFavorsCompositeActions(t *testing.T) {
 	q, s := newQueue(t)
 	if _, err := q.Enqueue([]Item{item("octo/composite", 1), item("octo/plain", 1)}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
@@ -499,7 +499,7 @@ func TestRescoreFavoursCompositeActions(t *testing.T) {
 	}
 }
 
-// The yield preference must not displace commonality: something the whole organisation depends
+// The yield preference must not displace commonality: something the whole organization depends
 // on still comes first, however promising a rarely used dependency looks.
 func TestCommonalityStillOutranksYieldPreference(t *testing.T) {
 	q, s := newQueue(t)
@@ -545,7 +545,7 @@ func seedCommonality(t *testing.T, s *store.Store, nodeKey string, workflows, re
 }
 
 // seedCommonalityOfKind records commonality for a node of a given kind, which is what decides
-// whether analysing it can yield anything.
+// whether analyzing it can yield anything.
 func seedCommonalityOfKind(
 	t *testing.T, s *store.Store, nodeKey, kind string, workflows, repos int,
 ) {

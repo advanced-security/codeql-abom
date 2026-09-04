@@ -1,6 +1,6 @@
 // Package frontier maintains the persisted queue of upstream dependencies awaiting analysis.
 //
-// Discovery is recursive: analysing a dependency reveals further dependencies, so consumers of
+// Discovery is recursive: analyzing a dependency reveals further dependencies, so consumers of
 // this queue are also its producers and expansion may span weeks across process restarts.
 // That rules out a fixed batch and requires durable state.
 //
@@ -44,14 +44,14 @@ type Item struct {
 	DiscoveredFrom string
 }
 
-// DefaultContainerWeight favours dependencies whose analysis can actually extend the graph.
+// DefaultContainerWeight favors dependencies whose analysis can actually extend the graph.
 //
 // A reusable workflow or composite action always contains steps that its callers inherit, so
-// analysing one adds edges. Most plain actions turn out to be JavaScript, whose dependencies
-// are npm packages an actions database cannot see, so analysing them adds nothing. Of the first
-// thirteen upstream repositories analysed, only four contributed any composite steps.
+// analyzing one adds edges. Most plain actions turn out to be JavaScript, whose dependencies
+// are npm packages an actions database cannot see, so analyzing them adds nothing. Of the first
+// thirteen upstream repositories analyzed, only four contributed any composite steps.
 //
-// The weight multiplies commonality rather than replacing it, so what the organisation most
+// The weight multiplies commonality rather than replacing it, so what the organization most
 // depends on still comes first.
 const DefaultContainerWeight = 3.0
 
@@ -218,10 +218,10 @@ func (q *Queue) Claim(limit int) ([]Item, error) {
 	return claimed, nil
 }
 
-// HeadRef is the default thing to analyse: what the action does now.
+// HeadRef is the default thing to analyze: what the action does now.
 const HeadRef = "HEAD"
 
-// Resolution records which ref was analysed and the commit it pointed at.
+// Resolution records which ref was analyzed and the commit it pointed at.
 type Resolution struct {
 	// Ref is what was requested, usually HeadRef.
 	Ref string
@@ -247,7 +247,7 @@ type Recheck struct {
 	Score float64
 }
 
-// Complete marks an item analysed and records what was analysed.
+// Complete marks an item analyzed and records what was analyzed.
 func (q *Queue) Complete(nodeKey string, res Resolution) error {
 	if res.Ref == "" {
 		res.Ref = HeadRef
@@ -266,7 +266,7 @@ func (q *Queue) Complete(nodeKey string, res Resolution) error {
 	return nil
 }
 
-// DueForRecheck returns analysed dependencies whose ref may have moved since, most valuable
+// DueForRecheck returns analyzed dependencies whose ref may have moved since, most valuable
 // first, so a cheap ref probe is spent on what most of the corpus depends on.
 //
 // Immutable refs are excluded: they cannot drift, so re-probing them is pure waste.

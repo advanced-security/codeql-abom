@@ -81,7 +81,7 @@ func (r *recorder) asked() []*http.Request {
 }
 
 // The whole package list travels in the query string, so it has to be split or a large
-// organisation's list would overrun the URL.
+// organization's list would overrun the URL.
 func TestFetchBatchesPackages(t *testing.T) {
 	rec := &recorder{pages: map[string]string{"": "[]"}}
 	c := newServer(t, rec)
@@ -212,7 +212,7 @@ func TestFetchStopsOnCancellation(t *testing.T) {
 	cancel()
 
 	if _, err := c.Fetch(ctx, []string{"a/one"}); err == nil {
-		t.Error("Fetch ignored a cancelled context")
+		t.Error("Fetch ignored a canceled context")
 	}
 }
 

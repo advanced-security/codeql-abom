@@ -31,6 +31,9 @@ func TestSchemaHasNoVerdictColumns(t *testing.T) {
 		}
 		tables = append(tables, name)
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("listing tables: %v", err)
+	}
 	if len(tables) == 0 {
 		t.Fatal("no abom_ tables found")
 	}
@@ -52,6 +55,10 @@ func TestSchemaHasNoVerdictColumns(t *testing.T) {
 						table, col)
 				}
 			}
+		}
+		if err := cols.Err(); err != nil {
+			cols.Close()
+			t.Fatalf("reading columns of %s: %v", table, err)
 		}
 		cols.Close()
 	}

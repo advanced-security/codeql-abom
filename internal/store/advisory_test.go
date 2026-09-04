@@ -35,7 +35,7 @@ func sampleAdvisory() Advisory {
 	}
 }
 
-// seedDependency records an organisation repository using an action at a given reference.
+// seedDependency records an organization repository using an action at a given reference.
 func seedDependency(t *testing.T, s *Store, repo, nodeKey, ref string, line int) {
 	t.Helper()
 	id, err := s.UpsertRepository(repo, "")

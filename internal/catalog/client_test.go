@@ -113,7 +113,7 @@ func TestFindDatabaseMissingLanguage(t *testing.T) {
 	}
 }
 
-// Most repositories in a large organisation have no actions database; that must be an
+// Most repositories in a large organization have no actions database; that must be an
 // expected, countable outcome rather than a hard failure.
 func TestListDatabasesNotFoundIsSentinel(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -291,7 +291,7 @@ func TestContextCancellationStopsRetrying(t *testing.T) {
 	cancel()
 
 	if _, err := c.ListDatabases(ctx, "octo-org/app"); err == nil {
-		t.Fatal("expected an error for a cancelled context")
+		t.Fatal("expected an error for a canceled context")
 	}
 }
 

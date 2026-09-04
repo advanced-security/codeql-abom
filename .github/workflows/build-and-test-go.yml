@@ -1,0 +1,68 @@
+name: Build and Test - Go
+
+# Every action is pinned to a full-length commit SHA. A tag is a moving pointer its owner can
+# repoint at any time, which is the supply-chain exposure this repository exists to measure.
+# The trailing comment records the release, and Dependabot maintains both.
+
+on:
+  pull_request:
+    paths:
+      - '**/*.go'
+      - '.github/workflows/build-and-test-go.yml'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+  push:
+    branches: ['main']
+    paths:
+      - '**/*.go'
+      - '.github/workflows/build-and-test-go.yml'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test-go:
+    name: Build and Test - Go
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Build and Test - Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build and Test - Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # First, because a duplicated package clause reads as a syntax error everywhere else and
+      # sends the reader looking in the wrong place.
+      - name: Build and Test - Check for corrupted writes
+        run: make check-corrupt
+
+      - name: Build and Test - Check formatting
+        run: make fmt
+
+      - name: Build and Test - Vet
+        run: make vet
+
+      - name: Build and Test - Run tests
+        run: make test
+
+      - name: Build and Test - Build the binary
+        run: make build
+
+      - name: Build and Test - Summary
+        run: |
+          {
+            echo "## Go"
+            echo ""
+            echo "- No corrupted writes"
+            echo "- gofmt clean, go vet clean"
+            echo "- \`go test ./... -race\` passed"
+            echo "- Binary builds"
+          } >> "$GITHUB_STEP_SUMMARY"

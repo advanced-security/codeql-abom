@@ -17,7 +17,7 @@ import (
 // separator that repository names may themselves contain. Splitting on position is therefore
 // unreliable; matching against the known repository list is not.
 type RepoResolver struct {
-	// canonical maps a sanitised prefix to the repository names that produce it. More than one
+	// canonical maps a sanitized prefix to the repository names that produce it. More than one
 	// name means the filename is genuinely ambiguous.
 	canonical map[string][]string
 }
@@ -91,7 +91,7 @@ func LoadRepoList(path, listName string) ([]string, error) {
 	return all, nil
 }
 
-// BulkResult summarises a directory ingestion.
+// BulkResult summarizes a directory ingestion.
 type BulkResult struct {
 	Files    int
 	Findings int
@@ -124,7 +124,7 @@ func (i *Ingester) FindingsFromDirectory(
 		repo, ok := resolver.Resolve(name)
 		path := filepath.Join(dir, name)
 
-		// The run records the repository it analysed, which beats inferring it from a
+		// The run records the repository it analyzed, which beats inferring it from a
 		// filename that flattened owner/name with an ambiguous separator.
 		if prov, err := readProvenanceFile(path); err == nil && prov.Repository != "" {
 			repo, ok = prov.Repository, true

@@ -1,4 +1,4 @@
-@* Coverage is stated on every page: silence about what was not analysed reads as completeness. *@
+@* Coverage is stated on every page: silence about what was not analyzed reads as completeness. *@
 
 @if (Summary is null)
 {
@@ -15,7 +15,7 @@ else
         </span>
         <span class="abom-coverage-item">
             <span class="abom-coverage-value">@Summary.UpstreamRepos.ToString("N0")</span>
-            <span class="abom-coverage-label">upstream analysed</span>
+            <span class="abom-coverage-label">upstream analyzed</span>
         </span>
         <span class="abom-coverage-item">
             <span class="abom-coverage-value">@Summary.Findings.ToString("N0")</span>
@@ -28,7 +28,7 @@ else
 
         @if (Summary.PendingDependencies > 0)
         {
-            <MudTooltip Text="These dependencies have not been analysed, so anything they pull in is not represented anywhere in this interface.">
+            <MudTooltip Text="These dependencies have not been analyzed, so anything they pull in is not represented anywhere in this interface.">
                 <span class="abom-coverage-item abom-coverage-unknown">
                     <span class="abom-coverage-value">@Summary.PendingDependencies.ToString("N0")</span>
                     <span class="abom-coverage-label">dependencies unresolved</span>

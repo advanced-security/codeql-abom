@@ -58,7 +58,7 @@ func find(t *testing.T, items []RemediationItem, ghsa string) RemediationItem {
 	return RemediationItem{}
 }
 
-// The ranking the organisation asked for is severity against how much it touches.
+// The ranking the organization asked for is severity against how much it touches.
 func TestRemediationRanksBySeverityTimesReach(t *testing.T) {
 	s := remediationStore(t)
 	advisoryAgainst(t, s, "GHSA-low-wide", "low", "actions/checkout", "2.0", "")
@@ -166,7 +166,7 @@ func TestRemediationExcludesWithdrawnAdvisories(t *testing.T) {
 }
 
 // CVSS and EPSS describe the advisory, not its reach here, so they are reported but must not
-// silently change the ranking the organisation asked for.
+// silently change the ranking the organization asked for.
 func TestRemediationScoreIsSeverityTimesReachOnly(t *testing.T) {
 	s := remediationStore(t)
 	if _, err := s.AddAdvisories([]Advisory{{

@@ -13,7 +13,7 @@ else if (_detail is null)
         <MudText Typo="Typo.body2">Nothing here is named <span class="abom-rule">@Key</span>.</MudText>
         <MudText Typo="Typo.caption">
             That is not the same as it being unused: it may sit behind a dependency that has not
-            been analysed. <MudLink Href="/discovery" Typo="Typo.caption">Check coverage</MudLink>.
+            been analyzed. <MudLink Href="/discovery" Typo="Typo.caption">Check coverage</MudLink>.
         </MudText>
     </MudAlert>
 }
@@ -62,7 +62,7 @@ else
         </MudItem>
         <MudItem xs="6" sm="3">
             <MudPaper Elevation="0" Outlined="true" Class="pa-3">
-                <MudText Typo="Typo.h6">@(_detail.Analysed ? "yes" : "not yet")</MudText>
+                <MudText Typo="Typo.h6">@(_detail.Analyzed ? "yes" : "not yet")</MudText>
                 <MudText Typo="Typo.caption">expanded</MudText>
             </MudPaper>
         </MudItem>
@@ -90,12 +90,12 @@ else
                             <span><b>@_impact.Transitive</b> through an intermediary</span>
                         </MudTooltip>
                     </div>
-                    @if (_impact.Unanalysed > 0)
+                    @if (_impact.Unanalyzed > 0)
                     {
                         <MudAlert Severity="MudBlazor.Severity.Normal" Variant="Variant.Outlined"
                                   Dense="true" Class="mb-2" Icon="@Icons.Material.Outlined.HelpOutline">
                             <MudText Typo="Typo.caption">
-                                @_impact.Unanalysed dependencies have not been expanded. A
+                                @_impact.Unanalyzed dependencies have not been expanded. A
                                 repository that reaches this only through one of those is not
                                 counted above.
                             </MudText>
@@ -264,7 +264,7 @@ else
             ? $"Names it directly at {string.Join(", ", r.Refs)}. This repository can change the reference itself."
             : $"Reaches it in {r.Hops} hops through an intermediary. It holds no reference of its own to change.";
 
-    // Runs on parameter change too, so following a neighbour link reloads rather than sticking.
+    // Runs on parameter change too, so following a neighbor link reloads rather than sticking.
     protected override async Task OnParametersSetAsync()
     {
         _loading = true;

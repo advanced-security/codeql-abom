@@ -25,7 +25,7 @@ type affected struct {
 // BuildExposure records how each repository under review reaches an advisory-affected action.
 //
 // Blast radius answers how many repositories are touched; exposure answers by what route, which
-// is what decides whether a fix is available to the organisation at all. A direct use can be
+// is what decides whether a fix is available to the organization at all. A direct use can be
 // bumped where it is; a transitive one waits on an intermediary that may belong to someone else.
 func (b *Builder) BuildExposure() error {
 	m, err := b.load()

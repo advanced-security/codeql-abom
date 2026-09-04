@@ -45,7 +45,7 @@ func TestResolvePrefersLongestMatch(t *testing.T) {
 	}
 }
 
-// Two repositories can sanitise to the same filename. Guessing would silently attribute
+// Two repositories can sanitize to the same filename. Guessing would silently attribute
 // findings to the wrong repository, so genuine ambiguity is reported instead.
 func TestResolveReportsAmbiguity(t *testing.T) {
 	r := NewRepoResolver([]string{"foo_bar/baz", "foo/bar_baz"})

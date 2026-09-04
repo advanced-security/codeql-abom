@@ -12,7 +12,7 @@ import (
 // RowFunc receives one decoded row. Returning an error aborts the stream.
 type RowFunc func(Row) error
 
-// StreamSelect walks the "#select" result set without materialising its tuples, invoking fn
+// StreamSelect walks the "#select" result set without materializing its tuples, invoking fn
 // once per row and returning the number of rows delivered.
 //
 // Peak memory is proportional to the widest single row rather than to the result count, which

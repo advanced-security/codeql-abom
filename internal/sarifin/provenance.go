@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// Provenance identifies the source a SARIF run analysed.
+// Provenance identifies the source a SARIF run analyzed.
 //
 // It is more reliable than the filename: MRVA and sarif-sql both flatten owner/name into the
 // filename with a separator that repository names may themselves contain, whereas the run

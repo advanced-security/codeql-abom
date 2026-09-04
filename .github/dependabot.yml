@@ -1,0 +1,38 @@
+version: 2
+
+updates:
+  # Actions are pinned by commit SHA, so this is what keeps them current: Dependabot rewrites
+  # the SHA and the trailing version comment together. Without it, pinning means frozen.
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    cooldown:
+      default-days: 7
+    groups:
+      all-github-actions:
+        patterns:
+          - '*'
+
+  - package-ecosystem: 'gomod'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    cooldown:
+      default-days: 7
+    groups:
+      all-go-dependencies:
+        patterns:
+          - '*'
+
+  - package-ecosystem: 'nuget'
+    directory: '/ui'
+    schedule:
+      interval: 'weekly'
+    cooldown:
+      default-days: 7
+    versioning-strategy: 'increase'
+    groups:
+      all-nuget-dependencies:
+        patterns:
+          - '*'

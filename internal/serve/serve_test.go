@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -88,7 +89,7 @@ func TestSummaryEndpoint(t *testing.T) {
 	}
 }
 
-func TestGraphEndpointReturnsScopedNeighbourhood(t *testing.T) {
+func TestGraphEndpointReturnsScopedNeighborhood(t *testing.T) {
 	srv, s := newServer(t)
 	seedGraph(t, s)
 
@@ -250,5 +251,24 @@ func TestAPIWorksWithoutUIAssets(t *testing.T) {
 	}
 	if rec := get(t, srv, "/"); rec.Code == http.StatusOK {
 		t.Error("served a page with no interface assets configured")
+	}
+}
+
+// A mistyped endpoint must fail as an endpoint. Falling through to the interface's HTML makes a
+// caller report a JSON parse error, which says nothing about the actual mistake.
+func TestUnknownAPIPathIsNotAnsweredWithHTML(t *testing.T) {
+	srv, s := newServer(t)
+	seedGraph(t, s)
+	srv.UI = fstest.MapFS{
+		"index.html": &fstest.MapFile{Data: []byte("<html>interface</html>")},
+	}
+
+	rec := get(t, srv, "/api/no-such-endpoint")
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status %d for an unrouted API path, want 404; body: %s",
+			rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "<html>") {
+		t.Error("an unrouted API path was answered with the interface")
 	}
 }

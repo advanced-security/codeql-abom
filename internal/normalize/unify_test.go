@@ -4,7 +4,7 @@ import "testing"
 
 // A reference to something defined in another repository must produce the same key as that
 // repository's own definition of it. Without this, a shared action appears as two disconnected
-// nodes and transitive blast radius is silently understated across the organisation.
+// nodes and transitive blast radius is silently understated across the organization.
 func TestExternalReferenceUnifiesWithItsDefinition(t *testing.T) {
 	tests := []struct {
 		name string

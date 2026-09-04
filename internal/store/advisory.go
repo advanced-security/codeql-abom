@@ -178,7 +178,7 @@ type AdvisoryReach struct {
 	MaxDependentRepos int `json:"maxDependentRepos"`
 }
 
-// AdvisoriesByReach lists advisories against the actions the organisation actually depends on,
+// AdvisoriesByReach lists advisories against the actions the organization actually depends on,
 // widest reach first.
 //
 // Withdrawn advisories are excluded: GitHub has retracted them, so reporting them would attach
@@ -420,7 +420,7 @@ type ExposureSummary struct {
 	Transitive int    `json:"transitive"`
 }
 
-// ExposureByAdvisory summarises reach per advisory, widest first.
+// ExposureByAdvisory summarizes reach per advisory, widest first.
 //
 // Direct and transitive are kept apart because they call for different work: one is a version
 // bump in the affected repository, the other is a fix somewhere upstream of it.
@@ -434,7 +434,7 @@ func (s *Store) ExposureByAdvisory() ([]ExposureSummary, error) {
 		GROUP BY e.ghsa_id, a.severity, a.summary
 		ORDER BY 4 + 5 DESC, e.ghsa_id`)
 	if err != nil {
-		return nil, fmt.Errorf("summarising exposure: %w", err)
+		return nil, fmt.Errorf("summarizing exposure: %w", err)
 	}
 	defer rows.Close()
 
@@ -450,7 +450,7 @@ func (s *Store) ExposureByAdvisory() ([]ExposureSummary, error) {
 }
 
 // AdvisoryPackages returns the repository-scoped package names worth querying: every external
-// action the organisation depends on.
+// action the organization depends on.
 //
 // Names are repository-scoped because that is the only granularity the advisory API knows;
 // subpath actions collapse onto their repository.

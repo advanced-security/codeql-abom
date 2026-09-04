@@ -75,7 +75,7 @@ func (r Ref) NodeKeyIn(repository string) string {
 // ParseUses decomposes a raw `uses:` value and its optional trailing comment into identity
 // components.
 //
-// It never returns an error: an unrecognised reference still yields a usable Ref so that a
+// It never returns an error: an unrecognized reference still yields a usable Ref so that a
 // single malformed workflow cannot drop an entire repository from the graph.
 func ParseUses(raw, pinComment string) Ref {
 	raw = strings.TrimSpace(raw)

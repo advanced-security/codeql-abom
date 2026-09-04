@@ -29,9 +29,9 @@ type GraphNode struct {
 	// Advisories counts published advisories naming this node's repository. It is a count of
 	// statements, not a judgement that any observed reference is affected.
 	Advisories int `json:"advisories"`
-	// Analysed reports whether the dependency itself was expanded, which is what decides
+	// Analyzed reports whether the dependency itself was expanded, which is what decides
 	// whether anything downstream of it is known at all.
-	Analysed bool `json:"analysed"`
+	Analyzed bool `json:"analyzed"`
 }
 
 // GraphEdge is a dependency relationship, merged across the references that expressed it.
@@ -69,9 +69,7 @@ const collapsedDisplay = `disp AS (
 
 const identityDisplay = `disp AS (SELECT row_id, row_id AS shown FROM abom_node)`
 
-// FullGraph returns the entire dependency graph in one payload.
-//
-// There is no node budget. The interface loads this once and every filter afterwards runs
+// FullGraph has no node budget. The interface loads it once and every filter afterwards runs
 // against it in the browser, so the cost is paid on arrival rather than on every interaction.
 func (s *Store) FullGraph(opts FullGraphOptions) (Graph, error) {
 	out := Graph{Nodes: []GraphNode{}, Edges: []GraphEdge{}, IncludesSteps: opts.IncludeSteps}
@@ -127,7 +125,7 @@ func (s *Store) graphNodes(display string) ([]GraphNode, map[string]*GraphNode, 
 	for rows.Next() {
 		var n GraphNode
 		if err := rows.Scan(&n.Key, &n.Kind, &n.Repository, &n.Origin, &n.Path, &n.Container,
-			&n.Owner, &n.IsExternal, &n.DependentRepos, &n.Advisories, &n.Analysed); err != nil {
+			&n.Owner, &n.IsExternal, &n.DependentRepos, &n.Advisories, &n.Analyzed); err != nil {
 			return nil, nil, fmt.Errorf("scanning graph node: %w", err)
 		}
 		n.Rules = []string{}

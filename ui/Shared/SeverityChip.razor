@@ -1,6 +1,6 @@
 @inject ThemeService Theme
 
-@* Severity always carries its label. Colour alone excludes anyone who cannot distinguish these
+@* Severity always carries its label. Color alone excludes anyone who cannot distinguish these
    hues, and the ranking has to survive a greyscale screenshot. *@
 <span style="display:inline-flex;align-items:center;gap:0.35rem;">
     <span style="@DotStyle"></span>
@@ -15,5 +15,5 @@
         : char.ToUpperInvariant(Severity[0]) + Severity[1..].ToLowerInvariant();
 
     private string DotStyle =>
-        $"width:9px;height:9px;border-radius:50%;flex:none;background:{Theme.SeverityColour(Severity)};";
+        $"width:9px;height:9px;border-radius:50%;flex:none;background:{Theme.SeverityColor(Severity)};";
 }

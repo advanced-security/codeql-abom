@@ -157,7 +157,7 @@ func TestLimiterRealSleepStopsOnCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := sleepContext(ctx, time.Hour); err == nil {
-		t.Error("sleepContext returned nil for a cancelled context")
+		t.Error("sleepContext returned nil for a canceled context")
 	}
 }
 

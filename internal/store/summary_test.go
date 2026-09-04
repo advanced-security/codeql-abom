@@ -12,7 +12,7 @@ func TestSummaryOfEmptyDatabase(t *testing.T) {
 		t.Fatalf("Summary: %v", err)
 	}
 	if got.Nodes != 0 || got.Edges != 0 || got.Findings != 0 || got.Advisories != 0 {
-		t.Errorf("empty database summarised as %+v", got)
+		t.Errorf("empty database summarized as %+v", got)
 	}
 	if got.Frontier == nil {
 		t.Error("Frontier map is nil, which would panic a caller ranging over it")
@@ -130,7 +130,7 @@ func TestSummaryCountsFrontierByStatus(t *testing.T) {
 	if got.Frontier["pending"] != 1 || got.Frontier["done"] != 2 {
 		t.Errorf("frontier = %v, want 1 pending and 2 done", got.Frontier)
 	}
-	if got.AnalysedUpstreams != 2 {
-		t.Errorf("AnalysedUpstreams = %d, want 2", got.AnalysedUpstreams)
+	if got.AnalyzedUpstreams != 2 {
+		t.Errorf("AnalyzedUpstreams = %d, want 2", got.AnalyzedUpstreams)
 	}
 }

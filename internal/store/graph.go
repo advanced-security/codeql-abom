@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// DefaultBatchSize is the number of rows buffered before a flush. Large enough to amortise
+// DefaultBatchSize is the number of rows buffered before a flush. Large enough to amortize
 // transaction overhead, small enough that a failed unit discards little work.
 const DefaultBatchSize = 2000
 
@@ -62,7 +62,7 @@ type Writer struct {
 
 	// nodeIDs holds every node key seen since the last Reset. Entries for repository-local
 	// nodes are dropped by ResetLocal so the map stays bounded by the largest single
-	// repository rather than growing with the whole organisation.
+	// repository rather than growing with the whole organization.
 	nodeIDs map[string]int64
 	// external records which cached keys are shared across repositories and must survive Reset.
 	external map[string]bool
@@ -111,7 +111,7 @@ func (w *Writer) Flush() error {
 }
 
 // ResetLocal discards cached IDs for repository-scoped nodes, keeping shared external ones.
-// Call it between repositories to keep memory flat across a large organisation.
+// Call it between repositories to keep memory flat across a large organization.
 func (w *Writer) ResetLocal() {
 	for key := range w.nodeIDs {
 		if !w.external[key] {

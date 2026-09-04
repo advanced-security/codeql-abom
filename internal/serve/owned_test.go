@@ -56,8 +56,8 @@ func TestMalformedDeclarationIsRejected(t *testing.T) {
 	}
 }
 
-// Candidates are a suggestion drawn from what was analysed. They must never arrive pre-selected:
-// an account holding analysed repositories is not thereby one the operator controls.
+// Candidates are a suggestion drawn from what was analyzed. They must never arrive pre-selected:
+// an account holding analyzed repositories is not thereby one the operator controls.
 func TestOwnerCandidatesArriveUnselected(t *testing.T) {
 	srv, s := newServer(t)
 	seedGraph(t, s)

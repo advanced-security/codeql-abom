@@ -104,6 +104,9 @@ func reachableFrom(t *testing.T, s *store.Store, repo string) map[string]bool {
 		}
 		out[key] = true
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("reading reachable nodes: %v", err)
+	}
 	return out
 }
 
@@ -158,7 +161,7 @@ func TestCrossRepositoryCompositeActionConnects(t *testing.T) {
 }
 
 // Ingestion order must not matter: the consumer may be processed before the repository that
-// defines what it calls, which is the normal case across a large organisation.
+// defines what it calls, which is the normal case across a large organization.
 func TestUnificationIsOrderIndependent(t *testing.T) {
 	s := newTestStore(t)
 	w := store.NewWriter(s, 0)

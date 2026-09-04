@@ -6,7 +6,7 @@ import (
 )
 
 // OrgNodeKind is the account a dependency lives under. GitHub does not distinguish a user from
-// an organisation in a path, and neither does this.
+// an organization in a path, and neither does this.
 const OrgNodeKind = "org"
 
 // OrgKey is the node key for an account.
@@ -53,7 +53,7 @@ func attachOwners(nodes []GraphNode, edges []GraphEdge) ([]GraphNode, []GraphEdg
 				Rules: []string{},
 				// An account is external until a repository under review proves otherwise.
 				IsExternal: true,
-				Analysed:   true,
+				Analyzed:   true,
 			}
 			orgs[owner] = org
 		}
@@ -73,8 +73,8 @@ func attachOwners(nodes []GraphNode, edges []GraphEdge) ([]GraphNode, []GraphEdg
 		if n.DependentRepos > org.DependentRepos {
 			org.DependentRepos = n.DependentRepos
 		}
-		if !n.Analysed {
-			org.Analysed = false
+		if !n.Analyzed {
+			org.Analyzed = false
 		}
 
 		if holdsDirectly(n, represented) {

@@ -59,11 +59,16 @@ else
             <PropertyColumn Property="x => x.Floating" Title="Naming a tag" />
             <PropertyColumn Property="x => x.CommitShare" Title="Commit share">
                 <CellTemplate>
-                    <div class="d-flex align-center gap-2" style="min-width:120px">
+                    <div class="d-flex align-center gap-2" style="min-width:150px">
                         <MudProgressLinear Value="@(context.Item.CommitShare * 100)" Rounded="true"
                                            Size="Size.Small" Style="flex:1"
-                                           Color="@ShareColour(context.Item.CommitShare)" />
-                        <span>@context.Item.CommitShare.ToString("P0")</span>
+                                           Color="@ShareColor(context.Item.CommitShare)" />
+                        <span style="min-width:34px;text-align:right">@context.Item.CommitShare.ToString("P0")</span>
+                        <MudTooltip Text="@ComparedToCorpus(context.Item.CommitShare)">
+                            <span class="mud-text-secondary" style="font-size:0.7rem">
+                                @(context.Item.CommitShare >= Baseline ? "▲" : "▼")
+                            </span>
+                        </MudTooltip>
                     </div>
                 </CellTemplate>
             </PropertyColumn>
@@ -96,7 +101,7 @@ else
             {
                 <div class="abom-pinning-child">
                     <PinningLevel Scope="@NextScope" Parent="@context.Item.ScopeKey"
-                                  Filter="Filter" RowsPerPage="15" />
+                                  Filter="Filter" RowsPerPage="15" Baseline="Baseline" />
                 </div>
             }
         </ChildRowContent>
@@ -114,6 +119,8 @@ else
     [Parameter] public string? Parent { get; set; }
     [Parameter, EditorRequired] public PinningQuery Filter { get; set; } = new();
     [Parameter] public int RowsPerPage { get; set; } = 25;
+    /// <summary>The corpus-wide commit share, which every row is coloured against.</summary>
+    [Parameter] public double Baseline { get; set; }
 
     private IReadOnlyList<PinningRow>? _rows;
     private string _loadedFor = string.Empty;
@@ -133,12 +140,20 @@ else
         _ => "reference",
     };
 
-    private static Color ShareColour(double share) => share switch
+    // Coloured relative to the corpus, not to an absolute ideal. Fixed thresholds painted every
+    // row red at a corpus share of 21%, so the colour varied with nothing and carried nothing.
+    private Color ShareColor(double share)
     {
-        >= 0.8 => Color.Success,
-        >= 0.4 => Color.Warning,
-        _ => Color.Error,
-    };
+        if (Baseline <= 0) return Color.Primary;
+        if (share >= Baseline * 1.5) return Color.Success;
+        if (share >= Baseline * 0.5) return Color.Warning;
+        return Color.Error;
+    }
+
+    private string ComparedToCorpus(double share) =>
+        Baseline <= 0
+            ? $"{share:P0} of pinnable references name a commit"
+            : $"{share:P0} against {Baseline:P0} across the corpus";
 
     /// <summary>Carries the row's scope and the active filters into the graph.</summary>
     private string ExplorerLink(PinningRow row)

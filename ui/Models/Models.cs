@@ -14,7 +14,7 @@ public sealed record Summary
     public int AffectedActions { get; init; }
     public int Exposures { get; init; }
     public int DirectExposures { get; init; }
-    public int AnalysedUpstreams { get; init; }
+    public int AnalyzedUpstreams { get; init; }
     public IReadOnlyDictionary<string, int> Frontier { get; init; } =
         new Dictionary<string, int>();
 
@@ -150,7 +150,7 @@ public sealed record ActionSummary
     public string Kind { get; init; } = string.Empty;
     public string Owner { get; init; } = string.Empty;
     public string Repo { get; init; } = string.Empty;
-    /// <summary>Separates what the organisation owns from what it merely depends on.</summary>
+    /// <summary>Separates what the organization owns from what it merely depends on.</summary>
     public string Origin { get; init; } = string.Empty;
     public int DependentRepos { get; init; }
     public int DirectDependents { get; init; }
@@ -158,7 +158,7 @@ public sealed record ActionSummary
     public int DistinctRefs { get; init; }
     public int Findings { get; init; }
     public int Advisories { get; init; }
-    public bool Analysed { get; init; }
+    public bool Analyzed { get; init; }
     public IReadOnlyList<string> Refs { get; init; } = [];
 }
 
@@ -268,7 +268,7 @@ public sealed record BumpImpact
     public int Direct { get; init; }
     public int Transitive { get; init; }
     public IReadOnlyList<AffectedRepo> Repos { get; init; } = [];
-    public int Unanalysed { get; init; }
+    public int Unanalyzed { get; init; }
 }
 
 /// <summary>One reference and how widely it is used, verbatim and unjudged.</summary>
@@ -279,7 +279,7 @@ public sealed record RefUsage
     public int Repositories { get; init; }
 }
 
-public sealed record NodeNeighbour
+public sealed record NodeNeighbor
 {
     public string Key { get; init; } = string.Empty;
     public string Kind { get; init; } = string.Empty;
@@ -298,12 +298,12 @@ public sealed record NodeDetail
     public string Origin { get; init; } = string.Empty;
     public string Path { get; init; } = string.Empty;
     public bool IsExternal { get; init; }
-    public bool Analysed { get; init; }
+    public bool Analyzed { get; init; }
     public int DependentRepos { get; init; }
     public int DirectDependents { get; init; }
     public IReadOnlyList<RefUsage> Refs { get; init; } = [];
     public IReadOnlyList<RuleCount> Rules { get; init; } = [];
     public IReadOnlyList<AdvisoryReach> Advisories { get; init; } = [];
-    public IReadOnlyList<NodeNeighbour> UsedBy { get; init; } = [];
-    public IReadOnlyList<NodeNeighbour> Uses { get; init; } = [];
+    public IReadOnlyList<NodeNeighbor> UsedBy { get; init; } = [];
+    public IReadOnlyList<NodeNeighbor> Uses { get; init; } = [];
 }

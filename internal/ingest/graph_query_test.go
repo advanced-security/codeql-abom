@@ -62,7 +62,7 @@ func TestBlastRadiusCountsDependentRepositories(t *testing.T) {
 }
 
 // A local action in one repository must never merge with a same-named action in another, or
-// blast radius is silently overstated across the whole organisation.
+// blast radius is silently overstated across the whole organization.
 func TestLocalActionsAreScopedPerRepository(t *testing.T) {
 	s := newTestStore(t)
 	ingestAs(t, s, "octo-org/app")
@@ -128,6 +128,9 @@ func TestReferencesArePreservedVerbatim(t *testing.T) {
 		}
 		got[raw] = true
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("reading references: %v", err)
+	}
 
 	// Every reference shape in the fixture must survive, including the ones upstream queries
 	// ignore, because a later abom/ query is what will evaluate them.
@@ -173,6 +176,9 @@ func TestBumpImpactListsAffectedRepositories(t *testing.T) {
 			t.Fatalf("scanning: %v", err)
 		}
 		affected = append(affected, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("reading bump impact: %v", err)
 	}
 	if len(affected) != 2 || affected[0] != "octo-org/app" || affected[1] != "octo-org/service" {
 		t.Errorf("affected = %v, want both repositories", affected)

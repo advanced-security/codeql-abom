@@ -40,29 +40,16 @@ func (s *Store) UpsertCatalogEntry(e CatalogEntry) error {
 	return nil
 }
 
-// CatalogRepositories returns repositories known to have a database for the language.
-//
-// This is what the ingestion pass consumes, so the expensive per-repository discovery is paid
-// once rather than on every run.
+// CatalogRepositories is what the ingestion pass consumes, so the expensive per-repository
+// discovery is paid once rather than on every run.
 func (s *Store) CatalogRepositories(language string) ([]string, error) {
-	rows, err := s.db.Query(`
+	return queryAll(s, "listing catalog", func(r *sql.Rows) (string, error) {
+		var repo string
+		return repo, r.Scan(&repo)
+	}, `
 		SELECT repository FROM abom_database_catalog
 		WHERE has_database = 1 AND language = ?
 		ORDER BY repository`, language)
-	if err != nil {
-		return nil, fmt.Errorf("listing catalog: %w", err)
-	}
-	defer rows.Close()
-
-	var repos []string
-	for rows.Next() {
-		var repo string
-		if err := rows.Scan(&repo); err != nil {
-			return nil, fmt.Errorf("scanning catalog: %w", err)
-		}
-		repos = append(repos, repo)
-	}
-	return repos, rows.Err()
 }
 
 // CatalogCoverage reports how many repositories were probed and how many had a database.

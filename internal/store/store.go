@@ -1,6 +1,6 @@
 // Package store persists the ABOM graph and its supporting vulnerability data in SQLite.
 //
-// The design target is an organisation of 20,000+ repositories, which implies millions of edge
+// The design target is an organization of 20,000+ repositories, which implies millions of edge
 // rows. Two choices follow from that and are load-bearing rather than incidental: indexes are
 // built after bulk loading rather than maintained during it, and writes are batched through
 // prepared statements inside explicit transactions.
@@ -46,7 +46,7 @@ func Open(path string, opts Options) (*Store, error) {
 
 	s := &Store{db: db, bulkMode: opts.BulkLoad}
 	if err := s.applyPragmas(opts); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	return s, nil
@@ -83,6 +83,9 @@ func (s *Store) DB() *sql.DB { return s.db }
 // Migrate creates all tables and adds any columns introduced since the database was created.
 // It is safe to call on an existing database.
 func (s *Store) Migrate() error {
+	if err := s.dropStaleDerivedTables(); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(schemaDDL); err != nil {
 		return fmt.Errorf("creating schema: %w", err)
 	}
@@ -98,6 +101,20 @@ func (s *Store) Migrate() error {
 		if _, err := s.db.Exec(stmt); err != nil {
 			return fmt.Errorf("adding %s.%s: %w", c.table, c.column, err)
 		}
+	}
+	return nil
+}
+
+// dropStaleDerivedTables removes derived tables that no longer have a consumer.
+//
+// Columns are normally only added, because dropping one loses data. This table held nothing
+// that is not recomputed from the findings themselves, so it is discarded rather than migrated.
+func (s *Store) dropStaleDerivedTables() error {
+	// abom_pinning cached findings per rule alongside a denominator, and both were a liability:
+	// the denominator related two unconnected quantities, and the cache could fall behind the
+	// findings it summarized. Callers now count from abom_finding directly.
+	if _, err := s.db.Exec(`DROP TABLE IF EXISTS abom_pinning`); err != nil {
+		return fmt.Errorf("dropping abom_pinning: %w", err)
 	}
 	return nil
 }
@@ -147,7 +164,8 @@ func (s *Store) Optimize() error {
 // resulting file is self-contained and safe to compress and ship.
 func (s *Store) Close() error {
 	if _, err := s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
-		s.db.Close()
+		// The checkpoint failure is the one worth reporting; closing is best effort after it.
+		_ = s.db.Close()
 		return fmt.Errorf("checkpointing wal: %w", err)
 	}
 	return s.db.Close()

@@ -8,7 +8,7 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
-// fixture builds a small organisation by hand so expected reach can be reasoned about exactly:
+// fixture builds a small organization by hand so expected reach can be reasoned about exactly:
 //
 //	app      workflow -> shared reusable workflow -> actions/checkout
 //	service  workflow -> shared reusable workflow
@@ -147,8 +147,8 @@ func upstreamUser(t *testing.T, s *store.Store, name, target string) {
 }
 
 // An upstream repository is fetched to find out what it depends on, not because it is under
-// review. Counting its CI as blast radius would inflate the organisation's exposure with
-// repositories the organisation does not own and cannot remediate.
+// review. Counting its CI as blast radius would inflate the organization's exposure with
+// repositories the organization does not own and cannot remediate.
 func TestBlastRadiusExcludesUpstreamRepositories(t *testing.T) {
 	s := fixture(t)
 	measure := func() (repos, workflows int) {
@@ -168,7 +168,7 @@ func TestBlastRadiusExcludesUpstreamRepositories(t *testing.T) {
 	}
 	if gotWorkflows != wantWorkflows {
 		t.Errorf("dependent_workflows = %d, want %d: an upstream repository's own CI is not a "+
-			"workflow the organisation can act on", gotWorkflows, wantWorkflows)
+			"workflow the organization can act on", gotWorkflows, wantWorkflows)
 	}
 }
 
@@ -183,7 +183,7 @@ func TestBlastRadiusExcludesSelfReferenceFromUpstreamCI(t *testing.T) {
 
 	repos, _, _ := blastRadius(t, s, "actions/checkout")
 	if repos != 4 {
-		t.Errorf("dependent_repos = %d, want the 4 organisation repositories only", repos)
+		t.Errorf("dependent_repos = %d, want the 4 organization repositories only", repos)
 	}
 }
 
@@ -251,7 +251,7 @@ func repoID(t *testing.T, s *store.Store, name string) int64 {
 }
 
 // A repository under review can also be an upstream dependency of another. Observed in real
-// data: an organisation analysing actions/cache also depends on it. It must stay under review,
+// data: an organization analyzing actions/cache also depends on it. It must stay under review,
 // or it disappears from its own report.
 func TestSeedRepositoryIsNotDemotedToUpstream(t *testing.T) {
 	s := fixture(t)
@@ -422,104 +422,6 @@ func seedFindings(t *testing.T, s *store.Store, ruleID string, repos ...string) 
 	}
 }
 
-// "Which references are unpinned?" is answered by selecting the upstream rule, never by an
-// ABOM-owned column.
-//
-// Only the finding count is asserted. references_total once served as a denominator and no
-// longer has a consumer: dividing a rule's findings by every reference in scope answered
-// nothing, because the denominator had no relationship to what the rule examined. Pinning is
-// now measured by Store.PinningLevel against the references the rule could have fired on.
-func TestPostureCountsFindingsByRule(t *testing.T) {
-	s := fixture(t)
-	seedFindings(t, s, "actions/unpinned-tag", "octo-org/app", "octo-org/service", "octo-org/tool")
-
-	if err := (&Builder{Store: s}).BuildPinning(); err != nil {
-		t.Fatalf("BuildPinning: %v", err)
-	}
-
-	var findings int
-	if err := s.DB().QueryRow(
-		`SELECT findings FROM abom_pinning
-		 WHERE scope_kind='org' AND rule_id='actions/unpinned-tag'`).
-		Scan(&findings); err != nil {
-		t.Fatalf("reading org posture: %v", err)
-	}
-	if findings != 3 {
-		t.Errorf("findings = %d, want 3", findings)
-	}
-}
-
-// Two rules must be reported side by side, not merged into one score.
-func TestPostureSeparatesRules(t *testing.T) {
-	s := fixture(t)
-	seedFindings(t, s, "actions/unpinned-tag", "octo-org/app")
-	seedFindings(t, s, "abom/local-action-reference", "octo-org/service", "octo-org/tool")
-
-	if err := (&Builder{Store: s}).BuildPinning(); err != nil {
-		t.Fatalf("BuildPinning: %v", err)
-	}
-
-	rows, err := s.DB().Query(
-		`SELECT rule_id, findings FROM abom_pinning WHERE scope_kind='org' ORDER BY rule_id`)
-	if err != nil {
-		t.Fatalf("reading posture: %v", err)
-	}
-	defer rows.Close()
-
-	got := map[string]int{}
-	for rows.Next() {
-		var rule string
-		var n int
-		if err := rows.Scan(&rule, &n); err != nil {
-			t.Fatalf("scanning: %v", err)
-		}
-		got[rule] = n
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("reading posture: %v", err)
-	}
-	if got["actions/unpinned-tag"] != 1 || got["abom/local-action-reference"] != 2 {
-		t.Errorf("posture by rule = %v, want 1 and 2", got)
-	}
-}
-
-func TestPosturePerRepository(t *testing.T) {
-	s := fixture(t)
-	seedFindings(t, s, "actions/unpinned-tag", "octo-org/shared")
-
-	if err := (&Builder{Store: s}).BuildPinning(); err != nil {
-		t.Fatalf("BuildPinning: %v", err)
-	}
-
-	var findings int
-	if err := s.DB().QueryRow(
-		`SELECT findings FROM abom_pinning
-		 WHERE scope_kind='repo' AND scope_key=? AND rule_id='actions/unpinned-tag'`,
-		"octo-org/shared").Scan(&findings); err != nil {
-		t.Fatalf("reading repo posture: %v", err)
-	}
-	if findings != 1 {
-		t.Errorf("octo-org/shared = %d findings, want 1", findings)
-	}
-}
-
-func TestPinningIsIdempotent(t *testing.T) {
-	s := fixture(t)
-	seedFindings(t, s, "actions/unpinned-tag", "octo-org/app")
-
-	b := &Builder{Store: s}
-	for i := 0; i < 2; i++ {
-		if err := b.BuildPinning(); err != nil {
-			t.Fatalf("run %d: %v", i, err)
-		}
-	}
-	var orgRows int
-	s.DB().QueryRow(`SELECT COUNT(*) FROM abom_pinning WHERE scope_kind='org'`).Scan(&orgRows)
-	if orgRows != 1 {
-		t.Errorf("got %d org rows after two builds, want 1", orgRows)
-	}
-}
-
 func TestBuildAll(t *testing.T) {
 	s := fixture(t)
 	seedFindings(t, s, "actions/unpinned-tag", "octo-org/app")
@@ -527,10 +429,9 @@ func TestBuildAll(t *testing.T) {
 	if err := (&Builder{Store: s}).BuildAll(); err != nil {
 		t.Fatalf("BuildAll: %v", err)
 	}
-	var radius, pinning int
+	var radius int
 	s.DB().QueryRow(`SELECT COUNT(*) FROM abom_blast_radius`).Scan(&radius)
-	s.DB().QueryRow(`SELECT COUNT(*) FROM abom_pinning`).Scan(&pinning)
-	if radius == 0 || pinning == 0 {
-		t.Errorf("BuildAll produced %d radius rows and %d pinning rows", radius, pinning)
+	if radius == 0 {
+		t.Error("BuildAll produced no blast radius rows")
 	}
 }

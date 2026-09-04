@@ -6,7 +6,7 @@
 
 <MudText Typo="Typo.h5"><h1 style="all:unset;">Actions &amp; Workflows</h1></MudText>
 <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">
-    Every external dependency the organisation reaches, widest reach first. The advisory count
+    Every external dependency the organization reaches, widest reach first. The advisory count
     is how many published advisories name the action's repository — not a claim that the
     references below fall inside them.
 </MudText>
@@ -86,9 +86,9 @@ else
             </PropertyColumn>
 
             @* Whether the dependency itself was expanded decides if anything downstream is known. *@
-            <PropertyColumn Property="x => x.Analysed" Title="Analysed">
+            <PropertyColumn Property="x => x.Analyzed" Title="Analyzed">
                 <CellTemplate>
-                    @if (context.Item.Analysed)
+                    @if (context.Item.Analyzed)
                     {
                         <MudText Typo="Typo.caption">yes</MudText>
                     }

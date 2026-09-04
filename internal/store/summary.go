@@ -20,7 +20,7 @@ type Summary struct {
 	Exposures         int            `json:"exposures"`
 	DirectExposures   int            `json:"directExposures"`
 	Frontier          map[string]int `json:"frontier"`
-	AnalysedUpstreams int            `json:"analysedUpstreams"`
+	AnalyzedUpstreams int            `json:"analyzedUpstreams"`
 }
 
 // Summary counts what has been collected so far.
@@ -46,7 +46,7 @@ func (s *Store) Summary() (Summary, error) {
 		{`SELECT COUNT(*) FROM abom_advisory WHERE withdrawn_at IS NULL`, &out.Advisories, nil},
 		{`SELECT COUNT(*) FROM abom_exposure`, &out.Exposures, nil},
 		{`SELECT COUNT(*) FROM abom_exposure WHERE hops = 1`, &out.DirectExposures, nil},
-		{`SELECT COUNT(*) FROM abom_frontier WHERE status = 'done'`, &out.AnalysedUpstreams, nil},
+		{`SELECT COUNT(*) FROM abom_frontier WHERE status = 'done'`, &out.AnalyzedUpstreams, nil},
 		{`SELECT COUNT(DISTINCT n.row_id)
 		  FROM abom_advisory a
 		  JOIN abom_advisory_package p ON p.advisory_row_id = a.row_id
@@ -56,13 +56,13 @@ func (s *Store) Summary() (Summary, error) {
 	}
 	for _, sc := range scalars {
 		if err := s.db.QueryRow(sc.query, sc.args...).Scan(sc.into); err != nil {
-			return out, fmt.Errorf("summarising: %w", err)
+			return out, fmt.Errorf("summarizing: %w", err)
 		}
 	}
 
 	rows, err := s.db.Query(`SELECT status, COUNT(*) FROM abom_frontier GROUP BY status`)
 	if err != nil {
-		return out, fmt.Errorf("summarising frontier: %w", err)
+		return out, fmt.Errorf("summarizing frontier: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {

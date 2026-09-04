@@ -69,7 +69,7 @@ func TestBumpImpactCarriesEachRepositoryOwnReferences(t *testing.T) {
 
 // Anything reachable only through a dependency that was never expanded cannot appear at all, so
 // the count of what is still pending travels with the answer.
-func TestBumpImpactReportsUnanalysedDependencies(t *testing.T) {
+func TestBumpImpactReportsUnanalyzedDependencies(t *testing.T) {
 	s := subgraphFixture(t)
 	if _, err := s.DB().Exec(`
 		INSERT INTO abom_frontier (node_key, depth, status, score, enqueued_at)
@@ -81,8 +81,8 @@ func TestBumpImpactReportsUnanalysedDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BumpImpactOf: %v", err)
 	}
-	if impact.Unanalysed != 1 {
-		t.Errorf("Unanalysed = %d, want 1", impact.Unanalysed)
+	if impact.Unanalyzed != 1 {
+		t.Errorf("Unanalyzed = %d, want 1", impact.Unanalyzed)
 	}
 }
 

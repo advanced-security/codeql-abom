@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// originRepo builds a real git repository on disk so checkout behaviour is exercised against
+// originRepo builds a real git repository on disk so checkout behavior is exercised against
 // git itself rather than a mock of it. Cloning from a local path keeps the test hermetic.
 func originRepo(t *testing.T, files map[string]string) string {
 	t.Helper()
@@ -134,7 +134,7 @@ func TestFetchTakesNestedActionManifests(t *testing.T) {
 }
 
 // A repository holding neither workflows nor an action manifest has a permanent answer.
-func TestFetchReportsNothingToAnalyse(t *testing.T) {
+func TestFetchReportsNothingToAnalyze(t *testing.T) {
 	origin := originRepo(t, map[string]string{"src/main.js": "console.log(1)\n"})
 
 	c := newCheckout(t, origin)

@@ -9,17 +9,17 @@ import (
 )
 
 // reposPerPage is the maximum GitHub allows, chosen because enumerating a 20,000 repository
-// organisation costs one request per page and pages are the only lever available.
+// organization costs one request per page and pages are the only lever available.
 const reposPerPage = 100
 
-// ListRepositories returns the non-archived repositories in an organisation.
+// ListRepositories returns the non-archived repositories in an organization.
 //
 // Code scanning endpoints are per-repository, so this enumeration is the first of two
 // repository-scoped passes: this one to discover repositories, then one lookup each to find
 // which of them actually have a CodeQL database.
 func (c *Client) ListRepositories(ctx context.Context, org string) ([]string, error) {
 	if org == "" || strings.ContainsAny(org, "/?#") {
-		return nil, fmt.Errorf("organisation %q is not a valid name", org)
+		return nil, fmt.Errorf("organization %q is not a valid name", org)
 	}
 
 	next := fmt.Sprintf("%s/orgs/%s/repos?per_page=%d&type=all",

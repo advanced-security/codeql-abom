@@ -188,7 +188,7 @@ func (i *Ingester) edge(
 // sourceChain emits the container nodes an edge hangs from and returns the key of the node the
 // edge originates at.
 //
-// Containment is expressed through node columns rather than extra edges: at organisation scale
+// Containment is expressed through node columns rather than extra edges: at organization scale
 // that avoids millions of rows that carry no information the columns do not already hold.
 func (i *Ingester) sourceChain(
 	edgeKind, repository, srcPath, srcJobID string, stepIndex int,

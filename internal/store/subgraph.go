@@ -34,7 +34,7 @@ const DefaultSubgraphNodes = 20000
 // node budget stops it, and the node budget is the honest limit to state.
 const unboundedHops = 1 << 30
 
-// collapsedKinds are folded into the container that holds them. A reader recognises a workflow;
+// collapsedKinds are folded into the container that holds them. A reader recognizes a workflow;
 // a step index is an implementation detail, and collapsing is what keeps a view inside budget.
 var collapsedKinds = map[string]bool{"step": true, "job": true}
 
@@ -107,7 +107,7 @@ func (o SubgraphOptions) hops() int {
 	return o.Hops
 }
 
-// Subgraph returns the neighbourhood around a focus node, or an overview when none is given.
+// Subgraph returns the neighborhood around a focus node, or an overview when none is given.
 //
 // The walk is breadth-first and bounded by node count, so the cost is a function of the scope
 // rather than of the corpus. Nothing loads the whole graph.
@@ -173,7 +173,7 @@ type subgraphWalk struct {
 func (v *subgraphWalk) step(frontier []int64, hop int) ([]int64, error) {
 	var next []int64
 	for _, node := range frontier {
-		rows, err := v.neighbours(node)
+		rows, err := v.neighbors(node)
 		if err != nil {
 			return nil, err
 		}
@@ -202,8 +202,8 @@ func (v *subgraphWalk) step(frontier []int64, hop int) ([]int64, error) {
 	return next, nil
 }
 
-// neighbour is one edge reached during the walk.
-type neighbour struct {
+// neighbor is one edge reached during the walk.
+type neighbor struct {
 	other int64
 	kind  string
 	ref   string
@@ -212,7 +212,7 @@ type neighbour struct {
 	outgoing bool
 }
 
-func (v *subgraphWalk) neighbours(node int64) ([]neighbour, error) {
+func (v *subgraphWalk) neighbors(node int64) ([]neighbor, error) {
 	// A displayed node stands for its members, so their edges are its edges.
 	members := `SELECT ? UNION SELECT row_id FROM abom_node WHERE container_node_row_id = ?`
 	if v.opts.Granularity == GranularityRepository {
@@ -242,15 +242,15 @@ func (v *subgraphWalk) neighbours(node int64) ([]neighbour, error) {
 
 	rows, err := v.store.db.Query(strings.Join(parts, " UNION ALL "), args...)
 	if err != nil {
-		return nil, fmt.Errorf("reading neighbours of %d: %w", node, err)
+		return nil, fmt.Errorf("reading neighbors of %d: %w", node, err)
 	}
 	defer rows.Close()
 
-	var out []neighbour
+	var out []neighbor
 	for rows.Next() {
-		var n neighbour
+		var n neighbor
 		if err := rows.Scan(&n.other, &n.kind, &n.ref, &n.outgoing); err != nil {
-			return nil, fmt.Errorf("scanning neighbour: %w", err)
+			return nil, fmt.Errorf("scanning neighbor: %w", err)
 		}
 		out = append(out, n)
 	}
@@ -258,7 +258,7 @@ func (v *subgraphWalk) neighbours(node int64) ([]neighbour, error) {
 }
 
 // record merges an edge, keeping every observed reference.
-func (v *subgraphWalk) record(shown, node int64, n neighbour) {
+func (v *subgraphWalk) record(shown, node int64, n neighbor) {
 	src, dst := shown, node
 	if n.outgoing {
 		src, dst = node, shown
@@ -281,7 +281,7 @@ func (v *subgraphWalk) record(shown, node int64, n neighbour) {
 	}
 }
 
-// displayOf walks up the container chain until it reaches something a reader recognises.
+// displayOf walks up the container chain until it reaches something a reader recognizes.
 func (v *subgraphWalk) displayOf(id int64) (int64, error) {
 	if cached, ok := v.display[id]; ok {
 		return cached, nil
@@ -337,7 +337,7 @@ func (v *subgraphWalk) resolveDisplay(id int64) (int64, error) {
 	return current, nil
 }
 
-// result materialises the walked ids into the returned view.
+// result materializes the walked ids into the returned view.
 func (v *subgraphWalk) result(focusID int64) (Subgraph, error) {
 	// Empty, not nil: a nil slice marshals to null, and a client reading a collection as null
 	// has to special-case what is simply an empty result.

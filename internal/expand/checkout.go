@@ -1,8 +1,8 @@
 // Package expand resolves upstream dependencies into graph data.
 //
-// Analysing a dependency means fetching enough of its source to build an actions database. That
+// Analyzing a dependency means fetching enough of its source to build an actions database. That
 // is a tiny fraction of a typical repository, so the checkout is filtered and sparse: at
-// organisation scale the difference between cloning whole repositories and cloning only their
+// organization scale the difference between cloning whole repositories and cloning only their
 // actions content is the difference between a feasible expansion and an infeasible one.
 package expand
 
@@ -31,7 +31,7 @@ func IsUnavailable(err error) bool { return errors.Is(err, ErrUnavailable) }
 // along with the manifests they reference by relative path.
 var sparsePatterns = []string{"/.github/", "action.yml", "action.yaml"}
 
-// Tree is a materialised source tree and the commit it came from.
+// Tree is a materialized source tree and the commit it came from.
 type Tree struct {
 	Dir string
 	// Ref is what was requested; SHA is what it resolved to.
@@ -39,7 +39,7 @@ type Tree struct {
 	SHA string
 }
 
-// Checkout materialises the minimum tree needed for an actions database.
+// Checkout materializes the minimum tree needed for an actions database.
 type Checkout struct {
 	// Git is the binary to invoke; empty means "git" from PATH.
 	Git string
@@ -71,7 +71,7 @@ func (c *Checkout) cloneURL(owner, repo string) string {
 	return url
 }
 
-// Fetch materialises owner/repo at HEAD into dest.
+// Fetch materializes owner/repo at HEAD into dest.
 func (c *Checkout) Fetch(ctx context.Context, dest, owner, repo string) (Tree, error) {
 	if c.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -119,9 +119,16 @@ func hasActionsContent(dir string) bool {
 		return true
 	}
 	found := false
-	filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || found {
-			return nil
+	// The walk's own error is deliberately discarded: an unreadable tree means nothing was
+	// found, which is exactly what the zero value says.
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			// An unreadable subtree is not actions content. Skipping it is the answer; abandoning
+			// the walk would report the rest of the tree as empty.
+			return nil //nolint:nilerr
+		}
+		if found {
+			return filepath.SkipAll
 		}
 		if d.IsDir() {
 			if d.Name() == ".git" {

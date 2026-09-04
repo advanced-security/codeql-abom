@@ -18,4 +18,9 @@
     <PackageReference Include="MudBlazor" Version="8.15.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Tests run under node, not in the browser; shipping them would serve dead bytes. -->
+    <Content Remove="wwwroot/js/*.test.js" />
+  </ItemGroup>
+
 </Project>

@@ -82,7 +82,7 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 
 /* The filter bar is instrumentation, not content: it should read as one compact strip rather
    than compete with the graph it controls. Sized explicitly rather than with `zoom`, which
-   scales the painted box but leaves hit-testing on the unscaled geometry, so neighbouring rows
+   scales the painted box but leaves hit-testing on the unscaled geometry, so neighboring rows
    end up intercepting each other's clicks. */
 .abom-filters .mud-input.mud-input-outlined > input,
 .abom-filters .mud-input.mud-input-outlined > div.mud-input-slot {
@@ -249,7 +249,7 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 
 .abom-key-label { cursor: pointer; flex: 1; }
 
-/* A native colour input is the one control every browser already knows how to present. */
+/* A native color input is the one control every browser already knows how to present. */
 .abom-swatch {
     width: 20px;
     height: 16px;

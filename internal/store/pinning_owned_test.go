@@ -38,13 +38,13 @@ func TestOwnedSplitReconcilesToTheTotal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PinningTotals: %v", err)
 	}
-	if total.Yours.Total() != total.Pinnable {
-		t.Errorf("pinnable split %d + %d = %d, want %d",
-			total.Yours.Yours, total.Yours.Elsewhere, total.Yours.Total(), total.Pinnable)
+	if total.Yours.Yours+total.Yours.Elsewhere != total.Pinnable {
+		t.Errorf("pinnable split %d + %d != %d",
+			total.Yours.Yours, total.Yours.Elsewhere, total.Pinnable)
 	}
-	if total.FlaggedSplit.Total() != total.Flagged {
-		t.Errorf("flagged split %d + %d = %d, want %d", total.FlaggedSplit.Yours,
-			total.FlaggedSplit.Elsewhere, total.FlaggedSplit.Total(), total.Flagged)
+	if total.FlaggedSplit.Yours+total.FlaggedSplit.Elsewhere != total.Flagged {
+		t.Errorf("flagged split %d + %d != %d",
+			total.FlaggedSplit.Yours, total.FlaggedSplit.Elsewhere, total.Flagged)
 	}
 }
 

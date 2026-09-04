@@ -1,0 +1,45 @@
+name: 'Setup CodeQL'
+description: 'Install the CodeQL CLI at the version pinned in .codeql-version, with the stub on PATH.'
+
+inputs:
+  install-packs:
+    description: 'Install the query packs this repository depends on.'
+    required: false
+    default: 'true'
+  enable-cache:
+    description: >-
+      Restore and save the CodeQL install cache. Set to false for release workflows: a
+      feature-branch contributor can populate a cache a later job would restore.
+    required: false
+    default: 'true'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup CodeQL - Read the pinned version
+      id: version
+      shell: bash
+      run: echo "codeql=$(cat .codeql-version)" >> "$GITHUB_OUTPUT"
+
+    - name: Setup CodeQL - Restore the CLI cache
+      if: inputs.enable-cache == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.local/share/gh/extensions
+        key: gh-codeql-${{ runner.os }}-${{ steps.version.outputs.codeql }}
+
+    - name: Setup CodeQL - Install the CLI
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh extension install github/gh-codeql --force
+        gh codeql set-version "${{ steps.version.outputs.codeql }}"
+        # `make ql` and the selfcheck subcommand invoke `codeql` directly, not through gh.
+        gh codeql install-stub --path /usr/local/bin/codeql
+        codeql version --format=terse
+
+    - name: Setup CodeQL - Install query packs
+      if: inputs.install-packs == 'true'
+      shell: bash
+      run: codeql pack install ql/actions/abom/src ql/actions/abom/test

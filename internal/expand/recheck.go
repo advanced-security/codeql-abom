@@ -31,7 +31,7 @@ func (c *Checkout) Resolve(ctx context.Context, owner, repo string) (string, err
 	return fields[0], nil
 }
 
-// RecheckStats summarises a recheck pass.
+// RecheckStats summarizes a recheck pass.
 type RecheckStats struct {
 	Checked   int
 	Drifted   int
@@ -41,7 +41,7 @@ type RecheckStats struct {
 	Unavailable int
 }
 
-// Rechecker finds analyses whose ref has moved and returns them to the queue.
+// Rechecker finds analyzes whose ref has moved and returns them to the queue.
 type Rechecker struct {
 	Queue   *frontier.Queue
 	Probe   RefProbe
@@ -49,7 +49,7 @@ type Rechecker struct {
 	OnEvent func(nodeKey, outcome string)
 }
 
-// Run probes dependencies whose ref may have moved since they were analysed.
+// Run probes dependencies whose ref may have moved since they were analyzed.
 func (r *Rechecker) Run(ctx context.Context, ttl time.Duration, limit int) (RecheckStats, error) {
 	due, err := r.Queue.DueForRecheck(ttl, limit)
 	if err != nil {

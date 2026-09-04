@@ -1,0 +1,52 @@
+name: Build and Test - Interface
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/build-and-test-ui.yml'
+      - 'Makefile'
+      - 'ui/**'
+  push:
+    branches: ['main']
+    paths:
+      - '.github/workflows/build-and-test-ui.yml'
+      - 'Makefile'
+      - 'ui/**'
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test-ui:
+    name: Build and Test - Interface
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Interface - Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Interface - Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      # The browser code carries a third of the interface's behavior and no compiler checks it.
+      - name: Interface - Test the browser code
+        run: make js
+
+      - name: Interface - Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Interface - Build
+        run: make ui
+
+      - name: Interface - Summary
+        run: |
+          {
+            echo "## Interface"
+            echo ""
+            echo "- Browser module tests passed"
+            echo "- Blazor build succeeded"
+          } >> "$GITHUB_STEP_SUMMARY"

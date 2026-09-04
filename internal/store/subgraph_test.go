@@ -123,7 +123,7 @@ func edgeBetween(t *testing.T, g Subgraph, src, dst string) SubgraphEdge {
 	return SubgraphEdge{}
 }
 
-// A step is an implementation detail; what a reader recognises is the workflow. Collapsing is
+// A step is an implementation detail; what a reader recognizes is the workflow. Collapsing is
 // also what keeps the rendered graph inside its budget.
 func TestSubgraphCollapsesStepsIntoTheirWorkflow(t *testing.T) {
 	s := subgraphFixture(t)
@@ -206,7 +206,7 @@ func TestSubgraphStopsAtTheHopBudget(t *testing.T) {
 	}
 }
 
-// Seed and upstream must stay distinguishable, or a view implies the organisation owns
+// Seed and upstream must stay distinguishable, or a view implies the organization owns
 // repositories it does not.
 func TestSubgraphDistinguishesSeedFromUpstream(t *testing.T) {
 	s := subgraphFixture(t)
@@ -700,7 +700,7 @@ func TestSearchNodesWithoutAQueryRanksByReach(t *testing.T) {
 }
 
 // A nil slice marshals to null, which a client reading a collection then has to special-case.
-// An empty neighbourhood is an empty list, not an absent one.
+// An empty neighborhood is an empty list, not an absent one.
 func TestSubgraphEmptyCollectionsAreNeverNil(t *testing.T) {
 	s := subgraphFixture(t)
 

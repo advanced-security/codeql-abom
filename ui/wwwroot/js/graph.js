@@ -1,3 +1,31 @@
+/**
+ * The WebGL dependency graph: lifecycle, filtering and selection.
+ *
+ * The decisions this file used to make itself now live beside their own tests: what belongs
+ * with what in topology.js, how it looks in appearance.js, where it settles in forces.js.
+ *
+ * Switching view changes only the target radius, never the angle, so nodes travel along a ray
+ * and stay trackable. That is what makes a switch read as re-orientation rather than reshuffle.
+ */
+
+import { instances } from './state.js';
+import {
+    seed, repoOf, orgOf, edgeClass, groupOf, anchorKey, keyOf, touches, touchesAny,
+} from './topology.js';
+import {
+    nodeColor, edgeColor, faded, nodeRadius, isSelected, buildNodeObject, shapesUsable,
+    internalMaterialClass, SHA,
+} from './appearance.js';
+import { applyForces } from './forces.js';
+import { collapseGroups } from './collapse.js';
+import { particleCount, particleSpeed, startParticleCycle } from './particles.js';
+
+// Re-exported so the pure decisions can be imported by name from one place, including by tests.
+export {
+    seed, repoOf, orgOf, edgeClass, groupOf, anchorKey, keyOf,
+    faded, nodeRadius, isSelected, particleSpeed,
+};
+
 // WebGL rendering for the ABOM dependency graph.
 //
 // One renderer, two modes: 3D, and 2D as the same WebGL scene constrained to a plane. A single
@@ -6,153 +34,24 @@
 // One node set, one *semantic* force at a time. Structural forces (link, charge) are always on
 // and come from the edges. A semantic force is a positional constraint derived from a metric,
 // and only ever one is active: if position encoded two things at once you could not tell whether
-// a node sits at the centre because it is urgent or because it is popular.
+// a node sits at the center because it is urgent or because it is popular.
 //
 // Switching view changes only the target radius, never the angle, so nodes travel along a ray
 // and stay trackable. That is what makes a switch read as re-orientation rather than reshuffle.
 
-const instances = new Map();
 
-const SHA = /^[0-9a-f]{40}$/i;
 
-/** Deterministic per-key seed, so the same corpus always lays out identically. */
-function seed(key) {
-    let h = 2166136261;
-    for (let i = 0; i < key.length; i++) {
-        h ^= key.charCodeAt(i);
-        h = Math.imul(h, 16777619);
-    }
-    return (h >>> 0) / 4294967295;
-}
 
-/** Pulls each node towards a radius the active view decides. */
-function radialForce(radiusOf, strength) {
-    let nodes = [];
-    function force(alpha) {
-        for (const n of nodes) {
-            const target = radiusOf(n);
-            if (target === null || target === undefined) continue;
-            const x = n.x || 1e-6, y = n.y || 1e-6, z = n.z || 0;
-            const dist = Math.sqrt(x * x + y * y + z * z) || 1e-6;
-            const k = (target - dist) * strength * alpha / dist;
-            n.vx += x * k;
-            n.vy += y * k;
-            if (n.vz !== undefined) n.vz += z * k;
-        }
-    }
-    force.initialize = (n) => { nodes = n; };
-    return force;
-}
 
-/** Pulls nodes towards one of a few anchor positions, clustering by category. */
-function anchorForce(anchorOf, strength) {
-    let nodes = [];
-    function force(alpha) {
-        for (const n of nodes) {
-            const a = anchorOf(n);
-            if (!a) continue;
-            n.vx += (a.x - (n.x || 0)) * strength * alpha;
-            n.vy += (a.y - (n.y || 0)) * strength * alpha;
-        }
-    }
-    force.initialize = (n) => { nodes = n; };
-    return force;
-}
 
-/**
- * Draws nodes back towards the origin, hardest on the ones with fewest links.
- *
- * Repulsion acts on every pair but only edges pull back, so barely-connected and orphaned nodes
- * accelerate outward with nothing to stop them. They end up owning most of the bounding box,
- * which leaves the dense part of the graph rendered as a speck and makes zoom feel dead.
- */
-function gravityForce(strengthOf) {
-    let nodes = [];
-    function force(alpha) {
-        for (const n of nodes) {
-            const s = strengthOf(n) * alpha;
-            n.vx -= (n.x || 0) * s;
-            n.vy -= (n.y || 0) * s;
-            if (n.vz !== undefined) n.vz -= (n.z || 0) * s;
-        }
-    }
-    force.initialize = (n) => { nodes = n; };
-    return force;
-}
 
-/**
- * Colour answers one question: what kind of thing is this.
- *
- * Origin and externality overlap — an upstream reusable workflow is both — so neither can carry
- * a legend on its own. Kind is disjoint by construction, and it is what a reader is trying to
- * tell apart first. Selection is shown by a ring instead, because it is a state rather than a
- * category and must not compete with the categories for hue.
- */
-function nodeColour(node, palette) {
-    return (palette.kinds && palette.kinds[node.kind]) || palette.muted;
-}
 
-/** The repository a node belongs to. An external action carries it in its own key. */
-function repoOf(node) {
-    if (node.kind === 'org') return '';
-    if (node.repository) return node.repository;
-    const parts = (node.key || '').split('/');
-    return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : (node.key || '');
-}
 
-function orgOf(node) {
-    // An account node names its owner directly; everything else carries it as a path segment.
-    if (node.kind === 'org') return node.owner || (node.key || '').replace(/^org:/, '');
-    return repoOf(node).split('/')[0];
-}
 
-/**
- * How far an edge reaches: within one repository, within one account, or across accounts.
- *
- * Same repository wins over same account, so the closest true relationship is the one reported
- * rather than the broadest. Nothing here is "external": the comparison is between the two
- * endpoints, and ABOM privileges no account of its own.
- */
-function edgeClass(s, t) {
-    if (!s || !t) return 'crossOwner';
-    if (repoOf(s) === repoOf(t)) return 'sameRepo';
-    return orgOf(s) === orgOf(t) ? 'sameOwner' : 'crossOwner';
-}
 
-function edgeColour(link, palette) {
-    switch (link.cls) {
-        case 'sameRepo': return palette.edgeSameRepo;
-        case 'sameOwner': return palette.edgeSameOwner;
-        default: return palette.edgeCrossOwner;
-    }
-}
 
-/** Drops an rgba colour's alpha, so a dimmed edge recedes without changing hue. */
-function faded(colour) {
-    if (typeof colour !== 'string') return colour;
-    if (colour.startsWith('rgba')) return colour.replace(/[\d.]+\)\s*$/, '0.06)');
-    if (colour.startsWith('rgb(')) return colour.replace('rgb(', 'rgba(').replace(')', ',0.06)');
-    return colour;
-}
 
-/** Reach spans orders of magnitude, so radius follows a log scale or hubs swamp everything. */
-function nodeRadius(node, selected) {
-    // An owner is a grouping device, not something a workflow can depend on. Sizing it by its
-    // largest member drew the container half again as large as the dependency inside it, and
-    // counted that member's reach twice on screen.
-    const base = node.kind === 'org'
-        ? 3.4
-        : 2 + Math.log2(1 + (node.dependentRepos || 0)) * 1.4;
-    // Barely enlarged. Size carries reach, so growing a node on selection made it two sizes for
-    // a reason that has nothing to do with reach, and up close it filled the canvas.
-    return isSelected(selected, node.key) ? base * 1.25 : base;
-}
 
-/** Selection is a set, but most callers hold one key or none. */
-function isSelected(selected, key) {
-    if (!selected) return false;
-    return typeof selected === 'string' ? selected === key : selected.has(key);
-}
 
 /** The sole selected key when exactly one is selected, otherwise empty. */
 function soleSelection(it) {
@@ -163,108 +62,11 @@ function soleSelection(it) {
 // Shapes
 // ---------------------------------------------------------------------------
 
-/**
- * Geometry per kind, so shape carries the same meaning as colour.
- *
- * Redundant encoding is the point: colour alone fails for a colour-blind reader, and at this
- * density hue is hard to judge against neighbouring hues anyway.
- *
- * Built from the separately vendored THREE. The graph library bundles its own copy, but plain
- * Mesh + BufferGeometry + Material objects interoperate across copies; `shapesUsable` proves it
- * at runtime rather than assuming it.
- */
-const KIND_GEOMETRY = {
-    // Not a torus: a ring is what marks the selection, and the two were indistinguishable. A
-    // solid drum rather than a flat disc, which turned edge-on into a slab as the camera moved.
-    org: T => new T.CylinderGeometry(1.15, 1.15, 1.5, 5),
-    repo: T => new T.BoxGeometry(1.7, 1.7, 1.7),
-    workflow: T => new T.SphereGeometry(1, 12, 10),
-    reusable_workflow: T => new T.OctahedronGeometry(1.25),
-    composite_action: T => new T.ConeGeometry(1.2, 2.2, 8),
-    action: T => new T.IcosahedronGeometry(1.15),
-    docker_image: T => new T.CylinderGeometry(1, 1, 1.8, 10),
-    step: T => new T.TetrahedronGeometry(1.2),
-};
 
-let shapeCache = null;
 
-function shapesUsable() {
-    return typeof window !== 'undefined' && window.THREE
-        && typeof window.THREE.Mesh === 'function';
-}
 
-function geometryFor(kind) {
-    const T = window.THREE;
-    if (!shapeCache) shapeCache = {};
-    if (!shapeCache[kind]) {
-        const make = KIND_GEOMETRY[kind] || KIND_GEOMETRY.workflow;
-        // Cached per kind, never per node: 3.6k geometries would defeat the point entirely.
-        shapeCache[kind] = make(T);
-    }
-    return shapeCache[kind];
-}
 
-/**
- * The material class belonging to the *renderer's* own THREE.
- *
- * Geometry crosses between the two THREE copies happily because it is plain typed-array data,
- * but a material does not: the renderer does not recognise a foreign material type and silently
- * falls back to white. Harvesting the class from a mesh the library itself built keeps colour
- * working while still using the vendored geometry.
- */
-function internalMaterialClass(it) {
-    if (it.materialClass !== undefined) return it.materialClass;
-    let found = null;
-    try {
-        it.graph.scene().traverse(o => {
-            if (!found && o.isMesh && o.material && o.material.constructor) {
-                found = o.material.constructor;
-            }
-        });
-    } catch { /* scene not ready yet */ }
-    if (found) it.materialClass = found;
-    return found;
-}
 
-function buildNodeObject(it, node) {
-    const T = window.THREE;
-    const Material = internalMaterialClass(it);
-    if (!Material) return null;
-
-    // Reassigning nodeThreeObject rebuilds every mesh, so dimming has to be decided here;
-    // mutating the material afterwards is discarded by the rebuild that follows.
-    const lit = !it.emphasis || it.emphasis.has(node.key);
-    const picked = isSelected(it.selected, node.key);
-    const geometry = geometryFor(node.kind);
-    const mesh = new T.Mesh(
-        geometry,
-        new Material({
-            color: lit ? nodeColour(node, it.palette) : it.palette.muted,
-            transparent: true,
-            // A selected node is see-through: opaque, it hid the neighbourhood it was chosen
-            // to reveal the moment the camera came close.
-            opacity: picked ? 0.45 : (lit ? 0.9 : 0.16),
-            depthWrite: !picked,
-        }));
-    const s = nodeRadius(node, it.selected);
-    mesh.scale.set(s, s, s);
-
-    if (picked) {
-        // An outline traced from the node's own geometry, so the marker fits whatever silhouette
-        // the node has. A ring only ever suited a sphere, and collided with any node drawn as
-        // one.
-        const hull = new T.Mesh(geometry, new Material({
-            color: it.palette.focus,
-            transparent: true,
-            opacity: 0.85,
-            side: T.BackSide,
-            depthWrite: false,
-        }));
-        hull.scale.set(1.22, 1.22, 1.22);
-        mesh.add(hull);
-    }
-    return mesh;
-}
 
 // ---------------------------------------------------------------------------
 // Data
@@ -302,7 +104,7 @@ export async function loadFull(elementId, url) {
             s.edgeClasses.add(e.cls);
             t.edgeClasses.add(e.cls);
             // Reference style is a property of the edge, but readers filter on nodes, so it is
-            // summarised onto both ends. Lexical only: whether a reference is *safe* is a
+            // summarized onto both ends. Lexical only: whether a reference is *safe* is a
             // query's verdict, never this file's.
             for (const ref of e.refs) {
                 const style = SHA.test(ref) ? 'sha' : 'tag';
@@ -353,7 +155,7 @@ function adjacencyOf(it) {
 }
 
 /** Everything reachable from a selection, in both directions, out to a hop limit. */
-function neighbourhood(it, key, hops) {
+function neighborhood(it, key, hops) {
     const adj = adjacencyOf(it);
     const seen = new Map([[key, 0]]);
     let frontier = [key];
@@ -375,7 +177,7 @@ function neighbourhood(it, key, hops) {
 /**
  * Narrows the loaded graph.
  *
- * A selection's neighbourhood is walked over the *whole* graph and the attribute filters are
+ * A selection's neighborhood is walked over the *whole* graph and the attribute filters are
  * then applied to the result. Walking only over already-filtered nodes would cut the path to
  * anything interesting and silently under-report reach.
  */
@@ -385,7 +187,7 @@ export function applyFilters(elementId, spec) {
 
     const f = spec || {};
     const total = it.all.nodes.length;
-    const reachable = f.selection ? neighbourhood(it, f.selection, f.hops || 0) : null;
+    const reachable = f.selection ? neighborhood(it, f.selection, f.hops || 0) : null;
 
     const search = (f.search || '').toLowerCase();
     // Explicit allow-lists: the panel always sends what is checked, so an empty list genuinely
@@ -406,7 +208,7 @@ export function applyFilters(elementId, spec) {
         if (search && !n.key.toLowerCase().includes(search)) continue;
         if (f.hasFindings && !n.findings) continue;
         if (f.hasAdvisory && !n.advisories) continue;
-        if (f.unanalysedOnly && n.analysed) continue;
+        if (f.unanalyzedOnly && n.analyzed) continue;
         if (f.minReach && (n.dependentRepos || 0) < f.minReach) continue;
         if (rules.size && !(n.rules || []).some(r => rules.has(r))) continue;
         if (f.refStyle && f.refStyle !== 'any' && !n.refStyles.has(f.refStyle)) continue;
@@ -647,7 +449,7 @@ export function create(elementId, use3d, dotNetRef) {
         graph, observer, onResize, el, labels, use3d, dotNetRef,
         cache: carried.cache, all: carried.all, adjacency: null,
         degree: carried.all ? carried.all.degree : new Map(),
-        selected: new Set(), hovered: '', hopsOf: null, view: 'neighbourhood', palette: null,
+        selected: new Set(), hovered: '', hopsOf: null, view: 'neighborhood', palette: null,
         emphasis: null,
         maxPriority: 1, pendingFit: false, running: true, seeded: false, visible: null,
         subset: false, renderedFor: null, groupBy: 'owner', collapsed: false,
@@ -769,9 +571,9 @@ export function setPalette(elementId, palette) {
 }
 
 /**
- * Rebuilds node meshes after a colour change.
+ * Rebuilds node meshes after a color change.
  *
- * A custom shape holds its colour in the material it was created with, so repainting the
+ * A custom shape holds its color in the material it was created with, so repainting the
  * accessor is not enough; the objects themselves have to be discarded and remade.
  */
 export function rebuildNodes(elementId) {
@@ -798,118 +600,10 @@ export function setPriorities(elementId, priorities) {
     }
 }
 
-function applyForces(it) {
-    const g = it.graph;
-    const spread = it.spread || 600;
-    const degree = it.degree || new Map();
-    // No distance cap: capping repulsion below the graph's own span means the outer nodes feel
-    // nothing and the whole layout collapses inward into a speck.
-    g.d3Force('charge').strength(-90).distanceMax(Infinity);
-    g.d3Force('link').distance(36).strength(0.6);
-    g.d3Force('gravity', gravityForce(n => 0.012 + 0.075 / (1 + (degree.get(n.key) || 0))));
-    g.d3Force('semantic', null);
 
-    if (it.view === 'priority') {
-        const max = it.maxPriority;
-        g.d3Force('semantic', radialForce(
-            n => isSelected(it.selected, n.key) ? 0 : spread * 0.15
-                + (1 - (n.priority || 0) / max) * spread, 0.09));
-    } else if (it.view === 'ownership') {
-        // Distance, not left-versus-right: an axis stops meaning anything the moment the camera
-        // orbits, and this has to read the same in 2D and 3D. Reached directly sits close in,
-        // reached through an intermediary sits out.
-        g.d3Force('semantic', radialForce(n => {
-            const hops = it.hopsOf ? it.hopsOf.get(n.key) : undefined;
-            if (hops === undefined) return null;
-            if (hops === 0) return 0;
-            return hops === 1 ? spread * 0.3 : spread;
-        }, 0.09));
-    } else if (it.view === 'distance') {
-        g.d3Force('semantic', radialForce(n => {
-            const hops = it.hopsOf ? it.hopsOf.get(n.key) : undefined;
-            return hops === undefined ? null : spread * 0.2 + hops * spread * 0.42;
-        }, 0.11));
-    }
 
-    // Collapsed, each group is already a single node, so pulling groups together would only
-    // gather unrelated nodes into a knot.
-    g.d3Force('grouping', it.groupBy && it.groupBy !== 'none' && !it.collapsed
-        ? clusterForce(it, spread)
-        : null);
-}
 
-/** What a node is grouped under, derived from its own key so no extra payload is needed. */
-function groupOf(node, by) {
-    switch (by) {
-        case 'owner':
-            return node.kind === 'org' ? (node.owner || '') : orgOf(node);
-        case 'repo':
-            return node.kind === 'org' ? '' : repoOf(node);
-        case 'workflow':
-            // A step or job belongs to the file holding it, and a workflow is its own group. An
-            // action is *referenced* by workflows rather than living in one, so it has no
-            // workflow to belong to and must not become a group of one.
-            if (node.container) return node.container;
-            return node.kind === 'workflow' || node.kind === 'reusable_workflow'
-                ? node.key
-                : '';
-        default:
-            return '';
-    }
-}
 
-/** Everything the current grouping cannot place, named rather than scattered. */
-const UNGROUPED = '(not in a workflow)';
-
-/**
- * Pulls members of a group toward the node that already represents it.
- *
- * The centre is the owner, repository or workflow node itself, not a position invented for the
- * group. Synthetic centres placed around a ring fought the link forces: a workflow was dragged
- * toward its owner's arbitrary spot while its dependencies pulled it somewhere else, and the
- * result crossed the whole diagram. Anchoring to a real node means grouping and structure agree.
- */
-function clusterForce(it, spread) {
-    let nodes = [];
-    let centreOf = new Map();
-
-    const force = alpha => {
-        const k = alpha * 0.09;
-        for (const n of nodes) {
-            const c = centreOf.get(n);
-            if (!c || c === n || c.x === undefined) continue;
-            n.vx += (c.x - n.x) * k;
-            n.vy += (c.y - n.y) * k;
-            if (it.use3d) n.vz += (c.z - n.z) * k;
-        }
-    };
-    force.initialize = ns => {
-        nodes = ns;
-        const byKey = new Map(ns.map(n => [n.key, n]));
-        centreOf = new Map();
-        for (const n of ns) {
-            const anchor = byKey.get(anchorKey(n, it.groupBy));
-            if (anchor && anchor !== n) centreOf.set(n, anchor);
-        }
-    };
-    return force;
-}
-
-/** The existing node a member should gather around, if there is one. */
-function anchorKey(node, by) {
-    switch (by) {
-        case 'owner': {
-            const owner = groupOf(node, 'owner');
-            return owner ? `org:${owner}` : '';
-        }
-        case 'repo':
-            return node.kind === 'org' ? '' : repoOf(node);
-        case 'workflow':
-            return node.container || '';
-        default:
-            return '';
-    }
-}
 
 /** Chooses what nodes are pulled together by, or `none` to leave the layout alone. */
 export function setGroupBy(elementId, by) {
@@ -934,61 +628,7 @@ export function setCollapsed(elementId, collapsed, spec) {
     return applyFilters(elementId, spec);
 }
 
-/** Builds one node per group, merging the edges between them. */
-function collapseGroups(it, nodes, links) {
-    const by = it.groupBy && it.groupBy !== 'none' ? it.groupBy : 'owner';
-    const groups = new Map();
 
-    for (const n of nodes) {
-        // One named bucket rather than a group per node: an ungrouped node standing alone would
-        // make a collapsed view look identical to an expanded one.
-        const name = groupOf(n, by) || UNGROUPED;
-        let g = groups.get(name);
-        if (!g) {
-            g = {
-                key: `group:${name}`, kind: 'org', path: name, owner: name,
-                members: 0, findings: 0, dependentRepos: 0, rules: [], advisories: 0,
-                analysed: true, isExternal: true, refStyles: new Set(), edgeClasses: new Set(),
-                // Seeded from the members' own centre so a collapsed view sits where the
-                // expanded one did.
-                x: 0, y: 0, z: 0,
-            };
-            groups.set(name, g);
-        }
-        g.members++;
-        g.findings += n.findings || 0;
-        g.dependentRepos = Math.max(g.dependentRepos, n.dependentRepos || 0);
-        if (!n.isExternal) g.isExternal = false;
-        if (n.x !== undefined) { g.x += n.x; g.y += n.y; g.z += n.z || 0; }
-        n.groupKey = g.key;
-    }
-    for (const g of groups.values()) {
-        g.x /= g.members; g.y /= g.members; g.z /= g.members;
-    }
-
-    const merged = new Map();
-    for (const e of links) {
-        if (!e.shown) continue;
-        const s = groups.get(groupOf(nodeByKey(nodes, e.source), by) || UNGROUPED);
-        const t = groups.get(groupOf(nodeByKey(nodes, e.target), by) || UNGROUPED);
-        if (!s || !t || s === t) continue;
-        const id = `${s.key}>${t.key}`;
-        const existing = merged.get(id);
-        if (existing) { existing.count += e.count || 1; continue; }
-        merged.set(id, {
-            source: s.key, target: t.key, kind: 'group', refs: [], count: e.count || 1,
-            cls: edgeClass(s, t), shown: true,
-        });
-    }
-    return { nodes: [...groups.values()], links: [...merged.values()] };
-}
-
-function nodeByKey(nodes, key) {
-    if (!nodes.byKey) {
-        nodes.byKey = new Map(nodes.map(n => [n.key, n]));
-    }
-    return nodes.byKey.get(key) || { key };
-}
 
 function paint(it) {
     const p = it.palette;
@@ -1000,9 +640,9 @@ function paint(it) {
     it.graph
         .nodeVisibility(n => !visible || visible.has(n.key))
         .linkVisibility(l => l.shown !== false)
-        .nodeColor(n => (em && !em.has(n.key)) ? p.muted : nodeColour(n, p))
+        .nodeColor(n => (em && !em.has(n.key)) ? p.muted : nodeColor(n, p))
         .nodeVal(n => nodeRadius(n, it.selected))
-        .linkColor(l => lit(l) ? edgeColour(l, p) : faded(edgeColour(l, p)))
+        .linkColor(l => lit(l) ? edgeColor(l, p) : faded(edgeColor(l, p)))
         .linkOpacity(0.65)
         .linkWidth(0)
         // Direction is the whole point of a dependency edge, so the arrow is never conditional.
@@ -1010,13 +650,13 @@ function paint(it) {
         .linkDirectionalArrowLength(l => lit(l) ? 2.6 : 0)
         .linkDirectionalArrowRelPos(0.92)
         .linkDirectionalArrowResolution(4)
-        .linkDirectionalArrowColor(l => edgeColour(l, p))
+        .linkDirectionalArrowColor(l => edgeColor(l, p))
         // Animated particles are expensive per link, so they are spent only on the selection,
         // where the cost is bounded by that one node's degree.
         .linkDirectionalParticles(l => particleCount(it, l))
         .linkDirectionalParticleWidth(1.4)
         .linkDirectionalParticleSpeed(particleSpeed)
-        .linkDirectionalParticleColor(l => edgeColour(l, p));
+        .linkDirectionalParticleColor(l => edgeColor(l, p));
 
     if (it.shapes) {
         // Returning null falls back to the library's own sphere, which is what happens until a
@@ -1025,65 +665,12 @@ function paint(it) {
     }
 }
 
-function touches(link, key) {
-    const s = link.source, t = link.target;
-    return (s && (s.key || s) === key) || (t && (t.key || t) === key);
-}
 
-function touchesAny(link, keys) {
-    return keys.has(keyOf(link.source)) || keys.has(keyOf(link.target));
-}
 
-/** force-graph rewrites endpoints into node objects once seeded, so both forms have to work. */
-function keyOf(end) {
-    return end && end.key !== undefined ? end.key : end;
-}
 
-/**
- * A distinct speed per edge, so the particles do not beat in unison.
- *
- * Every link starts its particles at the same phase and there is no API to offset them. Sharing
- * one speed therefore kept them in lockstep, and a hub's worth of edges read as a single pulse
- * arriving every cycle. The slowest edge here takes roughly four times as long to traverse as
- * the fastest, which pulls them apart and keeps them apart. Seeded by the edge itself, so the
- * same graph always animates the same way.
- *
- * Kept slow deliberately: this marks direction on the selection, and anything quick enough to
- * catch the eye competes with the graph for attention.
- */
-function particleSpeed(link) {
-    return 0.0004 + seed(`${keyOf(link.source)}>${keyOf(link.target)}#p`) * 0.0014;
-}
 
-/** Share of a selection's edges carrying a particle during any one phase. */
-const PARTICLE_SHARE = 0.14;
-const PARTICLE_PHASE_MS = 6000;
 
-/**
- * Only a slice of the selection's edges animates at a time.
- *
- * force-graph restarts a link's particles the instant they arrive, so a link that animates at
- * all animates constantly and there is no API for a gap. Rotating a small random subset gives
- * each edge long stretches of silence, which is what turns a pulse into occasional movement.
- */
-function particleCount(it, link) {
-    if (!it.animate || !it.selected || !it.selected.size) return 0;
-    if (!touchesAny(link, it.selected)) return 0;
-    const k = `${keyOf(link.source)}>${keyOf(link.target)}#${it.particlePhase || 0}`;
-    return seed(k) < PARTICLE_SHARE ? 1 : 0;
-}
 
-function startParticleCycle(it) {
-    clearInterval(it.particleTimer);
-    if (!it.selected || !it.selected.size || !it.animate) return;
-    it.particleTimer = setInterval(() => {
-        const cur = instances.get(it.id);
-        if (!cur || !cur.running) return;
-        cur.particlePhase = (cur.particlePhase || 0) + 1;
-        // Reassigning the accessor is what makes force-graph re-evaluate the active subset.
-        cur.graph.linkDirectionalParticles(l => particleCount(cur, l));
-    }, PARTICLE_PHASE_MS);
-}
 
 export function setMode(elementId, use3d, spec) {
     const it = instances.get(elementId);
@@ -1166,7 +753,7 @@ function applySelection(it, frame) {
     if (it.selected && it.selected.size && it.all) {
         const union = new Map();
         for (const key of it.selected) {
-            for (const [k, hop] of neighbourhood(it, key, 1)) {
+            for (const [k, hop] of neighborhood(it, key, 1)) {
                 if (!union.has(k) || hop < union.get(k)) union.set(k, hop);
             }
         }
@@ -1174,7 +761,7 @@ function applySelection(it, frame) {
     }
     paint(it);
     startParticleCycle(it);
-    // Meshes carry their own colour and outline, so a change of selection has to rebuild them.
+    // Meshes carry their own color and outline, so a change of selection has to rebuild them.
     if (it.shapes) it.graph.refresh();
     if (frame !== false && it.emphasis) frameKeys(it, it.emphasis);
 }

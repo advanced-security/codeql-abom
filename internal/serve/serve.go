@@ -1,7 +1,7 @@
 // Package serve exposes the ABOM over HTTP for the user interface.
 //
 // Queries stay in Go against the full database rather than being shipped to the browser: the
-// corpus reaches gigabytes at organisation scale, which no client can hold, and every read the
+// corpus reaches gigabytes at organization scale, which no client can hold, and every read the
 // interface needs already exists here.
 package serve
 
@@ -54,7 +54,11 @@ func (s *Server) Handler() http.Handler {
 }
 
 // assetRoots hold real files. A miss under one of them is a broken build, not a client route.
-var assetRoots = []string{"_framework/", "_content/", "css/", "js/", "lib/"}
+//
+// `api/` is here for a different reason: an unrouted API path must fail as an API path. Serving
+// the interface's HTML for it turns a mistyped endpoint into a JSON parse error in the caller,
+// which says nothing about what actually went wrong.
+var assetRoots = []string{"_framework/", "_content/", "css/", "js/", "lib/", "api/"}
 
 // ui serves the interface, falling back to its entry point so client-side routes survive a
 // reload.
@@ -257,7 +261,7 @@ func intParam(r *http.Request, name string, fallback int) int {
 
 // writeJSON renders a successful result, or the error that prevented it.
 //
-// Results are marshalled before anything is written, so a failure midway through cannot leave a
+// Results are marshaled before anything is written, so a failure midway through cannot leave a
 // half-written body that a client would parse as truncated data.
 func writeJSON(w http.ResponseWriter, payload any, err error) {
 	if err != nil {
@@ -270,7 +274,8 @@ func writeJSON(w http.ResponseWriter, payload any, err error) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(body)
+	// The body is already serialized, so a short write means the client went away.
+	_, _ = w.Write(body)
 }
 
 // gzipped compresses responses for clients that accept it.
@@ -286,7 +291,7 @@ func gzipped(next http.Handler) http.Handler {
 		w.Header().Set("Content-Encoding", "gzip")
 		w.Header().Add("Vary", "Accept-Encoding")
 		zw := gzip.NewWriter(w)
-		defer zw.Close()
+		defer func() { _ = zw.Close() }()
 		next.ServeHTTP(gzipWriter{ResponseWriter: w, Writer: zw}, r)
 	})
 }
@@ -301,5 +306,6 @@ func (g gzipWriter) Write(b []byte) (int, error) { return g.Writer.Write(b) }
 func writeError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": message})
+	// The status is already sent; there is no second error to report.
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
 }

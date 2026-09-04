@@ -2,7 +2,6 @@ package store
 
 import (
 	"database/sql"
-	"fmt"
 )
 
 // FrontierItem is one dependency in the discovery queue, as the Discovery view shows it.
@@ -43,23 +42,12 @@ func (s *Store) FrontierSnapshot(status string, limit int) ([]FrontierItem, erro
 		args = append(args, limit)
 	}
 
-	rows, err := s.db.Query(query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("reading frontier: %w", err)
-	}
-	defer rows.Close()
-
-	var out []FrontierItem
-	for rows.Next() {
+	return queryAll(s, "reading frontier", func(r *sql.Rows) (FrontierItem, error) {
 		var it FrontierItem
-		if err := rows.Scan(&it.NodeKey, &it.Owner, &it.Repo, &it.Status, &it.Depth,
+		return it, r.Scan(&it.NodeKey, &it.Owner, &it.Repo, &it.Status, &it.Depth,
 			&it.Score, &it.Attempts, &it.AnalysisCount, &it.ResolvedSHA,
-			&it.DiscoveredFrom, &it.Reason); err != nil {
-			return nil, fmt.Errorf("scanning frontier item: %w", err)
-		}
-		out = append(out, it)
-	}
-	return out, rows.Err()
+			&it.DiscoveredFrom, &it.Reason)
+	}, query, args...)
 }
 
 var _ = sql.ErrNoRows

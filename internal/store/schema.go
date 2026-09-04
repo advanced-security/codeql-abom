@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS repository (
   analysis_id            TEXT,
   -- Seed repositories are the ones under review. Upstream repositories are fetched only to
   -- resolve what the seeds depend on, so their own CI must not be counted as dependency
-  -- pressure on the organisation.
+  -- pressure on the organization.
   origin                 TEXT NOT NULL DEFAULT 'seed'
 );
 
@@ -159,7 +159,7 @@ CREATE TABLE IF NOT EXISTS abom_ingest_ledger (
 );
 
 -- Discovery results. Rows with has_database = 0 are retained deliberately: they are how
--- CodeQL coverage across the organisation is measured, and they stop the next discovery pass
+-- CodeQL coverage across the organization is measured, and they stop the next discovery pass
 -- from re-probing a repository that has nothing to offer.
 CREATE TABLE IF NOT EXISTS abom_database_catalog (
   repository   TEXT PRIMARY KEY,
@@ -172,7 +172,7 @@ CREATE TABLE IF NOT EXISTS abom_database_catalog (
   checked_at   TEXT NOT NULL
 );
 
--- Aggregate reach per referenceable node. Only counts are materialised; the full pairwise
+-- Aggregate reach per referenceable node. Only counts are materialized; the full pairwise
 -- dependent set is quadratic in the worst case and is computed on demand instead.
 CREATE TABLE IF NOT EXISTS abom_blast_radius (
   node_row_id         INTEGER PRIMARY KEY REFERENCES abom_node(row_id),
@@ -180,15 +180,6 @@ CREATE TABLE IF NOT EXISTS abom_blast_radius (
   dependent_workflows INTEGER NOT NULL,
   direct_dependents   INTEGER NOT NULL,
   max_depth           INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS abom_pinning (
-  scope_kind TEXT NOT NULL,
-  scope_key  TEXT NOT NULL,
-  rule_id    TEXT NOT NULL,
-  findings   INTEGER NOT NULL,
-  references_total INTEGER NOT NULL,
-  PRIMARY KEY (scope_kind, scope_key, rule_id)
 );
 
 -- Accounts the operator says they control, and can therefore actually remediate.
@@ -224,7 +215,7 @@ CREATE TABLE IF NOT EXISTS abom_frontier (
   enqueued_at     TEXT NOT NULL,
   next_attempt_at TEXT,
   completed_at    TEXT,
-  -- What was analysed, and what it pointed at when it was analysed. Mutable refs move, so a
+  -- What was analyzed, and what it pointed at when it was analyzed. Mutable refs move, so a
   -- recorded SHA is the only way to tell whether the graph still describes the current code.
   -- resolved_sha always names the commit the stored graph came FROM, never a newer one.
   analyzed_ref    TEXT,
@@ -275,7 +266,7 @@ CREATE TABLE IF NOT EXISTS abom_advisory_package (
 -- How each repository under review reaches an advisory-affected action.
 --
 -- The path is the point: a direct use can be bumped in the repository that has it, while a
--- transitive one has to be fixed in an intermediary that the organisation may not own. Only a
+-- transitive one has to be fixed in an intermediary that the organization may not own. Only a
 -- cross-repository graph can tell those apart.
 CREATE TABLE IF NOT EXISTS abom_exposure (
   row_id            INTEGER PRIMARY KEY,

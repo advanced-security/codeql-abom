@@ -60,7 +60,7 @@ during a multi-million-row insert costs far more than building them once.
 ## One writer
 
 The pool opens with `MaxOpenConns(1)`. Anything parallel belongs in `Prepare`; persistence is
-serialised through `Consume`. Do not add a second writer or a nested transaction.
+serialized through `Consume`. Do not add a second writer or a nested transaction.
 
 ## Reads for the interface
 

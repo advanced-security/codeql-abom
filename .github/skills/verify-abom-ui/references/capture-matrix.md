@@ -19,9 +19,9 @@ Capture at 1440×900 unless a check says otherwise.
 | 10 | Explorer — 3D | toggle 3D on a dense scope | Whether 3D resolves overlap or worsens it |
 | 11 | Actions inventory | none | Density, sort affordances, search discoverability |
 | 12 | Repository detail | open a repo with many findings | Findings grouped by rule; rule IDs visible |
-| 13 | Discovery / frontier | none | Pending vs analysed legible; coverage honest |
+| 13 | Discovery / frontier | none | Pending vs analyzed legible; coverage honest |
 | 14 | Discovery, live | run `expand-all --max-expansions 20` alongside | Whether motion communicates progress or distracts |
-| 15 | Empty state | point at a database with no advisories | That "nothing found" is distinct from "not yet analysed" |
+| 15 | Empty state | point at a database with no advisories | That "nothing found" is distinct from "not yet analyzed" |
 | 16 | Narrow viewport | 900×700 | Reflow, truncation, whether the graph becomes unusable |
 
 ## Notes

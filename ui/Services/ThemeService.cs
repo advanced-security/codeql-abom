@@ -15,13 +15,13 @@ public enum ThemeChoice
 /// <summary>
 /// Holds the appearance choice and the palette derived from it.
 ///
-/// The graph renders to a canvas outside the DOM, so it cannot inherit CSS. Its colours are
+/// The graph renders to a canvas outside the DOM, so it cannot inherit CSS. Its colors are
 /// published here instead and pushed across the interop boundary whenever the theme changes.
 /// </summary>
 public sealed class ThemeService(IJSRuntime js)
 {
     private const string StorageKey = "abom.theme";
-    private const string ColourKey = "abom.kindColours";
+    private const string ColorKey = "abom.kindColors";
 
     private Dictionary<string, string> _kindOverrides = [];
 
@@ -43,10 +43,10 @@ public sealed class ThemeService(IJSRuntime js)
             _ => ThemeChoice.System,
         };
 
-        // Overrides are keyed by kind and stored per scheme, since a colour that reads well on
+        // Overrides are keyed by kind and stored per scheme, since a color that reads well on
         // black rarely does on white.
-        var colours = await js.InvokeAsync<string?>("abomTheme.load", ColourKey);
-        _kindOverrides = ParseOverrides(colours);
+        var colors = await js.InvokeAsync<string?>("abomTheme.load", ColorKey);
+        _kindOverrides = ParseOverrides(colors);
 
         Resolve(systemPrefersDark);
     }
@@ -77,38 +77,38 @@ public sealed class ThemeService(IJSRuntime js)
         return map;
     }
 
-    /// <summary>Reassigns one kind's colour, or clears it when the value is null.</summary>
-    public async Task SetKindColourAsync(string kind, string? colour)
+    /// <summary>Reassigns one kind's color, or clears it when the value is null.</summary>
+    public async Task SetKindColorAsync(string kind, string? color)
     {
         var key = $"{(IsDark ? "d" : "l")}:{kind}";
-        if (string.IsNullOrWhiteSpace(colour))
+        if (string.IsNullOrWhiteSpace(color))
         {
             _kindOverrides.Remove(key);
         }
         else
         {
-            _kindOverrides[key] = colour;
+            _kindOverrides[key] = color;
         }
-        await PersistColoursAsync();
+        await PersistColorsAsync();
         Changed?.Invoke();
     }
 
-    public async Task ResetKindColoursAsync()
+    public async Task ResetKindColorsAsync()
     {
         _kindOverrides.Clear();
-        await PersistColoursAsync();
+        await PersistColorsAsync();
         Changed?.Invoke();
     }
 
     public bool HasKindOverrides => _kindOverrides.Count > 0;
 
-    private async Task PersistColoursAsync()
+    private async Task PersistColorsAsync()
     {
         var raw = string.Join(';', _kindOverrides.Select(kv => $"{kv.Key}={kv.Value}"));
-        await js.InvokeVoidAsync("abomTheme.save", ColourKey, raw);
+        await js.InvokeVoidAsync("abomTheme.save", ColorKey, raw);
     }
 
-    private IReadOnlyDictionary<string, string> KindColours(Dictionary<string, string> defaults)
+    private IReadOnlyDictionary<string, string> KindColors(Dictionary<string, string> defaults)
     {
         if (_kindOverrides.Count == 0)
         {
@@ -116,11 +116,11 @@ public sealed class ThemeService(IJSRuntime js)
         }
         var merged = new Dictionary<string, string>(defaults);
         var prefix = IsDark ? "d:" : "l:";
-        foreach (var (key, colour) in _kindOverrides)
+        foreach (var (key, color) in _kindOverrides)
         {
             if (key.StartsWith(prefix, StringComparison.Ordinal))
             {
-                merged[key[prefix.Length..]] = colour;
+                merged[key[prefix.Length..]] = color;
             }
         }
         return merged;
@@ -159,10 +159,10 @@ public sealed class ThemeService(IJSRuntime js)
     }
 
     /// <summary>
-    /// Severity colours, chosen to stay distinguishable on both backgrounds. Severity is never
-    /// encoded by colour alone in this interface; the label always travels with it.
+    /// Severity colors, chosen to stay distinguishable on both backgrounds. Severity is never
+    /// encoded by color alone in this interface; the label always travels with it.
     /// </summary>
-    public string SeverityColour(string severity) => (severity.ToLowerInvariant(), IsDark) switch
+    public string SeverityColor(string severity) => (severity.ToLowerInvariant(), IsDark) switch
     {
         ("critical", true) => "#FF6B6B",
         ("critical", false) => "#C62828",
@@ -187,7 +187,7 @@ public sealed class ThemeService(IJSRuntime js)
             Edge: "rgba(190,195,205,0.35)",
             Label: "#E9ECEF",
             Muted: "#5C5F66",
-            Kinds: KindColours(DarkKinds),
+            Kinds: KindColors(DarkKinds),
             EdgeSameRepo: "rgba(91,200,255,0.85)",
             EdgeSameOwner: "rgba(255,200,72,0.85)",
             EdgeCrossOwner: "rgba(255,110,156,0.85)")
@@ -200,12 +200,12 @@ public sealed class ThemeService(IJSRuntime js)
             Edge: "rgba(60,65,75,0.28)",
             Label: "#212529",
             Muted: "#ADB5BD",
-            Kinds: KindColours(LightKinds),
+            Kinds: KindColors(LightKinds),
             EdgeSameRepo: "rgba(11,127,199,0.8)",
             EdgeSameOwner: "rgba(178,106,0,0.8)",
             EdgeCrossOwner: "rgba(194,37,92,0.8)");
 
-    // Kind is the first thing a reader wants to tell apart, so it is what colour encodes.
+    // Kind is the first thing a reader wants to tell apart, so it is what color encodes.
     private static readonly Dictionary<string, string> DarkKinds = new()
     {
         ["org"] = "#FFD43B",
@@ -268,7 +268,7 @@ public sealed class ThemeService(IJSRuntime js)
     };
 }
 
-/// <summary>Colours the canvas graph draws with.</summary>
+/// <summary>Colors the canvas graph draws with.</summary>
 public sealed record GraphPalette(
     string Background,
     string Focus,

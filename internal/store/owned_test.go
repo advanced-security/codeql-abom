@@ -2,7 +2,7 @@ package store
 
 import "testing"
 
-// The whole point of the declaration. An account can hold a repository that was analysed and
+// The whole point of the declaration. An account can hold a repository that was analyzed and
 // still be one nobody here controls: the actions account owns actions/cache, which arrives as a
 // seed, and no operator can change it.
 func TestInScopeOwnerIsNotOwnedUntilDeclared(t *testing.T) {
@@ -64,6 +64,9 @@ func originCounts(t *testing.T, s *Store) map[string]int {
 		}
 		out[origin] = n
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("reading origins: %v", err)
+	}
 	return out
 }
 
@@ -121,7 +124,7 @@ func TestNothingDeclaredMeansNothingIsDivided(t *testing.T) {
 
 // The declaration says who can act. Deriving it from anything the corpus already knows would
 // make it a measurement, and the whole point is that it cannot be measured: an account can hold
-// analysed repositories and still be one nobody here controls.
+// analyzed repositories and still be one nobody here controls.
 func TestOwnershipIsDeclaredRatherThanDerived(t *testing.T) {
 	s := newTestStore(t)
 
@@ -152,5 +155,60 @@ func TestOwnershipIsDeclaredRatherThanDerived(t *testing.T) {
 	}
 	if !got["owner"] {
 		t.Error("abom_owned_org has no owner column")
+	}
+}
+
+// Migrating a database built when findings-per-rule were cached must discard that table.
+//
+// It held nothing that could not be counted from abom_finding on demand, and a cache of a count
+// can only ever be right or stale. Dropping it is safe precisely because it was derived.
+func TestMigrateDiscardsTheCachedFindingRollup(t *testing.T) {
+	s := newTestStore(t)
+
+	if _, err := s.DB().Exec(`
+		CREATE TABLE abom_pinning (
+		  scope_kind TEXT NOT NULL, scope_key TEXT NOT NULL, rule_id TEXT NOT NULL,
+		  findings INTEGER NOT NULL, references_total INTEGER NOT NULL,
+		  PRIMARY KEY (scope_kind, scope_key, rule_id))`); err != nil {
+		t.Fatalf("recreating the old shape: %v", err)
+	}
+	if _, err := s.DB().Exec(
+		`INSERT INTO abom_pinning VALUES ('org','','actions/unpinned-tag',3,15736)`); err != nil {
+		t.Fatalf("seeding: %v", err)
+	}
+
+	if err := s.Migrate(); err != nil {
+		t.Fatalf("Migrate over the old shape: %v", err)
+	}
+
+	var n int
+	err := s.DB().QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='abom_pinning'`).Scan(&n)
+	if err != nil {
+		t.Fatalf("inspecting: %v", err)
+	}
+	if n != 0 {
+		t.Error("the cached rollup survived the migration")
+	}
+}
+
+// Migrate runs on every subcommand, so it has to be safe to repeat.
+func TestMigrateIsRepeatable(t *testing.T) {
+	s := newTestStore(t)
+
+	for i := range 3 {
+		if err := s.Migrate(); err != nil {
+			t.Fatalf("Migrate %d: %v", i, err)
+		}
+	}
+
+	var tables int
+	if err := s.DB().QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'abom_%'`).
+		Scan(&tables); err != nil {
+		t.Fatalf("counting tables: %v", err)
+	}
+	if tables == 0 {
+		t.Error("repeated migration left no abom tables")
 	}
 }

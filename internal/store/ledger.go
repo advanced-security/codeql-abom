@@ -109,7 +109,7 @@ func (s *Store) FailUnit(u Unit, cause error) error {
 	return nil
 }
 
-// LedgerCounts summarises progress by status, for resumable-run reporting.
+// LedgerCounts summarizes progress by status, for resumable-run reporting.
 func (s *Store) LedgerCounts() (map[string]int, error) {
 	rows, err := s.db.Query(`SELECT status, COUNT(*) FROM abom_ingest_ledger GROUP BY status`)
 	if err != nil {

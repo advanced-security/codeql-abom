@@ -77,7 +77,7 @@ func TestActionsInventorySearchIsLiteral(t *testing.T) {
 	}
 }
 
-// Upstream repositories are not the organisation's to remediate, so listing them beside its own
+// Upstream repositories are not the organization's to remediate, so listing them beside its own
 // would imply ownership it does not have.
 func TestRepositoriesOverviewExcludesUpstream(t *testing.T) {
 	s := advisoryStore(t)

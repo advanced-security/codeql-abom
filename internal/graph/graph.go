@@ -4,7 +4,7 @@
 // small enough to hold (millions of rows, two integers each) and a single breadth-first pass
 // per referenceable node is far cheaper than repeatedly re-walking the graph in SQLite.
 //
-// Only aggregate counts are stored. Materialising every (node, dependent) pair is quadratic in
+// Only aggregate counts are stored. Materializing every (node, dependent) pair is quadratic in
 // the worst case, so the full dependent set is produced on demand by Dependents instead.
 package graph
 
@@ -36,7 +36,7 @@ type model struct {
 	keyOf map[int64]string
 	// seedRepo marks repositories under review. Upstream repositories still contribute edges,
 	// because a composite action's own steps are part of what its callers depend on, but their
-	// CI must not register as dependency pressure on the organisation.
+	// CI must not register as dependency pressure on the organization.
 	seedRepo map[int64]bool
 	// referenceable are the nodes that can appear as an edge target.
 	referenceable []int64
@@ -212,7 +212,7 @@ func (b *Builder) BuildBlastRadius() error {
 // Dependents returns the repositories that would be affected by a change to a node.
 //
 // This is the on-demand counterpart to the stored counts, used to answer "which repositories
-// does a version bump touch" without materialising every pair up front.
+// does a version bump touch" without materializing every pair up front.
 func (b *Builder) Dependents(nodeKey string) ([]string, error) {
 	var target int64
 	err := b.Store.DB().QueryRow(
@@ -251,49 +251,7 @@ func (b *Builder) Dependents(nodeKey string) ([]string, error) {
 	return out, rows.Err()
 }
 
-// BuildPinning recomputes reference posture from findings, grouped by the rule that produced
-// them.
-//
-// ABOM forms no opinion about what "pinned" means. Posture is a count of findings for a given
-// rule id (for example actions/unpinned-tag) against the total references in scope, so changing
-// the definition means amending the query and re-running, not editing this code.
-func (b *Builder) BuildPinning() error {
-	tx, err := b.Store.DB().Begin()
-	if err != nil {
-		return fmt.Errorf("beginning transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	if _, err := tx.Exec(`DELETE FROM abom_pinning`); err != nil {
-		return fmt.Errorf("clearing pinning: %w", err)
-	}
-
-	if _, err := tx.Exec(`
-		INSERT INTO abom_pinning (scope_kind, scope_key, rule_id, findings, references_total)
-		SELECT 'org', '', f.rule_id, COUNT(DISTINCT f.row_id),
-		       (SELECT COUNT(*) FROM abom_edge)
-		FROM abom_finding f
-		GROUP BY f.rule_id`); err != nil {
-		return fmt.Errorf("computing org posture: %w", err)
-	}
-
-	if _, err := tx.Exec(`
-		INSERT INTO abom_pinning (scope_kind, scope_key, rule_id, findings, references_total)
-		SELECT 'repo', r.repository_full_name, f.rule_id, COUNT(DISTINCT f.row_id),
-		       (SELECT COUNT(*) FROM abom_edge e WHERE e.repository_row_id = r.row_id)
-		FROM abom_finding f
-		JOIN repository r ON r.row_id = f.repository_row_id
-		GROUP BY r.repository_full_name, r.row_id, f.rule_id`); err != nil {
-		return fmt.Errorf("computing repository posture: %w", err)
-	}
-
-	return tx.Commit()
-}
-
 // BuildAll recomputes every aggregate.
 func (b *Builder) BuildAll() error {
-	if err := b.BuildBlastRadius(); err != nil {
-		return err
-	}
-	return b.BuildPinning()
+	return b.BuildBlastRadius()
 }

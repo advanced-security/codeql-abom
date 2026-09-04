@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 )
@@ -175,23 +176,15 @@ func (s *Store) PinningLevel(scope, parent string, f PinningFilter, limit int) (
 		args = append(args, limit)
 	}
 
-	rows, err := s.db.Query(query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("reading pinning level %s: %w", scope, err)
-	}
-	defer rows.Close()
-
-	out := []PinningRow{}
-	for rows.Next() {
+	return queryAll(s, "reading pinning level "+scope, func(r *sql.Rows) (PinningRow, error) {
 		p := PinningRow{Scope: scope, HasChildren: !leaf}
-		if err := rows.Scan(&p.ScopeKey, &p.Label, &p.Ref, &p.Kind, &p.Pinnable, &p.Commit,
+		if err := r.Scan(&p.ScopeKey, &p.Label, &p.Ref, &p.Kind, &p.Pinnable, &p.Commit,
 			&p.Floating, &p.Flagged, &p.FloatingUnflagged); err != nil {
-			return nil, fmt.Errorf("scanning pinning row: %w", err)
+			return p, err
 		}
 		p.Owned = owned[strings.ToLower(ownerOfKey(p.ScopeKey))]
-		out = append(out, p)
-	}
-	return out, rows.Err()
+		return p, nil
+	}, query, args...)
 }
 
 // ownerOfKey takes the account from any scope key, all of which start with it.

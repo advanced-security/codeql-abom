@@ -15,7 +15,7 @@ import (
 
 // ErrSkip marks a job that had nothing to do, such as a repository with no CodeQL database or
 // one the ingest ledger has already recorded as complete. Skips are an expected outcome at
-// organisation scale and are counted separately from failures.
+// organization scale and are counted separately from failures.
 var ErrSkip = errors.New("skip")
 
 // Job identifies one repository to process.
@@ -47,7 +47,7 @@ type Event struct {
 	Err  error
 }
 
-// Stats summarises a run.
+// Stats summarizes a run.
 type Stats struct {
 	Processed int
 	Skipped   int
@@ -80,7 +80,7 @@ type Pool struct {
 // Run processes every job, returning aggregate statistics.
 //
 // A failing job is recorded and the run continues; only cancellation stops the pool, so one
-// unreachable repository cannot abandon the rest of the organisation.
+// unreachable repository cannot abandon the rest of the organization.
 func (p *Pool) Run(ctx context.Context, jobs []Job) (Stats, error) {
 	if p.Prepare == nil {
 		return Stats{}, errors.New("work: Pool.Prepare is required")
@@ -169,7 +169,7 @@ func (p *Pool) Run(ctx context.Context, jobs []Job) (Stats, error) {
 			// Drain so producers observing cancellation can exit without blocking on send.
 			for range outCh {
 			}
-			return stats, fmt.Errorf("work: run cancelled: %w", err)
+			return stats, fmt.Errorf("work: run canceled: %w", err)
 		}
 	}
 

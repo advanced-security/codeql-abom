@@ -6,7 +6,7 @@ namespace Abom.WebAssembly.Services;
 /// The accounts the operator has declared they control.
 ///
 /// Loaded once and shared, because every page needs the same answer and a page disagreeing with
-/// its neighbour about what is yours would be worse than not marking anything at all.
+/// its neighbor about what is yours would be worse than not marking anything at all.
 /// </summary>
 public sealed class OwnedOrgService(AbomApi api)
 {

@@ -1,0 +1,63 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - bodyclose
+    - rowserrcheck
+    - nilerr
+    - unconvert
+    - copyloopvar
+    - misspell
+
+  # sqlclosecheck is deliberately absent. It asks for `defer rows.Close()`, but this store runs
+  # on a single connection (SetMaxOpenConns(1)), so holding a cursor open until the function
+  # returns deadlocks the moment that function issues another query. Closing explicitly before
+  # moving on is the correct pattern here, not an oversight.
+
+  settings:
+    misspell:
+      # American English throughout: prose, identifiers and docs alike.
+      locale: US
+    errcheck:
+      # Deferred cleanup and terminal output. Neither leaves a caller in a position to act, and
+      # checking them buries the errors that do matter.
+      exclude-functions:
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Stmt).Close
+        - (*database/sql.Tx).Rollback
+        - (*github.com/advanced-security/codeql-abom/internal/store.Store).Close
+        - os.RemoveAll
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Fprint
+    staticcheck:
+      checks:
+        - all
+        # Package comments are not required on every internal package.
+        - -ST1000
+        # Quickfix suggestions are style preferences rather than defects.
+        - -QF1001
+        - -QF1003
+
+  exclusions:
+    rules:
+      # A test that ignores a cleanup error fails on its assertion instead, which is the signal
+      # that matters. rowserrcheck stays on for tests: a missed rows.Err() there hides real data.
+      - path: _test\.go
+        linters: [errcheck]
+
+formatters:
+  enable:
+    - gofmt

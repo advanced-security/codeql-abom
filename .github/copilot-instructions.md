@@ -1,6 +1,6 @@
 # codeql-abom
 
-Builds an Actions Bill of Materials for a GitHub organisation from CodeQL results. Go 1.25,
+Builds an Actions Bill of Materials for a GitHub organization from CodeQL results. Go 1.25,
 single binary, SQLite store. Layering: `store` (SQL) → `graph`/`ingest`/`expand` (derivation) →
 `serve`/`cmd` (delivery). Only `store` writes SQL.
 
@@ -36,13 +36,13 @@ own. Never collapse them into one "affected" count.
 **Priority is severity × reach, and nothing else.** CVSS and EPSS are reported alongside but
 stay out of the arithmetic, so the number remains explainable. Never blend scores.
 
-**Say what is not known.** Coverage, pending frontier items and unanalysed dependencies are
+**Say what is not known.** Coverage, pending frontier items and unanalyzed dependencies are
 first-class output, not omissions.
 
 ## Working style
 
 **TDD, strictly.** Write the test, run it, watch it fail for the expected reason, then
-implement. Tests are named after the behaviour they protect, not the function they call.
+implement. Tests are named after the behavior they protect, not the function they call.
 
 **Validate against real data, with a before/after diff.** Unit tests passed through every
 architectural bug listed above. Snapshot the real database before a pipeline change and diff

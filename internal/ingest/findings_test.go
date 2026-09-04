@@ -116,7 +116,7 @@ func TestFindingsFromSARIFRecordsLocationAndFingerprint(t *testing.T) {
 	}
 }
 
-// Re-analysing an unchanged repository must not multiply findings.
+// Re-analyzing an unchanged repository must not multiply findings.
 func TestFindingsFromSARIFIsIdempotent(t *testing.T) {
 	s := newTestStore(t)
 	ing := New(s, store.NewWriter(s, 0))

@@ -82,7 +82,7 @@ func Extract(zipPath, destDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("opening %s: %w", zipPath, err)
 	}
-	defer zr.Close()
+	defer func() { _ = zr.Close() }()
 
 	root, err := filepath.Abs(destDir)
 	if err != nil {

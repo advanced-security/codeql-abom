@@ -30,7 +30,7 @@ func TestCreateDatabaseInvokesCodeQL(t *testing.T) {
 	}
 }
 
-// A stale directory would make codeql refuse to write, so re-analysing a drifted dependency has
+// A stale directory would make codeql refuse to write, so re-analyzing a drifted dependency has
 // to start from a clean location.
 func TestCreateDatabaseReplacesExistingDirectory(t *testing.T) {
 	stub, _ := stubCodeQL(t, "exit 0\n")

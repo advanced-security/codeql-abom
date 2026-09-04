@@ -77,7 +77,7 @@ func TestDiscoverRecordsCatalog(t *testing.T) {
 }
 
 // Repositories without a database are recorded, not discarded: that record is the CodeQL
-// coverage measurement for the organisation.
+// coverage measurement for the organization.
 func TestCoverageCountsRepositoriesWithoutDatabases(t *testing.T) {
 	src := &fakeSource{
 		repos:  []string{"octo-org/a", "octo-org/b", "octo-org/c", "octo-org/d"},

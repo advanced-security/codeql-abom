@@ -63,11 +63,11 @@ else
 
             <PropertyColumn Property="x => x.Depth" Title="Depth" />
 
-            <PropertyColumn Property="x => x.AnalysisCount" Title="Analyses">
+            <PropertyColumn Property="x => x.AnalysisCount" Title="Analyzes">
                 <CellTemplate>
                     @if (context.Item.AnalysisCount > 1)
                     {
-                        <MudTooltip Text="Re-analysed after its ref moved.">
+                        <MudTooltip Text="Re-analyzed after its ref moved.">
                             <span>@context.Item.AnalysisCount</span>
                         </MudTooltip>
                     }
@@ -78,7 +78,7 @@ else
                 </CellTemplate>
             </PropertyColumn>
 
-            <TemplateColumn Title="Analysed commit" Sortable="false">
+            <TemplateColumn Title="Analyzed commit" Sortable="false">
                 <CellTemplate>
                     @if (!string.IsNullOrEmpty(context.Item.ResolvedSha))
                     {
@@ -113,8 +113,8 @@ else
 
     private IEnumerable<(string, int, string)> Tiles =>
     [
-        ("analysed", _summary.AnalysedUpstreams, "dependencies expanded"),
-        ("pending", _summary.PendingDependencies, "not yet analysed"),
+        ("analyzed", _summary.AnalyzedUpstreams, "dependencies expanded"),
+        ("pending", _summary.PendingDependencies, "not yet analyzed"),
         ("under review", _summary.SeedRepos, "repositories in scope"),
         ("advisories", _summary.Advisories, $"covering {_summary.AffectedActions} actions in use"),
     ];
@@ -147,7 +147,7 @@ else
 
     private static string StatusLabel(string status) => status switch
     {
-        "done" => "analysed",
+        "done" => "analyzed",
         "pending" => "queued",
         "running" => "in progress",
         "unavailable" => "unavailable",

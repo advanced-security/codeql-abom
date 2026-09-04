@@ -26,7 +26,7 @@ type Client struct {
 	HTTP    *http.Client
 	BaseURL string
 	// Token authenticates requests. Without one the API allows 60 requests an hour, which is
-	// too few for an organisation-sized package list.
+	// too few for an organization-sized package list.
 	Token     string
 	BatchSize int
 	Pace      *work.Limiter

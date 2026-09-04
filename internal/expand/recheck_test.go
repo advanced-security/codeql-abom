@@ -28,8 +28,8 @@ func (p *probeFunc) Resolve(_ context.Context, owner, repo string) (string, erro
 	return p.answers[full], nil
 }
 
-// analysed puts a completed analysis in the queue, as a finished expansion would.
-func analysed(t *testing.T, q *frontier.Queue, owner, repo, ref, sha string) {
+// analyzed puts a completed analysis in the queue, as a finished expansion would.
+func analyzed(t *testing.T, q *frontier.Queue, owner, repo, ref, sha string) {
 	t.Helper()
 	key := owner + "/" + repo
 	if _, err := q.Enqueue([]frontier.Item{
@@ -58,7 +58,7 @@ func newRechecker(t *testing.T) (*Rechecker, *frontier.Queue, *probeFunc, *store
 	return &Rechecker{Queue: q, Probe: p}, q, p, s
 }
 
-// stale advances the queue's clock so analyses fall outside the freshness window.
+// stale advances the queue's clock so analyzes fall outside the freshness window.
 func stale(q *frontier.Queue, by time.Duration) {
 	q.Now = func() time.Time { return time.Now().UTC().Add(by) }
 }
@@ -76,7 +76,7 @@ func frontierStatus(t *testing.T, s *store.Store, key string) string {
 // A moved tag means the stored graph describes code that is no longer what consumers get.
 func TestRecheckRequeuesDriftedRefs(t *testing.T) {
 	r, q, p, s := newRechecker(t)
-	analysed(t, q, "actions", "checkout", frontier.HeadRef, "old-sha")
+	analyzed(t, q, "actions", "checkout", frontier.HeadRef, "old-sha")
 	p.answers["actions/checkout"] = "new-sha"
 	stale(q, 48*time.Hour)
 
@@ -94,9 +94,9 @@ func TestRecheckRequeuesDriftedRefs(t *testing.T) {
 }
 
 // Most probes find nothing changed, and that outcome must be cheap: no re-analysis is queued.
-func TestRecheckLeavesUnchangedRefsAnalysed(t *testing.T) {
+func TestRecheckLeavesUnchangedRefsAnalyzed(t *testing.T) {
 	r, q, p, s := newRechecker(t)
-	analysed(t, q, "actions", "checkout", frontier.HeadRef, "same-sha")
+	analyzed(t, q, "actions", "checkout", frontier.HeadRef, "same-sha")
 	p.answers["actions/checkout"] = "same-sha"
 	stale(q, 48*time.Hour)
 
@@ -117,7 +117,7 @@ func TestRecheckLeavesUnchangedRefsAnalysed(t *testing.T) {
 // it would either lose good data or spend a full re-analysis on a network blip.
 func TestRecheckFailureKeepsTheExistingAnalysis(t *testing.T) {
 	r, q, p, s := newRechecker(t)
-	analysed(t, q, "actions", "checkout", frontier.HeadRef, "old-sha")
+	analyzed(t, q, "actions", "checkout", frontier.HeadRef, "old-sha")
 	p.errs["actions/checkout"] = fmt.Errorf("connection reset")
 	stale(q, 48*time.Hour)
 
@@ -145,7 +145,7 @@ func TestRecheckFailureKeepsTheExistingAnalysis(t *testing.T) {
 // A repository that has been deleted or made private will not come back by retrying.
 func TestRecheckMarksVanishedRepositoriesUnavailable(t *testing.T) {
 	r, q, p, s := newRechecker(t)
-	analysed(t, q, "octo", "gone", frontier.HeadRef, "old-sha")
+	analyzed(t, q, "octo", "gone", frontier.HeadRef, "old-sha")
 	p.errs["octo/gone"] = fmt.Errorf("%w: repository not found", ErrUnavailable)
 	stale(q, 48*time.Hour)
 
@@ -165,7 +165,7 @@ func TestRecheckMarksVanishedRepositoriesUnavailable(t *testing.T) {
 // A SHA-pinned analysis cannot drift, so spending a probe on it is pure waste.
 func TestRecheckSkipsImmutableRefs(t *testing.T) {
 	r, q, p, _ := newRechecker(t)
-	analysed(t, q, "actions", "checkout", "abc123", "abc123")
+	analyzed(t, q, "actions", "checkout", "abc123", "abc123")
 	stale(q, 365*24*time.Hour)
 
 	stats, err := r.Run(context.Background(), 24*time.Hour, 10)
@@ -185,7 +185,7 @@ func TestRecheckSkipsImmutableRefs(t *testing.T) {
 func TestRecheckRespectsTheLimit(t *testing.T) {
 	r, q, p, _ := newRechecker(t)
 	for _, name := range []string{"one", "two", "three", "four"} {
-		analysed(t, q, "octo", name, frontier.HeadRef, "old-sha")
+		analyzed(t, q, "octo", name, frontier.HeadRef, "old-sha")
 		p.answers["octo/"+name] = "old-sha"
 	}
 	stale(q, 48*time.Hour)
@@ -199,10 +199,10 @@ func TestRecheckRespectsTheLimit(t *testing.T) {
 	}
 }
 
-// Freshly analysed work must not be re-probed on the next pass.
-func TestRecheckIgnoresFreshAnalyses(t *testing.T) {
+// Freshly analyzed work must not be re-probed on the next pass.
+func TestRecheckIgnoresFreshAnalyzes(t *testing.T) {
 	r, q, p, _ := newRechecker(t)
-	analysed(t, q, "actions", "checkout", frontier.HeadRef, "old-sha")
+	analyzed(t, q, "actions", "checkout", frontier.HeadRef, "old-sha")
 
 	stats, err := r.Run(context.Background(), 24*time.Hour, 10)
 	if err != nil {

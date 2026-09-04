@@ -57,8 +57,8 @@ Then make the fixture match reality, and expect node-count assertions to need up
 
 ## Naming and comments
 
-Name tests after the behaviour they protect, not the function they call. Put the *reason* the
-behaviour matters in a comment above the test — that is what tells a future reader whether a
+Name tests after the behavior they protect, not the function they call. Put the *reason* the
+behavior matters in a comment above the test — that is what tells a future reader whether a
 failure is a regression or an intentional change.
 
 ```go

@@ -251,7 +251,7 @@ func (h *harness) referencedFromSeed(seedRepo, targetKey string) {
 	}
 }
 
-// This is the recursive step: what an analysed dependency itself depends on becomes the next
+// This is the recursive step: what an analyzed dependency itself depends on becomes the next
 // round of work, which is how the graph reaches past the seed repositories.
 func TestExpandEnqueuesNewlyDiscoveredDependencies(t *testing.T) {
 	h := newHarness(t)
@@ -356,7 +356,7 @@ func TestExpandStopsEnqueueingAtMaxDepth(t *testing.T) {
 	}
 }
 
-// A deleted or private repository cannot be analysed however often it is tried.
+// A deleted or private repository cannot be analyzed however often it is tried.
 func TestExpandMarksUnreachableRepositoriesTerminal(t *testing.T) {
 	h := newHarness(t)
 	h.enqueue(item("octo", "gone", "", 1))
@@ -428,7 +428,7 @@ func TestExpandRecordsProvenance(t *testing.T) {
 		t.Errorf("query_id = %q", queryID)
 	}
 	if commit != "sha-composite" {
-		t.Errorf("db_commit = %q, want the analysed commit", commit)
+		t.Errorf("db_commit = %q, want the analyzed commit", commit)
 	}
 }
 

@@ -158,7 +158,7 @@ func TestExposureIgnoresWithdrawnAdvisories(t *testing.T) {
 	}
 }
 
-// Only repositories under review are exposed; an upstream repository is not the organisation's
+// Only repositories under review are exposed; an upstream repository is not the organization's
 // to remediate and would inflate the list.
 func TestExposureExcludesUpstreamRepositories(t *testing.T) {
 	s := fixture(t)

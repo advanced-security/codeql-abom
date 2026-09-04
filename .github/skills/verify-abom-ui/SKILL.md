@@ -1,22 +1,22 @@
 ---
 name: verify-abom-ui
-description: 'End-to-end verification of the codeql-abom user interface and UX, including visual review of screenshots. Use when testing, reviewing or debugging the ABOM UI; checking the force-directed dependency graph for readability or hairballing; confirming the interface honours ABOM architectural invariants (no unearned vulnerability verdicts, severity x reach scoring, seed vs upstream, direct vs transitive, visible coverage); cross-checking rendered numbers against the /api endpoints; or auditing colour, contrast and label legibility. REQUIRES a vision-capable model that can actually view screenshot images.'
+description: 'End-to-end verification of the codeql-abom user interface and UX, including visual review of screenshots. Use when testing, reviewing or debugging the ABOM UI; checking the force-directed dependency graph for readability or hairballing; confirming the interface honours ABOM architectural invariants (no unearned vulnerability verdicts, severity x reach scoring, seed vs upstream, direct vs transitive, visible coverage); cross-checking rendered numbers against the /api endpoints; or auditing color, contrast and label legibility. REQUIRES a vision-capable model that can actually view screenshot images.'
 argument-hint: 'Optionally name a page, route or invariant to focus on (e.g. "remediation page", "risk force view", "coverage strip")'
 ---
 
 # Verify the ABOM interface
 
-ABOM's interface carries claims about an organisation's security posture. Most of what can go
+ABOM's interface carries claims about an organization's security posture. Most of what can go
 wrong with it is invisible to a DOM assertion: a force layout that has degenerated into a
 hairball, a badge that asserts more certainty than the data supports, a severity encoding that
-only works for people who see colour. Those need to be looked at.
+only works for people who see color. Those need to be looked at.
 
 ## This skill requires vision
 
 You must be able to **view** raster screenshots, not merely capture them.
 
 Confirm before proceeding: capture one screenshot and describe something you could only know by
-looking at it — the position of a specific node, the colour of a badge, which label is truncated.
+looking at it — the position of a specific node, the color of a badge, which label is truncated.
 
 If you cannot see images, **stop and say so**. Do not infer appearance from the DOM and report it
 as a visual finding. A fabricated UX judgement is worse than no judgement, because it will be
@@ -84,11 +84,11 @@ because each one makes the interface assert something the data does not support.
 | --- | --- | --- | --- |
 | 1 | Verdicts come only from CodeQL rule IDs | A "vulnerable" badge on an action without its vulnerable range **and** the observed refs adjacent | `actions/vulnerable-action` is exact-match only and found nothing across 204 real repos; most refs are floating tags nothing can adjudicate. The UI must not manufacture certainty |
 | 2 | Priority is severity × reach, nothing else | A single risk number with no visible components, or CVSS/EPSS folded into the score | The number stops being explainable, and a reader cannot disagree with it |
-| 3 | Seed ≠ upstream | Repositories under review and dependency-only repositories styled identically | Implies the organisation owns repositories it does not |
+| 3 | Seed ≠ upstream | Repositories under review and dependency-only repositories styled identically | Implies the organization owns repositories it does not |
 | 4 | Direct ≠ transitive | One "affected: N" figure with no split | They are different work: one is a version bump here, the other waits on someone else |
 | 5 | Provenance is reachable | A finding with no rule ID, or an advisory with no GHSA, within one interaction | Every claim must trace to the query or advisory that made it |
 | 6 | Say what is not known | No coverage indicator on screen | Silence reads as completeness. Coverage belongs in a persistent strip |
-| 7 | References are verbatim | A ref rewritten, normalised or truncated without a way to see the original | The exact ref is the evidence a reader judges with |
+| 7 | References are verbatim | A ref rewritten, normalized or truncated without a way to see the original | The exact ref is the evidence a reader judges with |
 
 For each: **PASS**, **FAIL** with the screenshot region, or **N/A** if that surface is absent.
 
@@ -100,7 +100,7 @@ Only a viewer can make these calls.
   visually inseparable, the scope is too large — the fix is repository granularity or fewer
   hops, not a prettier layout.
 - **Hub occlusion.** In a high-fan-in view, is the focus node still findable, or buried under
-  its neighbours?
+  its neighbors?
 - **Semantic force legibility.** In the Risk view, name the highest-priority node from position
   alone. If you cannot, the semantic force is not doing its job.
 - **One semantic force at a time.** If position appears to encode two things at once, that is a

@@ -223,7 +223,7 @@ func TestSmallBatchSizeFlushesMidStream(t *testing.T) {
 }
 
 // ResetLocal must keep shared external nodes resolvable while dropping per-repo entries, so
-// memory stays flat across an organisation.
+// memory stays flat across an organization.
 func TestResetLocalKeepsExternalNodesCached(t *testing.T) {
 	s := newTestStore(t)
 	w := NewWriter(s, 0)

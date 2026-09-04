@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-// ErrNoSourceCode reports that a source tree held nothing the extractor recognised.
+// ErrNoSourceCode reports that a source tree held nothing the extractor recognized.
 //
 // For an upstream dependency this is a permanent answer, not a transient failure: a repository
 // with no workflows and no action manifest will still have none tomorrow.

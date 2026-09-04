@@ -89,7 +89,7 @@ func TestPinningLeafReconcilesToItsWorkflow(t *testing.T) {
 }
 
 // Upstream repositories were fetched only to resolve dependencies; their pinning is not the
-// organisation's to answer for, and including them would move every figure.
+// organization's to answer for, and including them would move every figure.
 func TestPinningLevelExcludesUpstream(t *testing.T) {
 	s := subgraphFixture(t)
 
