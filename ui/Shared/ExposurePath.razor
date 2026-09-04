@@ -1,0 +1,39 @@
+@* An exposure route is a chain, not a cloud, so it is drawn as one. A force layout would
+   scramble the ordering that is the entire point of the path. *@
+
+<div class="abom-path" style="display:flex;flex-wrap:wrap;align-items:center;gap:0.4rem;">
+    @for (var i = 0; i < Path.Count; i++)
+    {
+        var step = Path[i];
+        var isLast = i == Path.Count - 1;
+
+        <span class="abom-path-step">
+            <MudIcon Icon="@(isLast ? Icons.Material.Filled.GpsFixed : Icons.Material.Outlined.Description)"
+                     Size="Size.Small" />
+            <span style="@(isLast ? "font-weight:600;" : null)">@Shorten(step)</span>
+        </span>
+
+        @if (!isLast)
+        {
+            <span class="abom-path-arrow">&#8594;</span>
+        }
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<string> Path { get; set; } = [];
+
+    /// <summary>
+    /// Keeps the owner and the file name, which is what identifies a step, and drops the
+    /// middle of a long workflow path rather than truncating the end.
+    /// </summary>
+    private static string Shorten(string key)
+    {
+        if (key.Length <= 46)
+        {
+            return key;
+        }
+        var parts = key.Split('/');
+        return parts.Length < 3 ? key : $"{parts[0]}/{parts[1]}/…/{parts[^1]}";
+    }
+}

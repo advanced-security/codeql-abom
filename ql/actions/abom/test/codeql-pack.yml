@@ -1,0 +1,5 @@
+name: advanced-security/codeql-abom-actions-test
+version: 0.1.0
+dependencies:
+  advanced-security/codeql-abom-actions-src: ${workspace}
+extractor: actions

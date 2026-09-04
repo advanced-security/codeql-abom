@@ -1,0 +1,114 @@
+@page "/repositories"
+@inject AbomApi Api
+
+<PageTitle>Repositories — ABOM</PageTitle>
+
+<MudText Typo="Typo.h5"><h1 style="all:unset;">Repositories in scope</h1></MudText>
+<MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">
+    Only repositories in scope are listed — those in the organisation that were analysed with
+    CodeQL. Upstream repositories are fetched to resolve what
+    these depend on and are not the organisation's to remediate.
+</MudText>
+
+<MudTextField T="string" Value="_search" ValueChanged="OnSearch" Immediate="false"
+              DebounceInterval="400" Placeholder="Filter by name" Variant="Variant.Outlined"
+              Margin="Margin.Dense" Adornment="Adornment.Start"
+              AdornmentIcon="@Icons.Material.Filled.Search" Class="mb-3" Style="max-width:420px;" />
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else
+{
+    <MudDataGrid T="RepositorySummary" Items="_items" Dense="true" Hover="true"
+                 SortMode="SortMode.Single" Filterable="false" RowsPerPage="25">
+        <Columns>
+            <HierarchyColumn T="RepositorySummary" />
+            <PropertyColumn Property="x => x.FullName" Title="Repository" />
+            <PropertyColumn Property="x => x.Workflows" Title="Workflows" />
+            <PropertyColumn Property="x => x.Dependencies" Title="References" />
+            <PropertyColumn Property="x => x.Findings" Title="Findings" />
+            <PropertyColumn Property="x => x.DirectExposures" Title="Direct exposure" />
+            <PropertyColumn Property="x => x.Exposures" Title="Total exposure" />
+        </Columns>
+
+        <ChildRowContent>
+            <MudCard Elevation="0" Class="pa-3">
+                @if (_detail is null || _detail.FullName != context.Item.FullName)
+                {
+                    <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+                }
+                else
+                {
+                    <MudText Typo="Typo.subtitle2">Findings by rule</MudText>
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                        Every finding stays attributed to the query that made the call.
+                    </MudText>
+                    @foreach (var rule in _detail.FindingsByRule)
+                    {
+                        <div class="mt-1">
+                            <span class="abom-rule">@rule.RuleId</span>
+                            <span class="ml-2" style="font-variant-numeric:tabular-nums;">@rule.Count</span>
+                        </div>
+                    }
+
+                    @if (_detail.Exposures.Count > 0)
+                    {
+                        <MudDivider Class="my-3" />
+                        <MudText Typo="Typo.subtitle2">Routes to advisory-affected actions</MudText>
+                        @foreach (var e in _detail.Exposures)
+                        {
+                            <div class="mt-2">
+                                <div class="d-flex align-center gap-2">
+                                    <SeverityChip Severity="@e.Severity" />
+                                    <span class="abom-rule">@e.GhsaId</span>
+                                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                        @(e.IsDirect ? "direct — fixable here" : $"{e.Hops} hops — via an intermediary")
+                                    </MudText>
+                                </div>
+                                <div class="mt-1"><ExposurePath Path="@e.Path" /></div>
+                                @if (e.References.Count > 0)
+                                {
+                                    <div class="mt-1"><RefList Refs="@e.References" Max="5" /></div>
+                                }
+                            </div>
+                        }
+                    }
+                }
+            </MudCard>
+        </ChildRowContent>
+
+        <PagerContent>
+            <MudDataGridPager T="RepositorySummary" />
+        </PagerContent>
+    </MudDataGrid>
+}
+
+@code {
+    private IReadOnlyList<RepositorySummary> _items = [];
+    private RepositoryDetail? _detail;
+    private string _search = string.Empty;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        _loading = true;
+        _items = await Api.GetRepositoriesAsync(_search);
+        _loading = false;
+
+        // Detail is fetched for the first row so an expanded row is never empty on open.
+        if (_items.Count > 0)
+        {
+            _detail = await Api.GetRepositoryAsync(_items[0].FullName);
+        }
+    }
+
+    private async Task OnSearch(string value)
+    {
+        _search = value;
+        await Load();
+    }
+}

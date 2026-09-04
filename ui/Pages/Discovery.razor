@@ -1,0 +1,165 @@
+@page "/discovery"
+@implements IDisposable
+@inject AbomApi Api
+
+<PageTitle>Discovery — ABOM</PageTitle>
+
+<MudText Typo="Typo.h5"><h1 style="all:unset;">Discovery</h1></MudText>
+<MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">
+    How complete this picture is. Discovery is recursive and runs to a budget, so the queue is
+    never expected to be empty — what matters is whether the highest-value work has been done.
+</MudText>
+
+<MudGrid Spacing="3" Class="mb-3">
+    @foreach (var (label, count, hint) in Tiles)
+    {
+        <MudItem xs="6" sm="3">
+            <MudPaper Elevation="0" Outlined="true" Class="pa-3">
+                <MudText Typo="Typo.h5" Style="font-variant-numeric:tabular-nums;">@count</MudText>
+                <MudText Typo="Typo.caption">@label</MudText>
+                <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">@hint</MudText>
+            </MudPaper>
+        </MudItem>
+    }
+</MudGrid>
+
+<div class="d-flex align-center gap-3 mb-3">
+    <MudSwitch T="bool" Value="_live" ValueChanged="OnLiveChanged" Color="Color.Primary"
+               Label="Follow a running expansion" />
+    @if (_live)
+    {
+        <MudText Typo="Typo.caption" Class="mud-text-secondary">
+            refreshing every @(PollSeconds)s · last @_lastPoll.ToLocalTime().ToString("HH:mm:ss")
+        </MudText>
+    }
+</div>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else
+{
+    <MudDataGrid T="FrontierItem" Items="_items" Dense="true" Hover="true"
+                 SortMode="SortMode.Single" Filterable="false" RowsPerPage="30">
+        <Columns>
+            <PropertyColumn Property="x => x.Score" Title="Score">
+                <CellTemplate>
+                    <MudTooltip Text="Commonality per unit cost: how much of the corpus depends on this, weighted towards dependencies that can actually extend the graph.">
+                        <span style="font-variant-numeric:tabular-nums;">
+                            @context.Item.Score.ToString("0")
+                        </span>
+                    </MudTooltip>
+                </CellTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.NodeKey" Title="Dependency" />
+
+            <PropertyColumn Property="x => x.Status" Title="Status">
+                <CellTemplate>
+                    <span style="@StatusStyle(context.Item.Status)">@StatusLabel(context.Item.Status)</span>
+                </CellTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.Depth" Title="Depth" />
+
+            <PropertyColumn Property="x => x.AnalysisCount" Title="Analyses">
+                <CellTemplate>
+                    @if (context.Item.AnalysisCount > 1)
+                    {
+                        <MudTooltip Text="Re-analysed after its ref moved.">
+                            <span>@context.Item.AnalysisCount</span>
+                        </MudTooltip>
+                    }
+                    else
+                    {
+                        <span>@context.Item.AnalysisCount</span>
+                    }
+                </CellTemplate>
+            </PropertyColumn>
+
+            <TemplateColumn Title="Analysed commit" Sortable="false">
+                <CellTemplate>
+                    @if (!string.IsNullOrEmpty(context.Item.ResolvedSha))
+                    {
+                        <MudTooltip Text="The commit the stored graph was built from, not necessarily what the ref points at now.">
+                            <span class="abom-rule">@context.Item.ResolvedSha[..Math.Min(12, context.Item.ResolvedSha.Length)]</span>
+                        </MudTooltip>
+                    }
+                </CellTemplate>
+            </TemplateColumn>
+
+            <TemplateColumn Title="Note" Sortable="false">
+                <CellTemplate>
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">@context.Item.Reason</MudText>
+                </CellTemplate>
+            </TemplateColumn>
+        </Columns>
+        <PagerContent>
+            <MudDataGridPager T="FrontierItem" />
+        </PagerContent>
+    </MudDataGrid>
+}
+
+@code {
+    private const int PollSeconds = 5;
+
+    private IReadOnlyList<FrontierItem> _items = [];
+    private Summary _summary = new();
+    private bool _loading = true;
+    private bool _live;
+    private DateTime _lastPoll = DateTime.UtcNow;
+    private Timer? _timer;
+
+    private IEnumerable<(string, int, string)> Tiles =>
+    [
+        ("analysed", _summary.AnalysedUpstreams, "dependencies expanded"),
+        ("pending", _summary.PendingDependencies, "not yet analysed"),
+        ("under review", _summary.SeedRepos, "repositories in scope"),
+        ("advisories", _summary.Advisories, $"covering {_summary.AffectedActions} actions in use"),
+    ];
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        _summary = await Api.GetSummaryAsync();
+        _items = await Api.GetFrontierAsync(top: 400);
+        _lastPoll = DateTime.UtcNow;
+        _loading = false;
+    }
+
+    private void OnLiveChanged(bool value)
+    {
+        _live = value;
+        _timer?.Dispose();
+        _timer = null;
+
+        if (value)
+        {
+            _timer = new Timer(async _ =>
+            {
+                await Load();
+                await InvokeAsync(StateHasChanged);
+            }, null, TimeSpan.FromSeconds(PollSeconds), TimeSpan.FromSeconds(PollSeconds));
+        }
+    }
+
+    private static string StatusLabel(string status) => status switch
+    {
+        "done" => "analysed",
+        "pending" => "queued",
+        "running" => "in progress",
+        "unavailable" => "unavailable",
+        _ => status,
+    };
+
+    private static string StatusStyle(string status) => status switch
+    {
+        "done" => "font-weight:500;",
+        "unavailable" => "opacity:0.55;font-style:italic;",
+        _ => "opacity:0.8;",
+    };
+
+    public void Dispose() => _timer?.Dispose();
+}

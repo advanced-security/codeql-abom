@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ABOM — Actions Bill of Materials</title>
+    <base href="/" />
+    <link rel="stylesheet" href="_content/MudBlazor/MudBlazor.min.css" />
+    <link rel="stylesheet" href="css/app.css" />
+    <link rel="icon" href="data:," />
+    <link rel="preload" id="webassembly" />
+    <script type="importmap"></script>
+    <script>
+        // Resolve the scheme before first paint, or the app flashes light before Blazor loads.
+        (function () {
+            var saved = null;
+            try { saved = localStorage.getItem('abom.theme'); } catch (e) { /* private mode */ }
+            var dark = saved === 'dark' ||
+                ((!saved || saved === 'system') &&
+                    window.matchMedia('(prefers-color-scheme: dark)').matches);
+            document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+        })();
+    </script>
+</head>
+
+<body>
+    <div id="app">
+        <div class="abom-boot">
+            <div class="abom-boot-mark">ABOM</div>
+            <div class="abom-boot-text">Reading the Actions Bill of Materials…</div>
+        </div>
+    </div>
+
+    <div id="blazor-error-ui">
+        An unexpected error has occurred.
+        <a href="" class="reload">Reload</a>
+        <a class="dismiss">🗙</a>
+    </div>
+
+    <script src="js/three.min.js"></script>
+    <script src="js/3d-force-graph.min.js"></script>
+    <script src="js/theme.js"></script>
+    <script src="_content/MudBlazor/MudBlazor.min.js"></script>
+    <script src="_framework/blazor.webassembly#[.{fingerprint}].js"></script>
+</body>
+
+</html>

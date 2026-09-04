@@ -1,0 +1,12 @@
+name: Reusable
+on:
+  workflow_call:
+    inputs:
+      config-path:
+        required: true
+        type: string
+jobs:
+  reusable-job:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4

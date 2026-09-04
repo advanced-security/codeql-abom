@@ -1,0 +1,118 @@
+@page "/pinning"
+@inject AbomApi Api
+
+<PageTitle>Version pinning — ABOM</PageTitle>
+
+<MudText Typo="Typo.h5"><h1 style="all:unset;">Version pinning</h1></MudText>
+<MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">
+    How often each CodeQL rule fired, against the number of references it was measured over.
+    What counts as correctly pinned is the rule's judgement, not this tool's, so the rule id is
+    shown beside every number.
+</MudText>
+
+<div class="d-flex flex-wrap align-center gap-2 mb-3">
+    <MudSelect T="string" Label="Rule" Value="_rule" ValueChanged="OnRuleChanged" Dense="true"
+               Margin="Margin.Dense" Variant="Variant.Outlined" ShrinkLabel="true"
+               Style="max-width:320px;">
+        <MudSelectItem T="string" Value="@("")">every rule</MudSelectItem>
+        @foreach (var r in _rules)
+        {
+            <MudSelectItem T="string" Value="@r">@r</MudSelectItem>
+        }
+    </MudSelect>
+    <MudTextField T="string" Value="_search" ValueChanged="OnSearch" Immediate="false"
+                  DebounceInterval="400" Label="Repository" Placeholder="name contains"
+                  Variant="Variant.Outlined" Margin="Margin.Dense" ShrinkLabel="true"
+                  Clearable="true" Style="max-width:260px;" />
+</div>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else
+{
+    @if (Organisation.Any())
+    {
+        <MudText Typo="Typo.subtitle2" GutterBottom="true">Across the organisation</MudText>
+        <MudSimpleTable Dense="true" Hover="true" Class="abom-grid mb-4">
+            <thead>
+                <tr><th>Rule</th><th>Findings</th><th>References measured</th><th>Rate</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var p in Organisation)
+                {
+                    <tr>
+                        <td><span class="abom-rule">@p.RuleId</span></td>
+                        <td style="font-variant-numeric:tabular-nums;">@p.Findings.ToString("N0")</td>
+                        <td style="font-variant-numeric:tabular-nums;">@p.ReferencesTotal.ToString("N0")</td>
+                        <td style="font-variant-numeric:tabular-nums;">@Rate(p)</td>
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+    }
+
+    <MudText Typo="Typo.subtitle2" GutterBottom="true">By repository</MudText>
+    <MudDataGrid T="PostureRow" Items="Repositories" Dense="true" Hover="true"
+                 SortMode="SortMode.Multiple" Filterable="false" RowsPerPage="30"
+                 Class="abom-grid">
+        <Columns>
+            <PropertyColumn Property="x => x.ScopeKey" Title="Repository" />
+            <PropertyColumn Property="x => x.RuleId" Title="Rule">
+                <CellTemplate>
+                    <span class="abom-rule">@context.Item.RuleId</span>
+                </CellTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Findings" Title="Findings" />
+            <PropertyColumn Property="x => x.ReferencesTotal" Title="References measured" />
+            <TemplateColumn Title="Rate" SortBy="@(x => x.ReferencesTotal == 0 ? 0d : (double)x.Findings / x.ReferencesTotal)">
+                <CellTemplate>
+                    <span style="font-variant-numeric:tabular-nums;">@Rate(context.Item)</span>
+                </CellTemplate>
+            </TemplateColumn>
+        </Columns>
+        <PagerContent>
+            <MudDataGridPager T="PostureRow" />
+        </PagerContent>
+    </MudDataGrid>
+
+    <MudAlert Severity="MudBlazor.Severity.Normal" Variant="Variant.Outlined" Dense="true"
+              Class="mt-3" Icon="@Icons.Material.Outlined.HelpOutline">
+        <MudText Typo="Typo.caption">
+            A repository with no findings for a rule is absent from that rule's rows. That means
+            the rule did not fire, which is not the same as the repository having been checked
+            and passed — it may simply hold no references the rule applies to.
+        </MudText>
+    </MudAlert>
+}
+
+@code {
+    private IReadOnlyList<PostureRow> _rows = [];
+    private IReadOnlyList<string> _rules = [];
+    private string _rule = string.Empty;
+    private string _search = string.Empty;
+    private bool _loading = true;
+
+    private IEnumerable<PostureRow> Organisation => _rows.Where(r => r.Scope == "org");
+    private IEnumerable<PostureRow> Repositories => _rows.Where(r => r.Scope != "org");
+
+    private static string Rate(PostureRow p) =>
+        p.ReferencesTotal == 0 ? "—" : $"{100.0 * p.Findings / p.ReferencesTotal:0.0}%";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _rules = await Api.GetPostureRulesAsync();
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        _loading = true;
+        _rows = await Api.GetPinningAsync(_search, _rule, 1000);
+        _loading = false;
+    }
+
+    private async Task OnRuleChanged(string value) { _rule = value; await Load(); }
+    private async Task OnSearch(string value) { _search = value; await Load(); }
+}

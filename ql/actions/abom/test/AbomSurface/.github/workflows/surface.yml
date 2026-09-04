@@ -1,0 +1,25 @@
+name: Surface
+on:
+  pull_request_target:
+    types: [opened]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inherits-workflow-permissions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+  overrides-permissions:
+    runs-on: [self-hosted, linux, x64]
+    permissions:
+      contents: write
+      id-token: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+
+  calls-reusable-with-secrets:
+    uses: octo-org/shared/.github/workflows/build.yml@v1
+    secrets: inherit

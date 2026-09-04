@@ -1,0 +1,283 @@
+@page "/node/{*Key}"
+@inject AbomApi Api
+
+<PageTitle>@(Key ?? "Node") — ABOM</PageTitle>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else if (_detail is null)
+{
+    <MudAlert Severity="MudBlazor.Severity.Warning" Variant="Variant.Outlined">
+        <MudText Typo="Typo.body2">Nothing here is named <span class="abom-rule">@Key</span>.</MudText>
+        <MudText Typo="Typo.caption">
+            That is not the same as it being unused: it may sit behind a dependency that has not
+            been analysed. <MudLink Href="/discovery" Typo="Typo.caption">Check coverage</MudLink>.
+        </MudText>
+    </MudAlert>
+}
+else
+{
+    <div class="d-flex flex-wrap align-center gap-3 mb-1">
+        <MudText Typo="Typo.h5"><h1 style="all:unset;" class="abom-rule">@_detail.Key</h1></MudText>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@KindLabel</MudChip>
+        @if (!string.IsNullOrEmpty(_detail.Origin))
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                @(_detail.Origin == "seed" ? "in scope" : _detail.Origin)
+            </MudChip>
+        }
+        @* The pivot to the graph is a deliberate click, never where a name lands you. *@
+        <MudLink Href="@($"/explore?selection={Uri.EscapeDataString(_detail.Key)}")">
+            <MudIcon Icon="@Icons.Material.Outlined.Hub" Size="Size.Small" Class="mr-1" />
+            Open in Explorer
+        </MudLink>
+    </div>
+
+    <MudGrid Spacing="3" Class="mb-3">
+        <MudItem xs="6" sm="3">
+            <MudPaper Elevation="0" Outlined="true" Class="pa-3">
+                <MudText Typo="Typo.h6" Style="font-variant-numeric:tabular-nums;">@_detail.DependentRepos</MudText>
+                <MudText Typo="Typo.caption">repositories reach it</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="6" sm="3">
+            <MudPaper Elevation="0" Outlined="true" Class="pa-3">
+                <MudText Typo="Typo.h6" Style="font-variant-numeric:tabular-nums;">@_detail.Refs.Sum(r => r.Count)</MudText>
+                <MudText Typo="Typo.caption"><code>uses:</code> lines point here</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="6" sm="3">
+            <MudPaper Elevation="0" Outlined="true" Class="pa-3">
+                <MudText Typo="Typo.h6" Style="font-variant-numeric:tabular-nums;">@_detail.Refs.Count</MudText>
+                <MudText Typo="Typo.caption">distinct references</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="6" sm="3">
+            <MudPaper Elevation="0" Outlined="true" Class="pa-3">
+                <MudText Typo="Typo.h6" Style="font-variant-numeric:tabular-nums;">@_detail.Rules.Sum(r => r.Count)</MudText>
+                <MudText Typo="Typo.caption">findings</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="6" sm="3">
+            <MudPaper Elevation="0" Outlined="true" Class="pa-3">
+                <MudText Typo="Typo.h6">@(_detail.Analysed ? "yes" : "not yet")</MudText>
+                <MudText Typo="Typo.caption">expanded</MudText>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    <MudGrid Spacing="3">
+        <MudItem xs="12">
+            <MudPaper Elevation="0" Outlined="true" Class="pa-3">
+                <MudText Typo="Typo.subtitle2">If you bump this</MudText>
+                @if (_impact is null)
+                {
+                    <MudProgressLinear Indeterminate="true" Class="mt-2" />
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Class="mb-2">
+                        <b>@(_impact.Direct + _impact.Transitive)</b> repositories in scope would
+                        be affected by changing the version of this.
+                    </MudText>
+                    <div class="d-flex flex-wrap gap-4 mb-2">
+                        <MudTooltip Text="These name it themselves, so the reference lives in their own repository and they can change it.">
+                            <span><b>@_impact.Direct</b> directly</span>
+                        </MudTooltip>
+                        <MudTooltip Text="These reach it through an intermediary they do not own, so the fix is not theirs to make alone.">
+                            <span><b>@_impact.Transitive</b> through an intermediary</span>
+                        </MudTooltip>
+                    </div>
+                    @if (_impact.Unanalysed > 0)
+                    {
+                        <MudAlert Severity="MudBlazor.Severity.Normal" Variant="Variant.Outlined"
+                                  Dense="true" Class="mb-2" Icon="@Icons.Material.Outlined.HelpOutline">
+                            <MudText Typo="Typo.caption">
+                                @_impact.Unanalysed dependencies have not been expanded. A
+                                repository that reaches this only through one of those is not
+                                counted above.
+                            </MudText>
+                        </MudAlert>
+                    }
+                    <div class="d-flex flex-wrap gap-1">
+                        @foreach (var r in _impact.Repos.Take(60))
+                        {
+                            <MudTooltip Text="@AffectedHelp(r)">
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                         Color="@(r.Hops == 1 ? Color.Primary : Color.Default)">
+                                    @r.FullName
+                                    @if (r.Refs.Count > 0)
+                                    {
+                                        <span class="abom-ref ml-1">@string.Join(" ", r.Refs.Take(2))</span>
+                                    }
+                                </MudChip>
+                            </MudTooltip>
+                        }
+                        @if (_impact.Repos.Count > 60)
+                        {
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary align-self-center">
+                                and @(_impact.Repos.Count - 60) more
+                            </MudText>
+                        }
+                    </div>
+                }
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" md="6">
+            <MudPaper Elevation="0" Outlined="true" Class="pa-3">
+                <MudText Typo="Typo.subtitle2" GutterBottom="true">References in use</MudText>
+                @if (_detail.Refs.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                        Nothing references this by a version or commit.
+                    </MudText>
+                }
+                else
+                {
+                    <MudSimpleTable Dense="true" Hover="true" Striped="false" Class="abom-grid">
+                        <thead>
+                            <tr><th>Reference</th><th>Uses</th><th>Repositories</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var r in _detail.Refs)
+                            {
+                                <tr>
+                                    <td><span class="abom-ref">@r.Ref</span></td>
+                                    <td style="font-variant-numeric:tabular-nums;">@r.Count</td>
+                                    <td style="font-variant-numeric:tabular-nums;">@r.Repositories</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary mt-2 d-block">
+                        Listed verbatim. Whether any of these falls inside an advisory's affected
+                        range is decided by the <span class="abom-rule">actions/*</span> queries,
+                        not here.
+                    </MudText>
+                }
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" md="6">
+            <MudPaper Elevation="0" Outlined="true" Class="pa-3 mb-3">
+                <MudText Typo="Typo.subtitle2" GutterBottom="true">Findings by rule</MudText>
+                @if (_detail.Rules.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                        No rule fired against this node.
+                    </MudText>
+                }
+                else
+                {
+                    @foreach (var r in _detail.Rules)
+                    {
+                        <div class="d-flex justify-space-between">
+                            <span class="abom-rule">@r.RuleId</span>
+                            <span style="font-variant-numeric:tabular-nums;">@r.Count</span>
+                        </div>
+                    }
+                }
+            </MudPaper>
+
+            <MudPaper Elevation="0" Outlined="true" Class="pa-3">
+                <MudText Typo="Typo.subtitle2">Used by @_detail.UsedBy.Count workflows</MudText>
+                <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2">
+                    The count is how many <code>uses:</code> lines in that workflow point here,
+                    not how many workflows or repositories it has.
+                </MudText>
+                <MudSimpleTable Dense="true" Hover="true" Class="abom-grid">
+                    <thead>
+                        <tr><th>Workflow</th><th>References</th><th><code>uses:</code> lines</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var n in _detail.UsedBy.Take(25))
+                        {
+                            <tr>
+                                <td>
+                                    <MudLink Href="@($"/node/{n.Key}")" Typo="Typo.caption" Class="abom-rule">
+                                        @n.Key
+                                    </MudLink>
+                                </td>
+                                <td><RefList Refs="@n.Refs" Max="3" /></td>
+                                <td style="font-variant-numeric:tabular-nums;">@n.Count</td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+                @if (_detail.UsedBy.Count > 25)
+                {
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                        and @(_detail.UsedBy.Count - 25) more
+                    </MudText>
+                }
+
+                @if (_detail.Uses.Count > 0)
+                {
+                    <MudDivider Class="my-3" />
+                    <MudText Typo="Typo.subtitle2">Uses @_detail.Uses.Count dependencies</MudText>
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2">
+                        What this pulls in, and how many times it does so.
+                    </MudText>
+                    <MudSimpleTable Dense="true" Hover="true" Class="abom-grid">
+                        <thead>
+                            <tr><th>Dependency</th><th>References</th><th><code>uses:</code> lines</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var n in _detail.Uses.Take(25))
+                            {
+                                <tr>
+                                    <td>
+                                        <MudLink Href="@($"/node/{n.Key}")" Typo="Typo.caption" Class="abom-rule">
+                                            @n.Key
+                                        </MudLink>
+                                    </td>
+                                    <td><RefList Refs="@n.Refs" Max="3" /></td>
+                                    <td style="font-variant-numeric:tabular-nums;">@n.Count</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    [Parameter] public string? Key { get; set; }
+
+    private NodeDetail? _detail;
+    private BumpImpact? _impact;
+    private bool _loading = true;
+
+    private string KindLabel =>
+        ThemeService.KindNames.TryGetValue(_detail?.Kind ?? string.Empty, out var n)
+            ? n : (_detail?.Kind ?? string.Empty);
+
+    // A repository with no reference of its own has nothing to edit, which is the whole point of
+    // separating direct from transitive.
+    private static string AffectedHelp(AffectedRepo r) =>
+        r.Refs.Count > 0
+            ? $"Names it directly at {string.Join(", ", r.Refs)}. This repository can change the reference itself."
+            : $"Reaches it in {r.Hops} hops through an intermediary. It holds no reference of its own to change.";
+
+    // Runs on parameter change too, so following a neighbour link reloads rather than sticking.
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _impact = null;
+        _detail = string.IsNullOrEmpty(Key) ? null : await Api.GetNodeAsync(Key);
+        _loading = false;
+
+        if (_detail is not null)
+        {
+            // Fetched after the rest has rendered: the walk is quick, but nothing else on the
+            // page needs to wait for it.
+            _impact = await Api.GetBumpImpactAsync(Key!);
+            StateHasChanged();
+        }
+    }
+}

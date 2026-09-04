@@ -1,0 +1,54 @@
+@* Coverage is stated on every page: silence about what was not analysed reads as completeness. *@
+
+@if (Summary is null)
+{
+    <div class="abom-coverage">
+        <span class="abom-coverage-unknown">Reading coverage…</span>
+    </div>
+}
+else
+{
+    <div class="abom-coverage">
+        <span class="abom-coverage-item">
+            <span class="abom-coverage-value">@Summary.SeedRepos</span>
+            <span class="abom-coverage-label">repositories in scope</span>
+        </span>
+        <span class="abom-coverage-item">
+            <span class="abom-coverage-value">@Summary.UpstreamRepos</span>
+            <span class="abom-coverage-label">upstream analysed</span>
+        </span>
+        <span class="abom-coverage-item">
+            <span class="abom-coverage-value">@Summary.Findings</span>
+            <span class="abom-coverage-label">findings across @Summary.Rules rules</span>
+        </span>
+        <span class="abom-coverage-item">
+            <span class="abom-coverage-value">@Summary.Advisories</span>
+            <span class="abom-coverage-label">live advisories</span>
+        </span>
+
+        @if (Summary.PendingDependencies > 0)
+        {
+            <MudTooltip Text="These dependencies have not been analysed, so anything they pull in is not represented anywhere in this interface.">
+                <span class="abom-coverage-item abom-coverage-unknown">
+                    <MudIcon Icon="@Icons.Material.Outlined.HelpOutline" Size="Size.Small" />
+                    <span class="abom-coverage-value">@Summary.PendingDependencies</span>
+                    <span class="abom-coverage-label">dependencies unresolved</span>
+                </span>
+            </MudTooltip>
+        }
+
+        @if (Summary.Findings > Summary.LinkedFindings)
+        {
+            <MudTooltip Text="Findings reported against a file with no corresponding graph node. They are counted per repository but cannot be placed in the graph.">
+                <span class="abom-coverage-item abom-coverage-unknown">
+                    <span class="abom-coverage-value">@(Summary.Findings - Summary.LinkedFindings)</span>
+                    <span class="abom-coverage-label">findings unplaced</span>
+                </span>
+            </MudTooltip>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public Summary? Summary { get; set; }
+}

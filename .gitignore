@@ -1,0 +1,33 @@
+# Build output
+/dist/
+/bin/
+codeql-abom
+
+# CodeQL
+.codeql/
+*.bqrs
+*.sarif
+.cache/
+
+# CodeQL query-test artifacts (.expected files are checked in; these are not)
+*.testproj/
+*.actual
+
+# ABOM artifacts and databases
+/analyses/
+/output/
+*.db
+*.db.gz
+*.zip
+abom-graph.json
+abom-dashboard.json
+
+# Logs
+/logs/
+
+# .NET
+[Bb]in/
+[Oo]bj/
+
+# macOS
+.DS_Store

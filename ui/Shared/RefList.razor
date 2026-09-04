@@ -1,0 +1,35 @@
+@* References are the evidence a reader judges a version range with, so they are shown exactly as
+   written in the workflow: never normalised, never abbreviated in place. *@
+
+@if (Refs is null || Refs.Count == 0)
+{
+    <span class="abom-coverage-unknown" style="font-size:0.78rem;">no references recorded</span>
+}
+else
+{
+    @foreach (var r in Visible)
+    {
+        <span class="abom-ref">@r</span>
+    }
+
+    @if (Hidden > 0)
+    {
+        <MudLink Typo="Typo.caption" @onclick="@(() => _expanded = true)" Style="cursor:pointer;">
+            +@Hidden more
+        </MudLink>
+    }
+}
+
+@code {
+    [Parameter] public IReadOnlyList<string>? Refs { get; set; }
+
+    /// <summary>How many to show before collapsing; the rest stay one click away, never dropped.</summary>
+    [Parameter] public int Max { get; set; } = 6;
+
+    private bool _expanded;
+
+    private IEnumerable<string> Visible =>
+        _expanded || Refs!.Count <= Max ? Refs! : Refs!.Take(Max);
+
+    private int Hidden => _expanded || Refs is null ? 0 : Math.Max(0, Refs.Count - Max);
+}

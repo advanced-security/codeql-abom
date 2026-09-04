@@ -1,0 +1,132 @@
+@page "/inventory"
+@inject AbomApi Api
+@inject NavigationManager Nav
+
+<PageTitle>Actions &amp; Workflows — ABOM</PageTitle>
+
+<MudText Typo="Typo.h5"><h1 style="all:unset;">Actions &amp; Workflows</h1></MudText>
+<MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">
+    Every external dependency the organisation reaches, widest reach first. The advisory count
+    is how many published advisories name the action's repository — not a claim that the
+    references below fall inside them.
+</MudText>
+
+<MudTextField T="string" Value="_search" ValueChanged="OnSearch" Immediate="false"
+              DebounceInterval="400" Placeholder="Filter by name" Variant="Variant.Outlined"
+              Margin="Margin.Dense" Adornment="Adornment.Start"
+              AdornmentIcon="@Icons.Material.Filled.Search" Class="mb-3" Style="max-width:420px;" />
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else
+{
+    <MudDataGrid T="ActionSummary" Items="_items" Dense="true" Hover="true"
+                 SortMode="SortMode.Multiple" Filterable="false" RowsPerPage="30"
+                 Class="abom-grid">
+        <Columns>
+            <PropertyColumn Property="x => x.NodeKey" Title="Name">
+                <CellTemplate>
+                    @* A name goes to the thing itself. The graph is a pivot you choose, not
+                       somewhere a list drops you. *@
+                    <MudLink Href="@($"/node/{context.Item.NodeKey}")" Class="abom-rule">
+                        @context.Item.NodeKey
+                    </MudLink>
+                </CellTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.Kind" Title="Type">
+                <CellTemplate>
+                    <MudText Typo="Typo.caption">@TypeLabel(context.Item.Kind)</MudText>
+                </CellTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.Origin" Title="Origin">
+                <CellTemplate>
+                    <MudText Typo="Typo.caption">
+                        @(context.Item.Origin switch
+                        {
+                            "seed" => "in scope",
+                            "upstream" => "upstream",
+                            _ => "external",
+                        })
+                    </MudText>
+                </CellTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.DependentRepos" Title="Repos reached" />
+            <PropertyColumn Property="x => x.DirectDependents" Title="Total refs" />
+
+            @* One action pinned at forty commits is forty upgrade decisions, which a total
+               reference count hides entirely. *@
+            <PropertyColumn Property="x => x.DistinctRefs" Title="Distinct refs">
+                <CellTemplate>
+                    <MudTooltip Text="How many different references point at this. Each one is a separate decision to make.">
+                        <span style="font-variant-numeric:tabular-nums;">@context.Item.DistinctRefs</span>
+                    </MudTooltip>
+                </CellTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.Findings" Title="Findings" />
+
+            <PropertyColumn Property="x => x.Advisories" Title="Advisories">
+                <CellTemplate>
+                    @if (context.Item.Advisories > 0)
+                    {
+                        <MudTooltip Text="Published advisories naming this repository. Compare the ranges against the references before concluding anything.">
+                            <span style="font-variant-numeric:tabular-nums;">@context.Item.Advisories</span>
+                        </MudTooltip>
+                    }
+                    else
+                    {
+                        <span style="opacity:0.35;">0</span>
+                    }
+                </CellTemplate>
+            </PropertyColumn>
+
+            @* Whether the dependency itself was expanded decides if anything downstream is known. *@
+            <PropertyColumn Property="x => x.Analysed" Title="Analysed">
+                <CellTemplate>
+                    @if (context.Item.Analysed)
+                    {
+                        <MudText Typo="Typo.caption">yes</MudText>
+                    }
+                    else
+                    {
+                        <MudTooltip Text="This dependency has not been expanded, so whatever it pulls in is not represented anywhere in this interface.">
+                            <MudText Typo="Typo.caption" Class="abom-coverage-unknown">not yet</MudText>
+                        </MudTooltip>
+                    }
+                </CellTemplate>
+            </PropertyColumn>
+        </Columns>
+        <PagerContent>
+            <MudDataGridPager T="ActionSummary" />
+        </PagerContent>
+    </MudDataGrid>
+}
+
+@code {
+    private IReadOnlyList<ActionSummary> _items = [];
+    private string _search = string.Empty;
+    private bool _loading = true;
+
+    private static string TypeLabel(string kind) =>
+        ThemeService.KindNames.TryGetValue(kind, out var n) ? n : kind;
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        _loading = true;
+        _items = await Api.GetActionsAsync(_search, 500);
+        _loading = false;
+    }
+
+    private async Task OnSearch(string value)
+    {
+        _search = value;
+        await Load();
+    }
+}

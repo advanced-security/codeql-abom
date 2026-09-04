@@ -1,0 +1,678 @@
+@page "/explore"
+@implements IAsyncDisposable
+@inject AbomApi Api
+@inject ThemeService Theme
+@inject IJSRuntime Js
+@inject NavigationManager Nav
+
+<PageTitle>Explorer — ABOM</PageTitle>
+
+<MudPaper Elevation="0" Class="pa-2 mb-2 abom-filters" Outlined="true">
+    <div class="d-flex flex-wrap align-center gap-2">
+        <MudTextField T="string" Value="_search" ValueChanged="OnSearchChanged" Immediate="false"
+                      DebounceInterval="300" Label="Name contains"
+                      Placeholder="repo, workflow or action" Variant="Variant.Outlined"
+                      Margin="Margin.Dense" Clearable="true" ShrinkLabel="true"
+                      Class="abom-filter-wide" />
+
+        <MudSelect T="string" Label="Origin" MultiSelection="true" SelectedValues="_origins"
+                   SelectedValuesChanged="OnOriginsChanged" Dense="true" Margin="Margin.Dense"
+                   Variant="Variant.Outlined" Class="abom-filter" ShrinkLabel="true"
+                   MultiSelectionTextFunc="@(v => v.Count == 0 ? "any" : $"{v.Count} selected")">
+            <MudSelectItem T="string" Value="@("seed")">In scope</MudSelectItem>
+            <MudSelectItem T="string" Value="@("upstream")">Upstream</MudSelectItem>
+            <MudSelectItem T="string" Value="@("external")">Dependency</MudSelectItem>
+        </MudSelect>
+
+        <MudSelect T="string" Label="CodeQL rule" MultiSelection="true" SelectedValues="_rules"
+                   SelectedValuesChanged="OnRulesChanged" Dense="true" Margin="Margin.Dense"
+                   Variant="Variant.Outlined" Class="abom-filter" ShrinkLabel="true"
+                   MultiSelectionTextFunc="@(v => v.Count == 0 ? "any" : $"{v.Count} selected")">
+            @foreach (var r in _ruleIds)
+            {
+                <MudSelectItem T="string" Value="@r">@r</MudSelectItem>
+            }
+        </MudSelect>
+
+        @* Lexical only. Whether a reference is safe is actions/unpinned-tag's call, not ours. *@
+        <MudTooltip Text="How the reference is written, not whether it is safe. For that, filter by the actions/unpinned-tag rule.">
+            <MudSelect T="string" Label="Reference" Value="_refStyle" ValueChanged="OnRefStyleChanged"
+                       Dense="true" Margin="Margin.Dense" Variant="Variant.Outlined"
+                       ShrinkLabel="true" Class="abom-filter">
+                <MudSelectItem T="string" Value="@("any")">any</MudSelectItem>
+                <MudSelectItem T="string" Value="@("sha")">commit SHA</MudSelectItem>
+                <MudSelectItem T="string" Value="@("tag")">tag or branch</MudSelectItem>
+            </MudSelect>
+        </MudTooltip>
+
+        <MudTooltip Text="Show only nodes used by at least this many repositories. Leave blank for all.">
+            <MudNumericField T="int?" Value="_minReach" ValueChanged="OnMinReachChanged" Min="1"
+                             Label="Used by ≥" Placeholder="any" Variant="Variant.Outlined"
+                             Margin="Margin.Dense" Clearable="true" ShrinkLabel="true"
+                             Class="abom-filter-narrow" />
+        </MudTooltip>
+
+        <MudChipSet T="string" SelectedValues="_flags" SelectedValuesChanged="OnFlagsChanged"
+                    SelectionMode="SelectionMode.MultiSelection" CheckMark="true" Size="Size.Small">
+            <MudChip T="string" Value="@("findings")" Variant="Variant.Outlined">has findings</MudChip>
+            <MudChip T="string" Value="@("advisory")" Variant="Variant.Outlined">has advisory</MudChip>
+            <MudChip T="string" Value="@("unanalysed")" Variant="Variant.Outlined">not analysed</MudChip>
+        </MudChipSet>
+    </div>
+
+    <div class="d-flex flex-wrap align-center gap-3 mt-2">
+        <MudToggleGroup T="string" Value="_view" ValueChanged="OnViewChanged" Dense="true"
+                        Size="Size.Small" Color="Color.Primary" CheckMark="false"
+                        SelectionMode="SelectionMode.SingleSelection" Class="abom-views">
+            @foreach (var v in Views)
+            {
+                <MudToggleItem T="string" Value="@v.Key" Disabled="@(v.NeedsSelection && !HasSelection)">
+                    <MudTooltip Text="@ViewTooltip(v)" Placement="Placement.Bottom">
+                        <span>@v.Label</span>
+                    </MudTooltip>
+                </MudToggleItem>
+            }
+        </MudToggleGroup>
+        <MudSwitch T="bool" Value="_use3d" ValueChanged="On3dChanged" Color="Color.Primary"
+                   Label="3D" />
+        <MudTooltip Text="Watch the layout arrange itself, or compute it first and reveal it already settled.">
+            <MudSwitch T="bool" Value="_animate" ValueChanged="OnAnimateChanged" Color="Color.Primary"
+                       Label="Animate layout" />
+        </MudTooltip>
+
+        @if (!string.IsNullOrEmpty(_isolated))
+        {
+            <MudChip T="string" Color="Color.Warning" Variant="Variant.Filled" Size="Size.Small"
+                     OnClose="ClearSelection" CloseIcon="@Icons.Material.Filled.Close">
+                only @_isolated
+            </MudChip>
+            <MudSelect T="int" Label="Hops" Value="_hops" ValueChanged="OnHopsChanged" Dense="true"
+                       Margin="Margin.Dense" Variant="Variant.Outlined" ShrinkLabel="true"
+                       Class="abom-filter-narrow">
+                <MudSelectItem T="int" Value="0">all</MudSelectItem>
+                @for (var h = 1; h <= 6; h++)
+                {
+                    var v = h;
+                    <MudSelectItem T="int" Value="@v">@v</MudSelectItem>
+                }
+            </MudSelect>
+            <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.ArrowBack" OnClick="ClearSelection">
+                Back to the whole graph
+            </MudButton>
+        }
+        else if (!string.IsNullOrEmpty(_selection))
+        {
+            <MudText Typo="Typo.caption" Class="abom-rule">@_selection</MudText>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                double-click or right-click to show only its dependencies
+            </MudText>
+        }
+        @if (!string.IsNullOrEmpty(_selection))
+        {
+            <MudLink Href="@($"/node/{_selection}")" Typo="Typo.caption">open details</MudLink>
+        }
+        @if (IsNarrowed && string.IsNullOrEmpty(_isolated))
+        {
+            <MudButton Size="Size.Small" Variant="Variant.Text"
+                       StartIcon="@Icons.Material.Filled.ClearAll" OnClick="ShowEverything">
+                Show everything
+            </MudButton>
+        }
+        <MudSpacer />
+        <MudTooltip Text="@(_showLegend ? "Hide the key and give the graph the full width." : "Show the node and edge key, and filter by it.")">
+            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="ToggleKeyPanel"
+                       EndIcon="@(_showLegend ? Icons.Material.Filled.ChevronRight : Icons.Material.Filled.ChevronLeft)">
+                Nodes &amp; edges
+            </MudButton>
+        </MudTooltip>
+    </div>
+</MudPaper>
+
+@* Key and canvas side by side: there is far more room left-to-right than up-and-down, and the
+   checkboxes are only useful while you can see what they are changing. *@
+<div class="abom-explore">
+    <MudPaper Elevation="0" Outlined="true" Class="pa-0 abom-explore-canvas">
+        <div class="abom-graph-wrap">
+            <div id="abom-graph" class="abom-graph-host"></div>
+            @if (_busy)
+            {
+                <div class="@(_animate ? "abom-graph-busy" : "abom-graph-busy abom-graph-busy-opaque")">
+                    <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Medium" />
+                    <MudText Typo="Typo.caption" Class="mt-2">@_busyMessage</MudText>
+                </div>
+            }
+        </div>
+    </MudPaper>
+
+    @if (_showLegend)
+    {
+        <MudPaper Elevation="0" Outlined="true" Class="pa-2 abom-explore-key abom-keypanel">
+            <div class="d-flex align-center abom-key-head">
+                <MudCheckBox T="bool?" Value="@AllNodesChecked" ValueChanged="OnAllNodesChanged"
+                             TriState="true" Dense="true" Size="Size.Small" Color="Color.Primary" />
+                <span class="abom-key-title">SHOW ALL NODES</span>
+                @if (Theme.HasKindOverrides)
+                {
+                    <MudTooltip Text="Put every node kind back to its default colour.">
+                        <MudIconButton Icon="@Icons.Material.Filled.FormatColorReset" Size="Size.Small"
+                                       OnClick="ResetColours" Class="ml-1" />
+                    </MudTooltip>
+                }
+            </div>
+            @foreach (var kind in ThemeService.KindNames)
+            {
+                var k = kind.Key;
+                <div class="abom-key-row">
+                    <MudCheckBox T="bool" Value="@_kinds.Contains(k)" Dense="true"
+                                 Size="Size.Small" Color="Color.Primary"
+                                 ValueChanged="@(_ => ToggleKind(k))" />
+                    @KindGlyph(k)
+                    <MudTooltip Text="@KindHelp(k)" Placement="Placement.Left">
+                        <span class="abom-key-label" @onclick="@(() => ToggleKind(k))">@kind.Value</span>
+                    </MudTooltip>
+                    @* Colour is reassignable per kind and per scheme: a hue that reads well on
+                       black rarely does on white. *@
+                    <MudTooltip Text="Change this kind's colour.">
+                        <input type="color" class="abom-swatch" value="@KindColour(k)"
+                               @onchange="@(e => SetColour(k, e.Value?.ToString()))" />
+                    </MudTooltip>
+                </div>
+            }
+
+            <div class="d-flex align-center abom-key-head mt-3">
+                <MudCheckBox T="bool?" Value="@AllEdgesChecked" ValueChanged="OnAllEdgesChanged"
+                             TriState="true" Dense="true" Size="Size.Small" Color="Color.Primary" />
+                <span class="abom-key-title">SHOW ALL EDGES</span>
+            </div>
+            @foreach (var e in EdgeKinds)
+            {
+                var c = e.Key;
+                <MudTooltip Text="@e.Help" Placement="Placement.Left">
+                    <div class="abom-key-row" @onclick="@(() => ToggleEdge(c))">
+                        <MudCheckBox T="bool" Value="@_edgeClasses.Contains(c)" Dense="true"
+                                     Size="Size.Small" Color="Color.Primary"
+                                     ValueChanged="@(_ => ToggleEdge(c))" />
+                        <span class="abom-legend-line" style="background:@EdgeColour(c)"></span>
+                        <span>@e.Label</span>
+                    </div>
+                </MudTooltip>
+            }
+
+            <div class="abom-key-head mt-3"><span class="abom-key-title">STATE</span></div>
+            <div class="abom-key-row">
+                <span class="abom-legend-ring" style="border-color:@Theme.Palette.Focus"></span>
+                <span>selected &mdash; ringed</span>
+            </div>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary mt-2 d-block">
+                @PositionMeaning
+            </MudText>
+        </MudPaper>
+    }
+</div>
+
+<div class="d-flex flex-wrap align-center gap-3 mt-1">
+    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+        @if (_loading)
+        {
+            <span>Loading the whole graph…</span>
+        }
+        else
+        {
+            <span>
+                Showing <b>@_counts.Nodes.ToString("N0")</b> nodes out of
+                @_counts.Total.ToString("N0") total
+                @if (_counts.Hidden > 0)
+                {
+                    <span>(@_counts.Hidden.ToString("N0") nodes hidden by filters)</span>
+                }
+                @* Folding is a different mechanism from the filters, so it gets its own clause
+                   rather than being counted as "hidden". *@
+                @if (!ShowSteps)
+                {
+                    <span class="mud-text-secondary">
+                        · individual <code>uses:</code> steps folded into their workflow
+                    </span>
+                }
+            </span>
+        }
+    </MudText>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "selection")] public string? SelectionParam { get; set; }
+    [SupplyParameterFromQuery(Name = "view")] public string? ViewParam { get; set; }
+
+    // NeedsSelection marks a view whose force reads hop distance from a selected node. Without
+    // one it has nothing to measure from, so it is disabled rather than silently inert.
+    private sealed record ViewOption(string Key, string Label, string Meaning,
+        bool NeedsSelection = false);
+    private sealed record Counts(int Nodes, int Edges, int Hidden, int Total);
+
+    private static readonly ViewOption[] Views =
+    [
+        new("neighbourhood", "Neighbourhood",
+            "Position is structural: clusters are groups that share dependencies."),
+        new("priority", "Priority",
+            "Distance from the centre is remediation priority — closer is more urgent."),
+        new("ownership", "Who can fix it",
+            "Select a node first. What it reaches directly sits close in — those references live in your own repository and you can change them. What it reaches only through an intermediary sits further out, and someone else owns the fix.",
+            NeedsSelection: true),
+        new("distance", "Distance",
+            "Rings are hops from the selected node.", NeedsSelection: true),
+    ];
+
+    private static readonly Dictionary<string, string> Kinds = ThemeService.KindNames;
+
+    private sealed record EdgeKind(string Key, string Label, string Help);
+
+    private static readonly EdgeKind[] EdgeKinds =
+    [
+        new("sameRepo", "Same repo",
+            "Both ends live in the same repository: internal wiring rather than a supply-chain hop."),
+        new("sameOrg", "Same org",
+            "Crosses repositories but stays inside one organisation. Same repo wins over this."),
+        new("externalOrg", "External org",
+            "Leaves the organisation entirely. This is where the supply chain starts."),
+    ];
+
+    private static readonly Dictionary<string, string> KindHelpText = new()
+    {
+        ["repo"] = "A repository. Connected to the workflows and composite actions it holds.",
+        ["workflow"] = "A workflow file. Where `uses:` references are written.",
+        ["reusable_workflow"] = "A workflow other repositories can call. Its own dependencies become theirs.",
+        ["composite_action"] = "An action built from steps. Counts as an action, not a workflow.",
+        ["action"] = "An action being depended on.",
+        ["docker_image"] = "A container image referenced by a step.",
+        ["job"] = "A job within a workflow. Only present when steps are shown; otherwise folded into its workflow.",
+        ["step"] = "One individual `uses:` line. Off by default: there are 14,645 of them.",
+    };
+
+    private string KindHelp(string kind) =>
+        KindHelpText.TryGetValue(kind, out var h) ? h : kind;
+
+    private string EdgeColour(string cls) => cls switch
+    {
+        "sameRepo" => Theme.Palette.EdgeSameRepo,
+        "sameOrg" => Theme.Palette.EdgeSameOrg,
+        _ => Theme.Palette.EdgeExternalOrg,
+    };
+
+    /// <summary>The legend glyph matches the geometry the renderer actually draws.</summary>
+    private RenderFragment KindGlyph(string kind) => builder =>
+    {
+        var colour = KindColour(kind);
+        builder.AddMarkupContent(0, kind switch
+        {
+            "repo" => $"<svg class='abom-glyph' viewBox='0 0 16 16'><rect x='3' y='3' width='10' height='10' fill='{colour}'/></svg>",
+            "workflow" => $"<svg class='abom-glyph' viewBox='0 0 16 16'><circle cx='8' cy='8' r='5.5' fill='{colour}'/></svg>",
+            "reusable_workflow" => $"<svg class='abom-glyph' viewBox='0 0 16 16'><polygon points='8,2 14,8 8,14 2,8' fill='{colour}'/></svg>",
+            "composite_action" => $"<svg class='abom-glyph' viewBox='0 0 16 16'><polygon points='8,2 14,14 2,14' fill='{colour}'/></svg>",
+            "action" => $"<svg class='abom-glyph' viewBox='0 0 16 16'><polygon points='8,2 13.2,5 13.2,11 8,14 2.8,11 2.8,5' fill='{colour}'/></svg>",
+            "docker_image" => $"<svg class='abom-glyph' viewBox='0 0 16 16'><rect x='3.5' y='3' width='9' height='10' rx='4.5' fill='{colour}'/></svg>",
+            _ => $"<svg class='abom-glyph' viewBox='0 0 16 16'><polygon points='8,4 13,13 3,13' fill='{colour}'/></svg>",
+        });
+    };
+
+    private bool? AllNodesChecked => _kinds.Count == Kinds.Count ? true
+        : _kinds.Count == 0 ? false : null;
+
+    private bool? AllEdgesChecked => _edgeClasses.Count == EdgeKinds.Length ? true
+        : _edgeClasses.Count == 0 ? false : null;
+
+    private async Task SetColour(string kind, string? colour)
+    {
+        await Theme.SetKindColourAsync(kind, colour);
+        await PushPalette();
+    }
+
+    private async Task ResetColours()
+    {
+        await Theme.ResetKindColoursAsync();
+        await PushPalette();
+    }
+
+    private async Task PushPalette()
+    {
+        if (_module is not null)
+        {
+            await _module.InvokeVoidAsync("setPalette", "abom-graph", Theme.Palette);
+            // A shape carries its colour in a material built when the mesh was created, so it
+            // has to be rebuilt rather than merely repainted.
+            await _module.InvokeVoidAsync("rebuildNodes", "abom-graph");
+        }
+    }
+
+    private async Task ToggleKind(string kind)
+    {
+        var next = new HashSet<string>(_kinds);
+        if (!next.Remove(kind)) next.Add(kind);
+        var wasShowingSteps = ShowSteps;
+        _kinds = next;
+        // Steps are a different payload, not a different predicate.
+        if (ShowSteps != wasShowingSteps) await LoadGraph();
+        else await Refilter();
+    }
+
+    private async Task ToggleEdge(string cls)
+    {
+        var next = new HashSet<string>(_edgeClasses);
+        if (!next.Remove(cls)) next.Add(cls);
+        _edgeClasses = next;
+        await Refilter();
+    }
+
+    private async Task OnAllNodesChanged(bool? value)
+    {
+        var wasShowingSteps = ShowSteps;
+        _kinds = value == true ? Kinds.Keys.ToHashSet() : [];
+        if (ShowSteps != wasShowingSteps) await LoadGraph();
+        else await Refilter();
+    }
+
+    private async Task OnAllEdgesChanged(bool? value)
+    {
+        _edgeClasses = value == true ? EdgeKinds.Select(e => e.Key).ToHashSet() : [];
+        await Refilter();
+    }
+
+    private string _view = "neighbourhood";
+    private string _search = string.Empty;
+    private string _refStyle = "any";
+    private int? _minReach;
+    private int _hops;
+    private bool _use3d = true;
+    private bool _animate = true;
+    // Open by default: the key is beside the canvas rather than over it, and its checkboxes are
+    // the primary way to narrow the graph.
+    private bool _showLegend = true;
+    private bool _loading = true;
+    private bool _busy = true;
+    private string _busyMessage = "Loading the whole graph…";
+    private string _selection = string.Empty;
+    private string _isolated = string.Empty;
+    // Everything visible on arrival except steps and jobs, which only exist in the expanded
+    // payload and would add 20,000 nodes.
+    private static readonly string[] OffByDefault = ["step", "job"];
+
+    private IReadOnlyCollection<string> _kinds =
+        ThemeService.KindNames.Keys.Where(k => k != "step" && k != "job").ToHashSet();
+    private IReadOnlyCollection<string> _origins = [];
+    private IReadOnlyCollection<string> _rules = [];
+    private IReadOnlyCollection<string> _edgeClasses =
+        new HashSet<string> { "sameRepo", "sameOrg", "externalOrg" };
+    private IReadOnlyCollection<string> _flags = [];
+    private IReadOnlyList<string> _ruleIds = [];
+    private Counts _counts = new(0, 0, 0, 0);
+    private IJSObjectReference? _module;
+    private DotNetObjectReference<Explorer>? _self;
+    private bool _ready;
+
+    private bool ShowSteps => _kinds.Contains("step") || _kinds.Contains("job");
+
+    // Kinds and edge classes are allow-lists that start full, so "narrowed" means something has
+    // been switched *off*, not that a list is non-empty.
+    private bool IsNarrowed =>
+        !string.IsNullOrEmpty(_isolated) || !string.IsNullOrWhiteSpace(_search)
+        || _origins.Any() || _rules.Any() || _flags.Any()
+        || _refStyle != "any" || _minReach > 0
+        || _edgeClasses.Count != EdgeKinds.Length
+        || _kinds.Count != Kinds.Count - OffByDefault.Length;
+
+    private string PositionMeaning =>
+        Views.FirstOrDefault(v => v.Key == _view)?.Meaning ?? string.Empty;
+
+    private bool HasSelection => !string.IsNullOrEmpty(_selection);
+
+    /// <summary>The canvas changes width when the key opens, so it has to be re-measured.</summary>
+    private async Task ToggleKeyPanel()
+    {
+        _showLegend = !_showLegend;
+        StateHasChanged();
+        if (_module is not null)
+        {
+            await _module.InvokeVoidAsync("resize", "abom-graph");
+        }
+    }
+
+    private string ViewTooltip(ViewOption v) =>
+        v.NeedsSelection && !HasSelection
+            ? $"{v.Meaning} Click a node to enable this."
+            : v.Meaning;
+
+    private string KindColour(string kind) =>
+        Theme.Palette.Kinds.TryGetValue(kind, out var c) ? c : Theme.Palette.Muted;
+
+    protected override void OnInitialized()
+    {
+        _isolated = SelectionParam ?? string.Empty;
+        _selection = _isolated;
+        if (!string.IsNullOrEmpty(_isolated)) _hops = 1;
+        if (!string.IsNullOrEmpty(ViewParam)) _view = ViewParam;
+        Theme.Changed += OnThemeChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _module = await Js.InvokeAsync<IJSObjectReference>("import", "./js/graph.js");
+        _self = DotNetObjectReference.Create(this);
+        await _module.InvokeAsync<bool>("create", "abom-graph", _use3d, _self);
+        await _module.InvokeVoidAsync("setPalette", "abom-graph", Theme.Palette);
+        await _module.InvokeVoidAsync("setAnimate", "abom-graph", _animate);
+        _ready = true;
+        await LoadGraph();
+    }
+
+    private async Task LoadGraph()
+    {
+        if (_module is null) return;
+        _loading = true;
+        Busy("Loading the whole graph…");
+
+        var url = ShowSteps ? "/api/graph/full?steps=true" : "/api/graph/full";
+        var loaded = await _module.InvokeAsync<LoadResult>("loadFull", "abom-graph", url);
+        _ruleIds = loaded.Rules;
+
+        if (_view == "priority") await PushPriorities();
+        await _module.InvokeVoidAsync("setView", "abom-graph", _view);
+
+        _loading = false;
+        Busy($"Laying out {loaded.Nodes:N0} nodes…");
+        await Refilter();
+    }
+
+    private void Busy(string message)
+    {
+        _busy = true;
+        _busyMessage = message;
+        StateHasChanged();
+    }
+
+    /// <summary>The simulation is the only thing that knows when the picture has stopped moving.</summary>
+    [JSInvokable]
+    public Task OnLayoutSettled()
+    {
+        _busy = false;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private async Task Refilter()
+    {
+        if (_module is null || !_ready) return;
+        var spec = new
+        {
+            search = _search,
+            kinds = _kinds.ToArray(),
+            origins = _origins.ToArray(),
+            rules = _rules.ToArray(),
+            edgeClasses = _edgeClasses.ToArray(),
+            refStyle = _refStyle,
+            minReach = _minReach ?? 0,
+            hasFindings = _flags.Contains("findings"),
+            hasAdvisory = _flags.Contains("advisory"),
+            unanalysedOnly = _flags.Contains("unanalysed"),
+            selection = _isolated,
+            hops = _hops,
+        };
+        _counts = await _module.InvokeAsync<Counts>("applyFilters", "abom-graph", spec);
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// A single click only highlights and moves the camera.
+    ///
+    /// Rebuilding the view is a large enough change that it should take a deliberate second
+    /// action, so it is left to double-click and right-click.
+    /// </summary>
+    [JSInvokable]
+    public Task OnNodeSelected(string key)
+    {
+        _selection = key ?? string.Empty;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Narrows the view to everything touching a node, both directions.</summary>
+    [JSInvokable]
+    public async Task OnNodeIsolated(string key)
+    {
+        if (string.IsNullOrEmpty(key)) return;
+        _isolated = key == _isolated ? string.Empty : key;
+        _selection = _isolated;
+        // Start at the immediate neighbours. The graph is largely one connected component, so an
+        // unbounded walk from any node reaches nearly all of it and drilling in shows no change.
+        _hops = string.IsNullOrEmpty(_isolated) ? 0 : 1;
+        SyncAddress();
+        await Refilter();
+    }
+
+    private void SyncAddress()
+    {
+        var query = string.IsNullOrEmpty(_isolated)
+            ? $"/explore?view={_view}"
+            : $"/explore?selection={Uri.EscapeDataString(_isolated)}&view={_view}";
+        Nav.NavigateTo(query, forceLoad: false);
+    }
+
+    private async Task ClearSelection()
+    {
+        _isolated = string.Empty;
+        _selection = string.Empty;
+        _hops = 0;
+        await FallBackFromSelectionOnlyView();
+        SyncAddress();
+        await Refilter();
+        await _module!.InvokeVoidAsync("fit", "abom-graph");
+    }
+
+    /// <summary>Leaving a view that places nodes by hop distance, once there is nothing to measure from.</summary>
+    private async Task FallBackFromSelectionOnlyView()
+    {
+        var active = Views.FirstOrDefault(v => v.Key == _view);
+        if (active is { NeedsSelection: true } && !HasSelection)
+        {
+            _view = "neighbourhood";
+            await _module!.InvokeVoidAsync("setView", "abom-graph", _view);
+        }
+    }
+
+    private async Task ShowEverything()
+    {
+        _isolated = string.Empty;
+        _selection = string.Empty;
+        _search = string.Empty;        _refStyle = "any";
+        _minReach = null;
+        _hops = 0;
+        _kinds = Kinds.Keys.Where(k => !OffByDefault.Contains(k)).ToHashSet();
+        _edgeClasses = EdgeKinds.Select(e => e.Key).ToHashSet();
+        _origins = [];
+        _rules = [];
+        _flags = [];
+        SyncAddress();
+        await Refilter();
+        await _module!.InvokeVoidAsync("fit", "abom-graph");
+    }
+
+    private async Task OnViewChanged(string value)
+    {
+        _view = value;
+        if (value == "priority") await PushPriorities();
+        await _module!.InvokeVoidAsync("setView", "abom-graph", value);
+        SyncAddress();
+    }
+
+    /// <summary>Priority drives the Priority force, and is the same figure the table shows.</summary>
+    private async Task PushPriorities()
+    {
+        var items = await Api.GetRemediationAsync(300);
+        var map = new Dictionary<string, int>();
+        foreach (var item in items)
+        {
+            foreach (var action in item.Actions)
+            {
+                map[action] = Math.Max(map.GetValueOrDefault(action), item.Priority);
+            }
+        }
+        await _module!.InvokeVoidAsync("setPriorities", "abom-graph", map);
+    }
+
+    private async Task OnAnimateChanged(bool value)
+    {
+        _animate = value;
+        await _module!.InvokeVoidAsync("setAnimate", "abom-graph", value);
+    }
+
+    private async Task On3dChanged(bool value)
+    {
+        _use3d = value;
+        Busy(value ? "Rebuilding in 3D…" : "Rebuilding in 2D…");
+        var spec = new { selection = _isolated, hops = _hops };
+        await _module!.InvokeVoidAsync("setMode", "abom-graph", value, spec);
+        await _module.InvokeVoidAsync("setPalette", "abom-graph", Theme.Palette);
+        await Refilter();
+    }
+
+    private async Task OnSearchChanged(string value) { _search = value ?? string.Empty; await Refilter(); }
+    private async Task OnOriginsChanged(IEnumerable<string> v) { _origins = v?.ToArray() ?? []; await Refilter(); }
+    private async Task OnRulesChanged(IEnumerable<string> v) { _rules = v?.ToArray() ?? []; await Refilter(); }
+    private async Task OnRefStyleChanged(string v) { _refStyle = v; await Refilter(); }
+    private async Task OnMinReachChanged(int? v) { _minReach = v; await Refilter(); }
+    private async Task OnHopsChanged(int v) { _hops = v; await Refilter(); }
+
+    private async Task OnFlagsChanged(IEnumerable<string> v)
+    {
+        var wasShowingSteps = ShowSteps;
+        _flags = v?.ToArray() ?? [];
+        // Steps are a different payload, not a different predicate.
+        if (ShowSteps != wasShowingSteps) await LoadGraph();
+        else await Refilter();
+    }
+
+    private void OnThemeChanged()
+    {
+        if (_module is not null)
+        {
+            _ = _module.InvokeVoidAsync("setPalette", "abom-graph", Theme.Palette).AsTask();
+        }
+        StateHasChanged();
+    }
+
+    private sealed record LoadResult(int Nodes, int Edges, IReadOnlyList<string> Rules);
+
+    public async ValueTask DisposeAsync()
+    {
+        Theme.Changed -= OnThemeChanged;
+        if (_module is not null)
+        {
+            try
+            {
+                await _module.InvokeVoidAsync("dispose", "abom-graph");
+                await _module.DisposeAsync();
+            }
+            catch (JSDisconnectedException) { /* the circuit is already gone */ }
+        }
+        _self?.Dispose();
+    }
+}

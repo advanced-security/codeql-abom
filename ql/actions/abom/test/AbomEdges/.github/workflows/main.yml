@@ -1,0 +1,37 @@
+name: Main
+on:
+  pull_request_target:
+    types: [opened]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Pinned SHA with version comment
+        id: checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Floating major tag
+        uses: actions/setup-node@v4
+      - name: Semver tag
+        uses: actions/upload-artifact@v4.6.2
+      - name: Branch ref
+        uses: actions/stale@main
+      - name: No ref at all
+        uses: actions/labeler
+      - name: Local composite action
+        uses: ./.github/actions/greet
+      - name: Docker action
+        uses: docker://alpine:3.20
+      - name: Subpath action
+        uses: github/codeql-action/init@v3
+
+  call-remote-reusable:
+    uses: octo-org/shared/.github/workflows/build.yml@v1
+    secrets: inherit
+
+  call-local-reusable:
+    uses: ./.github/workflows/reusable.yml

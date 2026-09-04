@@ -1,0 +1,98 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject ThemeService Theme
+@inject AbomApi Api
+
+<MudThemeProvider @ref="_themeProvider" Theme="Theme.Theme" IsDarkMode="Theme.IsDark" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="1">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start"
+                       OnClick="@(() => _drawerOpen = !_drawerOpen)" aria-label="Toggle navigation" />
+        <MudText Typo="Typo.h6" Class="ml-2">ABOM</MudText>
+        <MudText Typo="Typo.caption" Class="ml-2 mud-text-secondary d-none d-sm-flex">
+            Actions Bill of Materials
+        </MudText>
+        <MudSpacer />
+        <MudTooltip Text="@ThemeTooltip">
+            <MudIconButton Icon="@ThemeIcon" Color="Color.Inherit" OnClick="CycleTheme"
+                           aria-label="@ThemeTooltip" />
+        </MudTooltip>
+    </MudAppBar>
+
+    <MudDrawer @bind-Open="_drawerOpen" ClipMode="DrawerClipMode.Always" Elevation="1">
+        <NavMenu />
+    </MudDrawer>
+
+    <MudMainContent>
+        <CoverageStrip Summary="_summary" />
+        <MudContainer MaxWidth="MaxWidth.False" Class="pa-4">
+            @Body
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>
+
+@code {
+    private MudThemeProvider _themeProvider = default!;
+    private bool _drawerOpen = true;
+    private bool _systemPrefersDark;
+    private Summary? _summary;
+
+    protected override void OnInitialized() => Theme.Changed += OnThemeChanged;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        // The system preference is only readable once the provider has rendered, so the first
+        // paint may briefly use the wrong scheme; index.html pre-applies it to avoid a flash.
+        _systemPrefersDark = await _themeProvider.GetSystemDarkModeAsync();
+        await Theme.InitialiseAsync(_systemPrefersDark);
+        await _themeProvider.WatchSystemDarkModeAsync(OnSystemPreferenceChanged);
+
+        _summary = await Api.GetSummaryAsync();
+        StateHasChanged();
+    }
+
+    private Task OnSystemPreferenceChanged(bool prefersDark)
+    {
+        _systemPrefersDark = prefersDark;
+        Theme.SystemPreferenceChanged(prefersDark);
+        return Task.CompletedTask;
+    }
+
+    private async Task CycleTheme()
+    {
+        var next = Theme.Choice switch
+        {
+            ThemeChoice.System => ThemeChoice.Light,
+            ThemeChoice.Light => ThemeChoice.Dark,
+            _ => ThemeChoice.System,
+        };
+        await Theme.SetAsync(next, _systemPrefersDark);
+    }
+
+    private string ThemeIcon => Theme.Choice switch
+    {
+        ThemeChoice.Light => Icons.Material.Filled.LightMode,
+        ThemeChoice.Dark => Icons.Material.Filled.DarkMode,
+        _ => Icons.Material.Filled.BrightnessAuto,
+    };
+
+    private string ThemeTooltip => Theme.Choice switch
+    {
+        ThemeChoice.Light => "Light. Click for dark.",
+        ThemeChoice.Dark => "Dark. Click to follow the system.",
+        _ => $"Following the system ({(_systemPrefersDark ? "dark" : "light")}). Click for light.",
+    };
+
+    private void OnThemeChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Theme.Changed -= OnThemeChanged;
+}

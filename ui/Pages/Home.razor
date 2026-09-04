@@ -1,0 +1,80 @@
+@page "/"
+@inject AbomApi Api
+
+<PageTitle>ABOM — Actions Bill of Materials</PageTitle>
+
+<MudText Typo="Typo.h5"><h1 style="all:unset;">Actions Bill of Materials</h1></MudText>
+<MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">
+    Every GitHub Actions dependency reached by the @_summary.SeedRepos repositories in scope —
+    those in the organisation that were analysed with CodeQL. Nothing here is a verdict this tool
+    invented: each claim traces back to the query that produced it.
+</MudText>
+
+<MudGrid Spacing="3">
+    @foreach (var s in Sections)
+    {
+        <MudItem xs="12" sm="6" md="4">
+            <MudPaper Elevation="0" Outlined="true" Class="pa-4 abom-section-card"
+                      @onclick="@(() => Go(s.Href))">
+                <div class="d-flex align-center gap-2 mb-2">
+                    <MudIcon Icon="@s.Icon" Color="Color.Primary" Size="Size.Small" />
+                    <MudLink Href="@s.Href" Typo="Typo.subtitle1">@s.Title</MudLink>
+                </div>
+                <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">@s.Question</MudText>
+                <MudText Typo="Typo.caption" Class="abom-section-figure">@s.Figure</MudText>
+            </MudPaper>
+        </MudItem>
+    }
+</MudGrid>
+
+@* Coverage is stated on the landing page too, so the first impression is not a complete one. *@
+<MudAlert Severity="MudBlazor.Severity.Normal" Variant="Variant.Outlined" Dense="true"
+          Class="mt-4" Icon="@Icons.Material.Outlined.HelpOutline">
+    <MudText Typo="Typo.body2">
+        @_summary.PendingDependencies dependencies have not been analysed yet, and
+        @(_summary.Findings - _summary.LinkedFindings) findings could not be attached to a
+        specific reference.
+    </MudText>
+    <MudText Typo="Typo.caption">
+        Anything downstream of an unanalysed dependency is not represented anywhere in this
+        interface. <MudLink Href="/discovery" Typo="Typo.caption">See what is missing</MudLink>.
+    </MudText>
+</MudAlert>
+
+@code {
+    private Summary _summary = new();
+
+    [Inject] private NavigationManager Nav { get; set; } = default!;
+
+    protected override async Task OnInitializedAsync() => _summary = await Api.GetSummaryAsync();
+
+    private void Go(string href) => Nav.NavigateTo(href);
+
+    private sealed record Section(string Title, string Question, string Href, string Icon,
+        string Figure);
+
+    // Each card names the question its section answers, because the section names alone do not.
+    private IEnumerable<Section> Sections =>
+    [
+        new("Explorer",
+            "How does it all connect? Start from everything and filter down to what you care about.",
+            "/explore", Icons.Material.Outlined.Hub,
+            $"{_summary.Nodes:N0} nodes · {_summary.Edges:N0} relationships"),
+        new("Discovery",
+            "How complete is this picture, and what has not been analysed yet?",
+            "/discovery", Icons.Material.Outlined.TravelExplore,
+            $"{_summary.AnalysedUpstreams:N0} analysed · {_summary.PendingDependencies:N0} pending"),
+        new("Actions & Workflows",
+            "What do we depend on, and at which exact references?",
+            "/inventory", Icons.Material.Outlined.Extension,
+            $"{_summary.Findings:N0} findings across {_summary.Rules} rules"),
+        new("Repositories",
+            "What does each repository pull in, and how much of it is theirs to fix?",
+            "/repositories", Icons.Material.Outlined.FolderOpen,
+            $"{_summary.SeedRepos:N0} in scope · {_summary.UpstreamRepos:N0} upstream"),
+        new("Remediation",
+            "What should we fix first, and why that order?",
+            "/remediation", Icons.Material.Outlined.Build,
+            $"{_summary.Advisories:N0} advisories · {_summary.AffectedActions:N0} actions in use"),
+    ];
+}

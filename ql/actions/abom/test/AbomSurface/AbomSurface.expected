@@ -1,0 +1,3 @@
+| .github/workflows/surface.yml | calls-reusable-with-secrets | contents: read | workflow | pull_request_target,workflow_dispatch |  | true | false | true |
+| .github/workflows/surface.yml | inherits-workflow-permissions | contents: read | workflow | pull_request_target,workflow_dispatch | ubuntu-latest | false | false | true |
+| .github/workflows/surface.yml | overrides-permissions | contents: write,id-token: write,pull-requests: read | job | pull_request_target,workflow_dispatch | linux,self-hosted,x64 | false | true | true |
