@@ -45,6 +45,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	if *uiDir != "" {
 		srv.UI = os.DirFS(*uiDir)
 	}
+	writeIdentityBanner(stdout, s)
 
 	httpServer := &http.Server{Addr: *addr, Handler: srv.Handler()}
 

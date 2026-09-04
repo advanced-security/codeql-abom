@@ -29,7 +29,7 @@ var subcommands = []subcommand{
 	{"expand-all", runExpandAll, "Follow dependencies upstream, then refresh every aggregate."},
 	{"report", runReport, "Print a summary of the collected ABOM."},
 	{"serve", runServe, "Serve the ABOM over HTTP for the user interface."},
-	{"owned", runOwned, "Declare which accounts you own."},
+	{"accounts", runAccounts, "Show the accounts you are verified to belong to."},
 	{"selfcheck", runSelfcheck, "Analyze a source tree with a CodeQL suite as a smoke test."},
 }
 
