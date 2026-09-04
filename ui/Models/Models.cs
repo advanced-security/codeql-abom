@@ -196,14 +196,61 @@ public sealed record RepositoryDetail
     public IReadOnlyList<Exposure> Exposures { get; init; } = [];
 }
 
-/// <summary>One rule's finding count against the references it was measured over.</summary>
-public sealed record PostureRow
+/// <summary>
+/// One scope's reference pinning, measured two independent ways: how references are written,
+/// and what <c>actions/unpinned-tag</c> objected to. They are never combined.
+/// </summary>
+/// <summary>The filter every pinning level is computed from, so parents match their children.</summary>
+public sealed record PinningQuery
+{
+    public string Search { get; init; } = string.Empty;
+    /// <summary>`commit`, `tag`, or empty. Lexical: how the reference is written.</summary>
+    public string RefStyle { get; init; } = string.Empty;
+    public bool FlaggedOnly { get; init; }
+
+    public bool IsActive =>
+        !string.IsNullOrWhiteSpace(Search) || !string.IsNullOrEmpty(RefStyle) || FlaggedOnly;
+
+    public string Query =>
+        $"&q={Uri.EscapeDataString(Search)}&style={Uri.EscapeDataString(RefStyle)}" +
+        $"&flagged={(FlaggedOnly ? "true" : "false")}";
+}
+
+public sealed record PinningRow
 {
     public string Scope { get; init; } = string.Empty;
     public string ScopeKey { get; init; } = string.Empty;
-    public string RuleId { get; init; } = string.Empty;
+    public string Label { get; init; } = string.Empty;
+    public string Ref { get; init; } = string.Empty;
+    public string Kind { get; init; } = string.Empty;
+    public int Pinnable { get; init; }
+    public int Commit { get; init; }
+    public int Floating { get; init; }
+    public int Flagged { get; init; }
+    public int FloatingUnflagged { get; init; }
+    public bool HasChildren { get; init; }
+    /// <summary>Marks a row in an account the operator declared. A mark, never a filter.</summary>
+    public bool Owned { get; init; }
+    public OwnedSplit Yours { get; init; } = new();
+    public OwnedSplit FlaggedSplit { get; init; } = new();
+
+    public double CommitShare => Pinnable == 0 ? 0 : (double)Commit / Pinnable;
+}
+
+/// <summary>A figure divided into what the operator can act on and what they cannot.</summary>
+public sealed record OwnedSplit
+{
+    public int Yours { get; init; }
+    public int Elsewhere { get; init; }
+    public int Total => Yours + Elsewhere;
+}
+
+public sealed record OwnerCandidate
+{
+    public string Owner { get; init; } = string.Empty;
+    public int Repositories { get; init; }
     public int Findings { get; init; }
-    public int ReferencesTotal { get; init; }
+    public bool Owned { get; init; }
 }
 
 public sealed record AffectedRepo

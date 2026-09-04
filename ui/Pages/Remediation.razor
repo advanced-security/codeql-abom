@@ -99,8 +99,8 @@ else
                 </CellTemplate>
             </PropertyColumn>
 
-            <PropertyColumn Property="x => x.TransitiveRepos" Title="Via"
-                            HeaderStyle="width:64px;" CellStyle="width:64px;">
+            <PropertyColumn Property="x => x.TransitiveRepos" Title="Transitive"
+                            HeaderStyle="width:88px;" CellStyle="width:88px;">
                 <CellTemplate>
                     <MudTooltip Text="These reach it through an intermediary that may belong to someone else.">
                         <span style="font-variant-numeric:tabular-nums;@(context.Item.TransitiveRepos > 0 ? "" : "opacity:0.4;")">

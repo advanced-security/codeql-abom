@@ -50,7 +50,15 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 .abom-coverage-item { display: flex; align-items: baseline; gap: 0.35rem; }
 .abom-coverage-value { font-weight: 600; font-variant-numeric: tabular-nums; }
 .abom-coverage-label { opacity: 0.7; }
-.abom-coverage-unknown { opacity: 0.85; font-style: italic; }
+/* Dotted underline marks the two items that carry an explanation, without an icon breaking the
+   baseline the other four share. */
+.abom-coverage-unknown {
+    opacity: 0.85;
+    font-style: italic;
+    text-decoration: underline dotted currentColor 1px;
+    text-underline-offset: 3px;
+    cursor: help;
+}
 
 /* Height is set by graph.js from the measured offset; this is only the pre-script fallback. */
 .abom-graph-host {
@@ -88,6 +96,16 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 .abom-filters .mud-chip { font-size: 0.75rem; height: 26px; }
 .abom-filters .mud-toggle-item { font-size: 0.75rem; }
 
+/* The second row was never covered by the rules above, so switches, buttons and links stayed at
+   full size and the bar outshouted the graph it controls. */
+.abom-filters .mud-button-root { font-size: 0.75rem; padding: 3px 10px; min-height: 28px; }
+.abom-filters .mud-button-root .mud-icon-root { font-size: 1rem; }
+.abom-filters .mud-checkbox .mud-typography { font-size: 0.78rem; }
+.abom-filters .mud-checkbox .mud-icon-root { font-size: 1.05rem; }
+.abom-filters .mud-checkbox .mud-button-root { padding: 4px; min-height: 0; }
+.abom-filters .mud-typography-caption { font-size: 0.72rem; }
+.abom-filters a.mud-typography { font-size: 0.75rem; }
+
 /* Labels sit above every box, so the value lines all start at the same place. */
 .abom-filters .mud-input-slot,
 .abom-filters input.mud-input-root { text-align: left; }
@@ -95,6 +113,49 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 .abom-filter { width: 150px; }
 .abom-filter-wide { width: 215px; }
 .abom-filter-narrow { width: 100px; }
+
+/* Each nesting step is indented and ruled, so depth is visible without repeating the full path
+   on every row. */
+.abom-pinning-child {
+    padding: 4px 0 8px 10px;
+    border-left: 2px solid var(--mud-palette-lines-default);
+    margin-left: 6px;
+}
+
+/* Nested levels are narrower than the one above, so headings wrap onto three lines unless they
+   are told not to. The heading still names the level, which is how depth is read. */
+.abom-pinning-child .mud-table-head .mud-table-cell {
+    font-size: 0.72rem;
+    white-space: nowrap;
+    padding: 4px 6px;
+}
+.abom-pinning-child .mud-table-body .mud-table-cell {
+    font-size: 0.78rem;
+    padding: 4px 6px;
+}
+
+/* Left unconstrained a tooltip stretches to the viewport, covering the controls it describes. */
+.mud-tooltip {
+    max-width: 320px;
+    font-size: 0.75rem;
+    line-height: 1.35;
+}
+
+/* Reads as a caption, so it is not mistaken for the checkbox rows above it. */
+.abom-key-note {    display: flex;
+    align-items: flex-start;
+    gap: 0.4rem;
+    font-size: 0.72rem;
+    opacity: 0.75;
+    padding: 2px 0;
+}
+/* The ring keeps its size against a label that wraps to two lines. */
+.abom-key-note .abom-legend-ring { flex: none; margin-top: 2px; }
+.abom-key-selected {
+    font-family: "Cascadia Code", "Fira Code", ui-monospace, monospace;
+    font-size: 0.7rem;
+    overflow-wrap: anywhere;
+}
 
 .abom-graph-wrap { position: relative; }
 
@@ -207,13 +268,19 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 .abom-legend-item { display: flex; align-items: center; gap: 0.35rem; }
 .abom-legend-dot { width: 10px; height: 10px; border-radius: 50%; }
 
-/* Selection is a state, not a category, so it is drawn as a ring and never as a hue. */
+/* Selection is a state, not a category, so it is drawn as a bright edge on the node's own
+   shape and never as a hue. The swatch is a rounded square rather than a circle, because the
+   marker no longer borrows any one kind's silhouette. */
 .abom-legend-ring {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
+    width: 11px;
+    height: 11px;
+    border-radius: 3px;
     border: 2px solid;
 }
+
+/* Carries the native title tooltip for a view that may be disabled, where a MudTooltip child
+   would never receive the pointer events it needs. */
+.abom-view-label { display: inline-block; }
 
 .abom-legend-line { width: 18px; height: 3px; display: inline-block; border-radius: 2px; }
 

@@ -14,9 +14,11 @@ type GraphNode struct {
 	Kind       string `json:"kind"`
 	Repository string `json:"repository"`
 	// Origin distinguishes repositories under review from those fetched as dependencies.
-	Origin     string `json:"origin"`
-	Path       string `json:"path"`
-	Container  string `json:"container,omitempty"`
+	Origin    string `json:"origin"`
+	Path      string `json:"path"`
+	Container string `json:"container,omitempty"`
+	// Owner is the account a dependency lives under, which is the coarsest grouping available.
+	Owner      string `json:"owner,omitempty"`
 	IsExternal bool   `json:"isExternal"`
 	// DependentRepos is blast radius, and is what sizes a node.
 	DependentRepos int `json:"dependentRepos"`
@@ -91,6 +93,8 @@ func (s *Store) FullGraph(opts FullGraphOptions) (Graph, error) {
 		return out, err
 	}
 
+	nodes, edges = attachOwners(nodes, edges)
+
 	out.Nodes, out.Edges = nodes, edges
 	return out, nil
 }
@@ -99,6 +103,7 @@ func (s *Store) graphNodes(display string) ([]GraphNode, map[string]*GraphNode, 
 	rows, err := s.db.Query(`WITH ` + display + `
 		SELECT n.node_key, n.node_kind, COALESCE(r.repository_full_name, ''),
 		       COALESCE(r.origin, ''), COALESCE(n.path, ''), COALESCE(c.node_key, ''),
+		       COALESCE(n.owner, ''),
 		       n.is_external, COALESCE(b.dependent_repos, 0),
 		       (SELECT COUNT(DISTINCT a.ghsa_id)
 		          FROM abom_advisory a
@@ -122,7 +127,7 @@ func (s *Store) graphNodes(display string) ([]GraphNode, map[string]*GraphNode, 
 	for rows.Next() {
 		var n GraphNode
 		if err := rows.Scan(&n.Key, &n.Kind, &n.Repository, &n.Origin, &n.Path, &n.Container,
-			&n.IsExternal, &n.DependentRepos, &n.Advisories, &n.Analysed); err != nil {
+			&n.Owner, &n.IsExternal, &n.DependentRepos, &n.Advisories, &n.Analysed); err != nil {
 			return nil, nil, fmt.Errorf("scanning graph node: %w", err)
 		}
 		n.Rules = []string{}

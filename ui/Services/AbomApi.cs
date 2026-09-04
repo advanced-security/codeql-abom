@@ -20,6 +20,21 @@ public sealed class AbomApi(HttpClient http)
     public async Task<Summary> GetSummaryAsync(CancellationToken ct = default) =>
         await GetAsync<Summary>("api/summary", ct) ?? new Summary();
 
+    public async Task<IReadOnlyList<string>> GetOwnedOrgsAsync(CancellationToken ct = default) =>
+        await GetListAsync<string>("api/owned-orgs", ct);
+
+    public async Task<IReadOnlyList<string>> SetOwnedOrgsAsync(
+        IEnumerable<string> owners, CancellationToken ct = default)
+    {
+        var response = await http.PutAsJsonAsync("api/owned-orgs", owners.ToArray(), Json, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<List<string>>(Json, ct) ?? [];
+    }
+
+    public async Task<IReadOnlyList<OwnerCandidate>> GetOwnerCandidatesAsync(
+        CancellationToken ct = default) =>
+        await GetListAsync<OwnerCandidate>("api/owner-candidates", ct);
+
     public async Task<IReadOnlyList<RemediationItem>> GetRemediationAsync(
         int top = 50, CancellationToken ct = default) =>
         await GetListAsync<RemediationItem>($"api/remediation?top={top}", ct);
@@ -58,16 +73,15 @@ public sealed class AbomApi(HttpClient http)
         string key, CancellationToken ct = default) =>
         await GetAsync<BumpImpact>($"api/node/{key}/-/impact", ct);
 
-    public async Task<IReadOnlyList<PostureRow>> GetPinningAsync(
-        string? search = null, string? rule = null, int top = 500,
-        CancellationToken ct = default) =>
-        await GetListAsync<PostureRow>(
-            $"api/pinning?top={top}&q={Uri.EscapeDataString(search ?? string.Empty)}" +
-            $"&rule={Uri.EscapeDataString(rule ?? string.Empty)}", ct);
+    public async Task<IReadOnlyList<PinningRow>> GetPinningAsync(
+        string scope, string? parent, PinningQuery filter, CancellationToken ct = default) =>
+        await GetListAsync<PinningRow>(
+            $"api/pinning?scope={Uri.EscapeDataString(scope)}" +
+            $"&parent={Uri.EscapeDataString(parent ?? string.Empty)}{filter.Query}", ct);
 
-    public async Task<IReadOnlyList<string>> GetPostureRulesAsync(
-        CancellationToken ct = default) =>
-        await GetListAsync<string>("api/posture-rules", ct);
+    public async Task<PinningRow?> GetPinningTotalsAsync(
+        PinningQuery filter, CancellationToken ct = default) =>
+        await GetAsync<PinningRow>($"api/pinning/totals?scope=all{filter.Query}", ct);
 
     public async Task<IReadOnlyList<FrontierItem>> GetFrontierAsync(
         string? status = null, int top = 500, CancellationToken ct = default) =>

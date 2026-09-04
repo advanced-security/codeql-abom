@@ -189,8 +189,8 @@ public sealed class ThemeService(IJSRuntime js)
             Muted: "#5C5F66",
             Kinds: KindColours(DarkKinds),
             EdgeSameRepo: "rgba(91,200,255,0.85)",
-            EdgeSameOrg: "rgba(255,200,72,0.85)",
-            EdgeExternalOrg: "rgba(255,110,156,0.85)")
+            EdgeSameOwner: "rgba(255,200,72,0.85)",
+            EdgeCrossOwner: "rgba(255,110,156,0.85)")
         : new GraphPalette(
             Background: "#FFFFFF",
             Focus: "#F08C00",
@@ -202,12 +202,13 @@ public sealed class ThemeService(IJSRuntime js)
             Muted: "#ADB5BD",
             Kinds: KindColours(LightKinds),
             EdgeSameRepo: "rgba(11,127,199,0.8)",
-            EdgeSameOrg: "rgba(178,106,0,0.8)",
-            EdgeExternalOrg: "rgba(194,37,92,0.8)");
+            EdgeSameOwner: "rgba(178,106,0,0.8)",
+            EdgeCrossOwner: "rgba(194,37,92,0.8)");
 
     // Kind is the first thing a reader wants to tell apart, so it is what colour encodes.
     private static readonly Dictionary<string, string> DarkKinds = new()
     {
+        ["org"] = "#FFD43B",
         ["repo"] = "#4DABF7",
         ["workflow"] = "#63E6BE",
         ["reusable_workflow"] = "#38D9A9",
@@ -220,6 +221,7 @@ public sealed class ThemeService(IJSRuntime js)
 
     private static readonly Dictionary<string, string> LightKinds = new()
     {
+        ["org"] = "#F08C00",
         ["repo"] = "#1971C2",
         ["workflow"] = "#0CA678",
         ["reusable_workflow"] = "#087F5B",
@@ -233,6 +235,7 @@ public sealed class ThemeService(IJSRuntime js)
     /// <summary>Human-readable names for the node kinds, used by the legend and filters.</summary>
     public static readonly Dictionary<string, string> KindNames = new()
     {
+        ["org"] = "Owner",
         ["repo"] = "Repository",
         ["workflow"] = "Workflow",
         ["reusable_workflow"] = "Reusable workflow",
@@ -277,5 +280,5 @@ public sealed record GraphPalette(
     string Muted,
     IReadOnlyDictionary<string, string> Kinds,
     string EdgeSameRepo,
-    string EdgeSameOrg,
-    string EdgeExternalOrg);
+    string EdgeSameOwner,
+    string EdgeCrossOwner);

@@ -1,0 +1,98 @@
+@page "/settings"
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@inject AbomApi Api
+@inject OwnedOrgService OwnedOrgs
+
+<PageTitle>Settings — ABOM</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1">Your Accounts</MudText>
+<MudText Typo="Typo.body2" Class="mb-4 mud-text-secondary">
+    Declare which GitHub accounts you control. Every page then reports its figures split into
+    what you can change and what you cannot &mdash; both halves, always. Nothing is hidden by
+    declaring an account, and nothing is assumed by leaving the list empty.
+</MudText>
+
+<MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mb-4">
+    <MudText Typo="Typo.body2">
+        This is a declaration, not a measurement. An account can hold repositories that were
+        analysed and still be one nobody here can change &mdash; <code>actions</code> owns
+        <code>actions/cache</code>, which is why it appears below and why the choice is yours.
+    </MudText>
+</MudAlert>
+
+@if (_candidates is null)
+{
+    <MudProgressLinear Indeterminate="true" Class="my-8" />
+}
+else
+{
+    <div class="d-flex flex-wrap align-center gap-3 mb-3">
+        <MudTextField T="string" Value="_search" ValueChanged="@(v => _search = v)"
+                      Immediate="true" DebounceInterval="200" Placeholder="Filter accounts"
+                      Variant="Variant.Outlined" Margin="Margin.Dense"
+                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                      Style="max-width:280px" />
+        <MudText Typo="Typo.caption" Class="mud-text-secondary">
+            @(OwnedOrgs.AnyDeclared
+                ? $"{OwnedOrgs.Owned.Count} declared — figures are reported split"
+                : "None declared — every figure is reported undivided")
+        </MudText>
+        <MudSpacer />
+        @if (OwnedOrgs.AnyDeclared)
+        {
+            <MudButton Size="Size.Small" Variant="Variant.Text"
+                       StartIcon="@Icons.Material.Filled.ClearAll" OnClick="ClearAll">
+                Clear all
+            </MudButton>
+        }
+    </div>
+
+    <MudDataGrid T="OwnerCandidate" Items="Filtered" Dense="true" Hover="true" Bordered="false"
+                 SortMode="SortMode.Multiple" Filterable="false" Class="abom-grid"
+                 RowsPerPage="25">
+        <Columns>
+            <TemplateColumn Title="Yours" Sortable="false">
+                <CellTemplate>
+                    <MudCheckBox T="bool" Value="@OwnedOrgs.IsOwned(context.Item.Owner)"
+                                 ValueChanged="@(_ => Toggle(context.Item.Owner))"
+                                 Size="Size.Small" Dense="true" Color="Color.Primary" />
+                </CellTemplate>
+            </TemplateColumn>
+            <PropertyColumn Property="x => x.Owner" Title="Account" />
+            <PropertyColumn Property="x => x.Repositories" Title="Repositories in scope" />
+            <PropertyColumn Property="x => x.Findings" Title="Findings" />
+        </Columns>
+        <PagerContent>
+            <MudDataGridPager T="OwnerCandidate" />
+        </PagerContent>
+    </MudDataGrid>
+}
+
+@code {
+    private IReadOnlyList<OwnerCandidate>? _candidates;
+    private string _search = string.Empty;
+
+    private IEnumerable<OwnerCandidate> Filtered =>
+        (_candidates ?? []).Where(c =>
+            string.IsNullOrWhiteSpace(_search) ||
+            c.Owner.Contains(_search, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        await OwnedOrgs.EnsureLoadedAsync();
+        _candidates = await Api.GetOwnerCandidatesAsync();
+    }
+
+    private async Task Toggle(string owner)
+    {
+        await OwnedOrgs.ToggleAsync(owner);
+        StateHasChanged();
+    }
+
+    private async Task ClearAll()
+    {
+        await OwnedOrgs.SetAsync([]);
+        StateHasChanged();
+    }
+}

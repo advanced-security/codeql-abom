@@ -1,0 +1,159 @@
+package store
+
+import "testing"
+
+func ownerNodes(nodes []GraphNode) map[string]GraphNode {
+	out := map[string]GraphNode{}
+	for _, n := range nodes {
+		if n.Kind == OrgNodeKind {
+			out[n.Path] = n
+		}
+	}
+	return out
+}
+
+// The bug that made repositories unreachable was that nothing pointed at them. An account must
+// never arrive in the same state.
+func TestOwnerNodesAreNeverIslands(t *testing.T) {
+	nodes := []GraphNode{
+		{Key: "octo-org/app", Kind: "repo", Repository: "octo-org/app", Origin: OriginSeed},
+		{Key: "actions/checkout", Kind: "action", IsExternal: true, Owner: "actions"},
+	}
+
+	got, edges := attachOwners(nodes, []GraphEdge{})
+
+	for owner, org := range ownerNodes(got) {
+		var attached int
+		for _, e := range edges {
+			if e.Source == org.Key || e.Target == org.Key {
+				attached++
+			}
+		}
+		if attached == 0 {
+			t.Errorf("account %s has no edges", owner)
+		}
+	}
+}
+
+// An account holding a repository under review is in scope; one known only as a dependency is
+// not. This is the account-level reading of seed versus upstream, and must not invent a third.
+func TestOwnerInScopeWhenItHoldsASeedRepository(t *testing.T) {
+	nodes := []GraphNode{
+		{Key: "octo-org/app", Kind: "repo", Repository: "octo-org/app", Origin: OriginSeed},
+		{Key: "actions/checkout", Kind: "action", IsExternal: true, Owner: "actions"},
+	}
+
+	got, _ := attachOwners(nodes, []GraphEdge{})
+	orgs := ownerNodes(got)
+
+	if orgs["octo-org"].IsExternal {
+		t.Error("octo-org holds a repository under review but is marked external")
+	}
+	if !orgs["actions"].IsExternal {
+		t.Error("actions is only ever a dependency but is marked in scope")
+	}
+}
+
+// Reach is the furthest of an account's members. Summing would count one repository once per
+// member that reaches it, inflating exactly the number the interface sizes nodes by.
+func TestOwnerReachIsTheFurthestMemberNotTheSum(t *testing.T) {
+	nodes := []GraphNode{
+		{Key: "actions/checkout", Kind: "action", IsExternal: true, Owner: "actions",
+			DependentRepos: 202},
+		{Key: "actions/cache", Kind: "action", IsExternal: true, Owner: "actions",
+			DependentRepos: 55},
+	}
+
+	got, _ := attachOwners(nodes, []GraphEdge{})
+
+	if reach := ownerNodes(got)["actions"].DependentRepos; reach != 202 {
+		t.Errorf("account reach is %d, want the furthest member's 202", reach)
+	}
+}
+
+// Findings roll up, and the rule ids that produced them travel with the count. Losing the rules
+// would leave an account carrying a verdict with nothing to attribute it to.
+func TestOwnerRollupKeepsRuleAttribution(t *testing.T) {
+	nodes := []GraphNode{
+		{Key: "actions/checkout", Kind: "action", IsExternal: true, Owner: "actions",
+			Findings: 3, Rules: []string{"actions/unpinned-tag"}},
+		{Key: "actions/cache", Kind: "action", IsExternal: true, Owner: "actions",
+			Findings: 2, Rules: []string{"actions/unpinned-tag", "actions/code-injection"}},
+	}
+
+	got, _ := attachOwners(nodes, []GraphEdge{})
+	org := ownerNodes(got)["actions"]
+
+	if org.Findings != 5 {
+		t.Errorf("findings %d, want 5", org.Findings)
+	}
+	if len(org.Rules) != 2 {
+		t.Errorf("rules %v, want the two distinct rule ids", org.Rules)
+	}
+}
+
+// Findings sit on workflows, never on the repository node. Rolling up only what hangs directly
+// beneath an account reported every account as clean.
+func TestOwnerRollsUpFindingsFromBeneathTheRepository(t *testing.T) {
+	nodes := []GraphNode{
+		{Key: "octo-org/app", Kind: "repo", Repository: "octo-org/app", Origin: OriginSeed},
+		{Key: "octo-org/app/.github/workflows/ci.yml", Kind: "workflow",
+			Repository: "octo-org/app", Origin: OriginSeed, Findings: 7,
+			Rules: []string{"actions/unpinned-tag"}},
+	}
+
+	got, _ := attachOwners(nodes, []GraphEdge{})
+	org := ownerNodes(got)["octo-org"]
+
+	if org.Findings != 7 {
+		t.Errorf("account findings %d, want the 7 recorded against its workflow", org.Findings)
+	}
+	if len(org.Rules) != 1 || org.Rules[0] != "actions/unpinned-tag" {
+		t.Errorf("account rules %v, want the workflow's rule id", org.Rules)
+	}
+}
+
+// A corpus need not contain a node standing for every repository. Where one is missing the
+// account must still reach what it holds, or it renders as an island exactly as repositories
+// once did.
+func TestOwnerReachesRepositoriesWithNoNodeOfTheirOwn(t *testing.T) {
+	nodes := []GraphNode{
+		{Key: "octo-org/app/.github/workflows/ci.yml", Kind: "workflow",
+			Repository: "octo-org/app", Origin: OriginSeed},
+	}
+
+	got, edges := attachOwners(nodes, []GraphEdge{})
+	org := ownerNodes(got)["octo-org"]
+	if org.Key == "" {
+		t.Fatal("no account derived from the workflow's repository")
+	}
+
+	var attached int
+	for _, e := range edges {
+		if e.Source == org.Key {
+			attached++
+		}
+	}
+	if attached == 0 {
+		t.Error("account holds nothing; with no repository node the workflow should hang from it")
+	}
+}
+
+// Attaching every workflow and step as well as the top of a repository would bury the account
+// in edges that say nothing the containment tree does not already say.
+func TestOwnerHoldsOnlyTheTopOfEachRepository(t *testing.T) {
+	nodes := []GraphNode{
+		{Key: "octo-org/app", Kind: "repo", Repository: "octo-org/app", Origin: OriginSeed},
+		{Key: "octo-org/app/.github/workflows/ci.yml", Kind: "workflow",
+			Repository: "octo-org/app", Origin: OriginSeed},
+	}
+
+	_, edges := attachOwners(nodes, []GraphEdge{})
+
+	for _, e := range edges {
+		if e.Kind == "org-contains" && e.Target != "octo-org/app" {
+			t.Errorf("account holds %s directly; only the repository should hang beneath it",
+				e.Target)
+		}
+	}
+}

@@ -94,39 +94,69 @@ function nodeColour(node, palette) {
 
 /** The repository a node belongs to. An external action carries it in its own key. */
 function repoOf(node) {
+    if (node.kind === 'org') return '';
     if (node.repository) return node.repository;
     const parts = (node.key || '').split('/');
     return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : (node.key || '');
 }
 
 function orgOf(node) {
+    // An account node names its owner directly; everything else carries it as a path segment.
+    if (node.kind === 'org') return node.owner || (node.key || '').replace(/^org:/, '');
     return repoOf(node).split('/')[0];
 }
 
 /**
- * How far an edge reaches: within one repository, across an organisation, or out of it.
+ * How far an edge reaches: within one repository, within one account, or across accounts.
  *
- * Same repository wins over same organisation, so the closest true relationship is the one
- * reported rather than the broadest.
+ * Same repository wins over same account, so the closest true relationship is the one reported
+ * rather than the broadest. Nothing here is "external": the comparison is between the two
+ * endpoints, and ABOM privileges no account of its own.
  */
 function edgeClass(s, t) {
-    if (!s || !t) return 'externalOrg';
+    if (!s || !t) return 'crossOwner';
     if (repoOf(s) === repoOf(t)) return 'sameRepo';
-    return orgOf(s) === orgOf(t) ? 'sameOrg' : 'externalOrg';
+    return orgOf(s) === orgOf(t) ? 'sameOwner' : 'crossOwner';
 }
 
 function edgeColour(link, palette) {
     switch (link.cls) {
         case 'sameRepo': return palette.edgeSameRepo;
-        case 'sameOrg': return palette.edgeSameOrg;
-        default: return palette.edgeExternalOrg;
+        case 'sameOwner': return palette.edgeSameOwner;
+        default: return palette.edgeCrossOwner;
     }
 }
 
+/** Drops an rgba colour's alpha, so a dimmed edge recedes without changing hue. */
+function faded(colour) {
+    if (typeof colour !== 'string') return colour;
+    if (colour.startsWith('rgba')) return colour.replace(/[\d.]+\)\s*$/, '0.06)');
+    if (colour.startsWith('rgb(')) return colour.replace('rgb(', 'rgba(').replace(')', ',0.06)');
+    return colour;
+}
+
 /** Reach spans orders of magnitude, so radius follows a log scale or hubs swamp everything. */
-function nodeRadius(node, selection) {
-    const base = 2 + Math.log2(1 + (node.dependentRepos || 0)) * 1.4;
-    return node.key === selection ? base * 2.2 : base;
+function nodeRadius(node, selected) {
+    // An owner is a grouping device, not something a workflow can depend on. Sizing it by its
+    // largest member drew the container half again as large as the dependency inside it, and
+    // counted that member's reach twice on screen.
+    const base = node.kind === 'org'
+        ? 3.4
+        : 2 + Math.log2(1 + (node.dependentRepos || 0)) * 1.4;
+    // Barely enlarged. Size carries reach, so growing a node on selection made it two sizes for
+    // a reason that has nothing to do with reach, and up close it filled the canvas.
+    return isSelected(selected, node.key) ? base * 1.25 : base;
+}
+
+/** Selection is a set, but most callers hold one key or none. */
+function isSelected(selected, key) {
+    if (!selected) return false;
+    return typeof selected === 'string' ? selected === key : selected.has(key);
+}
+
+/** The sole selected key when exactly one is selected, otherwise empty. */
+function soleSelection(it) {
+    return it.selected && it.selected.size === 1 ? [...it.selected][0] : '';
 }
 
 // ---------------------------------------------------------------------------
@@ -144,6 +174,9 @@ function nodeRadius(node, selection) {
  * at runtime rather than assuming it.
  */
 const KIND_GEOMETRY = {
+    // Not a torus: a ring is what marks the selection, and the two were indistinguishable. A
+    // solid drum rather than a flat disc, which turned edge-on into a slab as the camera moved.
+    org: T => new T.CylinderGeometry(1.15, 1.15, 1.5, 5),
     repo: T => new T.BoxGeometry(1.7, 1.7, 1.7),
     workflow: T => new T.SphereGeometry(1, 12, 10),
     reusable_workflow: T => new T.OctahedronGeometry(1.25),
@@ -198,15 +231,38 @@ function buildNodeObject(it, node) {
     const Material = internalMaterialClass(it);
     if (!Material) return null;
 
+    // Reassigning nodeThreeObject rebuilds every mesh, so dimming has to be decided here;
+    // mutating the material afterwards is discarded by the rebuild that follows.
+    const lit = !it.emphasis || it.emphasis.has(node.key);
+    const picked = isSelected(it.selected, node.key);
+    const geometry = geometryFor(node.kind);
     const mesh = new T.Mesh(
-        geometryFor(node.kind),
+        geometry,
         new Material({
-            color: nodeColour(node, it.palette),
+            color: lit ? nodeColour(node, it.palette) : it.palette.muted,
             transparent: true,
-            opacity: 0.9,
+            // A selected node is see-through: opaque, it hid the neighbourhood it was chosen
+            // to reveal the moment the camera came close.
+            opacity: picked ? 0.45 : (lit ? 0.9 : 0.16),
+            depthWrite: !picked,
         }));
-    const s = nodeRadius(node, it.selection);
+    const s = nodeRadius(node, it.selected);
     mesh.scale.set(s, s, s);
+
+    if (picked) {
+        // An outline traced from the node's own geometry, so the marker fits whatever silhouette
+        // the node has. A ring only ever suited a sphere, and collided with any node drawn as
+        // one.
+        const hull = new T.Mesh(geometry, new Material({
+            color: it.palette.focus,
+            transparent: true,
+            opacity: 0.85,
+            side: T.BackSide,
+            depthWrite: false,
+        }));
+        hull.scale.set(1.22, 1.22, 1.22);
+        mesh.add(hull);
+    }
     return mesh;
 }
 
@@ -273,6 +329,7 @@ export async function loadFull(elementId, url) {
     it.adjacency = null;
     // A different node set has to be handed to the renderer rather than merely re-hidden.
     it.seeded = false;
+    it.renderedFor = null;
     return {
         nodes: it.all.nodes.length,
         edges: it.all.links.length,
@@ -334,7 +391,10 @@ export function applyFilters(elementId, spec) {
     // Explicit allow-lists: the panel always sends what is checked, so an empty list genuinely
     // means "show none" rather than "no opinion".
     const kinds = new Set(f.kinds || []);
-    const edgeClasses = new Set(f.edgeClasses || []);
+    // Links saved before the classes were renamed still name the old keys; accepting both keeps
+    // an old address from silently emptying the graph.
+    const edgeClasses = new Set((f.edgeClasses || []).map(c =>
+        c === 'externalOrg' ? 'crossOwner' : c === 'sameOrg' ? 'sameOwner' : c));
     const origins = new Set(f.origins || []);
     const rules = new Set(f.rules || []);
 
@@ -354,39 +414,73 @@ export function applyFilters(elementId, spec) {
     }
 
     let edges = 0;
+    // force-graph holds copies of the links, so a flag written only onto the originals never
+    // reaches the renderer: `l.shown` stayed undefined and every edge drew regardless of what
+    // the filter said. The copies are keyed by their original so filtering cannot misalign them.
     for (const e of it.all.links) {
         e.shown = edgeClasses.has(e.cls) && visible.has(e.source) && visible.has(e.target);
+        const copy = it.renderedFor && it.renderedFor.get(e);
+        if (copy) copy.shown = e.shown;
         if (e.shown) edges++;
     }
 
-    it.selection = f.selection || '';
+    // Isolating replaces the selection with the node it was performed on: it is a different
+    // question from comparison, and keeping several marked inside one node's subgraph would
+    // mean nothing.
+    it.selected = f.selection ? new Set([f.selection]) : new Set();
     it.hopsOf = reachable;
     it.visible = visible;
+    // Isolating already removed the unrelated, so dimming on top of it would only mute what is
+    // left. Emphasis belongs to selection-without-narrowing.
+    it.emphasis = null;
 
-    // Hiding rather than rebuilding. Handing force-graph a new node set recreates every mesh
-    // and restarts the simulation, which is both slow and the reason the layout re-settles
-    // visibly on every filter change. A hidden link keeps its force, so positions do not move.
-    if (it.seeded) {
+    // Hidden nodes normally stay in the simulation so that positions hold still across a
+    // filter. That stops paying for itself once most of the graph is hidden: arriving on a
+    // 45-node view should not cost a 3,969-node settle. Below the threshold the simulation gets
+    // only what is shown, and coordinates are kept on the nodes so returning is free.
+    const subset = visible.size < total * SUBSET_FRACTION;
+
+    if (it.seeded && subset === it.subset) {
         paint(it);
         it.graph.refresh();
     } else {
-        render(it);
+        render(it, subset);
+    }
+    if (it.collapsed) {
+        const shown = it.graph.graphData();
+        return { nodes: shown.nodes.length, edges: shown.links.length, hidden: 0, total };
     }
     return { nodes: visible.size, edges, hidden: total - visible.size, total };
 }
 
-/** Seeds positions and hands the full node set to the renderer, once. */
-function render(it) {
-    const nodes = it.all.nodes;
-    const links = it.all.links;
+/** Below this share of the corpus, the simulation is given only what is on screen. */
+const SUBSET_FRACTION = 0.25;
+
+/** Seeds positions and hands the node set to the renderer. */
+function render(it, subset) {
+    let nodes = subset
+        ? it.all.nodes.filter(n => it.visible.has(n.key))
+        : it.all.nodes;
+    let links = subset
+        ? it.all.links.filter(e => e.shown)
+        : it.all.links;
+    let collapsed = null;
+    if (it.collapsed) {
+        collapsed = collapseGroups(it, nodes, it.all.links);
+        nodes = collapsed.nodes;
+        links = collapsed.links;
+    }
+    it.subset = !!subset;
     it.maxPriority = Math.max(1, ...nodes.map(n => n.priority || 0));
 
     // The layout's natural span grows with the node count, so the seed radius has to as well.
     // Seeding thousands of nodes into a small ball leaves the simulation pushing outward from a
     // singularity, and it settles as a speck.
     const spread = Math.max(300, Math.sqrt(nodes.length) * 34);
+    let fresh = 0;
     for (const n of nodes) {
         if (n.x === undefined) {
+            fresh++;
             const angle = seed(n.key) * Math.PI * 2;
             const r = spread * (0.35 + seed(n.key + '#r') * 0.65);
             n.x = Math.cos(angle) * r;
@@ -395,11 +489,20 @@ function render(it) {
         }
     }
     it.spread = spread;
+    // Switching payloads or narrowing returns to nodes that already hold settled coordinates.
+    // Paying a full warmup again would shake a picture that is already correct.
+    it.settled = nodes.length > 0 && fresh < nodes.length * 0.2;
     applySettleBudget(it);
 
     // force-graph rewrites link endpoints into object references, so it gets fresh copies and
     // the loaded graph keeps its string keys for filtering.
-    it.graph.graphData({ nodes, links: links.map(e => ({ ...e })) });
+    it.renderedFor = new Map();
+    const copies = links.map(e => {
+        const c = { ...e };
+        it.renderedFor.set(e, c);
+        return c;
+    });
+    it.graph.graphData({ nodes, links: copies });
     it.seeded = true;
     it.pendingFit = true;
     applyForces(it);
@@ -415,7 +518,10 @@ function render(it) {
  * first frame is drawn.
  */
 function applySettleBudget(it) {
-    if (it.animate) {
+    if (it.settled) {
+        // Coordinates carried over from a previous payload only need the newcomers placed.
+        it.graph.warmupTicks(0).cooldownTicks(60);
+    } else if (it.animate) {
         it.graph.warmupTicks(90).cooldownTicks(360);
     } else {
         it.graph.warmupTicks(420).cooldownTicks(30);
@@ -466,7 +572,7 @@ export function create(elementId, use3d, dotNetRef) {
         .d3VelocityDecay(0.55)
         // A single click only moves the camera. Rebuilding the whole view is a big enough change
         // that it should take a deliberate second action.
-        .onNodeClick(n => {
+        .onNodeClick((n, event) => {
             const cur = instances.get(elementId);
             if (!n || !cur) return;
             const now = performance.now();
@@ -475,12 +581,13 @@ export function create(elementId, use3d, dotNetRef) {
             cur.lastClickAt = now;
             if (isDouble) {
                 if (dotNetRef) dotNetRef.invokeMethodAsync('OnNodeIsolated', n.key);
-            } else {
-                cur.selection = n.key;
-                paint(cur);
-                focusNode(cur, n);
-                if (dotNetRef) dotNetRef.invokeMethodAsync('OnNodeSelected', n.key);
+                return;
             }
+            // Cmd on macOS, Ctrl elsewhere, toggles; Shift adds without removing.
+            const toggle = !!(event && (event.metaKey || event.ctrlKey));
+            const add = !!(event && event.shiftKey);
+            selectNode(cur, n.key, { toggle, add });
+            if (dotNetRef) dotNetRef.invokeMethodAsync('OnNodeSelected', [...cur.selected]);
         })
         .onNodeRightClick(n => {
             if (n && dotNetRef) dotNetRef.invokeMethodAsync('OnNodeIsolated', n.key);
@@ -540,8 +647,11 @@ export function create(elementId, use3d, dotNetRef) {
         graph, observer, onResize, el, labels, use3d, dotNetRef,
         cache: carried.cache, all: carried.all, adjacency: null,
         degree: carried.all ? carried.all.degree : new Map(),
-        selection: '', hovered: '', hopsOf: null, view: 'neighbourhood', palette: null,
+        selected: new Set(), hovered: '', hopsOf: null, view: 'neighbourhood', palette: null,
+        emphasis: null,
         maxPriority: 1, pendingFit: false, running: true, seeded: false, visible: null,
+        subset: false, renderedFor: null, groupBy: 'owner', collapsed: false,
+        id: elementId, particleTimer: null, particlePhase: 0,
         animate: previous ? previous.animate !== false : true,
         // Proved at runtime rather than assumed: the graph library bundles its own THREE, so
         // meshes built from the vendored copy have to be shown to actually render.
@@ -586,42 +696,24 @@ function drawLabels(it) {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
-    // The selection is marked by a ring rather than a colour, so that hue stays free to mean
-    // kind and nothing else.
-    const selected = nodes.find(o => o.key === it.selection);
-    if (selected && selected.x !== undefined) {
-        const pos = it.graph.graph2ScreenCoords(selected.x, selected.y, selected.z || 0);
-        if (pos) {
-            const r = Math.max(14, nodeRadius(selected, it.selection) * 2.4);
-            ctx.strokeStyle = p.focus;
-            ctx.lineWidth = 2.5;
-            ctx.globalAlpha = 0.95;
-            ctx.beginPath();
-            ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.globalAlpha = 0.25;
-            ctx.beginPath();
-            ctx.arc(pos.x, pos.y, r + 5, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.globalAlpha = 1;
-        }
-    }
+    // The selection marker is drawn in the scene as an outline on the node's own shape, so
+    // nothing about it belongs here. Labels only.
+    const shown = new Set(it.selected || []);
+    if (it.hovered) shown.add(it.hovered);
 
-    // Only what the reader is pointing at or has chosen. A standing set of labels covers the
-    // shape of the graph and cannot be clicked through to the node underneath.
-    for (const key of new Set([it.selection, it.hovered].filter(Boolean))) {
+    for (const key of shown) {
         const n = nodes.find(o => o.key === key);
         if (!n || n.x === undefined) continue;
         const pos = it.graph.graph2ScreenCoords(n.x, n.y, n.z || 0);
         if (!pos) continue;
 
-        const isSelected = n.key === it.selection;
+        const picked = isSelected(it.selected, n.key);
         const label = n.key.length > 60 ? n.key.slice(0, 59) + '…' : n.key;
         const size = 13;
-        ctx.font = `${isSelected ? '600 ' : ''}${size}px system-ui, sans-serif`;
+        ctx.font = `${picked ? '600 ' : ''}${size}px system-ui, sans-serif`;
 
         const w = ctx.measureText(label).width;
-        const y = pos.y + nodeRadius(n, it.selection) + size + 4;
+        const y = pos.y + nodeRadius(n, it.selected) + size + 4;
 
         ctx.fillStyle = p.background;
         ctx.globalAlpha = 0.92;
@@ -631,7 +723,7 @@ function drawLabels(it) {
         ctx.fill();
         ctx.globalAlpha = 1;
 
-        ctx.fillStyle = isSelected ? p.focus : p.label;
+        ctx.fillStyle = picked ? p.focus : p.label;
         ctx.fillText(label, pos.x, y);
     }
 }
@@ -651,12 +743,16 @@ function fitCore(it, percentile) {
     it.graph.cameraPosition({ x: 0, y: 0, z: r * 2.1 }, { x: 0, y: 0, z: 0 }, 600);
 }
 
-/** Whether the layout is watched as it settles, or computed before anything is drawn. */
+/** Whether motion is shown at all: the settling layout, and the particles along the selection. */
 export function setAnimate(elementId, animate) {
     const it = instances.get(elementId);
     if (!it) return;
     it.animate = animate !== false;
     applySettleBudget(it);
+    startParticleCycle(it);
+    if (it.palette) {
+        it.graph.linkDirectionalParticles(l => particleCount(it, l));
+    }
 }
 
 /** Re-measures the host, for when something beside it changed size. */
@@ -716,7 +812,7 @@ function applyForces(it) {
     if (it.view === 'priority') {
         const max = it.maxPriority;
         g.d3Force('semantic', radialForce(
-            n => n.key === it.selection ? 0 : spread * 0.15
+            n => isSelected(it.selected, n.key) ? 0 : spread * 0.15
                 + (1 - (n.priority || 0) / max) * spread, 0.09));
     } else if (it.view === 'ownership') {
         // Distance, not left-versus-right: an axis stops meaning anything the moment the camera
@@ -734,6 +830,164 @@ function applyForces(it) {
             return hops === undefined ? null : spread * 0.2 + hops * spread * 0.42;
         }, 0.11));
     }
+
+    // Collapsed, each group is already a single node, so pulling groups together would only
+    // gather unrelated nodes into a knot.
+    g.d3Force('grouping', it.groupBy && it.groupBy !== 'none' && !it.collapsed
+        ? clusterForce(it, spread)
+        : null);
+}
+
+/** What a node is grouped under, derived from its own key so no extra payload is needed. */
+function groupOf(node, by) {
+    switch (by) {
+        case 'owner':
+            return node.kind === 'org' ? (node.owner || '') : orgOf(node);
+        case 'repo':
+            return node.kind === 'org' ? '' : repoOf(node);
+        case 'workflow':
+            // A step or job belongs to the file holding it, and a workflow is its own group. An
+            // action is *referenced* by workflows rather than living in one, so it has no
+            // workflow to belong to and must not become a group of one.
+            if (node.container) return node.container;
+            return node.kind === 'workflow' || node.kind === 'reusable_workflow'
+                ? node.key
+                : '';
+        default:
+            return '';
+    }
+}
+
+/** Everything the current grouping cannot place, named rather than scattered. */
+const UNGROUPED = '(not in a workflow)';
+
+/**
+ * Pulls members of a group toward the node that already represents it.
+ *
+ * The centre is the owner, repository or workflow node itself, not a position invented for the
+ * group. Synthetic centres placed around a ring fought the link forces: a workflow was dragged
+ * toward its owner's arbitrary spot while its dependencies pulled it somewhere else, and the
+ * result crossed the whole diagram. Anchoring to a real node means grouping and structure agree.
+ */
+function clusterForce(it, spread) {
+    let nodes = [];
+    let centreOf = new Map();
+
+    const force = alpha => {
+        const k = alpha * 0.09;
+        for (const n of nodes) {
+            const c = centreOf.get(n);
+            if (!c || c === n || c.x === undefined) continue;
+            n.vx += (c.x - n.x) * k;
+            n.vy += (c.y - n.y) * k;
+            if (it.use3d) n.vz += (c.z - n.z) * k;
+        }
+    };
+    force.initialize = ns => {
+        nodes = ns;
+        const byKey = new Map(ns.map(n => [n.key, n]));
+        centreOf = new Map();
+        for (const n of ns) {
+            const anchor = byKey.get(anchorKey(n, it.groupBy));
+            if (anchor && anchor !== n) centreOf.set(n, anchor);
+        }
+    };
+    return force;
+}
+
+/** The existing node a member should gather around, if there is one. */
+function anchorKey(node, by) {
+    switch (by) {
+        case 'owner': {
+            const owner = groupOf(node, 'owner');
+            return owner ? `org:${owner}` : '';
+        }
+        case 'repo':
+            return node.kind === 'org' ? '' : repoOf(node);
+        case 'workflow':
+            return node.container || '';
+        default:
+            return '';
+    }
+}
+
+/** Chooses what nodes are pulled together by, or `none` to leave the layout alone. */
+export function setGroupBy(elementId, by) {
+    const it = instances.get(elementId);
+    if (!it || it.groupBy === by) return;
+    it.groupBy = by || 'none';
+    applyForces(it);
+    it.graph.d3ReheatSimulation();
+}
+
+/**
+ * Folds each group into one node, or unfolds them again.
+ *
+ * Members keep their coordinates while collapsed, so expanding returns them where they were
+ * rather than re-settling a layout the reader had already made sense of.
+ */
+export function setCollapsed(elementId, collapsed, spec) {
+    const it = instances.get(elementId);
+    if (!it || it.collapsed === !!collapsed) return;
+    it.collapsed = !!collapsed;
+    it.seeded = false;
+    return applyFilters(elementId, spec);
+}
+
+/** Builds one node per group, merging the edges between them. */
+function collapseGroups(it, nodes, links) {
+    const by = it.groupBy && it.groupBy !== 'none' ? it.groupBy : 'owner';
+    const groups = new Map();
+
+    for (const n of nodes) {
+        // One named bucket rather than a group per node: an ungrouped node standing alone would
+        // make a collapsed view look identical to an expanded one.
+        const name = groupOf(n, by) || UNGROUPED;
+        let g = groups.get(name);
+        if (!g) {
+            g = {
+                key: `group:${name}`, kind: 'org', path: name, owner: name,
+                members: 0, findings: 0, dependentRepos: 0, rules: [], advisories: 0,
+                analysed: true, isExternal: true, refStyles: new Set(), edgeClasses: new Set(),
+                // Seeded from the members' own centre so a collapsed view sits where the
+                // expanded one did.
+                x: 0, y: 0, z: 0,
+            };
+            groups.set(name, g);
+        }
+        g.members++;
+        g.findings += n.findings || 0;
+        g.dependentRepos = Math.max(g.dependentRepos, n.dependentRepos || 0);
+        if (!n.isExternal) g.isExternal = false;
+        if (n.x !== undefined) { g.x += n.x; g.y += n.y; g.z += n.z || 0; }
+        n.groupKey = g.key;
+    }
+    for (const g of groups.values()) {
+        g.x /= g.members; g.y /= g.members; g.z /= g.members;
+    }
+
+    const merged = new Map();
+    for (const e of links) {
+        if (!e.shown) continue;
+        const s = groups.get(groupOf(nodeByKey(nodes, e.source), by) || UNGROUPED);
+        const t = groups.get(groupOf(nodeByKey(nodes, e.target), by) || UNGROUPED);
+        if (!s || !t || s === t) continue;
+        const id = `${s.key}>${t.key}`;
+        const existing = merged.get(id);
+        if (existing) { existing.count += e.count || 1; continue; }
+        merged.set(id, {
+            source: s.key, target: t.key, kind: 'group', refs: [], count: e.count || 1,
+            cls: edgeClass(s, t), shown: true,
+        });
+    }
+    return { nodes: [...groups.values()], links: [...merged.values()] };
+}
+
+function nodeByKey(nodes, key) {
+    if (!nodes.byKey) {
+        nodes.byKey = new Map(nodes.map(n => [n.key, n]));
+    }
+    return nodes.byKey.get(key) || { key };
 }
 
 function paint(it) {
@@ -741,25 +995,27 @@ function paint(it) {
     if (!p) return;
 
     const visible = it.visible;
+    const em = it.emphasis;
+    const lit = l => !em || em.has(keyOf(l.source)) || em.has(keyOf(l.target));
     it.graph
         .nodeVisibility(n => !visible || visible.has(n.key))
         .linkVisibility(l => l.shown !== false)
-        .nodeColor(n => nodeColour(n, p))
-        .nodeVal(n => nodeRadius(n, it.selection))
-        .linkColor(l => edgeColour(l, p))
+        .nodeColor(n => (em && !em.has(n.key)) ? p.muted : nodeColour(n, p))
+        .nodeVal(n => nodeRadius(n, it.selected))
+        .linkColor(l => lit(l) ? edgeColour(l, p) : faded(edgeColour(l, p)))
         .linkOpacity(0.65)
         .linkWidth(0)
         // Direction is the whole point of a dependency edge, so the arrow is never conditional.
         // It sits just short of the target so the head is not swallowed by the node.
-        .linkDirectionalArrowLength(2.6)
+        .linkDirectionalArrowLength(l => lit(l) ? 2.6 : 0)
         .linkDirectionalArrowRelPos(0.92)
         .linkDirectionalArrowResolution(4)
         .linkDirectionalArrowColor(l => edgeColour(l, p))
         // Animated particles are expensive per link, so they are spent only on the selection,
         // where the cost is bounded by that one node's degree.
-        .linkDirectionalParticles(l => it.selection && touches(l, it.selection) ? 2 : 0)
-        .linkDirectionalParticleWidth(1.6)
-        .linkDirectionalParticleSpeed(0.012)
+        .linkDirectionalParticles(l => particleCount(it, l))
+        .linkDirectionalParticleWidth(1.4)
+        .linkDirectionalParticleSpeed(particleSpeed)
         .linkDirectionalParticleColor(l => edgeColour(l, p));
 
     if (it.shapes) {
@@ -772,6 +1028,61 @@ function paint(it) {
 function touches(link, key) {
     const s = link.source, t = link.target;
     return (s && (s.key || s) === key) || (t && (t.key || t) === key);
+}
+
+function touchesAny(link, keys) {
+    return keys.has(keyOf(link.source)) || keys.has(keyOf(link.target));
+}
+
+/** force-graph rewrites endpoints into node objects once seeded, so both forms have to work. */
+function keyOf(end) {
+    return end && end.key !== undefined ? end.key : end;
+}
+
+/**
+ * A distinct speed per edge, so the particles do not beat in unison.
+ *
+ * Every link starts its particles at the same phase and there is no API to offset them. Sharing
+ * one speed therefore kept them in lockstep, and a hub's worth of edges read as a single pulse
+ * arriving every cycle. The slowest edge here takes roughly four times as long to traverse as
+ * the fastest, which pulls them apart and keeps them apart. Seeded by the edge itself, so the
+ * same graph always animates the same way.
+ *
+ * Kept slow deliberately: this marks direction on the selection, and anything quick enough to
+ * catch the eye competes with the graph for attention.
+ */
+function particleSpeed(link) {
+    return 0.0004 + seed(`${keyOf(link.source)}>${keyOf(link.target)}#p`) * 0.0014;
+}
+
+/** Share of a selection's edges carrying a particle during any one phase. */
+const PARTICLE_SHARE = 0.14;
+const PARTICLE_PHASE_MS = 6000;
+
+/**
+ * Only a slice of the selection's edges animates at a time.
+ *
+ * force-graph restarts a link's particles the instant they arrive, so a link that animates at
+ * all animates constantly and there is no API for a gap. Rotating a small random subset gives
+ * each edge long stretches of silence, which is what turns a pulse into occasional movement.
+ */
+function particleCount(it, link) {
+    if (!it.animate || !it.selected || !it.selected.size) return 0;
+    if (!touchesAny(link, it.selected)) return 0;
+    const k = `${keyOf(link.source)}>${keyOf(link.target)}#${it.particlePhase || 0}`;
+    return seed(k) < PARTICLE_SHARE ? 1 : 0;
+}
+
+function startParticleCycle(it) {
+    clearInterval(it.particleTimer);
+    if (!it.selected || !it.selected.size || !it.animate) return;
+    it.particleTimer = setInterval(() => {
+        const cur = instances.get(it.id);
+        if (!cur || !cur.running) return;
+        cur.particlePhase = (cur.particlePhase || 0) + 1;
+        // Reassigning the accessor is what makes force-graph re-evaluate the active subset.
+        cur.graph.linkDirectionalParticles(l => particleCount(cur, l));
+    }, PARTICLE_PHASE_MS);
 }
 
 export function setMode(elementId, use3d, spec) {
@@ -819,12 +1130,79 @@ function focusNode(it, node) {
     it.graph.cameraPosition({ x: x * ratio, y: y * ratio, z: z * ratio }, node, 700);
 }
 
-/** Marks a node as selected without changing what the view contains. */
-export function setSelection(elementId, key) {
+/** Marks nodes as selected without changing what the view contains. */
+export function setSelection(elementId, keys) {
     const it = instances.get(elementId);
     if (!it) return;
-    it.selection = key || '';
+    it.selected = new Set((Array.isArray(keys) ? keys : [keys]).filter(Boolean));
+    applySelection(it);
+}
+
+/**
+ * Selecting dims rather than removes.
+ *
+ * The two gestures differ in what they cost the reader: a single click leaves everything where
+ * it is and merely turns the context down, so the selection can be judged against its
+ * surroundings and undone by looking elsewhere. Isolating rebuilds the view, so it stays behind
+ * a deliberate second gesture.
+ */
+function selectNode(it, key, opts) {
+    const o = opts || {};
+    if (!it.selected) it.selected = new Set();
+    if (o.toggle) {
+        if (!it.selected.delete(key)) it.selected.add(key);
+    } else if (o.add) {
+        it.selected.add(key);
+    } else {
+        it.selected = new Set([key]);
+    }
+    applySelection(it, !o.toggle && !o.add);
+}
+
+function applySelection(it, frame) {
+    // Emphasis is the union, so comparing several nodes shows everything they collectively
+    // touch rather than only the last one clicked.
+    it.emphasis = null;
+    if (it.selected && it.selected.size && it.all) {
+        const union = new Map();
+        for (const key of it.selected) {
+            for (const [k, hop] of neighbourhood(it, key, 1)) {
+                if (!union.has(k) || hop < union.get(k)) union.set(k, hop);
+            }
+        }
+        it.emphasis = union;
+    }
     paint(it);
+    startParticleCycle(it);
+    // Meshes carry their own colour and outline, so a change of selection has to rebuild them.
+    if (it.shapes) it.graph.refresh();
+    if (frame !== false && it.emphasis) frameKeys(it, it.emphasis);
+}
+
+/** Frames a set of nodes, keeping the camera's current direction so the view does not spin. */
+function frameKeys(it, keys) {
+    const nodes = it.graph.graphData().nodes
+        .filter(n => keys.has(n.key) && n.x !== undefined);
+    if (!nodes.length) return;
+
+    let cx = 0, cy = 0, cz = 0;
+    for (const n of nodes) { cx += n.x; cy += n.y; cz += n.z || 0; }
+    cx /= nodes.length; cy /= nodes.length; cz /= nodes.length;
+
+    let r = 0;
+    for (const n of nodes) r = Math.max(r, Math.hypot(n.x - cx, n.y - cy, (n.z || 0) - cz));
+    const distance = Math.max(140, r * 2.4);
+
+    if (!it.use3d) {
+        it.graph.cameraPosition({ x: cx, y: cy, z: distance }, { x: cx, y: cy, z: 0 }, 700);
+        return;
+    }
+    const cam = it.graph.cameraPosition();
+    const dx = cam.x - cx, dy = cam.y - cy, dz = cam.z - cz;
+    const len = Math.hypot(dx, dy, dz) || 1;
+    it.graph.cameraPosition(
+        { x: cx + dx / len * distance, y: cy + dy / len * distance, z: cz + dz / len * distance },
+        { x: cx, y: cy, z: cz }, 700);
 }
 
 export function fit(elementId) {
@@ -868,6 +1246,7 @@ export function dispose(elementId, keepEntry) {
     const it = instances.get(elementId);
     if (!it) return;
     it.running = false;
+    clearInterval(it.particleTimer);
     if (it.onResize) window.removeEventListener('resize', it.onResize);
     try { it.observer && it.observer.disconnect(); } catch { /* already gone */ }
     try { it.graph._destructor && it.graph._destructor(); } catch { /* already gone */ }

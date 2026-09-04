@@ -424,6 +424,11 @@ func seedFindings(t *testing.T, s *store.Store, ruleID string, repos ...string) 
 
 // "Which references are unpinned?" is answered by selecting the upstream rule, never by an
 // ABOM-owned column.
+//
+// Only the finding count is asserted. references_total once served as a denominator and no
+// longer has a consumer: dividing a rule's findings by every reference in scope answered
+// nothing, because the denominator had no relationship to what the rule examined. Pinning is
+// now measured by Store.PinningLevel against the references the rule could have fired on.
 func TestPostureCountsFindingsByRule(t *testing.T) {
 	s := fixture(t)
 	seedFindings(t, s, "actions/unpinned-tag", "octo-org/app", "octo-org/service", "octo-org/tool")
@@ -432,18 +437,15 @@ func TestPostureCountsFindingsByRule(t *testing.T) {
 		t.Fatalf("BuildPinning: %v", err)
 	}
 
-	var findings, total int
+	var findings int
 	if err := s.DB().QueryRow(
-		`SELECT findings, references_total FROM abom_pinning
+		`SELECT findings FROM abom_pinning
 		 WHERE scope_kind='org' AND rule_id='actions/unpinned-tag'`).
-		Scan(&findings, &total); err != nil {
+		Scan(&findings); err != nil {
 		t.Fatalf("reading org posture: %v", err)
 	}
 	if findings != 3 {
 		t.Errorf("findings = %d, want 3", findings)
-	}
-	if total != 6 {
-		t.Errorf("references_total = %d, want 6", total)
 	}
 }
 
@@ -489,15 +491,15 @@ func TestPosturePerRepository(t *testing.T) {
 		t.Fatalf("BuildPinning: %v", err)
 	}
 
-	var findings, total int
+	var findings int
 	if err := s.DB().QueryRow(
-		`SELECT findings, references_total FROM abom_pinning
+		`SELECT findings FROM abom_pinning
 		 WHERE scope_kind='repo' AND scope_key=? AND rule_id='actions/unpinned-tag'`,
-		"octo-org/shared").Scan(&findings, &total); err != nil {
+		"octo-org/shared").Scan(&findings); err != nil {
 		t.Fatalf("reading repo posture: %v", err)
 	}
-	if findings != 1 || total != 1 {
-		t.Errorf("octo-org/shared = %d findings / %d references, want 1 / 1", findings, total)
+	if findings != 1 {
+		t.Errorf("octo-org/shared = %d findings, want 1", findings)
 	}
 }
 

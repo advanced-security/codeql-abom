@@ -38,7 +38,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/nodes", s.nodes)
 	mux.HandleFunc("GET /api/node/{key...}", s.node)
 	mux.HandleFunc("GET /api/pinning", s.pinning)
-	mux.HandleFunc("GET /api/posture-rules", s.postureRules)
+	mux.HandleFunc("GET /api/pinning/totals", s.pinningTotals)
+	mux.HandleFunc("GET /api/owned-orgs", s.ownedOrgs)
+	mux.HandleFunc("PUT /api/owned-orgs", s.setOwnedOrgs)
+	mux.HandleFunc("GET /api/owner-candidates", s.ownerCandidates)
 	mux.HandleFunc("GET /api/frontier", s.frontier)
 	mux.HandleFunc("GET /api/actions", s.actions)
 	mux.HandleFunc("GET /api/repositories", s.repositories)
@@ -169,14 +172,49 @@ func (s *Server) node(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) pinning(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	rows, err := s.Store.PinningPosture(q.Get("q"), q.Get("rule"), intParam(r, "top", 500))
+	rows, err := s.Store.PinningLevel(r.URL.Query().Get("scope"), r.URL.Query().Get("parent"),
+		pinningFilter(r), intParam(r, "top", 1000))
 	writeJSON(w, rows, err)
 }
 
-func (s *Server) postureRules(w http.ResponseWriter, r *http.Request) {
-	rules, err := s.Store.PostureRules()
-	writeJSON(w, rules, err)
+func (s *Server) pinningTotals(w http.ResponseWriter, r *http.Request) {
+	total, err := s.Store.PinningTotals(pinningFilter(r))
+	writeJSON(w, total, err)
+}
+
+func (s *Server) ownedOrgs(w http.ResponseWriter, r *http.Request) {
+	owners, err := s.Store.OwnedOrgs()
+	writeJSON(w, owners, err)
+}
+
+func (s *Server) setOwnedOrgs(w http.ResponseWriter, r *http.Request) {
+	var owners []string
+	// Bounded because the body is unauthenticated input; the declaration is a short list of
+	// account names, never a payload.
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&owners); err != nil {
+		http.Error(w, "expected a JSON array of account names", http.StatusBadRequest)
+		return
+	}
+	if err := s.Store.SetOwnedOrgs(owners); err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	stored, err := s.Store.OwnedOrgs()
+	writeJSON(w, stored, err)
+}
+
+func (s *Server) ownerCandidates(w http.ResponseWriter, r *http.Request) {
+	candidates, err := s.Store.OwnerCandidates()
+	writeJSON(w, candidates, err)
+}
+
+func pinningFilter(r *http.Request) store.PinningFilter {
+	q := r.URL.Query()
+	return store.PinningFilter{
+		Search:      q.Get("q"),
+		RefStyle:    q.Get("style"),
+		FlaggedOnly: q.Get("flagged") == "true",
+	}
 }
 
 func (s *Server) frontier(w http.ResponseWriter, r *http.Request) {

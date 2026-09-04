@@ -191,6 +191,18 @@ CREATE TABLE IF NOT EXISTS abom_pinning (
   PRIMARY KEY (scope_kind, scope_key, rule_id)
 );
 
+-- Accounts the operator says they control, and can therefore actually remediate.
+--
+-- This is a declaration, not a measurement, and it is the only one of the three ownership
+-- notions here that cannot be derived. repository.origin records how a repository entered the
+-- corpus; an account holding a seed repository is "in scope". Neither means the operator can
+-- change anything: the actions account owns a seed repository and nobody running this tool
+-- controls it.
+CREATE TABLE IF NOT EXISTS abom_owned_org (
+  owner    TEXT PRIMARY KEY,
+  added_at TEXT NOT NULL
+);
+
 -- The upstream discovery queue. Expanding a dependency reveals further dependencies, so this
 -- is a persisted queue rather than a batch: consumers are also producers, and expansion may
 -- span weeks across process restarts.

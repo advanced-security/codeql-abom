@@ -24,8 +24,8 @@
 </MudGrid>
 
 <div class="d-flex align-center gap-3 mb-3">
-    <MudSwitch T="bool" Value="_live" ValueChanged="OnLiveChanged" Color="Color.Primary"
-               Label="Follow a running expansion" />
+    <MudCheckBox T="bool" Value="_live" ValueChanged="OnLiveChanged" Color="Color.Primary"
+                 Size="Size.Small" Dense="true" Label="Follow a running expansion" />
     @if (_live)
     {
         <MudText Typo="Typo.caption" Class="mud-text-secondary">
