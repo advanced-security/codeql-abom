@@ -212,7 +212,7 @@
                         <MudCheckBox T="bool" Value="@_edgeClasses.Contains(c)" Dense="true"
                                      Size="Size.Small" Color="Color.Primary"
                                      ValueChanged="@(_ => ToggleEdge(c))" />
-                        <span class="abom-legend-line" style="background:@EdgeColor(c)"></span>
+                        <span class="abom-legend-line" style="--abom-legend-color:@EdgeColor(c)"></span>
                         <span>@e.Label</span>
                     </div>
                 </MudTooltip>
@@ -221,7 +221,7 @@
             <div class="abom-key-head mt-3"><span class="abom-key-title">STATE</span></div>
             @* A caption, not a control: the rows above are clickable and this one never was. *@
             <div class="abom-key-note">
-                <span class="abom-legend-ring" style="border-color:@Theme.Palette.Focus"></span>
+                <span class="abom-legend-ring" style="--abom-legend-color:@Theme.Palette.Focus"></span>
                 @if (!HasSelection)
                 {
                     <span>nothing selected &mdash; click a node to mark it and dim the rest</span>

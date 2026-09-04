@@ -25,6 +25,24 @@ the large nodes swamp everything.
 - Tables: is the most decision-relevant column visible without horizontal scrolling?
 - Graph: can you separate one edge from its neighbors anywhere in the view?
 
+## One visual vocabulary
+
+Sizes, families and control shapes are defined once and taken from there: the type scale in
+`ui/wwwroot/css/app.css` under `:root`, and the MudBlazor `Typography` block in
+`ui/Services/ThemeService.cs`. `make style` enforces the mechanical half — no inline styles, no
+literal colors, no literal font sizes, no heading outside `PageHeader`, no unsized icon.
+
+What the checker cannot see, and a visual review must:
+
+- Does the same role look the same on every page? A page title, a section heading, a help line
+  and a table figure should each be recognisable as themselves anywhere.
+- Does anything sit *between* two steps of the scale, so it reads as neither one thing nor the
+  other?
+- Do controls of the same kind share a size and density across pages, or does one page's filter
+  bar sit taller than another's?
+- Do dark and light both hold? Contrast that works on one can vanish on the other, and only one
+  of them is usually captured.
+
 ## Hierarchy
 
 Look at the capture for two seconds and note what drew the eye first. On the landing page that

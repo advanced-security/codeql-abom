@@ -2,24 +2,83 @@
 @using Abom.WebAssembly.Models
 @using Abom.WebAssembly.Services
 @inject AbomApi Api
-@inject OwnedOrgService OwnedOrgs
+@inject AccountService Accounts
 
-<PageTitle>Settings — ABOM</PageTitle>
+<PageTitle>Your Accounts — ABOM</PageTitle>
 
-<MudText Typo="Typo.h5" Class="mb-1">Your Accounts</MudText>
-<MudText Typo="Typo.body2" Class="mb-4 mud-text-secondary">
-    Declare which GitHub accounts you control. Every page then reports its figures split into
-    what you can change and what you cannot &mdash; both halves, always. Nothing is hidden by
-    declaring an account, and nothing is assumed by leaving the list empty.
-</MudText>
+<PageHeader Title="Your Accounts">
+    Which GitHub accounts are yours is read from <code>gh</code>, never typed in. Every page then
+    reports its figures split into what you can change and what you cannot &mdash; both halves,
+    always. An account counts because GitHub says you belong to it.
+</PageHeader>
 
-<MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mb-4">
-    <MudText Typo="Typo.body2">
-        This is a declaration, not a measurement. An account can hold repositories that were
-        analyzed and still be one nobody here can change &mdash; <code>actions</code> owns
-        <code>actions/cache</code>, which is why it appears below and why the choice is yours.
+@if (_problem is not null)
+{
+    <MudAlert Dense="true" Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-4">
+        <MudText Typo="Typo.body2">@_problem.Reason</MudText>
+        <MudText Typo="Typo.body2" Class="mt-2">@_problem.Remedy</MudText>
+        <MudText Typo="Typo.caption" Class="mt-2 mud-text-secondary">
+            Until this is fixed nothing counts as yours and every figure is reported undivided.
+            That is not a claim that you own nothing.
+        </MudText>
+    </MudAlert>
+}
+else if (Accounts.Identity.Authenticated)
+{
+    <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Dense="true" Class="mb-4">
+        <MudText Typo="Typo.body2">
+            Verified as <b>@Accounts.Identity.Login</b> on @Accounts.Identity.Host@(Accounts.Identity.VerifiedAt is { } at
+                ? $", checked {at.ToLocalTime():yyyy-MM-dd HH:mm}" : string.Empty).
+        </MudText>
+    </MudAlert>
+}
+else
+{
+    <MudAlert Dense="true" Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-4">
+        <MudText Typo="Typo.body2">
+            No accounts verified yet, so every figure is reported undivided.
+        </MudText>
+        <MudText Typo="Typo.caption" Class="mud-text-secondary">
+            Check now, or run <code>codeql-abom accounts --refresh</code>.
+        </MudText>
+    </MudAlert>
+}
+
+<div class="d-flex flex-wrap align-center gap-3 mb-4">
+    <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_checking"
+               StartIcon="@Icons.Material.Filled.Refresh" OnClick="Refresh">
+        @(_checking ? "Checking…" : "Check with gh")
+    </MudButton>
+    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+        @(Accounts.AnyVerified
+            ? $"{Accounts.Identity.Accounts.Count} accounts — figures are reported split"
+            : "Nothing verified — every figure is reported undivided")
     </MudText>
-</MudAlert>
+</div>
+
+@if (Accounts.Identity.Accounts.Count > 0)
+{
+    <MudText Typo="Typo.subtitle2" Class="mb-1">Accounts you belong to</MudText>
+    <MudDataGrid T="OwnedAccount" Items="Accounts.Identity.Accounts" Dense="true" Hover="true" Bordered="false"
+                 Filterable="false" Class="abom-grid mb-6">
+        <Columns>
+            <PropertyColumn Property="x => x.Owner" Title="Account" />
+            <TemplateColumn Title="Kind">
+                <CellTemplate>
+                    @(context.Item.Kind == "user" ? "Your account" : "Organization")
+                </CellTemplate>
+            </TemplateColumn>
+            <PropertyColumn Property="x => x.Role" Title="Role" />
+        </Columns>
+    </MudDataGrid>
+}
+
+<MudText Typo="Typo.subtitle2" Class="mb-1">Accounts holding repositories in scope</MudText>
+<MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
+    Holding an analyzed repository does not make an account yours &mdash; <code>actions</code>
+    owns <code>actions/cache</code>, which is why it appears here and why belonging is checked
+    rather than assumed.
+</MudText>
 
 @if (_candidates is null)
 {
@@ -27,26 +86,8 @@
 }
 else
 {
-    <div class="d-flex flex-wrap align-center gap-3 mb-3">
-        <MudTextField T="string" Value="_search" ValueChanged="@(v => _search = v)"
-                      Immediate="true" DebounceInterval="200" Placeholder="Filter accounts"
-                      Variant="Variant.Outlined" Margin="Margin.Dense"
-                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
-                      Style="max-width:280px" />
-        <MudText Typo="Typo.caption" Class="mud-text-secondary">
-            @(OwnedOrgs.AnyDeclared
-                ? $"{OwnedOrgs.Owned.Count} declared — figures are reported split"
-                : "None declared — every figure is reported undivided")
-        </MudText>
-        <MudSpacer />
-        @if (OwnedOrgs.AnyDeclared)
-        {
-            <MudButton Size="Size.Small" Variant="Variant.Text"
-                       StartIcon="@Icons.Material.Filled.ClearAll" OnClick="ClearAll">
-                Clear all
-            </MudButton>
-        }
-    </div>
+    <SearchField Value="_search" ValueChanged="@(v => _search = v)"
+                 Placeholder="Filter accounts" Class="mb-3" />
 
     <MudDataGrid T="OwnerCandidate" Items="Filtered" Dense="true" Hover="true" Bordered="false"
                  SortMode="SortMode.Multiple" Filterable="false" Class="abom-grid"
@@ -54,9 +95,13 @@ else
         <Columns>
             <TemplateColumn Title="Yours" Sortable="false">
                 <CellTemplate>
-                    <MudCheckBox T="bool" Value="@OwnedOrgs.IsOwned(context.Item.Owner)"
-                                 ValueChanged="@(_ => Toggle(context.Item.Owner))"
-                                 Size="Size.Small" Dense="true" Color="Color.Primary" />
+                    @if (Accounts.IsOwned(context.Item.Owner))
+                    {
+                        <MudTooltip Text="Verified: GitHub says you belong to this account.">
+                            <MudIcon Icon="@Icons.Material.Filled.Person" Size="Size.Small"
+                                     Color="Color.Primary" />
+                        </MudTooltip>
+                    }
                 </CellTemplate>
             </TemplateColumn>
             <PropertyColumn Property="x => x.Owner" Title="Account" />
@@ -72,6 +117,8 @@ else
 @code {
     private IReadOnlyList<OwnerCandidate>? _candidates;
     private string _search = string.Empty;
+    private bool _checking;
+    private AccountProblem? _problem;
 
     private IEnumerable<OwnerCandidate> Filtered =>
         (_candidates ?? []).Where(c =>
@@ -80,19 +127,24 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        await OwnedOrgs.EnsureLoadedAsync();
+        await Accounts.EnsureLoadedAsync();
+        _problem = Accounts.Identity.Problem;
         _candidates = await Api.GetOwnerCandidatesAsync();
     }
 
-    private async Task Toggle(string owner)
+    private async Task Refresh()
     {
-        await OwnedOrgs.ToggleAsync(owner);
-        StateHasChanged();
-    }
-
-    private async Task ClearAll()
-    {
-        await OwnedOrgs.SetAsync([]);
-        StateHasChanged();
+        _checking = true;
+        try
+        {
+            await Accounts.RefreshAsync();
+            _problem = Accounts.Identity.Problem;
+            // Membership decides the marks, so the list has to be re-read alongside it.
+            _candidates = await Api.GetOwnerCandidatesAsync();
+        }
+        finally
+        {
+            _checking = false;
+        }
     }
 }

@@ -229,7 +229,7 @@ public sealed record PinningRow
     public int Flagged { get; init; }
     public int FloatingUnflagged { get; init; }
     public bool HasChildren { get; init; }
-    /// <summary>Marks a row in an account the operator declared. A mark, never a filter.</summary>
+    /// <summary>Marks a row in an account the operator belongs to. A mark, never a filter.</summary>
     public bool Owned { get; init; }
     public OwnedSplit Yours { get; init; } = new();
     public OwnedSplit FlaggedSplit { get; init; } = new();
@@ -251,6 +251,37 @@ public sealed record OwnerCandidate
     public int Repositories { get; init; }
     public int Findings { get; init; }
     public bool Owned { get; init; }
+}
+
+/// <summary>An account the operator is verified to belong to.</summary>
+public sealed record OwnedAccount
+{
+    public string Owner { get; init; } = string.Empty;
+    public string Kind { get; init; } = string.Empty;
+    public string Role { get; init; } = string.Empty;
+}
+
+/// <summary>A setup failure the operator can fix, and the command that fixes it.</summary>
+public sealed record AccountProblem
+{
+    public string Reason { get; init; } = string.Empty;
+    public string Remedy { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Who gh is authenticated as and what that established.
+///
+/// A Problem is not the same as belonging to nothing: one is a broken setup, the other is an
+/// answer, and they call for entirely different things from the reader.
+/// </summary>
+public sealed record AccountIdentity
+{
+    public bool Authenticated { get; init; }
+    public string Login { get; init; } = string.Empty;
+    public string Host { get; init; } = string.Empty;
+    public DateTimeOffset? VerifiedAt { get; init; }
+    public IReadOnlyList<OwnedAccount> Accounts { get; init; } = [];
+    public AccountProblem? Problem { get; init; }
 }
 
 public sealed record AffectedRepo

@@ -265,7 +265,37 @@ public sealed class ThemeService(IJSRuntime js)
             Surface = "#25262B",
             DrawerBackground = "#212529",
         },
+        // Stated rather than inherited. With no typography of its own the interface took
+        // MudBlazor's defaults, which are sized for prose, and every dense page then talked its
+        // own way back down to something readable.
+        Typography = new Typography
+        {
+            Default = new DefaultTypography
+            {
+                FontFamily = Sans,
+                FontSize = "0.875rem",
+                LineHeight = "1.45",
+            },
+            H5 = new H5Typography { FontFamily = Sans, FontSize = "1.35rem", FontWeight = "500" },
+            H6 = new H6Typography { FontFamily = Sans, FontSize = "1.05rem", FontWeight = "500" },
+            Subtitle1 = new Subtitle1Typography { FontFamily = Sans, FontSize = "0.95rem", FontWeight = "500" },
+            Subtitle2 = new Subtitle2Typography { FontFamily = Sans, FontSize = "0.85rem", FontWeight = "600" },
+            Body1 = new Body1Typography { FontFamily = Sans, FontSize = "0.875rem", LineHeight = "1.45" },
+            Body2 = new Body2Typography { FontFamily = Sans, FontSize = "0.8rem", LineHeight = "1.45" },
+            Caption = new CaptionTypography { FontFamily = Sans, FontSize = "0.72rem", LineHeight = "1.4" },
+            Overline = new OverlineTypography
+            {
+                FontFamily = Sans,
+                FontSize = "0.68rem",
+                FontWeight = "600",
+                LetterSpacing = "0.08em",
+            },
+            Button = new ButtonTypography { FontFamily = Sans, FontSize = "0.78rem", FontWeight = "500" },
+        },
     };
+
+    private static readonly string[] Sans =
+        ["system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"];
 }
 
 /// <summary>Colors the canvas graph draws with.</summary>

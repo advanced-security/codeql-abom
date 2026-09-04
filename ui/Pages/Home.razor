@@ -3,12 +3,11 @@
 
 <PageTitle>ABOM — Actions Bill of Materials</PageTitle>
 
-<MudText Typo="Typo.h5"><h1 style="all:unset;">Actions Bill of Materials</h1></MudText>
-<MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">
+<PageHeader Title="Actions Bill of Materials">
     Every GitHub Actions dependency reached by the @_summary.SeedRepos repositories in scope —
     those in the organization that were analyzed with CodeQL. Nothing here is a verdict this tool
     invented: each claim traces back to the query that produced it.
-</MudText>
+</PageHeader>
 
 <MudGrid Spacing="3">
     @foreach (var s in Sections)

@@ -4,18 +4,17 @@
 
 <PageTitle>Discovery — ABOM</PageTitle>
 
-<MudText Typo="Typo.h5"><h1 style="all:unset;">Discovery</h1></MudText>
-<MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">
+<PageHeader Title="Discovery">
     How complete this picture is. Discovery is recursive and runs to a budget, so the queue is
     never expected to be empty — what matters is whether the highest-value work has been done.
-</MudText>
+</PageHeader>
 
 <MudGrid Spacing="3" Class="mb-3">
     @foreach (var (label, count, hint) in Tiles)
     {
         <MudItem xs="6" sm="3">
             <MudPaper Elevation="0" Outlined="true" Class="pa-3">
-                <MudText Typo="Typo.h5" Style="font-variant-numeric:tabular-nums;">@count</MudText>
+                <MudText Typo="Typo.h5" Class="abom-num">@count</MudText>
                 <MudText Typo="Typo.caption">@label</MudText>
                 <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">@hint</MudText>
             </MudPaper>
@@ -40,13 +39,13 @@
 }
 else
 {
-    <MudDataGrid T="FrontierItem" Items="_items" Dense="true" Hover="true"
+    <MudDataGrid T="FrontierItem" Items="_items" Dense="true" Hover="true" Bordered="false"
                  SortMode="SortMode.Single" Filterable="false" RowsPerPage="30">
         <Columns>
             <PropertyColumn Property="x => x.Score" Title="Score">
                 <CellTemplate>
                     <MudTooltip Text="Commonality per unit cost: how much of the corpus depends on this, weighted towards dependencies that can actually extend the graph.">
-                        <span style="font-variant-numeric:tabular-nums;">
+                        <span class="abom-num">
                             @context.Item.Score.ToString("0")
                         </span>
                     </MudTooltip>
@@ -57,7 +56,7 @@ else
 
             <PropertyColumn Property="x => x.Status" Title="Status">
                 <CellTemplate>
-                    <span style="@StatusStyle(context.Item.Status)">@StatusLabel(context.Item.Status)</span>
+                    <span class="@StatusClass(context.Item.Status)">@StatusLabel(context.Item.Status)</span>
                 </CellTemplate>
             </PropertyColumn>
 
@@ -154,11 +153,11 @@ else
         _ => status,
     };
 
-    private static string StatusStyle(string status) => status switch
+    private static string StatusClass(string status) => status switch
     {
-        "done" => "font-weight:500;",
-        "unavailable" => "opacity:0.55;font-style:italic;",
-        _ => "opacity:0.8;",
+        "done" => "abom-status-done",
+        "unavailable" => "abom-status-unavailable",
+        _ => "abom-status-queued",
     };
 
     public void Dispose() => _timer?.Dispose();

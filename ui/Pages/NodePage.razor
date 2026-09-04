@@ -7,9 +7,25 @@
 {
     <MudProgressLinear Indeterminate="true" />
 }
+else if (_detail is null && IsAccount)
+{
+    @* An account is drawn in the graph as a roll-up of what it owns rather than something the
+       scan recorded, so it has no page of its own. Saying it might be unanalyzed would be
+       false: it is on screen precisely because its members were analyzed. *@
+    <MudAlert Dense="true" Severity="MudBlazor.Severity.Info" Variant="Variant.Outlined">
+        <MudText Typo="Typo.body2">
+            <span class="abom-rule">@AccountName</span> is an account, not a dependency.
+        </MudText>
+        <MudText Typo="Typo.caption">
+            It stands for everything it owns rather than for anything recorded in its own right.
+            See <MudLink Href="@($"/explore?q={AccountName}")" Typo="Typo.caption">its dependencies</MudLink>,
+            or <MudLink Href="/pinning" Typo="Typo.caption">how its references are pinned</MudLink>.
+        </MudText>
+    </MudAlert>
+}
 else if (_detail is null)
 {
-    <MudAlert Severity="MudBlazor.Severity.Warning" Variant="Variant.Outlined">
+    <MudAlert Dense="true" Severity="MudBlazor.Severity.Warning" Variant="Variant.Outlined">
         <MudText Typo="Typo.body2">Nothing here is named <span class="abom-rule">@Key</span>.</MudText>
         <MudText Typo="Typo.caption">
             That is not the same as it being unused: it may sit behind a dependency that has not
@@ -20,7 +36,7 @@ else if (_detail is null)
 else
 {
     <div class="d-flex flex-wrap align-center gap-3 mb-1">
-        <MudText Typo="Typo.h5"><h1 style="all:unset;" class="abom-rule">@_detail.Key</h1></MudText>
+        <MudText Typo="Typo.h5" HtmlTag="h1" Class="abom-title-mono abom-page-title">@_detail.Key</MudText>
         <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@KindLabel</MudChip>
         @if (!string.IsNullOrEmpty(_detail.Origin))
         {
@@ -38,25 +54,25 @@ else
     <MudGrid Spacing="3" Class="mb-3">
         <MudItem xs="6" sm="3">
             <MudPaper Elevation="0" Outlined="true" Class="pa-3">
-                <MudText Typo="Typo.h6" Style="font-variant-numeric:tabular-nums;">@_detail.DependentRepos</MudText>
+                <MudText Typo="Typo.h6" Class="abom-num">@_detail.DependentRepos</MudText>
                 <MudText Typo="Typo.caption">repositories reach it</MudText>
             </MudPaper>
         </MudItem>
         <MudItem xs="6" sm="3">
             <MudPaper Elevation="0" Outlined="true" Class="pa-3">
-                <MudText Typo="Typo.h6" Style="font-variant-numeric:tabular-nums;">@_detail.Refs.Sum(r => r.Count)</MudText>
+                <MudText Typo="Typo.h6" Class="abom-num">@_detail.Refs.Sum(r => r.Count)</MudText>
                 <MudText Typo="Typo.caption"><code>uses:</code> lines point here</MudText>
             </MudPaper>
         </MudItem>
         <MudItem xs="6" sm="3">
             <MudPaper Elevation="0" Outlined="true" Class="pa-3">
-                <MudText Typo="Typo.h6" Style="font-variant-numeric:tabular-nums;">@_detail.Refs.Count</MudText>
+                <MudText Typo="Typo.h6" Class="abom-num">@_detail.Refs.Count</MudText>
                 <MudText Typo="Typo.caption">distinct references</MudText>
             </MudPaper>
         </MudItem>
         <MudItem xs="6" sm="3">
             <MudPaper Elevation="0" Outlined="true" Class="pa-3">
-                <MudText Typo="Typo.h6" Style="font-variant-numeric:tabular-nums;">@_detail.Rules.Sum(r => r.Count)</MudText>
+                <MudText Typo="Typo.h6" Class="abom-num">@_detail.Rules.Sum(r => r.Count)</MudText>
                 <MudText Typo="Typo.caption">findings</MudText>
             </MudPaper>
         </MudItem>
@@ -137,7 +153,7 @@ else
                 }
                 else
                 {
-                    <MudSimpleTable Dense="true" Hover="true" Striped="false" Class="abom-grid">
+                    <MudSimpleTable Dense="true" Hover="true" Striped="false" Class="abom-grid abom-table">
                         <thead>
                             <tr><th>Reference</th><th>Uses</th><th>Repositories</th></tr>
                         </thead>
@@ -146,8 +162,8 @@ else
                             {
                                 <tr>
                                     <td><span class="abom-ref">@r.Ref</span></td>
-                                    <td style="font-variant-numeric:tabular-nums;">@r.Count</td>
-                                    <td style="font-variant-numeric:tabular-nums;">@r.Repositories</td>
+                                    <td class="abom-num">@r.Count</td>
+                                    <td class="abom-num">@r.Repositories</td>
                                 </tr>
                             }
                         </tbody>
@@ -176,7 +192,7 @@ else
                     {
                         <div class="d-flex justify-space-between">
                             <span class="abom-rule">@r.RuleId</span>
-                            <span style="font-variant-numeric:tabular-nums;">@r.Count</span>
+                            <span class="abom-num">@r.Count</span>
                         </div>
                     }
                 }
@@ -188,7 +204,7 @@ else
                     The count is how many <code>uses:</code> lines in that workflow point here,
                     not how many workflows or repositories it has.
                 </MudText>
-                <MudSimpleTable Dense="true" Hover="true" Class="abom-grid">
+                <MudSimpleTable Dense="true" Hover="true" Striped="false" Class="abom-grid abom-table">
                     <thead>
                         <tr><th>Workflow</th><th>References</th><th><code>uses:</code> lines</th></tr>
                     </thead>
@@ -202,7 +218,7 @@ else
                                     </MudLink>
                                 </td>
                                 <td><RefList Refs="@n.Refs" Max="3" /></td>
-                                <td style="font-variant-numeric:tabular-nums;">@n.Count</td>
+                                <td class="abom-num">@n.Count</td>
                             </tr>
                         }
                     </tbody>
@@ -221,7 +237,7 @@ else
                     <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2">
                         What this pulls in, and how many times it does so.
                     </MudText>
-                    <MudSimpleTable Dense="true" Hover="true" Class="abom-grid">
+                    <MudSimpleTable Dense="true" Hover="true" Striped="false" Class="abom-grid abom-table">
                         <thead>
                             <tr><th>Dependency</th><th>References</th><th><code>uses:</code> lines</th></tr>
                         </thead>
@@ -235,7 +251,7 @@ else
                                         </MudLink>
                                     </td>
                                     <td><RefList Refs="@n.Refs" Max="3" /></td>
-                                    <td style="font-variant-numeric:tabular-nums;">@n.Count</td>
+                                    <td class="abom-num">@n.Count</td>
                                 </tr>
                             }
                         </tbody>
@@ -256,6 +272,11 @@ else
     private string KindLabel =>
         ThemeService.KindNames.TryGetValue(_detail?.Kind ?? string.Empty, out var n)
             ? n : (_detail?.Kind ?? string.Empty);
+
+    // The graph draws an account as a node, so its key can be followed here like any other.
+    private bool IsAccount => Key?.StartsWith("org:", StringComparison.Ordinal) ?? false;
+
+    private string AccountName => IsAccount ? Key!["org:".Length..] : string.Empty;
 
     // A repository with no reference of its own has nothing to edit, which is the whole point of
     // separating direct from transitive.

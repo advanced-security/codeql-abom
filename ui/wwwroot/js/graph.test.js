@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
     seed, repoOf, orgOf, edgeClass, groupOf, anchorKey, keyOf, faded,
-    nodeRadius, isSelected, particleSpeed,
+    nodeRadius, isSelected, particleSpeed, needsRender, collapseGroups, ungroupedName,
 } from './graph.js';
 
 // These are the pure decisions behind the whole view: which edges are drawn, how big a node is,
@@ -122,4 +122,90 @@ test('particles move slowly enough to read as drift rather than a pulse', () => 
     assert.ok(1 / (fastest * 60) > 4, `fastest traverse is ${(1 / (fastest * 60)).toFixed(1)}s`);
     // Distinct periods are what pull them out of lockstep; there is no phase offset available.
     assert.ok(fastest / slowest > 2, `speed spread is only ${(fastest / slowest).toFixed(1)}x`);
+});
+
+test('a collapsed graph is rebuilt whenever anything it is folded from changes', () => {
+    // Two bugs, one cause: applyFilters skipped render() whenever the graph was already seeded,
+    // but the fold is built inside render(). Regrouping relabeled the caption while leaving the
+    // previous grouping on screen, and hiding an edge class left its merged edges drawn.
+    const collapsed = { seeded: true, subset: false, collapsed: true, groupBy: 'owner' };
+    assert.equal(needsRender(collapsed, false), true);
+
+    // The fold depends on the filtered edges too, so an unchanged grouping is not enough to
+    // stay on the cheap path.
+    assert.equal(needsRender({ ...collapsed, foldedBy: 'owner' }, false), true);
+});
+
+test('an expanded graph is not rebuilt just because the grouping changed', () => {
+    // Grouping only moves an expanded graph, so it must stay on the cheap path.
+    const it = { seeded: true, subset: false, collapsed: false, groupBy: 'owner', foldedBy: null };
+    assert.equal(needsRender(it, false), false);
+    assert.equal(needsRender({ ...it, seeded: false }, false), true, 'a first draw always renders');
+    assert.equal(needsRender(it, true), true, 'entering a subset changes the node set');
+});
+
+test('a different grouping folds to a different set of groups', () => {
+    const nodes = [
+        { key: 'octo/app/.github/workflows/ci.yml', kind: 'workflow', repository: 'octo/app' },
+        { key: 'octo/lib/.github/workflows/ci.yml', kind: 'workflow', repository: 'octo/lib' },
+    ];
+    const byOwner = collapseGroups({ groupBy: 'owner' }, nodes, []);
+    const byRepo = collapseGroups({ groupBy: 'repo' }, nodes, []);
+
+    assert.equal(byOwner.nodes.length, 1, 'both repositories belong to one owner');
+    assert.equal(byRepo.nodes.length, 2, 'each repository is its own group');
+});
+
+test('a collapsed graph classifies its edges by the real relationship', () => {
+    // The bug: groups are drawn as accounts, so both endpoints reported no repository and the
+    // classifier read two blanks as a match. Every edge in a collapsed view came out same-repo.
+    const nodes = [
+        { key: 'octo/app/.github/workflows/ci.yml', kind: 'workflow', repository: 'octo/app' },
+        { key: 'octo/lib/.github/workflows/ci.yml', kind: 'workflow', repository: 'octo/lib' },
+        { key: 'other/tool/.github/workflows/ci.yml', kind: 'workflow', repository: 'other/tool' },
+    ];
+    const links = [
+        { source: nodes[0].key, target: nodes[1].key, shown: true },
+        { source: nodes[0].key, target: nodes[2].key, shown: true },
+    ];
+
+    const byRepo = collapseGroups({ groupBy: 'repo' }, nodes, links);
+    const cls = Object.fromEntries(byRepo.links.map(l => [`${l.source}>${l.target}`, l.cls]));
+
+    assert.equal(cls['group:octo/app>group:octo/lib'], 'sameOwner',
+        'two repositories under one account are a same-owner edge');
+    assert.equal(cls['group:other/tool'] ?? cls['group:octo/app>group:other/tool'], 'crossOwner');
+    assert.ok(!Object.values(cls).includes('sameRepo'),
+        'distinct groups are never the same repository');
+});
+
+test('an owner node still has no repository of its own', () => {
+    // The guard for the fix above: only an explicit repository may override the node's shape.
+    assert.equal(repoOf({ key: 'org:actions', kind: 'org', owner: 'actions' }), '');
+});
+
+test('a hidden edge class stays hidden once the graph is folded', () => {
+    // The bug: merged edges were created shown, so they never faced the edge filter. Hiding
+    // cross-account edges left a starburst of them radiating from the ungrouped bucket.
+    const nodes = [
+        { key: 'octo/app/.github/workflows/ci.yml', kind: 'workflow', repository: 'octo/app' },
+        { key: 'octo/lib/.github/workflows/ci.yml', kind: 'workflow', repository: 'octo/lib' },
+        { key: 'other/tool/.github/workflows/ci.yml', kind: 'workflow', repository: 'other/tool' },
+    ];
+    const links = [
+        { source: nodes[0].key, target: nodes[1].key, shown: true },
+        { source: nodes[0].key, target: nodes[2].key, shown: true },
+    ];
+    const it = { groupBy: 'repo', edgeClasses: new Set(['sameRepo', 'sameOwner']) };
+
+    const drawn = collapseGroups(it, nodes, links).links.filter(l => l.shown !== false);
+    assert.deepEqual(drawn.map(l => l.cls), ['sameOwner'],
+        'the cross-account edge must not come back when folded');
+});
+
+test('the ungrouped bucket is named after the grouping that left it out', () => {
+    // It read "(not in a workflow)" even when grouping by repository, which describes nothing.
+    assert.equal(ungroupedName('repo'), '(not in a repository)');
+    assert.equal(ungroupedName('owner'), '(no account)');
+    assert.equal(ungroupedName('workflow'), '(not in a workflow)');
 });

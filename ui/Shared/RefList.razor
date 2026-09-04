@@ -3,7 +3,7 @@
 
 @if (Refs is null || Refs.Count == 0)
 {
-    <span class="abom-coverage-unknown" style="font-size:0.78rem;">no references recorded</span>
+    <span class="abom-coverage-unknown abom-ref-empty">no references recorded</span>
 }
 else
 {
@@ -14,7 +14,7 @@ else
 
     @if (Hidden > 0)
     {
-        <MudLink Typo="Typo.caption" @onclick="@(() => _expanded = true)" Style="cursor:pointer;">
+        <MudLink Typo="Typo.caption" @onclick="@(() => _expanded = true)" Class="abom-clickable">
             +@Hidden more
         </MudLink>
     }

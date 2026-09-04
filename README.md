@@ -42,19 +42,24 @@ make build
 
 `codeql-abom --help` lists every subcommand.
 
-## Declaring what you own
+## Confirming what is yours
 
-Most figures split into what you can change and what you cannot, once you say which accounts are
-yours:
+Most figures split into what you can change and what you cannot, once ABOM knows which accounts
+are yours. It never asks you: it reads the answer from an authenticated
+[`gh`](https://cli.github.com) session.
 
 ```bash
-./bin/codeql-abom owned --db abom.db --suggest
-./bin/codeql-abom owned --db abom.db --add my-org
+gh auth login                                   # once, with the read:org scope
+./bin/codeql-abom accounts --db abom.db --refresh
 ```
 
-This is a declaration, not a measurement, and it cannot be derived: an account can hold
-repositories that were analyzed and still be one nobody can change. `actions` owns
-`actions/cache`, which is why it appears among the suggestions and why the choice is yours.
+An account counts because GitHub says you belong to it, never because it was typed in. That
+matters because holding an analyzed repository proves nothing about who can change it: `actions`
+owns `actions/cache`, which is in scope for many organizations and controlled by none of them.
+
+Until an identity is verified, every figure is reported undivided — which is not a claim that
+you own nothing. If `gh` is missing, logged out, or lacks `read:org`, the interface says so and
+names the command that fixes it.
 
 ## Layout
 

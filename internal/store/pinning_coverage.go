@@ -56,7 +56,8 @@ type PinningRow struct {
 	// GitHub-owned. Naming it keeps the gap between the two measures visible.
 	FloatingUnflagged int  `json:"floatingUnflagged"`
 	HasChildren       bool `json:"hasChildren"`
-	// Owned marks a row the operator declared they control. A mark, never a filter: the row is
+	// Owned marks a row in an account the operator is verified to belong to. A mark, never a
+	// filter: the row is
 	// present either way.
 	Owned bool `json:"owned"`
 	// Yours and FlaggedSplit divide the totals. Both halves are always reported, so the

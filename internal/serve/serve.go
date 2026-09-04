@@ -7,14 +7,18 @@ package serve
 
 import (
 	"compress/gzip"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/advanced-security/codeql-abom/internal/ghauth"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
@@ -23,6 +27,8 @@ type Server struct {
 	Store *store.Store
 	// UI serves the interface assets. Nil disables it, leaving only the API.
 	UI fs.FS
+	// Verify establishes which accounts are the operator's. Nil asks the gh CLI.
+	Verify func(context.Context) (ghauth.Identity, error)
 }
 
 // Handler builds the routing tree.
@@ -39,8 +45,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/node/{key...}", s.node)
 	mux.HandleFunc("GET /api/pinning", s.pinning)
 	mux.HandleFunc("GET /api/pinning/totals", s.pinningTotals)
-	mux.HandleFunc("GET /api/owned-orgs", s.ownedOrgs)
-	mux.HandleFunc("PUT /api/owned-orgs", s.setOwnedOrgs)
+	mux.HandleFunc("GET /api/accounts", s.accounts)
+	mux.HandleFunc("POST /api/accounts/refresh", s.refreshAccounts)
 	mux.HandleFunc("GET /api/owner-candidates", s.ownerCandidates)
 	mux.HandleFunc("GET /api/frontier", s.frontier)
 	mux.HandleFunc("GET /api/actions", s.actions)
@@ -48,17 +54,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/repositories/{owner}/{name}", s.repository)
 
 	if s.UI != nil {
-		mux.Handle("GET /", s.ui())
+		// Registered for every method rather than GET alone: a method-restricted catch-all
+		// cannot coexist with the /api/ pattern below, which ServeMux rejects outright.
+		mux.Handle("/", s.ui())
 	}
+	// Anything under /api/ that no route claimed is absent, whatever the method. Without this a
+	// withdrawn route answers a PUT with 405, which says the resource is still there.
+	mux.HandleFunc("/api/", http.NotFound)
 	return gzipped(mux)
 }
 
 // assetRoots hold real files. A miss under one of them is a broken build, not a client route.
-//
-// `api/` is here for a different reason: an unrouted API path must fail as an API path. Serving
-// the interface's HTML for it turns a mistyped endpoint into a JSON parse error in the caller,
-// which says nothing about what actually went wrong.
-var assetRoots = []string{"_framework/", "_content/", "css/", "js/", "lib/", "api/"}
+var assetRoots = []string{"_framework/", "_content/", "css/", "js/", "lib/"}
 
 // ui serves the interface, falling back to its entry point so client-side routes survive a
 // reload.
@@ -186,25 +193,82 @@ func (s *Server) pinningTotals(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, total, err)
 }
 
-func (s *Server) ownedOrgs(w http.ResponseWriter, r *http.Request) {
-	owners, err := s.Store.OwnedOrgs()
-	writeJSON(w, owners, err)
+// accountsView is the identity as the interface needs to read it: who was verified, what that
+// established, and — when it could not be established — what the operator should do about it.
+type accountsView struct {
+	Authenticated bool            `json:"authenticated"`
+	Login         string          `json:"login"`
+	Host          string          `json:"host"`
+	VerifiedAt    *time.Time      `json:"verifiedAt"`
+	Accounts      []store.Account `json:"accounts"`
+	Problem       *ghauth.Problem `json:"problem"`
 }
 
-func (s *Server) setOwnedOrgs(w http.ResponseWriter, r *http.Request) {
-	var owners []string
-	// Bounded because the body is unauthenticated input; the declaration is a short list of
-	// account names, never a payload.
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&owners); err != nil {
-		http.Error(w, "expected a JSON array of account names", http.StatusBadRequest)
+func view(v store.Verification, problem *ghauth.Problem) accountsView {
+	out := accountsView{
+		Authenticated: v.Login != "",
+		Login:         v.Login,
+		Host:          v.Host,
+		Accounts:      v.Accounts,
+		Problem:       problem,
+	}
+	if out.Accounts == nil {
+		out.Accounts = []store.Account{}
+	}
+	if !v.VerifiedAt.IsZero() {
+		out.VerifiedAt = &v.VerifiedAt
+	}
+	return out
+}
+
+func (s *Server) accounts(w http.ResponseWriter, r *http.Request) {
+	stored, err := s.Store.Accounts()
+	writeJSON(w, view(stored, nil), err)
+}
+
+// refreshAccounts re-establishes the identity from gh.
+//
+// A failure leaves the stored accounts alone and reports the problem beside them. Wiping them
+// would let a moment without a network silently redraw every figure the split appears in, and
+// the operator would have no way to tell that from having genuinely lost access.
+func (s *Server) refreshAccounts(w http.ResponseWriter, r *http.Request) {
+	verify := s.Verify
+	if verify == nil {
+		verify = func(ctx context.Context) (ghauth.Identity, error) {
+			return ghauth.Verify(ctx, ghauth.Exec)
+		}
+	}
+
+	id, err := verify(r.Context())
+	if err != nil {
+		var p *ghauth.Problem
+		if !errors.As(err, &p) {
+			p = &ghauth.Problem{
+				Reason: err.Error(),
+				Remedy: "Check the authentication with: gh auth status",
+			}
+		}
+		stored, readErr := s.Store.Accounts()
+		writeJSON(w, view(stored, p), readErr)
 		return
 	}
-	if err := s.Store.SetOwnedOrgs(owners); err != nil {
+
+	if err := s.Store.ReplaceAccounts(verification(id)); err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
-	stored, err := s.Store.OwnedOrgs()
-	writeJSON(w, stored, err)
+	stored, err := s.Store.Accounts()
+	writeJSON(w, view(stored, nil), err)
+}
+
+// verification maps what gh established onto what the store records. The two types are kept
+// apart so the store never depends on how the identity was obtained.
+func verification(id ghauth.Identity) store.Verification {
+	v := store.Verification{Login: id.Login, Host: id.Host, VerifiedAt: id.VerifiedAt}
+	for _, a := range id.Accounts {
+		v.Accounts = append(v.Accounts, store.Account{Owner: a.Owner, Kind: a.Kind, Role: a.Role})
+	}
+	return v
 }
 
 func (s *Server) ownerCandidates(w http.ResponseWriter, r *http.Request) {

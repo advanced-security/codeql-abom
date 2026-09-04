@@ -20,15 +20,16 @@ public sealed class AbomApi(HttpClient http)
     public async Task<Summary> GetSummaryAsync(CancellationToken ct = default) =>
         await GetAsync<Summary>("api/summary", ct) ?? new Summary();
 
-    public async Task<IReadOnlyList<string>> GetOwnedOrgsAsync(CancellationToken ct = default) =>
-        await GetListAsync<string>("api/owned-orgs", ct);
+    public async Task<AccountIdentity> GetAccountsAsync(CancellationToken ct = default) =>
+        await GetAsync<AccountIdentity>("api/accounts", ct) ?? new AccountIdentity();
 
-    public async Task<IReadOnlyList<string>> SetOwnedOrgsAsync(
-        IEnumerable<string> owners, CancellationToken ct = default)
+    /// <summary>Re-asks gh who the operator is. A POST because it runs a subprocess.</summary>
+    public async Task<AccountIdentity> RefreshAccountsAsync(CancellationToken ct = default)
     {
-        var response = await http.PutAsJsonAsync("api/owned-orgs", owners.ToArray(), Json, ct);
+        var response = await http.PostAsync("api/accounts/refresh", content: null, ct);
         response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<List<string>>(Json, ct) ?? [];
+        return await response.Content.ReadFromJsonAsync<AccountIdentity>(Json, ct)
+               ?? new AccountIdentity();
     }
 
     public async Task<IReadOnlyList<OwnerCandidate>> GetOwnerCandidatesAsync(

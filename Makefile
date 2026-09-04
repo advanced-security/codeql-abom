@@ -2,9 +2,9 @@
 
 GO_FILES := $(shell find . -name '*.go' -not -path './ui/*')
 
-.PHONY: verify fmt vet test lint ql js ui selfcheck check-corrupt build clean
+.PHONY: verify fmt vet test lint ql js style ui selfcheck check-corrupt build clean
 
-verify: check-corrupt fmt vet lint test js ql ui
+verify: check-corrupt fmt vet lint test js style ql ui
 
 ## check-corrupt: catch a duplicated package clause.
 ##
@@ -46,6 +46,11 @@ js:
 ## ui: a Razor syntax error passes every Go check and fails in CI.
 ui:
 	@dotnet build ui/Abom.WebAssembly.csproj -c Release --nologo -v quiet && echo "ui: ok"
+
+## style: one visual vocabulary. Drift here is invisible to every other check, and review had
+## already missed six font sizes, three heading shapes and forty-nine inline styles.
+style:
+	@node ui/tools/check-style.mjs
 
 ql:
 	@codeql test run ql/actions/abom/test

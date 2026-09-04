@@ -116,6 +116,13 @@ func (s *Store) dropStaleDerivedTables() error {
 	if _, err := s.db.Exec(`DROP TABLE IF EXISTS abom_pinning`); err != nil {
 		return fmt.Errorf("dropping abom_pinning: %w", err)
 	}
+	// abom_owned_org held accounts the operator typed in. A declaration cannot be told apart from
+	// a guess, yet it decided which findings were reported as theirs to fix, so those rows are
+	// discarded rather than carried into abom_account: they were never verified and there is no
+	// way to verify them retroactively.
+	if _, err := s.db.Exec(`DROP TABLE IF EXISTS abom_owned_org`); err != nil {
+		return fmt.Errorf("dropping abom_owned_org: %w", err)
+	}
 	return nil
 }
 

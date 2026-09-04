@@ -1,0 +1,15 @@
+@* One search box: same width, variant, density and adornment on every page that filters a list.
+   Widths had drifted to 420px on two pages and 280px on a third. *@
+
+<MudTextField T="string" Value="Value" ValueChanged="ValueChanged"
+              Immediate="true" DebounceInterval="200" Placeholder="@Placeholder"
+              Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true"
+              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+              Class="@($"abom-search {Class}")" />
+
+@code {
+    [Parameter] public string Value { get; set; } = string.Empty;
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public string Placeholder { get; set; } = "Filter";
+    [Parameter] public string? Class { get; set; }
+}

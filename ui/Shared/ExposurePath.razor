@@ -1,7 +1,7 @@
 @* An exposure route is a chain, not a cloud, so it is drawn as one. A force layout would
    scramble the ordering that is the entire point of the path. *@
 
-<div class="abom-path" style="display:flex;flex-wrap:wrap;align-items:center;gap:0.4rem;">
+<div class="abom-path abom-inline-center">
     @for (var i = 0; i < Path.Count; i++)
     {
         var step = Path[i];
@@ -10,7 +10,7 @@
         <span class="abom-path-step">
             <MudIcon Icon="@(isLast ? Icons.Material.Filled.GpsFixed : Icons.Material.Outlined.Description)"
                      Size="Size.Small" />
-            <span style="@(isLast ? "font-weight:600;" : null)">@Shorten(step)</span>
+            <span class="@(isLast ? "abom-strong" : null)">@Shorten(step)</span>
         </span>
 
         @if (!isLast)

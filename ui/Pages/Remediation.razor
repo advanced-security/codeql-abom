@@ -4,11 +4,10 @@
 
 <PageTitle>Remediation — ABOM</PageTitle>
 
-<MudText Typo="Typo.h5" GutterBottom="true"><h1 style="all:unset;">Remediation</h1></MudText>
-<MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">
+<PageHeader Title="Remediation">
     Published severity against how many repositories reach it. CVSS and EPSS are shown for
     context and are deliberately not part of the score.
-</MudText>
+</PageHeader>
 
 @if (_loading)
 {
@@ -16,7 +15,7 @@
 }
 else if (_items.Count == 0)
 {
-    <MudAlert Severity="MudBlazor.Severity.Info" Variant="Variant.Outlined">
+    <MudAlert Dense="true" Severity="MudBlazor.Severity.Info" Variant="Variant.Outlined">
         <MudText Typo="Typo.body2">
             No repository in scope reaches an action named by a live advisory.
         </MudText>
@@ -36,10 +35,10 @@ else
             <HierarchyColumn T="RemediationItem" />
 
             <PropertyColumn Property="x => x.Priority" Title="Score" SortBy="x => x.Priority"
-                            HeaderStyle="width:74px;" CellStyle="width:74px;">
+                            HeaderClass="abom-col-score" CellClass="abom-col-score">
                 <CellTemplate>
                     <MudTooltip Text="@($"{context.Item.Severity} severity × {context.Item.TotalRepos} repositories reached")">
-                        <span style="font-weight:600;font-variant-numeric:tabular-nums;">
+                        <span class="abom-strong abom-num">
                             @context.Item.Priority
                         </span>
                     </MudTooltip>
@@ -47,14 +46,13 @@ else
             </PropertyColumn>
 
             <PropertyColumn Property="x => x.Severity" Title="Severity"
-                            HeaderStyle="width:132px;" CellStyle="width:132px;">
+                            HeaderClass="abom-col-severity" CellClass="abom-col-severity">
                 <CellTemplate>
                     <SeverityChip Severity="@context.Item.Severity" />
                     @* CVSS and EPSS sit beside severity as context; they are not in the score. *@
                     @if (context.Item.HasCvss || context.Item.HasEpss)
                     {
-                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block"
-                                 Style="font-size:0.68rem;white-space:nowrap;">
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block abom-metric-note">
                             @if (context.Item.HasCvss)
                             {
                                 <span>CVSS @context.Item.CvssV3Score.ToString("0.0")</span>
@@ -72,7 +70,7 @@ else
 
             <PropertyColumn Property="x => x.GhsaId" Title="Advisory">
                 <CellTemplate>
-                    <div style="display:flex;align-items:baseline;gap:0.5rem;">
+                    <div class="abom-inline">
                         <span class="abom-rule">@context.Item.GhsaId</span>
                         @if (!string.IsNullOrEmpty(context.Item.CveId))
                         {
@@ -91,19 +89,19 @@ else
 
             @* Direct and transitive are different work and never collapse into one number. *@
             <PropertyColumn Property="x => x.DirectRepos" Title="Direct"
-                            HeaderStyle="width:72px;" CellStyle="width:72px;">
+                            HeaderClass="abom-col-direct" CellClass="abom-col-direct">
                 <CellTemplate>
                     <MudTooltip Text="These repositories name the action themselves and can fix it.">
-                        <span style="font-variant-numeric:tabular-nums;">@context.Item.DirectRepos</span>
+                        <span class="abom-num">@context.Item.DirectRepos</span>
                     </MudTooltip>
                 </CellTemplate>
             </PropertyColumn>
 
             <PropertyColumn Property="x => x.TransitiveRepos" Title="Transitive"
-                            HeaderStyle="width:88px;" CellStyle="width:88px;">
+                            HeaderClass="abom-col-transitive" CellClass="abom-col-transitive">
                 <CellTemplate>
                     <MudTooltip Text="These reach it through an intermediary that may belong to someone else.">
-                        <span style="font-variant-numeric:tabular-nums;@(context.Item.TransitiveRepos > 0 ? "" : "opacity:0.4;")">
+                        <span class="abom-num @(context.Item.TransitiveRepos > 0 ? null : "abom-faint")">
                             @context.Item.TransitiveRepos
                         </span>
                     </MudTooltip>
@@ -111,7 +109,7 @@ else
             </PropertyColumn>
 
             <PropertyColumn Property="x => x.Fixable" Title="Fix"
-                            HeaderStyle="width:92px;" CellStyle="width:92px;">
+                            HeaderClass="abom-col-fix" CellClass="abom-col-fix">
                 <CellTemplate>
                     @if (context.Item.Fixable)
                     {
@@ -133,7 +131,7 @@ else
                 @foreach (var action in context.Item.Actions)
                 {
                     <div class="mt-2">
-                        <MudLink Typo="Typo.body2" @onclick="@(() => Explore(action))" Style="cursor:pointer;">
+                        <MudLink Typo="Typo.body2" @onclick="@(() => Explore(action))" Class="abom-clickable">
                             @action
                         </MudLink>
                         <div class="mt-1">

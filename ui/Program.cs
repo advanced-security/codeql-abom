@@ -14,7 +14,7 @@ builder.Services.AddScoped(_ => new HttpClient
 });
 builder.Services.AddScoped<AbomApi>();
 builder.Services.AddScoped<ThemeService>();
-builder.Services.AddScoped<OwnedOrgService>();
+builder.Services.AddScoped<AccountService>();
 builder.Services.AddMudServices();
 
 await builder.Build().RunAsync();

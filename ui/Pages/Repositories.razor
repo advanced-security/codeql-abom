@@ -3,17 +3,13 @@
 
 <PageTitle>Repositories — ABOM</PageTitle>
 
-<MudText Typo="Typo.h5"><h1 style="all:unset;">Repositories in scope</h1></MudText>
-<MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">
+<PageHeader Title="Repositories in scope">
     Only repositories in scope are listed — those in the organization that were analyzed with
     CodeQL. Upstream repositories are fetched to resolve what
     these depend on and are not the organization's to remediate.
-</MudText>
+</PageHeader>
 
-<MudTextField T="string" Value="_search" ValueChanged="OnSearch" Immediate="false"
-              DebounceInterval="400" Placeholder="Filter by name" Variant="Variant.Outlined"
-              Margin="Margin.Dense" Adornment="Adornment.Start"
-              AdornmentIcon="@Icons.Material.Filled.Search" Class="mb-3" Style="max-width:420px;" />
+<SearchField Value="_search" ValueChanged="OnSearch" Placeholder="Filter by name" Class="mb-3" />
 
 @if (_loading)
 {
@@ -21,7 +17,7 @@
 }
 else
 {
-    <MudDataGrid T="RepositorySummary" Items="_items" Dense="true" Hover="true"
+    <MudDataGrid T="RepositorySummary" Items="_items" Dense="true" Hover="true" Bordered="false"
                  SortMode="SortMode.Single" Filterable="false" RowsPerPage="25">
         <Columns>
             <HierarchyColumn T="RepositorySummary" />
@@ -49,7 +45,7 @@ else
                     {
                         <div class="mt-1">
                             <span class="abom-rule">@rule.RuleId</span>
-                            <span class="ml-2" style="font-variant-numeric:tabular-nums;">@rule.Count</span>
+                            <span class="ml-2 abom-num">@rule.Count</span>
                         </div>
                     }
 

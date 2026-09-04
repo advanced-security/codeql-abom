@@ -10,7 +10,7 @@
 
 import { instances } from './state.js';
 import {
-    seed, repoOf, orgOf, edgeClass, groupOf, anchorKey, keyOf, touches, touchesAny,
+    seed, repoOf, orgOf, edgeClass, groupOf, anchorKey, keyOf, touches, touchesAny, ungroupedName,
 } from './topology.js';
 import {
     nodeColor, edgeColor, faded, nodeRadius, isSelected, buildNodeObject, shapesUsable,
@@ -23,7 +23,7 @@ import { particleCount, particleSpeed, startParticleCycle } from './particles.js
 // Re-exported so the pure decisions can be imported by name from one place, including by tests.
 export {
     seed, repoOf, orgOf, edgeClass, groupOf, anchorKey, keyOf,
-    faded, nodeRadius, isSelected, particleSpeed,
+    faded, nodeRadius, isSelected, particleSpeed, collapseGroups, ungroupedName,
 };
 
 // WebGL rendering for the ABOM dependency graph.
@@ -232,6 +232,9 @@ export function applyFilters(elementId, spec) {
     it.selected = f.selection ? new Set([f.selection]) : new Set();
     it.hopsOf = reachable;
     it.visible = visible;
+    // Kept for the fold: a merged edge is classified only once the groups exist, so it has to be
+    // held to the same filter the edges it was merged from were.
+    it.edgeClasses = edgeClasses;
     // Isolating already removed the unrelated, so dimming on top of it would only mute what is
     // left. Emphasis belongs to selection-without-narrowing.
     it.emphasis = null;
@@ -242,11 +245,11 @@ export function applyFilters(elementId, spec) {
     // only what is shown, and coordinates are kept on the nodes so returning is free.
     const subset = visible.size < total * SUBSET_FRACTION;
 
-    if (it.seeded && subset === it.subset) {
+    if (needsRender(it, subset)) {
+        render(it, subset);
+    } else {
         paint(it);
         it.graph.refresh();
-    } else {
-        render(it, subset);
     }
     if (it.collapsed) {
         const shown = it.graph.graphData();
@@ -257,6 +260,18 @@ export function applyFilters(elementId, spec) {
 
 /** Below this share of the corpus, the simulation is given only what is on screen. */
 const SUBSET_FRACTION = 0.25;
+
+/**
+ * Whether the node set has to be rebuilt rather than repainted.
+ *
+ * A fold is a function of the filtered nodes, the filtered edges and the grouping, and it is
+ * built during a render. So a collapsed graph can never take the repaint path: doing so left
+ * the previous fold on screen under the new grouping's name, and kept showing merged edges
+ * whose underlying edges the filter had just removed.
+ */
+export function needsRender(it, subset) {
+    return !it.seeded || subset !== it.subset || !!it.collapsed;
+}
 
 /** Seeds positions and hands the node set to the renderer. */
 function render(it, subset) {

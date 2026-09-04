@@ -182,16 +182,24 @@ CREATE TABLE IF NOT EXISTS abom_blast_radius (
   max_depth           INTEGER NOT NULL
 );
 
--- Accounts the operator says they control, and can therefore actually remediate.
+-- Accounts the operator is verified to belong to, and can therefore plausibly remediate.
 --
--- This is a declaration, not a measurement, and it is the only one of the three ownership
--- notions here that cannot be derived. repository.origin records how a repository entered the
--- corpus; an account holding a seed repository is "in scope". Neither means the operator can
--- change anything: the actions account owns a seed repository and nobody running this tool
--- controls it.
-CREATE TABLE IF NOT EXISTS abom_owned_org (
-  owner    TEXT PRIMARY KEY,
-  added_at TEXT NOT NULL
+-- Every row is evidence rather than assertion: it exists because an authenticated gh call said
+-- the account in verified_as belongs to this owner, and it records when and against which host.
+-- That is the same standard the rest of ABOM holds itself to, where a finding carries the rule
+-- that produced it.
+--
+-- It is kept apart from the other two ownership notions. repository.origin records how a
+-- repository entered the corpus; an account holding a seed repository is "in scope". Neither
+-- means the operator can change anything: the actions account owns a seed repository and nobody
+-- running this tool controls it.
+CREATE TABLE IF NOT EXISTS abom_account (
+  owner       TEXT PRIMARY KEY,
+  kind        TEXT NOT NULL,
+  role        TEXT NOT NULL,
+  host        TEXT NOT NULL,
+  verified_as TEXT NOT NULL,
+  verified_at TEXT NOT NULL
 );
 
 -- The upstream discovery queue. Expanding a dependency reveals further dependencies, so this

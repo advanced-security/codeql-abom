@@ -4,17 +4,13 @@
 
 <PageTitle>Actions &amp; Workflows — ABOM</PageTitle>
 
-<MudText Typo="Typo.h5"><h1 style="all:unset;">Actions &amp; Workflows</h1></MudText>
-<MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">
+<PageHeader Title="Actions &amp; Workflows">
     Every external dependency the organization reaches, widest reach first. The advisory count
     is how many published advisories name the action's repository — not a claim that the
     references below fall inside them.
-</MudText>
+</PageHeader>
 
-<MudTextField T="string" Value="_search" ValueChanged="OnSearch" Immediate="false"
-              DebounceInterval="400" Placeholder="Filter by name" Variant="Variant.Outlined"
-              Margin="Margin.Dense" Adornment="Adornment.Start"
-              AdornmentIcon="@Icons.Material.Filled.Search" Class="mb-3" Style="max-width:420px;" />
+<SearchField Value="_search" ValueChanged="OnSearch" Placeholder="Filter by name" Class="mb-3" />
 
 @if (_loading)
 {
@@ -22,7 +18,7 @@
 }
 else
 {
-    <MudDataGrid T="ActionSummary" Items="_items" Dense="true" Hover="true"
+    <MudDataGrid T="ActionSummary" Items="_items" Dense="true" Hover="true" Bordered="false"
                  SortMode="SortMode.Multiple" Filterable="false" RowsPerPage="30"
                  Class="abom-grid">
         <Columns>
@@ -63,7 +59,7 @@ else
             <PropertyColumn Property="x => x.DistinctRefs" Title="Distinct refs">
                 <CellTemplate>
                     <MudTooltip Text="How many different references point at this. Each one is a separate decision to make.">
-                        <span style="font-variant-numeric:tabular-nums;">@context.Item.DistinctRefs</span>
+                        <span class="abom-num">@context.Item.DistinctRefs</span>
                     </MudTooltip>
                 </CellTemplate>
             </PropertyColumn>
@@ -75,12 +71,12 @@ else
                     @if (context.Item.Advisories > 0)
                     {
                         <MudTooltip Text="Published advisories naming this repository. Compare the ranges against the references before concluding anything.">
-                            <span style="font-variant-numeric:tabular-nums;">@context.Item.Advisories</span>
+                            <span class="abom-num">@context.Item.Advisories</span>
                         </MudTooltip>
                     }
                     else
                     {
-                        <span style="opacity:0.35;">0</span>
+                        <span class="abom-faint">0</span>
                     }
                 </CellTemplate>
             </PropertyColumn>

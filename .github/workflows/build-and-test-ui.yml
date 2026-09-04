@@ -34,6 +34,10 @@ jobs:
       - name: Interface - Test the browser code
         run: make js
 
+      # Visual drift passes every other check in this workflow.
+      - name: Interface - Check style
+        run: make style
+
       - name: Interface - Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -48,5 +52,6 @@ jobs:
             echo "## Interface"
             echo ""
             echo "- Browser module tests passed"
+            echo "- Style check passed"
             echo "- Blazor build succeeded"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -2,17 +2,16 @@
 @using Abom.WebAssembly.Models
 @using Abom.WebAssembly.Services
 @inject AbomApi Api
-@inject OwnedOrgService OwnedOrgs
+@inject AccountService Accounts
 
 <PageTitle>Version Pinning — ABOM</PageTitle>
 
-<MudText Typo="Typo.h5" Class="mb-1">Version Pinning</MudText>
-<MudText Typo="Typo.body2" Class="mb-4 mud-text-secondary">
+<PageHeader Title="Version Pinning">
     How the references in your workflows name what they depend on, and where
     <code>actions/unpinned-tag</code> objected. These are two different measurements, and they are
     kept apart on purpose. Expand any row to go from an owner to the individual
     <code>uses:</code> line.
-</MudText>
+</PageHeader>
 
 @if (_totals is null)
 {
@@ -36,7 +35,7 @@ else
             <MudPaper Class="pa-4" Elevation="0" Outlined="true">
                 <MudText Typo="Typo.overline" Class="mud-text-secondary">Flagged by actions/unpinned-tag</MudText>
                 <MudText Typo="Typo.h4">@_totals.Flagged.ToString("N0")</MudText>
-                @if (OwnedOrgs.AnyDeclared)
+                @if (Accounts.AnyVerified)
                 {
                     @* Both halves, always: the actionable figure without losing the corpus figure. *@
                     <MudText Typo="Typo.body2">
@@ -145,7 +144,7 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        await OwnedOrgs.EnsureLoadedAsync();
+        await Accounts.EnsureLoadedAsync();
         await Reload();
     }
 

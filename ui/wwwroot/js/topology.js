@@ -13,8 +13,10 @@ export function seed(key) {
 
 /** The repository a node belongs to. An external action carries it in its own key. */
 export function repoOf(node) {
-    if (node.kind === 'org') return '';
+    // An explicit repository wins over the shape of the node: a collapsed group is drawn as an
+    // account but can stand for a repository, and it has to compare as the one it stands for.
     if (node.repository) return node.repository;
+    if (node.kind === 'org') return '';
     const parts = (node.key || '').split('/');
     return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : (node.key || '');
 }
@@ -34,8 +36,13 @@ export function orgOf(node) {
  */
 export function edgeClass(s, t) {
     if (!s || !t) return 'crossOwner';
-    if (repoOf(s) === repoOf(t)) return 'sameRepo';
-    return orgOf(s) === orgOf(t) ? 'sameOwner' : 'crossOwner';
+    const sr = repoOf(s), tr = repoOf(t);
+    // An absent repository is not a shared one. Owner nodes, and the groups a collapsed view
+    // builds out of them, belong to no repository: comparing those two blanks as equal painted
+    // every edge in a collapsed graph as same-repo.
+    if (sr && sr === tr) return 'sameRepo';
+    const so = orgOf(s), to = orgOf(t);
+    return so && so === to ? 'sameOwner' : 'crossOwner';
 }
 
 /** What a node is grouped under, derived from its own key so no extra payload is needed. */
@@ -58,8 +65,14 @@ export function groupOf(node, by) {
     }
 }
 
-/** Everything the current grouping cannot place, named rather than scattered. */
-export const UNGROUPED = '(not in a workflow)';
+/** What the leftovers are called, so the name states which grouping left them out. */
+export function ungroupedName(by) {
+    switch (by) {
+        case 'owner': return '(no account)';
+        case 'repo': return '(not in a repository)';
+        default: return '(not in a workflow)';
+    }
+}
 
 /** The existing node a member should gather around, if there is one. */
 export function anchorKey(node, by) {

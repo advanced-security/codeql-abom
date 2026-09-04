@@ -1,7 +1,44 @@
+/* One vocabulary for every size, spacing and family in the interface.
+ *
+ * The scale exists because six sizes had accumulated between 0.68rem and 0.8rem, which reads as
+ * unevenness rather than as hierarchy. Anything that needs a size takes one of these. */
+:root {
+    --abom-text-xs: 0.72rem;
+    --abom-text-sm: 0.78rem;
+    --abom-text-md: 0.85rem;
+    --abom-text-lg: 1rem;
+
+    --abom-icon-sm: 1rem;
+    --abom-icon-md: 1.05rem;
+
+    /* Evidence a reader compares character by character is monospaced, everywhere. */
+    --abom-mono: "Cascadia Code", "Fira Code", ui-monospace, Consolas, Monaco, monospace;
+
+    --abom-gap-xs: 0.35rem;
+    --abom-gap-sm: 0.4rem;
+    --abom-gap-md: 0.5rem;
+    --abom-gap-lg: 1rem;
+
+    --abom-radius: 3px;
+    --abom-cell-pad: 4px 6px;
+
+    /* Filter widths are fixed so the bar does not reflow as values change length. */
+    --abom-filter-w: 150px;
+    --abom-filter-wide-w: 215px;
+    --abom-filter-narrow-w: 100px;
+    /* One search width. Two pages used 420px and one 280px, for no reason either could state. */
+    --abom-search-w: 340px;
+
+    --abom-dim: 0.7;
+}
+
 html, body {
     margin: 0;
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
+
+/* style-check: off — everything to the `on` marker paints before MudBlazor is running, so no
+   palette variable or type token exists yet to refer to. */
 
 /* Applied before Blazor loads so the boot screen matches the resolved scheme. */
 html[data-theme="dark"] body { background: #1A1B1E; color: #E9ECEF; }
@@ -34,6 +71,7 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 
 #blazor-error-ui .dismiss { cursor: pointer; float: right; }
 #blazor-error-ui .reload { color: #fff; text-decoration: underline; }
+/* style-check: on */
 
 /* The coverage strip states what is not known, so it stays visible on every page. */
 .abom-coverage {
@@ -42,7 +80,7 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     align-items: center;
     gap: 1.25rem;
     padding: 0.4rem 1rem;
-    font-size: 0.78rem;
+    font-size: var(--abom-text-sm);
     border-bottom: 1px solid var(--mud-palette-lines-default);
     background: var(--mud-palette-background-grey);
 }
@@ -88,31 +126,31 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 .abom-filters .mud-input.mud-input-outlined > div.mud-input-slot {
     padding-top: 6px;
     padding-bottom: 6px;
-    font-size: 0.8rem;
+    font-size: var(--abom-text-sm);
     min-height: 20px;
 }
 
-.abom-filters .mud-input-label { font-size: 0.8rem; }
-.abom-filters .mud-chip { font-size: 0.75rem; height: 26px; }
-.abom-filters .mud-toggle-item { font-size: 0.75rem; }
+.abom-filters .mud-input-label { font-size: var(--abom-text-sm); }
+.abom-filters .mud-chip { font-size: var(--abom-text-sm); height: 26px; }
+.abom-filters .mud-toggle-item { font-size: var(--abom-text-sm); }
 
 /* The second row was never covered by the rules above, so switches, buttons and links stayed at
    full size and the bar outshouted the graph it controls. */
-.abom-filters .mud-button-root { font-size: 0.75rem; padding: 3px 10px; min-height: 28px; }
-.abom-filters .mud-button-root .mud-icon-root { font-size: 1rem; }
-.abom-filters .mud-checkbox .mud-typography { font-size: 0.78rem; }
-.abom-filters .mud-checkbox .mud-icon-root { font-size: 1.05rem; }
+.abom-filters .mud-button-root { font-size: var(--abom-text-sm); padding: 3px 10px; min-height: 28px; }
+.abom-filters .mud-button-root .mud-icon-root { font-size: var(--abom-icon-sm); }
+.abom-filters .mud-checkbox .mud-typography { font-size: var(--abom-text-sm); }
+.abom-filters .mud-checkbox .mud-icon-root { font-size: var(--abom-icon-md); }
 .abom-filters .mud-checkbox .mud-button-root { padding: 4px; min-height: 0; }
-.abom-filters .mud-typography-caption { font-size: 0.72rem; }
-.abom-filters a.mud-typography { font-size: 0.75rem; }
+.abom-filters .mud-typography-caption { font-size: var(--abom-text-xs); }
+.abom-filters a.mud-typography { font-size: var(--abom-text-sm); }
 
 /* Labels sit above every box, so the value lines all start at the same place. */
 .abom-filters .mud-input-slot,
 .abom-filters input.mud-input-root { text-align: left; }
 
-.abom-filter { width: 150px; }
-.abom-filter-wide { width: 215px; }
-.abom-filter-narrow { width: 100px; }
+.abom-filter { width: var(--abom-filter-w); }
+.abom-filter-wide { width: var(--abom-filter-wide-w); }
+.abom-filter-narrow { width: var(--abom-filter-narrow-w); }
 
 /* Each nesting step is indented and ruled, so depth is visible without repeating the full path
    on every row. */
@@ -125,19 +163,19 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 /* Nested levels are narrower than the one above, so headings wrap onto three lines unless they
    are told not to. The heading still names the level, which is how depth is read. */
 .abom-pinning-child .mud-table-head .mud-table-cell {
-    font-size: 0.72rem;
+    font-size: var(--abom-text-xs);
     white-space: nowrap;
     padding: 4px 6px;
 }
 .abom-pinning-child .mud-table-body .mud-table-cell {
-    font-size: 0.78rem;
+    font-size: var(--abom-text-sm);
     padding: 4px 6px;
 }
 
 /* Left unconstrained a tooltip stretches to the viewport, covering the controls it describes. */
 .mud-tooltip {
     max-width: 320px;
-    font-size: 0.75rem;
+    font-size: var(--abom-text-sm);
     line-height: 1.35;
 }
 
@@ -145,15 +183,15 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 .abom-key-note {    display: flex;
     align-items: flex-start;
     gap: 0.4rem;
-    font-size: 0.72rem;
+    font-size: var(--abom-text-xs);
     opacity: 0.75;
     padding: 2px 0;
 }
 /* The ring keeps its size against a label that wraps to two lines. */
 .abom-key-note .abom-legend-ring { flex: none; margin-top: 2px; }
 .abom-key-selected {
-    font-family: "Cascadia Code", "Fira Code", ui-monospace, monospace;
-    font-size: 0.7rem;
+    font-family: var(--abom-mono);
+    font-size: var(--abom-text-xs);
     overflow-wrap: anywhere;
 }
 
@@ -178,8 +216,8 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 }
 /* Monospace anywhere a value is evidence a reader compares character by character. */
 .abom-ref, .abom-path, .abom-rule {
-    font-family: "Cascadia Code", "Fira Code", Consolas, Monaco, monospace;
-    font-size: 0.78rem;
+    font-family: var(--abom-mono);
+    font-size: var(--abom-text-sm);
 }
 
 /* An identifier broken across lines cannot be read or copied, so it never wraps. */
@@ -232,9 +270,9 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 }
 
 /* Legend and filter in one place, so a key entry is something you can act on. */
-.abom-keypanel { font-size: 0.8rem; }
+.abom-keypanel { font-size: var(--abom-text-sm); }
 .abom-key-head { margin-bottom: 0.15rem; }
-.abom-key-title { font-size: 0.7rem; letter-spacing: 0.08em; opacity: 0.7; }
+.abom-key-title { font-size: var(--abom-text-xs); letter-spacing: 0.08em; opacity: 0.7; }
 
 .abom-key-row {
     display: flex;
@@ -264,7 +302,7 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 /* The legend glyph is the same shape the renderer draws, so the key reads as a key. */
 .abom-glyph { width: 14px; height: 14px; flex: none; }
 
-.abom-legend { display: flex; flex-wrap: wrap; gap: 1rem; font-size: 0.75rem; }
+.abom-legend { display: flex; flex-wrap: wrap; gap: 1rem; font-size: var(--abom-text-sm); }
 .abom-legend-item { display: flex; align-items: center; gap: 0.35rem; }
 .abom-legend-dot { width: 10px; height: 10px; border-radius: 50%; }
 
@@ -296,3 +334,109 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 }
 
 .abom-section-figure { font-variant-numeric: tabular-nums; opacity: 0.7; }
+
+/* Utilities that existed only as inline styles, repeated across pages with slightly different
+   values each time. Naming them is what lets the checker forbid the inline form. */
+
+/* Digits line up column-wise, so a reader compares magnitudes rather than glyph widths. */
+.abom-num { font-variant-numeric: tabular-nums; }
+
+.abom-dim { opacity: var(--abom-dim); }
+.abom-faint { opacity: 0.4; }
+.abom-strong { font-weight: 600; }
+.abom-nowrap { white-space: nowrap; }
+.abom-clickable { cursor: pointer; }
+
+/* A row of items sharing one baseline: a figure beside its unit, a label beside its value. */
+.abom-inline {
+    display: flex;
+    align-items: baseline;
+    gap: var(--abom-gap-md);
+}
+
+.abom-inline-center {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--abom-gap-sm);
+}
+
+/* Secondary figures sit a step below the number they qualify. */
+.abom-metric-note { font-size: var(--abom-text-xs); white-space: nowrap; }
+
+/* One search box width everywhere, set by token rather than by each page. */
+.abom-search { max-width: var(--abom-search-w); }
+
+/* Simple tables carry the grid's metrics, so a page that uses one does not look like a
+   different application from the page beside it. */
+.abom-table .mud-table-cell {
+    padding: var(--abom-cell-pad);
+    font-size: var(--abom-text-sm);
+}
+.abom-table .mud-table-head .mud-table-cell {
+    font-size: var(--abom-text-xs);
+    white-space: nowrap;
+}
+
+/* The page heading block: one title, one standfirst, one rhythm below it. */
+.abom-page-head { margin-bottom: 1rem; }
+.abom-page-title { margin: 0 0 0.25rem 0; }
+
+/* Severity reads as a labelled dot. The hue arrives as a custom property because it is
+   theme-dependent and defined once in ThemeService. */
+.abom-sev { display: inline-flex; align-items: center; gap: var(--abom-gap-xs); }
+.abom-sev-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex: none;
+    background: var(--abom-sev-color);
+}
+.abom-sev-label { font-size: var(--abom-text-sm); font-weight: 500; }
+
+/* The commit-share cell: bar, figure and trend on one baseline, at a fixed width so the
+   column does not jump as percentages change length. */
+.abom-share { min-width: 150px; }
+.abom-share-bar { flex: 1; }
+.abom-share-pct { min-width: 34px; text-align: right; }
+.abom-share-trend { font-size: var(--abom-text-xs); }
+
+.abom-ref-empty { font-size: var(--abom-text-sm); }
+
+/* Frontier status is a closed set, so each state names a class instead of building a style. */
+.abom-status-done { font-weight: 500; }
+.abom-status-unavailable { opacity: 0.55; font-style: italic; }
+.abom-status-queued { opacity: 0.8; }
+
+/* Remediation columns are sized by what they hold, so the width is named rather than repeated
+   as a number in two attributes. */
+.abom-col-score { width: 74px; }
+.abom-col-severity { width: 132px; }
+.abom-col-direct { width: 72px; }
+.abom-col-transitive { width: 88px; }
+.abom-col-fix { width: 92px; }
+
+/* Legend swatches take their hue from the live palette, which is why it arrives inline. */
+.abom-legend-line { background: var(--abom-legend-color); }
+.abom-legend-ring { border-color: var(--abom-legend-color); }
+
+/* A node's title is its key, so it is monospaced — but at heading size. The inline key class
+   carries a size of its own, which silently demoted the page title to caption size. */
+.abom-title-mono { font-family: var(--abom-mono); }
+
+/* Inline code appears in half the standfirsts. Left unstyled the browser picks its own family
+   and an absolute size, which is where the stray sizes on those pages came from. */
+code {
+    font-family: var(--abom-mono);
+    font-size: 0.95em;
+}
+
+/* MudBlazor's own internals sit outside the Typography block, so a form label rendered at 16px
+   — larger than any body text on the page — and chip text at a size the scale never chose. The
+   filter bar had already been overriding both locally; this states it once instead. */
+.mud-input-label { font-size: var(--abom-text-md); }
+.mud-chip-content { font-size: var(--abom-text-xs); }
+
+/* Top-level grid headings are deliberately allowed to wrap. Holding them on one line widens the
+   table past its container and pushes the last column off screen, which is the failure the cell
+   padding above exists to prevent: a wrapped heading is ugly, a hidden column is wrong. */
