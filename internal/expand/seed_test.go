@@ -112,8 +112,55 @@ func TestSeedFrontierQueuesASeedRepositoriesDependencies(t *testing.T) {
 	}
 }
 
-// An upstream repository was fetched only to resolve a seed's dependencies; its own edges are
-// not a supply chain anyone under review actually has, so seeding must not start from them.
+// "Why is this queued at all" has exactly one answer, and it stops being recoverable once the
+// dependency is analyzed: the edge that put it there is then indistinguishable from any other.
+func TestSeedingRecordsWhichRepositoryNamedTheDependency(t *testing.T) {
+	h := newSeedHarness(t)
+	h.reference("org/app", store.OriginSeed, "actions/checkout")
+
+	if _, err := SeedFrontier(h.store, h.queue); err != nil {
+		t.Fatalf("SeedFrontier: %v", err)
+	}
+
+	var from string
+	if err := h.store.DB().QueryRow(
+		`SELECT COALESCE(discovered_from,'') FROM abom_frontier WHERE node_key='actions/checkout'`).
+		Scan(&from); err != nil {
+		t.Fatalf("reading provenance: %v", err)
+	}
+	if from != "org/app" {
+		t.Errorf("discovered_from = %q, want the repository that names it", from)
+	}
+}
+
+// Re-seeding never resets an entry, so a row queued before provenance was recorded would keep an
+// empty answer for good unless filling in a missing one is allowed.
+func TestSeedingFillsProvenanceThatWasMissing(t *testing.T) {
+	h := newSeedHarness(t)
+	h.reference("org/app", store.OriginSeed, "actions/checkout")
+	if _, err := h.store.DB().Exec(`
+		INSERT INTO abom_frontier (node_key, owner, repo, depth, status, enqueued_at)
+		VALUES ('actions/checkout', 'actions', 'checkout', 1, 'pending', '2026-01-01T00:00:00Z')`,
+	); err != nil {
+		t.Fatalf("seeding a row without provenance: %v", err)
+	}
+
+	if _, err := SeedFrontier(h.store, h.queue); err != nil {
+		t.Fatalf("SeedFrontier: %v", err)
+	}
+
+	var from string
+	if err := h.store.DB().QueryRow(
+		`SELECT COALESCE(discovered_from,'') FROM abom_frontier WHERE node_key='actions/checkout'`).
+		Scan(&from); err != nil {
+		t.Fatalf("reading provenance: %v", err)
+	}
+	if from != "org/app" {
+		t.Errorf("discovered_from = %q, want it backfilled", from)
+	}
+}
+
+// An upstream repository was fetched only to resolve a seed's dependencies; its own edges are// not a supply chain anyone under review actually has, so seeding must not start from them.
 func TestSeedFrontierIgnoresUpstreamRepositories(t *testing.T) {
 	h := newSeedHarness(t)
 	h.reference("octo/upstream-only", store.OriginUpstream, "actions/never-queued")

@@ -1,0 +1,77 @@
+package store
+
+import "fmt"
+
+// Dependency tiers.
+//
+// Derived from depth rather than stored, because depth is already maintained as the shortest
+// route from the repositories under review and a second copy could disagree with it.
+//
+// The distinction is about who can act: a direct dependency is named by a repository under
+// review and can be changed there, while a transitive one arrives through an intermediary that
+// may belong to someone else. Source repositories are not in this queue at all — they are what
+// the queue is measured from.
+const (
+	TierDirect     = "direct"
+	TierTransitive = "transitive"
+)
+
+// tierWhere renders the depth range of a tier.
+func tierWhere(tier string) (string, error) {
+	switch tier {
+	case TierDirect:
+		return "depth <= 1", nil
+	case TierTransitive:
+		return "depth > 1", nil
+	default:
+		return "", fmt.Errorf(
+			"store: %q is not a dependency tier; expected %q or %q", tier, TierDirect, TierTransitive)
+	}
+}
+
+// RequeueTier puts an entire tier back in the queue, returning how many were requeued.
+//
+// Nothing already known is cleared. The previous analysis stays on record until a new one
+// replaces it, so re-processing does not blank the Explorer for as long as the re-run takes.
+//
+// No attempt is charged: nothing failed, the work is being asked for again, and charging it
+// would let a few re-runs exhaust a dependency's retry budget.
+func (s *Store) RequeueTier(tier string) (int, error) {
+	where, err := tierWhere(tier)
+	if err != nil {
+		return 0, err
+	}
+	// Unavailable is left alone: re-running a checkout that cannot succeed is the one outcome
+	// already known in advance.
+	res, err := s.db.Exec(`
+		UPDATE abom_frontier
+		SET status = 'pending', attempts = 0, next_attempt_at = NULL, claimed_at = NULL
+		WHERE status = 'done' AND ` + where)
+	if err != nil {
+		return 0, fmt.Errorf("requeueing the %s tier: %w", tier, err)
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
+}
+
+// TierCounts reports how much work each tier holds, so the cost of re-processing one is stated
+// before it is spent rather than discovered afterwards.
+func (s *Store) TierCounts() (map[string]int, error) {
+	out := map[string]int{TierDirect: 0, TierTransitive: 0}
+	rows, err := s.db.Query(`
+		SELECT CASE WHEN depth <= 1 THEN 'direct' ELSE 'transitive' END, COUNT(*)
+		FROM abom_frontier WHERE status = 'done' GROUP BY 1`)
+	if err != nil {
+		return nil, fmt.Errorf("counting tiers: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var tier string
+		var n int
+		if err := rows.Scan(&tier, &n); err != nil {
+			return nil, err
+		}
+		out[tier] = n
+	}
+	return out, rows.Err()
+}

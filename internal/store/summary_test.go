@@ -19,6 +19,34 @@ func TestSummaryOfEmptyDatabase(t *testing.T) {
 	}
 }
 
+// "No advisory names this action" and "nobody has fetched an advisory in months" look identical
+// on screen, and only one of them is a statement about the corpus.
+func TestSummaryReportsWhenAdvisoriesWereLastFetched(t *testing.T) {
+	s := advisoryStore(t)
+	advisoryAgainst(t, s, "GHSA-age", "high", "github/codeql-action", "3.0", "")
+
+	got, err := s.Summary()
+	if err != nil {
+		t.Fatalf("Summary: %v", err)
+	}
+	if got.AdvisoriesFetchedAt == "" {
+		t.Error("advisories were fetched but the summary reports no fetch time")
+	}
+}
+
+func TestSummaryReportsNoFetchTimeWhenNoAdvisoryWasEverFetched(t *testing.T) {
+	s := advisoryStore(t)
+
+	got, err := s.Summary()
+	if err != nil {
+		t.Fatalf("Summary: %v", err)
+	}
+	if got.AdvisoriesFetchedAt != "" {
+		t.Errorf("AdvisoriesFetchedAt = %q, want empty when none were ever fetched",
+			got.AdvisoriesFetchedAt)
+	}
+}
+
 func TestSummaryCountsEachStage(t *testing.T) {
 	s := advisoryStore(t)
 	seedDependency(t, s, "octo-org/app", "github/codeql-action/init", "v3", 10)

@@ -5,6 +5,7 @@
  * @id abom/surface
  * @tags abom
  *       supply-chain
+ *       abom-observation
  */
 
 import actions
@@ -68,20 +69,37 @@ private string runsOnOf(Job job) {
   not exists(job.getARunsOnLabel()) and result = ""
 }
 
-from
-  Job job, string srcPath, string jobId, string permissions, string permissionsScope,
-  string triggers, string runsOn, boolean secretsInherit, boolean isPrivileged,
-  boolean isExternallyTriggerable
-where
-  srcPath = job.getLocation().getFile().getRelativePath() and
+/**
+ * Holds if `name` is `value` for the job at `jobId` in `path`.
+ *
+ * One row per fact rather than one wide row per job: the ingester stores whatever a query says
+ * about a subject without knowing what the query measures, so adding an attribute here needs no
+ * change anywhere else.
+ */
+private predicate surfaceFact(Job job, string path, string jobId, string name, string value) {
+  path = job.getLocation().getFile().getRelativePath() and
   jobId = job.getId() and
-  permissions = effectivePermissions(job, permissionsScope) and
-  triggers = triggersOf(job) and
-  runsOn = runsOnOf(job) and
-  (if hasSecretsInherit(job) then secretsInherit = true else secretsInherit = false) and
-  (if job.isPrivileged() then isPrivileged = true else isPrivileged = false) and
-  if job.getWorkflow().getOn().getAnEvent().isExternallyTriggerable()
-  then isExternallyTriggerable = true
-  else isExternallyTriggerable = false
-select srcPath, jobId, permissions, permissionsScope, triggers, runsOn, secretsInherit,
-  isPrivileged, isExternallyTriggerable
+  (
+    name = "permissions" and value = effectivePermissions(job, _)
+    or
+    name = "permissionsScope" and exists(effectivePermissions(job, value))
+    or
+    name = "triggers" and value = triggersOf(job)
+    or
+    name = "runsOn" and value = runsOnOf(job)
+    or
+    name = "secretsInherit" and
+    (if hasSecretsInherit(job) then value = "true" else value = "false")
+    or
+    name = "privileged" and (if job.isPrivileged() then value = "true" else value = "false")
+    or
+    name = "externallyTriggerable" and
+    if job.getWorkflow().getOn().getAnEvent().isExternallyTriggerable()
+    then value = "true"
+    else value = "false"
+  )
+}
+
+from Job job, string subjectPath, string subjectJob, string name, string value
+where surfaceFact(job, subjectPath, subjectJob, name, value)
+select subjectPath, subjectJob, name, value

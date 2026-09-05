@@ -37,7 +37,10 @@ type Decoder func(ctx context.Context, bqrsPath, jsonPath string) error
 type Options struct {
 	QueryPath string
 	QueryID   string
-	WorkDir   string
+	// Suite names a query suite to run instead of QueryPath. The set of queries ABOM runs is
+	// meant to grow, so what runs is read from the suite at run time rather than compiled in.
+	Suite   string
+	WorkDir string
 	// Limit caps how many queued dependencies a round claims.
 	Limit       int
 	Concurrency int
@@ -69,6 +72,8 @@ type Expander struct {
 	Builder  Builder
 	CodeQL   QueryRunner
 	Decode   Decoder
+	// Resolver expands Options.Suite. Only needed when a suite is used.
+	Resolver Resolver
 	// Pace caps the rate of outbound requests across workers; nil means unlimited.
 	Pace    *work.Limiter
 	OnEvent func(work.Event)
@@ -87,8 +92,13 @@ func (b batch) full() string { return b.owner + "/" + b.repo }
 
 // Run claims a round of work, analyzes it, and enqueues what it discovers.
 func (e *Expander) Run(ctx context.Context, opts Options) (Stats, error) {
-	if opts.QueryPath == "" || opts.WorkDir == "" {
-		return Stats{}, fmt.Errorf("expand: QueryPath and WorkDir are required")
+	if (opts.QueryPath == "" && opts.Suite == "") || opts.WorkDir == "" {
+		return Stats{}, fmt.Errorf("expand: a QueryPath or Suite, and WorkDir, are required")
+	}
+
+	planned, err := e.plan(ctx, opts)
+	if err != nil {
+		return Stats{}, err
 	}
 
 	claimed, err := e.Queue.Claim(opts.Limit)
@@ -111,7 +121,7 @@ func (e *Expander) Run(ctx context.Context, opts Options) (Stats, error) {
 	pool := &work.Pool{
 		Concurrency: opts.Concurrency,
 		Prepare: func(ctx context.Context, job work.Job) (work.Prepared, error) {
-			return e.prepare(ctx, byRepo[job.Repository], opts)
+			return e.prepare(ctx, byRepo[job.Repository], opts, planned)
 		},
 		Consume: func(ctx context.Context, p work.Prepared) (int, error) {
 			return e.consume(ctx, byRepo[p.Job.Repository], p, opts, &stats)
@@ -164,7 +174,7 @@ func groupByRepository(items []frontier.Item) []batch {
 }
 
 func (e *Expander) prepare(
-	ctx context.Context, b batch, opts Options,
+	ctx context.Context, b batch, opts Options, planned []plannedQuery,
 ) (work.Prepared, error) {
 	dir := filepath.Join(opts.WorkDir, b.owner+"_"+b.repo)
 	src := filepath.Join(dir, "src")
@@ -182,13 +192,8 @@ func (e *Expander) prepare(
 		return work.Prepared{}, err
 	}
 
-	bqrsPath := filepath.Join(dir, "results.bqrs")
-	if err := e.CodeQL.RunQuery(ctx, dbDir, opts.QueryPath, bqrsPath); err != nil {
-		return work.Prepared{}, err
-	}
-
-	jsonPath := filepath.Join(dir, "results.json")
-	if err := e.Decode(ctx, bqrsPath, jsonPath); err != nil {
+	jsonPath, extra, err := e.runQueries(ctx, dbDir, dir, planned)
+	if err != nil {
 		return work.Prepared{}, err
 	}
 
@@ -198,7 +203,12 @@ func (e *Expander) prepare(
 		os.RemoveAll(src)
 		os.RemoveAll(dbDir)
 	}
-	return work.Prepared{Job: work.Job{Repository: b.full()}, ResultPath: jsonPath, Commit: tree.SHA}, nil
+	return work.Prepared{
+		Job:        work.Job{Repository: b.full()},
+		ResultPath: jsonPath,
+		Extra:      extra,
+		Commit:     tree.SHA,
+	}, nil
 }
 
 func (e *Expander) consume(
@@ -228,6 +238,20 @@ func (e *Expander) consume(
 	if err != nil {
 		return 0, err
 	}
+
+	// Everything else the suite produced. A query that fails to ingest must not lose the
+	// dependency edges already written for this repository, so these are reported and skipped
+	// rather than aborting the round.
+	for queryID, path := range p.Extra {
+		if err := e.ingestExtra(queryID, path, b.full(), p.Commit); err != nil && e.OnEvent != nil {
+			e.OnEvent(work.Event{
+				Kind: work.EventFailed,
+				Job:  work.Job{Repository: b.full()},
+				Err:  fmt.Errorf("%s: %w", queryID, err),
+			})
+		}
+	}
+
 	if err := e.Writer.Flush(); err != nil {
 		return 0, err
 	}
@@ -253,50 +277,114 @@ func (e *Expander) consume(
 	return rows, nil
 }
 
-// enqueueDiscoveries queues whatever the freshly analyzed repository depends on.
-//
-// Only dependencies reached through something another repository actually references are
-// pursued. An upstream repository is fetched to learn what its published actions and reusable
-// workflows pull in; its own CI is nobody's supply chain, and queueing those dependencies
-// spends expansion budget on repositories no one under review depends on.
-//
-// Enqueue already ignores dependencies that are finished or known, so everything reached this
-// way can be offered without further filtering.
 func (e *Expander) enqueueDiscoveries(b batch) (int, error) {
-	rows, err := e.Store.DB().Query(`
-		SELECT DISTINCT n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''), COALESCE(n.path,'')
-		FROM abom_edge e
-		JOIN abom_node n ON n.row_id = e.dst_node_row_id
-		JOIN abom_node src ON src.row_id = e.src_node_row_id
-		JOIN repository r ON r.row_id = e.repository_row_id
-		WHERE r.repository_full_name = ?
-		  AND n.is_external = 1 AND n.owner IS NOT NULL AND n.repo IS NOT NULL
-		  AND EXISTS (
-		        SELECT 1 FROM abom_edge ref
-		        WHERE ref.dst_node_row_id = src.container_node_row_id
-		          AND ref.repository_row_id IS NOT e.repository_row_id)`, b.full())
+	items, err := discoveriesOf(e.Store, b.full(), b.depth)
 	if err != nil {
-		return 0, fmt.Errorf("reading discoveries for %s: %w", b.full(), err)
+		return 0, err
 	}
+	return e.Queue.Enqueue(items)
+}
 
-	var items []frontier.Item
+// SweepDiscoveries re-applies the discovery rule to every repository already analyzed.
+//
+// enqueueDiscoveries runs only at the moment a repository is analyzed, so a change to what
+// counts as a dependency reaches an existing database only when something is re-analyzed — and
+// on a drained queue nothing ever is. Enqueue ignores what it already holds, so this settles to
+// zero once the rule and the stored graph agree.
+func SweepDiscoveries(s *store.Store, q *frontier.Queue) (int, error) {
+	rows, err := s.DB().Query(`
+		SELECT r.repository_full_name, COALESCE(MIN(f.depth), 0)
+		FROM repository r
+		LEFT JOIN abom_frontier f ON f.owner || '/' || f.repo = r.repository_full_name
+		GROUP BY r.repository_full_name`)
+	if err != nil {
+		return 0, fmt.Errorf("listing analyzed repositories: %w", err)
+	}
+	type source struct {
+		full  string
+		depth int
+	}
+	var sources []source
 	for rows.Next() {
-		var it frontier.Item
-		if err := rows.Scan(&it.NodeKey, &it.Owner, &it.Repo, &it.Subpath); err != nil {
+		var src source
+		if err := rows.Scan(&src.full, &src.depth); err != nil {
 			rows.Close()
 			return 0, err
 		}
-		it.Depth = b.depth + 1
-		it.DiscoveredFrom = b.full()
-		items = append(items, it)
+		sources = append(sources, src)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
 
+	added := 0
+	for _, src := range sources {
+		items, err := discoveriesOf(s, src.full, src.depth)
+		if err != nil {
+			return added, err
+		}
+		n, err := q.Enqueue(items)
+		if err != nil {
+			return added, err
+		}
+		added += n
+	}
+	return added, nil
+}
+
+// discoveriesOf lists the external dependencies one analyzed repository names, classified by
+// whether anything executes them.
+//
+// What contains a `uses:` is decided by CodeQL, not here: `AbomEdges.qll` emits
+// `composite-step-uses-action` for a step inside a `runs:` block and `step-uses-action` for one
+// inside a workflow job. Re-deriving that from file paths would reinvent the parser and get it
+// wrong — an earlier gate required the container to be referenced from *another* repository,
+// which dropped every composite action called only by its own repository's workflows, and with
+// it dependencies that run whenever the organization uses the parent action.
+func discoveriesOf(s *store.Store, full string, depth int) ([]frontier.Item, error) {
+	rows, err := s.DB().Query(`
+		SELECT n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''), COALESCE(n.path,''),
+		       MAX(CASE
+		             WHEN e.edge_kind = 'composite-step-uses-action' THEN 1
+		             WHEN EXISTS (
+		                    SELECT 1 FROM abom_edge ref
+		                    WHERE ref.dst_node_row_id = src.container_node_row_id) THEN 1
+		             ELSE 0
+		           END) AS runtime
+		FROM abom_edge e
+		JOIN abom_node n ON n.row_id = e.dst_node_row_id
+		JOIN abom_node src ON src.row_id = e.src_node_row_id
+		JOIN repository r ON r.row_id = e.repository_row_id
+		WHERE r.repository_full_name = ?
+		  AND n.is_external = 1 AND n.owner IS NOT NULL AND n.repo IS NOT NULL
+		GROUP BY n.node_key`, full)
+	if err != nil {
+		return nil, fmt.Errorf("reading discoveries for %s: %w", full, err)
+	}
+	defer rows.Close()
+
+	var items []frontier.Item
+	for rows.Next() {
+		var it frontier.Item
+		var runtime int
+		if err := rows.Scan(&it.NodeKey, &it.Owner, &it.Repo, &it.Subpath, &runtime); err != nil {
+			return nil, err
+		}
+		it.Depth = depth + 1
+		it.DiscoveredFrom = full
+		it.SupplyChain = frontier.SupplyChainBuild
+		if runtime == 1 {
+			it.SupplyChain = frontier.SupplyChainRuntime
+		}
+		items = append(items, it)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	sort.Slice(items, func(i, j int) bool { return items[i].NodeKey < items[j].NodeKey })
-	return e.Queue.Enqueue(items)
+	return items, nil
 }
 
 // settleFailure decides whether a failed repository is worth trying again.

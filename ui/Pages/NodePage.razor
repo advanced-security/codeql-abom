@@ -79,7 +79,7 @@ else
         <MudItem xs="6" sm="3">
             <MudPaper Elevation="0" Outlined="true" Class="pa-3">
                 <MudText Typo="Typo.h6">@(_detail.Analyzed ? "yes" : "not yet")</MudText>
-                <MudText Typo="Typo.caption">expanded</MudText>
+                <MudText Typo="Typo.caption">analyzed</MudText>
             </MudPaper>
         </MudItem>
     </MudGrid>
@@ -111,7 +111,7 @@ else
                         <MudAlert Severity="MudBlazor.Severity.Normal" Variant="Variant.Outlined"
                                   Dense="true" Class="mb-2" Icon="@Icons.Material.Outlined.HelpOutline">
                             <MudText Typo="Typo.caption">
-                                @_impact.Unanalyzed dependencies have not been expanded. A
+                                @_impact.Unanalyzed dependencies have not been analyzed. A
                                 repository that reaches this only through one of those is not
                                 counted above.
                             </MudText>

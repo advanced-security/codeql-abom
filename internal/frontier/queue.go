@@ -31,6 +31,18 @@ const (
 // DefaultMaxDepth bounds how far from the seed repositories exploration may run.
 const DefaultMaxDepth = 5
 
+// How a dependency comes to be part of the supply chain.
+//
+// Runtime means something under review executes it: a composite action's own steps run inside
+// whoever calls the action, and a reusable workflow's steps run for whoever invokes it. Build
+// means it only ever runs in an upstream project's own CI. Both are followed — compromising a
+// release pipeline is how consumers receive a malicious version — but they are different claims,
+// and reporting build-time work as though this organization ran it would overstate the exposure.
+const (
+	SupplyChainRuntime = "runtime"
+	SupplyChainBuild   = "build_time"
+)
+
 // Item is one upstream dependency awaiting analysis.
 type Item struct {
 	NodeKey string
@@ -42,6 +54,9 @@ type Item struct {
 	// CostEstimate scales the score; zero means one unit.
 	CostEstimate   float64
 	DiscoveredFrom string
+	// SupplyChain is empty for work seeded from a repository under review, which is runtime by
+	// definition; Enqueue fills it in.
+	SupplyChain string
 }
 
 // DefaultContainerWeight favors dependencies whose analysis can actually extend the graph.
@@ -104,10 +119,20 @@ func (q *Queue) Enqueue(items []Item) (int, error) {
 	insert, err := tx.Prepare(`
 		INSERT INTO abom_frontier
 			(node_key, owner, repo, subpath, depth, status, cost_estimate,
-			 discovered_from, enqueued_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 discovered_from, enqueued_at, reason, completed_at, supply_chain)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(node_key) DO UPDATE SET
-			depth = MIN(abom_frontier.depth, excluded.depth)`)
+			depth = MIN(abom_frontier.depth, excluded.depth),
+			-- Provenance is only ever filled in, never replaced: the first repository to name a
+			-- dependency is why it is here, and a row seeded before this was recorded would
+			-- otherwise keep an empty answer forever.
+			discovered_from = COALESCE(abom_frontier.discovered_from, excluded.discovered_from),
+			-- Runtime is the stronger claim and wins, so the order repositories happen to be
+			-- analyzed in cannot decide how a dependency is reported.
+			supply_chain = CASE
+				WHEN abom_frontier.supply_chain = ? OR excluded.supply_chain = ? THEN ?
+				ELSE excluded.supply_chain
+			END`)
 	if err != nil {
 		return 0, fmt.Errorf("preparing enqueue: %w", err)
 	}
@@ -131,9 +156,26 @@ func (q *Queue) Enqueue(items []Item) (int, error) {
 			return added, fmt.Errorf("checking %q: %w", it.NodeKey, err)
 		}
 
+		status, reason := StatusPending, ""
+		// Terminal on arrival, so it is dated on arrival: every other settled row carries the
+		// time it stopped moving, and a view that shows one cannot leave these blank.
+		completed := ""
+		if !namesARepository(it.Owner, it.Repo) {
+			status = StatusUnavailable
+			reason = "the reference names no repository, so nothing can be fetched for it"
+			completed = q.now().Format(time.RFC3339Nano)
+		}
+
+		chain := it.SupplyChain
+		if chain == "" {
+			chain = SupplyChainRuntime
+		}
+
 		if _, err := insert.Exec(it.NodeKey, nullable(it.Owner), nullable(it.Repo),
-			nullable(it.Subpath), it.Depth, StatusPending, cost,
-			nullable(it.DiscoveredFrom), q.now().Format(time.RFC3339Nano)); err != nil {
+			nullable(it.Subpath), it.Depth, status, cost,
+			nullable(it.DiscoveredFrom), q.now().Format(time.RFC3339Nano),
+			nullable(reason), nullable(completed), chain,
+			SupplyChainRuntime, SupplyChainRuntime, SupplyChainRuntime); err != nil {
 			return added, fmt.Errorf("enqueueing %q: %w", it.NodeKey, err)
 		}
 		if !existed {
@@ -144,6 +186,32 @@ func (q *Queue) Enqueue(items []Item) (int, error) {
 		return 0, err
 	}
 	return added, nil
+}
+
+// namesARepository reports whether owner/repo could address a real repository.
+//
+// A `uses:` assembled from an expression extracts with the expression where the account should
+// be, giving keys like `$/bump-version`. Recording the reference verbatim is right — it is what
+// the workflow says — but no such repository exists, so a checkout only rediscovers that.
+func namesARepository(owner, repo string) bool {
+	if owner == "" || repo == "" || len(owner) > 39 {
+		return false
+	}
+	for _, r := range owner {
+		if !isASCIILetterOrDigit(r) && r != '-' {
+			return false
+		}
+	}
+	for _, r := range repo {
+		if !isASCIILetterOrDigit(r) && r != '-' && r != '_' && r != '.' {
+			return false
+		}
+	}
+	return true
+}
+
+func isASCIILetterOrDigit(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }
 
 // Rescore recomputes priorities from current commonality.
@@ -210,12 +278,67 @@ func (q *Queue) Claim(limit int) ([]Item, error) {
 
 	for _, it := range claimed {
 		if _, err := q.Store.DB().Exec(
-			`UPDATE abom_frontier SET status = ? WHERE node_key = ?`,
-			StatusRunning, it.NodeKey); err != nil {
+			`UPDATE abom_frontier SET status = ?, claimed_at = ? WHERE node_key = ?`,
+			StatusRunning, now, it.NodeKey); err != nil {
 			return nil, fmt.Errorf("marking %q running: %w", it.NodeKey, err)
 		}
 	}
 	return claimed, nil
+}
+
+// ReclaimStale returns claims older than lease to the queue.
+//
+// Nothing else ever moves a running item: Claim only looks at pending, so an interrupted run
+// strands its whole batch permanently. A claim with no recorded time predates the lease and is
+// therefore from an earlier process by construction.
+//
+// No attempt is counted. An interrupted attempt taught us nothing about the dependency, and
+// charging it would let a few restarts exhaust the retry budget of work never actually tried.
+func (q *Queue) ReclaimStale(lease time.Duration) (int, error) {
+	cutoff := q.now().Add(-lease).Format(time.RFC3339Nano)
+	res, err := q.Store.DB().Exec(`
+		UPDATE abom_frontier
+		SET status = ?, claimed_at = NULL, next_attempt_at = NULL
+		WHERE status = ? AND (claimed_at IS NULL OR claimed_at <= ?)`,
+		StatusPending, StatusRunning, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("reclaiming stale claims: %w", err)
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
+}
+
+// ReclaimOrphaned returns every claim to the queue, however recently it was made.
+//
+// Safe only at process start, and correct there: the store admits a single writer, so a claim
+// that outlived the process holding it belongs to nobody. Honoring the lease instead leaves a
+// stopped queue reporting dependencies as being analyzed for as long as an hour.
+func (q *Queue) ReclaimOrphaned() (int, error) {
+	return q.ReclaimStale(0)
+}
+
+// NextAttemptAt reports when the queue next holds claimable work, and false when nothing is
+// pending at all. A time in the past means work is claimable now.
+//
+// Claim excludes items still in backoff, so a caller that treats an empty claim as an empty
+// queue abandons that work while reporting the run finished.
+func (q *Queue) NextAttemptAt() (time.Time, bool, error) {
+	var at sql.NullString
+	// MIN over an empty set still yields one row, holding NULL, so a drained queue is not
+	// ErrNoRows and must be told apart by the null.
+	if err := q.Store.DB().QueryRow(`
+		SELECT MIN(COALESCE(next_attempt_at, enqueued_at))
+		FROM abom_frontier WHERE status = ?`, StatusPending).Scan(&at); err != nil {
+		return time.Time{}, false, fmt.Errorf("reading next attempt time: %w", err)
+	}
+	if !at.Valid {
+		return time.Time{}, false, nil
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, at.String)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("parsing next attempt time %q: %w", at.String, err)
+	}
+	return parsed, true, nil
 }
 
 // HeadRef is the default thing to analyze: what the action does now.
@@ -256,6 +379,7 @@ func (q *Queue) Complete(nodeKey string, res Resolution) error {
 	_, err := q.Store.DB().Exec(`
 		UPDATE abom_frontier
 		SET status = ?, completed_at = ?, next_attempt_at = NULL, reason = NULL,
+		    claimed_at = NULL,
 		    analyzed_ref = ?, resolved_sha = ?, analyzed_at = ?, checked_at = ?,
 		    analysis_count = analysis_count + 1
 		WHERE node_key = ?`,
@@ -349,7 +473,7 @@ func (q *Queue) Fail(nodeKey, reason string) error {
 	retryAt := q.now().Add(backoff(attempts)).Format(time.RFC3339Nano)
 	_, err := q.Store.DB().Exec(`
 		UPDATE abom_frontier
-		SET status = ?, attempts = ?, reason = ?, next_attempt_at = ?
+		SET status = ?, attempts = ?, reason = ?, next_attempt_at = ?, claimed_at = NULL
 		WHERE node_key = ?`, StatusPending, attempts, nullable(reason), retryAt, nodeKey)
 	if err != nil {
 		return fmt.Errorf("failing %q: %w", nodeKey, err)
@@ -371,7 +495,8 @@ func (q *Queue) setStatus(nodeKey, status, reason, completedAt string, _ error) 
 	}
 	_, err := q.Store.DB().Exec(`
 		UPDATE abom_frontier
-		SET status = ?, reason = COALESCE(?, reason), completed_at = ?, next_attempt_at = NULL
+		SET status = ?, reason = COALESCE(?, reason), completed_at = ?, next_attempt_at = NULL,
+		    claimed_at = NULL
 		WHERE node_key = ?`, status, nullable(reason), completed, nodeKey)
 	if err != nil {
 		return fmt.Errorf("setting %q to %s: %w", nodeKey, status, err)

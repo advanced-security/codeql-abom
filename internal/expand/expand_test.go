@@ -169,6 +169,16 @@ func queuedDepth(t *testing.T, s *store.Store, key string) (int, bool) {
 	return depth, true
 }
 
+func queuedSupplyChain(t *testing.T, s *store.Store, key string) string {
+	t.Helper()
+	var chain string
+	if err := s.DB().QueryRow(
+		`SELECT supply_chain FROM abom_frontier WHERE node_key=?`, key).Scan(&chain); err != nil {
+		t.Fatalf("reading supply_chain for %s: %v", key, err)
+	}
+	return chain
+}
+
 // Several actions commonly live in one repository, and cloning plus building a database once
 // per action would repeat the most expensive part of the work for no benefit.
 func TestExpandBatchesItemsSharingARepository(t *testing.T) {
@@ -279,20 +289,126 @@ func TestExpandEnqueuesNewlyDiscoveredDependencies(t *testing.T) {
 	}
 }
 
-// An upstream repository's own CI is not part of any consumer's supply chain, so following its
-// dependencies would spend expansion budget on repositories nobody under review depends on.
-func TestExpandIgnoresDependenciesOfUnreferencedUpstreamCI(t *testing.T) {
+// Local references resolve inside the repository being analyzed rather than becoming new work:
+// `./.github/actions/greet` is already part of the tree that was just cloned.
+func TestExpandDoesNotQueueLocalReferencesAsNewRepositories(t *testing.T) {
 	h := newHarness(t)
 	h.enqueue(item("octo", "composite", "", 1))
 
-	stats := h.run(10)
+	h.run(10)
 
-	if stats.Discovered != 0 {
-		t.Errorf("Discovered = %d, want none: nothing references this repository's workflows",
-			stats.Discovered)
+	for _, key := range []string{"./.github/actions/greet", "./.github/workflows/reusable.yml"} {
+		if _, ok := queuedDepth(t, h.store, key); ok {
+			t.Errorf("%s was enqueued, but a local path names nothing to fetch", key)
+		}
 	}
-	if _, ok := queuedDepth(t, h.store, "actions/checkout"); ok {
-		t.Error("queued a dependency reachable only through an upstream repository's own CI")
+}
+
+// A composite action's own steps run inside whoever calls the action, so what they pull in is
+// executed by every consumer. Requiring some *other* repository to reference the container first
+// dropped these: on the real corpus 93 runtime dependencies were never analyzed, including
+// chef/common-github-actions' azure-login pulling lancemccarthy/akeyless-action.
+func TestExpandFollowsACompositeActionsOwnSteps(t *testing.T) {
+	h := newHarness(t)
+	h.enqueue(item("octo", "composite", "", 1))
+
+	h.run(10)
+
+	for _, want := range []string{"actions/cache", "actions/setup-python"} {
+		if _, ok := queuedDepth(t, h.store, want); !ok {
+			t.Errorf("%s was not enqueued: a composite action's steps run for every caller", want)
+			continue
+		}
+		if chain := queuedSupplyChain(t, h.store, want); chain != frontier.SupplyChainRuntime {
+			t.Errorf("%s supply_chain = %q, want %q",
+				want, chain, frontier.SupplyChainRuntime)
+		}
+	}
+}
+
+// An upstream project's own CI is still followed, because compromising a release pipeline is how
+// a consumer gets a malicious version. It is labeled, not skipped: it is not executed by anyone
+// under review, and reporting it as though it were would overstate what runs here.
+func TestExpandLabelsUpstreamCIAsBuildTime(t *testing.T) {
+	h := newHarness(t)
+	h.enqueue(item("octo", "composite", "", 1))
+
+	h.run(10)
+
+	if _, ok := queuedDepth(t, h.store, "actions/setup-node"); !ok {
+		t.Fatal("actions/setup-node was not enqueued from the repository's own CI")
+	}
+	if chain := queuedSupplyChain(t, h.store, "actions/setup-node"); chain != frontier.SupplyChainBuild {
+		t.Errorf("supply_chain = %q, want %q", chain, frontier.SupplyChainBuild)
+	}
+}
+
+// Once something under review calls the workflow, its steps are executed by that caller, so the
+// same dependency is runtime rather than build-time. The stronger claim has to win, or the order
+// repositories happen to be analyzed in would decide how a dependency is reported.
+func TestExpandUpgradesBuildTimeToRuntimeWhenSomethingCallsIt(t *testing.T) {
+	h := newHarness(t)
+	h.enqueue(item("octo", "composite", "", 1))
+	h.referencedFromSeed("org/app", "octo/composite/.github/workflows/main.yml")
+
+	h.run(10)
+
+	if chain := queuedSupplyChain(t, h.store, "actions/setup-node"); chain != frontier.SupplyChainRuntime {
+		t.Errorf("supply_chain = %q, want %q once a repository under review calls the workflow",
+			chain, frontier.SupplyChainRuntime)
+	}
+}
+
+// Discovery only enqueues when a repository is analyzed, so a change to what counts as a
+// dependency reaches an already-analyzed database only if something re-analyzes it — and on a
+// drained queue nothing ever does. The sweep re-applies the current rule to what is already
+// known, which is what makes a rule change take effect without re-cloning the world.
+func TestSweepEnqueuesWhatTheCurrentRuleNowAdmits(t *testing.T) {
+	h := newHarness(t)
+	h.enqueue(item("octo", "composite", "", 1))
+	h.run(10)
+
+	// Forget the discoveries, keeping the analyzed repository and its edges, so the sweep has
+	// the same starting point as a database analyzed under an older rule.
+	if _, err := h.store.DB().Exec(
+		`DELETE FROM abom_frontier WHERE node_key LIKE 'actions/%'`); err != nil {
+		t.Fatalf("clearing discoveries: %v", err)
+	}
+	if _, ok := queuedDepth(t, h.store, "actions/cache"); ok {
+		t.Fatal("fixture setup failed: the discovery is still queued")
+	}
+
+	n, err := SweepDiscoveries(h.store, h.queue)
+	if err != nil {
+		t.Fatalf("SweepDiscoveries: %v", err)
+	}
+	if n == 0 {
+		t.Error("the sweep enqueued nothing, so a rule change could never reach an existing database")
+	}
+	if _, ok := queuedDepth(t, h.store, "actions/cache"); !ok {
+		t.Error("actions/cache was not recovered by the sweep")
+	}
+	if chain := queuedSupplyChain(t, h.store, "actions/cache"); chain != frontier.SupplyChainRuntime {
+		t.Errorf("supply_chain = %q, want %q", chain, frontier.SupplyChainRuntime)
+	}
+}
+
+// Running it twice must not keep finding work, or a drained queue would never stay drained and
+// the loop would spin re-offering the same dependencies for ever.
+func TestSweepIsIdempotent(t *testing.T) {
+	h := newHarness(t)
+	h.enqueue(item("octo", "composite", "", 1))
+	h.run(10)
+
+	if _, err := SweepDiscoveries(h.store, h.queue); err != nil {
+		t.Fatalf("first sweep: %v", err)
+	}
+	n, err := SweepDiscoveries(h.store, h.queue)
+	if err != nil {
+		t.Fatalf("second sweep: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("second sweep enqueued %d, want none", n)
 	}
 }
 

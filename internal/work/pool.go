@@ -28,6 +28,10 @@ type Prepared struct {
 	Job Job
 	// ResultPath is the decoded query output awaiting ingestion.
 	ResultPath string
+	// Extra carries any further decoded results the parallel phase produced, keyed by the query
+	// that produced each. A suite grows over time, so the number of results per repository is
+	// not fixed and cannot be a field per query.
+	Extra map[string]string
 	// Commit is the database revision the result came from, for ledger bookkeeping.
 	Commit string
 }

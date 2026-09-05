@@ -251,7 +251,21 @@ func (b *Builder) Dependents(nodeKey string) ([]string, error) {
 	return out, rows.Err()
 }
 
-// BuildAll recomputes every aggregate.
+// RebuildAggregates recomputes the passes that clear their table and derive it again. Their
+// cost tracks corpus size rather than how much changed, so callers schedule them deliberately.
+func (b *Builder) RebuildAggregates() error {
+	if err := b.BuildBlastRadius(); err != nil {
+		return err
+	}
+	return b.BuildExposure()
+}
+
+// BuildAll finishes a run: findings become properties of nodes, then every aggregate is derived
+// again. A finding that is never attributed, or an aggregate never rebuilt, is data the graph
+// holds and no view can reach.
 func (b *Builder) BuildAll() error {
-	return b.BuildBlastRadius()
+	if _, err := b.Store.LinkFindingsToNodes(); err != nil {
+		return err
+	}
+	return b.RebuildAggregates()
 }

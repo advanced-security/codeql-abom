@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 )
 
@@ -15,6 +16,10 @@ type Summary struct {
 	// LinkedFindings are attached to a graph node; the rest are known only per repository.
 	LinkedFindings int `json:"linkedFindings"`
 	Advisories     int `json:"advisories"`
+	// AdvisoriesFetchedAt is when advisory statements were last collected, empty if never.
+	// Nothing in this tool fetches them, so their age is the difference between an action no
+	// advisory names and one nobody has checked.
+	AdvisoriesFetchedAt string `json:"advisoriesFetchedAt"`
 	// AffectedActions counts graph nodes an advisory covers.
 	AffectedActions   int            `json:"affectedActions"`
 	Exposures         int            `json:"exposures"`
@@ -73,5 +78,14 @@ func (s *Store) Summary() (Summary, error) {
 		}
 		out.Frontier[status] = n
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+
+	var fetched sql.NullString
+	if err := s.db.QueryRow(`SELECT MAX(fetched_at) FROM abom_advisory`).Scan(&fetched); err != nil {
+		return out, fmt.Errorf("summarizing advisory age: %w", err)
+	}
+	out.AdvisoriesFetchedAt = fetched.String
+	return out, nil
 }

@@ -39,6 +39,22 @@ stay out of the arithmetic, so the number remains explainable. Never blend score
 **Say what is not known.** Coverage, pending frontier items and unanalyzed dependencies are
 first-class output, not omissions.
 
+**An absent measurement is not a measurement of zero.** Reach is recomputed wholesale, so a node
+ingested since the last rebuild has no `abom_blast_radius` row — and neither does a node nothing
+references, whose reach genuinely is zero. Those are different facts and the watermark in
+`abom_graph_generation` is what separates them. Drawing an unmeasured node at the smallest size
+asserts "nothing depends on this" in a view where size means reach. Same rule as the pinning
+split refusing to print `0 yours` with no verified identity.
+
+**The graph tables are append-only.** Nothing deletes from `abom_node`, `abom_edge` or
+`abom_finding`; only `abom_blast_radius`, `abom_exposure` and `abom_account` are truncated. Every
+delta cursor the interface holds is a row-id watermark, so a `DELETE` would silently hand clients
+an update that skips or repeats work. `TestGraphTablesAreAppendOnly` guards this.
+
+**A queue state a reader distinguishes is a state the interface must have.** `pending` with
+attempts spent is not the same as untouched, and a pause that takes effect between cycles is not
+the same as paused. Collapsing either reads as a control that did nothing.
+
 ## Working style
 
 **TDD, strictly.** Write the test, run it, watch it fail for the expected reason, then
@@ -64,13 +80,40 @@ corruption; `git ls-remote --tags` confirmed v1–v8 all exist. Verify the world
 Run before declaring work complete:
 
 ```bash
-for f in $(find . -name '*.go'); do [ $(grep -c '^package ' "$f") -gt 1 ] && echo "CORRUPT: $f"; done
-gofmt -l . && go vet ./... && go test ./... -count=1 -race
-codeql test run ql/actions/abom/test
+make verify              # check-corrupt, fmt, vet, lint, test -race, js, style, ql, ui, ui-test
+make selfcheck           # needs the CodeQL CLI; not in verify because it takes tens of seconds
 ```
 
-The first line is not optional: this environment intermittently prepends a duplicate `package`
-clause when writing Go files, which `gofmt -l` reports as a parse error rather than a diff.
+`make verify` is the only definition of "verified", and CI runs the same target. Do not assemble
+an equivalent by hand: `check-corrupt` runs first and is not optional, because this environment
+intermittently prepends a duplicate `package` clause when writing a Go file, which `gofmt -l`
+reports as a parse error rather than a diff.
+
+The interface is checked in three layers, and green in one says nothing about the others.
+`ui-test` (bUnit) covers behavior and markup; it has no CSS engine, so a wrapped label or an
+overflowing grid passes it. Layout and appearance are the screenshot pass in the
+`verify-abom-ui` skill. `js` covers the browser module, which no compiler reads.
+
+The service has one canonical lifecycle, so nobody re-derives it from shell history:
+
+```bash
+make start               # build + publish + serve in the background on $(ABOM_ADDR)
+make status              # is it up, and what is discovery doing
+make logs                # follow it; one line per cycle and per failure
+make restart / make stop
+make serve               # foreground, for watching it work
+```
+
+Override `ABOM_DB`, `ABOM_ADDR`, `ABOM_UI`, `ABOM_WORK` rather than editing the Makefile.
+Discovery never starts on its own: `make start ABOM_SERVE_FLAGS=--expand` opts in. Run one
+server, not several; two against one database is two writers, which the store forbids.
+
+**Never run `make verify`, `make ql` or `make selfcheck` while discovery is running**, and the
+same goes for the CodeQL MCP server's tools. Every `codeql` invocation shares one local
+compilation cache, so a query test and a dependency's database build in flight together contend
+for that cache as well as for every core. Check with `make status` first, and pause discovery
+from the Discovery page or `make stop`. This is also why a timing-sensitive failure during a
+crawl is not evidence of anything until it reproduces on a quiet machine.
 
 ## Comments
 

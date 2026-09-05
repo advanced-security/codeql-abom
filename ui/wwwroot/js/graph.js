@@ -14,6 +14,7 @@ import {
 } from './topology.js';
 import {
     nodeColor, edgeColor, faded, nodeRadius, isSelected, buildNodeObject, shapesUsable,
+    discoveryColor,
     internalMaterialClass, SHA,
 } from './appearance.js';
 import { applyForces } from './forces.js';
@@ -24,6 +25,7 @@ import { particleCount, particleSpeed, startParticleCycle } from './particles.js
 export {
     seed, repoOf, orgOf, edgeClass, groupOf, anchorKey, keyOf,
     faded, nodeRadius, isSelected, particleSpeed, collapseGroups, ungroupedName,
+    discoveryColor,
 };
 
 // WebGL rendering for the ABOM dependency graph.
@@ -79,14 +81,23 @@ function soleSelection(it) {
  * into the WASM heap only to hand it straight back to JavaScript would cost more than the
  * request does.
  */
-export async function loadFull(elementId, url) {
+export async function loadFull(elementId, url, force) {
     const it = instances.get(elementId);
     if (!it) return null;
+
+    // A forced load is how a client recovers when its delta cursor is too old to honor.
+    if (force) delete it.cache[url];
+    const cached = !!it.cache[url];
 
     if (!it.cache[url]) {
         const res = await fetch(url);
         if (!res.ok) throw new Error(`${url} responded ${res.status}`);
-        const data = await res.json();
+        const data = await res.json().catch(err => {
+            // A truncated or non-JSON body reads as a parse error against whatever the browser
+            // guessed it was loading, which says nothing about the request that produced it.
+            console.error(`abom: ${url} did not return usable JSON`, err);
+            throw err;
+        });
 
         const byKey = new Map();
         for (const n of data.nodes) {
@@ -123,12 +134,17 @@ export async function loadFull(elementId, url) {
         for (const n of data.nodes) {
             for (const r of n.rules || []) rules.add(r);
         }
-        it.cache[url] = { nodes: data.nodes, links, degree, rules: [...rules].sort() };
+        it.cache[url] = {
+            nodes: data.nodes, links, degree, rules: [...rules].sort(),
+            // Which generation this copy reflects. Zero means unknown, which is only true
+            // before the page has asked.
+            generation: 0,
+        };
     }
 
     it.all = it.cache[url];
     it.degree = it.all.degree;
-    it.adjacency = null;
+    it.adjacencies = null;
     // A different node set has to be handed to the renderer rather than merely re-hidden.
     it.seeded = false;
     it.renderedFor = null;
@@ -136,27 +152,201 @@ export async function loadFull(elementId, url) {
         nodes: it.all.nodes.length,
         edges: it.all.links.length,
         rules: it.all.rules,
+        // Served from a previous visit, positions and all, so the caller knows to catch up on
+        // whatever arrived while it was away rather than trusting what it just got.
+        cached,
+        generation: it.all.generation || 0,
     };
 }
 
-function adjacencyOf(it) {
-    if (it.adjacency) return it.adjacency;
+/** Records which generation the loaded copy reflects, so a later visit can ask for the rest. */
+export function setGeneration(elementId, generation) {
+    const it = instances.get(elementId);
+    if (it && it.all) it.all.generation = generation;
+}
+
+const linkKey = e => `${e.source}\u0000${e.target}`;
+
+/**
+ * Folds newly discovered nodes and edges into a loaded corpus, in place.
+ *
+ * Kept separate from the fetch so the decisions it makes are testable: what counts as new, what
+ * merely updates, and where an arrival is placed. Nothing here touches the renderer.
+ */
+export function mergeInto(all, delta) {
+    const byKey = new Map(all.nodes.map(n => [n.key, n]));
+    const arrived = [];
+    for (const n of delta.nodes || []) {
+        if (byKey.has(n.key)) continue;
+        n.refStyles = new Set();
+        n.edgeClasses = new Set();
+        byKey.set(n.key, n);
+        all.nodes.push(n);
+        arrived.push(n);
+    }
+
+    const existing = new Map(all.links.map(e => [linkKey(e), e]));
+    let addedEdges = 0;
+    for (const incoming of delta.edges || []) {
+        const s = byKey.get(incoming.source), t = byKey.get(incoming.target);
+        if (!s || !t) continue;
+
+        let edge = existing.get(linkKey(incoming));
+        if (edge) {
+            // The same relationship seen again carries more references, not a second edge.
+            edge.refs = incoming.refs || edge.refs;
+            edge.count = incoming.count;
+        } else {
+            edge = incoming;
+            existing.set(linkKey(edge), edge);
+            all.links.push(edge);
+            addedEdges++;
+        }
+        edge.cls = edgeClass(s, t);
+        s.edgeClasses.add(edge.cls);
+        t.edgeClasses.add(edge.cls);
+        for (const ref of edge.refs || []) {
+            const style = SHA.test(ref) ? 'sha' : 'tag';
+            s.refStyles.add(style);
+            t.refStyles.add(style);
+        }
+    }
+
+    // Reach is recomputed wholesale, so every node's counts can move without the node changing.
+    for (const m of delta.metrics || []) {
+        const n = byKey.get(m.key);
+        if (!n) continue;
+        n.dependentRepos = m.dependentRepos;
+        n.reachKnown = m.reachKnown;
+        n.findings = m.findings;
+        n.advisories = m.advisories;
+        n.analyzed = m.analyzed;
+    }
+
+    placeArrivals(all, arrived);
+
+    const degree = new Map();
+    for (const e of all.links) {
+        degree.set(e.source, (degree.get(e.source) || 0) + 1);
+        degree.set(e.target, (degree.get(e.target) || 0) + 1);
+    }
+    all.degree = degree;
+    const rules = new Set();
+    for (const n of all.nodes) {
+        for (const r of n.rules || []) rules.add(r);
+    }
+    all.rules = [...rules].sort();
+
+    return { nodes: arrived.length, edges: addedEdges };
+}
+
+/**
+ * Places arrivals among the neighbors they arrived attached to.
+ *
+ * Left to the renderer's own seeding they would appear at a hash of their key, which is
+ * somewhere arbitrary on the far side of the graph, and the reader would watch them fly across
+ * the screen to reach the cluster they belong to.
+ */
+export function placeArrivals(all, arrived) {
+    if (!arrived.length) return;
+    const byKey = new Map(all.nodes.map(n => [n.key, n]));
+
+    const neighbors = new Map();
+    const note = (a, b) => {
+        if (!neighbors.has(a)) neighbors.set(a, []);
+        neighbors.get(a).push(b);
+    };
+    for (const e of all.links) {
+        note(e.source, e.target);
+        note(e.target, e.source);
+    }
+
+    for (const n of arrived) {
+        const placed = (neighbors.get(n.key) || [])
+            .map(key => byKey.get(key))
+            .filter(other => other && other.x !== undefined);
+        if (!placed.length) continue;
+
+        const at = axis => placed.reduce((sum, o) => sum + (o[axis] || 0), 0) / placed.length;
+        // A little scatter, derived from the key so a reload lands identically: without it
+        // every arrival on one hub stacks into a single unreadable point.
+        const jitter = radius => (seed(n.key + radius) - 0.5) * 40;
+        n.x = at('x') + jitter('#x');
+        n.y = at('y') + jitter('#y');
+        n.z = at('z') + jitter('#z');
+    }
+}
+
+/**
+ * Fetches what changed and folds it in.
+ *
+ * A running expansion adds to the corpus continuously. Reloading the whole graph to see that
+ * would re-seed every position and destroy the picture the reader is holding, so only the
+ * difference is fetched and the layout is reheated rather than rebuilt.
+ */
+export async function mergeDelta(elementId, url) {
+    const it = instances.get(elementId);
+    if (!it || !it.all) return null;
+
+    const res = await fetch(url);
+    if (!res.ok) {
+        // Following runs unattended, so a merge that starts failing has to leave a trace where
+        // someone would look for it rather than only stopping.
+        console.error(`abom: ${url} responded ${res.status}; the graph is no longer following`);
+        throw new Error(`${url} responded ${res.status}`);
+    }
+    const delta = await res.json();
+    if (delta.reset) {
+        return { reset: true, generation: delta.generation, nodes: 0, edges: 0 };
+    }
+
+    const added = mergeInto(it.all, delta);
+    it.all.generation = delta.generation;
+    it.degree = it.all.degree;
+    it.adjacencies = null;
+    // The node set handed to the renderer has changed, so a repaint alone would leave the
+    // arrivals invisible however correct the filter result is.
+    it.dirty = added.nodes > 0 || added.edges > 0;
+    // A merge must never move the camera: the reader is mid-thought about what is on screen.
+    it.keepView = true;
+
+    return {
+        reset: false,
+        generation: delta.generation,
+        nodes: added.nodes,
+        edges: added.edges,
+        rules: it.all.rules,
+    };
+}
+
+/**
+ * Adjacency in one direction or both.
+ *
+ * Direction is the difference between "what does this pull in" and "who is waiting on this",
+ * and they are different questions with different answers. Walking undirected answers neither:
+ * a queued dependency has no outgoing edges at all, so an undirected hop shows only its callers
+ * while implying it showed everything.
+ */
+function adjacencyOf(it, direction = 'both') {
+    it.adjacencies ??= {};
+    if (it.adjacencies[direction]) return it.adjacencies[direction];
+
     const adj = new Map();
     const link = (a, b) => {
         if (!adj.has(a)) adj.set(a, []);
         adj.get(a).push(b);
     };
     for (const e of it.all.links) {
-        link(e.source, e.target);
-        link(e.target, e.source);
+        if (direction !== 'in') link(e.source, e.target);
+        if (direction !== 'out') link(e.target, e.source);
     }
-    it.adjacency = adj;
+    it.adjacencies[direction] = adj;
     return adj;
 }
 
-/** Everything reachable from a selection, in both directions, out to a hop limit. */
-function neighborhood(it, key, hops) {
-    const adj = adjacencyOf(it);
+/** Everything reachable from a selection, out to a hop limit, following the given direction. */
+export function neighborhood(it, key, hops, direction) {
+    const adj = adjacencyOf(it, direction);
     const seen = new Map([[key, 0]]);
     let frontier = [key];
     const limit = hops > 0 ? hops : Infinity;
@@ -187,7 +377,9 @@ export function applyFilters(elementId, spec) {
 
     const f = spec || {};
     const total = it.all.nodes.length;
-    const reachable = f.selection ? neighborhood(it, f.selection, f.hops || 0) : null;
+    const reachable = f.selection
+        ? neighborhood(it, f.selection, f.hops || 0, f.direction || 'both')
+        : null;
 
     const search = (f.search || '').toLowerCase();
     // Explicit allow-lists: the panel always sends what is checked, so an empty list genuinely
@@ -270,7 +462,7 @@ const SUBSET_FRACTION = 0.25;
  * whose underlying edges the filter had just removed.
  */
 export function needsRender(it, subset) {
-    return !it.seeded || subset !== it.subset || !!it.collapsed;
+    return !!it.dirty || !it.seeded || subset !== it.subset || !!it.collapsed;
 }
 
 /** Seeds positions and hands the node set to the renderer. */
@@ -321,7 +513,10 @@ function render(it, subset) {
     });
     it.graph.graphData({ nodes, links: copies });
     it.seeded = true;
-    it.pendingFit = true;
+    it.dirty = false;
+    // A merge into a graph the reader is already reading must not move the camera under them.
+    it.pendingFit = !it.keepView;
+    it.keepView = false;
     applyForces(it);
     paint(it);
 }
@@ -355,6 +550,26 @@ function fitHost(el) {
     if (!el || !el.isConnected) return;
     const top = el.getBoundingClientRect().top + window.scrollY;
     el.style.height = `${Math.max(360, Math.round(window.innerHeight - top - CAPTION_GUTTER))}px`;
+}
+
+const EDITABLE_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
+
+/**
+ * Whether an Escape keypress is the reader asking to leave the graph's selection.
+ *
+ * Escape already means "close this" to a search box or an open menu. Acting on it there too
+ * would throw away the surrounding context as a side effect of dismissing something small.
+ */
+export function escapesGraph(key, target, overlayOpen) {
+    if (key !== 'Escape' || overlayOpen) return false;
+    if (!target) return true;
+    if (EDITABLE_TAGS.has(target.tagName)) return false;
+    return !target.isContentEditable;
+}
+
+// MudBlazor marks its open menus and dialogs, and answers Escape on them itself.
+function overlayOpen() {
+    return !!document.querySelector('.mud-popover-open, .mud-dialog-container');
 }
 
 export function create(elementId, use3d, dotNetRef) {
@@ -409,6 +624,11 @@ export function create(elementId, use3d, dotNetRef) {
         .onNodeRightClick(n => {
             if (n && dotNetRef) dotNetRef.invokeMethodAsync('OnNodeIsolated', n.key);
         })
+        // Clicking nothing means "never mind". The renderer is set to clickAfterDrag(false), so
+        // a camera rotation that happens to end over empty space does not reach this.
+        .onBackgroundClick(() => {
+            if (dotNetRef) dotNetRef.invokeMethodAsync('OnGraphCleared');
+        })
         .onNodeHover(n => {
             const cur = instances.get(elementId);
             if (cur) cur.hovered = n ? n.key : '';
@@ -460,8 +680,16 @@ export function create(elementId, use3d, dotNetRef) {
     window.addEventListener('resize', onResize);
     requestAnimationFrame(() => fitHost(el));
 
+    // On document rather than the canvas: the WebGL surface never holds focus, so a listener
+    // bound to it would only fire after the reader had clicked it first.
+    const onKeyDown = event => {
+        if (!escapesGraph(event.key, event.target, overlayOpen())) return;
+        if (dotNetRef) dotNetRef.invokeMethodAsync('OnGraphCleared');
+    };
+    document.addEventListener('keydown', onKeyDown);
+
     const it = {
-        graph, observer, onResize, el, labels, use3d, dotNetRef,
+        graph, observer, onResize, onKeyDown, el, labels, use3d, dotNetRef,
         cache: carried.cache, all: carried.all, adjacency: null,
         degree: carried.all ? carried.all.degree : new Map(),
         selected: new Set(), hovered: '', hopsOf: null, view: 'neighborhood', palette: null,
@@ -601,9 +829,15 @@ export function rebuildNodes(elementId) {
 export function setView(elementId, view) {
     const it = instances.get(elementId);
     if (!it) return;
+    const recolors = it.view === 'frontier' || view === 'frontier';
     it.view = view;
     applyForces(it);
     paint(it);
+    // Coverage answers with hue, not position, and a custom shape holds its color in the
+    // material it was built with. Switching into or out of it has to remake the meshes.
+    if (recolors && it.shapes) {
+        it.graph.nodeThreeObject(it.graph.nodeThreeObject());
+    }
     it.graph.d3ReheatSimulation();
 }
 
@@ -652,10 +886,13 @@ function paint(it) {
     const visible = it.visible;
     const em = it.emphasis;
     const lit = l => !em || em.has(keyOf(l.source)) || em.has(keyOf(l.target));
+    // The frontier view answers coverage, so hue carries how much is known rather than what kind
+    // of thing each node is. The legend swaps with it.
+    const color = it.view === 'frontier' ? discoveryColor : nodeColor;
     it.graph
         .nodeVisibility(n => !visible || visible.has(n.key))
         .linkVisibility(l => l.shown !== false)
-        .nodeColor(n => (em && !em.has(n.key)) ? p.muted : nodeColor(n, p))
+        .nodeColor(n => (em && !em.has(n.key)) ? p.muted : color(n, p))
         .nodeVal(n => nodeRadius(n, it.selected))
         .linkColor(l => lit(l) ? edgeColor(l, p) : faded(edgeColor(l, p)))
         .linkOpacity(0.65)
@@ -768,7 +1005,7 @@ function applySelection(it, frame) {
     if (it.selected && it.selected.size && it.all) {
         const union = new Map();
         for (const key of it.selected) {
-            for (const [k, hop] of neighborhood(it, key, 1)) {
+            for (const [k, hop] of neighborhood(it, key, 1, 'both')) {
                 if (!union.has(k) || hop < union.get(k)) union.set(k, hop);
             }
         }
@@ -850,6 +1087,7 @@ export function dispose(elementId, keepEntry) {
     it.running = false;
     clearInterval(it.particleTimer);
     if (it.onResize) window.removeEventListener('resize', it.onResize);
+    if (it.onKeyDown) document.removeEventListener('keydown', it.onKeyDown);
     try { it.observer && it.observer.disconnect(); } catch { /* already gone */ }
     try { it.graph._destructor && it.graph._destructor(); } catch { /* already gone */ }
     const el = document.getElementById(elementId);

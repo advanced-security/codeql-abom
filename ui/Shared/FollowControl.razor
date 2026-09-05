@@ -1,0 +1,53 @@
+@* One follow control for every view that watches a running expansion. *@
+@implements IDisposable
+@inject FollowService Follow
+
+<div class="d-flex align-center gap-2">
+    @* The tooltip wraps a span rather than the checkbox: MudBlazor swallows pointer events on a
+       disabled control, so a tooltip anchored to it never appears. *@
+    <MudTooltip Text="@FollowHint">
+        <span>
+            <MudCheckBox T="bool" Value="Follow.Enabled" ValueChanged="OnEnabledChanged"
+                         Color="Color.Primary" Size="Size.Small" Dense="true"
+                         Disabled="@(!Follow.DiscoveryRunning)" Label="Follow" />
+        </span>
+    </MudTooltip>
+
+    @* Always enabled. The interval is a preference, not a property of the current run, and
+       setting it before starting anything is the normal case. *@
+    <MudText Typo="Typo.caption" Class="mud-text-secondary">every</MudText>
+    <MudSelect T="int" Value="Follow.Seconds" ValueChanged="OnSecondsChanged"
+               Dense="true" Margin="Margin.Dense" Variant="Variant.Text"
+               Class="abom-filter-narrow">
+        @foreach (var seconds in FollowService.Choices)
+        {
+            <MudSelectItem T="int" Value="@seconds">@FollowService.Describe(seconds)</MudSelectItem>
+        }
+    </MudSelect>
+
+    @if (LastUpdated is { } at)
+    {
+        <MudText Typo="Typo.caption" Class="mud-text-secondary">
+            @($"updated {TimeText.DayAndTime(at, "HH:mm:ss")}")
+        </MudText>
+    }
+</div>
+
+@code {
+    /// <summary>When the hosting view last took data, so following shows evidence of working.</summary>
+    [Parameter] public DateTime? LastUpdated { get; set; }
+
+    private string FollowHint => Follow.DiscoveryRunning
+        ? $"Refresh this view every {FollowService.Describe(Follow.Seconds)} while discovery runs."
+        : "Nothing is running, so there is nothing to follow. Start discovery first.";
+
+    protected override void OnInitialized() => Follow.Changed += OnChanged;
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    private void OnEnabledChanged(bool value) => Follow.SetEnabled(value);
+
+    private async Task OnSecondsChanged(int seconds) => await Follow.SetSecondsAsync(seconds);
+
+    public void Dispose() => Follow.Changed -= OnChanged;
+}

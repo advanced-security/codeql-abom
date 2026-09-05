@@ -6,6 +6,7 @@
  * @id abom/edges
  * @tags abom
  *       supply-chain
+ *       abom-edges
  */
 
 import actions

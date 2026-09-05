@@ -14,6 +14,18 @@ export function nodeColor(node, palette) {
     return (palette.kinds && palette.kinds[node.kind]) || palette.muted;
 }
 
+/**
+ * Color by place in the discovery queue, for the view that is about coverage.
+ *
+ * Most nodes were never queued: they are workflows and steps inside the corpus under review,
+ * not dependencies of it. They get the muted color, because "not a dependency" is a fact and
+ * must not be drawn in the same family as "we have not looked yet".
+ */
+export function discoveryColor(node, palette) {
+    const states = palette.discovery || {};
+    return states[node.discovery] || palette.muted;
+}
+
 export function edgeColor(link, palette) {
     switch (link.cls) {
         case 'sameRepo': return palette.edgeSameRepo;
@@ -35,9 +47,17 @@ export function nodeRadius(node, selected) {
     // An owner is a grouping device, not something a workflow can depend on. Sizing it by its
     // largest member drew the container half again as large as the dependency inside it, and
     // counted that member's reach twice on screen.
-    const base = node.kind === 'org'
-        ? 3.4
-        : 2 + Math.log2(1 + (node.dependentRepos || 0)) * 1.4;
+    let base;
+    if (node.kind === 'org') {
+        base = 3.4;
+    } else if (node.reachKnown === false) {
+        // Arrived since reach was last measured. Drawing it at the smallest size would say
+        // nothing depends on it, which is a measurement nobody has made yet, so it sits at the
+        // middle of the scale until one has been.
+        base = 3.2;
+    } else {
+        base = 2 + Math.log2(1 + (node.dependentRepos || 0)) * 1.4;
+    }
     // Barely enlarged. Size carries reach, so growing a node on selection made it two sizes for
     // a reason that has nothing to do with reach, and up close it filled the canvas.
     return isSelected(selected, node.key) ? base * 1.25 : base;
@@ -122,10 +142,13 @@ export function buildNodeObject(it, node) {
     const lit = !it.emphasis || it.emphasis.has(node.key);
     const picked = isSelected(it.selected, node.key);
     const geometry = geometryFor(node.kind);
+    // The mesh carries its own color, so a view that recolors has to be honored here as well as
+    // on the accessor; the accessor alone is ignored the moment shapes are in use.
+    const color = it.view === 'frontier' ? discoveryColor : nodeColor;
     const mesh = new T.Mesh(
         geometry,
         new Material({
-            color: lit ? nodeColor(node, it.palette) : it.palette.muted,
+            color: lit ? color(node, it.palette) : it.palette.muted,
             transparent: true,
             // A selected node is see-through: opaque, it hid the neighborhood it was chosen
             // to reveal the moment the camera came close.

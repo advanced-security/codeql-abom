@@ -2,6 +2,7 @@
 @implements IDisposable
 @inject ThemeService Theme
 @inject AbomApi Api
+@inject FollowService Follow
 
 <MudThemeProvider @ref="_themeProvider" Theme="Theme.Theme" IsDarkMode="Theme.IsDark" />
 <MudPopoverProvider />
@@ -55,6 +56,7 @@
         _systemPrefersDark = await _themeProvider.GetSystemDarkModeAsync();
         await Theme.InitialiseAsync(_systemPrefersDark);
         await _themeProvider.WatchSystemDarkModeAsync(OnSystemPreferenceChanged);
+        await Follow.InitializeAsync();
 
         _summary = await Api.GetSummaryAsync();
         StateHasChanged();

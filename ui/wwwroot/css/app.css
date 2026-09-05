@@ -152,6 +152,17 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 .abom-filter-wide { width: var(--abom-filter-wide-w); }
 .abom-filter-narrow { width: var(--abom-filter-narrow-w); }
 
+/* The frontier key: a filled dot carrying the discovery color, matching the graph's own nodes. */
+.abom-legend-dot {
+    width: var(--abom-icon-sm);
+    height: var(--abom-icon-sm);
+    border-radius: 50%;
+    background: var(--abom-legend-color);
+    display: inline-block;
+    flex: 0 0 auto;
+    margin-right: 0.5rem;
+}
+
 /* Each nesting step is indented and ruled, so depth is visible without repeating the full path
    on every row. */
 .abom-pinning-child {
@@ -382,6 +393,38 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 .abom-page-head { margin-bottom: 1rem; }
 .abom-page-title { margin: 0 0 0.25rem 0; }
 
+.abom-legend-dot-sm {
+    width: 0.5rem;
+    height: 0.5rem;
+    margin-right: 0.35rem;
+}
+
+/* The queue as a bar: composition, never a percentage. Sized to read at a glance without
+   crowding out the status beside it. */
+.abom-queue-bar {
+    display: flex;
+    align-items: stretch;
+    height: 0.5rem;
+    border-radius: 999px;
+    overflow: hidden;
+    background: var(--mud-palette-lines-default);
+    flex: 1 1 200px;
+    min-width: 140px;
+    max-width: 340px;
+}
+
+.abom-queue-seg {
+    width: var(--abom-seg-w);
+    background: var(--abom-seg-color);
+}
+
+/* Blazor's FocusOnNavigate moves focus to the page heading so a screen reader announces the new
+   page. It is the only thing that ever focuses this element: FocusOnNavigate sets tabindex="-1",
+   so no amount of tabbing reaches it. There is therefore no keyboard case to preserve, and a
+   ring around a heading only offers a sighted reader something to do that does not exist.
+   :focus-visible is not enough on its own; browsers still match it after a page load. */
+.abom-page-title:focus { outline: none; }
+
 /* Severity reads as a labelled dot. The hue arrives as a custom property because it is
    theme-dependent and defined once in ThemeService. */
 .abom-sev { display: inline-flex; align-items: center; gap: var(--abom-gap-xs); }
@@ -407,6 +450,10 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 .abom-status-done { font-weight: 500; }
 .abom-status-unavailable { opacity: 0.55; font-style: italic; }
 .abom-status-queued { opacity: 0.8; }
+
+/* The dot keys the state to the filter above it, so it has to sit beside the word rather than
+   wrap onto its own line and double the row height. */
+.abom-status-cell { white-space: nowrap; display: inline-flex; align-items: center; }
 
 /* Remediation columns are sized by what they hold, so the width is named rather than repeated
    as a number in two attributes. */

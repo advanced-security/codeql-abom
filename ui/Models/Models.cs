@@ -112,6 +112,89 @@ public sealed record SubgraphNode
     public int Findings { get; init; }
 }
 
+/// <summary>Something the operator has to fix, with the exact way to fix it.</summary>
+public sealed record DiscoveryProblem
+{
+    public string Reason { get; init; } = string.Empty;
+    public string Remedy { get; init; } = string.Empty;
+}
+
+public sealed record DiscoveryStatus
+{
+    public string State { get; init; } = "stopped";
+    public int Cycle { get; init; }
+    public string CycleStart { get; init; } = string.Empty;
+    public string LastCycleAt { get; init; } = string.Empty;
+    public int Reclaimed { get; init; }
+    public int Analyzed { get; init; }
+    public int Settled { get; init; }
+    public int Failed { get; init; }
+    public int Unavailable { get; init; }
+    public int Discovered { get; init; }
+    public int Edges { get; init; }
+    public int Rechecked { get; init; }
+    public int Drifted { get; init; }
+
+    /// <summary>Dependencies ingested since reach was last measured.</summary>
+    public int ReachPending { get; init; }
+
+    /// <summary>Arrivals that trigger an automatic recount, so ReachPending has a denominator.</summary>
+    public int ReachThreshold { get; init; }
+    public string LastRebuildReason { get; init; } = string.Empty;
+    public long LastRebuildMillis { get; init; }
+    public string LastError { get; init; } = string.Empty;
+    public string LastErrorAt { get; init; } = string.Empty;
+    public DiscoveryProblem? Problem { get; init; }
+
+    /// <summary>What starting the loop will spend, so pressing Start is not an unpriced act.</summary>
+    public int Concurrency { get; init; }
+    public string WorkDir { get; init; } = string.Empty;
+    public int ClaimsPerCycle { get; init; }
+
+    /// <summary>Alive and claiming, or about to: an idle loop still picks up expiring retries.</summary>
+    public bool IsRunning => State is "working" or "idle" or "pausing";
+
+    /// <summary>Asked to stop, with work already in flight that will run to completion.</summary>
+    public bool IsPausing => State == "pausing";
+}
+
+public sealed record GraphVersion
+{
+    public long Generation { get; init; }
+    public int Nodes { get; init; }
+    public int Edges { get; init; }
+    public string UpdatedAt { get; init; } = string.Empty;
+
+    /// <summary>When blast radius was last derived. Nodes added since carry no measured reach.</summary>
+    public string ReachRecomputedAt { get; init; } = string.Empty;
+}
+
+public sealed record DiscoveryState
+{
+    public bool Available { get; init; }
+    public DiscoveryStatus Status { get; init; } = new();
+    public IReadOnlyDictionary<string, int> Frontier { get; init; } =
+        new Dictionary<string, int>();
+
+    /// <summary>Analyzed work per dependency tier, so re-analysis can state its cost.</summary>
+    public IReadOnlyDictionary<string, int> Tiers { get; init; } =
+        new Dictionary<string, int>();
+
+    public GraphVersion Version { get; init; } = new();
+
+    /// <summary>Empty when advisories were never collected.</summary>
+    public string AdvisoriesFetchedAt { get; init; } = string.Empty;
+
+    public int Pending => Frontier.TryGetValue("pending", out var n) ? n : 0;
+    public int Running => Frontier.TryGetValue("running", out var n) ? n : 0;
+    public int Done => Frontier.TryGetValue("done", out var n) ? n : 0;
+
+    public int Count(string state) => Frontier.TryGetValue(state, out var n) ? n : 0;
+
+    /// <summary>Everything not yet looked inside, however many attempts it has cost.</summary>
+    public int Unresolved => Count("queued") + Count("retrying") + Running;
+}
+
 public sealed record SubgraphEdge
 {
     public string Source { get; init; } = string.Empty;
@@ -142,6 +225,22 @@ public sealed record FrontierItem
     public string ResolvedSha { get; init; } = string.Empty;
     public string DiscoveredFrom { get; init; } = string.Empty;
     public string Reason { get; init; } = string.Empty;
+    public string ClaimedAt { get; init; } = string.Empty;
+    public string NextAttemptAt { get; init; } = string.Empty;
+
+    /// <summary>"runtime" when something in scope executes it, "build_time" when only its own project's CI does.</summary>
+    public string SupplyChain { get; init; } = string.Empty;
+
+    /// <summary>
+    /// The state a reader distinguishes, which is one more than the queue stores: a dependency
+    /// waiting on a retry has already cost something, and a queued one has not.
+    /// </summary>
+    public string State => Status switch
+    {
+        "pending" when Attempts > 0 => "retrying",
+        "pending" => "queued",
+        _ => Status,
+    };
 }
 
 public sealed record ActionSummary

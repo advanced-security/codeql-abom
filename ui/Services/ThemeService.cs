@@ -188,6 +188,7 @@ public sealed class ThemeService(IJSRuntime js)
             Label: "#E9ECEF",
             Muted: "#5C5F66",
             Kinds: KindColors(DarkKinds),
+            Discovery: DarkDiscovery,
             EdgeSameRepo: "rgba(91,200,255,0.85)",
             EdgeSameOwner: "rgba(255,200,72,0.85)",
             EdgeCrossOwner: "rgba(255,110,156,0.85)")
@@ -201,6 +202,7 @@ public sealed class ThemeService(IJSRuntime js)
             Label: "#212529",
             Muted: "#ADB5BD",
             Kinds: KindColors(LightKinds),
+            Discovery: LightDiscovery,
             EdgeSameRepo: "rgba(11,127,199,0.8)",
             EdgeSameOwner: "rgba(178,106,0,0.8)",
             EdgeCrossOwner: "rgba(194,37,92,0.8)");
@@ -232,9 +234,56 @@ public sealed class ThemeService(IJSRuntime js)
         ["step"] = "#868E96",
     };
 
-    /// <summary>Human-readable names for the node kinds, used by the legend and filters.</summary>
-    public static readonly Dictionary<string, string> KindNames = new()
+    // The semantic colors, stated once. MudBlazor's components read them from the theme and the
+    // graph canvas cannot read CSS at all, so without a single source here the same state ends up
+    // two different colors depending on which half of the interface drew it.
+    private const string SuccessDark = "#51CF66";
+    private const string InfoDark = "#4DABF7";
+    private const string WarningDark = "#FFA94D";
+    private const string ErrorDark = "#FF6B6B";
+
+    private const string SuccessLight = "#2F9E44";
+    private const string InfoLight = "#1971C2";
+    private const string WarningLight = "#E8590C";
+    private const string ErrorLight = "#C92A2A";
+
+    // Discovery state, for the views that are about coverage rather than about structure. Drawn
+    // from the semantic palette, not from the kind palette: a reader already knows green means
+    // settled and amber means attention, and reusing a kind's hue would mean two things at once.
+    //
+    // Queued is deliberately the muted color. Most of the bar is queued early on, and "not looked
+    // at yet" is exactly what grey should say. There is no color for a node that was never
+    // queued, because that is a fact rather than a stage.
+    private static readonly Dictionary<string, string> DarkDiscovery = new()
     {
+        ["queued"] = "#5C5F66",
+        ["retrying"] = WarningDark,
+        ["running"] = InfoDark,
+        ["done"] = SuccessDark,
+        ["unavailable"] = ErrorDark,
+    };
+
+    private static readonly Dictionary<string, string> LightDiscovery = new()
+    {
+        ["queued"] = "#ADB5BD",
+        ["retrying"] = WarningLight,
+        ["running"] = InfoLight,
+        ["done"] = SuccessLight,
+        ["unavailable"] = ErrorLight,
+    };
+
+    /// <summary>Human-readable names for the discovery states, used by the frontier legend.</summary>
+    public static readonly Dictionary<string, string> DiscoveryNames = new()
+    {
+        ["queued"] = "Queued",
+        ["retrying"] = "Retrying",
+        ["running"] = "Discovering",
+        ["done"] = "Analyzed",
+        ["unavailable"] = "Unavailable",
+    };
+
+    /// <summary>Human-readable names for the node kinds, used by the legend and filters.</summary>
+    public static readonly Dictionary<string, string> KindNames = new()    {
         ["org"] = "Owner",
         ["repo"] = "Repository",
         ["workflow"] = "Workflow",
@@ -251,6 +300,10 @@ public sealed class ThemeService(IJSRuntime js)
         PaletteLight = new PaletteLight
         {
             Primary = "#1971C2",
+            Success = SuccessLight,
+            Info = InfoLight,
+            Warning = WarningLight,
+            Error = ErrorLight,
             AppbarBackground = "#F1F3F5",
             AppbarText = "#212529",
             Background = "#FFFFFF",
@@ -259,6 +312,10 @@ public sealed class ThemeService(IJSRuntime js)
         PaletteDark = new PaletteDark
         {
             Primary = "#4DABF7",
+            Success = SuccessDark,
+            Info = InfoDark,
+            Warning = WarningDark,
+            Error = ErrorDark,
             AppbarBackground = "#212529",
             AppbarText = "#E9ECEF",
             Background = "#1A1B1E",
@@ -309,6 +366,7 @@ public sealed record GraphPalette(
     string Label,
     string Muted,
     IReadOnlyDictionary<string, string> Kinds,
+    IReadOnlyDictionary<string, string> Discovery,
     string EdgeSameRepo,
     string EdgeSameOwner,
     string EdgeCrossOwner);

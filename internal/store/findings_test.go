@@ -242,6 +242,84 @@ func TestLinkFindingsPrefersTheStepOverItsWorkflow(t *testing.T) {
 	}
 }
 
+// A reusable workflow's file is represented by the container that holds its jobs, so nothing at
+// that path is a workflow node. Attribution has to walk out of the jobs and steps sitting there,
+// or every result a rule reports against such a file stays invisible to the graph.
+func TestFindingsAttachToTheContainerHoldingTheFile(t *testing.T) {
+	s := newTestStore(t)
+	repoID, err := s.UpsertRepository("octo-org/app", "")
+	if err != nil {
+		t.Fatalf("UpsertRepository: %v", err)
+	}
+
+	const path = ".github/workflows/reusable.yml"
+	w := NewWriter(s, 0)
+	for _, n := range []Node{
+		{Key: "octo-org/app/" + path, Kind: "reusable_workflow", RepositoryID: repoID, Path: path},
+		{Key: "job:octo-org/app:" + path + ":build", Kind: "job", RepositoryID: repoID,
+			Path: path, ContainerKey: "octo-org/app/" + path},
+		{Key: "step:octo-org/app:" + path + ":build:0", Kind: "step", RepositoryID: repoID,
+			Path: path, ContainerKey: "job:octo-org/app:" + path + ":build"},
+	} {
+		if err := w.AddNode(n); err != nil {
+			t.Fatalf("AddNode(%s): %v", n.Key, err)
+		}
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	// Line 1 is the file header, which no step occupies.
+	if _, err := s.AddFindings([]Finding{{
+		RuleID: "actions/missing-workflow-permissions", RepositoryID: repoID,
+		FilePath: path, StartLine: 1,
+	}}); err != nil {
+		t.Fatalf("AddFindings: %v", err)
+	}
+
+	if _, err := s.LinkFindingsToNodes(); err != nil {
+		t.Fatalf("LinkFindingsToNodes: %v", err)
+	}
+
+	var kind string
+	if err := s.DB().QueryRow(`
+		SELECT n.node_kind FROM abom_finding_node fn
+		JOIN abom_node n ON n.row_id = fn.node_row_id`).Scan(&kind); err != nil {
+		t.Fatalf("reading link: %v", err)
+	}
+	if kind != "reusable_workflow" {
+		t.Errorf("finding attached to a %q node, want the reusable_workflow holding the file", kind)
+	}
+}
+
+// A file that names no dependency has no node in a graph built from dependencies. Inventing one
+// so the count looks better would be reporting something that was never extracted.
+func TestFindingsInUnmodeledFilesStayUnattached(t *testing.T) {
+	s := newTestStore(t)
+	repoID := seedGraph(t, s, NewWriter(s, 0))
+
+	if _, err := s.AddFindings([]Finding{{
+		RuleID: "actions/code-injection/medium", RepositoryID: repoID,
+		FilePath: ".github/actions/no-dependencies/action.yml", StartLine: 4,
+	}}); err != nil {
+		t.Fatalf("AddFindings: %v", err)
+	}
+	if _, err := s.LinkFindingsToNodes(); err != nil {
+		t.Fatalf("LinkFindingsToNodes: %v", err)
+	}
+
+	var links int
+	if err := s.DB().QueryRow(`
+		SELECT COUNT(*) FROM abom_finding_node fn
+		JOIN abom_finding f ON f.row_id = fn.finding_row_id
+		WHERE f.rule_id = 'actions/code-injection/medium'`).Scan(&links); err != nil {
+		t.Fatalf("counting links: %v", err)
+	}
+	if links != 0 {
+		t.Errorf("attached a finding to %d nodes for a file the graph never modeled", links)
+	}
+}
+
 func TestLinkFindingsToNodesIsIdempotent(t *testing.T) {
 	s := newTestStore(t)
 	repoID := seedGraph(t, s, NewWriter(s, 0))

@@ -4,6 +4,7 @@
 @inject ThemeService Theme
 @inject IJSRuntime Js
 @inject NavigationManager Nav
+@inject FollowService Follow
 
 <PageTitle>Explorer — ABOM</PageTitle>
 
@@ -84,7 +85,7 @@
             <MudSelectItem T="string" Value="@("workflow")">Workflow path</MudSelectItem>
             <MudSelectItem T="string" Value="@("none")">Nothing</MudSelectItem>
         </MudSelect>
-        <MudTooltip Text="Fold each group into a single node. Click one to expand it again.">
+        <MudTooltip Text="Collapse each group into a single node. Click one to open it again.">
             <MudCheckBox T="bool" Value="_collapsed" ValueChanged="OnCollapsedChanged"
                          Color="Color.Primary" Size="Size.Small" Dense="true" Label="Collapse"
                          Disabled="@(_groupBy == "none")" />
@@ -119,10 +120,27 @@
                     <MudSelectItem T="int" Value="@v">@v</MudSelectItem>
                 }
             </MudSelect>
+            <MudTooltip Text="@DirectionMeaning">
+                <MudSelect T="string" Label="Follow" Value="_direction"
+                           ValueChanged="OnDirectionChanged" Dense="true" Margin="Margin.Dense"
+                           Variant="Variant.Outlined" ShrinkLabel="true" Class="abom-filter">
+                    @foreach (var d in Directions)
+                    {
+                        <MudSelectItem T="string" Value="@d.Key">@d.Label</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudTooltip>
             <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default"
                        StartIcon="@Icons.Material.Filled.ArrowBack" OnClick="ClearSelection">
                 Back to the whole graph
             </MudButton>
+            @if (CameFromDiscovery)
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Search" Href="@BackToDiscovery">
+                    Back to Discovery
+                </MudButton>
+            }
         }
         else if (HasSelection)
         {
@@ -167,6 +185,31 @@
     @if (_showLegend)
     {
         <MudPaper Elevation="0" Outlined="true" Class="pa-2 abom-explore-key abom-keypanel">
+            @if (_view == "frontier")
+            {
+                @* Hue means something else in this view, so the key has to say so where the
+                   reader is looking, not leave the kind colors below to be misread. *@
+                <div class="d-flex align-center abom-key-head">
+                    <span class="abom-key-title">COLOR: DISCOVERY STATE</span>
+                </div>
+                @foreach (var state in ThemeService.DiscoveryNames)
+                {
+                    <div class="abom-key-row">
+                        <span class="abom-legend-dot"
+                              style="--abom-legend-color:@DiscoveryColor(state.Key)"></span>
+                        <span class="abom-key-label">@state.Value</span>
+                    </div>
+                }
+                <div class="abom-key-row">
+                    <span class="abom-legend-dot"
+                          style="--abom-legend-color:@Theme.Palette.Muted"></span>
+                    <span class="abom-key-label">never a dependency</span>
+                </div>
+                <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1">
+                    Rings are how far each dependency sits from the repositories you review. The
+                    colors below filter which nodes are shown, not what they are colored.
+                </MudText>
+            }
             <div class="d-flex align-center abom-key-head">
                 <MudCheckBox T="bool?" Value="@AllNodesChecked" ValueChanged="OnAllNodesChanged"
                              TriState="true" Dense="true" Size="Size.Small" Color="Color.Primary" />
@@ -251,9 +294,9 @@
         }
         else if (_collapsed)
         {
-            @* Folded, not filtered: nothing was removed, so saying "hidden" would be wrong. *@
+            @* Grouped, not filtered: nothing was removed, so saying "hidden" would be wrong. *@
             <span>
-                <b>@_counts.Nodes.ToString("N0")</b> groups by @GroupByLabel, folded from
+                <b>@_counts.Nodes.ToString("N0")</b> groups by @GroupByLabel, gathered from
                 @_counts.Total.ToString("N0") nodes
                 <span class="mud-text-secondary">· click a group to expand it</span>
             </span>
@@ -272,12 +315,24 @@
                 @if (!ShowSteps)
                 {
                     <span class="mud-text-secondary">
-                        · individual <code>uses:</code> steps folded into their workflow
+                        · individual <code>uses:</code> steps counted as part of their workflow
                     </span>
                 }
             </span>
         }
+        @if (_arrived > 0)
+        {
+            <span class="mud-text-secondary">
+                · @_arrived.ToString("N0") arrived from a running expansion
+            </span>
+        }
+        @if (_pollError is { } failure)
+        {
+            <span class="abom-status-unavailable">· could not refresh: @failure</span>
+        }
     </MudText>
+    <MudSpacer />
+    <FollowControl LastUpdated="_lastPoll" />
 </div>
 
 @code {
@@ -290,12 +345,40 @@
     [SupplyParameterFromQuery(Name = "kinds")] public string? KindsParam { get; set; }
     [SupplyParameterFromQuery(Name = "flags")] public string? FlagsParam { get; set; }
     [SupplyParameterFromQuery(Name = "minReach")] public int? MinReachParam { get; set; }
+    [SupplyParameterFromQuery(Name = "direction")] public string? DirectionParam { get; set; }
+    [SupplyParameterFromQuery(Name = "from")] public string? FromParam { get; set; }
+    [SupplyParameterFromQuery(Name = "status")] public string? StatusParam { get; set; }
 
     // NeedsSelection marks a view whose force reads hop distance from a selected node. Without
     // one it has nothing to measure from, so it is disabled rather than silently inert.
     private sealed record ViewOption(string Key, string Label, string Meaning,
         bool NeedsSelection = false);
     private sealed record Counts(int Nodes, int Edges, int Hidden, int Total);
+
+    private sealed record MergeResult(
+        bool Reset, long Generation, int Nodes, int Edges, IReadOnlyList<string> Rules)
+    {
+        public IReadOnlyList<string> Rules { get; init; } = Rules ?? [];
+    }
+
+    private long _generation;
+    private int _arrived;
+    private DateTime? _lastPoll;
+    private string? _pollError;
+    private Timer? _followTimer;
+
+    // Which way a neighborhood is walked. "What does this pull in" and "who is waiting on this"
+    // are different questions, and a queued dependency has no answer to the first at all.
+    private string _direction = "both";
+
+    private sealed record DirectionOption(string Key, string Label, string Meaning);
+
+    private static readonly DirectionOption[] Directions =
+    [
+        new("both", "Both ways", "Everything connected to the selection, either way round."),
+        new("out", "What it uses", "Only what the selection depends on, recursively."),
+        new("in", "What uses it", "Only what depends on the selection, recursively."),
+    ];
 
     private static readonly ViewOption[] Views =
     [
@@ -308,6 +391,9 @@
             NeedsSelection: true),
         new("distance", "Distance",
             "Rings are hops from the selected node.", NeedsSelection: true),
+        new("frontier", "Coverage",
+            "Color is how much is known about each dependency. Rings are how far it sits from "
+            + "the repositories you review. Grey means it was never a dependency."),
     ];
 
     private static readonly Dictionary<string, string> Kinds = ThemeService.KindNames;
@@ -326,14 +412,14 @@
 
     private static readonly Dictionary<string, string> KindHelpText = new()
     {
-        ["org"] = "An account, user or organization alike. Holds the repositories and actions beneath it, and is the coarsest way to see who the corpus depends on.",
+        ["org"] = "An account, user or organization alike. Holds the repositories and actions beneath it, and is the broadest way to see who your organization depends on.",
         ["repo"] = "A repository. Connected to the workflows and composite actions it holds.",
         ["workflow"] = "A workflow file. Where `uses:` references are written.",
         ["reusable_workflow"] = "A workflow other repositories can call. Its own dependencies become theirs.",
         ["composite_action"] = "An action built from steps. Counts as an action, not a workflow.",
         ["action"] = "An action being depended on.",
         ["docker_image"] = "A container image referenced by a step.",
-        ["job"] = "A job within a workflow. Only present when steps are shown; otherwise folded into its workflow.",
+        ["job"] = "A job within a workflow. Only present when steps are shown; otherwise counted as part of its workflow.",
         ["step"] = "One individual `uses:` line. Off by default: there are 14,645 of them.",
     };
 
@@ -510,12 +596,16 @@
     private string KindColor(string kind) =>
         Theme.Palette.Kinds.TryGetValue(kind, out var c) ? c : Theme.Palette.Muted;
 
+    private string DiscoveryColor(string state) =>
+        Theme.Palette.Discovery.TryGetValue(state, out var c) ? c : Theme.Palette.Muted;
+
     protected override void OnInitialized()
     {
         _isolated = SelectionParam ?? string.Empty;
         _selected = string.IsNullOrEmpty(_isolated) ? [] : [_isolated];
         if (!string.IsNullOrEmpty(_isolated)) _hops = 1;
         if (!string.IsNullOrEmpty(ViewParam)) _view = ViewParam;
+        if (Directions.Any(d => d.Key == DirectionParam)) _direction = DirectionParam!;
 
         // Handed over from another page, so the reader arrives at what they were already looking
         // at rather than at the whole corpus again.
@@ -528,6 +618,7 @@
         if (SplitParam(KindsParam) is { Count: > 0 } kinds) _kinds = kinds;
 
         Theme.Changed += OnThemeChanged;
+        Follow.Changed += OnFollowChanged;
     }
 
     private static HashSet<string> SplitParam(string? value) =>
@@ -546,17 +637,32 @@
         await _module.InvokeVoidAsync("setAnimate", "abom-graph", _animate);
         _ready = true;
         await LoadGraph();
+        ApplyFollow();
     }
 
-    private async Task LoadGraph()
+    private async Task LoadGraph(bool force = false)
     {
         if (_module is null) return;
         _loading = true;
         Busy("Loading the whole graph…");
 
         var url = ShowSteps ? "/api/graph/full?steps=true" : "/api/graph/full";
-        var loaded = await _module.InvokeAsync<LoadResult>("loadFull", "abom-graph", url);
+        var loaded = await _module.InvokeAsync<LoadResult>("loadFull", "abom-graph", url, force);
         _ruleIds = loaded.Rules;
+
+        // A cached copy comes back with its positions intact, which is what makes returning to
+        // this page instant. It also comes back as old as the visit that built it, so the
+        // generation it holds is the cursor to catch up from rather than the current one.
+        var caughtUp = loaded.Cached && loaded.Generation > 0;
+        if (caughtUp)
+        {
+            _generation = loaded.Generation;
+        }
+        else
+        {
+            _generation = (await Api.GetGraphVersionAsync()).Generation;
+            await _module.InvokeVoidAsync("setGeneration", "abom-graph", _generation);
+        }
 
         if (_view == "priority") await PushPriorities();
         await _module.InvokeVoidAsync("setView", "abom-graph", _view);
@@ -564,6 +670,97 @@
         _loading = false;
         Busy("Laying out the graph…");
         await Refilter();
+
+        if (caughtUp) await FollowGraph();
+    }
+
+    /// <summary>
+    /// Folds in what a running expansion has added since the last look.
+    ///
+    /// The version is checked first because it is a few bytes against a corpus, and because
+    /// re-laying-out an unchanged graph every interval would move the picture for nothing.
+    /// </summary>
+    private async Task FollowGraph()
+    {
+        if (_module is null || !_ready || _loading) return;
+
+        var version = await Api.GetGraphVersionAsync();
+        _lastPoll = DateTime.UtcNow;
+        if (version.Generation == _generation)
+        {
+            StateHasChanged();
+            return;
+        }
+
+        var url = ShowSteps
+            ? $"/api/graph/delta?since={_generation}&steps=true"
+            : $"/api/graph/delta?since={_generation}";
+        var merged = await _module.InvokeAsync<MergeResult>("mergeDelta", "abom-graph", url);
+        if (merged.Reset)
+        {
+            // The cursor is older than the server will answer for, so the held copy cannot be
+            // brought up to date and has to be replaced rather than reused.
+            await LoadGraph(force: true);
+            return;
+        }
+
+        _generation = merged.Generation;
+        _arrived = merged.Nodes;
+        if (merged.Rules.Count > 0) _ruleIds = merged.Rules;
+        await Refilter();
+    }
+
+    /// <summary>
+    /// Watches whether there is anything to follow, whether or not this view is following.
+    ///
+    /// Discovery is started from another page, and without this the follow control here would
+    /// stay greyed out for as long as the tab was open.
+    /// </summary>
+    private async Task PollDiscovery()
+    {
+        var state = await Api.GetDiscoveryAsync();
+        // A read that failed returns an empty result rather than throwing, so without this the
+        // page would quietly decide discovery had stopped and grey the follow control.
+        _pollError = Api.LastError;
+        if (_pollError is not null)
+        {
+            StateHasChanged();
+            return;
+        }
+
+        Follow.SetDiscoveryRunning(state.Status.IsRunning);
+        if (Follow.Enabled)
+        {
+            await FollowGraph();
+        }
+    }
+
+    private void OnFollowChanged()
+    {
+        ApplyFollow();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void ApplyFollow()
+    {
+        _followTimer?.Dispose();
+        // Polling continues while following is off: it is a few hundred bytes, and it is the
+        // only way this page learns that a run started somewhere else.
+        _followTimer = new Timer(async _ =>
+        {
+            // Nothing awaits a timer callback, so a failed fetch or a JS interop error raised
+            // here is discarded, and the graph silently stops following.
+            try
+            {
+                await InvokeAsync(PollDiscovery);
+                _pollError = null;
+            }
+            catch (Exception ex)
+            {
+                _pollError = ex.Message;
+                await InvokeAsync(StateHasChanged);
+            }
+        }, null, Follow.Interval, Follow.Interval);
     }
 
     private void Busy(string message)
@@ -596,6 +793,7 @@
         unanalyzedOnly = _flags.Contains("unanalyzed"),
         selection = _isolated,
         hops = _hops,
+        direction = _direction,
     };
 
     private async Task Refilter()
@@ -636,6 +834,17 @@
         await Refilter();
     }
 
+    /// <summary>Escape, or a click on empty canvas: the short way back out of a selection.</summary>
+    [JSInvokable]
+    public async Task OnGraphCleared()
+    {
+        if (string.IsNullOrEmpty(_isolated) && _selected.Count == 0) return;
+        // Only isolation changed which nodes are on screen, so only isolation has earned a camera
+        // move. Recentering after merely dropping a highlight loses the reader's place for nothing.
+        await ClearSelection(recenter: !string.IsNullOrEmpty(_isolated));
+        StateHasChanged();
+    }
+
     private void SyncAddress()
     {
         var query = string.IsNullOrEmpty(_isolated)
@@ -644,7 +853,9 @@
         Nav.NavigateTo(query, forceLoad: false);
     }
 
-    private async Task ClearSelection()
+    private async Task ClearSelection() => await ClearSelection(recenter: true);
+
+    private async Task ClearSelection(bool recenter)
     {
         _isolated = string.Empty;
         _selected = [];
@@ -652,7 +863,8 @@
         await FallBackFromSelectionOnlyView();
         SyncAddress();
         await Refilter();
-        await _module!.InvokeVoidAsync("fit", "abom-graph");
+        await _module!.InvokeVoidAsync("setSelection", "abom-graph", Array.Empty<string>());
+        if (recenter) await _module!.InvokeVoidAsync("fit", "abom-graph");
     }
 
     /// <summary>Leaving a view that places nodes by hop distance, once there is nothing to measure from.</summary>
@@ -731,6 +943,18 @@
     private async Task OnMinReachChanged(int? v) { _minReach = v; await Refilter(); }
     private async Task OnHopsChanged(int v) { _hops = v; await Refilter(); }
 
+    private async Task OnDirectionChanged(string v) { _direction = v; await Refilter(); }
+
+    // Arriving from another page is a one-way trip otherwise: the browser's Back works, but
+    // nothing on screen says so, and the reader has usually changed something by then.
+    private bool CameFromDiscovery => FromParam == "discovery";
+
+    private string BackToDiscovery =>
+        string.IsNullOrEmpty(StatusParam) ? "/discovery" : $"/discovery?status={StatusParam}";
+
+    private string DirectionMeaning =>
+        Directions.FirstOrDefault(d => d.Key == _direction)?.Meaning ?? string.Empty;
+
     private async Task OnFlagsChanged(IEnumerable<string> v)
     {
         var wasShowingSteps = ShowSteps;
@@ -749,16 +973,21 @@
         StateHasChanged();
     }
 
-    private sealed record LoadResult(int Nodes, int Edges, IReadOnlyList<string> Rules);
+    private sealed record LoadResult(
+        int Nodes, int Edges, IReadOnlyList<string> Rules, bool Cached, long Generation);
 
     public async ValueTask DisposeAsync()
     {
         Theme.Changed -= OnThemeChanged;
+        Follow.Changed -= OnFollowChanged;
+        _followTimer?.Dispose();
         if (_module is not null)
         {
             try
             {
-                await _module.InvokeVoidAsync("dispose", "abom-graph");
+                // Keep the entry: it holds the parsed graph and the positions it settled into,
+                // which is the whole cost of coming back to this page.
+                await _module.InvokeVoidAsync("dispose", "abom-graph", true);
                 await _module.DisposeAsync();
             }
             catch (JSDisconnectedException) { /* the circuit is already gone */ }

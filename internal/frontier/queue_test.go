@@ -22,8 +22,15 @@ func newQueue(t *testing.T) (*Queue, *store.Store) {
 	return &Queue{Store: s, MaxDepth: 5}, s
 }
 
+// item mirrors what SeedFrontier produces: a key, and the account and repository it addresses.
+// A frontier item without those cannot be fetched at all, so a fixture lacking them would be
+// testing something the crawler never sees.
 func item(key string, depth int) Item {
-	return Item{NodeKey: key, Owner: "octo-org", Repo: key, Depth: depth}
+	owner, repo := "octo-org", key
+	if o, r, found := strings.Cut(key, "/"); found {
+		owner, repo = o, r
+	}
+	return Item{NodeKey: key, Owner: owner, Repo: repo, Depth: depth}
 }
 
 func TestEnqueueDeduplicates(t *testing.T) {
@@ -247,8 +254,8 @@ func TestUnavailableIsNotRetried(t *testing.T) {
 func TestCyclesEnqueueOnce(t *testing.T) {
 	q, _ := newQueue(t)
 
-	a := Item{NodeKey: "a", Depth: 1, DiscoveredFrom: "b"}
-	b := Item{NodeKey: "b", Depth: 1, DiscoveredFrom: "a"}
+	a := Item{NodeKey: "a", Owner: "octo-org", Repo: "a", Depth: 1, DiscoveredFrom: "b"}
+	b := Item{NodeKey: "b", Owner: "octo-org", Repo: "b", Depth: 1, DiscoveredFrom: "a"}
 	if _, err := q.Enqueue([]Item{a, b}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
@@ -536,6 +543,217 @@ func TestContainerWeightIsConfigurable(t *testing.T) {
 
 	if len(claimed) != 2 || claimed[0].NodeKey != "octo/plain" {
 		t.Errorf("claim order = %+v, want commonality alone to decide", claimed)
+	}
+}
+
+// An interrupted run leaves items marked running, and nothing else ever moves them again:
+// Claim only ever looks at pending. Without a lease one Ctrl-C strands that work permanently.
+func TestAStaleClaimReturnsToTheQueue(t *testing.T) {
+	q, _ := newQueue(t)
+	if _, err := q.Enqueue([]Item{item("a", 1)}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if _, err := q.Claim(1); err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+
+	q.Now = func() time.Time { return time.Now().UTC().Add(2 * time.Hour) }
+	n, err := q.ReclaimStale(time.Hour)
+	if err != nil {
+		t.Fatalf("ReclaimStale: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("reclaimed %d items, want 1", n)
+	}
+
+	claimed, _ := q.Claim(1)
+	if len(claimed) != 1 || claimed[0].NodeKey != "a" {
+		t.Errorf("claimed %+v, want the reclaimed item to be available again", claimed)
+	}
+}
+
+// Nothing was learned from an interrupted attempt, so reclaiming must not spend an attempt or
+// push the item into backoff. Otherwise a few restarts would exhaust the retry budget of work
+// that was never actually tried.
+func TestReclaimingAStaleClaimDoesNotCountAsAnAttempt(t *testing.T) {
+	q, s := newQueue(t)
+	if _, err := q.Enqueue([]Item{item("a", 1)}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if _, err := q.Claim(1); err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+
+	q.Now = func() time.Time { return time.Now().UTC().Add(2 * time.Hour) }
+	if _, err := q.ReclaimStale(time.Hour); err != nil {
+		t.Fatalf("ReclaimStale: %v", err)
+	}
+
+	var attempts int
+	var next any
+	if err := s.DB().QueryRow(
+		`SELECT attempts, next_attempt_at FROM abom_frontier WHERE node_key='a'`).
+		Scan(&attempts, &next); err != nil {
+		t.Fatalf("reading item: %v", err)
+	}
+	if attempts != 0 || next != nil {
+		t.Errorf("attempts=%d next_attempt_at=%v, want 0 and unset", attempts, next)
+	}
+}
+
+// A claim that outlived the process holding it cannot be in flight, because the store admits a
+// single writer. Waiting out the lease leaves a stopped queue reporting work nobody is doing: a
+// restart mid-cycle stranded 20 dependencies that the interface showed as being analyzed, and
+// the same screen said discovery had never started.
+func TestReclaimOrphanedTakesBackEvenAClaimMadeMomentsAgo(t *testing.T) {
+	q, s := newQueue(t)
+	if _, err := q.Enqueue([]Item{item("a", 1)}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if _, err := q.Claim(1); err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+
+	n, err := q.ReclaimOrphaned()
+	if err != nil {
+		t.Fatalf("ReclaimOrphaned: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("reclaimed %d, want the orphaned claim back", n)
+	}
+
+	var status string
+	var attempts int
+	if err := s.DB().QueryRow(
+		`SELECT status, attempts FROM abom_frontier WHERE node_key='a'`).
+		Scan(&status, &attempts); err != nil {
+		t.Fatalf("reading item: %v", err)
+	}
+	if status != StatusPending {
+		t.Errorf("status = %q, want the claim handed back to the queue", status)
+	}
+	if attempts != 0 {
+		t.Errorf("attempts = %d, want an interrupted attempt not charged", attempts)
+	}
+}
+
+// A claim still within its lease belongs to a worker that is using it; handing it to a second
+// worker would clone the clone and the database build.
+func TestAFreshClaimIsNotReclaimed(t *testing.T) {
+	q, _ := newQueue(t)
+	if _, err := q.Enqueue([]Item{item("a", 1)}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if _, err := q.Claim(1); err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+
+	n, err := q.ReclaimStale(time.Hour)
+	if err != nil {
+		t.Fatalf("ReclaimStale: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("reclaimed %d items, want 0 while the lease holds", n)
+	}
+}
+
+// Exiting because nothing is claimable right now reports the same thing as an empty queue,
+// which is how a run abandons work in backoff while calling itself finished.
+func TestNextAttemptAtReportsWorkWaitingInBackoff(t *testing.T) {
+	q, _ := newQueue(t)
+	if _, err := q.Enqueue([]Item{item("a", 1)}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if _, err := q.Claim(1); err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	if err := q.Fail("a", "network exploded"); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+
+	at, ok, err := q.NextAttemptAt()
+	if err != nil {
+		t.Fatalf("NextAttemptAt: %v", err)
+	}
+	if !ok {
+		t.Fatal("reported no pending work while an item waits in backoff")
+	}
+	if !at.After(time.Now().UTC()) {
+		t.Errorf("next attempt at %v, want a time in the future", at)
+	}
+}
+
+func TestNextAttemptAtReportsNothingWhenTheQueueIsDrained(t *testing.T) {
+	q, _ := newQueue(t)
+	if _, err := q.Enqueue([]Item{item("a", 1)}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if err := q.Complete("a", Resolution{Ref: HeadRef, SHA: "sha-a"}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	if _, ok, err := q.NextAttemptAt(); err != nil {
+		t.Fatalf("NextAttemptAt: %v", err)
+	} else if ok {
+		t.Error("reported pending work with nothing left in the queue")
+	}
+}
+
+// A `uses:` assembled from an expression extracts with the expression where the account should
+// be. The reference is real and belongs in the graph verbatim, but no such repository exists, so
+// queueing it spends a checkout to learn what its name already said.
+func TestAReferenceThatNamesNoRepositoryIsNeverQueued(t *testing.T) {
+	q, s := newQueue(t)
+
+	if _, err := q.Enqueue([]Item{
+		{NodeKey: "$/bump-version", Owner: "$", Repo: "bump-version", Depth: 1},
+		{NodeKey: "actions/checkout", Owner: "actions", Repo: "checkout", Depth: 1},
+	}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	claimed, err := q.Claim(10)
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	if len(claimed) != 1 || claimed[0].NodeKey != "actions/checkout" {
+		t.Errorf("claimed %+v, want only the reference that names a real repository", claimed)
+	}
+
+	var status, reason string
+	if err := s.DB().QueryRow(
+		`SELECT status, COALESCE(reason,'') FROM abom_frontier WHERE node_key='$/bump-version'`).
+		Scan(&status, &reason); err != nil {
+		t.Fatalf("reading the item: %v", err)
+	}
+	if status != StatusUnavailable {
+		t.Errorf("status = %q, want %q", status, StatusUnavailable)
+	}
+	if reason == "" {
+		t.Error("recorded it as unanalyzable without saying why")
+	}
+}
+
+// Settled the moment it arrives is still settled. Leaving the time empty makes it the only
+// terminal row a view cannot date, so "when did we give up on this" has no answer for exactly
+// the entries whose answer was immediate.
+func TestAReferenceRejectedOnArrivalIsStillDated(t *testing.T) {
+	q, s := newQueue(t)
+
+	if _, err := q.Enqueue([]Item{
+		{NodeKey: "$/bump-version", Owner: "$", Repo: "bump-version", Depth: 1},
+	}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	var completed string
+	if err := s.DB().QueryRow(
+		`SELECT COALESCE(completed_at,'') FROM abom_frontier WHERE node_key='$/bump-version'`).
+		Scan(&completed); err != nil {
+		t.Fatalf("reading the item: %v", err)
+	}
+	if completed == "" {
+		t.Error("settled the reference without recording when")
 	}
 }
 

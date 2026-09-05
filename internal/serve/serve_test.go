@@ -9,6 +9,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/advanced-security/codeql-abom/internal/graph"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
@@ -196,6 +197,52 @@ func TestFrontierEndpoint(t *testing.T) {
 	pending := decode[[]store.FrontierItem](t, get(t, srv, "/api/frontier?status=pending"))
 	if len(pending) != 1 {
 		t.Errorf("filtered to %d items, want 1", len(pending))
+	}
+}
+
+// The question the interface exists to answer about a dependency: not whether the name appears
+// somewhere, but which repositories under review actually reach it and through what.
+func TestNodeReachNamesWhoActuallyGetsThere(t *testing.T) {
+	srv, s := newServer(t)
+	seedGraph(t, s)
+
+	reach := decode[[]graph.NodeReach](t, get(t, srv, "/api/node/actions/checkout/-/reach"))
+	if len(reach) != 1 {
+		t.Fatalf("reach = %+v, want the one repository that uses it", reach)
+	}
+	if reach[0].Repository != "octo-org/app" || reach[0].Hops != 1 {
+		t.Errorf("reach = %+v, want octo-org/app at one hop", reach[0])
+	}
+}
+
+// Every observation names the query that made it, so a reader can always ask why a fact is
+// there. Serving them unattributed would break the rule the whole store is built on.
+func TestNodeObservationsCarryTheirQuery(t *testing.T) {
+	srv, s := newServer(t)
+	seedGraph(t, s)
+
+	run, err := s.RecordQueryRun(store.QueryRun{
+		QueryID: "abom/step-conditions", Repository: "octo-org/app",
+	})
+	if err != nil {
+		t.Fatalf("RecordQueryRun: %v", err)
+	}
+	if _, err := s.AddObservations(run, []store.Observation{{
+		SubjectKind: store.SubjectNode, SubjectKey: "actions/checkout",
+		Name: "condition", Value: "github.ref == 'refs/heads/main'",
+	}}); err != nil {
+		t.Fatalf("AddObservations: %v", err)
+	}
+
+	obs := decode[[]store.StoredObservation](t, get(t, srv, "/api/node/actions/checkout/-/observations"))
+	if len(obs) != 1 {
+		t.Fatalf("observations = %+v, want the one recorded", obs)
+	}
+	if obs[0].QueryID != "abom/step-conditions" {
+		t.Errorf("QueryID = %q, want the query that produced it", obs[0].QueryID)
+	}
+	if obs[0].Value != "github.ref == 'refs/heads/main'" {
+		t.Errorf("Value = %q, want the condition verbatim", obs[0].Value)
 	}
 }
 

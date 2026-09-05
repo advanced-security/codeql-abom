@@ -54,6 +54,9 @@ func attachOwners(nodes []GraphNode, edges []GraphEdge) ([]GraphNode, []GraphEdg
 				// An account is external until a repository under review proves otherwise.
 				IsExternal: true,
 				Analyzed:   true,
+				// An account is a grouping, not something anything depends on, so its reach is
+				// not a pending measurement waiting to arrive.
+				ReachKnown: true,
 			}
 			orgs[owner] = org
 		}

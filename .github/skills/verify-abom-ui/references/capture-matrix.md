@@ -19,10 +19,15 @@ Capture at 1440×900 unless a check says otherwise.
 | 10 | Explorer — 3D | toggle 3D on a dense scope | Whether 3D resolves overlap or worsens it |
 | 11 | Actions inventory | none | Density, sort affordances, search discoverability |
 | 12 | Repository detail | open a repo with many findings | Findings grouped by rule; rule IDs visible |
-| 13 | Discovery / frontier | none | Pending vs analyzed legible; coverage honest |
-| 14 | Discovery, live | run `expand-all --max-expansions 20` alongside | Whether motion communicates progress or distracts |
-| 15 | Empty state | point at a database with no advisories | That "nothing found" is distinct from "not yet analyzed" |
-| 16 | Narrow viewport | 900×700 | Reflow, truncation, whether the graph becomes unusable |
+| 13 | Discovery, nothing started | fresh database, discovery never started | "Not started" distinguishable from "paused"; what pressing Start will cost is stated before it is spent |
+| 14 | Discovery, each queue state | click each state filter in turn | Every empty result explains itself; counts on the filters make "none" unambiguous |
+| 15 | Discovery, live | start discovery, watch two cycles | Whether motion communicates progress; whether Pause visibly takes effect before the cycle ends |
+| 16 | Explorer — Coverage view | switch to Coverage on the whole graph | Legend swaps with the encoding; nodes that were never dependencies are not drawn as unknown |
+| 17 | Explorer — following a run | enable Follow while discovery runs | New nodes arrive near their neighbors; the layout does not jump and the camera does not move |
+| 18 | Follow control, nothing running | discovery stopped | Checkbox disabled and empty, with a reason; the interval stays settable |
+| 19 | Empty state | point at a database with no advisories | That "nothing found" is distinct from "not yet analyzed" |
+| 20 | Server unreachable | stop the server with a page open and following | The page says it lost the server rather than freezing on stale data |
+| 21 | Narrow viewport | 900×700 | Reflow, truncation, whether the graph becomes unusable |
 
 ## Notes
 
@@ -36,3 +41,11 @@ across a force switch, and determinism across a reload.
 **Capture 15 matters more than it looks.** The distinction between "we looked and found nothing"
 and "we have not looked here" is one ABOM takes seriously everywhere else, and an empty state is
 where an interface usually loses it.
+
+**Captures 13, 14 and 18 are the pre-start set.** Most of a discovery interface's life is spent
+with a full queue and nothing analyzed, and that is the state least likely to have been designed.
+A bare grid with a pager reading `0-0 of 0` is the failure to look for.
+
+**Capture 20 needs the server actually stopped**, not a throttled network: `make stop` while the
+page is open. A view that follows a run has to say when it can no longer reach the server, or it
+reports stale numbers indefinitely with no sign anything is wrong.

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
     seed, repoOf, orgOf, edgeClass, groupOf, anchorKey, keyOf, faded,
     nodeRadius, isSelected, particleSpeed, needsRender, collapseGroups, ungroupedName,
+    mergeInto, placeArrivals, neighborhood, discoveryColor, escapesGraph,
 } from './graph.js';
 
 // These are the pure decisions behind the whole view: which edges are drawn, how big a node is,
@@ -208,4 +209,189 @@ test('the ungrouped bucket is named after the grouping that left it out', () => 
     assert.equal(ungroupedName('repo'), '(not in a repository)');
     assert.equal(ungroupedName('owner'), '(no account)');
     assert.equal(ungroupedName('workflow'), '(not in a workflow)');
+});
+
+// A running expansion adds to the corpus continuously. Merging has to leave the picture the
+// reader is holding intact, which means keeping every position that already settled.
+test('merging keeps the positions of nodes that are already placed', () => {
+    const all = {
+        nodes: [{ key: 'octo/app', x: 10, y: 20, z: 0, refStyles: new Set(), edgeClasses: new Set() }],
+        links: [],
+    };
+
+    mergeInto(all, { nodes: [{ key: 'actions/checkout' }], edges: [], metrics: [] });
+
+    const existing = all.nodes.find(n => n.key === 'octo/app');
+    assert.deepEqual([existing.x, existing.y], [10, 20]);
+});
+
+test('an arrival is placed among the neighbors it arrived attached to', () => {
+    const all = {
+        nodes: [
+            { key: 'a', x: 100, y: 100, z: 0, refStyles: new Set(), edgeClasses: new Set() },
+            { key: 'b', x: 140, y: 100, z: 0, refStyles: new Set(), edgeClasses: new Set() },
+        ],
+        links: [],
+    };
+
+    mergeInto(all, {
+        nodes: [{ key: 'new' }],
+        edges: [{ source: 'a', target: 'new', refs: [], count: 1 },
+                { source: 'b', target: 'new', refs: [], count: 1 }],
+        metrics: [],
+    });
+
+    const arrival = all.nodes.find(n => n.key === 'new');
+    // Near the midpoint of its two neighbors, give or take the scatter that stops arrivals
+    // stacking on one point.
+    assert.ok(Math.abs(arrival.x - 120) < 40, `x was ${arrival.x}`);
+    assert.ok(Math.abs(arrival.y - 100) < 40, `y was ${arrival.y}`);
+});
+
+test('an arrival with nowhere to attach is left for the renderer to seed', () => {
+    const all = { nodes: [], links: [] };
+    mergeInto(all, { nodes: [{ key: 'orphan' }], edges: [], metrics: [] });
+    assert.equal(all.nodes[0].x, undefined);
+});
+
+test('placing arrivals is deterministic, so a reload lands identically', () => {
+    const build = () => ({
+        nodes: [{ key: 'a', x: 0, y: 0, z: 0 }, { key: 'new' }],
+        links: [{ source: 'a', target: 'new' }],
+    });
+    const first = build(), second = build();
+    placeArrivals(first, [first.nodes[1]]);
+    placeArrivals(second, [second.nodes[1]]);
+    assert.deepEqual(
+        [first.nodes[1].x, first.nodes[1].y], [second.nodes[1].x, second.nodes[1].y]);
+});
+
+// Seeing the same relationship again means more references, not a second edge between the same
+// pair, which would double its weight in the layout.
+test('a relationship seen again updates rather than duplicating', () => {
+    const all = {
+        nodes: [
+            { key: 'a', x: 0, y: 0, z: 0, refStyles: new Set(), edgeClasses: new Set() },
+            { key: 'b', x: 1, y: 1, z: 0, refStyles: new Set(), edgeClasses: new Set() },
+        ],
+        links: [{ source: 'a', target: 'b', refs: ['v1'], count: 1 }],
+    };
+
+    const added = mergeInto(all, {
+        nodes: [],
+        edges: [{ source: 'a', target: 'b', refs: ['v1', 'v2'], count: 2 }],
+        metrics: [],
+    });
+
+    assert.equal(all.links.length, 1);
+    assert.equal(added.edges, 0);
+    assert.deepEqual(all.links[0].refs, ['v1', 'v2']);
+});
+
+// Reach is recomputed wholesale, so a node the client already holds can change size without
+// changing in any other way.
+test('metrics update nodes the client already holds', () => {
+    const all = {
+        nodes: [{ key: 'actions/checkout', dependentRepos: 3, reachKnown: true,
+                  refStyles: new Set(), edgeClasses: new Set() }],
+        links: [],
+    };
+
+    mergeInto(all, {
+        nodes: [], edges: [],
+        metrics: [{ key: 'actions/checkout', dependentRepos: 91, reachKnown: true,
+                    findings: 2, advisories: 1, analyzed: true }],
+    });
+
+    assert.equal(all.nodes[0].dependentRepos, 91);
+    assert.equal(all.nodes[0].analyzed, true);
+});
+
+// A merge that only repainted would leave every arrival invisible, however correct the filter
+// result was.
+test('a merge forces the node set to be handed to the renderer again', () => {
+    const it = { seeded: true, subset: false, collapsed: false, dirty: true };
+    assert.equal(needsRender(it, false), true);
+});
+
+// Size carries reach, so the smallest circle reads as "nothing depends on this". A node that
+// arrived before the next rebuild has no measurement yet, and must not be drawn as if it did.
+test('a node whose reach is not yet measured is not drawn as unused', () => {
+    const unmeasured = { key: 'new/action', reachKnown: false, dependentRepos: 0 };
+    const measuredZero = { key: 'old/action', reachKnown: true, dependentRepos: 0 };
+
+    assert.ok(nodeRadius(unmeasured) > nodeRadius(measuredZero));
+});
+
+// "What does this pull in" and "who is waiting on this" are different questions. Walking
+// undirected answers neither, and for a queued dependency it silently answers the wrong one:
+// it has no outgoing edges at all, so an undirected hop shows only its callers.
+const chain = {
+    all: {
+        links: [
+            { source: 'app', target: 'shared' },
+            { source: 'shared', target: 'checkout' },
+        ],
+    },
+};
+
+test('following outward finds what a node uses', () => {
+    const seen = neighborhood(chain, 'app', 0, 'out');
+    assert.deepEqual([...seen.keys()].sort(), ['app', 'checkout', 'shared']);
+});
+
+test('following inward finds what uses a node', () => {
+    const seen = neighborhood(chain, 'checkout', 0, 'in');
+    assert.deepEqual([...seen.keys()].sort(), ['app', 'checkout', 'shared']);
+});
+
+test('a dependency nothing has looked inside has nothing downstream to show', () => {
+    const seen = neighborhood(chain, 'checkout', 0, 'out');
+    assert.deepEqual([...seen.keys()], ['checkout']);
+});
+
+test('walking both ways is not the same as walking one', () => {
+    assert.equal(neighborhood(chain, 'shared', 1, 'both').size, 3);
+    assert.equal(neighborhood(chain, 'shared', 1, 'out').size, 2);
+});
+
+// Most of the corpus was never queued: those nodes are workflows and steps under review, not
+// dependencies of it. "Not a dependency" is a fact, and must not be drawn in the same family as
+// "we have not looked yet".
+test('a node that was never queued is not colored as a discovery state', () => {
+    const palette = { muted: '#555', discovery: { queued: '#fc0', done: '#0c8' } };
+
+    assert.equal(discoveryColor({ key: 'octo/app', discovery: '' }, palette), '#555');
+    assert.equal(discoveryColor({ key: 'a/b', discovery: 'queued' }, palette), '#fc0');
+    assert.equal(discoveryColor({ key: 'c/d', discovery: 'done' }, palette), '#0c8');
+});
+
+// The only way out of a selection used to be a button and a chip's close icon, both of which
+// have to be found before they can be used.
+test('escape leaves the selection when nothing else is claiming the key', () => {
+    assert.equal(escapesGraph('Escape', { tagName: 'CANVAS' }, false), true);
+    assert.equal(escapesGraph('Escape', { tagName: 'BODY' }, false), true);
+    assert.equal(escapesGraph('Escape', null, false), true);
+});
+
+test('a key that is not escape is left alone', () => {
+    assert.equal(escapesGraph('Enter', { tagName: 'CANVAS' }, false), false);
+    assert.equal(escapesGraph('a', null, false), false);
+    assert.equal(escapesGraph('Esc', { tagName: 'CANVAS' }, false), false);
+});
+
+// Escape in a search box means "clear what I typed". Taking it to also drop the selection would
+// throw away the reader's whole context as a side effect of abandoning one word.
+test('escape while typing belongs to the field, not the graph', () => {
+    assert.equal(escapesGraph('Escape', { tagName: 'INPUT' }, false), false);
+    assert.equal(escapesGraph('Escape', { tagName: 'TEXTAREA' }, false), false);
+    assert.equal(escapesGraph('Escape', { tagName: 'SELECT' }, false), false);
+    assert.equal(escapesGraph('Escape', { tagName: 'DIV', isContentEditable: true }, false), false);
+});
+
+// An open menu answers Escape by closing itself. If the graph answered the same press, one key
+// would undo two things and the reader could only see one of them.
+test('escape closes an open menu before it reaches the graph', () => {
+    assert.equal(escapesGraph('Escape', { tagName: 'CANVAS' }, true), false);
+    assert.equal(escapesGraph('Escape', null, true), false);
 });

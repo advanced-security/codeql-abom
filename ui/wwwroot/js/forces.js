@@ -90,6 +90,14 @@ export function applyForces(it) {
             const hops = it.hopsOf ? it.hopsOf.get(n.key) : undefined;
             return hops === undefined ? null : spread * 0.2 + hops * spread * 0.42;
         }, 0.11));
+    } else if (it.view === 'frontier') {
+        // Rings are hops from the corpus under review, so the picture reads outward: what is
+        // known at the center, what is queued beyond it. Anything that was never a dependency
+        // has no depth and is left where the structure puts it.
+        g.d3Force('semantic', radialForce(n => {
+            if (!n.discovery) return null;
+            return spread * 0.2 + (n.depth || 1) * spread * 0.34;
+        }, 0.1));
     }
 
     // Collapsed, each group is already a single node, so pulling groups together would only

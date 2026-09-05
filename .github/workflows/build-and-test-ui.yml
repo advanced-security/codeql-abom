@@ -46,6 +46,10 @@ jobs:
       - name: Interface - Build
         run: make ui
 
+      # A Razor build proves the markup parses and nothing about what it renders.
+      - name: Interface - Test components
+        run: make ui-test
+
       - name: Interface - Summary
         run: |
           {
@@ -54,4 +58,5 @@ jobs:
             echo "- Browser module tests passed"
             echo "- Style check passed"
             echo "- Blazor build succeeded"
+            echo "- Component tests passed"
           } >> "$GITHUB_STEP_SUMMARY"

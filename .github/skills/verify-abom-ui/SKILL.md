@@ -25,12 +25,26 @@ trusted. Fall back to the DOM-only checks in step 4 and label the report `PARTIA
 ## Prerequisites
 
 ```bash
-cd /path/to/codeql-abom && go build -o /tmp/codeql-abom ./cmd/codeql-abom
-/tmp/codeql-abom serve --db /tmp/abom-real/abom.db --addr 127.0.0.1:8099 --ui-dir <published-wwwroot>
+cd /path/to/codeql-abom
+make start                       # builds the binary, publishes the interface, serves it
+make status                      # confirms it is up and reports what discovery is doing
 ```
+
+`make start` rebuilds both halves every time. Serving a stale interface against a new binary
+looks like an interface bug and costs far more to work out than the rebuild does. Override
+`ABOM_DB` and `ABOM_ADDR` rather than invoking `serve` by hand, and run one server: two against
+one database is two writers, which the store forbids.
 
 Use a database with real ingested data. An empty database hides every interesting failure —
 truncation, hub occlusion, label overflow, wrapping — because nothing is dense enough to break.
+
+To review a *running* expansion rather than a static picture, start it from the Discovery page
+or with `make start ABOM_SERVE_FLAGS=--expand`, and read `make logs` alongside the screenshots:
+one line per cycle and per failure. Discovery never starts on its own.
+
+While discovery runs it is building CodeQL databases on every core. Browser work alongside it is
+fine, but do not run `make verify`, `make ql` or `make selfcheck` at the same time: every
+`codeql` invocation shares one local compilation cache, and they will contend for it.
 
 ## Procedure
 
@@ -89,6 +103,9 @@ because each one makes the interface assert something the data does not support.
 | 5 | Provenance is reachable | A finding with no rule ID, or an advisory with no GHSA, within one interaction | Every claim must trace to the query or advisory that made it |
 | 6 | Say what is not known | No coverage indicator on screen | Silence reads as completeness. Coverage belongs in a persistent strip |
 | 7 | References are verbatim | A ref rewritten, normalized or truncated without a way to see the original | The exact ref is the evidence a reader judges with |
+| 8 | An absent measurement is not zero | A node added since the last rebuild drawn at the smallest size, in a view where size means reach | It asserts "nothing depends on this" when nobody has looked. Unmeasured needs its own treatment |
+| 9 | Every distinguishable queue state is visible | Work waiting on a retry shown identically to work nothing has touched; Pause leaving the status unchanged while a cycle finishes | A control that appears to do nothing, and a queue that hides what it has already spent |
+| 10 | The interface speaks the reader's language | "reach", "cycle", "claimed", "frontier", "corpus", "hops", "folded", "unplaced" in user-facing text | These are names for internal machinery. A security engineer should not have to learn the scheduler to read the page |
 
 For each: **PASS**, **FAIL** with the screenshot region, or **N/A** if that surface is absent.
 

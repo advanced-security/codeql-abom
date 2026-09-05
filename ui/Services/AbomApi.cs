@@ -36,6 +36,42 @@ public sealed class AbomApi(HttpClient http)
         CancellationToken ct = default) =>
         await GetListAsync<OwnerCandidate>("api/owner-candidates", ct);
 
+    public async Task<DiscoveryState> GetDiscoveryAsync(CancellationToken ct = default) =>
+        await GetAsync<DiscoveryState>("api/discovery/status", ct) ?? new DiscoveryState();
+
+    /// <summary>
+    /// Starts or pauses expansion. A POST because it makes the server clone repositories and
+    /// run CodeQL, and the header is what keeps a cross-site form from doing the same.
+    /// </summary>
+    public async Task<DiscoveryState> SetDiscoveryAsync(bool running, CancellationToken ct = default)
+    {
+        var request = new HttpRequestMessage(
+            HttpMethod.Post, running ? "api/discovery/start" : "api/discovery/pause");
+        request.Headers.Add("X-Abom-Control", "1");
+        var response = await http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<DiscoveryState>(Json, ct)
+               ?? new DiscoveryState();
+    }
+
+    /// <summary>
+    /// Puts a whole dependency tier back in the queue, so a changed or extended query suite can
+    /// be run over work already analyzed. Nothing already known is cleared.
+    /// </summary>
+    public async Task<DiscoveryState> RequeueTierAsync(string tier, CancellationToken ct = default)
+    {
+        var request = new HttpRequestMessage(
+            HttpMethod.Post, $"api/discovery/requeue/{Uri.EscapeDataString(tier)}");
+        request.Headers.Add("X-Abom-Control", "1");
+        var response = await http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<DiscoveryState>(Json, ct)
+               ?? new DiscoveryState();
+    }
+
+    public async Task<GraphVersion> GetGraphVersionAsync(CancellationToken ct = default) =>
+        await GetAsync<GraphVersion>("api/graph/version", ct) ?? new GraphVersion();
+
     public async Task<IReadOnlyList<RemediationItem>> GetRemediationAsync(
         int top = 50, CancellationToken ct = default) =>
         await GetListAsync<RemediationItem>($"api/remediation?top={top}", ct);
@@ -102,11 +138,15 @@ public sealed class AbomApi(HttpClient http)
     {
         try
         {
-            return await http.GetFromJsonAsync<T>(url, Json, ct);
+            var result = await http.GetFromJsonAsync<T>(url, Json, ct);
+            // Cleared on success, or a single transient failure would be reported for the rest
+            // of the session.
+            LastError = null;
+            return result;
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
         {
-            LastError = ex.Message;
+            LastError = $"{url}: {ex.Message}";
             return default;
         }
     }

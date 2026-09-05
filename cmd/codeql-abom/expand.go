@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/expand"
 	"github.com/advanced-security/codeql-abom/internal/frontier"
@@ -22,6 +23,11 @@ import (
 // without a cap a queue whose failures keep becoming reclaimable would never let the process
 // exit.
 const maxExpandRounds = 1000
+
+// staleClaimLease bounds how long a dependency may sit claimed before another run may take it.
+// A claim is released only by the process holding it, so a crash needs a time bound; an hour is
+// far longer than a clone, database build and query take.
+const staleClaimLease = time.Hour
 
 // runExpandAll follows dependencies out from the seed repositories until the frontier is empty,
 // then refreshes every aggregate the graph reports on.
@@ -62,11 +68,22 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	}
 
 	queue := &frontier.Queue{Store: s, MaxDepth: *maxDepth}
+	reclaimed, err := queue.ReclaimStale(staleClaimLease)
+	if err != nil {
+		return fmt.Errorf("expand-all: reclaiming abandoned work: %w", err)
+	}
+	if reclaimed > 0 {
+		fmt.Fprintf(stdout, "expand-all: %d dependencies reclaimed from an interrupted run\n", reclaimed)
+	}
+
 	seeded, err := expand.SeedFrontier(s, queue)
 	if err != nil {
 		return fmt.Errorf("expand-all: seeding the frontier: %w", err)
 	}
 	fmt.Fprintf(stdout, "expand-all: %d dependencies seeded from repositories under review\n", seeded)
+	if err := rank(s, queue); err != nil {
+		return fmt.Errorf("expand-all: %w", err)
+	}
 
 	var pace *work.Limiter
 	if *rateLimitPerHour > 0 {
@@ -112,16 +129,58 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		if stats.Processed == 0 && stats.Failed == 0 && stats.Unavailable == 0 {
 			break
 		}
+		if err := rank(s, queue); err != nil {
+			return fmt.Errorf("expand-all: %w", err)
+		}
 	}
 	fmt.Fprintf(stdout, "expand-all: %d repositories, %d items settled, %d failed, "+
 		"%d unavailable, %d newly discovered, %d edges ingested\n",
 		total.Processed, total.Items, total.Failed, total.Unavailable, total.Discovered, total.Edges)
 
+	if err := reportWorkLeftWaiting(stdout, queue); err != nil {
+		return fmt.Errorf("expand-all: %w", err)
+	}
+
 	if err := (&graph.Builder{Store: s}).BuildAll(); err != nil {
 		return fmt.Errorf("expand-all: rebuilding aggregates: %w", err)
+	}
+	if err := queue.Rescore(); err != nil {
+		return fmt.Errorf("expand-all: rescoring the frontier: %w", err)
 	}
 	if err := finalizeStore(s); err != nil {
 		return fmt.Errorf("expand-all: %w", err)
 	}
+	return nil
+}
+
+// rank refreshes what the next claim is ordered by.
+//
+// Commonality is only partly known when a dependency is first discovered, so a score means
+// nothing until reach has been derived from the edges ingested so far.
+func rank(s *store.Store, queue *frontier.Queue) error {
+	if err := (&graph.Builder{Store: s}).BuildBlastRadius(); err != nil {
+		return fmt.Errorf("recomputing reach: %w", err)
+	}
+	if err := queue.Rescore(); err != nil {
+		return fmt.Errorf("rescoring the frontier: %w", err)
+	}
+	return nil
+}
+
+// reportWorkLeftWaiting names dependencies still in backoff.
+//
+// A round claims nothing while every remaining item waits on a retry, which is indistinguishable
+// from an empty queue unless it is said out loud.
+func reportWorkLeftWaiting(stdout io.Writer, queue *frontier.Queue) error {
+	at, ok, err := queue.NextAttemptAt()
+	if err != nil || !ok || !at.After(time.Now().UTC()) {
+		return err
+	}
+	stats, err := queue.Stats()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "expand-all: %d dependencies are waiting on a retry, the first at %s\n",
+		stats[frontier.StatusPending], at.Local().Format(time.RFC1123))
 	return nil
 }

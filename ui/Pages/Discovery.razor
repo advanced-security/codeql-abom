@@ -1,50 +1,148 @@
 @page "/discovery"
 @implements IDisposable
 @inject AbomApi Api
+@inject FollowService Follow
+@inject ThemeService Theme
+@inject NavigationManager Nav
 
 <PageTitle>Discovery — ABOM</PageTitle>
 
 <PageHeader Title="Discovery">
-    How complete this picture is. Discovery is recursive and runs to a budget, so the queue is
-    never expected to be empty — what matters is whether the highest-value work has been done.
+    How complete this picture is. Discovery works outward from the repositories under review, so
+    the queue does drain — and when it does, it keeps watching the references it already analyzed
+    for ones that have since moved.
 </PageHeader>
 
-<MudGrid Spacing="3" Class="mb-3">
-    @foreach (var (label, count, hint) in Tiles)
-    {
-        <MudItem xs="6" sm="3">
-            <MudPaper Elevation="0" Outlined="true" Class="pa-3">
-                <MudText Typo="Typo.h5" Class="abom-num">@count</MudText>
-                <MudText Typo="Typo.caption">@label</MudText>
-                <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">@hint</MudText>
-            </MudPaper>
-        </MudItem>
-    }
-</MudGrid>
+@* No tiles here. Analyzed and not-yet-analyzed are the bar and the chips below; under review
+   and advisories are already in the page header. Four boxes restating them pushed the one
+   control anyone came for below the fold. *@
 
-<div class="d-flex align-center gap-3 mb-3">
-    <MudCheckBox T="bool" Value="_live" ValueChanged="OnLiveChanged" Color="Color.Primary"
-                 Size="Size.Small" Dense="true" Label="Follow a running expansion" />
-    @if (_live)
-    {
-        <MudText Typo="Typo.caption" Class="mud-text-secondary">
-            refreshing every @(PollSeconds)s · last @_lastPoll.ToLocalTime().ToString("HH:mm:ss")
-        </MudText>
-    }
+@if (_pollError is { } failure)
+{
+    <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3">
+        This view could not reach the server: @failure
+    </MudAlert>
+}
+
+@if (_state.Status.Problem is { } problem)
+{
+    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">
+        @problem.Reason — @problem.Remedy
+    </MudAlert>
+}
+else if (!string.IsNullOrEmpty(_state.Status.LastError))
+{
+    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">
+        Discovery hit a problem and carried on: @_state.Status.LastError
+    </MudAlert>
+}
+
+<MudPaper Elevation="0" Outlined="true" Class="pa-3 mb-3">
+    <div class="d-flex align-center flex-wrap gap-3">
+        <MudButton Size="Size.Small" Variant="Variant.Filled"
+                   Color="@(IsRunning ? Color.Default : Color.Primary)"
+                   StartIcon="@(IsRunning ? Icons.Material.Filled.Pause : Icons.Material.Filled.PlayArrow)"
+                   Disabled="@(_busy || _state.Status.IsPausing)" OnClick="ToggleRunning">
+            @(_state.Status.IsPausing ? "Pausing…" : IsRunning ? "Pause" : "Start")
+        </MudButton>
+        <QueueBar State="_state" />
+        <MudText Typo="Typo.body2">@StateSentence</MudText>
+        <MudSpacer />
+        <FollowControl LastUpdated="_lastPoll" />
+    </div>
+    <div class="d-flex align-center gap-2 mt-1">
+        @if (RecountShare is { } share)
+        {
+            @* Beside the sentence it quantifies, not beside the state: it measures arrivals, not
+               progress through the queue. *@
+            <MudProgressCircular Color="Color.Info" Size="Size.Small" Value="@share"
+                                 Min="0" Max="100" aria-label="@RecountHint" />
+        }
+        <MudText Typo="Typo.caption" Class="mud-text-secondary">@DetailSentence</MudText>
+        <MudSpacer />
+        @* What it will cost is on the button, because pressing it spends minutes of cloning and
+           database building that nothing here can take back. *@
+        @foreach (var tier in Tiers)
+        {
+            <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="@_busy"
+                       StartIcon="@Icons.Material.Filled.Refresh"
+                       OnClick="@(() => Requeue(tier))"
+                       title="@RequeueHint(tier)">
+                @($"Re-analyze {tier} ({_tiers.GetValueOrDefault(tier):N0})")
+            </MudButton>
+        }
+    </div>
+</MudPaper>
+
+<div class="d-flex align-center flex-wrap gap-2 mb-3">
+    <MudChipSet T="string" SelectedValue="_status" SelectedValueChanged="OnStatusChanged"
+                SelectionMode="SelectionMode.SingleSelection" CheckMark="true">
+        @foreach (var filter in Filters)
+        {
+            <MudChip T="string" Value="@filter.Value" Size="Size.Small" Variant="Variant.Text"
+                     title="@FilterHint(filter.Value)">
+                @* Hue is what ties a filter to its slice of the bar above, which is why the bar
+                   needs no separate legend. *@
+                @if (filter.Value == AdvisoryFilter)
+                {
+                    <MudIcon Icon="@Icons.Material.Filled.Campaign" Size="Size.Small"
+                             Class="mr-1" />
+                }
+                else if (filter.Value == BuildTimeFilter)
+                {
+                    <MudIcon Icon="@Icons.Material.Filled.Build" Size="Size.Small" Class="mr-1" />
+                }
+                else if (filter.Value != "")
+                {
+                    <span class="abom-legend-dot abom-legend-dot-sm"
+                          style="--abom-legend-color:@DiscoveryColor(filter.Value)"></span>
+                }
+                @filter.Label @CountOf(filter.Value)
+            </MudChip>
+        }
+    </MudChipSet>
 </div>
+
+@if (_status == AdvisoryFilter)
+{
+    @* Naming is not adjudicating. An advisory names a package and a version range; whether the
+       reference observed here falls inside that range is not something this list decides, and a
+       reader who takes the filter for a verdict has been misled by us rather than by the data. *@
+    <MudAlert Severity="Severity.Normal" Dense="true" Variant="Variant.Outlined" Class="mb-3">
+        A published advisory names these dependencies. That is not a finding about your use of
+        them: the advisory applies to a version range, and most references here are floating tags
+        that nothing can resolve to a version. <MudLink Href="/remediation">Remediation</MudLink>
+        shows each advisory's range and the references actually observed, side by side.
+    </MudAlert>
+}
+
+@if (_status == BuildTimeFilter)
+{
+    <MudAlert Severity="Severity.Normal" Dense="true" Variant="Variant.Outlined" Class="mb-3">
+        These run only inside their own project's CI, building or releasing the action you use.
+        Nothing in your organization executes them — but whoever controls that pipeline controls
+        the version you receive, which is why they are analyzed too.
+    </MudAlert>
+}
 
 @if (_loading)
 {
     <MudProgressLinear Indeterminate="true" />
 }
+else if (_items.Count == 0)
+{
+    @* An empty grid with a pager says nothing: it reads the same whether there are none or the
+       query failed. On a view about what is not known, that is the worst available answer. *@
+    <MudAlert Severity="Severity.Normal" Dense="true" Variant="Variant.Outlined">@EmptySentence</MudAlert>
+}
 else
 {
     <MudDataGrid T="FrontierItem" Items="_items" Dense="true" Hover="true" Bordered="false"
-                 SortMode="SortMode.Single" Filterable="false" RowsPerPage="30">
+                 SortMode="SortMode.Single" Filterable="false" RowsPerPage="30" Class="abom-grid">
         <Columns>
             <PropertyColumn Property="x => x.Score" Title="Score">
                 <CellTemplate>
-                    <MudTooltip Text="Commonality per unit cost: how much of the corpus depends on this, weighted towards dependencies that can actually extend the graph.">
+                    <MudTooltip Text="How much of your organization depends on this, and how likely analyzing it is to turn up more. The highest scores are analyzed first.">
                         <span class="abom-num">
                             @context.Item.Score.ToString("0")
                         </span>
@@ -52,45 +150,112 @@ else
                 </CellTemplate>
             </PropertyColumn>
 
-            <PropertyColumn Property="x => x.NodeKey" Title="Dependency" />
-
-            <PropertyColumn Property="x => x.Status" Title="Status">
+            <PropertyColumn Property="x => x.NodeKey" Title="Dependency">
                 <CellTemplate>
-                    <span class="@StatusClass(context.Item.Status)">@StatusLabel(context.Item.Status)</span>
+                    <MudTooltip Text="Show what is waiting on this in the Explorer.">
+                        <MudLink Href="@DependentsLink(context.Item.NodeKey)">
+                            @context.Item.NodeKey
+                        </MudLink>
+                    </MudTooltip>
                 </CellTemplate>
             </PropertyColumn>
+
+            @* Redundant while a single state is chosen: every row would read the same. *@
+            @if (MixedStates)
+            {
+                <TemplateColumn Title="State" Sortable="false">
+                    <CellTemplate>
+                        <MudTooltip Text="@StateHint(context.Item)">
+                            @* Same dot and hue as the chip that filters to this state, so the
+                               mixed view is read with the key already learned above it. *@
+                            <span class="abom-status-cell">
+                                <span class="abom-legend-dot abom-legend-dot-sm"
+                                      style="--abom-legend-color:@DiscoveryColor(context.Item.State)"></span>
+                                <span class="@StateClass(context.Item.State)">@StateLabel(context.Item.State)</span>
+                            </span>
+                        </MudTooltip>
+                    </CellTemplate>
+                </TemplateColumn>
+            }
 
             <PropertyColumn Property="x => x.Depth" Title="Depth" />
 
-            <PropertyColumn Property="x => x.AnalysisCount" Title="Analyzes">
-                <CellTemplate>
-                    @if (context.Item.AnalysisCount > 1)
-                    {
-                        <MudTooltip Text="Re-analyzed after its ref moved.">
-                            <span>@context.Item.AnalysisCount</span>
+            @* Only where it varies. Under the build-time filter every row reads the same. *@
+            @if (_status != BuildTimeFilter)
+            {
+                <TemplateColumn Title="Runs in" Sortable="false">
+                    <CellTemplate>
+                        <MudTooltip Text="@SupplyChainHint(context.Item.SupplyChain)">
+                            <span class="abom-status-cell">@SupplyChainLabel(context.Item.SupplyChain)</span>
                         </MudTooltip>
-                    }
-                    else
-                    {
-                        <span>@context.Item.AnalysisCount</span>
-                    }
-                </CellTemplate>
-            </PropertyColumn>
+                    </CellTemplate>
+                </TemplateColumn>
+            }
 
-            <TemplateColumn Title="Analyzed commit" Sortable="false">
-                <CellTemplate>
-                    @if (!string.IsNullOrEmpty(context.Item.ResolvedSha))
-                    {
-                        <MudTooltip Text="The commit the stored graph was built from, not necessarily what the ref points at now.">
-                            <span class="abom-rule">@context.Item.ResolvedSha[..Math.Min(12, context.Item.ResolvedSha.Length)]</span>
-                        </MudTooltip>
-                    }
-                </CellTemplate>
-            </TemplateColumn>
+            @* Only under the state it belongs to. In a mixed view these are blank on most rows
+               and still cost the width that pushed the Note column off the screen. *@
+            @if (_status == "running")
+            {
+                <TemplateColumn Title="Started" Sortable="false">
+                    <CellTemplate>
+                        @if (context.Item.State == "running")
+                        {
+                            <MudTooltip Text="How long this analysis has been running. A clone, a database build and a query.">
+                                <span class="abom-num">@Elapsed(context.Item.ClaimedAt)</span>
+                            </MudTooltip>
+                        }
+                    </CellTemplate>
+                </TemplateColumn>
+            }
+
+            @if (_status == "retrying")
+            {
+                <TemplateColumn Title="Next try" Sortable="false">
+                    <CellTemplate>
+                        @if (context.Item.Attempts > 0)
+                        {
+                            <MudTooltip Text="@($"{context.Item.Attempts} attempts so far.")">
+                                <span class="abom-num">@Clock(context.Item.NextAttemptAt)</span>
+                            </MudTooltip>
+                        }
+                    </CellTemplate>
+                </TemplateColumn>
+            }
+
+            @if (MixedStates || _status == "done")
+            {
+                <PropertyColumn Property="x => x.AnalysisCount" Title="Analyses">
+                    <CellTemplate>
+                        @if (context.Item.AnalysisCount > 1)
+                        {
+                            <MudTooltip Text="Re-analyzed after its ref moved.">
+                                <span>@context.Item.AnalysisCount</span>
+                            </MudTooltip>
+                        }
+                        else
+                        {
+                            <span>@context.Item.AnalysisCount</span>
+                        }
+                    </CellTemplate>
+                </PropertyColumn>
+
+                <TemplateColumn Title="Analyzed commit" Sortable="false">
+                    <CellTemplate>
+                        @if (!string.IsNullOrEmpty(context.Item.ResolvedSha))
+                        {
+                            <MudTooltip Text="The commit this was analyzed at. The reference may point somewhere else by now. Opens what it depends on.">
+                                <MudLink Href="@UsesLink(context.Item.NodeKey)" Class="abom-rule">
+                                    @context.Item.ResolvedSha[..Math.Min(12, context.Item.ResolvedSha.Length)]
+                                </MudLink>
+                            </MudTooltip>
+                        }
+                    </CellTemplate>
+                </TemplateColumn>
+            }
 
             <TemplateColumn Title="Note" Sortable="false">
                 <CellTemplate>
-                    <MudText Typo="Typo.caption" Class="mud-text-secondary">@context.Item.Reason</MudText>
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">@Note(context.Item)</MudText>
                 </CellTemplate>
             </TemplateColumn>
         </Columns>
@@ -101,64 +266,389 @@ else
 }
 
 @code {
-    private const int PollSeconds = 5;
+    [SupplyParameterFromQuery(Name = "status")] public string? StatusParam { get; set; }
 
     private IReadOnlyList<FrontierItem> _items = [];
-    private Summary _summary = new();
+    private DiscoveryState _state = new();
     private bool _loading = true;
-    private bool _live;
-    private DateTime _lastPoll = DateTime.UtcNow;
+    private bool _busy;
+    private DateTime? _lastPoll;
+    private string? _pollError;
     private Timer? _timer;
 
-    private IEnumerable<(string, int, string)> Tiles =>
+    // Queued first: this grid is about what is left to do. Ordering by score alone buries every
+    // pending item under work that has already finished.
+    private string _status = "queued";
+
+    private sealed record Filter(string Value, string Label);
+
+    // All first, then alphabetical: a reader looking for one name should not have to learn an
+    // ordering to find it. The hues still tie each chip to its slice of the bar, which is what
+    // the bar is keyed by now that position no longer matches.
+    private static readonly Filter[] Filters =
     [
-        ("analyzed", _summary.AnalyzedUpstreams, "dependencies expanded"),
-        ("pending", _summary.PendingDependencies, "not yet analyzed"),
-        ("under review", _summary.SeedRepos, "repositories in scope"),
-        ("advisories", _summary.Advisories, $"covering {_summary.AffectedActions} actions in use"),
+        new("", "All"),
+        new("done", "Analyzed"),
+        new(BuildTimeFilter, "Build-time only"),
+        new("running", "Discovering"),
+        new(AdvisoryFilter, "Has advisories"),
+        new("queued", "Queued"),
+        new("retrying", "Retrying"),
+        new("unavailable", "Unavailable"),
     ];
 
-    protected override async Task OnInitializedAsync() => await Load();
+    // Not a queue state but a property of the dependency, so it gets an icon rather than a state
+    // hue: a grey dot in a row of state colors would read as a sixth state.
+    private const string AdvisoryFilter = "advisories";
+
+    // Also not a state: it says who runs the dependency, not where it sits in the queue.
+    private const string BuildTimeFilter = "buildTime";
+
+    // Counted from the graph rather than the queue, because it is exactly the population the
+    // queue has no row for.
+    private const string UpstreamOnlyKey = "upstreamOnly";
+
+    // Depth 1 is what a repository under review names itself and can change there; anything
+    // further arrives through an intermediary that may belong to someone else.
+    private static readonly string[] Tiers = ["direct", "transitive"];
+
+    private IReadOnlyDictionary<string, int> _tiers => _state.Tiers;
+
+    private string RequeueHint(string tier) => tier switch    {
+        "direct" => $"Analyze all {_tiers.GetValueOrDefault(tier):N0} dependencies your repositories name directly, again, with the query suite currently configured. Nothing already known is cleared while it runs.",
+        _ => $"Analyze all {_tiers.GetValueOrDefault(tier):N0} dependencies reached through an intermediary, again. This is the larger tier and takes correspondingly longer.",
+    };
+
+    private async Task Requeue(string tier)
+    {
+        _busy = true;
+        try
+        {
+            _state = await Api.RequeueTierAsync(tier);
+            await Load();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    // Filtering on advisories says nothing about how far along any of these are, so the rows can
+    // still be in any state and the view owes the reader the same columns "All" gives.
+    private bool MixedStates => _status is "" or AdvisoryFilter or BuildTimeFilter;
+
+    private bool IsRunning => _state.Status.IsRunning;
+
+    private string CountOf(string state) =>
+        state == "" ? string.Empty : _state.Count(state).ToString("N0");
+
+    private string DiscoveryColor(string state) =>
+        Theme.Palette.Discovery.TryGetValue(state, out var c) ? c : Theme.Palette.Muted;
+
+    // Filling towards the next automatic recount. Null when there is nothing to say: no
+    // threshold reported, or nothing has arrived since the last one.
+    private double? RecountShare
+    {
+        get
+        {
+            var threshold = _state.Status.ReachThreshold;
+            var pending = _state.Status.ReachPending;
+            if (threshold <= 0 || pending <= 0)
+            {
+                return null;
+            }
+            // A full ring means "due". How far past the threshold it went is in the sentence
+            // beside it, where a number can say it exactly.
+            return Math.Min(100d, pending * 100d / threshold);
+        }
+    }
+
+    // The ring's accessible name. It is a graphic beside prose, so it needs to say the same
+    // thing the prose does rather than leaving a screen reader with an unlabeled figure.
+    private string RecountHint
+    {
+        get
+        {
+            var threshold = _state.Status.ReachThreshold;
+            var pending = _state.Status.ReachPending;
+            if (pending >= threshold)
+            {
+                return $"Recount due: {pending:N0} dependencies have arrived, past the "
+                       + $"{threshold:N0} that trigger one.";
+            }
+            return $"{pending:N0} of {threshold:N0} dependencies towards the next recount of "
+                   + "usage counts.";
+        }
+    }
+
+    // Every filter, not only the obscure ones: "Build-time only" is meaningless on sight, but so
+    // is "Discovering" to anyone who has not already worked out that this is a queue.
+    private static string FilterHint(string value) => value switch
+    {
+        "" => "Every dependency the graph knows about, whatever state it is in.",
+        "done" => "Fetched and analyzed, so what these depend on is in the graph.",
+        "running" => "Being fetched and analyzed right now.",
+        "queued" => "Waiting to be analyzed. Nothing has looked inside these yet, so whatever they depend on is missing from the graph.",
+        "retrying" => "Fetching failed and is scheduled to be tried again.",
+        "unavailable" => "Nothing can be fetched: the repository is gone, private, or the reference names no repository at all. These will not be retried.",
+        AdvisoryFilter => "A published security advisory names these dependencies. Being named is not a finding about your use of them — the advisory covers a version range, and most references here are floating tags.",
+        BuildTimeFilter => "These run only inside their own project's CI, building or releasing the action you use. Nothing in your organization executes them — but whoever controls that pipeline controls the version you receive, which is why they are analyzed too.",
+        _ => string.Empty,
+    };
+
+    // Short, because the bar beside it carries the shape and the filters below carry the counts.
+    //
+    // The figure is how many run at once, not how many are outstanding. Those are different
+    // numbers — a round takes on far more than it processes at a time — and showing both without
+    // saying which was which read as a contradiction.
+    private string StateSentence => _state.Status.State switch
+    {
+        "working" => $"Analyzing {_state.Status.Concurrency} repositories at a time.",
+        "idle" => "Running, nothing to analyze right now.",
+        "pausing" => _state.Running > 0
+            ? $"Finishing {_state.Running} already started."
+            : "Finishing what has already started.",
+        "paused" => "Stopped.",
+        // Never started is not the same as interrupted, and saying "paused" sends the reader
+        // looking for the failure that stopped it.
+        _ => "Not started.",
+    };
+
+    // One dim line under the bar, and only what the reader cannot see already: what starting
+    // costs when it is stopped, how stale the sizing is when it is running.
+    //
+    // Clock time, not "just now": this line is only redrawn when the page loads or a refresh
+    // lands, so a relative phrase silently becomes false the longer someone sits looking at it.
+    private string DetailSentence
+    {
+        get
+        {
+            if (!IsRunning)
+            {
+                return "Downloads and analyzes each queued dependency, up to "
+                       + $"{_state.Status.Concurrency} at a time. Safe to stop and resume.";
+            }
+            if (string.IsNullOrEmpty(_state.Version.ReachRecomputedAt))
+            {
+                return "Nothing counted yet, so the Explorer draws new dependencies at a "
+                       + "neutral size rather than as unused.";
+            }
+            var counted = TimeText.DayAndTime(_state.Version.ReachRecomputedAt);
+            var pending = _state.Status.ReachPending;
+            var threshold = _state.Status.ReachThreshold;
+            if (pending <= 0 || threshold <= 0)
+            {
+                return $"Usage counts last worked out {counted}.";
+            }
+            if (pending >= threshold)
+            {
+                return $"Usage counts last worked out {counted}. {pending:N0} dependencies have "
+                       + $"arrived since, past the {threshold:N0} that trigger a recount, so they "
+                       + "will be counted at the end of this cycle.";
+            }
+            return $"Usage counts last worked out {counted}. {pending:N0} of {threshold:N0} "
+                   + "dependencies towards the next recount; until then the Explorer sizes nodes "
+                   + "on the previous count.";
+        }
+    }
+
+    // A drained queue is the normal resting state, not an achievement. It is also not a complete
+    // picture while dependencies remain that nothing has looked inside, so this reports the gap
+    // rather than implying there is none.
+    private string DrainedSentence
+    {
+        get
+        {
+            var next = IsRunning
+                ? "Discovery now re-checks what it already analyzed and requeues anything whose reference has moved."
+                : "Press Start to re-check what was already analyzed for references that have moved.";
+            var unanalyzed = _state.Count(UpstreamOnlyKey);
+            if (unanalyzed == 0)
+            {
+                return $"Nothing is waiting. {next}";
+            }
+            return "Nothing is waiting, which is not the same as nothing left to look at: "
+                   + $"{unanalyzed:N0} dependencies appear in the graph that nothing has yet "
+                   + $"analyzed, so whatever they pull in is not represented. {next}";
+        }
+    }
+
+    private string EmptySentence => _status switch
+    {
+        "queued" => DrainedSentence,
+        "retrying" => "No dependency has failed and been rescheduled.",
+        "running" => IsRunning
+            ? "Nothing is being analyzed at this moment. The next batch starts shortly."
+            : "Nothing is being analyzed. Press Start to begin.",
+        "done" => "No dependency has been analyzed yet.",
+        "unavailable" => "No dependency has been found unfetchable.",
+        AdvisoryFilter => "No dependency here is named by a published advisory. That is not a clean bill of health: advisories name exact packages, and a floating tag may still resolve into a vulnerable range.",
+        _ => "The queue is empty.",
+    };
+
+    private static string Elapsed(string timestamp) => Since(timestamp) switch
+    {
+        null => string.Empty,
+        var span when span < TimeSpan.FromMinutes(1) => $"{(int)span.Value.TotalSeconds}s",
+        var span => $"{(int)span.Value.TotalMinutes}m",
+    };
+
+    private static TimeSpan? Since(string timestamp) =>
+        DateTime.TryParse(timestamp, null,
+            System.Globalization.DateTimeStyles.AdjustToUniversal, out var at)
+            ? DateTime.UtcNow - at
+            : null;
+
+    private static string Clock(string timestamp) =>
+        DateTime.TryParse(timestamp, null,
+            System.Globalization.DateTimeStyles.AdjustToUniversal, out var at)
+            ? at.ToLocalTime().ToString("HH:mm")
+            : string.Empty;
+
+    // Its callers, not its dependencies: a queued dependency has no dependencies recorded yet,
+    // which is exactly why it is queued. The filter travels too, so the way back lands here.
+    private string DependentsLink(string nodeKey) =>
+        $"/explore?selection={Uri.EscapeDataString(nodeKey)}&direction=in&from=discovery"
+        + (string.IsNullOrEmpty(_status) ? "" : $"&status={_status}");
+
+    private string UsesLink(string nodeKey) =>
+        $"/explore?selection={Uri.EscapeDataString(nodeKey)}&direction=out&from=discovery"
+        + (string.IsNullOrEmpty(_status) ? "" : $"&status={_status}");
+
+    // reason is set only when something went wrong; discoveredFrom says why it is queued at all.
+    private static string Note(FrontierItem item) =>
+        !string.IsNullOrEmpty(item.Reason) ? item.Reason
+        : !string.IsNullOrEmpty(item.DiscoveredFrom) ? $"named by {item.DiscoveredFrom}"
+        : string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (StatusParam is not null && Filters.Any(f => f.Value == StatusParam))
+        {
+            _status = StatusParam;
+        }
+        Follow.Changed += OnFollowChanged;
+        await Load();
+        ApplyFollow();
+    }
 
     private async Task Load()
     {
-        _summary = await Api.GetSummaryAsync();
-        _items = await Api.GetFrontierAsync(top: 400);
+        _state = await Api.GetDiscoveryAsync();
+        _items = await Api.GetFrontierAsync(_status, top: 400);
+        Follow.SetDiscoveryRunning(_state.Status.IsRunning);
+        // A read that failed returns an empty result rather than throwing, so the transport's
+        // own account of what went wrong is the only thing that separates "nothing here" from
+        // "could not ask".
+        _pollError = Api.LastError;
         _lastPoll = DateTime.UtcNow;
         _loading = false;
     }
 
-    private void OnLiveChanged(bool value)
+    private async Task OnStatusChanged(string value)
     {
-        _live = value;
-        _timer?.Dispose();
-        _timer = null;
+        _status = value ?? string.Empty;
+        // Otherwise the previous filter's answer stays on screen until the new one lands, and a
+        // view whose job is separating "none" from "not looked yet" states one before asking.
+        _loading = true;
+        _items = [];
+        // In the address rather than only in memory, so leaving for the Explorer and coming back
+        // returns to the same filter. Replaced, not pushed: changing a filter is not a
+        // navigation, and stacking them would make Back walk through every chip.
+        Nav.NavigateTo(
+            Nav.GetUriWithQueryParameter("status", string.IsNullOrEmpty(_status) ? null : _status),
+            forceLoad: false, replace: true);
+        await Load();
+    }
 
-        if (value)
+    private async Task ToggleRunning()
+    {
+        _busy = true;
+        try
         {
-            _timer = new Timer(async _ =>
-            {
-                await Load();
-                await InvokeAsync(StateHasChanged);
-            }, null, TimeSpan.FromSeconds(PollSeconds), TimeSpan.FromSeconds(PollSeconds));
+            _state = await Api.SetDiscoveryAsync(!IsRunning);
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            // A refused or failed control request must say so: the button otherwise appears to
+            // work and the loop never starts.
+            _pollError = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
         }
     }
 
-    private static string StatusLabel(string status) => status switch
+    private void OnFollowChanged()
+    {
+        ApplyFollow();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void ApplyFollow()
+    {
+        _timer?.Dispose();
+        _timer = null;
+        if (!Follow.Enabled)
+        {
+            return;
+        }
+        _timer = new Timer(async _ =>
+        {
+            // Nothing awaits a timer callback, so an exception raised inside it is discarded:
+            // following would keep ticking against a server that had stopped answering, with
+            // the page frozen on stale data and no sign of why.
+            try
+            {
+                await Load();
+            }
+            catch (Exception ex)
+            {
+                _pollError = ex.Message;
+            }
+            await InvokeAsync(StateHasChanged);
+        }, null, Follow.Interval, Follow.Interval);
+    }
+
+    private static string StateLabel(string state) => state switch
     {
         "done" => "analyzed",
-        "pending" => "queued",
-        "running" => "in progress",
+        "queued" => "queued",
+        "retrying" => "retrying",
+        "running" => "discovering",
         "unavailable" => "unavailable",
-        _ => status,
+        _ => state,
     };
 
-    private static string StatusClass(string status) => status switch
+    private static string StateHint(FrontierItem item) => item.State switch
+    {
+        "queued" => "Referenced by something in scope. Nothing has looked inside it yet, so whatever it depends on is not in this picture.",
+        "retrying" => $"Fetching it failed {item.Attempts} times. It is waiting before trying again.",
+        "running" => "Being fetched and analyzed now. Anything it names will appear as it is found.",
+        "done" => "We know what this depends on, as of the commit shown.",
+        "unavailable" => "Nothing can be fetched for it, and it will not be retried.",
+        _ => item.State,
+    };
+
+    private static string StateClass(string state) => state switch
     {
         "done" => "abom-status-done",
         "unavailable" => "abom-status-unavailable",
         _ => "abom-status-queued",
     };
 
-    public void Dispose() => _timer?.Dispose();
+    private static string SupplyChainLabel(string chain) =>
+        chain == "build_time" ? "their CI" : "your workflows";
+
+    private static string SupplyChainHint(string chain) => chain == "build_time"
+        ? "Only this dependency's own project runs it, in their release pipeline. Nothing here executes it — but a compromised pipeline is how a bad version reaches you, so it is still analyzed."
+        : "Something in scope executes this, directly or through an action it calls.";
+
+    public void Dispose()
+    {
+        Follow.Changed -= OnFollowChanged;
+        _timer?.Dispose();
+    }
 }

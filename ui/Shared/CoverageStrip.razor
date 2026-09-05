@@ -38,10 +38,10 @@ else
 
         @if (Summary.Findings > Summary.LinkedFindings)
         {
-            <MudTooltip Text="Findings reported against a file with no corresponding graph node. They are counted per repository but cannot be placed in the graph.">
+            <MudTooltip Text="Findings in files that name no dependency. They are counted for their repository, but there is nothing in the Explorer to attach them to.">
                 <span class="abom-coverage-item abom-coverage-unknown">
                     <span class="abom-coverage-value">@((Summary.Findings - Summary.LinkedFindings).ToString("N0"))</span>
-                    <span class="abom-coverage-label">findings unplaced</span>
+                    <span class="abom-coverage-label">findings not in the Explorer</span>
                 </span>
             </MudTooltip>
         }

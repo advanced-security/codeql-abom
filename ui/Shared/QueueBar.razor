@@ -1,0 +1,47 @@
+@* How the queue is made up, as a bar.
+
+   Deliberately not a percentage: discovery finds new dependencies as it goes, so the total grows
+   and any "N% complete" would run backwards. Composition re-proportions instead, which reads
+   correctly as "more was found". Colors match the Explorer's Coverage view, so the same state is
+   the same hue wherever it appears. *@
+@inject ThemeService Theme
+
+<MudTooltip Text="@Breakdown">
+    <div class="abom-queue-bar" role="img" aria-label="@Breakdown">
+        @foreach (var seg in Segments)
+        {
+            <span class="abom-queue-seg"
+                  style="--abom-seg-w:@(Width(seg.Count));--abom-seg-color:@Color(seg.State)"></span>
+        }
+    </div>
+</MudTooltip>
+
+@code {
+    [Parameter, EditorRequired] public DiscoveryState State { get; set; } = new();
+
+    private sealed record Segment(string State, string Label, int Count);
+
+    // Left to right as the work travels: settled, in progress, waiting, given up on.
+    private IEnumerable<Segment> Segments =>
+        new Segment[]
+        {
+            new("done", "analyzed", State.Count("done")),
+            new("running", "being analyzed", State.Count("running")),
+            new("retrying", "retrying", State.Count("retrying")),
+            new("queued", "queued", State.Count("queued")),
+            new("unavailable", "unavailable", State.Count("unavailable")),
+        }.Where(s => s.Count > 0);
+
+    private int Total => Segments.Sum(s => s.Count);
+
+    private string Width(int count) =>
+        Total == 0 ? "0%" : $"{100.0 * count / Total:0.##}%";
+
+    private string Color(string state) =>
+        Theme.Palette.Discovery.TryGetValue(state, out var c) ? c : Theme.Palette.Muted;
+
+    private string Breakdown =>
+        Total == 0
+            ? "Nothing in the queue yet."
+            : string.Join(" · ", Segments.Select(s => $"{s.Count:N0} {s.Label}"));
+}

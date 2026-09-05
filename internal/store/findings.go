@@ -149,5 +149,39 @@ func (s *Store) LinkFindingsToNodes() (int, error) {
 		return 0, fmt.Errorf("linking findings to workflows: %w", err)
 	}
 	m, _ := res.RowsAffected()
-	return int(n + m), nil
+
+	// A reusable workflow or a composite action is represented by the container holding its
+	// jobs, so nothing at its path is a workflow node and the join above finds nothing. Walk out
+	// of the jobs and steps recorded there to whatever holds them. Nesting is at most
+	// step -> job -> container, so two levels reach it.
+	//
+	// Findings in a file the graph never modeled are left alone: a graph built from
+	// dependencies has no node for a file that names none, and inventing one would report
+	// something that was never extracted.
+	res, err = s.db.Exec(`
+		INSERT INTO abom_finding_node (finding_row_id, node_row_id)
+		SELECT f.row_id, (
+		        SELECT CASE
+		                 WHEN n.node_kind NOT IN ('job','step') THEN n.row_id
+		                 WHEN p.node_kind NOT IN ('job','step') THEN p.row_id
+		                 WHEN gp.row_id IS NOT NULL             THEN gp.row_id
+		                 ELSE COALESCE(p.row_id, n.row_id)
+		               END
+		        FROM abom_node n
+		        LEFT JOIN abom_node p  ON p.row_id  = n.container_node_row_id
+		        LEFT JOIN abom_node gp ON gp.row_id = p.container_node_row_id
+		        WHERE n.repository_row_id = f.repository_row_id AND n.path = f.file_path
+		        ORDER BY n.row_id LIMIT 1)
+		FROM abom_finding f
+		WHERE NOT EXISTS (
+		        SELECT 1 FROM abom_finding_node fn WHERE fn.finding_row_id = f.row_id)
+		  AND EXISTS (
+		        SELECT 1 FROM abom_node n
+		        WHERE n.repository_row_id = f.repository_row_id AND n.path = f.file_path)
+		ON CONFLICT DO NOTHING`)
+	if err != nil {
+		return 0, fmt.Errorf("linking findings to the container holding their file: %w", err)
+	}
+	c, _ := res.RowsAffected()
+	return int(n + m + c), nil
 }

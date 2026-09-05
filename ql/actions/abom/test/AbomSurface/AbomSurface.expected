@@ -1,3 +1,21 @@
-| .github/workflows/surface.yml | calls-reusable-with-secrets | contents: read | workflow | pull_request_target,workflow_dispatch |  | true | false | true |
-| .github/workflows/surface.yml | inherits-workflow-permissions | contents: read | workflow | pull_request_target,workflow_dispatch | ubuntu-latest | false | false | true |
-| .github/workflows/surface.yml | overrides-permissions | contents: write,id-token: write,pull-requests: read | job | pull_request_target,workflow_dispatch | linux,self-hosted,x64 | false | true | true |
+| .github/workflows/surface.yml | calls-reusable-with-secrets | externallyTriggerable | true |
+| .github/workflows/surface.yml | calls-reusable-with-secrets | permissions | contents: read |
+| .github/workflows/surface.yml | calls-reusable-with-secrets | permissionsScope | workflow |
+| .github/workflows/surface.yml | calls-reusable-with-secrets | privileged | false |
+| .github/workflows/surface.yml | calls-reusable-with-secrets | runsOn |  |
+| .github/workflows/surface.yml | calls-reusable-with-secrets | secretsInherit | true |
+| .github/workflows/surface.yml | calls-reusable-with-secrets | triggers | pull_request_target,workflow_dispatch |
+| .github/workflows/surface.yml | inherits-workflow-permissions | externallyTriggerable | true |
+| .github/workflows/surface.yml | inherits-workflow-permissions | permissions | contents: read |
+| .github/workflows/surface.yml | inherits-workflow-permissions | permissionsScope | workflow |
+| .github/workflows/surface.yml | inherits-workflow-permissions | privileged | false |
+| .github/workflows/surface.yml | inherits-workflow-permissions | runsOn | ubuntu-latest |
+| .github/workflows/surface.yml | inherits-workflow-permissions | secretsInherit | false |
+| .github/workflows/surface.yml | inherits-workflow-permissions | triggers | pull_request_target,workflow_dispatch |
+| .github/workflows/surface.yml | overrides-permissions | externallyTriggerable | true |
+| .github/workflows/surface.yml | overrides-permissions | permissions | contents: write,id-token: write,pull-requests: read |
+| .github/workflows/surface.yml | overrides-permissions | permissionsScope | job |
+| .github/workflows/surface.yml | overrides-permissions | privileged | true |
+| .github/workflows/surface.yml | overrides-permissions | runsOn | linux,self-hosted,x64 |
+| .github/workflows/surface.yml | overrides-permissions | secretsInherit | false |
+| .github/workflows/surface.yml | overrides-permissions | triggers | pull_request_target,workflow_dispatch |

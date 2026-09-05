@@ -6,6 +6,7 @@
 package serve
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/ghauth"
+	"github.com/advanced-security/codeql-abom/internal/graph"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
@@ -29,6 +31,14 @@ type Server struct {
 	UI fs.FS
 	// Verify establishes which accounts are the operator's. Nil asks the gh CLI.
 	Verify func(context.Context) (ghauth.Identity, error)
+	// Discovery is the expansion loop. Nil answers that discovery is unavailable here.
+	Discovery Discovery
+	// AllowRemoteControl lets a non-loopback client start discovery. Off by default because
+	// starting it makes this process clone repositories and run CodeQL.
+	AllowRemoteControl bool
+	// Log receives failed requests. Nil discards them, which leaves a 500 visible only to the
+	// client that hit it.
+	Log io.Writer
 }
 
 // Handler builds the routing tree.
@@ -41,6 +51,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/exposure", s.exposure)
 	mux.HandleFunc("GET /api/graph", s.graph)
 	mux.HandleFunc("GET /api/graph/full", s.fullGraph)
+	mux.HandleFunc("GET /api/graph/version", s.graphVersion)
+	mux.HandleFunc("GET /api/graph/delta", s.graphDelta)
+	mux.HandleFunc("GET /api/discovery/status", s.discoveryStatus)
+	mux.HandleFunc("POST /api/discovery/start", s.discoveryStart)
+	mux.HandleFunc("POST /api/discovery/pause", s.discoveryPause)
+	mux.HandleFunc("POST /api/discovery/requeue/{tier}", s.discoveryRequeue)
 	mux.HandleFunc("GET /api/nodes", s.nodes)
 	mux.HandleFunc("GET /api/node/{key...}", s.node)
 	mux.HandleFunc("GET /api/pinning", s.pinning)
@@ -61,7 +77,59 @@ func (s *Server) Handler() http.Handler {
 	// Anything under /api/ that no route claimed is absent, whatever the method. Without this a
 	// withdrawn route answers a PUT with 405, which says the resource is still there.
 	mux.HandleFunc("/api/", http.NotFound)
-	return gzipped(mux)
+	return gzipped(s.logging(mux))
+}
+
+// logging records requests that failed, and ones that succeeded too slowly to be pleasant.
+//
+// Handlers answer an error to the caller and nothing else, so a query that breaks for every
+// reader leaves no trace on the machine actually running. Successful requests are not logged:
+// the interface polls continuously, and a line each would bury the failures.
+func (s *Server) logging(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.Log == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		rec := &recorder{ResponseWriter: w, status: http.StatusOK}
+		start := time.Now()
+		next.ServeHTTP(rec, r)
+		took := time.Since(start)
+		switch {
+		case rec.status >= http.StatusBadRequest:
+			fmt.Fprintf(s.Log, "%s serve: %d %s %s %s\n", time.Now().UTC().Format(time.RFC3339),
+				rec.status, r.Method, r.URL.RequestURI(), strings.TrimSpace(rec.body.String()))
+		case took >= slowRequest:
+			// A graph that answers correctly but takes seconds is the complaint users actually
+			// report, and it is invisible in a log that only keeps failures.
+			fmt.Fprintf(s.Log, "%s serve: slow %s %s took %dms\n",
+				time.Now().UTC().Format(time.RFC3339), r.Method, r.URL.RequestURI(),
+				took.Milliseconds())
+		}
+	})
+}
+
+// slowRequest is the point past which a reader notices waiting.
+const slowRequest = 2 * time.Second
+
+// recorder keeps the status and, for a failure, the body that explains it.
+type recorder struct {
+	http.ResponseWriter
+	status int
+	body   bytes.Buffer
+}
+
+func (r *recorder) WriteHeader(status int) {
+	r.status = status
+	r.ResponseWriter.WriteHeader(status)
+}
+
+func (r *recorder) Write(b []byte) (int, error) {
+	// Only a failure's body is kept; a successful response is megabytes of graph.
+	if r.status >= http.StatusBadRequest && r.body.Len() < 2048 {
+		r.body.Write(b)
+	}
+	return r.ResponseWriter.Write(b)
 }
 
 // assetRoots hold real files. A miss under one of them is a broken build, not a client route.
@@ -157,6 +225,18 @@ func (s *Server) fullGraph(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, g, err)
 }
 
+func (s *Server) graphVersion(w http.ResponseWriter, r *http.Request) {
+	version, err := s.Store.GraphVersion()
+	writeJSON(w, version, err)
+}
+
+func (s *Server) graphDelta(w http.ResponseWriter, r *http.Request) {
+	delta, err := s.Store.GraphDelta(int64(intParam(r, "since", 0)), store.FullGraphOptions{
+		IncludeSteps: r.URL.Query().Get("steps") == "true",
+	})
+	writeJSON(w, delta, err)
+}
+
 func (s *Server) nodes(w http.ResponseWriter, r *http.Request) {
 	items, err := s.Store.SearchNodes(r.URL.Query().Get("q"), intParam(r, "top", 50))
 	writeJSON(w, items, err)
@@ -171,6 +251,19 @@ func (s *Server) node(w http.ResponseWriter, r *http.Request) {
 	if rest, ok := strings.CutSuffix(key, "/-/impact"); ok {
 		impact, err := s.Store.BumpImpactOf(rest)
 		writeJSON(w, impact, err)
+		return
+	}
+	// Which repositories under review actually reach this, and by what route. Same key, same
+	// route, for the same reason.
+	if rest, ok := strings.CutSuffix(key, "/-/reach"); ok {
+		reach, err := (&graph.Builder{Store: s.Store}).ReachOfNode(rest, 0)
+		writeJSON(w, reach, err)
+		return
+	}
+	// Everything any query has said about this node, each answer naming the query that made it.
+	if rest, ok := strings.CutSuffix(key, "/-/observations"); ok {
+		obs, err := s.Store.ObservationsOf(store.SubjectNode, rest)
+		writeJSON(w, obs, err)
 		return
 	}
 

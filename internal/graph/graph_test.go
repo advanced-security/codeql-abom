@@ -435,3 +435,41 @@ func TestBuildAll(t *testing.T) {
 		t.Error("BuildAll produced no blast radius rows")
 	}
 }
+
+// A finding arrives keyed by file position, and nothing built on the graph can see it until it
+// is attributed to a node. Ingesting without attributing loses the result silently.
+func TestARunLeavesNoFindingUnplaced(t *testing.T) {
+	s := fixture(t)
+	seedFindings(t, s, "actions/unpinned-tag", "octo-org/app")
+
+	if err := (&Builder{Store: s}).BuildAll(); err != nil {
+		t.Fatalf("BuildAll: %v", err)
+	}
+
+	var unplaced int
+	if err := s.DB().QueryRow(`
+		SELECT COUNT(*) FROM abom_finding f
+		WHERE NOT EXISTS (
+		        SELECT 1 FROM abom_finding_node fn WHERE fn.finding_row_id = f.row_id)`).
+		Scan(&unplaced); err != nil {
+		t.Fatalf("counting unplaced findings: %v", err)
+	}
+	if unplaced != 0 {
+		t.Errorf("%d findings were left unattributed to any node", unplaced)
+	}
+}
+
+// Exposure is recomputed from scratch, so a run that expands the graph without rebuilding it
+// keeps answering remediation questions from the graph as it was before.
+func TestBuildAllRefreshesExposure(t *testing.T) {
+	s := fixture(t)
+	affects(t, s, "GHSA-refresh", "actions/checkout", "")
+
+	if err := (&Builder{Store: s}).BuildAll(); err != nil {
+		t.Fatalf("BuildAll: %v", err)
+	}
+
+	if _, _, ok := exposureOfRepo(t, s, "octo-org/tool", "GHSA-refresh"); !ok {
+		t.Error("BuildAll left exposure unbuilt")
+	}
+}
