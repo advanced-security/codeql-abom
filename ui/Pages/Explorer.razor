@@ -90,12 +90,23 @@
                          Color="Color.Primary" Size="Size.Small" Dense="true" Label="Collapse"
                          Disabled="@(_groupBy == "none")" />
         </MudTooltip>
+        <MudTooltip Text="@ScopeHelp">
+            <MudCheckBox T="bool" Value="IsExposureScope" ValueChanged="OnScopeChanged"
+                         Color="Color.Primary" Size="Size.Small" Dense="true"
+                         Label="Only what reaches an advisory" />
+        </MudTooltip>
         @if (_groupBy == "workflow" && !ShowSteps)
         {
             @* Actions are referenced by workflows rather than held in one, so with steps folded
                away there is little left for this grouping to gather. *@
             <MudText Typo="Typo.caption" Class="mud-text-secondary">
                 turn on Step to group by workflow
+            </MudText>
+        }
+        @if (StepsNeedFocus)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                pick a node to see its steps
             </MudText>
         }
         <MudTooltip Text="Watch the layout arrange itself and the selection's dependencies flow, or hold everything still.">
@@ -222,23 +233,43 @@
                     </MudTooltip>
                 }
             </div>
-            @foreach (var kind in ThemeService.KindNames)
+            @foreach (var row in KindTree.Where(IsRowShown))
             {
-                var k = kind.Key;
-                <div class="abom-key-row">
+                var k = row.Kind;
+                <div class="abom-key-row" style="--abom-key-depth:@row.Depth">
                     <MudCheckBox T="bool" Value="@_kinds.Contains(k)" Dense="true"
                                  Size="Size.Small" Color="Color.Primary"
                                  ValueChanged="@(_ => ToggleKind(k))" />
                     @KindGlyph(k)
                     <MudTooltip Text="@KindHelp(k)" Placement="Placement.Left">
-                        <span class="abom-key-label" @onclick="@(() => ToggleKind(k))">@kind.Value</span>
+                        <span class="abom-key-label" @onclick="@(() => ToggleKind(k))">@Kinds[k]</span>
                     </MudTooltip>
+                    @if (FoldGrouping.ContainsKey(k))
+                    {
+                        <MudTooltip Text="@FoldHelp(k)" Placement="Placement.Left">
+                            @* A chevron, not the unfold glyphs: at this size those collapse into
+                               something that reads as a close button. *@
+                            <MudIconButton Icon="@(IsFoldedAt(k) ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ExpandLess)"
+                                           Size="Size.Small" OnClick="@(() => ToggleFold(k))"
+                                           Class="@(IsFoldedAt(k) ? "abom-key-fold abom-key-fold-on" : "abom-key-fold")" />
+                        </MudTooltip>
+                    }
                     @* Color is reassignable per kind and per scheme: a hue that reads well on
                        black rarely does on white. *@
                     <MudTooltip Text="Change this kind's color.">
                         <input type="color" class="abom-swatch" value="@KindColor(k)"
                                @onchange="@(e => SetColor(k, e.Value?.ToString()))" />
                     </MudTooltip>
+                </div>
+            }
+            @if (FoldedKinds is { Count: > 0 } folded)
+            {
+                @* The rows are gone from the key because their nodes are gone from the canvas.
+                   Naming what went, and what the next step opens into, keeps the fold from
+                   reading as kinds having been switched off. *@
+                <div class="abom-key-note" style="--abom-key-depth:@(FoldDepth + 1)">
+                    <span>@string.Join(", ", folded.Select(k => Kinds[k].ToLowerInvariant()))
+                          folded in &mdash; @NextStepLabel</span>
                 </div>
             }
 
@@ -251,7 +282,8 @@
             {
                 var c = e.Key;
                 <MudTooltip Text="@e.Help" Placement="Placement.Left">
-                    <div class="abom-key-row" @onclick="@(() => ToggleEdge(c))">
+                    <div class="abom-key-row" style="--abom-key-depth:@e.Depth"
+                         @onclick="@(() => ToggleEdge(c))">
                         <MudCheckBox T="bool" Value="@_edgeClasses.Contains(c)" Dense="true"
                                      Size="Size.Small" Color="Color.Primary"
                                      ValueChanged="@(_ => ToggleEdge(c))" />
@@ -398,16 +430,129 @@
 
     private static readonly Dictionary<string, string> Kinds = ThemeService.KindNames;
 
-    private sealed record EdgeKind(string Key, string Label, string Help);
+    /// <summary>One legend row: a kind, and how deep it sits in what contains it.</summary>
+    ///
+    /// A kind appears wherever it can be contained, so `step` shows up under both a job and a
+    /// composite action. The checkbox is the same filter in each place, which is the truth: a
+    /// step is a step. What differs is the containment the reader is being shown.
+    private sealed record KindRow(string Kind, int Depth);
+
+    private static readonly KindRow[] KindTree =
+    [
+        new("org", 0),
+        new("repo", 1),
+        new("workflow", 2),
+        new("job", 3),
+        new("step", 4),
+        new("reusable_workflow", 2),
+        new("job", 3),
+        new("step", 4),
+        new("composite_action", 2),
+        new("step", 3),
+        new("action", 2),
+        new("docker_image", 2),
+    ];
+
+    /// <summary>The grouping each foldable kind folds its contents into.</summary>
+    ///
+    /// Only these three exist as groupings, so only these three can carry a fold control. A kind
+    /// with no grouping behind it would offer a button that quietly did nothing.
+    private static readonly Dictionary<string, string> FoldGrouping = new()
+    {
+        ["org"] = "owner",
+        ["repo"] = "repo",
+        ["workflow"] = "workflow",
+    };
+
+    /// <summary>The fold ladder, coarsest first.</summary>
+    public static readonly string[] FoldLadder = ["owner", "repo", "workflow"];
+
+    /// <summary>The grouping one rung finer, or null when the next step is the whole graph.</summary>
+    ///
+    /// Expanding steps down this ladder rather than off it. Treating the fold as a single switch
+    /// meant opening the owner view dropped the reader straight from 603 nodes to 9,811, which is
+    /// the view that cannot be drawn at all.
+    public static string? FinerFold(string groupBy)
+    {
+        var i = Array.IndexOf(FoldLadder, groupBy);
+        return i >= 0 && i + 1 < FoldLadder.Length ? FoldLadder[i + 1] : null;
+    }
+
+    private bool IsFoldedAt(string kind) =>
+        _collapsed && FoldGrouping.TryGetValue(kind, out var by) && _groupBy == by;
+
+    /// <summary>How deep the fold sits, or null when nothing is folded.</summary>
+    private int? FoldDepth
+    {
+        get
+        {
+            foreach (var row in KindTree)
+            {
+                if (IsFoldedAt(row.Kind)) return row.Depth;
+            }
+            return null;
+        }
+    }
+
+    // A row below the fold has no node of its own on the canvas, so leaving it in the key made
+    // folding look like it had done nothing.
+    private bool IsRowShown(KindRow row) => FoldDepth is not int depth || row.Depth <= depth;
+
+    private List<string> FoldedKinds => FoldDepth is not int depth
+        ? []
+        : KindTree.Where(r => r.Depth > depth).Select(r => r.Kind).Distinct().ToList();
+
+    /// <summary>What opening the current fold one rung would show.</summary>
+    private string NextStepLabel => FinerFold(_groupBy) is { } finer
+        ? $"open one level for {LadderLabel(finer)}s"
+        : "open the last level for every node";
+
+    private string FoldHelp(string kind)
+    {
+        if (!IsFoldedAt(kind)) return $"Fold everything back into one node per {Kinds[kind].ToLowerInvariant()}.";
+        var finer = FinerFold(FoldGrouping[kind]);
+        return finer is null
+            ? "Open the last level: every node individually. This is the whole graph."
+            : $"Open one level, into one node per {LadderLabel(finer)}. Everything below stays folded.";
+    }
+
+    private static string LadderLabel(string grouping) => grouping switch
+    {
+        "owner" => "owner",
+        "repo" => "repository",
+        _ => "workflow",
+    };
+
+    private async Task ToggleFold(string kind)
+    {
+        if (!FoldGrouping.TryGetValue(kind, out var by)) return;
+        if (!IsFoldedAt(kind))
+        {
+            _groupBy = by;
+            await OnCollapsedChanged(true);
+            return;
+        }
+        // One rung finer, not off the ladder: everything below the new level stays folded.
+        var finer = FinerFold(by);
+        if (finer is null)
+        {
+            await OnCollapsedChanged(false);
+            return;
+        }
+        _groupBy = finer;
+        await OnCollapsedChanged(true);
+    }
+
+    private sealed record EdgeKind(string Key, string Label, string Help, int Depth);
 
     private static readonly EdgeKind[] EdgeKinds =
     [
-        new("sameRepo", "Same repo",
-            "Both ends live in the same repository: internal wiring rather than a supply-chain hop."),
         new("sameOwner", "Same org/owner",
-            "Crosses repositories but stays with one account. Same repo wins over this."),
+            "Crosses repositories but stays with one account. Same repo wins over this.", 0),
+        new("sameRepo", "Same repo",
+            "Both ends live in the same repository: internal wiring rather than a supply-chain hop.", 1),
         new("crossOwner", "Cross org/owner",
-            "The two ends belong to different accounts. This is where the supply chain starts."),
+            "The two ends belong to different accounts. This is where the supply chain starts.", 0),
     ];
 
     private static readonly Dictionary<string, string> KindHelpText = new()
@@ -527,6 +672,9 @@
     private string _busyMessage = "Loading the whole graph…";
     private List<string> _selected = [];
     private string _groupBy = "owner";
+    // Folding is for the whole-graph view, which is 9,811 nodes and renders at under four frames
+    // a second unfolded. The exposure scope is 213 and must *not* fold, or the routes it exists
+    // to show are gathered away into their owners.
     private bool _collapsed;
 
     private string GroupByLabel => _groupBy switch
@@ -553,7 +701,21 @@
     private DotNetObjectReference<Explorer>? _self;
     private bool _ready;
 
-    private bool ShowSteps => _kinds.Contains("step") || _kinds.Contains("job");
+    // The view arrives with a reason to be looking at something: the routes by which repositories
+    // under review reach an action an advisory names. 213 nodes against 9,811 on the reference
+    // corpus, so it is the cheapest view as well as the only one that answers a question.
+    private string _scope = "exposure";
+
+    private bool IsExposureScope => _scope == "exposure";
+
+    private bool ShowSteps => (_kinds.Contains("step") || _kinds.Contains("job"))
+                              && !string.IsNullOrEmpty(_isolated);
+
+    // Steps exist to answer reachability, and reachability is only ever asked from the
+    // perspective of one action or workflow. Loaded globally they are 54,508 nodes and 28.7 MB
+    // that no view can draw, so they arrive only inside a focus.
+    private bool StepsNeedFocus => (_kinds.Contains("step") || _kinds.Contains("job"))
+                                   && string.IsNullOrEmpty(_isolated);
 
     // Kinds and edge classes are allow-lists that start full, so "narrowed" means something has
     // been switched *off*, not that a list is non-empty.
@@ -635,6 +797,10 @@
         await _module.InvokeAsync<bool>("create", "abom-graph", _use3d, _self);
         await _module.InvokeVoidAsync("setPalette", "abom-graph", Theme.Palette);
         await _module.InvokeVoidAsync("setAnimate", "abom-graph", _animate);
+        // The fold is the arrival state, so the renderer has to be told before the first draw
+        // rather than only when the checkbox is touched.
+        await _module.InvokeVoidAsync("setGroupBy", "abom-graph", _groupBy);
+        await _module.InvokeVoidAsync("setCollapsed", "abom-graph", _collapsed, FilterSpec());
         _ready = true;
         await LoadGraph();
         ApplyFollow();
@@ -644,9 +810,12 @@
     {
         if (_module is null) return;
         _loading = true;
-        Busy("Loading the whole graph…");
+        Busy(IsExposureScope ? "Loading what reaches an advisory…" : "Loading the whole graph…");
 
-        var url = ShowSteps ? "/api/graph/full?steps=true" : "/api/graph/full";
+        var query = new List<string>();
+        if (ShowSteps) query.Add("steps=true");
+        if (IsExposureScope) query.Add("scope=exposure");
+        var url = "/api/graph/full" + (query.Count > 0 ? "?" + string.Join("&", query) : "");
         var loaded = await _module.InvokeAsync<LoadResult>("loadFull", "abom-graph", url, force);
         _ruleIds = loaded.Rules;
 
@@ -825,12 +994,15 @@
     public async Task OnNodeIsolated(string key)
     {
         if (string.IsNullOrEmpty(key)) return;
+        var wasShowingSteps = ShowSteps;
         _isolated = key == _isolated ? string.Empty : key;
         _selected = string.IsNullOrEmpty(_isolated) ? [] : [_isolated];
         // Start at the immediate neighbors. The graph is largely one connected component, so an
         // unbounded walk from any node reaches nearly all of it and drilling in shows no change.
         _hops = string.IsNullOrEmpty(_isolated) ? 0 : 1;
         SyncAddress();
+        // Gaining or losing a focus is what makes steps available, so the payload changes with it.
+        if (ShowSteps != wasShowingSteps) await LoadGraph();
         await Refilter();
     }
 
@@ -857,11 +1029,13 @@
 
     private async Task ClearSelection(bool recenter)
     {
+        var wasShowingSteps = ShowSteps;
         _isolated = string.Empty;
         _selected = [];
         _hops = 0;
         await FallBackFromSelectionOnlyView();
         SyncAddress();
+        if (ShowSteps != wasShowingSteps) await LoadGraph();
         await Refilter();
         await _module!.InvokeVoidAsync("setSelection", "abom-graph", Array.Empty<string>());
         if (recenter) await _module!.InvokeVoidAsync("fit", "abom-graph");
@@ -914,6 +1088,22 @@
         if (_groupBy == "none" && _collapsed) await OnCollapsedChanged(false);
         await _module!.InvokeVoidAsync("setGroupBy", "abom-graph", _groupBy);
         if (_collapsed) await Refilter();
+    }
+
+    private string ScopeHelp => IsExposureScope
+        ? "Showing only the routes by which repositories in scope reach an action an advisory "
+          + "names. Turn this off for every dependency, which is far larger and arrives folded."
+        : "Show only the routes to an action an advisory names — far smaller, and the question "
+          + "most people open this page to answer.";
+
+    private async Task OnScopeChanged(bool exposureOnly)
+    {
+        _scope = exposureOnly ? "exposure" : string.Empty;
+        _groupBy = "owner";
+        await LoadGraph(force: true);
+        // The two scopes need opposite treatment, so the fold follows the scope rather than being
+        // left wherever the reader last put it.
+        await OnCollapsedChanged(!exposureOnly);
     }
 
     private async Task OnCollapsedChanged(bool value)

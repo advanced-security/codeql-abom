@@ -9,6 +9,16 @@ import (
 // reachStore is what ReachOfNode needs, named so the test can be explicit about it.
 type reachStore = *store.Store
 
+// StepCondition is an `if:` on the route, and the container holding the step it guards.
+//
+// Reported verbatim and never evaluated. Whether `github.ref == 'refs/heads/main'` holds on a
+// given run is not something static analysis settles; printing the expression lets a reader
+// judge, while deciding it would be this tool inventing a verdict.
+type StepCondition struct {
+	In        string `json:"in"`
+	Condition string `json:"condition"`
+}
+
 // NodeReach is one repository under review that reaches a node, and how.
 type NodeReach struct {
 	Repository string `json:"repository"`
@@ -16,6 +26,9 @@ type NodeReach struct {
 	// container directly, and more when it arrives through intermediaries someone else owns.
 	Hops int      `json:"hops"`
 	Path []string `json:"path"`
+	// Conditions are the guards on the steps along this route, nearest the node first. Empty
+	// means every step on it runs unconditionally, which is the stronger claim of the two.
+	Conditions []StepCondition `json:"conditions"`
 }
 
 // ReachOfNode reports which repositories under review reach a node, and by what route.
@@ -61,7 +74,10 @@ func (b *Builder) ReachOfNode(nodeKey string, maxDepth int) ([]NodeReach, error)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, NodeReach{Repository: name, Hops: 0, Path: []string{m.keyOf[target]}})
+		out = append(out, NodeReach{
+			Repository: name, Hops: 0, Path: []string{m.keyOf[target]},
+			Conditions: []StepCondition{},
+		})
 	}
 
 	for repo, e := range m.exposureOf(unit, maxDepth) {
@@ -72,7 +88,13 @@ func (b *Builder) ReachOfNode(nodeKey string, maxDepth int) ([]NodeReach, error)
 		if name == "" {
 			continue
 		}
-		out = append(out, NodeReach{Repository: name, Hops: e.hops, Path: e.path})
+		conditions := e.conditions
+		if conditions == nil {
+			conditions = []StepCondition{}
+		}
+		out = append(out, NodeReach{
+			Repository: name, Hops: e.hops, Path: e.path, Conditions: conditions,
+		})
 	}
 	return out, nil
 }

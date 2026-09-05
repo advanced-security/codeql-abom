@@ -221,6 +221,7 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 func (s *Server) fullGraph(w http.ResponseWriter, r *http.Request) {
 	g, err := s.Store.FullGraph(store.FullGraphOptions{
 		IncludeSteps: r.URL.Query().Get("steps") == "true",
+		Scope:        r.URL.Query().Get("scope"),
 	})
 	writeJSON(w, g, err)
 }

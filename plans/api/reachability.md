@@ -1,6 +1,6 @@
 # Step-level reachability
 
-**Status:** shipped with a known approximation; CFG ingestion pending.
+**Status:** exact, rendered, and condition-aware. CFG ingestion pending.
 
 ## Why this exists
 
@@ -24,28 +24,62 @@ Semantics, which took some care to get right:
 `AbomStepConditions.ql` emits each `if:` verbatim. On the reference corpus: 202 repositories
 reach `actions/checkout`, and 67 condition facts came from a three-repository run.
 
-Endpoints: `/api/node/{key}/-/reach` and `/-/observations`.
+Endpoints: `/api/node/{key}/-/reach` and `/-/observations`. The node page renders the first as
+"What actually reaches this": one row per repository, its route, and the guards on it.
 
-## The approximation, stated plainly
+## Conditions are joined to routes now
 
-The runtime/build-time test is **local** — "something calls this container" — not transitive
-reachability from a repository under review. It is enough to stop composite actions being
-dropped, but a build-time-only caller can propagate `runtime` one hop.
+`ReachOfNode` carries the `if:` on each step the route passes through. The walk is the only
+thing that knows *which* step made each reference, so the guards are gathered during it rather
+than joined afterwards — a later join could only say that some step in the container is
+conditional, which is a much weaker claim.
 
-Tightening it means computing reachability from the seed set over runtime edges and classifying
-against that closure, rather than asking a one-hop question. The machinery exists; wiring it is
-the work.
+On the reference corpus: 23 repositories reach `aws-actions/configure-aws-credentials`, and
+**5 of them only past an `if:`**. `pytorch/FBGEMM` arrives at 3 hops guarded by
+`${{ inputs.trigger-event == 'schedule' || (inputs.trigger-event == 'push' && startsWith(github.event.ref, 'refs/heads/nightly')) }}`
+in `pytorch/test-infra/.github/workflows/_binary_upload.yml`. "23 repositories configure AWS
+credentials" and "18 do, and 5 more do on nightly builds" are different findings.
+
+## What the corpus check falsified
+
+Two things, neither predicted.
+
+**The conditions were being recorded against a key that names nothing.** A composite action's
+`runs:` block has no job, so the ingester read an empty `subjectJob` as "not a step" and fell
+back to the workflow key — which, for `greet/action.yml`, is not even the composite action's own
+key. Every step in one manifest therefore collapsed onto a single subject, where
+`UNIQUE(query_run_id, subject_kind, subject_key, name)` kept exactly one of them. Position is
+now checked before the job. These are the conditions that matter most: a composite action's
+steps run inside every caller.
+
+**Nothing was capturing them in the first place.** `AbomStepConditions.ql` is in
+`abom-dependency-graph.qls`, but `serve` defaults `--expand-suite` to empty and runs the single
+edges query, so a normal crawl produced no conditions at all. The 67 that existed came from a
+three-repository run — and all 67 sat in *upstream* repositories' own CI, which by construction
+is never seed-reachable, so not one of them could ever have appeared on a route. The join had
+been correct and empty. Re-running the direct tier under the full suite took conditions to 620
+(289 joined to a node) across 10 repositories, and the first guarded routes appeared
+immediately. This is the "zero results is a coverage gap, not a broken traversal" rule paying
+for itself.
+
+## The approximation that remains
+
+Reach reports each repository's **shortest** route, so a guard that exists only on a longer path
+is not shown. `actions/cache` is reached by 77 repositories and reports 0 guarded, even though
+`pytorch/test-infra/.github/actions/run-script-with-cache` guards it with
+`${{ inputs.cache-path != '' }}` — because every one of those repositories also names
+`actions/cache` directly. Shortest-route is the right default; "every route" is a different
+question and would need its own endpoint.
 
 ## Pending
 
-1. **Exact runtime classification** over the seed-reachable closure, replacing the local test.
-2. **CFG ingestion.** `actions/tools/print-cfg` is now usable (see below) and gives intra-workflow
-   control flow. That is what turns "this step is reached" into "this step is reached, and here
-   is what stands between the entry point and it".
-3. **`StreamResultSet(name)`** in `internal/bqrs` for `nodes`/`edges`.
-4. **Surface reach in the interface.** The endpoint exists and nothing renders it.
-5. **Condition-aware reporting**: a step reached unconditionally is a different claim from one
-   behind `if: github.ref == 'refs/heads/main'`, and the interface should say which.
+1. **CFG ingestion.** `actions/tools/print-cfg` is now usable (see below) and gives
+   intra-workflow control flow. That is what turns "this step is reached" into "this step is
+   reached, and here is what stands between the entry point and it".
+2. **`StreamResultSet(name)`** in `internal/bqrs` for `nodes`/`edges`.
+3. **Tier → suite binding**, so the graph suite is what a crawl runs by default rather than
+   something an operator has to know to pass. See `plans/api/query-suites.md`.
+4. **All-routes reach**, for guards that only exist on a longer path than the shortest.
 
 ## The line that must not be crossed
 

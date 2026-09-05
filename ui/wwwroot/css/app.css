@@ -292,11 +292,21 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     cursor: pointer;
     padding-right: 0.5rem;
     border-radius: 3px;
+    /* Containment is the whole point of the key now that the graph arrives folded: a reader has
+       to see which level the fold is happening at, not just which kinds are switched on. */
+    padding-left: calc(var(--abom-key-depth, 0) * 0.85rem);
 }
 
 .abom-key-row:hover { background: var(--mud-palette-action-default-hover); }
 
+/* A guide rail down each nested level, so a row's parent is findable without counting pixels. */
+.abom-key-row[style*="--abom-key-depth"] { border-left: 1px solid var(--mud-palette-lines-default); }
+
 .abom-key-label { cursor: pointer; flex: 1; }
+
+/* The fold control sits with the kind it folds, and stays quiet until it is the active one. */
+.abom-key-fold { opacity: 0.45; }
+.abom-key-fold-on { opacity: 1; }
 
 /* A native color input is the one control every browser already knows how to present. */
 .abom-swatch {

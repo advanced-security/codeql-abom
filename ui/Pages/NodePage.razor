@@ -142,6 +142,90 @@ else
             </MudPaper>
         </MudItem>
 
+        <MudItem xs="12">
+            <MudPaper Elevation="0" Outlined="true" Class="pa-3">
+                <MudText Typo="Typo.subtitle2">What actually reaches this</MudText>
+                <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2">
+                    Not whether a name appears somewhere, but whether something you run arrives
+                    here, through whom, and guarded by what.
+                </MudText>
+                @if (_reach is null)
+                {
+                    <MudProgressLinear Indeterminate="true" Class="mt-2" />
+                }
+                else if (_reach.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                        No repository in scope reaches this. That is not the same as it being
+                        unreachable: anything that arrives only through a dependency that
+                        has not been analyzed cannot appear here.
+                        <MudLink Href="/discovery" Typo="Typo.body2">Check coverage</MudLink>.
+                    </MudText>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Class="mb-2">
+                        <b>@_reach.Count</b> repositories in scope reach this,
+                        <b>@_reach.Count(r => r.Conditions.Count > 0)</b> of them only past an
+                        <code>if:</code>.
+                    </MudText>
+                    <MudSimpleTable Dense="true" Hover="true" Striped="false" Class="abom-grid abom-table">
+                        <thead>
+                            <tr><th>Repository</th><th>How it arrives</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var r in _reach.OrderBy(r => r.Hops).ThenBy(r => r.Repository).Take(40))
+                            {
+                                <tr>
+                                    <td>
+                                        <MudLink Href="@($"/repositories/{r.Repository}")" Typo="Typo.caption" Class="abom-rule">
+                                            @r.Repository
+                                        </MudLink>
+                                        <MudTooltip Text="@HopsHelp(r.Hops)">
+                                            <span class="abom-ref ml-1">@HopsLabel(r.Hops)</span>
+                                        </MudTooltip>
+                                    </td>
+                                    @* The guard shares the route's cell rather than taking a column of its own:
+                                       an `if:` runs to over a hundred characters, and a third column clipped it
+                                       off the right edge of the page. *@
+                                    <td>
+                                        <div class="abom-path">@string.Join(" → ", r.Path)</div>
+                                        @if (r.Conditions.Count == 0)
+                                        {
+                                            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                                Every step on this route is unconditional.
+                                            </MudText>
+                                        }
+                                        else
+                                        {
+                                            @foreach (var c in r.Conditions)
+                                            {
+                                                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                                    only when <span class="abom-path">@c.Condition</span>
+                                                    — on a step in @c.In
+                                                </MudText>
+                                            }
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                    @if (_reach.Count > 40)
+                    {
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                            and @(_reach.Count - 40) more
+                        </MudText>
+                    }
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary mt-2 d-block">
+                        Conditions are printed exactly as the workflow wrote them. Whether one
+                        holds on any given run is not something static analysis settles, so ABOM
+                        reports the expression rather than deciding it.
+                    </MudText>
+                }
+            </MudPaper>
+        </MudItem>
+
         <MudItem xs="12" md="6">
             <MudPaper Elevation="0" Outlined="true" Class="pa-3">
                 <MudText Typo="Typo.subtitle2" GutterBottom="true">References in use</MudText>
@@ -267,6 +351,7 @@ else
 
     private NodeDetail? _detail;
     private BumpImpact? _impact;
+    private IReadOnlyList<NodeRoute>? _reach;
     private bool _loading = true;
 
     private string KindLabel =>
@@ -285,11 +370,28 @@ else
             ? $"Names it directly at {string.Join(", ", r.Refs)}. This repository can change the reference itself."
             : $"Reaches it in {r.Hops} hops through an intermediary. It holds no reference of its own to change.";
 
+    private static string HopsLabel(int hops) => hops switch
+    {
+        0 => "lives here",
+        1 => "direct",
+        _ => $"{hops} hops",
+    };
+
+    // Zero hops is not a shorter route; it is the absence of one. Drawing it as "direct" would
+    // say the repository calls itself.
+    private static string HopsHelp(int hops) => hops switch
+    {
+        0 => "The step is in this repository, so it runs it without depending on anything.",
+        1 => "This repository names the container itself, so the reference is its own to change.",
+        _ => $"Arrives through {hops - 1} intermediaries somebody else may own.",
+    };
+
     // Runs on parameter change too, so following a neighbor link reloads rather than sticking.
     protected override async Task OnParametersSetAsync()
     {
         _loading = true;
         _impact = null;
+        _reach = null;
         _detail = string.IsNullOrEmpty(Key) ? null : await Api.GetNodeAsync(Key);
         _loading = false;
 
@@ -298,6 +400,8 @@ else
             // Fetched after the rest has rendered: the walk is quick, but nothing else on the
             // page needs to wait for it.
             _impact = await Api.GetBumpImpactAsync(Key!);
+            StateHasChanged();
+            _reach = await Api.GetReachAsync(Key!);
             StateHasChanged();
         }
     }

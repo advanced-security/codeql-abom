@@ -37,6 +37,8 @@ type discoveryOptions struct {
 	interval           time.Duration
 	lease              time.Duration
 	recheckTTL         time.Duration
+	advisoryMaxAge     time.Duration
+	advisoryMinPeriod  time.Duration
 	rateLimitPerHour   int
 	aggregateAfter     int
 	aggregateMaxAge    time.Duration
@@ -86,6 +88,12 @@ func newSupervisor(s *store.Store, opts discoveryOptions, logTo io.Writer) (*sup
 	r := &runner.Runner{CodeQLPath: opts.codeqlPath, Threads: opts.codeqlThreads(), RAMMB: opts.ramMB}
 	checkout := &expand.Checkout{}
 
+	// Seeded from what is already held so a restart does not re-fetch a set collected minutes ago.
+	fetchedAt, _, err := s.AdvisoriesFetchedAt()
+	if err != nil {
+		return nil, fmt.Errorf("reading how old the advisory set is: %w", err)
+	}
+
 	return &supervisor.Supervisor{
 		Store: s,
 		Queue: queue,
@@ -124,7 +132,16 @@ func newSupervisor(s *store.Store, opts discoveryOptions, logTo io.Writer) (*sup
 		},
 		Preflight: preflight(opts.codeqlPath, opts.queryPath, dir),
 		Sweeper:   func() (int, error) { return expand.SweepDiscoveries(s, queue) },
-		Log:       logTo,
+		Reclassifier: func() (int, error) {
+			return expand.ReclassifySupplyChain(s, queue)
+		},
+		Advisor: newAdvisor(s, logTo),
+
+		AdvisoryMaxAge:      opts.advisoryMaxAge,
+		AdvisoryMinInterval: opts.advisoryMinPeriod,
+		LastAdvisoryAt:      fetchedAt,
+
+		Log: logTo,
 	}, nil
 }
 

@@ -15,6 +15,11 @@ const (
 	SubjectRepository = "repository"
 )
 
+// ObservationCondition is the fact AbomStepConditions.ql states: the `if:` guarding a step,
+// verbatim. Named here because both the query that emits it and the traversal that joins it
+// have to mean the same string.
+const ObservationCondition = "condition"
+
 // Observation is one thing a query said about one subject.
 //
 // This is the generic path for query output that is neither a dependency edge nor a security

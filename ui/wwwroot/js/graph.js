@@ -424,6 +424,8 @@ export function applyFilters(elementId, spec) {
     it.selected = f.selection ? new Set([f.selection]) : new Set();
     it.hopsOf = reachable;
     it.visible = visible;
+    it.visibleSig = visibleSignature(visible);
+    wake(it);
     // Kept for the fold: a merged edge is classified only once the groups exist, so it has to be
     // held to the same filter the edges it was merged from were.
     it.edgeClasses = edgeClasses;
@@ -431,14 +433,12 @@ export function applyFilters(elementId, spec) {
     // left. Emphasis belongs to selection-without-narrowing.
     it.emphasis = null;
 
-    // Hidden nodes normally stay in the simulation so that positions hold still across a
-    // filter. That stops paying for itself once most of the graph is hidden: arriving on a
-    // 45-node view should not cost a 3,969-node settle. Below the threshold the simulation gets
-    // only what is shown, and coordinates are kept on the nodes so returning is free.
-    const subset = visible.size < total * SUBSET_FRACTION;
-
-    if (needsRender(it, subset)) {
-        render(it, subset);
+    // Anything hidden is left out of the simulation entirely. Keeping it in so that positions
+    // held still across a filter cost 3.4 frames per second on the full corpus: `nodeVisibility`
+    // only stops a node being drawn, while d3-force went on integrating all 9,811 of them every
+    // tick. Coordinates live on the nodes themselves, so returning to a wider filter is free.
+    if (needsRender(it)) {
+        render(it);
     } else {
         paint(it);
         it.graph.refresh();
@@ -450,8 +450,17 @@ export function applyFilters(elementId, spec) {
     return { nodes: visible.size, edges, hidden: total - visible.size, total };
 }
 
-/** Below this share of the corpus, the simulation is given only what is on screen. */
-const SUBSET_FRACTION = 0.25;
+/**
+ * A cheap identity for the visible set, so an unchanged filter can be repainted.
+ *
+ * Order-independent and size-sensitive: two selections of the same size are routinely different
+ * sets, and comparing counts alone would leave the simulation holding the previous one.
+ */
+export function visibleSignature(visible) {
+    let sum = 0;
+    for (const key of visible) sum = (sum + seed(key) * 4294967296) % 9007199254740881;
+    return `${visible.size}:${sum}`;
+}
 
 /**
  * Whether the node set has to be rebuilt rather than repainted.
@@ -461,25 +470,83 @@ const SUBSET_FRACTION = 0.25;
  * the previous fold on screen under the new grouping's name, and kept showing merged edges
  * whose underlying edges the filter had just removed.
  */
-export function needsRender(it, subset) {
-    return !!it.dirty || !it.seeded || subset !== it.subset || !!it.collapsed;
+export function needsRender(it) {
+    return !!it.dirty || !it.seeded || it.visibleSig !== it.renderedSig || !!it.collapsed;
+}
+
+/** The nodes and links handed to the simulation: what is visible, never the whole corpus. */
+export function simulationSet(it) {
+    if (!it.visible) return { nodes: it.all.nodes, links: it.all.links };
+    return {
+        nodes: it.all.nodes.filter(n => it.visible.has(n.key)),
+        links: it.all.links.filter(e => e.shown),
+    };
+}
+
+/** How long a settled view keeps drawing at full rate before it comes to rest. */
+export const REST_DELAY = 2000;
+
+/** Frames per second at rest. Enough for a particle to read as moving, not as a video. */
+export const REST_FPS = 6;
+
+/**
+ * How much per-frame work a view can drop, given nothing has changed for a while.
+ *
+ * The layout stops itself, but the renderer and the label pass went on redrawing an identical
+ * frame for ever. `still` stops both; `idle` keeps drawing a few times a second because
+ * directional particles mark which way a dependency points, and that is worth keeping on a view
+ * nobody is touching — they simply advance in steps rather than smoothly.
+ */
+export function restLevel(it, now) {
+    if (!it.settledAt || it.dirty) return 'none';
+    if (now - it.settledAt < REST_DELAY) return 'none';
+    return it.animate && it.selected && it.selected.size ? 'idle' : 'still';
+}
+
+/**
+ * Brings the view back to full rate.
+ *
+ * Called from anything that changes what a frame would show: a filter, a merge, a hover, or the
+ * camera moving. Cheap enough to call unconditionally.
+ */
+export function wake(it) {
+    if (!it) return;
+    it.settledAt = 0;
+    if (it.resting === 'still' && it.graph) it.graph.resumeAnimation();
+    const wasResting = it.resting;
+    it.resting = 'none';
+    if (wasResting && wasResting !== 'none' && !it.drawing) drawLabels(it);
+}
+
+/**
+ * Where the camera is, cheaply enough to compare every frame.
+ *
+ * Stillness is detected by comparing this rather than by listening for the controls' change
+ * event: damping keeps that event firing long after the reader has stopped, so a view driven by
+ * it never came to rest at all.
+ */
+function cameraSignature(it) {
+    const c = it.graph && it.graph.camera && it.graph.camera();
+    const p = c && c.position;
+    const q = c && c.quaternion;
+    if (!p || !q || typeof p.x !== 'number' || typeof q.x !== 'number') return '';
+    return `${p.x.toFixed(1)},${p.y.toFixed(1)},${p.z.toFixed(1)},`
+         + `${q.x.toFixed(3)},${q.y.toFixed(3)},${q.z.toFixed(3)},${q.w.toFixed(3)}`;
 }
 
 /** Seeds positions and hands the node set to the renderer. */
-function render(it, subset) {
-    let nodes = subset
-        ? it.all.nodes.filter(n => it.visible.has(n.key))
-        : it.all.nodes;
-    let links = subset
-        ? it.all.links.filter(e => e.shown)
-        : it.all.links;
+function render(it) {
+    let { nodes, links } = simulationSet(it);
     let collapsed = null;
     if (it.collapsed) {
         collapsed = collapseGroups(it, nodes, it.all.links);
         nodes = collapsed.nodes;
         links = collapsed.links;
     }
-    it.subset = !!subset;
+    it.renderedSig = it.visibleSig;
+    // A new node set is a new layout, so the view is moving again until the engine says otherwise.
+    it.engineStopped = false;
+    it.settledAt = 0;
     it.maxPriority = Math.max(1, ...nodes.map(n => n.priority || 0));
 
     // The layout's natural span grows with the node count, so the seed radius has to as well.
@@ -632,6 +699,7 @@ export function create(elementId, use3d, dotNetRef) {
         .onNodeHover(n => {
             const cur = instances.get(elementId);
             if (cur) cur.hovered = n ? n.key : '';
+            wake(cur);
         })
         .warmupTicks(60)
         .cooldownTicks(400)
@@ -651,6 +719,7 @@ export function create(elementId, use3d, dotNetRef) {
             // The layout takes seconds to settle on a large graph, and until it does the canvas
             // looks blank rather than busy. Only the simulation knows when it is done.
             if (dotNetRef) dotNetRef.invokeMethodAsync('OnLayoutSettled');
+            cur.engineStopped = true;
         });
 
     const controls = graph.controls();
@@ -716,7 +785,35 @@ export function create(elementId, use3d, dotNetRef) {
  */
 function drawLabels(it) {
     if (!it.running) return;
-    requestAnimationFrame(() => drawLabels(it));
+    it.drawing = true;
+
+    // The view is only still when the layout has stopped *and* the camera has, because labels
+    // are projected and a moving camera changes the frame on its own.
+    const cam = cameraSignature(it);
+    if (cam !== it.camSig) {
+        it.camSig = cam;
+        it.settledAt = 0;
+    } else if (it.engineStopped && !it.settledAt) {
+        it.settledAt = performance.now();
+    }
+
+    const level = restLevel(it, performance.now());
+    if (level !== 'none') {
+        // Coming to rest is what stops an idle tab redrawing an identical frame sixty times a
+        // second. `still` has nothing moving at all; `idle` still has particles to advance.
+        if (level !== it.resting) {
+            it.resting = level;
+            if (level === 'still' && it.graph) it.graph.pauseAnimation();
+        }
+        if (level === 'still') {
+            it.drawing = false;
+            return;
+        }
+        setTimeout(() => drawLabels(it), 1000 / REST_FPS);
+    } else {
+        it.resting = 'none';
+        requestAnimationFrame(() => drawLabels(it));
+    }
 
     const p = it.palette;
     const canvas = it.labels;

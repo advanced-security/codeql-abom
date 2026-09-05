@@ -75,10 +75,15 @@ func subjectKeyOf(row bqrs.Row, repository string) (string, error) {
 		return "", fmt.Errorf(
 			"ingest: %q needs Options.Repository to become a node key", ColSubjectPath)
 	}
-	if job, err := row.String(ColSubjectJob); err == nil && job != "" {
-		if step, err := row.Int(ColSubjectStep); err == nil && step >= 0 {
-			return normalize.StepKey(repository, path, job, step), nil
-		}
+	job, _ := row.String(ColSubjectJob)
+	// Position is what identifies a step, and it is checked before the job because a composite
+	// action's `runs:` block has no job to name. Reading an empty job as "not a step" put every
+	// step in an action manifest on the file's own key, where the uniqueness constraint then
+	// kept one row per file.
+	if step, err := row.Int(ColSubjectStep); err == nil && step >= 0 {
+		return normalize.StepKey(repository, path, job, step), nil
+	}
+	if job != "" {
 		return normalize.JobKey(repository, path, job), nil
 	}
 	return normalize.WorkflowKey(repository, path), nil

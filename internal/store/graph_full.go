@@ -68,6 +68,34 @@ type FullGraphOptions struct {
 	// IncludeSteps keeps every individual `uses:` line rather than folding it into the
 	// workflow or composite action that holds it. Roughly 23k nodes against 3.6k.
 	IncludeSteps bool
+	// Scope narrows the graph to a reason for looking at it. Empty is the whole corpus.
+	Scope string
+}
+
+// ScopeExposure keeps only what lies on a route from a repository under review to an action an
+// advisory names.
+//
+// The route is the unit, not the affected action: whether a fix is yours or an intermediary's is
+// a fact about the path, and it is the question the whole graph exists to answer. On the
+// reference corpus that is 213 nodes against 9,811, so it is also the cheapest view to draw.
+const ScopeExposure = "exposure"
+
+// onExposureRoute is every node key lying on a stored exposure route.
+//
+// Read from the stored path rather than recomputed, so this scope and the Remediation page
+// cannot disagree about what is exposed. abom_exposure is rebuilt wholesale, so an empty result
+// means the last rebuild found nothing, not that nothing was looked at.
+const onExposureRoute = `(SELECT j.value FROM abom_exposure ex, json_each(ex.path) j)`
+
+// scopeFilter restricts a query to the chosen scope, as a fragment appended to its WHERE clause.
+//
+// Applied in SQL rather than to the assembled graph: filtering afterwards still paid for all
+// 9,811 nodes and their per-node advisory and frontier subqueries in order to return 277.
+func scopeFilter(scope, column string) string {
+	if scope != ScopeExposure {
+		return ""
+	}
+	return " AND " + column + " IN " + onExposureRoute
 }
 
 // display folds steps and jobs into the container that holds them.
@@ -106,14 +134,14 @@ func (s *Store) FullGraph(opts FullGraphOptions) (Graph, error) {
 		display = identityDisplay
 	}
 
-	nodes, index, err := s.graphNodes(display, 0)
+	nodes, index, err := s.graphNodes(display, 0, opts.Scope)
 	if err != nil {
 		return out, err
 	}
 	if err := s.attachRules(display, index); err != nil {
 		return out, err
 	}
-	edges, err := s.graphEdges(display, 0)
+	edges, err := s.graphEdges(display, 0, opts.Scope)
 	if err != nil {
 		return out, err
 	}
@@ -126,7 +154,7 @@ func (s *Store) FullGraph(opts FullGraphOptions) (Graph, error) {
 
 // graphNodes reads the displayed nodes. A non-zero since restricts them to those a node added
 // after that row id displays as, which is how a delta is derived.
-func (s *Store) graphNodes(display string, since int64) ([]GraphNode, map[string]*GraphNode, error) {
+func (s *Store) graphNodes(display string, since int64, scope string) ([]GraphNode, map[string]*GraphNode, error) {
 	rows, err := s.db.Query(`WITH `+display+`
 		SELECT n.node_key, n.node_kind, COALESCE(r.repository_full_name, ''),
 		       COALESCE(r.origin, ''), COALESCE(n.path, ''), COALESCE(c.node_key, ''),
@@ -147,7 +175,8 @@ func (s *Store) graphNodes(display string, since int64) ([]GraphNode, map[string
 		LEFT JOIN repository r ON r.row_id = n.repository_row_id
 		LEFT JOIN abom_node c ON c.row_id = n.container_node_row_id
 		LEFT JOIN abom_blast_radius b ON b.node_row_id = n.row_id
-		WHERE n.row_id IN (SELECT shown FROM disp WHERE row_id > ?)`, since)
+		WHERE n.row_id IN (SELECT shown FROM disp WHERE row_id > ?)`+
+		scopeFilter(scope, "n.node_key"), since)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reading graph nodes: %w", err)
 	}
@@ -215,7 +244,7 @@ func (s *Store) attachRules(display string, index map[string]*GraphNode) error {
 	return nil
 }
 
-func (s *Store) graphEdges(display string, since int64) ([]GraphEdge, error) {
+func (s *Store) graphEdges(display string, since int64, scope string) ([]GraphEdge, error) {
 	// A repository is otherwise an island: nothing in abom_edge points at it, so without the
 	// containment half of this union every repo node renders unattached and isolating one finds
 	// nothing. Containment stops at what the repository directly holds, because wiring every
@@ -227,7 +256,8 @@ func (s *Store) graphEdges(display string, since int64) ([]GraphEdge, error) {
 		JOIN disp dd ON dd.row_id = e.dst_node_row_id
 		JOIN abom_node sn ON sn.row_id = ds.shown
 		JOIN abom_node dn ON dn.row_id = dd.shown
-		WHERE ds.shown <> dd.shown AND e.row_id > ?
+		WHERE ds.shown <> dd.shown AND e.row_id > ?`+
+		scopeFilter(scope, "sn.node_key")+scopeFilter(scope, "dn.node_key")+`
 		UNION ALL
 		SELECT owner.node_key, held.node_key, 'repo-contains', ''
 		FROM abom_node owner
@@ -235,7 +265,9 @@ func (s *Store) graphEdges(display string, since int64) ([]GraphEdge, error) {
 		                   AND held.row_id <> owner.row_id
 		                   AND held.container_node_row_id IS NULL
 		                   AND held.node_kind <> 'repo'
-		WHERE owner.node_kind = 'repo' AND held.row_id > ?`, since, since)
+		WHERE owner.node_kind = 'repo' AND held.row_id > ?`+
+		scopeFilter(scope, "owner.node_key")+scopeFilter(scope, "held.node_key"),
+		since, since)
 	if err != nil {
 		return nil, fmt.Errorf("reading graph edges: %w", err)
 	}

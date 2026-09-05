@@ -176,7 +176,8 @@ func TestACycleReturnsAbandonedClaimsToTheQueue(t *testing.T) {
 // writer. Waiting out the lease costs an hour of dead time in which the interface reports work
 // in flight that nothing is doing: a real restart stranded 20 dependencies for 34 minutes while
 // the same screen said there was nothing to analyze.
-func TestTheFirstCycleReclaimsClaimsLeftByAPreviousProcess(t *testing.T) {	sup, s := newSupervisor(t)
+func TestTheFirstCycleReclaimsClaimsLeftByAPreviousProcess(t *testing.T) {
+	sup, s := newSupervisor(t)
 	if _, err := sup.Queue.Enqueue([]frontier.Item{
 		{NodeKey: "octo/tool", Owner: "octo", Repo: "tool", Depth: 1},
 	}); err != nil {
@@ -259,6 +260,172 @@ func TestFailuresAreWrittenDownAndNotOnlyHeld(t *testing.T) {
 	}
 	if !strings.Contains(log.String(), "cloning a dependency") {
 		t.Errorf("log = %q, want what was being attempted", log.String())
+	}
+}
+
+// Advisories are matched against packages by name, so a dependency discovered today is checked
+// against a set fetched before it existed unless the crawl refreshes them.
+func TestRefreshingAdvisoriesRecordsWhatItFound(t *testing.T) {
+	sup, _ := newSupervisor(t)
+	var log bytes.Buffer
+	sup.Log = &log
+	var asked int
+	sup.Advisor = func(context.Context) (int, error) {
+		asked++
+		return 3, nil
+	}
+
+	sup.refreshAdvisories(context.Background())
+
+	if asked != 1 {
+		t.Errorf("advisor asked %d times, want once", asked)
+	}
+	if !strings.Contains(log.String(), "3 advisories") {
+		t.Errorf("log = %q, want what the refresh found", log.String())
+	}
+}
+
+// A drained queue never re-enqueues, so a classification only Enqueue can set keeps whatever the
+// loosest rule ever said. The pass allowed to lower one has to be reached from the loop, or
+// tightening the rule changes nothing anybody can see.
+func TestADrainedCycleReclassifiesWhatIsAlreadyQueued(t *testing.T) {
+	sup, _ := newSupervisor(t)
+	var log bytes.Buffer
+	sup.Log = &log
+	sup.Reclassifier = func() (int, error) { return 7, nil }
+
+	sup.cycle(context.Background())
+
+	if !strings.Contains(log.String(), "reclassified 7 dependencies") {
+		t.Errorf("log = %q, want the reclassification reported", log.String())
+	}
+}
+
+// A pass that changed nothing must stay silent, or a settled corpus writes a line a minute all
+// night saying so.
+func TestAReclassificationThatChangedNothingIsNotAnnounced(t *testing.T) {
+	sup, _ := newSupervisor(t)
+	var log bytes.Buffer
+	sup.Log = &log
+	sup.Reclassifier = func() (int, error) { return 0, nil }
+
+	sup.cycle(context.Background())
+
+	if strings.Contains(log.String(), "reclassified") {
+		t.Errorf("log = %q, want nothing said about an unchanged classification", log.String())
+	}
+}
+
+// Refreshing on an idle cycle would spend GitHub's rate limit re-asking the same question. The
+// unauthenticated budget is 60 an hour, and a loop polling all night would exhaust it for
+// nothing. This is the guard in cycle, tested where it lives.
+func TestAdvisoriesAreNotRefreshedWhenNothingArrived(t *testing.T) {
+	sup, _ := newSupervisor(t)
+	var asked int
+	sup.Advisor = func(context.Context) (int, error) {
+		asked++
+		return 0, nil
+	}
+
+	sup.cycle(context.Background())
+
+	if asked != 0 {
+		t.Errorf("advisor asked %d times on an idle cycle, want none", asked)
+	}
+}
+
+// Advisories enrich the graph; they are not what the crawl is for. A GitHub outage or an
+// exhausted rate limit must not stop dependencies being analyzed.
+func TestAFailedAdvisoryRefreshDoesNotStopTheCycle(t *testing.T) {
+	sup, _ := newSupervisor(t)
+	var log bytes.Buffer
+	sup.Log = &log
+	sup.Advisor = func(context.Context) (int, error) {
+		return 0, errors.New("rate limit exhausted")
+	}
+
+	sup.refreshAdvisories(context.Background())
+
+	if sup.Status().LastError == "" {
+		t.Error("a failed refresh left no trace at all")
+	}
+	if !strings.Contains(log.String(), "rate limit exhausted") {
+		t.Errorf("log does not say why the refresh failed: %q", log.String())
+	}
+}
+
+// A nil Advisor is the normal configuration for anything that is not the serve loop, so it must
+// be a no-op rather than a panic.
+func TestARefreshWithNoAdvisorIsHarmless(t *testing.T) {
+	sup, _ := newSupervisor(t)
+	sup.refreshAdvisories(context.Background())
+	if sup.Status().LastError != "" {
+		t.Errorf("LastError = %q, want nothing recorded", sup.Status().LastError)
+	}
+}
+
+// A finished crawl never ingests again, so arrival alone leaves a completed corpus matched
+// against an advisory set that can never be updated. Measured on the real corpus: 1213 done, 40
+// unavailable, nothing pending, and advisoriesFetchedAt frozen a day back.
+func TestAStaleAdvisorySetIsRefreshedOnADrainedQueue(t *testing.T) {
+	sup, _ := newSupervisor(t)
+	sup.AdvisoryMaxAge = 6 * time.Hour
+	sup.LastAdvisoryAt = time.Now().UTC().Add(-24 * time.Hour)
+	var asked int
+	sup.Advisor = func(context.Context) (int, error) {
+		asked++
+		return 0, nil
+	}
+
+	sup.cycle(context.Background())
+
+	if asked != 1 {
+		t.Errorf("advisor asked %d times, want once for an advisory set past its ceiling", asked)
+	}
+}
+
+// Within the ceiling the answer is still good, and re-asking spends a rate limit to be told the
+// same thing.
+func TestAFreshAdvisorySetIsNotRefetched(t *testing.T) {
+	sup, _ := newSupervisor(t)
+	sup.AdvisoryMaxAge = 6 * time.Hour
+	sup.LastAdvisoryAt = time.Now().UTC().Add(-time.Minute)
+	var asked int
+	sup.Advisor = func(context.Context) (int, error) {
+		asked++
+		return 0, nil
+	}
+
+	sup.cycle(context.Background())
+
+	if asked != 0 {
+		t.Errorf("advisor asked %d times inside the ceiling, want none", asked)
+	}
+}
+
+// Measured on the reference corpus: 936 packages is 19 paced requests and took 109 seconds, with
+// the cycle blocked throughout. Without a floor a crawl ingesting on every 30s cycle would spend
+// nearly all of its time re-asking about advisories instead of analyzing dependencies.
+func TestABurstOfProductiveCyclesDoesNotRefetchAdvisoriesEachTime(t *testing.T) {
+	sup, _ := newSupervisor(t)
+	sup.Advisor = func(context.Context) (int, error) { return 0, nil }
+	sup.AdvisoryMinInterval = 15 * time.Minute
+	sup.LastAdvisoryAt = time.Now().UTC().Add(-time.Minute)
+
+	if sup.advisoryRefreshDue(true) {
+		t.Error("refetched 936 packages because one more cycle happened to ingest")
+	}
+}
+
+// The floor must not become a reason never to refresh: past it, arrival still counts.
+func TestArrivalRefreshesAdvisoriesOnceTheFloorHasPassed(t *testing.T) {
+	sup, _ := newSupervisor(t)
+	sup.Advisor = func(context.Context) (int, error) { return 0, nil }
+	sup.AdvisoryMinInterval = 15 * time.Minute
+	sup.LastAdvisoryAt = time.Now().UTC().Add(-time.Hour)
+
+	if !sup.advisoryRefreshDue(true) {
+		t.Error("new packages arrived well past the floor and were never checked")
 	}
 }
 

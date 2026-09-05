@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/advanced-security/codeql-abom/internal/frontier"
+	"github.com/advanced-security/codeql-abom/internal/graph"
 	"github.com/advanced-security/codeql-abom/internal/ingest"
 	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/store"
@@ -278,11 +279,25 @@ func (e *Expander) consume(
 }
 
 func (e *Expander) enqueueDiscoveries(b batch) (int, error) {
-	items, err := discoveriesOf(e.Store, b.full(), b.depth)
+	chain, err := (&graph.Builder{Store: e.Store}).ClassifyDependencies()
+	if err != nil {
+		return 0, err
+	}
+	items, err := discoveriesOf(e.Store, chain, b.full(), b.depth)
 	if err != nil {
 		return 0, err
 	}
 	return e.Queue.Enqueue(items)
+}
+
+// ReclassifySupplyChain re-derives how every queued dependency is classified from the whole
+// graph, and is what lets a tightened rule reach a corpus that is already built.
+func ReclassifySupplyChain(s *store.Store, q *frontier.Queue) (int, error) {
+	chain, err := (&graph.Builder{Store: s}).ClassifyDependencies()
+	if err != nil {
+		return 0, err
+	}
+	return q.Reclassify(chain)
 }
 
 // SweepDiscoveries re-applies the discovery rule to every repository already analyzed.
@@ -292,6 +307,10 @@ func (e *Expander) enqueueDiscoveries(b batch) (int, error) {
 // on a drained queue nothing ever is. Enqueue ignores what it already holds, so this settles to
 // zero once the rule and the stored graph agree.
 func SweepDiscoveries(s *store.Store, q *frontier.Queue) (int, error) {
+	chain, err := (&graph.Builder{Store: s}).ClassifyDependencies()
+	if err != nil {
+		return 0, err
+	}
 	rows, err := s.DB().Query(`
 		SELECT r.repository_full_name, COALESCE(MIN(f.depth), 0)
 		FROM repository r
@@ -320,7 +339,7 @@ func SweepDiscoveries(s *store.Store, q *frontier.Queue) (int, error) {
 
 	added := 0
 	for _, src := range sources {
-		items, err := discoveriesOf(s, src.full, src.depth)
+		items, err := discoveriesOf(s, chain, src.full, src.depth)
 		if err != nil {
 			return added, err
 		}
@@ -334,7 +353,7 @@ func SweepDiscoveries(s *store.Store, q *frontier.Queue) (int, error) {
 }
 
 // discoveriesOf lists the external dependencies one analyzed repository names, classified by
-// whether anything executes them.
+// whether anything under review executes them.
 //
 // What contains a `uses:` is decided by CodeQL, not here: `AbomEdges.qll` emits
 // `composite-step-uses-action` for a step inside a `runs:` block and `step-uses-action` for one
@@ -342,19 +361,17 @@ func SweepDiscoveries(s *store.Store, q *frontier.Queue) (int, error) {
 // wrong — an earlier gate required the container to be referenced from *another* repository,
 // which dropped every composite action called only by its own repository's workflows, and with
 // it dependencies that run whenever the organization uses the parent action.
-func discoveriesOf(s *store.Store, full string, depth int) ([]frontier.Item, error) {
+//
+// Classification is a whole-graph question and is answered by graph.ClassifyDependencies, not
+// from the rows below: what this repository can see is whether it names a dependency, never
+// whether anyone under review reaches the file that names it.
+func discoveriesOf(
+	s *store.Store, chain *graph.SupplyChain, full string, depth int,
+) ([]frontier.Item, error) {
 	rows, err := s.DB().Query(`
-		SELECT n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''), COALESCE(n.path,''),
-		       MAX(CASE
-		             WHEN e.edge_kind = 'composite-step-uses-action' THEN 1
-		             WHEN EXISTS (
-		                    SELECT 1 FROM abom_edge ref
-		                    WHERE ref.dst_node_row_id = src.container_node_row_id) THEN 1
-		             ELSE 0
-		           END) AS runtime
+		SELECT n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''), COALESCE(n.path,'')
 		FROM abom_edge e
 		JOIN abom_node n ON n.row_id = e.dst_node_row_id
-		JOIN abom_node src ON src.row_id = e.src_node_row_id
 		JOIN repository r ON r.row_id = e.repository_row_id
 		WHERE r.repository_full_name = ?
 		  AND n.is_external = 1 AND n.owner IS NOT NULL AND n.repo IS NOT NULL
@@ -367,14 +384,13 @@ func discoveriesOf(s *store.Store, full string, depth int) ([]frontier.Item, err
 	var items []frontier.Item
 	for rows.Next() {
 		var it frontier.Item
-		var runtime int
-		if err := rows.Scan(&it.NodeKey, &it.Owner, &it.Repo, &it.Subpath, &runtime); err != nil {
+		if err := rows.Scan(&it.NodeKey, &it.Owner, &it.Repo, &it.Subpath); err != nil {
 			return nil, err
 		}
 		it.Depth = depth + 1
 		it.DiscoveredFrom = full
 		it.SupplyChain = frontier.SupplyChainBuild
-		if runtime == 1 {
+		if runtime, _ := chain.Of(it.NodeKey); runtime {
 			it.SupplyChain = frontier.SupplyChainRuntime
 		}
 		items = append(items, it)

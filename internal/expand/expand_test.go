@@ -304,10 +304,13 @@ func TestExpandDoesNotQueueLocalReferencesAsNewRepositories(t *testing.T) {
 	}
 }
 
-// A composite action's own steps run inside whoever calls the action, so what they pull in is
-// executed by every consumer. Requiring some *other* repository to reference the container first
-// dropped these: on the real corpus 93 runtime dependencies were never analyzed, including
+// A composite action's own steps run inside whoever calls the action, so what they pull in has
+// to be followed. Requiring some *other* repository to reference the container first dropped
+// these: on the real corpus 93 runtime dependencies were never analyzed, including
 // chef/common-github-actions' azure-login pulling lancemccarthy/akeyless-action.
+//
+// Following is a separate question from how they are labeled, which is why this asserts only
+// that they are queued.
 func TestExpandFollowsACompositeActionsOwnSteps(t *testing.T) {
 	h := newHarness(t)
 	h.enqueue(item("octo", "composite", "", 1))
@@ -317,12 +320,40 @@ func TestExpandFollowsACompositeActionsOwnSteps(t *testing.T) {
 	for _, want := range []string{"actions/cache", "actions/setup-python"} {
 		if _, ok := queuedDepth(t, h.store, want); !ok {
 			t.Errorf("%s was not enqueued: a composite action's steps run for every caller", want)
-			continue
 		}
+	}
+}
+
+// "Runs for every caller" is a claim about callers, so it needs one. Once a repository under
+// review names the composite action, its steps run inside that repository and what they pull in
+// is executed here.
+func TestACompositeActionsStepsAreRuntimeOnceSomethingUnderReviewCallsIt(t *testing.T) {
+	h := newHarness(t)
+	h.enqueue(item("octo", "composite", "", 1))
+	h.referencedFromSeed("org/app", "octo/composite/.github/actions/greet")
+
+	h.run(10)
+
+	for _, want := range []string{"actions/cache", "actions/setup-python"} {
 		if chain := queuedSupplyChain(t, h.store, want); chain != frontier.SupplyChainRuntime {
 			t.Errorf("%s supply_chain = %q, want %q",
 				want, chain, frontier.SupplyChainRuntime)
 		}
+	}
+}
+
+// The same steps, with nobody under review calling the action holding them. Being inside a
+// `runs:` block says they run for whoever invokes it, not that anyone here does — and a rule
+// that read the edge kind alone carried that claim one hop past its evidence.
+func TestACompositeActionNothingUnderReviewCallsIsBuildTime(t *testing.T) {
+	h := newHarness(t)
+	h.enqueue(item("octo", "composite", "", 1))
+
+	h.run(10)
+
+	if chain := queuedSupplyChain(t, h.store, "actions/cache"); chain != frontier.SupplyChainBuild {
+		t.Errorf("supply_chain = %q, want %q while nothing under review calls the action",
+			chain, frontier.SupplyChainBuild)
 	}
 }
 
@@ -366,6 +397,7 @@ func TestExpandUpgradesBuildTimeToRuntimeWhenSomethingCallsIt(t *testing.T) {
 func TestSweepEnqueuesWhatTheCurrentRuleNowAdmits(t *testing.T) {
 	h := newHarness(t)
 	h.enqueue(item("octo", "composite", "", 1))
+	h.referencedFromSeed("org/app", "octo/composite/.github/actions/greet")
 	h.run(10)
 
 	// Forget the discoveries, keeping the analyzed repository and its edges, so the sweep has
@@ -409,6 +441,30 @@ func TestSweepIsIdempotent(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("second sweep enqueued %d, want none", n)
+	}
+}
+
+// Enqueue may only ever strengthen a classification, so tightening the rule cannot on its own
+// correct a row an older, looser rule already labeled runtime. On the reference corpus 254 rows
+// were stuck that way, and re-crawling would not have moved one of them.
+func TestReclassifyingCorrectsALabelAnOlderRuleLeftBehind(t *testing.T) {
+	h := newHarness(t)
+	h.enqueue(item("octo", "composite", "", 1))
+	h.run(10)
+
+	if _, err := h.store.DB().Exec(
+		`UPDATE abom_frontier SET supply_chain = ? WHERE node_key = 'actions/cache'`,
+		frontier.SupplyChainRuntime); err != nil {
+		t.Fatalf("staging a stale label: %v", err)
+	}
+
+	if _, err := ReclassifySupplyChain(h.store, h.queue); err != nil {
+		t.Fatalf("ReclassifySupplyChain: %v", err)
+	}
+
+	if chain := queuedSupplyChain(t, h.store, "actions/cache"); chain != frontier.SupplyChainBuild {
+		t.Errorf("supply_chain = %q, want %q: nothing under review calls the action holding it",
+			chain, frontier.SupplyChainBuild)
 	}
 }
 

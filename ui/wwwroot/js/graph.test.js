@@ -5,6 +5,7 @@ import {
     seed, repoOf, orgOf, edgeClass, groupOf, anchorKey, keyOf, faded,
     nodeRadius, isSelected, particleSpeed, needsRender, collapseGroups, ungroupedName,
     mergeInto, placeArrivals, neighborhood, discoveryColor, escapesGraph,
+    simulationSet, visibleSignature, restLevel, REST_DELAY, REST_FPS,
 } from './graph.js';
 
 // These are the pure decisions behind the whole view: which edges are drawn, how big a node is,
@@ -129,20 +130,22 @@ test('a collapsed graph is rebuilt whenever anything it is folded from changes',
     // Two bugs, one cause: applyFilters skipped render() whenever the graph was already seeded,
     // but the fold is built inside render(). Regrouping relabeled the caption while leaving the
     // previous grouping on screen, and hiding an edge class left its merged edges drawn.
-    const collapsed = { seeded: true, subset: false, collapsed: true, groupBy: 'owner' };
-    assert.equal(needsRender(collapsed, false), true);
+    const collapsed = { seeded: true, collapsed: true, groupBy: 'owner' };
+    assert.equal(needsRender(collapsed), true);
 
     // The fold depends on the filtered edges too, so an unchanged grouping is not enough to
     // stay on the cheap path.
-    assert.equal(needsRender({ ...collapsed, foldedBy: 'owner' }, false), true);
+    assert.equal(needsRender({ ...collapsed, foldedBy: 'owner' }), true);
 });
 
 test('an expanded graph is not rebuilt just because the grouping changed', () => {
     // Grouping only moves an expanded graph, so it must stay on the cheap path.
-    const it = { seeded: true, subset: false, collapsed: false, groupBy: 'owner', foldedBy: null };
-    assert.equal(needsRender(it, false), false);
-    assert.equal(needsRender({ ...it, seeded: false }, false), true, 'a first draw always renders');
-    assert.equal(needsRender(it, true), true, 'entering a subset changes the node set');
+    const it = {
+        seeded: true, collapsed: false, groupBy: 'owner', foldedBy: null,
+        visibleSig: '3:1', renderedSig: '3:1',
+    };
+    assert.equal(needsRender(it), false);
+    assert.equal(needsRender({ ...it, seeded: false }), true, 'a first draw always renders');
 });
 
 test('a different grouping folds to a different set of groups', () => {
@@ -202,6 +205,124 @@ test('a hidden edge class stays hidden once the graph is folded', () => {
     const drawn = collapseGroups(it, nodes, links).links.filter(l => l.shown !== false);
     assert.deepEqual(drawn.map(l => l.cls), ['sameOwner'],
         'the cross-account edge must not come back when folded');
+});
+
+// Folding is where "nobody has measured this" turns quietly into "this is zero": a group takes
+// the largest reach among its members, and an unmeasured member contributes 0 to that maximum.
+// The group has to carry the doubt forward instead of averaging it away.
+test('a group holding an unmeasured member does not claim its reach is known', () => {
+    const nodes = [
+        { key: 'octo/app/a.yml', kind: 'workflow', repository: 'octo/app',
+          dependentRepos: 4, reachKnown: true },
+        { key: 'octo/app/b.yml', kind: 'workflow', repository: 'octo/app',
+          dependentRepos: 0, reachKnown: false },
+    ];
+
+    const [group] = collapseGroups({ groupBy: 'repo' }, nodes, []).nodes;
+
+    assert.equal(group.reachKnown, false,
+        'one unmeasured member is enough to make the group total a lower bound');
+});
+
+test('a group of fully measured members reports its reach as known', () => {
+    const nodes = [
+        { key: 'octo/app/a.yml', kind: 'workflow', repository: 'octo/app',
+          dependentRepos: 4, reachKnown: true },
+        { key: 'octo/app/b.yml', kind: 'workflow', repository: 'octo/app',
+          dependentRepos: 0, reachKnown: true },
+    ];
+
+    const [group] = collapseGroups({ groupBy: 'repo' }, nodes, []).nodes;
+
+    assert.equal(group.reachKnown, true, 'a measured zero is a measurement');
+});
+
+// Coverage is a first-class claim, and a fold is exactly where it gets lost: every group was
+// built `analyzed: true`, so a group of repositories nothing had looked inside was drawn as
+// though all of it had been.
+test('a group holding an unanalyzed member is not reported as analyzed', () => {
+    const nodes = [
+        { key: 'octo/app/a.yml', kind: 'workflow', repository: 'octo/app', analyzed: true },
+        { key: 'octo/app/b.yml', kind: 'workflow', repository: 'octo/app', analyzed: false },
+    ];
+
+    const [group] = collapseGroups({ groupBy: 'repo' }, nodes, []).nodes;
+
+    assert.equal(group.analyzed, false,
+        'a group is only analyzed when everything folded into it is');
+});
+
+// The whole reason the default view rendered at 3.4 frames per second: hidden nodes stayed in
+// the simulation and `nodeVisibility` only stopped them being drawn, so d3-force integrated all
+// 9,811 of them every tick. What is not on screen must not be in the simulation.
+test('the simulation is given only the nodes that are visible', () => {
+    const it = {
+        visible: new Set(['a']),
+        all: {
+            nodes: [{ key: 'a' }, { key: 'b' }, { key: 'c' }],
+            links: [
+                { source: 'a', target: 'b', shown: false },
+                { source: 'a', target: 'a', shown: true },
+            ],
+        },
+    };
+
+    const { nodes, links } = simulationSet(it);
+
+    assert.deepEqual(nodes.map(n => n.key), ['a'], 'hidden nodes are left out entirely');
+    assert.equal(links.length, 1, 'only edges the filter kept are simulated');
+});
+
+// A filter that changes nothing must not pay for a reseed, or every keystroke reshuffles a
+// layout the reader is already using.
+test('an unchanged visible set is repainted rather than rebuilt', () => {
+    const it = { seeded: true, collapsed: false, visibleSig: 7, renderedSig: 7 };
+
+    assert.equal(needsRender(it), false);
+    assert.equal(needsRender({ ...it, visibleSig: 8 }), true,
+        'a different visible set has to be handed to the simulation again');
+    assert.equal(needsRender({ ...it, seeded: false }), true, 'a first draw always renders');
+});
+
+// Two filters can select the same number of nodes and not the same nodes. Comparing counts
+// would leave the simulation holding the previous selection.
+test('two different selections of the same size are not treated as the same view', () => {
+    assert.notEqual(visibleSignature(new Set(['a', 'b'])), visibleSignature(new Set(['a', 'c'])));
+    assert.equal(visibleSignature(new Set(['a', 'b'])), visibleSignature(new Set(['b', 'a'])),
+        'order is not part of the identity of a set');
+});
+
+// Once the layout has settled nothing on screen moves, yet the label pass re-projected and
+// redrew an identical frame on every animation frame, for ever. Idle has to cost nothing.
+test('a view that has settled with nothing animating stops drawing entirely', () => {
+    const settled = { settledAt: 1000, dirty: false, animate: true, selected: new Set() };
+
+    assert.equal(restLevel(settled, 1000 + REST_DELAY), 'still',
+        'no selection means no particles, so there is nothing left to move');
+});
+
+test('a layout that is still moving keeps drawing', () => {
+    const moving = { settledAt: 0, dirty: false, animate: false, selected: new Set() };
+    assert.equal(restLevel(moving, 9e9), 'none', 'nothing has settled yet');
+    assert.equal(restLevel({ ...moving, settledAt: 1000 }, 1200), 'none',
+        'settled a moment ago, still inside the grace period');
+});
+
+// Following an expansion is exactly when the screen must not go to sleep: arrivals are the
+// reason the reader left it open.
+test('a view with arrivals waiting does not rest', () => {
+    const arriving = { settledAt: 1000, dirty: true, animate: false, selected: new Set() };
+    assert.equal(restLevel(arriving, 9e9), 'none');
+});
+
+// Particles mark which way a dependency points, which is worth keeping even on a view nobody is
+// touching. At rest they advance in visible steps rather than smoothly, which costs a fraction
+// of the frames and still reads as direction.
+test('a selection keeps its particles flowing after the view comes to rest', () => {
+    const selected = { settledAt: 1000, dirty: false, animate: true, selected: new Set(['a']) };
+
+    assert.equal(restLevel(selected, 9e9), 'idle');
+    assert.ok(REST_FPS > 0 && REST_FPS < 30, 'resting still draws, just far less often');
 });
 
 test('the ungrouped bucket is named after the grouping that left it out', () => {
@@ -310,8 +431,8 @@ test('metrics update nodes the client already holds', () => {
 // A merge that only repainted would leave every arrival invisible, however correct the filter
 // result was.
 test('a merge forces the node set to be handed to the renderer again', () => {
-    const it = { seeded: true, subset: false, collapsed: false, dirty: true };
-    assert.equal(needsRender(it, false), true);
+    const it = { seeded: true, collapsed: false, dirty: true };
+    assert.equal(needsRender(it), true);
 });
 
 // Size carries reach, so the smallest circle reads as "nothing depends on this". A node that

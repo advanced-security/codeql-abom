@@ -38,18 +38,22 @@ type model struct {
 	// because a composite action's own steps are part of what its callers depend on, but their
 	// CI must not register as dependency pressure on the organization.
 	seedRepo map[int64]bool
+	// conditionOf holds the `if:` guarding a step, verbatim. Empty for the overwhelming majority
+	// of steps, which are unconditional.
+	conditionOf map[int64]string
 	// referenceable are the nodes that can appear as an edge target.
 	referenceable []int64
 }
 
 func (b *Builder) load() (*model, error) {
 	m := &model{
-		reverse:   make(map[int64][]int64),
-		container: make(map[int64]int64),
-		repoOf:    make(map[int64]int64),
-		kindOf:    make(map[int64]string),
-		keyOf:     make(map[int64]string),
-		seedRepo:  make(map[int64]bool),
+		reverse:     make(map[int64][]int64),
+		container:   make(map[int64]int64),
+		repoOf:      make(map[int64]int64),
+		kindOf:      make(map[int64]string),
+		keyOf:       make(map[int64]string),
+		seedRepo:    make(map[int64]bool),
+		conditionOf: make(map[int64]string),
 	}
 
 	repos, err := b.Store.DB().Query(
@@ -115,7 +119,40 @@ func (b *Builder) load() (*model, error) {
 			m.referenceable = append(m.referenceable, dst)
 		}
 	}
-	return m, edges.Err()
+	if err := edges.Err(); err != nil {
+		return nil, err
+	}
+	return m, m.loadConditions(b.Store)
+}
+
+// loadConditions attaches each step's `if:` to the traversal, so a route can say what stands
+// between an entry point and the step at the end of it.
+//
+// Ordered by row id so the most recent statement about a step wins deterministically; several
+// runs of the same query against different commits may each have said something.
+func (m *model) loadConditions(s *store.Store) error {
+	rows, err := s.DB().Query(`
+		SELECT n.row_id, COALESCE(o.value, '')
+		FROM abom_observation o
+		JOIN abom_node n ON n.node_key = o.subject_key
+		WHERE o.subject_kind = ? AND o.name = ?
+		ORDER BY o.row_id`, store.SubjectNode, store.ObservationCondition)
+	if err != nil {
+		return fmt.Errorf("loading step conditions: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id int64
+		var condition string
+		if err := rows.Scan(&id, &condition); err != nil {
+			return fmt.Errorf("scanning step condition: %w", err)
+		}
+		if condition != "" {
+			m.conditionOf[id] = condition
+		}
+	}
+	return rows.Err()
 }
 
 // Reach is the set of things that transitively depend on a node.

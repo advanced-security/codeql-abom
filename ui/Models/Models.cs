@@ -401,6 +401,25 @@ public sealed record BumpImpact
     public int Unanalyzed { get; init; }
 }
 
+/// <summary>An <c>if:</c> on a route, and the workflow or action holding the step it guards.</summary>
+/// <remarks>Verbatim. Whether it holds on a given run is the reader's judgement, not ABOM's.</remarks>
+public sealed record StepCondition
+{
+    public string In { get; init; } = string.Empty;
+    public string Condition { get; init; } = string.Empty;
+}
+
+/// <summary>One repository under review that reaches a node, and the route it takes.</summary>
+/// <remarks>Named for the route because <c>NodeReach</c> already means an advisory's reach.</remarks>
+public sealed record NodeRoute
+{
+    public string Repository { get; init; } = string.Empty;
+    /// <summary>0 when the node lives here, 1 when this repository names its container itself.</summary>
+    public int Hops { get; init; }
+    public IReadOnlyList<string> Path { get; init; } = [];
+    public IReadOnlyList<StepCondition> Conditions { get; init; } = [];
+}
+
 /// <summary>One reference and how widely it is used, verbatim and unjudged.</summary>
 public sealed record RefUsage
 {

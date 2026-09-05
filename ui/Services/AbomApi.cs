@@ -110,6 +110,10 @@ public sealed class AbomApi(HttpClient http)
         string key, CancellationToken ct = default) =>
         await GetAsync<BumpImpact>($"api/node/{key}/-/impact", ct);
 
+    public async Task<IReadOnlyList<NodeRoute>> GetReachAsync(
+        string key, CancellationToken ct = default) =>
+        await GetListAsync<NodeRoute>($"api/node/{key}/-/reach", ct);
+
     public async Task<IReadOnlyList<PinningRow>> GetPinningAsync(
         string scope, string? parent, PinningQuery filter, CancellationToken ct = default) =>
         await GetListAsync<PinningRow>(

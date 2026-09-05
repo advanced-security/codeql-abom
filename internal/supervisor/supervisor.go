@@ -41,7 +41,30 @@ type Supervisor struct {
 	// how much it added. Run only on a drained queue, where it is cheap and where a rule that
 	// has since changed would otherwise never reach an existing database. Nil disables it.
 	Sweeper func() (int, error)
-	Now     func() time.Time
+	// Reclassifier re-derives how queued dependencies are classified from the whole graph, and
+	// reports how many it changed. It is the only pass allowed to lower a claim, because Enqueue
+	// may only ever strengthen one; without it a tightened rule never reaches an existing
+	// database. Nil disables it.
+	Reclassifier func() (int, error)
+	// Advisor refreshes advisories for the packages the graph now names, reporting how many were
+	// recorded. Nil disables it.
+	Advisor func(context.Context) (int, error)
+	// AdvisoryMaxAge bounds how stale the advisory set may get once the crawl stops growing.
+	//
+	// Arrival alone is not enough: a finished corpus never ingests again, so a refresh keyed only
+	// on discovery would leave 1213 analyzed repositories matched forever against whatever was
+	// fetched the day the queue drained. Zero disables the ceiling.
+	AdvisoryMaxAge time.Duration
+	// AdvisoryMinInterval floors how often the set is refetched, however much arrives.
+	//
+	// The refresh runs inside the cycle: 936 packages measured at 19 paced requests over 109
+	// seconds, and the loop analyzes nothing meanwhile. Without a floor a crawl ingesting on
+	// every 30s cycle would spend nearly all of its time re-asking the same question.
+	AdvisoryMinInterval time.Duration
+	// LastAdvisoryAt seeds the ceiling from what the store already holds, so a restart does not
+	// re-fetch a set collected minutes ago.
+	LastAdvisoryAt time.Time
+	Now            func() time.Time
 	// Log receives one line per event worth a human's attention. Nil discards them.
 	//
 	// A loop meant to run for hours has to leave a trail: Status carries only the most recent
@@ -63,6 +86,12 @@ const (
 	DefaultLease        = time.Hour
 	DefaultRecheckTTL   = 24 * time.Hour
 	DefaultRecheckLimit = 50
+	// DefaultAdvisoryMaxAge matches the aggregate ceiling: new advisories are published daily,
+	// and 936 packages is a handful of batched requests.
+	DefaultAdvisoryMaxAge = 24 * time.Hour
+	// DefaultAdvisoryMinInterval keeps a productive crawl from spending most of a cycle on a
+	// refresh that measured 109 seconds over 936 packages.
+	DefaultAdvisoryMinInterval = 15 * time.Minute
 )
 
 func (s *Supervisor) now() time.Time {
@@ -279,12 +308,28 @@ func (s *Supervisor) cycle(ctx context.Context) time.Duration {
 			return s.fail("attributing findings", err)
 		}
 	}
+	if s.advisoryRefreshDue(ingested) {
+		s.refreshAdvisories(ctx)
+	}
 
 	next, pending, err := s.Queue.NextAttemptAt()
 	if err != nil {
 		return s.fail("reading the queue", err)
 	}
 	drained := !pending
+
+	// Classification is a whole-graph judgement, so it is re-derived here rather than from
+	// whatever this cycle happened to analyze. It runs before the sweep because anything the
+	// sweep then enqueues is classified by the same rule on the way in.
+	if drained && s.Reclassifier != nil {
+		n, err := s.Reclassifier()
+		if err != nil {
+			return s.fail("reclassifying queued dependencies", err)
+		}
+		if n > 0 {
+			s.logf("reclassified %d dependencies against what the seed repositories reach", n)
+		}
+	}
 
 	// A drained queue is the moment to check the rule against everything already known, rather
 	// than only against whatever happened to be analyzed this cycle.
@@ -358,6 +403,50 @@ func (s *Supervisor) refreshAggregates(drained, ingested bool) error {
 	})
 	s.logf("recomputed reach in %dms because %s", elapsed.Milliseconds(), why)
 	return nil
+}
+
+// advisoryRefreshDue reports whether the advisory question has changed: either new packages
+// arrived, or the existing answer has aged past the ceiling. The floor outranks both.
+func (s *Supervisor) advisoryRefreshDue(ingested bool) bool {
+	if s.Advisor == nil {
+		return false
+	}
+	since := s.now().Sub(s.LastAdvisoryAt)
+	if s.AdvisoryMinInterval > 0 && since < s.AdvisoryMinInterval {
+		return false
+	}
+	if ingested {
+		return true
+	}
+	if s.AdvisoryMaxAge <= 0 {
+		return false
+	}
+	return since >= s.AdvisoryMaxAge
+}
+
+// refreshAdvisories brings the advisory set up to date with the packages just discovered.
+//
+// A failure is recorded and the cycle continues. Advisories enrich the graph; they are not what
+// the crawl is for, and a GitHub outage or an exhausted rate limit must not stop dependencies
+// being analyzed.
+func (s *Supervisor) refreshAdvisories(ctx context.Context) {
+	if s.Advisor == nil {
+		return
+	}
+	n, err := s.Advisor(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		s.fail("refreshing advisories", err)
+		return
+	}
+	// Recorded even when nothing came back: the question was asked, and asking again immediately
+	// would spend the rate limit to be told the same thing.
+	s.LastAdvisoryAt = s.now()
+	if n > 0 {
+		s.logf("refreshed %d advisories for the packages now in the graph", n)
+	}
 }
 
 // recheck probes analyzed dependencies for ref drift once there is nothing better to do. It is

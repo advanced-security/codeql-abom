@@ -19,6 +19,7 @@ deliberate decision from an accident, and does not re-derive a constraint by bre
 plans/next.md          index, ranking, and what we are deliberately not doing
 plans/api/*.md         server behavior, query execution, HTTP surface
 plans/db/*.md          schema, storage semantics, derivation
+plans/tools/*.md       how the work itself gets done
 plans/ui/*.md          interface and its testing
 ```
 

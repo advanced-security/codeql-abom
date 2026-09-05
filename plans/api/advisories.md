@@ -1,6 +1,7 @@
 # Advisory enrichment
 
-**Status:** not wired in. `internal/advisory` is not in the binary at all.
+**Status:** shipped and verified against the real corpus (2026-09-05), with a known cost: the
+refresh runs inside the cycle and blocks it for as long as it takes.
 
 ## Why this exists
 
@@ -21,19 +22,62 @@ the others. Worth a standing check: a package with tests and no callers is not "
 matched against an advisory set fetched before it existed, so the answer is stale by
 construction and nothing on screen says so.
 
+## Done
+
+1. **`Supervisor.Advisor func(context.Context) (int, error)`**, with `refreshAdvisories` and
+   `advisoryRefreshDue`. A failure is recorded through `fail` and the cycle continues —
+   advisories enrich, so an outage must not stop dependencies being analyzed.
+2. **`cmd/codeql-abom/advisories.go`** wires `advisory.Client.Fetch`, which already batches,
+   paginates, deduplicates across batches and explains rate-limit exhaustion. Paced at 600/hour
+   so enrichment cannot starve discovery of quota. Token from the environment
+   (`GITHUB_TOKEN`/`GH_TOKEN` via the existing `githubToken()`), falling back to `gh auth token`,
+   then unauthenticated at 60/hour.
+3. ~~A store method listing packages worth querying~~ — **this was wrong when written.**
+   `store.AdvisoryPackages()` already existed and already returned distinct `owner/repo` for
+   external `action`, `composite_action`, `reusable_workflow` and `workflow` nodes. Nothing was
+   needed here. Repository-scoped, because the API does not know about subpath actions: an
+   advisory naming `github/codeql-action` covers `.../init` too.
+4. **Conversion**, in `storeAdvisories`. The two types are field-identical today, which is
+   exactly what makes a hand-written mapping dangerous: a field added to one side and forgotten
+   compiles, stores and renders, and every advisory simply looks unscored forever.
+   `TestConvertingAnAdvisoryCarriesEveryField` compares the whole struct rather than spot fields.
+5. **An age ceiling and a floor**, `AdvisoryMaxAge` (24h) and `AdvisoryMinInterval` (15m), seeded
+   from `store.AdvisoriesFetchedAt()` so a restart does not refetch a set collected minutes ago.
+   Both were forced by the corpus check below, not designed up front.
+
+## What the corpus check falsified
+
+The original trigger was arrival alone: refresh after a cycle that ingested. Against the real
+database that is **inert** — the frontier is fully drained (1213 done, 40 unavailable, nothing
+pending), so no cycle ever ingests again and `advisoriesFetchedAt` would have stayed frozen at
+`2026-09-04T05:49:28Z` forever. Advisories are published whether or not we analyzed anything
+today; the answer ages on its own. Hence the ceiling.
+
+The floor came from measuring the run: **936 packages, 19 paced requests, 109 seconds**, with the
+cycle blocked throughout. On a live crawl ingesting every 30s cycle, the loop would have spent
+almost all of its time re-asking about advisories instead of analyzing dependencies.
+
+## Measured, on a copy of the real corpus
+
+```text
+advisories            20 -> 34
+fetched_at            2026-09-04T05:49:28Z -> 2026-09-05T02:56:18Z
+advisory packages     14 -> 28 named,  12 -> 23 that we actually have nodes for
+exposure             253 rows / 13 GHSAs / 115 repos  (unchanged)
+```
+
+**Exposure not moving is correct, and worth recording so nobody "fixes" it.** All 14 new
+advisories name actions whose `abom_blast_radius.dependent_repos` is 0 — `step-security/harden-runner`
+has 1490 incoming edges and every one of them is from an `upstream` repository, never a `seed`.
+Upstream repos contribute edges, not dependents. The transitive walk itself is fine: the 13
+GHSAs that did land distribute across hops 1 (201), 2 (42) and 3 (10).
+
 ## Pending
 
-1. **An `Advisor` hook on the supervisor**, refreshing advisories for the packages that settled
-   in each cycle. Keyed on the cycle rather than a timer, so the enrichment tracks the crawl.
-2. **Wire the client**: `advisory.Client.Fetch(ctx, packages)` already batches, paginates,
-   deduplicates across batches, and explains rate-limit exhaustion. Token from `gh auth token`,
-   falling back to env, then unauthenticated at 60/hour.
-3. **A store method listing packages worth querying** — distinct `owner/repo` for external
-   actions and reusable workflows. Repository-scoped, because the API does not know about
-   subpath actions: an advisory naming `github/codeql-action` covers `.../init` too.
-4. **Conversion.** `advisory.Advisory` and `store.Advisory` are field-identical; the mapping is
-   mechanical but must not be assumed to stay that way.
-5. **Surface the fetch age** wherever advisory-derived numbers appear.
+- **Surface the fetch age** wherever advisory-derived numbers appear.
+- **The refresh blocks the cycle.** 109 seconds is tolerable at a 15m floor and would not be if
+  the package list grew an order of magnitude. Moving it off the cycle means a second writer, so
+  it needs the single-writer constraint thought through rather than a goroutine.
 
 ## The invariant this must not break
 
@@ -53,3 +97,7 @@ judge.
   "Has advisories" count.
 - Rate-limit exhaustion surfaces its remedy rather than a bare 403.
 - No new column anywhere records a verdict. `TestSchemaHasNoVerdictColumns` still passes.
+- A retraction is carried, not filtered: `TestAWithdrawnAdvisoryIsStillRecorded`. Dropping it
+  would leave nothing able to explain why a finding disappeared.
+- An advisory with no EPSS stays unscored rather than becoming a probability of zero:
+  `TestAnUnscoredAdvisoryStaysUnscored`.

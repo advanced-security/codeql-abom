@@ -99,8 +99,9 @@ func (b *Builder) affectedNodes() ([]affected, error) {
 }
 
 type reachPath struct {
-	hops int
-	path []string
+	hops       int
+	path       []string
+	conditions []StepCondition
 }
 
 // exposureOf walks dependents from target, keeping the shortest route to each repository.
@@ -113,6 +114,9 @@ func (m *model) exposureOf(target int64, maxDepth int) map[int64]reachPath {
 
 	// from records the node each container was reached from, so a path can be walked back.
 	from := map[int64]int64{}
+	// enteredBy records the step that made the reference, which is where an `if:` sits. The
+	// container alone cannot say it: a workflow has many steps and only one of them named this.
+	enteredBy := map[int64]int64{}
 	visited := map[int64]bool{target: true}
 	frontier := []int64{target}
 
@@ -136,11 +140,13 @@ func (m *model) exposureOf(target int64, maxDepth int) map[int64]reachPath {
 				}
 				if _, ok := from[via]; !ok && via != target {
 					from[via] = node
+					enteredBy[via] = src
 				}
 
 				if repo, ok := m.repoOf[src]; ok && m.seedRepo[repo] {
 					if _, seen := out[repo]; !seen {
-						out[repo] = reachPath{hops: depth, path: m.pathFrom(via, target, from)}
+						path, conditions := m.routeFrom(via, target, from, enteredBy)
+						out[repo] = reachPath{hops: depth, path: path, conditions: conditions}
 					}
 				}
 				if via != src && !visited[via] {
@@ -153,12 +159,25 @@ func (m *model) exposureOf(target int64, maxDepth int) map[int64]reachPath {
 	return out
 }
 
-// pathFrom walks the recorded predecessors back to the target.
-func (m *model) pathFrom(start, target int64, from map[int64]int64) []string {
+// routeFrom walks the recorded predecessors back to the target, collecting the containers passed
+// through and the `if:` guarding each hop.
+//
+// Conditions are gathered here rather than joined afterwards because only the walk knows which
+// step made each reference; a later join could only say that the container holds a conditional
+// step somewhere.
+func (m *model) routeFrom(
+	start, target int64, from, enteredBy map[int64]int64,
+) ([]string, []StepCondition) {
 	path := []string{m.keyOf[start]}
+	var conditions []StepCondition
 
 	seen := map[int64]bool{start: true}
 	for node := start; node != target; {
+		if condition := m.conditionOf[enteredBy[node]]; condition != "" {
+			conditions = append(conditions, StepCondition{
+				In: m.keyOf[node], Condition: condition,
+			})
+		}
 		prev, ok := from[node]
 		if !ok {
 			break
@@ -171,5 +190,5 @@ func (m *model) pathFrom(start, target int64, from map[int64]int64) []string {
 		path = append(path, m.keyOf[prev])
 		node = prev
 	}
-	return path
+	return path, conditions
 }

@@ -49,6 +49,10 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		"how old an analysis must be before its ref is probed for drift")
 	fs.DurationVar(&d.lease, "expand-lease", supervisor.DefaultLease,
 		"how long a claimed dependency may sit before an interrupted run's work is taken back")
+	fs.DurationVar(&d.advisoryMaxAge, "advisory-max-age", supervisor.DefaultAdvisoryMaxAge,
+		"longest the advisory set may go unrefreshed once the queue has drained (0: only on arrival)")
+	fs.DurationVar(&d.advisoryMinPeriod, "advisory-min-interval", supervisor.DefaultAdvisoryMinInterval,
+		"shortest gap between two advisory refreshes, however much arrives")
 	fs.IntVar(&d.rateLimitPerHour, "rate-limit-per-hour", 0, "cap checkouts per hour (0: unlimited)")
 	fs.IntVar(&d.aggregateAfter, "aggregate-after-edges", supervisor.DefaultAfterEdges,
 		"dependencies that must arrive before reach is recomputed")

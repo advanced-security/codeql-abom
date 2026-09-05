@@ -16,7 +16,11 @@ export function collapseGroups(it, nodes, links) {
             g = {
                 key: `group:${name}`, kind: 'org', path: name, ...identityOf(name, by),
                 members: 0, findings: 0, dependentRepos: 0, rules: [], advisories: 0,
-                analyzed: true, isExternal: true, refStyles: new Set(), edgeClasses: new Set(),
+                // Both start at the strongest claim and are weakened by any member that cannot
+                // support it, because a fold must never answer a question on behalf of a member
+                // nobody has measured or analyzed.
+                analyzed: true, reachKnown: true,
+                isExternal: true, refStyles: new Set(), edgeClasses: new Set(),
                 // Seeded from the members' own center so a collapsed view sits where the
                 // expanded one did.
                 x: 0, y: 0, z: 0,
@@ -26,6 +30,10 @@ export function collapseGroups(it, nodes, links) {
         g.members++;
         g.findings += n.findings || 0;
         g.dependentRepos = Math.max(g.dependentRepos, n.dependentRepos || 0);
+        // An unmeasured member contributes 0 to that maximum, so the total is a lower bound and
+        // the group has to say so rather than presenting it as measured.
+        if (n.reachKnown === false) g.reachKnown = false;
+        if (n.analyzed === false) g.analyzed = false;
         if (!n.isExternal) g.isExternal = false;
         if (n.x !== undefined) { g.x += n.x; g.y += n.y; g.z += n.z || 0; }
         n.groupKey = g.key;

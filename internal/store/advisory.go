@@ -449,6 +449,26 @@ func (s *Store) ExposureByAdvisory() ([]ExposureSummary, error) {
 	return out, rows.Err()
 }
 
+// AdvisoriesFetchedAt reports when advisories were last collected, and false if never.
+//
+// A crawl that has drained never ingests again, so a refresh keyed only on arrival would leave
+// this frozen; a caller enforcing an age ceiling needs to seed it from what is already held
+// rather than re-fetch on every restart.
+func (s *Store) AdvisoriesFetchedAt() (time.Time, bool, error) {
+	var fetched sql.NullString
+	if err := s.db.QueryRow(`SELECT MAX(fetched_at) FROM abom_advisory`).Scan(&fetched); err != nil {
+		return time.Time{}, false, fmt.Errorf("reading advisory age: %w", err)
+	}
+	if !fetched.Valid || fetched.String == "" {
+		return time.Time{}, false, nil
+	}
+	at, err := time.Parse(time.RFC3339, fetched.String)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("parsing advisory age %q: %w", fetched.String, err)
+	}
+	return at, true, nil
+}
+
 // AdvisoryPackages returns the repository-scoped package names worth querying: every external
 // action the organization depends on.
 //

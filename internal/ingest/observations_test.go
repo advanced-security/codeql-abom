@@ -243,6 +243,49 @@ func TestAQueryMayNameAStepByItsPosition(t *testing.T) {
 	}
 }
 
+// A composite action's steps sit in a `runs:` block, which has no job to name, so the position
+// is the only thing distinguishing them. Falling back to the file when the job is empty put
+// every one of them on one key that names no node — and the uniqueness constraint then kept a
+// single row per file. These are the conditions that matter most, because a composite action's
+// steps run inside every caller.
+func TestAStepInACompositeActionIsNamedByPositionRatherThanItsFile(t *testing.T) {
+	s := observationStore(t)
+	run, err := s.RecordQueryRun(store.QueryRun{QueryID: "abom/conditions", Repository: "octo/app"})
+	if err != nil {
+		t.Fatalf("RecordQueryRun: %v", err)
+	}
+
+	bqrs := `{"#select":{"columns":[
+		{"name":"subjectPath","kind":"String"},
+		{"name":"subjectJob","kind":"String"},
+		{"name":"subjectStep","kind":"Integer"},
+		{"name":"name","kind":"String"},
+		{"name":"value","kind":"String"}],
+		"tuples":[
+			[".github/actions/greet/action.yml","",0,"condition","runner.os == 'Linux'"],
+			[".github/actions/greet/action.yml","",1,"condition","runner.os != 'Linux'"]]}}`
+
+	i := New(s, store.NewWriter(s, 0))
+	if _, err := i.ObservationsFromBQRS(strings.NewReader(bqrs), Options{
+		Repository: "octo/app", QueryRunID: run,
+	}); err != nil {
+		t.Fatalf("ObservationsFromBQRS: %v", err)
+	}
+
+	// The same key the graph gives a composite action's step, so the fact lands on the node a
+	// reader is looking at rather than beside it.
+	for i, condition := range []string{"runner.os == 'Linux'", "runner.os != 'Linux'"} {
+		want := normalize.StepKey("octo/app", ".github/actions/greet/action.yml", "", i)
+		got, err := s.ObservationsOf(store.SubjectNode, want)
+		if err != nil {
+			t.Fatalf("ObservationsOf: %v", err)
+		}
+		if len(got) != 1 || got[0].Value != condition {
+			t.Errorf("got %+v for %q, want %q", got, want, condition)
+		}
+	}
+}
+
 // Routing is decided by what the query declares, because a filename says nothing reliable and
 // renaming a query must not change how its results are read.
 func TestResultsAreRoutedByWhatTheQueryDeclares(t *testing.T) {
