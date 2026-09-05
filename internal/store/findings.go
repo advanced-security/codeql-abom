@@ -14,16 +14,26 @@ import (
 type QueryRun struct {
 	QueryID      string
 	QueryVersion string
+	Pack         string
 	PackVersion  string
-	Repository   string
-	DBCommit     string
+	// PackDigest is the content hash of the pack that supplied the query. A pack version alone
+	// cannot serve as identity: ours track the CodeQL CLI and do not move when a query is
+	// edited, and upstream versions are immutable only by a convention nothing here verifies.
+	PackDigest string
+	// CLIVersion is the CodeQL that ran, not the one pinned. Extraction and evaluation both
+	// change between releases, so the same query on the same commit may legitimately differ.
+	CLIVersion string
+	Repository string
+	DBCommit   string
 }
 
 func (q QueryRun) key() string {
 	h := sha256.New()
 	for _, part := range []string{
-		q.QueryID, q.QueryVersion, q.PackVersion, q.Repository, q.DBCommit,
+		q.QueryID, q.QueryVersion, q.Pack, q.PackVersion, q.PackDigest,
+		q.CLIVersion, q.Repository, q.DBCommit,
 	} {
+		// Length-prefixed, so no two different tuples can concatenate to the same bytes.
 		fmt.Fprintf(h, "%d:%s\x00", len(part), part)
 	}
 	return hex.EncodeToString(h.Sum(nil))
@@ -38,10 +48,12 @@ func (s *Store) RecordQueryRun(q QueryRun) (int64, error) {
 
 	if _, err := s.db.Exec(`
 		INSERT INTO abom_query_run
-			(run_key, query_id, query_version, pack_version, repository, db_commit, ran_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+			(run_key, query_id, query_version, pack, pack_version, pack_digest,
+			 cli_version, repository, db_commit, ran_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(run_key) DO UPDATE SET ran_at = excluded.ran_at`,
-		key, q.QueryID, nullable(q.QueryVersion), nullable(q.PackVersion),
+		key, q.QueryID, nullable(q.QueryVersion), nullable(q.Pack), nullable(q.PackVersion),
+		nullable(q.PackDigest), nullable(q.CLIVersion),
 		q.Repository, nullable(q.DBCommit), now()); err != nil {
 		return 0, fmt.Errorf("recording query run for %s: %w", q.QueryID, err)
 	}
@@ -68,6 +80,8 @@ type Finding struct {
 	Severity         string
 	SecuritySeverity float64
 	Fingerprint      string
+	// ResultHash identifies the finding by content, with the repository deliberately outside it.
+	ResultHash string
 }
 
 // AddFindings writes findings in one transaction, ignoring exact duplicates.
@@ -85,8 +99,8 @@ func (s *Store) AddFindings(findings []Finding) (int, error) {
 	stmt, err := tx.Prepare(`
 		INSERT INTO abom_finding
 			(query_run_id, rule_id, repository_row_id, file_path, start_line, start_column,
-			 end_line, end_column, message, severity, security_severity, fingerprint)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 end_line, end_column, message, severity, security_severity, fingerprint, result_hash)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT DO NOTHING`)
 	if err != nil {
 		return 0, fmt.Errorf("preparing finding insert: %w", err)
@@ -98,7 +112,7 @@ func (s *Store) AddFindings(findings []Finding) (int, error) {
 		if _, err := stmt.Exec(nullableID(f.QueryRunID), f.RuleID, f.RepositoryID,
 			nullable(f.FilePath), f.StartLine, f.StartColumn, f.EndLine, f.EndColumn,
 			nullable(f.Message), nullable(f.Severity), f.SecuritySeverity,
-			f.Fingerprint); err != nil {
+			f.Fingerprint, nullable(f.ResultHash)); err != nil {
 			return written, fmt.Errorf("inserting finding for %s: %w", f.RuleID, err)
 		}
 		written++

@@ -194,7 +194,7 @@ public sealed class ThemeService(IJSRuntime js)
             EdgeCrossOwner: "rgba(255,110,156,0.85)")
         : new GraphPalette(
             Background: "#FFFFFF",
-            Focus: "#F08C00",
+            Focus: "#B35C00",
             Seed: "#1971C2",
             Upstream: "#6741D9",
             External: "#0CA678",
@@ -223,7 +223,7 @@ public sealed class ThemeService(IJSRuntime js)
 
     private static readonly Dictionary<string, string> LightKinds = new()
     {
-        ["org"] = "#F08C00",
+        ["org"] = "#B35C00",
         ["repo"] = "#1971C2",
         ["workflow"] = "#0CA678",
         ["reusable_workflow"] = "#087F5B",
@@ -251,12 +251,16 @@ public sealed class ThemeService(IJSRuntime js)
     // from the semantic palette, not from the kind palette: a reader already knows green means
     // settled and amber means attention, and reusing a kind's hue would mean two things at once.
     //
-    // Queued is deliberately the muted color. Most of the bar is queued early on, and "not looked
-    // at yet" is exactly what grey should say. There is no color for a node that was never
-    // queued, because that is a fact rather than a stage.
+    // Queued was the muted colour on the reasoning that "not looked at yet" is what grey says.
+    // That was wrong twice over: it was byte-identical to the colour reserved for a node that was
+    // never a dependency, and at 2.7:1 on dark and 2.1:1 on light it fell under the 3:1 floor for
+    // a graphical object, so a queue of 422 items read as an unfilled or disabled control. It is
+    // now a slate that is plainly a colour without competing with the states a reader acts on.
+    // There is still no colour for a node that was never queued, because that is a fact rather
+    // than a stage.
     private static readonly Dictionary<string, string> DarkDiscovery = new()
     {
-        ["queued"] = "#5C5F66",
+        ["queued"] = "#8A929E",
         ["retrying"] = WarningDark,
         ["running"] = InfoDark,
         ["done"] = SuccessDark,
@@ -265,7 +269,7 @@ public sealed class ThemeService(IJSRuntime js)
 
     private static readonly Dictionary<string, string> LightDiscovery = new()
     {
-        ["queued"] = "#ADB5BD",
+        ["queued"] = "#5F6B7A",
         ["retrying"] = WarningLight,
         ["running"] = InfoLight,
         ["done"] = SuccessLight,

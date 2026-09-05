@@ -6,6 +6,7 @@ import (
 	"io"
 	"strconv"
 
+	"github.com/advanced-security/codeql-abom/internal/normalize"
 	"github.com/advanced-security/codeql-abom/internal/sarifin"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
@@ -50,6 +51,14 @@ func (i *Ingester) FindingsFromSARIF(r io.Reader, opts Options) (int, error) {
 	}
 
 	err = sarifin.Stream(r, sarifin.Handler{
+		OnTool: func(tool sarifin.Tool) error {
+			if opts.CLIVersion == "" || tool.SemanticVersion == opts.CLIVersion {
+				return nil
+			}
+			return fmt.Errorf(
+				"%s: the ledger records CodeQL %s but the SARIF was written by %q",
+				opts.Repository, opts.CLIVersion, tool.SemanticVersion)
+		},
 		OnRule: func(rule sarifin.Rule) error {
 			rules[rule.ID] = rule
 			return nil
@@ -75,6 +84,12 @@ func (i *Ingester) FindingsFromSARIF(r io.Reader, opts Options) (int, error) {
 				Severity:         severity,
 				SecuritySeverity: parseSeverity(rule.SecuritySeverity),
 				Fingerprint:      res.Fingerprints["primaryLocationLineHash"],
+				ResultHash: normalize.ResultHash(
+					res.RuleID, res.FilePath, res.Fingerprints["primaryLocationLineHash"],
+					normalize.Region{
+						StartLine: res.Region.StartLine, StartColumn: res.Region.StartColumn,
+						EndLine: res.Region.EndLine, EndColumn: res.Region.EndColumn,
+					}),
 			})
 
 			if len(batch) >= findingBatch {

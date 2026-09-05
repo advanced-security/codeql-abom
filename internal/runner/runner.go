@@ -29,6 +29,11 @@ type Runner struct {
 	// RAMMB caps evaluator memory; zero lets CodeQL choose. Worth setting when many workers
 	// share one machine, since the default sizes itself against total system memory.
 	RAMMB int
+	// Lock serializes the invocations that share CodeQL's compilation cache. Nil means none,
+	// which is right for a one-shot command with nothing to contend with.
+	Lock *Lock
+
+	versionState
 }
 
 func (r *Runner) codeql() string {
@@ -56,6 +61,12 @@ func (r *Runner) RunQuery(ctx context.Context, dbPath, queryPath, outputPath str
 		args = append(args, fmt.Sprintf("--ram=%d", r.RAMMB))
 	}
 	args = append(args, queryPath)
+
+	release, err := r.Lock.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	cmd := exec.CommandContext(ctx, r.codeql(), args...)
 	var stderr bytes.Buffer

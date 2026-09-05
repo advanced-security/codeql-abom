@@ -1,2 +1,12 @@
+## This repository standardizes on `codeql-pack.yml` rather than `qlpack.yml`; either is
+## supported by CodeQL, and naming one keeps `codeql pack ls` from finding a pack twice.
+ignore:
+  - '**/qlpack.yml'
+  - '.github/**'
+
+## Explicit rather than a `ql/**` glob: each pack name must be unique across the repository, and
+## listing the patterns is what makes a stray or half-moved pack fail loudly instead of joining
+## the workspace unnoticed.
 provide:
-  - "ql/**/codeql-pack.yml"
+  - 'ql/*/*/src/codeql-pack.yml'
+  - 'ql/*/*/test/codeql-pack.yml'

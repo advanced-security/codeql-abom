@@ -71,7 +71,13 @@ CREATE TABLE IF NOT EXISTS abom_query_run (
   run_key      TEXT NOT NULL UNIQUE,
   query_id     TEXT NOT NULL,
   query_version TEXT,
+  pack         TEXT,
   pack_version TEXT,
+  -- Content hash of the pack that supplied the query. The version cannot serve as identity:
+  -- ABOM's own packs track the CodeQL CLI and do not move when a query is edited.
+  pack_digest  TEXT,
+  -- The CodeQL that ran, not the one pinned in .codeql-version.
+  cli_version  TEXT,
   repository   TEXT NOT NULL,
   db_commit    TEXT,
   ran_at       TEXT NOT NULL
@@ -96,6 +102,9 @@ CREATE TABLE IF NOT EXISTS abom_finding (
   -- Empty rather than NULL: SQLite treats NULLs as distinct in a UNIQUE constraint, so a
   -- nullable fingerprint would let identical findings insert repeatedly.
   fingerprint       TEXT NOT NULL DEFAULT '',
+  -- Content identity of the finding, excluding the repository so that one defect reached through
+  -- many repositories is a group-by rather than a traversal.
+  result_hash       TEXT,
   UNIQUE(rule_id, repository_row_id, file_path, start_line, start_column, fingerprint)
 );
 
@@ -318,6 +327,42 @@ CREATE TABLE IF NOT EXISTS abom_exposure (
   UNIQUE(repository_row_id, node_row_id, ghsa_id)
 );
 
+-- What each dependency tier runs, as configuration rather than a command-line flag.
+--
+-- A tier binds to a *set* of suites, so no combined per-tier suite artifact ever has to be
+-- generated. The companion table records that a tier was configured at all, which is what makes
+-- "analyze nothing in this tier" expressible: without it, an empty binding is indistinguishable
+-- from one nobody has set, and the defaults would be seeded back over a deliberate choice.
+CREATE TABLE IF NOT EXISTS abom_tier_suite (
+  tier  TEXT NOT NULL,
+  suite TEXT NOT NULL,
+  PRIMARY KEY (tier, suite)
+);
+
+CREATE TABLE IF NOT EXISTS abom_tier_configured (
+  tier TEXT PRIMARY KEY
+);
+
+-- What each suite last resolved to, and which pack supplied each query.
+--
+-- A suite is a program over packs — locate, filter, compose — so its contents are only knowable
+-- by asking the CLI to resolve it. Resolving costs one process per query, which is why this
+-- records what the crawl already resolved rather than being recomputed on a read: the interface
+-- polls, and every codeql invocation shares one compilation cache with the crawl.
+--
+-- The pack is the level that carries a version, since a suite has none of its own. A suite
+-- nobody has resolved has no rows here, which is deliberately different from resolving to none.
+CREATE TABLE IF NOT EXISTS abom_suite_query (
+  suite        TEXT NOT NULL,
+  pack         TEXT NOT NULL,
+  pack_version TEXT,
+  pack_digest  TEXT,
+  query_id     TEXT NOT NULL,
+  kind         TEXT,
+  resolved_at  TEXT NOT NULL,
+  PRIMARY KEY (suite, query_id)
+);
+
 -- A marker the interface polls to learn the graph changed, carrying the row ids the change is
 -- measured from. Sound only because abom_node and abom_edge are never deleted from, which
 -- TestGraphTablesAreAppendOnly pins.
@@ -350,6 +395,14 @@ var addedColumns = []struct{ table, column, decl string }{
 	// external reference, so runtime is the right answer for them rather than a guess.
 	{"abom_frontier", "supply_chain", "TEXT NOT NULL DEFAULT 'runtime'"},
 	{"repository", "origin", "TEXT NOT NULL DEFAULT 'seed'"},
+	// Rows written before the identity chain existed keep a run key computed without these, so
+	// they will not match a current key and their pairs re-run once. That is the correct
+	// outcome: nothing verified them.
+	{"abom_query_run", "pack", "TEXT"},
+	{"abom_query_run", "pack_digest", "TEXT"},
+	{"abom_query_run", "cli_version", "TEXT"},
+	{"abom_suite_query", "pack_digest", "TEXT"},
+	{"abom_finding", "result_hash", "TEXT"},
 }
 
 // indexDDL is applied only after bulk loading. Maintaining these indexes during a multi-million

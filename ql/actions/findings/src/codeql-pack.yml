@@ -1,0 +1,9 @@
+name: advanced-security/abom-actions-findings-src
+version: 2.26.4
+description: 'Selection of upstream Actions queries whose findings ABOM records and attributes'
+library: false
+suites: codeql-suites
+dependencies:
+  # The suite selects from this pack and pins the same version explicitly, so the selection is
+  # readable without resolving the lock file. check-versions keeps the two from drifting.
+  codeql/actions-queries: 0.6.34

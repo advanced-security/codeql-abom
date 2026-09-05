@@ -115,6 +115,19 @@ func (s *Supervisor) lease() time.Duration {
 	return s.Lease
 }
 
+// cycleProgressed reports whether a cycle is worth a log line. A re-analysis that finds
+// everything already on record still settles every repository it claimed, and staying silent
+// through that reads as a hung crawl.
+func cycleProgressed(s expand.Stats) bool {
+	return s.Edges > 0 || s.Processed > 0 || s.Skipped > 0
+}
+
+// cycleIngested reports whether a cycle produced new graph data. Skipping produces none, so the
+// work that follows ingestion has nothing to chew on.
+func cycleIngested(s expand.Stats) bool {
+	return s.Edges > 0 || s.Processed > 0
+}
+
 // reclaimLease is zero for the first cycle of a process: the store admits a single writer, so a
 // claim that outlived the process holding it cannot be in flight anywhere, and honoring the lease
 // would only hide that work behind an hour of apparent progress.
@@ -296,14 +309,16 @@ func (s *Supervisor) cycle(ctx context.Context) time.Duration {
 		return s.fail("expanding dependencies", err)
 	}
 
-	ingested := stats.Edges > 0 || stats.Processed > 0
-	if ingested {
+	ingested := cycleIngested(stats)
+	if cycleProgressed(stats) {
 		// Only when something happened: a loop waiting on a queue whose next retry is hours
 		// away would otherwise write two lines a minute all night.
-		s.logf("cycle %d analyzed %d repositories, settled %d dependencies, "+
-			"discovered %d, ingested %d edges (%d failed, %d unavailable)",
-			s.Status().Cycle, stats.Processed, stats.Items, stats.Discovered, stats.Edges,
-			stats.Failed, stats.Unavailable)
+		s.logf("cycle %d analyzed %d repositories, skipped %d already on record, settled %d "+
+			"dependencies, discovered %d, ingested %d edges (%d failed, %d unavailable)",
+			s.Status().Cycle, stats.Processed, stats.Skipped, stats.Items, stats.Discovered,
+			stats.Edges, stats.Failed, stats.Unavailable)
+	}
+	if ingested {
 		if _, err := s.Store.LinkFindingsToNodes(); err != nil {
 			return s.fail("attributing findings", err)
 		}

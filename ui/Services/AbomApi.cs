@@ -54,6 +54,28 @@ public sealed class AbomApi(HttpClient http)
                ?? new DiscoveryState();
     }
 
+    /// <summary>What each dependency tier runs, and every suite it could be bound to.</summary>
+    public async Task<SuiteBinding?> GetTierSuitesAsync(CancellationToken ct = default) =>
+        await GetAsync<SuiteBinding>("api/discovery/suites", ct);
+
+    /// <summary>
+    /// Rewrites what one tier runs. Takes effect on the next round rather than the current one,
+    /// because a round's queries are resolved once before any repository is claimed.
+    /// </summary>
+    public async Task<SuiteBinding?> SetTierSuitesAsync(
+        string tier, IReadOnlyList<string> suites, CancellationToken ct = default)
+    {
+        var request = new HttpRequestMessage(
+            HttpMethod.Put, $"api/discovery/suites/{Uri.EscapeDataString(tier)}")
+        {
+            Content = JsonContent.Create(suites),
+        };
+        request.Headers.Add("X-Abom-Control", "1");
+        var response = await http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<SuiteBinding>(Json, ct);
+    }
+
     /// <summary>
     /// Puts a whole dependency tier back in the queue, so a changed or extended query suite can
     /// be run over work already analyzed. Nothing already known is cleared.

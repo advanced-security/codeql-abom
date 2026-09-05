@@ -401,6 +401,35 @@ public sealed record BumpImpact
     public int Unanalyzed { get; init; }
 }
 
+/// <summary>What each dependency tier runs, and what it could run.</summary>
+public sealed record SuiteBinding
+{
+    public IReadOnlyList<string> Available { get; init; } = [];
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> Tiers { get; init; } =
+        new Dictionary<string, IReadOnlyList<string>>();
+    /// <summary>Analyzed dependencies per tier, so the cost of a change is stated before it is spent.</summary>
+    public IReadOnlyDictionary<string, int> Counts { get; init; } = new Dictionary<string, int>();
+    /// <summary>What each suite last resolved to. A suite nobody resolved is absent, not zero.</summary>
+    public IReadOnlyDictionary<string, SuiteDetail> Contents { get; init; } =
+        new Dictionary<string, SuiteDetail>();
+}
+
+/// <summary>The packs behind a suite, which is where a version anyone can act on lives.</summary>
+/// <remarks>A suite has no version of its own: it is a program over packs, not a list.</remarks>
+public sealed record SuiteDetail
+{
+    public IReadOnlyList<PackDetail> Packs { get; init; } = [];
+    public int QueryCount { get; init; }
+    public string ResolvedAt { get; init; } = string.Empty;
+}
+
+public sealed record PackDetail
+{
+    public string Name { get; init; } = string.Empty;
+    public string Version { get; init; } = string.Empty;
+    public IReadOnlyList<string> Queries { get; init; } = [];
+}
+
 /// <summary>An <c>if:</c> on a route, and the workflow or action holding the step it guards.</summary>
 /// <remarks>Verbatim. Whether it holds on a given run is the reader's judgement, not ABOM's.</remarks>
 public sealed record StepCondition

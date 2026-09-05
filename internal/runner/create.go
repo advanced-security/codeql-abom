@@ -44,6 +44,12 @@ func (r *Runner) CreateDatabase(ctx context.Context, srcDir, dbDir, language str
 	}
 	args = append(args, dbDir)
 
+	release, err := r.Lock.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	cmd := exec.CommandContext(ctx, r.codeql(), args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

@@ -18,7 +18,7 @@ import (
 // defaultEdgesQuery is the query that turns a database into ABOM dependency edges. It is a
 // @kind table query, not a @kind problem one, so it has to be run locally rather than through
 // the SARIF-only MRVA backend.
-const defaultEdgesQuery = "ql/actions/abom/src/AbomEdges.ql"
+const defaultEdgesQuery = "ql/actions/graph-extraction/src/AbomEdges.ql"
 
 // defaultEdgesQueryID identifies the query in the ingest ledger, matching its own @id.
 const defaultEdgesQueryID = "abom/edges"
@@ -74,7 +74,7 @@ func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	w := store.NewWriter(s, 0)
 	p := &pipeline.Pipeline{
 		Source:   catalog.New(*apiURL, githubToken(), nil),
-		Runner:   &runner.Runner{CodeQLPath: *codeqlPath},
+		Runner:   &runner.Runner{CodeQLPath: *codeqlPath, Lock: runner.SharedLock()},
 		Decode:   pipeline.DefaultDecoder(*codeqlPath),
 		Store:    s,
 		Ingester: ingest.New(s, w),

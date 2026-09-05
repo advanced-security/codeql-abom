@@ -31,6 +31,14 @@ type QueryRunner interface {
 	RunQuery(ctx context.Context, dbPath, queryPath, outputPath string) error
 }
 
+// Analyzer evaluates findings-shaped queries against a database, writing SARIF.
+//
+// This is the second lane. `database analyze` is the only way to run a `@kind problem` query,
+// and the rule id it reports is the only thing in ABOM that carries a security verdict.
+type Analyzer interface {
+	AnalyzeQueries(ctx context.Context, dbPath string, targets []string, sarifPath string) error
+}
+
 // Decoder converts BQRS into the JSON the ingester consumes.
 type Decoder func(ctx context.Context, bqrsPath, jsonPath string) error
 
@@ -52,7 +60,9 @@ type Options struct {
 // Stats summarizes a round.
 type Stats struct {
 	// Processed counts repositories analyzed; Items counts the dependencies they settled.
-	Processed   int
+	Processed int
+	// Skipped counts repositories the ledger already had on record, settled without analysis.
+	Skipped     int
 	Items       int
 	Failed      int
 	Unavailable int
@@ -75,9 +85,15 @@ type Expander struct {
 	Decode   Decoder
 	// Resolver expands Options.Suite. Only needed when a suite is used.
 	Resolver Resolver
+	// Analyzer runs the findings lane. Only needed when a suite holds findings-shaped queries.
+	Analyzer Analyzer
 	// Pace caps the rate of outbound requests across workers; nil means unlimited.
 	Pace    *work.Limiter
 	OnEvent func(work.Event)
+
+	// digests remembers each pack's content hash for the life of a round. A pack cannot change
+	// while the round that resolved it is running.
+	digests runner.DigestCache
 }
 
 // batch is the set of queued dependencies answered by analyzing one repository.
@@ -93,13 +109,22 @@ func (b batch) full() string { return b.owner + "/" + b.repo }
 
 // Run claims a round of work, analyzes it, and enqueues what it discovers.
 func (e *Expander) Run(ctx context.Context, opts Options) (Stats, error) {
-	if (opts.QueryPath == "" && opts.Suite == "") || opts.WorkDir == "" {
-		return Stats{}, fmt.Errorf("expand: a QueryPath or Suite, and WorkDir, are required")
+	if opts.WorkDir == "" {
+		return Stats{}, fmt.Errorf("expand: WorkDir is required")
 	}
 
-	planned, err := e.plan(ctx, opts)
+	plans, err := e.plansByTier(ctx, opts)
 	if err != nil {
 		return Stats{}, err
+	}
+	// A binding that names findings queries with nothing able to run them is the defect this
+	// lane exists to fix, so it fails loudly here rather than quietly producing no findings.
+	for tier, p := range plans {
+		if len(p.findings) > 0 && e.Analyzer == nil {
+			return Stats{}, fmt.Errorf(
+				"expand: %s is bound to %d findings queries but no Analyzer is configured",
+				tier, len(p.findings))
+		}
 	}
 
 	claimed, err := e.Queue.Claim(opts.Limit)
@@ -122,10 +147,12 @@ func (e *Expander) Run(ctx context.Context, opts Options) (Stats, error) {
 	pool := &work.Pool{
 		Concurrency: opts.Concurrency,
 		Prepare: func(ctx context.Context, job work.Job) (work.Prepared, error) {
-			return e.prepare(ctx, byRepo[job.Repository], opts, planned)
+			b := byRepo[job.Repository]
+			return e.prepare(ctx, b, opts, plans[tierOf(b)])
 		},
 		Consume: func(ctx context.Context, p work.Prepared) (int, error) {
-			return e.consume(ctx, byRepo[p.Job.Repository], p, opts, &stats)
+			b := byRepo[p.Job.Repository]
+			return e.consume(ctx, b, p, opts, plans[tierOf(b)], &stats)
 		},
 		OnEvent: func(ev work.Event) {
 			if ev.Kind == work.EventFailed {
@@ -141,7 +168,7 @@ func (e *Expander) Run(ctx context.Context, opts Options) (Stats, error) {
 	if err != nil {
 		return stats, err
 	}
-	stats.Processed = poolStats.Processed
+	stats.Processed = poolStats.Processed - stats.Skipped
 	stats.Edges = poolStats.Rows
 	return stats, nil
 }
@@ -174,8 +201,31 @@ func groupByRepository(items []frontier.Item) []batch {
 	return out
 }
 
+// alreadyRecorded reports whether every query this plan would run is already on record against
+// this exact database.
+//
+// All or nothing, because one database serves every query in the plan: a single query not yet on
+// record means the build has to happen regardless. An unknown commit is never treated as a match,
+// since an empty one would collide with every other unknown.
+func (e *Expander) alreadyRecorded(planned tierPlan, repository, commit string) (bool, error) {
+	if commit == "" {
+		return false, nil
+	}
+	runs := planned.runs(repository, commit)
+	if len(runs) == 0 {
+		return false, nil
+	}
+	for _, run := range runs {
+		done, err := e.Store.QueryRunExists(run)
+		if err != nil || !done {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
 func (e *Expander) prepare(
-	ctx context.Context, b batch, opts Options, planned []plannedQuery,
+	ctx context.Context, b batch, opts Options, planned tierPlan,
 ) (work.Prepared, error) {
 	dir := filepath.Join(opts.WorkDir, b.owner+"_"+b.repo)
 	src := filepath.Join(dir, "src")
@@ -188,14 +238,41 @@ func (e *Expander) prepare(
 		return work.Prepared{}, err
 	}
 
+	// The commit is only knowable once the source is in hand, so the checkout is not avoidable
+	// here. Deciding from abom_frontier.resolved_sha instead would skip precisely when a ref had
+	// moved, which is the case re-analysis exists for.
+	done, err := e.alreadyRecorded(planned, b.full(), tree.SHA)
+	if err != nil {
+		return work.Prepared{}, err
+	}
+	if done {
+		if !opts.KeepArtifacts {
+			os.RemoveAll(src)
+		}
+		return work.Prepared{
+			Job:             work.Job{Repository: b.full()},
+			Commit:          tree.SHA,
+			AlreadyRecorded: true,
+		}, nil
+	}
+
 	dbDir := filepath.Join(dir, "db")
 	if err := e.Builder.CreateDatabase(ctx, tree.Dir, dbDir, "actions"); err != nil {
 		return work.Prepared{}, err
 	}
 
-	jsonPath, extra, err := e.runQueries(ctx, dbDir, dir, planned)
+	jsonPath, edgesID, extra, err := e.runQueries(ctx, dbDir, dir, planned.bqrs)
 	if err != nil {
 		return work.Prepared{}, err
+	}
+
+	// The findings lane runs against the same database, before it is removed below.
+	var sarifPath string
+	if len(planned.findings) > 0 {
+		sarifPath = filepath.Join(dir, "findings.sarif")
+		if err := e.Analyzer.AnalyzeQueries(ctx, dbDir, planned.findings, sarifPath); err != nil {
+			return work.Prepared{}, err
+		}
 	}
 
 	// The checkout and database are the bulk of the disk cost and are finished with here, so
@@ -205,25 +282,37 @@ func (e *Expander) prepare(
 		os.RemoveAll(dbDir)
 	}
 	return work.Prepared{
-		Job:        work.Job{Repository: b.full()},
-		ResultPath: jsonPath,
-		Extra:      extra,
-		Commit:     tree.SHA,
+		Job:           work.Job{Repository: b.full()},
+		ResultPath:    jsonPath,
+		ResultQueryID: edgesID,
+		SarifPath:     sarifPath,
+		Extra:         extra,
+		Commit:        tree.SHA,
 	}, nil
 }
 
 func (e *Expander) consume(
-	_ context.Context, b batch, p work.Prepared, opts Options, stats *Stats,
+	_ context.Context, b batch, p work.Prepared, opts Options, planned tierPlan, stats *Stats,
 ) (int, error) {
+	if p.AlreadyRecorded {
+		stats.Skipped++
+		return 0, e.settle(b, p, opts, stats)
+	}
 	// The repository is being analyzed because something depends on it, not because it is
 	// under review, so its own CI must not register as dependency pressure.
 	if _, err := e.Store.InsertUpstreamRepository(b.full()); err != nil {
 		return 0, err
 	}
 
-	runID, err := e.Store.RecordQueryRun(store.QueryRun{
-		QueryID: opts.QueryID, Repository: b.full(), DBCommit: p.Commit,
-	})
+	// A suite decides which query supplied the edges, so the ledger records that query rather
+	// than whatever --query-id happened to say.
+	queryID := p.ResultQueryID
+	if queryID == "" {
+		queryID = opts.QueryID
+	}
+	runID, err := e.Store.RecordQueryRun(planned.identify(queryID, store.QueryRun{
+		QueryID: queryID, Repository: b.full(), DBCommit: p.Commit,
+	}))
 	if err != nil {
 		return 0, err
 	}
@@ -244,11 +333,23 @@ func (e *Expander) consume(
 	// dependency edges already written for this repository, so these are reported and skipped
 	// rather than aborting the round.
 	for queryID, path := range p.Extra {
-		if err := e.ingestExtra(queryID, path, b.full(), p.Commit); err != nil && e.OnEvent != nil {
+		if err := e.ingestExtra(queryID, path, b.full(), p.Commit, planned); err != nil &&
+			e.OnEvent != nil {
 			e.OnEvent(work.Event{
 				Kind: work.EventFailed,
 				Job:  work.Job{Repository: b.full()},
 				Err:  fmt.Errorf("%s: %w", queryID, err),
+			})
+		}
+	}
+
+	if p.SarifPath != "" {
+		err := e.ingestFindings(p.SarifPath, b.full(), p.Commit, planned)
+		if err != nil && e.OnEvent != nil {
+			e.OnEvent(work.Event{
+				Kind: work.EventFailed,
+				Job:  work.Job{Repository: b.full()},
+				Err:  fmt.Errorf("findings: %w", err),
 			})
 		}
 	}
@@ -258,24 +359,33 @@ func (e *Expander) consume(
 	}
 	e.Writer.ResetLocal()
 
+	return rows, e.settle(b, p, opts, stats)
+}
+
+// settle enqueues what the repository revealed and takes its dependencies out of the queue.
+//
+// A skipped repository goes through this too. The ledger row is written before discoveries are
+// enqueued, so a run interrupted between the two would otherwise skip on the next pass and never
+// discover what it had already paid to find.
+func (e *Expander) settle(b batch, p work.Prepared, opts Options, stats *Stats) error {
 	discovered, err := e.enqueueDiscoveries(b)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	stats.Discovered += discovered
 
 	res := frontier.Resolution{Ref: "HEAD", SHA: p.Commit}
 	for _, it := range b.items {
 		if err := e.Queue.Complete(it.NodeKey, res); err != nil {
-			return 0, err
+			return err
 		}
 		stats.Items++
 	}
 
-	if !opts.KeepArtifacts {
+	if !opts.KeepArtifacts && p.ResultPath != "" {
 		os.RemoveAll(filepath.Dir(p.ResultPath))
 	}
-	return rows, nil
+	return nil
 }
 
 func (e *Expander) enqueueDiscoveries(b batch) (int, error) {

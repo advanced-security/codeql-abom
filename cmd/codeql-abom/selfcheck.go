@@ -43,7 +43,7 @@ func runSelfcheck(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	dbDir := filepath.Join(dir, "db")
 	sarifPath := filepath.Join(dir, "findings.sarif")
 
-	r := &runner.Runner{CodeQLPath: *codeqlPath}
+	r := &runner.Runner{CodeQLPath: *codeqlPath, Lock: runner.SharedLock()}
 	if err := r.CreateDatabase(ctx, *sourceRoot, dbDir, selfLanguage); err != nil {
 		return fmt.Errorf("selfcheck: creating a database: %w", err)
 	}

@@ -8,8 +8,12 @@
 # This is deliberately the same 35 queries as the upstream suite it replaces, so that owning
 # the file changes nothing on the day it lands. Filters belong below, one reviewable diff at a
 # time.
+#
+# Pinned exactly rather than by range: without `version:` the CLI resolves the most recent pack,
+# so the set of rules ABOM attributes could change with no commit here.
 - import: codeql-suites/actions-all.qls
   from: codeql/actions-queries
+  version: 0.6.34
 
 # The nine `experimental/` queries stay in. Precision is a property of the rule, and ABOM
 # attributes rather than adjudicates: a consumer filtering on rule id can always drop them,

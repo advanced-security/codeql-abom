@@ -57,6 +57,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/discovery/start", s.discoveryStart)
 	mux.HandleFunc("POST /api/discovery/pause", s.discoveryPause)
 	mux.HandleFunc("POST /api/discovery/requeue/{tier}", s.discoveryRequeue)
+	mux.HandleFunc("GET /api/discovery/suites", s.tierSuites)
+	mux.HandleFunc("PUT /api/discovery/suites/{tier}", s.setTierSuites)
 	mux.HandleFunc("GET /api/nodes", s.nodes)
 	mux.HandleFunc("GET /api/node/{key...}", s.node)
 	mux.HandleFunc("GET /api/pinning", s.pinning)

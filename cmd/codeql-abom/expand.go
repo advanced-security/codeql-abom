@@ -29,6 +29,16 @@ const maxExpandRounds = 1000
 // far longer than a clone, database build and query take.
 const staleClaimLease = time.Hour
 
+// roundDidWork reports whether a round moved the queue, which is how expand-all recognizes a
+// drained frontier.
+//
+// Skips count. A round that found every repository already on record settled all of them, and
+// reading that as an empty queue would abandon whatever is still queued behind it. Discoveries
+// deliberately do not count: they are enqueued by a round that also attempted something.
+func roundDidWork(s expand.Stats) bool {
+	return s.Processed > 0 || s.Skipped > 0 || s.Failed > 0 || s.Unavailable > 0
+}
+
 // runExpandAll follows dependencies out from the seed repositories until the frontier is empty,
 // then refreshes every aggregate the graph reports on.
 func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -91,7 +101,7 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	}
 
 	w := store.NewWriter(s, 0)
-	r := &runner.Runner{CodeQLPath: *codeqlPath}
+	r := &runner.Runner{CodeQLPath: *codeqlPath, Lock: runner.SharedLock()}
 	e := &expand.Expander{
 		Queue:    queue,
 		Store:    s,
@@ -100,6 +110,9 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		Fetcher:  &expand.Checkout{},
 		Builder:  r,
 		CodeQL:   r,
+		Analyzer: r,
+		// Without this, `expand --query=` cannot fall through to what the tiers are bound to.
+		Resolver: r,
 		Decode:   expand.Decoder(pipeline.DefaultDecoder(*codeqlPath)),
 		Pace:     pace,
 		OnEvent:  logFailures(stdout),
@@ -121,21 +134,23 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 			return fmt.Errorf("expand-all: %w", err)
 		}
 		total.Processed += stats.Processed
+		total.Skipped += stats.Skipped
 		total.Items += stats.Items
 		total.Failed += stats.Failed
 		total.Unavailable += stats.Unavailable
 		total.Discovered += stats.Discovered
 		total.Edges += stats.Edges
-		if stats.Processed == 0 && stats.Failed == 0 && stats.Unavailable == 0 {
+		if !roundDidWork(stats) {
 			break
 		}
 		if err := rank(s, queue); err != nil {
 			return fmt.Errorf("expand-all: %w", err)
 		}
 	}
-	fmt.Fprintf(stdout, "expand-all: %d repositories, %d items settled, %d failed, "+
-		"%d unavailable, %d newly discovered, %d edges ingested\n",
-		total.Processed, total.Items, total.Failed, total.Unavailable, total.Discovered, total.Edges)
+	fmt.Fprintf(stdout, "expand-all: %d repositories, %d already on record, %d items settled, "+
+		"%d failed, %d unavailable, %d newly discovered, %d edges ingested\n",
+		total.Processed, total.Skipped, total.Items, total.Failed, total.Unavailable,
+		total.Discovered, total.Edges)
 
 	if err := reportWorkLeftWaiting(stdout, queue); err != nil {
 		return fmt.Errorf("expand-all: %w", err)

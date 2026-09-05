@@ -85,7 +85,10 @@ func newSupervisor(s *store.Store, opts discoveryOptions, logTo io.Writer) (*sup
 	}
 
 	w := store.NewWriter(s, 0)
-	r := &runner.Runner{CodeQLPath: opts.codeqlPath, Threads: opts.codeqlThreads(), RAMMB: opts.ramMB}
+	r := &runner.Runner{
+		CodeQLPath: opts.codeqlPath, Threads: opts.codeqlThreads(), RAMMB: opts.ramMB,
+		Lock: runner.SharedLock(),
+	}
 	checkout := &expand.Checkout{}
 
 	// Seeded from what is already held so a restart does not re-fetch a set collected minutes ago.
@@ -106,6 +109,7 @@ func newSupervisor(s *store.Store, opts discoveryOptions, logTo io.Writer) (*sup
 			Builder:  r,
 			CodeQL:   r,
 			Resolver: r,
+			Analyzer: r,
 			Decode:   expand.Decoder(pipeline.DefaultDecoder(opts.codeqlPath)),
 			Pace:     pace,
 			// Without this a repository that fails every time is invisible: the count moves
@@ -181,10 +185,14 @@ func preflight(codeqlPath, queryPath, workDir string) func() *supervisor.Problem
 				Remedy: "install git; discovery clones each dependency to analyze it",
 			}
 		}
-		if _, err := os.Stat(queryPath); err != nil {
-			return &supervisor.Problem{
-				Reason: fmt.Sprintf("the edges query %s cannot be read", queryPath),
-				Remedy: "restart serve with --query pointing at AbomEdges.ql",
+		// Only when a single query overrides the stored binding; a suite path is resolved by the
+		// CodeQL CLI rather than opened here.
+		if queryPath != "" {
+			if _, err := os.Stat(queryPath); err != nil {
+				return &supervisor.Problem{
+					Reason: fmt.Sprintf("the edges query %s cannot be read", queryPath),
+					Remedy: "restart serve with --query pointing at AbomEdges.ql",
+				}
 			}
 		}
 		probe := filepath.Join(workDir, ".abom-writable")

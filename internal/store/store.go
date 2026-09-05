@@ -102,7 +102,12 @@ func (s *Store) Migrate() error {
 			return fmt.Errorf("adding %s.%s: %w", c.table, c.column, err)
 		}
 	}
-	return nil
+	// Before seeding, so a binding that only needs renaming still counts as configured and the
+	// defaults are not written over it.
+	if err := s.migrateSuiteNames(); err != nil {
+		return err
+	}
+	return s.seedTierSuites()
 }
 
 // dropStaleDerivedTables removes derived tables that no longer have a consumer.

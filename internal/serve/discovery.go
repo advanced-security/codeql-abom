@@ -1,10 +1,13 @@
 package serve
 
 import (
+	"encoding/json"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 
+	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/store"
 	"github.com/advanced-security/codeql-abom/internal/supervisor"
 )
@@ -95,6 +98,124 @@ func (s *Server) discoveryPause(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Discovery.Pause()
 	s.discoveryStatus(w, r)
+}
+
+// suiteBinding is what a control needs to offer the choice: everything that could be bound, and
+// what each tier is bound to now.
+type suiteBinding struct {
+	Available []string            `json:"available"`
+	Tiers     map[string][]string `json:"tiers"`
+	// Counts is how many analyzed dependencies each tier holds, so the cost of changing what it
+	// runs is on screen before it is spent rather than discovered during the next crawl.
+	Counts map[string]int `json:"counts"`
+	// Contents is what each suite last resolved to. A suite nobody has resolved is absent, not
+	// present with a zero count: the interface has to be able to say it does not know yet.
+	Contents map[string]suiteDetail `json:"contents,omitempty"`
+}
+
+// suiteDetail is the level between a suite and its queries: the packs behind it, each with the
+// version that changes when the queries do.
+type suiteDetail struct {
+	Packs      []packDetail `json:"packs"`
+	QueryCount int          `json:"queryCount"`
+	ResolvedAt string       `json:"resolvedAt"`
+}
+
+type packDetail struct {
+	Name    string   `json:"name"`
+	Version string   `json:"version"`
+	Queries []string `json:"queries"`
+}
+
+// suiteDetails groups what each suite resolved to by the pack that supplied each query.
+func suiteDetails(contents map[string][]store.SuiteQuery) map[string]suiteDetail {
+	out := map[string]suiteDetail{}
+	for suite, queries := range contents {
+		byPack := map[string]*packDetail{}
+		var order []string
+		detail := suiteDetail{QueryCount: len(queries)}
+		for _, q := range queries {
+			if q.ResolvedAt > detail.ResolvedAt {
+				detail.ResolvedAt = q.ResolvedAt
+			}
+			p, ok := byPack[q.Pack]
+			if !ok {
+				p = &packDetail{Name: q.Pack, Version: q.PackVersion}
+				byPack[q.Pack] = p
+				order = append(order, q.Pack)
+			}
+			p.Queries = append(p.Queries, q.QueryID)
+		}
+		sort.Strings(order)
+		for _, name := range order {
+			detail.Packs = append(detail.Packs, *byPack[name])
+		}
+		out[suite] = detail
+	}
+	return out
+}
+
+// tierSuites reports what each dependency tier runs, and what it could run.
+func (s *Server) tierSuites(w http.ResponseWriter, _ *http.Request) {
+	bound, err := s.Store.TierSuites()
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	counts, err := s.Store.TierCounts()
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	available, err := runner.AvailableSuites(runner.PackRoot)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	// Anything already bound stays offered even if it is not on disk here: a binding may name a
+	// suite from an installed pack, and dropping it from the list would make it look invented.
+	seen := map[string]bool{}
+	for _, suite := range available {
+		seen[suite] = true
+	}
+	for _, suites := range bound {
+		for _, suite := range suites {
+			if !seen[suite] {
+				seen[suite] = true
+				available = append(available, suite)
+			}
+		}
+	}
+	sort.Strings(available)
+	contents, err := s.Store.SuiteContents()
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	writeJSON(w, suiteBinding{
+		Available: available, Tiers: bound, Counts: counts,
+		Contents: suiteDetails(contents),
+	}, nil)
+}
+
+// setTierSuites rewrites what one tier runs.
+//
+// Guarded like the other controls that spend the machine's time: what a tier binds to decides
+// how much CodeQL every future round of that tier pays for.
+func (s *Server) setTierSuites(w http.ResponseWriter, r *http.Request) {
+	if !s.allowControl(w, r) {
+		return
+	}
+	var suites []string
+	if err := json.NewDecoder(r.Body).Decode(&suites); err != nil {
+		writeError(w, http.StatusBadRequest, "expected a JSON array of suite paths")
+		return
+	}
+	if err := s.Store.SetTierSuites(r.PathValue("tier"), suites); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.tierSuites(w, r)
 }
 
 // discoveryRequeue puts a whole tier back in the queue.

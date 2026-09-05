@@ -25,6 +25,8 @@ func (f *fakeResolver) ResolveMetadata(_ context.Context, path string) (runner.M
 	return f.meta[path], nil
 }
 
+func (f *fakeResolver) Version(_ context.Context) (string, error) { return "2.26.4", nil }
+
 // Adding a query to a suite has to be enough to make it run. If the set of queries were compiled
 // in, every new query would need a release, which is the opposite of an inspection engine meant
 // to be reprogrammed.
@@ -41,12 +43,13 @@ func TestASuiteDecidesWhatRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	if len(planned) != 2 {
-		t.Fatalf("planned %d queries, want both the suite names", len(planned))
+	if len(planned.bqrs) != 2 {
+		t.Fatalf("planned %d queries, want both the suite names", len(planned.bqrs))
 	}
-	if planned[0].shape != ingest.ShapeEdges || planned[1].shape != ingest.ShapeObservations {
+	if planned.bqrs[0].shape != ingest.ShapeEdges ||
+		planned.bqrs[1].shape != ingest.ShapeObservations {
 		t.Errorf("shapes = %q/%q, want each read as the query declares",
-			planned[0].shape, planned[1].shape)
+			planned.bqrs[0].shape, planned.bqrs[1].shape)
 	}
 }
 
@@ -79,13 +82,14 @@ func TestASingleQueryStillNeedsNoSuite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	if len(planned) != 1 || planned[0].shape != ingest.ShapeEdges {
+	if len(planned.bqrs) != 1 || planned.bqrs[0].shape != ingest.ShapeEdges {
 		t.Errorf("planned %+v, want the one query read as edges", planned)
 	}
 }
 
 // Findings come from `database analyze` as SARIF, a different lane entirely. A suite may mix
-// them in legitimately, so they are skipped rather than treated as an error.
+// them in legitimately, so they leave the BQRS lane — but they must be *routed*, not dropped:
+// silently discarding them made the `direct` binding promise a findings pass it never ran.
 func TestFindingsQueriesAreLeftToTheirOwnLane(t *testing.T) {
 	e := &Expander{Resolver: &fakeResolver{
 		queries: []string{"/q/AbomEdges.ql", "/q/Unpinned.ql"},
@@ -99,8 +103,12 @@ func TestFindingsQueriesAreLeftToTheirOwnLane(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	if len(planned) != 1 || planned[0].id != "abom/edges" {
-		t.Errorf("planned %+v, want only the query this lane can read", planned)
+	if len(planned.bqrs) != 1 || planned.bqrs[0].id != "abom/edges" {
+		t.Errorf("bqrs lane %+v, want only the query this lane can read", planned.bqrs)
+	}
+	if len(planned.findings) != 1 || planned.findings[0] != "/q/Unpinned.ql" {
+		t.Errorf("findings lane %v, want the problem query routed rather than dropped",
+			planned.findings)
 	}
 }
 

@@ -50,7 +50,7 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
         <MudSpacer />
         <FollowControl LastUpdated="_lastPoll" />
     </div>
-    <div class="d-flex align-center gap-2 mt-1">
+    <div class="d-flex align-center flex-wrap gap-2 mt-1">
         @if (RecountShare is { } share)
         {
             @* Beside the sentence it quantifies, not beside the state: it measures arrivals, not
@@ -66,12 +66,142 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
         {
             <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="@_busy"
                        StartIcon="@Icons.Material.Filled.Refresh"
+                       Class="abom-requeue"
                        OnClick="@(() => Requeue(tier))"
                        title="@RequeueHint(tier)">
                 @($"Re-analyze {tier} ({_tiers.GetValueOrDefault(tier):N0})")
             </MudButton>
         }
     </div>
+
+    @* One box: what the crawl is doing and what it is configured to do belong together, and a
+       second outlined panel cost 40px of chrome to say so. *@
+    <MudDivider Class="my-2" />
+
+    @if (_loading && _suites is null)
+    {
+        <MudText Typo="Typo.subtitle2">What each tier is analyzed with</MudText>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">Reading the binding&hellip;</MudText>
+    }
+    else if (_suites is null)
+    {
+        @* A read that failed and a read still arriving look identical if both just wait, and a
+           section with no binding to summarize must not fold shut over the reason it has none. *@
+        <MudText Typo="Typo.subtitle2">What each tier is analyzed with</MudText>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">
+            Could not read what each tier is bound to, so nothing is shown rather than a binding
+            that might be wrong. A server older than this interface has no such endpoint.
+        </MudText>
+    }
+    else if (_suites.Available.Count == 0)
+    {
+        <MudText Typo="Typo.subtitle2">What each tier is analyzed with</MudText>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">
+            No suites were found on disk. That is not the same as none being configured &mdash;
+            a tier may name a suite from an installed pack, which would still run.
+        </MudText>
+    }
+    else
+    {
+        @* The binding stays on screen folded or not: hiding it would turn "direct runs findings"
+           into something a reader has to go looking for, and assume the default otherwise. *@
+        <button type="button" class="abom-fold-toggle" @onclick="ToggleConfig"
+                aria-expanded="@(_configOpen ? "true" : "false")">
+            <MudIcon Size="Size.Small" Icon="@(_configOpen
+                ? Icons.Material.Filled.ExpandMore
+                : Icons.Material.Filled.ChevronRight)" />
+            <span class="abom-fold-text">
+                <span class="abom-fold-title">What each tier is analyzed with</span>
+                <span class="abom-fold-summary">@BindingSummary()</span>
+            </span>
+        </button>
+        @foreach (var tier in Tiers.Where(t => BoundCount(t) == 0))
+        {
+            @* An empty binding is a legitimate instruction, so it is stated rather than corrected,
+               and stated outside the fold because it is state rather than a control. *@
+            <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1">
+                Nothing is bound to @tier, so its dependencies are fetched and left unanalyzed.
+            </MudText>
+        }
+        @if (_configOpen)
+        {
+            <MudSimpleTable Dense="true" Hover="true" Striped="false"
+                            Class="abom-grid abom-table abom-config-grid mt-2">
+                <thead>
+                    <tr>
+                        <th>Suite</th>
+                        @foreach (var tier in Tiers)
+                        {
+                            @* The reason a tier is worth more or less work belongs on the tier, not
+                               in a paragraph above the grid that names neither. *@
+                            <th class="abom-tier-head">
+                                <span class="abom-tier-name">@tier</span>
+                                <span class="abom-tier-why">@TierWhy(tier)</span>
+                                <span class="abom-tier-count">
+                                    @_tiers.GetValueOrDefault(tier).ToString("N0") dependencies
+                                </span>
+                            </th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var suite in _suites.Available)
+                    {
+                        <tr>
+                            <td>
+                                <button type="button" class="abom-suite-toggle"
+                                        @onclick="@(() => ToggleSuiteDetail(suite))"
+                                        aria-expanded="@(IsSuiteOpen(suite) ? "true" : "false")">
+                                    <MudIcon Size="Size.Small" Icon="@(IsSuiteOpen(suite)
+                                        ? Icons.Material.Filled.ExpandMore
+                                        : Icons.Material.Filled.ChevronRight)" />
+                                    <span class="abom-fold-text">
+                                        <span class="abom-path">@SuiteLabel(suite)</span>
+                                        <span class="abom-fold-summary">@SuiteSummary(suite)</span>
+                                    </span>
+                                </button>
+                            </td>
+                            @foreach (var tier in Tiers)
+                            {
+                                <td>
+                                    <MudTooltip Text="@BindHint(tier, suite)">
+                                        <MudCheckBox T="bool" Dense="true" Size="Size.Small"
+                                                     Color="Color.Primary" Disabled="@_busy"
+                                                     Value="@IsBound(tier, suite)"
+                                                     ValueChanged="@(_ => ToggleSuite(tier, suite))" />
+                                    </MudTooltip>
+                                </td>
+                            }
+                        </tr>
+                        @if (IsSuiteOpen(suite) && Detail(suite) is { } detail)
+                        {
+                            <tr>
+                                <td colspan="@(Tiers.Length + 1)">
+                                    @foreach (var p in detail.Packs)
+                                    {
+                                        <div class="abom-pack">
+                                            <span class="abom-path">@p.Name</span>
+                                            <span class="abom-fold-summary">@p.Version</span>
+                                        </div>
+                                        <ul class="abom-query-list">
+                                            @foreach (var id in p.Queries)
+                                            {
+                                                <li class="abom-path">@id</li>
+                                            }
+                                        </ul>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </MudSimpleTable>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2">
+                A change takes effect on the next round. Dependencies already analyzed keep their
+                current results until that tier is re-analyzed.
+            </MudText>
+        }
+    }
 </MudPaper>
 
 <div class="d-flex align-center flex-wrap gap-2 mb-3">
@@ -314,6 +444,95 @@ else
 
     private IReadOnlyDictionary<string, int> _tiers => _state.Tiers;
 
+    private SuiteBinding? _suites;
+
+    private IReadOnlyList<string> BoundTo(string tier) =>
+        _suites is not null && _suites.Tiers.TryGetValue(tier, out var s) ? s : [];
+
+    private bool IsBound(string tier, string suite) => BoundTo(tier).Contains(suite);
+
+    private int BoundCount(string tier) => BoundTo(tier).Count;
+
+    // Stated per column, because the whole point of the grid is that the two tiers deserve
+    // different work, and a reader deciding that is looking at the column.
+    private static string TierWhy(string tier) => tier switch
+    {
+        "direct" => "your repositories name these",
+        _ => "reached through something else",
+    };
+
+    // Configuration is changed a few times a month and the queue is why the page is open, so the
+    // control folds. What it is set to does not: see plans/ui/discovery-config.md.
+    private bool _configOpen;
+
+    private void ToggleConfig() => _configOpen = !_configOpen;
+
+    private string BindingSummary() => string.Join(" · ", Tiers.Select(tier =>
+    {
+        var bound = BoundTo(tier);
+        return bound.Count == 0
+            ? $"{tier}: nothing"
+            : $"{tier}: {string.Join(", ", bound.Select(SuiteLabel))}";
+    }));
+
+    private readonly HashSet<string> _openSuites = [];
+
+    private bool IsSuiteOpen(string suite) => _openSuites.Contains(suite);
+
+    private void ToggleSuiteDetail(string suite)
+    {
+        if (!_openSuites.Remove(suite))
+        {
+            _openSuites.Add(suite);
+        }
+    }
+
+    private SuiteDetail? Detail(string suite) =>
+        _suites is not null && _suites.Contents.TryGetValue(suite, out var d) ? d : null;
+
+    // A suite has no version of its own, so the line carries the packs behind it. A suite no
+    // crawl has resolved has no count to state, and saying 0 would assert a measurement.
+    private string SuiteSummary(string suite)
+    {
+        if (Detail(suite) is not { } detail)
+        {
+            return "not yet resolved";
+        }
+        var versions = string.Join(", ", detail.Packs.Select(p => p.Version).Distinct());
+        var queries = $"{detail.QueryCount:N0} {(detail.QueryCount == 1 ? "query" : "queries")}";
+        return string.IsNullOrEmpty(versions) ? queries : $"{versions} · {queries}";
+    }
+
+    // The path is how the binding is stored and what an operator would grep for, so the label
+    // shortens it without inventing a name the suite does not have.
+    private static string SuiteLabel(string suite)
+    {
+        var name = suite.Split('/').LastOrDefault() ?? suite;
+        return name.EndsWith(".qls", StringComparison.Ordinal) ? name[..^4] : name;
+    }
+
+    private string BindHint(string tier, string suite) => IsBound(tier, suite)
+        ? $"Stop running {SuiteLabel(suite)} on the {tier} tier. Results already recorded stay until that tier is re-analyzed."
+        : $"Run {SuiteLabel(suite)} on the {tier} tier from the next round. Its {_tiers.GetValueOrDefault(tier):N0} analyzed dependencies pick it up only when re-analyzed.";
+
+    private async Task ToggleSuite(string tier, string suite)
+    {
+        _busy = true;
+        try
+        {
+            var next = BoundTo(tier).ToList();
+            if (!next.Remove(suite))
+            {
+                next.Add(suite);
+            }
+            _suites = await Api.SetTierSuitesAsync(tier, next);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
     private string RequeueHint(string tier) => tier switch    {
         "direct" => $"Analyze all {_tiers.GetValueOrDefault(tier):N0} dependencies your repositories name directly, again, with the query suite currently configured. Nothing already known is cleared while it runs.",
         _ => $"Analyze all {_tiers.GetValueOrDefault(tier):N0} dependencies reached through an intermediary, again. This is the larger tier and takes correspondingly longer.",
@@ -536,6 +755,7 @@ else
     {
         _state = await Api.GetDiscoveryAsync();
         _items = await Api.GetFrontierAsync(_status, top: 400);
+        _suites = await Api.GetTierSuitesAsync();
         Follow.SetDiscoveryRunning(_state.Status.IsRunning);
         // A read that failed returns an empty result rather than throwing, so the transport's
         // own account of what went wrong is the only thing that separates "nothing here" from

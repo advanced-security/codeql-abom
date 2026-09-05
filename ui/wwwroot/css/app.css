@@ -253,6 +253,106 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     overflow: hidden;
 }
 
+/* A disclosure whose header keeps stating the setting, so folding hides the control and never
+   the fact. Built from a real button so it is reachable by keyboard and reports its own state. */
+.abom-fold-toggle {
+    display: flex;
+    align-items: flex-start;
+    /* MudBlazor centers button content globally, which would indent the header past the grid. */
+    justify-content: flex-start;
+    gap: 0.35rem;
+    width: 100%;
+    padding: 0;
+    background: none;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    color: inherit;
+    font: inherit;
+}
+
+.abom-fold-text {
+    display: flex;
+    flex-direction: column;
+}
+
+.abom-fold-title {
+    font-size: var(--abom-text-md);
+    font-weight: 600;
+}
+
+.abom-fold-summary {
+    font-size: var(--abom-text-xs);
+    color: var(--mud-palette-text-secondary);
+}
+
+/* One suite per row, disclosing the packs behind it. Same shape as the section fold, one level in. */
+.abom-suite-toggle {
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: var(--abom-gap-xs);
+    padding: 0;
+    background: none;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    color: inherit;
+    font: inherit;
+}
+
+.abom-pack {
+    display: flex;
+    align-items: baseline;
+    gap: var(--abom-gap-md);
+}
+
+/* The query list is the audit trail, so it scrolls rather than pushing the queue off the page. */
+.abom-query-list {
+    margin: 0 0 var(--abom-gap-md) 1.2rem;
+    padding: 0;
+    max-height: 12rem;
+    overflow-y: auto;
+    list-style: none;
+    font-size: var(--abom-text-xs);
+}
+
+/* Full width would put the tier checkboxes a screen away from the suite they belong to. */
+.abom-config-grid {
+    max-width: 52rem;
+}
+
+/* MudBlazor uppercases button labels, which made "Re-analyze direct (423)" wrap to two lines and
+   cost the row 18px it did not need. Sentence case is also what the rest of the page uses. */
+.abom-requeue {
+    text-transform: none;
+    white-space: nowrap;
+}
+
+/* A tier column header carries three facts of decreasing weight: which tier, why it differs
+   from the other, and how much work a tick would apply to. Stacking them keeps that reasoning
+   next to the checkbox it governs instead of in a paragraph above the grid. */
+.abom-grid thead th {
+    vertical-align: bottom;
+}
+
+.abom-tier-head {
+    line-height: 1.35;
+}
+
+.abom-tier-name {
+    display: block;
+    text-transform: capitalize;
+}
+
+.abom-tier-why,
+.abom-tier-count {
+    display: block;
+    font-weight: 400;
+    font-size: var(--abom-text-xs);
+    color: var(--mud-palette-text-secondary);
+}
+
 .abom-ref {
     display: inline-block;
     padding: 0.05rem 0.35rem;

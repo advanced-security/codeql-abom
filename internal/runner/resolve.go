@@ -40,7 +40,8 @@ func (m Metadata) HasTag(tag string) bool {
 // The suite is the unit that grows: new queries are added by editing a `.qls`, so the query set
 // has to be discovered at run time. Listing it in Go would mean a release for every query added.
 func (r *Runner) ResolveQueries(ctx context.Context, suite string) ([]string, error) {
-	out, err := r.output(ctx, "resolve", "queries", suite)
+	args := append([]string{"resolve", "queries"}, localPackArgs()...)
+	out, err := r.output(ctx, append(args, suite)...)
 	if err != nil {
 		return nil, fmt.Errorf("codeql resolve queries %s: %w", suite, err)
 	}

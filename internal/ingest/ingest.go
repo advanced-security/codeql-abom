@@ -39,6 +39,9 @@ type Options struct {
 	Provenance string
 	// QueryRunID ties every emitted row back to the query and pack version that produced it.
 	QueryRunID int64
+	// CLIVersion is the CodeQL the ledger recorded for this run. When set, SARIF that names a
+	// different one is refused rather than attributed to the wrong analyzer.
+	CLIVersion string
 }
 
 // Ingester writes graph rows for one repository at a time.

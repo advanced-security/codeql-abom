@@ -17,10 +17,10 @@ ABOM_SERVE_FLAGS ?=
 BIN      := bin/codeql-abom
 GO_FILES := $(shell find . -name '*.go' -not -path './ui/*')
 
-.PHONY: build check-corrupt clean fmt js lint logs package publish ql restart selfcheck \
-	serve start status stop style test ui ui-test verify vet
+.PHONY: build check-corrupt check-versions clean fmt js lint logs package publish ql restart \
+	selfcheck serve start status stop style test ui ui-test verify vet
 
-verify: check-corrupt fmt vet lint test js style ql ui ui-test
+verify: check-corrupt check-versions fmt vet lint test js style ql ui ui-test
 
 build:
 	@go build -o $(BIN) ./cmd/codeql-abom
@@ -78,7 +78,7 @@ publish:
 	@echo "publish: $(ABOM_UI)/wwwroot"
 
 ql:
-	@codeql test run ql/actions/abom/test
+	@codeql test run ql/actions/graph-extraction/test
 
 restart: stop start
 
@@ -86,7 +86,7 @@ restart: stop start
 ## path. Not in `verify`: it needs the CodeQL CLI and takes tens of seconds.
 selfcheck:
 	@go run ./cmd/codeql-abom selfcheck \
-		--suite ql/actions/abom/src/codeql-suites/abom-selfcheck.qls
+		--suite advanced-security/abom-actions-selfcheck-src:codeql-suites/abom-selfcheck.qls
 
 ## serve: run in the foreground, for watching it work. `make start` for the background.
 serve: build publish
@@ -99,14 +99,27 @@ serve: build publish
 ## Both halves every time, deliberately: serving a stale interface against a new binary looks
 ## like a bug in the interface, and costs far more to work out than the rebuild does.
 start: build publish
-	@if [ -f "$(ABOM_PID)" ] && kill -0 "$$(cat $(ABOM_PID))" 2>/dev/null; then \
-		echo "start: already serving as pid $$(cat $(ABOM_PID)); use 'make restart'"; exit 1; \
+	@# One dev server per machine, found by process rather than by address: the pid file only
+	@# knows what this Makefile started, and a second server on another port is still a second
+	@# writer against the database. Matching on the executable name keeps this recipe's own
+	@# shell out of the results.
+	@running=$$(for pid in $$(pgrep -x $(notdir $(BIN)) 2>/dev/null); do \
+		case "$$(ps -o args= -p $$pid 2>/dev/null)" in (*" serve"*) echo $$pid;; esac; \
+	done | tr '\n' ' '); \
+	if [ -n "$$running" ]; then \
+		echo "start: a server is already running, and only one is allowed:"; \
+		ps -o pid=,args= -p $$running; \
+		echo "start: use 'make restart', or 'make stop' first"; exit 1; \
 	fi
 	@mkdir -p "$(ABOM_WORK)"
 	@$(BIN) serve --db "$(ABOM_DB)" --addr "$(ABOM_ADDR)" \
 		--ui-dir "$(ABOM_UI)/wwwroot" --work-dir "$(ABOM_WORK)" $(ABOM_SERVE_FLAGS) \
 		>> "$(ABOM_LOG)" 2>&1 & echo $$! > "$(ABOM_PID)"
 	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		if ! kill -0 "$$(cat $(ABOM_PID))" 2>/dev/null; then \
+			echo "start: the server exited during startup; see $(ABOM_LOG)"; \
+			tail -n 20 "$(ABOM_LOG)"; rm -f "$(ABOM_PID)"; exit 1; \
+		fi; \
 		if curl -fsS -o /dev/null "http://$(ABOM_ADDR)/api/summary" 2>/dev/null; then \
 			echo "start: http://$(ABOM_ADDR) (pid $$(cat $(ABOM_PID)), log $(ABOM_LOG))"; \
 			exit 0; \
@@ -117,27 +130,45 @@ start: build publish
 	tail -n 20 "$(ABOM_LOG)"; exit 1
 
 status:
-	@if [ -f "$(ABOM_PID)" ] && kill -0 "$$(cat $(ABOM_PID))" 2>/dev/null; then \
-		echo "status: serving http://$(ABOM_ADDR) (pid $$(cat $(ABOM_PID)))"; \
-		curl -fsS "http://$(ABOM_ADDR)/api/discovery/status" && echo; \
-	else \
-		echo "status: not running"; \
-	fi
+	@# Found the same way stop finds it, so a server started by hand is reported rather than
+	@# denied. "Not running" gates running the test suites, so it has to mean it.
+	@running=$$(for pid in $$(pgrep -x $(notdir $(BIN)) 2>/dev/null); do \
+		case "$$(ps -o args= -p $$pid 2>/dev/null)" in (*" serve"*) echo $$pid;; esac; \
+	done | tr '\n' ' '); \
+	if [ -z "$$running" ]; then echo "status: not running"; exit 0; fi; \
+	ps -o pid=,args= -p $$running; \
+	curl -fsS "http://$(ABOM_ADDR)/api/discovery/status" && echo
 
+## Stops every abom server on the machine, not merely what the pid file remembers: one started
+## by hand still holds the port and still writes to a database, and leaving it is what makes
+## `restart` a no-op and the next `start` refuse.
 stop:
-	@if [ ! -f "$(ABOM_PID)" ]; then echo "stop: not running"; exit 0; fi; \
-	pid=$$(cat "$(ABOM_PID)"); \
-	if kill -0 "$$pid" 2>/dev/null; then \
-		kill "$$pid"; echo "stop: stopped pid $$pid"; \
-	else \
-		echo "stop: not running"; \
-	fi; \
-	rm -f "$(ABOM_PID)"
+	@stopped=0; \
+	for pid in $$(pgrep -x $(notdir $(BIN)) 2>/dev/null); do \
+		case "$$(ps -o args= -p $$pid 2>/dev/null)" in \
+			(*" serve"*) kill "$$pid" 2>/dev/null && echo "stop: stopped pid $$pid"; stopped=1;; \
+		esac; \
+	done; \
+	rm -f "$(ABOM_PID)"; \
+	if [ $$stopped -eq 0 ]; then echo "stop: not running"; exit 0; fi; \
+	for i in 1 2 3 4 5; do \
+		still=$$(for pid in $$(pgrep -x $(notdir $(BIN)) 2>/dev/null); do \
+			case "$$(ps -o args= -p $$pid 2>/dev/null)" in (*" serve"*) echo $$pid;; esac; \
+		done); \
+		[ -z "$$still" ] && exit 0; \
+		sleep 1; \
+	done; \
+	echo "stop: a server is still running after 5s"; exit 1
 
 ## style: one visual vocabulary. Drift here is invisible to every other check, and review had
 ## already missed six font sizes, three heading shapes and forty-nine inline styles.
 style:
 	@node ui/tools/check-style.mjs
+
+## check-versions: exact pinning means the same upstream version is written in a suite, a pack
+## manifest and a lock file. `codeql pack upgrade` rewrites two of the three.
+check-versions:
+	@./scripts/check-versions.sh
 
 test:
 	@go test ./... -count=1 -race

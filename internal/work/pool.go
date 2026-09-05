@@ -28,12 +28,22 @@ type Prepared struct {
 	Job Job
 	// ResultPath is the decoded query output awaiting ingestion.
 	ResultPath string
+	// ResultQueryID identifies the query that produced ResultPath. A suite decides which query
+	// that is, so it cannot come from a flag.
+	ResultQueryID string
 	// Extra carries any further decoded results the parallel phase produced, keyed by the query
 	// that produced each. A suite grows over time, so the number of results per repository is
 	// not fixed and cannot be a field per query.
 	Extra map[string]string
+	// SarifPath is the findings lane's output. It is a field of its own rather than an Extra
+	// entry because SARIF is read by a different ingester than everything in Extra.
+	SarifPath string
 	// Commit is the database revision the result came from, for ledger bookkeeping.
 	Commit string
+	// AlreadyRecorded means the ledger has this exact work on record and nothing was run. It
+	// travels as a result rather than as ErrSkip because the job still has to be settled, and
+	// only Consume may write.
+	AlreadyRecorded bool
 }
 
 // Event kinds reported through Pool.OnEvent.

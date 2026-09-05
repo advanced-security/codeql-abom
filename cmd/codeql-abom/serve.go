@@ -31,7 +31,9 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		"let a non-loopback client start discovery, which runs git and codeql on this machine")
 	var d discoveryOptions
 	fs.BoolVar(&d.autostart, "expand", false, "start discovery as soon as the server is up")
-	fs.StringVar(&d.queryPath, "query", defaultEdgesQuery, "edges query to run against each database")
+	// Empty by default: what each tier runs is stored configuration, editable while the server is
+	// up, and naming a query here overrides it for every tier.
+	fs.StringVar(&d.queryPath, "query", "", "single edges query to run instead of the stored per-tier suites")
 	fs.StringVar(&d.queryID, "query-id", defaultEdgesQueryID, "ledger identity for the query")
 	fs.StringVar(&d.suite, "expand-suite", "",
 		"query suite to run against each database instead of a single query")

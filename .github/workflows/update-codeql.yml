@@ -1,0 +1,168 @@
+name: Update CodeQL CLI
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_version:
+        description: 'Target CodeQL CLI version (e.g. v2.26.5). Empty uses the latest release.'
+        required: false
+        type: string
+  schedule:
+    - cron: '30 5 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  # A pack tracks the CLI it is compiled for, so a CLI release is a version bump for every pack
+  # here, for the suites that pin upstream, and for the lock files.
+  detect:
+    name: Detect CodeQL CLI Update
+    runs-on: ubuntu-latest
+
+    outputs:
+      current: ${{ steps.check.outputs.current }}
+      latest: ${{ steps.check.outputs.latest }}
+      needed: ${{ steps.check.outputs.needed }}
+
+    steps:
+      - name: Detect - Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Detect - Compare against the latest release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ github.event.inputs.target_version }}
+        run: |
+          current=$(tr -d '[:space:]' <.codeql-version)
+          current=${current#v}
+
+          target=$(echo "${TARGET}" | tr -d '[:space:]')
+          if [ -n "${target}" ]; then
+            latest=${target#v}
+            if ! gh release view "v${latest}" --repo github/codeql-cli-binaries \
+                 --json tagName >/dev/null 2>&1; then
+              echo "::error::v${latest} is not a github/codeql-cli-binaries release"
+              exit 1
+            fi
+          else
+            tag=$(gh release list --repo github/codeql-cli-binaries \
+                  --json 'tagName,isLatest' --jq '.[] | select(.isLatest) | .tagName')
+            # An empty answer means the API changed shape, not that we are up to date.
+            if [ -z "${tag}" ]; then
+              echo "::error::could not determine the latest CodeQL CLI release"
+              exit 1
+            fi
+            latest=${tag#v}
+          fi
+
+          echo "current=${current}" >> "$GITHUB_OUTPUT"
+          echo "latest=${latest}" >> "$GITHUB_OUTPUT"
+          if [ "${latest}" != "${current}" ]; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # On the nightly schedule an upgrade branch may already carry review commits on top of the
+  # bot's push. Re-running would force over them, so the run stops instead.
+  existing-branch:
+    name: Check for an Existing Upgrade Branch
+    needs: detect
+    if: needs.detect.outputs.needed == 'true'
+    runs-on: ubuntu-latest
+
+    outputs:
+      exists: ${{ steps.look.outputs.exists }}
+
+    steps:
+      - name: Branch - Look it up on origin
+        id: look
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: 'codeql/upgrade-to-v${{ needs.detect.outputs.latest }}'
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual dispatch, so the branch check is skipped."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if gh api "repos/${GITHUB_REPOSITORY}/branches/${BRANCH}" --silent >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  upgrade:
+    name: Upgrade and Open a Pull Request
+    needs: [detect, existing-branch]
+    if: needs.detect.outputs.needed == 'true' && needs.existing-branch.outputs.exists != 'true'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Upgrade - Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Upgrade - Pin the new CLI version
+        env:
+          LATEST: ${{ needs.detect.outputs.latest }}
+        run: printf 'v%s\n' "${LATEST}" > .codeql-version
+
+      - name: Upgrade - Setup CodeQL
+        uses: ./.github/actions/setup-codeql
+
+      - name: Upgrade - Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Upgrade - Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Upgrade - Bump every pack to the new CLI version
+        env:
+          LATEST: ${{ needs.detect.outputs.latest }}
+        run: ./scripts/bump-pack-versions.sh "${LATEST}"
+
+      - name: Upgrade - Upgrade pack dependencies and re-pin the suites
+        env:
+          LATEST: ${{ needs.detect.outputs.latest }}
+        run: |
+          for pack in ql/*/*/src ql/*/*/test; do
+            [ -f "${pack}/codeql-pack.yml" ] || continue
+            codeql pack upgrade "${pack}"
+          done
+          # `codeql pack upgrade` rewrites dependencies and lock files and never touches a
+          # `version:` inside a .qls, so the suites are re-pinned from the lock files here or
+          # check-versions fails the build.
+          ./scripts/bump-pack-versions.sh --repin
+
+      - name: Upgrade - Verify
+        run: make verify
+
+      - name: Upgrade - Open a pull request
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          title: 'Upgrade CodeQL CLI to v${{ needs.detect.outputs.latest }}'
+          body: |
+            Upgrades the CodeQL CLI from `${{ needs.detect.outputs.current }}` to
+            `${{ needs.detect.outputs.latest }}`.
+
+            - `.codeql-version` pinned to the new release
+            - every pack under `ql/` bumped to match, since a pack tracks the CLI it is compiled for
+            - pack dependencies upgraded and lock files refreshed
+            - the `version:` pins inside the suites re-pinned from the lock files, which
+              `codeql pack upgrade` does not do
+            - `make verify` passed, including `check-versions`
+          commit-message: 'Upgrade CodeQL CLI to v${{ needs.detect.outputs.latest }}'
+          branch: 'codeql/upgrade-to-v${{ needs.detect.outputs.latest }}'
+          delete-branch: true
