@@ -125,23 +125,23 @@ func (p tierPlan) identifyFindings(run store.QueryRun) store.QueryRun {
 	return run
 }
 
-// runs is every ledger row this plan will write for one database.
+// queryRun is the ledger row for one query against one database.
 //
-// The skip and the record are built from this same list on purpose. If they were assembled
-// separately the skip would silently stop firing the moment one of them gained a field.
-func (p tierPlan) runs(repository, commit string) []store.QueryRun {
-	out := make([]store.QueryRun, 0, len(p.bqrs)+1)
-	for _, q := range p.bqrs {
-		out = append(out, p.identify(q.id, store.QueryRun{
-			QueryID: q.id, Repository: repository, DBCommit: commit,
-		}))
-	}
-	if len(p.findings) > 0 {
-		out = append(out, p.identifyFindings(store.QueryRun{
-			QueryID: strings.Join(p.findings, " "), Repository: repository, DBCommit: commit,
-		}))
-	}
-	return out
+// The skip and the record are built from this same constructor on purpose. Assembled separately
+// they would drift the moment either gained a field, and the failure is silent: the skip simply
+// stops firing and everything still looks correct.
+func (p tierPlan) queryRun(queryID, repository, commit string) store.QueryRun {
+	return p.identify(queryID, store.QueryRun{
+		QueryID: queryID, Repository: repository, DBCommit: commit,
+	})
+}
+
+// findingsRun is the ledger row for the findings lane, which `database analyze` runs as one
+// invocation over many queries.
+func (p tierPlan) findingsRun(repository, commit string) store.QueryRun {
+	return p.identifyFindings(store.QueryRun{
+		QueryID: strings.Join(p.findings, " "), Repository: repository, DBCommit: commit,
+	})
 }
 
 // plannedQuery is one query to run against a repository's database, with the shape its results
@@ -157,11 +157,16 @@ type plannedQuery struct {
 	packDigest  string
 }
 
-// tierOf decides which pass a batch earns, from the shallowest dependency it holds.
+// tierOf decides which pass a batch earns.
 //
-// Shallowest rather than deepest: a repository reached both directly and through an intermediary
-// is one a repository under review names itself, and the broader pass is the one it has earned.
-func tierOf(b batch) string {
+// Ownership first, because a dependency the operator owns is one they can change today whatever
+// distance the graph placed it at. Otherwise the shallowest dependency the batch holds decides:
+// a repository reached both directly and through an intermediary is one a repository under review
+// names itself, and the broader pass is the one it has earned.
+func tierOf(b batch, owned map[string]bool) string {
+	if owned[strings.ToLower(b.owner)] {
+		return store.TierOwned
+	}
 	if b.depth <= 1 {
 		return store.TierDirect
 	}
@@ -319,9 +324,7 @@ func (e *Expander) runQueries(
 // Attribution is per query, not per round: two queries against one database are two statements
 // by two authors, and a shared run id would make it impossible to say which said what.
 func (e *Expander) ingestExtra(queryID, path, repository, commit string, planned tierPlan) error {
-	runID, err := e.Store.RecordQueryRun(planned.identify(queryID, store.QueryRun{
-		QueryID: queryID, Repository: repository, DBCommit: commit,
-	}))
+	runID, err := e.Store.RecordQueryRun(planned.queryRun(queryID, repository, commit))
 	if err != nil {
 		return err
 	}
@@ -342,9 +345,7 @@ func (e *Expander) ingestExtra(queryID, path, repository, commit string, planned
 // The run is named after what was invoked, because `database analyze` is one invocation over
 // many queries. Which query made which claim is already on each result, as its rule id.
 func (e *Expander) ingestFindings(path, repository, commit string, planned tierPlan) error {
-	runID, err := e.Store.RecordQueryRun(planned.identifyFindings(store.QueryRun{
-		QueryID: strings.Join(planned.findings, " "), Repository: repository, DBCommit: commit,
-	}))
+	runID, err := e.Store.RecordQueryRun(planned.findingsRun(repository, commit))
 	if err != nil {
 		return err
 	}

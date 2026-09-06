@@ -101,7 +101,8 @@ func (b *Builder) load() (*model, error) {
 		return nil, err
 	}
 
-	edges, err := b.Store.DB().Query(`SELECT src_node_row_id, dst_node_row_id FROM abom_edge`)
+	edges, err := b.Store.DB().Query(`SELECT e.src_node_row_id, e.dst_node_row_id
+		FROM abom_edge e WHERE ` + store.DependencyEdgeFilter)
 	if err != nil {
 		return nil, fmt.Errorf("loading edges: %w", err)
 	}

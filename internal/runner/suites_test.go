@@ -109,8 +109,9 @@ func TestAPackWithNoSuitesDirectoryContributesNothing(t *testing.T) {
 }
 
 // Suites now live in several packs, so an interface offering only one pack's would silently hide
-// the findings lane.
-func TestSuitesFromEveryPackAreOffered(t *testing.T) {
+// the findings lane. Every analysis pack contributes; the CI-only pack does not, which
+// TestTheSelfCheckPackIsNotOfferedAsABinding covers.
+func TestSuitesFromEveryAnalysisPackAreOffered(t *testing.T) {
 	root := t.TempDir()
 	pack(t, root, "actions/graph-extraction/src", "advanced-security/abom-actions-graph-extraction-src",
 		"codeql-suites", "abom-dependency-graph.qls")
@@ -123,8 +124,8 @@ func TestSuitesFromEveryPackAreOffered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AvailableSuites: %v", err)
 	}
-	if len(got) != 3 {
-		t.Fatalf("got %v, want one suite from each pack", got)
+	if len(got) != 2 {
+		t.Fatalf("got %v, want one suite from each analysis pack", got)
 	}
 }
 

@@ -123,8 +123,29 @@ func dedupe(in []string) []string {
 }
 
 // seedTierSuites writes the defaults for any tier nobody has configured.
+//
+// Owned has no default of its own: it is seeded from whatever direct is bound to, so introducing
+// the tier reclassifies dependencies without changing what runs against them. A default of its
+// own would silently move the corpus's analysis — cost and results — on the first round after an
+// upgrade, which is not a thing to decide on someone's behalf.
 func (s *Store) seedTierSuites() error {
+	defaults := map[string][]string{}
 	for tier, suites := range DefaultTierSuites {
+		defaults[tier] = suites
+	}
+	if _, ok := defaults[TierOwned]; !ok {
+		bound, err := s.TierSuites()
+		if err != nil {
+			return err
+		}
+		inherited := bound[TierDirect]
+		if len(inherited) == 0 {
+			inherited = DefaultTierSuites[TierDirect]
+		}
+		defaults[TierOwned] = inherited
+	}
+
+	for tier, suites := range defaults {
 		var configured int
 		if err := s.db.QueryRow(
 			`SELECT COUNT(*) FROM abom_tier_configured WHERE tier = ?`, tier).

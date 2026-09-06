@@ -37,7 +37,7 @@ func analyzed(t *testing.T, q *frontier.Queue, owner, repo, ref, sha string) {
 	}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
-	if err := q.Complete(key, frontier.Resolution{Ref: ref, SHA: sha}); err != nil {
+	if err := q.Complete(frontier.Of(key), frontier.Resolution{Ref: ref, SHA: sha}); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 }

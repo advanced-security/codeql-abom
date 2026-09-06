@@ -71,8 +71,8 @@ func (c *Checkout) cloneURL(owner, repo string) string {
 	return url
 }
 
-// Fetch materializes owner/repo at HEAD into dest.
-func (c *Checkout) Fetch(ctx context.Context, dest, owner, repo string) (Tree, error) {
+// Fetch materializes owner/repo at ref into dest. An empty ref means the default branch.
+func (c *Checkout) Fetch(ctx context.Context, dest, owner, repo, ref string) (Tree, error) {
 	if c.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, c.Timeout)
@@ -88,16 +88,31 @@ func (c *Checkout) Fetch(ctx context.Context, dest, owner, repo string) (Tree, e
 	url := c.cloneURL(owner, repo)
 	// blob:none defers file downloads until sparse-checkout has decided what is wanted, so
 	// only the matching blobs ever cross the network.
-	if out, err := c.run(ctx, dest, "clone", "--filter=blob:none", "--no-checkout",
-		"--depth=1", url, "."); err != nil {
-		return Tree{}, fmt.Errorf("%w: cloning %s: %s", ErrUnavailable, url, out)
+	clone := []string{"clone", "--filter=blob:none", "--no-checkout", "--depth=1"}
+	// A tag or branch is fetched by name at depth 1. A commit cannot be: `clone --branch` only
+	// accepts refs, so a SHA-pinned use is fetched below instead.
+	if ref != "" && !looksLikeSHA(ref) {
+		clone = append(clone, "--branch", ref)
+	}
+	clone = append(clone, url, ".")
+	if out, err := c.run(ctx, dest, clone...); err != nil {
+		return Tree{}, fmt.Errorf("%w: cloning %s at %q: %s", ErrUnavailable, url, ref, out)
 	}
 
 	args := append([]string{"sparse-checkout", "set", "--no-cone"}, sparsePatterns...)
 	if out, err := c.run(ctx, dest, args...); err != nil {
 		return Tree{}, fmt.Errorf("selecting actions content in %s: %s", repo, out)
 	}
-	if out, err := c.run(ctx, dest, "checkout"); err != nil {
+
+	if ref != "" && looksLikeSHA(ref) {
+		if out, err := c.run(ctx, dest, "fetch", "--depth=1", "origin", ref); err != nil {
+			return Tree{}, fmt.Errorf("%w: fetching %s of %s: %s", ErrUnavailable, ref, repo, out)
+		}
+		if out, err := c.run(ctx, dest, "checkout", ref); err != nil {
+			return Tree{}, fmt.Errorf("%w: checking out %s of %s: %s",
+				ErrUnavailable, ref, repo, out)
+		}
+	} else if out, err := c.run(ctx, dest, "checkout"); err != nil {
 		return Tree{}, fmt.Errorf("checking out %s: %s", repo, out)
 	}
 
@@ -106,11 +121,30 @@ func (c *Checkout) Fetch(ctx context.Context, dest, owner, repo string) (Tree, e
 		return Tree{}, fmt.Errorf("resolving HEAD of %s: %s", repo, sha)
 	}
 
-	tree := Tree{Dir: dest, Ref: "HEAD", SHA: strings.TrimSpace(sha)}
+	// The ref is recorded as asked for, not as "HEAD": a row for `v4` that reported HEAD could
+	// never be told apart from one analyzed at the default branch.
+	analyzed := ref
+	if analyzed == "" {
+		analyzed = "HEAD"
+	}
+	tree := Tree{Dir: dest, Ref: analyzed, SHA: strings.TrimSpace(sha)}
 	if !hasActionsContent(dest) {
 		return Tree{}, fmt.Errorf("%w: %s has no workflows or action manifest", ErrUnavailable, repo)
 	}
 	return tree, nil
+}
+
+// looksLikeSHA reports whether a reference is a full commit id, which git will not clone by name.
+func looksLikeSHA(ref string) bool {
+	if len(ref) != 40 {
+		return false
+	}
+	for _, r := range ref {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", r) {
+			return false
+		}
+	}
+	return true
 }
 
 // hasActionsContent reports whether anything survived the sparse filter.

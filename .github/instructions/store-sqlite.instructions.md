@@ -1,77 +1,73 @@
 ---
-description: "Use when writing SQL, schema changes, migrations, upserts or queries in the codeql-abom store package. Covers SQLite NULL semantics in UNIQUE constraints, why LastInsertId is unsafe after ON CONFLICT, the single-writer constraint, and additive column migrations."
+description: "Use when writing SQL, schema changes, migrations, upserts or queries in the codeql-abom store package. Covers LastInsertId after ON CONFLICT, NULL semantics in UNIQUE constraints, absent versus zero, empty-set aggregates, scalar subqueries under multiplicity, empty join keys, additive migrations, index placement and the single-writer rule."
 applyTo: "internal/store/**/*.go"
 ---
 
 # Store and SQLite rules
 
 Only this package writes SQL. Derivation lives in `internal/graph`, delivery in `internal/serve`.
+`serve` marshals these structs directly, so `json:` tags are the API contract and are camelCase.
 
 ## Never use LastInsertId after an upsert
 
 `ON CONFLICT DO UPDATE` reports one row affected even when it updated, and leaves `LastInsertId`
-pointing at an unrelated row. This silently corrupted node identity once. Always read the id
-back:
-
-```go
-if _, err := insert.Exec(...); err != nil { return err }
-var id int64
-if err := lookup.QueryRow(n.Key).Scan(&id); err != nil {  // never LastInsertId()
-    return fmt.Errorf("resolving node %q: %w", n.Key, err)
-}
-```
+on an unrelated row. This corrupted node identity once. Read the id back with a lookup.
 
 ## NULLs are distinct in a UNIQUE constraint
 
-SQLite treats every NULL as different, so a nullable column in a UNIQUE constraint lets
-duplicates through. Use `NOT NULL DEFAULT ''` for any column participating in one.
-
-```sql
--- Empty rather than null: SQLite treats nulls as distinct in a UNIQUE constraint, so a
--- nullable column here would let duplicates through.
-vulnerable_version_range TEXT NOT NULL DEFAULT '',
-UNIQUE(advisory_row_id, package_name, vulnerable_version_range)
-```
-
-Elsewhere the opposite applies: `nullable()` stores empty strings as NULL so "absent" and
-"empty" stay distinguishable.
+A nullable column in a UNIQUE constraint lets duplicates through. Use `NOT NULL DEFAULT ''` for
+any column in one. Elsewhere `nullable()` stores `""` as NULL, keeping absent and empty apart.
 
 ## Distinguish absent from zero
 
-A null score is not a score of zero. `cvss_v3_score` of `0.0` means *unscored* while severity is
-still `high`, so rendering "CVSS 0.0" is a lie. Carry a `Has…` flag alongside the value.
+A null score is not zero: `cvss_v3_score` of `0.0` means *unscored*. Carry a `Has…` flag.
+`GROUP_CONCAT` skips nulls, which is how *not recorded* stays distinct from *none*.
+
+## Aggregates over an empty set are NULL
+
+`COUNT` returns 0; `SUM`, `MIN` and `MAX` return NULL. Use `COALESCE(SUM(...), 0)`.
+
+## A scalar subquery returns an arbitrary row, not an error
+
+`(SELECT status ... WHERE node_key = ?)` was correct until the queue was re-keyed
+`(node_key, ref)`. Aggregate instead. When a key gains a column, every `WHERE <old key> = ?` is a
+candidate defect — make the tuple the only way to address a row so the compiler finds the rest.
+
+## A join on a key that can be empty joins everything
+
+Most queue rows have no `resolved_sha` and many runs have no `db_commit`:
+
+```sql
+AND COALESCE(abom_frontier.resolved_sha, '') <> ''
+AND COALESCE(r.db_commit, '') <> ''
+```
 
 ## Schema changes must be additive
 
-`Migrate()` applies `addedColumns` via `PRAGMA table_info` + `ALTER TABLE ADD COLUMN`. A
-expansion runs for weeks and a graph takes hours to rebuild, so gaining a column must never
-require a rebuild. Add to `addedColumns` as well as the `CREATE TABLE`, and verify in place:
+`Migrate()` applies `addedColumns` via `PRAGMA table_info` + `ALTER TABLE ADD COLUMN`. An
+expansion runs for weeks, so a new column must never require a rebuild. Add it to `addedColumns`
+as well as the `CREATE TABLE`.
+
+## Indexes after bulk load, except the ones a page reads
+
+`CreateIndexes()` runs after loading, and
+`TestIndexesAreNotCreatedByMigrateOnTheTablesItLoadsInBulk` guards the tables that rationale
+protects — not indexes as such. `serve` never calls it, so an index a page needs on a small table
+belongs in `Migrate()`. One missing index cost 198 ms a page against 9.7 ms.
 
 ```bash
-sqlite3 abom.db "PRAGMA table_info(abom_frontier);"   # before and after
+sqlite3 abom.db "EXPLAIN QUERY PLAN <the query>;"   # SCAN on the inner side is the warning
 ```
-
-## Indexes are created after bulk load
-
-`Migrate()` creates tables only; `CreateIndexes()` runs once at the end. Maintaining indexes
-during a multi-million-row insert costs far more than building them once.
-`TestIndexesAreNotCreatedByMigrate` guards this.
 
 ## One writer
 
-The pool opens with `MaxOpenConns(1)`. Anything parallel belongs in `Prepare`; persistence is
-serialized through `Consume`. Do not add a second writer or a nested transaction.
+The pool opens with `MaxOpenConns(1)`. Parallelism belongs in `Prepare`; persistence is
+serialized through `Consume`. No second writer, no nested transaction.
 
 ## Reads for the interface
 
-Query surface functions are consumed by `internal/serve` and must:
+Scoped, not whole-graph. Return evidence rather than judgement: observed refs verbatim,
+`Truncated` when a budget bit. Slices must be `[]T{}` — Go nil marshals to `null` and breaks the
+C# client. Every `Next()` loop needs `rows.Err()`, and `errors.Is(err, sql.ErrNoRows)`.
 
-- carry camelCase `json:` tags, matching the sibling `mrva-reports` convention
-- be scoped, not whole-graph — `Subgraph` walks bounded by hops and node count so cost follows
-  the scope rather than the corpus
-- return evidence rather than judgement: observed refs verbatim, `Truncated` when a budget bit
-
-## Check `rows.Err()`
-
-Every `Next()` loop needs a final `rows.Err()`, and `errors.Is(err, sql.ErrNoRows)` rather than
-`==`. `go vet` catches the first; nothing catches the second.
+Carrying a new field all the way to a screen: use the `surface-a-store-fact` skill.

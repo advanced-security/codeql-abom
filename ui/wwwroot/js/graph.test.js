@@ -5,7 +5,7 @@ import {
     seed, repoOf, orgOf, edgeClass, groupOf, anchorKey, keyOf, faded,
     nodeRadius, isSelected, particleSpeed, needsRender, collapseGroups, ungroupedName,
     mergeInto, placeArrivals, neighborhood, discoveryColor, escapesGraph,
-    simulationSet, visibleSignature, restLevel, REST_DELAY, REST_FPS,
+    simulationSet, visibleSignature, restLevel, REST_DELAY, REST_FPS, fullyAnalyzed, labelFor,
 } from './graph.js';
 
 // These are the pure decisions behind the whole view: which edges are drawn, how big a node is,
@@ -237,6 +237,29 @@ test('a group of fully measured members reports its reach as known', () => {
     assert.equal(group.reachKnown, true, 'a measured zero is a measurement');
 });
 
+// The queue analyzes a reference; the graph draws a name. `analyzed` is true as soon as ONE
+// reference has results, so the "not analyzed" filter excluded 467 partially covered actions on
+// the real corpus — including actions/checkout at 1 of 27. The filter whose entire job is finding
+// unanalyzed work was hiding the largest gaps in it.
+test('a dependency is only analyzed when every reference in use has been', () => {
+    assert.equal(fullyAnalyzed({ analyzed: true, refsInUse: 27, refsAnalyzed: 1 }), false,
+        'one reference of twenty-seven is not coverage');
+    assert.equal(fullyAnalyzed({ analyzed: true, refsInUse: 27, refsAnalyzed: 27 }), true);
+});
+
+// Nothing has looked at it, so it cannot be complete. Zero of zero is the absent measurement this
+// repository refuses to draw as a zero.
+test('a dependency nothing has queued is not reported as fully analyzed', () => {
+    assert.equal(fullyAnalyzed({ analyzed: false, refsInUse: 0, refsAnalyzed: 0 }), false);
+});
+
+// A node from a server too old to send the counts still has to be classifiable, and its one
+// boolean is the best answer available.
+test('a node without reference counts falls back to the boolean', () => {
+    assert.equal(fullyAnalyzed({ analyzed: true }), true);
+    assert.equal(fullyAnalyzed({ analyzed: false }), false);
+});
+
 // Coverage is a first-class claim, and a fold is exactly where it gets lost: every group was
 // built `analyzed: true`, so a group of repositories nothing had looked inside was drawn as
 // though all of it had been.
@@ -252,8 +275,40 @@ test('a group holding an unanalyzed member is not reported as analyzed', () => {
         'a group is only analyzed when everything folded into it is');
 });
 
-// The whole reason the default view rendered at 3.4 frames per second: hidden nodes stayed in
-// the simulation and `nodeVisibility` only stopped them being drawn, so d3-force integrated all
+// A fold is where coverage gets lost twice: once in the boolean, once in the counts. A group of
+// members each partially analyzed is partially analyzed, and the filter has to reach it.
+test('a group folds its reference coverage rather than only its boolean', () => {
+    const nodes = [
+        { key: 'a/one', kind: 'action', repository: '', owner: 'a', analyzed: true, refsInUse: 20, refsAnalyzed: 1 },
+        { key: 'a/two', kind: 'action', repository: '', owner: 'a', analyzed: true, refsInUse: 5, refsAnalyzed: 5 },
+    ];
+
+    const [group] = collapseGroups({ groupBy: 'owner' }, nodes, []).nodes;
+
+    assert.equal(group.refsInUse, 25);
+    assert.equal(group.refsAnalyzed, 6);
+    assert.equal(fullyAnalyzed(group), false,
+        'a group is only covered when every reference folded into it is');
+});
+
+// Two labelling systems ran at once: force-graph's HTML tooltip and this view's canvas labels.
+// They drew the same node twice, and once anything was selected the tooltip stayed on whichever
+// node it last saw, because it knows nothing about our selection. The canvas label is the only
+// one now, so it has to carry the reach the tooltip used to add.
+test('a label names the node and its reach in one string', () => {
+    assert.equal(labelFor({ key: 'actions/checkout@v4', dependentRepos: 77 }),
+        'actions/checkout@v4 \u00b7 77 repos');
+    assert.equal(labelFor({ key: 'actions/checkout@v4', dependentRepos: 0 }),
+        'actions/checkout@v4', 'nothing depending on it is not a count worth printing');
+});
+
+// A version labels itself, because the key is already `name@ref` once the queue analyzes per
+// reference. Nothing has to re-derive the version from the node's other fields.
+test('a per-reference node labels itself with its reference', () => {
+    assert.match(labelFor({ key: 'actions/checkout@v3' }), /@v3$/);
+});
+
+// The whole reason the default view rendered at 3.4 frames per second: hidden nodes stayed in// the simulation and `nodeVisibility` only stopped them being drawn, so d3-force integrated all
 // 9,811 of them every tick. What is not on screen must not be in the simulation.
 test('the simulation is given only the nodes that are visible', () => {
     const it = {

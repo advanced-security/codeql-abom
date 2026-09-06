@@ -35,6 +35,10 @@ type GraphMetric struct {
 	Findings       int    `json:"findings"`
 	Advisories     int    `json:"advisories"`
 	Analyzed       bool   `json:"analyzed"`
+	// Coverage moves as references are analyzed, without the node itself changing, which is the
+	// same reason reach is carried here.
+	RefsInUse    int `json:"refsInUse"`
+	RefsAnalyzed int `json:"refsAnalyzed"`
 	// Discovery moves as the queue is worked, which is the whole reason a follower refreshes.
 	Discovery string `json:"discovery,omitempty"`
 }
@@ -214,7 +218,10 @@ func (s *Store) graphMetrics(display string) ([]GraphMetric, error) {
 		           AND p.package_name = n.owner || '/' || n.repo),
 		       EXISTS (SELECT 1 FROM abom_frontier f
 		                WHERE f.node_key = n.node_key AND f.status = 'done'),
-		       COALESCE(` + frontierState + `, '')
+		       COALESCE(` + frontierState + `, ''),
+		       (SELECT COUNT(*) FROM abom_frontier f WHERE f.node_key = n.node_key),
+		       (SELECT COUNT(*) FROM abom_frontier f
+		         WHERE f.node_key = n.node_key AND f.status = 'done')
 		FROM abom_node n
 		LEFT JOIN abom_blast_radius b ON b.node_row_id = n.row_id
 		WHERE n.row_id IN (SELECT shown FROM disp)`)
@@ -227,7 +234,7 @@ func (s *Store) graphMetrics(display string) ([]GraphMetric, error) {
 	for rows.Next() {
 		var m GraphMetric
 		if err := rows.Scan(&m.Key, &m.DependentRepos, &m.ReachKnown, &m.Findings,
-			&m.Advisories, &m.Analyzed, &m.Discovery); err != nil {
+			&m.Advisories, &m.Analyzed, &m.Discovery, &m.RefsInUse, &m.RefsAnalyzed); err != nil {
 			return nil, fmt.Errorf("scanning graph metric: %w", err)
 		}
 		out = append(out, m)

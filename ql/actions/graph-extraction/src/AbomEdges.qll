@@ -8,6 +8,7 @@
 
 import actions
 private import codeql.actions.ast.internal.Ast as AstInternal
+private import codeql.actions.ast.internal.Yaml as InternalYaml
 
 /** Gets the `id:` of `step`, or the empty string when the step declares no id. */
 private string stepIdOrEmpty(Step step) {
@@ -82,5 +83,46 @@ predicate abomEdge(
     srcStepIndex = -1 and
     srcStepId = "" and
     usesRaw = usesNode.getValue()
+  )
+}
+
+/**
+ * Gets the `needs:` entry in `job` that names `needed`.
+ *
+ * The individual entry carries the location rather than the job, because `needs: [a, b]` is two
+ * edges out of one job and edge identity is file plus line plus column — one location for both
+ * would silently collapse them to a single row.
+ */
+private InternalYaml::YamlScalar neededJobRef(Job job, Job needed) {
+  needed = job.getANeededJob() and
+  exists(InternalYaml::YamlNode needs |
+    needs = job.(AstInternal::JobImpl).getNode().(InternalYaml::YamlMapping).lookup("needs") and
+    (result = needs or result = needs.getAChildNode()) and
+    result.getValue() = needed.getId()
+  )
+}
+
+/**
+ * Holds if `job` must run after `needed`, per its `needs:` declaration.
+ *
+ * This is the only ordering GitHub Actions guarantees between jobs: everything else in a
+ * workflow file runs concurrently, so document order says nothing.
+ */
+predicate abomNeedsEdge(
+  string edgeKind, string srcKind, string srcPath, string srcJobId, int srcStepIndex,
+  string srcStepId, string usesRaw, string pinComment, int startLine, int startColumn,
+  int endLine, int endColumn
+) {
+  exists(Job job, Job needed, InternalYaml::YamlScalar ref |
+    ref = neededJobRef(job, needed) and
+    edgeKind = "job-needs-job" and
+    srcKind = "workflow" and
+    srcPath = job.getLocation().getFile().getRelativePath() and
+    srcJobId = job.getId() and
+    srcStepIndex = -1 and
+    srcStepId = "" and
+    usesRaw = needed.getId() and
+    pinComment = "" and
+    ref.getLocation().hasLocationInfo(_, startLine, startColumn, endLine, endColumn)
   )
 }

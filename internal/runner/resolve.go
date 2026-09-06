@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -69,7 +70,25 @@ func (r *Runner) ResolveMetadata(ctx context.Context, queryPath string) (Metadat
 
 // output runs the CLI and returns stdout, folding stderr into the error so a failure explains
 // itself rather than surfacing a bare exit status.
+//
+// The long-lived server answers first when there is one. Anything it cannot answer is re-run as
+// its own process: on that protocol a rejected command and a dead JVM are indistinguishable, and
+// only the process form can say which it was. Re-running is safe because every command routed
+// this way is read-only.
 func (r *Runner) output(ctx context.Context, args ...string) ([]byte, error) {
+	if r.Server != nil {
+		out, err := r.Server.Run(ctx, args...)
+		if err == nil {
+			return out, nil
+		}
+		if !errors.Is(err, ErrServerUnavailable) {
+			return nil, err
+		}
+	}
+	return r.freshOutput(ctx, args...)
+}
+
+func (r *Runner) freshOutput(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, r.codeql(), args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

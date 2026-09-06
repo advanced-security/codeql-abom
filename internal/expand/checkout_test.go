@@ -53,7 +53,7 @@ func fetch(t *testing.T, origin string) Tree {
 	t.Helper()
 	c := newCheckout(t, origin)
 	tree, err := c.Fetch(context.Background(), filepath.Join(t.TempDir(), "work"),
-		"", filepath.Base(origin))
+		"", filepath.Base(origin), "")
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestFetchReportsNothingToAnalyze(t *testing.T) {
 
 	c := newCheckout(t, origin)
 	_, err := c.Fetch(context.Background(), filepath.Join(t.TempDir(), "work"),
-		"", filepath.Base(origin))
+		"", filepath.Base(origin), "")
 	if !IsUnavailable(err) {
 		t.Fatalf("err = %v, want an unavailable error", err)
 	}
@@ -154,7 +154,7 @@ func TestFetchReportsMissingRepository(t *testing.T) {
 	c := &Checkout{BaseURL: t.TempDir()}
 
 	_, err := c.Fetch(context.Background(), filepath.Join(t.TempDir(), "work"),
-		"", "does-not-exist")
+		"", "does-not-exist", "")
 	if !IsUnavailable(err) {
 		t.Fatalf("err = %v, want an unavailable error", err)
 	}
@@ -165,11 +165,11 @@ func TestFetchIsRepeatableIntoTheSameWorkDir(t *testing.T) {
 	c := newCheckout(t, origin)
 	dest := filepath.Join(t.TempDir(), "work")
 
-	first, err := c.Fetch(context.Background(), dest, "", filepath.Base(origin))
+	first, err := c.Fetch(context.Background(), dest, "", filepath.Base(origin), "")
 	if err != nil {
 		t.Fatalf("first Fetch: %v", err)
 	}
-	second, err := c.Fetch(context.Background(), dest, "", filepath.Base(origin))
+	second, err := c.Fetch(context.Background(), dest, "", filepath.Base(origin), "")
 	if err != nil {
 		t.Fatalf("second Fetch: %v", err)
 	}

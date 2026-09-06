@@ -1,30 +1,45 @@
 # What to build next
 
 An index over `plans/**`. Each plan holds the reasoning; this file holds the order and the
-one-line reason for it. Push and pop freely. Re-rank as needed — the ranking is itself a plan,
-and plans are always subject to change over time.
+one-line reason for it.
 
-Keep it terse. If an entry needs a paragraph, the paragraph belongs in its plan.
+- Pop implemented plans to `Implemented` section.
+- Re-rank `Ranked next` as needed, and as we learn from each implemented plan.
+- Keep it terse. If an entry needs a paragraph, the paragraph belongs in its plan.
+- **One entry is one piece of work, never a phase of one.** A plan with a cheap half and an
+  expensive half is sequencing, and sequencing belongs inside the plan. Splitting it here spends
+  two slots on one plan and pushes everything below it down twice, which is how a plan that was
+  nearly next ends up mid-table without anyone deciding it should.
+
+The ranking is itself a plan, and plans are always subject to change over time.
 
 ## Ranked next
 
-1. **[Select and pin](db/analysis-ledger.md)** — selection predicates as filters and controls, so
-   "re-analyze what has not run since pack X vY" is a query rather than a whole-tier requeue;
-   `pinned_at` ahead of `score` in `Claim`.
-2. **[Warm JVMs via `codeql execute`](db/analysis-ledger.md)** — `cli-server` for the ~38
-   `resolve metadata` calls a round plus every decode, `query-server2` for the BQRS lane. Each
-   currently pays 2-5s of JVM start.
-3. **[Theme and layout audit](ui/theme.md)** — the palette is now checked as arithmetic; the
-   MudBlazor semantic colours and every layout question still are not, and layout is where the
-   known defects are.
-4. **[CFG ingestion](api/reachability.md)** — turns "this step is reached" into "and here is what
-   stands between the entry point and it". `actions/tools/print-cfg` is usable now.
-5. **[Give `internal/archive` a command or delete it](api/query-suites.md)** — a working, tested
+1. **[Bring the selection controls to the interface](db/analysis-ledger.md)** — requeue by
+   staleness and by repository exist and are command-line only; the Discovery page still offers
+   whole-tier requeue and nothing else (verified: it calls only `RequeueTierAsync`). A skip-heavy
+   re-analysis also shows a counter that does not move, which the cycle log says and the page
+   does not. **Ranked first for a reason that has since weakened**: suite provenance was going to
+   need a way to select the *not recorded* rows, but a running crawl took them from 50 to 105 in
+   an hour without any control at all. What stands is operator control for the other reasons —
+   targeted re-analysis and a progress counter that tells the truth.
+2. **[Warm the BQRS lane via `query-server2`](db/analysis-ledger.md)** — the small commands now
+   run through a persistent JVM; `query run` still starts one per query per repository. Worth
+   about 3 x 0.7 s a repository, against a much larger protocol than the cli-server's. Measure
+   before committing.
+3. **[Give `internal/archive` a command or delete it](api/query-suites.md)** — a working, tested
    pipeline no binary reaches. It is why the findings lane looked implemented for as long as it
    did. Cheap, and it removes a standing source of the same mistake.
-6. **[Overlay databases](db/analysis-ledger.md)** — they map onto the recheck loop directly, but
+4. **[Overlay databases](db/analysis-ledger.md)** — they map onto the recheck loop directly, but
    the flags are Wizards-only. Probe and degrade. After the ledger, which decides what to run at
    all.
+5. **[List every repository using a version](ui/discovery-references.md)** — the grid previews five
+   names and says "and 213 more", which is honest and a dead end. The node page is where the full
+   list belongs. Left over from the row-names-a-version work, and genuinely separate: a different
+   page, a different query shape.
+6. **[Collapse `name@ref` back to one node](ui/explorer-references.md)** — per-reference nodes are
+   the useful default and now the only behavior. "Which actions do we use at all" is a second
+   legitimate reading, and the counts it needs already ride on every node.
 7. **[Run the CodeQL update workflow for real](ql/packs.md)** — `update-codeql.yml` and
    `bump-pack-versions.sh` are exercised locally and have never run in Actions.
 8. **[Component catalog spike](ui/testing.md)** — BlazingStory, our own, or neither. Timeboxed,
@@ -38,6 +53,187 @@ Keep it terse. If an entry needs a paragraph, the paragraph belongs in its plan.
     and versioning landed early so that publishing is never the thing blocked.
 
 ## Implemented
+
+- **A dependency row names a version, not a package** — the queue is keyed `(node_key, ref)` and
+  the grid drew bare names, so fourteen consecutive rows read `actions/checkout` and looked like
+  duplicates. They were fourteen versions. Rows now read `actions/checkout@v4`, and an empty
+  reference says **(default branch)** rather than reverting to the bare name — **1,253 of 2,352**
+  rows have one, so a blank there would have re-created the bug for half the queue. Reconciling
+  corrected the plan three times before any code changed: the C# `FrontierItem` had **no `Ref`
+  property at all**, so the Go struct and the JSON carried it and the model dropped it silently;
+  the "Analyzed commit" column already renders `ResolvedSha`, so the tag-and-resolution pairing
+  mostly existed; and `.abom-ref` already existed as a styling class. `Note` became **Used by**,
+  backed by the edges rather than the queue's `discovered_from`, which holds only the first
+  repository to reach a dependency — that single name was what the old column printed.
+  **The count is split by ownership, and the split is the whole point:** `actions/checkout@v4` is
+  named by **220 repositories, 7 of them yours**; counting them together reads as exposure the
+  operator owns, the same conflation that once inflated blast radius 202 → 209. It reuses the
+  `abom_account` predicate behind `isOwned` so ownership cannot drift from what the owned tier
+  means, and it never prints "0 yours" — with no verified account that is an unanswered question,
+  not a count of none. The corpus check then found the interface exposing real corruption: the
+  junk `/` repository appeared in **27** rows' previews, now **0** after cleanup.
+  `ui/discovery-references.md`
+- **The queue stopped settling anything, and filed the results under "/"** — found by pausing a
+  crawl and watching "Finishing 40" never finish. `byRepo` is keyed `owner/repo@ref` but `prepare`
+  stamped the prepared job with `owner/repo`, so `Consume` missed the map and Go handed it a
+  **zero-value batch**: no items to settle, and `full()` on it is `"/"`. Analysis ran, was filed
+  under a repository literally named `/` (**125 query runs, 203 edges**), and **40 rows sat
+  `running` with `attempts = 0`** while `done` froze at 1,169. It only bit once references existed,
+  because `key()` and `full()` are the same string without one — which is why the cycle before it
+  settled 20 and every cycle after settled 0. A map miss is now an error rather than a zero value.
+  Fixing it surfaced a second one: `settle` hardcoded `Resolution{Ref: "HEAD"}`, and `Mutable()`
+  decides drift by comparing that to the commit, so **every SHA-pinned row was recorded as movable
+  and would be rechecked forever**. Both were regressions from the per-reference work earlier the
+  same day; a drained queue would have looked fine. `db/analysis-identity.md`
+- **A row says what analyzed it, or says it does not know** — the Discovery page configured which
+  suites run on which tier and then listed rows with no way to tell what any of them was analyzed
+  with, so a row analyzed by the graph pack alone — no findings because **nothing looked for any**
+  — was drawn identically to a row that was searched and came back clean. The entry framed the gap
+  as "408 of 1,707 runs predate `db_commit`"; measuring from the page instead of the run table
+  found it four times worse, because carrying a commit is not carrying a pack: **1,555 of 1,707
+  runs record no pack at all**, and only **50 of 1,149** analyzed rows can name their suites. So
+  the column ships answering *not recorded* for **1,099** rows, which is the honest result — pack
+  identity began being written part-way through this corpus, cleanly (nothing before 15:50 has it,
+  everything after 20:01 does), so it fills in as re-analysis proceeds. Attribution never
+  derivation: the suites come from the run recorded against the row's commit, never the tier's
+  current binding, which would make a suite enabled this morning look retroactively applied. The
+  flagged set was checked against the same set computed independently in SQL and **matched
+  exactly, with no false positives**. Two guards are load-bearing and were tests first: without
+  the empty-string checks the join degenerates into every commitless run matching every
+  unanalyzed row, so a *queued* dependency would have reported suites it never saw. And the read
+  path had no index — `SCAN r`, twice per row, **198 ms against 9.7 ms** — which meant narrowing
+  `TestIndexesAreNotCreatedByMigrate` from a categorical ban to the bulk-loaded tables its own
+  reasoning names, because a read-only server never calls `CreateIndexes` and would never have
+  had it. **Re-measured an hour later mid-crawl, with no code changed: 105 rows now name their
+  suites**, so the gap closes by itself and needs no backfill. `db/analysis-identity.md`
+- **The Explorer draws a version, not a name** — the queue analyzes per `name@ref` but the graph
+  still drew one node per dependency, so the coverage the previous entry exposed had nowhere to
+  land: a node was one dot whatever it was used at. Nodes now split on the reference the queue
+  actually fetches, each carrying its own state, depth, score and dependents: **9,811 → 12,073
+  nodes, 2,650 of them per-reference**. The predicate is what took the work: splitting every
+  external action stranded a reusable workflow inside a seed repository, which is analyzed with
+  its repository rather than per reference, and the exposure scope caught it as an edge whose end
+  had left the graph. Splitting only what the *queue* fetches per reference fixed all four
+  failures at once. The corpus then disagreed with the unit tests twice more — **700 dangling
+  edges**, all composite actions we had in fact read but whose analyzed version no edge
+  referenced, then **16** with outgoing edges and no analyzed version at all. A version we
+  analyzed is a version that exists, so the first are emitted; the second cannot be placed
+  without inventing one, so those stay whole. **0 dangling edges** at the end. The label bug
+  reported alongside it was not a collision: force-graph's built-in tooltip and the view's own
+  canvas labels were both drawing every node, at different positions with different text, and the
+  tooltip kept naming the last node it saw once anything was selected because it knows nothing
+  about our selection. One labelling system now, and it carries the reach the tooltip used to
+  add. `ui/explorer-references.md`
+- **The Explorer counts references, not just names** — the queue analyzes per reference while the
+  graph draws one node per dependency, so `analyzed` was true as soon as *one* reference had
+  results. On the real corpus that meant `actions/checkout` reported analyzed at **1 of 27**, and
+  the "not analyzed" filter — `if (f.unanalyzedOnly && n.analyzed) continue;` — excluded every
+  partially covered action. Nodes now carry `refsInUse`/`refsAnalyzed` through the full graph, the
+  delta metrics and the node detail, and the filter asks `fullyAnalyzed()`: **"not analyzed" goes
+  from 8,662 to 9,129 nodes, the 467 difference being exactly the partially covered set** counted
+  independently in SQL before any code changed. The node page states "1 of 27 references analyzed"
+  where it used to say "yes". Two places would have dropped the counts without failing anything:
+  `mergeInto` overwrites metric fields when a delta arrives, and `collapseGroups` folds nodes into
+  groups — a group summing nothing would have re-hidden what the change exposes. `analyzed` itself
+  was left alone: it answers "is anything downstream known", which is a real boolean question, and
+  redefining it would have changed a field several callers already read correctly.
+  `ui/explorer-references.md`
+- **Analysis identity: the queue analyzes references, not names** — everything was analyzed at the
+  default branch (**1,213 of 1,213** rows at HEAD) while the organization runs many versions of the
+  same action, so a repository pinning `v3` was reported from a reading of `main`. The frontier is
+  re-keyed `(node_key, ref)`, checkouts fetch the reference asked for, and coverage is now
+  measurable: **3,298 `name@ref` pairs in use, 574 analyzed (17%), 30 queued, 2,668 never queued**.
+  The 574 are exactly the pairs whose `uses:` names no reference — the only ones a default-branch
+  reading legitimately covers — against an interface that said 1,149 analyzed and looked complete.
+  The rebuild is verified on the real corpus: **1,253 rows in, 1,253 out**, `done` and
+  `resolved_sha` unchanged, existing rows keeping `ref = ''` rather than an invented `HEAD`. Three
+  things would have been silently wrong: every `WHERE node_key = ?` in the queue would have
+  completed all references at once, now impossible because `frontier.Key` is the only way to
+  address a row; `groupByRepository` would have analyzed one tree and attributed it to every
+  reference; and the Explorer's per-node state came from a **scalar subquery, which returns an
+  arbitrary row rather than an error** — it now aggregates so the least settled reference wins, a
+  node with one queued reference being not analyzed rather than analyzed. Also carries
+  `analyzed_at` to the grid (**1,149 of 1,149** populated, reaching no Go struct), tier size beside
+  tier analyzed (headers said 9 / 458 / 682; the tiers **hold 16 / 518 / 719**), and replaces the
+  `Depth` column with the tier — owned dependencies sit at depths 1, 2 and 3, so **7 of 16** the
+  operator can change themselves were drawn as somebody else's intermediary. `db/analysis-identity.md`
+- **Job ordering from `needs:`** — the graph had only *uses* edges and no *after* edge at all, so
+  "what stands between the entry point and this step" had no answer. `AbomEdges.ql` now emits
+  `job-needs-job`: **331 edges across 54 re-analyzed repositories**, 35,457 → 35,803 edges and
+  54,509 → 54,527 nodes, the new nodes being jobs no `uses:` ever names. **The aggregates held
+  still, which is the result**: blast radius rows 2,194 → 2,194, `SUM(dependent_repos)` 3,127 →
+  3,127, runtime/build-time 578/675 unchanged, and no job anywhere holds a blast radius. The
+  proof is the one number that moved: `SUM(direct_dependents)` equalled the edge count exactly
+  before, and afterwards reads **35,472 = 35,803 minus exactly the 331 ordering edges**. Two
+  things nearly went wrong. Blast radius read every edge unfiltered, so ordering would have
+  counted as use — both guard tests failed before the filter, which now lives in one place as
+  `store.DependencyEdgeFilter` so the aggregates cannot disagree about what a dependency is. And
+  the first corpus reading showed "unchanged" while `abom_graph_generation` sat at the old
+  watermark, which is an absent measurement rather than a zero; only the rewritten sums settled
+  it. `api/reachability.md`
+- **Theme and layout audit** — the graph palette was measured to two decimals while MudBlazor's,
+  which every chip, alert and button reads from, was not measured at all. Light `Success`
+  **3.45:1** and light `Warning` **3.58:1** against white, both under the 4.5:1 text bar, because
+  an *outlined chip draws its label in the semantic colour* — and this interface uses exactly that
+  for "build-time only" and every pinning level. Now `#2A833B` (4.76:1) and `#C25100` (4.70:1);
+  dark was 6.24–8.59:1 throughout, which is the recurring lesson that the scheme people look at is
+  the one already correct. Both constants double as light discovery states, so the change had to
+  clear the chroma and hue floors: `retrying` vs `unavailable` improves **21° → 25°** against a 20°
+  floor it had been sitting one degree above. The coverage strip's orphaned sixth item was not a
+  width problem — the items want **1,062px against 880px** at 1152, so no gap change could seat
+  six on one line — it was a *column count* problem, and `auto-fit` picks five for six items. Now
+  stated as 2, 3 or 6, the only counts that divide six: **5+1 → 6 across at 1600 (70px → 32px)**
+  and 3+3 below it, nothing clipped at any width. `ui/theme.md`
+- **An Owned tier, a hidden self-check, and a queue colour that is a colour** — `owned` sits ahead
+  of `direct` and is keyed on verified accounts rather than depth, because a dependency you own is
+  reached wherever the graph places it. On the real corpus the split moves **448 / 689 → 16 / 439
+  / 682**, summing to the 1,137 done exactly, so nothing is counted twice; migration seeded
+  `owned` with both of `direct`'s suites and left the others alone, so the first round runs what it
+  ran before. Self-check is excluded by **pack**, not by suite name — which is what the earlier
+  "filtering it out is the wrong fix" note was protecting, and the pack restructure is what made it
+  possible, since the suite now sits alone in a pack that exists only for CI. `Queued` went from a
+  **9%-saturated** slate to a real yellow with `Retrying` boldened to keep the pair apart, behind a
+  chroma floor and a hue-distance floor that the previous guard could not express: it asserted
+  "not identical to Muted", which a second grey passed. The hue floor could not be set where it was
+  first written — 25° is unsatisfiable when three of five states share a 60°-wide warm arc, so it
+  is 20°. The third tier also silently regressed the Discovery header — the box went **150 → 188px**
+  and the queue start 441 → 519 — because `flex-wrap` breaks lines from content widths *before* it
+  shrinks anything, so the sentence beside the controls could not give the width back. Fixed by
+  denying the row the ability to wrap above 1100px. `ui/tier-suites.md`, `ui/discovery-config.md`
+
+- **The skip is per lane, not per repository** — `pendingWork` asks the ledger about each lane
+  separately and `prepare` runs only what is outstanding. The deferral that preceded this was
+  justified by "the database build dominates", which measurement refuted: the build is **13%** of
+  a repository and the two lanes are **87%**. On the real corpus, editing one line of
+  `AbomEdges.qll` and re-running 10 repositories already on record produced **30 graph queries and
+  0 findings analyses** — the four analyses in that pass were all first-time repositories, checked
+  individually rather than assumed. Before, all 10 would have re-run the 35-query analyze, about
+  **118 s of ~250 s** spent on queries whose digest had not moved. `db/analysis-ledger.md`
+
+- **The small commands stopped paying for a JVM** — `runner.CLIServer` keeps one `codeql execute
+  cli-server` alive and routes `resolve metadata`, `resolve queries` and `bqrs decode` through it:
+  **0.75 s → 0.004 s** and **0.62 s → 0.004 s** per call, about 190x. On a 15-repository crawl that
+  is 45 decode process starts eliminated plus 38 metadata starts a round, and 60 samples during a
+  live crawl saw **zero** such subprocesses. The entry's "2-5 s of JVM start" was wrong — it is
+  about 0.7 s — but the payoff is bigger than framed, because the decode is paid per query per
+  repository. The design turns on something nothing predicted: **a command the CLI rejects kills
+  the server**, empty answer and exit 2, so a bad command and a dead JVM are indistinguishable
+  on this protocol. Every failure therefore drops the process and re-runs as its own, which is
+  safe only because everything routed there is read-only. `query-server2` is split out and not
+  done. `db/analysis-ledger.md`
+
+- **Re-processing is proportional to what moved** — `RequeueStale` puts back only the items whose
+  repository was not analyzed at the current identity, `RequeueRepository` aims at one repository,
+  and `expedited_at` is honored ahead of `score` in `Claim` and in the queue view. Both reachable
+  as `expand-all --requeue-stale` and `--requeue owner/name`. On the real corpus: a whole tier is
+  **1,117** items, `--requeue-stale` is **1,110**, and after editing one `.qll` it is **1,117**
+  again — the pack digest moving is what makes the previously current repositories stale. A
+  repository scoring **0.0** was analyzed first, ahead of **93** pending items topping out at
+  **2.0**. The identity comes from a fresh suite resolution rather than the store, because after a
+  CodeQL upgrade the recorded version is the old one and selecting against it would call the
+  corpus current exactly when all of it went stale. Not named `pinned_at` as the plan asked: a
+  pinned reference already means a SHA-pinned uses: clause everywhere else here.
+  `db/analysis-ledger.md`
 
 - **Every finding says what it is, independently of the run** — `normalize.ResultHash` over the
   rule, the repository-relative path and CodeQL's `primaryLocationLineHash`, stored on
@@ -153,7 +349,10 @@ Keep it terse. If an entry needs a paragraph, the paragraph belongs in its plan.
   anything already bound stays offered even when it is not on disk, because a binding may name a
   pack's suite. The corpus check argued *against* the obvious tidy-up: filtering out
   `abom-selfcheck.qls` by name would reintroduce exactly the release-coupled hard-coding the
-  control exists to remove. `ui/tier-suites.md`
+  control exists to remove. **Since superseded, and by the ground moving rather than by the
+  argument losing:** the pack restructure put that suite alone in a pack that exists only for CI,
+  so the exclusion became a property of one pack instead of a list of suite names, and a new suite
+  in an analysis pack still needs no release. `ui/tier-suites.md`
 - **Tier → suite binding as configuration** — `abom_tier_suite`, seeded at migration and
   rewritable at run time; a batch is planned by the shallowest depth it holds and a shared suite
   resolves once per round. On the reference corpus: direct binds graph + findings, transitive
@@ -225,6 +424,14 @@ Keep it terse. If an entry needs a paragraph, the paragraph belongs in its plan.
 
 ## Not doing, and why
 
+- **Ingesting the actions CFG as control flow.** `codeql/actions-all@0.6.0` builds it from
+  `StandardPreOrderTree` over the AST and **never consults `needs:`** — `grep needs Cfg.qll`
+  returns nothing — so sibling jobs are chained in document order. For two independent jobs that
+  asserts a sequence that does not exist, since Actions runs jobs in parallel. Its nodes are also
+  expressions rather than steps, with edges jumping backwards into `env:` declarations. Measured
+  on a real database: an entire workflow is the chain `enter → name → Job → Uses Step → Uses Step
+  → exit`. The truthful parts of "what stands between" are `step_index` and conditions, which are
+  already held, plus `needs:`, which the CFG cannot supply. See `api/reachability.md`.
 - **Evaluating `if:` conditions.** Whether `github.ref == 'refs/heads/main'` holds on a given run
   is not something static analysis settles. Report the expression; let a reader judge.
 - **Deriving vulnerability from an advisory.** The observed reference may sit outside the

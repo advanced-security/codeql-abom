@@ -1,6 +1,7 @@
 # Step-level reachability
 
-**Status:** exact, rendered, and condition-aware. CFG ingestion pending.
+**Status:** exact, rendered, condition-aware, and ordered. Job ordering from `needs:` is ingested;
+the CFG approach that preceded it is refused, with evidence, below.
 
 ## Why this exists
 
@@ -73,13 +74,76 @@ question and would need its own endpoint.
 
 ## Pending
 
-1. **CFG ingestion.** `actions/tools/print-cfg` is now usable (see below) and gives
-   intra-workflow control flow. That is what turns "this step is reached" into "this step is
-   reached, and here is what stands between the entry point and it".
-2. **`StreamResultSet(name)`** in `internal/bqrs` for `nodes`/`edges`.
-3. **Tier → suite binding**, so the graph suite is what a crawl runs by default rather than
-   something an operator has to know to pass. See `plans/api/query-suites.md`.
-4. **All-routes reach**, for guards that only exist on a longer path than the shortest.
+1. **`StreamResultSet(name)`** in `internal/bqrs` for `nodes`/`edges`.
+2. **All-routes reach**, for guards that only exist on a longer path than the shortest.
+3. **Nothing reads the ordering yet.** `job-needs-job` is recorded and deliberately excluded from
+   every dependency aggregate; no endpoint or view presents it. Ingesting it first is the right
+   order — the edges accumulate as repositories are re-analyzed — but until something renders it,
+   the answer to "what stands between the entry point and this step" is in the database and not
+   on screen.
+
+## What the ordering measured
+
+On 54 re-analyzed repositories: **331 `job-needs-job` edges**, taking the corpus from 35,457 to
+35,803 edges and 54,509 to 54,527 nodes — the extra nodes are jobs that no `uses:` ever names,
+which exist only because something needs them.
+
+**The aggregates did not move, and that is the whole point.** `needs:` is ordering, not use, so a
+traversal that counted it would inflate reach with jobs from the reader's own workflows:
+
+| | before | after |
+| --- | --- | --- |
+| blast radius rows | 2,194 | 2,194 |
+| `SUM(dependent_repos)` | 3,127 | 3,127 |
+| `SUM(direct_dependents)` | 35,457 | **35,472** |
+| jobs holding a blast radius | 0 | 0 |
+| runtime / build-time | 578 / 675 | 578 / 675 |
+
+The one number that moved is the proof. `SUM(direct_dependents)` equalled the edge count exactly
+before, because every edge contributes one direct dependent. Afterwards the corpus holds 35,803
+edges and the sum is 35,472 — **35,803 minus exactly the 331 ordering edges**, with the +15
+accounted for by genuinely new `step-uses-action` rows the re-analysis picked up.
+
+**"Unchanged" nearly went in the record as a result when it was an absent measurement.** The
+first reading showed blast radius identical and was about to be reported as the filter working —
+but `abom_graph_generation` was still at generation 99 with the old edge watermark, which is the
+repository's own rule that a measurement nobody took is not a measurement of zero. What settled
+it was that the rows had in fact been rewritten, visible only in the sum.
+
+## Why not the CFG
+
+This plan carried "CFG ingestion" as its top pending item for a long time on the strength of
+`actions/tools/print-cfg` becoming usable. Reconciling it against the library and a real database
+killed it, and the reasons are worth keeping so it is not proposed again.
+
+**It is not ABOM's query.** `actions/tools/print-cfg` lives in `codeql-development-mcp-server`,
+needs the `selectedSourceFiles` extensible predicate, an extension pack marked `library: true`,
+and `--additional-packs` with `--model-packs`, and it runs one file at a time. Nothing about it
+is reachable from a crawl as it stands.
+
+**It is an AST walk, not control flow.** `codeql/actions-all@0.6.0` builds the graph from
+`StandardPreOrderTree` over AST children, with scopes limited to `Workflow` and `CompositeAction`.
+On a real workflow the entire graph is a chain:
+
+```text
+enter → name: 'ShellCheck' → Job: shellcheck → Uses Step → Uses Step → exit
+```
+
+**It never consults `needs:`.** `grep needs Cfg.qll` returns nothing; jobs are chained by
+`getAJob()` in document order. Where the chain happens to agree with the dependency graph it is a
+coincidence of file layout — in `record.yml` and `test.yml` the chained pair *does* declare
+`needs:`, and the CFG would have chained them identically had it not. **For two independent jobs
+it therefore asserts a sequence that does not exist**, because Actions runs jobs in parallel
+unless `needs:` says otherwise. Ingesting that as "what stands between" would be this tool
+inventing an ordering, which is the same line the condition and advisory rules already draw.
+
+**Its nodes are expressions, not steps.** The graph includes `github.repository`,
+`secrets.GITHUB_TOKEN`, `env.TAG_NAME` and raw `run:` script bodies, with edges that jump
+backwards to `env:` declarations — `Uses Step` at line 23 to an expression at line 12. Useful for
+taint analysis, which is what it is for; not a route through a workflow.
+
+So the truthful parts of "what stands between" are already held (`step_index`, conditions) or are
+`needs:`, which the CFG cannot supply.
 
 ## The line that must not be crossed
 

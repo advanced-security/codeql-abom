@@ -221,6 +221,10 @@ export function mergeInto(all, delta) {
         n.findings = m.findings;
         n.advisories = m.advisories;
         n.analyzed = m.analyzed;
+        // Coverage moves for the same reason reach does: a reference analyzed since the last
+        // delta changes the ratio without changing the node.
+        if (m.refsInUse !== undefined) n.refsInUse = m.refsInUse;
+        if (m.refsAnalyzed !== undefined) n.refsAnalyzed = m.refsAnalyzed;
     }
 
     placeArrivals(all, arrived);
@@ -371,6 +375,20 @@ export function neighborhood(it, key, hops, direction) {
  * then applied to the result. Walking only over already-filtered nodes would cut the path to
  * anything interesting and silently under-report reach.
  */
+/**
+ * Whether every reference of a dependency has been analyzed.
+ *
+ * `analyzed` is true as soon as one reference has results, which is the right answer to "is
+ * anything downstream of this known" and the wrong one to "has this been covered". The queue
+ * analyzes a reference and the graph draws a name, so the counts are what tell 1 of 27 from 27
+ * of 27. Zero references is nothing looked at, not everything covered.
+ */
+export function fullyAnalyzed(n) {
+    if (n.refsInUse > 0) return (n.refsAnalyzed || 0) >= n.refsInUse;
+    if (n.refsInUse === 0 && n.refsAnalyzed !== undefined) return false;
+    return !!n.analyzed;
+}
+
 export function applyFilters(elementId, spec) {
     const it = instances.get(elementId);
     if (!it || !it.all) return { nodes: 0, edges: 0, hidden: 0, total: 0 };
@@ -400,7 +418,7 @@ export function applyFilters(elementId, spec) {
         if (search && !n.key.toLowerCase().includes(search)) continue;
         if (f.hasFindings && !n.findings) continue;
         if (f.hasAdvisory && !n.advisories) continue;
-        if (f.unanalyzedOnly && n.analyzed) continue;
+        if (f.unanalyzedOnly && fullyAnalyzed(n)) continue;
         if (f.minReach && (n.dependentRepos || 0) < f.minReach) continue;
         if (rules.size && !(n.rules || []).some(r => rules.has(r))) continue;
         if (f.refStyle && f.refStyle !== 'any' && !n.refStyles.has(f.refStyle)) continue;
@@ -656,7 +674,11 @@ export function create(elementId, use3d, dotNetRef) {
         .height(Math.max(1, Math.round(box.height)))
         .numDimensions(use3d ? 3 : 2)
         .nodeId('key')
-        .nodeLabel(n => `${n.key}\n${n.kind}${n.dependentRepos ? ` · ${n.dependentRepos} repos` : ''}`)
+        // Disabled deliberately: force-graph's tooltip is an HTML element positioned from its own
+        // hover events, and this view already draws labels on the canvas for hover AND selection.
+        // Running both put two labels for one node on screen, and the tooltip lingered on the
+        // last node it saw once a selection existed — it has no notion of ours.
+        .nodeLabel(() => '')
         .nodeVal(nodeRadius)
         // Four segments is plenty for a sphere a few pixels across, and at thousands of nodes
         // triangle count is what decides whether the view stays interactive.
@@ -783,6 +805,18 @@ export function create(elementId, use3d, dotNetRef) {
  * sprite per node would put thousands of extra objects into a scene that has to stay
  * interactive.
  */
+/**
+ * The text on a node's label.
+ *
+ * The key already carries `name@ref` where a dependency is analyzed per reference, so a version
+ * names itself. Reach is appended because it was the one thing the tooltip said that the label
+ * did not, and losing it when the tooltip went would have been a regression.
+ */
+export function labelFor(n) {
+    const key = n.key.length > 60 ? n.key.slice(0, 59) + '\u2026' : n.key;
+    return n.dependentRepos ? `${key} \u00b7 ${n.dependentRepos} repos` : key;
+}
+
 function drawLabels(it) {
     if (!it.running) return;
     it.drawing = true;
@@ -850,7 +884,7 @@ function drawLabels(it) {
         if (!pos) continue;
 
         const picked = isSelected(it.selected, n.key);
-        const label = n.key.length > 60 ? n.key.slice(0, 59) + '…' : n.key;
+        const label = labelFor(n);
         const size = 13;
         ctx.font = `${picked ? '600 ' : ''}${size}px system-ui, sans-serif`;
 

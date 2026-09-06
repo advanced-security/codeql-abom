@@ -35,3 +35,17 @@ jobs:
 
   call-local-reusable:
     uses: ./.github/workflows/reusable.yml
+
+  # A single scalar need, and a sequence of them. The sequence is the case that matters:
+  # both entries hang off one job, so they only stay distinct if each carries its own location.
+  needs-one:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo one
+
+  needs-many:
+    needs: [build, needs-one]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo many

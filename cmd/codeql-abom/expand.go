@@ -12,7 +12,6 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/frontier"
 	"github.com/advanced-security/codeql-abom/internal/graph"
 	"github.com/advanced-security/codeql-abom/internal/ingest"
-	"github.com/advanced-security/codeql-abom/internal/pipeline"
 	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/store"
 	"github.com/advanced-security/codeql-abom/internal/work"
@@ -54,6 +53,10 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	maxDepth := fs.Int("max-depth", frontier.DefaultMaxDepth, "hops beyond a seed repository to follow")
 	rateLimitPerHour := fs.Int("rate-limit-per-hour", 0, "cap checkouts per hour (0: unlimited)")
 	keepArtifacts := fs.Bool("keep-artifacts", false, "keep downloaded databases and results")
+	requeueStale := fs.Bool("requeue-stale", false,
+		"first requeue analyzed dependencies whose packs or CodeQL have since changed")
+	requeueRepo := fs.String("requeue", "",
+		"first requeue one repository (owner/name) and run it ahead of the ranking")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -101,7 +104,9 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	}
 
 	w := store.NewWriter(s, 0)
-	r := &runner.Runner{CodeQLPath: *codeqlPath, Lock: runner.SharedLock()}
+	server := &runner.CLIServer{CodeQLPath: *codeqlPath}
+	defer func() { _ = server.Close() }()
+	r := &runner.Runner{CodeQLPath: *codeqlPath, Lock: runner.SharedLock(), Server: server}
 	e := &expand.Expander{
 		Queue:    queue,
 		Store:    s,
@@ -113,9 +118,13 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		Analyzer: r,
 		// Without this, `expand --query=` cannot fall through to what the tiers are bound to.
 		Resolver: r,
-		Decode:   expand.Decoder(pipeline.DefaultDecoder(*codeqlPath)),
+		Decode:   expand.Decoder(r.Decode),
 		Pace:     pace,
 		OnEvent:  logFailures(stdout),
+	}
+
+	if err := requeueSelection(ctx, s, queue, e, *requeueStale, *requeueRepo, stdout); err != nil {
+		return fmt.Errorf("expand-all: %w", err)
 	}
 
 	opts := expand.Options{

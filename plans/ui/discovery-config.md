@@ -139,6 +139,56 @@ a truncated number on the one control whose entire job is stating the cost befor
 The container needed `flex-wrap` so the buttons move down intact rather than being cut off. Nine
 component tests were green throughout; the screenshot showed it immediately.
 
+## The third tier undid it, and `flex-wrap` was why
+
+Adding Owned put a third button in the run-control row, and the box went from 150px to **188px**,
+the table start from 441 to 519. `flex-wrap` — the fix above — was the mechanism: **flexbox breaks
+lines from each item's content width and only then shrinks what is left on a line**, so the row
+wrapped before the sentence beside it ever gave up a pixel. At 1280 CSS px the row wanted
+552 (sentence) + 65 + 107 + 113 + 136 + 40 of gaps = 1123 against 982 available.
+
+Two attempts failed and are worth recording because each looked sufficient:
+
+1. **Shortening the labels** to `owned (16)`, with the verb stated once for the row, took 73px
+   off. The button tops did not move: `[289, 289, 327]` before and after. 73 was not the 141 the
+   line was short by, and nothing part-way helps — the item either fits or it does not.
+2. **Making the sentence shrinkable** (`flex: 1 1 auto; min-width: 0`, replacing the `MudSpacer`)
+   did not help either, for the ordering reason above. It measured 669px wide, having *grown*
+   into the space the wrap freed.
+
+What worked was denying the row the ability to wrap above 1100px, so shrinking became the only
+way to resolve the overflow. That needed the `flex-wrap` utility class removed from the element,
+because **MudBlazor's utility classes are `!important`** and beat a media query — the rule was
+correct and simply never applied, which only `getComputedStyle` revealed. Below 1100px the
+sentence has no width left to give, so the row still wraps there; measured at 819 and 879 CSS px
+the buttons move down **intact**, never clipped, which is the failure mode the section above
+established as the acceptable one.
+
+Verified with `window.innerWidth` read in the same call as every measurement:
+
+| CSS px | run-control row | wrapped | box |
+| --- | --- | --- | --- |
+| 1600 | 31px | no | 150px |
+| 1440 | 31px | no | 150px |
+| 1280 | 32px | no | 151px |
+| 879 | 70px | yes, intact | — |
+
+Against the 70px row and 188px box the third tier produced, at every width from 1280 up.
+
+**Two measurement traps cost more time than the fix.** `setViewportSize({width: 1600})` yields a
+**1280 CSS px** page on this machine — `devicePixelRatio` is 1.25 — so the first round of numbers
+above was labeled 1600 and taken at 1280. And the viewport does not hold: one run read
+`innerWidth` 1280 immediately before a screenshot and 1536 immediately after, another reported
+2412. A screenshot taken at a width that was never set showed the controls simply absent from the
+frame, which reads as a far worse bug than the one being fixed. **Read `innerWidth` in the same
+`evaluate` as the geometry, and prove "one line" by comparing the items' `top` values** — three
+equal tops survive the drift where an image does not. The `rows visible` column earlier in this
+document was counted against `innerHeight` 576, not the 720 its heading implies, and is not
+comparable to anything measured since.
+
+Nine component tests were green through all of it, again. `ui-test` has no CSS engine, so the
+statement it cannot make is the one that matters here.
+
 ## Not doing
 
 - **Moving configuration to its own route.** It belongs beside the thing it configures; a reader

@@ -122,10 +122,26 @@ func TestATierBoundToNothingPlansNothing(t *testing.T) {
 // Depth is what separates a dependency a repository under review names itself from one that
 // arrives through somebody else's intermediary, and it is what chooses the pass.
 func TestABatchIsPlannedByTheShallowestDepthItHolds(t *testing.T) {
-	if got := tierOf(batch{depth: 1}); got != store.TierDirect {
+	if got := tierOf(batch{depth: 1}, nil); got != store.TierDirect {
 		t.Errorf("depth 1 is the %q tier, got %q", store.TierDirect, got)
 	}
-	if got := tierOf(batch{depth: 2}); got != store.TierTransitive {
+	if got := tierOf(batch{depth: 2}, nil); got != store.TierTransitive {
 		t.Errorf("depth 2 is the %q tier, got %q", store.TierTransitive, got)
+	}
+}
+
+// Owning a dependency is a different answer to "what can you do about this" than naming it, and
+// the graph places an owned action at whatever depth it happens to be reached.
+func TestAnOwnedBatchIsPlannedAsOwnedAtAnyDepth(t *testing.T) {
+	owned := map[string]bool{"octo-org": true}
+	for _, depth := range []int{1, 4} {
+		got := tierOf(batch{owner: "Octo-Org", depth: depth}, owned)
+		if got != store.TierOwned {
+			t.Errorf("an owned batch at depth %d is the %q tier, got %q",
+				depth, store.TierOwned, got)
+		}
+	}
+	if got := tierOf(batch{owner: "someone-else", depth: 1}, owned); got != store.TierDirect {
+		t.Errorf("an unowned batch is the %q tier, got %q", store.TierDirect, got)
 	}
 }

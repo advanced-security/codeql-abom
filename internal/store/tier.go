@@ -4,28 +4,44 @@ import "fmt"
 
 // Dependency tiers.
 //
-// Derived from depth rather than stored, because depth is already maintained as the shortest
-// route from the repositories under review and a second copy could disagree with it.
+// Direct and transitive are derived from depth rather than stored, because depth is already
+// maintained as the shortest route from the repositories under review and a second copy could
+// disagree with it.
 //
 // The distinction is about who can act: a direct dependency is named by a repository under
 // review and can be changed there, while a transitive one arrives through an intermediary that
 // may belong to someone else. Source repositories are not in this queue at all — they are what
 // the queue is measured from.
+//
+// Owned is the exception, and deliberately not a depth range: a dependency the operator owns is
+// reached at whatever distance the graph happens to place it, and owning it is a different answer
+// to "what can you do about this" than naming it. It therefore takes precedence, which also keeps
+// the three exclusive — a dependency counted twice would make the tiers exceed the queue.
 const (
+	TierOwned      = "owned"
 	TierDirect     = "direct"
 	TierTransitive = "transitive"
 )
 
-// tierWhere renders the depth range of a tier.
+// isOwned matches a queued dependency against the verified accounts. Lower-cased on both sides
+// because GitHub treats account names case-insensitively and so must membership.
+const isOwned = `EXISTS (SELECT 1 FROM abom_account a
+	                        WHERE LOWER(a.owner) = LOWER(abom_frontier.owner))`
+
+// tierOfRow is the precedence, written once. It feeds both the counts and the requeue, which
+// would otherwise be free to disagree about what a tier contains.
+const tierOfRow = `CASE WHEN ` + isOwned + ` THEN '` + TierOwned + `'
+	                    WHEN depth <= 1 THEN '` + TierDirect + `'
+	                    ELSE '` + TierTransitive + `' END`
+
+// tierWhere renders the membership of a tier.
 func tierWhere(tier string) (string, error) {
 	switch tier {
-	case TierDirect:
-		return "depth <= 1", nil
-	case TierTransitive:
-		return "depth > 1", nil
+	case TierOwned, TierDirect, TierTransitive:
+		return tierOfRow + " = '" + tier + "'", nil
 	default:
-		return "", fmt.Errorf(
-			"store: %q is not a dependency tier; expected %q or %q", tier, TierDirect, TierTransitive)
+		return "", fmt.Errorf("store: %q is not a dependency tier; expected %q, %q or %q",
+			tier, TierOwned, TierDirect, TierTransitive)
 	}
 }
 
@@ -54,24 +70,38 @@ func (s *Store) RequeueTier(tier string) (int, error) {
 	return int(n), err
 }
 
+// TierCount separates how big a tier is from how much of it is currently analyzed.
+//
+// They are different questions and were one number for too long: binding a suite to a tier costs
+// according to the tier's size, while re-analyzing one costs according to what is on record. A
+// requeue empties Analyzed and leaves Total alone, so a tier being re-analyzed must never read as
+// a tier holding nothing.
+type TierCount struct {
+	Total    int `json:"total"`
+	Analyzed int `json:"analyzed"`
+}
+
 // TierCounts reports how much work each tier holds, so the cost of re-processing one is stated
 // before it is spent rather than discovered afterwards.
-func (s *Store) TierCounts() (map[string]int, error) {
-	out := map[string]int{TierDirect: 0, TierTransitive: 0}
+func (s *Store) TierCounts() (map[string]TierCount, error) {
+	out := map[string]TierCount{
+		TierOwned: {}, TierDirect: {}, TierTransitive: {},
+	}
 	rows, err := s.db.Query(`
-		SELECT CASE WHEN depth <= 1 THEN 'direct' ELSE 'transitive' END, COUNT(*)
-		FROM abom_frontier WHERE status = 'done' GROUP BY 1`)
+		SELECT ` + tierOfRow + `, COUNT(*),
+		       SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END)
+		FROM abom_frontier GROUP BY 1`)
 	if err != nil {
 		return nil, fmt.Errorf("counting tiers: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var tier string
-		var n int
-		if err := rows.Scan(&tier, &n); err != nil {
+		var total, analyzed int
+		if err := rows.Scan(&tier, &total, &analyzed); err != nil {
 			return nil, err
 		}
-		out[tier] = n
+		out[tier] = TierCount{Total: total, Analyzed: analyzed}
 	}
 	return out, rows.Err()
 }

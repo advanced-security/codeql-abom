@@ -217,38 +217,7 @@ CREATE TABLE IF NOT EXISTS abom_account (
 --
 -- depth bounds how far exploration may run; it is deliberately NOT a priority signal, because
 -- depth is path-dependent while commonality is a property of the dependency itself.
-CREATE TABLE IF NOT EXISTS abom_frontier (
-  node_key        TEXT PRIMARY KEY,
-  owner           TEXT,
-  repo            TEXT,
-  subpath         TEXT,
-  depth           INTEGER NOT NULL,
-  status          TEXT NOT NULL,
-  attempts        INTEGER NOT NULL DEFAULT 0,
-  score           REAL NOT NULL DEFAULT 0,
-  cost_estimate   REAL NOT NULL DEFAULT 1,
-  reason          TEXT,
-  discovered_from TEXT,
-  enqueued_at     TEXT NOT NULL,
-  next_attempt_at TEXT,
-  completed_at    TEXT,
-  -- When the item was handed to a worker. A crash cannot update a row, so this is the only
-  -- evidence that distinguishes work in progress from work abandoned mid-flight.
-  claimed_at      TEXT,
-  -- What was analyzed, and what it pointed at when it was analyzed. Mutable refs move, so a
-  -- recorded SHA is the only way to tell whether the graph still describes the current code.
-  -- resolved_sha always names the commit the stored graph came FROM, never a newer one.
-  analyzed_ref    TEXT,
-  resolved_sha    TEXT,
-  analyzed_at     TEXT,
-  -- checked_at tracks the cheap ref probe, which runs far more often than a full re-analysis.
-  checked_at      TEXT,
-  analysis_count  INTEGER NOT NULL DEFAULT 0,
-  -- Whether anything under review executes this, or it only runs in an upstream project's own
-  -- CI. Both are followed, because a compromised release pipeline is how consumers receive a
-  -- malicious version, but they are different claims and must not be reported as one.
-  supply_chain    TEXT NOT NULL DEFAULT 'runtime'
-);
+` + frontierDDL + `
 
 -- Anything a query says that is neither a dependency edge nor a security finding.
 --
@@ -403,6 +372,10 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_query_run", "cli_version", "TEXT"},
 	{"abom_suite_query", "pack_digest", "TEXT"},
 	{"abom_finding", "result_hash", "TEXT"},
+	{"abom_frontier", "expedited_at", "TEXT"},
+	// Added here as well as in the DDL so an old table has the column before the rebuild that
+	// makes it part of the key copies rows forward.
+	{"abom_frontier", "ref", "TEXT NOT NULL DEFAULT ''"},
 }
 
 // indexDDL is applied only after bulk loading. Maintaining these indexes during a multi-million
@@ -414,8 +387,7 @@ CREATE INDEX IF NOT EXISTS idx_edge_repo       ON abom_edge(repository_row_id);
 CREATE INDEX IF NOT EXISTS idx_finding_rule    ON abom_finding(rule_id);
 CREATE INDEX IF NOT EXISTS idx_finding_loc     ON abom_finding(repository_row_id, file_path, start_line);
 CREATE INDEX IF NOT EXISTS idx_finding_node    ON abom_finding_node(node_row_id);
-CREATE INDEX IF NOT EXISTS idx_frontier_claim  ON abom_frontier(status, score);
-CREATE INDEX IF NOT EXISTS idx_frontier_check  ON abom_frontier(status, checked_at);
+` + frontierIndexDDL + `
 CREATE INDEX IF NOT EXISTS idx_advisory_pkg    ON abom_advisory_package(package_name);
 CREATE INDEX IF NOT EXISTS idx_observation_sub ON abom_observation(subject_kind, subject_key);
 CREATE INDEX IF NOT EXISTS idx_exposure_repo   ON abom_exposure(repository_row_id);
@@ -429,5 +401,14 @@ CREATE INDEX IF NOT EXISTS idx_alert_rule_repo ON alert(rule_row_id, repository_
 CREATE INDEX IF NOT EXISTS idx_alert_location  ON alert(repository_row_id, file_path, start_line);
 CREATE INDEX IF NOT EXISTS idx_link_node       ON abom_alert_link(node_row_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_status   ON abom_ingest_ledger(status);
+` + queryRunIndexDDL + `
 CREATE INDEX IF NOT EXISTS idx_catalog_has_db   ON abom_database_catalog(has_database);
 `
+
+// queryRunIndexDDL is created on open rather than after bulk loading, unlike every other index.
+//
+// Suite provenance joins each queue row to the runs on its commit, so the Discovery page needs
+// it on a server that only ever reads and never loads. The deferral exists to keep million-row
+// inserts cheap, and this table holds thousands.
+const queryRunIndexDDL = `
+CREATE INDEX IF NOT EXISTS idx_query_run_repo  ON abom_query_run(repository, db_commit);`

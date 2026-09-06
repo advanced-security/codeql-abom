@@ -102,6 +102,14 @@ func (s *Store) Migrate() error {
 			return fmt.Errorf("adding %s.%s: %w", c.table, c.column, err)
 		}
 	}
+	// After the columns exist, because the rebuild copies every one of them forward.
+	if err := s.migrateFrontierRefKey(); err != nil {
+		return err
+	}
+	// The one index a read-only server cannot wait for CreateIndexes to build.
+	if _, err := s.db.Exec(queryRunIndexDDL); err != nil {
+		return fmt.Errorf("indexing run identity: %w", err)
+	}
 	// Before seeding, so a binding that only needs renaming still counts as configured and the
 	// defaults are not written over it.
 	if err := s.migrateSuiteNames(); err != nil {

@@ -35,6 +35,10 @@ type NodeDetail struct {
 	Path       string `json:"path"`
 	IsExternal bool   `json:"isExternal"`
 	Analyzed   bool   `json:"analyzed"`
+	// RefsInUse and RefsAnalyzed say how much of the dependency was looked at. Analyzed alone is
+	// true as soon as one reference has results, which on this corpus is routinely 1 of 27.
+	RefsInUse    int `json:"refsInUse"`
+	RefsAnalyzed int `json:"refsAnalyzed"`
 
 	DependentRepos   int `json:"dependentRepos"`
 	DirectDependents int `json:"directDependents"`
@@ -192,13 +196,17 @@ func (s *Store) NodeDetailOf(key string) (NodeDetail, error) {
 		SELECT n.node_key, n.node_kind, r.repository_full_name, r.origin, n.path, n.is_external,
 		       COALESCE(b.dependent_repos, 0), COALESCE(b.direct_dependents, 0),
 		       EXISTS (SELECT 1 FROM abom_frontier f
-		                WHERE f.node_key = n.node_key AND f.status = 'done')
+		                WHERE f.node_key = n.node_key AND f.status = 'done'),
+		       (SELECT COUNT(*) FROM abom_frontier f WHERE f.node_key = n.node_key),
+		       (SELECT COUNT(*) FROM abom_frontier f
+		         WHERE f.node_key = n.node_key AND f.status = 'done')
 		FROM abom_node n
 		LEFT JOIN repository r ON r.row_id = n.repository_row_id
 		LEFT JOIN abom_blast_radius b ON b.node_row_id = n.row_id
 		WHERE n.node_key = ?`, key).
 		Scan(&d.Key, &d.Kind, &repo, &origin, &path, &d.IsExternal,
-			&d.DependentRepos, &d.DirectDependents, &d.Analyzed)
+			&d.DependentRepos, &d.DirectDependents, &d.Analyzed,
+			&d.RefsInUse, &d.RefsAnalyzed)
 	if err == sql.ErrNoRows {
 		return d, fmt.Errorf("no node %q", key)
 	}

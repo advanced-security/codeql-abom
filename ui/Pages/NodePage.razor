@@ -78,8 +78,10 @@ else
         </MudItem>
         <MudItem xs="6" sm="3">
             <MudPaper Elevation="0" Outlined="true" Class="pa-3">
-                <MudText Typo="Typo.h6">@(_detail.Analyzed ? "yes" : "not yet")</MudText>
-                <MudText Typo="Typo.caption">analyzed</MudText>
+                @* "yes" was true as soon as one reference had results, which is routinely one of
+                   twenty-seven. The ratio is the only form that tells partial from complete. *@
+                <MudText Typo="Typo.h6">@CoverageAnswer()</MudText>
+                <MudText Typo="Typo.caption">@CoverageCaption()</MudText>
             </MudPaper>
         </MudItem>
     </MudGrid>
@@ -357,6 +359,19 @@ else
     private string KindLabel =>
         ThemeService.KindNames.TryGetValue(_detail?.Kind ?? string.Empty, out var n)
             ? n : (_detail?.Kind ?? string.Empty);
+
+    // A dependency is analyzed at a reference, so "yes" is only true of a reference. Where several
+    // are in use the honest answer is the ratio; "yes" from one of twenty-seven is the claim this
+    // page used to make.
+    private string CoverageAnswer()
+    {
+        if (_detail is null) return "—";
+        if (_detail.RefsInUse > 1) return $"{_detail.RefsAnalyzed:N0} of {_detail.RefsInUse:N0}";
+        return _detail.Analyzed ? "yes" : "not yet";
+    }
+
+    private string CoverageCaption() =>
+        _detail is { RefsInUse: > 1 } ? "references analyzed" : "analyzed";
 
     // The graph draws an account as a node, so its key can be followed here like any other.
     private bool IsAccount => Key?.StartsWith("org:", StringComparison.Ordinal) ?? false;

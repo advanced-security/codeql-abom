@@ -64,7 +64,8 @@ func (b *Builder) ClassifyDependencies() (*SupplyChain, error) {
 		FROM abom_edge e
 		JOIN abom_node src ON src.row_id = e.src_node_row_id
 		JOIN abom_node dst ON dst.row_id = e.dst_node_row_id
-		JOIN repository r ON r.row_id = e.repository_row_id`)
+		JOIN repository r ON r.row_id = e.repository_row_id
+		WHERE ` + store.DependencyEdgeFilter)
 	if err != nil {
 		return nil, fmt.Errorf("loading dependency calls: %w", err)
 	}

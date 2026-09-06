@@ -20,12 +20,7 @@ import (
 
 // fixtureEdges is real `codeql bqrs decode --format=json` output. Regenerate with:
 //
-//	codeql database create --language=actions \
-//	    --source-root=ql/actions/abom/test/AbomEdges /tmp/abom-fixture-db
-//	codeql query run --database=/tmp/abom-fixture-db --output=/tmp/edges.bqrs \
-//	    ql/actions/abom/src/AbomEdges.ql
-//	codeql bqrs decode --format=json \
-//	    --output=internal/expand/testdata/abom-edges.json /tmp/edges.bqrs
+//	.github/skills/regenerate-abom-fixtures/scripts/regen-edges-fixture.sh
 //
 // Hand-written BQRS is not a substitute. Edge identity includes source location, so invented
 // tuples that share a line silently collapse into one edge and hide whatever is under test.
@@ -44,10 +39,11 @@ type harness struct {
 	mu       sync.Mutex
 	fetched  []string
 	built    []string
+	queried  []string
 	fetchErr map[string]error
 }
 
-func (h *harness) Fetch(_ context.Context, dest, owner, repo string) (Tree, error) {
+func (h *harness) Fetch(_ context.Context, dest, owner, repo, ref string) (Tree, error) {
 	h.mu.Lock()
 	full := owner + "/" + repo
 	h.fetched = append(h.fetched, full)
@@ -69,7 +65,10 @@ func (h *harness) CreateDatabase(_ context.Context, srcDir, dbDir, _ string) err
 	return os.MkdirAll(dbDir, 0o755)
 }
 
-func (h *harness) RunQuery(_ context.Context, _, _, outputPath string) error {
+func (h *harness) RunQuery(_ context.Context, _, queryPath, outputPath string) error {
+	h.mu.Lock()
+	h.queried = append(h.queried, queryPath)
+	h.mu.Unlock()
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		return err
 	}
@@ -468,22 +467,38 @@ func TestReclassifyingCorrectsALabelAnOlderRuleLeftBehind(t *testing.T) {
 	}
 }
 
-// The fixture references the same action at two different refs. Identity is the action, not the
-// ref, so it is one unit of work rather than two.
-func TestExpandQueuesAnActionOnceAcrossRefs(t *testing.T) {
+// The fixture references the same action at two different refs. Each ref is its own tree, its own
+// database and its own findings, so each is its own unit of work — the action is the identity in
+// the graph, and the reference is the identity of the analysis.
+func TestExpandQueuesAnActionOncePerRef(t *testing.T) {
 	h := newHarness(t)
 	h.enqueue(item("octo", "composite", "", 1))
 	h.referencedFromSeed("org/app", "octo/composite/.github/workflows/main.yml")
 
 	h.run(10)
 
-	var n int
-	if err := h.store.DB().QueryRow(
-		`SELECT COUNT(*) FROM abom_frontier WHERE node_key='actions/checkout'`).Scan(&n); err != nil {
-		t.Fatalf("counting: %v", err)
+	rows, err := h.store.DB().Query(
+		`SELECT ref FROM abom_frontier WHERE node_key='actions/checkout' ORDER BY ref`)
+	if err != nil {
+		t.Fatalf("reading refs: %v", err)
 	}
-	if n != 1 {
-		t.Errorf("actions/checkout queued %d times, want 1", n)
+	defer rows.Close()
+	var refs []string
+	for rows.Next() {
+		var ref string
+		if err := rows.Scan(&ref); err != nil {
+			t.Fatalf("scanning: %v", err)
+		}
+		refs = append(refs, ref)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("reading refs: %v", err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("actions/checkout queued as %v, want one row per referenced ref", refs)
+	}
+	if refs[0] == refs[1] {
+		t.Errorf("both rows are %q, so the refs were collapsed after all", refs[0])
 	}
 }
 

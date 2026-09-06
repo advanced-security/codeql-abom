@@ -34,8 +34,18 @@ type GraphNode struct {
 	// statements, not a judgement that any observed reference is affected.
 	Advisories int `json:"advisories"`
 	// Analyzed reports whether the dependency itself was expanded, which is what decides
-	// whether anything downstream of it is known at all.
+	// whether anything downstream of it is known at all. It is true when *any* reference has
+	// results, so it says nothing on its own about how much of the dependency was looked at.
 	Analyzed bool `json:"analyzed"`
+	// RefsInUse and RefsAnalyzed are how much of this dependency has been looked at, because the
+	// queue analyzes a reference and the graph draws a name. One analyzed reference out of
+	// twenty-seven is not the same fact as twenty-seven of twenty-seven, and a single boolean
+	// cannot tell them apart. Both zero means nothing has ever queued it, which is not coverage.
+	RefsInUse    int `json:"refsInUse"`
+	RefsAnalyzed int `json:"refsAnalyzed"`
+	// Ref is the version this node stands for, empty for a dependency used without one. The
+	// graph draws a node per version because the queue analyzes one per version.
+	Ref string `json:"ref,omitempty"`
 	// Discovery is the node's place in the queue: queued, retrying, running, done, unavailable,
 	// or empty for the majority of nodes, which are not dependencies and were never queued.
 	// Empty is not "unknown" and must not be drawn as though it were.
@@ -111,10 +121,16 @@ const identityDisplay = `disp AS (SELECT row_id, row_id AS shown FROM abom_node)
 
 // frontierState is a node's place in the discovery queue, split the way a reader reads it.
 // Most nodes are not dependencies and have no row; that is an empty string, not a state.
+//
+// A dependency now has one row per reference, and the states rank so the least settled wins: a
+// node with four analyzed refs and one still queued is not analyzed, and reporting it as such
+// would hide exactly the coverage gap this split exists to show.
 const frontierState = `(SELECT CASE
-				 WHEN f.status = 'pending' AND f.attempts > 0 THEN 'retrying'
-				 WHEN f.status = 'pending' THEN 'queued'
-				 ELSE f.status
+				 WHEN SUM(f.status = 'running') > 0 THEN 'running'
+				 WHEN SUM(f.status = 'pending' AND f.attempts > 0) > 0 THEN 'retrying'
+				 WHEN SUM(f.status = 'pending') > 0 THEN 'queued'
+				 WHEN SUM(f.status = 'done') > 0 THEN 'done'
+				 ELSE MIN(f.status)
 			   END FROM abom_frontier f WHERE f.node_key = n.node_key)`
 
 // Only nodes that appear as an edge target get a row, so a missing row usually means nothing
@@ -146,6 +162,12 @@ func (s *Store) FullGraph(opts FullGraphOptions) (Graph, error) {
 		return out, err
 	}
 
+	// Before owners are attached, so a version hangs from the same owner its dependency does.
+	nodes, edges, err = s.splitNodesByRef(nodes, edges)
+	if err != nil {
+		return out, err
+	}
+
 	nodes, edges = attachOwners(nodes, edges)
 
 	out.Nodes, out.Edges = nodes, edges
@@ -169,8 +191,13 @@ func (s *Store) graphNodes(display string, since int64, scope string) ([]GraphNo
 		       EXISTS (SELECT 1 FROM abom_frontier f
 		                WHERE f.node_key = n.node_key AND f.status = 'done'),
 		       COALESCE(`+frontierState+`, ''),
-		       COALESCE((SELECT f.depth FROM abom_frontier f WHERE f.node_key = n.node_key), 0),
-		       COALESCE((SELECT f.score FROM abom_frontier f WHERE f.node_key = n.node_key), 0)
+		       COALESCE((SELECT MIN(f.depth) FROM abom_frontier f
+		                  WHERE f.node_key = n.node_key), 0),
+		       COALESCE((SELECT MAX(f.score) FROM abom_frontier f
+		                  WHERE f.node_key = n.node_key), 0),
+		       (SELECT COUNT(*) FROM abom_frontier f WHERE f.node_key = n.node_key),
+		       (SELECT COUNT(*) FROM abom_frontier f
+		         WHERE f.node_key = n.node_key AND f.status = 'done')
 		FROM abom_node n
 		LEFT JOIN repository r ON r.row_id = n.repository_row_id
 		LEFT JOIN abom_node c ON c.row_id = n.container_node_row_id
@@ -187,7 +214,8 @@ func (s *Store) graphNodes(display string, since int64, scope string) ([]GraphNo
 		var n GraphNode
 		if err := rows.Scan(&n.Key, &n.Kind, &n.Repository, &n.Origin, &n.Path, &n.Container,
 			&n.Owner, &n.IsExternal, &n.DependentRepos, &n.ReachKnown, &n.Advisories,
-			&n.Analyzed, &n.Discovery, &n.Depth, &n.QueueScore); err != nil {
+			&n.Analyzed, &n.Discovery, &n.Depth, &n.QueueScore,
+			&n.RefsInUse, &n.RefsAnalyzed); err != nil {
 			return nil, nil, fmt.Errorf("scanning graph node: %w", err)
 		}
 		n.Rules = []string{}

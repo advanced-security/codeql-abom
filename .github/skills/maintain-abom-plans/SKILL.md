@@ -34,6 +34,19 @@ before acting: the ranking is a judgement and the plan holds the evidence behind
 Check the ranking still holds before starting. Dependencies between entries are stated
 ("depends on 4"); a lower entry is sometimes unblocked by work that has since landed.
 
+**One entry is one piece of work, never a phase of one.** A plan file may legitimately answer more
+than one entry when they are genuinely different work — *Component catalog spike* and *Explorer
+component coverage* both point at `ui/testing.md` and share nothing else. What is not allowed is
+splitting a single plan into "the big part" and "the cheap parts": that is sequencing, it belongs
+in the plan's own Sequencing section, and putting it in the ranking spends two slots on one plan
+and pushes everything beneath it down twice. The test is whether the two entries could be done by
+different people in either order. If one is just the leftovers of the other, it is one entry.
+
+**Adding an entry is a decision about everything below it.** A plan that was nearly next can end
+up mid-table without anyone ever deciding to demote it, purely through accumulated insertions
+above. When ranking something above long-standing work, say so and say why, rather than letting
+the number drift.
+
 ## Writing a plan
 
 Structure, loosely:

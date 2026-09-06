@@ -63,6 +63,18 @@ func AvailableSuites(root string) ([]string, error) {
 	return out, nil
 }
 
+// ciOnlyPacks hold suites that gate this repository against its own workflows rather than
+// analyzing a corpus. Offering one as a binding advertises a control that answers no question the
+// corpus asks.
+//
+// A pack rather than a suite name, which is what makes this affordable: a suite dropped into a
+// pack that is for analysis still appears with no release, and only a pack that exists solely for
+// CI has to be named. `make selfcheck` passes the suite directly, so nothing that needs it comes
+// through here.
+var ciOnlyPacks = map[string]bool{
+	"advanced-security/abom-actions-selfcheck-src": true,
+}
+
 // suitesOfPack reads one manifest and lists the suites it declares.
 func suitesOfPack(manifest string) ([]string, error) {
 	name, _, suiteDir, err := packIdentity(manifest)
@@ -70,7 +82,7 @@ func suitesOfPack(manifest string) ([]string, error) {
 		return nil, err
 	}
 	// A pack that declares no suite directory has none to offer, which is not an error.
-	if name == "" || suiteDir == "" {
+	if name == "" || suiteDir == "" || ciOnlyPacks[name] {
 		return nil, nil
 	}
 

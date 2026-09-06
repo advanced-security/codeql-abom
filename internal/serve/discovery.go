@@ -28,10 +28,11 @@ type DiscoveryState struct {
 	Available bool              `json:"available"`
 	Status    supervisor.Status `json:"status"`
 	Frontier  map[string]int    `json:"frontier"`
-	// Tiers counts analyzed work per dependency tier, so a control that re-analyzes one can say
-	// what it will cost before it is pressed.
-	Tiers   map[string]int     `json:"tiers"`
-	Version store.GraphVersion `json:"version"`
+	// Tiers gives each dependency tier's size and how much of it is analyzed. Both are needed:
+	// binding a suite costs by the tier's size, re-analyzing costs by what is on record, and a
+	// tier being re-analyzed must not read as a tier holding nothing.
+	Tiers   map[string]store.TierCount `json:"tiers"`
+	Version store.GraphVersion         `json:"version"`
 	// AdvisoriesFetchedAt is empty when advisories were never collected. Nothing here fetches
 	// them, so their age belongs on screen next to everything derived from them.
 	AdvisoriesFetchedAt string `json:"advisoriesFetchedAt"`
@@ -105,12 +106,16 @@ func (s *Server) discoveryPause(w http.ResponseWriter, r *http.Request) {
 type suiteBinding struct {
 	Available []string            `json:"available"`
 	Tiers     map[string][]string `json:"tiers"`
-	// Counts is how many analyzed dependencies each tier holds, so the cost of changing what it
+	// Counts is each tier's size and how much of it is analyzed, so the cost of changing what it
 	// runs is on screen before it is spent rather than discovered during the next crawl.
-	Counts map[string]int `json:"counts"`
+	Counts map[string]store.TierCount `json:"counts"`
 	// Contents is what each suite last resolved to. A suite nobody has resolved is absent, not
 	// present with a zero count: the interface has to be able to say it does not know yet.
 	Contents map[string]suiteDetail `json:"contents,omitempty"`
+	// Verified reports whether any identity has been established. Without one, nothing has shown
+	// that the operator owns any dependency, so an owned count of zero would be a claim rather
+	// than a measurement and the interface draws no column for it.
+	Verified bool `json:"verified"`
 }
 
 // suiteDetail is the level between a suite and its queries: the packs behind it, each with the
@@ -192,9 +197,14 @@ func (s *Server) tierSuites(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, nil, err)
 		return
 	}
+	verified, err := s.Store.Verified()
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
 	writeJSON(w, suiteBinding{
 		Available: available, Tiers: bound, Counts: counts,
-		Contents: suiteDetails(contents),
+		Contents: suiteDetails(contents), Verified: verified,
 	}, nil)
 }
 

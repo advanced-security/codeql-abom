@@ -71,7 +71,7 @@ func (r *Rechecker) Run(ctx context.Context, ttl time.Duration, limit int) (Rech
 		case IsUnavailable(err):
 			stats.Unavailable++
 			r.emit(item.NodeKey, "unavailable")
-			if err := r.Queue.Unavailable(item.NodeKey, reasonOf(err)); err != nil {
+			if err := r.Queue.Unavailable(item.Key(), reasonOf(err)); err != nil {
 				return stats, err
 			}
 		case err != nil:
@@ -82,13 +82,13 @@ func (r *Rechecker) Run(ctx context.Context, ttl time.Duration, limit int) (Rech
 		case sha == item.SHA:
 			stats.Unchanged++
 			r.emit(item.NodeKey, "unchanged")
-			if err := r.Queue.Touch(item.NodeKey); err != nil {
+			if err := r.Queue.Touch(item.Key()); err != nil {
 				return stats, err
 			}
 		default:
 			stats.Drifted++
 			r.emit(item.NodeKey, "drifted")
-			if err := r.Queue.MarkStale(item.NodeKey, sha); err != nil {
+			if err := r.Queue.MarkStale(item.Key(), sha); err != nil {
 				return stats, err
 			}
 		}

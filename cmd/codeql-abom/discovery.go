@@ -14,7 +14,6 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/frontier"
 	"github.com/advanced-security/codeql-abom/internal/graph"
 	"github.com/advanced-security/codeql-abom/internal/ingest"
-	"github.com/advanced-security/codeql-abom/internal/pipeline"
 	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/store"
 	"github.com/advanced-security/codeql-abom/internal/supervisor"
@@ -85,9 +84,12 @@ func newSupervisor(s *store.Store, opts discoveryOptions, logTo io.Writer) (*sup
 	}
 
 	w := store.NewWriter(s, 0)
+	// The crawl runs for hours, so the small commands are worth a JVM that stays up. It is not
+	// closed here: the supervisor outlives this function and the CLI exits when the process does.
 	r := &runner.Runner{
 		CodeQLPath: opts.codeqlPath, Threads: opts.codeqlThreads(), RAMMB: opts.ramMB,
-		Lock: runner.SharedLock(),
+		Lock:   runner.SharedLock(),
+		Server: &runner.CLIServer{CodeQLPath: opts.codeqlPath},
 	}
 	checkout := &expand.Checkout{}
 
@@ -110,7 +112,7 @@ func newSupervisor(s *store.Store, opts discoveryOptions, logTo io.Writer) (*sup
 			CodeQL:   r,
 			Resolver: r,
 			Analyzer: r,
-			Decode:   expand.Decoder(pipeline.DefaultDecoder(opts.codeqlPath)),
+			Decode:   expand.Decoder(r.Decode),
 			Pace:     pace,
 			// Without this a repository that fails every time is invisible: the count moves
 			// and nothing says which one, or why.

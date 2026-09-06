@@ -176,9 +176,9 @@ public sealed record DiscoveryState
     public IReadOnlyDictionary<string, int> Frontier { get; init; } =
         new Dictionary<string, int>();
 
-    /// <summary>Analyzed work per dependency tier, so re-analysis can state its cost.</summary>
-    public IReadOnlyDictionary<string, int> Tiers { get; init; } =
-        new Dictionary<string, int>();
+    /// <summary>Each tier's size and how much of it is analyzed.</summary>
+    public IReadOnlyDictionary<string, TierCount> Tiers { get; init; } =
+        new Dictionary<string, TierCount>();
 
     public GraphVersion Version { get; init; } = new();
 
@@ -215,6 +215,13 @@ public sealed record Subgraph
 public sealed record FrontierItem
 {
     public string NodeKey { get; init; } = string.Empty;
+
+    /// <summary>
+    /// The reference this row analyzes, empty for the default branch. The queue is keyed
+    /// (node_key, ref), so without this a row cannot say which version it is.
+    /// </summary>
+    public string Ref { get; init; } = string.Empty;
+
     public string Owner { get; init; } = string.Empty;
     public string Repo { get; init; } = string.Empty;
     public string Status { get; init; } = string.Empty;
@@ -228,8 +235,44 @@ public sealed record FrontierItem
     public string ClaimedAt { get; init; } = string.Empty;
     public string NextAttemptAt { get; init; } = string.Empty;
 
+    /// <summary>Empty when nothing has ever analyzed this.</summary>
+    public string AnalyzedAt { get; init; } = string.Empty;
+
+    /// <summary>Which tier this sits in, and therefore which suites analyzed it.</summary>
+    public string Tier { get; init; } = string.Empty;
+
     /// <summary>"runtime" when something in scope executes it, "build_time" when only its own project's CI does.</summary>
     public string SupplyChain { get; init; } = string.Empty;
+
+    /// <summary>
+    /// What analyzed this row, as <c>pack@version</c>, taken from the runs recorded against its
+    /// commit rather than from the tier's current binding.
+    /// </summary>
+    public IReadOnlyList<string> Suites { get; init; } = Array.Empty<string>();
+
+    /// <summary>
+    /// False when nothing recorded which suites ran. Most analyzed rows predate pack identity,
+    /// and "not recorded" must not render as "nothing looked" — those are opposite statements.
+    /// </summary>
+    public bool SuitesKnown { get; init; }
+
+    /// <summary>The CodeQL that produced the row, empty when unrecorded.</summary>
+    public string CliVersion { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Repositories running this exact version, a bounded preview. <see cref="UsedByCount"/> is
+    /// the real total; the queue's DiscoveredFrom is only the first to reach it.
+    /// </summary>
+    public IReadOnlyList<string> UsedBy { get; init; } = Array.Empty<string>();
+
+    /// <summary>How many repositories name this version in total.</summary>
+    public int UsedByCount { get; init; }
+
+    /// <summary>
+    /// How many of them the operator is verified against. These are the ones they can change
+    /// themselves, which is a different decision from the total.
+    /// </summary>
+    public int UsedByOwned { get; init; }
 
     /// <summary>
     /// The state a reader distinguishes, which is one more than the queue stores: a dependency
@@ -401,17 +444,33 @@ public sealed record BumpImpact
     public int Unanalyzed { get; init; }
 }
 
+/// <summary>A tier's size and how much of it is currently analyzed.</summary>
+public sealed record TierCount
+{
+    /// <summary>Every dependency in the tier, whatever state it is in.</summary>
+    public int Total { get; init; }
+
+    /// <summary>How many are analyzed now. A requeue empties this and leaves Total alone.</summary>
+    public int Analyzed { get; init; }
+}
+
 /// <summary>What each dependency tier runs, and what it could run.</summary>
 public sealed record SuiteBinding
 {
     public IReadOnlyList<string> Available { get; init; } = [];
     public IReadOnlyDictionary<string, IReadOnlyList<string>> Tiers { get; init; } =
         new Dictionary<string, IReadOnlyList<string>>();
-    /// <summary>Analyzed dependencies per tier, so the cost of a change is stated before it is spent.</summary>
-    public IReadOnlyDictionary<string, int> Counts { get; init; } = new Dictionary<string, int>();
+
+    /// <summary>Each tier's size and analyzed count, so a change states its cost before it is spent.</summary>
+    public IReadOnlyDictionary<string, TierCount> Counts { get; init; } =
+        new Dictionary<string, TierCount>();
+
     /// <summary>What each suite last resolved to. A suite nobody resolved is absent, not zero.</summary>
     public IReadOnlyDictionary<string, SuiteDetail> Contents { get; init; } =
         new Dictionary<string, SuiteDetail>();
+    /// <summary>Whether an identity has been established. Without one an owned count of zero is a
+    /// claim rather than a measurement, so the tier is not offered at all.</summary>
+    public bool Verified { get; init; }
 }
 
 /// <summary>The packs behind a suite, which is where a version anyone can act on lives.</summary>
@@ -477,6 +536,10 @@ public sealed record NodeDetail
     public string Path { get; init; } = string.Empty;
     public bool IsExternal { get; init; }
     public bool Analyzed { get; init; }
+
+    /// <summary>References in use, and how many were analyzed. Analyzed is true at the first one.</summary>
+    public int RefsInUse { get; init; }
+    public int RefsAnalyzed { get; init; }
     public int DependentRepos { get; init; }
     public int DirectDependents { get; init; }
     public IReadOnlyList<RefUsage> Refs { get; init; } = [];

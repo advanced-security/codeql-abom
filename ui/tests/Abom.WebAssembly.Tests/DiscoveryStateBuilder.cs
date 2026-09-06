@@ -17,6 +17,10 @@ public sealed class DiscoveryStateBuilder
     private string _reachRecomputedAt = "";
     private int _direct, _transitive;
 
+    // Defaults to "all of it analyzed", which is the steady state. A requeue is the case where the
+    // two diverge, so it is set explicitly.
+    private int? _directAnalyzed;
+
     public static DiscoveryStateBuilder NeverStarted() => new();
 
     public static DiscoveryStateBuilder Running() =>
@@ -66,6 +70,13 @@ public sealed class DiscoveryStateBuilder
         return this;
     }
 
+    /// <summary>A tier that holds work with none of it analyzed, as a requeue leaves it.</summary>
+    public DiscoveryStateBuilder WithDirectAnalyzed(int analyzed)
+    {
+        _directAnalyzed = analyzed;
+        return this;
+    }
+
     public DiscoveryStateBuilder WithReach(int pending, int threshold, string recomputedAt)
     {
         _reachPending = pending;
@@ -96,10 +107,10 @@ public sealed class DiscoveryStateBuilder
             ["buildTime"] = _buildTime,
             ["upstreamOnly"] = _upstreamOnly,
         },
-        tiers = new Dictionary<string, int>
+        tiers = new Dictionary<string, object>
         {
-            ["direct"] = _direct,
-            ["transitive"] = _transitive,
+            ["direct"] = new { total = _direct, analyzed = _directAnalyzed ?? _direct },
+            ["transitive"] = new { total = _transitive, analyzed = _transitive },
         },
         version = new { reachRecomputedAt = _reachRecomputedAt },
         advisoriesFetchedAt = "",

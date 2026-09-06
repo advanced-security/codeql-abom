@@ -22,7 +22,7 @@ public class TierSuiteControlTests : AbomTestContext
                       "ql/actions/abom/src/codeql-suites/abom-findings.qls"],
          "tiers":{"direct":["ql/actions/abom/src/codeql-suites/abom-dependency-graph.qls"],
                   "transitive":[]},
-         "counts":{"direct":522,"transitive":691}}
+         "counts":{"direct":{"total":522,"analyzed":522},"transitive":{"total":691,"analyzed":691}}}
         """;
 
     [Fact]
@@ -150,15 +150,20 @@ public class TierSuiteControlTests : AbomTestContext
 
         var cut = Render<Pages.Discovery>();
 
-        cut.WaitForAssertion(() => Assert.Contains("Re-analyze direct", cut.Markup));
-        Assert.Contains("Re-analyze transitive", cut.Markup);
+        // Asserted on the controls rather than their wording: the verb moved to a label shared by
+        // the row when a third tier made repeating it wrap the last button onto its own line.
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll(".abom-requeue").Count));
+        var requeue = cut.FindAll(".abom-requeue");
+        Assert.Contains("direct", requeue[0].TextContent);
+        Assert.Contains("transitive", requeue[1].TextContent);
+        Assert.Contains("Re-analyze", cut.Markup);
     }
 
     private const string WithContents = """
         {"available":["advanced-security/abom-actions-findings-src:codeql-suites/abom-findings.qls"],
          "tiers":{"direct":["advanced-security/abom-actions-findings-src:codeql-suites/abom-findings.qls"],
                   "transitive":[]},
-         "counts":{"direct":522,"transitive":691},
+         "counts":{"direct":{"total":522,"analyzed":522},"transitive":{"total":691,"analyzed":691}},
          "contents":{"advanced-security/abom-actions-findings-src:codeql-suites/abom-findings.qls":
            {"packs":[{"name":"codeql/actions-queries","version":"0.6.34",
                       "queries":["actions/unpinned-tag","actions/code-injection/medium"]}],

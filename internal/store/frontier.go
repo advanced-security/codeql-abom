@@ -3,14 +3,20 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"sort"
+	"strconv"
+	"strings"
 )
 
 // FrontierItem is one dependency in the discovery queue, as the Discovery view shows it.
 type FrontierItem struct {
 	NodeKey string `json:"nodeKey"`
-	Owner   string `json:"owner"`
-	Repo    string `json:"repo"`
-	Status  string `json:"status"`
+	// Ref is the reference this row analyzes. Empty means the default branch. A dependency used
+	// at several refs has a row for each, because each is its own checkout and its own results.
+	Ref    string `json:"ref"`
+	Owner  string `json:"owner"`
+	Repo   string `json:"repo"`
+	Status string `json:"status"`
 	// Depth is the distance from the seed set, which the Discovery view uses for placement.
 	Depth int `json:"depth"`
 	// Score is commonality per unit cost: what decides the order work is claimed in.
@@ -20,6 +26,14 @@ type FrontierItem struct {
 	ResolvedSHA    string  `json:"resolvedSha"`
 	DiscoveredFrom string  `json:"discoveredFrom"`
 	Reason         string  `json:"reason"`
+	// AnalyzedAt dates the results on record. Empty means never analyzed, which is a different
+	// statement from analyzed long ago and must stay tellable apart.
+	AnalyzedAt string `json:"analyzedAt"`
+	// Tier is what Depth means to a reader: whether this is theirs to fix, named directly by a
+	// repository under review, or reached through an intermediary. It also decides which query
+	// suites analyzed it. Derived from the same expression the tier counts use, so a row and the
+	// header above it cannot disagree.
+	Tier string `json:"tier"`
 	// ClaimedAt dates the analysis in flight, so a worker stuck on one dependency shows up as
 	// one that has been on it far too long.
 	ClaimedAt string `json:"claimedAt"`
@@ -28,7 +42,82 @@ type FrontierItem struct {
 	// SupplyChain is "runtime" when something under review executes this, "build_time" when it
 	// only runs in an upstream project's own CI.
 	SupplyChain string `json:"supplyChain"`
+	// Suites names what actually analyzed this row, as `pack@version`, from the runs recorded
+	// against its commit. Never from the tier's current binding: that is what happens next, and
+	// showing it would make a suite enabled this morning look retroactively applied.
+	Suites []string `json:"suites"`
+	// SuitesKnown separates "analyzed, and here is with what" from "analyzed before we recorded
+	// what with". 1,555 of 1,707 runs on the real corpus predate pack identity, so the second is
+	// the common case, and rendering it as no suites would assert that nothing looked.
+	SuitesKnown bool `json:"suitesKnown"`
+	// CLIVersion is the CodeQL that produced the row. Extraction and evaluation both change
+	// between releases, so it is part of what a result means.
+	CLIVersion string `json:"cliVersion"`
+	// UsedBy names repositories running this exact version, bounded by usedBySample. The queue's
+	// own discovered_from holds only the first repository to reach it, which is provenance for
+	// the crawl rather than an answer to "who runs this".
+	UsedBy []string `json:"usedBy"`
+	// UsedByCount is how many there are in total, which is the number worth acting on:
+	// actions/checkout@v4 is named by 220 repositories and the sample shows five.
+	UsedByCount int `json:"usedByCount"`
+	// UsedByOwned is how many of those the operator is verified against, and so can change
+	// themselves. Reporting only the total reads as exposure they own, when on the real corpus
+	// 220 repositories name actions/checkout@v4 and far fewer are theirs.
+	UsedByOwned int `json:"usedByOwned"`
 }
+
+// usedBySample bounds the names carried inline. The count is exact; the list is a preview, so a
+// page of 500 rows cannot turn into megabytes of repository names.
+const usedBySample = 5
+
+// selectUsedBy counts and samples the repositories naming a queue row's exact version.
+//
+// Matched on the edge's ref rather than the node, because one action at two references is two
+// different things to everyone downstream and sharing users between them would undo that.
+var selectUsedBy = `
+	(SELECT COUNT(DISTINCT e.repository_row_id)
+	   FROM abom_edge e
+	   JOIN abom_node n ON n.row_id = e.dst_node_row_id
+	  WHERE n.node_key = abom_frontier.node_key
+	    AND COALESCE(e.ref_value, '') = abom_frontier.ref),
+	(SELECT COUNT(DISTINCT e.repository_row_id)
+	   FROM abom_edge e
+	   JOIN abom_node n ON n.row_id = e.dst_node_row_id
+	   JOIN repository r ON r.row_id = e.repository_row_id
+	  WHERE n.node_key = abom_frontier.node_key
+	    AND COALESCE(e.ref_value, '') = abom_frontier.ref
+	    AND EXISTS (SELECT 1 FROM abom_account a
+	                 WHERE LOWER(a.owner) = LOWER(SUBSTR(r.repository_full_name, 1,
+	                       INSTR(r.repository_full_name, '/') - 1)))),
+	(SELECT GROUP_CONCAT(name) FROM (
+	   SELECT DISTINCT r.repository_full_name AS name
+	     FROM abom_edge e
+	     JOIN abom_node n ON n.row_id = e.dst_node_row_id
+	     JOIN repository r ON r.row_id = e.repository_row_id
+	    WHERE n.node_key = abom_frontier.node_key
+	      AND COALESCE(e.ref_value, '') = abom_frontier.ref
+	    ORDER BY name LIMIT ` + strconv.Itoa(usedBySample) + `))`
+
+// runsForRow joins a queue row to the runs recorded against the very commit it analyzed.
+//
+// The empty-commit guards are load-bearing. Most rows have no `resolved_sha` and many runs have
+// no `db_commit`, so without them the join degenerates into every commitless run matching every
+// unanalyzed row, and a queued dependency would report suites it never saw.
+const runsForRow = `
+	FROM abom_query_run r
+	WHERE r.repository = abom_frontier.owner || '/' || abom_frontier.repo
+	  AND r.db_commit = abom_frontier.resolved_sha
+	  AND COALESCE(abom_frontier.resolved_sha, '') <> ''
+	  AND COALESCE(r.db_commit, '') <> ''`
+
+// selectSuites renders the packs and the CodeQL version a row was analyzed with.
+//
+// GROUP_CONCAT skips nulls, so a run predating pack identity contributes nothing and the row
+// comes back empty — which is the point: it is unrecorded, not suite-free.
+const selectSuites = `
+	(SELECT GROUP_CONCAT(DISTINCT r.pack || '@' || COALESCE(r.pack_version, '?'))` +
+	runsForRow + ` AND COALESCE(r.pack, '') <> ''),
+	(SELECT GROUP_CONCAT(DISTINCT r.cli_version)` + runsForRow + `)`
 
 // Pseudo-statuses splitting pending by whether anything has been tried.
 //
@@ -69,6 +158,47 @@ const FrontierUpstreamOnly = "upstreamOnly"
 // with runtime dependencies would overstate what this organization actually runs.
 const FrontierBuildTime = "buildTime"
 
+// RefCoverage counts the versions actually in use against the versions actually analyzed.
+//
+// This is the number the queue could not produce while it held one row per dependency: every
+// reference was collapsed onto a single analysis of the default branch, so a repository pinning
+// `v3` was reported from a reading of `main`. Observed counts distinct `name@ref` pairs the graph
+// has seen; Analyzed counts those with results on record; Unqueued is the difference the crawl
+// has not reached, which is a coverage gap rather than a clean result.
+type RefCoverage struct {
+	Observed int `json:"observed"`
+	Analyzed int `json:"analyzed"`
+	Queued   int `json:"queued"`
+	Unqueued int `json:"unqueued"`
+}
+
+// observedRefs is every `name@ref` the graph has seen for something a crawl could fetch. Docker
+// images are excluded for the same reason they are never queued: nothing can be cloned for one.
+const observedRefs = `
+	SELECT DISTINCT n.node_key AS node_key, COALESCE(e.ref_value, '') AS ref
+	FROM abom_edge e
+	JOIN abom_node n ON n.row_id = e.dst_node_row_id
+	WHERE n.is_external = 1 AND n.node_kind IN ('action', 'reusable_workflow')`
+
+// RefsCovered reports how much of what is in use has actually been analyzed.
+func (s *Store) RefsCovered() (RefCoverage, error) {
+	var out RefCoverage
+	err := s.db.QueryRow(`
+		WITH observed AS (`+observedRefs+`)
+		SELECT COUNT(*),
+		       COALESCE(SUM(f.status = 'done'), 0),
+		       COALESCE(SUM(f.status IN ('pending', 'running')), 0),
+		       COALESCE(SUM(f.node_key IS NULL), 0)
+		FROM observed o
+		LEFT JOIN abom_frontier f
+		  ON f.node_key = o.node_key AND f.ref = o.ref`).
+		Scan(&out.Observed, &out.Analyzed, &out.Queued, &out.Unqueued)
+	if err != nil {
+		return RefCoverage{}, fmt.Errorf("measuring reference coverage: %w", err)
+	}
+	return out, nil
+}
+
 // countUpstreamOnly is expressed against the graph rather than the queue, because the whole point
 // is the dependencies the queue never received a row for. Docker images are excluded: nothing can
 // be cloned for one, so it is out of scope for an unrelated reason.
@@ -106,11 +236,15 @@ func (s *Store) FrontierSnapshot(status string, limit int) ([]FrontierItem, erro
 		SELECT node_key, COALESCE(owner,''), COALESCE(repo,''), status, depth, score,
 		       attempts, analysis_count, COALESCE(resolved_sha,''),
 		       COALESCE(discovered_from,''), COALESCE(reason,''),
-		       COALESCE(claimed_at,''), COALESCE(next_attempt_at,''), supply_chain
+		       COALESCE(claimed_at,''), COALESCE(next_attempt_at,''), supply_chain,
+		       COALESCE(analyzed_at,''), ` + tierOfRow + `, ref,` + selectSuites + `,` +
+		selectUsedBy + `
 		FROM abom_frontier`
 	where, args := frontierWhere(status)
 	query += where
-	query += ` ORDER BY score DESC, depth ASC, node_key`
+	// Same order Claim takes, so the queue reads as what happens next rather than as a ranking
+	// the crawl is about to ignore.
+	query += ` ORDER BY expedited_at IS NULL, score DESC, depth ASC, node_key`
 	if limit > 0 {
 		query += ` LIMIT ?`
 		args = append(args, limit)
@@ -118,9 +252,26 @@ func (s *Store) FrontierSnapshot(status string, limit int) ([]FrontierItem, erro
 
 	return queryAll(s, "reading frontier", func(r *sql.Rows) (FrontierItem, error) {
 		var it FrontierItem
-		return it, r.Scan(&it.NodeKey, &it.Owner, &it.Repo, &it.Status, &it.Depth,
+		var suites, cli sql.NullString
+		var users sql.NullString
+		if err := r.Scan(&it.NodeKey, &it.Owner, &it.Repo, &it.Status, &it.Depth,
 			&it.Score, &it.Attempts, &it.AnalysisCount, &it.ResolvedSHA,
-			&it.DiscoveredFrom, &it.Reason, &it.ClaimedAt, &it.NextAttemptAt, &it.SupplyChain)
+			&it.DiscoveredFrom, &it.Reason, &it.ClaimedAt, &it.NextAttemptAt, &it.SupplyChain,
+			&it.AnalyzedAt, &it.Tier, &it.Ref, &suites, &cli,
+			&it.UsedByCount, &it.UsedByOwned, &users); err != nil {
+			return it, err
+		}
+		it.UsedBy = []string{}
+		if users.Valid && users.String != "" {
+			it.UsedBy = strings.Split(users.String, ",")
+		}
+		if suites.Valid && suites.String != "" {
+			it.Suites = strings.Split(suites.String, ",")
+			sort.Strings(it.Suites)
+			it.SuitesKnown = true
+		}
+		it.CLIVersion = cli.String
+		return it, nil
 	}, query, args...)
 }
 

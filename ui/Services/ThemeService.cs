@@ -239,37 +239,52 @@ public sealed class ThemeService(IJSRuntime js)
     // two different colors depending on which half of the interface drew it.
     private const string SuccessDark = "#51CF66";
     private const string InfoDark = "#4DABF7";
-    private const string WarningDark = "#FFA94D";
+    // Bolder and darker than the orange this was, so it clears the yellow "queued" now sits at.
+    // It is the semantic warning, so every warning in the interface moves with it — which is the
+    // point: a legend with a private orange would drift from the components beside it.
+    private const string WarningDark = "#FF922B";
     private const string ErrorDark = "#FF6B6B";
 
-    private const string SuccessLight = "#2F9E44";
+    // Success and Warning are darker than the Open Color values they were. On white, #2F9E44
+    // measured 3.45:1 and #E8590C 3.58:1 — fine for a swatch, short of the 4.5:1 an outlined chip
+    // needs, and this interface draws "build-time only" and every pinning level as exactly that.
+    // Dark mode was never the problem, which is the point: it is the scheme that gets looked at.
+    private const string SuccessLight = "#2A833B";
     private const string InfoLight = "#1971C2";
-    private const string WarningLight = "#E8590C";
+    private const string WarningLight = "#C25100";
     private const string ErrorLight = "#C92A2A";
 
-    // Discovery state, for the views that are about coverage rather than about structure. Drawn
-    // from the semantic palette, not from the kind palette: a reader already knows green means
-    // settled and amber means attention, and reusing a kind's hue would mean two things at once.
+    // Discovery state, for the views that are about coverage rather than about structure.
     //
-    // Queued was the muted colour on the reasoning that "not looked at yet" is what grey says.
-    // That was wrong twice over: it was byte-identical to the colour reserved for a node that was
-    // never a dependency, and at 2.7:1 on dark and 2.1:1 on light it fell under the 3:1 floor for
-    // a graphical object, so a queue of 422 items read as an unfilled or disabled control. It is
-    // now a slate that is plainly a colour without competing with the states a reader acts on.
+    // Colour may be reclaimed between pages: an overlap is a problem only when two different
+    // kinds of thing claim one colour on the same page. The Discovery page draws no node kinds at
+    // all, and on the Explorer's frontier view the kind swatches are filters rather than what the
+    // canvas is coloured by.
+    //
+    // Queued was grey twice. First as `Muted` exactly — the colour reserved for a node that was
+    // never a dependency — and then as a slate that cleared both the contrast floor and the
+    // distance from `Muted` while still being about 9% saturated. Dark mode is greyscale by
+    // construction, so a category drawn in grey reads as chrome; it is now a yellow, and the
+    // warning orange beside it moved to keep the pair apart.
+    //
     // There is still no colour for a node that was never queued, because that is a fact rather
     // than a stage.
     private static readonly Dictionary<string, string> DarkDiscovery = new()
     {
-        ["queued"] = "#8A929E",
+        ["queued"] = "#F5D90A",
         ["retrying"] = WarningDark,
         ["running"] = InfoDark,
         ["done"] = SuccessDark,
         ["unavailable"] = ErrorDark,
     };
 
+    // A yellow bright enough to read as yellow cannot clear 3:1 against white — `#F5D90A` manages
+    // about 1.5:1 — so the light-mode queue colour is necessarily dark and reads closer to olive.
+    // That is the cost of the contrast floor, not a different choice of hue: it sits at the same
+    // 48 degrees its dark counterpart does.
     private static readonly Dictionary<string, string> LightDiscovery = new()
     {
-        ["queued"] = "#5F6B7A",
+        ["queued"] = "#9A7B00",
         ["retrying"] = WarningLight,
         ["running"] = InfoLight,
         ["done"] = SuccessLight,

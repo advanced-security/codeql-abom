@@ -60,7 +60,7 @@ func TestEnqueueDoesNotResetCompletedItems(t *testing.T) {
 	if _, err := q.Enqueue([]Item{item("a", 1)}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
-	if err := q.Complete("a", Resolution{Ref: HeadRef, SHA: "sha-a"}); err != nil {
+	if err := q.Complete(Of("a"), Resolution{Ref: HeadRef, SHA: "sha-a"}); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 	if _, err := q.Enqueue([]Item{item("a", 2)}); err != nil {
@@ -145,7 +145,7 @@ func TestRescoreReflectsNewlyLearnedCommonality(t *testing.T) {
 	if first, _ := q.Claim(1); first[0].NodeKey != "a" {
 		t.Fatalf("expected a first, got %q", first[0].NodeKey)
 	}
-	if err := q.Release("a"); err != nil {
+	if err := q.Release(Of("a")); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 
@@ -207,7 +207,7 @@ func TestFailSchedulesRetryWithBackoff(t *testing.T) {
 	if _, err := q.Claim(1); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if err := q.Fail("a", "network exploded"); err != nil {
+	if err := q.Fail(Of("a"), "network exploded"); err != nil {
 		t.Fatalf("Fail: %v", err)
 	}
 
@@ -236,7 +236,7 @@ func TestUnavailableIsNotRetried(t *testing.T) {
 	if _, err := q.Claim(1); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if err := q.Unavailable("a", "no .github directory"); err != nil {
+	if err := q.Unavailable(Of("a"), "no .github directory"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
@@ -307,7 +307,7 @@ func TestMutableRefBecomesDueForRecheck(t *testing.T) {
 	if _, err := q.Enqueue([]Item{item("actions/checkout", 1)}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
-	if err := q.Complete("actions/checkout", Resolution{Ref: HeadRef, SHA: "old-sha"}); err != nil {
+	if err := q.Complete(Of("actions/checkout"), Resolution{Ref: HeadRef, SHA: "old-sha"}); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 
@@ -334,7 +334,7 @@ func TestImmutableRefIsNeverRechecked(t *testing.T) {
 	if _, err := q.Enqueue([]Item{item("actions/checkout", 1)}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
-	if err := q.Complete("actions/checkout", Resolution{Ref: "abc123", SHA: "abc123"}); err != nil {
+	if err := q.Complete(Of("actions/checkout"), Resolution{Ref: "abc123", SHA: "abc123"}); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 
@@ -355,12 +355,12 @@ func TestTouchDefersWithoutReanalyzing(t *testing.T) {
 	if _, err := q.Enqueue([]Item{item("a", 1)}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
-	if err := q.Complete("a", Resolution{Ref: HeadRef, SHA: "sha1"}); err != nil {
+	if err := q.Complete(Of("a"), Resolution{Ref: HeadRef, SHA: "sha1"}); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 
 	q.Now = func() time.Time { return time.Now().UTC().Add(48 * time.Hour) }
-	if err := q.Touch("a"); err != nil {
+	if err := q.Touch(Of("a")); err != nil {
 		t.Fatalf("Touch: %v", err)
 	}
 
@@ -381,13 +381,13 @@ func TestStaleRefRequeuesAndOutranksLowValueWork(t *testing.T) {
 	if _, err := q.Enqueue([]Item{item("actions/checkout", 1), item("obscure/action", 1)}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
-	if err := q.Complete("actions/checkout", Resolution{Ref: HeadRef, SHA: "old-sha"}); err != nil {
+	if err := q.Complete(Of("actions/checkout"), Resolution{Ref: HeadRef, SHA: "old-sha"}); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 	seedCommonality(t, s, "actions/checkout", 3000, 200)
 	seedCommonality(t, s, "obscure/action", 1, 1)
 
-	if err := q.MarkStale("actions/checkout", "new-sha"); err != nil {
+	if err := q.MarkStale(Of("actions/checkout"), "new-sha"); err != nil {
 		t.Fatalf("MarkStale: %v", err)
 	}
 	if err := q.Rescore(); err != nil {
@@ -411,10 +411,10 @@ func TestMarkStaleKeepsTheAnalyzedSHA(t *testing.T) {
 	if _, err := q.Enqueue([]Item{item("a", 1)}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
-	if err := q.Complete("a", Resolution{Ref: HeadRef, SHA: "old-sha"}); err != nil {
+	if err := q.Complete(Of("a"), Resolution{Ref: HeadRef, SHA: "old-sha"}); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	if err := q.MarkStale("a", "new-sha"); err != nil {
+	if err := q.MarkStale(Of("a"), "new-sha"); err != nil {
 		t.Fatalf("MarkStale: %v", err)
 	}
 
@@ -440,7 +440,7 @@ func TestReanalysisCountsUp(t *testing.T) {
 		t.Fatalf("Enqueue: %v", err)
 	}
 	for _, sha := range []string{"sha1", "sha2", "sha3"} {
-		if err := q.Complete("a", Resolution{Ref: HeadRef, SHA: sha}); err != nil {
+		if err := q.Complete(Of("a"), Resolution{Ref: HeadRef, SHA: sha}); err != nil {
 			t.Fatalf("Complete: %v", err)
 		}
 	}
@@ -667,7 +667,7 @@ func TestNextAttemptAtReportsWorkWaitingInBackoff(t *testing.T) {
 	if _, err := q.Claim(1); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if err := q.Fail("a", "network exploded"); err != nil {
+	if err := q.Fail(Of("a"), "network exploded"); err != nil {
 		t.Fatalf("Fail: %v", err)
 	}
 
@@ -688,7 +688,7 @@ func TestNextAttemptAtReportsNothingWhenTheQueueIsDrained(t *testing.T) {
 	if _, err := q.Enqueue([]Item{item("a", 1)}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
-	if err := q.Complete("a", Resolution{Ref: HeadRef, SHA: "sha-a"}); err != nil {
+	if err := q.Complete(Of("a"), Resolution{Ref: HeadRef, SHA: "sha-a"}); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 

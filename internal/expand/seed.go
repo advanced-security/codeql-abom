@@ -21,13 +21,14 @@ func SeedFrontier(s *store.Store, q *frontier.Queue) (int, error) {
 	// the first by name is chosen so the answer does not change between runs.
 	rows, err := s.DB().Query(`
 		SELECT n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''), COALESCE(n.path,''),
-		       MIN(r.repository_full_name)
+		       MIN(r.repository_full_name), COALESCE(e.ref_value, '')
 		FROM abom_edge e
 		JOIN abom_node n ON n.row_id = e.dst_node_row_id
 		JOIN repository r ON r.row_id = e.repository_row_id
 		WHERE r.origin = ?
 		  AND n.is_external = 1 AND n.owner IS NOT NULL AND n.repo IS NOT NULL
-		GROUP BY n.node_key, n.owner, n.repo, n.path`, store.OriginSeed)
+		GROUP BY n.node_key, n.owner, n.repo, n.path, COALESCE(e.ref_value, '')`,
+		store.OriginSeed)
 	if err != nil {
 		return 0, fmt.Errorf("reading seed dependencies: %w", err)
 	}
@@ -37,7 +38,7 @@ func SeedFrontier(s *store.Store, q *frontier.Queue) (int, error) {
 	for rows.Next() {
 		var it frontier.Item
 		if err := rows.Scan(&it.NodeKey, &it.Owner, &it.Repo, &it.Subpath,
-			&it.DiscoveredFrom); err != nil {
+			&it.DiscoveredFrom, &it.Ref); err != nil {
 			return 0, fmt.Errorf("scanning seed dependency: %w", err)
 		}
 		it.Depth = 1

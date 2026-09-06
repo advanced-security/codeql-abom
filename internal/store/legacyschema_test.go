@@ -30,6 +30,28 @@ CREATE TABLE abom_suite_query (
   resolved_at  TEXT NOT NULL,
   PRIMARY KEY (suite, query_id)
 );
+CREATE TABLE abom_frontier (
+  node_key        TEXT PRIMARY KEY,
+  owner           TEXT,
+  repo            TEXT,
+  subpath         TEXT,
+  depth           INTEGER NOT NULL,
+  status          TEXT NOT NULL,
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  score           REAL NOT NULL DEFAULT 0,
+  cost_estimate   REAL NOT NULL DEFAULT 1,
+  reason          TEXT,
+  discovered_from TEXT,
+  enqueued_at     TEXT NOT NULL,
+  next_attempt_at TEXT,
+  completed_at    TEXT,
+  claimed_at      TEXT,
+  analyzed_ref    TEXT,
+  resolved_sha    TEXT,
+  analyzed_at     TEXT,
+  checked_at      TEXT,
+  analysis_count  INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE abom_finding (
   row_id            INTEGER PRIMARY KEY,
   query_run_id      INTEGER,
@@ -52,6 +74,13 @@ CREATE TABLE abom_finding (
 // widen them rather than create them.
 func migratedLegacyStore(t *testing.T) *Store {
 	t.Helper()
+	return migratedLegacyStoreWith(t, nil)
+}
+
+// migratedLegacyStoreWith seeds the legacy tables before migrating. A migration that rewrites a
+// table can only be tested against one that already holds rows.
+func migratedLegacyStoreWith(t *testing.T, seed func(*Store)) *Store {
+	t.Helper()
 
 	s, err := Open(filepath.Join(t.TempDir(), "abom.db"), Options{})
 	if err != nil {
@@ -61,6 +90,9 @@ func migratedLegacyStore(t *testing.T) *Store {
 
 	if _, err := s.db.Exec(legacySchema); err != nil {
 		t.Fatalf("create legacy schema: %v", err)
+	}
+	if seed != nil {
+		seed(s)
 	}
 	if err := s.Migrate(); err != nil {
 		t.Fatalf("Migrate: %v", err)
@@ -142,5 +174,74 @@ func TestAnUpgradedDatabaseAcceptsAResultHash(t *testing.T) {
 	}
 	if got != finding.ResultHash {
 		t.Errorf("stored result hash %q, want %q", got, finding.ResultHash)
+	}
+}
+
+func TestAnUpgradedDatabaseCanExpediteAQueuedItem(t *testing.T) {
+	s := migratedLegacyStore(t)
+
+	if _, err := s.db.Exec(`
+		INSERT INTO abom_frontier (node_key, owner, repo, depth, status, enqueued_at)
+		VALUES ('octo/mine', 'octo', 'mine', 1, 'pending', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seeding the queue: %v", err)
+	}
+
+	if _, err := s.db.Exec(
+		`UPDATE abom_frontier SET expedited_at = ? WHERE node_key = ?`,
+		"2026-01-02T00:00:00Z", "octo/mine"); err != nil {
+		t.Fatalf("expediting on an upgraded database: %v", err)
+	}
+}
+
+// The queue was keyed by dependency alone, which allowed exactly one analyzed tree per
+// dependency. Re-keying it needs a table rebuild, and a rebuild is where rows go missing: this
+// upgrades a legacy database with work already in it and checks every row and every column
+// survived, then that the new key admits a second reference for the same dependency.
+func TestUpgradingReKeysTheQueueWithoutLosingWork(t *testing.T) {
+	s := migratedLegacyStoreWith(t, func(s *Store) {
+		if _, err := s.db.Exec(`
+			INSERT INTO abom_frontier
+				(node_key, owner, repo, depth, status, attempts, score, enqueued_at,
+				 resolved_sha, analysis_count)
+			VALUES ('actions/checkout', 'actions', 'checkout', 1, 'done', 2, 9.5,
+			        '2026-01-01T00:00:00Z', 'abc123', 3)`); err != nil {
+			t.Fatalf("seeding legacy work: %v", err)
+		}
+	})
+
+	var status, sha, ref string
+	var attempts, count int
+	var score float64
+	if err := s.db.QueryRow(`
+		SELECT status, COALESCE(resolved_sha,''), ref, attempts, score, analysis_count
+		FROM abom_frontier WHERE node_key = 'actions/checkout'`).
+		Scan(&status, &sha, &ref, &attempts, &score, &count); err != nil {
+		t.Fatalf("the row did not survive the rebuild: %v", err)
+	}
+	if status != "done" || sha != "abc123" || attempts != 2 || score != 9.5 || count != 3 {
+		t.Errorf("row came back as %q/%q/%d/%v/%d, want its recorded values",
+			status, sha, attempts, score, count)
+	}
+	// Empty, not "HEAD": the row was analyzed at whatever the default branch was, and inventing
+	// a ref name it never recorded would be a claim rather than a migration.
+	if ref != "" {
+		t.Errorf("ref = %q, want empty for a row analyzed before refs were tracked", ref)
+	}
+
+	if _, err := s.db.Exec(`
+		INSERT INTO abom_frontier (node_key, ref, owner, repo, depth, status, enqueued_at)
+		VALUES ('actions/checkout', 'v3', 'actions', 'checkout', 1, 'pending',
+		        '2026-01-02T00:00:00Z')`); err != nil {
+		t.Fatalf("a second reference for one dependency was refused: %v", err)
+	}
+
+	var rows int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM abom_frontier WHERE node_key = 'actions/checkout'`).
+		Scan(&rows); err != nil {
+		t.Fatalf("counting: %v", err)
+	}
+	if rows != 2 {
+		t.Errorf("the dependency has %d rows, want one per reference", rows)
 	}
 }

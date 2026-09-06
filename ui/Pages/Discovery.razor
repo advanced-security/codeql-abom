@@ -50,7 +50,9 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
         <MudSpacer />
         <FollowControl LastUpdated="_lastPoll" />
     </div>
-    <div class="d-flex align-center flex-wrap gap-2 mt-1">
+    @* Wrapping is owned by .abom-run-row, not by the flex-wrap utility, whose !important would
+       win against the media query that holds the controls on one line. *@
+    <div class="d-flex align-center gap-2 mt-1 abom-run-row">
         @if (RecountShare is { } share)
         {
             @* Beside the sentence it quantifies, not beside the state: it measures arrivals, not
@@ -58,8 +60,13 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
             <MudProgressCircular Color="Color.Info" Size="Size.Small" Value="@share"
                                  Min="0" Max="100" aria-label="@RecountHint" />
         }
-        <MudText Typo="Typo.caption" Class="mud-text-secondary">@DetailSentence</MudText>
-        <MudSpacer />
+        @* The sentence absorbs the slack and shrinks, rather than a spacer absorbing it and
+           pushing the controls off the line. A third tier made that difference visible: the
+           spacer held 110px it would not give back, so the third button wrapped. *@
+        <MudText Typo="Typo.caption" Class="mud-text-secondary abom-run-note">@DetailSentence</MudText>
+        @* The verb once, the tiers three times, because three buttons repeating "Re-analyze" spend
+           the width on the word rather than on what it applies to. *@
+        <MudText Typo="Typo.caption" Class="mud-text-secondary abom-requeue-label">Re-analyze</MudText>
         @* What it will cost is on the button, because pressing it spends minutes of cloning and
            database building that nothing here can take back. *@
         @foreach (var tier in Tiers)
@@ -69,7 +76,7 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
                        Class="abom-requeue"
                        OnClick="@(() => Requeue(tier))"
                        title="@RequeueHint(tier)">
-                @($"Re-analyze {tier} ({_tiers.GetValueOrDefault(tier):N0})")
+                @($"{tier} ({TierOf(tier).Analyzed:N0})")
             </MudButton>
         }
     </div>
@@ -134,11 +141,17 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
                         {
                             @* The reason a tier is worth more or less work belongs on the tier, not
                                in a paragraph above the grid that names neither. *@
+                            @* Size decides what binding a suite here costs; analyzed decides what
+                               re-analyzing costs. Stating only the second made a tier read as
+                               empty the moment it was re-analyzed. *@
                             <th class="abom-tier-head">
                                 <span class="abom-tier-name">@tier</span>
                                 <span class="abom-tier-why">@TierWhy(tier)</span>
                                 <span class="abom-tier-count">
-                                    @_tiers.GetValueOrDefault(tier).ToString("N0") dependencies
+                                    @TierOf(tier).Total.ToString("N0") dependencies
+                                </span>
+                                <span class="abom-tier-count mud-text-secondary">
+                                    @TierOf(tier).Analyzed.ToString("N0") analyzed
                                 </span>
                             </th>
                         }
@@ -284,7 +297,7 @@ else
                 <CellTemplate>
                     <MudTooltip Text="Show what is waiting on this in the Explorer.">
                         <MudLink Href="@DependentsLink(context.Item.NodeKey)">
-                            @context.Item.NodeKey
+                            @context.Item.NodeKey<span class="abom-ref">@RefSuffix(context.Item)</span>
                         </MudLink>
                     </MudTooltip>
                 </CellTemplate>
@@ -308,7 +321,17 @@ else
                 </TemplateColumn>
             }
 
-            <PropertyColumn Property="x => x.Depth" Title="Depth" />
+            @* The tier rather than the raw hop count. Score and directness correlate, so depth
+               reads as a constant 1 down the whole default view while what a reader needs is
+               whether this is theirs to fix and which suites ran on it. The hops stay in the
+               tooltip, where they explain the tier rather than standing in for it. *@
+            <TemplateColumn Title="Tier" Sortable="false">
+                <CellTemplate>
+                    <MudTooltip Text="@TierRowHint(context.Item)">
+                        <span class="abom-status-cell">@TierLabel(context.Item.Tier)</span>
+                    </MudTooltip>
+                </CellTemplate>
+            </TemplateColumn>
 
             @* Only where it varies. Under the build-time filter every row reads the same. *@
             @if (_status != BuildTimeFilter)
@@ -381,11 +404,68 @@ else
                         }
                     </CellTemplate>
                 </TemplateColumn>
+
+                @* Blank rather than a date for anything never analyzed: a row with no results is
+                   not a row analyzed long ago, and only one of those is worth re-running. *@
+                <TemplateColumn Title="Last analyzed" Sortable="false">
+                    <CellTemplate>
+                        @if (!string.IsNullOrEmpty(context.Item.AnalyzedAt))
+                        {
+                            <MudTooltip Text="@($"Analyzed {Clock(context.Item.AnalyzedAt)}. Re-analyzing this tier replaces it.")">
+                                <span class="abom-num">@Ago(context.Item.AnalyzedAt)</span>
+                            </MudTooltip>
+                        }
+                    </CellTemplate>
+                </TemplateColumn>
+
+                @* What actually ran, never what the tier is bound to now. A row analyzed before
+                   run identity landed says so: "no findings" means nothing until you know
+                   whether anything looked for any. *@
+                <TemplateColumn Title="Analyzed with" Sortable="false">
+                    <CellTemplate>
+                        @if (context.Item.SuitesKnown)
+                        {
+                            <MudTooltip Text="@SuitesTooltip(context.Item)">
+                                <span class="abom-rule">@SuitesLabel(context.Item)</span>
+                            </MudTooltip>
+                        }
+                        else if (!string.IsNullOrEmpty(context.Item.AnalyzedAt))
+                        {
+                            <MudTooltip Text="This row was analyzed before the suites that ran were recorded, so what looked at it is unknown. Re-analyzing it records them.">
+                                <span class="mud-text-secondary">not recorded</span>
+                            </MudTooltip>
+                        }
+                    </CellTemplate>
+                </TemplateColumn>
             }
 
-            <TemplateColumn Title="Note" Sortable="false">
+            <TemplateColumn Title="Used by" Sortable="false">
                 <CellTemplate>
-                    <MudText Typo="Typo.caption" Class="mud-text-secondary">@Note(context.Item)</MudText>
+                    @* Collapsed by default: 220 repositories name one version of actions/checkout,
+                       and a row is not the place to list them. The count is exact, the names are a
+                       preview, and the note stays because it says how the crawl reached this. *@
+                    @if (context.Item.UsedByCount > 0)
+                    {
+                        <details class="abom-usedby">
+                            <summary>@UsedByLabel(context.Item)</summary>
+                            <ul>
+                                @foreach (var repo in context.Item.UsedBy)
+                                {
+                                    <li>@repo</li>
+                                }
+                                @if (context.Item.UsedByCount > context.Item.UsedBy.Count)
+                                {
+                                    <li class="mud-text-secondary">
+                                        and @(context.Item.UsedByCount - context.Item.UsedBy.Count) more
+                                    </li>
+                                }
+                            </ul>
+                        </details>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">@Note(context.Item)</MudText>
+                    }
                 </CellTemplate>
             </TemplateColumn>
         </Columns>
@@ -438,11 +518,32 @@ else
     // queue has no row for.
     private const string UpstreamOnlyKey = "upstreamOnly";
 
-    // Depth 1 is what a repository under review names itself and can change there; anything
-    // further arrives through an intermediary that may belong to someone else.
-    private static readonly string[] Tiers = ["direct", "transitive"];
+    // Owning a dependency is a different answer to "what can you do about this" than naming it,
+    // and it is not a depth: an owned action is reached wherever the graph places it. Depth 1 is
+    // what a repository under review names itself; anything further arrives through an
+    // intermediary that may belong to someone else.
+    //
+    // Owned is offered only once an identity has established it. With none, a column reading zero
+    // would assert the operator owns no dependency, which nothing has shown.
+    private string[] Tiers => _suites?.Verified == true
+        ? ["owned", "direct", "transitive"]
+        : ["direct", "transitive"];
 
-    private IReadOnlyDictionary<string, int> _tiers => _state.Tiers;
+    private IReadOnlyDictionary<string, TierCount> _tiers => _state.Tiers;
+
+    private TierCount TierOf(string tier) =>
+        _tiers.TryGetValue(tier, out var c) ? c : new TierCount();
+
+    private static string TierLabel(string tier) => string.IsNullOrEmpty(tier) ? "—" : tier;
+
+    // The hop count explains the tier rather than replacing it: 1 is named directly, more than 1
+    // arrives through an intermediary. Owned is neither, which is why it says so instead.
+    private static string TierRowHint(FrontierItem item) => item.Tier switch
+    {
+        "owned" => $"You are verified against this account, so this is yours to change. Reached in {item.Depth} hop{(item.Depth == 1 ? "" : "s")}.",
+        "direct" => "A repository under review names this itself, so it can be changed there.",
+        _ => $"Reached through an intermediary someone else may own, {item.Depth} hops out.",
+    };
 
     private SuiteBinding? _suites;
 
@@ -453,10 +554,11 @@ else
 
     private int BoundCount(string tier) => BoundTo(tier).Count;
 
-    // Stated per column, because the whole point of the grid is that the two tiers deserve
-    // different work, and a reader deciding that is looking at the column.
+    // Stated per column, because the whole point of the grid is that the tiers deserve different
+    // work, and a reader deciding that is looking at the column.
     private static string TierWhy(string tier) => tier switch
     {
+        "owned" => "you own these",
         "direct" => "your repositories name these",
         _ => "reached through something else",
     };
@@ -513,7 +615,7 @@ else
 
     private string BindHint(string tier, string suite) => IsBound(tier, suite)
         ? $"Stop running {SuiteLabel(suite)} on the {tier} tier. Results already recorded stay until that tier is re-analyzed."
-        : $"Run {SuiteLabel(suite)} on the {tier} tier from the next round. Its {_tiers.GetValueOrDefault(tier):N0} analyzed dependencies pick it up only when re-analyzed.";
+        : $"Run {SuiteLabel(suite)} on the {tier} tier from the next round. Its {TierOf(tier).Analyzed:N0} analyzed dependencies pick it up only when re-analyzed.";
 
     private async Task ToggleSuite(string tier, string suite)
     {
@@ -533,9 +635,11 @@ else
         }
     }
 
-    private string RequeueHint(string tier) => tier switch    {
-        "direct" => $"Analyze all {_tiers.GetValueOrDefault(tier):N0} dependencies your repositories name directly, again, with the query suite currently configured. Nothing already known is cleared while it runs.",
-        _ => $"Analyze all {_tiers.GetValueOrDefault(tier):N0} dependencies reached through an intermediary, again. This is the larger tier and takes correspondingly longer.",
+    private string RequeueHint(string tier) => tier switch
+    {
+        "owned" => $"Re-analyze the {TierOf(tier).Analyzed:N0} analyzed of {TierOf(tier).Total:N0} dependencies belonging to accounts you are verified against. These are the ones you can change yourself, whatever depth they were reached at.",
+        "direct" => $"Re-analyze the {TierOf(tier).Analyzed:N0} analyzed of {TierOf(tier).Total:N0} dependencies your repositories name directly, with the query suite currently configured. Nothing already known is cleared while it runs.",
+        _ => $"Re-analyze the {TierOf(tier).Analyzed:N0} analyzed of {TierOf(tier).Total:N0} dependencies reached through an intermediary. This is the larger tier and takes correspondingly longer.",
     };
 
     private async Task Requeue(string tier)
@@ -712,6 +816,17 @@ else
         var span => $"{(int)span.Value.TotalMinutes}m",
     };
 
+    // Coarser than Elapsed, which dates work in flight. Staleness is read in days and weeks, and
+    // a column of minute counts down a settled queue would say nothing at a glance.
+    private static string Ago(string timestamp) => Since(timestamp) switch
+    {
+        null => string.Empty,
+        var span when span < TimeSpan.FromHours(1) => $"{(int)span.Value.TotalMinutes}m",
+        var span when span < TimeSpan.FromDays(1) => $"{(int)span.Value.TotalHours}h",
+        var span when span < TimeSpan.FromDays(28) => $"{(int)span.Value.TotalDays}d",
+        var span => $"{(int)(span.Value.TotalDays / 7)}w",
+    };
+
     private static TimeSpan? Since(string timestamp) =>
         DateTime.TryParse(timestamp, null,
             System.Globalization.DateTimeStyles.AdjustToUniversal, out var at)
@@ -723,6 +838,40 @@ else
             System.Globalization.DateTimeStyles.AdjustToUniversal, out var at)
             ? at.ToLocalTime().ToString("HH:mm")
             : string.Empty;
+
+    // A name is a package; a reference is what runs. Findings, advisories and pinning all attach
+    // to the second, so a row never shows the first alone. An empty ref is the default branch —
+    // a real answer, and not the same as having no reference.
+    private static string RefSuffix(FrontierItem item) =>
+        string.IsNullOrEmpty(item.Ref) ? " (default branch)" : "@" + item.Ref;
+
+    // "220 repositories" and "12 yours" are different decisions: the second is what the operator
+    // can change. Never printed as "0 yours" — with no verified account that is an unanswered
+    // question, not a count of none, the same rule the pinning split follows.
+    private static string UsedByLabel(FrontierItem item)
+    {
+        var total = item.UsedByCount == 1 ? "1 repository" : $"{item.UsedByCount:N0} repositories";
+        return item.UsedByOwned > 0 ? $"{total} · {item.UsedByOwned:N0} yours" : total;
+    }
+
+    // The pack name alone in the cell, versions in the tooltip: two packs at full identity is
+    // more than a grid cell holds, and the name is what distinguishes "only the graph was
+    // extracted" from "security queries also ran".
+    private static string SuitesLabel(FrontierItem item) =>
+        string.Join(", ", item.Suites.Select(ShortSuite));
+
+    private static string SuitesTooltip(FrontierItem item) =>
+        string.Join("\n", item.Suites) +
+        (string.IsNullOrEmpty(item.CliVersion) ? string.Empty : $"\nCodeQL {item.CliVersion}");
+
+    // `advanced-security/abom-actions-graph-extraction-src@2.26.4` is the pack this repository
+    // publishes; in a column about what ran, the owner and the version are noise.
+    private static string ShortSuite(string suite)
+    {
+        var name = suite.Split('@')[0];
+        var slash = name.LastIndexOf('/');
+        return slash < 0 ? name : name[(slash + 1)..];
+    }
 
     // Its callers, not its dependencies: a queued dependency has no dependencies recorded yet,
     // which is exactly why it is queued. The filter travels too, so the way back lands here.

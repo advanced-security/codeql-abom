@@ -73,16 +73,33 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 #blazor-error-ui .reload { color: #fff; text-decoration: underline; }
 /* style-check: on */
 
-/* The coverage strip states what is not known, so it stays visible on every page. */
+/* The coverage strip states what is not known, so it stays visible on every page.
+
+   A grid rather than a flex row because the items are ragged — 107px to 193px — and packing them
+   greedily left the sixth alone on a second line, reading as an afterthought rather than the last
+   of six. One line is not available at the middle widths at any gap: the items want 1,062px and
+   the strip has 880px at 1152. So the column count is stated rather than fitted, because only 2,
+   3 and 6 divide six evenly and `auto-fit` will happily choose 5 and orphan one. Four and five
+   items — when nothing is unresolved — can still leave a short last row; six is the case that
+   occurs while discovery has anything left to do. */
 .abom-coverage {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
     align-items: center;
-    gap: 1.25rem;
+    gap: 0.4rem 1.25rem;
     padding: 0.4rem 1rem;
     font-size: var(--abom-text-sm);
     border-bottom: 1px solid var(--mud-palette-lines-default);
     background: var(--mud-palette-background-grey);
+}
+
+@media (min-width: 900px) {
+    .abom-coverage { grid-template-columns: repeat(3, 1fr); }
+}
+
+/* Six across needs about 1,300px of strip, and the drawer takes 240px of the window. */
+@media (min-width: 1600px) {
+    .abom-coverage { grid-template-columns: repeat(6, 1fr); }
 }
 
 .abom-coverage-item { display: flex; align-items: baseline; gap: 0.35rem; }
@@ -327,6 +344,40 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 .abom-requeue {
     text-transform: none;
     white-space: nowrap;
+}
+
+/* The verb is stated once for the row rather than on each button, so a third tier does not push
+   the third button onto a line of its own. */
+.abom-requeue-label {
+    margin-right: 0.25rem;
+    white-space: nowrap;
+}
+
+/* Takes the leftover width and gives it back under pressure, which keeps the re-analyze controls
+   on one line: a flex-grow spacer would hold that width and wrap them instead. */
+.abom-run-note {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* Flexbox breaks lines from each item's content width and only then shrinks what is left on the
+   line, so a shrinkable sentence cannot rescue a row that is already allowed to wrap. Once a
+   third tier existed the controls no longer fitted beside the sentence, and wrapping them cost
+   the queue 38px. Holding the row on one line makes the sentence give up the width instead.
+   Below this the sentence has no width left to give, so wrapping is the better failure. */
+.abom-run-row {
+    flex-wrap: wrap;
+}
+
+@media (min-width: 1100px) {
+    .abom-run-row {
+        flex-wrap: nowrap;
+    }
+
+    .abom-run-row .abom-requeue,
+    .abom-run-row .abom-requeue-label {
+        flex-shrink: 0;
+    }
 }
 
 /* A tier column header carries three facts of decreasing weight: which tier, why it differs
@@ -597,3 +648,8 @@ code {
 /* Top-level grid headings are deliberately allowed to wrap. Holding them on one line widens the
    table past its container and pushes the last column off screen, which is the failure the cell
    padding above exists to prevent: a wrapped heading is ugly, a hidden column is wrong. */
+
+/* The used-by disclosure: a version can be named by hundreds of repositories, so the row shows
+   a count and opens to a preview rather than laying them out. */
+.abom-usedby summary { cursor: pointer; font-size: var(--abom-text-sm); }
+.abom-usedby ul { margin: 4px 0 0; padding-left: 16px; font-size: var(--abom-text-sm); }

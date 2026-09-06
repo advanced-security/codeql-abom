@@ -20,6 +20,10 @@ export function collapseGroups(it, nodes, links) {
                 // support it, because a fold must never answer a question on behalf of a member
                 // nobody has measured or analyzed.
                 analyzed: true, reachKnown: true,
+                // Summed rather than reduced to a boolean: a group of five dependencies with one
+                // reference each analyzed out of twenty is not "analyzed", and it is not
+                // "unanalyzed" either.
+                refsInUse: 0, refsAnalyzed: 0,
                 isExternal: true, refStyles: new Set(), edgeClasses: new Set(),
                 // Seeded from the members' own center so a collapsed view sits where the
                 // expanded one did.
@@ -34,6 +38,8 @@ export function collapseGroups(it, nodes, links) {
         // the group has to say so rather than presenting it as measured.
         if (n.reachKnown === false) g.reachKnown = false;
         if (n.analyzed === false) g.analyzed = false;
+        g.refsInUse += n.refsInUse || 0;
+        g.refsAnalyzed += n.refsAnalyzed || 0;
         if (!n.isExternal) g.isExternal = false;
         if (n.x !== undefined) { g.x += n.x; g.y += n.y; g.z += n.z || 0; }
         n.groupKey = g.key;

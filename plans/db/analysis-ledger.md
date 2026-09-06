@@ -3,9 +3,11 @@
 **Status:** CodeQL invocations are serialized machine-wide and measured at 1 during a
 `--concurrency 4` crawl. Every run records the pack, its content digest and the CodeQL that
 evaluated it; a repository whose whole plan is already on record is settled without being
-analyzed; and every finding carries a content hash that two consecutive rebuilds reproduce
-exactly. Selection and pinning are pending, and the identity columns cannot be tightened while
-the corpus still holds pre-identity rows.
+analyzed; every finding carries a content hash that two consecutive rebuilds reproduce exactly;
+re-processing can be selected by identity or aimed at one repository; and the small commands run
+through a JVM that stays up. The BQRS lane still starts a process per query, the interface still
+offers only the tier buttons, and the identity columns cannot be tightened while the corpus holds
+pre-identity rows.
 
 ## Why this exists
 
@@ -243,32 +245,155 @@ did not produce them. Verified on the real corpus: the findings run recorded `2.
 said `2.26.4`, zero mismatches. The check is skipped when no version was recorded, which is the
 single-query lane — refusing there would stop the crawl over a check nobody asked for.
 
+## Done: re-processing is proportional to what moved
+
+`RequeueStale(cliVersion, packDigests)` puts back only the done items whose repository was not
+analyzed at that identity, and `RequeueRepository(name)` puts back the dependencies one
+repository answers. Both are reachable: `expand-all --requeue-stale` and `--requeue owner/name`.
+
+The skip already made an unchanged analysis free, but the checkout in front of it is not, so a
+whole-tier requeue still clones every repository in the tier. Measured on the real corpus:
+
+| | Items requeued |
+| --- | --- |
+| Whole tier | 1,117 |
+| `--requeue-stale` | 1,110 |
+| `--requeue-stale` after editing `AbomEdges.qll` | 1,117 |
+
+The 7 excluded are exactly the items already analyzed at the current identity. That is a small
+saving today and says nothing against the mechanism: 1,555 of 1,571 ledger rows predate the
+identity, so almost everything genuinely is out of date. The pack-edit row is the one that shows
+the chain working — moving one `.qll` moves its pack digest, and the 7 current repositories become
+stale with everything else.
+
+**The identity must come from a fresh resolution, not from the store.** `Expander.CurrentIdentity`
+resolves the bound suites rather than reading what was recorded, because after a CodeQL upgrade
+the most recent recorded version *is* the old one — selecting against stored state would report
+the corpus as current at precisely the moment all of it went stale.
+
+An empty identity is refused rather than matching nothing, since a caller that failed to resolve
+its packs would otherwise requeue the corpus as its way of reporting a bug.
+
+## Done: a request that does not wait its turn
+
+`abom_frontier.expedited_at`, honored ahead of `score` in `Claim` and in the queue view.
+`--requeue owner/name` sets it, which is the plan's "filter plus a pin" as one control.
+
+On the real corpus a repository scoring **0.0** was analyzed first, ahead of **93** pending items
+topping out at **2.0**, and the ranking resumed immediately after it. Among expedited items the
+score still decides, because expediting everything is expediting nothing.
+
+`Complete` clears the mark. Leaving it would let something expedited once jump the queue every
+time a tier requeue put it back.
+
+### It is not called `pinned_at`
+
+The plan asked for `pinned_at`. In this repository a *pinned* reference already means a SHA-pinned
+uses: clause — it is what `actions/unpinned-tag` reports and what `pinning_coverage.go` measures —
+so a `pinned_at` on the queue would have read as "when this reference was pinned to a commit" to
+every reader who met it. The behavior is the one the plan asked for; only the word changed.
+
+## Done: the small commands stopped paying for a JVM
+
+`runner.CLIServer` keeps one `codeql execute cli-server` alive and routes `resolve metadata`,
+`resolve queries` and `bqrs decode` through it. Measured per call:
+
+| | Own process | Through the server |
+| --- | --- | --- |
+| `resolve metadata` | 0.75 s | 0.004 s |
+| `bqrs decode` | 0.62 s | 0.004 s |
+
+**The plan said 2-5 s of JVM start and that was wrong** — it is about 0.7 s. The saving is
+nonetheless larger than the entry implied, because the warm call is not "faster" but roughly 190
+times faster, and the decode is paid once per graph query per repository rather than once a round.
+
+On a real crawl of 15 repositories that is 45 decode process starts eliminated, about 28 s, plus
+38 metadata starts a round at about 28 s each round. Verified in production rather than inferred:
+60 samples during a live crawl saw **zero** `bqrs decode` or `resolve` subprocesses, with the
+server up. The round itself took 311 s for 15 repositories against 109 s for 4 in an earlier run,
+which is consistent but not a controlled comparison — different repositories, different clones.
+
+### A rejected command takes the server down with it
+
+This is the thing that shaped the design, and nothing predicted it. Asking the server for a query
+that does not exist returns an **empty answer** and the process **exits 2**; the next write gets a
+broken pipe. Confirmed with stderr drained, so it is the command that kills it and not a full pipe.
+
+So on this protocol "your command was bad" and "the JVM died" are the same event, and no error
+from the server can be trusted to mean either one. Every failure is `ErrServerUnavailable`, the
+process is dropped, and the caller re-runs the command as its own process — which both recovers
+from a genuine crash and produces the real diagnostic for a genuinely bad command. That is only
+safe because everything routed here is read-only; it is why `database create`, `database analyze`
+and `query run` stay where they are, quite apart from the reference implementation excluding them.
+
+### The decode buffers where it used to stream
+
+`bqrs.DecodeToJSON` streams the CLI's stdout to a file so a result set larger than memory stays
+possible. Through the server the answer is one NUL-delimited message, so it is held whole.
+
+Affordable here on measurement, not on assumption: across the corpus the decoded graph results are
+**1.3 KB mean, 5.3 KB largest**. The streaming form stays for anything that is not that.
+
+One-shot commands are deliberately not wired to it. `build` and `selfcheck` would pay a JVM start
+they have no second call to amortize.
+
+### Done: the skip is per lane, because the cost said it had to be
+
+`pendingWork` asks the ledger about each lane separately and `prepare` runs only what is
+outstanding. All-or-nothing was a deliberate deferral, justified at the time by "the database
+build dominates anyway". **Measured, that was wrong.** One repository:
+
+| Phase | Time | Share |
+| --- | --- | --- |
+| `database create` | 3.3 s | 13% |
+| 3 x graph `query run` | ~10 s | 40% |
+| `database analyze`, 35 findings queries | 11.8 s | 47% |
+
+The build is an eighth of it. The lanes are 87%, they come from different packs with different
+digests, and nothing about running one requires running the other.
+
+On the real corpus, editing one line of `AbomEdges.qll` and re-running 10 repositories already on
+record: **30 graph queries re-run, 0 findings analyses**. The four findings analyses in that pass
+were all repositories being seen for the first time, checked individually rather than assumed.
+Before, all 10 would have re-run the 35-query analyze — about **118 s of ~250 s** burned on
+queries whose digest had not moved. An upstream `actions-queries` bump saves the mirror image.
+
+The database is still built whenever *any* lane has work, which is the 13%. That is not avoidable:
+a lane that has to run needs something to run against.
+
+Skipping the edges lane leaves a round with findings and no BQRS, so `consume` treats a missing
+`ResultPath` as ordinary rather than as a failure. That was the only thing making the split
+non-trivial.
+
+### The pre-identity backlog is not this, and is not fixable
+
+Separately, **1,555 of 1,631** ledger rows predate the identity, covering **818** repositories
+that therefore cannot skip until each has been analyzed once more. That one is not an accepted
+inefficiency but an unavoidable one: those rows record that a query ran against a commit and not
+what produced it, and no amount of design recovers information that was never written. Fabricating
+a plausible digest would be exactly the kind of claim this subsystem exists to refuse.
+
 ## Pending
 
-1. **`cli-server` for the small calls.** Verified against the reference implementation in
-   `codeql-development-mcp-server` (`server/src/lib/`): `codeql execute cli-server` speaks a
-   NUL-delimited protocol and removes 2-5s of JVM start per call. ABOM makes roughly 38
-   `resolve metadata` calls per round plus a decode per query per repository. **`database
-   analyze`, `database create`, `test extract` and `test run` cannot use it** — its
-   `FRESH_PROCESS_SUBCOMMANDS` set, because they spawn extractors, stream multi-event output, or
-   are compound orchestration. Its CWD and environment are also fixed at startup.
-2. **`query-server2` for the BQRS lane**, replacing per-repository `query run`. JSON-RPC with
-   Content-Length headers.
-3. **The design fork this opens.** If `database analyze` must be a fresh process anyway, then
+1. **`query-server2` for the BQRS lane**, replacing per-repository `query run`. JSON-RPC with
+   Content-Length headers. Worth roughly 3 x 0.7 s a repository on the same arithmetic as the
+   cli-server work, against a much larger implementation: compile and evaluate are separate
+   requests with a per-database session, where the cli-server is one command in and one answer
+   out. Measure a `query run` against a warm evaluation before committing to it.
+2. **The design fork this opens.** If `database analyze` must be a fresh process anyway, then
    evaluating through `query-server2` and interpreting with `bqrs interpret` — which is not in
    the exclusion set — would remove `database analyze` from the crawl entirely and collapse the
    two lanes into one, at the cost of assembling rule metadata ourselves.
-4. **Tighten the identity columns to `NOT NULL`.** Blocked, and not by code: **1,555 of 1,571**
+3. **Tighten the identity columns to `NOT NULL`.** Blocked, and not by code: **1,555 of 1,571**
    ledger rows still predate the identity, so the constraint would reject the corpus outright.
    The skip cannot converge this either — a pre-identity row never matches a current key, so
    every one of those pairs has to be analyzed once more. This becomes a one-line change after a
    full re-crawl, and stays wrong before one.
-5. **Select and pin**: selection predicates as filters and controls, so "re-analyze what has not
-   run since pack X vY" is a query rather than a whole-tier requeue; `abom_frontier.pinned_at`,
-   which does not exist yet, honored ahead of `score` in `Claim`. The interface also still reports
-   only what was analyzed, so a skip-heavy re-analysis shows a counter that does not move; the
-   cycle log says it, the Discovery page does not.
-6. **Overlay databases**, guarded. They map onto the recheck loop directly: a base keyed on
+4. **The controls are command-line only.** The Discovery page still offers whole-tier requeue and
+   nothing else, so the cheap selection is available to whoever runs the binary and not to whoever
+   is looking at the interface. The queue view already orders expedited work where it will run,
+   which is the half that would otherwise contradict the page.
+5. **Overlay databases**, guarded. They map onto the recheck loop directly: a base keyed on
    `resolved_sha`, an overlay when the ref moves. Probe `codeql <cmd> -h -vv` and degrade to a
    full build — these are Wizards-only flags that may move without notice.
 
