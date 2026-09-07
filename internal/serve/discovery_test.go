@@ -2,11 +2,15 @@ package serve
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/advanced-security/codeql-abom/internal/expand"
 	"github.com/advanced-security/codeql-abom/internal/supervisor"
 )
 
@@ -16,6 +20,11 @@ type fakeDiscovery struct {
 	paused  bool
 	woken   bool
 	problem *supervisor.Problem
+
+	selection  expand.Selection
+	selectErr  error
+	staleAsked bool
+	repoAsked  string
 }
 
 func (f *fakeDiscovery) Status() supervisor.Status {
@@ -33,6 +42,16 @@ func (f *fakeDiscovery) Start() *supervisor.Problem {
 func (f *fakeDiscovery) Pause() { f.paused = true }
 
 func (f *fakeDiscovery) Wake() { f.woken = true }
+
+func (f *fakeDiscovery) RequeueStale(context.Context) (expand.Selection, error) {
+	f.staleAsked = true
+	return f.selection, f.selectErr
+}
+
+func (f *fakeDiscovery) RequeueRepository(name string) (expand.Selection, error) {
+	f.repoAsked = name
+	return f.selection, f.selectErr
+}
 
 func controlRequest(target string) *http.Request {
 	r := httptest.NewRequest(http.MethodPost, target, nil)
@@ -236,6 +255,159 @@ func TestDiscoveryControlAllowsRemoteWhenOperatorOptedIn(t *testing.T) {
 	}
 	if !loop.started {
 		t.Error("the loop was never asked to start")
+	}
+}
+
+func requeueResult(t *testing.T, w *httptest.ResponseRecorder) RequeueResult {
+	t.Helper()
+	var got RequeueResult
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding %s: %v", w.Body.String(), err)
+	}
+	return got
+}
+
+// Selecting what is out of date spends the same clones and database builds a tier requeue does,
+// so it is guarded the same way.
+func TestRequeueingStaleWorkIsGuardedLikeStarting(t *testing.T) {
+	s, _ := newServer(t)
+	loop := &fakeDiscovery{}
+	s.Discovery = loop
+
+	r := httptest.NewRequest(http.MethodPost, "/api/discovery/requeue-stale", nil)
+	r.Host = "127.0.0.1:8080"
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403 without the control header", w.Code)
+	}
+	if loop.staleAsked {
+		t.Error("an unguarded request reached the selection")
+	}
+}
+
+// The count alone cannot be checked by anyone. What it was judged against is the difference
+// between a number and a claim, and only the loop that resolved the packs can say.
+func TestRequeueingStaleWorkReportsWhatItJudgedAgainst(t *testing.T) {
+	s, _ := newServer(t)
+	s.Discovery = &fakeDiscovery{
+		selection: expand.Selection{Requeued: 1742, CLIVersion: "2.26.4", Packs: 4},
+	}
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, controlRequest("/api/discovery/requeue-stale"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	got := requeueResult(t, w)
+	if got.Requeued != 1742 || got.CLIVersion != "2.26.4" || got.Packs != 4 {
+		t.Errorf("got %+v, want the selection the loop reported", got)
+	}
+}
+
+// The state travels with the numbers. Without it the queue counts beside the button stay a poll
+// behind, so a requeue of 1,742 items leaves "queued 0" on screen.
+func TestASelectiveRequeueAnswersWithTheStateItLeftBehind(t *testing.T) {
+	s, _ := newServer(t)
+	s.Discovery = &fakeDiscovery{selection: expand.Selection{Requeued: 1}}
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, controlRequest("/api/discovery/requeue-stale"))
+
+	if got := requeueResult(t, w); !got.State.Available {
+		t.Error("the answer carried no discovery state, so the page cannot refresh from it")
+	}
+}
+
+// Requeued work sits untouched until the interval elapses, which reads as a control that did
+// nothing for as long as the loop sleeps.
+func TestRequeueingStaleWorkWakesTheLoop(t *testing.T) {
+	s, _ := newServer(t)
+	loop := &fakeDiscovery{selection: expand.Selection{Requeued: 3}}
+	s.Discovery = loop
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, controlRequest("/api/discovery/requeue-stale"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if !loop.woken {
+		t.Error("the loop was not woken, so the requeued work waits out the interval")
+	}
+}
+
+// A corpus that is entirely current is the normal outcome after a crawl, and waking the loop for
+// it burns a cycle discovering there is nothing to do.
+func TestRequeueingNothingStaleLeavesTheLoopAlone(t *testing.T) {
+	s, _ := newServer(t)
+	loop := &fakeDiscovery{}
+	s.Discovery = loop
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, controlRequest("/api/discovery/requeue-stale"))
+
+	if loop.woken {
+		t.Error("the loop was woken with nothing requeued")
+	}
+}
+
+// A repository is named in the body rather than the path: an owner and a name are two segments,
+// and routing on them would collide with the tier route beside it.
+func TestRequeueingARepositoryUsesTheNameItWasGiven(t *testing.T) {
+	s, _ := newServer(t)
+	loop := &fakeDiscovery{selection: expand.Selection{Requeued: 12, Expedited: 12}}
+	s.Discovery = loop
+
+	r := controlRequest("/api/discovery/requeue-repository")
+	r.Body = io.NopCloser(strings.NewReader(`{"repository":"octo/mine"}`))
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if loop.repoAsked != "octo/mine" {
+		t.Errorf("the loop was asked for %q, want octo/mine", loop.repoAsked)
+	}
+	if got := requeueResult(t, w); got.Expedited != 12 {
+		t.Errorf("expedited %d, want the 12 the loop reported", got.Expedited)
+	}
+}
+
+// An empty name matches nothing, and reporting success for it leaves an operator watching a
+// crawl that was never going to run.
+func TestRequeueingARepositoryNeedsAName(t *testing.T) {
+	s, _ := newServer(t)
+	loop := &fakeDiscovery{}
+	s.Discovery = loop
+
+	r := controlRequest("/api/discovery/requeue-repository")
+	r.Body = io.NopCloser(strings.NewReader(`{"repository":"  "}`))
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+	if loop.repoAsked != "" {
+		t.Errorf("the loop was asked for %q on an empty name", loop.repoAsked)
+	}
+}
+
+// A server built without a loop has nothing to resolve the packs, so it cannot judge staleness
+// at all. Answering 0 would report the corpus as current.
+func TestSelectiveRequeueNeedsADiscoveryLoop(t *testing.T) {
+	s, _ := newServer(t)
+	s.Discovery = nil
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, controlRequest("/api/discovery/requeue-stale"))
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", w.Code)
 	}
 }
 

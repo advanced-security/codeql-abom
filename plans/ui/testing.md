@@ -1,6 +1,7 @@
 # Interface testing
 
-**Status:** layer 1 done, layers 2 and 3 pending.
+**Status:** the bUnit layer and the screenshot pass are in use; the component catalog is an open
+decision, not a commitment.
 
 ## Why this exists
 
@@ -23,7 +24,9 @@ both passed bUnit and were only ever going to be caught by looking.
 ## Done
 
 `ui/tests/Abom.WebAssembly.Tests/` — bUnit 2.9.0, xunit.v3, net10.0, in `make verify` and CI.
-10 tests, each named after a regression that actually shipped.
+**76 tests**, each named after a regression that actually shipped. It was 10 when this layer
+landed; the count is worth keeping current because it is the one number that says whether the
+layer is being used or merely present.
 
 Non-obvious things the harness encodes, all of which cost time to find:
 

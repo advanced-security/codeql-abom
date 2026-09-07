@@ -106,13 +106,20 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	w := store.NewWriter(s, 0)
 	server := &runner.CLIServer{CodeQLPath: *codeqlPath}
 	defer func() { _ = server.Close() }()
-	r := &runner.Runner{CodeQLPath: *codeqlPath, Lock: runner.SharedLock(), Server: server}
+	evaluator := &runner.QueryServer{CodeQLPath: *codeqlPath}
+	defer func() { _ = evaluator.Close() }()
+	r := &runner.Runner{
+		CodeQLPath: *codeqlPath, Lock: runner.SharedLock(),
+		Server: server, Evaluator: evaluator,
+	}
+	checkout := &expand.Checkout{}
 	e := &expand.Expander{
 		Queue:    queue,
 		Store:    s,
 		Ingester: ingest.New(s, w),
 		Writer:   w,
-		Fetcher:  &expand.Checkout{},
+		Fetcher:  checkout,
+		Probe:    checkout,
 		Builder:  r,
 		CodeQL:   r,
 		Analyzer: r,
@@ -123,7 +130,7 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		OnEvent:  logFailures(stdout),
 	}
 
-	if err := requeueSelection(ctx, s, queue, e, *requeueStale, *requeueRepo, stdout); err != nil {
+	if err := requeueSelection(ctx, e, *requeueStale, *requeueRepo, stdout); err != nil {
 		return fmt.Errorf("expand-all: %w", err)
 	}
 

@@ -201,3 +201,23 @@ func TestFindingsFromSARIFHandlesNoResults(t *testing.T) {
 		t.Errorf("stored %d findings, want 0", n)
 	}
 }
+
+// A run that names no rule at all searched for nothing, which is not the same as searching and
+// finding nothing — and it is indistinguishable from a clean repository once stored.
+//
+// Not hypothetical: `database interpret-results` over a results tree it does not recognize exits
+// 0, says "Exported results to SARIF", and writes exactly this. Every repository would have come
+// back clean and the crawl would have looked healthy.
+func TestFindingsFromSARIFRejectsARunThatSearchedForNothing(t *testing.T) {
+	s := newTestStore(t)
+	ing := New(s, store.NewWriter(s, 0))
+
+	const empty = `{"runs":[{"tool":{"driver":{"name":"CodeQL","rules":[]}},"results":[]}]}`
+	_, err := ing.FindingsFromSARIF(strings.NewReader(empty), Options{Repository: "octo-org/app"})
+	if err == nil {
+		t.Fatal("a run that names no rules was accepted as a clean repository")
+	}
+	if !strings.Contains(err.Error(), "octo-org/app") {
+		t.Errorf("the error does not name the repository: %v", err)
+	}
+}

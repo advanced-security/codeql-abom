@@ -15,44 +15,195 @@ The ranking is itself a plan, and plans are always subject to change over time.
 
 ## Ranked next
 
-1. **[Bring the selection controls to the interface](db/analysis-ledger.md)** — requeue by
-   staleness and by repository exist and are command-line only; the Discovery page still offers
-   whole-tier requeue and nothing else (verified: it calls only `RequeueTierAsync`). A skip-heavy
-   re-analysis also shows a counter that does not move, which the cycle log says and the page
-   does not. **Ranked first for a reason that has since weakened**: suite provenance was going to
-   need a way to select the *not recorded* rows, but a running crawl took them from 50 to 105 in
-   an hour without any control at all. What stands is operator control for the other reasons —
-   targeted re-analysis and a progress counter that tells the truth.
-2. **[Warm the BQRS lane via `query-server2`](db/analysis-ledger.md)** — the small commands now
-   run through a persistent JVM; `query run` still starts one per query per repository. Worth
-   about 3 x 0.7 s a repository, against a much larger protocol than the cli-server's. Measure
-   before committing.
-3. **[Give `internal/archive` a command or delete it](api/query-suites.md)** — a working, tested
-   pipeline no binary reaches. It is why the findings lane looked implemented for as long as it
-   did. Cheap, and it removes a standing source of the same mistake.
-4. **[Overlay databases](db/analysis-ledger.md)** — they map onto the recheck loop directly, but
-   the flags are Wizards-only. Probe and degrade. After the ledger, which decides what to run at
-   all.
-5. **[List every repository using a version](ui/discovery-references.md)** — the grid previews five
-   names and says "and 213 more", which is honest and a dead end. The node page is where the full
-   list belongs. Left over from the row-names-a-version work, and genuinely separate: a different
-   page, a different query shape.
-6. **[Collapse `name@ref` back to one node](ui/explorer-references.md)** — per-reference nodes are
+Entries 1 to 6 are one re-architecture, taken in dependency order. The project was seeded from
+`gh mrva` databases across 204 repositories nobody owns, and every guardrail below follows from
+fixing that: what is owned is declared, discovery is bounded by it, what falls outside is removed,
+and what remains is emitted as a bill of materials. The interface entries that were ranked 1 and 2
+drop below it, because the re-scope changes the Explorer and doing them first buys rework.
+
+1. **[Ownership is declared, and discovery is gated on it](db/owned-scope.md)** — `origin` defaults
+   to `seed` in the schema, so any ingest silently creates a root-set member; and `isOwned` reads
+   the 33 accounts `gh` says you belong to, which is membership rather than responsibility.
+   Declared orgs with optional per-account include lists, personal account opt-in, `gh` demoted to
+   a pre-flight permission check, and no discovery until both are in hand.
+2. **[Nothing enters the graph the owned set does not reach](db/discovery-boundary.md)** —
+   `Enqueue` drops a candidate only on depth and "names no repository"; there is no ownership
+   boundary anywhere. Adds one, renames `seed` to `owned`, and replaces the flat `MaxDepth = 5`
+   with iterative deepening so a shallow answer is complete before a deep one is attempted.
+3. **[What no longer belongs is removed, provably](db/pruning.md)** — nothing can ever leave, and
+   `GraphDelta` can only add, so a client is never told something disappeared. Tombstone, delta
+   removals, then compaction behind an epoch. Validated against the wide seed, which is the
+   largest orphan set this project will ever have.
+4. **[An edge says what boundary it crosses](db/edge-relationships.md)** — same repository, same
+   owner, cross owner. Structural and ownership-independent, so it can land any time, and the bill
+   of materials needs it. Ranked here so the BOM does not ship and then get reworked.
+5. **[A bill of materials you can read, export and verify](api/bill-of-materials.md)** — the
+   product. There is no export of any kind today. A closure read from a root, coverage stated
+   inside the document rather than beside it, and three serializations: native ABOM JSON,
+   CycloneDX 1.6, SPDX 2.3. **SPDX 3.0 was asked for and is unavailable** — `spdx/tools-golang`
+   supports 2.1 to 2.3 only.
+6. **[Complete first, then current, under budget](db/freshness-budget.md)** — the claim order is
+   `score DESC`, which encodes neither completeness nor freshness, and the drift recheck has fired
+   **0 times across 2,800 rows**. An explicit objective, `checked_at` made to mean *probed*, and
+   per-cycle budget accounting.
+7. **[Collapse `name@ref` back to one node](ui/explorer-references.md)** — per-reference nodes are
    the useful default and now the only behavior. "Which actions do we use at all" is a second
    legitimate reading, and the counts it needs already ride on every node.
-7. **[Run the CodeQL update workflow for real](ql/packs.md)** — `update-codeql.yml` and
+8. **[Run the CodeQL update workflow for real](ql/packs.md)** — `update-codeql.yml` and
    `bump-pack-versions.sh` are exercised locally and have never run in Actions.
-8. **[Component catalog spike](ui/testing.md)** — BlazingStory, our own, or neither. Timeboxed,
+9. **[Component catalog spike](ui/testing.md)** — BlazingStory, our own, or neither. Timeboxed,
    with criteria written before the code. Its own README says it may be abandoned; that is the
    decision, not a footnote.
-9. **[Explorer component coverage](ui/testing.md)** — needs `JSInterop.SetupModule`. Selection
-   state has two independent halves, so it is a phase rather than a few tests.
-10. **[Observation store hardening](db/observations.md)** — indexes, retention, the subject keys
+10. **[Explorer component coverage](ui/testing.md)** — needs `JSInterop.SetupModule`. Selection
+    state has two independent halves, so it is a phase rather than a few tests.
+11. **[Observation store hardening](db/observations.md)** — indexes, retention, the subject keys
     that did not join. Wait until read patterns are known; guessing indexes now would be guessing.
-11. **[Publish packs to GHCR](ql/packs.md)** — deliberately deferred until much later. The naming
+12. **[Publish packs to GHCR](ql/packs.md)** — deliberately deferred until much later. The naming
     and versioning landed early so that publishing is never the thing blocked.
 
 ## Implemented
+
+- **[List every repository using a version](ui/discovery-references.md)** — the grid's "and N more"
+  was a dead end on **291 of the corpus's 5,787** name-and-version pairs; it now links to the node
+  page, where each row of *References in use* opens the repositories naming that version.
+  `NodeUsersOf(key, ref)` backs `GET /api/node/{key}/-/users?ref=`. Cross-checked against the same
+  sets counted independently in SQL, exact in all three: `actions/checkout@v4` **285 repositories,
+  76 in scope, 7 the operator's**; `actions/upload-artifact@v4` 98 and 43; `actions/setup-node@v3`
+  74 and 7. Two numbers a reader would otherwise add up wrongly are now kept apart. **Per-reference
+  totals do not sum**: `actions/checkout` has 65 references totalling **1,468** against **1,019**
+  distinct repositories, because one repository naming three versions is three rows and one
+  repository. And **uses are not repositories**: `gradle/actions` names `checkout@v4` **146** times
+  from one repository, and it is `upstream`, so those 146 are nobody's work here — which is why
+  every row carries its origin instead of the list being filtered to seeds. The six bUnit tests
+  passed the moment they were written, so the render was deliberately broken to watch all six
+  fail before being restored. One real defect fell out: a `break` out of a `rows` loop followed by
+  another query **deadlocks** under `MaxOpenConns(1)` — it hung for the full ten-minute timeout
+  rather than failing, and only on the truncation path, because every other path drains the loop
+  and auto-closes.
+
+- **Reprocessing proportional to what changed** — closed out. The pre-check, the fetch-scope
+  assertion and the indexed-content digest all landed; overlay databases, the one remaining
+  mechanism, are **blocked by the extractor rather than by us**. Overlay support is declared per
+  extractor by `overlay_support_version` in `codeql-extractor.yml`; seven bundled extractors
+  declare `20250626` and `actions` is not among them. `codeql database create --language=actions
+  --overlay-base` still exits **0** and prints *Successfully created database*, then writes
+  `overlayBaseDatabase: false` — a silent no-op, which is the worst shape a blocker can take. The
+  same command against javascript writes `true` plus an `overlayBaseSpecifier`, which is the
+  positive control that the flag works and the extractor is the gate.
+  `TestTheActionsExtractorStillCannotBuildAnOverlayBase` asserts it under `make itest` and fails
+  when the blocker lifts; it was verified by pointing it at the javascript base and watching it
+  fail. Two CLI details cost a round of guessing and are now written down: `--overlay-base` is a
+  **boolean** that marks the database being created rather than a path to one, and neither overlay
+  option appears in `database create --help`. Closing the plan also settled the cost question it
+  had left open — measured on `actions/checkout`, three runs per phase, warm lanes: fetch **3.68 s
+  (24.1%)**, build **3.11 s (20.3%)**, graph lane **3.95 s (25.8%)**, findings lane **4.56 s
+  (29.8%)**, total **15.30 s**. The build was 3.3 s of 25 s (13%) when first measured; it has not
+  got slower, everything around it got faster, so overlays are worth **more** than the ranking
+  assumed and nothing at all until the extractor moves. What shipped attacks the other 80%.
+
+- **A commit is recognized by what the extractor would read, not only by its sha** — a release
+  moves a tag over a rebuilt `dist/`, which the sparse fetch does not take, so the commit is new
+  and the database is byte-identical. `abom_commit_content` records a sha256 over every file the
+  fetch produced, and `QueryRunExistsForContent` matches every part of the run identity *except*
+  the commit, joined on that digest. Measured against the corpus itself — the **480** commits ABOM
+  has actually built databases for across the 30 repositories with more than one — **427** are
+  distinct trees, so **53 rebuilds (11.0%)** were redundant, each one a database build plus both
+  query lanes. `actions/cache` is 15 commits over 9 trees, `actions/checkout` 36 over 27. Fourteen
+  of the thirty gain nothing, which is the honest shape. Over release *tags* rather than analyzed
+  commits the share runs higher — **16 of 60** across ten popular actions, with
+  `github/codeql-action` v4.37.7/.8/.9 sharing one tree. Nothing is written for the new commit:
+  copying the ledger rows forward would record a run that did not happen, and the run stays
+  attributed where it occurred. `.git` is excluded from the digest because its packfiles differ
+  between two clones of one commit, which would have made every digest unique and the check inert
+  — silently, since an inert check looks exactly like a correct one that never matches. The
+  Discovery *suites* column had to move with it: it joined a row to runs at its own `resolved_sha`
+  and a row settled by equivalence has none, so it would have answered *not recorded* for a
+  repository that is analyzed — inventing a coverage gap out of an optimization, the mirror of
+  claiming coverage never earned. Both content rows in that join are constrained to the same
+  repository, so an identical tree in a fork still joins to nothing.
+
+- **A reference is resolved before it is cloned, and probed against itself** — the skip already
+  refused an unchanged query against an unchanged identity, but the checkout in front of that
+  decision was still paid, on the reasoning that the commit is only knowable once the source is in
+  hand. A reference resolves remotely for a fraction of a clone, so it is knowable first. Measured
+  on the real corpus over the same twelve rows, requeued after being analyzed: **12 repositories
+  fetched in 11.25 s becomes 0 fetched in 4.48 s**, with both settling twelve items and ingesting
+  nothing — identical outcome, no clones. **803 of 2,800** settled rows are SHA-pinned and are not
+  probed at all, since a reference that is already a commit cannot move. Failure is never the
+  answer "nothing outstanding": an unanswerable probe falls back to fetching, and so does a
+  reference mistaken for a commit. Generalizing the resolver surfaced a **latent defect in the
+  drift recheck**: it resolved HEAD for every candidate while `Recheck.Requested` sat unused
+  beside it, so a row asking about `v4` was compared against the default branch — an unmoved tag
+  reads as drifted, re-analyzes to the identical result, and is due again next pass. Checking why
+  the corpus had not paid for it was worth more than the fix: `checked_at` is set by `Complete` at
+  analysis time and never meant "probed", and the honest signal `checked_at > analyzed_at` is
+  **0 rows across all 2,800** — the recheck is wired but gated on a drained queue plus a 24-hour
+  TTL and has never run here. It would have put **800 of the 1,997 mutable rows** on a permanent
+  24-hour treadmill. One assertion was rewritten rather than deleted: the test that demanded a
+  fetch now demands the recorded commit, which is the guarantee it was always for.
+  `db/analysis-ledger.md`
+
+- **`internal/archive` is deleted, and dead packages are now asserted against** — a complete,
+  tested pipeline that `go list -deps` showed **no command reached**, and nothing outside it
+  imported. The entry offered a command or deletion; adopting it would have reintroduced the
+  defect the ledger exists to prevent. `consumeFindings` recorded a query run with **no pack, no
+  digest and no CLI version**, so every row would have joined the **1,555 pre-identity rows** that
+  can never converge, and it passed no `CLIVersion` to `FindingsFromSARIF`, skipping the
+  `semanticVersion` check that stops SARIF being attributed to an analyzer that did not produce
+  it. Its query lane also still called `RunQuery` per query, the pattern removed everywhere else
+  that morning. Nothing was lost: "run our queries over archives already on disk" is what
+  `pipeline.DatabaseSource` is documented to extend, so it is an adapter rather than a parallel
+  `Runner` with its own pool. **The guard matters more than the deletion** —
+  `TestEveryInternalPackageIsReachableFromABinary` was written first, failed naming exactly one
+  package, and passes now. Reading dead code answers "does this work" and never "does this run".
+  **The measurement for removing unreachable code is that nothing moves, and nothing did**: a real
+  round afterwards running both lanes left findings at **11,370** and edges at **46,264**, with
+  the ledger rows it wrote carrying full identity beside an older pre-identity row. The same
+  hazard one level down is recorded rather than folded in: `ingest.FindingsFromDirectory`
+  now has no caller outside its own tests, and a package-level guard cannot see it.
+  `api/query-suites.md`
+
+- **The BQRS lane costs one process, then none** — `query run` per query became one
+  `database run-queries` for the lane, and then `runner.QueryServer` moved the evaluation into a
+  `codeql execute query-server2` session that outlives the repository. One repository's three
+  graph queries: **11.76 s → 4.34 s** for the batch, of which **1.47 s** is evaluation and
+  **0.72 s** is the process-and-JVM floor. The entry priced this at "3 x 0.7 s a repository" and
+  was **wrong by about five times**: the JVM is a fifth of what each process wastes, the rest
+  being library-path resolution, pack resolution, opening the dataset and evaluator teardown —
+  all per *process*, which is why one invocation recovers most of it and a session recovers the
+  rest. Serialized time, since `runner.Lock` holds CodeQL to one invocation machine-wide, and
+  three lock acquisitions a repository become one. Results are byte-equivalent across all three
+  routes: **43 / 84 / 7 tuples**. The protocol is the CLI's IDE plumbing and is not a stable
+  interface: parameters go **inside a `body` envelope** beside a `progressId`, and sending them
+  bare answers `Internal error` with a NullPointerException that says nothing about the shape —
+  unreachable by any unit test, which is why `make itest` now builds a database and runs the
+  protocol against a real server. Every failure degrades to `ErrServerUnavailable` and re-runs as
+  its own process, while a verdict the evaluator returns does not, because a query it rejected
+  would be rejected again. **The fork this opened is refused, and the corpus said why:**
+  `database analyze` does split into `run-queries` plus `interpret-results` with CodeQL still
+  assembling all 35 rules, but `interpret-results` finds results by pack-relative path, and given
+  a layout it does not recognize it **exits 0, says "Exported results to SARIF", and writes zero
+  rules and zero results** — every repository clean, the crawl healthy. `FindingsFromSARIF` now
+  refuses a run that names no rules at all. `db/analysis-ledger.md`
+
+- **The selection controls reached the interface** — requeue by staleness and by repository had
+  existed for `expand-all` since the ledger landed, and the Discovery page offered whole-tier
+  requeue and nothing else. Both are now buttons, and the selecting moved into
+  `expand.RequeueStale`/`RequeueRepository` so the page and the command line cannot drift into two
+  answers to "what is out of date". On the real corpus, against **2,800** settled dependencies:
+  every tier puts back **2,800**, out-of-date puts back **987** against CodeQL 2.26.4 and 2 packs,
+  and one repository puts back **218 with 221 moved ahead of the ranking**. **The plan's own
+  "that is a small saving today" is now false** — it was measured when 1,555 of 1,571 ledger rows
+  predated the identity and only 7 items could be excluded; with 3,917 of 5,472 rows now carrying
+  one it excludes **1,813 of 2,800**, two thirds of the clones a tier sweep pays for. Nothing about
+  the mechanism changed, only what there was to select on. The corpus then produced a state nobody
+  had written: asking for a repository whose rows a stale sweep had *already* queued reported
+  `0 requeued`, correctly, and the page said *nothing analyzed for it* — wrong twice over, because
+  the repository is known and "run this next" could still be answered. Expediting now runs whether
+  or not anything was put back. Separately, a cycle that only skipped moved **no number the page
+  shows**: `Processed` excludes skips by construction, so a re-analysis of a current corpus left
+  `Analyzed` at zero and read as a hung loop, while the cycle log had said `skipped N already on
+  record` all along. `Status.Skipped` carries it now. `db/analysis-ledger.md`
 
 - **A dependency row names a version, not a package** — the queue is keyed `(node_key, ref)` and
   the grid drew bare names, so fourteen consecutive rows read `actions/checkout` and looked like
@@ -424,6 +575,15 @@ The ranking is itself a plan, and plans are always subject to change over time.
 
 ## Not doing, and why
 
+- **Evaluating the findings lane through the query server.** It splits cleanly — `database
+  analyze` is `run-queries` plus `interpret-results`, and running them separately over the same
+  tree produces the same SARIF with all 35 rules, so no rule metadata would be assembled by hand.
+  It fails on the layout: `interpret-results` finds results by their **pack-relative path**, and
+  given a tree it does not recognize it **exits 0, prints "Exported results to SARIF" and writes
+  zero rules and zero results** — measured, by flattening a tree that had just produced 12
+  findings. Every repository would have come back clean. Reproducing CodeQL's internal layout from
+  pack paths is the only way through and getting it wrong is silent, which is not a trade worth
+  making on the lane that carries every security verdict. See `db/analysis-ledger.md`.
 - **Ingesting the actions CFG as control flow.** `codeql/actions-all@0.6.0` builds it from
   `StandardPreOrderTree` over the AST and **never consults `needs:`** — `grep needs Cfg.qll`
   returns nothing — so sibling jobs are chained in document order. For two independent jobs that

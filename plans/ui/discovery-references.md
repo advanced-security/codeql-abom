@@ -1,8 +1,14 @@
 # A dependency row names a version, not a package
 
-**Status:** shipped. Rows name a version, an empty reference says *default branch*, and `Used by`
-is backed by the edges and split by ownership. One item is deliberately left over: the preview
-stops at five names, and the full list belongs on the node page.
+**Status:** shipped. Rows name a version, an empty reference says *default branch*, `Used by` is
+backed by the edges and split by ownership, and the preview's "and N more" now leads to the whole
+list on the node page.
+
+**Every number below was measured against the wide `gh mrva` seed**, before the re-scope in
+`db/owned-scope.md` and `db/discovery-boundary.md`. `actions/checkout@v4` at 285 repositories
+counts 204 seed repositories nobody owns; once the root set is declared it will be a small
+fraction of that. The numbers are kept because they are what was measured, not because they
+describe the corpus after re-scoping.
 
 ## What it measured
 
@@ -83,9 +89,39 @@ which is what the current "named by" column prints. The real set of users lives 
 3. ~~Show the tag and its resolution together.~~ Largely already existed — the "Analyzed commit"
    column renders `ResolvedSha` beside the reference.
 4. ~~Rename `Note` to `Used by`.~~ **Shipped**, edge-backed and split by ownership.
-5. **Still open: the full list of users.** The preview stops at five and says "and 213 more",
-   which is honest and a dead end. The node page is where every repository using a version
-   belongs — a different page and a different query shape, so it is its own entry.
+5. ~~The full list of users.~~ **Shipped.** `NodeUsersOf(key, ref)` backs
+   `GET /api/node/{key}/-/users?ref=`, and each row of *References in use* on the node page opens
+   the repositories naming that version. Discovery's "and N more" links there with the reference
+   in the query string, so the page opens on the row the reader came from.
+
+### What the full list had to be careful about
+
+**291 of the corpus's 5,787 name-and-version pairs** exceed the five-name preview, so that is how
+many rows dead-ended. The widest is `actions/checkout@v4` at **285 repositories**.
+
+Cross-checked against the same numbers computed independently in SQL, exact in all three cases:
+
+| | API | SQL |
+| --- | ---: | ---: |
+| `actions/checkout@v4` | 285 total, 76 in scope | 285, 76 |
+| `actions/upload-artifact@v4` | 98 total, 43 in scope | 98, 43 |
+| `actions/setup-node@v3` | 74 total, 7 in scope | 74, 7 |
+
+**The per-reference totals must not be added up.** `actions/checkout` has 65 distinct references
+whose totals sum to **1,468**, against **1,019** distinct repositories using it at any reference.
+One repository naming three versions is three rows and one repository, and a page that summed
+them would report half again as many users as exist.
+
+**Uses and repositories are also different numbers.** `gradle/actions` names `checkout@v4` **146**
+times; that is one repository and 146 places to edit. It is also `upstream`, so those 146 are
+nobody's work here — which is why every row carries its origin rather than the list being filtered
+to seeds. Of the 285, **76 are in scope and 7 are the operator's**.
+
+**A `break` out of a `rows` loop deadlocked the process.** The pool is `MaxOpenConns(1)`, so the
+open `*sql.Rows` still held the only connection when the follow-up count ran. It did not fail — it
+hung for the full ten-minute test timeout, and only on the truncation path, because every other
+path drains the loop and auto-closes. Reading rows in their own function so `defer rows.Close()`
+fires first is the fix.
 
 ## The constraint that must not be broken
 
@@ -98,7 +134,9 @@ the *point*: an unresolvable tag is a finding the current grid cannot express.
 ## Verification
 
 - No row in Discovery renders a dependency without a reference.
-- The 31 `actions/checkout` rows read as 31 versions, and their "Used by" counts sum to the edge
-  count for that node.
 - A tag-based row and a SHA-pinned row for the same action are visibly different rows.
 - An unresolved tag says so rather than showing an empty commit.
+- The full user list agrees exactly with the same set counted independently in SQL.
+- A list cut by the budget says so; one that was not does not claim to have been.
+- Ownership is unanswered rather than zero until an account is verified.
+- An upstream user is listed and marked, never silently dropped and never counted as work.

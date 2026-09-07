@@ -879,31 +879,6 @@
         await Refilter();
     }
 
-    /// <summary>
-    /// Watches whether there is anything to follow, whether or not this view is following.
-    ///
-    /// Discovery is started from another page, and without this the follow control here would
-    /// stay greyed out for as long as the tab was open.
-    /// </summary>
-    private async Task PollDiscovery()
-    {
-        var state = await Api.GetDiscoveryAsync();
-        // A read that failed returns an empty result rather than throwing, so without this the
-        // page would quietly decide discovery had stopped and grey the follow control.
-        _pollError = Api.LastError;
-        if (_pollError is not null)
-        {
-            StateHasChanged();
-            return;
-        }
-
-        Follow.SetDiscoveryRunning(state.Status.IsRunning);
-        if (Follow.Enabled)
-        {
-            await FollowGraph();
-        }
-    }
-
     private void OnFollowChanged()
     {
         ApplyFollow();
@@ -913,22 +888,22 @@
     private void ApplyFollow()
     {
         _followTimer?.Dispose();
-        // Polling continues while following is off: it is a few hundred bytes, and it is the
-        // only way this page learns that a run started somewhere else.
         _followTimer = new Timer(async _ =>
         {
             // Nothing awaits a timer callback, so a failed fetch or a JS interop error raised
             // here is discarded, and the graph silently stops following.
             try
             {
-                await InvokeAsync(PollDiscovery);
-                _pollError = null;
+                await InvokeAsync(FollowGraph);
+                // A read that failed returns an empty result rather than throwing, so the
+                // transport's own account is the only sign the picture has stopped moving.
+                _pollError = Api.LastError;
             }
             catch (Exception ex)
             {
                 _pollError = ex.Message;
-                await InvokeAsync(StateHasChanged);
             }
+            await InvokeAsync(StateHasChanged);
         }, null, Follow.Interval, Follow.Interval);
     }
 

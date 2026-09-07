@@ -26,9 +26,14 @@ type Builder interface {
 	CreateDatabase(ctx context.Context, srcDir, dbDir, language string) error
 }
 
-// QueryRunner evaluates a query against a database.
+// QueryRunner evaluates queries against a database.
+//
+// The whole set at once rather than one at a time: the cost of a query is dominated by the
+// process around it, not by the evaluation, so a lane of three costs three times the setup and
+// once the answer.
 type QueryRunner interface {
-	RunQuery(ctx context.Context, dbPath, queryPath, outputPath string) error
+	// RunQueries returns the BQRS each query wrote, keyed by the query path asked for.
+	RunQueries(ctx context.Context, dbPath string, queryPaths []string) (map[string]string, error)
 }
 
 // Analyzer evaluates findings-shaped queries against a database, writing SARIF.
@@ -80,9 +85,12 @@ type Expander struct {
 	Ingester *ingest.Ingester
 	Writer   *store.Writer
 	Fetcher  Fetcher
-	Builder  Builder
-	CodeQL   QueryRunner
-	Decode   Decoder
+	// Probe resolves a reference without fetching it, so the commit that decides whether any
+	// work is outstanding is known before a clone is paid for. Nil fetches first, as before.
+	Probe   RefProbe
+	Builder Builder
+	CodeQL  QueryRunner
+	Decode  Decoder
 	// Resolver expands Options.Suite. Only needed when a suite is used.
 	Resolver Resolver
 	// Analyzer runs the findings lane. Only needed when a suite holds findings-shaped queries.
@@ -255,27 +263,43 @@ func (p pending) empty() bool { return len(p.bqrs) == 0 && !p.findings }
 //
 // An unknown commit leaves everything outstanding: an empty one would collide with every other
 // unknown, so it can never be treated as a match.
-func (e *Expander) pendingWork(planned tierPlan, repository, commit string) (pending, error) {
+//
+// The digest is the same argument one level down. A release moves a tag over a rebuilt `dist/`
+// and touches nothing the extractor reads, so the commit is new but the database is not; where
+// the content is known to match, an earlier commit's run answers for this one. Every other part
+// of the run identity still has to match, and nothing is written for the new commit — the run
+// stays recorded where it happened.
+func (e *Expander) pendingWork(
+	planned tierPlan, repository, commit, digest string,
+) (pending, error) {
 	if commit == "" {
 		return pending{bqrs: planned.bqrs, findings: len(planned.findings) > 0}, nil
 	}
 
+	done := func(q store.QueryRun) (bool, error) {
+		ran, err := e.Store.QueryRunExists(q)
+		if err != nil || ran {
+			return ran, err
+		}
+		return e.Store.QueryRunExistsForContent(q, digest)
+	}
+
 	var out pending
 	for _, q := range planned.bqrs {
-		done, err := e.Store.QueryRunExists(planned.queryRun(q.id, repository, commit))
+		ran, err := done(planned.queryRun(q.id, repository, commit))
 		if err != nil {
 			return pending{}, err
 		}
-		if !done {
+		if !ran {
 			out.bqrs = append(out.bqrs, q)
 		}
 	}
 	if len(planned.findings) > 0 {
-		done, err := e.Store.QueryRunExists(planned.findingsRun(repository, commit))
+		ran, err := done(planned.findingsRun(repository, commit))
 		if err != nil {
 			return pending{}, err
 		}
-		out.findings = !done
+		out.findings = !ran
 	}
 	return out, nil
 }
@@ -307,6 +331,29 @@ func (e *Expander) prepare(
 	dir := filepath.Join(opts.WorkDir, b.owner+"_"+b.repo+refSuffix(b.ref))
 	src := filepath.Join(dir, "src")
 
+	// Before the clone, not after: the ledger only needs the commit, and a reference resolves
+	// remotely for a fraction of what fetching it costs. A tier requeue puts back everything
+	// including what is already current, and those are settled here without a checkout.
+	if sha, ok := e.commitWithoutFetching(ctx, b); ok {
+		// A commit seen before has its content on record, so the equivalence is available here
+		// too. A commit never seen has none, and an absent digest matches nothing.
+		digest, _, err := e.Store.CommitContentDigest(b.full(), sha)
+		if err != nil {
+			return work.Prepared{}, err
+		}
+		outstanding, err := e.pendingWork(planned, b.full(), sha, digest)
+		if err != nil {
+			return work.Prepared{}, err
+		}
+		if outstanding.empty() {
+			return work.Prepared{
+				Job:             work.Job{Repository: b.key()},
+				Commit:          sha,
+				AlreadyRecorded: true,
+			}, nil
+		}
+	}
+
 	if err := e.Pace.Wait(ctx); err != nil {
 		return work.Prepared{}, err
 	}
@@ -315,10 +362,22 @@ func (e *Expander) prepare(
 		return work.Prepared{}, err
 	}
 
+	// What the extractor would read, recorded whether or not this round goes on to analyze it:
+	// the value of knowing it is that a later commit can be recognized as the same database.
+	digest, err := IndexedDigest(tree.Dir)
+	if err != nil {
+		return work.Prepared{}, err
+	}
+	if digest != "" && tree.SHA != "" {
+		if err := e.Store.RecordCommitContent(b.full(), tree.SHA, digest); err != nil {
+			return work.Prepared{}, err
+		}
+	}
+
 	// The commit is only knowable once the source is in hand, so the checkout is not avoidable
 	// here. Deciding from abom_frontier.resolved_sha instead would skip precisely when a ref had
 	// moved, which is the case re-analysis exists for.
-	outstanding, err := e.pendingWork(planned, b.full(), tree.SHA)
+	outstanding, err := e.pendingWork(planned, b.full(), tree.SHA, digest)
 	if err != nil {
 		return work.Prepared{}, err
 	}

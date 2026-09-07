@@ -247,10 +247,57 @@ else
                             @foreach (var r in _detail.Refs)
                             {
                                 <tr>
-                                    <td><span class="abom-ref">@r.Ref</span></td>
+                                    <td>
+                                        <button type="button" class="abom-ref-users"
+                                                title="List every repository naming this version"
+                                                @onclick="@(() => ShowUsers(r.Ref))">
+                                            <span class="abom-ref">@r.Ref</span>
+                                        </button>
+                                    </td>
                                     <td class="abom-num">@r.Count</td>
                                     <td class="abom-num">@r.Repositories</td>
                                 </tr>
+                                @if (_openRef == r.Ref)
+                                {
+                                    <tr>
+                                        <td colspan="3" class="abom-ref-users-cell">
+                                            @if (_users is null)
+                                            {
+                                                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                                    Loading the repositories naming this version…
+                                                </MudText>
+                                            }
+                                            else
+                                            {
+                                                <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-1">
+                                                    @UsersSummary(_users)
+                                                </MudText>
+                                                @if (_users.Repos.Count == 0)
+                                                {
+                                                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                                        No repository names this version.
+                                                    </MudText>
+                                                }
+                                                <ul class="abom-ref-users-list">
+                                                    @foreach (var u in _users.Repos)
+                                                    {
+                                                        <li>
+                                                            <MudLink Href="@($"/repositories/{u.FullName}")"
+                                                                     Typo="Typo.caption">@u.FullName</MudLink>
+                                                            <span class="mud-text-secondary">@UseLabel(u)</span>
+                                                        </li>
+                                                    }
+                                                </ul>
+                                                @if (_users.Truncated)
+                                                {
+                                                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                                        @(_users.Total - _users.Repos.Count) more not shown.
+                                                    </MudText>
+                                                }
+                                            }
+                                        </td>
+                                    </tr>
+                                }
                             }
                         </tbody>
                     </MudSimpleTable>
@@ -351,10 +398,53 @@ else
 @code {
     [Parameter] public string? Key { get; set; }
 
+    // Discovery rows are one version each, so a link from there says which. Absent means the
+    // page was opened for the node itself and no reference is preselected.
+    [SupplyParameterFromQuery(Name = "ref")]
+    public string? Ref { get; set; }
+
     private NodeDetail? _detail;
     private BumpImpact? _impact;
     private IReadOnlyList<NodeRoute>? _reach;
     private bool _loading = true;
+
+    // The reference whose users are open, and their list. Null while a request is in flight, so
+    // "loading" and "nobody uses this" stay distinguishable.
+    private string? _openRef;
+    private NodeUsers? _users;
+
+    private async Task ShowUsers(string reference)
+    {
+        if (_openRef == reference)
+        {
+            _openRef = null;
+            return;
+        }
+        _openRef = reference;
+        _users = null;
+        _users = await Api.GetNodeUsersAsync(Key ?? string.Empty, reference);
+    }
+
+    // The count of places to edit is not the count of repositories: one repository naming a
+    // version from three workflows is one row and three edits.
+    private static string UseLabel(RepositoryUse u)
+    {
+        var parts = new List<string> { u.Uses == 1 ? "1 use" : $"{u.Uses:N0} uses" };
+        if (u.Origin == "upstream") parts.Add("upstream");
+        if (u.Owned) parts.Add("yours");
+        return $" — {string.Join(", ", parts)}";
+    }
+
+    // "0 yours" with nothing verified is a question nobody has answered, not a count of none, so
+    // ownership is only named once it can be.
+    private static string UsersSummary(NodeUsers users)
+    {
+        var parts = new List<string> { $"{users.Total:N0} repositories" };
+        if (users.Total != users.Seeds) parts.Add($"{users.Seeds:N0} in scope");
+        if (users.OwnedKnown && users.Owned > 0) parts.Add($"{users.Owned:N0} yours");
+        return string.Join(" · ", parts) + ". Named directly; anything reaching it through an "
+            + "intermediary is under \"If you bump this\".";
+    }
 
     private string KindLabel =>
         ThemeService.KindNames.TryGetValue(_detail?.Kind ?? string.Empty, out var n)
@@ -407,11 +497,19 @@ else
         _loading = true;
         _impact = null;
         _reach = null;
+        _openRef = null;
+        _users = null;
         _detail = string.IsNullOrEmpty(Key) ? null : await Api.GetNodeAsync(Key);
         _loading = false;
 
         if (_detail is not null)
         {
+            // Discovery links here for one version, so that row opens without a second click.
+            if (Ref is not null)
+            {
+                await ShowUsers(Ref);
+                StateHasChanged();
+            }
             // Fetched after the rest has rendered: the walk is quick, but nothing else on the
             // page needs to wait for it.
             _impact = await Api.GetBumpImpactAsync(Key!);

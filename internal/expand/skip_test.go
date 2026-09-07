@@ -2,7 +2,6 @@ package expand
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/advanced-security/codeql-abom/internal/frontier"
@@ -152,24 +151,26 @@ func TestAQueryNotYetOnRecordIsStillAnalyzed(t *testing.T) {
 	}
 }
 
-// The checkout is not avoidable and must not be claimed as avoided: the run key includes the
-// commit, and the commit is only known once the source is in hand. Skipping on the frontier's
-// last known sha would skip precisely when a ref had moved.
+// A skip must still record the commit it skipped on, or the row claims an analysis of a commit
+// nobody established.
+//
+// This used to assert a fetch, on the reasoning that the commit is only knowable once the source
+// is in hand. That is no longer true: a reference resolves remotely, so the commit is known
+// before the clone and the clone is skipped with it. The guarantee is unchanged and asserted
+// directly. Deciding from the frontier's *stored* sha would still be wrong — it would skip
+// precisely when a ref had moved — and is not what happens, because the probe asks the remote
+// what the reference points at now.
 func TestASkipStillResolvesTheCommitItSkippedOn(t *testing.T) {
 	h := drainedHarness(t)
-	h.mu.Lock()
-	h.fetched = nil
-	h.mu.Unlock()
 
 	h.requeueDirect()
 	h.run(100)
 
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for _, full := range h.fetched {
-		if strings.Contains(full, "gradle/actions") {
-			return
-		}
+	status, sha, _ := statusOf(t, h.store, "gradle/actions/setup-gradle")
+	if status != "done" {
+		t.Errorf("status = %q, want done", status)
 	}
-	t.Error("the skipping pass never fetched, so it cannot know the commit it skipped on")
+	if sha != "sha-actions" {
+		t.Errorf("resolved_sha = %q, want the commit the skip was decided on", sha)
+	}
 }

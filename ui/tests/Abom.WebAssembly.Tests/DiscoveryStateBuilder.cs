@@ -16,6 +16,7 @@ public sealed class DiscoveryStateBuilder
     private int _reachThreshold = 500;
     private string _reachRecomputedAt = "";
     private int _direct, _transitive;
+    private int _analyzed, _skipped;
 
     // Defaults to "all of it analyzed", which is the steady state. A requeue is the case where the
     // two diverge, so it is set explicitly.
@@ -32,6 +33,10 @@ public sealed class DiscoveryStateBuilder
 
     public static DiscoveryStateBuilder Paused() =>
         new DiscoveryStateBuilder().With(state: "paused", done: 500, queued: 120);
+
+    /// <summary>A pause that has been asked for and is waiting on what was already started.</summary>
+    public static DiscoveryStateBuilder Pausing() =>
+        new DiscoveryStateBuilder().With(state: "pausing", done: 500, queued: 120, running: 20);
 
     public DiscoveryStateBuilder With(
         string? state = null, int? done = null, int? queued = null, int? running = null,
@@ -85,6 +90,14 @@ public sealed class DiscoveryStateBuilder
         return this;
     }
 
+    /// <summary>What the cycles so far did. Skipping is the case where analyzed stays put.</summary>
+    public DiscoveryStateBuilder WithProgress(int analyzed, int skipped)
+    {
+        _analyzed = analyzed;
+        _skipped = skipped;
+        return this;
+    }
+
     public string ToJson() => JsonSerializer.Serialize(new
     {
         available = true,
@@ -92,6 +105,8 @@ public sealed class DiscoveryStateBuilder
         {
             state = _state,
             concurrency = 4,
+            analyzed = _analyzed,
+            skipped = _skipped,
             reachPending = _reachPending,
             reachThreshold = _reachThreshold,
             claimsPerCycle = 20,

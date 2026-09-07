@@ -35,10 +35,10 @@ reach through three intermediaries".
   once without editing configuration; `serve` no longer defaults `--query`, so the binding is
   what a normal crawl uses.
 - **The findings lane runs during a crawl.** A bound suite's findings-shaped queries go to
-  `database analyze`; everything else goes to `query run` as before, from the same resolved
-  plan. A suite that is *entirely* findings is passed as a suite, because that is what analyze
-  is built to take and a suite carries selection its expanded file list does not; only a suite
-  that mixes lanes is named query by query. A binding that names findings queries with no
+  `database analyze`; everything else goes to the BQRS lane, from the same resolved plan. A suite
+  that is *entirely* findings is passed as a suite, because that is what analyze is built to take
+  and a suite carries selection its expanded file list does not; only a suite that mixes lanes is
+  named query by query. A binding that names findings queries with no
   analyzer configured is now refused before the round starts, because absorbing it quietly is
   the exact defect this replaced.
 
@@ -46,10 +46,10 @@ reach through three intermediaries".
 
 Every piece of this lane already existed and was tested: `runner.AnalyzeDatabase`,
 `ingest.FindingsFromSARIF`, and `internal/archive` wiring the two together. The gap was one
-`continue` in `expand.plan`. `internal/archive` is not reachable from the binary at all —
-`go list -deps ./cmd/codeql-abom` does not contain it and nothing outside the package calls it —
+`continue` in `expand.plan`. `internal/archive` was not reachable from the binary at all —
+`go list -deps ./cmd/codeql-abom` did not contain it and nothing outside the package called it —
 so its findings path had never run in a crawl. Findings in the corpus arrived through `build`
-ingesting SARIF produced elsewhere.
+ingesting SARIF produced elsewhere. **It has since been deleted; see below.**
 
 Two assumptions turned out wrong on the way:
 
@@ -73,6 +73,34 @@ it back still returns `[]`.
 This is the same distinction the rest of ABOM keeps between an absent measurement and a measured
 zero, arriving in configuration.
 
+## Done: `internal/archive` is deleted, and the class of mistake is now asserted
+
+The entry offered a command or deletion. **Deleted**, and not on tidiness grounds — adopting it
+would have reintroduced a defect the ledger exists to prevent.
+
+`archive.consumeFindings` recorded `store.QueryRun{QueryID, Repository, DBCommit}` and nothing
+else: no pack, no pack digest, no CLI version. Every row it wrote would have joined the **1,555
+pre-identity rows** `db/analysis-ledger.md` states can never converge, because a row that does not
+say what produced it never matches a current run key and has to be analyzed again forever. It
+also passed no `CLIVersion` to `FindingsFromSARIF`, so the `tool.driver.semanticVersion` check —
+the one thing stopping SARIF being attributed to an analyzer that did not produce it — was
+skipped. Its query lane still called `RunQuery` once per query, the pattern just removed
+everywhere else.
+
+Nothing is lost. The capability was "run ABOM's queries over database archives already on disk",
+and the extension point for that already exists and says so: `pipeline.DatabaseSource` is
+documented as "satisfied by `catalog.Client` and by any mrva-system or mrvahepc adapter added
+later". A directory of archives is an adapter, not a parallel `Runner` with its own pool,
+options and prepare/consume. `sarifin.ReadProvenance` keeps a production caller in
+`ingest/bulk.go`, so the deletion orphaned nothing.
+
+**The guard matters more than the deletion.**
+`TestEveryInternalPackageIsReachableFromABinary` compares `go list ./internal/...` against
+`go list -deps <module>/cmd/...` and fails naming anything no command reaches. Written first, it
+failed on exactly one package. Reading dead code answers "does this work" and never "does this
+run", and no build, test run or review diff tells the two apart — which is why this lane looked
+implemented for as long as it did.
+
 ## Pending
 
 1. **`analyzed_suite` and `analyzed_suite_version` per frontier row**, so "re-process with an
@@ -81,9 +109,12 @@ zero, arriving in configuration.
    that actually changed need to run again. Nothing consumes it yet.
 3. **Graph result sets.** `internal/bqrs` already parses every named result set, so `nodes`/
    `edges` are readable; only a `StreamResultSet(name)` sibling to `StreamSelect` is missing.
-4. **`internal/archive` is dead code.** It is a working, tested pipeline for analyzing a
-   directory of archives that no command reaches. Either give it a command or delete it; leaving
-   it is how the findings lane looked implemented for as long as it did.
+4. **`ingest.FindingsFromDirectory` is the same mistake one level down.** Deleting
+   `internal/archive` left it with no caller outside its own tests, and the package guard cannot
+   see it because `ingest` is reachable. It ingests a directory of SARIF against a
+   `RepoResolver`, which was the other half of the archive acquisition model. Delete it or give
+   it a caller — but it is a public ingest entry point, so removing it is a decision about what
+   the ingest API offers rather than a tidy-up.
 5. **A control for the binding.** `ui/tier-suites.md` — the endpoints exist and nothing renders
    them.
 

@@ -73,11 +73,46 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
         {
             <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="@_busy"
                        StartIcon="@Icons.Material.Filled.Refresh"
-                       Class="abom-requeue"
+                       Class="abom-requeue abom-requeue-tier"
                        OnClick="@(() => Requeue(tier))"
                        title="@RequeueHint(tier)">
                 @($"{tier} ({TierOf(tier).Analyzed:N0})")
             </MudButton>
+        }
+        @* No count on this one, deliberately: how much is out of date is only knowable by
+           resolving the bound packs through CodeQL, and doing that on every poll would spend a
+           subprocess a minute to price a button. It is a subset of the tiers beside it, and what
+           it selected is reported the moment it runs. *@
+        <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="@_busy"
+                   StartIcon="@Icons.Material.Filled.Refresh"
+                   Class="abom-requeue abom-requeue-stale"
+                   OnClick="RequeueStale"
+                   title="Re-analyze only what has not been analyzed by the packs and CodeQL version currently in use. Cheaper than a tier: everything already on record is left alone. How much that is has to be worked out by resolving the packs, so it is reported after it runs rather than before.">
+            out of date
+        </MudButton>
+    </div>
+
+    @* Its own line rather than beside the tier buttons: a field that takes typing is a different
+       kind of control from a button that takes one press, and the row above already wraps. *@
+    <div class="d-flex align-center gap-2 mt-1 abom-run-row abom-requeue-repo">
+        <MudText Typo="Typo.caption" Class="mud-text-secondary abom-requeue-label">Or one repository</MudText>
+        <MudTextField T="string" @bind-Value="_requeueRepo" Placeholder="owner/name"
+                      Immediate="true" Disabled="@_busy" Margin="Margin.Dense"
+                      Variant="Variant.Text" Class="abom-requeue-field"
+                      OnKeyDown="OnRequeueKey" />
+        @* Ahead of the ranking, because someone who has just fixed something is asking for that
+           one answer, and filing it behind nine hundred better-scored items refuses the request
+           in all but name. *@
+        <MudButton Size="Size.Small" Variant="Variant.Text"
+                   Disabled="@(_busy || string.IsNullOrWhiteSpace(_requeueRepo))"
+                   StartIcon="@Icons.Material.Filled.Refresh" Class="abom-requeue"
+                   OnClick="RequeueRepository"
+                   title="Re-analyze the dependencies this repository names, ahead of everything else in the queue.">
+            Re-analyze
+        </MudButton>
+        @if (_requeueNote is { } note)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">@note</MudText>
         }
     </div>
 
@@ -456,7 +491,9 @@ else
                                 @if (context.Item.UsedByCount > context.Item.UsedBy.Count)
                                 {
                                     <li class="mud-text-secondary">
-                                        and @(context.Item.UsedByCount - context.Item.UsedBy.Count) more
+                                        <MudLink Href="@NodeUsersLink(context.Item)" Typo="Typo.caption">
+                                            and @(context.Item.UsedByCount - context.Item.UsedBy.Count) more
+                                        </MudLink>
                                     </li>
                                 }
                             </ul>
@@ -485,6 +522,12 @@ else
     private DateTime? _lastPoll;
     private string? _pollError;
     private Timer? _timer;
+    private TimeSpan _beat;
+    private string? _requeueRepo;
+    private string? _requeueNote;
+
+    /// <summary>The beat a state that is on its way somewhere else is watched on.</summary>
+    private static readonly TimeSpan Settling = TimeSpan.FromSeconds(2);
 
     // Queued first: this grid is about what is left to do. Ordering by score alone buries every
     // pending item under work that has already finished.
@@ -656,6 +699,65 @@ else
         }
     }
 
+    private async Task RequeueStale() => await Select(
+        () => Api.RequeueStaleAsync(),
+        got => got.Requeued > 0
+            ? $"{got.Requeued:N0} requeued as out of date against CodeQL {got.CliVersion} "
+              + $"and {got.Packs} packs."
+            // A current corpus is the normal outcome after a crawl, and silence here reads as a
+            // button that did not work.
+            : $"Nothing is out of date against CodeQL {got.CliVersion} and {got.Packs} packs.");
+
+    private async Task RequeueRepository()
+    {
+        var name = (_requeueRepo ?? string.Empty).Trim();
+        if (name.Length == 0)
+        {
+            return;
+        }
+        await Select(
+            () => Api.RequeueRepositoryAsync(name),
+            got => got switch
+            {
+                { Requeued: > 0 } =>
+                    $"{got.Requeued:N0} requeued for {name}, {got.Expedited:N0} ahead of the ranking.",
+                // Already queued is not the same as unknown, and the request — run this next —
+                // was still answered.
+                { Expedited: > 0 } =>
+                    $"{name} was already queued. {got.Expedited:N0} moved ahead of the ranking.",
+                // Otherwise the operator is left watching a crawl that will never reach what
+                // they asked about.
+                _ => $"Nothing analyzed for {name} to requeue.",
+            });
+    }
+
+    private async Task OnRequeueKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await RequeueRepository();
+        }
+    }
+
+    private async Task Select(Func<Task<RequeueResult>> ask, Func<RequeueResult, string> say)
+    {
+        _busy = true;
+        try
+        {
+            var got = await ask();
+            _requeueNote = say(got);
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            _requeueNote = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
     // Filtering on advisories says nothing about how far along any of these are, so the rows can
     // still be in any state and the view owes the reader the same columns "All" gives.
     private bool MixedStates => _status is "" or AdvisoryFilter or BuildTimeFilter;
@@ -726,16 +828,24 @@ else
     // saying which was which read as a contradiction.
     private string StateSentence => _state.Status.State switch
     {
-        "working" => $"Analyzing {_state.Status.Concurrency} repositories at a time.",
-        "idle" => "Running, nothing to analyze right now.",
+        "working" => $"Analyzing {_state.Status.Concurrency} repositories at a time.{SkipSuffix}",
+        "idle" => $"Running, nothing to analyze right now.{SkipSuffix}",
         "pausing" => _state.Running > 0
             ? $"Finishing {_state.Running} already started."
             : "Finishing what has already started.",
-        "paused" => "Stopped.",
+        "paused" => $"Stopped.{SkipSuffix}",
         // Never started is not the same as interrupted, and saying "paused" sends the reader
         // looking for the failure that stopped it.
         _ => "Not started.",
     };
+
+    // A re-analysis of work already on record settles everything it claims and analyzes none of
+    // it, so every counter beside this one stays put and the loop reads as hung. Absent when
+    // nothing was skipped: a standing "0 already on record" is noise on a first crawl.
+    private string SkipSuffix =>
+        _state.Status.Skipped > 0
+            ? $" Settled {_state.Status.Skipped:N0} already on record without re-analyzing them."
+            : string.Empty;
 
     // One dim line under the bar, and only what the reader cannot see already: what starting
     // costs when it is stopped, how stale the sizing is when it is running.
@@ -854,6 +964,11 @@ else
         return item.UsedByOwned > 0 ? $"{total} · {item.UsedByOwned:N0} yours" : total;
     }
 
+    // The preview stops at five, and the node page holds the rest. The reference travels with
+    // the key: the row is one version, and the node page would otherwise answer for the package.
+    private static string NodeUsersLink(FrontierItem item) =>
+        $"/node/{item.NodeKey}?ref={Uri.EscapeDataString(item.Ref)}";
+
     // The pack name alone in the cell, versions in the tooltip: two packs at full identity is
     // more than a grid cell holds, and the name is what distinguishes "only the graph was
     // extracted" from "security queries also ran".
@@ -897,7 +1012,6 @@ else
         }
         Follow.Changed += OnFollowChanged;
         await Load();
-        ApplyFollow();
     }
 
     private async Task Load()
@@ -905,13 +1019,13 @@ else
         _state = await Api.GetDiscoveryAsync();
         _items = await Api.GetFrontierAsync(_status, top: 400);
         _suites = await Api.GetTierSuitesAsync();
-        Follow.SetDiscoveryRunning(_state.Status.IsRunning);
         // A read that failed returns an empty result rather than throwing, so the transport's
         // own account of what went wrong is the only thing that separates "nothing here" from
         // "could not ask".
         _pollError = Api.LastError;
         _lastPoll = DateTime.UtcNow;
         _loading = false;
+        ApplyFollow();
     }
 
     private async Task OnStatusChanged(string value)
@@ -958,12 +1072,16 @@ else
 
     private void ApplyFollow()
     {
-        _timer?.Dispose();
-        _timer = null;
-        if (!Follow.Enabled)
+        // A loop on its way out of a state has disabled the control that would say it arrived,
+        // so it is watched on its own beat rather than the reader's: five minutes of "Pausing…"
+        // after the pause finished reads as a page that stopped working.
+        var beat = _state.Status.IsPausing && Follow.Interval > Settling ? Settling : Follow.Interval;
+        if (_timer is not null && beat == _beat)
         {
             return;
         }
+        _timer?.Dispose();
+        _beat = beat;
         _timer = new Timer(async _ =>
         {
             // Nothing awaits a timer callback, so an exception raised inside it is discarded:
@@ -978,7 +1096,7 @@ else
                 _pollError = ex.Message;
             }
             await InvokeAsync(StateHasChanged);
-        }, null, Follow.Interval, Follow.Interval);
+        }, null, beat, beat);
     }
 
     private static string StateLabel(string state) => state switch

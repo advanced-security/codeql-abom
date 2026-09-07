@@ -33,8 +33,12 @@ type Status struct {
 	LastCycleAt string `json:"lastCycleAt"`
 	NextWakeAt  string `json:"nextWakeAt"`
 
-	Reclaimed   int `json:"reclaimed"`
-	Analyzed    int `json:"analyzed"`
+	Reclaimed int `json:"reclaimed"`
+	Analyzed  int `json:"analyzed"`
+	// Skipped counts repositories the ledger already had on record. Analyzed cannot stand in for
+	// it — Processed excludes skips — so a re-analysis of a current corpus would otherwise move
+	// no number at all and read as a loop doing nothing.
+	Skipped     int `json:"skipped"`
 	Settled     int `json:"settled"`
 	Failed      int `json:"failed"`
 	Unavailable int `json:"unavailable"`

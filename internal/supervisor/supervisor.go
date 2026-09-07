@@ -128,6 +128,18 @@ func cycleIngested(s expand.Stats) bool {
 	return s.Edges > 0 || s.Processed > 0
 }
 
+// recordCycle folds a round into the running totals the interface reads. Named rather than
+// inlined so every count the cycle log reports has somewhere to land, which Skipped did not.
+func recordCycle(st *Status, s expand.Stats) {
+	st.Analyzed += s.Processed
+	st.Skipped += s.Skipped
+	st.Settled += s.Items
+	st.Failed += s.Failed
+	st.Unavailable += s.Unavailable
+	st.Discovered += s.Discovered
+	st.Edges += s.Edges
+}
+
 // reclaimLease is zero for the first cycle of a process: the store admits a single writer, so a
 // claim that outlived the process holding it cannot be in flight anywhere, and honoring the lease
 // would only hide that work behind an hour of apparent progress.
@@ -204,6 +216,16 @@ func (s *Supervisor) logf(format string, args ...any) {
 // Wake asks a running loop to look for work now rather than at the end of its interval. It does
 // not start a paused loop: work appearing is not a reason to override someone having stopped it.
 func (s *Supervisor) Wake() { s.signal() }
+
+// RequeueStale and RequeueRepository belong here because the interface reaches the selection
+// through the loop, and the loop is what holds the expansion that can resolve a pack identity.
+func (s *Supervisor) RequeueStale(ctx context.Context) (expand.Selection, error) {
+	return s.Expander.RequeueStale(ctx)
+}
+
+func (s *Supervisor) RequeueRepository(name string) (expand.Selection, error) {
+	return s.Expander.RequeueRepository(name)
+}
 
 func (s *Supervisor) signal() {
 	s.mu.Lock()
@@ -294,14 +316,7 @@ func (s *Supervisor) cycle(ctx context.Context) time.Duration {
 
 	s.setState(StateWorking)
 	stats, err := s.Expander.Run(ctx, s.Options)
-	s.record(func(st *Status) {
-		st.Analyzed += stats.Processed
-		st.Settled += stats.Items
-		st.Failed += stats.Failed
-		st.Unavailable += stats.Unavailable
-		st.Discovered += stats.Discovered
-		st.Edges += stats.Edges
-	})
+	s.record(func(st *Status) { recordCycle(st, stats) })
 	if err != nil {
 		if ctx.Err() != nil {
 			return 0

@@ -107,6 +107,59 @@ func TestARowWithNoCommitMatchesNoRunAtAll(t *testing.T) {
 	}
 }
 
+// A row settled because its content matched an earlier commit was never run at its own
+// `resolved_sha`, so a strict commit join reports it as unrecorded. It is not: the same database
+// was analyzed, at a commit this repository's own content table names. Answering "not known"
+// here would invent a coverage gap out of an optimization, which is the mirror of claiming
+// coverage that was never earned.
+func TestARowSettledByEquivalentContentNamesTheSuitesThatRan(t *testing.T) {
+	s := newTestStore(t)
+	seedAnalyzedRow(t, s, "actions/checkout", "v4", "actions", "checkout", "new1234")
+	sameContent(t, s, "actions/checkout", "old9999", "digest-a")
+	sameContent(t, s, "actions/checkout", "new1234", "digest-a")
+	if _, err := s.RecordQueryRun(QueryRun{
+		QueryID: "actions/unpinned-tag", Pack: "codeql/actions-queries", PackVersion: "0.6.34",
+		CLIVersion: "2.26.4", Repository: "actions/checkout", DBCommit: "old9999",
+	}); err != nil {
+		t.Fatalf("RecordQueryRun: %v", err)
+	}
+
+	item := onlyFrontierItem(t, s)
+	if !item.SuitesKnown {
+		t.Fatal("an equivalent database was analyzed, so the row is not unrecorded")
+	}
+	if len(item.Suites) != 1 || !strings.Contains(item.Suites[0], "codeql/actions-queries") {
+		t.Errorf("want the suite that ran, got %v", item.Suites)
+	}
+}
+
+// Equivalence is the whole justification, so content that differs must join to nothing — the
+// same rule as the commit join it stands in for.
+func TestSuitesDoNotLeakFromACommitWhoseContentDiffers(t *testing.T) {
+	s := newTestStore(t)
+	seedAnalyzedRow(t, s, "actions/checkout", "v4", "actions", "checkout", "new1234")
+	sameContent(t, s, "actions/checkout", "old9999", "digest-a")
+	sameContent(t, s, "actions/checkout", "new1234", "digest-b")
+	if _, err := s.RecordQueryRun(QueryRun{
+		QueryID: "actions/unpinned-tag", Pack: "codeql/actions-queries", PackVersion: "0.6.34",
+		CLIVersion: "2.26.4", Repository: "actions/checkout", DBCommit: "old9999",
+	}); err != nil {
+		t.Fatalf("RecordQueryRun: %v", err)
+	}
+
+	item := onlyFrontierItem(t, s)
+	if len(item.Suites) != 0 || item.SuitesKnown {
+		t.Fatalf("a run against different content was attributed to this row: %v", item.Suites)
+	}
+}
+
+func sameContent(t *testing.T, s *Store, repository, commit, digest string) {
+	t.Helper()
+	if err := s.RecordCommitContent(repository, commit, digest); err != nil {
+		t.Fatalf("RecordCommitContent(%s): %v", commit, err)
+	}
+}
+
 func seedAnalyzedRow(t *testing.T, s *Store, nodeKey, ref, owner, repo, sha string) {
 	t.Helper()
 	if _, err := s.DB().Exec(`

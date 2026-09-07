@@ -91,6 +91,36 @@ public sealed class AbomApi(HttpClient http)
                ?? new DiscoveryState();
     }
 
+    /// <summary>
+    /// Puts back only what has not been analyzed at the identity the bound suites resolve to
+    /// now. The server resolves that identity through CodeQL, which is why it cannot be
+    /// previewed on the button the way a tier's size can.
+    /// </summary>
+    public Task<RequeueResult> RequeueStaleAsync(CancellationToken ct = default) =>
+        RequeueAsync("api/discovery/requeue-stale", null, ct);
+
+    /// <summary>
+    /// Puts back the dependencies one repository answers, ahead of the ranking. The tier a
+    /// dependency sits in is not the granularity anyone reasons about after fixing something.
+    /// </summary>
+    public Task<RequeueResult> RequeueRepositoryAsync(
+        string repository, CancellationToken ct = default) =>
+        RequeueAsync("api/discovery/requeue-repository", new { repository }, ct);
+
+    private async Task<RequeueResult> RequeueAsync(string path, object? body, CancellationToken ct)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, path);
+        request.Headers.Add("X-Abom-Control", "1");
+        if (body is not null)
+        {
+            request.Content = JsonContent.Create(body);
+        }
+        var response = await http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<RequeueResult>(Json, ct)
+               ?? new RequeueResult();
+    }
+
     public async Task<GraphVersion> GetGraphVersionAsync(CancellationToken ct = default) =>
         await GetAsync<GraphVersion>("api/graph/version", ct) ?? new GraphVersion();
 
@@ -135,6 +165,13 @@ public sealed class AbomApi(HttpClient http)
     public async Task<IReadOnlyList<NodeRoute>> GetReachAsync(
         string key, CancellationToken ct = default) =>
         await GetListAsync<NodeRoute>($"api/node/{key}/-/reach", ct);
+
+    // The reference goes in the query string rather than the path: it may be empty, and an empty
+    // path segment cannot say "default branch" apart from a malformed route.
+    public async Task<NodeUsers?> GetNodeUsersAsync(
+        string key, string reference, CancellationToken ct = default) =>
+        await GetAsync<NodeUsers>(
+            $"api/node/{key}/-/users?ref={Uri.EscapeDataString(reference)}", ct);
 
     public async Task<IReadOnlyList<PinningRow>> GetPinningAsync(
         string scope, string? parent, PinningQuery filter, CancellationToken ct = default) =>

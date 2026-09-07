@@ -117,8 +117,8 @@ deliberately broken code. If a new test passes immediately, that is a bug in the
 - Read a file before editing it, and include the trailing context in a replacement or the
   anchor line gets clobbered.
 
-Check the invariants in `.github/copilot-instructions.md` as you go. Each was learned from a real
-bug, and breaking one produces data that looks right and is wrong.
+Check the invariants in `.github/instructions/architecture.instructions.md` as you go. Each was
+learned from a real bug, and breaking one produces data that looks right and is wrong.
 
 ## 5. Verify
 
@@ -138,7 +138,7 @@ it. Layout is the screenshot pass in the **`verify-abom-ui`** skill.
 ## 6. Diff the real corpus, and let it contradict you
 
 `make verify` green is necessary and not sufficient. Unit tests passed through every
-architectural bug listed in `.github/copilot-instructions.md`.
+architectural bug listed in `.github/instructions/architecture.instructions.md`.
 
 Run the change against the copy, then compare the headline numbers with `/tmp/abom-before.db`:
 node and edge counts, frontier status counts, findings per rule, blast radius, and whatever
@@ -189,5 +189,6 @@ status theatre.
 
 - `.github/skills/maintain-abom-plans/SKILL.md` — reading, writing and re-ranking `plans/**`.
 - `.github/skills/verify-abom-ui/SKILL.md` — the screenshot pass `ui-test` cannot do.
-- `.github/copilot-instructions.md` — the architectural invariants, and the canonical
-  `make start / status / logs / stop` lifecycle.
+- `.github/instructions/architecture.instructions.md` — the architectural invariants.
+- `.github/instructions/working-style.instructions.md` — test-first, the real-corpus diff, and
+  the canonical `make start / status / logs / stop` lifecycle.

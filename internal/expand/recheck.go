@@ -12,21 +12,29 @@ import (
 
 // RefProbe resolves what a ref currently points at.
 type RefProbe interface {
-	Resolve(ctx context.Context, owner, repo string) (string, error)
+	Resolve(ctx context.Context, owner, repo, ref string) (string, error)
 }
 
-// Resolve reports the commit HEAD points at without fetching any objects.
+// Resolve reports the commit a ref points at without fetching any objects. An empty ref means
+// the default branch.
 //
 // This is what makes drift detection affordable: a ref lookup costs a fraction of the clone and
 // database build it decides whether to spend.
-func (c *Checkout) Resolve(ctx context.Context, owner, repo string) (string, error) {
-	out, err := c.run(ctx, "", "ls-remote", c.cloneURL(owner, repo), "HEAD")
+//
+// The ref is not optional. Probing the default branch for a row that asked about `v4` compares
+// two unrelated commits, so an unmoved tag reads as drifted, re-analyzes to the identical result
+// and is due again next pass — a treadmill indistinguishable from real drift.
+func (c *Checkout) Resolve(ctx context.Context, owner, repo, ref string) (string, error) {
+	if ref == "" {
+		ref = "HEAD"
+	}
+	out, err := c.run(ctx, "", "ls-remote", c.cloneURL(owner, repo), ref)
 	if err != nil {
-		return "", fmt.Errorf("%w: resolving %s/%s: %s", ErrUnavailable, owner, repo, out)
+		return "", fmt.Errorf("%w: resolving %s/%s@%s: %s", ErrUnavailable, owner, repo, ref, out)
 	}
 	fields := strings.Fields(out)
 	if len(fields) == 0 {
-		return "", fmt.Errorf("%w: %s/%s has no HEAD", ErrUnavailable, owner, repo)
+		return "", fmt.Errorf("%w: %s/%s has no %s", ErrUnavailable, owner, repo, ref)
 	}
 	return fields[0], nil
 }
@@ -66,7 +74,7 @@ func (r *Rechecker) Run(ctx context.Context, ttl time.Duration, limit int) (Rech
 		}
 
 		stats.Checked++
-		sha, err := r.Probe.Resolve(ctx, item.Owner, item.Repo)
+		sha, err := r.Probe.Resolve(ctx, item.Owner, item.Repo, item.Requested)
 		switch {
 		case IsUnavailable(err):
 			stats.Unavailable++

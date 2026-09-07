@@ -1,4 +1,9 @@
-# codeql-abom
+---
+description: "Use when changing Go code under cmd/ or internal/ in codeql-abom: the layering, and the architectural invariants that produce data which looks right and is wrong when broken. Covers verdicts coming only from rule IDs, advisories enriching rather than adjudicating, seed versus upstream repositories, direct versus transitive exposure, severity x reach, saying what is not known, absent versus zero measurements, append-only graph tables, and queue states a reader distinguishes."
+applyTo: "{cmd,internal}/**/*.go"
+---
+
+# codeql-abom architecture
 
 Builds an Actions Bill of Materials for a GitHub organization from CodeQL results. Go 1.25,
 single binary, SQLite store. Layering: `store` (SQL) → `graph`/`ingest`/`expand` (derivation) →
@@ -54,73 +59,3 @@ an update that skips or repeats work. `TestGraphTablesAreAppendOnly` guards this
 **A queue state a reader distinguishes is a state the interface must have.** `pending` with
 attempts spent is not the same as untouched, and a pause that takes effect between cycles is not
 the same as paused. Collapsing either reads as a control that did nothing.
-
-## Working style
-
-**TDD, strictly.** Write the test, run it, watch it fail for the expected reason, then
-implement. Tests are named after the behavior they protect, not the function they call.
-
-**Validate against real data, with a before/after diff.** Unit tests passed through every
-architectural bug listed above. Snapshot the real database before a pipeline change and diff
-the headline metrics after:
-
-```bash
-cp abom.db abom-before.db   # then compare blast radius, node/edge counts, findings per rule
-```
-
-**Zero results usually means a coverage gap, not a broken traversal.** Before touching
-traversal code, check whether the data supports the result at all — e.g. compare
-`blast_radius.dependent_repos` against direct-edge repo counts.
-
-**Never "fix" data that contradicts an assumption.** `actions/download-artifact@v8` looked like
-corruption; `git ls-remote --tags` confirmed v1–v8 all exist. Verify the world first.
-
-## Verification
-
-Run before declaring work complete:
-
-```bash
-make verify              # check-corrupt, fmt, vet, lint, test -race, js, style, ql, ui, ui-test
-make selfcheck           # needs the CodeQL CLI; not in verify because it takes tens of seconds
-```
-
-`make verify` is the only definition of "verified", and CI runs the same target. Do not assemble
-an equivalent by hand: `check-corrupt` runs first and is not optional, because this environment
-intermittently prepends a duplicate `package` clause when writing a Go file, which `gofmt -l`
-reports as a parse error rather than a diff.
-
-The interface is checked in three layers, and green in one says nothing about the others.
-`ui-test` (bUnit) covers behavior and markup; it has no CSS engine, so a wrapped label or an
-overflowing grid passes it. Layout and appearance are the screenshot pass in the
-`verify-abom-ui` skill. `js` covers the browser module, which no compiler reads.
-
-The service has one canonical lifecycle, so nobody re-derives it from shell history:
-
-```bash
-make start               # build + publish + serve in the background on $(ABOM_ADDR)
-make status              # is it up, and what is discovery doing
-make logs                # follow it; one line per cycle and per failure
-make restart / make stop
-make serve               # foreground, for watching it work
-```
-
-Override `ABOM_DB`, `ABOM_ADDR`, `ABOM_UI`, `ABOM_WORK` rather than editing the Makefile.
-Discovery never starts on its own: `make start ABOM_SERVE_FLAGS=--expand` opts in. Run one
-server, not several; two against one database is two writers, which the store forbids.
-
-**Never run `make verify`, `make ql` or `make selfcheck` while discovery is running**, and the
-same goes for the CodeQL MCP server's tools. Every `codeql` invocation shares one local
-compilation cache, so a query test and a dependency's database build in flight together contend
-for that cache as well as for every core. Check with `make status` first, and pause discovery
-from the Discovery page or `make stop`. This is also why a timing-sensitive failure during a
-crawl is not evidence of anything until it reproduces on a quiet machine.
-
-## Comments
-
-State only what the code cannot show, in one line. Explain *why* a constraint exists, never
-what the next statement does.
-
-```go
-// codeql refuses to write into an existing directory, which re-analysis would otherwise hit.
-if err := os.RemoveAll(dbDir); err != nil {
-```

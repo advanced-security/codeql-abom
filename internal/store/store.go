@@ -110,6 +110,10 @@ func (s *Store) Migrate() error {
 	if _, err := s.db.Exec(queryRunIndexDDL); err != nil {
 		return fmt.Errorf("indexing run identity: %w", err)
 	}
+	// Additive, so a corpus upgraded in place gains it without a rebuild.
+	if _, err := s.db.Exec(commitContentDDL); err != nil {
+		return fmt.Errorf("creating the commit content table: %w", err)
+	}
 	// Before seeding, so a binding that only needs renaming still counts as configured and the
 	// defaults are not written over it.
 	if err := s.migrateSuiteNames(); err != nil {

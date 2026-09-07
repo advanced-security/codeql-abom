@@ -35,6 +35,7 @@ type harness struct {
 	store    *store.Store
 	queue    *frontier.Queue
 	expander *Expander
+	probe    *harnessProbe
 
 	mu       sync.Mutex
 	fetched  []string
@@ -43,19 +44,82 @@ type harness struct {
 	fetchErr map[string]error
 }
 
+// harnessProbe answers what a reference points at without a fetch, agreeing with what Fetch
+// reports so the pre-check and the checkout cannot disagree by construction.
+type harnessProbe struct {
+	mu      sync.Mutex
+	asked   []string
+	moved   string
+	content string
+	failed  bool
+}
+
+// state is the commit every reference resolves to and the content found there. Empty commit
+// means "whatever the repository's own default is", which is what an unmoved corpus looks like.
+func (p *harnessProbe) state() (string, string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	content := p.content
+	if content == "" {
+		content = "name: ci\n"
+	}
+	return p.moved, content
+}
+
+func (p *harnessProbe) Resolve(_ context.Context, owner, repo, ref string) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.asked = append(p.asked, owner+"/"+repo+"@"+ref)
+	if p.failed {
+		return "", errTransient
+	}
+	if p.moved != "" {
+		return p.moved, nil
+	}
+	return "sha-" + repo, nil
+}
+
+func (p *harnessProbe) moveEverythingTo(sha string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.moved = sha
+}
+
+// rewriteContent changes what a fetch finds, which is what a rebuild has to depend on.
+func (p *harnessProbe) rewriteContent(body string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.content = body
+}
+
+func (p *harnessProbe) failEverything() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.failed = true
+}
+
 func (h *harness) Fetch(_ context.Context, dest, owner, repo, ref string) (Tree, error) {
 	h.mu.Lock()
 	full := owner + "/" + repo
 	h.fetched = append(h.fetched, full)
 	err := h.fetchErr[full]
+	sha, content := h.probe.state()
 	h.mu.Unlock()
 	if err != nil {
 		return Tree{}, err
 	}
-	if err := os.MkdirAll(dest, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dest, ".github", "workflows"), 0o755); err != nil {
 		return Tree{}, err
 	}
-	return Tree{Dir: dest, Ref: "HEAD", SHA: "sha-" + repo}, nil
+	// Real content, so a commit can move without it changing and the two can be told apart.
+	if err := os.WriteFile(
+		filepath.Join(dest, ".github", "workflows", "ci.yml"), []byte(content), 0o644); err != nil {
+		return Tree{}, err
+	}
+	if sha == "" {
+		sha = "sha-" + repo
+	}
+	return Tree{Dir: dest, Ref: "HEAD", SHA: sha}, nil
 }
 
 func (h *harness) CreateDatabase(_ context.Context, srcDir, dbDir, _ string) error {
@@ -65,14 +129,22 @@ func (h *harness) CreateDatabase(_ context.Context, srcDir, dbDir, _ string) err
 	return os.MkdirAll(dbDir, 0o755)
 }
 
-func (h *harness) RunQuery(_ context.Context, _, queryPath, outputPath string) error {
-	h.mu.Lock()
-	h.queried = append(h.queried, queryPath)
-	h.mu.Unlock()
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
-		return err
+func (h *harness) RunQueries(
+	_ context.Context, _ string, queryPaths []string,
+) (map[string]string, error) {
+	out := make(map[string]string, len(queryPaths))
+	dir := h.t.TempDir()
+	for _, q := range queryPaths {
+		h.mu.Lock()
+		h.queried = append(h.queried, q)
+		h.mu.Unlock()
+		bqrs := filepath.Join(dir, filepath.Base(q)+".bqrs")
+		if err := os.WriteFile(bqrs, []byte("bqrs"), 0o644); err != nil {
+			return nil, err
+		}
+		out[q] = bqrs
 	}
-	return os.WriteFile(outputPath, []byte("bqrs"), 0o644)
+	return out, nil
 }
 
 // decode stands in for the CodeQL decoder by serving the recorded query output.
@@ -98,6 +170,7 @@ func newHarness(t *testing.T) *harness {
 	h := &harness{
 		t: t, store: s,
 		queue:    &frontier.Queue{Store: s, MaxDepth: 3},
+		probe:    &harnessProbe{},
 		fetchErr: map[string]error{},
 	}
 	w := store.NewWriter(s, 0)
@@ -107,6 +180,7 @@ func newHarness(t *testing.T) *harness {
 		Ingester: ingest.New(s, w),
 		Writer:   w,
 		Fetcher:  h,
+		Probe:    h.probe,
 		Builder:  h,
 		CodeQL:   h,
 		Decode:   h.decode,

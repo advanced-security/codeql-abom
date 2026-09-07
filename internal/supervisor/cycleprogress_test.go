@@ -32,3 +32,22 @@ func TestSkippingAloneIsNotTreatedAsIngestion(t *testing.T) {
 		t.Error("a cycle that analyzed a repository claimed to have ingested nothing")
 	}
 }
+
+// The log has always said "skipped N already on record"; the status had nowhere to put it, so a
+// re-analysis of work already on record moved no number the interface shows. Processed excludes
+// skips by construction, which is why Analyzed cannot stand in for this.
+func TestACycleThatOnlySkippedIsVisibleInTheStatus(t *testing.T) {
+	var st Status
+
+	recordCycle(&st, expand.Stats{Skipped: 40, Items: 96})
+
+	if st.Skipped != 40 {
+		t.Errorf("Skipped = %d, want the 40 the cycle log reports", st.Skipped)
+	}
+	if st.Analyzed != 0 {
+		t.Errorf("Analyzed = %d, want 0: nothing was analyzed", st.Analyzed)
+	}
+	if st.Settled != 96 {
+		t.Errorf("Settled = %d, want 96", st.Settled)
+	}
+}

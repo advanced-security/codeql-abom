@@ -353,6 +353,13 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     white-space: nowrap;
 }
 
+/* A repository name is two short segments, so the field is sized for one rather than taking the
+   row's leftover width and pushing the button it belongs to onto the next line. */
+.abom-requeue-field {
+    flex: 0 0 auto;
+    width: 14rem;
+}
+
 /* Takes the leftover width and gives it back under pressure, which keeps the re-analyze controls
    on one line: a flex-grow spacer would hold that width and wrap them instead. */
 .abom-run-note {
@@ -653,3 +660,22 @@ code {
    a count and opens to a preview rather than laying them out. */
 .abom-usedby summary { cursor: pointer; font-size: var(--abom-text-sm); }
 .abom-usedby ul { margin: 4px 0 0; padding-left: 16px; font-size: var(--abom-text-sm); }
+
+/* A reference on the node page opens the rest of that list. A button rather than a link because
+   it reveals a row in place; styled flat so the table still reads as a table. */
+.abom-ref-users {
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+}
+.abom-ref-users:hover .abom-ref { text-decoration: underline; }
+.abom-ref-users-cell { padding-top: 0 !important; }
+.abom-ref-users-list {
+    margin: 0;
+    padding-left: 16px;
+    font-size: var(--abom-text-sm);
+    columns: 2;
+}

@@ -1,12 +1,14 @@
 package serve
 
 import (
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
 	"sort"
 	"strings"
 
+	"github.com/advanced-security/codeql-abom/internal/expand"
 	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/store"
 	"github.com/advanced-security/codeql-abom/internal/supervisor"
@@ -20,6 +22,27 @@ type Discovery interface {
 	Pause()
 	// Wake asks a running loop to look for work now rather than at the end of its interval.
 	Wake()
+	// RequeueStale puts back what has not been analyzed at the identity the bound suites resolve
+	// to now. It belongs to the loop rather than the store because resolving that identity is a
+	// CodeQL call, and reading it from the store would report the corpus as current at exactly
+	// the moment all of it went stale.
+	RequeueStale(ctx context.Context) (expand.Selection, error)
+	// RequeueRepository puts back the dependencies one repository answers, ahead of the ranking.
+	RequeueRepository(name string) (expand.Selection, error)
+}
+
+// RequeueResult is what a selective requeue did, beside the state it left behind.
+//
+// Both in one answer, because either alone leaves the page misleading: the state cannot say what
+// the button achieved, and the numbers alone leave the queue counts beside it a poll out of date.
+type RequeueResult struct {
+	Requeued  int `json:"requeued"`
+	Expedited int `json:"expedited"`
+	// CLIVersion and Packs say what staleness was judged against, so the count is checkable
+	// rather than merely asserted.
+	CLIVersion string         `json:"cliVersion"`
+	Packs      int            `json:"packs"`
+	State      DiscoveryState `json:"state"`
 }
 
 // DiscoveryState is the whole picture the Discovery view renders from: what the loop is doing,
@@ -39,6 +62,15 @@ type DiscoveryState struct {
 }
 
 func (s *Server) discoveryStatus(w http.ResponseWriter, r *http.Request) {
+	out, err := s.discoveryState()
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	writeJSON(w, out, nil)
+}
+
+func (s *Server) discoveryState() (DiscoveryState, error) {
 	out := DiscoveryState{Available: s.Discovery != nil, Frontier: map[string]int{}}
 	if s.Discovery != nil {
 		out.Status = s.Discovery.Status()
@@ -46,32 +78,28 @@ func (s *Server) discoveryStatus(w http.ResponseWriter, r *http.Request) {
 
 	summary, err := s.Store.Summary()
 	if err != nil {
-		writeJSON(w, nil, err)
-		return
+		return DiscoveryState{}, err
 	}
 	out.AdvisoriesFetchedAt = summary.AdvisoriesFetchedAt
 
 	counts, err := s.Store.FrontierCounts()
 	if err != nil {
-		writeJSON(w, nil, err)
-		return
+		return DiscoveryState{}, err
 	}
 	out.Frontier = counts
 
 	tiers, err := s.Store.TierCounts()
 	if err != nil {
-		writeJSON(w, nil, err)
-		return
+		return DiscoveryState{}, err
 	}
 	out.Tiers = tiers
 
 	version, err := s.Store.GraphVersion()
 	if err != nil {
-		writeJSON(w, nil, err)
-		return
+		return DiscoveryState{}, err
 	}
 	out.Version = version
-	writeJSON(w, out, nil)
+	return out, nil
 }
 
 func (s *Server) discoveryStart(w http.ResponseWriter, r *http.Request) {
@@ -248,6 +276,76 @@ func (s *Server) discoveryRequeue(w http.ResponseWriter, r *http.Request) {
 		s.Discovery.Wake()
 	}
 	s.discoveryStatus(w, r)
+}
+
+// discoveryRequeueStale puts back only what is out of date against the current pack identity.
+//
+// The tier buttons beside it re-clone everything in the tier; this re-clones what actually
+// moved. Both spend the machine's time, so both are guarded the same way.
+func (s *Server) discoveryRequeueStale(w http.ResponseWriter, r *http.Request) {
+	if !s.allowControl(w, r) {
+		return
+	}
+	if s.Discovery == nil {
+		writeError(w, http.StatusServiceUnavailable, "discovery is not available on this server")
+		return
+	}
+	got, err := s.Discovery.RequeueStale(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.writeRequeued(w, got)
+}
+
+// discoveryRequeueRepository puts back the dependencies one repository answers.
+//
+// The name is in the body rather than the path: an owner and a name are two segments, and a
+// two-segment route would be indistinguishable from the tier route beside it.
+func (s *Server) discoveryRequeueRepository(w http.ResponseWriter, r *http.Request) {
+	if !s.allowControl(w, r) {
+		return
+	}
+	if s.Discovery == nil {
+		writeError(w, http.StatusServiceUnavailable, "discovery is not available on this server")
+		return
+	}
+	var body struct {
+		Repository string `json:"repository"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "expected a JSON object naming a repository")
+		return
+	}
+	// An empty name matches nothing, and reporting success for it leaves an operator watching a
+	// crawl that was never going to run.
+	if strings.TrimSpace(body.Repository) == "" {
+		writeError(w, http.StatusBadRequest, "name a repository as owner/name")
+		return
+	}
+	got, err := s.Discovery.RequeueRepository(body.Repository)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.writeRequeued(w, got)
+}
+
+func (s *Server) writeRequeued(w http.ResponseWriter, got expand.Selection) {
+	// Expediting alone is worth waking for: the loop would otherwise sleep through a request to
+	// run something next.
+	if got.Requeued > 0 || got.Expedited > 0 {
+		s.Discovery.Wake()
+	}
+	state, err := s.discoveryState()
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	writeJSON(w, RequeueResult{
+		Requeued: got.Requeued, Expedited: got.Expedited,
+		CLIVersion: got.CLIVersion, Packs: got.Packs, State: state,
+	}, nil)
 }
 
 // controlHeader is required on every control request.

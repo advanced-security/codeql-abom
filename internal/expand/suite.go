@@ -295,17 +295,26 @@ func (e *Expander) plan(ctx context.Context, opts Options) (tierPlan, error) {
 func (e *Expander) runQueries(
 	ctx context.Context, dbDir, dir string, planned []plannedQuery,
 ) (edges, edgesID string, extra map[string]string, err error) {
+	paths := make([]string, 0, len(planned))
 	for _, q := range planned {
-		bqrsPath := filepath.Join(dir, safeName(q.id)+".bqrs")
-		if err := e.CodeQL.RunQuery(ctx, dbDir, q.path, bqrsPath); err != nil {
-			return "", "", nil, err
+		paths = append(paths, q.path)
+	}
+	written, err := e.CodeQL.RunQueries(ctx, dbDir, paths)
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	for _, q := range planned {
+		bqrsPath, ok := written[q.path]
+		if !ok {
+			// An empty result set is still a file, so a missing one means the query did not run.
+			// Carrying on would settle the repository against results nothing produced.
+			return "", "", nil, fmt.Errorf("no results for %s", q.path)
 		}
 		jsonPath := filepath.Join(dir, safeName(q.id)+".json")
 		if err := e.Decode(ctx, bqrsPath, jsonPath); err != nil {
 			return "", "", nil, err
 		}
-		// The BQRS is decoded and finished with; failing to clear it costs disk, not results.
-		_ = os.Remove(bqrsPath)
 
 		if q.shape == ingest.ShapeEdges && edges == "" {
 			edges, edgesID = jsonPath, q.id

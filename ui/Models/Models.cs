@@ -127,6 +127,12 @@ public sealed record DiscoveryStatus
     public string LastCycleAt { get; init; } = string.Empty;
     public int Reclaimed { get; init; }
     public int Analyzed { get; init; }
+
+    /// <summary>
+    /// Repositories the ledger already had on record. Analyzed cannot stand in for it, so a
+    /// re-analysis of a current corpus would otherwise move no number at all.
+    /// </summary>
+    public int Skipped { get; init; }
     public int Settled { get; init; }
     public int Failed { get; init; }
     public int Unavailable { get; init; }
@@ -156,6 +162,21 @@ public sealed record DiscoveryStatus
 
     /// <summary>Asked to stop, with work already in flight that will run to completion.</summary>
     public bool IsPausing => State == "pausing";
+}
+
+/// <summary>
+/// What a selective requeue put back, beside the state it left behind.
+///
+/// The identity travels with the count because the count alone cannot be checked: "1,742
+/// requeued" is a number, "against CodeQL 2.26.4 and 4 packs" is a claim anyone can test.
+/// </summary>
+public sealed record RequeueResult
+{
+    public int Requeued { get; init; }
+    public int Expedited { get; init; }
+    public string CliVersion { get; init; } = string.Empty;
+    public int Packs { get; init; }
+    public DiscoveryState State { get; init; } = new();
 }
 
 public sealed record GraphVersion
@@ -514,6 +535,48 @@ public sealed record RefUsage
     public string Ref { get; init; } = string.Empty;
     public int Count { get; init; }
     public int Repositories { get; init; }
+}
+
+/// <summary>One repository naming a node at one reference.</summary>
+public sealed record RepositoryUse
+{
+    public string FullName { get; init; } = string.Empty;
+
+    /// <summary>
+    /// <c>seed</c> for a repository under review, <c>upstream</c> for one fetched only to resolve
+    /// what those depend on. Both run the version; only the first is anyone's here to change.
+    /// </summary>
+    public string Origin { get; init; } = string.Empty;
+
+    public bool Owned { get; init; }
+
+    /// <summary>How many <c>uses:</c> lines, which is how much editing this repository would be.</summary>
+    public int Uses { get; init; }
+}
+
+/// <summary>
+/// Every repository naming one node at one exact reference — the rest of the list the Discovery
+/// grid can only preview.
+///
+/// Direct only. Anything reaching the node through an intermediary is <see cref="BumpImpact"/>,
+/// and the two are different work rather than two halves of one number.
+/// </summary>
+public sealed record NodeUsers
+{
+    public string Key { get; init; } = string.Empty;
+    public string Ref { get; init; } = string.Empty;
+    public int Total { get; init; }
+    public int Seeds { get; init; }
+    public int Owned { get; init; }
+
+    /// <summary>
+    /// False when no account has been verified, which makes <see cref="Owned"/> an unanswered
+    /// question rather than a count of none.
+    /// </summary>
+    public bool OwnedKnown { get; init; }
+
+    public IReadOnlyList<RepositoryUse> Repos { get; init; } = [];
+    public bool Truncated { get; init; }
 }
 
 public sealed record NodeNeighbor

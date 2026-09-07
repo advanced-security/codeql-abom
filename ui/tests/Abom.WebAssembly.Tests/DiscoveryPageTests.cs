@@ -110,4 +110,25 @@ public class DiscoveryPageTests : AbomTestContext
 
         cut.WaitForAssertion(() => Assert.Contains("100 of 500", cut.Markup));
     }
+
+    // Shipped: pressing Pause left "Pausing…" and a disabled button on screen long after the
+    // loop had finished pausing, because the page only refreshed itself when following was
+    // ticked — and following could not be ticked once the loop had stopped. A state the loop is
+    // on its way out of is one the page has to watch to the end.
+    [Fact]
+    public void APauseThatHasFinishedStopsSayingItIsPausing()
+    {
+        Serve(DiscoveryStateBuilder.Pausing());
+        var cut = Render<Pages.Discovery>();
+        cut.WaitForAssertion(() => Assert.Contains("Pausing", cut.Markup));
+
+        Serve(DiscoveryStateBuilder.Paused());
+
+        cut.WaitForAssertion(() => Assert.DoesNotContain("Pausing", cut.Markup), Settling);
+        Assert.Contains("Start", cut.Markup);
+    }
+
+    // Long enough for the page to have watched and answered, short enough that a page which
+    // never watches fails rather than hangs.
+    private static readonly TimeSpan Settling = TimeSpan.FromSeconds(15);
 }

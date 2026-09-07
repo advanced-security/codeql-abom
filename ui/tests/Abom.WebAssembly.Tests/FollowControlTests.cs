@@ -8,16 +8,15 @@ namespace Abom.WebAssembly.Tests;
 
 public class FollowControlTests : AbomTestContext
 {
-    // A control offering to follow something that is not running is a control that does nothing,
-    // and the reader is left to work out why.
+    // A checkbox here was disabled whenever nothing was running, so no view could be asked to
+    // watch for something starting, and a page left on "Pausing…" stayed there until someone
+    // reloaded it. Having the page open is the choice to watch it; the only setting is how often.
     [Fact]
-    public void FollowIsDisabledWhenNothingIsRunning()
+    public void TheOpenPageIsTheChoiceToWatch()
     {
-        Services.GetRequiredService<FollowService>().SetDiscoveryRunning(false);
-
         var cut = Render<FollowControl>();
 
-        Assert.True(cut.Find("input[type=checkbox]").HasAttribute("disabled"));
+        Assert.Empty(cut.FindAll("input[type=checkbox]"));
     }
 
     // The interval is a preference, not a property of the current run: setting it before
@@ -25,36 +24,46 @@ public class FollowControlTests : AbomTestContext
     [Fact]
     public void TheIntervalStaysSettableWhileNothingIsRunning()
     {
-        Services.GetRequiredService<FollowService>().SetDiscoveryRunning(false);
-
         var cut = Render<FollowControl>();
 
         Assert.DoesNotContain("disabled", cut.Find(".mud-select").OuterHtml);
     }
 
-    // Stopping cannot leave the box ticked: it would claim to be following a run that ended.
     [Fact]
-    public void StoppingClearsFollowing()
+    public async Task TheIntervalIsRestoredOnReload()
     {
+        JSInterop.Setup<string?>("abomTheme.load", "abom.follow").SetResult("60");
         var follow = Services.GetRequiredService<FollowService>();
-        follow.SetDiscoveryRunning(true);
-        follow.SetEnabled(true);
 
-        follow.SetDiscoveryRunning(false);
+        await follow.InitializeAsync();
 
-        Assert.False(follow.Enabled);
+        Assert.Equal(60, follow.Seconds);
     }
 
-    // Starting must not tick it on someone's behalf. Following pulls data every interval, and a
-    // control that turns itself on is one nobody chose.
+    // Views arm their timers as they render; the layout restores the saved interval afterwards.
+    // Unannounced, the restored value is held by nobody and every open view keeps the default
+    // beat until the control is touched.
     [Fact]
-    public void StartingDoesNotBeginFollowingOnItsOwn()
+    public async Task ARestoredIntervalRetimesTheViewsAlreadyOpen()
+    {
+        JSInterop.Setup<string?>("abomTheme.load", "abom.follow").SetResult("60");
+        var follow = Services.GetRequiredService<FollowService>();
+        var announced = 0;
+        follow.Changed += () => announced++;
+
+        await follow.InitializeAsync();
+
+        Assert.Equal(1, announced);
+    }
+
+    [Fact]
+    public async Task ChoosingAnIntervalIsRemembered()
     {
         var follow = Services.GetRequiredService<FollowService>();
-        follow.SetDiscoveryRunning(false);
 
-        follow.SetDiscoveryRunning(true);
+        await follow.SetSecondsAsync(300);
 
-        Assert.False(follow.Enabled);
+        var saved = JSInterop.Invocations["abomTheme.save"].Last();
+        Assert.Equal(["abom.follow", "300"], saved.Arguments);
     }
 }

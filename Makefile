@@ -17,8 +17,8 @@ ABOM_SERVE_FLAGS ?=
 BIN      := bin/codeql-abom
 GO_FILES := $(shell find . -name '*.go' -not -path './ui/*')
 
-.PHONY: build check-corrupt check-versions clean fmt js lint logs package publish ql restart \
-	selfcheck serve start status stop style test ui ui-test verify vet
+.PHONY: build check-corrupt check-versions clean fmt itest js lint logs package publish ql \
+	restart selfcheck serve start status stop style test ui ui-test verify vet
 
 verify: check-corrupt check-versions fmt vet lint test js style ql ui ui-test
 
@@ -81,6 +81,35 @@ ql:
 	@codeql test run ql/actions/graph-extraction/test
 
 restart: stop start
+
+## itest: exercise the CodeQL protocols that only a real server can answer for. Not in `verify`:
+## it builds a database and takes tens of seconds. The query server is the CLI's IDE-facing
+## plumbing, so its message shapes are not a stable interface and drift silently. Serialized with
+## -p 1: each package shells out to CodeQL, and every invocation shares one compilation cache.
+ABOM_ITEST_DB ?= /tmp/abom-itest-db
+## A second database, from a tree with a root action.yml: the sparse-filter check cannot fail
+## against a source that has nothing outside .github/, which is the shape it exists to catch.
+ABOM_ITEST_SPARSE_DB ?= /tmp/abom-itest-sparse-db
+## A third, built with --overlay-base: the CLI accepts that flag for actions and exits 0 while
+## writing overlayBaseDatabase: false, so the blocker is asserted rather than remembered.
+ABOM_ITEST_OVERLAY_DB ?= /tmp/abom-itest-overlay-db
+itest:
+	@if [ ! -d "$(ABOM_ITEST_DB)" ]; then \
+		codeql database create "$(ABOM_ITEST_DB)" --language=actions \
+			--source-root=ql/actions/graph-extraction/test/AbomEdges; \
+	fi
+	@if [ ! -d "$(ABOM_ITEST_SPARSE_DB)" ]; then \
+		codeql database create "$(ABOM_ITEST_SPARSE_DB)" --language=actions \
+			--source-root=internal/expand/testdata/sparse; \
+	fi
+	@if [ ! -d "$(ABOM_ITEST_OVERLAY_DB)" ]; then \
+		codeql database create "$(ABOM_ITEST_OVERLAY_DB)" --language=actions --overlay-base \
+			--source-root=internal/expand/testdata/sparse; \
+	fi
+	@ABOM_ITEST_DB="$(ABOM_ITEST_DB)" ABOM_ITEST_SPARSE_DB="$(ABOM_ITEST_SPARSE_DB)" \
+		ABOM_ITEST_OVERLAY_DB="$(ABOM_ITEST_OVERLAY_DB)" \
+		go test -p 1 ./internal/runner/ ./internal/pipeline/ ./internal/expand/ -count=1
+	@echo "itest: ok"
 
 ## selfcheck: run our own analysis over our own workflows, through our own database-creation
 ## path. Not in `verify`: it needs the CodeQL CLI and takes tens of seconds.

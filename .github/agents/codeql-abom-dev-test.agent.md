@@ -15,8 +15,8 @@ skill rather than improvising.
 | [regenerate-abom-fixtures](../skills/regenerate-abom-fixtures/SKILL.md) | A fixture is stale or wrong, or a test fails on data shape. |
 | [verify-abom-ui](../skills/verify-abom-ui/SKILL.md) | Layout, color, legibility or graph readability. Needs a vision-capable model. |
 
-Read `.github/copilot-instructions.md` for the architectural invariants. Each was learned from a
-real bug, and breaking one produces data that looks right and is wrong.
+Read `.github/instructions/architecture.instructions.md` for the architectural invariants. Each
+was learned from a real bug, and breaking one produces data that looks right and is wrong.
 
 ## Non-negotiable
 

@@ -155,6 +155,10 @@ public sealed class ThemeService(IJSRuntime js)
             ThemeChoice.Dark => true,
             _ => systemPrefersDark,
         };
+        // index.html paints the page from a data-theme attribute before Blazor exists, and
+        // nothing else keeps it current; left behind it inverts the interface. Not awaited
+        // because the system can change scheme outside any async path of ours.
+        _ = js.InvokeVoidAsync("abomTheme.applyResolved", IsDark);
         Changed?.Invoke();
     }
 

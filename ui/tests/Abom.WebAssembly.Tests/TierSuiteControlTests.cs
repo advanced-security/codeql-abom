@@ -152,8 +152,8 @@ public class TierSuiteControlTests : AbomTestContext
 
         // Asserted on the controls rather than their wording: the verb moved to a label shared by
         // the row when a third tier made repeating it wrap the last button onto its own line.
-        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll(".abom-requeue").Count));
-        var requeue = cut.FindAll(".abom-requeue");
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll(".abom-requeue-tier").Count));
+        var requeue = cut.FindAll(".abom-requeue-tier");
         Assert.Contains("direct", requeue[0].TextContent);
         Assert.Contains("transitive", requeue[1].TextContent);
         Assert.Contains("Re-analyze", cut.Markup);

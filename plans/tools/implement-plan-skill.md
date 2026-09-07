@@ -14,7 +14,7 @@ the two steps that get skipped are always the same two:
   queued), and `api/advisories.md` item 3, which asked for a `store.AdvisoryPackages()` that had
   existed the whole time.
 - **The real-corpus before/after.** `make verify` green is necessary and not sufficient. Unit
-  tests passed through every architectural bug in `copilot-instructions.md`.
+  tests passed through every architectural bug in `architecture.instructions.md`.
 
 The operator should be able to type one thing and get the whole loop, including the parts that
 are easy to skip precisely because nothing fails when they are.

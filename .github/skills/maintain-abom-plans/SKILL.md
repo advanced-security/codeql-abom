@@ -99,5 +99,6 @@ the plan rather than working around it.
 
 ## Related
 
-- `.github/copilot-instructions.md` — architectural invariants; a plan must not contradict them.
+- `.github/instructions/architecture.instructions.md` — architectural invariants; a plan must not
+  contradict them.
 - `.github/skills/verify-abom-ui/` — how the interface layers are verified.

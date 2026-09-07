@@ -101,6 +101,13 @@ func (i *Ingester) FindingsFromSARIF(r io.Reader, opts Options) (int, error) {
 	if err != nil {
 		return stored, fmt.Errorf("streaming sarif for %s: %w", opts.Repository, err)
 	}
+	// Searching and finding nothing is a result; searching for nothing is not, and the two are
+	// the same row once stored. CodeQL lists every rule it ran whether or not it matched, so an
+	// empty rule set means the analysis covered no query at all.
+	if len(rules) == 0 {
+		return 0, fmt.Errorf(
+			"%s: the analysis named no rules, so nothing was searched for", opts.Repository)
+	}
 	if err := flush(); err != nil {
 		return stored, err
 	}

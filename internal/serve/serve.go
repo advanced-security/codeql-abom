@@ -57,6 +57,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/discovery/start", s.discoveryStart)
 	mux.HandleFunc("POST /api/discovery/pause", s.discoveryPause)
 	mux.HandleFunc("POST /api/discovery/requeue/{tier}", s.discoveryRequeue)
+	mux.HandleFunc("POST /api/discovery/requeue-stale", s.discoveryRequeueStale)
+	mux.HandleFunc("POST /api/discovery/requeue-repository", s.discoveryRequeueRepository)
 	mux.HandleFunc("GET /api/discovery/suites", s.tierSuites)
 	mux.HandleFunc("PUT /api/discovery/suites/{tier}", s.setTierSuites)
 	mux.HandleFunc("GET /api/nodes", s.nodes)
@@ -267,6 +269,14 @@ func (s *Server) node(w http.ResponseWriter, r *http.Request) {
 	if rest, ok := strings.CutSuffix(key, "/-/observations"); ok {
 		obs, err := s.Store.ObservationsOf(store.SubjectNode, rest)
 		writeJSON(w, obs, err)
+		return
+	}
+	// Every repository naming one version, which the Discovery grid can only preview. The ref is
+	// a parameter rather than part of the path: it may be empty, and an empty path segment would
+	// make "default branch" indistinguishable from a malformed route.
+	if rest, ok := strings.CutSuffix(key, "/-/users"); ok {
+		users, err := s.Store.NodeUsersOf(rest, r.URL.Query().Get("ref"))
+		writeJSON(w, users, err)
 		return
 	}
 

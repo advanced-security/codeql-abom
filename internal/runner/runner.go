@@ -35,6 +35,9 @@ type Runner struct {
 	// Server answers the small commands from one long-lived JVM. Nil runs every command as its
 	// own process, which is what a one-shot invocation wants.
 	Server *CLIServer
+	// Evaluator runs the BQRS lane against a session that outlives the repository. Nil evaluates
+	// each batch in its own process.
+	Evaluator Evaluator
 
 	versionState
 }

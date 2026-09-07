@@ -84,12 +84,16 @@ func newSupervisor(s *store.Store, opts discoveryOptions, logTo io.Writer) (*sup
 	}
 
 	w := store.NewWriter(s, 0)
-	// The crawl runs for hours, so the small commands are worth a JVM that stays up. It is not
-	// closed here: the supervisor outlives this function and the CLI exits when the process does.
+	// The crawl runs for hours, so both the small commands and the BQRS lane are worth a JVM that
+	// stays up. Neither is closed here: the supervisor outlives this function and the CLI exits
+	// when the process does.
 	r := &runner.Runner{
 		CodeQLPath: opts.codeqlPath, Threads: opts.codeqlThreads(), RAMMB: opts.ramMB,
 		Lock:   runner.SharedLock(),
 		Server: &runner.CLIServer{CodeQLPath: opts.codeqlPath},
+		Evaluator: &runner.QueryServer{
+			CodeQLPath: opts.codeqlPath, Threads: opts.codeqlThreads(), RAMMB: opts.ramMB,
+		},
 	}
 	checkout := &expand.Checkout{}
 
@@ -108,6 +112,7 @@ func newSupervisor(s *store.Store, opts discoveryOptions, logTo io.Writer) (*sup
 			Ingester: ingest.New(s, w),
 			Writer:   w,
 			Fetcher:  checkout,
+			Probe:    checkout,
 			Builder:  r,
 			CodeQL:   r,
 			Resolver: r,

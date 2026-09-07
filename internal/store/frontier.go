@@ -98,17 +98,30 @@ var selectUsedBy = `
 	      AND COALESCE(e.ref_value, '') = abom_frontier.ref
 	    ORDER BY name LIMIT ` + strconv.Itoa(usedBySample) + `))`
 
-// runsForRow joins a queue row to the runs recorded against the very commit it analyzed.
+// runsForRow joins a queue row to the runs recorded against the database it analyzed.
 //
 // The empty-commit guards are load-bearing. Most rows have no `resolved_sha` and many runs have
 // no `db_commit`, so without them the join degenerates into every commitless run matching every
 // unanalyzed row, and a queued dependency would report suites it never saw.
+//
+// The second arm is the same join with content standing in for the commit, because a row settled
+// by content equivalence has no run at its own sha. Reporting that as unrecorded would turn an
+// optimization into an invented coverage gap. Both content rows are this repository's, so an
+// identical tree in a fork still joins to nothing.
 const runsForRow = `
 	FROM abom_query_run r
 	WHERE r.repository = abom_frontier.owner || '/' || abom_frontier.repo
-	  AND r.db_commit = abom_frontier.resolved_sha
 	  AND COALESCE(abom_frontier.resolved_sha, '') <> ''
-	  AND COALESCE(r.db_commit, '') <> ''`
+	  AND COALESCE(r.db_commit, '') <> ''
+	  AND (r.db_commit = abom_frontier.resolved_sha
+	       OR EXISTS (SELECT 1
+	                    FROM abom_commit_content here
+	                    JOIN abom_commit_content ran
+	                      ON ran.repository = here.repository
+	                     AND ran.indexed_digest = here.indexed_digest
+	                   WHERE here.repository = r.repository
+	                     AND here.commit_sha = abom_frontier.resolved_sha
+	                     AND ran.commit_sha = r.db_commit))`
 
 // selectSuites renders the packs and the CodeQL version a row was analyzed with.
 //
