@@ -1,5 +1,5 @@
 ---
-description: "Use when writing or fixing Go tests for codeql-abom. Covers fail-first, structural invariants over whole results, test naming, surfacing worker-pool failures, and the invariant guards that must not be weakened."
+description: "Use when writing or fixing Go tests for codeql-abom. Covers fail-first, structural invariants over whole results, test naming, asserting cost as calls rather than elapsed time, surfacing worker-pool failures, and the invariant guards that must not be weakened."
 applyTo: "**/*_test.go"
 ---
 
@@ -40,6 +40,13 @@ so a future reader can tell a regression from an intentional change.
 func TestWithdrawnAdvisoriesAreNotReported(t *testing.T) {
 ```
 
+## Assert cost as calls, not as elapsed time
+
+"Enumeration is one API pass, not one call per repository" is a claim a fake can count. A
+stopwatch cannot: `TestLimiterHoldsRateUnderConcurrency` is the timing-sensitive test here and it
+flakes ("scheduled 8s of waiting, want 7s"). Re-run with `-count=5` before believing it, and
+never add another test that measures a duration to prove a design.
+
 ## Surface failures
 
 Worker-pool jobs fail silently, hiding a consume-phase error behind an unrelated assertion. Wire
@@ -47,7 +54,8 @@ Worker-pool jobs fail silently, hiding a consume-phase error behind an unrelated
 
 ## Do not weaken the invariant guards
 
-`TestSchemaHasNoVerdictColumns`, `TestGraphTablesAreAppendOnly`,
+`TestSchemaHasNoVerdictColumns`, `TestGraphTablesAreDeletedOnlyByTheCompaction`,
+`TestReadsGoThroughTheLiveViews`,
 `TestCommonalityStillOutranksYieldPreference`, `TestSeedRepositoryIsNotDemotedToUpstream`,
 `TestRemediationScoreIsSeverityTimesReachOnly`,
 `TestUpstreamRepositoriesStillContributeTransitiveEdges`.

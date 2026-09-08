@@ -189,8 +189,8 @@ func (s *Store) refStates() (map[[2]string]refState, error) {
 		SELECT f.node_key, f.ref, f.status, f.status = 'done',
 		       f.depth, f.score,
 		       (SELECT COUNT(DISTINCT e.repository_row_id)
-		          FROM abom_edge e
-		          JOIN abom_node n ON n.row_id = e.dst_node_row_id
+		          FROM abom_edge_live e
+		          JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 		         WHERE n.node_key = f.node_key AND COALESCE(e.ref_value, '') = f.ref)
 		FROM abom_frontier f`)
 	if err != nil {

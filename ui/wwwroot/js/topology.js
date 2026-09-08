@@ -45,6 +45,26 @@ export function edgeClass(s, t) {
     return so && so === to ? 'sameOwner' : 'crossOwner';
 }
 
+/** The three classes the store stores, under the names this view already draws them by. */
+const STORED_BOUNDARY = {
+    'same-repository': 'sameRepo',
+    'same-owner': 'sameOwner',
+    'cross-owner': 'crossOwner',
+};
+
+/**
+ * The class to draw an edge in, preferring what the store decided.
+ *
+ * The store is authoritative because it is what the bill of materials reads, and two derivations
+ * of one fact are two answers waiting to disagree. Deriving from the endpoints remains the
+ * fallback: containment edges and the merged edges a collapsed view builds were never observed
+ * as references and so have no stored boundary. An unrecognized value falls back too — trusting
+ * it would put edges in a bucket no filter checkbox names, where they would never draw.
+ */
+export function boundaryClass(stored, s, t) {
+    return STORED_BOUNDARY[stored] || edgeClass(s, t);
+}
+
 /** What a node is grouped under, derived from its own key so no extra payload is needed. */
 export function groupOf(node, by) {
     switch (by) {

@@ -270,6 +270,43 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     overflow: hidden;
 }
 
+/* Something ABOM has not established: an account gh has not confirmed, or a component nothing
+   analyzed. Deliberately not the muted secondary color, which reads as "less important" — this
+   is not less important, it is unknown, and an unexamined component that looks like a clean one
+   is the failure the coverage statement exists to prevent. */
+.abom-unconfirmed {
+    color: var(--mud-palette-warning-darken);
+    font-style: italic;
+}
+
+/* A repository the operator has declared. A mark rather than a color alone, so it survives being
+   printed and does not rely on hue to carry the meaning. */
+.abom-owned-mark {
+    font-weight: 600;
+}
+
+.abom-owned-mark::before {
+    content: "\2713\00a0";
+    color: var(--mud-palette-success);
+}
+
+/* The filter row above the bill of materials. Fixed widths on the two controls, because flexbox
+   wraps on content width and a grown search field pushes the export menu onto a second line. */
+.abom-bom-search { max-width: 320px; flex: 0 0 320px; }
+.abom-bom-select { max-width: 200px; flex: 0 0 200px; }
+.abom-bom-controls { flex-wrap: nowrap; }
+
+/* Several references to one component are several lines, and each must stay copyable whole. */
+.abom-bom-ref { white-space: nowrap; }
+
+/* The objective sits above the controls because it is the reason to press them. Depth chips wrap
+   rather than scroll: a corpus five deep has five of them and they must all stay visible. */
+.abom-objective-depths {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
 /* A disclosure whose header keeps stating the setting, so folding hides the control and never
    the fact. Built from a real button so it is reachable by keyboard and reports its own state. */
 .abom-fold-toggle {
@@ -545,6 +582,10 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 
 /* One search box width everywhere, set by token rather than by each page. */
 .abom-search { max-width: var(--abom-search-w); }
+
+/* An account name needs room to be recognized: truncating one is how an operator declares the
+   wrong org and cannot see that they did. */
+.abom-owner-field { min-width: 16rem; }
 
 /* Simple tables carry the grid's metrics, so a page that uses one does not look like a
    different application from the page beside it. */

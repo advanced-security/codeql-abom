@@ -16,7 +16,7 @@ func boundToOnePack(t *testing.T) (*harness, string) {
 
 	h := newHarness(t)
 	h.expander.Resolver = &packedResolver{queries: map[string][]string{"graph.qls": {query}}}
-	for _, tier := range []string{store.TierDirect, store.TierTransitive} {
+	for _, tier := range []string{store.TierOwned, store.TierDirect, store.TierTransitive} {
 		if err := h.store.SetTierSuites(tier, []string{"graph.qls"}); err != nil {
 			t.Fatalf("SetTierSuites(%s): %v", tier, err)
 		}

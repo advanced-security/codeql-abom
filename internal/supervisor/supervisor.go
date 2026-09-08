@@ -78,6 +78,10 @@ type Supervisor struct {
 	started      bool
 	everStarted  bool
 	sweptOnStart bool
+	// Status counters are cumulative since the process started, so a cycle's own spend is the
+	// difference from what the previous cycle had already counted.
+	lastRechecked int
+	lastDrifted   int
 }
 
 // Default loop settings.
@@ -306,6 +310,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 // because the alternative is a background process that dies silently hours after anyone looked.
 func (s *Supervisor) cycle(ctx context.Context) time.Duration {
 	s.beginCycle()
+	started := s.now()
 
 	if n, err := s.Queue.ReclaimStale(s.reclaimLease()); err != nil {
 		return s.fail("reclaiming abandoned work", err)
@@ -385,11 +390,50 @@ func (s *Supervisor) cycle(ctx context.Context) time.Duration {
 	if err := s.Queue.Rescore(); err != nil {
 		return s.fail("rescoring the queue", err)
 	}
-	if err := s.recheck(ctx, drained); err != nil && ctx.Err() == nil {
+
+	progress, err := s.Queue.Completeness()
+	if err != nil {
+		return s.fail("reading completeness", err)
+	}
+	if err := s.recheck(ctx, progress); err != nil && ctx.Err() == nil {
 		return s.fail("rechecking analyzed dependencies", err)
 	}
+	// After the recheck, so the probes it spent are in the cycle's own accounting rather than
+	// the next one's.
+	s.recordSpend(stats, progress, started)
 
 	return s.waitFor(next, pending)
+}
+
+// recordSpend appends what this cycle cost and what it bought.
+//
+// Failures are logged and not returned: losing a line of accounting is not a reason to fail a
+// cycle whose work already succeeded.
+func (s *Supervisor) recordSpend(stats expand.Stats, progress []frontier.DepthProgress,
+	started time.Time) {
+	st := s.Status()
+	spend := store.CycleSpend{
+		Cycle:     st.Cycle,
+		StartedAt: started.UTC().Format(time.RFC3339Nano),
+		Millis:    s.now().Sub(started).Milliseconds(),
+		// A repository is fetched and built once per analysis, so those are the analysis count
+		// rather than separately instrumented counters. Skips cost neither.
+		Fetches:     stats.Processed,
+		Builds:      stats.Processed,
+		Evaluations: stats.Processed,
+		Probes:      st.Rechecked - s.lastRechecked,
+		Analyzed:    stats.Processed,
+		Skipped:     stats.Skipped,
+		Settled:     stats.Items,
+		Discovered:  stats.Discovered,
+		Drifted:     st.Drifted - s.lastDrifted,
+	}
+	spend.ShallowestIncomplete, spend.HasOutstanding = frontier.ShallowestIncomplete(progress)
+	s.lastRechecked, s.lastDrifted = st.Rechecked, st.Drifted
+
+	if err := s.Store.RecordCycle(spend); err != nil {
+		s.logf("could not record what cycle %d spent: %v", spend.Cycle, err)
+	}
 }
 
 // refreshAggregates recomputes reach when the policy says it is worth the cost, and records a
@@ -479,10 +523,10 @@ func (s *Supervisor) refreshAdvisories(ctx context.Context) {
 	}
 }
 
-// recheck probes analyzed dependencies for ref drift once there is nothing better to do. It is
+// recheck probes analyzed dependencies for ref drift once completeness is satisfied. It is
 // deliberately last: re-analyzing what moved matters less than analyzing what was never seen.
-func (s *Supervisor) recheck(ctx context.Context, drained bool) error {
-	if s.Rechecker == nil || !drained {
+func (s *Supervisor) recheck(ctx context.Context, progress []frontier.DepthProgress) error {
+	if s.Rechecker == nil || !freshnessDue(progress) {
 		return nil
 	}
 	stats, err := s.Rechecker.Run(ctx, s.recheckTTL(), s.recheckLimit())
@@ -495,6 +539,16 @@ func (s *Supervisor) recheck(ctx context.Context, drained bool) error {
 			stats.Checked, stats.Drifted)
 	}
 	return err
+}
+
+// freshnessDue reports whether the objective has reached its third stage.
+//
+// Gated on completeness rather than on a momentarily empty queue: `drained` means nothing is
+// claimable *right now*, which is transiently true while work waits on a retry, and freshness
+// must not spend a probe while anything at any depth has never been analyzed.
+func freshnessDue(progress []frontier.DepthProgress) bool {
+	_, outstanding := frontier.ShallowestIncomplete(progress)
+	return !outstanding
 }
 
 // waitFor sleeps until there is work, rather than polling a queue whose next item is hours away.

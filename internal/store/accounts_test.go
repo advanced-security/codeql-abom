@@ -85,7 +85,11 @@ func originCounts(t *testing.T, s *Store) map[string]int {
 	return out
 }
 
-// GitHub does not distinguish account names by case, so neither may membership.
+// GitHub does not distinguish account names by case, so neither may the stored verification.
+//
+// Asserted against what was stored rather than against OwnedSet, which since 2026-09-07 reads the
+// declared scope: verification records what access exists and no longer decides ownership. The
+// case rule is what this test is for and it still holds.
 func TestOwnedAccountsIgnoreCaseAndDuplicates(t *testing.T) {
 	s := subgraphFixture(t)
 
@@ -99,14 +103,6 @@ func TestOwnedAccountsIgnoreCaseAndDuplicates(t *testing.T) {
 	if len(stored.Accounts) != 1 {
 		t.Fatalf("one account arrived three ways, stored %d: %+v",
 			len(stored.Accounts), stored.Accounts)
-	}
-
-	owned, err := s.OwnedSet()
-	if err != nil {
-		t.Fatalf("OwnedSet: %v", err)
-	}
-	if !owned["octo-org"] {
-		t.Error("membership test is case-sensitive; it must not be")
 	}
 }
 
@@ -139,7 +135,7 @@ func TestNothingVerifiedMeansNothingIsDivided(t *testing.T) {
 }
 
 // Re-verifying replaces what was there. An account left behind after the operator lost access to
-// it would keep reporting their findings as theirs to fix.
+// it would keep claiming an access check had passed that never ran again.
 func TestReVerifyingReplacesTheAccountsRatherThanAddingToThem(t *testing.T) {
 	s := subgraphFixture(t)
 
@@ -150,15 +146,12 @@ func TestReVerifyingReplacesTheAccountsRatherThanAddingToThem(t *testing.T) {
 		t.Fatalf("ReplaceAccounts: %v", err)
 	}
 
-	owned, err := s.OwnedSet()
+	stored, err := s.Accounts()
 	if err != nil {
-		t.Fatalf("OwnedSet: %v", err)
+		t.Fatalf("Accounts: %v", err)
 	}
-	if owned["old-org"] {
-		t.Error("an account absent from the latest verification is still reported as owned")
-	}
-	if !owned["octo-org"] {
-		t.Error("an account present in the latest verification is not reported as owned")
+	if len(stored.Accounts) != 1 || stored.Accounts[0].Owner != "octo-org" {
+		t.Errorf("accounts = %+v, want only the latest verification", stored.Accounts)
 	}
 }
 

@@ -30,6 +30,11 @@ watermark in `abom_graph_generation` is what separates them.
 advisories are reported verbatim beside the observed refs. The interface renders evidence and
 says what is not known — *not recorded* must stay distinguishable from *none*.
 
+**An empty result is not the same as an empty answer.** The boundary filter returned nothing
+because no cycle had classified the edges yet, and the page said only "no results" —
+indistinguishable from a filter that ran and matched none. Where a view can be empty because
+something has not run, say which, and name the action that would change it.
+
 ## Every open view refreshes itself
 
 There is no Follow checkbox; `FollowService` is only the beat

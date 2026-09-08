@@ -1,7 +1,66 @@
 # Nothing enters the graph that the owned set does not reach
 
-**Status:** planned. Depends on `db/owned-scope.md`, which makes "owned" a thing the code can ask
-about. This plan is the guardrail itself.
+**Status:** shipped, without the `origin` rename the plan asked for — which reconciling showed
+would have been a false claim. Discovery is bounded by the owned closure, and the round found a
+latent defect that would have swallowed the entire root set.
+
+## What reconciling corrected, before any code changed
+
+**The rename would have asserted something untrue.** The plan said "`seed` becomes `owned` — it is
+the same set under a name that says why". `db/owned-scope.md` had just measured that the two are
+**disjoint on this corpus**: 0 of the 204 `origin='seed'` repositories belong to a declared
+account. Renaming would have recorded 204 repositories nobody owns as owned. `origin` keeps
+meaning *how a repository entered the corpus*, and the boundary is a separate question answered
+from the declaration.
+
+**The closure machinery already existed in another form.** `graph.ClassifyDependencies` already
+walks a reachability closure breadth-first — rooted at `origin='seed'` containers, answering
+whether anything under review *executes* a dependency. `OwnedClosure` is the same shape rooted at
+the declared accounts and asking whether it is reachable at all, kept separate because they are
+different questions.
+
+**There are exactly three production `Enqueue` callers**, all in `expand`: `SeedFrontier`,
+`enqueueDiscoveries` and `SweepDiscoveries`. The boundary went into all three rather than into
+`Enqueue`, which would have needed a per-item lookup in a hot loop.
+
+## The defect this round found
+
+**`plansByTier` built plans for direct and transitive only.** The owned tier was added to
+`tierOf`, to `abom_tier_suite`'s seed, and to the Discovery page's columns — and never here. A
+batch landing in it got a zero-value `tierPlan`, which `pendingWork` reads as nothing
+outstanding, so `prepare` returned `AlreadyRecorded: true`.
+
+**An owned repository was settled as *already recorded* without a query ever running against it.**
+The test that caught it reports `Processed:0 Skipped:1`.
+
+It was latent because the owned tier held accounts the corpus contained almost nothing from: all
+221 done owned rows have query runs, because they were analyzed before they became owned. After
+this plan **every root is owned-tier**, so it would have silently swallowed the entire root set on
+the first real crawl. Four test harnesses enumerated the tiers the same way and were corrected
+with it.
+
+## What the corpus check found
+
+Declaring seven accounts the operator is owner or admin of:
+
+| | |
+| --- | ---: |
+| owned repositories present in the corpus | **1** |
+| repositories inside the closure | **270 of 1,099** |
+| queue rows inside the closure | **1,642 of 3,662** |
+| repositories the boundary excludes | **829** |
+| queue rows the boundary excludes | **2,020** |
+
+The single owned repository is `advanced-security/dismiss-alerts`. It reaches 270 because it names
+`actions/checkout`, `actions/setup-node`, `actions/upload-artifact` and `github/codeql-action`,
+and those hubs' own repositories name a great deal more.
+
+**The closure is deliberately wider than what gets queued.** It follows every dependency edge,
+including an upstream action's own CI, because admission asks *is this reachable* and not *does
+anything under review execute it*. The second question is `ClassifyDependencies`, which still
+governs runtime versus build-time, and `TestExpandIgnoresDependenciesOfUnreferencedUpstreamCI`
+still holds. A boundary that answered both questions at once would have made one of them
+unreadable.
 
 ## Why this exists
 
@@ -104,17 +163,36 @@ growing and says what does not belong; the next one takes it out.
 
 ## Verification
 
-- **How much of the existing corpus is outside the owned closure.** Measured on a copy, from a
-  small declared scope: nodes, edges, frontier rows and repositories in and out. This is the
-  headline number and it will be most of the corpus.
-- A crawl from a declared scope reaches exactly the closure the same rule computes independently
-  in SQL. Exact agreement, not a plausible ratio.
-- Nothing outside the closure is ever enqueued: a fixture where an out-of-scope repository names a
-  new dependency must add nothing.
-- Depth 1 closes before any depth-2 work is claimed, observable in the cycle log.
-- Re-running the re-scope pass changes nothing the second time.
-- `InsertUpstreamRepository`'s no-demotion rule still holds: a repository that is both owned and
-  depended upon stays owned.
+- The closure starts at what is declared, follows dependencies outward, and admits nothing the
+  declared set does not reach. Verified by breaking the walk so it followed no edges and watching
+  two of the six tests fail before restoring it.
+- **With nothing declared the closure is empty, not universal.** Admitting everything would make
+  the boundary inert exactly when it has never been configured, which is the state a first run is
+  in — and an inert check looks exactly like a correct one that never fires.
+- Ordering edges admit nothing: `job-needs-job` is sequence, not dependency.
+- The sweep no longer reaches outside the closure. It re-applied the discovery rule to every
+  repository in the table, including the 895 upstream ones nothing owned reaches.
+- An owned repository is analyzed rather than settled unread.
+- Seeding starts from the declaration rather than from `origin`.
+
+Sixteen existing tests were **narrowed rather than deleted**. All shared one premise — the
+repository being analyzed is under review — which is now stated as a declaration rather than
+assumed. `harness.enqueue` declares each item's account, because a directly enqueued item is a
+root and roots come from the declared scope; `enqueueUnowned` exists for the case that is
+deliberately outside it. Two others were decoupled from a requeued row count that content
+equivalence and tier membership legitimately change.
+
+## Still pending
+
+**Iterative deepening is not built.** The flat `DefaultMaxDepth = 5` remains. The boundary makes
+it far less load-bearing — depth was the only guardrail and is now the second one — but running to
+closure at depth 1 before spending anything at depth 2 belongs with the claim ordering in
+`db/freshness-budget.md`, which is where the objective lives. Splitting it there rather than
+leaving it half-done here.
+
+**The out-of-scope marking is not built either.** The boundary stops the graph growing; it does
+not mark what is already outside. That is `db/pruning.md`, which has to solve tombstoning anyway,
+and marking without a way to act on the mark is a column with no consumer.
 
 ## Open questions
 

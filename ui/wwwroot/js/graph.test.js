@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-    seed, repoOf, orgOf, edgeClass, groupOf, anchorKey, keyOf, faded,
+    seed, repoOf, orgOf, edgeClass, boundaryClass, groupOf, anchorKey, keyOf, faded,
     nodeRadius, isSelected, particleSpeed, needsRender, collapseGroups, ungroupedName,
     mergeInto, placeArrivals, neighborhood, discoveryColor, escapesGraph,
     simulationSet, visibleSignature, restLevel, REST_DELAY, REST_FPS, fullyAnalyzed, labelFor,
@@ -33,6 +33,34 @@ test('an owner node compares by its account and not by a repository it does not 
     assert.equal(repoOf(org), '', 'an account owns repositories rather than being one');
     assert.equal(edgeClass(org, action), 'sameOwner');
     assert.equal(edgeClass(org, foreign), 'crossOwner');
+});
+
+// The store now classifies boundaries too, and two derivations of one fact are two answers
+// waiting to disagree. The stored value is the authoritative one — it is what the bill of
+// materials reads — so where it exists the view must not re-derive a second opinion.
+test('a stored boundary is preferred over deriving one again in the browser', () => {
+    const s = { key: 'octo/app/.github/workflows/ci.yml', repository: 'octo/app' };
+    const t = { key: 'octo/app/.github/workflows/build.yml', repository: 'octo/app' };
+
+    // Deliberately contradicts what edgeClass would say, so preferring the store is visible.
+    assert.equal(edgeClass(s, t), 'sameRepo');
+    assert.equal(boundaryClass('cross-owner', s, t), 'crossOwner');
+    assert.equal(boundaryClass('same-owner', s, t), 'sameOwner');
+    assert.equal(boundaryClass('same-repository', s, t), 'sameRepo');
+});
+
+// Containment edges and the merged edges a collapsed view builds have no stored boundary,
+// because they were never observed as references. Falling back keeps them drawable rather than
+// dropping them out of every class the panel can check.
+test('an edge with no stored boundary still gets one from its endpoints', () => {
+    const org = { key: 'org:actions', kind: 'org', owner: 'actions' };
+    const action = { key: 'actions/checkout' };
+
+    assert.equal(boundaryClass('', org, action), 'sameOwner');
+    assert.equal(boundaryClass(undefined, org, action), 'sameOwner');
+    // An unrecognized value is not a class. Trusting it would put edges in a bucket no filter
+    // checkbox names, and they would silently never draw.
+    assert.equal(boundaryClass('something-else', org, action), 'sameOwner');
 });
 
 test('grouping by workflow does not put every node in a group of its own', () => {
@@ -570,4 +598,31 @@ test('escape while typing belongs to the field, not the graph', () => {
 test('escape closes an open menu before it reaches the graph', () => {
     assert.equal(escapesGraph('Escape', { tagName: 'CANVAS' }, true), false);
     assert.equal(escapesGraph('Escape', null, true), false);
+});
+
+test('a delta that removes a node takes it out of the graph', () => {
+    const all = {
+        nodes: [{ key: 'a', refStyles: new Set(), edgeClasses: new Set() },
+                { key: 'b', refStyles: new Set(), edgeClasses: new Set() }],
+        links: [{ source: 'a', target: 'b', refs: [], count: 1 }],
+    };
+
+    mergeInto(all, { nodes: [], edges: [], removedNodes: ['b'], removedEdges: [] });
+
+    assert.deepEqual(all.nodes.map(n => n.key), ['a']);
+    // An edge whose end is gone is a break nothing can draw.
+    assert.equal(all.links.length, 0);
+});
+
+test('a delta that removes an edge leaves its endpoints alone', () => {
+    const all = {
+        nodes: [{ key: 'a', refStyles: new Set(), edgeClasses: new Set() },
+                { key: 'b', refStyles: new Set(), edgeClasses: new Set() }],
+        links: [{ key: 'e1', source: 'a', target: 'b', refs: [], count: 1 }],
+    };
+
+    mergeInto(all, { nodes: [], edges: [], removedNodes: [], removedEdges: ['e1'] });
+
+    assert.equal(all.links.length, 0);
+    assert.deepEqual(all.nodes.map(n => n.key), ['a', 'b']);
 });

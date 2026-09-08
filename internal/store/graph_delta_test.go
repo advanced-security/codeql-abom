@@ -3,33 +3,48 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
 
-// A generation cursor is a row id watermark, which only means anything while rows are never
-// removed. A DELETE against the graph tables would silently hand every client a delta that
-// skips or repeats work, so the absence is pinned here rather than left to review.
-func TestGraphTablesAreAppendOnly(t *testing.T) {
+// A generation cursor is a row id watermark, which only means anything while a client is told
+// when rows go away. An unannounced DELETE would silently hand every client a delta that skips
+// or repeats work, so the absence is pinned here rather than left to review.
+//
+// Narrowed on 2026-09-07 from "nothing may delete" to "only the compaction may". The stated
+// reason was always the cursor, not deletion as such: `store/prune.go` bumps an epoch that makes
+// every client reload, which is precisely what the cursor needed and what nothing else does.
+// Deleting anywhere else is still the defect this was written for.
+func TestGraphTablesAreDeletedOnlyByTheCompaction(t *testing.T) {
 	root, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatalf("resolving repository root: %v", err)
 	}
 	appendOnly := []string{"abom_node", "abom_edge", "abom_finding"}
+	// The one file allowed to delete, because it is the one that ends the cursor's meaning.
+	const compaction = "internal/store/prune.go"
 
 	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") ||
 			strings.HasSuffix(path, "_test.go") {
 			return err
 		}
+		rel, _ := filepath.Rel(root, path)
+		if filepath.ToSlash(rel) == compaction {
+			return nil
+		}
 		body, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
 		for _, table := range appendOnly {
-			if strings.Contains(string(body), "DELETE FROM "+table) {
-				rel, _ := filepath.Rel(root, path)
-				t.Errorf("%s deletes from %s, which invalidates every delta cursor", rel, table)
+			// A word boundary, or `abom_finding` matches `abom_finding_node`, which is a link
+			// table and not one of these.
+			deletes := regexp.MustCompile(`DELETE FROM ` + table + `\b`)
+			if deletes.MatchString(string(body)) {
+				t.Errorf("%s deletes from %s without bumping the epoch, "+
+					"which invalidates every delta cursor in silence", rel, table)
 			}
 		}
 		return nil

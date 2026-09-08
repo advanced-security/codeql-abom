@@ -422,6 +422,13 @@ public sealed record OwnedAccount
     public string Owner { get; init; } = string.Empty;
     public string Kind { get; init; } = string.Empty;
     public string Role { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Whether the role carries enough access to answer for the account. Decided by the server
+    /// from the role, never re-derived here: the interface reading `role` and reaching its own
+    /// conclusion is the second derivation that lets the two disagree.
+    /// </summary>
+    public bool CanDeclare { get; init; }
 }
 
 /// <summary>A setup failure the operator can fix, and the command that fixes it.</summary>
@@ -527,6 +534,246 @@ public sealed record NodeRoute
     public int Hops { get; init; }
     public IReadOnlyList<string> Path { get; init; } = [];
     public IReadOnlyList<StepCondition> Conditions { get; init; } = [];
+}
+
+/// <summary>
+/// One account the operator has stated is theirs — the fourth ownership notion, and the only one
+/// that means responsibility.
+///
+/// <c>repository.origin</c> records how a repository entered the corpus and <see
+/// cref="OwnedAccount"/> records what GitHub says you belong to. Neither means anyone can change
+/// anything.
+/// </summary>
+public sealed record DeclaredAccount
+{
+    public string Owner { get; init; } = string.Empty;
+
+    /// <summary><c>organization</c> or <c>user</c>. A user account is opted into.</summary>
+    public string Kind { get; init; } = string.Empty;
+
+    public bool Enabled { get; init; }
+
+    /// <summary>
+    /// True when the account is restricted to <see cref="Includes"/>. Held rather than derived
+    /// from the list being non-empty, so removing the last include cannot silently widen an
+    /// account from two repositories to all of them.
+    /// </summary>
+    public bool IncludesOnly { get; init; }
+
+    public IReadOnlyList<string> Includes { get; init; } = [];
+    public string DeclaredAt { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// What a candidate declaration would admit and drop, answered before it is written.
+/// </summary>
+/// <remarks>
+/// Repositories are named rather than only counted: recognizing one is how an operator catches a
+/// declaration they did not mean to make, and "417 repositories leave" is a number nobody can
+/// check.
+/// </remarks>
+public sealed record ScopePreview
+{
+    /// <summary>Repositories the declaration names directly. The closure is what they reach, so
+    /// the two differ by the whole supply chain.</summary>
+    public int RootsNow { get; init; }
+    public int RootsNext { get; init; }
+    public int ClosureNow { get; init; }
+    public int ClosureNext { get; init; }
+
+    public IReadOnlyList<string> Entering { get; init; } = [];
+    public IReadOnlyList<string> Leaving { get; init; } = [];
+    public int EnteringCount { get; init; }
+    public int LeavingCount { get; init; }
+    public bool Truncated { get; init; }
+
+    /// <summary>Queue rows inside the closure. A scope can shrink without any queued work
+    /// stopping, which a repository count alone cannot show.</summary>
+    public int QueuedNow { get; init; }
+    public int QueuedNext { get; init; }
+
+    /// <summary>True when the candidate would reach no repository the corpus holds. Declaring
+    /// such an account is legitimate; silently succeeding is what leaves every page empty.</summary>
+    public bool ReachesNothing => ClosureNext == 0;
+}
+
+/// <summary>What the crawl is trying to achieve, and what it has been spending to get there.</summary>
+public sealed record Objective
+{
+    public IReadOnlyList<DepthProgress> Progress { get; init; } = [];
+
+    /// <summary>
+    /// The depth being worked. <see cref="HasOutstanding"/> tells a complete closure from work
+    /// at depth 0, which is a different and wrong statement.
+    /// </summary>
+    public int Working { get; init; }
+
+    public bool HasOutstanding { get; init; }
+
+    /// <summary>The cap exploration may not pass, so "complete" can be told apart from
+    /// "complete as far as we are allowed to look".</summary>
+    public int MaxDepth { get; init; }
+
+    public IReadOnlyList<CycleSpend> Recent { get; init; } = [];
+    public CycleTotal Totals { get; init; } = new();
+}
+
+/// <summary>How much of one depth has been settled.</summary>
+public sealed record DepthProgress
+{
+    public int Depth { get; init; }
+    public int Total { get; init; }
+    public int Done { get; init; }
+
+    /// <summary>Analyzed plus the rows nothing can act on, which is what completeness means.</summary>
+    public int Settled { get; init; }
+
+    public int Pending { get; init; }
+    public int Running { get; init; }
+    public int Available { get; init; }
+}
+
+/// <summary>What one cycle cost and what it bought.</summary>
+public sealed record CycleSpend
+{
+    public int Cycle { get; init; }
+    public string StartedAt { get; init; } = string.Empty;
+    public long Millis { get; init; }
+
+    public int Fetches { get; init; }
+    public int Builds { get; init; }
+    public int Evaluations { get; init; }
+    public int Probes { get; init; }
+
+    public int Analyzed { get; init; }
+    public int Skipped { get; init; }
+    public int Settled { get; init; }
+    public int Discovered { get; init; }
+    public int Drifted { get; init; }
+
+    public int ShallowestIncomplete { get; init; }
+    public bool HasOutstanding { get; init; }
+}
+
+/// <summary>Every recorded cycle summed, so "under budget" has something to check against.</summary>
+public sealed record CycleTotal
+{
+    public int Cycles { get; init; }
+    public long Millis { get; init; }
+    public int Fetches { get; init; }
+    public int Builds { get; init; }
+    public int Evaluations { get; init; }
+    public int Probes { get; init; }
+    public int Analyzed { get; init; }
+    public int Discovered { get; init; }
+}
+
+/// <summary>
+/// A bill of materials: what a set of roots is composed of, and what was examined to say so.
+///
+/// Coverage travels inside the document rather than beside it, because a reader holding only this
+/// has to be able to tell a short document from a thorough one.
+/// </summary>
+public sealed record Bom
+{
+    public IReadOnlyList<string> Roots { get; init; } = [];
+    public string GeneratedAt { get; init; } = string.Empty;
+    public IReadOnlyList<BomComponent> Components { get; init; } = [];
+    public IReadOnlyList<BomRelationship> Relationships { get; init; } = [];
+    public BomCoverage Coverage { get; init; } = new();
+}
+
+/// <summary>One thing the roots are composed of.</summary>
+public sealed record BomComponent
+{
+    public string Key { get; init; } = string.Empty;
+    public string Kind { get; init; } = string.Empty;
+    public string Repository { get; init; } = string.Empty;
+
+    /// <summary>Relative to this document's roots, which is why it is not a fact about the edge.</summary>
+    public bool Direct { get; init; }
+
+    public int Depth { get; init; }
+    public IReadOnlyList<BomReference> References { get; init; } = [];
+    public IReadOnlyList<BomFinding> Findings { get; init; } = [];
+    public IReadOnlyList<BomAdvisory> Advisories { get; init; } = [];
+
+    /// <summary>
+    /// At least one reference in use was examined. The pair below says how much: one boolean
+    /// cannot distinguish partial coverage from complete.
+    /// </summary>
+    public bool Analyzed { get; init; }
+
+    public int RefsInUse { get; init; }
+    public int RefsAnalyzed { get; init; }
+}
+
+/// <summary>A version of a component as some workflow actually wrote it.</summary>
+public sealed record BomReference
+{
+    public string Raw { get; init; } = string.Empty;
+    public string Value { get; init; } = string.Empty;
+    public string ResolvedSha { get; init; } = string.Empty;
+    public bool Analyzed { get; init; }
+}
+
+/// <summary>One result, carrying whatever provenance was recorded for it.</summary>
+public sealed record BomFinding
+{
+    public string RuleId { get; init; } = string.Empty;
+    public string Repository { get; init; } = string.Empty;
+    public string FilePath { get; init; } = string.Empty;
+    public int StartLine { get; init; }
+    public string Message { get; init; } = string.Empty;
+    public string Severity { get; init; } = string.Empty;
+    public double SecuritySeverity { get; init; }
+
+    /// <summary>Empty means the run was not recorded, which is a state and not a failure.</summary>
+    public string RunKey { get; init; } = string.Empty;
+
+    public string PackDigest { get; init; } = string.Empty;
+    public string ResultHash { get; init; } = string.Empty;
+    public string CliVersion { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// An advisory naming a component's repository, reported beside the observed references and
+/// never applied to them.
+/// </summary>
+public sealed record BomAdvisory
+{
+    public string GhsaId { get; init; } = string.Empty;
+    public string Severity { get; init; } = string.Empty;
+    public string Summary { get; init; } = string.Empty;
+    public string VulnerableRange { get; init; } = string.Empty;
+}
+
+/// <summary>A dependency between two components.</summary>
+public sealed record BomRelationship
+{
+    public string Source { get; init; } = string.Empty;
+    public string Target { get; init; } = string.Empty;
+    public string Kind { get; init; } = string.Empty;
+    public string Boundary { get; init; } = string.Empty;
+}
+
+/// <summary>What was examined to produce the document.</summary>
+public sealed record BomCoverage
+{
+    public int ComponentsInUse { get; init; }
+    public int ComponentsAnalyzed { get; init; }
+    public int ReferencesInUse { get; init; }
+    public int ReferencesAnalyzed { get; init; }
+    public int Findings { get; init; }
+
+    /// <summary>
+    /// Analyzed but not attributable to a recorded run. A real third state: 2,759 findings on
+    /// the reference corpus are in it.
+    /// </summary>
+    public int FindingsUntraced { get; init; }
+
+    public int FindingsWithoutHash { get; init; }
+    public int FindingsWithoutDigest { get; init; }
 }
 
 /// <summary>One reference and how widely it is used, verbatim and unjudged.</summary>

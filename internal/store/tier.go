@@ -23,10 +23,11 @@ const (
 	TierTransitive = "transitive"
 )
 
-// isOwned matches a queued dependency against the verified accounts. Lower-cased on both sides
-// because GitHub treats account names case-insensitively and so must membership.
-const isOwned = `EXISTS (SELECT 1 FROM abom_account a
-	                        WHERE LOWER(a.owner) = LOWER(abom_frontier.owner))`
+// isOwned matches a queued dependency against the declared scope — the accounts the operator has
+// stated they hold both the privilege to analyze and the responsibility to remediate. It read the
+// `gh`-verified accounts until 2026-09-07, which reported membership: being in an organization
+// does not make its supply chain anyone's work.
+const isOwned = ownedFrontierRow
 
 // tierOfRow is the precedence, written once. It feeds both the counts and the requeue, which
 // would otherwise be free to disagree about what a tier contains.

@@ -40,6 +40,13 @@ public sealed class AbomApi(HttpClient http)
         await GetAsync<DiscoveryState>("api/discovery/status", ct) ?? new DiscoveryState();
 
     /// <summary>
+    /// Reads what the crawl is trying to achieve and what it has been spending. A loop whose
+    /// priorities are invisible is one nobody can steer.
+    /// </summary>
+    public async Task<Objective?> GetObjectiveAsync(CancellationToken ct = default) =>
+        await GetAsync<Objective>("api/discovery/objective", ct);
+
+    /// <summary>
     /// Starts or pauses expansion. A POST because it makes the server clone repositories and
     /// run CodeQL, and the header is what keeps a cross-site form from doing the same.
     /// </summary>
@@ -165,6 +172,64 @@ public sealed class AbomApi(HttpClient http)
     public async Task<IReadOnlyList<NodeRoute>> GetReachAsync(
         string key, CancellationToken ct = default) =>
         await GetListAsync<NodeRoute>($"api/node/{key}/-/reach", ct);
+
+    public async Task<IReadOnlyList<DeclaredAccount>> GetOwnedScopeAsync(
+        CancellationToken ct = default) =>
+        await GetListAsync<DeclaredAccount>("api/owned-scope", ct);
+
+    /// <summary>
+    /// Replaces the declaration wholesale, matching the store: a diff nobody assembled is a diff
+    /// nobody can check, so the caller sends the scope it wants to end up with.
+    /// </summary>
+    public async Task<IReadOnlyList<DeclaredAccount>> SetOwnedScopeAsync(
+        IReadOnlyList<DeclaredAccount> accounts, CancellationToken ct = default)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Put, "api/owned-scope")
+        {
+            Content = JsonContent.Create(accounts),
+        };
+        request.Headers.Add("X-Abom-Control", "1");
+        var response = await http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<IReadOnlyList<DeclaredAccount>>(Json, ct)
+               ?? [];
+    }
+
+    /// <summary>
+    /// Asks what a candidate declaration would admit and drop. Carries no control header because
+    /// it writes nothing, and guarding a read would tell the next reader that it does.
+    /// </summary>
+    public async Task<ScopePreview?> PreviewOwnedScopeAsync(
+        IReadOnlyList<DeclaredAccount> accounts, CancellationToken ct = default)
+    {
+        var response = await http.PostAsJsonAsync("api/owned-scope/preview", accounts, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<ScopePreview>(Json, ct);
+    }
+
+    /// <summary>
+    /// Reads the bill of materials. No roots asks for the declared owned scope, which is the
+    /// usual case and the only one that needs no argument.
+    /// </summary>
+    public async Task<Bom?> GetBomAsync(
+        IEnumerable<string>? roots = null, CancellationToken ct = default)
+    {
+        var query = string.Join("&", (roots ?? []).Select(
+            r => "root=" + Uri.EscapeDataString(r)));
+        var path = string.IsNullOrEmpty(query) ? "api/bom" : $"api/bom?{query}";
+        return await GetAsync<Bom>(path, ct);
+    }
+
+    /// <summary>
+    /// The address a download link points at. Built here rather than in markup so the page and
+    /// the API cannot drift apart about what the parameters are called.
+    /// </summary>
+    public static string BomDownloadUrl(string format, IEnumerable<string>? roots = null)
+    {
+        var parts = new List<string> { "format=" + Uri.EscapeDataString(format), "download=true" };
+        parts.AddRange((roots ?? []).Select(r => "root=" + Uri.EscapeDataString(r)));
+        return "api/bom?" + string.Join("&", parts);
+    }
 
     // The reference goes in the query string rather than the path: it may be empty, and an empty
     // path segment cannot say "default branch" apart from a malformed route.

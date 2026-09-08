@@ -45,13 +45,21 @@ func (h *harness) pending() int {
 	return n
 }
 
+// requeueDirect puts the analyzed rows back, whichever tier holds them.
+//
+// It requeued only `direct` until 2026-09-07, when a declared root became owned-tier and this
+// started finding nothing. Every caller wants "put back what was analyzed", not one tier.
 func (h *harness) requeueDirect() int {
 	h.t.Helper()
-	n, err := h.store.RequeueTier(store.TierDirect)
-	if err != nil {
-		h.t.Fatalf("RequeueTier: %v", err)
+	total := 0
+	for _, tier := range []string{store.TierOwned, store.TierDirect, store.TierTransitive} {
+		n, err := h.store.RequeueTier(tier)
+		if err != nil {
+			h.t.Fatalf("RequeueTier(%s): %v", tier, err)
+		}
+		total += n
 	}
-	return n
+	return total
 }
 
 // databasesBuilt counts CodeQL database builds, which is the expensive step the skip exists to
@@ -139,15 +147,21 @@ func TestASkippingPassIngestsNothing(t *testing.T) {
 
 // The skip is keyed on identity, not on "this repository was seen". Amending a query has to
 // defeat it, or a fix would never reach anything already analyzed.
+//
+// Asserted on the ledger rather than on database builds: two references of one repository can
+// share indexed content, and the second is then settled by content equivalence without a
+// rebuild. That is a different mechanism working, not this one failing.
 func TestAQueryNotYetOnRecordIsStillAnalyzed(t *testing.T) {
 	h := drainedHarness(t)
-	built := h.databasesBuilt()
 
-	requeued := h.requeueDirect()
+	if requeued := h.requeueDirect(); requeued == 0 {
+		t.Fatal("nothing was requeued, so the skip would not be exercised")
+	}
 	h.runQuery(100, "abom/edges-amended")
 
-	if again := h.databasesBuilt() - built; again != requeued {
-		t.Errorf("a query not on record built %d databases, want %d", again, requeued)
+	if n := countRows(t, h.store,
+		`SELECT COUNT(*) FROM abom_query_run WHERE query_id = 'abom/edges-amended'`); n == 0 {
+		t.Error("a query not on record never ran, so amending one would reach nothing")
 	}
 }
 

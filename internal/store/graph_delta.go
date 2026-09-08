@@ -55,6 +55,10 @@ type GraphDelta struct {
 	Nodes   []GraphNode   `json:"nodes"`
 	Edges   []GraphEdge   `json:"edges"`
 	Metrics []GraphMetric `json:"metrics"`
+	// RemovedNodes and RemovedEdges name what disappeared since the cursor. A delta that could
+	// only ever add left a client holding a pruned node for as long as the page stayed open.
+	RemovedNodes []string `json:"removedNodes"`
+	RemovedEdges []string `json:"removedEdges"`
 }
 
 // ReachStaleness reports how far the stored blast radius has fallen behind the graph.
@@ -71,7 +75,7 @@ type ReachStaleness struct {
 // against the graph rather than a timer alone.
 func (s *Store) ReachStaleness() (ReachStaleness, error) {
 	out := ReachStaleness{Never: true}
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM abom_edge`).Scan(&out.TotalEdges); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM abom_edge_live`).Scan(&out.TotalEdges); err != nil {
 		return out, fmt.Errorf("counting edges: %w", err)
 	}
 
@@ -94,7 +98,7 @@ func (s *Store) ReachStaleness() (ReachStaleness, error) {
 	}
 	out.Never, out.At = false, parsed
 	if err := s.db.QueryRow(
-		`SELECT COUNT(*) FROM abom_edge WHERE row_id > ?`, mark.Int64).Scan(&out.NewEdges); err != nil {
+		`SELECT COUNT(*) FROM abom_edge_live WHERE row_id > ?`, mark.Int64).Scan(&out.NewEdges); err != nil {
 		return out, fmt.Errorf("counting edges since the last rebuild: %w", err)
 	}
 	return out, nil
@@ -118,8 +122,8 @@ func (s *Store) GraphVersion() (GraphVersion, error) {
 		query string
 		into  *int
 	}{
-		{`SELECT COUNT(*) FROM abom_node`, &out.Nodes},
-		{`SELECT COUNT(*) FROM abom_edge`, &out.Edges},
+		{`SELECT COUNT(*) FROM abom_node_live`, &out.Nodes},
+		{`SELECT COUNT(*) FROM abom_edge_live`, &out.Edges},
 	} {
 		if err := s.db.QueryRow(c.query).Scan(c.into); err != nil {
 			return out, fmt.Errorf("reading graph version: %w", err)
@@ -131,10 +135,10 @@ func (s *Store) GraphVersion() (GraphVersion, error) {
 // RecordGraphGeneration marks the graph as it stands now, returning the new generation.
 func (s *Store) RecordGraphGeneration(r GraphRebuild) (int64, error) {
 	var nodeMark, edgeMark sql.NullInt64
-	if err := s.db.QueryRow(`SELECT MAX(row_id) FROM abom_node`).Scan(&nodeMark); err != nil {
+	if err := s.db.QueryRow(`SELECT MAX(row_id) FROM abom_node_live`).Scan(&nodeMark); err != nil {
 		return 0, fmt.Errorf("reading node watermark: %w", err)
 	}
-	if err := s.db.QueryRow(`SELECT MAX(row_id) FROM abom_edge`).Scan(&edgeMark); err != nil {
+	if err := s.db.QueryRow(`SELECT MAX(row_id) FROM abom_edge_live`).Scan(&edgeMark); err != nil {
 		return 0, fmt.Errorf("reading edge watermark: %w", err)
 	}
 
@@ -157,7 +161,10 @@ func (s *Store) RecordGraphGeneration(r GraphRebuild) (int64, error) {
 // GraphDelta returns what changed since a generation, or asks for a full reload when that
 // generation is not on record.
 func (s *Store) GraphDelta(since int64, opts FullGraphOptions) (GraphDelta, error) {
-	out := GraphDelta{Nodes: []GraphNode{}, Edges: []GraphEdge{}, Metrics: []GraphMetric{}}
+	out := GraphDelta{
+		Nodes: []GraphNode{}, Edges: []GraphEdge{}, Metrics: []GraphMetric{},
+		RemovedNodes: []string{}, RemovedEdges: []string{},
+	}
 
 	version, err := s.GraphVersion()
 	if err != nil {
@@ -166,9 +173,10 @@ func (s *Store) GraphDelta(since int64, opts FullGraphOptions) (GraphDelta, erro
 	out.Generation = version.Generation
 
 	var nodeMark, edgeMark int64
+	var epoch int64
 	err = s.db.QueryRow(`
-		SELECT node_watermark, edge_watermark FROM abom_graph_generation WHERE generation = ?`,
-		since).Scan(&nodeMark, &edgeMark)
+		SELECT node_watermark, edge_watermark, epoch FROM abom_graph_generation
+		 WHERE generation = ?`, since).Scan(&nodeMark, &edgeMark, &epoch)
 	if err == sql.ErrNoRows {
 		out.Reset = true
 		return out, nil
@@ -176,20 +184,38 @@ func (s *Store) GraphDelta(since int64, opts FullGraphOptions) (GraphDelta, erro
 	if err != nil {
 		return out, fmt.Errorf("reading generation %d: %w", since, err)
 	}
+	// Compaction deletes rows, so a cursor from before it names row ids that no longer mean what
+	// the client thinks. Nothing short of a reload is honest here.
+	var current int64
+	if err := s.db.QueryRow(
+		`SELECT COALESCE(MAX(epoch), 0) FROM abom_graph_generation`).Scan(&current); err != nil {
+		return out, fmt.Errorf("reading the epoch: %w", err)
+	}
+	if current != epoch {
+		out.Reset = true
+		return out, nil
+	}
+
+	if out.RemovedNodes, err = s.removedSince("abom_node", since); err != nil {
+		return out, err
+	}
+	if out.RemovedEdges, err = s.removedSince("abom_edge", since); err != nil {
+		return out, err
+	}
 
 	display := collapsedDisplay
 	if opts.IncludeSteps {
 		display = identityDisplay
 	}
 
-	nodes, index, err := s.graphNodes(display, nodeMark, opts.Scope)
+	nodes, index, err := s.graphNodes(display, nodeMark, opts)
 	if err != nil {
 		return out, err
 	}
 	if err := s.attachRules(display, index); err != nil {
 		return out, err
 	}
-	edges, err := s.graphEdges(display, edgeMark, opts.Scope)
+	edges, err := s.graphEdges(display, edgeMark, opts)
 	if err != nil {
 		return out, err
 	}
@@ -222,7 +248,7 @@ func (s *Store) graphMetrics(display string) ([]GraphMetric, error) {
 		       (SELECT COUNT(*) FROM abom_frontier f WHERE f.node_key = n.node_key),
 		       (SELECT COUNT(*) FROM abom_frontier f
 		         WHERE f.node_key = n.node_key AND f.status = 'done')
-		FROM abom_node n
+		FROM abom_node_live n
 		LEFT JOIN abom_blast_radius b ON b.node_row_id = n.row_id
 		WHERE n.row_id IN (SELECT shown FROM disp)`)
 	if err != nil {

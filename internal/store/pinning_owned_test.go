@@ -12,8 +12,10 @@ func TestOwnedSplitLeavesTheUndividedTotalIntact(t *testing.T) {
 		t.Fatalf("PinningTotals: %v", err)
 	}
 
-	if err := s.ReplaceAccounts(verification("octo-org")); err != nil {
-		t.Fatalf("ReplaceAccounts: %v", err)
+	if err := s.SetOwnedScope([]DeclaredAccount{
+		{Owner: "octo-org", Kind: AccountOrganization, Enabled: true},
+	}); err != nil {
+		t.Fatalf("SetOwnedScope: %v", err)
 	}
 	after, err := s.PinningTotals(PinningFilter{})
 	if err != nil {
@@ -30,8 +32,10 @@ func TestOwnedSplitLeavesTheUndividedTotalIntact(t *testing.T) {
 // does not support.
 func TestOwnedSplitReconcilesToTheTotal(t *testing.T) {
 	s := subgraphFixture(t)
-	if err := s.ReplaceAccounts(verification("octo-org")); err != nil {
-		t.Fatalf("ReplaceAccounts: %v", err)
+	if err := s.SetOwnedScope([]DeclaredAccount{
+		{Owner: "octo-org", Kind: AccountOrganization, Enabled: true},
+	}); err != nil {
+		t.Fatalf("SetOwnedScope: %v", err)
 	}
 
 	total, err := s.PinningTotals(PinningFilter{})
@@ -51,8 +55,10 @@ func TestOwnedSplitReconcilesToTheTotal(t *testing.T) {
 // Rows carry the mark so a reader can sort and scan by it.
 func TestPinningRowsAreMarkedOwned(t *testing.T) {
 	s := subgraphFixture(t)
-	if err := s.ReplaceAccounts(verification("octo-org")); err != nil {
-		t.Fatalf("ReplaceAccounts: %v", err)
+	if err := s.SetOwnedScope([]DeclaredAccount{
+		{Owner: "octo-org", Kind: AccountOrganization, Enabled: true},
+	}); err != nil {
+		t.Fatalf("SetOwnedScope: %v", err)
 	}
 
 	rows, err := s.PinningLevel(PinningByOwner, "", PinningFilter{}, 0)

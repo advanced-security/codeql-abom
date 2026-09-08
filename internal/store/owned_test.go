@@ -15,6 +15,24 @@ func ownedRow(t *testing.T, st *Store, key, owner string, depth int) {
 	}
 }
 
+// declares states that the accounts are the operator's, which is what decides the owned tier.
+//
+// It replaced `verifies` on 2026-09-07. Every test below still protects what it always did —
+// ownership beats depth, the tiers are exclusive, a requeue takes what it counted — and only the
+// source of ownership moved, from what `gh` says you belong to, to what you have said is yours.
+func declares(t *testing.T, st *Store, owners ...string) {
+	t.Helper()
+	accounts := make([]DeclaredAccount, 0, len(owners))
+	for _, o := range owners {
+		accounts = append(accounts, DeclaredAccount{
+			Owner: o, Kind: AccountOrganization, Enabled: true,
+		})
+	}
+	if err := st.SetOwnedScope(accounts); err != nil {
+		t.Fatalf("SetOwnedScope: %v", err)
+	}
+}
+
 func verifies(t *testing.T, st *Store, owners ...string) {
 	t.Helper()
 	accounts := make([]Account, 0, len(owners))
@@ -33,7 +51,7 @@ func verifies(t *testing.T, st *Store, owners ...string) {
 // whatever distance the graph happens to place it.
 func TestOwnershipDecidesTheTierRegardlessOfDepth(t *testing.T) {
 	st := newTestStore(t)
-	verifies(t, st, "octo-org")
+	declares(t, st, "octo-org")
 	ownedRow(t, st, "near", "octo-org", 1)
 	ownedRow(t, st, "far", "octo-org", 4)
 	ownedRow(t, st, "theirs", "someone-else", 1)
@@ -55,7 +73,7 @@ func TestOwnershipDecidesTheTierRegardlessOfDepth(t *testing.T) {
 // queue and the cost stated on a re-analyze button becomes a lie.
 func TestEveryQueuedDependencyLandsInExactlyOneTier(t *testing.T) {
 	st := newTestStore(t)
-	verifies(t, st, "octo-org")
+	declares(t, st, "octo-org")
 	ownedRow(t, st, "mine-near", "octo-org", 1)
 	ownedRow(t, st, "mine-far", "octo-org", 3)
 	ownedRow(t, st, "direct", "someone-else", 1)
@@ -75,7 +93,7 @@ func TestEveryQueuedDependencyLandsInExactlyOneTier(t *testing.T) {
 // and must not fall out of the tier the operator can act on.
 func TestOwnershipIgnoresCase(t *testing.T) {
 	st := newTestStore(t)
-	verifies(t, st, "Octo-Org")
+	declares(t, st, "Octo-Org")
 	ownedRow(t, st, "mine", "octo-org", 1)
 
 	counts, err := st.TierCounts()
@@ -91,7 +109,7 @@ func TestOwnershipIgnoresCase(t *testing.T) {
 // amount of work than the number beside it.
 func TestRequeueingTheOwnedTierTakesWhatItCounted(t *testing.T) {
 	st := newTestStore(t)
-	verifies(t, st, "octo-org")
+	declares(t, st, "octo-org")
 	ownedRow(t, st, "mine", "octo-org", 3)
 	ownedRow(t, st, "theirs", "someone-else", 3)
 

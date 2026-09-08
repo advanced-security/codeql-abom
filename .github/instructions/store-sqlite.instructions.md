@@ -23,6 +23,11 @@ any column in one. Elsewhere `nullable()` stores `""` as NULL, keeping absent an
 A null score is not zero: `cvss_v3_score` of `0.0` means *unscored*. Carry a `Has…` flag.
 `GROUP_CONCAT` skips nulls, which is how *not recorded* stays distinct from *none*.
 
+A `NOT NULL` boolean cannot say *not asked*. `has_database INTEGER NOT NULL` forces `0` for a
+repository nobody probed, asserting code scanning is off there. A column holding a measurement
+someone may not have taken is nullable — which outranks the rule above, and the rule above applies
+only to columns inside a UNIQUE constraint.
+
 ## Aggregates over an empty set are NULL
 
 `COUNT` returns 0; `SUM`, `MIN` and `MAX` return NULL. Use `COALESCE(SUM(...), 0)`.

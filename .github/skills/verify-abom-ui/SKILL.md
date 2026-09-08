@@ -79,6 +79,10 @@ problems worth finding.
 screenshot — for anything you intend to click. Check: headings nest sensibly, interactive
 elements are reachable, tables have headers, nothing conveys state through `title` alone.
 
+An unpaginated grid defeats both readings: 2,548 rows made the Bill of Materials snapshot 2.7 MB
+and its screenshot unreadable. Extract the figures with `page.evaluate` to get unblocked — and
+record the missing pagination as a finding rather than working around it in silence.
+
 ### 5. Look at the screenshots
 
 Now view each capture and judge it. Go through the invariant audit below and the
@@ -98,7 +102,7 @@ because each one makes the interface assert something the data does not support.
 | --- | --- | --- | --- |
 | 1 | Verdicts come only from CodeQL rule IDs | A "vulnerable" badge on an action without its vulnerable range **and** the observed refs adjacent | `actions/vulnerable-action` is exact-match only and found nothing across 204 real repos; most refs are floating tags nothing can adjudicate. The UI must not manufacture certainty |
 | 2 | Priority is severity × reach, nothing else | A single risk number with no visible components, or CVSS/EPSS folded into the score | The number stops being explainable, and a reader cannot disagree with it |
-| 3 | Seed ≠ upstream | Repositories under review and dependency-only repositories styled identically | Implies the organization owns repositories it does not |
+| 3 | Declared ownership ≠ everything else | Owned and dependency-only repositories styled identically, or a repository count larger than what was declared | Implies the operator owns repositories they do not. `origin='seed'` is data provenance, never a claim of ownership |
 | 4 | Direct ≠ transitive | One "affected: N" figure with no split | They are different work: one is a version bump here, the other waits on someone else |
 | 5 | Provenance is reachable | A finding with no rule ID, or an advisory with no GHSA, within one interaction | Every claim must trace to the query or advisory that made it |
 | 6 | Say what is not known | No coverage indicator on screen | Silence reads as completeness. Coverage belongs in a persistent strip |
@@ -106,6 +110,7 @@ because each one makes the interface assert something the data does not support.
 | 8 | An absent measurement is not zero | A node added since the last rebuild drawn at the smallest size, in a view where size means reach | It asserts "nothing depends on this" when nobody has looked. Unmeasured needs its own treatment |
 | 9 | Every distinguishable queue state is visible | Work waiting on a retry shown identically to work nothing has touched; Pause leaving the status unchanged while a cycle finishes | A control that appears to do nothing, and a queue that hides what it has already spent |
 | 10 | The interface speaks the reader's language | "reach", "cycle", "claimed", "frontier", "corpus", "hops", "folded", "unplaced" in user-facing text | These are names for internal machinery. A security engineer should not have to learn the scheduler to read the page |
+| 11 | Owning a repository ≠ having a database for it | A repository shown as un-analyzable, or left out of coverage, because code scanning is off there | ABOM builds its own actions databases; `has_database` is provenance, not eligibility. Treating it as a limit understates what is owned |
 
 For each: **PASS**, **FAIL** with the screenshot region, or **N/A** if that surface is absent.
 

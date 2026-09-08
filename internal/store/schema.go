@@ -130,7 +130,10 @@ CREATE TABLE IF NOT EXISTS abom_edge (
   end_line            INTEGER,
   end_column          INTEGER,
   repository_row_id   INTEGER REFERENCES repository(row_id),
-  provenance          TEXT
+  provenance          TEXT,
+  -- Which boundary the reference crosses: same repository, same account, or another account.
+  -- NULL while nothing could name both ends, which is not the same as crossing an account.
+  boundary            TEXT
 );
 
 CREATE TABLE IF NOT EXISTS abom_surface (
@@ -215,8 +218,12 @@ CREATE TABLE IF NOT EXISTS abom_account (
 -- is a persisted queue rather than a batch: consumers are also producers, and expansion may
 -- span weeks across process restarts.
 --
--- depth bounds how far exploration may run; it is deliberately NOT a priority signal, because
--- depth is path-dependent while commonality is a property of the dependency itself.
+-- depth bounds how far exploration may run, and since 2026-09-07 it is also the outer key of the
+-- claim order. It was deliberately not a priority signal before, on the grounds that depth is
+-- path-dependent while commonality is a property of the dependency itself. That reasoning ranked
+-- individual items well and gave the crawl no objective: ordering by commonality first meant it
+-- could work depth 3 while depth 1 was still incomplete, and "complete at depth 1" is the only
+-- claim of the two that the queue can prove. Commonality still decides within a depth.
 ` + frontierDDL + `
 
 -- Anything a query says that is neither a dependency edge nor a security finding.
@@ -376,6 +383,19 @@ var addedColumns = []struct{ table, column, decl string }{
 	// Added here as well as in the DDL so an old table has the column before the rebuild that
 	// makes it part of the key copies rows forward.
 	{"abom_frontier", "ref", "TEXT NOT NULL DEFAULT ''"},
+	// Tombstones. A DELETE would invalidate every delta cursor, which is a row-id watermark; a
+	// mark keeps the ids monotonic and lets the delta say what disappeared. The generation is
+	// what a cursor is expressed in, so a removal carries one or a client cannot be told about it
+	// exactly once.
+	{"abom_node", "removed_at", "TEXT"},
+	{"abom_edge", "removed_at", "TEXT"},
+	{"abom_node", "removed_generation", "INTEGER"},
+	{"abom_edge", "removed_generation", "INTEGER"},
+	// Bumped by compaction, which deletes rows and so ends the meaning of every row-id cursor.
+	{"abom_graph_generation", "epoch", "INTEGER NOT NULL DEFAULT 0"},
+	// Derivable from rows already stored, so existing edges are filled by
+	// ClassifyEdgeBoundaries rather than by re-analysis.
+	{"abom_edge", "boundary", "TEXT"},
 }
 
 // indexDDL is applied only after bulk loading. Maintaining these indexes during a multi-million

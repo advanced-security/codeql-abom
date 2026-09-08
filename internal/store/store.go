@@ -114,6 +114,16 @@ func (s *Store) Migrate() error {
 	if _, err := s.db.Exec(commitContentDDL); err != nil {
 		return fmt.Errorf("creating the commit content table: %w", err)
 	}
+	if _, err := s.db.Exec(ownedScopeDDL); err != nil {
+		return fmt.Errorf("creating the declared scope tables: %w", err)
+	}
+	if _, err := s.db.Exec(cycleSpendDDL); err != nil {
+		return fmt.Errorf("creating the cycle spend table: %w", err)
+	}
+	// After the columns, which the views select on.
+	if _, err := s.db.Exec(liveViewDDL); err != nil {
+		return fmt.Errorf("creating the live views: %w", err)
+	}
 	// Before seeding, so a binding that only needs renaming still counts as configured and the
 	// defaults are not written over it.
 	if err := s.migrateSuiteNames(); err != nil {

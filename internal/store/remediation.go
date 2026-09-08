@@ -59,7 +59,7 @@ func (s *Store) RemediationPriority(limit int) ([]RemediationItem, error) {
 		                 AND p.first_patched_version <> '' THEN 1 ELSE 0 END)
 		FROM abom_exposure e
 		JOIN abom_advisory a ON a.ghsa_id = e.ghsa_id
-		JOIN abom_node n ON n.row_id = e.node_row_id
+		JOIN abom_node_live n ON n.row_id = e.node_row_id
 		LEFT JOIN abom_advisory_package p ON p.advisory_row_id = a.row_id
 		WHERE a.withdrawn_at IS NULL
 		GROUP BY e.ghsa_id, a.cve_id, a.severity, a.summary,

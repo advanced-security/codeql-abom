@@ -7,13 +7,17 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
-// SeedFrontier populates the frontier from every seed repository's own edges, so expand-all has
+// SeedFrontier populates the frontier from every declared repository's own edges, so a crawl has
 // somewhere to start.
 //
 // enqueueDiscoveries (in expand.go) only ever runs after a repository already in the queue has
-// been analyzed; nothing seeds the very first batch. A repository under review needs no such
+// been analyzed; nothing seeds the very first batch. A repository the operator owns needs no such
 // precondition; naming a dependency at all is what makes that dependency part of a real supply
 // chain, unlike an upstream repository's own CI (see enqueueDiscoveries' doc comment).
+//
+// Roots come from the declared scope rather than from `repository.origin`. The two were assumed
+// to be the same set and are not: on the reference corpus 0 of the 204 `origin='seed'`
+// repositories belong to a declared account, because they arrived from a `gh mrva` bootstrap.
 func SeedFrontier(s *store.Store, q *frontier.Queue) (int, error) {
 	// The referencing repository is recorded because it is the only answer to "why is this
 	// queued at all", and once the item is analyzed the edge that put it there is no longer
@@ -22,13 +26,12 @@ func SeedFrontier(s *store.Store, q *frontier.Queue) (int, error) {
 	rows, err := s.DB().Query(`
 		SELECT n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''), COALESCE(n.path,''),
 		       MIN(r.repository_full_name), COALESCE(e.ref_value, '')
-		FROM abom_edge e
-		JOIN abom_node n ON n.row_id = e.dst_node_row_id
+		FROM abom_edge_live e
+		JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 		JOIN repository r ON r.row_id = e.repository_row_id
-		WHERE r.origin = ?
+		WHERE ` + store.OwnedRepositoryFilter + `
 		  AND n.is_external = 1 AND n.owner IS NOT NULL AND n.repo IS NOT NULL
-		GROUP BY n.node_key, n.owner, n.repo, n.path, COALESCE(e.ref_value, '')`,
-		store.OriginSeed)
+		GROUP BY n.node_key, n.owner, n.repo, n.path, COALESCE(e.ref_value, '')`)
 	if err != nil {
 		return 0, fmt.Errorf("reading seed dependencies: %w", err)
 	}

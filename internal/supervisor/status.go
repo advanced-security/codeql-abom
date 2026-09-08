@@ -68,6 +68,9 @@ type Status struct {
 	WorkDir     string `json:"workDir"`
 	// ClaimsPerCycle bounds how much work one cycle takes on.
 	ClaimsPerCycle int `json:"claimsPerCycle"`
+	// MaxDepth is the cap exploration may not pass, so "complete" can be told apart from
+	// "complete as far as we are allowed to look".
+	MaxDepth int `json:"maxDepth"`
 }
 
 // Status returns a copy of the current state.
@@ -87,6 +90,9 @@ func (s *Supervisor) Status() Status {
 	out.WorkDir = s.Options.WorkDir
 	out.ClaimsPerCycle = s.Options.Limit
 	out.ReachThreshold = s.Aggregates.afterEdges()
+	if s.Queue != nil {
+		out.MaxDepth = s.Queue.MaxDepth
+	}
 	return out
 }
 

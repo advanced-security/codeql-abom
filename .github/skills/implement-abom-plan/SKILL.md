@@ -29,7 +29,8 @@ Resolve a named argument in this order, stopping at the first that matches:
    punctuation and the leading `**`. Substring matches count, so `tier suites` finds
    *Per-tier suite controls*.
 3. A plan filename stem, e.g. `supply-chain` → `plans/db/supply-chain.md`.
-4. An entry title in **Implemented** — see below.
+4. An entry title in **`plans/implemented.md`** — see below. That file is git-ignored, so it may
+   be absent; absence is not evidence the work has not shipped.
 
 And then:
 
@@ -39,7 +40,7 @@ And then:
 - **Nothing matches.** Say so, print the **Ranked next** titles, and stop. Do not silently fall
   back to `next` — the user named something for a reason, and quietly doing different work is
   worse than doing none.
-- **It is already in Implemented.** Say so and stop, unless its plan's Pending section still has
+- **It is already in `plans/implemented.md`.** Say so and stop, unless its plan's Pending section still has
   content and the user clearly meant that. Confirm before starting.
 - **It is in "Not doing, and why".** Refuse, quote the reason, and stop. Those entries exist to
   stop a decision being relitigated from scratch; overturning one is a conversation, not a task.
@@ -168,8 +169,10 @@ Back to **`maintain-abom-plans`**:
   check exists to falsify the design, and when it does, that paragraph is the most valuable one
   in the file. The advisory plan's trigger was inert on a drained queue and its refresh blocked
   the cycle for 109 seconds; neither was predicted.
-- Move the entry into **Implemented** in `next.md` with its measured before/after, and re-rank
-  what is left.
+- Move the entry into **`plans/implemented.md`** with its measured before/after, newest first, and
+  re-rank what is left in `next.md`. That file is **git-ignored on purpose** — git history is the
+  record of what shipped, and this is the reasoning behind it. Do not stage it, and do not paste
+  it back into `next.md`, which keeps a pointer only.
 
 ## 8. Stop at verified
 
@@ -178,9 +181,9 @@ Resolve, verify, then report what changed and what it measured. Committing is th
 
 ## The rule that makes this worth running
 
-**A green build is not "done".** An entry does not move to Implemented without a measured
-real-corpus before/after in its line. If the numbers cannot be produced, the entry stays where it
-is and the run reports why — that is a useful outcome, not a failure.
+**A green build is not "done".** An entry does not move to `plans/implemented.md` without a
+measured real-corpus before/after in its line. If the numbers cannot be produced, the entry stays
+where it is and the run reports why — that is a useful outcome, not a failure.
 
 Everything else here is convenience. This is the part that stops the planning documents becoming
 status theatre.

@@ -134,7 +134,7 @@ func (s *Store) LinkFindingsToNodes() (int, error) {
 		INSERT INTO abom_finding_node (finding_row_id, node_row_id)
 		SELECT f.row_id, e.src_node_row_id
 		FROM abom_finding f
-		JOIN abom_edge e
+		JOIN abom_edge_live e
 		  ON e.repository_row_id = f.repository_row_id
 		 AND e.file_path = f.file_path
 		 AND e.start_line = f.start_line
@@ -152,7 +152,7 @@ func (s *Store) LinkFindingsToNodes() (int, error) {
 		INSERT INTO abom_finding_node (finding_row_id, node_row_id)
 		SELECT f.row_id, n.row_id
 		FROM abom_finding f
-		JOIN abom_node n
+		JOIN abom_node_live n
 		  ON n.repository_row_id = f.repository_row_id
 		 AND n.node_kind IN ('workflow', 'composite_action')
 		 AND n.path = f.file_path
@@ -181,16 +181,16 @@ func (s *Store) LinkFindingsToNodes() (int, error) {
 		                 WHEN gp.row_id IS NOT NULL             THEN gp.row_id
 		                 ELSE COALESCE(p.row_id, n.row_id)
 		               END
-		        FROM abom_node n
-		        LEFT JOIN abom_node p  ON p.row_id  = n.container_node_row_id
-		        LEFT JOIN abom_node gp ON gp.row_id = p.container_node_row_id
+		        FROM abom_node_live n
+		        LEFT JOIN abom_node_live p  ON p.row_id  = n.container_node_row_id
+		        LEFT JOIN abom_node_live gp ON gp.row_id = p.container_node_row_id
 		        WHERE n.repository_row_id = f.repository_row_id AND n.path = f.file_path
 		        ORDER BY n.row_id LIMIT 1)
 		FROM abom_finding f
 		WHERE NOT EXISTS (
 		        SELECT 1 FROM abom_finding_node fn WHERE fn.finding_row_id = f.row_id)
 		  AND EXISTS (
-		        SELECT 1 FROM abom_node n
+		        SELECT 1 FROM abom_node_live n
 		        WHERE n.repository_row_id = f.repository_row_id AND n.path = f.file_path)
 		ON CONFLICT DO NOTHING`)
 	if err != nil {

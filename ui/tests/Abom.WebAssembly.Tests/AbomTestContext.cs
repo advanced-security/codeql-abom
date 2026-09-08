@@ -39,7 +39,21 @@ public abstract class AbomTestContext : BunitContext
     ///
     /// Faked at the transport rather than by replacing AbomApi, so the JSON contract the server
     /// actually publishes stays under test.
-    protected void Answer(string path, string json) => _handler.Answers[path] = json;
+    ///
+    /// <para>**First registered wins.** Paths overlap by design — <c>/-/users</c> and
+    /// <c>api/node/</c> both match a users request, as do <c>api/owned-scope</c> and
+    /// <c>api/owned-scope/preview</c> — so register the specific one first.</para>
+    protected void Answer(string path, string json) => _handler.Answer(path, json);
+
+    /// <summary>
+    /// Every request the component made, in order.
+    ///
+    /// A page that renders a declaration correctly and writes the wrong one looks identical on
+    /// screen, so what was sent has to be assertable separately from what was drawn.
+    /// </summary>
+    protected IReadOnlyList<SentRequest> Sent => _handler.Sent;
+
+    protected sealed record SentRequest(string Method, string Url, string Body);
 
     /// <summary>
     /// Holds every answer for <paramref name="path"/> until the returned action is called.
@@ -57,13 +71,33 @@ public abstract class AbomTestContext : BunitContext
 
     private sealed class StubHandler : HttpMessageHandler
     {
-        public Dictionary<string, string> Answers { get; } = [];
+        // Ordered, because which stub answers an overlapping path is a decision tests make by
+        // registering the specific one first. A dictionary left that to its own ordering.
+        private readonly List<(string Path, string Json)> _answers = [];
+
         public Dictionary<string, TaskCompletionSource> Gates { get; } = [];
+        public List<SentRequest> Sent { get; } = [];
+
+        public void Answer(string path, string json)
+        {
+            var at = _answers.FindIndex(a => a.Path == path);
+            if (at >= 0)
+            {
+                _answers[at] = (path, json);
+                return;
+            }
+            _answers.Add((path, json));
+        }
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var url = request.RequestUri?.ToString() ?? string.Empty;
+            var body = request.Content is null
+                ? string.Empty
+                : await request.Content.ReadAsStringAsync(cancellationToken);
+            Sent.Add(new SentRequest(request.Method.Method, url, body));
+
             foreach (var (path, gate) in Gates)
             {
                 if (url.Contains(path, StringComparison.Ordinal))
@@ -71,7 +105,7 @@ public abstract class AbomTestContext : BunitContext
                     await gate.Task.WaitAsync(cancellationToken);
                 }
             }
-            foreach (var (path, json) in Answers)
+            foreach (var (path, json) in _answers)
             {
                 if (url.Contains(path, StringComparison.Ordinal))
                 {

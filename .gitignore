@@ -1,19 +1,23 @@
-# Build output
+## Build output
 /dist/
 /bin/
 
-# CodeQL
+## CodeQL
+.cache/
 .codeql/
+# BQRS and SARIF files are blanket-ignored, so a
+# checked-in fixture needs its own negation here
+# or in a more specific `.gitignore` -- Without a
+# negation, `git add` skips it silently, which looks
+# exactly like a fixture that was never generated.
 *.bqrs
 *.sarif
-!/internal/archive/testdata/findings.sarif
-.cache/
 
-# CodeQL query-test artifacts (.expected files are checked in; these are not)
+## CodeQL query-test artifacts (.expected files are checked in; these are not)
 *.testproj/
 *.actual
 
-# ABOM artifacts and databases
+## ABOM artifacts and databases
 /analyses/
 /output/
 *.db
@@ -22,12 +26,22 @@
 abom-graph.json
 abom-dashboard.json
 
-# Logs
+## Logs
 /logs/
 
-# .NET
+# Agent working notes, deliberately untracked. Git history is already the record of what shipped;
+# a markdown summary of it becomes a second copy that drifts from the log it duplicates. The
+# reasoning behind each entry is worth keeping locally, so agents keep it here.
+/plans/implemented.md
+
+## .NET
 [Bb]in/
 [Oo]bj/
 
-# macOS
+## OS generated, hidden files
 .DS_Store
+
+## Temporary by nature
+*.swo
+*.swp
+

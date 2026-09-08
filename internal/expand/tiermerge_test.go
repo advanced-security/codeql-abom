@@ -20,7 +20,7 @@ func TestMergingSuitesIntoATierKeepsTheRunIdentity(t *testing.T) {
 		t.Fatalf("plansByTier: %v", err)
 	}
 
-	for _, tier := range []string{store.TierDirect, store.TierTransitive} {
+	for _, tier := range []string{store.TierOwned, store.TierDirect, store.TierTransitive} {
 		if v := plans[tier].cliVersion; v != "2.26.4" {
 			t.Errorf("%s tier carries CodeQL version %q, want 2.26.4", tier, v)
 		}

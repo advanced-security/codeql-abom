@@ -10,7 +10,8 @@
 
 import { instances } from './state.js';
 import {
-    seed, repoOf, orgOf, edgeClass, groupOf, anchorKey, keyOf, touches, touchesAny, ungroupedName,
+    seed, repoOf, orgOf, edgeClass, boundaryClass, groupOf, anchorKey, keyOf, touches, touchesAny,
+    ungroupedName,
 } from './topology.js';
 import {
     nodeColor, edgeColor, faded, nodeRadius, isSelected, buildNodeObject, shapesUsable,
@@ -23,7 +24,7 @@ import { particleCount, particleSpeed, startParticleCycle } from './particles.js
 
 // Re-exported so the pure decisions can be imported by name from one place, including by tests.
 export {
-    seed, repoOf, orgOf, edgeClass, groupOf, anchorKey, keyOf,
+    seed, repoOf, orgOf, edgeClass, boundaryClass, groupOf, anchorKey, keyOf,
     faded, nodeRadius, isSelected, particleSpeed, collapseGroups, ungroupedName,
     discoveryColor,
 };
@@ -110,8 +111,9 @@ export async function loadFull(elementId, url, force) {
             const s = byKey.get(e.source), t = byKey.get(e.target);
             if (!s || !t) continue;
             // Classified once here rather than per frame, and recorded on both ends so that
-            // filtering by relationship is a set lookup.
-            e.cls = edgeClass(s, t);
+            // filtering by relationship is a set lookup. The store's answer wins where it has
+            // one, so the view and the bill of materials cannot disagree.
+            e.cls = boundaryClass(e.boundary, s, t);
             s.edgeClasses.add(e.cls);
             t.edgeClasses.add(e.cls);
             // Reference style is a property of the edge, but readers filter on nodes, so it is
@@ -167,6 +169,10 @@ export function setGeneration(elementId, generation) {
 
 const linkKey = e => `${e.source}\u0000${e.target}`;
 
+// force-graph rewrites an endpoint from a key to the node object once it has drawn, so a removal
+// arriving mid-session sees either shape.
+const endpointKey = end => (end && typeof end === 'object' ? end.key : end);
+
 /**
  * Folds newly discovered nodes and edges into a loaded corpus, in place.
  *
@@ -174,6 +180,17 @@ const linkKey = e => `${e.source}\u0000${e.target}`;
  * merely updates, and where an arrival is placed. Nothing here touches the renderer.
  */
 export function mergeInto(all, delta) {
+    // Removals first: an arriving edge must not attach to a node this delta also takes away.
+    const goneNodes = new Set(delta.removedNodes || []);
+    const goneEdges = new Set(delta.removedEdges || []);
+    if (goneNodes.size || goneEdges.size) {
+        all.nodes = all.nodes.filter(n => !goneNodes.has(n.key));
+        all.links = all.links.filter(e =>
+            !goneEdges.has(e.key) &&
+            !goneNodes.has(endpointKey(e.source)) &&
+            !goneNodes.has(endpointKey(e.target)));
+    }
+
     const byKey = new Map(all.nodes.map(n => [n.key, n]));
     const arrived = [];
     for (const n of delta.nodes || []) {
@@ -202,7 +219,7 @@ export function mergeInto(all, delta) {
             all.links.push(edge);
             addedEdges++;
         }
-        edge.cls = edgeClass(s, t);
+        edge.cls = boundaryClass(edge.boundary, s, t);
         s.edgeClasses.add(edge.cls);
         t.edgeClasses.add(edge.cls);
         for (const ref of edge.refs || []) {

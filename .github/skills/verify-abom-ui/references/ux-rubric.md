@@ -61,6 +61,17 @@ earns its keep.
 - Is coverage visible without hunting for it?
 - When the API reported truncation, does the view admit it?
 
+## Empty states
+
+An empty screen is a stage in a process, not an error. Judge it by whether a first-time reader
+could act.
+
+- Does it say *why* it is empty — nothing declared, nothing run yet, or a filter that matched
+  none? Those are three different screens.
+- Does it name the next action, and is that action reachable from here?
+- After taking it, does something visibly change? Two empty screens in a row is the failure this
+  section exists to catch.
+
 ## Motion
 
 Only for the live Discovery view.

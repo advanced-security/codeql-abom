@@ -197,7 +197,7 @@ func (s *Store) AdvisoriesByReach(limit int) ([]AdvisoryReach, error) {
 		       n.node_key, COALESCE(b.dependent_repos, 0)
 		FROM abom_advisory a
 		JOIN abom_advisory_package p ON p.advisory_row_id = a.row_id
-		JOIN abom_node n
+		JOIN abom_node_live n
 		  ON n.owner IS NOT NULL AND n.repo IS NOT NULL
 		 AND n.owner || '/' || n.repo = p.package_name
 		LEFT JOIN abom_blast_radius b ON b.node_row_id = n.row_id
@@ -289,8 +289,8 @@ func (s *Store) AdvisoriesByReach(limit int) ([]AdvisoryReach, error) {
 func (s *Store) referencesTo(nodeKey string) ([]string, error) {
 	rows, err := s.db.Query(`
 		SELECT COALESCE(e.ref_value, ''), COUNT(*)
-		FROM abom_edge e
-		JOIN abom_node n ON n.row_id = e.dst_node_row_id
+		FROM abom_edge_live e
+		JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 		JOIN repository r ON r.row_id = e.repository_row_id
 		WHERE n.node_key = ? AND r.origin = ?
 		GROUP BY e.ref_value
@@ -342,7 +342,7 @@ func (s *Store) ExposuresByRepository(limit int) ([]Exposure, error) {
 		       n.node_key, e.hops, e.path
 		FROM abom_exposure e
 		JOIN repository r ON r.row_id = e.repository_row_id
-		JOIN abom_node n ON n.row_id = e.node_row_id
+		JOIN abom_node_live n ON n.row_id = e.node_row_id
 		JOIN abom_advisory a ON a.ghsa_id = e.ghsa_id
 		ORDER BY e.hops ASC, r.repository_full_name, e.ghsa_id`)
 	if err != nil {
@@ -387,8 +387,8 @@ func (s *Store) ExposuresByRepository(limit int) ([]Exposure, error) {
 func (s *Store) referencesFrom(repository, nodeKey string) ([]string, error) {
 	rows, err := s.db.Query(`
 		SELECT DISTINCT COALESCE(e.ref_value, '')
-		FROM abom_edge e
-		JOIN abom_node n ON n.row_id = e.dst_node_row_id
+		FROM abom_edge_live e
+		JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 		JOIN repository r ON r.row_id = e.repository_row_id
 		WHERE n.node_key = ? AND r.repository_full_name = ?
 		ORDER BY 1`, nodeKey, repository)
@@ -477,7 +477,7 @@ func (s *Store) AdvisoriesFetchedAt() (time.Time, bool, error) {
 func (s *Store) AdvisoryPackages() ([]string, error) {
 	rows, err := s.db.Query(`
 		SELECT DISTINCT n.owner || '/' || n.repo
-		FROM abom_node n
+		FROM abom_node_live n
 		WHERE n.is_external = 1 AND n.owner IS NOT NULL AND n.repo IS NOT NULL
 		  AND n.node_kind IN ('action', 'composite_action', 'reusable_workflow', 'workflow')
 		ORDER BY 1`)

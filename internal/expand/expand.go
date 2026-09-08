@@ -537,6 +537,14 @@ func (e *Expander) enqueueDiscoveries(b batch) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	closure, err := (&graph.Builder{Store: e.Store}).OwnedClosure()
+	if err != nil {
+		return 0, err
+	}
+	// Nothing owned reaches this repository, so what it names is somebody else's supply chain.
+	if !closure.Contains(b.full()) {
+		return 0, nil
+	}
 	items, err := discoveriesOf(e.Store, chain, b.full(), b.depth)
 	if err != nil {
 		return 0, err
@@ -562,6 +570,10 @@ func ReclassifySupplyChain(s *store.Store, q *frontier.Queue) (int, error) {
 // zero once the rule and the stored graph agree.
 func SweepDiscoveries(s *store.Store, q *frontier.Queue) (int, error) {
 	chain, err := (&graph.Builder{Store: s}).ClassifyDependencies()
+	if err != nil {
+		return 0, err
+	}
+	closure, err := (&graph.Builder{Store: s}).OwnedClosure()
 	if err != nil {
 		return 0, err
 	}
@@ -593,6 +605,12 @@ func SweepDiscoveries(s *store.Store, q *frontier.Queue) (int, error) {
 
 	added := 0
 	for _, src := range sources {
+		// The sweep re-applies the discovery rule to everything analyzed, which before the
+		// boundary meant every repository in the table — including the 895 upstream ones nothing
+		// owned reaches.
+		if !closure.Contains(src.full) {
+			continue
+		}
 		items, err := discoveriesOf(s, chain, src.full, src.depth)
 		if err != nil {
 			return added, err
@@ -625,8 +643,8 @@ func discoveriesOf(
 	rows, err := s.DB().Query(`
 		SELECT n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''), COALESCE(n.path,''),
 		       COALESCE(e.ref_value, '')
-		FROM abom_edge e
-		JOIN abom_node n ON n.row_id = e.dst_node_row_id
+		FROM abom_edge_live e
+		JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 		JOIN repository r ON r.row_id = e.repository_row_id
 		WHERE r.repository_full_name = ?
 		  AND n.is_external = 1 AND n.owner IS NOT NULL AND n.repo IS NOT NULL

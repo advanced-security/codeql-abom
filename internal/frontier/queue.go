@@ -234,7 +234,7 @@ func (q *Queue) Rescore() error {
 			             ELSE 1.0
 			         END
 			       / abom_frontier.cost_estimate
-			FROM abom_node n
+			FROM abom_node_live n
 			JOIN abom_blast_radius b ON b.node_row_id = n.row_id
 			WHERE n.node_key = abom_frontier.node_key
 		), 0)`, q.containerWeight(), q.containerWeight())
@@ -245,6 +245,14 @@ func (q *Queue) Rescore() error {
 }
 
 // Claim takes up to limit of the highest-value pending items and marks them running.
+//
+// Depth outranks score, which is the objective: finish the depth already being worked before
+// spending anything deeper. Ordering by score first meant the crawl did whatever looked cheapest
+// and could start depth 3 while depth 1 was still incomplete — "complete at depth 1" is a claim
+// the queue can prove, and "worked on the cheapest thing available" never was.
+//
+// `expedited_at` still outranks all of it: an operator asking for one repository is stating an
+// objective the crawl cannot infer.
 func (q *Queue) Claim(limit int) ([]Item, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -256,7 +264,7 @@ func (q *Queue) Claim(limit int) ([]Item, error) {
 		FROM abom_frontier
 		WHERE status = ?
 		  AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
-		ORDER BY expedited_at IS NULL, score DESC, depth ASC, enqueued_at ASC
+		ORDER BY expedited_at IS NULL, depth ASC, score DESC, enqueued_at ASC
 		LIMIT ?`, StatusPending, now, limit)
 	if err != nil {
 		return nil, fmt.Errorf("claiming frontier items: %w", err)
@@ -402,6 +410,10 @@ func (i Item) Key() Key { return Key{NodeKey: i.NodeKey, Ref: i.Ref} }
 func (r Recheck) Key() Key { return Key{NodeKey: r.NodeKey, Ref: r.Requested} }
 
 // Complete marks an item analyzed and records what was analyzed.
+//
+// `checked_at` is deliberately not touched: it records a *probe*, and writing it here made
+// `checked_at > analyzed_at` structurally impossible, so the one signal that says whether
+// freshness is working read as if it always were. It was 0 across all 2,800 analyzed rows.
 func (q *Queue) Complete(k Key, res Resolution) error {
 	if res.Ref == "" {
 		res.Ref = HeadRef
@@ -411,10 +423,10 @@ func (q *Queue) Complete(k Key, res Resolution) error {
 		UPDATE abom_frontier
 		SET status = ?, completed_at = ?, next_attempt_at = NULL, reason = NULL,
 		    claimed_at = NULL, expedited_at = NULL,
-		    analyzed_ref = ?, resolved_sha = ?, analyzed_at = ?, checked_at = ?,
+		    analyzed_ref = ?, resolved_sha = ?, analyzed_at = ?,
 		    analysis_count = analysis_count + 1
 		WHERE node_key = ? AND ref = ?`,
-		StatusDone, now, res.Ref, nullable(res.SHA), now, now, k.NodeKey, k.Ref)
+		StatusDone, now, res.Ref, nullable(res.SHA), now, k.NodeKey, k.Ref)
 	if err != nil {
 		return fmt.Errorf("completing %q: %w", k.NodeKey, err)
 	}
@@ -424,7 +436,13 @@ func (q *Queue) Complete(k Key, res Resolution) error {
 // DueForRecheck returns analyzed dependencies whose ref may have moved since, most valuable
 // first, so a cheap ref probe is spent on what most of the corpus depends on.
 //
-// Immutable refs are excluded: they cannot drift, so re-probing them is pure waste.
+// Immutable refs are excluded by `analyzed_ref <> resolved_sha`, which compares a ref *name*
+// against a *commit*: true for every tag and branch, false only when the ref is itself a SHA.
+//
+// Both clocks are consulted. `checked_at` alone would re-probe everything analyzed minutes ago,
+// which teaches nothing because the analysis already resolved the commit; `analyzed_at` alone was
+// the old behavior, which made a probe indistinguishable from an analysis and left the freshness
+// signal permanently reading as satisfied.
 func (q *Queue) DueForRecheck(ttl time.Duration, limit int) ([]Recheck, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -439,8 +457,9 @@ func (q *Queue) DueForRecheck(ttl time.Duration, limit int) ([]Recheck, error) {
 		  AND resolved_sha IS NOT NULL AND resolved_sha <> ''
 		  AND (analyzed_ref IS NULL OR analyzed_ref <> resolved_sha)
 		  AND (checked_at IS NULL OR checked_at <= ?)
-		ORDER BY score DESC, checked_at ASC
-		LIMIT ?`, StatusDone, cutoff, limit)
+		  AND (analyzed_at IS NULL OR analyzed_at <= ?)
+		ORDER BY checked_at IS NOT NULL, score DESC, checked_at ASC
+		LIMIT ?`, StatusDone, cutoff, cutoff, limit)
 	if err != nil {
 		return nil, fmt.Errorf("finding recheck candidates: %w", err)
 	}

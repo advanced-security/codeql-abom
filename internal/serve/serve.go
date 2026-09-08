@@ -53,6 +53,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/graph/full", s.fullGraph)
 	mux.HandleFunc("GET /api/graph/version", s.graphVersion)
 	mux.HandleFunc("GET /api/graph/delta", s.graphDelta)
+	mux.HandleFunc("GET /api/bom", s.bom)
 	mux.HandleFunc("GET /api/discovery/status", s.discoveryStatus)
 	mux.HandleFunc("POST /api/discovery/start", s.discoveryStart)
 	mux.HandleFunc("POST /api/discovery/pause", s.discoveryPause)
@@ -60,12 +61,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/discovery/requeue-stale", s.discoveryRequeueStale)
 	mux.HandleFunc("POST /api/discovery/requeue-repository", s.discoveryRequeueRepository)
 	mux.HandleFunc("GET /api/discovery/suites", s.tierSuites)
+	mux.HandleFunc("GET /api/discovery/objective", s.objective)
 	mux.HandleFunc("PUT /api/discovery/suites/{tier}", s.setTierSuites)
 	mux.HandleFunc("GET /api/nodes", s.nodes)
 	mux.HandleFunc("GET /api/node/{key...}", s.node)
 	mux.HandleFunc("GET /api/pinning", s.pinning)
 	mux.HandleFunc("GET /api/pinning/totals", s.pinningTotals)
 	mux.HandleFunc("GET /api/accounts", s.accounts)
+	mux.HandleFunc("GET /api/owned-scope", s.ownedScope)
+	mux.HandleFunc("PUT /api/owned-scope", s.setOwnedScope)
+	mux.HandleFunc("POST /api/owned-scope/preview", s.previewOwnedScope)
 	mux.HandleFunc("POST /api/accounts/refresh", s.refreshAccounts)
 	mux.HandleFunc("GET /api/owner-candidates", s.ownerCandidates)
 	mux.HandleFunc("GET /api/frontier", s.frontier)
@@ -226,6 +231,7 @@ func (s *Server) fullGraph(w http.ResponseWriter, r *http.Request) {
 	g, err := s.Store.FullGraph(store.FullGraphOptions{
 		IncludeSteps: r.URL.Query().Get("steps") == "true",
 		Scope:        r.URL.Query().Get("scope"),
+		Boundary:     r.URL.Query().Get("boundary"),
 	})
 	writeJSON(w, g, err)
 }
@@ -330,6 +336,144 @@ func view(v store.Verification, problem *ghauth.Problem) accountsView {
 func (s *Server) accounts(w http.ResponseWriter, r *http.Request) {
 	stored, err := s.Store.Accounts()
 	writeJSON(w, view(stored, nil), err)
+}
+
+// ownedScope serves what the operator has declared is theirs, which is what discovery is bounded
+// by and what every "yours" figure is counted against.
+func (s *Server) ownedScope(w http.ResponseWriter, r *http.Request) {
+	declared, err := s.Store.OwnedScope()
+	writeJSON(w, declared, err)
+}
+
+// setOwnedScope replaces the declaration. An empty list is a real instruction — it stops
+// discovery — so it is accepted rather than treated as a malformed body.
+func (s *Server) setOwnedScope(w http.ResponseWriter, r *http.Request) {
+	if !s.allowControl(w, r) {
+		return
+	}
+	var accounts []store.DeclaredAccount
+	if err := json.NewDecoder(r.Body).Decode(&accounts); err != nil {
+		writeError(w, http.StatusBadRequest, "the declared scope must be a list of accounts")
+		return
+	}
+	if err := s.Store.SetOwnedScope(accounts); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.ownedScope(w, r)
+}
+
+// previewScopeLimit caps the named repositories. A reader deciding whether to undeclare needs a
+// few names to recognize, not a list nobody reads.
+const previewScopeLimit = 20
+
+// ScopePreview is what a candidate declaration would change, answered before it is written.
+//
+// Repositories are named rather than only counted: "417 repositories leave" is a number nobody
+// can check, and recognizing one of them is how an operator catches a declaration they did not
+// mean to make.
+type ScopePreview struct {
+	// Roots are the repositories a declaration names directly; the closure is everything those
+	// reach. The two differ by the whole supply chain, so reporting one as the other would
+	// understate what undeclaring costs.
+	RootsNow    int `json:"rootsNow"`
+	RootsNext   int `json:"rootsNext"`
+	ClosureNow  int `json:"closureNow"`
+	ClosureNext int `json:"closureNext"`
+
+	Entering      []string `json:"entering"`
+	Leaving       []string `json:"leaving"`
+	EnteringCount int      `json:"enteringCount"`
+	LeavingCount  int      `json:"leavingCount"`
+	Truncated     bool     `json:"truncated"`
+
+	// QueuedNow and QueuedNext are frontier rows inside the closure, which is what the crawl
+	// will actually work. A scope can shrink without any queued work stopping, and an operator
+	// reading only repository counts could not tell.
+	QueuedNow  int `json:"queuedNow"`
+	QueuedNext int `json:"queuedNext"`
+}
+
+// previewOwnedScope answers what a candidate declaration would admit and drop.
+//
+// A POST because it carries a body, and deliberately not control-guarded: it writes nothing, and
+// guarding a read would tell the next reader that it does.
+func (s *Server) previewOwnedScope(w http.ResponseWriter, r *http.Request) {
+	var candidate []store.DeclaredAccount
+	if err := json.NewDecoder(r.Body).Decode(&candidate); err != nil {
+		writeError(w, http.StatusBadRequest, "the declared scope must be a list of accounts")
+		return
+	}
+
+	out, err := s.scopePreview(candidate)
+	writeJSON(w, out, err)
+}
+
+func (s *Server) scopePreview(candidate []store.DeclaredAccount) (ScopePreview, error) {
+	var out ScopePreview
+
+	repositories, err := s.Store.AllRepositories()
+	if err != nil {
+		return out, err
+	}
+	nextRoots := make([]string, 0, len(repositories))
+	for _, full := range repositories {
+		owner, repo, ok := strings.Cut(full, "/")
+		if ok && store.CoveredBy(candidate, owner, repo) {
+			nextRoots = append(nextRoots, full)
+		}
+	}
+
+	builder := &graph.Builder{Store: s.Store}
+	now, err := builder.OwnedClosure()
+	if err != nil {
+		return out, err
+	}
+	next, err := builder.ClosureFrom(nextRoots)
+	if err != nil {
+		return out, err
+	}
+
+	out.RootsNow, out.RootsNext = now.Roots(), next.Roots()
+	out.ClosureNow, out.ClosureNext = now.Size(), next.Size()
+
+	for _, name := range next.Repositories() {
+		if !now.Contains(name) {
+			out.EnteringCount++
+			if len(out.Entering) < previewScopeLimit {
+				out.Entering = append(out.Entering, name)
+			}
+		}
+	}
+	for _, name := range now.Repositories() {
+		if !next.Contains(name) {
+			out.LeavingCount++
+			if len(out.Leaving) < previewScopeLimit {
+				out.Leaving = append(out.Leaving, name)
+			}
+		}
+	}
+	out.Truncated = out.EnteringCount > len(out.Entering) || out.LeavingCount > len(out.Leaving)
+	if out.Entering == nil {
+		out.Entering = []string{}
+	}
+	if out.Leaving == nil {
+		out.Leaving = []string{}
+	}
+
+	queued, err := s.Store.FrontierRepositoryCounts()
+	if err != nil {
+		return out, err
+	}
+	for full, n := range queued {
+		if now.Contains(full) {
+			out.QueuedNow += n
+		}
+		if next.Contains(full) {
+			out.QueuedNext += n
+		}
+	}
+	return out, nil
 }
 
 // refreshAccounts re-establishes the identity from gh.

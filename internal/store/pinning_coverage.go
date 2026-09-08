@@ -83,8 +83,8 @@ const pinnableReferences = `ref AS (
 	       CASE WHEN LENGTH(e.ref_value) = 40
 	             AND e.ref_value GLOB '[0-9a-f]*' THEN 1 ELSE 0 END AS is_commit,
 	       CASE WHEN f.row_id IS NULL THEN 0 ELSE 1 END AS flagged
-	FROM abom_edge e
-	JOIN abom_node dn ON dn.row_id = e.dst_node_row_id
+	FROM abom_edge_live e
+	JOIN abom_node_live dn ON dn.row_id = e.dst_node_row_id
 	JOIN repository rep ON rep.row_id = e.repository_row_id
 	LEFT JOIN abom_finding f
 	       ON f.repository_row_id = e.repository_row_id

@@ -178,7 +178,10 @@ func tierOf(b batch, owned map[string]bool) string {
 // A suite two tiers share is resolved once: resolving shells out to the CodeQL CLI, and a crawl
 // claims batches from both tiers every round.
 func (e *Expander) plansByTier(ctx context.Context, opts Options) (map[string]tierPlan, error) {
-	tiers := []string{store.TierDirect, store.TierTransitive}
+	// Every tier `tierOf` can return. Omitting one hands its batches a zero-value plan, which
+	// `pendingWork` reads as nothing outstanding — so the repository is settled as *already
+	// recorded* without being analyzed. Owned was missing here until 2026-09-07.
+	tiers := []string{store.TierOwned, store.TierDirect, store.TierTransitive}
 	out := map[string]tierPlan{}
 
 	// A suite named on the command line is how an operator runs something once without editing

@@ -46,10 +46,35 @@ func newSeedHarness(t *testing.T) *seedHarness {
 	return &seedHarness{t: t, store: s, queue: &frontier.Queue{Store: s, MaxDepth: 3}}
 }
 
+// declare adds a repository's account to the declared scope, additively.
+func (h *seedHarness) declare(repoFullName string) {
+	h.t.Helper()
+	owner, _, _ := strings.Cut(repoFullName, "/")
+	declared, err := h.store.OwnedScope()
+	if err != nil {
+		h.t.Fatalf("OwnedScope: %v", err)
+	}
+	for _, a := range declared {
+		if strings.EqualFold(a.Owner, owner) {
+			return
+		}
+	}
+	declared = append(declared, store.DeclaredAccount{
+		Owner: owner, Kind: store.AccountOrganization, Enabled: true,
+	})
+	if err := h.store.SetOwnedScope(declared); err != nil {
+		h.t.Fatalf("SetOwnedScope: %v", err)
+	}
+}
+
 // reference records repoFullName using targetKey, as a real query's edges table would. origin
-// distinguishes a repository under review from one only fetched to resolve dependencies.
+// distinguishes a repository under review from one only fetched to resolve dependencies — and
+// since 2026-09-07 "under review" is a declaration, so a seed repository is declared here.
 func (h *seedHarness) reference(repoFullName, origin, targetKey string) {
 	h.t.Helper()
+	if origin == store.OriginSeed {
+		h.declare(repoFullName)
+	}
 	var (
 		id  int64
 		err error

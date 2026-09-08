@@ -104,15 +104,18 @@ func TestEnqueueRejectsBeyondMaxDepth(t *testing.T) {
 }
 
 // Value is commonality, not proximity: a widely-depended-on dependency outranks a rarely used
-// one even when the rare one was found closer to the seed set.
-func TestClaimOrdersByCommonalityNotDepth(t *testing.T) {
+// one. Narrowed on 2026-09-07 when depth became the outer key of the objective — completeness at
+// a depth before anything deeper — so commonality now decides *within* a depth rather than
+// across depths. The thing this protects is unchanged: score, not discovery order, ranks the
+// work the crawl can choose between.
+func TestClaimOrdersByCommonalityWithinADepth(t *testing.T) {
 	q, s := newQueue(t)
 
-	if _, err := q.Enqueue([]Item{item("rare-but-close", 1), item("common-but-far", 4)}); err != nil {
+	if _, err := q.Enqueue([]Item{item("rare-but-early", 4), item("common-but-late", 4)}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
-	seedCommonality(t, s, "rare-but-close", 1, 1)
-	seedCommonality(t, s, "common-but-far", 150, 90)
+	seedCommonality(t, s, "rare-but-early", 1, 1)
+	seedCommonality(t, s, "common-but-late", 150, 90)
 
 	if err := q.Rescore(); err != nil {
 		t.Fatalf("Rescore: %v", err)
@@ -124,8 +127,8 @@ func TestClaimOrdersByCommonalityNotDepth(t *testing.T) {
 	if len(claimed) != 2 {
 		t.Fatalf("claimed %d items, want 2", len(claimed))
 	}
-	if claimed[0].NodeKey != "common-but-far" {
-		t.Errorf("first claimed = %q, want common-but-far", claimed[0].NodeKey)
+	if claimed[0].NodeKey != "common-but-late" {
+		t.Errorf("first claimed = %q, want common-but-late", claimed[0].NodeKey)
 	}
 }
 

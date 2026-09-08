@@ -59,7 +59,7 @@ func findingsHarness(t *testing.T) (*harness, *fakeAnalyzer) {
 	}
 	a := &fakeAnalyzer{}
 	h.expander.Analyzer = a
-	for _, tier := range []string{store.TierDirect, store.TierTransitive} {
+	for _, tier := range []string{store.TierOwned, store.TierDirect, store.TierTransitive} {
 		if err := h.store.SetTierSuites(tier, []string{"mixed.qls"}); err != nil {
 			t.Fatalf("SetTierSuites: %v", err)
 		}

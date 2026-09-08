@@ -34,6 +34,11 @@ func boundHarness(t *testing.T) (*harness, *tierResolver) {
 		"findings.qls": {"Findings.ql"},
 	}}
 	h.expander.Resolver = r
+	// Owned gets the broad pass, which is the binding's whole reason: everything on what you own,
+	// the minimum on what you reach through three intermediaries.
+	if err := h.store.SetTierSuites(store.TierOwned, []string{"graph.qls", "findings.qls"}); err != nil {
+		t.Fatalf("SetTierSuites(owned): %v", err)
+	}
 	if err := h.store.SetTierSuites(store.TierDirect, []string{"graph.qls", "findings.qls"}); err != nil {
 		t.Fatalf("SetTierSuites(direct): %v", err)
 	}
@@ -93,7 +98,7 @@ func TestAnExplicitSuiteOverridesTheStoredBinding(t *testing.T) {
 		t.Fatalf("plansByTier: %v", err)
 	}
 
-	for _, tier := range []string{store.TierDirect, store.TierTransitive} {
+	for _, tier := range []string{store.TierOwned, store.TierDirect, store.TierTransitive} {
 		if len(plans[tier].bqrs) != 1 || plans[tier].bqrs[0].path != "Findings.ql" {
 			t.Errorf("%s planned %+v, want only the suite named on the command line",
 				tier, plans[tier])

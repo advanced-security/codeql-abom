@@ -76,23 +76,21 @@ const usedBySample = 5
 // different things to everyone downstream and sharing users between them would undo that.
 var selectUsedBy = `
 	(SELECT COUNT(DISTINCT e.repository_row_id)
-	   FROM abom_edge e
-	   JOIN abom_node n ON n.row_id = e.dst_node_row_id
+	   FROM abom_edge_live e
+	   JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 	  WHERE n.node_key = abom_frontier.node_key
 	    AND COALESCE(e.ref_value, '') = abom_frontier.ref),
 	(SELECT COUNT(DISTINCT e.repository_row_id)
-	   FROM abom_edge e
-	   JOIN abom_node n ON n.row_id = e.dst_node_row_id
+	   FROM abom_edge_live e
+	   JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 	   JOIN repository r ON r.row_id = e.repository_row_id
 	  WHERE n.node_key = abom_frontier.node_key
 	    AND COALESCE(e.ref_value, '') = abom_frontier.ref
-	    AND EXISTS (SELECT 1 FROM abom_account a
-	                 WHERE LOWER(a.owner) = LOWER(SUBSTR(r.repository_full_name, 1,
-	                       INSTR(r.repository_full_name, '/') - 1)))),
+	    AND ` + ownedFullName("r.repository_full_name") + `),
 	(SELECT GROUP_CONCAT(name) FROM (
 	   SELECT DISTINCT r.repository_full_name AS name
-	     FROM abom_edge e
-	     JOIN abom_node n ON n.row_id = e.dst_node_row_id
+	     FROM abom_edge_live e
+	     JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 	     JOIN repository r ON r.row_id = e.repository_row_id
 	    WHERE n.node_key = abom_frontier.node_key
 	      AND COALESCE(e.ref_value, '') = abom_frontier.ref
@@ -189,8 +187,8 @@ type RefCoverage struct {
 // images are excluded for the same reason they are never queued: nothing can be cloned for one.
 const observedRefs = `
 	SELECT DISTINCT n.node_key AS node_key, COALESCE(e.ref_value, '') AS ref
-	FROM abom_edge e
-	JOIN abom_node n ON n.row_id = e.dst_node_row_id
+	FROM abom_edge_live e
+	JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 	WHERE n.is_external = 1 AND n.node_kind IN ('action', 'reusable_workflow')`
 
 // RefsCovered reports how much of what is in use has actually been analyzed.
@@ -216,7 +214,7 @@ func (s *Store) RefsCovered() (RefCoverage, error) {
 // is the dependencies the queue never received a row for. Docker images are excluded: nothing can
 // be cloned for one, so it is out of scope for an unrelated reason.
 const countUpstreamOnly = `
-	SELECT COUNT(*) FROM abom_node n
+	SELECT COUNT(*) FROM abom_node_live n
 	LEFT JOIN abom_frontier f ON f.node_key = n.node_key
 	WHERE n.is_external = 1
 	  AND n.node_kind IN ('action', 'reusable_workflow')
@@ -286,6 +284,34 @@ func (s *Store) FrontierSnapshot(status string, limit int) ([]FrontierItem, erro
 		it.CLIVersion = cli.String
 		return it, nil
 	}, query, args...)
+}
+
+// FrontierRepositoryCounts is how many queue rows each repository holds.
+//
+// A change of scope is priced in work as well as in repositories: a narrowing can drop hundreds
+// of repositories the crawl had nothing queued for, and an operator reading only a repository
+// count would read that as losing hundreds of analyses.
+func (s *Store) FrontierRepositoryCounts() (map[string]int, error) {
+	rows, err := s.db.Query(`
+		SELECT owner || '/' || repo, COUNT(*)
+		FROM abom_frontier
+		WHERE owner <> '' AND repo <> ''
+		GROUP BY owner || '/' || repo`)
+	if err != nil {
+		return nil, fmt.Errorf("counting the frontier by repository: %w", err)
+	}
+	defer rows.Close()
+
+	out := map[string]int{}
+	for rows.Next() {
+		var full string
+		var n int
+		if err := rows.Scan(&full, &n); err != nil {
+			return nil, fmt.Errorf("scanning a frontier repository count: %w", err)
+		}
+		out[full] = n
+	}
+	return out, rows.Err()
 }
 
 // FrontierCounts counts the queue by the states a reader distinguishes, which is one more than

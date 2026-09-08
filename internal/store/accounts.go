@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -15,6 +16,30 @@ type Account struct {
 	Kind string `json:"kind"`
 	// Role is "owner" for their own account, and GitHub's "admin" or "member" for an org.
 	Role string `json:"role"`
+}
+
+// The roles that carry enough access to answer for an account.
+//
+// Deliberately coarse: a member can read an organization and change nothing in it, so offering
+// every membership as declarable is what let a corpus assert the operator owns `facebook`. Finer
+// roles and a scoped token are the intended refinement, not this.
+// See `plans/db/declaration-provenance.md`.
+const (
+	RoleOwner = "owner"
+	RoleAdmin = "admin"
+)
+
+// CanDeclare reports whether this role carries enough access to be responsible for the account.
+func (a Account) CanDeclare() bool { return a.Role == RoleOwner || a.Role == RoleAdmin }
+
+// MarshalJSON carries the derived eligibility to the interface rather than leaving it to read the
+// role and reach its own conclusion, which is the second derivation this exists to prevent.
+func (a Account) MarshalJSON() ([]byte, error) {
+	type account Account // Prevents this method recursing through itself.
+	return json.Marshal(struct {
+		account
+		CanDeclare bool `json:"canDeclare"`
+	}{account(a), a.CanDeclare()})
 }
 
 // Verification is a completed identity check and the accounts it established.
@@ -93,13 +118,16 @@ func (s *Store) ForgetAccounts() error {
 	return nil
 }
 
-// OwnedSet lower-cases its keys, because GitHub treats account names case-insensitively and so
-// must membership.
+// OwnedSet is the declared accounts, lower-cased because GitHub treats account names
+// case-insensitively and so must membership.
+//
+// Owner granularity: an account restricted by an include list is still the operator's account,
+// and callers judging a whole *repository* use `RepositoryIsOwned`, which honors the list.
 func (s *Store) OwnedSet() (map[string]bool, error) {
-	owners, err := queryAll(s, "reading owned accounts", func(r *sql.Rows) (string, error) {
+	owners, err := queryAll(s, "reading declared accounts", func(r *sql.Rows) (string, error) {
 		var owner string
 		return owner, r.Scan(&owner)
-	}, `SELECT owner FROM abom_account`)
+	}, `SELECT owner FROM abom_owned_scope WHERE enabled = 1`)
 	if err != nil {
 		return nil, err
 	}

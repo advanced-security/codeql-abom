@@ -3,7 +3,6 @@ package store
 import (
 	"strings"
 	"testing"
-	"time"
 )
 
 // The grid used to print one "named by", because the frontier records a single first-discoverer.
@@ -59,17 +58,16 @@ func TestARowNamesEveryRepositoryUsingThatVersion(t *testing.T) {
 	}
 }
 
-// "220 repositories" and "12 of them yours" are different decisions. A repository the operator is
-// verified against is one they can change themselves, whatever its origin; the rest are context.
-// Counting them together reads as exposure the operator owns, which is the same conflation that
-// once inflated blast radius 202 to 209.
+// "220 repositories" and "12 of them yours" are different decisions. A repository under an account
+// the operator has declared is one they can change themselves, whatever its origin; the rest are
+// context. Counting them together reads as exposure the operator owns, which is the same
+// conflation that once inflated blast radius 202 to 209.
 func TestARowSeparatesTheRepositoriesTheOperatorOwns(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.ReplaceAccounts(Verification{
-		Login: "someone", Host: "github.com", VerifiedAt: time.Now(),
-		Accounts: []Account{{Owner: "octo", Kind: "organization", Role: "admin"}},
+	if err := s.SetOwnedScope([]DeclaredAccount{
+		{Owner: "octo", Kind: AccountOrganization, Enabled: true},
 	}); err != nil {
-		t.Fatalf("ReplaceAccounts: %v", err)
+		t.Fatalf("SetOwnedScope: %v", err)
 	}
 	seedUsers(t, s, "v4", "octo/app", "stranger/app")
 
@@ -78,7 +76,7 @@ func TestARowSeparatesTheRepositoriesTheOperatorOwns(t *testing.T) {
 		t.Errorf("UsedByCount = %d, want both", item.UsedByCount)
 	}
 	if item.UsedByOwned != 1 {
-		t.Errorf("UsedByOwned = %d, want only the verified account's repository", item.UsedByOwned)
+		t.Errorf("UsedByOwned = %d, want only the declared account's repository", item.UsedByOwned)
 	}
 }
 

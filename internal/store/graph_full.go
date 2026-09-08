@@ -61,6 +61,9 @@ type GraphEdge struct {
 	Source string `json:"source"`
 	Target string `json:"target"`
 	Kind   string `json:"kind"`
+	// Boundary is what the relationship crosses: see BoundarySameRepository and its siblings.
+	// Empty means the target names no repository, which is unknown rather than a fourth class.
+	Boundary string `json:"boundary,omitempty"`
 	// Refs are the references observed for this relationship, verbatim and unjudged.
 	Refs  []string `json:"refs"`
 	Count int      `json:"count"`
@@ -80,6 +83,9 @@ type FullGraphOptions struct {
 	IncludeSteps bool
 	// Scope narrows the graph to a reason for looking at it. Empty is the whole corpus.
 	Scope string
+	// Boundary keeps only relationships of one class. Empty keeps every class *and* the
+	// unclassified, because absent is not a class to filter on.
+	Boundary string
 }
 
 // ScopeExposure keeps only what lies on a route from a repository under review to an action an
@@ -114,10 +120,10 @@ func scopeFilter(scope, column string) string {
 // collapsed node count is exactly the count of everything else.
 const collapsedDisplay = `disp AS (
 	SELECT n.row_id, COALESCE(c.row_id, n.row_id) AS shown
-	FROM abom_node n
-	LEFT JOIN abom_node c ON c.row_id = n.container_node_row_id)`
+	FROM abom_node_live n
+	LEFT JOIN abom_node_live c ON c.row_id = n.container_node_row_id)`
 
-const identityDisplay = `disp AS (SELECT row_id, row_id AS shown FROM abom_node)`
+const identityDisplay = `disp AS (SELECT row_id, row_id AS shown FROM abom_node_live)`
 
 // frontierState is a node's place in the discovery queue, split the way a reader reads it.
 // Most nodes are not dependencies and have no row; that is an empty string, not a state.
@@ -150,14 +156,14 @@ func (s *Store) FullGraph(opts FullGraphOptions) (Graph, error) {
 		display = identityDisplay
 	}
 
-	nodes, index, err := s.graphNodes(display, 0, opts.Scope)
+	nodes, index, err := s.graphNodes(display, 0, opts)
 	if err != nil {
 		return out, err
 	}
 	if err := s.attachRules(display, index); err != nil {
 		return out, err
 	}
-	edges, err := s.graphEdges(display, 0, opts.Scope)
+	edges, err := s.graphEdges(display, 0, opts)
 	if err != nil {
 		return out, err
 	}
@@ -176,7 +182,7 @@ func (s *Store) FullGraph(opts FullGraphOptions) (Graph, error) {
 
 // graphNodes reads the displayed nodes. A non-zero since restricts them to those a node added
 // after that row id displays as, which is how a delta is derived.
-func (s *Store) graphNodes(display string, since int64, scope string) ([]GraphNode, map[string]*GraphNode, error) {
+func (s *Store) graphNodes(display string, since int64, opts FullGraphOptions) ([]GraphNode, map[string]*GraphNode, error) {
 	rows, err := s.db.Query(`WITH `+display+`
 		SELECT n.node_key, n.node_kind, COALESCE(r.repository_full_name, ''),
 		       COALESCE(r.origin, ''), COALESCE(n.path, ''), COALESCE(c.node_key, ''),
@@ -198,12 +204,12 @@ func (s *Store) graphNodes(display string, since int64, scope string) ([]GraphNo
 		       (SELECT COUNT(*) FROM abom_frontier f WHERE f.node_key = n.node_key),
 		       (SELECT COUNT(*) FROM abom_frontier f
 		         WHERE f.node_key = n.node_key AND f.status = 'done')
-		FROM abom_node n
+		FROM abom_node_live n
 		LEFT JOIN repository r ON r.row_id = n.repository_row_id
-		LEFT JOIN abom_node c ON c.row_id = n.container_node_row_id
+		LEFT JOIN abom_node_live c ON c.row_id = n.container_node_row_id
 		LEFT JOIN abom_blast_radius b ON b.node_row_id = n.row_id
 		WHERE n.row_id IN (SELECT shown FROM disp WHERE row_id > ?)`+
-		scopeFilter(scope, "n.node_key"), since)
+		scopeFilter(opts.Scope, "n.node_key"), since)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reading graph nodes: %w", err)
 	}
@@ -242,7 +248,7 @@ func (s *Store) attachRules(display string, index map[string]*GraphNode) error {
 		SELECT shown.node_key, f.rule_id, COUNT(*)
 		FROM abom_finding_node fn
 		JOIN disp d ON d.row_id = fn.node_row_id
-		JOIN abom_node shown ON shown.row_id = d.shown
+		JOIN abom_node_live shown ON shown.row_id = d.shown
 		JOIN abom_finding f ON f.row_id = fn.finding_row_id
 		GROUP BY shown.node_key, f.rule_id`)
 	if err != nil {
@@ -272,29 +278,31 @@ func (s *Store) attachRules(display string, index map[string]*GraphNode) error {
 	return nil
 }
 
-func (s *Store) graphEdges(display string, since int64, scope string) ([]GraphEdge, error) {
+func (s *Store) graphEdges(display string, since int64, opts FullGraphOptions) ([]GraphEdge, error) {
 	// A repository is otherwise an island: nothing in abom_edge points at it, so without the
 	// containment half of this union every repo node renders unattached and isolating one finds
 	// nothing. Containment stops at what the repository directly holds, because wiring every
 	// step to it as well would add tens of thousands of edges saying nothing new.
 	rows, err := s.db.Query(`WITH `+display+`
-		SELECT sn.node_key, dn.node_key, e.edge_kind, COALESCE(e.ref_value, '')
-		FROM abom_edge e
+		SELECT sn.node_key, dn.node_key, e.edge_kind, COALESCE(e.ref_value, ''),
+		       COALESCE(e.boundary, '')
+		FROM abom_edge_live e
 		JOIN disp ds ON ds.row_id = e.src_node_row_id
 		JOIN disp dd ON dd.row_id = e.dst_node_row_id
-		JOIN abom_node sn ON sn.row_id = ds.shown
-		JOIN abom_node dn ON dn.row_id = dd.shown
+		JOIN abom_node_live sn ON sn.row_id = ds.shown
+		JOIN abom_node_live dn ON dn.row_id = dd.shown
 		WHERE ds.shown <> dd.shown AND e.row_id > ?`+
-		scopeFilter(scope, "sn.node_key")+scopeFilter(scope, "dn.node_key")+`
+		boundaryFilter(opts.Boundary)+
+		scopeFilter(opts.Scope, "sn.node_key")+scopeFilter(opts.Scope, "dn.node_key")+`
 		UNION ALL
-		SELECT owner.node_key, held.node_key, 'repo-contains', ''
-		FROM abom_node owner
-		JOIN abom_node held ON held.repository_row_id = owner.repository_row_id
+		SELECT owner.node_key, held.node_key, 'repo-contains', '', ''
+		FROM abom_node_live owner
+		JOIN abom_node_live held ON held.repository_row_id = owner.repository_row_id
 		                   AND held.row_id <> owner.row_id
 		                   AND held.container_node_row_id IS NULL
 		                   AND held.node_kind <> 'repo'
 		WHERE owner.node_kind = 'repo' AND held.row_id > ?`+
-		scopeFilter(scope, "owner.node_key")+scopeFilter(scope, "held.node_key"),
+		scopeFilter(opts.Scope, "owner.node_key")+scopeFilter(opts.Scope, "held.node_key"),
 		since, since)
 	if err != nil {
 		return nil, fmt.Errorf("reading graph edges: %w", err)
@@ -304,14 +312,15 @@ func (s *Store) graphEdges(display string, since int64, scope string) ([]GraphEd
 	merged := map[[2]string]*GraphEdge{}
 	order := [][2]string{}
 	for rows.Next() {
-		var src, dst, kind, ref string
-		if err := rows.Scan(&src, &dst, &kind, &ref); err != nil {
+		var src, dst, kind, ref, boundary string
+		if err := rows.Scan(&src, &dst, &kind, &ref, &boundary); err != nil {
 			return nil, fmt.Errorf("scanning graph edge: %w", err)
 		}
 		key := [2]string{src, dst}
 		e, ok := merged[key]
 		if !ok {
-			e = &GraphEdge{Source: src, Target: dst, Kind: kind, Refs: []string{}}
+			e = &GraphEdge{Source: src, Target: dst, Kind: kind, Boundary: boundary,
+				Refs: []string{}}
 			merged[key] = e
 			order = append(order, key)
 		}

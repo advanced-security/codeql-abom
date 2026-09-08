@@ -43,8 +43,8 @@ func (s *Store) Summary() (Summary, error) {
 	}{
 		{`SELECT COUNT(*) FROM repository WHERE origin = ?`, &out.SeedRepos, []any{OriginSeed}},
 		{`SELECT COUNT(*) FROM repository WHERE origin = ?`, &out.UpstreamRepos, []any{OriginUpstream}},
-		{`SELECT COUNT(*) FROM abom_node`, &out.Nodes, nil},
-		{`SELECT COUNT(*) FROM abom_edge`, &out.Edges, nil},
+		{`SELECT COUNT(*) FROM abom_node_live`, &out.Nodes, nil},
+		{`SELECT COUNT(*) FROM abom_edge_live`, &out.Edges, nil},
 		{`SELECT COUNT(*) FROM abom_finding`, &out.Findings, nil},
 		{`SELECT COUNT(DISTINCT rule_id) FROM abom_finding`, &out.Rules, nil},
 		{`SELECT COUNT(DISTINCT finding_row_id) FROM abom_finding_node`, &out.LinkedFindings, nil},
@@ -55,7 +55,7 @@ func (s *Store) Summary() (Summary, error) {
 		{`SELECT COUNT(DISTINCT n.row_id)
 		  FROM abom_advisory a
 		  JOIN abom_advisory_package p ON p.advisory_row_id = a.row_id
-		  JOIN abom_node n ON n.owner IS NOT NULL AND n.repo IS NOT NULL
+		  JOIN abom_node_live n ON n.owner IS NOT NULL AND n.repo IS NOT NULL
 		                  AND n.owner || '/' || n.repo = p.package_name
 		  WHERE a.withdrawn_at IS NULL`, &out.AffectedActions, nil},
 	}

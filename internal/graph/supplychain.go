@@ -61,9 +61,9 @@ func (b *Builder) ClassifyDependencies() (*SupplyChain, error) {
 	rows, err := b.Store.DB().Query(`
 		SELECT COALESCE(src.container_node_row_id, src.row_id), e.dst_node_row_id,
 		       dst.node_key, r.origin
-		FROM abom_edge e
-		JOIN abom_node src ON src.row_id = e.src_node_row_id
-		JOIN abom_node dst ON dst.row_id = e.dst_node_row_id
+		FROM abom_edge_live e
+		JOIN abom_node_live src ON src.row_id = e.src_node_row_id
+		JOIN abom_node_live dst ON dst.row_id = e.dst_node_row_id
 		JOIN repository r ON r.row_id = e.repository_row_id
 		WHERE ` + store.DependencyEdgeFilter)
 	if err != nil {

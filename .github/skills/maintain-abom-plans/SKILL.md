@@ -17,6 +17,7 @@ deliberate decision from an accident, and does not re-derive a constraint by bre
 
 ```
 plans/next.md          index, ranking, and what we are deliberately not doing
+plans/implemented.md   what shipped and what the corpus said — git-ignored, see below
 plans/api/*.md         server behavior, query execution, HTTP surface
 plans/db/*.md          schema, storage semantics, derivation
 plans/tools/*.md       how the work itself gets done
@@ -68,6 +69,12 @@ Rules that keep these documents worth reading:
   the current plans lead with a mistake, and those are the most useful paragraphs in them.
 - **Name the invariant, not just the behavior.** "Advisories enrich, they never adjudicate" is
   reusable; "don't set vulnerable=true here" is not.
+- **An open question is a fork with named alternatives.** If the answer already follows from an
+  architectural invariant, it is a decision to record, not a question to ask. Two of a recent
+  plan's three "open questions" were restatements the core concepts had already settled, and
+  asking cost a turn and taught nothing.
+- **Answer a question in place.** Strike it through, keep it, and write the decision beneath.
+  Deleting it invites the same question again; the strike is what shows it was considered.
 - **No status theatre.** No percentages, no burndown, no dates. This is not a tracker.
 
 ## Moving something to Implemented
@@ -76,8 +83,22 @@ Only when it is verified against the real corpus, not when the code compiles. `m
 green is necessary and not sufficient — the entry should carry the measured before/after that
 shows it did what it claimed.
 
-Move the one-line summary into the Implemented list in `next.md`, keep the plan file (its
-pending section usually still has content), and update the plan's Status line.
+Move the summary into `plans/implemented.md`, newest first, keep the plan file (its pending
+section usually still has content), and update the plan's Status line.
+
+**`plans/implemented.md` is git-ignored on purpose.** Git history already records what changed and
+when, so a tracked markdown summary is a second copy that drifts from the log it duplicates. What
+history does not carry is the reasoning — the measurement that refuted a design, the number that
+did not move and why that was right — and that is what the file is for. Write it for an agent
+picking the work up cold, not for a reviewer reading a diff.
+
+Two consequences worth holding on to:
+
+- **It may not exist.** A fresh clone has no copy. Absence means nothing has been *recorded here*,
+  never that nothing has shipped — the same absent-is-not-zero rule the store follows. Check the
+  Status line of each plan, and the code, before concluding a workstream has not landed.
+- **Never add it to a commit**, and never restore it by pasting the section back into `next.md`.
+  `next.md` keeps a pointer and nothing more.
 
 ## Adding to "Not doing"
 
@@ -93,6 +114,9 @@ Before trusting a plan's claim about the code, check it. Claims that have been w
 - "package X is wired in" — `go list -deps ./cmd/codeql-abom` said otherwise for four packages.
 - "the queue is empty so we are done" — 415 dependencies existed that were never queued.
 - "these are out of scope" — the measurement could not distinguish the thing it was asked about.
+- "`discover --org` enumerates and records which repos have a database" — accurate, and it hid
+  that the seconds-long enumeration is only reachable behind a per-repository probe. A package
+  doc comment states intent; read the calls it makes.
 
 A plan asserting something about the code is a hypothesis with a shelf life. Verify, then edit
 the plan rather than working around it.

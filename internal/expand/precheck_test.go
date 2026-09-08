@@ -18,7 +18,13 @@ func TestARepositoryAlreadyOnRecordIsSettledWithoutFetching(t *testing.T) {
 	h.enqueue(item("gradle", "actions", "setup-gradle", 1))
 	h.drain()
 
-	if n := h.requeueDirect(); n == 0 {
+	// One repository rather than every tier: what this protects is the pre-check settling a row
+	// whose plan is on record, and a broader requeue also puts back rows whose references the
+	// harness's probe resolves differently, which is a different question.
+	if _, err := h.store.RequeueRepository("gradle/actions"); err != nil {
+		t.Fatalf("RequeueRepository: %v", err)
+	}
+	if h.pendingCount() == 0 {
 		t.Fatal("nothing was requeued, so the pre-check would not be exercised")
 	}
 	fetched := len(h.fetched)

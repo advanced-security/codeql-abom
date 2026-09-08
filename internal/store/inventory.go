@@ -56,7 +56,7 @@ func (s *Store) SearchNodes(search string, limit int) ([]NodeMatch, error) {
 	query := `
 		SELECT n.node_key, n.node_kind, COALESCE(r.repository_full_name, ''),
 		       COALESCE(r.origin, ''), COALESCE(b.dependent_repos, 0)
-		FROM abom_node n
+		FROM abom_node_live n
 		LEFT JOIN repository r ON r.row_id = n.repository_row_id
 		LEFT JOIN abom_blast_radius b ON b.node_row_id = n.row_id
 		` + where + `
@@ -87,7 +87,7 @@ func (s *Store) ActionsInventory(search string, limit int) ([]ActionSummary, err
 		SELECT n.node_key, n.node_kind, COALESCE(n.owner,''), COALESCE(n.repo,''),
 		       COALESCE(r.origin, ''),
 		       COALESCE(b.dependent_repos, 0), COALESCE(b.direct_dependents, 0),
-		       (SELECT COUNT(DISTINCT e.ref_value) FROM abom_edge e
+		       (SELECT COUNT(DISTINCT e.ref_value) FROM abom_edge_live e
 		         WHERE e.dst_node_row_id = n.row_id
 		           AND e.ref_value IS NOT NULL AND e.ref_value <> ''),
 		       (SELECT COUNT(*) FROM abom_finding_node fn WHERE fn.node_row_id = n.row_id),
@@ -99,7 +99,7 @@ func (s *Store) ActionsInventory(search string, limit int) ([]ActionSummary, err
 		           AND p.package_name = n.owner || '/' || n.repo),
 		       EXISTS (SELECT 1 FROM abom_frontier f
 		                WHERE f.node_key = n.node_key AND f.status = 'done')
-		FROM abom_node n
+		FROM abom_node_live n
 		LEFT JOIN repository r ON r.row_id = n.repository_row_id
 		LEFT JOIN abom_blast_radius b ON b.node_row_id = n.row_id
 		` + where + `
@@ -155,9 +155,9 @@ func (s *Store) RepositoriesOverview(search string, limit int) ([]RepositorySumm
 
 	query := `
 		SELECT r.repository_full_name, r.origin,
-		       (SELECT COUNT(*) FROM abom_node n
+		       (SELECT COUNT(*) FROM abom_node_live n
 		         WHERE n.repository_row_id = r.row_id AND n.node_kind = 'workflow'),
-		       (SELECT COUNT(*) FROM abom_edge e WHERE e.repository_row_id = r.row_id),
+		       (SELECT COUNT(*) FROM abom_edge_live e WHERE e.repository_row_id = r.row_id),
 		       (SELECT COUNT(*) FROM abom_finding f WHERE f.repository_row_id = r.row_id),
 		       (SELECT COUNT(*) FROM abom_exposure x WHERE x.repository_row_id = r.row_id),
 		       (SELECT COUNT(*) FROM abom_exposure x
@@ -233,11 +233,11 @@ func (s *Store) RepositoryDetailOf(fullName string) (RepositoryDetail, error) {
 
 	flows, err := s.db.Query(`
 		SELECT n.node_key, COALESCE(n.path,''),
-		       (SELECT COUNT(*) FROM abom_edge e
-		         JOIN abom_node src ON src.row_id = e.src_node_row_id
+		       (SELECT COUNT(*) FROM abom_edge_live e
+		         JOIN abom_node_live src ON src.row_id = e.src_node_row_id
 		        WHERE src.container_node_row_id = n.row_id OR src.row_id = n.row_id),
 		       (SELECT COUNT(*) FROM abom_finding_node fn WHERE fn.node_row_id = n.row_id)
-		FROM abom_node n
+		FROM abom_node_live n
 		WHERE n.repository_row_id = ? AND n.node_kind IN ('workflow', 'composite_action')
 		ORDER BY n.path`, rowID)
 	if err != nil {

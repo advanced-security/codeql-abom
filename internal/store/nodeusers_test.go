@@ -2,7 +2,6 @@ package store
 
 import (
 	"testing"
-	"time"
 )
 
 // The Discovery grid previews five names and says "and 280 more", which is honest and a dead end
@@ -115,13 +114,12 @@ func TestOwnershipIsUnansweredUntilAnAccountIsVerified(t *testing.T) {
 	}
 }
 
-func TestAVerifiedAccountMarksItsOwnRepositories(t *testing.T) {
+func TestADeclaredAccountMarksItsOwnRepositories(t *testing.T) {
 	s := subgraphFixture(t)
-	if err := s.ReplaceAccounts(Verification{
-		Login: "someone", Host: "github.com", VerifiedAt: time.Now(),
-		Accounts: []Account{{Owner: "octo-org", Kind: "organization"}},
+	if err := s.SetOwnedScope([]DeclaredAccount{
+		{Owner: "octo-org", Kind: AccountOrganization, Enabled: true},
 	}); err != nil {
-		t.Fatalf("ReplaceAccounts: %v", err)
+		t.Fatalf("SetOwnedScope: %v", err)
 	}
 
 	users, err := s.NodeUsersOf("actions/checkout", "v4")
@@ -129,7 +127,7 @@ func TestAVerifiedAccountMarksItsOwnRepositories(t *testing.T) {
 		t.Fatalf("NodeUsersOf: %v", err)
 	}
 	if !users.OwnedKnown {
-		t.Fatal("an account is verified, so ownership is answerable")
+		t.Fatal("a scope is declared, so ownership is answerable")
 	}
 	if users.Owned != users.Total {
 		t.Errorf("Owned = %d of %d; every repository here is under octo-org",

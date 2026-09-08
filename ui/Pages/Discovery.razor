@@ -17,6 +17,74 @@
    and advisories are already in the page header. Four boxes restating them pushed the one
    control anyone came for below the fold. *@
 
+@if (_objective is { } objective)
+{
+    <MudPaper Elevation="0" Outlined="true" Class="pa-3 mb-3 abom-objective">
+        <MudText Typo="Typo.subtitle2">What the crawl is working on</MudText>
+        <MudText Typo="Typo.body2" Class="mt-1">
+            @if (objective.HasOutstanding)
+            {
+                <span>
+                    Completing <b>depth @objective.Working</b>, and nothing deeper is started
+                    until it is done.
+                </span>
+            }
+            else
+            {
+                @* Not "depth 0": a complete closure is a different statement from work at the
+                   shallowest depth, and reporting a number would invent one. *@
+                <span>
+                    <b>Nothing outstanding.</b> Every reference in scope has been analyzed
+                    &mdash; as far as depth @objective.MaxDepth, which is the cap exploration
+                    may not pass.
+                </span>
+            }
+        </MudText>
+
+        @if (objective.Progress.Count > 0)
+        {
+            <div class="abom-objective-depths mt-2">
+                @foreach (var depth in objective.Progress)
+                {
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
+                             Color="@(depth.Available == 0 ? Color.Success : Color.Default)">
+                        depth @depth.Depth: @depth.Settled.ToString("N0") of
+                        @depth.Total.ToString("N0")
+                    </MudChip>
+                }
+            </div>
+        }
+
+        @if (LastCycle is { } last)
+        {
+            <MudText Typo="Typo.body2" Class="mud-text-secondary mt-2">
+                Last cycle took <b>@Seconds(last.Millis)s</b>: @last.Fetches.ToString("N0")
+                fetches, @last.Builds.ToString("N0") database builds,
+                @last.Probes.ToString("N0") reference probes. It analyzed
+                @last.Analyzed.ToString("N0"), skipped @last.Skipped.ToString("N0") already on
+                record and discovered @last.Discovered.ToString("N0").
+                @if (last.Drifted > 0)
+                {
+                    <span>@last.Drifted.ToString("N0") had moved since they were analyzed.</span>
+                }
+            </MudText>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                @objective.Totals.Cycles.ToString("N0") cycles recorded, totalling
+                @Seconds(objective.Totals.Millis)s across
+                @objective.Totals.Fetches.ToString("N0") fetches and
+                @objective.Totals.Probes.ToString("N0") probes.
+            </MudText>
+        }
+        else
+        {
+            @* Nothing recorded is not zero spend. *@
+            <MudText Typo="Typo.body2" Class="mud-text-secondary mt-2">
+                No cycle has run yet, so there is nothing to say about what discovery costs here.
+            </MudText>
+        }
+    </MudPaper>
+}
+
 @if (_pollError is { } failure)
 {
     <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3">
@@ -517,6 +585,14 @@ else
 
     private IReadOnlyList<FrontierItem> _items = [];
     private DiscoveryState _state = new();
+    private Objective? _objective;
+
+    // The most recent cycle, or null when none has been recorded. Never a zero-valued stand-in:
+    // a database that has never run a cycle is not one that ran and cost nothing.
+    private CycleSpend? LastCycle =>
+        _objective is { Recent.Count: > 0 } ? _objective.Recent[0] : null;
+
+    private static string Seconds(long millis) => (millis / 1000.0).ToString("N1");
     private bool _loading = true;
     private bool _busy;
     private DateTime? _lastPoll;
@@ -1017,6 +1093,7 @@ else
     private async Task Load()
     {
         _state = await Api.GetDiscoveryAsync();
+        _objective = await Api.GetObjectiveAsync();
         _items = await Api.GetFrontierAsync(_status, top: 400);
         _suites = await Api.GetTierSuitesAsync();
         // A read that failed returns an empty result rather than throwing, so the transport's

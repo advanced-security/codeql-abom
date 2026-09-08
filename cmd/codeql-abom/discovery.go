@@ -141,7 +141,7 @@ func newSupervisor(s *store.Store, opts discoveryOptions, logTo io.Writer) (*sup
 			MaxAge:      opts.aggregateMaxAge,
 			MinInterval: opts.aggregateMinPeriod,
 		},
-		Preflight: preflight(opts.codeqlPath, opts.queryPath, dir),
+		Preflight: preflight(s, opts.codeqlPath, opts.queryPath, dir),
 		Sweeper:   func() (int, error) { return expand.SweepDiscoveries(s, queue) },
 		Reclassifier: func() (int, error) {
 			return expand.ReclassifySupplyChain(s, queue)
@@ -174,8 +174,26 @@ func logDiscoveryFailures(w io.Writer) func(work.Event) {
 //
 // It runs at every start rather than once, because the answer changes: a CLI gets installed, a
 // disk fills up, and the operator is told either way instead of watching a loop do nothing.
-func preflight(codeqlPath, queryPath, workDir string) func() *supervisor.Problem {
+func preflight(s *store.Store, codeqlPath, queryPath, workDir string) func() *supervisor.Problem {
 	return func() *supervisor.Problem {
+		// First, because it is the one thing here the operator configures rather than installs,
+		// and because a crawl with no declared scope is what built a corpus of 204 repositories
+		// nobody owns.
+		declared, err := s.OwnedScopeDeclared()
+		if err != nil {
+			return &supervisor.Problem{
+				Reason: fmt.Sprintf("the declared scope cannot be read: %v", err),
+				Remedy: "check the database is readable, then declare an account with `codeql-abom own`",
+			}
+		}
+		if !declared {
+			return &supervisor.Problem{
+				Reason: "no owned account is declared, so there is nothing in scope to discover",
+				Remedy: "declare the accounts you own on the Your Accounts page, " +
+					"or run `codeql-abom own --db <db> --org <name>`",
+			}
+		}
+
 		binary := codeqlPath
 		if binary == "" {
 			binary = "codeql"

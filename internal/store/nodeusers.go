@@ -44,11 +44,13 @@ func (s *Store) NodeUsersOf(key, ref string) (NodeUsers, error) {
 func (s *Store) nodeUsersOf(key, ref string, budget int) (NodeUsers, error) {
 	out := NodeUsers{Key: key, Ref: ref, Repos: []RepositoryUse{}}
 
-	verified, err := s.Verified()
+	// Declared, not verified: ownership is answerable once the operator has stated a scope, and
+	// `gh` saying they belong to something they never claimed answers nothing.
+	declared, err := s.OwnedScopeDeclared()
 	if err != nil {
 		return out, err
 	}
-	out.OwnedKnown = verified
+	out.OwnedKnown = declared
 
 	if err := s.readNodeUsers(&out, budget); err != nil {
 		return out, err
@@ -67,11 +69,9 @@ func (s *Store) readNodeUsers(out *NodeUsers, budget int) error {
 	// repositories are different numbers and the interface needs both.
 	rows, err := s.db.Query(`
 		SELECT r.repository_full_name, COALESCE(r.origin, ''), COUNT(*),
-		       EXISTS (SELECT 1 FROM abom_account a
-		                WHERE LOWER(a.owner) = LOWER(SUBSTR(r.repository_full_name, 1,
-		                      INSTR(r.repository_full_name, '/') - 1)))
-		FROM abom_edge e
-		JOIN abom_node n ON n.row_id = e.dst_node_row_id
+		       `+ownedFullName("r.repository_full_name")+`
+		FROM abom_edge_live e
+		JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 		JOIN repository r ON r.row_id = e.repository_row_id
 		WHERE n.node_key = ? AND COALESCE(e.ref_value, '') = ?
 		GROUP BY r.repository_full_name, r.origin
@@ -105,11 +105,9 @@ func (s *Store) countNodeUsers(out *NodeUsers) error {
 	err := s.db.QueryRow(`
 		SELECT COUNT(*), COALESCE(SUM(seed), 0), COALESCE(SUM(owned), 0) FROM (
 			SELECT r.origin = ? AS seed,
-			       EXISTS (SELECT 1 FROM abom_account a
-			                WHERE LOWER(a.owner) = LOWER(SUBSTR(r.repository_full_name, 1,
-			                      INSTR(r.repository_full_name, '/') - 1))) AS owned
-			FROM abom_edge e
-			JOIN abom_node n ON n.row_id = e.dst_node_row_id
+			       `+ownedFullName("r.repository_full_name")+` AS owned
+			FROM abom_edge_live e
+			JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 			JOIN repository r ON r.row_id = e.repository_row_id
 			WHERE n.node_key = ? AND COALESCE(e.ref_value, '') = ?
 			GROUP BY r.repository_full_name, r.origin)`,

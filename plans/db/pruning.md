@@ -35,6 +35,63 @@ foreign_key_check` empty and `PRAGMA integrity_check` ok. Any automated prune ha
 same closure, and the endpoint case is the one that is easy to miss because the obvious query
 filters by `repository_row_id`.
 
+**Status:** shipped. Removal is a tombstone the delta reports, reads go through views that cannot
+be opted out of, and a separate compaction reclaims the space behind an epoch that reloads every
+client. On the reference corpus a prune marks **42,011 of 56,830 nodes and 31,365 of 46,264
+edges**, leaving the graph the declared scope actually reaches.
+
+## What reconciling and two probes corrected
+
+**The plan priced "reads filter it" as a detail. It is 104 call sites** across 23 files —
+`nodedetail.go` alone joins the graph tables 14 times, `graph_full.go` 11 — against **2** write
+sites. Every missed filter is a pruned node still drawn, which fails nothing.
+
+**The first design for fixing that cheaply does not work.** Renaming the physical tables to
+`abom_node_all` and creating views under the *original* names would have made all 104 reads
+correct untouched. Probed against a copy of the real corpus: SQLite's `ALTER TABLE ... RENAME TO`
+**does not rewrite foreign key references in other tables**, so `abom_finding_node` still read
+`REFERENCES abom_node(row_id)` — now a view — and `PRAGMA foreign_key_check` failed with
+`foreign key mismatch - "abom_exposure" referencing "abom_node"`. Six tables reference
+`abom_node`.
+
+**The design that works keeps the tables and adds views beside them.** `abom_node_live` and
+`abom_edge_live` are new objects, so no foreign key moves and no table is rebuilt. The 104 reads
+were rewritten once, and `TestReadsGoThroughTheLiveViews` keeps them that way: it names the three
+files allowed to touch the physical tables — the writer, the prune and the schema — and fails any
+other `FROM`/`JOIN` that does not say `_live`. What "live" means now changes in one place.
+
+**The views cost nothing measurable.** SQLite flattens them, so the plan is the same index search
+as before:
+
+```text
+SEARCH abom_node USING INDEX sqlite_autoindex_abom_node_1 (node_key=?)
+SEARCH abom_edge USING INDEX idx_edge_dst (dst_node_row_id=?)
+```
+
+The physical-table plan differs only in being *covering*, since a view selects every column.
+0.02 s against 0.01 s over 46,264 edges.
+
+## What the corpus check found
+
+Against a copy, with seven accounts declared:
+
+| | Before | After marking | After compaction |
+| --- | ---: | ---: | ---: |
+| nodes (physical) | 56,830 | 56,830 | **14,819** |
+| nodes (live) | 56,830 | **14,819** | 14,819 |
+| edges (physical) | 46,264 | 46,264 | **14,899** |
+| edges (live) | 46,264 | **14,899** | 14,899 |
+| findings | 11,370 | 11,370 | **11,370** |
+| query runs | 5,472 | 5,472 | **5,472** |
+
+**Three quarters of the graph was somebody else's supply chain.** The ledger did not move, which
+is the invariant working: a run happened and a finding was really produced, so deleting them to
+tidy the graph would record that work did not occur.
+
+A second dry run reports **0 nodes and 0 edges** — the operation settles, which is what makes it
+safe to run on a schedule. `PRAGMA foreign_key_check` is empty and `PRAGMA integrity_check` is
+`ok` both after marking and after compaction.
+
 ## The design
 
 ### Tombstone, then compact
@@ -51,16 +108,18 @@ client whose cursor predates the epoch is told to reload rather than being hande
 silently skips row ids. Compaction is separate and deliberate, so a prune is reversible right up
 until someone decides it is not.
 
-### The guard is narrowed, not deleted
+### The guard was narrowed, not deleted
 
-`TestGraphTablesAreAppendOnly` will fail. Its **stated reason** is that a delta cursor is a row-id
-watermark, so a `DELETE` would hand clients an update that skips or repeats work. That reason is
-narrower than the assertion: a removals list plus an epoch is precisely what makes deletion safe
-for a cursor.
+`TestGraphTablesAreAppendOnly` failed, exactly as predicted. Its **stated reason** was that a
+delta cursor is a row-id watermark, so a `DELETE` would hand clients an update that skips or
+repeats work. That reason is narrower than the assertion: a removals list plus an epoch is
+precisely what makes deletion safe for a cursor.
 
-So the test is narrowed to what its reasoning actually protects — no unannounced deletion — and
-says so in its own comment. It is not deleted, and the rule that a blocking guard gets narrowed
-rather than removed is exactly what stops this from being how the invariant quietly dies.
+It is now `TestGraphTablesAreDeletedOnlyByTheCompaction`, allowing exactly one file —
+`internal/store/prune.go`, the one that bumps the epoch — and still failing anywhere else. Its
+comment says what changed and why. Fixing it also caught a defect in the old version: it matched
+`DELETE FROM abom_finding` as a substring of `abom_finding_node`, which is a link table and not
+one of the three it protects. The new one uses a word boundary.
 
 ### The closure
 
@@ -93,13 +152,15 @@ destructive operation whose scope is only visible afterwards is one nobody will 
 
 ## Phases
 
-1. `removed_at`, and every read filtered. Nothing removes anything yet; the column is inert and
-   the reads are proven not to change.
-2. `GraphDelta` carries removals; the browser module honors them. `mergeInto` in `graph.js` is the
-   place a removal is dropped silently, the same way it drops an uncopied metric field.
-3. The removal predicates and the FK closure, with dry-run output.
-4. Compaction and the epoch, with the client reload path.
-5. `TestGraphTablesAreAppendOnly` narrowed, with its reasoning rewritten rather than removed.
+All done.
+
+1. `removed_at`, the removal predicate and a dry run that shares the removal's implementation.
+2. `abom_node_live` / `abom_edge_live`, 104 reads rewritten, and
+   `TestReadsGoThroughTheLiveViews` naming the three files allowed to bypass them.
+3. `GraphDelta` carries removals; `mergeInto` in `graph.js` honors them.
+4. `Compact` and the epoch, with the client reload path.
+5. The guard narrowed to `TestGraphTablesAreDeletedOnlyByTheCompaction`.
+6. `codeql-abom prune`, explaining by default, `--apply` to mark and `--compact` to delete.
 
 ## Verification
 

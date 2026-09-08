@@ -26,6 +26,9 @@ func put(t *testing.T, srv *Server, path, body string) *httptest.ResponseRecorde
 	t.Helper()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, path, strings.NewReader(body))
+	// Changing what discovery will crawl is a control operation, so it carries what one needs.
+	req.Host = "127.0.0.1:8080"
+	req.Header.Set(controlHeader, "1")
 	srv.Handler().ServeHTTP(rec, req)
 	return rec
 }
@@ -194,21 +197,24 @@ func TestPinningTotalsCarryBothHalvesOfTheSplit(t *testing.T) {
 			before.Yours.Elsewhere, before.Pinnable)
 	}
 
-	srv.Verify = verifies(ghauth.Account{Owner: "octo-org", Kind: "organization", Role: "admin"})
-	if rec := post(t, srv, "/api/accounts/refresh"); rec.Code != http.StatusOK {
-		t.Fatalf("verifying: status %d", rec.Code)
+	// Declared rather than verified since 2026-09-07: the split counts what the operator has
+	// said is theirs. What this test protects — that the halves sum to the whole and the totals
+	// do not move — is unchanged.
+	if rec := put(t, srv, "/api/owned-scope",
+		`[{"owner":"octo-org","kind":"organization","enabled":true}]`); rec.Code != http.StatusOK {
+		t.Fatalf("declaring: status %d: %s", rec.Code, rec.Body.String())
 	}
 
 	after := decode[totals](t, get(t, srv, "/api/pinning/totals"))
 	if after.Pinnable != before.Pinnable || after.Flagged != before.Flagged {
-		t.Errorf("verifying changed the totals: %d/%d became %d/%d",
+		t.Errorf("declaring changed the totals: %d/%d became %d/%d",
 			before.Pinnable, before.Flagged, after.Pinnable, after.Flagged)
 	}
 	if after.Yours.Yours+after.Yours.Elsewhere != after.Pinnable {
 		t.Errorf("split %d + %d != %d", after.Yours.Yours, after.Yours.Elsewhere, after.Pinnable)
 	}
 	if after.Yours.Yours == 0 {
-		t.Error("verified the account that owns the only repository, yet nothing is yours")
+		t.Error("declared the account that owns the only repository, yet nothing is yours")
 	}
 }
 

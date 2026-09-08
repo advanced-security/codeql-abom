@@ -75,7 +75,7 @@ func (b *Builder) load() (*model, error) {
 	}
 
 	nodes, err := b.Store.DB().Query(
-		`SELECT row_id, node_key, node_kind, repository_row_id, container_node_row_id FROM abom_node`)
+		`SELECT row_id, node_key, node_kind, repository_row_id, container_node_row_id FROM abom_node_live`)
 	if err != nil {
 		return nil, fmt.Errorf("loading nodes: %w", err)
 	}
@@ -102,7 +102,7 @@ func (b *Builder) load() (*model, error) {
 	}
 
 	edges, err := b.Store.DB().Query(`SELECT e.src_node_row_id, e.dst_node_row_id
-		FROM abom_edge e WHERE ` + store.DependencyEdgeFilter)
+		FROM abom_edge_live e WHERE ` + store.DependencyEdgeFilter)
 	if err != nil {
 		return nil, fmt.Errorf("loading edges: %w", err)
 	}
@@ -135,7 +135,7 @@ func (m *model) loadConditions(s *store.Store) error {
 	rows, err := s.DB().Query(`
 		SELECT n.row_id, COALESCE(o.value, '')
 		FROM abom_observation o
-		JOIN abom_node n ON n.node_key = o.subject_key
+		JOIN abom_node_live n ON n.node_key = o.subject_key
 		WHERE o.subject_kind = ? AND o.name = ?
 		ORDER BY o.row_id`, store.SubjectNode, store.ObservationCondition)
 	if err != nil {
@@ -254,7 +254,7 @@ func (b *Builder) BuildBlastRadius() error {
 func (b *Builder) Dependents(nodeKey string) ([]string, error) {
 	var target int64
 	err := b.Store.DB().QueryRow(
-		`SELECT row_id FROM abom_node WHERE node_key = ?`, nodeKey).Scan(&target)
+		`SELECT row_id FROM abom_node_live WHERE node_key = ?`, nodeKey).Scan(&target)
 	if err != nil {
 		return nil, fmt.Errorf("resolving %q: %w", nodeKey, err)
 	}
@@ -292,6 +292,11 @@ func (b *Builder) Dependents(nodeKey string) ([]string, error) {
 // RebuildAggregates recomputes the passes that clear their table and derive it again. Their
 // cost tracks corpus size rather than how much changed, so callers schedule them deliberately.
 func (b *Builder) RebuildAggregates() error {
+	// Classifying first: it only ever fills edges that have none, so it costs nothing once the
+	// graph and the classification agree, and the aggregates below can read it.
+	if _, err := b.Store.ClassifyEdgeBoundaries(); err != nil {
+		return err
+	}
 	if err := b.BuildBlastRadius(); err != nil {
 		return err
 	}

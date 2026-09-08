@@ -207,7 +207,43 @@ func (h *harness) run(limit int) Stats {
 	return stats
 }
 
+// enqueue puts items in the queue and declares their accounts.
+//
+// A directly enqueued item is a root, and since 2026-09-07 roots come from the declared scope —
+// `SeedFrontier` produces nothing else. Declaring here is what this helper always meant by "a
+// repository under review"; use enqueueUnowned to queue something deliberately outside it.
 func (h *harness) enqueue(items ...frontier.Item) {
+	h.t.Helper()
+	h.own(items...)
+	h.enqueueUnowned(items...)
+}
+
+// own adds each item's account to the declaration without discarding what is already there.
+func (h *harness) own(items ...frontier.Item) {
+	h.t.Helper()
+	declared, err := h.store.OwnedScope()
+	if err != nil {
+		h.t.Fatalf("OwnedScope: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, a := range declared {
+		seen[strings.ToLower(a.Owner)] = true
+	}
+	for _, it := range items {
+		if it.Owner == "" || seen[strings.ToLower(it.Owner)] {
+			continue
+		}
+		seen[strings.ToLower(it.Owner)] = true
+		declared = append(declared, store.DeclaredAccount{
+			Owner: it.Owner, Kind: store.AccountOrganization, Enabled: true,
+		})
+	}
+	if err := h.store.SetOwnedScope(declared); err != nil {
+		h.t.Fatalf("SetOwnedScope: %v", err)
+	}
+}
+
+func (h *harness) enqueueUnowned(items ...frontier.Item) {
 	h.t.Helper()
 	if _, err := h.queue.Enqueue(items); err != nil {
 		h.t.Fatalf("Enqueue: %v", err)

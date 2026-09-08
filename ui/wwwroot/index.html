@@ -38,6 +38,17 @@
         <a class="dismiss">🗙</a>
     </div>
 
+    <!-- Vendored rather than fetched from a CDN so the interface works offline and its supply
+         chain is a file we can point at. Recorded here because a tool that builds bills of
+         materials should be able to answer this question about itself:
+           three.min.js         Three.js, MIT, Copyright 2010-2022 Three.js Authors
+           3d-force-graph.min.js  v1.73.4, MIT, https://github.com/vasturiano/3d-force-graph
+
+         Both are loaded on purpose, and the browser's "Multiple instances of Three.js" warning is
+         expected: 3d-force-graph bundles its own copy, and node geometry is built from the
+         standalone one. Geometry crosses between the two copies because it is plain typed-array
+         data; materials do not, which `js/appearance.js` explains and works around. Dropping
+         either script removes node shapes. -->
     <script src="js/three.min.js"></script>
     <script src="js/3d-force-graph.min.js"></script>
     <script src="js/theme.js"></script>

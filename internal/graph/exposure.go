@@ -78,7 +78,7 @@ func (b *Builder) affectedNodes() ([]affected, error) {
 		SELECT DISTINCT a.ghsa_id, n.row_id
 		FROM abom_advisory a
 		JOIN abom_advisory_package p ON p.advisory_row_id = a.row_id
-		JOIN abom_node n
+		JOIN abom_node_live n
 		  ON n.owner IS NOT NULL AND n.repo IS NOT NULL
 		 AND n.owner || '/' || n.repo = p.package_name
 		WHERE a.withdrawn_at IS NULL`)

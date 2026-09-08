@@ -30,6 +30,9 @@ var subcommands = []subcommand{
 	{"report", runReport, "Print a summary of the collected ABOM."},
 	{"serve", runServe, "Serve the ABOM over HTTP for the user interface."},
 	{"accounts", runAccounts, "Show the accounts you are verified to belong to."},
+	{"own", runOwned, "Declare which accounts you own, which is what discovery is bounded by."},
+	{"prune", runPrune, "Remove what the declared scope does not reach."},
+	{"bom", runBOM, "Write a bill of materials for the declared scope, or for a named root."},
 	{"selfcheck", runSelfcheck, "Analyze a source tree with a CodeQL suite as a smoke test."},
 }
 
