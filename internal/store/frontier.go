@@ -70,31 +70,43 @@ type FrontierItem struct {
 // page of 500 rows cannot turn into megabytes of repository names.
 const usedBySample = 5
 
-// selectUsedBy counts and samples the repositories naming a queue row's exact version.
+// usedByRollup counts and samples, per (node_key, ref), the repositories naming that exact
+// version — once for the whole query instead of three times per queue row.
 //
 // Matched on the edge's ref rather than the node, because one action at two references is two
 // different things to everyone downstream and sharing users between them would undo that.
-var selectUsedBy = `
-	(SELECT COUNT(DISTINCT e.repository_row_id)
-	   FROM abom_edge_live e
-	   JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
-	  WHERE n.node_key = abom_frontier.node_key
-	    AND COALESCE(e.ref_value, '') = abom_frontier.ref),
-	(SELECT COUNT(DISTINCT e.repository_row_id)
-	   FROM abom_edge_live e
-	   JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
-	   JOIN repository r ON r.row_id = e.repository_row_id
-	  WHERE n.node_key = abom_frontier.node_key
-	    AND COALESCE(e.ref_value, '') = abom_frontier.ref
-	    AND ` + ownedFullName("r.repository_full_name") + `),
-	(SELECT GROUP_CONCAT(name) FROM (
-	   SELECT DISTINCT r.repository_full_name AS name
-	     FROM abom_edge_live e
-	     JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
-	     JOIN repository r ON r.row_id = e.repository_row_id
-	    WHERE n.node_key = abom_frontier.node_key
-	      AND COALESCE(e.ref_value, '') = abom_frontier.ref
-	    ORDER BY name LIMIT ` + strconv.Itoa(usedBySample) + `))`
+//
+// Measured 2026-09-11 on the seeded corpus: as three correlated subqueries this was 1.65 s over
+// 3,662 rows against 0.01 s for the plain columns, and `LIMIT 500` did not help because the
+// ORDER BY evaluates the select list for every row before the limit applies. As one rollup it is
+// 0.06 s and agrees on all 3,662 rows.
+//
+// DENSE_RANK rather than ROW_NUMBER: the sample is the alphabetically first `usedBySample`
+// *distinct* names, and two edges from one repository would otherwise spend two of the five
+// places on the same name. GROUP_CONCAT does not promise an order, so the caller sorts what it
+// splits — which lands on the same list the ORDER BY produced before.
+var usedByRollup = `WITH users AS (
+	SELECT nk, rf,
+	       COUNT(DISTINCT repo_id) AS cnt,
+	       COUNT(DISTINCT CASE WHEN owned THEN repo_id END) AS owned_cnt,
+	       GROUP_CONCAT(DISTINCT CASE WHEN rank <= ` + strconv.Itoa(usedBySample) + ` THEN name END) AS sample
+	  FROM (SELECT n.node_key AS nk,
+	               COALESCE(e.ref_value, '') AS rf,
+	               e.repository_row_id AS repo_id,
+	               r.repository_full_name AS name,
+	               ` + ownedFullName("r.repository_full_name") + ` AS owned,
+	               DENSE_RANK() OVER (PARTITION BY n.node_key, COALESCE(e.ref_value, '')
+	                                  ORDER BY r.repository_full_name) AS rank
+	          FROM abom_edge_live e
+	          JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
+	          LEFT JOIN repository r ON r.row_id = e.repository_row_id)
+	 GROUP BY nk, rf)
+`
+
+// selectUsedBy reads the rollup rather than recomputing it. A queue row nothing names yet has no
+// rollup row, and zero users is the right answer for it.
+const selectUsedBy = `
+	COALESCE(u.cnt, 0), COALESCE(u.owned_cnt, 0), u.sample`
 
 // runsForRow joins a queue row to the runs recorded against the database it analyzed.
 //
@@ -238,28 +250,37 @@ func frontierWhere(status string) (string, []any) {
 	}
 }
 
-// FrontierSnapshot returns the discovery queue, highest value first.
-//
-// Passing an empty status returns every state, because the Discovery view is about the shape of
-// what is known against what is not: showing only pending work would hide the progress.
-func (s *Store) FrontierSnapshot(status string, limit int) ([]FrontierItem, error) {
-	query := `
+// frontierSnapshotQuery is separate from the read so its plan can be asserted: whether this walks
+// the edge table once per queue row is a structural property, not something a stopwatch decides.
+func frontierSnapshotQuery(status string, limit int) (string, []any) {
+	query := usedByRollup + `
 		SELECT node_key, COALESCE(owner,''), COALESCE(repo,''), status, depth, score,
 		       attempts, analysis_count, COALESCE(resolved_sha,''),
 		       COALESCE(discovered_from,''), COALESCE(reason,''),
 		       COALESCE(claimed_at,''), COALESCE(next_attempt_at,''), supply_chain,
 		       COALESCE(analyzed_at,''), ` + tierOfRow + `, ref,` + selectSuites + `,` +
 		selectUsedBy + `
-		FROM abom_frontier`
+		FROM abom_frontier
+		LEFT JOIN users u ON u.nk = abom_frontier.node_key AND u.rf = abom_frontier.ref`
 	where, args := frontierWhere(status)
 	query += where
 	// Same order Claim takes, so the queue reads as what happens next rather than as a ranking
-	// the crawl is about to ignore.
-	query += ` ORDER BY expedited_at IS NULL, score DESC, depth ASC, node_key`
+	// the crawl is about to ignore. `ref` closes the order: a dependency queued at several
+	// references ties on everything before it, and a tie under LIMIT returns an arbitrary subset.
+	query += ` ORDER BY expedited_at IS NULL, score DESC, depth ASC, node_key, ref`
 	if limit > 0 {
 		query += ` LIMIT ?`
 		args = append(args, limit)
 	}
+	return query, args
+}
+
+// FrontierSnapshot returns the discovery queue, highest value first.
+//
+// Passing an empty status returns every state, because the Discovery view is about the shape of
+// what is known against what is not: showing only pending work would hide the progress.
+func (s *Store) FrontierSnapshot(status string, limit int) ([]FrontierItem, error) {
+	query, args := frontierSnapshotQuery(status, limit)
 
 	return queryAll(s, "reading frontier", func(r *sql.Rows) (FrontierItem, error) {
 		var it FrontierItem
@@ -275,6 +296,9 @@ func (s *Store) FrontierSnapshot(status string, limit int) ([]FrontierItem, erro
 		it.UsedBy = []string{}
 		if users.Valid && users.String != "" {
 			it.UsedBy = strings.Split(users.String, ",")
+			// GROUP_CONCAT does not promise an order; the rollup picked which names, not their
+			// sequence. Sorting lands on the list the old ORDER BY produced.
+			sort.Strings(it.UsedBy)
 		}
 		if suites.Valid && suites.String != "" {
 			it.Suites = strings.Split(suites.String, ",")

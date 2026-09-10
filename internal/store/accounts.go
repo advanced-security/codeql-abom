@@ -51,6 +51,27 @@ type Verification struct {
 	Host       string    `json:"host"`
 	VerifiedAt time.Time `json:"verifiedAt"`
 	Accounts   []Account `json:"accounts"`
+	// Scopes the token carried. Empty means nobody asked, which is not the same as a token that
+	// carries none: both are recorded as "cannot say", because guessing decides whether an
+	// operator is locked out of their own bill of materials.
+	Scopes []string `json:"scopes"`
+}
+
+// CanReadMemberships reports whether the token could see the whole organization list.
+//
+// `user/memberships/orgs` returns what you belong to and never what you do not, so an account
+// absent from it is evidence against the operator **only** if the list was complete. A classic
+// token missing `read:org` is refused outright, but a fine-grained or App token reports no
+// classic scopes at all and may answer with only the accounts it was issued for — a partial list
+// that looks exactly like a complete one. Treating that as complete would contradict accounts the
+// operator really does own.
+func (v Verification) CanReadMemberships() bool {
+	for _, s := range v.Scopes {
+		if s == "read:org" || s == "admin:org" {
+			return true
+		}
+	}
+	return false
 }
 
 // ReplaceAccounts records a verification wholesale, discarding whatever preceded it.
@@ -69,6 +90,12 @@ func (s *Store) ReplaceAccounts(v Verification) error {
 		return fmt.Errorf("clearing verified accounts: %w", err)
 	}
 	at := v.VerifiedAt.UTC().Format(time.RFC3339)
+	// NULL when nobody asked, so a later read can tell an unanswered question from a token that
+	// genuinely carried no scopes.
+	var scopes any
+	if len(v.Scopes) > 0 {
+		scopes = strings.Join(v.Scopes, ",")
+	}
 	seen := map[string]bool{}
 	for _, a := range v.Accounts {
 		owner := strings.TrimSpace(a.Owner)
@@ -79,9 +106,9 @@ func (s *Store) ReplaceAccounts(v Verification) error {
 		}
 		seen[strings.ToLower(owner)] = true
 		if _, err := tx.Exec(`
-			INSERT INTO abom_account (owner, kind, role, host, verified_as, verified_at)
-			VALUES (?, ?, ?, ?, ?, ?)`,
-			owner, a.Kind, a.Role, v.Host, v.Login, at); err != nil {
+			INSERT INTO abom_account (owner, kind, role, host, verified_as, verified_at, scopes)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			owner, a.Kind, a.Role, v.Host, v.Login, at, scopes); err != nil {
 			return fmt.Errorf("recording verified account %s: %w", owner, err)
 		}
 	}
@@ -94,14 +121,19 @@ func (s *Store) Accounts() (Verification, error) {
 	accounts, err := queryAll(s, "reading verified accounts", func(r *sql.Rows) (Account, error) {
 		var a Account
 		var host, login, at string
-		if err := r.Scan(&a.Owner, &a.Kind, &a.Role, &host, &login, &at); err != nil {
+		var scopes sql.NullString
+		if err := r.Scan(&a.Owner, &a.Kind, &a.Role, &host, &login, &at, &scopes); err != nil {
 			return a, err
 		}
 		// Every row carries the same verification, so the last one read settles the provenance.
 		v.Host, v.Login = host, login
 		v.VerifiedAt, _ = time.Parse(time.RFC3339, at)
+		v.Scopes = nil
+		if scopes.Valid && scopes.String != "" {
+			v.Scopes = strings.Split(scopes.String, ",")
+		}
 		return a, nil
-	}, `SELECT owner, kind, role, host, verified_as, verified_at
+	}, `SELECT owner, kind, role, host, verified_as, verified_at, scopes
 	      FROM abom_account ORDER BY kind DESC, owner`)
 	if err != nil {
 		return v, err
@@ -127,7 +159,7 @@ func (s *Store) OwnedSet() (map[string]bool, error) {
 	owners, err := queryAll(s, "reading declared accounts", func(r *sql.Rows) (string, error) {
 		var owner string
 		return owner, r.Scan(&owner)
-	}, `SELECT owner FROM abom_owned_scope WHERE enabled = 1`)
+	}, `SELECT owner FROM abom_owned_scope_honored WHERE enabled = 1`)
 	if err != nil {
 		return nil, err
 	}

@@ -60,3 +60,46 @@ func TestReadsGoThroughTheLiveViews(t *testing.T) {
 		t.Fatalf("walking the repository: %v", err)
 	}
 }
+
+// The same argument for the declaration. A read that names `abom_owned_scope` itself honors a
+// declaration `gh` answered against, which is how 44 of somebody else's repositories became this
+// operator's to remediate. `abom_owned_scope_honored` is the view that cannot be forgotten.
+func TestOwnershipReadsGoThroughTheHonoredView(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatalf("resolving repository root: %v", err)
+	}
+
+	// ownedscope.go declares the view, writes the table, and reads it undivided for the page that
+	// has to show a contradicted declaration so the operator can correct it. schema.go declares.
+	allowed := map[string]bool{
+		"internal/store/ownedscope.go": true,
+		"internal/store/schema.go":     true,
+	}
+	direct := regexp.MustCompile(`(?:FROM|JOIN)\s+(abom_owned_scope)\b(?:_honored)?`)
+
+	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") ||
+			strings.HasSuffix(path, "_test.go") {
+			return err
+		}
+		rel, _ := filepath.Rel(root, path)
+		if allowed[filepath.ToSlash(rel)] {
+			return nil
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, m := range direct.FindAllString(string(body), -1) {
+			if strings.HasSuffix(m, "_honored") {
+				continue
+			}
+			t.Errorf("%s reads %q directly; use abom_owned_scope_honored", rel, m)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the repository: %v", err)
+	}
+}

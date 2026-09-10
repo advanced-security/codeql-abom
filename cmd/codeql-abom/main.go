@@ -33,6 +33,8 @@ var subcommands = []subcommand{
 	{"own", runOwned, "Declare which accounts you own, which is what discovery is bounded by."},
 	{"prune", runPrune, "Remove what the declared scope does not reach."},
 	{"bom", runBOM, "Write a bill of materials for the declared scope, or for a named root."},
+	{"stale", runStale, "Report findings no tracked run of their suite still reports."},
+	{"branches", runBranches, "Record which branches the declared repositories protect."},
 	{"selfcheck", runSelfcheck, "Analyze a source tree with a CodeQL suite as a smoke test."},
 }
 

@@ -91,6 +91,54 @@ func TestCompactionForcesEveryClientToReload(t *testing.T) {
 	}
 }
 
+// A refused cursor is correct; a cursor that can never be honored is not.
+//
+// The compaction bumps the epoch, and every generation recorded afterwards has to carry it. When
+// it does not, the epoch comparison can never match again: the delta answers reset for the rest of
+// the database's life and every open page silently reloads the whole payload on every poll.
+// Nothing logs it and the interface looks correct throughout.
+//
+// This test compacts first on purpose. A delta test that does not passes on a corpus where every
+// epoch is already equal — which is every corpus that has never been compacted, and is why this
+// survived at least one compaction unnoticed.
+func TestAGenerationRecordedAfterACompactionIsStillHonored(t *testing.T) {
+	s := pruneFixture(t)
+	if _, err := s.MarkOutsideClosure([]string{"octo-org/app"}); err != nil {
+		t.Fatalf("MarkOutsideClosure: %v", err)
+	}
+	stale := generationOf(t, s)
+	if _, err := s.Compact(); err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	fresh, err := s.RecordGraphGeneration(GraphRebuild{})
+	if err != nil {
+		t.Fatalf("RecordGraphGeneration: %v", err)
+	}
+
+	delta, err := s.GraphDelta(fresh, FullGraphOptions{})
+	if err != nil {
+		t.Fatalf("GraphDelta: %v", err)
+	}
+	if delta.Reset {
+		t.Error("a generation recorded after the compaction was refused, so no cursor can ever " +
+			"be honored again and every client reloads forever")
+	}
+
+	// The guard still has to mean what it meant: the point is to record the epoch honestly, not
+	// to stop checking it.
+	if stale != fresh {
+		before, err := s.GraphDelta(stale, FullGraphOptions{})
+		if err != nil {
+			t.Fatalf("GraphDelta(stale): %v", err)
+		}
+		if !before.Reset {
+			t.Error("a cursor from before the compaction was honored; its row ids name rows " +
+				"that no longer exist")
+		}
+	}
+}
+
 // The foreign key closure is the part that bit when the junk `/` repository was deleted by hand:
 // `abom_finding_node`, `abom_alert_link` and edges naming a node as an endpoint all held it.
 func TestCompactionLeavesNoDanglingReferences(t *testing.T) {

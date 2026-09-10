@@ -23,21 +23,6 @@ export function radialForce(radiusOf, strength) {
     return force;
 }
 
-/** Pulls nodes towards one of a few anchor positions, clustering by category. */
-function anchorForce(anchorOf, strength) {
-    let nodes = [];
-    function force(alpha) {
-        for (const n of nodes) {
-            const a = anchorOf(n);
-            if (!a) continue;
-            n.vx += (a.x - (n.x || 0)) * strength * alpha;
-            n.vy += (a.y - (n.y || 0)) * strength * alpha;
-        }
-    }
-    force.initialize = (n) => { nodes = n; };
-    return force;
-}
-
 /**
  * Draws nodes back towards the origin, hardest on the ones with fewest links.
  *

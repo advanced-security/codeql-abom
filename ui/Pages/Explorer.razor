@@ -20,7 +20,7 @@
                    SelectedValuesChanged="OnOriginsChanged" Dense="true" Margin="Margin.Dense"
                    Variant="Variant.Outlined" Class="abom-filter" ShrinkLabel="true"
                    MultiSelectionTextFunc="@(v => v.Count == 0 ? "any" : $"{v.Count} selected")">
-            <MudSelectItem T="string" Value="@("seed")">In scope</MudSelectItem>
+            <MudSelectItem T="string" Value="@("seed")">Starting point</MudSelectItem>
             <MudSelectItem T="string" Value="@("upstream")">Upstream</MudSelectItem>
             <MudSelectItem T="string" Value="@("external")">Dependency</MudSelectItem>
         </MudSelect>
@@ -90,11 +90,18 @@
                          Color="Color.Primary" Size="Size.Small" Dense="true" Label="Collapse"
                          Disabled="@(_groupBy == "none")" />
         </MudTooltip>
-        <MudTooltip Text="@ScopeHelp">
-            <MudCheckBox T="bool" Value="IsExposureScope" ValueChanged="OnScopeChanged"
-                         Color="Color.Primary" Size="Size.Small" Dense="true"
-                         Label="Only what reaches an advisory" />
-        </MudTooltip>
+        @* A toggle group rather than a checkbox: the scope that is not the default is the one a
+           reader has to be able to see exists. *@
+        <MudToggleGroup T="string" Value="_scope" ValueChanged="OnScopeChanged"
+                        Size="Size.Small" Color="Color.Primary" CheckMark="false"
+                        SelectionMode="SelectionMode.SingleSelection" Class="abom-views">
+            @foreach (var s in Scopes)
+            {
+                <MudToggleItem T="string" Value="@s.Key">
+                    <span class="abom-view-label" title="@s.Help">@s.Label</span>
+                </MudToggleItem>
+            }
+        </MudToggleGroup>
         @if (_groupBy == "workflow" && !ShowSteps)
         {
             @* Actions are referenced by workflows rather than held in one, so with steps folded
@@ -183,7 +190,35 @@
     <MudPaper Elevation="0" Outlined="true" Class="pa-0 abom-explore-canvas">
         <div class="abom-graph-wrap">
             <div id="abom-graph" class="abom-graph-host"></div>
-            @if (_busy)
+            @* Before the spinner, not after it. `_busy` is cleared only by the simulation calling
+               OnLayoutSettled, and an empty graph gives it nothing to lay out — so a page with
+               nothing to draw would otherwise claim to be laying it out forever. *@
+            @if (Frame is not null)
+            {
+                <div class="abom-graph-busy abom-graph-busy-opaque" data-abom-explorer-frame="@Frame">
+                    @if (Frame == "declare")
+                    {
+                        <MudText Typo="Typo.body1">Nothing is declared yet.</MudText>
+                        <MudText Typo="Typo.caption" Class="mt-2 mud-text-secondary">
+                            Declare the accounts you own in
+                            <MudLink Href="/settings">Settings</MudLink>, and the repositories
+                            under them appear here.
+                        </MudText>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body1">
+                            Waiting for @string.Join(", ", _declared!.Select(a => a.Owner)).
+                        </MudText>
+                        @* Names what has not happened rather than asserting a crawl is running:
+                           the page cannot see the queue from here. *@
+                        <MudText Typo="Typo.caption" Class="mt-2 mud-text-secondary">
+                            Nothing has been drawn for it yet. Discovery is where analysis starts.
+                        </MudText>
+                    }
+                </div>
+            }
+            else if (_busy)
             {
                 <div class="@(_animate ? "abom-graph-busy" : "abom-graph-busy abom-graph-busy-opaque")">
                     <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Medium" />
@@ -307,9 +342,10 @@
                 }
             </div>
             @* Color carries kind and only kind. Saying so stops the key implying that a
-               repository under review and one fetched as a dependency look different here. *@
+               repository discovery started from and one fetched as a dependency look different
+               here. *@
             <div class="abom-key-note">
-                <span>in scope and upstream are not colored apart &mdash; use the Origin filter</span>
+                <span>starting points and upstream are not colored apart &mdash; use the Origin filter</span>
             </div>
             <MudText Typo="Typo.caption" Class="mud-text-secondary mt-2 d-block">
                 @PositionMeaning
@@ -322,14 +358,19 @@
     <MudText Typo="Typo.caption" Class="mud-text-secondary">
         @if (_loading)
         {
-            <span>Loading the whole graph…</span>
+            <span>@ScopeBusyMessage</span>
         }
         else if (_collapsed)
         {
-            @* Grouped, not filtered: nothing was removed, so saying "hidden" would be wrong. *@
+            @* Grouping removes nothing, so the groups are not "hidden" — but a filter running
+               underneath a fold still is, and omitting it reported a filtered view as whole. *@
             <span>
                 <b>@_counts.Nodes.ToString("N0")</b> groups by @GroupByLabel, gathered from
                 @_counts.Total.ToString("N0") nodes
+                @if (_counts.Hidden > 0)
+                {
+                    <span>(@_counts.Hidden.ToString("N0") nodes hidden by filters)</span>
+                }
                 <span class="mud-text-secondary">· click a group to expand it</span>
             </span>
         }
@@ -385,7 +426,7 @@
     // one it has nothing to measure from, so it is disabled rather than silently inert.
     private sealed record ViewOption(string Key, string Label, string Meaning,
         bool NeedsSelection = false);
-    private sealed record Counts(int Nodes, int Edges, int Hidden, int Total);
+    internal sealed record Counts(int Nodes, int Edges, int Hidden, int Total);
 
     private sealed record MergeResult(
         bool Reset, long Generation, int Nodes, int Edges, IReadOnlyList<string> Rules)
@@ -545,13 +586,15 @@
 
     private sealed record EdgeKind(string Key, string Label, string Help, int Depth);
 
+    @* One boundary vocabulary, following the Bill of Materials because that is where a
+       non-expert reads these words. The stored values are unchanged. *@
     private static readonly EdgeKind[] EdgeKinds =
     [
-        new("sameOwner", "Same org/owner",
-            "Crosses repositories but stays with one account. Same repo wins over this.", 0),
-        new("sameRepo", "Same repo",
+        new("sameOwner", "Same account",
+            "Crosses repositories but stays with one account. Same repository wins over this.", 0),
+        new("sameRepo", "Same repository",
             "Both ends live in the same repository: internal wiring rather than a supply-chain hop.", 1),
-        new("crossOwner", "Cross org/owner",
+        new("crossOwner", "Another account",
             "The two ends belong to different accounts. This is where the supply chain starts.", 0),
     ];
 
@@ -671,6 +714,9 @@
     private bool _busy = true;
     private string _busyMessage = "Loading the whole graph…";
     private List<string> _selected = [];
+    // Grouping supplies the owner and repository context each node is drawn inside. It arrives
+    // *uncollapsed*: once findings have cut the population, folding gathers away the very nodes
+    // this scope exists to show. Collapsing stays a tool for whoever widens the scope back out.
     private string _groupBy = "owner";
     // Folding is for the whole-graph view, which is 9,811 nodes and renders at under four frames
     // a second unfolded. The exposure scope is 213 and must *not* fold, or the routes it exists
@@ -694,19 +740,39 @@
     private IReadOnlyCollection<string> _rules = [];
     private IReadOnlyCollection<string> _edgeClasses =
         new HashSet<string> { "sameRepo", "sameOwner", "crossOwner" };
-    private IReadOnlyCollection<string> _flags = [];
+    // The second half of the arrival scope. Owned alone is the right population and an unreadable
+    // starburst — 4,805 nodes, 1,564 groups by repository; with findings it is 177. The page is
+    // for "what do I depend on that something is wrong with", not "what do I depend on".
+    private IReadOnlyCollection<string> _flags = ["findings"];
     private IReadOnlyList<string> _ruleIds = [];
     private Counts _counts = new(0, 0, 0, 0);
     private IJSObjectReference? _module;
     private DotNetObjectReference<Explorer>? _self;
     private bool _ready;
 
-    // The view arrives with a reason to be looking at something: the routes by which repositories
-    // under review reach an action an advisory names. 213 nodes against 9,811 on the reference
-    // corpus, so it is the cheapest view as well as the only one that answers a question.
-    private string _scope = "exposure";
+    // The view arrives showing what the operator declared and what it pulls in — the one scope
+    // they already have a word for.
+    private string _scope = "owned";
+
+    private sealed record ScopeChoice(string Key, string Label, string Help);
+
+    // Every scope is bounded by something the operator can name. The whole corpus used to be
+    // offered here as a research view and is not a question about their estate; it grows with
+    // what the crawl walked through, and at 12,550 nodes it drew at 1.5 FPS.
+    private static readonly ScopeChoice[] Scopes =
+    [
+        new("owned", "What you own",
+            "The accounts you declared and everything they reach. Empty until you declare one."),
+        new("exposure", "Advisory routes",
+            "Only the routes by which analyzed repositories reach an action an advisory names."),
+    ];
+
+    /// <summary>The scopes a reader can choose. An empty one would ask the API for everything.</summary>
+    public static IReadOnlyList<string> ScopeKeys => [.. Scopes.Select(s => s.Key)];
 
     private bool IsExposureScope => _scope == "exposure";
+
+    private bool IsOwnedScope => _scope == "owned";
 
     private bool ShowSteps => (_kinds.Contains("step") || _kinds.Contains("job"))
                               && !string.IsNullOrEmpty(_isolated);
@@ -783,6 +849,33 @@
         Follow.Changed += OnFollowChanged;
     }
 
+    protected override async Task OnInitializedAsync()
+    {
+        // Read before the first frame is drawn, so the page never shows the wrong stage and then
+        // corrects itself.
+        try
+        {
+            _declared = await Api.GetOwnedScopeAsync();
+        }
+        catch (HttpRequestException)
+        {
+            // Swallowed on purpose: _declared stays null, which draws no frame at all. Reporting
+            // a transport failure here would put an error over the first-run stages, before the
+            // reader has done anything that could have caused one.
+        }
+    }
+
+    private IReadOnlyList<DeclaredAccount>? _declared;
+
+    // Which of the three first-run stages the page is at, or none once there is a picture.
+    //
+    // Null until the declaration has been read: saying "nothing is here" before the answer
+    // arrives is an absent measurement drawn as a measurement.
+    private string? Frame =>
+        _declared is null || _loading || _counts.Nodes > 0 ? null
+        : _declared.Count == 0 ? "declare"
+        : "waiting";
+
     private static HashSet<string> SplitParam(string? value) =>
         string.IsNullOrWhiteSpace(value)
             ? []
@@ -810,11 +903,11 @@
     {
         if (_module is null) return;
         _loading = true;
-        Busy(IsExposureScope ? "Loading what reaches an advisory…" : "Loading the whole graph…");
+        Busy(ScopeBusyMessage);
 
         var query = new List<string>();
         if (ShowSteps) query.Add("steps=true");
-        if (IsExposureScope) query.Add("scope=exposure");
+        if (!string.IsNullOrEmpty(_scope)) query.Add("scope=" + _scope);
         var url = "/api/graph/full" + (query.Count > 0 ? "?" + string.Join("&", query) : "");
         var loaded = await _module.InvokeAsync<LoadResult>("loadFull", "abom-graph", url, force);
         _ruleIds = loaded.Rules;
@@ -992,13 +1085,45 @@
         StateHasChanged();
     }
 
-    private void SyncAddress()
+    /// <summary>
+    /// Puts the whole view back in the address: presentation, then the predicate in its canonical
+    /// form.
+    ///
+    /// <para>
+    /// The predicate half used to be dropped here, so changing a rule filter and navigating away
+    /// lost it silently. It is written through <see cref="ViewSpec"/> rather than assembled inline
+    /// because the same text is read by the graph API and by the pull request gate, and three
+    /// hand-rolled serializers would drift without anything reporting it.
+    /// </para>
+    /// </summary>
+    public void SyncAddress()
     {
-        var query = string.IsNullOrEmpty(_isolated)
-            ? $"/explore?view={_view}"
-            : $"/explore?selection={Uri.EscapeDataString(_isolated)}&view={_view}";
-        Nav.NavigateTo(query, forceLoad: false);
+        var presentation = new List<string> { $"view={_view}" };
+        if (!string.IsNullOrEmpty(_isolated))
+        {
+            presentation.Insert(0, $"selection={Uri.EscapeDataString(_isolated)}");
+        }
+
+        var predicate = CurrentSpec().ToQueryString();
+        var query = string.Join("&", presentation);
+        if (predicate.Length > 0) query = $"{query}&{predicate}";
+
+        Nav.NavigateTo($"/explore?{query}", forceLoad: false);
     }
+
+    /// <summary>The portable half of what is on screen. Presentation is deliberately absent.</summary>
+    private ViewSpec CurrentSpec() => new()
+    {
+        Scope = _scope,
+        Search = _search,
+        Kinds = [.. _kinds],
+        Origins = [.. _origins],
+        Rules = [.. _rules],
+        EdgeClass = [.. _edgeClasses],
+        RefStyle = _refStyle,
+        MinReach = _minReach ?? 0,
+        Flags = [.. _flags],
+    };
 
     private async Task ClearSelection() => await ClearSelection(recenter: true);
 
@@ -1065,22 +1190,22 @@
         if (_collapsed) await Refilter();
     }
 
-    private string ScopeHelp => IsExposureScope
-        ? "Showing only the routes by which repositories in scope reach an action an advisory "
-          + "names. Turn this off for every dependency, which is far larger and arrives folded."
-        : "Show only the routes to an action an advisory names — far smaller, and the question "
-          + "most people open this page to answer.";
-
-    private async Task OnScopeChanged(bool exposureOnly)
+    private string ScopeBusyMessage => _scope switch
     {
-        _scope = exposureOnly ? "exposure" : string.Empty;
-        _groupBy = "owner";
-        await LoadGraph(force: true);
-        // The two scopes need opposite treatment, so the fold follows the scope rather than being
-        // left wherever the reader last put it.
-        await OnCollapsedChanged(!exposureOnly);
-    }
+        "owned" => "Loading what you own…",
+        "exposure" => "Loading what reaches an advisory…",
+        _ => "Loading…",
+    };
 
+    private async Task OnScopeChanged(string value)
+    {
+        _scope = value;
+        await LoadGraph(force: true);
+        _groupBy = "owner";
+        // Every scope is now small enough to draw, and folding gathers away the nodes it exists
+        // to show.
+        await OnCollapsedChanged(false);
+    }
     private async Task OnCollapsedChanged(bool value)
     {
         _collapsed = value;
@@ -1138,7 +1263,7 @@
         StateHasChanged();
     }
 
-    private sealed record LoadResult(
+    internal sealed record LoadResult(
         int Nodes, int Edges, IReadOnlyList<string> Rules, bool Cached, long Generation);
 
     public async ValueTask DisposeAsync()

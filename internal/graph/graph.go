@@ -132,12 +132,8 @@ func (b *Builder) load() (*model, error) {
 // Ordered by row id so the most recent statement about a step wins deterministically; several
 // runs of the same query against different commits may each have said something.
 func (m *model) loadConditions(s *store.Store) error {
-	rows, err := s.DB().Query(`
-		SELECT n.row_id, COALESCE(o.value, '')
-		FROM abom_observation o
-		JOIN abom_node_live n ON n.node_key = o.subject_key
-		WHERE o.subject_kind = ? AND o.name = ?
-		ORDER BY o.row_id`, store.SubjectNode, store.ObservationCondition)
+	rows, err := s.DB().Query(store.ConditionObservationsQuery,
+		store.SubjectNode, store.ObservationCondition)
 	if err != nil {
 		return fmt.Errorf("loading step conditions: %w", err)
 	}
@@ -295,6 +291,11 @@ func (b *Builder) RebuildAggregates() error {
 	// Classifying first: it only ever fills edges that have none, so it costs nothing once the
 	// graph and the classification agree, and the aggregates below can read it.
 	if _, err := b.Store.ClassifyEdgeBoundaries(); err != nil {
+		return err
+	}
+	// Same shape: the queue already resolved these tags, and recording them is what lets a
+	// commit-pinned reference be named as the version GitHub can match an advisory against.
+	if _, err := b.Store.BackfillRefResolutions(); err != nil {
 		return err
 	}
 	if err := b.BuildBlastRadius(); err != nil {

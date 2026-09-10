@@ -46,6 +46,15 @@ public abstract class AbomTestContext : BunitContext
     protected void Answer(string path, string json) => _handler.Answer(path, json);
 
     /// <summary>
+    /// Answers requests for <paramref name="path"/> with <paramref name="status"/>.
+    ///
+    /// A refusal the server states deliberately arrives as a status code, and a page that
+    /// handles it well is indistinguishable from one that never asked unless a test can make
+    /// the call actually fail.
+    /// </summary>
+    protected void Fail(string path, HttpStatusCode status) => _handler.Fail(path, status);
+
+    /// <summary>
     /// Every request the component made, in order.
     ///
     /// A page that renders a declaration correctly and writes the wrong one looks identical on
@@ -74,9 +83,12 @@ public abstract class AbomTestContext : BunitContext
         // Ordered, because which stub answers an overlapping path is a decision tests make by
         // registering the specific one first. A dictionary left that to its own ordering.
         private readonly List<(string Path, string Json)> _answers = [];
+        private readonly List<(string Path, HttpStatusCode Status)> _failures = [];
 
         public Dictionary<string, TaskCompletionSource> Gates { get; } = [];
         public List<SentRequest> Sent { get; } = [];
+
+        public void Fail(string path, HttpStatusCode status) => _failures.Add((path, status));
 
         public void Answer(string path, string json)
         {
@@ -103,6 +115,17 @@ public abstract class AbomTestContext : BunitContext
                 if (url.Contains(path, StringComparison.Ordinal))
                 {
                     await gate.Task.WaitAsync(cancellationToken);
+                }
+            }
+            foreach (var (path, status) in _failures)
+            {
+                if (url.Contains(path, StringComparison.Ordinal))
+                {
+                    return new HttpResponseMessage(status)
+                    {
+                        Content = new StringContent($"{{\"error\":\"refused {path}\"}}",
+                            Encoding.UTF8, "application/json"),
+                    };
                 }
             }
             foreach (var (path, json) in _answers)

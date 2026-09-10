@@ -10,7 +10,7 @@
 
 import { instances } from './state.js';
 import {
-    seed, repoOf, orgOf, edgeClass, boundaryClass, groupOf, anchorKey, keyOf, touches, touchesAny,
+    seed, repoOf, orgOf, edgeClass, boundaryClass, groupOf, anchorKey, keyOf,
     ungroupedName,
 } from './topology.js';
 import {
@@ -55,11 +55,6 @@ export {
 
 
 
-
-/** The sole selected key when exactly one is selected, otherwise empty. */
-function soleSelection(it) {
-    return it.selected && it.selected.size === 1 ? [...it.selected][0] : '';
-}
 
 // ---------------------------------------------------------------------------
 // Shapes
@@ -946,6 +941,7 @@ export function setAnimate(elementId, animate) {
     if (it.palette) {
         it.graph.linkDirectionalParticles(l => particleCount(it, l));
     }
+    wake(it);
 }
 
 /** Re-measures the host, for when something beside it changed size. */
@@ -959,6 +955,7 @@ export function setPalette(elementId, palette) {
     if (!it) return;
     it.palette = palette;
     paint(it);
+    wake(it);
 }
 
 /**
@@ -986,6 +983,7 @@ export function setView(elementId, view) {
     if (recolors && it.shapes) {
         it.graph.nodeThreeObject(it.graph.nodeThreeObject());
     }
+    wake(it);
     it.graph.d3ReheatSimulation();
 }
 
@@ -995,6 +993,9 @@ export function setPriorities(elementId, priorities) {
     for (const n of it.all.nodes) {
         n.priority = priorities[n.key] || 0;
     }
+    // The rendered node set does not change on a view switch, so nothing else recomputes this
+    // and the force would divide by whatever the last rebuild left behind.
+    it.maxPriority = Math.max(1, ...it.all.nodes.map(n => n.priority || 0));
 }
 
 
@@ -1008,6 +1009,7 @@ export function setGroupBy(elementId, by) {
     if (!it || it.groupBy === by) return;
     it.groupBy = by || 'none';
     applyForces(it);
+    wake(it);
     it.graph.d3ReheatSimulation();
 }
 
@@ -1123,6 +1125,7 @@ export function setSelection(elementId, keys) {
     if (!it) return;
     it.selected = new Set((Array.isArray(keys) ? keys : [keys]).filter(Boolean));
     applySelection(it);
+    wake(it);
 }
 
 /**
@@ -1195,38 +1198,6 @@ function frameKeys(it, keys) {
 export function fit(elementId) {
     const it = instances.get(elementId);
     if (it) fitCore(it);
-}
-
-/** Viewport position of a node, so a caller can drive a real click at real coordinates. */
-export function nodeScreenPosition(elementId, key) {
-    const it = instances.get(elementId);
-    if (!it) return null;
-    const node = it.graph.graphData().nodes.find(n => n.key === key);
-    if (!node || node.x === undefined) return null;
-    const p = it.graph.graph2ScreenCoords(node.x, node.y, node.z || 0);
-    if (!p) return null;
-    const box = it.el.getBoundingClientRect();
-    return { x: box.left + p.x, y: box.top + p.y };
-}
-
-export function nodeKeys(elementId) {
-    const it = instances.get(elementId);
-    return it ? it.graph.graphData().nodes.map(n => n.key) : [];
-}
-
-/** Frames rendered over a sampling window, for benchmarking at scale. */
-export function sampleFrameRate(ms) {
-    return new Promise(resolve => {
-        let frames = 0;
-        const start = performance.now();
-        const tick = () => {
-            frames++;
-            const elapsed = performance.now() - start;
-            if (elapsed < ms) requestAnimationFrame(tick);
-            else resolve(Math.round(frames * 1000 / elapsed));
-        };
-        requestAnimationFrame(tick);
-    });
 }
 
 export function dispose(elementId, keepEntry) {

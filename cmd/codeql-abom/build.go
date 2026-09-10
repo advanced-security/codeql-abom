@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 
-	"github.com/advanced-security/codeql-abom/internal/catalog"
 	"github.com/advanced-security/codeql-abom/internal/ingest"
 	"github.com/advanced-security/codeql-abom/internal/pipeline"
 	"github.com/advanced-security/codeql-abom/internal/runner"
@@ -73,7 +72,7 @@ func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 
 	w := store.NewWriter(s, 0)
 	p := &pipeline.Pipeline{
-		Source:   catalog.New(*apiURL, githubToken(), nil),
+		Source:   githubClient(ctx, *apiURL, s),
 		Runner:   &runner.Runner{CodeQLPath: *codeqlPath, Lock: runner.SharedLock()},
 		Decode:   pipeline.DefaultDecoder(*codeqlPath),
 		Store:    s,

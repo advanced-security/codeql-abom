@@ -123,11 +123,7 @@ func (c *Checkout) Fetch(ctx context.Context, dest, owner, repo, ref string) (Tr
 
 	// The ref is recorded as asked for, not as "HEAD": a row for `v4` that reported HEAD could
 	// never be told apart from one analyzed at the default branch.
-	analyzed := ref
-	if analyzed == "" {
-		analyzed = "HEAD"
-	}
-	tree := Tree{Dir: dest, Ref: analyzed, SHA: strings.TrimSpace(sha)}
+	tree := Tree{Dir: dest, Ref: analyzedRef(ref), SHA: strings.TrimSpace(sha)}
 	if !hasActionsContent(dest) {
 		return Tree{}, fmt.Errorf("%w: %s has no workflows or action manifest", ErrUnavailable, repo)
 	}

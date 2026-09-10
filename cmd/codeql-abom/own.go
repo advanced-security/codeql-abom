@@ -9,6 +9,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/advanced-security/codeql-abom/internal/declare"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
@@ -52,15 +53,15 @@ func runOwned(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 
 	switch {
 	case *clear:
-		if err := s.SetOwnedScope(nil); err != nil {
+		if err := s.SetOwnedScope(nil, store.DeclaredByCLI); err != nil {
 			return fmt.Errorf("own: %w", err)
 		}
 	case len(orgs) > 0 || len(users) > 0:
-		accounts, err := declaration(orgs, users, includes)
+		accounts, err := declare.Accounts(orgs, users, includes)
 		if err != nil {
 			return fmt.Errorf("own: %w", err)
 		}
-		if err := s.SetOwnedScope(accounts); err != nil {
+		if err := s.SetOwnedScope(accounts, store.DeclaredByCLI); err != nil {
 			return fmt.Errorf("own: %w", err)
 		}
 	case len(includes) > 0:
@@ -73,50 +74,6 @@ func runOwned(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	writeDeclaredScope(stdout, declared)
 	return nil
-}
-
-// declaration folds the flags into accounts, refusing an include that belongs to none of them.
-//
-// An include for an undeclared account would otherwise restrict nothing and read as accepted,
-// leaving a typo looking like a configuration.
-func declaration(orgs, users, includes repeated) ([]store.DeclaredAccount, error) {
-	byOwner := map[string]*store.DeclaredAccount{}
-	order := []string{}
-	add := func(owner, kind string) {
-		key := strings.ToLower(owner)
-		if _, ok := byOwner[key]; ok {
-			return
-		}
-		byOwner[key] = &store.DeclaredAccount{Owner: owner, Kind: kind, Enabled: true}
-		order = append(order, key)
-	}
-	for _, o := range orgs {
-		add(o, store.AccountOrganization)
-	}
-	// Named rather than discovered: a personal account is one person's, so it is opted into.
-	for _, u := range users {
-		add(u, store.AccountUser)
-	}
-
-	for _, in := range includes {
-		owner, repo, found := strings.Cut(in, "/")
-		if !found || owner == "" || repo == "" {
-			return nil, fmt.Errorf("%q does not name owner/repo", in)
-		}
-		a, ok := byOwner[strings.ToLower(owner)]
-		if !ok {
-			return nil, fmt.Errorf("--include %s names %s, which was not declared with --org or --user",
-				in, owner)
-		}
-		a.IncludesOnly = true
-		a.Includes = append(a.Includes, repo)
-	}
-
-	out := make([]store.DeclaredAccount, 0, len(order))
-	for _, key := range order {
-		out = append(out, *byOwner[key])
-	}
-	return out, nil
 }
 
 func writeDeclaredScope(w io.Writer, accounts []store.DeclaredAccount) {

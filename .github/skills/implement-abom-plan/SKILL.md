@@ -30,7 +30,7 @@ Resolve a named argument in this order, stopping at the first that matches:
    *Per-tier suite controls*.
 3. A plan filename stem, e.g. `supply-chain` → `plans/db/supply-chain.md`.
 4. An entry title in **`plans/implemented.md`** — see below. That file is git-ignored, so it may
-   be absent; absence is not evidence the work has not shipped.
+   be absent; absence is not evidence the work has not built.
 
 And then:
 
@@ -72,6 +72,19 @@ Claims that have already been false in this repository:
 - "the queue is empty so we are done" — 415 dependencies existed that had never been queued.
 - "these are out of scope" — the measurement could not distinguish the thing it was asked about.
 - `api/advisories.md` item 3 asked for a `store.AdvisoryPackages()` that had existed all along.
+- **"nothing detects that an upstream reference moved"** — `expand.Rechecker` had been doing it
+  for weeks, wired in, with 1,359 of 1,451 analyses probed. A duplicate was written and deleted.
+
+**Grep for the behavior, not for the name you would give it.** That last one was missed by
+searching `webhook`, `event` and `RequeueStale` — all reasonable, none of them the word the
+existing code used, which was `recheck`. Before concluding something does not exist, search two or
+three *synonyms* for what it would do:
+
+```bash
+grep -rniE "drift|recheck|stale|refresh|revisit" --include=*.go internal/ | grep -v _test.go
+```
+
+It has now happened twice, and both times the cost was a full implementation thrown away.
 
 Correct the plan where it is wrong, re-rank if a dependency has since landed, and say what
 changed. Re-ranking decides what `next` means; it never overrides an entry the user named.
@@ -94,11 +107,18 @@ If discovery is running, pause it from the Discovery page or `make stop`, and sa
 ## 3. Snapshot the corpus
 
 ```bash
-cp "$ABOM_DB" /tmp/abom-before.db
+sqlite3 "$ABOM_DB" ".backup /tmp/abom-before.db"
 ```
 
 Before any code changes. Step 6 has nothing to diff against otherwise, and the snapshot costs
 nothing.
+
+**Do not use `cp`.** The database runs in WAL mode, so `cp` copies the main file and leaves the
+write-ahead log behind — the snapshot is silently missing everything committed since the last
+checkpoint. Measured 2026-09-08: `cp` produced 16,809 edges against the live 16,826, and a 4.4 MB
+WAL was sitting there unread. The baseline looks fine, diffs cleanly, and is wrong, so the
+symptom is a step-6 number that moved when nothing should have moved. `.backup` and
+`VACUUM INTO` both read through the WAL; `cp` does not.
 
 Never point work at the live database when a copy will do. Run a second server on its own port
 and its own copy rather than disturbing the one that is up.
@@ -163,21 +183,49 @@ confirmed v1–v8 all exist. Verify the world first.
 
 Back to **`maintain-abom-plans`**:
 
-- Update the plan's **Status** line, in one sentence. "Shipped with a known approximation" is a
-  status; "in progress" is not.
-- **Record what turned out wrong.** A plan that only lists successes teaches nothing. The corpus
-  check exists to falsify the design, and when it does, that paragraph is the most valuable one
-  in the file. The advisory plan's trigger was inert on a drained queue and its refresh blocked
-  the cycle for 109 seconds; neither was predicted.
+- Update the plan's **Status** line, in one sentence, present tense and undated. "Built with a known
+  approximation" is a status; "in progress" is not.
+- **Remove what landed from the plan.** Delete the pending item outright rather than striking it
+  through — plans describe what is next, and git history is the record of what shipped. If that was
+  the plan's last pending item, **retire the whole file**: move any durable rule to
+  `.github/instructions/**`, any statement of what the system now does to `docs/architecture.md`,
+  then delete the plan, fix every reference to it, and drop its entry from `next.md`.
+- **Record what turned out wrong**, in `plans/implemented.md`. A record that only lists successes
+  teaches nothing. The corpus check exists to falsify the design, and when it does, that paragraph is
+  the most valuable one written. The advisory plan's trigger was inert on a drained queue and its
+  refresh blocked the cycle for 109 seconds; neither was predicted.
 - Move the entry into **`plans/implemented.md`** with its measured before/after, newest first, and
   re-rank what is left in `next.md`. That file is **git-ignored on purpose** — git history is the
-  record of what shipped, and this is the reasoning behind it. Do not stage it, and do not paste
+  record of what was built, and this is the reasoning behind it. Do not stage it, and do not paste
   it back into `next.md`, which keeps a pointer only.
 
 ## 8. Stop at verified
 
 Never `git commit`, `git push`, `git commit --amend`, `git reset --hard` or `git push --force`.
 Resolve, verify, then report what changed and what it measured. Committing is the user's call.
+
+**The same rule covers writing to GitHub's APIs, and more strictly.** A commit is local and
+reversible; a dependency snapshot is neither. There is no delete endpoint, a snapshot naming a real
+manifest **replaces** GitHub's own static analysis rather than adding to it, and on 2026-09-08 a
+partial one removed two correct dependencies from a live repository. The "repair" that followed
+added a fabricated dependency which then stayed live for a day, because snapshots do not expire and
+GitHub reports them as fact. So:
+
+- Write only to `advanced-security/codeql-abom-test1` or `-test2`, which exist for this.
+- **Ask before the first write to any new target.** Being told to run a plan is not authorization
+  for an irreversible action against a third party's system — that inference is exactly what went
+  wrong, and "the user re-invoked the skill" is not consent.
+- Reads are free. Probe with `GET` as far as it will take you before reaching for `POST`.
+- **State the expected result before writing**, so the read-back can falsify it. Both repairs were
+  checked this way and both predictions held; a write whose outcome was not predicted is a write
+  whose outcome cannot be wrong.
+- **Record every write**, including ones made by hand. GitHub offers no way to ask what has been
+  submitted to a repository, so a submission nobody wrote down is one nobody can find. A `gh`
+  one-liner bypasses ABOM's ledger and recreates exactly the problem the ledger exists to solve.
+- To undo one: same `job.correlator` and `detector.name`, empty `manifests` object. Supersession
+  keys on the detector **name**, not its version — verified across three snapshots declaring
+  `0.0.1`, `0.0.2` and `0.0.3`. An empty `resolved` inside a manifest is *not* the same thing: it
+  removes the packages and leaves the path owned and permanently blank.
 
 ## The rule that makes this worth running
 

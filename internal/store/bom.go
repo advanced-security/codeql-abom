@@ -1,10 +1,20 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 )
+
+// ErrNoBOMRoot reports that nothing has been declared and no root was named, so there is nothing
+// for a bill of materials to be about.
+//
+// A distinct error rather than a message, because a caller has to be able to tell it from a
+// genuine failure without matching on prose: this one means the reader has not done something
+// yet, and every other one means ABOM has.
+var ErrNoBOMRoot = errors.New(
+	"store: a bill of materials needs a root; declare an owned scope or name one")
 
 // BOM is a bill of materials: what a set of roots is composed of, what is known about each piece,
 // and what was examined to produce the answer.
@@ -62,8 +72,16 @@ type BOMFinding struct {
 	Message          string  `json:"message,omitempty"`
 	Severity         string  `json:"severity,omitempty"`
 	SecuritySeverity float64 `json:"securitySeverity,omitempty"`
+	// Provider is the producer that made the claim. Empty means nobody recorded one.
+	Provider string `json:"provider,omitempty"`
+	// Reproducible answers whether this provider's findings can be produced again from what was
+	// recorded. Nil when the provider is unknown or unrecognized, because "nobody asked" and "it
+	// cannot be done" are different claims and a bare false would state the second for both.
+	Reproducible *bool `json:"reproducible,omitempty"`
 	// Provenance, each independently absent. Empty means not recorded, and the document says so
-	// rather than implying the claim is unbacked or that it is fully attested.
+	// rather than implying the claim is unbacked or that it is fully attested. These three are
+	// CodeQL's provenance in particular: another provider leaves them empty because that is not
+	// what backs it, which is why Provider has to be read first.
 	RunKey     string `json:"runKey,omitempty"`
 	PackDigest string `json:"packDigest,omitempty"`
 	ResultHash string `json:"resultHash,omitempty"`
@@ -108,6 +126,10 @@ type BOMCoverage struct {
 	// actually held, so a document cannot imply attestation it does not have.
 	FindingsWithoutHash   int `json:"findingsWithoutHash"`
 	FindingsWithoutDigest int `json:"findingsWithoutDigest"`
+	// FindingsWithoutProvider counts findings nobody attributed to a producer. Distinct from
+	// untraced: a finding can name its CodeQL run and still not say that CodeQL is what made it,
+	// which is the state every finding written before providers existed is in.
+	FindingsWithoutProvider int `json:"findingsWithoutProvider"`
 }
 
 // BOMOptions selects what the document is about.
@@ -141,8 +163,7 @@ func (s *Store) BillOfMaterials(opts BOMOptions) (BOM, error) {
 	// An undeclared scope is not an empty one. Emitting a document with no components would
 	// report that the organization depends on nothing, which is a fabricated fact.
 	if len(roots) == 0 {
-		return out, fmt.Errorf(
-			"store: a bill of materials needs a root; declare an owned scope or name one")
+		return out, ErrNoBOMRoot
 	}
 	out.Roots = append(out.Roots, roots...)
 	sort.Strings(out.Roots)

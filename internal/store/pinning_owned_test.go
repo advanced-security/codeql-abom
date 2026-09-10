@@ -14,7 +14,7 @@ func TestOwnedSplitLeavesTheUndividedTotalIntact(t *testing.T) {
 
 	if err := s.SetOwnedScope([]DeclaredAccount{
 		{Owner: "octo-org", Kind: AccountOrganization, Enabled: true},
-	}); err != nil {
+	}, DeclaredByCLI); err != nil {
 		t.Fatalf("SetOwnedScope: %v", err)
 	}
 	after, err := s.PinningTotals(PinningFilter{})
@@ -34,7 +34,7 @@ func TestOwnedSplitReconcilesToTheTotal(t *testing.T) {
 	s := subgraphFixture(t)
 	if err := s.SetOwnedScope([]DeclaredAccount{
 		{Owner: "octo-org", Kind: AccountOrganization, Enabled: true},
-	}); err != nil {
+	}, DeclaredByCLI); err != nil {
 		t.Fatalf("SetOwnedScope: %v", err)
 	}
 
@@ -57,7 +57,7 @@ func TestPinningRowsAreMarkedOwned(t *testing.T) {
 	s := subgraphFixture(t)
 	if err := s.SetOwnedScope([]DeclaredAccount{
 		{Owner: "octo-org", Kind: AccountOrganization, Enabled: true},
-	}); err != nil {
+	}, DeclaredByCLI); err != nil {
 		t.Fatalf("SetOwnedScope: %v", err)
 	}
 

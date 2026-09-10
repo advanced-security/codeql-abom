@@ -116,4 +116,55 @@ public class ObjectivePanelTests : AbomTestContext
 
         cut.WaitForAssertion(() => Assert.Contains("No cycle has run yet", cut.Markup));
     }
+
+    // A depth chip counts settled work, which is analyzed plus what could not be fetched. The
+    // tier chips count analyzed alone, so on a real corpus the two decompositions of one queue
+    // differed by exactly the unavailable count and nothing on screen reconciled them.
+    //
+    // The fixture makes done and settled differ on purpose: every other fixture here has them
+    // equal, which is a shape that cannot exercise this at all.
+    private const string WithUnavailable = """
+        {"progress":[
+           {"depth":1,"total":10,"done":6,"settled":9,"pending":1,"running":0,"available":1}],
+         "working":1,"hasOutstanding":true,"maxDepth":5,
+         "recent":[],
+         "totals":{"cycles":3,"millis":9000,"fetches":6,"builds":6,"evaluations":6,
+                   "probes":0,"analyzed":6,"discovered":12}}
+        """;
+
+    [Fact]
+    public void ADepthCountsSettledWorkAndSaysWhatThatIncludes()
+    {
+        Serve(WithUnavailable);
+
+        var cut = Render<Pages.Discovery>();
+
+        // The chip keeps counting settled, because a depth whose remaining rows can never be
+        // fetched is finished and must not read as permanently incomplete.
+        cut.WaitForAssertion(() => Assert.Contains("9 of 10", Flat(cut.Markup)));
+        // And it says so, so the figure can be reconciled with the analyzed count elsewhere.
+        Assert.Contains("settled", cut.Markup, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("unavailable", cut.Markup, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // The split itself has to be reachable, or "settled includes unavailable" is a rule without
+    // the numbers that let a reader apply it.
+    [Fact]
+    public void ADepthChipCarriesTheAnalyzedAndUnavailableSplit()
+    {
+        Serve(WithUnavailable);
+
+        var cut = Render<Pages.Discovery>();
+
+        cut.WaitForAssertion(() => Assert.Contains("9 of 10", Flat(cut.Markup)));
+        var chip = cut.Find(".abom-objective-depths [title]");
+        var title = chip.GetAttribute("title") ?? "";
+        Assert.Contains("6", title);
+        Assert.Contains("3", title);
+    }
+
+    // Razor line breaks land inside the rendered text, so "9 of 10" is "9 of\n10" in the markup.
+    // Normalizing is what keeps the assertion about the figure rather than about the template.
+    private static string Flat(string markup) =>
+        System.Text.RegularExpressions.Regex.Replace(markup, @"\s+", " ");
 }

@@ -96,6 +96,45 @@ func TestClassifyingTwiceChangesNothing(t *testing.T) {
 	}
 }
 
+// Re-analysis can move an edge to a different target — that is how correcting the parser
+// corrects the graph. The classification only fills what is unset, so an edge that keeps the
+// class of a target it no longer points at is a stale verdict that no later pass revisits.
+func TestARepointedEdgeIsClassifiedAgain(t *testing.T) {
+	s := boundaryFixture(t)
+	classify(t, s)
+	if got := boundaryOf(t, s, "stranger"); got != BoundaryCrossOwner {
+		t.Fatalf("boundary = %q, want %q before the target moves", got, BoundaryCrossOwner)
+	}
+
+	w := NewWriter(s, 0)
+	// A re-ingest names its endpoints again, which is what gives this writer their row ids.
+	for _, n := range []Node{
+		{Key: "octo-org/app/.github/workflows/ci.yml", Kind: "workflow"},
+		{Key: "octo-org/shared", Kind: "action", Owner: "octo-org", Repo: "shared",
+			IsExternal: true},
+	} {
+		if err := w.AddNode(n); err != nil {
+			t.Fatalf("AddNode(%s): %v", n.Key, err)
+		}
+	}
+	if err := w.AddEdge(Edge{
+		Key: "stranger", SrcKey: "octo-org/app/.github/workflows/ci.yml",
+		DstKey: "octo-org/shared", Kind: "step-uses-action",
+		FilePath: ".github/workflows/ci.yml", StartLine: 1,
+	}); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	classify(t, s)
+	if got := boundaryOf(t, s, "stranger"); got != BoundarySameOwner {
+		t.Errorf("boundary = %q, want %q: the edge now points at octo-org/shared", got,
+			BoundarySameOwner)
+	}
+}
+
 // A node upsert never revises repository_row_id, so a repository first seen as somebody else's
 // dependency has none. Reading the target from the node's own owner and repo is what makes an
 // external action classifiable at all.

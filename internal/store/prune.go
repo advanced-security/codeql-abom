@@ -36,6 +36,10 @@ type PruneReport struct {
 	Repositories int `json:"repositories"`
 	Nodes        int `json:"nodes"`
 	Edges        int `json:"edges"`
+	// Queued is frontier rows for repositories the closure does not reach. Removing the graph and
+	// leaving these behind does not settle: the crawl claims them, ingestion is not closure-gated,
+	// and their nodes come straight back.
+	Queued int `json:"queued"`
 }
 
 // ExplainOutsideClosure reports what a prune would remove, without removing it.
@@ -81,6 +85,12 @@ func (s *Store) pruneOutsideClosure(inClosure []string, act bool) (PruneReport, 
 		           AND e.removed_at IS NULL
 		           AND LOWER(er.repository_full_name) IN ` + list + `))`
 
+	// A queue row names the repository it will fetch, so the same boundary decides it. Rows with no
+	// repository are left alone: they name nothing the closure can rule on, and guessing would
+	// delete work over a blank field.
+	deadQueueRows := `owner <> '' AND repo <> ''
+	                  AND LOWER(owner || '/' || repo) NOT IN ` + list
+
 	counts := []struct {
 		into  *int
 		query string
@@ -90,8 +100,19 @@ func (s *Store) pruneOutsideClosure(inClosure []string, act bool) (PruneReport, 
 	}{
 		{&out.Edges, `SELECT COUNT(*) FROM abom_edge WHERE ` + LiveEdge + ` AND ` + deadEdges, 1},
 		{&out.Nodes, `SELECT COUNT(*) FROM abom_node WHERE ` + LiveNode + ` AND ` + deadNodes, 3},
-		{&out.Repositories, `SELECT COUNT(*) FROM repository
-		                      WHERE LOWER(repository_full_name) NOT IN ` + list, 1},
+		// Repositories that lose something, not repositories that merely sit outside the closure.
+		// The looser count reports the same number after a prune as before it, and an outside
+		// repository whose nodes are all held live by an edge from inside loses nothing at all —
+		// both read as work that does not exist. Measured on the real corpus: 838, then 1, then 0.
+		{&out.Repositories, `SELECT COUNT(*) FROM (
+		        SELECT r.row_id FROM abom_node
+		          JOIN repository r ON r.row_id = abom_node.repository_row_id
+		         WHERE ` + LiveNode + ` AND ` + deadNodes + `
+		        UNION
+		        SELECT r.row_id FROM abom_edge
+		          JOIN repository r ON r.row_id = abom_edge.repository_row_id
+		         WHERE ` + LiveEdge + ` AND ` + deadEdges + `)`, 4},
+		{&out.Queued, `SELECT COUNT(*) FROM abom_frontier WHERE ` + deadQueueRows, 1},
 	}
 	for _, c := range counts {
 		if err := s.db.QueryRow(c.query, repeated(args, c.lists)...).Scan(c.into); err != nil {
@@ -127,6 +148,16 @@ func (s *Store) pruneOutsideClosure(inClosure []string, act bool) (PruneReport, 
 			return PruneReport{}, fmt.Errorf("marking what is outside the closure: %w", err)
 		}
 	}
+
+	// The queue goes with the graph, and it goes now rather than at compaction: a crawl between
+	// the two would claim these rows, analyze them, and write their nodes straight back, because
+	// only onward discovery is closure-gated and ingestion is not. Deleted rather than tombstoned
+	// because the frontier is a work queue, not part of the append-only graph — and the ledger
+	// still records that the work happened, so re-declaring the account does not redo it.
+	if _, err := s.db.Exec(
+		`DELETE FROM abom_frontier WHERE `+deadQueueRows, args...); err != nil {
+		return PruneReport{}, fmt.Errorf("removing queued work outside the closure: %w", err)
+	}
 	return out, nil
 }
 
@@ -142,10 +173,9 @@ func (s *Store) nextGeneration(bumpEpoch bool) (int64, error) {
 		`SELECT MAX(row_id) FROM abom_edge`).Scan(&edgeMark); err != nil {
 		return 0, fmt.Errorf("reading the edge watermark: %w", err)
 	}
-	var epoch int64
-	if err := s.db.QueryRow(
-		`SELECT COALESCE(MAX(epoch), 0) FROM abom_graph_generation`).Scan(&epoch); err != nil {
-		return 0, fmt.Errorf("reading the epoch: %w", err)
+	epoch, err := s.currentEpoch()
+	if err != nil {
+		return 0, err
 	}
 	// A new row rather than an update, so a cursor pointing at the previous generation still
 	// reads the previous epoch and can be told its row ids no longer mean anything.
@@ -175,6 +205,19 @@ func (s *Store) removedSince(table string, since int64) ([]string, error) {
 		var k string
 		return k, r.Scan(&k)
 	}, `SELECT `+key+` FROM `+table+` WHERE removed_generation > ? ORDER BY row_id`, since)
+}
+
+// Tombstoned counts nodes removed from view and still on disk.
+//
+// Reads the raw table on purpose: a tombstone is precisely what the live views hide, so asking
+// them would always answer zero.
+func (s *Store) Tombstoned() (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM abom_node WHERE removed_at IS NOT NULL`).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("counting tombstoned nodes: %w", err)
+	}
+	return n, nil
 }
 
 // Compact deletes what has been tombstoned and ends the meaning of every row-id cursor.

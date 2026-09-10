@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 )
 
@@ -83,9 +84,139 @@ type FullGraphOptions struct {
 	IncludeSteps bool
 	// Scope narrows the graph to a reason for looking at it. Empty is the whole corpus.
 	Scope string
+	// Closure is the repositories the declared scope reaches, as KeepList returns them. Read only
+	// under ScopeOwned, and empty there means an empty graph rather than the whole corpus.
+	Closure []string
 	// Boundary keeps only relationships of one class. Empty keeps every class *and* the
 	// unclassified, because absent is not a class to filter on.
 	Boundary string
+	// Origins keeps only nodes from repositories of these tiers. A node with no repository reads
+	// as "external", which is what the browser calls it. Empty asks nothing.
+	Origins []string
+	// MinReach is a floor on how many repositories depend on a node. Zero asks nothing; a node
+	// whose reach has never been measured meets no floor, which is the direction that avoids
+	// claiming a reach nothing established.
+	MinReach int
+	// UnanalyzedOnly keeps what has not been analyzed at every reference in use.
+	UnanalyzedOnly bool
+	// RefStyle keeps only nodes some edge names by a commit id (`sha`) or by anything else
+	// (`tag`). Empty asks nothing; `any` is the interface's word for the same.
+	RefStyle string
+}
+
+// Reference styles, lexical only: whether a reference is *safe* is a query's verdict, never this
+// file's.
+const (
+	RefStyleSHA = "sha"
+	RefStyleTag = "tag"
+)
+
+// commitRef matches a full git object name. The same test the browser applies, so the two sides
+// cannot disagree about what counts as pinned.
+var commitRef = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
+
+// refStylesOf summarizes onto each node the styles of the references its edges name.
+//
+// A property of the edge, but readers filter on nodes, so it is recorded against both ends —
+// exactly as `graph.js` does, because a node the browser keeps and the server drops is a filter
+// that means two things.
+func refStylesOf(edges []GraphEdge) map[string]map[string]bool {
+	styles := map[string]map[string]bool{}
+	mark := func(key, style string) {
+		if styles[key] == nil {
+			styles[key] = map[string]bool{}
+		}
+		styles[key][style] = true
+	}
+	for _, e := range edges {
+		for _, ref := range e.Refs {
+			style := RefStyleTag
+			if commitRef.MatchString(ref) {
+				style = RefStyleSHA
+			}
+			mark(e.Source, style)
+			mark(e.Target, style)
+		}
+	}
+	return styles
+}
+
+// fullyAnalyzedNode is the browser's rule: a dependency is analyzed only when every reference in
+// use has been, and zero references is nothing looked at rather than everything covered.
+func fullyAnalyzedNode(n GraphNode) bool {
+	if n.RefsInUse > 0 {
+		return n.RefsAnalyzed >= n.RefsInUse
+	}
+	return false
+}
+
+// originTierOf is the tier a node belongs to, with the same fallback the browser applies: a node
+// with no repository has no origin to read and counts as external.
+func originTierOf(n GraphNode) string {
+	if n.Origin == "" {
+		return "external"
+	}
+	return n.Origin
+}
+
+// applyNodePredicates drops what the predicate excludes, and the edges left dangling.
+//
+// **None of these can be pushed into SQL, and measuring on the real corpus is what proved it.**
+// The node set is not what the query returns: `splitNodesByRef` derives each per-reference node
+// from the *edges* that name a reference, so removing a node before the split removes edges, and
+// removing edges removes the references a dependency exists at. Filtering `origins=external` in
+// SQL cut the seed and upstream steps that point at external actions, and **1,889 of 3,433 action
+// nodes then vanished entirely** — not hidden, absent, because nothing was left to name their
+// versions. The three origin buckets stopped partitioning the corpus: 11,045 nodes against 12,550.
+//
+// The scope filter survives in SQL only because a closure is edge-closed by construction: it
+// admits any node a declared repository's edge names, so both ends of those edges are kept. An
+// origin is not, and neither is a reach floor.
+//
+// Applied after owners are attached, because that is the node set the browser applies the same
+// predicates to, and an account is judged on its own rolled-up figures exactly as it is on screen.
+func applyNodePredicates(nodes []GraphNode, edges []GraphEdge, opts FullGraphOptions) ([]GraphNode, []GraphEdge) {
+	style := opts.RefStyle
+	if style == "any" {
+		style = ""
+	}
+	if len(opts.Origins) == 0 && opts.MinReach <= 0 && !opts.UnanalyzedOnly && style == "" {
+		return nodes, edges
+	}
+	var styles map[string]map[string]bool
+	if style != "" {
+		styles = refStylesOf(edges)
+	}
+	wanted := make(map[string]bool, len(opts.Origins))
+	for _, o := range opts.Origins {
+		wanted[o] = true
+	}
+	kept := make([]GraphNode, 0, len(nodes))
+	visible := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		if len(wanted) > 0 && !wanted[originTierOf(n)] {
+			continue
+		}
+		// An unmeasured reach meets no floor: the alternative claims a reach nothing established.
+		if opts.MinReach > 0 && n.DependentRepos < opts.MinReach {
+			continue
+		}
+		if opts.UnanalyzedOnly && fullyAnalyzedNode(n) {
+			continue
+		}
+		if style != "" && !styles[n.Key][style] {
+			continue
+		}
+		kept = append(kept, n)
+		visible[n.Key] = true
+	}
+	surviving := make([]GraphEdge, 0, len(edges))
+	for _, e := range edges {
+		if visible[e.Source] && visible[e.Target] {
+			surviving = append(surviving, e)
+		}
+	}
+	return kept, surviving
 }
 
 // ScopeExposure keeps only what lies on a route from a repository under review to an action an
@@ -103,15 +234,66 @@ const ScopeExposure = "exposure"
 // means the last rebuild found nothing, not that nothing was looked at.
 const onExposureRoute = `(SELECT j.value FROM abom_exposure ex, json_each(ex.path) j)`
 
+// ScopeOwned keeps only what the operator's declaration reaches.
+//
+// The whole corpus is not a view anybody asked for: it is everything the crawl happened to walk
+// through, and at 56,830 nodes no edge can be followed from one end to the other. What an operator
+// has a word for is what they own and what it pulls in.
+const ScopeOwned = "owned"
+
+// closureCTE is every live node the declared closure reaches, as a CTE the scope filter selects
+// from.
+//
+// A CTE rather than repeating the predicate: the filter appears five times across two queries, and
+// binding the closure once per query instead of once per occurrence is the difference between
+// three copies of the argument list and fifteen.
+//
+// The three clauses are the negation of pruneOutsideClosure's deadNodes, deliberately and
+// literally. A node is inside when its repository is declared, when it *is* a declared repository,
+// or when a live edge belonging to one names it — that last clause is what makes this a closure
+// rather than a filter, and re-deriving it here instead of mirroring it is how the picture and the
+// pruning come to disagree about what is in scope.
+func closureCTE(closure []string) (string, []any) {
+	list, names := inList(closure)
+	args := append(append(append([]any{}, names...), names...), names...)
+	return `, closure AS (
+		SELECT n.node_key
+		  FROM abom_node_live n
+		  LEFT JOIN repository r ON r.row_id = n.repository_row_id
+		 WHERE LOWER(r.repository_full_name) IN ` + list + `
+		    OR LOWER(n.owner || '/' || n.repo) IN ` + list + `
+		    OR EXISTS (SELECT 1 FROM abom_edge_live e
+		                JOIN repository er ON er.row_id = e.repository_row_id
+		               WHERE (e.src_node_row_id = n.row_id OR e.dst_node_row_id = n.row_id)
+		                 AND LOWER(er.repository_full_name) IN ` + list + `))`, args
+}
+
+// scopeParts is the CTE a scope needs and the arguments that bind it. Empty for every scope that
+// reads from stored rows, which is why the exposure scope needs neither.
+func scopeParts(opts FullGraphOptions) (string, []any) {
+	if opts.Scope != ScopeOwned || len(opts.Closure) == 0 {
+		return "", nil
+	}
+	return closureCTE(opts.Closure)
+}
+
 // scopeFilter restricts a query to the chosen scope, as a fragment appended to its WHERE clause.
 //
 // Applied in SQL rather than to the assembled graph: filtering afterwards still paid for all
 // 9,811 nodes and their per-node advisory and frontier subqueries in order to return 277.
-func scopeFilter(scope, column string) string {
-	if scope != ScopeExposure {
-		return ""
+func scopeFilter(opts FullGraphOptions, column string) string {
+	switch opts.Scope {
+	case ScopeExposure:
+		return " AND " + column + " IN " + onExposureRoute
+	case ScopeOwned:
+		// Declaring nothing shows nothing. Falling through to the whole corpus would answer a
+		// question about the operator's own supply chain with somebody else's.
+		if len(opts.Closure) == 0 {
+			return " AND 0"
+		}
+		return " AND " + column + " IN (SELECT node_key FROM closure)"
 	}
-	return " AND " + column + " IN " + onExposureRoute
+	return ""
 }
 
 // display folds steps and jobs into the container that holds them.
@@ -125,6 +307,23 @@ const collapsedDisplay = `disp AS (
 
 const identityDisplay = `disp AS (SELECT row_id, row_id AS shown FROM abom_node_live)`
 
+// frontierMatch pairs a node with its queue rows.
+//
+// A repository node is keyed `repo:owner/name` and lowercased by normalize.RepoKey, while its
+// queue row is keyed `owner/name` in GitHub's own spelling. An exact match on node_key therefore
+// never fired for a repository: on the reference corpus 93 repositories analyzed minutes earlier
+// all reported `analyzed = false`, and none carried a discovery state at all.
+//
+// The repository takes only its **root** row, `depth = 0`, which `expand.SeedOwnedRepositories`
+// is the sole producer of. A project the operator owns is two nodes — the repository, and the
+// same project as a dependency others use at particular references — and they answer different
+// questions. `advanced-security/filter-sarif` is analyzed at its default branch and queued at
+// `main` and `v1.1` because somebody else uses those; letting the repository see those rows
+// reported the operator's own work as unanalyzed when it was not.
+const frontierMatch = `(f.node_key = n.node_key
+		OR (n.node_kind = 'repo' AND f.depth = 0
+		    AND LOWER(f.node_key) = SUBSTR(n.node_key, 6)))`
+
 // frontierState is a node's place in the discovery queue, split the way a reader reads it.
 // Most nodes are not dependencies and have no row; that is an empty string, not a state.
 //
@@ -137,7 +336,7 @@ const frontierState = `(SELECT CASE
 				 WHEN SUM(f.status = 'pending') > 0 THEN 'queued'
 				 WHEN SUM(f.status = 'done') > 0 THEN 'done'
 				 ELSE MIN(f.status)
-			   END FROM abom_frontier f WHERE f.node_key = n.node_key)`
+			   END FROM abom_frontier f WHERE ` + frontierMatch + `)`
 
 // Only nodes that appear as an edge target get a row, so a missing row usually means nothing
 // references this node and its reach is genuinely zero. It means "not measured" only for a node
@@ -174,42 +373,98 @@ func (s *Store) FullGraph(opts FullGraphOptions) (Graph, error) {
 		return out, err
 	}
 
+	// Before owners are attached, so an account holds every repository the operator declared
+	// rather than only the ones something has managed to analyze.
+	nodes, err = s.attachOwnedRepositories(nodes)
+	if err != nil {
+		return out, err
+	}
+
 	nodes, edges = attachOwners(nodes, edges)
+
+	nodes, edges = applyNodePredicates(nodes, edges, opts)
 
 	out.Nodes, out.Edges = nodes, edges
 	return out, nil
 }
 
-// graphNodes reads the displayed nodes. A non-zero since restricts them to those a node added
-// after that row id displays as, which is how a delta is derived.
-func (s *Store) graphNodes(display string, since int64, opts FullGraphOptions) ([]GraphNode, map[string]*GraphNode, error) {
-	rows, err := s.db.Query(`WITH `+display+`
+// frontierRollup is every frontier column a node needs, aggregated once for the whole query
+// instead of re-read per node.
+//
+// The inner UNION ALL is what makes a single equality join enough. frontierMatch has two arms —
+// an exact key, and a repository node keyed `repo:owner/name` against a queue keyed `owner/name`
+// — and the second applies LOWER() to the indexed column, so no index can serve it and SQLite
+// scans the whole frontier for every node. Emitting the repository form as its own row moves that
+// arm to the build side, where it is paid once. `repo:` is five characters, which is the 6 the
+// original SUBSTR skipped past.
+//
+// A row cannot match both arms: one is the frontier key and the other is that key with a prefix,
+// so the UNION ALL cannot double count.
+const frontierRollup = `, fstate AS (
+	SELECT mk,
+	       SUM(status = 'running') AS running,
+	       SUM(status = 'pending' AND attempts > 0) AS retrying,
+	       SUM(status = 'pending') AS pending,
+	       SUM(status = 'done') AS done,
+	       MIN(status) AS min_status,
+	       MIN(depth) AS min_depth,
+	       MAX(score) AS max_score,
+	       COUNT(*) AS refs
+	  FROM (SELECT node_key AS mk, status, attempts, depth, score FROM abom_frontier
+	        UNION ALL
+	        SELECT 'repo:' || LOWER(node_key), status, attempts, depth, score
+	          FROM abom_frontier WHERE depth = 0)
+	 GROUP BY mk)`
+
+// advisoryRollup counts advisories per package once rather than per node.
+const advisoryRollup = `, adv AS (
+	SELECT p.package_name AS pkg, COUNT(DISTINCT a.ghsa_id) AS advisories
+	  FROM abom_advisory a
+	  JOIN abom_advisory_package p ON p.advisory_row_id = a.row_id
+	 WHERE a.withdrawn_at IS NULL
+	 GROUP BY p.package_name)`
+
+// rolledFrontierState reads the same ranking frontierState does, from the rollup. The least
+// settled reference still wins, so a node with four analyzed refs and one queued is not analyzed.
+const rolledFrontierState = `(CASE
+		 WHEN fs.running > 0 THEN 'running'
+		 WHEN fs.retrying > 0 THEN 'retrying'
+		 WHEN fs.pending > 0 THEN 'queued'
+		 WHEN fs.done > 0 THEN 'done'
+		 ELSE fs.min_status
+	   END)`
+
+// graphNodesQuery is separate from the read so its plan can be asserted: the cost of this query
+// is a structural property, not something a stopwatch should be asked about.
+func graphNodesQuery(display string, since int64, opts FullGraphOptions) (string, []any) {
+	cte, args := scopeParts(opts)
+	return `WITH ` + display + cte + frontierRollup + advisoryRollup + `
 		SELECT n.node_key, n.node_kind, COALESCE(r.repository_full_name, ''),
 		       COALESCE(r.origin, ''), COALESCE(n.path, ''), COALESCE(c.node_key, ''),
 		       COALESCE(n.owner, ''),
-		       n.is_external, COALESCE(b.dependent_repos, 0), `+reachKnown+`,
-		       (SELECT COUNT(DISTINCT a.ghsa_id)
-		          FROM abom_advisory a
-		          JOIN abom_advisory_package p ON p.advisory_row_id = a.row_id
-		         WHERE a.withdrawn_at IS NULL
-		           AND n.owner IS NOT NULL AND n.repo IS NOT NULL
-		           AND p.package_name = n.owner || '/' || n.repo),
-		       EXISTS (SELECT 1 FROM abom_frontier f
-		                WHERE f.node_key = n.node_key AND f.status = 'done'),
-		       COALESCE(`+frontierState+`, ''),
-		       COALESCE((SELECT MIN(f.depth) FROM abom_frontier f
-		                  WHERE f.node_key = n.node_key), 0),
-		       COALESCE((SELECT MAX(f.score) FROM abom_frontier f
-		                  WHERE f.node_key = n.node_key), 0),
-		       (SELECT COUNT(*) FROM abom_frontier f WHERE f.node_key = n.node_key),
-		       (SELECT COUNT(*) FROM abom_frontier f
-		         WHERE f.node_key = n.node_key AND f.status = 'done')
+		       n.is_external, COALESCE(b.dependent_repos, 0), ` + reachKnown + `,
+		       COALESCE(adv.advisories, 0),
+		       COALESCE(fs.done, 0) > 0,
+		       COALESCE(` + rolledFrontierState + `, ''),
+		       COALESCE(fs.min_depth, 0),
+		       COALESCE(fs.max_score, 0),
+		       COALESCE(fs.refs, 0),
+		       COALESCE(fs.done, 0)
 		FROM abom_node_live n
 		LEFT JOIN repository r ON r.row_id = n.repository_row_id
 		LEFT JOIN abom_node_live c ON c.row_id = n.container_node_row_id
 		LEFT JOIN abom_blast_radius b ON b.node_row_id = n.row_id
-		WHERE n.row_id IN (SELECT shown FROM disp WHERE row_id > ?)`+
-		scopeFilter(opts.Scope, "n.node_key"), since)
+		LEFT JOIN fstate fs ON fs.mk = n.node_key
+		LEFT JOIN adv ON adv.pkg = n.owner || '/' || n.repo
+		WHERE n.row_id IN (SELECT shown FROM disp WHERE row_id > ?)` +
+		scopeFilter(opts, "n.node_key"), append(args, since)
+}
+
+// graphNodes reads the displayed nodes. A non-zero since restricts them to those a node added
+// after that row id displays as, which is how a delta is derived.
+func (s *Store) graphNodes(display string, since int64, opts FullGraphOptions) ([]GraphNode, map[string]*GraphNode, error) {
+	query, args := graphNodesQuery(display, since, opts)
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reading graph nodes: %w", err)
 	}
@@ -283,7 +538,8 @@ func (s *Store) graphEdges(display string, since int64, opts FullGraphOptions) (
 	// containment half of this union every repo node renders unattached and isolating one finds
 	// nothing. Containment stops at what the repository directly holds, because wiring every
 	// step to it as well would add tens of thousands of edges saying nothing new.
-	rows, err := s.db.Query(`WITH `+display+`
+	cte, args := scopeParts(opts)
+	rows, err := s.db.Query(`WITH `+display+cte+`
 		SELECT sn.node_key, dn.node_key, e.edge_kind, COALESCE(e.ref_value, ''),
 		       COALESCE(e.boundary, '')
 		FROM abom_edge_live e
@@ -293,7 +549,7 @@ func (s *Store) graphEdges(display string, since int64, opts FullGraphOptions) (
 		JOIN abom_node_live dn ON dn.row_id = dd.shown
 		WHERE ds.shown <> dd.shown AND e.row_id > ?`+
 		boundaryFilter(opts.Boundary)+
-		scopeFilter(opts.Scope, "sn.node_key")+scopeFilter(opts.Scope, "dn.node_key")+`
+		scopeFilter(opts, "sn.node_key")+scopeFilter(opts, "dn.node_key")+`
 		UNION ALL
 		SELECT owner.node_key, held.node_key, 'repo-contains', '', ''
 		FROM abom_node_live owner
@@ -302,8 +558,8 @@ func (s *Store) graphEdges(display string, since int64, opts FullGraphOptions) (
 		                   AND held.container_node_row_id IS NULL
 		                   AND held.node_kind <> 'repo'
 		WHERE owner.node_kind = 'repo' AND held.row_id > ?`+
-		scopeFilter(opts.Scope, "owner.node_key")+scopeFilter(opts.Scope, "held.node_key"),
-		since, since)
+		scopeFilter(opts, "owner.node_key")+scopeFilter(opts, "held.node_key"),
+		append(args, since, since)...)
 	if err != nil {
 		return nil, fmt.Errorf("reading graph edges: %w", err)
 	}

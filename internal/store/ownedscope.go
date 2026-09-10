@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS abom_owned_scope (
   -- would otherwise widen an account from two repositories to all of them without anyone saying
   -- so. Set with an empty list, this scopes to nothing, which is the safe reading.
   includes_only INTEGER NOT NULL DEFAULT 0,
+  -- How the row arrived, decided by the code path that wrote it and never by its payload.
+  -- NULL means nobody knows, which is the honest answer for every row written before this
+  -- existed. See plans/db/declaration-provenance.md.
+  declared_by   TEXT,
   declared_at   TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS abom_owned_include (
@@ -30,11 +34,80 @@ CREATE TABLE IF NOT EXISTS abom_owned_include (
   PRIMARY KEY (owner, repo)
 );`
 
+// sawWholeMembershipList is the SQL spelling of Verification.CanReadMemberships: the token
+// carried a scope that lets `user/memberships/orgs` return every organization, so a name absent
+// from the answer is absent from the operator's memberships rather than from the token's view.
+//
+// The comma padding makes this an element match rather than a substring one, so a scope merely
+// containing `read:org` does not qualify. `verified_as` guards the case the Go side spells as an
+// empty login: rows with no verification behind them establish nothing.
+// `TestTheGateAgreesWithTheDeclarationState` is what stops the two spellings drifting.
+const sawWholeMembershipList = `EXISTS (
+	SELECT 1 FROM abom_account a
+	 WHERE a.verified_as <> ''
+	   AND (',' || COALESCE(a.scopes, '') || ',' LIKE '%,read:org,%'
+	        OR ',' || COALESCE(a.scopes, '') || ',' LIKE '%,admin:org,%'))`
+
+// honoredScopeDDL holds back declarations `gh` answered against.
+//
+// A view rather than a clause each caller remembers, for the reason the live views exist: the
+// tier, the queue, the closure and every "yours" figure read the declaration, and one of them
+// forgetting the gate is how 44 of somebody else's repositories became this operator's to
+// remediate. Only *contradicted* is held — an unverified corpus or a token that cannot read
+// memberships leaves a declaration unproven, and gating on that locks an operator out of their
+// own bill of materials. See plans/db/declaration-provenance.md.
+const honoredScopeDDL = `
+CREATE VIEW IF NOT EXISTS abom_owned_scope_honored AS
+SELECT * FROM abom_owned_scope o
+ WHERE NOT (` + sawWholeMembershipList + `
+            AND NOT EXISTS (SELECT 1 FROM abom_account b
+                             WHERE LOWER(b.owner) = LOWER(o.owner)));`
+
 // Account kinds. A user account is inherently one person's, which is why it is opted into.
 const (
 	AccountOrganization = "organization"
 	AccountUser         = "user"
 )
+
+// How a declaration arrived. Set by the write path, never by the caller's payload: a client that
+// could name its own source could claim any of them.
+const (
+	DeclaredByCLI       = "cli"
+	DeclaredByInterface = "interface"
+	// DeclaredByConfig is an untracked local file, read at startup. It is a channel, not an
+	// authority: a row it writes is verified exactly like one that was typed.
+	DeclaredByConfig = "config"
+)
+
+// What `gh` has to say about a declaration. Three states, because the two that used to be one are
+// opposite claims: nobody asked, and somebody asked and was told no.
+const (
+	DeclarationUnknown      = "unknown"
+	DeclarationConfirmed    = "confirmed"
+	DeclarationContradicted = "contradicted"
+)
+
+// DeclarationState reports how a verification bears on a declaration.
+//
+// Contradicted is not a gap in evidence, it is evidence against: `gh` listed the accounts the
+// operator belongs to and this was not among them. Drawing it the same as *never asked* is what
+// let a corpus present `facebook` as owned for months.
+func DeclarationState(a DeclaredAccount, v Verification) string {
+	if v.Login == "" {
+		return DeclarationUnknown
+	}
+	for _, known := range v.Accounts {
+		if strings.EqualFold(known.Owner, a.Owner) {
+			return DeclarationConfirmed
+		}
+	}
+	// Absent from an incomplete list is not evidence of anything. Only a token that could have
+	// seen the whole list may turn absence into a contradiction.
+	if !v.CanReadMemberships() {
+		return DeclarationUnknown
+	}
+	return DeclarationContradicted
+}
 
 // DeclaredAccount is one account the operator has stated is theirs.
 type DeclaredAccount struct {
@@ -47,6 +120,9 @@ type DeclaredAccount struct {
 	IncludesOnly bool     `json:"includesOnly"`
 	Includes     []string `json:"includes"`
 	DeclaredAt   string   `json:"declaredAt"`
+	// DeclaredBy is output only: the store sets it from the write path and ignores whatever a
+	// caller sends. Empty means the row predates the column and nobody knows who wrote it.
+	DeclaredBy string `json:"declaredBy"`
 }
 
 // Covers reports whether a repository falls inside this account's declaration.
@@ -84,7 +160,7 @@ func CoveredBy(accounts []DeclaredAccount, owner, repo string) bool {
 //
 // Both sides are lower-cased because GitHub treats account names case-insensitively.
 const ownedRepository = `EXISTS (
-	SELECT 1 FROM abom_owned_scope o
+	SELECT 1 FROM abom_owned_scope_honored o
 	 WHERE o.enabled = 1
 	   AND LOWER(o.owner) = LOWER(?)
 	   AND (o.includes_only = 0
@@ -93,7 +169,7 @@ const ownedRepository = `EXISTS (
 
 // ownedFrontierRow is the same predicate against a queue row, for use inside a larger statement.
 const ownedFrontierRow = `EXISTS (
-	SELECT 1 FROM abom_owned_scope o
+	SELECT 1 FROM abom_owned_scope_honored o
 	 WHERE o.enabled = 1
 	   AND LOWER(o.owner) = LOWER(abom_frontier.owner)
 	   AND (o.includes_only = 0
@@ -108,7 +184,7 @@ func ownedFullName(col string) string {
 	owner := `SUBSTR(` + col + `, 1, INSTR(` + col + `, '/') - 1)`
 	repo := `SUBSTR(` + col + `, INSTR(` + col + `, '/') + 1)`
 	return `EXISTS (
-		SELECT 1 FROM abom_owned_scope o
+		SELECT 1 FROM abom_owned_scope_honored o
 		 WHERE o.enabled = 1
 		   AND LOWER(o.owner) = LOWER(` + owner + `)
 		   AND (o.includes_only = 0
@@ -121,7 +197,13 @@ func ownedFullName(col string) string {
 //
 // Replacement rather than merge, for the reason ReplaceAccounts gives: an account that accumulated
 // would keep counting as the operator's long after they stopped being responsible for it.
-func (s *Store) SetOwnedScope(accounts []DeclaredAccount) error {
+//
+// `by` is the code path doing the writing, not anything the caller supplied.
+func (s *Store) SetOwnedScope(accounts []DeclaredAccount, by string) error {
+	if by != DeclaredByCLI && by != DeclaredByInterface && by != DeclaredByConfig {
+		return fmt.Errorf("store: %q is not a declaration source; expected %q, %q or %q",
+			by, DeclaredByCLI, DeclaredByInterface, DeclaredByConfig)
+	}
 	for _, a := range accounts {
 		if strings.TrimSpace(a.Owner) == "" {
 			return fmt.Errorf("store: a declared account needs an owner")
@@ -153,9 +235,9 @@ func (s *Store) SetOwnedScope(accounts []DeclaredAccount) error {
 		}
 		seen[strings.ToLower(owner)] = true
 		if _, err := tx.Exec(`
-			INSERT INTO abom_owned_scope (owner, kind, enabled, includes_only, declared_at)
-			VALUES (?, ?, ?, ?, ?)`,
-			owner, a.Kind, a.Enabled, a.IncludesOnly, at); err != nil {
+			INSERT INTO abom_owned_scope (owner, kind, enabled, includes_only, declared_by, declared_at)
+			VALUES (?, ?, ?, ?, ?, ?)`,
+			owner, a.Kind, a.Enabled, a.IncludesOnly, by, at); err != nil {
 			return fmt.Errorf("declaring %s: %w", owner, err)
 		}
 		for _, repo := range a.Includes {
@@ -177,9 +259,12 @@ func (s *Store) SetOwnedScope(accounts []DeclaredAccount) error {
 func (s *Store) OwnedScope() ([]DeclaredAccount, error) {
 	accounts, err := queryAll(s, "reading the declared scope", func(r *sql.Rows) (DeclaredAccount, error) {
 		var a DeclaredAccount
+		var by sql.NullString
 		a.Includes = []string{}
-		return a, r.Scan(&a.Owner, &a.Kind, &a.Enabled, &a.IncludesOnly, &a.DeclaredAt)
-	}, `SELECT owner, kind, enabled, includes_only, declared_at
+		err := r.Scan(&a.Owner, &a.Kind, &a.Enabled, &a.IncludesOnly, &by, &a.DeclaredAt)
+		a.DeclaredBy = by.String
+		return a, err
+	}, `SELECT owner, kind, enabled, includes_only, declared_by, declared_at
 	      FROM abom_owned_scope ORDER BY kind DESC, owner`)
 	if err != nil {
 		return nil, err
@@ -217,11 +302,12 @@ func (s *Store) ownedIncludes() (map[string][]string, error) {
 }
 
 // OwnedScopeDeclared reports whether anything is declared and enabled, which is the only question
-// the discovery gate asks. Nothing declared and everything disabled are the same answer.
+// the discovery gate asks. Nothing declared and everything disabled are the same answer, and so
+// is a scope whose every account `gh` answered against.
 func (s *Store) OwnedScopeDeclared() (bool, error) {
 	var n int
 	if err := s.db.QueryRow(
-		`SELECT COUNT(*) FROM abom_owned_scope WHERE enabled = 1`).Scan(&n); err != nil {
+		`SELECT COUNT(*) FROM abom_owned_scope_honored WHERE enabled = 1`).Scan(&n); err != nil {
 		return false, fmt.Errorf("reading whether a scope is declared: %w", err)
 	}
 	return n > 0, nil
@@ -241,9 +327,8 @@ func (s *Store) AllRepositories() ([]string, error) {
 
 // OwnedRepositories lists every repository in the corpus that falls inside the declared scope.
 //
-// The graph is the only place repositories are known, so an account declared but never seen
-// contributes nothing here — which is honest: it is a statement of intent that the corpus cannot
-// yet act on.
+// A declared account contributes nothing here until it has been enumerated, which is honest: a
+// declaration is a statement of intent, and enumeration is what turns it into repositories.
 func (s *Store) OwnedRepositories() ([]string, error) {
 	return queryAll(s, "reading owned repositories", func(r *sql.Rows) (string, error) {
 		var name string

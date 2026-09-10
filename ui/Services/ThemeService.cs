@@ -58,9 +58,9 @@ public sealed class ThemeService(IJSRuntime js)
         {
             return map;
         }
-        foreach (var pair in raw.Split(';', StringSplitOptions.RemoveEmptyEntries))
+        foreach (var parts in raw.Split(';', StringSplitOptions.RemoveEmptyEntries)
+                     .Select(pair => pair.Split('=', 2)))
         {
-            var parts = pair.Split('=', 2);
             if (parts.Length != 2)
             {
                 continue;

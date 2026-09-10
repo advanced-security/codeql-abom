@@ -90,6 +90,115 @@ func TestFindingsFromSARIFStoresRuleMetadata(t *testing.T) {
 	}
 }
 
+// Same shape, different producer. SARIF and code scanning already keep tool names unique within a
+// repository, so the name in the document is the identity and needs no massaging here.
+const otherToolSarif = `{
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {"driver": {"name": "Some Other Analyzer", "rules": [
+        {"id": "other/rule", "properties": {"problem.severity": "warning"}}
+      ]}},
+      "results": [
+        {
+          "ruleId": "other/rule",
+          "level": "warning",
+          "message": {"text": "something"},
+          "locations": [{"physicalLocation": {
+            "artifactLocation": {"uri": ".github/workflows/main.yml"},
+            "region": {"startLine": 4, "startColumn": 1}}}]
+        }
+      ]
+    }
+  ]
+}`
+
+const namelessToolSarif = `{
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {"driver": {"rules": [
+        {"id": "other/rule", "properties": {"problem.severity": "warning"}}
+      ]}},
+      "results": [
+        {
+          "ruleId": "other/rule",
+          "level": "warning",
+          "message": {"text": "something"},
+          "locations": [{"physicalLocation": {
+            "artifactLocation": {"uri": ".github/workflows/main.yml"},
+            "region": {"startLine": 4, "startColumn": 1}}}]
+        }
+      ]
+    }
+  ]
+}`
+
+// SARIF is the findings surface, and every SARIF document names the tool that wrote it. Reading
+// that is the difference between recording a producer and asserting one: a constant at the insert
+// says "CodeQL" no matter what the file actually came from.
+func TestFindingsFromSARIFAreAttributedToCodeQL(t *testing.T) {
+	s := newTestStore(t)
+	ing := New(s, store.NewWriter(s, 0))
+
+	if _, err := ing.FindingsFromSARIF(strings.NewReader(suiteSarif),
+		Options{Repository: "octo-org/app"}); err != nil {
+		t.Fatalf("FindingsFromSARIF: %v", err)
+	}
+
+	var unattributed int
+	if err := s.DB().QueryRow(
+		`SELECT COUNT(*) FROM abom_finding WHERE provider IS NOT ?`,
+		store.ProviderCodeQL).Scan(&unattributed); err != nil {
+		t.Fatalf("reading providers: %v", err)
+	}
+	if unattributed != 0 {
+		t.Errorf("%d findings are not attributed to %q", unattributed, store.ProviderCodeQL)
+	}
+}
+
+// The proof that the name is read rather than asserted: the same ingest, a document written by
+// something else, and the row says so.
+func TestTheProviderIsWhicheverToolWroteTheDocument(t *testing.T) {
+	s := newTestStore(t)
+	ing := New(s, store.NewWriter(s, 0))
+
+	if _, err := ing.FindingsFromSARIF(strings.NewReader(otherToolSarif),
+		Options{Repository: "octo-org/app"}); err != nil {
+		t.Fatalf("FindingsFromSARIF: %v", err)
+	}
+
+	var provider string
+	if err := s.DB().QueryRow(
+		`SELECT COALESCE(provider, '') FROM abom_finding`).Scan(&provider); err != nil {
+		t.Fatalf("reading the provider: %v", err)
+	}
+	if provider != "Some Other Analyzer" {
+		t.Errorf("provider = %q, want the tool the document names", provider)
+	}
+}
+
+// A document that names no tool leaves the producer unknown. SARIF requires the field, so this is
+// a malformed file rather than a foreseeable one — and guessing CodeQL on its behalf is exactly
+// the fabrication the column exists to prevent.
+func TestADocumentThatNamesNoToolRecordsNoProvider(t *testing.T) {
+	s := newTestStore(t)
+	ing := New(s, store.NewWriter(s, 0))
+
+	if _, err := ing.FindingsFromSARIF(strings.NewReader(namelessToolSarif),
+		Options{Repository: "octo-org/app"}); err != nil {
+		t.Fatalf("FindingsFromSARIF: %v", err)
+	}
+
+	var provider any
+	if err := s.DB().QueryRow(`SELECT provider FROM abom_finding`).Scan(&provider); err != nil {
+		t.Fatalf("reading the provider: %v", err)
+	}
+	if provider != nil {
+		t.Errorf("provider = %v, want NULL: nothing said who wrote it", provider)
+	}
+}
+
 func TestFindingsFromSARIFRecordsLocationAndFingerprint(t *testing.T) {
 	s := newTestStore(t)
 	ing := New(s, store.NewWriter(s, 0))
@@ -136,6 +245,40 @@ func TestFindingsFromSARIFIsIdempotent(t *testing.T) {
 }
 
 // Findings must attach to the graph, or traversal cannot answer security questions.
+// The production path end to end, minus CodeQL itself: SARIF in, a sighting out. Recording which
+// run reported a finding has to happen here, because a finding row spans commits and can name
+// only one run — nothing downstream can reconstruct it afterwards.
+func TestIngestingSARIFUnderARunRecordsASighting(t *testing.T) {
+	s := newTestStore(t)
+	ing := New(s, store.NewWriter(s, 0))
+
+	runID, err := s.RecordQueryRun(store.QueryRun{
+		QueryID: "actions/unpinned-tag", QueryVersion: "1.0.0",
+		Pack: "codeql/actions-queries", PackVersion: "0.6.35",
+		Repository: "octo-org/app", DBCommit: "cafe1234",
+	})
+	if err != nil {
+		t.Fatalf("RecordQueryRun: %v", err)
+	}
+
+	stored, err := ing.FindingsFromSARIF(strings.NewReader(suiteSarif),
+		Options{Repository: "octo-org/app", QueryRunID: runID})
+	if err != nil {
+		t.Fatalf("FindingsFromSARIF: %v", err)
+	}
+
+	var sightings int
+	if err := s.DB().QueryRow(
+		`SELECT COUNT(*) FROM abom_finding_sighting WHERE query_run_id = ?`,
+		runID).Scan(&sightings); err != nil {
+		t.Fatalf("counting sightings: %v", err)
+	}
+	if sightings != stored {
+		t.Errorf("%d sightings for %d findings; every finding the run reported needs one",
+			sightings, stored)
+	}
+}
+
 func TestFindingsLinkToGraphNodes(t *testing.T) {
 	s := newTestStore(t)
 	w := store.NewWriter(s, 0)

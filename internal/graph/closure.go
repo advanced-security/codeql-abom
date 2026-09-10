@@ -73,6 +73,29 @@ func (b *Builder) OwnedClosure() (*Closure, error) {
 	return b.ClosureFrom(roots)
 }
 
+// KeepList names the repositories the corpus holds that the declared scope reaches, and the
+// closure it derived them from.
+//
+// Written once because the command and the server both prune, and two answers to "what survives"
+// would be two different corpora depending on which door was used.
+func (b *Builder) KeepList() ([]string, *Closure, error) {
+	closure, err := b.OwnedClosure()
+	if err != nil {
+		return nil, nil, err
+	}
+	all, err := b.Store.AllRepositories()
+	if err != nil {
+		return nil, nil, err
+	}
+	keep := make([]string, 0, len(all))
+	for _, name := range all {
+		if closure.Contains(name) {
+			keep = append(keep, name)
+		}
+	}
+	return keep, closure, nil
+}
+
 // ClosureFrom walks outward from an explicit root set, so a declaration that has not been stored
 // can be measured before anyone commits to it.
 func (b *Builder) ClosureFrom(roots []string) (*Closure, error) {

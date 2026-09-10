@@ -64,7 +64,8 @@ type Options struct {
 
 // Stats summarizes a round.
 type Stats struct {
-	// Processed counts repositories analyzed; Items counts the dependencies they settled.
+	// Processed counts analyses, not repositories: a repository reached at three references is
+	// three databases and three sets of results. A crawl of 101 repositories reported 319.
 	Processed int
 	// Skipped counts repositories the ledger already had on record, settled without analysis.
 	Skipped     int
@@ -114,6 +115,22 @@ type batch struct {
 	items []frontier.Item
 	// depth is the shallowest depth among the items, and what discoveries are measured from.
 	depth int
+}
+
+// revision is the exact tree a round's results describe, and what every ledger row is attributed
+// to. The requested ref and the one actually analyzed are both kept: a moving ref resolves to a
+// commit, and losing which ref was asked for makes a re-analysis look like a different dependency.
+type revision struct {
+	repository string
+	commit     string
+	ref        string
+	analyzed   string
+}
+
+func (b batch) revision(p work.Prepared) revision {
+	return revision{
+		repository: b.full(), commit: p.Commit, ref: b.ref, analyzed: p.AnalyzedRef,
+	}
 }
 
 func (b batch) full() string { return b.owner + "/" + b.repo }
@@ -285,8 +302,12 @@ func (e *Expander) pendingWork(
 	}
 
 	var out pending
+	// No ref: this asks whether the evaluation is on record, and the ref is not part of a run's
+	// identity. Putting one here would make the skip miss whenever a second reference reached
+	// content already analyzed, which is the case it exists for.
+	at := revision{repository: repository, commit: commit}
 	for _, q := range planned.bqrs {
-		ran, err := done(planned.queryRun(q.id, repository, commit))
+		ran, err := done(planned.queryRun(q.id, at))
 		if err != nil {
 			return pending{}, err
 		}
@@ -295,13 +316,22 @@ func (e *Expander) pendingWork(
 		}
 	}
 	if len(planned.findings) > 0 {
-		ran, err := done(planned.findingsRun(repository, commit))
+		ran, err := done(planned.findingsRun(at))
 		if err != nil {
 			return pending{}, err
 		}
 		out.findings = !ran
 	}
 	return out, nil
+}
+
+// analyzedRef names the reference a checkout produced. Shared with the skip path, which settles
+// without a checkout and still has to describe the reference the same way.
+func analyzedRef(ref string) string {
+	if ref == "" {
+		return "HEAD"
+	}
+	return ref
 }
 
 // refSuffix names a reference for a directory. Refs contain slashes and dots — `refs/heads/main`,
@@ -331,27 +361,12 @@ func (e *Expander) prepare(
 	dir := filepath.Join(opts.WorkDir, b.owner+"_"+b.repo+refSuffix(b.ref))
 	src := filepath.Join(dir, "src")
 
-	// Before the clone, not after: the ledger only needs the commit, and a reference resolves
-	// remotely for a fraction of what fetching it costs. A tier requeue puts back everything
-	// including what is already current, and those are settled here without a checkout.
-	if sha, ok := e.commitWithoutFetching(ctx, b); ok {
-		// A commit seen before has its content on record, so the equivalence is available here
-		// too. A commit never seen has none, and an absent digest matches nothing.
-		digest, _, err := e.Store.CommitContentDigest(b.full(), sha)
-		if err != nil {
-			return work.Prepared{}, err
-		}
-		outstanding, err := e.pendingWork(planned, b.full(), sha, digest)
-		if err != nil {
-			return work.Prepared{}, err
-		}
-		if outstanding.empty() {
-			return work.Prepared{
-				Job:             work.Job{Repository: b.key()},
-				Commit:          sha,
-				AlreadyRecorded: true,
-			}, nil
-		}
+	settled, ok, err := e.settleWithoutFetching(ctx, b, planned)
+	if err != nil {
+		return work.Prepared{}, err
+	}
+	if ok {
+		return settled, nil
 	}
 
 	if err := e.Pace.Wait(ctx); err != nil {
@@ -388,10 +403,52 @@ func (e *Expander) prepare(
 		return work.Prepared{
 			Job:             work.Job{Repository: b.key()},
 			Commit:          tree.SHA,
+			AnalyzedRef:     tree.Ref,
 			AlreadyRecorded: true,
 		}, nil
 	}
 
+	return e.analyzeTree(ctx, b, opts, planned, dir, src, tree, outstanding)
+}
+
+// settleWithoutFetching answers a batch that needs no checkout, reporting whether it did.
+//
+// Before the clone, not after: the ledger only needs the commit, and a reference resolves
+// remotely for a fraction of what fetching it costs. A tier requeue puts back everything
+// including what is already current, and those are settled here without a checkout.
+func (e *Expander) settleWithoutFetching(
+	ctx context.Context, b batch, planned tierPlan,
+) (work.Prepared, bool, error) {
+	sha, ok := e.commitWithoutFetching(ctx, b)
+	if !ok {
+		return work.Prepared{}, false, nil
+	}
+	// A commit seen before has its content on record, so the equivalence is available here
+	// too. A commit never seen has none, and an absent digest matches nothing.
+	digest, _, err := e.Store.CommitContentDigest(b.full(), sha)
+	if err != nil {
+		return work.Prepared{}, false, err
+	}
+	outstanding, err := e.pendingWork(planned, b.full(), sha, digest)
+	if err != nil {
+		return work.Prepared{}, false, err
+	}
+	if !outstanding.empty() {
+		return work.Prepared{}, false, nil
+	}
+	return work.Prepared{
+		Job:             work.Job{Repository: b.key()},
+		Commit:          sha,
+		AnalyzedRef:     analyzedRef(b.ref),
+		AlreadyRecorded: true,
+	}, true, nil
+}
+
+// analyzeTree builds the database for a checkout and runs everything the tier still wants.
+func (e *Expander) analyzeTree(
+	ctx context.Context, b batch, opts Options, planned tierPlan,
+	dir, src string, tree Tree, outstanding pending,
+) (work.Prepared, error) {
 	dbDir := filepath.Join(dir, "db")
 	if err := e.Builder.CreateDatabase(ctx, tree.Dir, dbDir, "actions"); err != nil {
 		return work.Prepared{}, err
@@ -424,6 +481,7 @@ func (e *Expander) prepare(
 		SarifPath:     sarifPath,
 		Extra:         extra,
 		Commit:        tree.SHA,
+		AnalyzedRef:   tree.Ref,
 	}, nil
 }
 
@@ -432,6 +490,9 @@ func (e *Expander) consume(
 ) (int, error) {
 	if p.AlreadyRecorded {
 		stats.Skipped++
+		if err := e.attachRefs(b, p, planned); err != nil {
+			return 0, err
+		}
 		return 0, e.settle(b, p, opts, stats)
 	}
 	// The repository is being analyzed because something depends on it, not because it is
@@ -443,53 +504,21 @@ func (e *Expander) consume(
 	// A suite decides which query supplied the edges, so the ledger records that query rather
 	// than whatever --query-id happened to say. There may be none: a round that had only the
 	// findings lane left to prove built a database and never ran an edges query.
-	rows := 0
-	if p.ResultPath != "" {
-		queryID := p.ResultQueryID
-		if queryID == "" {
-			queryID = opts.QueryID
-		}
-		runID, err := e.Store.RecordQueryRun(planned.queryRun(queryID, b.full(), p.Commit))
-		if err != nil {
-			return 0, err
-		}
-
-		f, err := os.Open(p.ResultPath)
-		if err != nil {
-			return 0, fmt.Errorf("opening results: %w", err)
-		}
-		rows, err = e.Ingester.EdgesFromBQRS(f, ingest.Options{
-			Repository: b.full(), QueryRunID: runID,
-		})
-		f.Close()
-		if err != nil {
-			return 0, err
-		}
+	at := b.revision(p)
+	rows, err := e.ingestEdges(p, opts, planned, at)
+	if err != nil {
+		return 0, err
 	}
 
 	// Everything else the suite produced. A query that fails to ingest must not lose the
 	// dependency edges already written for this repository, so these are reported and skipped
 	// rather than aborting the round.
 	for queryID, path := range p.Extra {
-		if err := e.ingestExtra(queryID, path, b.full(), p.Commit, planned); err != nil &&
-			e.OnEvent != nil {
-			e.OnEvent(work.Event{
-				Kind: work.EventFailed,
-				Job:  work.Job{Repository: b.full()},
-				Err:  fmt.Errorf("%s: %w", queryID, err),
-			})
-		}
+		e.report(at.repository, queryID, e.ingestExtra(queryID, path, at, planned))
 	}
 
 	if p.SarifPath != "" {
-		err := e.ingestFindings(p.SarifPath, b.full(), p.Commit, planned)
-		if err != nil && e.OnEvent != nil {
-			e.OnEvent(work.Event{
-				Kind: work.EventFailed,
-				Job:  work.Job{Repository: b.full()},
-				Err:  fmt.Errorf("findings: %w", err),
-			})
-		}
+		e.report(at.repository, "findings", e.ingestFindings(p.SarifPath, at, planned))
 	}
 
 	if err := e.Writer.Flush(); err != nil {
@@ -498,6 +527,43 @@ func (e *Expander) consume(
 	e.Writer.ResetLocal()
 
 	return rows, e.settle(b, p, opts, stats)
+}
+
+// ingestEdges records the dependency edges one round produced, and how many rows they were.
+func (e *Expander) ingestEdges(
+	p work.Prepared, opts Options, planned tierPlan, at revision,
+) (int, error) {
+	if p.ResultPath == "" {
+		return 0, nil
+	}
+	queryID := p.ResultQueryID
+	if queryID == "" {
+		queryID = opts.QueryID
+	}
+	runID, err := e.Store.RecordQueryRun(planned.queryRun(queryID, at))
+	if err != nil {
+		return 0, err
+	}
+	f, err := os.Open(p.ResultPath)
+	if err != nil {
+		return 0, fmt.Errorf("opening results: %w", err)
+	}
+	defer f.Close()
+	return e.Ingester.EdgesFromBQRS(f, ingest.Options{
+		Repository: at.repository, QueryRunID: runID,
+	})
+}
+
+// report surfaces a failure that must not abort the round, naming what failed.
+func (e *Expander) report(repository, what string, err error) {
+	if err == nil || e.OnEvent == nil {
+		return
+	}
+	e.OnEvent(work.Event{
+		Kind: work.EventFailed,
+		Job:  work.Job{Repository: repository},
+		Err:  fmt.Errorf("%s: %w", what, err),
+	})
 }
 
 // settle enqueues what the repository revealed and takes its dependencies out of the queue.

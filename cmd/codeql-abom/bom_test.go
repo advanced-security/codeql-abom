@@ -114,7 +114,7 @@ func bomCommandDB(t *testing.T) string {
 	}
 	if err := s.SetOwnedScope([]store.DeclaredAccount{
 		{Owner: "octo-org", Kind: store.AccountOrganization, Enabled: true},
-	}); err != nil {
+	}, store.DeclaredByCLI); err != nil {
 		t.Fatalf("SetOwnedScope: %v", err)
 	}
 

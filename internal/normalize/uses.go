@@ -93,11 +93,16 @@ func ParseUses(raw, pinComment string) Ref {
 
 	case strings.HasPrefix(raw, "./"), strings.HasPrefix(raw, "../"):
 		r.Subpath = strings.TrimPrefix(strings.TrimPrefix(raw, "./"), "../")
-		if workflowPattern.MatchString(r.Subpath) {
-			r.NodeKind = NodeLocalWorkflow
-		} else {
-			r.NodeKind = NodeLocalAction
-		}
+		r.NodeKind = repositoryRelativeKind(r.Subpath)
+		return r
+
+	// GitHub's self repository reference: the repository of the file it appears in, at the
+	// commit that is running. It resolves against that repository rather than the caller's
+	// workspace, which is why it carries no `@ref` and why it must never be split on `/` —
+	// reading the `$` as an account states a dependency on a third party of that name.
+	case strings.HasPrefix(raw, "$/"):
+		r.Subpath = strings.TrimPrefix(raw, "$/")
+		r.NodeKind = repositoryRelativeKind(r.Subpath)
 		return r
 	}
 
@@ -122,6 +127,15 @@ func ParseUses(raw, pinComment string) Ref {
 		r.NodeKind = NodeAction
 	}
 	return r
+}
+
+// repositoryRelativeKind classifies a target named by a path inside a repository. Reusable
+// workflows are referenced by a path to a YAML file; everything else is an action directory.
+func repositoryRelativeKind(subpath string) NodeKind {
+	if workflowPattern.MatchString(subpath) {
+		return NodeLocalWorkflow
+	}
+	return NodeLocalAction
 }
 
 // normalizeComment reduces a trailing comment to a bare version string, or "" when the comment

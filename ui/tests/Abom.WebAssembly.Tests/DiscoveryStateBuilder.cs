@@ -16,6 +16,7 @@ public sealed class DiscoveryStateBuilder
     private int _reachThreshold = 500;
     private string _reachRecomputedAt = "";
     private int _direct, _transitive;
+    private int _owned, _ownedAnalyzed;
     private int _analyzed, _skipped;
 
     // Defaults to "all of it analyzed", which is the steady state. A requeue is the case where the
@@ -82,6 +83,14 @@ public sealed class DiscoveryStateBuilder
         return this;
     }
 
+    /// <summary>The tier enumeration writes at depth 0, which is how its result is observable.</summary>
+    public DiscoveryStateBuilder WithOwned(int total, int analyzed)
+    {
+        _owned = total;
+        _ownedAnalyzed = analyzed;
+        return this;
+    }
+
     public DiscoveryStateBuilder WithReach(int pending, int threshold, string recomputedAt)
     {
         _reachPending = pending;
@@ -124,6 +133,7 @@ public sealed class DiscoveryStateBuilder
         },
         tiers = new Dictionary<string, object>
         {
+            ["owned"] = new { total = _owned, analyzed = _ownedAnalyzed },
             ["direct"] = new { total = _direct, analyzed = _directAnalyzed ?? _direct },
             ["transitive"] = new { total = _transitive, analyzed = _transitive },
         },

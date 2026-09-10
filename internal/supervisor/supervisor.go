@@ -64,7 +64,24 @@ type Supervisor struct {
 	// LastAdvisoryAt seeds the ceiling from what the store already holds, so a restart does not
 	// re-fetch a set collected minutes ago.
 	LastAdvisoryAt time.Time
-	Now            func() time.Time
+
+	// Enumerate re-reads the declared accounts, reporting how many repositories it queued.
+	//
+	// Without it the loop can only work on what something else already recorded, so a repository
+	// created after the last enumeration is invisible to it however long it runs. Nil keeps that
+	// behavior, which is what every build before this one did.
+	Enumerate func(context.Context) (int, error)
+	// EnumerateEvery bounds how often the organization is re-read. Zero uses the default.
+	//
+	// A full listing is cheap against an unchanged account — its pages are conditional, so they
+	// cost a round trip and no quota — but it is not free, and a cycle runs every thirty seconds.
+	// Reading it more cleverly than this is `plans/api/org-enumeration.md`.
+	EnumerateEvery time.Duration
+	// LastEnumeratedAt is when the accounts were last read, successfully or not. A failed attempt
+	// counts, or an unreachable account is retried on every cycle forever.
+	LastEnumeratedAt time.Time
+
+	Now func() time.Time
 	// Log receives one line per event worth a human's attention. Nil discards them.
 	//
 	// A loop meant to run for hours has to leave a trail: Status carries only the most recent
@@ -96,6 +113,11 @@ const (
 	// DefaultAdvisoryMinInterval keeps a productive crawl from spending most of a cycle on a
 	// refresh that measured 109 seconds over 936 packages.
 	DefaultAdvisoryMinInterval = 15 * time.Minute
+	// DefaultEnumerateEvery bounds how stale the list of repositories may get. An hour is short
+	// enough that a repository created in the morning is analyzed the same day, and long enough
+	// that the listing is a rounding error beside the analysis. It is a starting point rather
+	// than a measured optimum; `plans/api/org-enumeration.md` owns finding the latter.
+	DefaultEnumerateEvery = time.Hour
 )
 
 func (s *Supervisor) now() time.Time {
@@ -142,6 +164,47 @@ func recordCycle(st *Status, s expand.Stats) {
 	st.Unavailable += s.Unavailable
 	st.Discovered += s.Discovered
 	st.Edges += s.Edges
+}
+
+// readOrganization re-reads the declared accounts when the period has elapsed.
+//
+// A failure is recorded and the cycle continues: an account that could not be reached is a
+// coverage gap, and stopping the analysis already queued would turn one unreachable account into
+// no progress at all.
+func (s *Supervisor) readOrganization(ctx context.Context) {
+	if s.Enumerate == nil || !s.enumerationDue() {
+		return
+	}
+	// Recorded before the attempt, so an account that fails is not retried every thirty seconds.
+	s.LastEnumeratedAt = s.now()
+
+	queued, err := s.Enumerate(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		s.record(func(st *Status) {
+			st.LastError = fmt.Sprintf("reading the organization: %v", err)
+			st.LastErrorAt = s.now().Format(time.RFC3339)
+		})
+		s.logf("could not read the organization: %v", err)
+		return
+	}
+	if queued > 0 {
+		s.logf("read the organization and queued %d repositories", queued)
+	}
+}
+
+// enumerationDue reports whether the organization is worth re-reading.
+func (s *Supervisor) enumerationDue() bool {
+	if s.LastEnumeratedAt.IsZero() {
+		return true
+	}
+	every := s.EnumerateEvery
+	if every <= 0 {
+		every = DefaultEnumerateEvery
+	}
+	return s.now().Sub(s.LastEnumeratedAt) >= every
 }
 
 // reclaimLease is zero for the first cycle of a process: the store admits a single writer, so a
@@ -193,6 +256,7 @@ func (s *Supervisor) Start() *Problem {
 		s.signal()
 		s.logf("started")
 	}
+	s.rememberIntent(true)
 	return nil
 }
 
@@ -205,7 +269,21 @@ func (s *Supervisor) Pause() {
 	if was {
 		s.logf("paused")
 	}
+	s.rememberIntent(false)
 	s.signal()
+}
+
+// rememberIntent records what the operator asked for, so a restart does not undo it.
+//
+// A failure to write is logged and not returned: the loop is already doing what was asked, and
+// refusing to start because a preference could not be saved would be the worse of the two.
+func (s *Supervisor) rememberIntent(running bool) {
+	if s.Store == nil {
+		return
+	}
+	if err := s.Store.SetDiscoveryIntent(running); err != nil {
+		s.logf("could not record that discovery should be running=%v: %v", running, err)
+	}
 }
 
 // logf records one line, timestamped, so a trail read hours later can be placed in time.
@@ -318,6 +396,10 @@ func (s *Supervisor) cycle(ctx context.Context) time.Duration {
 		s.record(func(st *Status) { st.Reclaimed += n })
 		s.logf("reclaimed %d dependencies left claimed by an interrupted run", n)
 	}
+
+	// Before expansion, not after: a repository found now should be queued before this cycle
+	// claims its work, rather than waiting for the next one.
+	s.readOrganization(ctx)
 
 	s.setState(StateWorking)
 	stats, err := s.Expander.Run(ctx, s.Options)

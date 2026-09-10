@@ -1,0 +1,7 @@
+name: advanced-security/abom-csharp-quality-src
+version: 2.27.0
+description: "Code quality queries ABOM runs against its own C#"
+library: false
+suites: codeql-suites
+dependencies:
+  codeql/csharp-queries: 1.9.3

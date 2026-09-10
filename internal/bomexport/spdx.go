@@ -170,8 +170,8 @@ func newIDs() *ids { return &ids{taken: map[string]int{}} }
 func (i *ids) of(key string) string {
 	base := strings.Trim(notSPDXSafe.ReplaceAllString(key, "-"), "-")
 	if base == "" {
-		// A key made entirely of punctuation, such as the unexpanded `${{ }}` expression that
-		// reaches the graph as `$/`.
+		// A key made entirely of punctuation, such as the unevaluated `${{ }}` expression that
+		// reaches the graph verbatim.
 		base = "unnamed"
 	}
 	id := "SPDXRef-" + base

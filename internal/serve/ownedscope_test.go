@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
@@ -136,4 +137,61 @@ func preview(t *testing.T, srv *Server, body string) ScopePreview {
 	req := httptest.NewRequest(http.MethodPost, "/api/owned-scope/preview", strings.NewReader(body))
 	srv.Handler().ServeHTTP(rec, req)
 	return decode[ScopePreview](t, rec)
+}
+
+// The state that did not exist. `facebook` was declared for an operator gh places in 33 accounts,
+// none of them facebook, and the page drew it identically to an account gh had never been asked
+// about. One is a missing measurement; the other is evidence against the declaration.
+func TestAContradictedDeclarationIsDistinguishedFromAnUnverifiedOne(t *testing.T) {
+	srv, s := newServer(t)
+	if err := s.ReplaceAccounts(store.Verification{
+		Login: "operator", Host: "github.com", VerifiedAt: time.Now().UTC(),
+		Scopes:   []string{"read:org"},
+		Accounts: []store.Account{{Owner: "acme", Kind: store.AccountOrganization, Role: "admin"}},
+	}); err != nil {
+		t.Fatalf("ReplaceAccounts: %v", err)
+	}
+	put(t, srv, "/api/owned-scope", `[
+	  {"owner":"acme","kind":"organization","enabled":true},
+	  {"owner":"facebook","kind":"organization","enabled":true}
+	]`)
+
+	got := decode[[]declaredAccountView](t, get(t, srv, "/api/owned-scope"))
+
+	state := map[string]string{}
+	for _, a := range got {
+		state[a.Owner] = a.State
+	}
+	if state["acme"] != store.DeclarationConfirmed {
+		t.Errorf("acme = %q, want %q", state["acme"], store.DeclarationConfirmed)
+	}
+	if state["facebook"] != store.DeclarationContradicted {
+		t.Errorf("facebook = %q, want %q", state["facebook"], store.DeclarationContradicted)
+	}
+}
+
+// Losing the network must never turn a declaration into a contradiction. Nothing has been
+// established either way, and the remedy is a command rather than a correction.
+func TestWithNoVerificationEveryDeclarationIsUnknownRatherThanContradicted(t *testing.T) {
+	srv, _ := newServer(t)
+	put(t, srv, "/api/owned-scope", `[{"owner":"acme","kind":"organization","enabled":true}]`)
+
+	got := decode[[]declaredAccountView](t, get(t, srv, "/api/owned-scope"))
+
+	if len(got) != 1 || got[0].State != store.DeclarationUnknown {
+		t.Errorf("state = %+v, want every account %q", got, store.DeclarationUnknown)
+	}
+}
+
+// A declaration written through the API is the operator acting in a session someone was looking
+// at, and that is worth being able to tell from a row nobody can account for.
+func TestADeclarationWrittenThroughTheApiSaysWhereItCameFrom(t *testing.T) {
+	srv, _ := newServer(t)
+	put(t, srv, "/api/owned-scope", `[{"owner":"acme","kind":"organization","enabled":true}]`)
+
+	got := decode[[]declaredAccountView](t, get(t, srv, "/api/owned-scope"))
+
+	if len(got) != 1 || got[0].DeclaredBy != store.DeclaredByInterface {
+		t.Errorf("declaredBy = %+v, want %q", got, store.DeclaredByInterface)
+	}
 }

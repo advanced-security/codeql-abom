@@ -11,10 +11,18 @@ public class OwnedScopeTests : AbomTestContext
 {
     private const string Identity = """
         {"authenticated":true,"login":"data-douser","host":"github.com",
-         "verifiedAt":"2026-09-04T02:12:00Z","problem":null,
+         "verifiedAt":"2026-09-04T02:12:00Z","problem":null,"canReadMemberships":true,
          "accounts":[{"owner":"data-douser","kind":"user","role":"owner","canDeclare":true},
                      {"owner":"ops-team","kind":"organization","role":"admin","canDeclare":true},
                      {"owner":"docs","kind":"organization","role":"member","canDeclare":false}]}
+        """;
+
+    // The same identity with nothing on record about what the token may read. `user/memberships/orgs`
+    // answers with what it can see, which is why absence from it proves nothing here.
+    private const string BlindIdentity = """
+        {"authenticated":true,"login":"data-douser","host":"github.com",
+         "verifiedAt":"2026-09-04T02:12:00Z","problem":null,"canReadMemberships":false,
+         "accounts":[{"owner":"data-douser","kind":"user","role":"owner","canDeclare":true}]}
         """;
 
     private const string Candidates = """
@@ -24,12 +32,28 @@ public class OwnedScopeTests : AbomTestContext
 
     private const string DeclaresAcme = """
         [{"owner":"acme","kind":"organization","enabled":true,
-          "includesOnly":false,"includes":[],"declaredAt":"2026-09-07T00:00:00Z"}]
+          "includesOnly":false,"includes":[],"declaredAt":"2026-09-07T00:00:00Z",
+          "declaredBy":"interface","state":"unknown"}]
         """;
 
     private const string DeclaresRestricted = """
         [{"owner":"acme-labs","kind":"organization","enabled":true,
-          "includesOnly":true,"includes":["tooling"],"declaredAt":"2026-09-07T00:00:00Z"}]
+          "includesOnly":true,"includes":["tooling"],"declaredAt":"2026-09-07T00:00:00Z",
+          "declaredBy":"interface","state":"unknown"}]
+        """;
+
+    // gh answered, listing 33 accounts, and this was not among them. The state that did not exist
+    // until a corpus was found declaring `facebook` for someone who has never owned it.
+    private const string DeclaresContradicted = """
+        [{"owner":"facebook","kind":"organization","enabled":true,
+          "includesOnly":false,"includes":[],"declaredAt":"2026-09-07T00:00:00Z",
+          "declaredBy":"interface","state":"contradicted"}]
+        """;
+
+    private const string DeclaresUnaccounted = """
+        [{"owner":"acme","kind":"organization","enabled":true,
+          "includesOnly":false,"includes":[],"declaredAt":"2026-09-07T00:00:00Z",
+          "declaredBy":"","state":"unknown"}]
         """;
 
     private void Serve(string scope)
@@ -134,11 +158,129 @@ public class OwnedScopeTests : AbomTestContext
          "queuedNow":0,"queuedNext":0}
         """;
 
+    // A declaration gh contradicts is kept — you can be responsible for something you have just
+    // lost access to — but it must not be drawn as settled fact. The green mark outweighed the
+    // amber caption beside it, and `facebook` read as owned for as long as nobody looked.
+    [Fact]
+    public void AContradictedDeclarationDoesNotCarryTheOwnershipMark()
+    {
+        ServeEditable(DeclaresContradicted);
+
+        var cut = Render<Pages.Settings>();
+
+        cut.WaitForAssertion(
+            () => Assert.NotNull(cut.Find("[data-abom-declared='facebook']")));
+        Assert.DoesNotContain(
+            "abom-owned-mark", cut.Find("[data-abom-declared='facebook']").GetAttribute("class"));
+    }
+
+    // Losing the network is not gh disagreeing. One is a missing measurement with a command that
+    // fixes it; the other is evidence against.
+    [Fact]
+    public void AnUnverifiedDeclarationIsStillDrawnAsYours()
+    {
+        ServeEditable(DeclaresAcme);
+
+        var cut = Render<Pages.Settings>();
+
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-declared='acme']")));
+        Assert.Contains(
+            "abom-owned-mark", cut.Find("[data-abom-declared='acme']").GetAttribute("class"));
+    }
+
+    [Fact]
+    public void AContradictedDeclarationSaysGhDoesNotListIt()
+    {
+        ServeEditable(DeclaresContradicted);
+
+        var cut = Render<Pages.Settings>();
+
+        cut.WaitForAssertion(
+            () => Assert.Contains("does not list",
+                cut.Find("[data-abom-access='facebook']").TextContent));
+    }
+
+    // Since the gate, a contradicted declaration roots nothing: no crawl, no bill of materials,
+    // no "yours" figure. An operator who is not told that reads every count on every page as
+    // covering an account it silently excludes.
+    [Fact]
+    public void AContradictedDeclarationSaysNothingItHoldsIsCounted()
+    {
+        ServeEditable(DeclaresContradicted);
+
+        var cut = Render<Pages.Settings>();
+
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-held]")));
+        Assert.Contains("facebook", cut.Find("[data-abom-held]").TextContent);
+    }
+
+    // Nothing is held while nothing is contradicted, or the warning becomes furniture.
+    [Fact]
+    public void AnUnverifiedDeclarationIsNotReportedAsHeld()
+    {
+        ServeEditable(DeclaresAcme);
+
+        var cut = Render<Pages.Settings>();
+
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-declared='acme']")));
+        Assert.Empty(cut.FindAll("[data-abom-held]"));
+    }
+
+    // Nothing on record saying the token can read organization memberships means gh can neither
+    // confirm nor contradict, and the store cannot tell a token carrying no such scope from a
+    // verification taken before scopes were recorded. Saying "press Check with gh" alone sends the
+    // first operator round a loop that cannot terminate, so the caption has to cover both.
+    [Fact]
+    public void AnUnrecordedTokenScopeSaysSoRatherThanBlamingGh()
+    {
+        Answer("api/owned-scope/preview", NoImpact);
+        Answer("api/owned-scope/enumerate",
+            """{"added":0,"promoted":0,"unchanged":0,"accounts":[],"failed":[]}""");
+        Answer("api/owned-scope", DeclaresAcme);
+        Answer("api/owner-candidates", Candidates);
+        Answer("api/accounts", BlindIdentity);
+
+        var cut = Render<Pages.Settings>();
+
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-uncheckable]")));
+    }
+
+    // The whole plan in one assertion: a row nobody can account for must say so, because that is
+    // exactly what a declaration somebody typed into the database looks like.
+    [Fact]
+    public void ADeclarationNobodyCanAccountForSaysSo()
+    {
+        ServeEditable(DeclaresUnaccounted);
+
+        var cut = Render<Pages.Settings>();
+
+        cut.WaitForAssertion(
+            () => Assert.NotNull(cut.Find("[data-abom-unaccounted='acme']")));
+    }
+
+    // A row the operator is adding right now is about to be accounted for by the save, and marking
+    // it unknown-source would be telling them their own action is untraceable.
+    [Fact]
+    public void AnUnsavedDeclarationIsNotMarkedUnaccountedFor()
+    {
+        ServeEditable("[]");
+        var cut = Render<Pages.Settings>();
+        cut.WaitForAssertion(() => Assert.Contains("ops-team", cut.Markup));
+
+        cut.Find("[data-abom-declare='ops-team']").Click();
+
+        Assert.Empty(cut.FindAll("[data-abom-unaccounted='ops-team']"));
+    }
+
     private void ServeEditable(string scope)
     {
-        // Registered before the scope stub: `api/owned-scope` is a prefix of this path, and the
-        // stub that answers an overlapping path is the first one registered.
+        // Registered before the scope stub: `api/owned-scope` is a prefix of both these paths, and
+        // the stub that answers an overlapping path is the first one registered.
         Answer("api/owned-scope/preview", NoImpact);
+        // Saving enumerates what was declared. These tests are about what gets written, not what
+        // it turned out to hold, so the enumeration answers nothing found.
+        Answer("api/owned-scope/enumerate",
+            """{"added":0,"promoted":0,"unchanged":0,"accounts":[],"failed":[]}""");
         Serve(scope);
     }
 

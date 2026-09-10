@@ -112,10 +112,10 @@ public class NodeReachTests : AbomTestContext
         var cut = RenderNode();
 
         cut.WaitForAssertion(() => Assert.Contains("What actually reaches this", cut.Markup));
-        Assert.DoesNotContain("No repository in scope reaches this", cut.Markup);
+        Assert.DoesNotContain("No repository here reaches this", cut.Markup);
 
         release();
         cut.WaitForAssertion(() =>
-            Assert.Contains("No repository in scope reaches this", cut.Markup));
+            Assert.Contains("No repository here reaches this", cut.Markup));
     }
 }

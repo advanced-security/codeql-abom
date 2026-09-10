@@ -141,8 +141,9 @@ func TestTwoComponentsNeverShareAnSPDXIdentifier(t *testing.T) {
 		Components: []store.BOMComponent{
 			{Key: "actions/upload-artifact/merge", Kind: "action"},
 			{Key: "actions/upload-artifact-merge", Kind: "action"},
-			// Made entirely of punctuation: an unexpanded `${{ }}` reaches the graph as this.
-			{Key: "$/", Kind: "action"},
+			// Made entirely of punctuation: an unevaluated `${{ }}` expression reaches the graph
+			// verbatim, and one made only of symbols has no SPDX-safe name to fall back on.
+			{Key: "@@", Kind: "action"},
 		},
 	}
 	out, err := SPDX(doc)

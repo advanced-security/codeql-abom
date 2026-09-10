@@ -62,7 +62,7 @@ func (h *seedHarness) declare(repoFullName string) {
 	declared = append(declared, store.DeclaredAccount{
 		Owner: owner, Kind: store.AccountOrganization, Enabled: true,
 	})
-	if err := h.store.SetOwnedScope(declared); err != nil {
+	if err := h.store.SetOwnedScope(declared, store.DeclaredByCLI); err != nil {
 		h.t.Fatalf("SetOwnedScope: %v", err)
 	}
 }

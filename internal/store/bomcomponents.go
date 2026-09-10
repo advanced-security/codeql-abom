@@ -29,26 +29,7 @@ func (s *Store) fillComponents(out *BOM, depth map[string]int, edges []bomEdge) 
 		return err
 	}
 
-	// References come from the edges that point at each component, so a version nothing names is
-	// not invented and one named twice is not counted twice.
-	refs := map[string]map[string]BOMReference{}
-	for _, e := range edges {
-		if _, inside := depth[e.target]; !inside {
-			continue
-		}
-		if _, inside := depth[e.source]; !inside {
-			continue
-		}
-		if refs[e.target] == nil {
-			refs[e.target] = map[string]BOMReference{}
-		}
-		key := e.refRaw + "\x00" + e.refValue
-		r := BOMReference{Raw: e.refRaw, Value: e.refValue}
-		if c, ok := coverage[refCoverageKey(e.target, e.refValue)]; ok {
-			r.ResolvedSHA, r.Analyzed = c.resolvedSHA, c.analyzed
-		}
-		refs[e.target][key] = r
-	}
+	refs := referencesByComponent(depth, edges, coverage)
 
 	keys := make([]string, 0, len(depth))
 	for k := range depth {
@@ -91,6 +72,48 @@ func (s *Store) fillComponents(out *BOM, depth map[string]int, edges []bomEdge) 
 		out.Components = append(out.Components, c)
 	}
 
+	out.Relationships = append(out.Relationships, relationshipsFrom(depth, edges)...)
+
+	out.Coverage = summarizeCoverage(out.Components)
+	return nil
+}
+
+// referencesByComponent collects the versions each component is named at.
+//
+// Keyed by the reference so a version nothing names is not invented and one named twice is not
+// counted twice. An edge with either end outside the walked closure describes something this
+// document does not claim to cover, and contributes nothing rather than dragging its endpoint in.
+func referencesByComponent(
+	depth map[string]int, edges []bomEdge, coverage map[string]refCoverage,
+) map[string]map[string]BOMReference {
+	refs := map[string]map[string]BOMReference{}
+	for _, e := range edges {
+		if _, inside := depth[e.target]; !inside {
+			continue
+		}
+		if _, inside := depth[e.source]; !inside {
+			continue
+		}
+		if refs[e.target] == nil {
+			refs[e.target] = map[string]BOMReference{}
+		}
+		key := e.refRaw + "\x00" + e.refValue
+		r := BOMReference{Raw: e.refRaw, Value: e.refValue}
+		if c, ok := coverage[refCoverageKey(e.target, e.refValue)]; ok {
+			r.ResolvedSHA, r.Analyzed = c.resolvedSHA, c.analyzed
+		}
+		refs[e.target][key] = r
+	}
+	return refs
+}
+
+// relationshipsFrom reports each distinct relationship inside the closure once, in an order that
+// comes from the content rather than from map iteration, so two documents can be diffed.
+//
+// The kind is part of the identity: one component can both use another and depend on it for
+// ordering, and collapsing those loses a distinction the graph draws.
+func relationshipsFrom(depth map[string]int, edges []bomEdge) []BOMRelationship {
+	out := make([]BOMRelationship, 0, len(edges))
 	seen := map[[3]string]bool{}
 	for _, e := range edges {
 		if _, inside := depth[e.source]; !inside {
@@ -104,12 +127,12 @@ func (s *Store) fillComponents(out *BOM, depth map[string]int, edges []bomEdge) 
 			continue
 		}
 		seen[k] = true
-		out.Relationships = append(out.Relationships, BOMRelationship{
+		out = append(out, BOMRelationship{
 			Source: e.source, Target: e.target, Kind: e.kind, Boundary: e.boundary,
 		})
 	}
-	sort.Slice(out.Relationships, func(i, j int) bool {
-		a, b := out.Relationships[i], out.Relationships[j]
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
 		if a.Source != b.Source {
 			return a.Source < b.Source
 		}
@@ -118,9 +141,7 @@ func (s *Store) fillComponents(out *BOM, depth map[string]int, edges []bomEdge) 
 		}
 		return a.Kind < b.Kind
 	})
-
-	out.Coverage = summarizeCoverage(out.Components)
-	return nil
+	return out
 }
 
 // summarizeCoverage states what was examined, counted from the document itself so the statement
@@ -149,6 +170,9 @@ func summarizeCoverage(components []BOMComponent) BOMCoverage {
 			}
 			if f.PackDigest == "" {
 				cov.FindingsWithoutDigest++
+			}
+			if f.Provider == "" {
+				cov.FindingsWithoutProvider++
 			}
 		}
 	}
@@ -202,7 +226,8 @@ func (s *Store) componentFindings(depth map[string]int) (map[string][]BOMFinding
 		       COALESCE(f.file_path, ''), COALESCE(f.start_line, 0), COALESCE(f.message, ''),
 		       COALESCE(f.severity, ''), COALESCE(f.security_severity, 0),
 		       COALESCE(f.result_hash, ''), COALESCE(q.run_key, ''),
-		       COALESCE(q.pack_digest, ''), COALESCE(q.cli_version, '')
+		       COALESCE(q.pack_digest, ''), COALESCE(q.cli_version, ''),
+		       COALESCE(f.provider, '')
 		FROM abom_finding_node fn
 		JOIN disp d ON d.row_id = fn.node_row_id
 		JOIN abom_node_live shown ON shown.row_id = d.shown
@@ -221,8 +246,12 @@ func (s *Store) componentFindings(depth map[string]int) (map[string][]BOMFinding
 		var f BOMFinding
 		if err := rows.Scan(&key, &f.RuleID, &f.Repository, &f.FilePath, &f.StartLine,
 			&f.Message, &f.Severity, &f.SecuritySeverity, &f.ResultHash, &f.RunKey,
-			&f.PackDigest, &f.CLIVersion); err != nil {
+			&f.PackDigest, &f.CLIVersion, &f.Provider); err != nil {
 			return nil, fmt.Errorf("scanning a component finding: %w", err)
+		}
+		if KnownProvider(f.Provider) {
+			reproducible := Reproducible(f.Provider)
+			f.Reproducible = &reproducible
 		}
 		if _, inside := depth[key]; !inside {
 			continue

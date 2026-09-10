@@ -195,8 +195,9 @@ func (q *Queue) Enqueue(items []Item) (int, error) {
 // namesARepository reports whether owner/repo could address a real repository.
 //
 // A `uses:` assembled from an expression extracts with the expression where the account should
-// be, giving keys like `$/bump-version`. Recording the reference verbatim is right — it is what
-// the workflow says — but no such repository exists, so a checkout only rediscovers that.
+// be, giving keys like `${{ github.repository }}/setup`. Recording the reference verbatim is
+// right — it is what the workflow says — but no such repository exists, so a checkout only
+// rediscovers that.
 func namesARepository(owner, repo string) bool {
 	if owner == "" || repo == "" || len(owner) > 39 {
 		return false

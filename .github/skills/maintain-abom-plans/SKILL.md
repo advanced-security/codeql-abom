@@ -6,18 +6,28 @@ argument-hint: 'Optionally name a plan or area (e.g. "advisories", "plans/db", "
 
 # Maintain the ABOM plans
 
-`plans/**` is where reasoning outlives a conversation. Each file explains why a piece of work
-exists, what is already true, what is pending, and the constraint that must not be broken.
-`plans/next.md` indexes them and holds the order.
+`plans/**` says what is **next**, and nothing else. Each file explains why a piece of work exists,
+what is pending, and the constraint that must not be broken. `plans/next.md` indexes them and holds
+the order.
 
-The point is not to have a plan. The point is that someone six months from now can tell a
-deliberate decision from an accident, and does not re-derive a constraint by breaking it.
+**Git history is the record of what was implemented.** A plan is not a logbook, a changelog, or a
+chronicle of how the work went. The three-way split:
+
+| Goes to | |
+| --- | --- |
+| `plans/**` | Pending work, open decisions, and the constraints around them |
+| `docs/**` | The big picture — what ABOM does now, and the roadmap |
+| `.github/instructions/**` | Rules that govern code somebody writes next year |
+| `plans/implemented.md` | The reasoning: what the corpus refuted, what did not move. Git-ignored |
+
+The point is that someone six months from now can tell a deliberate decision from an accident, and
+does not re-derive a constraint by breaking it — without reading a year of arrival states to do it.
 
 ## Layout
 
 ```
 plans/next.md          index, ranking, and what we are deliberately not doing
-plans/implemented.md   what shipped and what the corpus said — git-ignored, see below
+plans/implemented.md   reasoning worth keeping — git-ignored, see below
 plans/api/*.md         server behavior, query execution, HTTP surface
 plans/db/*.md          schema, storage semantics, derivation
 plans/tools/*.md       how the work itself gets done
@@ -50,55 +60,64 @@ the number drift.
 
 ## Writing a plan
 
-Structure, loosely:
+Structure, loosely — aim for 25 to 60 lines, and **100 is the maximum**. A plan past it is either
+two workstreams or a plan narrating itself:
 
-- **Status** in one line, at the top. "Shipped with a known approximation" is a status; "in
-  progress" is not.
+- **Status** in one line, at the top, present tense, no date. "Built with a known approximation" is
+  a status; "in progress" is not.
 - **Why this exists** — the problem, not the solution. Prefer the observed failure over the
   abstract concern.
-- **What is already true** — so a reader can tell what to trust.
 - **Pending**, numbered, with dependencies named.
 - **The constraint that must not be broken**, stated as a rule with its reason.
 - **Verification** — what would show it works, against real data.
 
 Rules that keep these documents worth reading:
 
-- **Numbers, not adjectives.** "415 of 988 never queued" beats "many were missing". Every figure
-  should be one someone could reproduce.
-- **Record what turned out wrong.** A plan that only records successes teaches nothing. Two of
-  the current plans lead with a mistake, and those are the most useful paragraphs in them.
+- **Numbers that size the work, not numbers that narrate it.** "523 pins the queue cannot reach"
+  earns its place; "reduced 140,421 rows to 43,379" is a result, and results live in git.
+- **No arrival states.** No "built 2026-09-05", no struck-through completed items, no phase lists
+  with most of the phases done, no before/after table for work that is finished. If it is done, it
+  leaves the file.
 - **Name the invariant, not just the behavior.** "Advisories enrich, they never adjudicate" is
-  reusable; "don't set vulnerable=true here" is not.
+  reusable; "don't set vulnerable=true here" is not. A rule this general belongs in
+  `.github/instructions/**`, where it reaches the person editing the code.
 - **An open question is a fork with named alternatives.** If the answer already follows from an
-  architectural invariant, it is a decision to record, not a question to ask. Two of a recent
-  plan's three "open questions" were restatements the core concepts had already settled, and
-  asking cost a turn and taught nothing.
-- **Answer a question in place.** Strike it through, keep it, and write the decision beneath.
-  Deleting it invites the same question again; the strike is what shows it was considered.
+  architectural invariant, it is a decision to record, not a question to ask.
+- **Answer a question in place.** Write the decision as a decision. Do not keep the question and the
+  answer side by side once it is settled — state what was decided and why, in one place.
 - **No status theatre.** No percentages, no burndown, no dates. This is not a tracker.
 
-## Moving something to Implemented
+## Retiring a plan
 
-Only when it is verified against the real corpus, not when the code compiles. `make verify`
-green is necessary and not sufficient — the entry should carry the measured before/after that
-shows it did what it claimed.
+When the last pending item lands, **the plan file goes away.** Before deleting it, move anything
+durable out:
 
-Move the summary into `plans/implemented.md`, newest first, keep the plan file (its pending
-section usually still has content), and update the plan's Status line.
+1. A rule that governs future code → the matching `.github/instructions/*.instructions.md`.
+2. A fact about what the system now does → `docs/architecture.md`, or `docs/vocabulary.md` if it is
+   a word the interface uses.
+3. A theme somebody should know is coming → `docs/roadmap.md`.
+4. The reasoning — what was refuted, what did not move and why that was right →
+   `plans/implemented.md`.
 
-**`plans/implemented.md` is git-ignored on purpose.** Git history already records what changed and
-when, so a tracked markdown summary is a second copy that drifts from the log it duplicates. What
-history does not carry is the reasoning — the measurement that refuted a design, the number that
-did not move and why that was right — and that is what the file is for. Write it for an agent
-picking the work up cold, not for a reviewer reading a diff.
+Then delete the file, fix every reference to it, and remove its entry from `next.md`. A plan kept
+alive only to hold history is the thing this layout exists to prevent.
+
+**Never stage or commit.** Leave the deletion unstaged; the operator commits.
+
+## `plans/implemented.md`
+
+**Git-ignored on purpose.** Git history already records what changed and when, so a tracked markdown
+summary is a second copy that drifts from the log it duplicates. What history does not carry is the
+reasoning — the measurement that refuted a design, the number that did not move and why that was
+right — and that is what the file is for. Write it for an agent picking the work up cold.
 
 Two consequences worth holding on to:
 
 - **It may not exist.** A fresh clone has no copy. Absence means nothing has been *recorded here*,
-  never that nothing has shipped — the same absent-is-not-zero rule the store follows. Check the
-  Status line of each plan, and the code, before concluding a workstream has not landed.
-- **Never add it to a commit**, and never restore it by pasting the section back into `next.md`.
-  `next.md` keeps a pointer and nothing more.
+  never that nothing has been built — the same absent-is-not-zero rule the store follows. Check each
+  plan's Status line, and the code, before concluding a workstream has not landed.
+- **Never add it to a commit**, and never restore its content into a tracked plan. `next.md` keeps a
+  pointer and nothing more.
 
 ## Adding to "Not doing"
 
@@ -123,6 +142,7 @@ the plan rather than working around it.
 
 ## Related
 
+- `docs/architecture.md` — what the system does now; a plan must not restate it.
 - `.github/instructions/architecture.instructions.md` — architectural invariants; a plan must not
-  contradict them.
+  contradict them, and a rule general enough to belong there should not stay in a plan.
 - `.github/skills/verify-abom-ui/` — how the interface layers are verified.

@@ -118,7 +118,7 @@ func TestADeclaredAccountMarksItsOwnRepositories(t *testing.T) {
 	s := subgraphFixture(t)
 	if err := s.SetOwnedScope([]DeclaredAccount{
 		{Owner: "octo-org", Kind: AccountOrganization, Enabled: true},
-	}); err != nil {
+	}, DeclaredByCLI); err != nil {
 		t.Fatalf("SetOwnedScope: %v", err)
 	}
 

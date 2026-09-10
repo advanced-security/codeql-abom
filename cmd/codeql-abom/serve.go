@@ -8,8 +8,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/advanced-security/codeql-abom/internal/catalog"
+	"github.com/advanced-security/codeql-abom/internal/declare"
+	"github.com/advanced-security/codeql-abom/internal/enumerate"
 	"github.com/advanced-security/codeql-abom/internal/expand"
 	"github.com/advanced-security/codeql-abom/internal/frontier"
 	"github.com/advanced-security/codeql-abom/internal/serve"
@@ -20,15 +24,116 @@ import (
 // shutdownGrace bounds how long serve waits for in-flight requests once asked to stop.
 const shutdownGrace = 5 * time.Second
 
+// wireEnumeration lets the loop re-read the declared accounts on a period.
+//
+// A period of zero leaves the loop unable to enumerate, which is what every build before this did.
+func wireEnumeration(
+	loop *supervisor.Supervisor, srv *serve.Server, s *store.Store, every time.Duration,
+) {
+	if every <= 0 {
+		return
+	}
+	loop.EnumerateEvery = every
+	loop.Enumerate = func(ctx context.Context) (int, error) {
+		report, err := enumerate.Run(ctx, enumerate.Options{
+			Store:            s,
+			Read:             srv.Enumerate,
+			QueueOwned:       srv.QueueOwned,
+			FullListingEvery: srv.FullListingEvery,
+		})
+		if err != nil {
+			return 0, err
+		}
+		if len(report.Failed) > 0 {
+			// Named rather than counted: an account nobody can reach is a coverage gap, and
+			// "1 failed" sends a reader looking for which.
+			return report.Queued, fmt.Errorf("%s could not be read: %s",
+				report.Failed[0].Owner, report.Failed[0].Error)
+		}
+		return report.Queued, nil
+	}
+}
+
+// shouldResume reports whether discovery starts with the server.
+//
+// A crawl the operator started survives a restart, and one they paused stays paused: a restart may
+// not overturn either decision. `--expand` forces it either way.
+func shouldResume(s *store.Store, autostart bool, stdout, stderr io.Writer) bool {
+	if autostart {
+		return true
+	}
+	running, known, err := s.DiscoveryIntent()
+	if err != nil {
+		fmt.Fprintf(stderr, "serve: cannot read whether discovery should be running: %v\n", err)
+		return false
+	}
+	if known && running {
+		fmt.Fprintln(stdout, "serve: resuming discovery, which was running when this last stopped")
+		return true
+	}
+	return false
+}
+
+// seedDeclaration applies an untracked local declaration, and only when the database holds none.
+//
+// It declares; it never vouches. What `gh` says about the account still decides whether the
+// declaration is honored, so this is a way to avoid retyping rather than a way around verification.
+func seedDeclaration(s *store.Store, path string, stderr io.Writer) error {
+	accounts, err := declare.Load(path)
+	if err != nil {
+		return fmt.Errorf("serve: %w", err)
+	}
+	seeded, err := declare.Seed(s, accounts)
+	if err != nil {
+		return fmt.Errorf("serve: %w", err)
+	}
+	if !seeded {
+		return nil
+	}
+	names := make([]string, 0, len(accounts))
+	for _, a := range accounts {
+		names = append(names, a.Owner)
+	}
+	fmt.Fprintf(stderr, "serve: %s declared %s; verification still decides whether it is honored\n",
+		path, strings.Join(names, ", "))
+	return nil
+}
+
 // runServe answers interface queries over HTTP until the context is canceled.
 func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", "", "path to the ABOM SQLite database (required)")
+	// Untracked, and only ever fills a vacuum. Development rebuilds the database often, and an
+	// operator who retypes the declaration every time stops declaring.
+	declareFile := fs.String("declare-file", declare.DefaultFileName,
+		"local file declaring owned accounts, applied only when nothing is declared")
 	addr := fs.String("addr", "localhost:8080", "address to listen on")
 	uiDir := fs.String("ui-dir", "", "directory containing the published interface (optional)")
 	allowRemote := fs.Bool("allow-remote-control", false,
 		"let a non-loopback client start discovery, which runs git and codeql on this machine")
+	// Off by default. Route latencies map what exists and what is expensive, and pprof serves
+	// goroutine stacks and heap contents; both are fine on a workstation and not by default.
+	diagnostics := fs.Bool("diagnostics", false,
+		"expose /api/metrics and /debug/pprof/ for local performance analysis")
+	apiURL := fs.String("api-url", defaultAPIURL(), "GitHub API base URL")
+	// How stale the list of repositories may get. A read is bounded by what moved since the last
+	// one rather than by how big the account is; see plans/api/org-enumeration.md.
+	enumerateEvery := fs.Duration("enumerate-every", supervisor.DefaultEnumerateEvery,
+		"how often the declared accounts are re-read for new repositories (0: never)")
+	// Only a full listing can establish that a repository is gone, so sweeping forever keeps dead
+	// repositories while looking more current than reading everything would.
+	listEvery := fs.Duration("list-every", enumerate.DefaultFullListingEvery,
+		"how often every page of an account is read, which is the only way a deletion is seen")
+	// Selection is the operator's; detection is at most a default. An empty value prefers GraphQL
+	// and falls back to REST, and a pinned route is never second-guessed.
+	route := fs.String("read-route", "",
+		"which API reads an account: graphql, rest, or empty to prefer graphql and fall back")
+	// Empty by default, and an empty list submits nowhere. A dependency snapshot replaces data on
+	// somebody else's repository and cannot be withdrawn, so the targets are named explicitly or
+	// this build can only preview.
+	submitTargets := fs.String("submit-targets", "",
+		"comma-separated repositories that may receive dependency snapshots")
 	var d discoveryOptions
 	fs.BoolVar(&d.autostart, "expand", false, "start discovery as soon as the server is up")
 	// Empty by default: what each tier runs is stored configuration, editable while the server is
@@ -79,6 +184,10 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return fmt.Errorf("migrating %s: %w", *dbPath, err)
 	}
 
+	if err := seedDeclaration(s, *declareFile, stderr); err != nil {
+		return err
+	}
+
 	loop, err := newSupervisor(s, d, stderr)
 	if err != nil {
 		return fmt.Errorf("serve: %w", err)
@@ -89,12 +198,35 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	if _, err := s.LinkFindingsToNodes(); err != nil {
 		fmt.Fprintf(stderr, "serve: attributing findings: %v\n", err)
 	}
+	// Same reasoning, and a sharper failure: the only other caller runs inside a discovery cycle,
+	// so a database migrated in place and never crawled serves every boundary filter an empty
+	// answer, which reads as "no cross-owner dependencies" rather than "never measured".
+	if _, err := s.ClassifyEdgeBoundaries(); err != nil {
+		fmt.Fprintf(stderr, "serve: classifying edge boundaries: %v\n", err)
+	}
+	// Before SeedFrontier, which can only queue the dependencies of a repository that has
+	// already been analyzed. These are what get analyzed first.
+	if seeded, err := expand.SeedOwnedRepositories(s, loop.Queue); err != nil {
+		fmt.Fprintf(stderr, "serve: queueing owned repositories: %v\n", err)
+	} else if seeded > 0 {
+		fmt.Fprintf(stdout, "serve: %d repositories you own queued for analysis\n", seeded)
+	}
 	// Seeding is idempotent, and without it a database that has only been built has nothing
 	// for the loop to claim however long it runs.
 	if seeded, err := expand.SeedFrontier(s, loop.Queue); err != nil {
 		fmt.Fprintf(stderr, "serve: seeding the frontier: %v\n", err)
 	} else if seeded > 0 {
 		fmt.Fprintf(stdout, "serve: %d dependencies seeded from repositories under review\n", seeded)
+	}
+	// A composite action analyzed only on its default branch contributes nothing to a submission:
+	// a child is attributable to a consumer only when the parent was analyzed at the ref that
+	// consumer pinned. These are already queued by SeedFrontier; what they lack is priority, and
+	// they are the ceiling on how deep any submission can go.
+	if pinned, err := expand.ExpediteCompositePins(s, loop.Queue); err != nil {
+		fmt.Fprintf(stderr, "serve: prioritizing composite pins: %v\n", err)
+	} else if pinned > 0 {
+		fmt.Fprintf(stdout,
+			"serve: %d composite actions prioritized at the references our workflows pin\n", pinned)
 	}
 	// Before anything is served, not on the first cycle: until discovery is started the queue
 	// would otherwise report a previous run's claims as work in flight, on a page that says
@@ -108,7 +240,26 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 
 	srv := &serve.Server{
 		Store: s, Discovery: loop, AllowRemoteControl: *allowRemote, Log: stderr,
+		Diagnostics: *diagnostics,
 	}
+	// Without this the interface can record a declaration and never act on it: declaring names
+	// accounts, and only enumeration turns them into the repositories a report is about.
+	reader, err := readClient(ctx, *apiURL, s, *route)
+	if err != nil {
+		return fmt.Errorf("serve: %w", err)
+	}
+	srv.Enumerate = reader.Sweep
+	srv.FullListingEvery = *listEvery
+	srv.QueueOwned = func() (int, error) { return expand.SeedOwnedRepositories(s, loop.Queue) }
+	// The same enumeration the button performs, on a period. A person clicking and a loop on a
+	// timer take one path, so a repository created after the last read is not invisible until
+	// somebody happens to press it.
+	wireEnumeration(loop, srv, s, *enumerateEvery)
+	// Preview always works; submitting requires a configured target. A build with no targets can
+	// inspect what it would send and cannot write, which is the right default for something that
+	// cannot be undone.
+	wireSnapshots(srv, s, githubToken(ctx), splitTargets(*submitTargets),
+		catalog.New(*apiURL, githubToken(ctx), nil).HeadSHA)
 	if *uiDir != "" {
 		srv.UI = os.DirFS(*uiDir)
 	}
@@ -121,7 +272,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 			fmt.Fprintf(stderr, "serve: discovery stopped: %v\n", err)
 		}
 	}()
-	if d.autostart {
+	if shouldResume(s, d.autostart, stdout, stderr) {
 		if problem := loop.Start(); problem != nil {
 			fmt.Fprintf(stderr, "serve: discovery cannot start: %s\n  %s\n",
 				problem.Reason, problem.Remedy)

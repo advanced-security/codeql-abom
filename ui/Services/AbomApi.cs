@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Abom.WebAssembly.Models;
@@ -26,7 +27,7 @@ public sealed class AbomApi(HttpClient http)
     /// <summary>Re-asks gh who the operator is. A POST because it runs a subprocess.</summary>
     public async Task<AccountIdentity> RefreshAccountsAsync(CancellationToken ct = default)
     {
-        var response = await http.PostAsync("api/accounts/refresh", content: null, ct);
+        using var response = await http.PostAsync("api/accounts/refresh", content: null, ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<AccountIdentity>(Json, ct)
                ?? new AccountIdentity();
@@ -52,10 +53,10 @@ public sealed class AbomApi(HttpClient http)
     /// </summary>
     public async Task<DiscoveryState> SetDiscoveryAsync(bool running, CancellationToken ct = default)
     {
-        var request = new HttpRequestMessage(
+        using var request = new HttpRequestMessage(
             HttpMethod.Post, running ? "api/discovery/start" : "api/discovery/pause");
         request.Headers.Add("X-Abom-Control", "1");
-        var response = await http.SendAsync(request, ct);
+        using var response = await http.SendAsync(request, ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<DiscoveryState>(Json, ct)
                ?? new DiscoveryState();
@@ -72,13 +73,13 @@ public sealed class AbomApi(HttpClient http)
     public async Task<SuiteBinding?> SetTierSuitesAsync(
         string tier, IReadOnlyList<string> suites, CancellationToken ct = default)
     {
-        var request = new HttpRequestMessage(
+        using var request = new HttpRequestMessage(
             HttpMethod.Put, $"api/discovery/suites/{Uri.EscapeDataString(tier)}")
         {
             Content = JsonContent.Create(suites),
         };
         request.Headers.Add("X-Abom-Control", "1");
-        var response = await http.SendAsync(request, ct);
+        using var response = await http.SendAsync(request, ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<SuiteBinding>(Json, ct);
     }
@@ -89,10 +90,10 @@ public sealed class AbomApi(HttpClient http)
     /// </summary>
     public async Task<DiscoveryState> RequeueTierAsync(string tier, CancellationToken ct = default)
     {
-        var request = new HttpRequestMessage(
+        using var request = new HttpRequestMessage(
             HttpMethod.Post, $"api/discovery/requeue/{Uri.EscapeDataString(tier)}");
         request.Headers.Add("X-Abom-Control", "1");
-        var response = await http.SendAsync(request, ct);
+        using var response = await http.SendAsync(request, ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<DiscoveryState>(Json, ct)
                ?? new DiscoveryState();
@@ -116,13 +117,13 @@ public sealed class AbomApi(HttpClient http)
 
     private async Task<RequeueResult> RequeueAsync(string path, object? body, CancellationToken ct)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, path);
+        using var request = new HttpRequestMessage(HttpMethod.Post, path);
         request.Headers.Add("X-Abom-Control", "1");
         if (body is not null)
         {
             request.Content = JsonContent.Create(body);
         }
-        var response = await http.SendAsync(request, ct);
+        using var response = await http.SendAsync(request, ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<RequeueResult>(Json, ct)
                ?? new RequeueResult();
@@ -130,6 +131,24 @@ public sealed class AbomApi(HttpClient http)
 
     public async Task<GraphVersion> GetGraphVersionAsync(CancellationToken ct = default) =>
         await GetAsync<GraphVersion>("api/graph/version", ct) ?? new GraphVersion();
+
+    /// <summary>What leaving the declared closure would remove. Changes nothing.</summary>
+    public async Task<PruneView?> GetPruneAsync(CancellationToken ct = default) =>
+        await GetAsync<PruneView>("api/prune", ct);
+
+    /// <summary>
+    /// Tombstones what the declaration does not reach, or deletes what is already tombstoned.
+    /// Both carry the control header: they remove work that only re-analysis can rebuild.
+    /// </summary>
+    public async Task<PruneView?> PruneAsync(bool compact, CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post, compact ? "api/prune/compact" : "api/prune/apply");
+        request.Headers.Add("X-Abom-Control", "1");
+        using var response = await http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<PruneView>(Json, ct);
+    }
 
     public async Task<IReadOnlyList<RemediationItem>> GetRemediationAsync(
         int top = 50, CancellationToken ct = default) =>
@@ -184,15 +203,32 @@ public sealed class AbomApi(HttpClient http)
     public async Task<IReadOnlyList<DeclaredAccount>> SetOwnedScopeAsync(
         IReadOnlyList<DeclaredAccount> accounts, CancellationToken ct = default)
     {
-        var request = new HttpRequestMessage(HttpMethod.Put, "api/owned-scope")
+        using var request = new HttpRequestMessage(HttpMethod.Put, "api/owned-scope")
         {
             Content = JsonContent.Create(accounts),
         };
         request.Headers.Add("X-Abom-Control", "1");
-        var response = await http.SendAsync(request, ct);
+        using var response = await http.SendAsync(request, ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<IReadOnlyList<DeclaredAccount>>(Json, ct)
                ?? [];
+    }
+
+    /// <summary>
+    /// Turns the declared scope into repositories.
+    ///
+    /// Declaring records which accounts are the operator's; only this acts on it. The two were
+    /// separate for a week and a corpus was found where every account the operator owned was
+    /// declared and one of their repositories was present, because nothing had ever asked GitHub
+    /// what those accounts held.
+    /// </summary>
+    public async Task<EnumerationReport?> EnumerateOwnedScopeAsync(CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/owned-scope/enumerate");
+        request.Headers.Add("X-Abom-Control", "1");
+        using var response = await http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<EnumerationReport>(Json, ct);
     }
 
     /// <summary>
@@ -202,7 +238,7 @@ public sealed class AbomApi(HttpClient http)
     public async Task<ScopePreview?> PreviewOwnedScopeAsync(
         IReadOnlyList<DeclaredAccount> accounts, CancellationToken ct = default)
     {
-        var response = await http.PostAsJsonAsync("api/owned-scope/preview", accounts, ct);
+        using var response = await http.PostAsJsonAsync("api/owned-scope/preview", accounts, ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<ScopePreview>(Json, ct);
     }
@@ -264,18 +300,33 @@ public sealed class AbomApi(HttpClient http)
 
     private async Task<T?> GetAsync<T>(string url, CancellationToken ct)
     {
+        var started = Stopwatch.GetTimestamp();
         try
         {
             var result = await http.GetFromJsonAsync<T>(url, Json, ct);
             // Cleared on success, or a single transient failure would be reported for the rest
             // of the session.
             LastError = null;
+            Record(url, started, ok: true);
             return result;
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
         {
             LastError = $"{url}: {ex.Message}";
+            // A failed fetch is still a wait, and usually the one a reader is complaining about.
+            Record(url, started, ok: false);
             return default;
+        }
+    }
+
+    private void Record(string url, long started, bool ok)
+    {
+        var elapsed = Stopwatch.GetElapsedTime(started);
+        _recent.Add(new FetchTiming(url, (long)elapsed.TotalMilliseconds, ok));
+        // Bounded, or a page that polls forever becomes the leak this was added to find.
+        if (_recent.Count > RecentFetchLimit)
+        {
+            _recent.RemoveRange(0, _recent.Count - RecentFetchLimit);
         }
     }
 
@@ -284,4 +335,24 @@ public sealed class AbomApi(HttpClient http)
 
     /// <summary>The most recent transport failure, surfaced rather than swallowed.</summary>
     public string? LastError { get; private set; }
+
+    /// <summary>How many fetches are kept. Bounded for the same reason the server's ring is.</summary>
+    public const int RecentFetchLimit = 64;
+
+    private readonly List<FetchTiming> _recent = [];
+
+    /// <summary>
+    /// What the interface waited for, oldest first.
+    ///
+    /// `/api/metrics` measures from the first byte of a request to the last byte written, and
+    /// knows nothing about transfer, deserialization or the render that follows. Without this,
+    /// "the Explorer is slow" names two suspects at once and neither can be ruled out.
+    /// </summary>
+    public IReadOnlyList<FetchTiming> RecentFetches => _recent;
 }
+
+/// <summary>One fetch, as the browser experienced it.</summary>
+/// <param name="Url">The endpoint asked for, relative to the API root.</param>
+/// <param name="Milliseconds">Wall time from request to parsed result.</param>
+/// <param name="Ok">False when the fetch failed, which is still a wait worth seeing.</param>
+public readonly record struct FetchTiming(string Url, long Milliseconds, bool Ok);

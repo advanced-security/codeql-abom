@@ -49,3 +49,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: echo many
+
+  # GitHub's self repository reference. It is fully resolved — this repository at the running
+  # commit — and carries no `@ref`, so the extraction must hand it to the ingester verbatim
+  # rather than leaving a `$` where an account name would be.
+  self-reference:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Self reference to a sibling action
+        uses: $/.github/actions/greet
+
+  call-self-reusable:
+    uses: $/.github/workflows/reusable.yml

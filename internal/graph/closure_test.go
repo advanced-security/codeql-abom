@@ -112,7 +112,7 @@ func declareOwned(t *testing.T, s *store.Store, owners ...string) {
 			Owner: o, Kind: store.AccountOrganization, Enabled: true,
 		})
 	}
-	if err := s.SetOwnedScope(accounts); err != nil {
+	if err := s.SetOwnedScope(accounts, store.DeclaredByCLI); err != nil {
 		t.Fatalf("SetOwnedScope: %v", err)
 	}
 }

@@ -1,11 +1,14 @@
-name: Self Audit - Actions
+name: Self Audit
 
-# Runs ABOM against ABOM.
+# Runs ABOM against ABOM, in every language ABOM is written in.
 #
-# Two things at once, deliberately. It audits the workflows this repository ships against the
+# Two things at once, deliberately. It audits the code this repository ships against the
 # same queries the tool reports on for everyone else, and it exercises the database-creation
 # path every upstream expansion depends on -- a path no unit test can cover, because a real
 # extractor and a real source tree are the only honest fixture for it.
+#
+# One job per language rather than one job for all four. They share nothing, they take minutes
+# each, and a single job would report "self audit failed" without saying which language.
 
 on:
   pull_request:
@@ -13,16 +16,22 @@ on:
       - '.codeql-version'
       - '.github/**'
       - 'cmd/codeql-abom/selfcheck.go'
-      - 'internal/runner/**'
+      - 'internal/**'
+      - 'ql/**'
+      - 'ui/**'
+      - 'go.mod'
   push:
     branches: ['main']
     paths:
       - '.codeql-version'
       - '.github/**'
       - 'cmd/codeql-abom/selfcheck.go'
-      - 'internal/runner/**'
+      - 'internal/**'
+      - 'ql/**'
+      - 'ui/**'
+      - 'go.mod'
   schedule:
-    # Weekly: a query pack update can start flagging a workflow that has not itself changed.
+    # Weekly: a query pack update can start flagging code that has not itself changed.
     - cron: '0 7 * * 1'
 
 permissions:
@@ -30,8 +39,36 @@ permissions:
 
 jobs:
   self-audit:
-    name: Self Audit - Actions
+    name: Self Audit - ${{ matrix.name }}
     runs-on: ubuntu-latest
+
+    strategy:
+      # Every language is reported, not just the first to fail. A cancelled sibling would hide
+      # whether the others were clean, which is the question a red build raises.
+      fail-fast: false
+      matrix:
+        include:
+          - name: Actions
+            language: actions
+            source-root: '.'
+            suite: ''
+            dotnet: false
+          - name: Go
+            language: go
+            source-root: '.'
+            suite: 'advanced-security/abom-go-quality-src:codeql-suites/abom-go-quality.qls'
+            dotnet: false
+          - name: 'C#'
+            language: csharp
+            source-root: 'ui'
+            suite: 'advanced-security/abom-csharp-quality-src:codeql-suites/abom-csharp-quality.qls'
+            dotnet: true
+          - name: JavaScript
+            language: javascript
+            source-root: 'ui/wwwroot'
+            suite: >-
+              advanced-security/abom-javascript-quality-src:codeql-suites/abom-javascript-quality.qls
+            dotnet: false
 
     steps:
       - name: Self Audit - Checkout repository
@@ -43,22 +80,47 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # The C# extractor builds the project to read it, so the SDK has to be present before the
+      # database is created. The other three extract from source alone.
+      - name: Self Audit - Setup .NET
+        if: matrix.dotnet
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+
       - name: Self Audit - Setup CodeQL
         uses: ./.github/actions/setup-codeql
 
-      - name: Self Audit - Analyze our own workflows
+      - name: Self Audit - Analyze our own ${{ matrix.name }}
         # The suite is fetched from the CodeQL registry (ghcr.io) on first use; the CLI reads
         # GITHUB_TOKEN itself to authenticate that pull, same as any other registry client.
+        #
+        # No --max-findings: the default is zero, and naming it here would be one more place to
+        # quietly raise it.
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: make selfcheck
+          LANGUAGE: ${{ matrix.language }}
+          SOURCE_ROOT: ${{ matrix.source-root }}
+          SUITE: ${{ matrix.suite }}
+        run: |
+          if [ -n "$SUITE" ]; then
+            go run ./cmd/codeql-abom selfcheck \
+              --language="$LANGUAGE" --source-root="$SOURCE_ROOT" --suite "$SUITE"
+          else
+            go run ./cmd/codeql-abom selfcheck --source-root="$SOURCE_ROOT"
+          fi
 
       - name: Self Audit - Summary
         if: always()
+        env:
+          NAME: ${{ matrix.name }}
+          OUTCOME: ${{ job.status }}
         run: |
           {
-            echo "## Self Audit"
+            echo "## Self Audit - $NAME"
             echo ""
-            echo "\`actions-security-and-quality\` run against this repository's own workflows,"
-            echo "using ABOM's own database-creation path."
+            echo "Result: **$OUTCOME**"
+            echo ""
+            echo "ABOM's own code-quality suite run against this repository, using ABOM's own"
+            echo "database-creation path. The threshold is zero findings."
           } >> "$GITHUB_STEP_SUMMARY"

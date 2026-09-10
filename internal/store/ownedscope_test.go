@@ -132,7 +132,7 @@ func TestTheDeclarationReadsBackWithItsIncludes(t *testing.T) {
 
 func TestAnUnknownAccountKindIsRefused(t *testing.T) {
 	s := newTestStore(t)
-	err := s.SetOwnedScope([]DeclaredAccount{{Owner: "acme", Kind: "team", Enabled: true}})
+	err := s.SetOwnedScope([]DeclaredAccount{{Owner: "acme", Kind: "team", Enabled: true}}, DeclaredByCLI)
 	if err == nil {
 		t.Error("a kind that is neither a user nor an organization is a caller mistake")
 	}
@@ -174,6 +174,9 @@ func TestVerifiedMembershipAloneMakesNothingOwned(t *testing.T) {
 
 // The two facts are kept apart rather than one replacing the other: `gh` still says what access
 // exists, and that is worth showing beside a declaration it disagrees with.
+//
+// `verifies` records no token scopes, so this is the *unproven* case, not the contradicted one —
+// which the gate honors deliberately. `TestAContradictedDeclarationOwnsNothing` holds the other.
 func TestADeclarationIsOwnedEvenWhenVerificationDisagrees(t *testing.T) {
 	s := newTestStore(t)
 	verifies(t, s, "docs")
@@ -238,7 +241,7 @@ func TestCoveredByAgreesWithTheStoredScopePredicate(t *testing.T) {
 
 func declare(t *testing.T, s *Store, accounts ...DeclaredAccount) {
 	t.Helper()
-	if err := s.SetOwnedScope(accounts); err != nil {
+	if err := s.SetOwnedScope(accounts, DeclaredByCLI); err != nil {
 		t.Fatalf("SetOwnedScope: %v", err)
 	}
 }
@@ -259,4 +262,33 @@ func declared(t *testing.T, s *Store) bool {
 		t.Fatalf("OwnedScopeDeclared: %v", err)
 	}
 	return got
+}
+
+// A local file is a third write path, and the store has to name it like the other two. Provenance
+// is what lets the interface say a row nobody typed came from a file on this machine.
+func TestAConfigFileIsADeclarationSourceTheStoreRecords(t *testing.T) {
+	s := newTestStore(t)
+	acct := DeclaredAccount{Owner: "has-ghas", Kind: AccountOrganization, Enabled: true}
+
+	if err := s.SetOwnedScope([]DeclaredAccount{acct}, DeclaredByConfig); err != nil {
+		t.Fatalf("a local file must be able to declare: %v", err)
+	}
+
+	got, err := s.OwnedScope()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].DeclaredBy != DeclaredByConfig {
+		t.Errorf("the declaration must record that it came from a file; got %+v", got)
+	}
+}
+
+// An invented source stays refused, or provenance says nothing about who wrote a row.
+func TestAnInventedDeclarationSourceIsRefused(t *testing.T) {
+	s := newTestStore(t)
+	acct := DeclaredAccount{Owner: "acme", Kind: AccountOrganization, Enabled: true}
+
+	if err := s.SetOwnedScope([]DeclaredAccount{acct}, "webhook"); err == nil {
+		t.Error("a source the store does not define must be refused")
+	}
 }

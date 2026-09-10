@@ -26,8 +26,21 @@
 abom-graph.json
 abom-dashboard.json
 
+# A local declaration of the accounts this machine is responsible for. Untracked because ownership
+# is one operator's statement, not a property of the repository — checking one in would declare
+# somebody else's organization on every clone. It only ever fills a vacuum, and `gh` still decides
+# whether what it declares is honored.
+/abom.local.json
+
 ## Logs
 /logs/
+
+## Browser test harness. The lock file is checked in on purpose — it is the only record of what
+## the one npm dependency actually resolved to.
+ui/tests/e2e/node_modules/
+ui/tests/e2e/test-results/
+ui/tests/e2e/playwright-report/
+ui/tests/e2e/blob-report/
 
 # Agent working notes, deliberately untracked. Git history is already the record of what shipped;
 # a markdown summary of it becomes a second copy that drifts from the log it duplicates. The

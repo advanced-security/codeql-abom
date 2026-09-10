@@ -8,14 +8,14 @@
 <PageTitle>Discovery — ABOM</PageTitle>
 
 <PageHeader Title="Discovery">
-    How complete this picture is. Discovery works outward from the repositories under review, so
+    How complete this picture is. Discovery works outward from the repositories it started from, so
     the queue does drain — and when it does, it keeps watching the references it already analyzed
     for ones that have since moved.
 </PageHeader>
 
-@* No tiles here. Analyzed and not-yet-analyzed are the bar and the chips below; under review
-   and advisories are already in the page header. Four boxes restating them pushed the one
-   control anyone came for below the fold. *@
+@* No tiles here. Analyzed and not-yet-analyzed are the bar and the chips below; what discovery
+   started from and advisories are already in the page header. Four boxes restating them pushed
+   the one control anyone came for below the fold. *@
 
 @if (_objective is { } objective)
 {
@@ -29,12 +29,21 @@
                     until it is done.
                 </span>
             }
-            else
+            else if (objective.Progress.Count == 0)
+            {
+                @* An empty closure and a drained one both report nothing outstanding. Reading
+                   the first as the second announces complete coverage of nothing, which is the
+                   one claim a first run must not make. *@
+                <span>
+                    <b>Nothing has been enumerated yet</b>, so there is nothing to be outstanding.
+                    This is not a statement about coverage.
+                </span>
+            }            else
             {
                 @* Not "depth 0": a complete closure is a different statement from work at the
                    shallowest depth, and reporting a number would invent one. *@
                 <span>
-                    <b>Nothing outstanding.</b> Every reference in scope has been analyzed
+                    <b>Nothing outstanding.</b> Every reference reached has been analyzed
                     &mdash; as far as depth @objective.MaxDepth, which is the cap exploration
                     may not pass.
                 </span>
@@ -47,12 +56,24 @@
                 @foreach (var depth in objective.Progress)
                 {
                     <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
-                             Color="@(depth.Available == 0 ? Color.Success : Color.Default)">
+                             Color="@(depth.Available == 0 ? Color.Success : Color.Default)"
+                             title="@DepthSplit(depth)">
                         depth @depth.Depth: @depth.Settled.ToString("N0") of
                         @depth.Total.ToString("N0")
                     </MudChip>
                 }
             </div>
+            @* These count settled work and the tier chips count analyzed, so on a corpus with
+               anything unavailable the two decompositions of one queue do not sum alike. Stating
+               the rule once is what lets a reader reconcile them. *@
+            @if (UnavailableAcrossDepths > 0)
+            {
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                    Settled counts what is finished: analyzed, plus
+                    <b>@UnavailableAcrossDepths.ToString("N0")</b> that could not be fetched and
+                    will not be attempted again. Tier figures elsewhere count analyzed only.
+                </MudText>
+            }
         }
 
         @if (LastCycle is { } last)
@@ -110,14 +131,51 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
         <MudButton Size="Size.Small" Variant="Variant.Filled"
                    Color="@(IsRunning ? Color.Default : Color.Primary)"
                    StartIcon="@(IsRunning ? Icons.Material.Filled.Pause : Icons.Material.Filled.PlayArrow)"
-                   Disabled="@(_busy || _state.Status.IsPausing)" OnClick="ToggleRunning">
-            @(_state.Status.IsPausing ? "Pausing…" : IsRunning ? "Pause" : "Start")
+                   Disabled="@(_busy || _state.Status.IsPausing)" OnClick="ToggleRunning"
+                   data-abom-run
+                   title="Analysis clones each repository, builds a CodeQL database and runs the bound suites. Enumeration, which only lists what is under a declared account, is a separate act and happens when the declaration is saved.">
+            @(_state.Status.IsPausing ? "Pausing…" : IsRunning ? "Pause analysis" : "Start analysis")
         </MudButton>
         <QueueBar State="_state" />
         <MudText Typo="Typo.body2">@StateSentence</MudText>
         <MudSpacer />
         <FollowControl LastUpdated="_lastPoll" />
     </div>
+
+    @* The other act. Enumeration lists what is under a declared account and costs seconds;
+       analysis builds a database per repository and costs minutes. Nothing records enumeration as
+       an event, so its result is read from the owned tier, which is what it writes at depth 0. *@
+    @if (_declared is { } declared)
+    {
+        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1"
+                 data-abom-enumeration>
+            @if (declared.Count == 0)
+            {
+                <span>
+                    No account is declared, so nothing has been enumerated as yours. Declare one in
+                    <MudLink Href="/settings">Settings</MudLink> to list the repositories
+                    underneath it. Anything already in the queue arrived as a dependency.
+                </span>
+            }
+            else if (TierOf("owned").Total == 0)
+            {
+                @* Not "0 repositories": a declaration that has enumerated nothing yet is a
+                   different state from an account that turned out to be empty. *@
+                <span>
+                    @string.Join(", ", declared.Select(a => a.Owner)) declared. Nothing has been
+                    enumerated under it yet.
+                </span>
+            }
+            else
+            {
+                <span>
+                    Enumeration found <b>@TierOf("owned").Total.ToString("N0")</b> repositories
+                    under @string.Join(", ", declared.Select(a => a.Owner)); analysis has covered
+                    @TierOf("owned").Analyzed.ToString("N0").
+                </span>
+            }
+        </MudText>
+    }
     @* Wrapping is owned by .abom-run-row, not by the flex-wrap utility, whose !important would
        win against the media query that holds the controls on one line. *@
     <div class="d-flex align-center gap-2 mt-1 abom-run-row">
@@ -250,12 +308,28 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
                             <th class="abom-tier-head">
                                 <span class="abom-tier-name">@tier</span>
                                 <span class="abom-tier-why">@TierWhy(tier)</span>
-                                <span class="abom-tier-count">
-                                    @TierOf(tier).Total.ToString("N0") dependencies
-                                </span>
-                                <span class="abom-tier-count mud-text-secondary">
-                                    @TierOf(tier).Analyzed.ToString("N0") analyzed
-                                </span>
+                                @if (TierOf(tier).HoldsRepositories)
+                                {
+                                    @* Two different kinds of work, and the operator's own
+                                       repositories are not something they depend on. *@
+                                    <span class="abom-tier-count" data-abom-tier-split="@tier">
+                                        @TierOf(tier).Repositories.ToString("N0") repositories,
+                                        @TierOf(tier).Dependencies.ToString("N0") dependencies
+                                    </span>
+                                    <span class="abom-tier-count mud-text-secondary">
+                                        @TierOf(tier).RepositoriesAnalyzed.ToString("N0") and
+                                        @TierOf(tier).DependenciesAnalyzed.ToString("N0") analyzed
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="abom-tier-count">
+                                        @TierOf(tier).Total.ToString("N0") dependencies
+                                    </span>
+                                    <span class="abom-tier-count mud-text-secondary">
+                                        @TierOf(tier).Analyzed.ToString("N0") analyzed
+                                    </span>
+                                }
                             </th>
                         }
                     </tr>
@@ -580,17 +654,105 @@ else
     </MudDataGrid>
 }
 
+@* Deliberately last and quiet: removal is rare, and the two halves are separated because only
+   one of them is reversible. *@
+<MudText Typo="Typo.subtitle2" Class="mt-8 mb-1">Removing what you no longer own</MudText>
+@if (_declared is { Count: 0 })
+{
+    @* Pruning is defined against a declared closure, so with none the server refuses. That is a
+       state this page can explain, and it is not read at all rather than reported as a fault. *@
+    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-8" data-abom-prune-undeclared>
+        Nothing is declared, so there is no closure to be outside of. Declare an account in
+        <MudLink Href="/settings">Settings</MudLink> before removing anything.
+    </MudText>
+}
+else if (_prune is null)
+{
+    <MudText Typo="Typo.body2" Class="mud-text-secondary">Reading what is outside your scope…</MudText>
+}
+else if (_prune.RemovesNothing)
+{
+    <MudText Typo="Typo.body2" Class="mud-text-secondary" data-abom-prune-clean>
+        Everything here is reachable from what you declared. Nothing to remove.
+        @if (_pruneOutcome is not null)
+        {
+            <span data-abom-prune-outcome> @_pruneOutcome</span>
+        }
+    </MudText>
+    @if (_prune.Tombstoned > 0)
+    {
+        <div class="d-flex flex-wrap align-center gap-3 mb-8 mt-2">
+            <MudTooltip Text="Delete what is already removed, permanently. Only re-analysis can rebuild it, and every open page reloads.">
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
+                           Disabled="_pruning" OnClick="@(() => Prune(true))" data-abom-prune-compact>
+                    Delete @_prune.Tombstoned.ToString("N0") permanently
+                </MudButton>
+            </MudTooltip>
+        </div>
+    }
+}
+else
+{
+    <MudText Typo="Typo.body2" Class="mb-2" data-abom-prune-summary>
+        @_prune.Declared declared @(_prune.Declared == 1 ? "repository reaches" : "repositories reach")
+        @_prune.Reachable. Outside that: <b>@_prune.Removed.Nodes.ToString("N0")</b> nodes and
+        <b>@_prune.Removed.Edges.ToString("N0")</b> edges across
+        <b>@_prune.Removed.Repositories.ToString("N0")</b> repositories@(_prune.Removed.Queued > 0
+            ? $", and {_prune.Removed.Queued:N0} queued dependencies that would otherwise be analyzed and come back"
+            : "").
+    </MudText>
+    <div class="d-flex flex-wrap align-center gap-3 mb-8">
+        <MudTooltip Text="Take these out of every view. Nothing is deleted yet, and re-analysis brings back anything you declare again.">
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_pruning"
+                       OnClick="@(() => Prune(false))" data-abom-prune-mark>
+                @(_pruning ? "Working…" : "Remove from view")
+            </MudButton>
+        </MudTooltip>
+        <MudTooltip Text="Delete what is already removed, permanently. Only re-analysis can rebuild it, and every open page reloads.">
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
+                       Disabled="_pruning" OnClick="@(() => Prune(true))" data-abom-prune-compact>
+                Delete permanently
+            </MudButton>
+        </MudTooltip>
+        @if (_pruneOutcome is not null)
+        {
+            <MudText Typo="Typo.body2" data-abom-prune-outcome>@_pruneOutcome</MudText>
+        }
+    </div>
+}
+
 @code {
     [SupplyParameterFromQuery(Name = "status")] public string? StatusParam { get; set; }
 
     private IReadOnlyList<FrontierItem> _items = [];
     private DiscoveryState _state = new();
+    // Null until read. Enumeration is not recorded as an event anywhere, so what it produced is
+    // only observable as the owned tier, and the declaration is what says whether to expect any.
+    private IReadOnlyList<DeclaredAccount>? _declared;
+
+    // No depth holds a single reference, so nothing has entered the closure at all. A drained
+    // closure reports the same zero outstanding, and telling them apart is the difference
+    // between complete coverage and none.
+    private bool NothingEnumerated => _objective is { } objective && objective.Progress.Count == 0;
     private Objective? _objective;
 
     // The most recent cycle, or null when none has been recorded. Never a zero-valued stand-in:
     // a database that has never run a cycle is not one that ran and cost nothing.
     private CycleSpend? LastCycle =>
         _objective is { Recent.Count: > 0 } ? _objective.Recent[0] : null;
+
+    // Settled is analyzed plus what could not be fetched, so a depth chip and a tier chip count
+    // different things and only agree when nothing is unavailable.
+    private int UnavailableAcrossDepths =>
+        _objective is { } o ? o.Progress.Sum(d => d.Settled - d.Done) : 0;
+
+    private static string DepthSplit(DepthProgress d)
+    {
+        var unavailable = d.Settled - d.Done;
+        return unavailable > 0
+            ? $"{d.Done:N0} analyzed, {unavailable:N0} unavailable — {d.Settled:N0} settled of {d.Total:N0}."
+            : $"{d.Done:N0} analyzed of {d.Total:N0}.";
+    }
 
     private static string Seconds(long millis) => (millis / 1000.0).ToString("N1");
     private bool _loading = true;
@@ -639,7 +801,7 @@ else
 
     // Owning a dependency is a different answer to "what can you do about this" than naming it,
     // and it is not a depth: an owned action is reached wherever the graph places it. Depth 1 is
-    // what a repository under review names itself; anything further arrives through an
+    // what a starting repository names itself; anything further arrives through an
     // intermediary that may belong to someone else.
     //
     // Owned is offered only once an identity has established it. With none, a column reading zero
@@ -660,7 +822,7 @@ else
     private static string TierRowHint(FrontierItem item) => item.Tier switch
     {
         "owned" => $"You are verified against this account, so this is yours to change. Reached in {item.Depth} hop{(item.Depth == 1 ? "" : "s")}.",
-        "direct" => "A repository under review names this itself, so it can be changed there.",
+        "direct" => "A repository discovery started from names this itself, so it can be changed there.",
         _ => $"Reached through an intermediary someone else may own, {item.Depth} hops out.",
     };
 
@@ -756,7 +918,9 @@ else
 
     private string RequeueHint(string tier) => tier switch
     {
-        "owned" => $"Re-analyze the {TierOf(tier).Analyzed:N0} analyzed of {TierOf(tier).Total:N0} dependencies belonging to accounts you are verified against. These are the ones you can change yourself, whatever depth they were reached at.",
+        "owned" => TierOf(tier).HoldsRepositories
+            ? $"Re-analyze the {TierOf(tier).Repositories:N0} repositories you own ({TierOf(tier).RepositoriesAnalyzed:N0} analyzed) and the {TierOf(tier).Dependencies:N0} dependencies in those same accounts ({TierOf(tier).DependenciesAnalyzed:N0} analyzed). These are the ones you can change yourself."
+            : $"Re-analyze the {TierOf(tier).Analyzed:N0} analyzed of {TierOf(tier).Total:N0} dependencies belonging to accounts you are verified against. These are the ones you can change yourself, whatever depth they were reached at.",
         "direct" => $"Re-analyze the {TierOf(tier).Analyzed:N0} analyzed of {TierOf(tier).Total:N0} dependencies your repositories name directly, with the query suite currently configured. Nothing already known is cleared while it runs.",
         _ => $"Re-analyze the {TierOf(tier).Analyzed:N0} analyzed of {TierOf(tier).Total:N0} dependencies reached through an intermediary. This is the larger tier and takes correspondingly longer.",
     };
@@ -968,6 +1132,17 @@ else
     {
         get
         {
+            // A queue that never held anything is not one that emptied. Offering to re-check
+            // prior work names work that was never done, and Start has nothing to claim until
+            // something is declared to start from.
+            if (NothingEnumerated)
+            {
+                return _declared is { Count: 0 }
+                    ? "Nothing is waiting because nothing has been enumerated. Declare an "
+                      + "account in Settings, and the repositories underneath it become the "
+                      + "starting point."
+                    : "Nothing is waiting because nothing has been enumerated yet.";
+            }
             var next = IsRunning
                 ? "Discovery now re-checks what it already analyzed and requeues anything whose reference has moved."
                 : "Press Start to re-check what was already analyzed for references that have moved.";
@@ -1093,9 +1268,14 @@ else
     private async Task Load()
     {
         _state = await Api.GetDiscoveryAsync();
+        _declared = await Api.GetOwnedScopeAsync();
         _objective = await Api.GetObjectiveAsync();
         _items = await Api.GetFrontierAsync(_status, top: 400);
         _suites = await Api.GetTierSuitesAsync();
+        // Skipped rather than attempted when nothing is declared: the server refuses to prune
+        // against an empty closure, and that refusal would otherwise land in LastError and be
+        // reported as an unreachable server on every first run.
+        _prune = _declared is { Count: 0 } ? null : await Api.GetPruneAsync();
         // A read that failed returns an empty result rather than throwing, so the transport's
         // own account of what went wrong is the only thing that separates "nothing here" from
         // "could not ask".
@@ -1103,6 +1283,37 @@ else
         _lastPoll = DateTime.UtcNow;
         _loading = false;
         ApplyFollow();
+    }
+
+    private PruneView? _prune;
+    private bool _pruning;
+    private string? _pruneOutcome;
+
+    private async Task Prune(bool compact)
+    {
+        _pruning = true;
+        _pruneOutcome = null;
+        try
+        {
+            var done = await Api.PruneAsync(compact);
+            _pruneOutcome = done is null
+                ? "Nothing came back."
+                : compact
+                    ? $"Deleted {done.Removed.Nodes:N0} nodes and {done.Removed.Edges:N0} edges."
+                    : $"Removed {done.Removed.Nodes:N0} nodes and {done.Removed.Edges:N0} edges from view"
+                      + (done.Removed.Queued > 0 ? $", and {done.Removed.Queued:N0} queued dependencies." : ".");
+            // Re-read rather than trusting the response: what is left is the question the next
+            // decision turns on, and the answer to "what did that cost" is a different one.
+            await Load();
+        }
+        catch (HttpRequestException e)
+        {
+            _pruneOutcome = "Nothing was removed: " + e.Message;
+        }
+        finally
+        {
+            _pruning = false;
+        }
     }
 
     private async Task OnStatusChanged(string value)
@@ -1188,7 +1399,7 @@ else
 
     private static string StateHint(FrontierItem item) => item.State switch
     {
-        "queued" => "Referenced by something in scope. Nothing has looked inside it yet, so whatever it depends on is not in this picture.",
+        "queued" => "Referenced by something already analyzed. Nothing has looked inside it yet, so whatever it depends on is not in this picture.",
         "retrying" => $"Fetching it failed {item.Attempts} times. It is waiting before trying again.",
         "running" => "Being fetched and analyzed now. Anything it names will appear as it is found.",
         "done" => "We know what this depends on, as of the commit shown.",
@@ -1208,7 +1419,7 @@ else
 
     private static string SupplyChainHint(string chain) => chain == "build_time"
         ? "Only this dependency's own project runs it, in their release pipeline. Nothing here executes it — but a compromised pipeline is how a bad version reaches you, so it is still analyzed."
-        : "Something in scope executes this, directly or through an action it calls.";
+        : "Something here executes this, directly or through an action it calls.";
 
     public void Dispose()
     {

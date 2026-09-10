@@ -9,10 +9,29 @@
 else
 {
     <div class="abom-coverage">
-        <span class="abom-coverage-item">
-            <span class="abom-coverage-value">@Summary.SeedRepos.ToString("N0")</span>
-            <span class="abom-coverage-label">repositories in scope</span>
-        </span>
+        @* Ownership and the corpus in one cell, because they are only meaningful against each
+           other and because the grid below is tuned for six. The noun lives in the tooltip: at
+           the six-column breakpoint a cell is 205px, and spelling it out needs 219px. *@
+        <MudTooltip Text="Repositories under an account you declared, against the number discovery started from. Nothing else on this strip is a claim about who owns anything.">
+            <span class="abom-coverage-item" data-abom-owned-count>
+                @if (Summary.OwnedRepos > 0)
+                {
+                    <span class="abom-coverage-value">@Summary.OwnedRepos.ToString("N0")</span>
+                    <span class="abom-coverage-label">
+                        yours of @Summary.SeedRepos.ToString("N0")
+                    </span>
+                }
+                else
+                {
+                    @* Not "0 repositories": nothing declared is an absence of a claim, not a
+                       measured emptiness. *@
+                    <span class="abom-coverage-value abom-coverage-unknown">none</span>
+                    <span class="abom-coverage-label">
+                        declared of @Summary.SeedRepos.ToString("N0")
+                    </span>
+                }
+            </span>
+        </MudTooltip>
         <span class="abom-coverage-item">
             <span class="abom-coverage-value">@Summary.UpstreamRepos.ToString("N0")</span>
             <span class="abom-coverage-label">upstream analyzed</span>

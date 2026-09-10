@@ -15,13 +15,19 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/http/pprof"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/advanced-security/codeql-abom/internal/enumerate"
 	"github.com/advanced-security/codeql-abom/internal/ghauth"
 	"github.com/advanced-security/codeql-abom/internal/graph"
 	"github.com/advanced-security/codeql-abom/internal/store"
+
+	// Aliased because this package already has a `view` of its own, for accounts.
+	viewspec "github.com/advanced-security/codeql-abom/internal/view"
 )
 
 // Server answers interface queries from an ABOM database.
@@ -33,17 +39,48 @@ type Server struct {
 	Verify func(context.Context) (ghauth.Identity, error)
 	// Discovery is the expansion loop. Nil answers that discovery is unavailable here.
 	Discovery Discovery
+	// Enumerate reads one declared account, bounded by what a previous read established. Nil
+	// answers that this build cannot enumerate, which is not the same answer as an account
+	// holding nothing.
+	Enumerate enumerate.Read
+	// FullListingEvery is how often every page of an account is read rather than a prefix of it.
+	// Zero takes enumerate.DefaultFullListingEvery.
+	FullListingEvery time.Duration
+	// QueueOwned puts the operator's own repositories in the analysis queue. Nil leaves them
+	// recorded and never analyzed, which is the state enumeration exists to end.
+	QueueOwned func() (int, error)
+	// SnapshotPreview reports what a submission would send. Nil answers that this build cannot
+	SnapshotPreview func(repository string) (SnapshotPreview, error)
+	// SnapshotSubmit writes a snapshot to GitHub. Nil leaves the endpoint unavailable, which is
+	// the right default: the write cannot be withdrawn and there is no delete endpoint.
+	SnapshotSubmit func(repository string) (SnapshotResult, error)
+	// ApprovedTargets names the repositories that may receive a snapshot. Renewal iterates this
+	// and nothing else, so a repository the operator never approved cannot be written to by a
+	// batch pass that was aimed at something else.
+	ApprovedTargets func() []string
 	// AllowRemoteControl lets a non-loopback client start discovery. Off by default because
 	// starting it makes this process clone repositories and run CodeQL.
 	AllowRemoteControl bool
 	// Log receives failed requests. Nil discards them, which leaves a 500 visible only to the
 	// client that hit it.
 	Log io.Writer
+	// Diagnostics exposes /api/metrics and /debug/pprof/. Off by default: route names with their
+	// latencies are a map of what exists and what is expensive, and pprof serves goroutine stacks
+	// and heap contents. One flag for both, because two invites the answer "metrics are the safe
+	// half" and the safe half is the one left running.
+	Diagnostics bool
+
+	// metrics is built by Handler, so a zero Server stays usable and every request is counted
+	// whether or not Log is set.
+	metrics *metrics
 }
 
 // Handler builds the routing tree.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	if s.metrics == nil {
+		s.metrics = newMetrics()
+	}
 
 	mux.HandleFunc("GET /api/summary", s.summary)
 	mux.HandleFunc("GET /api/remediation", s.remediation)
@@ -69,41 +106,81 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/pinning/totals", s.pinningTotals)
 	mux.HandleFunc("GET /api/accounts", s.accounts)
 	mux.HandleFunc("GET /api/owned-scope", s.ownedScope)
+	mux.HandleFunc("GET /api/match", s.match)
+	mux.HandleFunc("GET /api/views", s.views)
+	mux.HandleFunc("PUT /api/views/{name}", s.saveView)
+	mux.HandleFunc("DELETE /api/views/{name}", s.deleteView)
 	mux.HandleFunc("PUT /api/owned-scope", s.setOwnedScope)
 	mux.HandleFunc("POST /api/owned-scope/preview", s.previewOwnedScope)
+	mux.HandleFunc("POST /api/owned-scope/enumerate", s.enumerate)
+	mux.HandleFunc("GET /api/prune", s.prune)
+	mux.HandleFunc("POST /api/prune/apply", s.pruneApply)
+	mux.HandleFunc("POST /api/prune/compact", s.pruneCompact)
 	mux.HandleFunc("POST /api/accounts/refresh", s.refreshAccounts)
 	mux.HandleFunc("GET /api/owner-candidates", s.ownerCandidates)
 	mux.HandleFunc("GET /api/frontier", s.frontier)
 	mux.HandleFunc("GET /api/actions", s.actions)
 	mux.HandleFunc("GET /api/repositories", s.repositories)
 	mux.HandleFunc("GET /api/repositories/{owner}/{name}", s.repository)
+	mux.HandleFunc("POST /api/repositories/{owner}/{name}/snapshot/preview", s.snapshotPreview)
+	mux.HandleFunc("POST /api/repositories/{owner}/{name}/snapshot/submit", s.snapshotSubmit)
+	mux.HandleFunc("GET /api/submissions", s.submissions)
+	mux.HandleFunc("POST /api/submissions/renew", s.renew)
 
 	if s.UI != nil {
 		// Registered for every method rather than GET alone: a method-restricted catch-all
 		// cannot coexist with the /api/ pattern below, which ServeMux rejects outright.
 		mux.Handle("/", s.ui())
 	}
+	if s.Diagnostics {
+		s.diagnostics(mux)
+	}
 	// Anything under /api/ that no route claimed is absent, whatever the method. Without this a
 	// withdrawn route answers a PUT with 405, which says the resource is still there.
 	mux.HandleFunc("/api/", http.NotFound)
-	return gzipped(s.logging(mux))
+	return gzipped(s.observe(mux))
 }
 
-// logging records requests that failed, and ones that succeeded too slowly to be pleasant.
+// diagnostics registers the surfaces an operator has to ask for by name.
+func (s *Server) diagnostics(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/metrics", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, s.metrics.report(), nil)
+	})
+	// The whole /debug/pprof/ tree, not only the index: the profiles are separate handlers.
+	mux.HandleFunc("GET /debug/pprof/", pprof.Index)
+	mux.HandleFunc("GET /debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("GET /debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("GET /debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("GET /debug/pprof/trace", pprof.Trace)
+}
+
+// observe records what every request cost, and logs the ones worth a line.
+//
+// Recording is unconditional. The duration was already being computed here and thrown away unless
+// the request failed or took over slowRequest, which is two seconds — so an endpoint answering in
+// 0.68 s left no trace at all, and that is the gap this exists to close.
 //
 // Handlers answer an error to the caller and nothing else, so a query that breaks for every
 // reader leaves no trace on the machine actually running. Successful requests are not logged:
 // the interface polls continuously, and a line each would bury the failures.
-func (s *Server) logging(next http.Handler) http.Handler {
+func (s *Server) observe(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.Log == nil {
-			next.ServeHTTP(w, r)
-			return
-		}
-		rec := &recorder{ResponseWriter: w, status: http.StatusOK}
+		rec := &recorder{ResponseWriter: w, status: http.StatusOK, marshalNanos: -1}
 		start := time.Now()
 		next.ServeHTTP(rec, r)
 		took := time.Since(start)
+
+		marshalMillis := int64(-1)
+		if rec.marshalNanos >= 0 {
+			marshalMillis = rec.marshalNanos / int64(time.Millisecond)
+		}
+		// ServeMux sets Pattern on this request while matching, so the route is available here
+		// without parsing the URL — which is what keeps the key bounded as the corpus grows.
+		s.metrics.record(r.Pattern, rec.status, took.Milliseconds(), rec.written, marshalMillis)
+
+		if s.Log == nil {
+			return
+		}
 		switch {
 		case rec.status >= http.StatusBadRequest:
 			fmt.Fprintf(s.Log, "%s serve: %d %s %s %s\n", time.Now().UTC().Format(time.RFC3339),
@@ -121,11 +198,16 @@ func (s *Server) logging(next http.Handler) http.Handler {
 // slowRequest is the point past which a reader notices waiting.
 const slowRequest = 2 * time.Second
 
-// recorder keeps the status and, for a failure, the body that explains it.
+// recorder keeps the status, the bytes written, the time spent encoding, and for a failure the
+// body that explains it.
 type recorder struct {
 	http.ResponseWriter
-	status int
-	body   bytes.Buffer
+	status  int
+	written int64
+	// marshalNanos stays negative until something encodes, so a handler that never marshaled is
+	// distinguishable from one that marshaled instantly.
+	marshalNanos int64
+	body         bytes.Buffer
 }
 
 func (r *recorder) WriteHeader(status int) {
@@ -138,7 +220,9 @@ func (r *recorder) Write(b []byte) (int, error) {
 	if r.status >= http.StatusBadRequest && r.body.Len() < 2048 {
 		r.body.Write(b)
 	}
-	return r.ResponseWriter.Write(b)
+	n, err := r.ResponseWriter.Write(b)
+	r.written += int64(n)
+	return n, err
 }
 
 // assetRoots hold real files. A miss under one of them is a broken build, not a client route.
@@ -228,12 +312,70 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 // every interaction. Steps are folded into their workflow unless asked for: 3.6k nodes against
 // 23k, for the same set of relationships.
 func (s *Server) fullGraph(w http.ResponseWriter, r *http.Request) {
-	g, err := s.Store.FullGraph(store.FullGraphOptions{
-		IncludeSteps: r.URL.Query().Get("steps") == "true",
-		Scope:        r.URL.Query().Get("scope"),
-		Boundary:     r.URL.Query().Get("boundary"),
-	})
+	spec, err := s.graphPredicate(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	opts, err := s.graphOptions(spec)
+	if err != nil {
+		writeJSON(w, store.Graph{}, err)
+		return
+	}
+	g, err := s.Store.FullGraph(opts)
 	writeJSON(w, g, err)
+}
+
+// graphPredicate reads the shared predicate from a request, ignoring the named parameters that are
+// cursors rather than filters.
+//
+// Parsed through the shared predicate rather than field by field, so an unknown filter is refused
+// here instead of silently matching everything. The browser and the pull request gate read the
+// same text, and a typo that widened the match would be invisible in all three.
+//
+// `?view=<name>` is resolved first and supplies the whole predicate, because a name is a reference
+// to a question rather than another clause of one.
+func (s *Server) graphPredicate(r *http.Request, cursors ...string) (viewspec.Spec, error) {
+	if spec, named, err := s.resolveView(r, cursors...); named {
+		return spec, err
+	}
+	q := r.URL.Query()
+	for _, key := range cursors {
+		q.Del(key)
+	}
+	return viewspec.Parse(q.Encode())
+}
+
+// graphOptions turns a predicate into the options both graph endpoints answer from.
+//
+// Shared so the delta cannot drift into answering a different question from the payload it is
+// updating: it carried arrivals from outside the declared scope until 2026-09-10, because it built
+// its options from `steps` alone.
+//
+// `kinds`, `search`, the finding predicates and the neighborhood walk are deliberately absent.
+// Measured 2026-09-10, they sever 74% to 99% of their own match's edges, because the graph is
+// bipartite by kind — applying them here would ship a scatter instead of a graph. They belong to
+// the set-answering endpoint the gate needs, where structure is irrelevant.
+func (s *Server) graphOptions(spec viewspec.Spec) (store.FullGraphOptions, error) {
+	opts := store.FullGraphOptions{
+		IncludeSteps:   spec.Steps,
+		Scope:          spec.Scope,
+		Boundary:       spec.Boundary,
+		Origins:        spec.Origins,
+		MinReach:       spec.MinReach,
+		RefStyle:       spec.RefStyle,
+		UnanalyzedOnly: slices.Contains(spec.Flags, viewspec.FlagUnanalyzed),
+	}
+	// The same KeepList pruning acts on, so what the operator is shown and what removal would
+	// keep are one answer rather than two that can drift apart.
+	if opts.Scope == store.ScopeOwned {
+		keep, _, err := (&graph.Builder{Store: s.Store}).KeepList()
+		if err != nil {
+			return store.FullGraphOptions{}, err
+		}
+		opts.Closure = keep
+	}
+	return opts, nil
 }
 
 func (s *Server) graphVersion(w http.ResponseWriter, r *http.Request) {
@@ -242,9 +384,21 @@ func (s *Server) graphVersion(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) graphDelta(w http.ResponseWriter, r *http.Request) {
-	delta, err := s.Store.GraphDelta(int64(intParam(r, "since", 0)), store.FullGraphOptions{
-		IncludeSteps: r.URL.Query().Get("steps") == "true",
-	})
+	// `since` is a cursor, not a filter: it says where the reader got to, not what they asked for.
+	spec, err := s.graphPredicate(r, "since")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	opts, err := s.graphOptions(spec)
+	if err != nil {
+		writeJSON(w, store.GraphDelta{}, err)
+		return
+	}
+	delta, err := s.Store.GraphDelta(int64(intParam(r, "since", 0)), opts)
+	if err == nil && s.metrics != nil {
+		s.metrics.recordDelta(delta.Reset)
+	}
 	writeJSON(w, delta, err)
 }
 
@@ -314,15 +468,20 @@ type accountsView struct {
 	VerifiedAt    *time.Time      `json:"verifiedAt"`
 	Accounts      []store.Account `json:"accounts"`
 	Problem       *ghauth.Problem `json:"problem"`
+	// CanReadMemberships is why a declaration is only unproven rather than refuted. Without it a
+	// blind token looks exactly like `gh` never having answered, and the remedy offered is to ask
+	// again — a loop that cannot terminate.
+	CanReadMemberships bool `json:"canReadMemberships"`
 }
 
 func view(v store.Verification, problem *ghauth.Problem) accountsView {
 	out := accountsView{
-		Authenticated: v.Login != "",
-		Login:         v.Login,
-		Host:          v.Host,
-		Accounts:      v.Accounts,
-		Problem:       problem,
+		Authenticated:      v.Login != "",
+		Login:              v.Login,
+		Host:               v.Host,
+		Accounts:           v.Accounts,
+		Problem:            problem,
+		CanReadMemberships: v.CanReadMemberships(),
 	}
 	if out.Accounts == nil {
 		out.Accounts = []store.Account{}
@@ -338,11 +497,39 @@ func (s *Server) accounts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, view(stored, nil), err)
 }
 
+// declaredAccountView is a declaration with what `gh` has to say about it.
+//
+// The state is computed here rather than in the browser because it decides whether an ownership
+// mark may be drawn, and two derivations of that would be two answers to who owns what.
+type declaredAccountView struct {
+	store.DeclaredAccount
+	State string `json:"state"`
+	// Enumeration is when this account was last read and by which route. A repository deleted
+	// after the last full listing is still reported until the next one, which is only defensible
+	// if a reader can see how long ago that was.
+	Enumeration store.EnumerationMarks `json:"enumeration"`
+}
+
 // ownedScope serves what the operator has declared is theirs, which is what discovery is bounded
 // by and what every "yours" figure is counted against.
 func (s *Server) ownedScope(w http.ResponseWriter, r *http.Request) {
 	declared, err := s.Store.OwnedScope()
-	writeJSON(w, declared, err)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	// A failure to read the verification leaves every state unknown, which is the honest answer:
+	// it is exactly the case where nothing has been established either way.
+	verified, _ := s.Store.Accounts()
+
+	out := make([]declaredAccountView, 0, len(declared))
+	for _, a := range declared {
+		// Marks that cannot be read leave the account unread rather than undeclared: what the
+		// operator said is theirs does not depend on whether anything has looked at it yet.
+		marks, _, _ := s.Store.EnumerationState(a.Owner)
+		out = append(out, declaredAccountView{a, store.DeclarationState(a, verified), marks})
+	}
+	writeJSON(w, out, nil)
 }
 
 // setOwnedScope replaces the declaration. An empty list is a real instruction — it stops
@@ -356,7 +543,7 @@ func (s *Server) setOwnedScope(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "the declared scope must be a list of accounts")
 		return
 	}
-	if err := s.Store.SetOwnedScope(accounts); err != nil {
+	if err := s.Store.SetOwnedScope(accounts, store.DeclaredByInterface); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -514,7 +701,9 @@ func (s *Server) refreshAccounts(w http.ResponseWriter, r *http.Request) {
 // verification maps what gh established onto what the store records. The two types are kept
 // apart so the store never depends on how the identity was obtained.
 func verification(id ghauth.Identity) store.Verification {
-	v := store.Verification{Login: id.Login, Host: id.Host, VerifiedAt: id.VerifiedAt}
+	v := store.Verification{
+		Login: id.Login, Host: id.Host, VerifiedAt: id.VerifiedAt, Scopes: id.Scopes,
+	}
 	for _, a := range id.Accounts {
 		v.Accounts = append(v.Accounts, store.Account{Owner: a.Owner, Kind: a.Kind, Role: a.Role})
 	}
@@ -582,7 +771,11 @@ func writeJSON(w http.ResponseWriter, payload any, err error) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	started := time.Now()
 	body, err := json.Marshal(payload)
+	if rec, ok := w.(*recorder); ok {
+		rec.marshalNanos = time.Since(started).Nanoseconds()
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("encoding response: %v", err))
 		return

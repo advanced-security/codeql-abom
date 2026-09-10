@@ -2,6 +2,7 @@ package serve
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -23,6 +24,12 @@ func (s *Server) bom(w http.ResponseWriter, r *http.Request) {
 	doc, err := s.Store.BillOfMaterials(store.BOMOptions{
 		Roots: r.URL.Query()["root"],
 	})
+	// Nothing declared yet is a state the reader is in, not a fault the server is in. Reported as
+	// a 500 it reads as a broken server and leaves the page unable to say what would fix it.
+	if errors.Is(err, store.ErrNoBOMRoot) {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err != nil {
 		writeJSON(w, nil, err)
 		return

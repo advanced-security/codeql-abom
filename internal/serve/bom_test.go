@@ -71,6 +71,31 @@ func TestAnUnknownFormatIsRefused(t *testing.T) {
 	}
 }
 
+// Refusing to invent a document is correct; reporting that refusal as a server fault is not.
+//
+// On a fresh install nothing is declared, so the store declines to emit a bill of materials
+// rather than assert the organization depends on nothing. The endpoint turned that into a 500,
+// which tells a reader the server is broken and leaves the page with nothing to say. A browser
+// found this on the first run of the e2e suite, where it showed up as a console error on a page
+// that had merely never been given a scope.
+func TestAnUndeclaredScopeIsAnAnswerRatherThanAServerFault(t *testing.T) {
+	srv, _ := newServer(t)
+
+	res := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/api/bom", nil))
+
+	if res.Code >= 500 {
+		t.Errorf("an undeclared scope was reported as a server fault (%d): %s",
+			res.Code, res.Body.String())
+	}
+	if res.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", res.Code)
+	}
+	if !strings.Contains(res.Body.String(), "declare") {
+		t.Errorf("the refusal does not name the action that would fix it: %s", res.Body.String())
+	}
+}
+
 // A browser rendering the page must not be handed a download, so the header is opt-in.
 func TestTheDownloadHeaderIsOnlySentWhenAsked(t *testing.T) {
 	if _, res := getBOM(t, "/api/bom"); res.Header().Get("Content-Disposition") != "" {
@@ -111,7 +136,7 @@ func getBOM(t *testing.T, target string) (string, *httptest.ResponseRecorder) {
 	seedGraph(t, s)
 	if err := s.SetOwnedScope([]store.DeclaredAccount{
 		{Owner: "octo-org", Kind: store.AccountOrganization, Enabled: true},
-	}); err != nil {
+	}, store.DeclaredByCLI); err != nil {
 		t.Fatalf("SetOwnedScope: %v", err)
 	}
 	if _, err := s.ClassifyEdgeBoundaries(); err != nil {

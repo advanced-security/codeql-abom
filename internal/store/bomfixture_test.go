@@ -42,7 +42,7 @@ func bomFixture(t *testing.T) *Store {
 
 	if err := s.SetOwnedScope([]DeclaredAccount{
 		{Owner: "octo-org", Kind: AccountOrganization, Enabled: true},
-	}); err != nil {
+	}, DeclaredByCLI); err != nil {
 		t.Fatalf("SetOwnedScope: %v", err)
 	}
 
@@ -107,10 +107,12 @@ func bomFixture(t *testing.T) *Store {
 		t.Fatalf("RecordQueryRun: %v", err)
 	}
 	if _, err := s.AddFindings([]Finding{
-		{QueryRunID: traced, RuleID: "actions/unpinned-tag", RepositoryID: app,
-			FilePath: ".github/workflows/ci.yml", StartLine: 1, Severity: "warning",
+		{Provider: ProviderCodeQL, QueryRunID: traced, RuleID: "actions/unpinned-tag",
+			RepositoryID: app,
+			FilePath:     ".github/workflows/ci.yml", StartLine: 1, Severity: "warning",
 			SecuritySeverity: 5.5, Message: "unpinned", Fingerprint: "f1",
 			ResultHash: "sha256:result"},
+
 		// No run at all: 2,759 findings on the real corpus are in exactly this state.
 		{RuleID: "actions/unpinned-tag", RepositoryID: checkout,
 			FilePath: ".github/workflows/test.yml", StartLine: 1, Severity: "warning",

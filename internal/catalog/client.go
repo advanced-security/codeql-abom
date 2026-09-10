@@ -6,6 +6,7 @@
 package catalog
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,7 +17,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/advanced-security/codeql-abom/internal/work"
 )
 
 // ErrNoDatabase reports that a repository has no CodeQL database for the requested language.
@@ -49,8 +54,165 @@ type Client struct {
 	// MaxBackoff caps how long a single retry will wait, so a far-future reset time cannot
 	// stall a worker indefinitely.
 	MaxBackoff time.Duration
+	// Cache lets an unchanged answer be recognized for a round trip and no primary quota. Nil
+	// asks for everything again, which is correct and is what every read cost before this.
+	Cache ResponseCache
+	// Pace spaces requests, and follows the budget GitHub reports rather than a number anybody
+	// guessed. Nil asks as fast as the caller can.
+	Pace *work.Limiter
+	// Route pins which API reads an account: RouteGraphQL, RouteREST, or empty for the default,
+	// which prefers GraphQL and falls back to REST. Selection is the operator's and detection is
+	// at most a default, so a pinned route is never second-guessed.
+	Route string
+
+	requests    atomic.Int64
+	notModified atomic.Int64
+	// points is what GraphQL charged, which is not a count of requests: one call may cost one
+	// point or several, and only the answer knows which.
+	points atomic.Int64
+
+	budgetMu sync.Mutex
+	budget   RateLimit
+	// graphqlBudget is deliberately its own field. GraphQL and REST draw on separate allowances,
+	// and letting one answer overwrite the other reports a crawl with points to spare as having
+	// none, or the reverse.
+	graphqlBudget RateLimit
 
 	sleep func(time.Duration)
+}
+
+// RateLimit is what GitHub last said was left of the primary budget.
+type RateLimit struct {
+	// Known separates a budget nobody reported from a budget of nothing. Reporting "0 remaining"
+	// for an account whose headers never arrived would stop a crawl entitled to run.
+	Known     bool
+	Remaining int
+	Limit     int
+	ResetAt   time.Time
+}
+
+// Stats is what a client has spent.
+type Stats struct {
+	// Requests counts answers received, including unchanged ones — a conditional request is still
+	// a round trip, and reporting it as free would be a different lie from the one it fixes.
+	Requests int
+	// NotModified counts the answers GitHub said were unchanged.
+	NotModified int
+	// RateLimit is the REST budget the most recent answer reported.
+	RateLimit RateLimit
+	// GraphQL is the separate budget GraphQL draws on, reported apart from REST's because they
+	// are separate allowances and one says nothing about the other.
+	GraphQL RateLimit
+	// Points is what GraphQL charged. Requests and points are different currencies, and adding
+	// them would produce a number with no units.
+	Points int
+	// Waits counts requests the pace held back, and Waited is how long they were held for.
+	// A crawl that waited is evidence the rate is wrong; one that did not is not.
+	Waits  int
+	Waited time.Duration
+}
+
+// Stats reports what this client has spent so far.
+func (c *Client) Stats() Stats {
+	c.budgetMu.Lock()
+	budget := c.budget
+	graphql := c.graphqlBudget
+	c.budgetMu.Unlock()
+	waits, waited := c.Pace.Waited()
+	return Stats{
+		Requests:    int(c.requests.Load()),
+		NotModified: int(c.notModified.Load()),
+		RateLimit:   budget,
+		GraphQL:     graphql,
+		Points:      int(c.points.Load()),
+		Waits:       waits,
+		Waited:      waited,
+	}
+}
+
+// observeBudget records what an answer said was left, whatever its status code.
+//
+// Read here rather than only in `isRateLimited`, which runs after a 403: a crawl whose first news
+// of its budget is that it has none cannot pace itself, only recover.
+func (c *Client) observeBudget(resp *http.Response) {
+	remaining, err := strconv.Atoi(resp.Header.Get("x-ratelimit-remaining"))
+	if err != nil {
+		return
+	}
+	seen := RateLimit{Known: true, Remaining: remaining}
+	if v, err := strconv.Atoi(resp.Header.Get("x-ratelimit-limit")); err == nil {
+		seen.Limit = v
+	}
+	if v, err := strconv.ParseInt(resp.Header.Get("x-ratelimit-reset"), 10, 64); err == nil {
+		seen.ResetAt = time.Unix(v, 0)
+	}
+	// GitHub names which allowance the answer drew on. A points budget running low is no reason
+	// to slow the per-repository probes, which spend requests from a different one, so the pace
+	// follows REST and GraphQL's figure is recorded for the reader.
+	if strings.EqualFold(resp.Header.Get("x-ratelimit-resource"), "graphql") {
+		c.budgetMu.Lock()
+		c.graphqlBudget = seen
+		c.budgetMu.Unlock()
+		return
+	}
+	c.budgetMu.Lock()
+	c.budget = seen
+	c.budgetMu.Unlock()
+	c.followBudget(seen)
+}
+
+// paceBelow is the share of the budget that must remain before requests are spaced out.
+//
+// A fifth: late enough that an ordinary crawl never waits, early enough that what is left cannot
+// be burned through before the window resets. Measured first at no threshold at all, which spread
+// 14,967 remaining requests evenly across the hour and turned a 26-request read into 13 seconds of
+// waiting for a budget that was never at risk.
+const paceBelow = 0.2
+
+// followBudget spaces requests out once the budget is running low.
+//
+// Nothing is done for a budget that was never reported, because an unknown budget is not a budget
+// of nothing and throttling on one would slow a crawl for a limit nobody stated. Nothing is done
+// for an exhausted one either: zero requests an hour is how `SetPerHour` spells *unlimited*, so
+// computing the rate there would make running out the fastest setting available. The 403 path
+// already sleeps until the reset, and two mechanisms arguing over that is worse than one.
+func (c *Client) followBudget(seen RateLimit) {
+	if c.Pace == nil || !seen.Known || seen.Remaining <= 0 || seen.ResetAt.IsZero() {
+		return
+	}
+	// Plenty left, so nothing to spread — and a budget that recovered has to lift its own throttle.
+	if seen.Limit > 0 && float64(seen.Remaining) > float64(seen.Limit)*paceBelow {
+		c.Pace.SetPerHour(0)
+		return
+	}
+	until := time.Until(seen.ResetAt)
+	if until <= 0 {
+		return
+	}
+	c.Pace.SetPerHour(int(float64(seen.Remaining) * float64(time.Hour) / float64(until)))
+}
+
+// ResponseCache remembers what a URL last answered, so GitHub can be asked whether that answer
+// still stands rather than asked for it again.
+//
+// A miss and a failure are the same thing to a caller — both mean "ask in full" — which is why
+// nothing here returns an error: a cache that cannot answer must never be able to fail a read.
+type ResponseCache interface {
+	Lookup(url string) (etag string, body []byte, ok bool)
+	Save(url, etag string, body []byte)
+}
+
+// jsonAccept is the only media type this client will remember. An allowlist rather than an
+// exclusion of `application/zip`, so a binary media type added later is not cached by omission.
+const jsonAccept = "application/vnd.github+json"
+
+// maxCachedBody bounds what one entry may cost. A page of repositories is tens of kilobytes.
+const maxCachedBody = 2 << 20
+
+// readCloser reattaches a closer to a reader that has been wrapped.
+type readCloser struct {
+	io.Reader
+	io.Closer
 }
 
 // DefaultMaxRetries and DefaultMaxBackoff bound rate-limit handling.
@@ -195,13 +357,42 @@ func (c *Client) do(ctx context.Context, url, accept string) (*http.Response, er
 			req.Header.Set("Authorization", "Bearer "+c.token)
 		}
 
+		var held []byte
+		cacheable := c.Cache != nil && accept == jsonAccept
+		if cacheable {
+			if etag, body, ok := c.Cache.Lookup(url); ok && etag != "" {
+				req.Header.Set("If-None-Match", etag)
+				held = body
+			}
+		}
+
+		if err := c.Pace.Wait(ctx); err != nil {
+			return nil, err
+		}
 		resp, err := c.http.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("requesting %s: %w", redact(url), err)
 		}
-
+		c.requests.Add(1)
+		c.observeBudget(resp)
 		switch {
 		case resp.StatusCode == http.StatusOK:
+			if !cacheable {
+				return resp, nil
+			}
+			return c.remember(resp, url)
+
+		case resp.StatusCode == http.StatusNotModified:
+			c.notModified.Add(1)
+			resp.Body.Close()
+			if held == nil {
+				// Answering empty here would report an account as holding nothing.
+				return nil, fmt.Errorf("%s answered 304 and nothing was held to answer with",
+					redact(url))
+			}
+			// Presented as 200 because it is the same answer, established rather than assumed.
+			resp.StatusCode = http.StatusOK
+			resp.Body = io.NopCloser(bytes.NewReader(held))
 			return resp, nil
 
 		case resp.StatusCode == http.StatusNotFound:
@@ -223,6 +414,34 @@ func (c *Client) do(ctx context.Context, url, accept string) (*http.Response, er
 				redact(url), resp.StatusCode, strings.TrimSpace(string(body)))
 		}
 	}
+}
+
+// remember buffers an answer so a later 304 has something to replay.
+//
+// The body is read here rather than by the caller, so an answer too large to hold still has to
+// reach the caller whole — truncating it to fit a cache would corrupt the read it was meant to
+// make cheaper.
+func (c *Client) remember(resp *http.Response, url string) (*http.Response, error) {
+	etag := resp.Header.Get("ETag")
+	if etag == "" {
+		return resp, nil
+	}
+
+	original := resp.Body
+	head, err := io.ReadAll(io.LimitReader(original, maxCachedBody+1))
+	if err != nil {
+		original.Close()
+		return nil, fmt.Errorf("reading %s: %w", redact(url), err)
+	}
+	if len(head) > maxCachedBody {
+		resp.Body = readCloser{io.MultiReader(bytes.NewReader(head), original), original}
+		return resp, nil
+	}
+
+	original.Close()
+	c.Cache.Save(url, etag, head)
+	resp.Body = io.NopCloser(bytes.NewReader(head))
+	return resp, nil
 }
 
 // isRateLimited distinguishes throttling from a genuine authorization failure: GitHub signals

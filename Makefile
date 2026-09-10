@@ -17,10 +17,26 @@ ABOM_SERVE_FLAGS ?=
 BIN      := bin/codeql-abom
 GO_FILES := $(shell find . -name '*.go' -not -path './ui/*')
 
-.PHONY: build check-corrupt check-versions clean fmt itest js lint logs package publish ql \
-	restart selfcheck serve start status stop style test ui ui-test verify vet
+.PHONY: bench build check-corrupt check-versions clean e2e fmt itest js lint logs package publish ql \
+	quality restart selfcheck serve start status stop style test ui ui-test verify vet
 
 verify: check-corrupt check-versions fmt vet lint test js style ql ui ui-test
+
+## bench: time the store read paths against a real corpus.
+##
+## No -race, deliberately: the detector costs 2x to 20x, so a benchmark under it measures the
+## detector. `make test` keeps -race, which is where it belongs.
+##
+## ABOM_BENCH_DB must name a snapshot, not the live database. Without it every benchmark skips
+## rather than measuring an empty store, because a fast nothing is how a CLI timing ranked work
+## first that the served path was never paying for.
+ABOM_BENCH_DB ?= /tmp/abom-bench.db
+bench:
+	@if [ ! -f "$(ABOM_BENCH_DB)" ]; then \
+		echo "bench: no corpus at $(ABOM_BENCH_DB); take one with"; \
+		echo "  sqlite3 -readonly \"file:$(ABOM_DB)?immutable=1\" \".backup $(ABOM_BENCH_DB)\""; \
+	fi
+	@ABOM_BENCH_DB="$(ABOM_BENCH_DB)" go test ./internal/... -run '^$$' -bench . -benchmem
 
 build:
 	@go build -o $(BIN) ./cmd/codeql-abom
@@ -41,6 +57,43 @@ check-corrupt:
 
 clean:
 	@rm -rf bin dist
+
+## e2e: drive the published interface in a real browser.
+##
+## Outside `verify` for the same reason `itest` and `selfcheck` are: it needs tools the repository
+## does not carry. This one needs npm and a downloaded Chromium, which is the first npm dependency
+## in a tool whose subject is supply-chain risk, so it is opt-in until that trade is settled.
+##
+## It owns geometry. `ui-test` has no CSS engine, so a grid that overflows and a label that wraps
+## onto its own row are green everywhere else.
+##
+## Runs against a database it creates and throws away. Point it at a *copy* of a real corpus to
+## reach the assertions an empty one cannot show:
+##
+##   make e2e ABOM_E2E_DB=/tmp/abom-copy.db
+##   make e2e ABOM_E2E_FLAGS="--headed --project=chromium"
+ABOM_E2E_DIR   ?= /tmp/abom-e2e
+ABOM_E2E_DB    ?= $(ABOM_E2E_DIR)/abom.db
+ABOM_E2E_PORT  ?= 8231
+ABOM_E2E_FLAGS ?=
+e2e: build publish
+	@if [ "$(abspath $(ABOM_E2E_DB))" = "$(abspath $(ABOM_DB))" ]; then \
+		echo "e2e: refusing to run against $(ABOM_DB), which is the working database."; \
+		echo "e2e: take a copy first, and note that cp does not read the WAL:"; \
+		echo "  sqlite3 \"$(ABOM_DB)\" \".backup /tmp/abom-copy.db\""; exit 1; \
+	fi
+	@if [ ! -d ui/tests/e2e/node_modules ]; then \
+		echo "e2e: installing the harness into ui/tests/e2e"; \
+		(cd ui/tests/e2e && npm ci --no-fund --no-audit) || exit 1; \
+	fi
+	@if [ "$(ABOM_E2E_DB)" = "$(ABOM_E2E_DIR)/abom.db" ]; then rm -rf "$(ABOM_E2E_DIR)"; fi
+	@mkdir -p "$(ABOM_E2E_DIR)"
+	@cd ui/tests/e2e && \
+		ABOM_E2E_BIN="$(CURDIR)/$(BIN)" \
+		ABOM_E2E_DB="$(ABOM_E2E_DB)" \
+		ABOM_E2E_UI="$(ABOM_UI)/wwwroot" \
+		ABOM_E2E_PORT="$(ABOM_E2E_PORT)" \
+		npx playwright test $(ABOM_E2E_FLAGS)
 
 fmt:
 	@out=$$(gofmt -l . 2>&1 | grep -v '^ui/' || true); \
@@ -110,6 +163,19 @@ itest:
 		ABOM_ITEST_OVERLAY_DB="$(ABOM_ITEST_OVERLAY_DB)" \
 		go test -p 1 ./internal/runner/ ./internal/pipeline/ ./internal/expand/ -count=1
 	@echo "itest: ok"
+
+## quality: analyze our own source with our own tool, in every language we write.
+## Separate from `verify` on purpose: `verify` answers "is this change correct" on every edit,
+## this answers "what does our own analyzer say about this codebase" and builds four databases
+## to do it. Fails above zero findings, in every language; `self-audit.yml` runs the same four
+## as a matrix. Pass --max-findings=-1 to take a measurement without failing.
+quality: selfcheck
+	@go run ./cmd/codeql-abom selfcheck --language=go \
+		--suite advanced-security/abom-go-quality-src:codeql-suites/abom-go-quality.qls
+	@go run ./cmd/codeql-abom selfcheck --language=csharp --source-root=ui \
+		--suite advanced-security/abom-csharp-quality-src:codeql-suites/abom-csharp-quality.qls
+	@go run ./cmd/codeql-abom selfcheck --language=javascript --source-root=ui/wwwroot \
+		--suite advanced-security/abom-javascript-quality-src:codeql-suites/abom-javascript-quality.qls
 
 ## selfcheck: run our own analysis over our own workflows, through our own database-creation
 ## path. Not in `verify`: it needs the CodeQL CLI and takes tens of seconds.

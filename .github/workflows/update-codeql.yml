@@ -119,12 +119,12 @@ jobs:
         uses: ./.github/actions/setup-codeql
 
       - name: Upgrade - Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
       - name: Upgrade - Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
 
@@ -134,16 +134,13 @@ jobs:
         run: ./scripts/bump-pack-versions.sh "${LATEST}"
 
       - name: Upgrade - Upgrade pack dependencies and re-pin the suites
-        env:
-          LATEST: ${{ needs.detect.outputs.latest }}
         run: |
-          for pack in ql/*/*/src ql/*/*/test; do
-            [ -f "${pack}/codeql-pack.yml" ] || continue
-            codeql pack upgrade "${pack}"
-          done
-          # `codeql pack upgrade` rewrites dependencies and lock files and never touches a
-          # `version:` inside a .qls, so the suites are re-pinned from the lock files here or
-          # check-versions fails the build.
+          # Not a bare `codeql pack upgrade` loop: that is a no-op against an exact pin, because
+          # the pin already satisfies its own constraint. It leaves every version agreeing with
+          # every other version and all of them stale, which check-versions and make verify both
+          # pass. --upgrade-deps forces resolution; --repin then fixes the `version:` inside each
+          # .qls, which codeql pack upgrade never looks at.
+          ./scripts/bump-pack-versions.sh --upgrade-deps
           ./scripts/bump-pack-versions.sh --repin
 
       - name: Upgrade - Verify

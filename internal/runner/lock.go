@@ -106,7 +106,9 @@ func (l *Lock) lockFile(ctx context.Context) error {
 	if err := os.MkdirAll(filepath.Dir(l.Path), 0o755); err != nil {
 		return fmt.Errorf("creating the lock directory: %w", err)
 	}
-	f, err := os.OpenFile(l.Path, os.O_CREATE|os.O_RDWR, 0o644)
+	// Read-only: nothing is ever written to the lock file, only flocked. Opening it for writing
+	// would claim an access this never uses and make every close a potential lost write.
+	f, err := os.OpenFile(l.Path, os.O_CREATE|os.O_RDONLY, 0o644)
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", l.Path, err)
 	}

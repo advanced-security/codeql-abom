@@ -2,7 +2,9 @@ package store
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 )
 
@@ -25,6 +27,11 @@ type QueryRun struct {
 	CLIVersion string
 	Repository string
 	DBCommit   string
+	// Ref and AnalyzedRef are how this evaluation was reached, not what it evaluated. They are
+	// deliberately absent from key(): the run is identified by content, so two refs at one
+	// commit are one evaluation, recorded as two rows in abom_query_run_ref.
+	Ref         string
+	AnalyzedRef string
 }
 
 func (q QueryRun) key() string {
@@ -63,11 +70,89 @@ func (s *Store) RecordQueryRun(q QueryRun) (int64, error) {
 		`SELECT row_id FROM abom_query_run WHERE run_key = ?`, key).Scan(&id); err != nil {
 		return 0, fmt.Errorf("resolving query run for %s: %w", q.QueryID, err)
 	}
+
+	// Only when a ref is actually known. An unrecorded ref must stay distinguishable from the
+	// default branch, which the frontier spells as the empty ref.
+	if q.AnalyzedRef != "" {
+		if err := s.recordRunRef(id, q); err != nil {
+			return 0, err
+		}
+	}
 	return id, nil
 }
 
-// Finding is one result from any query, upstream or ABOM's own.
+// AttachQueryRunRef records a reference against a run that is already on the ledger, reporting
+// whether one was found.
+//
+// This is the skip path: a second reference to a commit already analyzed produces the same run
+// key, so nothing is written and the reference would be lost. It matches on the full identity,
+// **which includes the commit**, so a run found here analyzed this exact revision. Content
+// equivalence is deliberately not accepted: that run happened at a different commit, and saying
+// this reference was analyzed there would claim something that did not happen.
+func (s *Store) AttachQueryRunRef(q QueryRun) (bool, error) {
+	if q.AnalyzedRef == "" {
+		return false, nil
+	}
+	var id int64
+	err := s.db.QueryRow(
+		`SELECT row_id FROM abom_query_run WHERE run_key = ?`, q.key()).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("resolving query run for %s: %w", q.QueryID, err)
+	}
+	if err := s.recordRunRef(id, q); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Store) recordRunRef(id int64, q QueryRun) error {
+	if _, err := s.db.Exec(`
+		INSERT INTO abom_query_run_ref (query_run_id, ref, analyzed_ref)
+		VALUES (?, ?, ?)
+		ON CONFLICT(query_run_id, ref, analyzed_ref) DO NOTHING`,
+		id, q.Ref, q.AnalyzedRef); err != nil {
+		return fmt.Errorf("recording ref %q for query run %s: %w", q.AnalyzedRef, q.QueryID, err)
+	}
+	return nil
+}
+
+// QueryRunRefs lists the references an evaluation was reached through, as `ref@analyzed`.
+//
+// Empty rather than an error when nothing is on record: no ref was recorded is a coverage state,
+// not a failure.
+func (s *Store) QueryRunRefs(runID int64) ([]string, error) {
+	rows, err := s.db.Query(`
+		SELECT ref, analyzed_ref FROM abom_query_run_ref
+		WHERE query_run_id = ? ORDER BY ref, analyzed_ref`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("reading refs for query run %d: %w", runID, err)
+	}
+	defer rows.Close()
+
+	refs := []string{}
+	for rows.Next() {
+		var ref, analyzed string
+		if err := rows.Scan(&ref, &analyzed); err != nil {
+			return nil, fmt.Errorf("scanning ref for query run %d: %w", runID, err)
+		}
+		refs = append(refs, ref+"@"+analyzed)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading refs for query run %d: %w", runID, err)
+	}
+	return refs, nil
+}
+
+// Finding is one result from any provider — a CodeQL suite, or anything else that can attach
+// evidence to the graph without changing its shape.
 type Finding struct {
+	// Provider names the producer. Empty means nobody recorded one, which is a state and not a
+	// synonym for CodeQL: every finding predating this column is unattributed, and relabeling
+	// them would invent the provenance the field exists to hold.
+	Provider         string
 	QueryRunID       int64
 	RuleID           string
 	RepositoryID     int64
@@ -84,7 +169,8 @@ type Finding struct {
 	ResultHash string
 }
 
-// AddFindings writes findings in one transaction, ignoring exact duplicates.
+// AddFindings writes findings in one transaction, folding a finding already on record into the
+// row that holds it.
 func (s *Store) AddFindings(findings []Finding) (int, error) {
 	if len(findings) == 0 {
 		return 0, nil
@@ -96,24 +182,55 @@ func (s *Store) AddFindings(findings []Finding) (int, error) {
 	}
 	defer tx.Rollback()
 
+	// Provenance is refreshed and identity is not: a finding seen again is the same finding, but
+	// the run that reproduced it is newer evidence than the one that first saw it. Ignoring the
+	// conflict outright left 2,759 corpus findings unable to name any run at all, 2,377 of them
+	// in repositories re-analyzed since. COALESCE so a lane that carries neither cannot erase
+	// what an earlier one recorded.
+	// RETURNING rather than LastInsertId: after ON CONFLICT DO UPDATE the CLI reports one row
+	// affected and leaves LastInsertId on an unrelated row, which corrupted node identity once.
 	stmt, err := tx.Prepare(`
 		INSERT INTO abom_finding
-			(query_run_id, rule_id, repository_row_id, file_path, start_line, start_column,
-			 end_line, end_column, message, severity, security_severity, fingerprint, result_hash)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT DO NOTHING`)
+			(provider, query_run_id, rule_id, repository_row_id, file_path, start_line,
+			 start_column, end_line, end_column, message, severity, security_severity,
+			 fingerprint, result_hash)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(rule_id, repository_row_id, file_path, start_line, start_column, fingerprint)
+		DO UPDATE SET
+			provider     = COALESCE(excluded.provider, abom_finding.provider),
+			query_run_id = COALESCE(excluded.query_run_id, abom_finding.query_run_id),
+			result_hash  = COALESCE(excluded.result_hash, abom_finding.result_hash)
+		RETURNING row_id`)
 	if err != nil {
 		return 0, fmt.Errorf("preparing finding insert: %w", err)
 	}
 	defer stmt.Close()
 
+	// Which run reported which finding. One finding row spans commits and can name only one run,
+	// so without this relation "is it still reported" is unanswerable.
+	sighting, err := tx.Prepare(`
+		INSERT INTO abom_finding_sighting (finding_row_id, query_run_id)
+		VALUES (?, ?) ON CONFLICT DO NOTHING`)
+	if err != nil {
+		return 0, fmt.Errorf("preparing sighting insert: %w", err)
+	}
+	defer sighting.Close()
+
 	written := 0
 	for _, f := range findings {
-		if _, err := stmt.Exec(nullableID(f.QueryRunID), f.RuleID, f.RepositoryID,
-			nullable(f.FilePath), f.StartLine, f.StartColumn, f.EndLine, f.EndColumn,
+		var rowID int64
+		if err := stmt.QueryRow(nullable(f.Provider), nullableID(f.QueryRunID), f.RuleID,
+			f.RepositoryID, nullable(f.FilePath), f.StartLine, f.StartColumn, f.EndLine, f.EndColumn,
 			nullable(f.Message), nullable(f.Severity), f.SecuritySeverity,
-			f.Fingerprint, nullable(f.ResultHash)); err != nil {
+			f.Fingerprint, nullable(f.ResultHash)).Scan(&rowID); err != nil {
 			return written, fmt.Errorf("inserting finding for %s: %w", f.RuleID, err)
+		}
+		// A finding nobody attributed to a run gets no sighting. Inventing one would put a claim
+		// in the relation that the sweep then trusts.
+		if f.QueryRunID != 0 {
+			if _, err := sighting.Exec(rowID, f.QueryRunID); err != nil {
+				return written, fmt.Errorf("recording a sighting for %s: %w", f.RuleID, err)
+			}
 		}
 		written++
 	}

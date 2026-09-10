@@ -4,6 +4,12 @@ namespace Abom.WebAssembly.Models;
 public sealed record Summary
 {
     public int SeedRepos { get; init; }
+
+    /// <summary>
+    /// Seeded repositories the declaration claims. Independent of <see cref="SeedRepos"/>: a
+    /// corpus can hold hundreds and own none of them, so the two are never printed as one figure.
+    /// </summary>
+    public int OwnedRepos { get; init; }
     public int UpstreamRepos { get; init; }
     public int Nodes { get; init; }
     public int Edges { get; init; }
@@ -262,7 +268,7 @@ public sealed record FrontierItem
     /// <summary>Which tier this sits in, and therefore which suites analyzed it.</summary>
     public string Tier { get; init; } = string.Empty;
 
-    /// <summary>"runtime" when something in scope executes it, "build_time" when only its own project's CI does.</summary>
+    /// <summary>"runtime" when an analyzed repository executes it, "build_time" when only its own project's CI does.</summary>
     public string SupplyChain { get; init; } = string.Empty;
 
     /// <summary>
@@ -452,6 +458,13 @@ public sealed record AccountIdentity
     public DateTimeOffset? VerifiedAt { get; init; }
     public IReadOnlyList<OwnedAccount> Accounts { get; init; } = [];
     public AccountProblem? Problem { get; init; }
+
+    /// <summary>
+    /// Whether the token could see the whole organization list. False means a declaration absent
+    /// from it proves nothing, so asking gh again cannot settle anything and the remedy is a
+    /// differently scoped token. Decided by the server, never re-derived from the scope strings.
+    /// </summary>
+    public bool CanReadMemberships { get; init; }
 }
 
 public sealed record AffectedRepo
@@ -475,11 +488,29 @@ public sealed record BumpImpact
 /// <summary>A tier's size and how much of it is currently analyzed.</summary>
 public sealed record TierCount
 {
-    /// <summary>Every dependency in the tier, whatever state it is in.</summary>
+    /// <summary>Every queue row in the tier, whatever state it is in.</summary>
     public int Total { get; init; }
 
     /// <summary>How many are analyzed now. A requeue empties this and leaves Total alone.</summary>
     public int Analyzed { get; init; }
+
+    /// <summary>Rows standing for the operator's own repositories, which enumeration queues at
+    /// depth 0. They joined the owned tier when enumeration started, and one number for both hid
+    /// that all 91 analyzed rows were repositories and none of the 44 owned dependencies had been
+    /// looked at.</summary>
+    public int Repositories { get; init; }
+
+    public int RepositoriesAnalyzed { get; init; }
+
+    /// <summary>The tier's work that is somebody's dependency rather than the operator's own
+    /// repository. Derived, so the halves cannot disagree with the total.</summary>
+    public int Dependencies => Total - Repositories;
+
+    public int DependenciesAnalyzed => Analyzed - RepositoriesAnalyzed;
+
+    /// <summary>True when the tier holds both kinds and reporting one number would conflate
+    /// them. Only the owned tier ever can.</summary>
+    public bool HoldsRepositories => Repositories > 0;
 }
 
 /// <summary>What each dependency tier runs, and what it could run.</summary>
@@ -525,7 +556,7 @@ public sealed record StepCondition
     public string Condition { get; init; } = string.Empty;
 }
 
-/// <summary>One repository under review that reaches a node, and the route it takes.</summary>
+/// <summary>One repository that reaches a node, and the route it takes.</summary>
 /// <remarks>Named for the route because <c>NodeReach</c> already means an advisory's reach.</remarks>
 public sealed record NodeRoute
 {
@@ -562,6 +593,26 @@ public sealed record DeclaredAccount
 
     public IReadOnlyList<string> Includes { get; init; } = [];
     public string DeclaredAt { get; init; } = string.Empty;
+
+    /// <summary>
+    /// How the row arrived: <c>cli</c>, <c>interface</c>, or empty when it predates the column and
+    /// nobody can account for it.
+    /// </summary>
+    public string DeclaredBy { get; init; } = string.Empty;
+
+    /// <summary>
+    /// What <c>gh</c> has to say: <c>confirmed</c>, <c>unknown</c> (it has not answered) or
+    /// <c>contradicted</c> (it answered and this account was not among them). Decided by the
+    /// server, never re-derived here.
+    /// </summary>
+    public string State { get; init; } = string.Empty;
+
+    /// <summary>True when gh answered and did not list this account. Not a gap in evidence —
+    /// evidence against, which is why it may not carry an ownership mark.</summary>
+    public bool Contradicted => State == "contradicted";
+
+    /// <summary>True when nobody can say how this declaration got here.</summary>
+    public bool Unaccounted => string.IsNullOrEmpty(DeclaredBy);
 }
 
 /// <summary>
@@ -595,6 +646,96 @@ public sealed record ScopePreview
     /// <summary>True when the candidate would reach no repository the corpus holds. Declaring
     /// such an account is legitimate; silently succeeding is what leaves every page empty.</summary>
     public bool ReachesNothing => ClosureNext == 0;
+}
+
+/// <summary>What declaring an account turned out to mean.</summary>
+/// <remarks>
+/// Declaring names accounts; enumerating turns them into repositories. The two were separate for
+/// a week, and a corpus was found where the operator had declared both accounts they owned — 397
+/// repositories — and it held one, arrived at as somebody else's dependency.
+/// </remarks>
+public sealed record EnumerationReport
+{
+    /// <summary>Repositories the corpus had never seen.</summary>
+    public int Added { get; init; }
+
+    /// <summary>Repositories it held only as somebody else's dependency and now holds as the
+    /// operator's own. Kept apart from <see cref="Added"/> because a run that is all promotions
+    /// found nothing new, and one that is all additions was not crawling their work at all.</summary>
+    public int Promoted { get; init; }
+
+    /// <summary>Repositories already recorded as theirs, which is what a second run should be
+    /// almost entirely made of.</summary>
+    public int Unchanged { get; init; }
+
+    public IReadOnlyList<AccountEnumeration> Accounts { get; init; } = [];
+
+    /// <summary>Accounts that could not be reached. Named rather than counted, so that a short
+    /// report reads as an incomplete answer rather than a small estate.</summary>
+    public IReadOnlyList<AccountFailure> Failed { get; init; } = [];
+
+    /// <summary>Repositories put in the analysis queue. Recording a repository is not analyzing
+    /// it, and a corpus of rows nothing will ever read looks the same as an empty one.</summary>
+    public int Queued { get; init; }
+
+    /// <summary>Set when the repositories were recorded and could not be queued.</summary>
+    public string? QueueError { get; init; }
+
+    /// <summary>Repositories seen across every account that answered.</summary>
+    public int Found => Accounts.Sum(a => a.Found);
+
+    /// <summary>True when nothing was learned and nothing failed — a second run over an unchanged
+    /// estate, which is not worth reporting as an event.</summary>
+    public bool Quiet => Added == 0 && Promoted == 0 && Failed.Count == 0;
+}
+
+/// <summary>One declared account's contribution to an enumeration.</summary>
+public sealed record AccountEnumeration
+{
+    public string Owner { get; init; } = "";
+    public int Found { get; init; }
+    public int Added { get; init; }
+    public int Promoted { get; init; }
+}
+
+/// <summary>An account that could not be enumerated, with the reason.</summary>
+public sealed record AccountFailure
+{
+    public string Owner { get; init; } = "";
+    public string Error { get; init; } = "";
+}
+
+/// <summary>What removal would cost, or what it just cost.</summary>
+/// <remarks>
+/// The declared and reachable counts sit beside the removal because they are what decides it: a
+/// corpus looks enormous until you see that one declared repository reaches 270 of its 1,099.
+/// </remarks>
+public sealed record PruneView
+{
+    public int Declared { get; init; }
+    public int Reachable { get; init; }
+    public PruneRemoval Removed { get; init; } = new();
+
+    /// <summary>What is already out of view and still on disk. Zero means "delete permanently"
+    /// would do nothing.</summary>
+    public int Tombstoned { get; init; }
+
+    /// <summary>False for an estimate, true for an outcome. One shape answering both would let
+    /// the page report what it would do as what it did.</summary>
+    public bool Applied { get; init; }
+
+    public bool RemovesNothing => Removed.Nodes == 0 && Removed.Edges == 0 && Removed.Queued == 0;
+}
+
+public sealed record PruneRemoval
+{
+    public int Repositories { get; init; }
+    public int Nodes { get; init; }
+    public int Edges { get; init; }
+
+    /// <summary>Queued work for repositories the closure does not reach. Left behind, the crawl
+    /// would analyze it and write its nodes straight back.</summary>
+    public int Queued { get; init; }
 }
 
 /// <summary>What the crawl is trying to achieve, and what it has been spending to get there.</summary>
@@ -790,8 +931,9 @@ public sealed record RepositoryUse
     public string FullName { get; init; } = string.Empty;
 
     /// <summary>
-    /// <c>seed</c> for a repository under review, <c>upstream</c> for one fetched only to resolve
-    /// what those depend on. Both run the version; only the first is anyone's here to change.
+    /// How the repository entered the corpus, which is provenance and not a claim about who owns
+    /// it: <c>seed</c> for one discovery started from, <c>upstream</c> for one fetched only to
+    /// resolve what those depend on. Ownership is declared, and is read from the owned scope.
     /// </summary>
     public string Origin { get; init; } = string.Empty;
 

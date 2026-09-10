@@ -68,6 +68,68 @@ func TestACompletedRowRecordsTheReferenceItAnalyzed(t *testing.T) {
 	}
 }
 
+// The ledger row must record the reference too, not just the frontier.
+//
+// The frontier already knew it and the run did not: `queryRun` took `(id, repository, commit)`,
+// so a finding's provenance stopped at a commit with no way back to the branch. A finding that
+// cannot name its ref cannot gate a pull request, and GitHub's own features — campaigns,
+// Dependabot, branch protection — are scoped to the default branch or to protected branches.
+func TestAQueryRunRecordsTheReferenceItAnalyzed(t *testing.T) {
+	h := newHarness(t)
+	h.enqueue(frontier.Item{
+		NodeKey: "actions/checkout", Ref: "v4",
+		Owner: "actions", Repo: "checkout", Depth: 1,
+	})
+
+	h.run(10)
+
+	var refs int
+	if err := h.expander.Store.DB().QueryRow(`
+		SELECT COUNT(*) FROM abom_query_run_ref r
+		JOIN abom_query_run q ON q.row_id = r.query_run_id
+		WHERE q.repository = 'actions/checkout' AND r.ref = 'v4'`).Scan(&refs); err != nil {
+		t.Fatalf("reading the recorded refs: %v", err)
+	}
+	if refs == 0 {
+		t.Error("the run was recorded without the reference it was reached through")
+	}
+}
+
+// A second reference to an already-analyzed commit must still be recorded.
+//
+// The run key hashes the commit, so a second ref at the same commit produces the same key and the
+// whole analysis is skipped — which is correct, and meant the ref was never written. On the
+// seeded corpus 392 repository/commit pairs are reached by more than one ref, so this is the
+// common case rather than an edge: without it the ref relation under-reports exactly the
+// multiplicity it exists for.
+func TestASecondRefToAnAlreadyAnalyzedCommitIsStillRecorded(t *testing.T) {
+	h := newHarness(t)
+	h.enqueue(frontier.Item{
+		NodeKey: "actions/checkout", Ref: "v4",
+		Owner: "actions", Repo: "checkout", Depth: 1,
+	})
+	h.run(10)
+
+	// The same repository again at a different reference. The fixture resolves both to one
+	// commit, which is what makes the second a skip rather than an analysis.
+	h.enqueue(frontier.Item{
+		NodeKey: "actions/checkout", Ref: "v5",
+		Owner: "actions", Repo: "checkout", Depth: 1,
+	})
+	h.run(10)
+
+	var refs int
+	if err := h.expander.Store.DB().QueryRow(`
+		SELECT COUNT(DISTINCT r.ref) FROM abom_query_run_ref r
+		JOIN abom_query_run q ON q.row_id = r.query_run_id
+		WHERE q.repository = 'actions/checkout'`).Scan(&refs); err != nil {
+		t.Fatalf("reading the recorded refs: %v", err)
+	}
+	if refs < 2 {
+		t.Errorf("recorded %d distinct refs, want both v4 and v5", refs)
+	}
+}
+
 // The zero-value batch names itself "/", so a lookup miss does not fail — it invents a
 // repository and files real analysis under it.
 func TestAnalysisIsNeverAttributedToTheZeroBatch(t *testing.T) {

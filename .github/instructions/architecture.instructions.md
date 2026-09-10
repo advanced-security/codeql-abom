@@ -1,5 +1,5 @@
 ---
-description: "Use when changing Go code under cmd/ or internal/ in codeql-abom: the layering, and the architectural invariants that produce data which looks right and is wrong when broken. Covers verdicts coming only from rule IDs, advisories enriching rather than adjudicating, seed versus upstream repositories, ownership versus what already has a database, direct versus transitive exposure, severity x reach, saying what is not known, absent versus zero measurements, append-only graph tables, and queue states a reader distinguishes."
+description: "Use when changing Go code under cmd/ or internal/ in codeql-abom: the layering, and the architectural invariants that produce data which looks right and is wrong when broken. Covers verdicts coming only from rule IDs, advisories enriching rather than adjudicating, seed versus upstream repositories, ownership versus what already has a database, direct versus transitive exposure, severity x reach, saying what is not known, absent versus zero measurements, writing to GitHub's APIs being irreversible and replacing rather than adding, append-only graph tables, and queue states a reader distinguishes."
 applyTo: "{cmd,internal}/**/*.go"
 ---
 
@@ -63,6 +63,19 @@ references, whose reach genuinely is zero. Those are different facts and the wat
 asserts "nothing depends on this" in a view where size means reach. Same rule as the pinning
 split refusing to print `0 yours` with no verified identity.
 
+**Writing to GitHub is irreversible, replaces rather than adds, and belongs to a test target.**
+ABOM's first external write is the dependency submission API, and it obeys none of the intuitions
+a read does. A submitted snapshot **outranks GitHub's own static analysis**, so a partial one does
+not enrich a repository's dependency graph — it *deletes* what GitHub correctly found. Measured on
+2026-09-08: a snapshot naming one of three direct dependencies removed the other two from a live
+repository, and they returned only after a complete resubmission. Precedence keys on
+`file.source_location`, so a deliberately distinct manifest name buys no coexistence — anything
+naming a real workflow path owns that path's whole dependency list. There is **no delete
+endpoint**; the only repair is a superseding snapshot. So: submission targets a repository created
+for the purpose (`advanced-security/codeql-abom-test1`, `-test2`) until a completeness gate exists
+with tests behind it, and the guard is code rather than care. This is absent-is-not-zero again, at
+the one boundary where the mistake lands in somebody else's system.
+
 **The graph tables are append-only, and only the compaction may delete.** Nothing deletes from
 `abom_node`, `abom_edge` or `abom_finding` except `store.Compact`, which bumps an epoch that
 forces every client to reload; only `abom_blast_radius`, `abom_exposure` and `abom_account` are
@@ -75,3 +88,86 @@ they cannot opt out of it. `TestGraphTablesAreDeletedOnlyByTheCompaction` and
 **A queue state a reader distinguishes is a state the interface must have.** `pending` with
 attempts spent is not the same as untouched, and a pause that takes effect between cycles is not
 the same as paused. Collapsing either reads as a control that did nothing.
+
+**Ownership is declared, and the graph is its closure.** Nothing enters the graph that the owned set
+does not reach; the walk is inductive from declared roots. Four notions stay separate — `origin`
+(how a row entered), in-scope (holds a seed), `abom_owned_scope` (what the operator is answerable
+for) and `abom_account` (what `gh` reports). Only the third implies anyone can change anything, and
+only `owner` or `admin` roles are eligible to be declared. Belonging is not being answerable.
+
+**No capability may exist only in a client.** If the interface can do it, an endpoint can do it. A
+client renders; it does not decide — filtering, folding and layout are rendering, and anything that
+changes what the corpus holds, or what it asserts, belongs behind the API. Guarding is a property of
+the endpoint, never of the caller: a control-guarded action is guarded identically for the CLI, the
+Action and the interface.
+
+**A view selects; it never adjudicates.** The predicate language chooses what to show and gains no
+`blocking` field — a verdict belongs to the gate, evaluating a policy the operator wrote. An
+unsupported predicate is an error, never a silent no-op, and an empty selector matches nothing
+rather than everything. **Parsing a predicate is not applying it**: six were accepted and silently
+ignored, and only an end-to-end check found them.
+
+**The policy is the operator's; ABOM only evaluates it.** No rule may be implied, defaulted or
+inferred from severity alone. A verdict records both the evidence and the policy that acted on it,
+because a block nobody can explain gets switched off. **Inconclusive is never silently a pass** —
+fail-closed and fail-open are configured choices.
+
+**A person chooses every alert.** Nothing uploads by itself. The tool name and category ABOM writes
+are constants, never read from a source SARIF: changing either moves every alert, which reads as a
+batch of new findings and a batch of fixes that never happened.
+
+**Conditions are reported verbatim and never evaluated.** `github.ref == 'main'` is a fact about the
+workflow; whether it holds is not static analysis's to settle. Job ordering comes from `needs:`,
+ingested as its own relation — never from the Actions CFG, which is an AST pre-order walk that does
+not consult `needs:` and would assert an order between jobs that actually run in parallel.
+
+**A reference is recorded as written.** `actions/checkout@v7` is evidence about what the
+organization runs, even where upstream publishes no such version; nothing may normalize, correct or
+truncate it on the way to a node. A reference ABOM does not understand is refused explicitly — it is
+not a dependency on an account, and new syntax must never fall through to the owner/repo split.
+
+**A version submitted on a claim is a reference nothing verified.** A pin comment is somebody's
+assertion; only a measurement — the crawl, or the tags API — names a version fit to submit, and a
+measurement always outranks a claim.
+
+**Runtime and build-time exposure are different.** A dependency is runtime when some edge naming it
+comes from a container inside the seed-reachable closure; otherwise only an upstream project's CI
+runs it, and reporting that as exposure overstates it. Classification comes from `edge_kind`, which
+CodeQL already emits, and is never re-derived from file paths.
+
+**Queries are routed by their own metadata.** The set is resolved at runtime, never compiled in, and
+each query's `@kind` decides where its results go, so renaming a file cannot re-route it. Four
+shapes are accepted — edges, observations, `@kind graph`, SARIF — and anything else is refused. An
+empty tier binding legitimately means "do not analyze this tier", which is why `abom_tier_configured`
+exists to tell it from a tier nobody configured.
+
+**A finding is evidence attached to a node, never a verdict about it**, and every finding names its
+producer and how to reproduce it. Where a provider cannot establish a fact the state is *unknown*,
+which is not permissive. A provider may not invent an edge: findings attach to the graph, and only
+the crawl changes its shape.
+
+**Requeueing keeps what is already known.** Clearing results to re-run would blank the Explorer for
+as long as the analysis takes, turning a refresh into an outage.
+
+**Reading an account is one path, whoever walks it.** A person pressing the button and the loop on
+its period both go through `internal/enumerate`. A second implementation would be a second reader of
+`DeclaredAccount.Covers`, which is how an includes-only declaration smuggles in the rest of its
+account.
+
+**A read that failed is not an account that shrank.** An account that could not be reached is
+recorded and named, and the cycle carries on with the work already queued. Reporting the graph as
+current because a listing returned nothing is the coverage lie in its purest form.
+
+**Efficiency is never bought by narrowing what is reported without saying so.** Skipping a
+repository because its validator matched is a measurement that it did not change. Skipping one
+because a budget ran out is a coverage gap. The two must never render alike — a bounded read that
+silently drops the rest turns a performance fix into a coverage lie.
+
+**A 304 is evidence of sameness, not evidence of freshness.** It says the representation did not
+change, which is exactly what was asked. It does not license reporting the derived graph as
+re-measured, and a stored measurement time must still be the time something was actually read.
+
+**An unknown budget is not a budget of nothing.** A rate limit nobody reported must not throttle a
+crawl, and an exhausted one must not read as unlimited because the arithmetic rounded to zero.
+Pacing guards against exhaustion; it is not a governor, and a budget with room must leave the crawl
+alone.

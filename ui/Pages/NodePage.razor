@@ -41,7 +41,7 @@ else
         @if (!string.IsNullOrEmpty(_detail.Origin))
         {
             <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
-                @(_detail.Origin == "seed" ? "in scope" : _detail.Origin)
+                @(_detail.Origin == "seed" ? "starting point" : _detail.Origin)
             </MudChip>
         }
         @* The pivot to the graph is a deliberate click, never where a name lands you. *@
@@ -97,7 +97,7 @@ else
                 else
                 {
                     <MudText Typo="Typo.body2" Class="mb-2">
-                        <b>@(_impact.Direct + _impact.Transitive)</b> repositories in scope would
+                        <b>@(_impact.Direct + _impact.Transitive)</b> repositories would
                         be affected by changing the version of this.
                     </MudText>
                     <div class="d-flex flex-wrap gap-4 mb-2">
@@ -158,7 +158,7 @@ else
                 else if (_reach.Count == 0)
                 {
                     <MudText Typo="Typo.body2" Class="mud-text-secondary">
-                        No repository in scope reaches this. That is not the same as it being
+                        No repository here reaches this. That is not the same as it being
                         unreachable: anything that arrives only through a dependency that
                         has not been analyzed cannot appear here.
                         <MudLink Href="/discovery" Typo="Typo.body2">Check coverage</MudLink>.
@@ -167,7 +167,7 @@ else
                 else
                 {
                     <MudText Typo="Typo.body2" Class="mb-2">
-                        <b>@_reach.Count</b> repositories in scope reach this,
+                        <b>@_reach.Count</b> repositories reach this,
                         <b>@_reach.Count(r => r.Conditions.Count > 0)</b> of them only past an
                         <code>if:</code>.
                     </MudText>
@@ -440,7 +440,7 @@ else
     private static string UsersSummary(NodeUsers users)
     {
         var parts = new List<string> { $"{users.Total:N0} repositories" };
-        if (users.Total != users.Seeds) parts.Add($"{users.Seeds:N0} in scope");
+        if (users.Total != users.Seeds) parts.Add($"{users.Seeds:N0} starting points");
         if (users.OwnedKnown && users.Owned > 0) parts.Add($"{users.Owned:N0} yours");
         return string.Join(" · ", parts) + ". Named directly; anything reaching it through an "
             + "intermediary is under \"If you bump this\".";

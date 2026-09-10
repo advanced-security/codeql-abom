@@ -7,7 +7,11 @@ import (
 
 // Summary is the state of the whole pipeline, for an operator deciding what to run next.
 type Summary struct {
-	SeedRepos     int `json:"seedRepos"`
+	SeedRepos int `json:"seedRepos"`
+	// OwnedRepos are the seeded repositories the declaration claims. Reported separately because
+	// the two are independent: the reference corpus holds 204 seeded and owns none of them, and
+	// printing the first as the operator's is a claim of responsibility nobody made.
+	OwnedRepos    int `json:"ownedRepos"`
 	UpstreamRepos int `json:"upstreamRepos"`
 	Nodes         int `json:"nodes"`
 	Edges         int `json:"edges"`
@@ -42,6 +46,8 @@ func (s *Store) Summary() (Summary, error) {
 		args  []any
 	}{
 		{`SELECT COUNT(*) FROM repository WHERE origin = ?`, &out.SeedRepos, []any{OriginSeed}},
+		{`SELECT COUNT(*) FROM repository WHERE ` + ownedFullName("repository_full_name"),
+			&out.OwnedRepos, nil},
 		{`SELECT COUNT(*) FROM repository WHERE origin = ?`, &out.UpstreamRepos, []any{OriginUpstream}},
 		{`SELECT COUNT(*) FROM abom_node_live`, &out.Nodes, nil},
 		{`SELECT COUNT(*) FROM abom_edge_live`, &out.Edges, nil},

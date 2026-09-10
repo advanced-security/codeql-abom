@@ -4,8 +4,8 @@
 <PageTitle>ABOM — Actions Bill of Materials</PageTitle>
 
 <PageHeader Title="Actions Bill of Materials">
-    Every GitHub Actions dependency reached by the @_summary.SeedRepos repositories in scope —
-    those in the organization that were analyzed with CodeQL. Nothing here is a verdict this tool
+    Every GitHub Actions dependency reached by the @_summary.SeedRepos repositories discovery
+    started from. Nothing here is a verdict this tool
     invented: each claim traces back to the query that produced it.
 </PageHeader>
 
@@ -70,7 +70,7 @@
         new("Repositories",
             "What does each repository pull in, and how much of it is theirs to fix?",
             "/repositories", Icons.Material.Outlined.FolderOpen,
-            $"{_summary.SeedRepos:N0} in scope · {_summary.UpstreamRepos:N0} upstream"),
+            $"{_summary.SeedRepos:N0} starting points · {_summary.UpstreamRepos:N0} upstream"),
         new("Remediation",
             "What should we fix first, and why that order?",
             "/remediation", Icons.Material.Outlined.Build,

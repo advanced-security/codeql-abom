@@ -75,9 +75,33 @@ function checkFontSizes(file, text, off) {
     });
 }
 
-/** Headings belong to PageHeader, which is what keeps the document outline stable. */
-function checkHeadings(file, text, off) {
+/**
+ * One word per notion. `origin` records how a repository entered the corpus, which is provenance
+ * of the data; rendering it as "in scope" or "under review" turns it into a claim that somebody
+ * is responsible for those repositories, and nothing about ABOM happens until an operator
+ * declares ownership. Boundary classes had three spellings across three surfaces, so a reader
+ * filtering "Another account" on one page and "Cross org/owner" on another could not tell they
+ * had asked the same question.
+ */
+const retiredWords = [
+    [/\bin scope\b/i, 'says "in scope"; ownership is declared, so say whose it is or say "reached"'],
+    [/\bunder review\b/i, 'says "under review"; no repository is under review by nobody'],
+    [/\bSame org\/owner\b/, 'boundary wording; the interface says "same account"'],
+    [/\bCross org\/owner\b/, 'boundary wording; the interface says "another account"'],
+    [/\bSame repo\b(?!sitory)/, 'boundary wording; the interface says "same repository"'],
+];
+
+function checkVocabulary(file, text, off) {
     text.split('\n').forEach((line, i) => {
+        if (off.has(i + 1)) return;
+        for (const [re, message] of retiredWords) {
+            if (re.test(line)) report(file, i + 1, message);
+        }
+    });
+}
+
+/** Headings belong to PageHeader, which is what keeps the document outline stable. */
+function checkHeadings(file, text, off) {    text.split('\n').forEach((line, i) => {
         if (off.has(i + 1) || file.endsWith('PageHeader.razor')) return;
         if (/<h1[\s>]/.test(line)) {
             report(file, i + 1, 'page heading outside PageHeader');
@@ -125,6 +149,7 @@ for (const dir of ['Pages', 'Shared', 'Layout', 'wwwroot/css']) {
             checkInlineStyles(file, text, off);
             checkHeadings(file, text, off);
             checkIconSizes(file, text, off);
+            checkVocabulary(file, text, off);
         }
     }
 }

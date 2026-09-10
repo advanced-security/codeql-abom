@@ -6,11 +6,8 @@
 package bqrs
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"os/exec"
 	"strconv"
 )
 
@@ -146,21 +143,4 @@ func (r Row) raw(column string) (json.RawMessage, error) {
 		return nil, fmt.Errorf("row has %d values, want column %d (%q)", len(r.values), i, column)
 	}
 	return r.values[i], nil
-}
-
-// DecodeFile runs `codeql bqrs decode` on path and parses the result.
-func DecodeFile(ctx context.Context, codeqlPath, path string) (Decoded, error) {
-	if codeqlPath == "" {
-		codeqlPath = "codeql"
-	}
-	cmd := exec.CommandContext(ctx, codeqlPath, "bqrs", "decode", "--format=json", "--entities=all", path)
-	out, err := cmd.Output()
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return nil, fmt.Errorf("codeql bqrs decode %s: %w: %s", path, err, exitErr.Stderr)
-		}
-		return nil, fmt.Errorf("codeql bqrs decode %s: %w", path, err)
-	}
-	return Parse(out)
 }

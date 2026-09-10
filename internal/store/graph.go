@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -188,7 +189,11 @@ func (w *Writer) flushEdges() error {
 				ref_raw         = excluded.ref_raw,
 				ref_value       = excluded.ref_value,
 				pin_comment     = excluded.pin_comment,
-				dst_node_row_id = excluded.dst_node_row_id`)
+				dst_node_row_id = excluded.dst_node_row_id,
+				-- ClassifyEdgeBoundaries only fills what is unset, so an edge whose target
+				-- moved would keep the class of a target it no longer points at.
+				boundary        = CASE WHEN abom_edge.dst_node_row_id = excluded.dst_node_row_id
+				                       THEN abom_edge.boundary END`)
 		if err != nil {
 			return fmt.Errorf("preparing edge insert: %w", err)
 		}
@@ -267,6 +272,45 @@ func (s *Store) InsertUpstreamRepository(fullName string) (int64, error) {
 		return 0, fmt.Errorf("resolving repository %q: %w", fullName, err)
 	}
 	return id, nil
+}
+
+// InsertOwnedRepository records a repository the operator owns, found by enumerating a declared
+// account.
+//
+// It promotes an existing row rather than skipping it: a repository first seen as somebody else's
+// dependency is recorded `upstream`, and a declaration is new information about it — the operator
+// owns it, so it is a root of its own report and not only a leaf of someone else's. This is the
+// one direction that changes an origin; InsertUpstreamRepository never demotes, so the two cannot
+// fight over the same row.
+func (s *Store) InsertOwnedRepository(fullName string) (int64, error) {
+	if _, err := s.db.Exec(
+		`INSERT INTO repository (repository_full_name, origin) VALUES (?, ?)
+		 ON CONFLICT(repository_full_name) DO UPDATE SET origin = excluded.origin`,
+		fullName, OriginSeed); err != nil {
+		return 0, fmt.Errorf("inserting owned repository %q: %w", fullName, err)
+	}
+	var id int64
+	if err := s.db.QueryRow(
+		`SELECT row_id FROM repository WHERE repository_full_name = ?`, fullName).Scan(&id); err != nil {
+		return 0, fmt.Errorf("resolving repository %q: %w", fullName, err)
+	}
+	return id, nil
+}
+
+// RepositoryOrigin reports how a repository is currently recorded, or "" if the corpus has never
+// seen it. The distinction is what tells a caller whether it found something new or re-found
+// something it already had under another description.
+func (s *Store) RepositoryOrigin(fullName string) (string, error) {
+	var origin string
+	err := s.db.QueryRow(
+		`SELECT origin FROM repository WHERE repository_full_name = ?`, fullName).Scan(&origin)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("reading origin of %q: %w", fullName, err)
+	}
+	return origin, nil
 }
 
 // nullable stores empty strings as NULL so that "absent" and "empty" stay distinguishable and

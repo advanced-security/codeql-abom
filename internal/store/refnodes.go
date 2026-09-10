@@ -22,6 +22,9 @@ type refState struct {
 	depth     int
 	score     float64
 	dependent int
+	// analyzedAt decides which version an edge out of this dependency belongs to. Ingestion
+	// upserts, so the newest analysis is the one whose results the graph currently holds.
+	analyzedAt string
 }
 
 // splitNodesByRef expands each dependency into one node per reference actually in use.
@@ -43,18 +46,47 @@ func (s *Store) splitNodesByRef(nodes []GraphNode, edges []GraphEdge) ([]GraphNo
 		return nodes, edges, nil
 	}
 
-	// Only what the queue fetches per reference. A reusable workflow inside a repository under
-	// review is analyzed with its repository, not per reference, and splitting it would strand
-	// the edges that run out of it — which is exactly how the exposure scope caught this.
+	queued, analyzedRefs := indexRefStates(states)
+	splittable := splittableNodes(nodes, edges, queued, analyzedRefs)
+	if len(splittable) == 0 {
+		return nodes, edges, nil
+	}
+	refsOf := refsInUse(edges, splittable, analyzedRefs)
+
+	return expandNodesByRef(nodes, splittable, refsOf, states),
+		retargetEdges(edges, splittable, refsOf, sourceRefs(analyzedRefs, states)), nil
+}
+
+// indexRefStates groups the queue rows by dependency: everything queued, and the analyzed
+// references of each.
+//
+// Every analyzed reference is kept, not one of them: `states` is keyed by pair, so a single-valued
+// map here gave a dependency analyzed at nine references a node for whichever one Go's randomized
+// iteration visited last, and a different one on every read.
+func indexRefStates(states map[[2]string]refState) (map[string]bool, map[string]map[string]bool) {
 	queued := map[string]bool{}
-	analyzedRef := map[string]string{}
+	analyzedRefs := map[string]map[string]bool{}
 	for key, st := range states {
 		queued[key[0]] = true
 		if st.analyzed {
-			analyzedRef[key[0]] = key[1]
+			if analyzedRefs[key[0]] == nil {
+				analyzedRefs[key[0]] = map[string]bool{}
+			}
+			analyzedRefs[key[0]][key[1]] = true
 		}
 	}
+	return queued, analyzedRefs
+}
 
+// splittableNodes picks the dependencies that may be drawn once per reference.
+//
+// Only what the queue fetches per reference. A reusable workflow inside a repository under review
+// is analyzed with its repository, not per reference, and splitting it would strand the edges that
+// run out of it — which is exactly how the exposure scope caught this.
+func splittableNodes(
+	nodes []GraphNode, edges []GraphEdge,
+	queued map[string]bool, analyzedRefs map[string]map[string]bool,
+) map[string]bool {
 	splittable := map[string]bool{}
 	for _, n := range nodes {
 		if queued[n.Key] {
@@ -65,50 +97,56 @@ func (s *Store) splitNodesByRef(nodes []GraphNode, edges []GraphEdge) ([]GraphNo
 	// which version that was, there is no version to hang them on, and splitting the node would
 	// have to invent one. Leave it whole and say nothing rather than guess.
 	for _, e := range edges {
-		if splittable[e.Source] && analyzedRef[e.Source] == "" {
-			if _, ok := analyzedRef[e.Source]; !ok {
-				delete(splittable, e.Source)
-			}
+		if splittable[e.Source] && len(analyzedRefs[e.Source]) == 0 {
+			delete(splittable, e.Source)
 		}
 	}
-	if len(splittable) == 0 {
-		return nodes, edges, nil
-	}
+	return splittable
+}
 
-	// Which references each dependency is actually used at, from the edges that name them.
+// refsInUse collects the references each splittable dependency has to be drawn at.
+func refsInUse(
+	edges []GraphEdge, splittable map[string]bool, analyzedRefs map[string]map[string]bool,
+) map[string]map[string]bool {
 	refsOf := map[string]map[string]bool{}
+	add := func(key, ref string) {
+		if refsOf[key] == nil {
+			refsOf[key] = map[string]bool{}
+		}
+		refsOf[key][ref] = true
+	}
+	// Which references each dependency is actually used at, from the edges that name them.
 	for _, e := range edges {
 		if !splittable[e.Target] {
 			continue
 		}
-		seen := refsOf[e.Target]
-		if seen == nil {
-			seen = map[string]bool{}
-			refsOf[e.Target] = seen
-		}
 		if len(e.Refs) == 0 {
-			seen[""] = true
+			add(e.Target, "")
 			continue
 		}
 		for _, r := range e.Refs {
-			seen[r] = true
+			add(e.Target, r)
 		}
 	}
-
 	// A version we analyzed is a version that exists, whether or not anything in the corpus is
 	// seen using it. Its steps are already edges out of it, so omitting the node it ran as would
 	// strand them: 700 dangling sources, all of them composite actions we had in fact read.
 	for _, e := range edges {
-		ref, ok := analyzedRef[e.Source]
-		if !ok || !splittable[e.Source] {
+		if !splittable[e.Source] {
 			continue
 		}
-		if refsOf[e.Source] == nil {
-			refsOf[e.Source] = map[string]bool{}
+		for ref := range analyzedRefs[e.Source] {
+			add(e.Source, ref)
 		}
-		refsOf[e.Source][ref] = true
 	}
+	return refsOf
+}
 
+// expandNodesByRef draws one node per reference in use, each filled in from its own queue row.
+func expandNodesByRef(
+	nodes []GraphNode, splittable map[string]bool,
+	refsOf map[string]map[string]bool, states map[[2]string]refState,
+) []GraphNode {
 	out := make([]GraphNode, 0, len(nodes))
 	for _, n := range nodes {
 		refs := refsOf[n.Key]
@@ -117,33 +155,61 @@ func (s *Store) splitNodesByRef(nodes []GraphNode, edges []GraphEdge) ([]GraphNo
 			continue
 		}
 		for _, ref := range sortedKeys(refs) {
-			v := n
-			v.Key = refNodeKey(n.Key, ref)
-			v.Ref = ref
-			// Every version starts from nothing known and is filled in by its own queue row.
-			// A version nobody queued is unanalyzed, not inherited from a sibling that was.
-			v.Analyzed, v.Discovery, v.Depth, v.QueueScore = false, "", 0, 0
-			v.RefsInUse, v.RefsAnalyzed = 1, 0
-			v.DependentRepos = 0
-			if st, ok := states[[2]string{n.Key, ref}]; ok {
-				v.Analyzed, v.Discovery = st.analyzed, st.status
-				v.Depth, v.QueueScore = st.depth, st.score
-				v.DependentRepos = st.dependent
-				if st.analyzed {
-					v.RefsAnalyzed = 1
-				}
-			}
-			// Findings came from the tree that was analyzed, so a version nothing looked at
-			// reports none rather than borrowing its sibling's. The rule list stays an empty
-			// slice: the interface reads it as a set, and null is not one.
-			if !v.Analyzed {
-				v.Findings, v.Rules = 0, []string{}
-			}
-			out = append(out, v)
+			out = append(out, nodeAtRef(n, ref, states))
 		}
 	}
+	return out
+}
 
-	return out, retargetEdges(edges, splittable, refsOf, analyzedRef), nil
+// nodeAtRef is one dependency as one version of itself.
+func nodeAtRef(n GraphNode, ref string, states map[[2]string]refState) GraphNode {
+	v := n
+	v.Key = refNodeKey(n.Key, ref)
+	v.Ref = ref
+	// Every version starts from nothing known and is filled in by its own queue row.
+	// A version nobody queued is unanalyzed, not inherited from a sibling that was.
+	v.Analyzed, v.Discovery, v.Depth, v.QueueScore = false, "", 0, 0
+	v.RefsInUse, v.RefsAnalyzed = 1, 0
+	v.DependentRepos = 0
+	if st, ok := states[[2]string{n.Key, ref}]; ok {
+		v.Analyzed, v.Discovery = st.analyzed, st.status
+		v.Depth, v.QueueScore = st.depth, st.score
+		v.DependentRepos = st.dependent
+		if st.analyzed {
+			v.RefsAnalyzed = 1
+		}
+	}
+	// Findings came from the tree that was analyzed, so a version nothing looked at
+	// reports none rather than borrowing its sibling's. The rule list stays an empty
+	// slice: the interface reads it as a set, and null is not one.
+	if !v.Analyzed {
+		v.Findings, v.Rules = 0, []string{}
+	}
+	return v
+}
+
+// sourceRefs picks the one version an edge out of a dependency is attributed to.
+//
+// The bare node is gone once a dependency is split, so every edge leaving it must name a version
+// or it dangles. Where several versions were analyzed the newest one wins: ingestion upserts, so
+// its results are the ones the graph currently holds. Ties break on the reference name, because
+// two versions analyzed in the same second must still resolve the same way on every read.
+func sourceRefs(
+	analyzedRefs map[string]map[string]bool, states map[[2]string]refState,
+) map[string]string {
+	out := map[string]string{}
+	for key, refs := range analyzedRefs {
+		best, bestAt := "", ""
+		first := true
+		for _, ref := range sortedKeys(refs) {
+			at := states[[2]string{key, ref}].analyzedAt
+			if first || at > bestAt || (at == bestAt && ref > best) {
+				best, bestAt, first = ref, at, false
+			}
+		}
+		out[key] = best
+	}
+	return out
 }
 
 // retargetEdges points each use at the version it names, splitting an edge that carries several.
@@ -181,18 +247,41 @@ func retargetEdges(
 	return out
 }
 
+// usersPerRef counts the repositories naming each (node_key, ref) exactly once for the whole
+// query, instead of once per row that asks.
+//
+// Shared rather than written twice: the queue view and the graph both answer "who runs this exact
+// version" from the same edges, and `ownedFullName` exists because the tier, the queue and the
+// node users had already drifted into three answers to one question.
+// `TestTheQueueAndTheGraphAgreeOnHowManyRepositoriesNameAVersion` is the guard.
+//
+// Matched on the edge's ref rather than the node, because one action at two references is two
+// different things to everyone downstream.
+const usersPerRef = `SELECT n.node_key AS nk, COALESCE(e.ref_value, '') AS rf,
+	       COUNT(DISTINCT e.repository_row_id) AS cnt
+	  FROM abom_edge_live e
+	  JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
+	 GROUP BY n.node_key, COALESCE(e.ref_value, '')`
+
+// refStatesQuery is separate from the read so its plan can be asserted: whether this walks the
+// edge table once per queue row is a structural property, not something a stopwatch decides.
+//
+// Measured 2026-09-11: as a correlated subquery this was **30.07% of `/api/graph/full`**, more
+// than reading every edge in the corpus.
+const refStatesQuery = `
+	WITH users AS (` + usersPerRef + `)
+	SELECT f.node_key, f.ref, f.status, f.status = 'done',
+	       f.depth, f.score,
+	       COALESCE(u.cnt, 0),
+	       COALESCE(f.analyzed_at, '')
+	FROM abom_frontier f
+	LEFT JOIN users u ON u.nk = f.node_key AND u.rf = f.ref`
+
 // refStates reads every queue row and the reach of the version it names. Reach is counted from
 // the edges rather than from blast radius, which is keyed by name and would attribute the whole
 // dependency's dependents to each of its versions.
 func (s *Store) refStates() (map[[2]string]refState, error) {
-	rows, err := s.db.Query(`
-		SELECT f.node_key, f.ref, f.status, f.status = 'done',
-		       f.depth, f.score,
-		       (SELECT COUNT(DISTINCT e.repository_row_id)
-		          FROM abom_edge_live e
-		          JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
-		         WHERE n.node_key = f.node_key AND COALESCE(e.ref_value, '') = f.ref)
-		FROM abom_frontier f`)
+	rows, err := s.db.Query(refStatesQuery)
 	if err != nil {
 		return nil, fmt.Errorf("reading reference states: %w", err)
 	}
@@ -203,7 +292,7 @@ func (s *Store) refStates() (map[[2]string]refState, error) {
 		var key, ref string
 		var st refState
 		if err := rows.Scan(&key, &ref, &st.status, &st.analyzed, &st.depth, &st.score,
-			&st.dependent); err != nil {
+			&st.dependent, &st.analyzedAt); err != nil {
 			return nil, fmt.Errorf("scanning reference state: %w", err)
 		}
 		// The queue's states are split the way a reader reads them, as elsewhere.

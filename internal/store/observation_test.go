@@ -48,32 +48,36 @@ func TestAnObservationCarriesTheQueryThatProducedIt(t *testing.T) {
 	}
 }
 
-// Re-running a query must refresh rather than accumulate, or a database analyzed twice would
-// report every fact twice and any count drawn from it would drift upward on its own.
-func TestReRunningAQueryRefreshesItsObservations(t *testing.T) {
+// A fact that changes keeps both statements, and the newest carries the highest row id.
+//
+// This used to assert that a second write left exactly one row, which was true only while the
+// key led with `query_run_id` — and a single run restating a value is not what a re-run is. The
+// guarantee that matters is the one `graph.loadConditions` depends on: it orders by row id and
+// lets the last win, so a later statement must sort after the one it supersedes.
+func TestALaterStatementSortsAfterTheOneItSupersedes(t *testing.T) {
 	s := newTestStore(t)
-	run := testRun(t, s, "abom/step-reachability")
 	obs := Observation{
 		SubjectKind: SubjectNode, SubjectKey: "actions/checkout",
 		Name: "reachable", Value: "true",
 	}
-	if _, err := s.AddObservations(run, []Observation{obs}); err != nil {
+	if _, err := s.AddObservations(testRun(t, s, "abom/step-reachability"),
+		[]Observation{obs}); err != nil {
 		t.Fatalf("first write: %v", err)
 	}
 	obs.Value = "false"
-	if _, err := s.AddObservations(run, []Observation{obs}); err != nil {
+	if _, err := s.AddObservations(observationRunAt(t, s, "abom/step-reachability", "bbb"),
+		[]Observation{obs}); err != nil {
 		t.Fatalf("second write: %v", err)
 	}
 
-	got, err := s.ObservationsOf(SubjectNode, "actions/checkout")
-	if err != nil {
-		t.Fatalf("ObservationsOf: %v", err)
+	var newest string
+	if err := s.db.QueryRow(`SELECT value FROM abom_observation
+		WHERE subject_key = ? ORDER BY row_id DESC LIMIT 1`, "actions/checkout").
+		Scan(&newest); err != nil {
+		t.Fatalf("reading the newest statement: %v", err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("read back %d observations, want the one refreshed row", len(got))
-	}
-	if got[0].Value != "false" {
-		t.Errorf("Value = %q, want the re-run's answer", got[0].Value)
+	if newest != "false" {
+		t.Errorf("the newest statement is %q, want the one written last", newest)
 	}
 }
 

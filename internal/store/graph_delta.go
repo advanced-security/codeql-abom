@@ -141,6 +141,13 @@ func (s *Store) RecordGraphGeneration(r GraphRebuild) (int64, error) {
 	if err := s.db.QueryRow(`SELECT MAX(row_id) FROM abom_edge_live`).Scan(&edgeMark); err != nil {
 		return 0, fmt.Errorf("reading edge watermark: %w", err)
 	}
+	// Carried forward rather than left to the column default. A generation written at 0 after a
+	// compaction has bumped the epoch can never match the current one, so the delta answers reset
+	// for the life of the database and every open page reloads the whole payload on every poll.
+	epoch, err := s.currentEpoch()
+	if err != nil {
+		return 0, err
+	}
 
 	var ms any
 	if r.Duration > 0 {
@@ -149,13 +156,26 @@ func (s *Store) RecordGraphGeneration(r GraphRebuild) (int64, error) {
 	res, err := s.db.Exec(`
 		INSERT INTO abom_graph_generation
 			(node_watermark, edge_watermark, created_at, reach_rebuilt,
-			 rebuild_ms, rebuilt_nodes, rebuilt_edges)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		nodeMark.Int64, edgeMark.Int64, now(), r.ReachRebuilt, ms, r.Nodes, r.Edges)
+			 rebuild_ms, rebuilt_nodes, rebuilt_edges, epoch)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		nodeMark.Int64, edgeMark.Int64, now(), r.ReachRebuilt, ms, r.Nodes, r.Edges, epoch)
 	if err != nil {
 		return 0, fmt.Errorf("recording graph generation: %w", err)
 	}
 	return res.LastInsertId()
+}
+
+// currentEpoch is the epoch new generations belong to, which only the compaction advances.
+//
+// One reader for both writers: a second copy of this query is how the two drifted apart in the
+// first place, with the compaction naming the column and the ingestion path leaving it defaulted.
+func (s *Store) currentEpoch() (int64, error) {
+	var epoch int64
+	if err := s.db.QueryRow(
+		`SELECT COALESCE(MAX(epoch), 0) FROM abom_graph_generation`).Scan(&epoch); err != nil {
+		return 0, fmt.Errorf("reading the epoch: %w", err)
+	}
+	return epoch, nil
 }
 
 // GraphDelta returns what changed since a generation, or asks for a full reload when that
@@ -220,6 +240,9 @@ func (s *Store) GraphDelta(since int64, opts FullGraphOptions) (GraphDelta, erro
 		return out, err
 	}
 	out.Nodes, out.Edges = attachOwners(nodes, edges)
+	// The same predicate the full payload answered, or an arrival the reader's filter excludes
+	// merges into their picture anyway.
+	out.Nodes, out.Edges = applyNodePredicates(out.Nodes, out.Edges, opts)
 
 	out.Metrics, err = s.graphMetrics(display)
 	if err != nil {

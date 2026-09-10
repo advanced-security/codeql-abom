@@ -2,6 +2,7 @@ package work
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,11 @@ type fakeClock struct {
 	now    time.Time
 	slept  []time.Duration
 	cancel error
+	// overlap models concurrent waiters: several goroutines sleeping at once occupy the same
+	// stretch of wall clock, so their durations must not accumulate. Adding each sleep to one
+	// shared now, as a sequential caller's would, inflates time by however many happened to be
+	// waiting and makes every total depend on the order the goroutines were scheduled in.
+	overlap bool
 }
 
 func newClock() *fakeClock {
@@ -35,7 +41,9 @@ func (c *fakeClock) Sleep(ctx context.Context, d time.Duration) error {
 		return c.cancel
 	}
 	c.slept = append(c.slept, d)
-	c.now = c.now.Add(d)
+	if !c.overlap {
+		c.now = c.now.Add(d)
+	}
 	return nil
 }
 
@@ -51,6 +59,13 @@ func paced(perHour int) (*Limiter, *fakeClock) {
 	c := newClock()
 	l := NewLimiter(perHour)
 	l.now, l.sleep = c.Now, c.Sleep
+	return l, c
+}
+
+// pacedConcurrently is paced with overlapping sleeps, for callers that wait at the same time.
+func pacedConcurrently(perHour int) (*Limiter, *fakeClock) {
+	l, c := paced(perHour)
+	c.overlap = true
 	return l, c
 }
 
@@ -75,7 +90,8 @@ func TestLimiterSpacesRequestsEvenly(t *testing.T) {
 
 // Capping the rate is the point; adding workers must shorten queueing, not raise the rate.
 func TestLimiterHoldsRateUnderConcurrency(t *testing.T) {
-	l, c := paced(3600)
+	l, c := pacedConcurrently(3600)
+	start := c.Now()
 
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
@@ -89,14 +105,31 @@ func TestLimiterHoldsRateUnderConcurrency(t *testing.T) {
 	}
 	wg.Wait()
 
-	// Eight requests at one per second occupy seven seconds of schedule regardless of how
-	// many goroutines asked.
-	var total time.Duration
-	for _, w := range c.waits() {
-		total += w
+	// Eight requests occupy eight intervals of schedule however many goroutines asked, and
+	// whatever order they asked in. This is the cap itself: were slots handed out without
+	// reserving, concurrent callers would share one and the rate would rise with the worker
+	// count.
+	l.mu.Lock()
+	reserved := l.next.Sub(start)
+	l.mu.Unlock()
+	if reserved != 8*time.Second {
+		t.Errorf("eight requests reserved %v of schedule, want 8s: concurrency must shorten "+
+			"queueing, not raise the rate", reserved)
 	}
-	if total != 7*time.Second {
-		t.Errorf("scheduled %v of waiting, want 7s", total)
+
+	// One caller issues immediately and the other seven are spaced one interval apart. Sorted,
+	// because which goroutine took which slot is not decided.
+	waits := c.waits()
+	slices.Sort(waits)
+	want := []time.Duration{1, 2, 3, 4, 5, 6, 7}
+	if len(waits) != len(want) {
+		t.Fatalf("slept %d times, want %d: exactly one request should not wait",
+			len(waits), len(want))
+	}
+	for i, w := range want {
+		if waits[i] != w*time.Second {
+			t.Errorf("wait %d = %v, want %v", i, waits[i], w*time.Second)
+		}
 	}
 }
 

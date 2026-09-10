@@ -49,11 +49,7 @@ func runPrune(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return nil
 	}
 
-	closure, err := (&graph.Builder{Store: s}).OwnedClosure()
-	if err != nil {
-		return fmt.Errorf("prune: %w", err)
-	}
-	keep, err := inClosure(s, closure)
+	keep, closure, err := (&graph.Builder{Store: s}).KeepList()
 	if err != nil {
 		return fmt.Errorf("prune: %w", err)
 	}
@@ -78,19 +74,4 @@ func runPrune(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		fmt.Fprintln(stdout, "nothing was changed; re-run with --apply to mark it")
 	}
 	return nil
-}
-
-// inClosure names the repositories the corpus holds that the declared scope reaches.
-func inClosure(s *store.Store, closure *graph.Closure) ([]string, error) {
-	all, err := s.AllRepositories()
-	if err != nil {
-		return nil, err
-	}
-	keep := make([]string, 0, len(all))
-	for _, name := range all {
-		if closure.Contains(name) {
-			keep = append(keep, name)
-		}
-	}
-	return keep, nil
 }

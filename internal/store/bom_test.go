@@ -174,6 +174,46 @@ func TestAFindingWithNoRunIsReportedAsUntracedRatherThanDropped(t *testing.T) {
 	}
 }
 
+// A CodeQL finding says which provider produced it and that the provider can be reproduced, so a
+// later one that cannot is distinguishable rather than merely thinner.
+func TestACodeQLFindingNamesItsProviderAndSaysItIsReproducible(t *testing.T) {
+	doc := build(t, bomFixture(t), BOMOptions{})
+
+	c := componentOf(doc, "octo-org/app/.github/workflows/ci.yml")
+	if c == nil || len(c.Findings) == 0 {
+		t.Fatal("the workflow with the unpinned reference has no finding against it")
+	}
+	f := c.Findings[0]
+	if f.Provider != ProviderCodeQL {
+		t.Errorf("Provider = %q, want %q", f.Provider, ProviderCodeQL)
+	}
+	if f.Reproducible == nil || !*f.Reproducible {
+		t.Error("a CodeQL finding is reproducible from its pack digest and CLI version")
+	}
+}
+
+// Not-reproducible and not-recorded are different claims, and the corpus is entirely the second.
+// Collapsing them would report 11,370 findings as un-reproducible when nobody ever asked.
+func TestAFindingNobodyAttributedSaysSoRatherThanClaimingItCannotBeReproduced(t *testing.T) {
+	doc := build(t, bomFixture(t), BOMOptions{})
+
+	c := componentOf(doc, "actions/checkout/.github/workflows/test.yml")
+	if c == nil || len(c.Findings) == 0 {
+		t.Fatal("the unattributed finding is missing")
+	}
+	f := c.Findings[0]
+	if f.Provider != "" {
+		t.Errorf("Provider = %q, want it unset: nothing recorded a producer", f.Provider)
+	}
+	if f.Reproducible != nil {
+		t.Errorf("Reproducible = %v, want no answer to a question nobody asked", *f.Reproducible)
+	}
+	if doc.Coverage.FindingsWithoutProvider != 1 {
+		t.Errorf("FindingsWithoutProvider = %d, want 1 stated in the document itself",
+			doc.Coverage.FindingsWithoutProvider)
+	}
+}
+
 // A finding against somebody else's repository is not evidence about this document's scope.
 func TestFindingsFromOutsideTheClosureDoNotAppear(t *testing.T) {
 	doc := build(t, bomFixture(t), BOMOptions{})

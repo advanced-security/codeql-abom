@@ -19,6 +19,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The bUnit harness has to supply a result for every typed call into ./js/graph.js, and it
+         cannot name a private nested record. Visibility only; nothing changes at runtime. -->
+    <InternalsVisibleTo Include="Abom.WebAssembly.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Tests run under node, not in the browser; shipping them would serve dead bytes. -->
     <Content Remove="wwwroot/js/*.test.js" />
   </ItemGroup>

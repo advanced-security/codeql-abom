@@ -9,15 +9,25 @@ Blazor WASM (.NET 10) + MudBlazor, with the Explorer graph drawn by `force-graph
 `wwwroot/js/graph.js`. The server marshals `internal/store` structs directly, so their `json:`
 tags are the API contract.
 
-## Three verification layers, and green in one says nothing about the others
+## Four verification layers, and green in one says nothing about the others
 
 - `make ui-test` — bUnit component tests in `tests/Abom.WebAssembly.Tests/`. Owns *behavior and
   markup*. It has no CSS engine, so a wrapped label or an overflowing grid passes it.
 - `make js` — `node --test` over `wwwroot/js/*.test.js`. Owns the browser module, which no
   compiler reads. A bad edit inside `create()` shows only as a red Blazor error bar at runtime.
-- The screenshot pass in the `verify-abom-ui` skill. Owns *layout and appearance*.
+- `make e2e` — Playwright in `tests/e2e/`, driving the published interface in a real browser.
+  Owns *geometry*, the boot path and the API contract as the page actually exercises it. **Not in
+  `verify`**: it needs npm and a downloaded Chromium, so it is opt-in like `itest` and `selfcheck`.
+  `ABOM_E2E_DB=<copy>` points it at a real corpus; `ABOM_E2E_CHANNEL=chrome` borrows the system
+  browser when the pinned download will not complete.
+- The screenshot pass in the `verify-abom-ui` skill. Owns *appearance* and taste.
 
-`make ui` only compiles Razor. All four are in `make verify`.
+`make ui` only compiles Razor. All but `e2e` are in `make verify`.
+
+**5xx means ABOM is broken; 4xx means the reader has not done something yet.** The browser suite
+fails on the first and not the second, and handlers must keep that line: a precondition the reader
+has not met is `writeError(w, http.StatusBadRequest, ...)`, never a 500. Reported as a fault it
+tells a reader the server is broken and leaves the page unable to name what would fix it.
 
 ## What the interface must not assert
 
@@ -34,6 +44,22 @@ says what is not known — *not recorded* must stay distinguishable from *none*.
 because no cycle had classified the edges yet, and the page said only "no results" —
 indistinguishable from a filter that ran and matched none. Where a view can be empty because
 something has not run, say which, and name the action that would change it.
+
+**A default that hides things must say so on screen.** "Showing 213 of 401 — 188 hidden by
+filters" is the floor. A default that quietly drops everything without a finding asserts a clean
+estate.
+
+**An empty state is a stage, not an apology.** Before anything is declared the Explorer says so and
+points at Settings; after a declaration and before enumeration finishes, it says what it is waiting
+for. "None declared" is not "0".
+
+**A collapsed section still states what it is set to.** A fold that hides a binding turns it into
+something a reader has to go looking for, and a reader who does not know to look assumes the
+default.
+
+**One vocabulary.** The words for ownership, boundaries, exposure and coverage are fixed in
+[`docs/vocabulary.md`](../../docs/vocabulary.md) and enforced by `checkVocabulary` in
+`ui/tools/check-style.mjs`, which fails the build on the retired spellings.
 
 ## Every open view refreshes itself
 
@@ -56,6 +82,19 @@ from `OnAfterRenderAsync`, after pages have already armed timers on the default.
   `flex: 1 1 auto; min-width: 0` on a neighbour cannot stop a sibling wrapping — the neighbour
   grows into the space the wrap just freed. Set `flex-wrap: nowrap` with `flex-shrink: 0` on what
   must not squash.
+- **An expansion panel renders its content whether or not it is expanded**, so a markup assertion
+  proves nothing about what a reader can see.
+- **`Immediate="true"` binds to `oninput`**, while bUnit's `Change()` raises `change`. The input is
+  silently ignored and the test passes for the wrong reason.
+
+## Color is checked as arithmetic
+
+Every value has one source in `ThemeService`, so a test can read them all; nothing may reintroduce
+a literal color elsewhere. Two floors are enforced: a **chroma floor**, because a color carrying a
+category must not be greyscale, and a **hue-distance floor** within a single legend.
+
+**A state a reader can act on may not wear the color of something that was never measured.**
+`queued` and `Muted` sharing one swatch said "waiting" and "irrelevant" with the same ink.
 
 ## force-graph
 
@@ -83,6 +122,18 @@ the interesting bug window is *while a request is in flight*.
 
 In JS fakes, `requestAnimationFrame` must **not** invoke its callback: `drawLabels` re-arms itself
 every frame and a naive stub recurses until the stack dies.
+
+In the browser suite, wait for `.abom-boot` to go rather than for `networkidle`. Every open view
+re-polls on a timer, so "no requests for 500ms" is a property of the poll interval; asserting while
+the static boot shell is still up measures the boot screen and every content check fails for the
+same misleading reason. A known defect is recorded with `test.fail()`, never `skip` — a skip reports
+as a pass, and `test.fail()` breaks the run when somebody fixes the thing.
+
+**A measurement taken in a browser must prove the thing it timed actually moved.** A frame-rate
+probe that clears the rest state without calling `graph.resumeAnimation()` counts the browser's
+idle loop and reports a flat 60 FPS everywhere. Ask a node where it was before and after; `moved: 0`
+is the tell. Node count is the cost driver — with every edge removed the ceiling is under 5 FPS at
+corpus scale — so the simulation set, not the renderer, is what has to stay small.
 
 The csproj needs `<Compile Remove="tests/**" />`, or the SDK glob compiles the test project into
 the app assembly.

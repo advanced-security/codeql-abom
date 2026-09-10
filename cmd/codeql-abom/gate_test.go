@@ -32,7 +32,7 @@ func TestDiscoveryWillNotStartWhenEveryDeclarationIsDisabled(t *testing.T) {
 	s := gateStore(t)
 	if err := s.SetOwnedScope([]store.DeclaredAccount{
 		{Owner: "data-douser", Kind: store.AccountUser, Enabled: false},
-	}); err != nil {
+	}, store.DeclaredByCLI); err != nil {
 		t.Fatalf("SetOwnedScope: %v", err)
 	}
 
@@ -45,7 +45,7 @@ func TestDiscoveryStartsOnceSomethingIsDeclared(t *testing.T) {
 	s := gateStore(t)
 	if err := s.SetOwnedScope([]store.DeclaredAccount{
 		{Owner: "acme", Kind: store.AccountOrganization, Enabled: true},
-	}); err != nil {
+	}, store.DeclaredByCLI); err != nil {
 		t.Fatalf("SetOwnedScope: %v", err)
 	}
 

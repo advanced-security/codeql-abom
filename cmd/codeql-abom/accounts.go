@@ -83,6 +83,7 @@ func verifyIdentity(ctx context.Context, s *store.Store) error {
 		Host:       id.Host,
 		VerifiedAt: id.VerifiedAt,
 		Accounts:   accounts,
+		Scopes:     id.Scopes,
 	})
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/ingest"
 	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/store"
+	"github.com/advanced-security/codeql-abom/internal/work"
 )
 
 // Resolver expands a suite into queries and reads what each declares about itself.
@@ -130,17 +131,19 @@ func (p tierPlan) identifyFindings(run store.QueryRun) store.QueryRun {
 // The skip and the record are built from this same constructor on purpose. Assembled separately
 // they would drift the moment either gained a field, and the failure is silent: the skip simply
 // stops firing and everything still looks correct.
-func (p tierPlan) queryRun(queryID, repository, commit string) store.QueryRun {
+func (p tierPlan) queryRun(queryID string, at revision) store.QueryRun {
 	return p.identify(queryID, store.QueryRun{
-		QueryID: queryID, Repository: repository, DBCommit: commit,
+		QueryID: queryID, Repository: at.repository, DBCommit: at.commit,
+		Ref: at.ref, AnalyzedRef: at.analyzed,
 	})
 }
 
 // findingsRun is the ledger row for the findings lane, which `database analyze` runs as one
 // invocation over many queries.
-func (p tierPlan) findingsRun(repository, commit string) store.QueryRun {
+func (p tierPlan) findingsRun(at revision) store.QueryRun {
 	return p.identifyFindings(store.QueryRun{
-		QueryID: strings.Join(p.findings, " "), Repository: repository, DBCommit: commit,
+		QueryID: strings.Join(p.findings, " "), Repository: at.repository, DBCommit: at.commit,
+		Ref: at.ref, AnalyzedRef: at.analyzed,
 	})
 }
 
@@ -331,12 +334,40 @@ func (e *Expander) runQueries(
 	return edges, edgesID, extra, nil
 }
 
+// attachRefs records the reference a skipped round was reached through.
+//
+// Nothing ran, so nothing would otherwise be written — but a second reference to a commit already
+// analyzed is the common case, not an edge, and the reference is the whole point of asking twice.
+// Only runs matching the full identity, commit included, take a reference: a round skipped because
+// some *other* commit had identical content did not analyze this one.
+func (e *Expander) attachRefs(b batch, p work.Prepared, planned tierPlan) error {
+	if p.AnalyzedRef == "" || p.Commit == "" {
+		return nil
+	}
+	runs := make([]store.QueryRun, 0, len(planned.bqrs)+1)
+	at := b.revision(p)
+	for _, q := range planned.bqrs {
+		runs = append(runs, planned.queryRun(q.id, at))
+	}
+	if len(planned.findings) > 0 {
+		runs = append(runs, planned.findingsRun(at))
+	}
+	for _, run := range runs {
+		if _, err := e.Store.AttachQueryRunRef(run); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ingestExtra records one non-edge query's results against the repository just analyzed.
 //
 // Attribution is per query, not per round: two queries against one database are two statements
 // by two authors, and a shared run id would make it impossible to say which said what.
-func (e *Expander) ingestExtra(queryID, path, repository, commit string, planned tierPlan) error {
-	runID, err := e.Store.RecordQueryRun(planned.queryRun(queryID, repository, commit))
+func (e *Expander) ingestExtra(
+	queryID, path string, at revision, planned tierPlan,
+) error {
+	runID, err := e.Store.RecordQueryRun(planned.queryRun(queryID, at))
 	if err != nil {
 		return err
 	}
@@ -347,7 +378,7 @@ func (e *Expander) ingestExtra(queryID, path, repository, commit string, planned
 	defer f.Close()
 
 	_, err = e.Ingester.ObservationsFromBQRS(f, ingest.Options{
-		Repository: repository, QueryRunID: runID,
+		Repository: at.repository, QueryRunID: runID,
 	})
 	return err
 }
@@ -356,8 +387,10 @@ func (e *Expander) ingestExtra(queryID, path, repository, commit string, planned
 //
 // The run is named after what was invoked, because `database analyze` is one invocation over
 // many queries. Which query made which claim is already on each result, as its rule id.
-func (e *Expander) ingestFindings(path, repository, commit string, planned tierPlan) error {
-	runID, err := e.Store.RecordQueryRun(planned.findingsRun(repository, commit))
+func (e *Expander) ingestFindings(
+	path string, at revision, planned tierPlan,
+) error {
+	runID, err := e.Store.RecordQueryRun(planned.findingsRun(at))
 	if err != nil {
 		return err
 	}
@@ -368,7 +401,7 @@ func (e *Expander) ingestFindings(path, repository, commit string, planned tierP
 	defer f.Close()
 
 	_, err = e.Ingester.FindingsFromSARIF(f, ingest.Options{
-		Repository: repository, QueryRunID: runID, CLIVersion: planned.cliVersion,
+		Repository: at.repository, QueryRunID: runID, CLIVersion: planned.cliVersion,
 	})
 	return err
 }

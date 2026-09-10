@@ -148,10 +148,17 @@ func writeEntry(entry *zip.File, target string) error {
 	if err != nil {
 		return fmt.Errorf("creating %s: %w", entry.Name, err)
 	}
-	defer dst.Close()
 
-	if _, err := io.Copy(dst, src); err != nil {
-		return fmt.Errorf("extracting %s: %w", entry.Name, err)
+	_, copyErr := io.Copy(dst, src)
+	// Close is where a buffered write finally reports failure, so discarding it would let a
+	// truncated file out of an extraction that returned success. The copy error wins when both
+	// fail, because it says what went wrong first.
+	closeErr := dst.Close()
+	if copyErr != nil {
+		return fmt.Errorf("extracting %s: %w", entry.Name, copyErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("writing %s: %w", entry.Name, closeErr)
 	}
 	return nil
 }

@@ -89,6 +89,30 @@ func (s *Store) Migrate() error {
 	if _, err := s.db.Exec(schemaDDL); err != nil {
 		return fmt.Errorf("creating schema: %w", err)
 	}
+	// Every remaining CREATE TABLE runs before the column pass, because that pass is one sweep of
+	// ALTER TABLE and a table it names but that does not exist yet fails on every fresh database.
+	// Additive, so a corpus upgraded in place gains them without a rebuild.
+	if _, err := s.db.Exec(commitContentDDL); err != nil {
+		return fmt.Errorf("creating the commit content table: %w", err)
+	}
+	if _, err := s.db.Exec(ownedScopeDDL); err != nil {
+		return fmt.Errorf("creating the declared scope tables: %w", err)
+	}
+	if _, err := s.db.Exec(cycleSpendDDL); err != nil {
+		return fmt.Errorf("creating the cycle spend table: %w", err)
+	}
+	if _, err := s.db.Exec(savedViewDDL); err != nil {
+		return fmt.Errorf("creating the saved view table: %w", err)
+	}
+	if _, err := s.db.Exec(httpCacheDDL); err != nil {
+		return fmt.Errorf("creating the response cache table: %w", err)
+	}
+	if _, err := s.db.Exec(discoveryStateDDL); err != nil {
+		return fmt.Errorf("creating the discovery state table: %w", err)
+	}
+	if _, err := s.db.Exec(enumerationStateDDL); err != nil {
+		return fmt.Errorf("creating the enumeration state table: %w", err)
+	}
 	for _, c := range addedColumns {
 		has, err := s.hasColumn(c.table, c.column)
 		if err != nil {
@@ -102,27 +126,44 @@ func (s *Store) Migrate() error {
 			return fmt.Errorf("adding %s.%s: %w", c.table, c.column, err)
 		}
 	}
+	// After the additive pass, so a column this drops can never be one that pass just added.
+	for _, c := range droppedColumns {
+		has, err := s.hasColumn(c.table, c.column)
+		if err != nil {
+			return err
+		}
+		if !has {
+			continue
+		}
+		stmt := fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", c.table, c.column)
+		if _, err := s.db.Exec(stmt); err != nil {
+			return fmt.Errorf("dropping %s.%s: %w", c.table, c.column, err)
+		}
+	}
 	// After the columns exist, because the rebuild copies every one of them forward.
 	if err := s.migrateFrontierRefKey(); err != nil {
+		return err
+	}
+	if err := s.migrateObservationFactKey(); err != nil {
 		return err
 	}
 	// The one index a read-only server cannot wait for CreateIndexes to build.
 	if _, err := s.db.Exec(queryRunIndexDDL); err != nil {
 		return fmt.Errorf("indexing run identity: %w", err)
 	}
-	// Additive, so a corpus upgraded in place gains it without a rebuild.
-	if _, err := s.db.Exec(commitContentDDL); err != nil {
-		return fmt.Errorf("creating the commit content table: %w", err)
-	}
-	if _, err := s.db.Exec(ownedScopeDDL); err != nil {
-		return fmt.Errorf("creating the declared scope tables: %w", err)
-	}
-	if _, err := s.db.Exec(cycleSpendDDL); err != nil {
-		return fmt.Errorf("creating the cycle spend table: %w", err)
+	// The observation table's other reader asks by attribute name, which the fact key cannot
+	// serve. Here rather than in indexDDL because that only runs after a bulk load, so an index
+	// added there never reaches a database that already exists.
+	if _, err := s.db.Exec(observationIndexDDL); err != nil {
+		return fmt.Errorf("indexing observations by name: %w", err)
 	}
 	// After the columns, which the views select on.
 	if _, err := s.db.Exec(liveViewDDL); err != nil {
 		return fmt.Errorf("creating the live views: %w", err)
+	}
+	// Selects on abom_account.scopes, which the column pass above may have just added.
+	if _, err := s.db.Exec(honoredScopeDDL); err != nil {
+		return fmt.Errorf("creating the honored scope view: %w", err)
 	}
 	// Before seeding, so a binding that only needs renaming still counts as configured and the
 	// defaults are not written over it.

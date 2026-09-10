@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
     seed, repoOf, orgOf, edgeClass, boundaryClass, groupOf, anchorKey, keyOf, faded,
@@ -625,4 +626,44 @@ test('a delta that removes an edge leaves its endpoints alone', () => {
 
     assert.equal(all.links.length, 0);
     assert.deepEqual(all.nodes.map(n => n.key), ['a', 'b']);
+});
+
+// A rested view has paused its renderer, so a mutator that changes what a frame shows and does
+// not wake it changes the state and repaints nothing. Switching the Priority force did exactly
+// that: the caption and the button changed, the layout stayed on the previous force, and the
+// interface told the reader position meant urgency while showing them structure.
+//
+// Structural rather than behavioral, because `instances` is module-private and the bug is about
+// a call that is missing. It also catches the next mutator somebody adds.
+test('every mutator that changes what a frame shows wakes the view', () => {
+    const source = readFileSync(new URL('./graph.js', import.meta.url), 'utf8');
+    const mutators = [
+        'setView', 'setGroupBy', 'setPalette', 'setSelection',
+        'setAnimate', 'setCollapsed', 'setMode',
+    ];
+
+    const missing = mutators.filter(name => {
+        const start = source.indexOf(`export function ${name}(`);
+        assert.ok(start >= 0, `${name} is gone; update this guard`);
+        const next = source.indexOf('\nexport function ', start + 1);
+        const body = source.slice(start, next < 0 ? source.length : next);
+        // applyFilters wakes on the way through, so delegating to it counts.
+        return !/\bwake\(/.test(body) && !/\bapplyFilters\(/.test(body);
+    });
+
+    assert.deepEqual(missing, [],
+        'these change what a frame shows without waking the view, so a rested renderer never repaints');
+});
+
+// The scale the Priority force divides by. Recomputed when priorities arrive, because the
+// rendered node set does not change on a view switch and the layout would otherwise be laid out
+// against whatever the last rebuild happened to leave behind.
+test('priorities set the scale the priority force divides by', () => {
+    const source = readFileSync(new URL('./graph.js', import.meta.url), 'utf8');
+    const start = source.indexOf('export function setPriorities(');
+    const next = source.indexOf('\nexport function ', start + 1);
+    const body = source.slice(start, next < 0 ? source.length : next);
+
+    assert.match(body, /maxPriority/,
+        'setPriorities must refresh maxPriority, or the force divides by a stale scale');
 });

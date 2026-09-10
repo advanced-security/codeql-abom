@@ -709,7 +709,8 @@ func TestAReferenceThatNamesNoRepositoryIsNeverQueued(t *testing.T) {
 	q, s := newQueue(t)
 
 	if _, err := q.Enqueue([]Item{
-		{NodeKey: "$/bump-version", Owner: "$", Repo: "bump-version", Depth: 1},
+		{NodeKey: "${{ github.repository }}/setup", Owner: "${{ github.repository }}",
+			Repo: "setup", Depth: 1},
 		{NodeKey: "actions/checkout", Owner: "actions", Repo: "checkout", Depth: 1},
 	}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
@@ -725,7 +726,7 @@ func TestAReferenceThatNamesNoRepositoryIsNeverQueued(t *testing.T) {
 
 	var status, reason string
 	if err := s.DB().QueryRow(
-		`SELECT status, COALESCE(reason,'') FROM abom_frontier WHERE node_key='$/bump-version'`).
+		`SELECT status, COALESCE(reason,'') FROM abom_frontier WHERE node_key='${{ github.repository }}/setup'`).
 		Scan(&status, &reason); err != nil {
 		t.Fatalf("reading the item: %v", err)
 	}
@@ -744,14 +745,15 @@ func TestAReferenceRejectedOnArrivalIsStillDated(t *testing.T) {
 	q, s := newQueue(t)
 
 	if _, err := q.Enqueue([]Item{
-		{NodeKey: "$/bump-version", Owner: "$", Repo: "bump-version", Depth: 1},
+		{NodeKey: "${{ github.repository }}/setup", Owner: "${{ github.repository }}",
+			Repo: "setup", Depth: 1},
 	}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
 
 	var completed string
 	if err := s.DB().QueryRow(
-		`SELECT COALESCE(completed_at,'') FROM abom_frontier WHERE node_key='$/bump-version'`).
+		`SELECT COALESCE(completed_at,'') FROM abom_frontier WHERE node_key='${{ github.repository }}/setup'`).
 		Scan(&completed); err != nil {
 		t.Fatalf("reading the item: %v", err)
 	}

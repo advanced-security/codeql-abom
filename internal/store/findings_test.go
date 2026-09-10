@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"strings"
 	"testing"
 )
@@ -150,6 +151,100 @@ func TestAddFindingsDeduplicates(t *testing.T) {
 	s.DB().QueryRow(`SELECT COUNT(*) FROM abom_finding`).Scan(&count)
 	if count != 1 {
 		t.Errorf("got %d findings after ingesting the same one twice, want 1", count)
+	}
+}
+
+// A finding already on record has to gain the run that reproduced it, or its provenance is
+// pinned to the first sighting forever. Measured on the reference corpus: 2,759 findings carry no
+// `query_run_id`, and 2,377 of them sit in repositories that have since been re-analyzed — the
+// rows could not be reproduced or aged out with their pack, and no amount of crawling fixed it.
+func TestReanalysisAttachesTheRunThatReproducedAFinding(t *testing.T) {
+	s := newTestStore(t)
+	repoID, err := s.UpsertRepository("octo-org/app", "")
+	if err != nil {
+		t.Fatalf("UpsertRepository: %v", err)
+	}
+	runID, err := s.RecordQueryRun(QueryRun{
+		QueryID: "codeql/actions-queries", Repository: "octo-org/app", DBCommit: "sha",
+	})
+	if err != nil {
+		t.Fatalf("RecordQueryRun: %v", err)
+	}
+
+	finding := Finding{
+		RuleID: "actions/unpinned-tag", RepositoryID: repoID,
+		FilePath: ".github/workflows/ci.yml", StartLine: 12, StartColumn: 9,
+		Message: "unpinned", Severity: "warning", SecuritySeverity: 5.0,
+	}
+	if _, err := s.AddFindings([]Finding{finding}); err != nil {
+		t.Fatalf("AddFindings: %v", err)
+	}
+
+	reanalyzed := finding
+	reanalyzed.QueryRunID = runID
+	reanalyzed.ResultHash = "hash-of-the-normalized-result"
+	if _, err := s.AddFindings([]Finding{reanalyzed}); err != nil {
+		t.Fatalf("AddFindings: %v", err)
+	}
+
+	var count int
+	var gotRun sql.NullInt64
+	var gotHash sql.NullString
+	if err := s.DB().QueryRow(
+		`SELECT COUNT(*), MAX(query_run_id), MAX(result_hash) FROM abom_finding`).
+		Scan(&count, &gotRun, &gotHash); err != nil {
+		t.Fatalf("reading the finding: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("got %d findings, want 1: re-analysis must not duplicate a finding", count)
+	}
+	if gotRun.Int64 != runID {
+		t.Errorf("query_run_id = %v, want %d", gotRun, runID)
+	}
+	if gotHash.String != reanalyzed.ResultHash {
+		t.Errorf("result_hash = %q, want %q", gotHash.String, reanalyzed.ResultHash)
+	}
+}
+
+// Re-analysis that learned nothing must not erase what an earlier one recorded. The single-query
+// lane that wrote the corpus's run-less findings passed no run at all, and letting it overwrite
+// would trade one absent measurement for another.
+func TestAReanalysisWithNoRunLeavesTheRecordedOneAlone(t *testing.T) {
+	s := newTestStore(t)
+	repoID, err := s.UpsertRepository("octo-org/app", "")
+	if err != nil {
+		t.Fatalf("UpsertRepository: %v", err)
+	}
+	runID, err := s.RecordQueryRun(QueryRun{
+		QueryID: "codeql/actions-queries", Repository: "octo-org/app", DBCommit: "sha",
+	})
+	if err != nil {
+		t.Fatalf("RecordQueryRun: %v", err)
+	}
+
+	finding := Finding{
+		QueryRunID: runID, ResultHash: "recorded",
+		RuleID: "actions/unpinned-tag", RepositoryID: repoID,
+		FilePath: ".github/workflows/ci.yml", StartLine: 12, StartColumn: 9,
+	}
+	if _, err := s.AddFindings([]Finding{finding}); err != nil {
+		t.Fatalf("AddFindings: %v", err)
+	}
+
+	anonymous := finding
+	anonymous.QueryRunID, anonymous.ResultHash = 0, ""
+	if _, err := s.AddFindings([]Finding{anonymous}); err != nil {
+		t.Fatalf("AddFindings: %v", err)
+	}
+
+	var gotRun sql.NullInt64
+	var gotHash sql.NullString
+	if err := s.DB().QueryRow(
+		`SELECT query_run_id, result_hash FROM abom_finding`).Scan(&gotRun, &gotHash); err != nil {
+		t.Fatalf("reading the finding: %v", err)
+	}
+	if gotRun.Int64 != runID || gotHash.String != "recorded" {
+		t.Errorf("run %v hash %q, want the recorded ones kept", gotRun, gotHash.String)
 	}
 }
 

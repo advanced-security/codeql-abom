@@ -10,6 +10,17 @@ import (
 
 const userJSON = `{"login":"octocat","type":"User","html_url":"https://github.com/octocat"}`
 
+// gh -i prints the response headers, a blank line, then the body. The scopes are only ever
+// stated there, and they decide whether an unlisted organization is a contradiction or a
+// question nobody could answer.
+func withHeaders(scopes, body string) []byte {
+	h := "HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n"
+	if scopes != "" {
+		h += "X-Oauth-Scopes: " + scopes + "\r\n"
+	}
+	return []byte(h + "\r\n" + body)
+}
+
 const membershipsJSON = `[
   {"state":"active","role":"admin","organization":{"login":"octo-org"}},
   {"state":"active","role":"member","organization":{"login":"another-org"}}
@@ -38,9 +49,43 @@ func (f *fakeGH) run(_ context.Context, name string, args ...string) ([]byte, er
 
 func working() *fakeGH {
 	return &fakeGH{replies: map[string]reply{
-		"api user":                             {out: []byte(userJSON)},
+		"api -i user":                          {out: withHeaders("gist, read:org, repo", userJSON)},
 		"api user/memberships/orgs --paginate": {out: []byte(membershipsJSON)},
 	}}
+}
+
+// Without this the corpus cannot tell "you do not belong to facebook" from "this token could
+// never have seen facebook", and it presented the second as the first.
+func TestVerifyRecordsTheScopesTheTokenCarries(t *testing.T) {
+	id, err := Verify(context.Background(), working().run)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+
+	want := []string{"gist", "read:org", "repo"}
+	if len(id.Scopes) != len(want) {
+		t.Fatalf("scopes %v, want %v", id.Scopes, want)
+	}
+	for i, s := range id.Scopes {
+		if s != want[i] {
+			t.Errorf("scope %d is %q, want %q", i, s, want[i])
+		}
+	}
+}
+
+// A token that reports no scopes at all — a fine-grained PAT, say — must not be recorded as one
+// that carries them, and must not be invented into one either.
+func TestVerifyRecordsNoScopesWhenGhDoesNotReportThem(t *testing.T) {
+	gh := working()
+	gh.replies["api -i user"] = reply{out: withHeaders("", userJSON)}
+
+	id, err := Verify(context.Background(), gh.run)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if len(id.Scopes) != 0 {
+		t.Errorf("scopes %v, want none reported", id.Scopes)
+	}
 }
 
 func TestVerifyReportsTheAuthenticatedAccountAndEveryOrgItBelongsTo(t *testing.T) {
@@ -75,7 +120,7 @@ func TestHostComesFromTheAccountRatherThanBeingAssumed(t *testing.T) {
 	// An enterprise install answers on its own host, and pinning the result to github.com would
 	// silently attribute those accounts to the wrong place.
 	gh := working()
-	gh.replies["api user"] = reply{out: []byte(
+	gh.replies["api -i user"] = reply{out: withHeaders("read:org",
 		`{"login":"octocat","type":"User","html_url":"https://ghe.example.com/octocat"}`)}
 
 	id, err := Verify(context.Background(), gh.run)
@@ -138,7 +183,7 @@ func TestEveryPageOfMembershipsIsRead(t *testing.T) {
 
 func TestAMissingGHSaysHowToInstallIt(t *testing.T) {
 	gh := &fakeGH{replies: map[string]reply{
-		"api user": {err: fmt.Errorf("looking for gh: %w", ErrNotInstalled)},
+		"api -i user": {err: fmt.Errorf("looking for gh: %w", ErrNotInstalled)},
 	}}
 
 	_, err := Verify(context.Background(), gh.run)
@@ -154,7 +199,7 @@ func TestAMissingGHSaysHowToInstallIt(t *testing.T) {
 func TestBeingLoggedOutSaysHowToLogIn(t *testing.T) {
 	// Verbatim from gh 2.97 with no stored credentials.
 	gh := &fakeGH{replies: map[string]reply{
-		"api user": {err: errors.New(
+		"api -i user": {err: errors.New(
 			"To get started with GitHub CLI, please run:  gh auth login")},
 	}}
 
@@ -172,7 +217,7 @@ func TestARejectedTokenSaysHowToLogInAgain(t *testing.T) {
 	// Verbatim from gh 2.97 with an invalid token: the status arrives on stderr, which Exec
 	// folds into the error.
 	gh := &fakeGH{replies: map[string]reply{
-		"api user": {err: errors.New("gh api user: exit status 1: gh: Bad credentials (HTTP 401)")},
+		"api -i user": {err: errors.New("gh api user: exit status 1: gh: Bad credentials (HTTP 401)")},
 	}}
 
 	_, err := Verify(context.Background(), gh.run)
@@ -224,7 +269,7 @@ func TestNothingFromGitHubReachesTheCommandLine(t *testing.T) {
 	}
 
 	want := [][]string{
-		{"gh", "api", "user"},
+		{"gh", "api", "-i", "user"},
 		{"gh", "api", "user/memberships/orgs", "--paginate"},
 	}
 	if len(gh.calls) != len(want) {
@@ -239,7 +284,7 @@ func TestNothingFromGitHubReachesTheCommandLine(t *testing.T) {
 
 func TestAnUnreadableAnswerIsAnErrorRatherThanAnEmptyIdentity(t *testing.T) {
 	gh := working()
-	gh.replies["api user"] = reply{out: []byte(`{"login":`)}
+	gh.replies["api -i user"] = reply{out: withHeaders("read:org", `{"login":`)}
 
 	if _, err := Verify(context.Background(), gh.run); err == nil {
 		t.Error("a truncated response was accepted as an identity")
@@ -249,7 +294,7 @@ func TestAnUnreadableAnswerIsAnErrorRatherThanAnEmptyIdentity(t *testing.T) {
 func TestAnAnswerWithoutALoginIsRejected(t *testing.T) {
 	// An empty login would otherwise be stored as an account named "", which nothing owns.
 	gh := working()
-	gh.replies["api user"] = reply{out: []byte(`{"login":"","type":"User"}`)}
+	gh.replies["api -i user"] = reply{out: withHeaders("read:org", `{"login":"","type":"User"}`)}
 
 	if _, err := Verify(context.Background(), gh.run); err == nil {
 		t.Error("an identity with no login was accepted")

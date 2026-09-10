@@ -22,6 +22,12 @@ was learned from a real bug, and breaking one produces data that looks right and
 
 - **Never `git commit`, `git push`, `--amend`, `reset --hard` or `push --force`.** Stop at
   verified and report. Committing is the user's call.
+- **Never write to a GitHub API for a repository outside the test targets.** Reads are free;
+  writes are not. `advanced-security/codeql-abom-test1` and `-test2` exist for this. A dependency
+  snapshot **replaces** GitHub's own analysis rather than adding to it, there is no delete
+  endpoint, and a partial one has already removed correct dependencies from a live repository.
+  Ask before the first write to any new target — **re-invoking a skill is not authorization for
+  an irreversible external action**, and treating it as such is how that happened.
 - **`make verify` is the only definition of verified.** Do not assemble an equivalent by hand;
   `check-corrupt` runs first and is not optional.
 - **Check `make status` before any `codeql` work.** Never run `make verify`, `make ql`,

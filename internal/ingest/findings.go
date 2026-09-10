@@ -33,6 +33,9 @@ func (i *Ingester) FindingsFromSARIF(r io.Reader, opts Options) (int, error) {
 	// Rule metadata carries security-severity and arrives before the results it describes, so
 	// it is held here and joined by rule id as each result streams past.
 	rules := make(map[string]sarifin.Rule)
+	// The producer, as the document spells it. Empty until a tool is seen, and left empty if the
+	// document names none — substituting CodeQL there would invent the provenance.
+	var producer string
 
 	var batch []store.Finding
 	stored := 0
@@ -52,6 +55,7 @@ func (i *Ingester) FindingsFromSARIF(r io.Reader, opts Options) (int, error) {
 
 	err = sarifin.Stream(r, sarifin.Handler{
 		OnTool: func(tool sarifin.Tool) error {
+			producer = tool.Name
 			if opts.CLIVersion == "" || tool.SemanticVersion == opts.CLIVersion {
 				return nil
 			}
@@ -72,6 +76,7 @@ func (i *Ingester) FindingsFromSARIF(r io.Reader, opts Options) (int, error) {
 			}
 
 			batch = append(batch, store.Finding{
+				Provider:         producer,
 				QueryRunID:       opts.QueryRunID,
 				RuleID:           res.RuleID,
 				RepositoryID:     repoID,

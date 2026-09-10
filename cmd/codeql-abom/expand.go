@@ -163,7 +163,7 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 			return fmt.Errorf("expand-all: %w", err)
 		}
 	}
-	fmt.Fprintf(stdout, "expand-all: %d repositories, %d already on record, %d items settled, "+
+	fmt.Fprintf(stdout, "expand-all: %d analyses, %d already on record, %d items settled, "+
 		"%d failed, %d unavailable, %d newly discovered, %d edges ingested\n",
 		total.Processed, total.Skipped, total.Items, total.Failed, total.Unavailable,
 		total.Discovered, total.Edges)

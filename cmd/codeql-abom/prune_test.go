@@ -96,7 +96,7 @@ func seedPrunable(t *testing.T, s *store.Store) {
 	t.Helper()
 	if err := s.SetOwnedScope([]store.DeclaredAccount{
 		{Owner: "octo-org", Kind: store.AccountOrganization, Enabled: true},
-	}); err != nil {
+	}, store.DeclaredByCLI); err != nil {
 		t.Fatalf("SetOwnedScope: %v", err)
 	}
 	mine, err := s.UpsertRepository("octo-org/app", "")
@@ -143,7 +143,7 @@ func clearScope(t *testing.T, db string) {
 		t.Fatalf("store.Open: %v", err)
 	}
 	defer s.Close()
-	if err := s.SetOwnedScope(nil); err != nil {
+	if err := s.SetOwnedScope(nil, store.DeclaredByCLI); err != nil {
 		t.Fatalf("SetOwnedScope: %v", err)
 	}
 }

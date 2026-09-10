@@ -1,6 +1,7 @@
 @page "/settings"
 @using Abom.WebAssembly.Models
 @using Abom.WebAssembly.Services
+@using System.Text.Json
 @inject AbomApi Api
 @inject AccountService Accounts
 
@@ -34,6 +35,19 @@ else
     }
     else
     {
+        @if (Held.Any())
+        {
+            <MudAlert Dense="true" Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-2">
+                <MudText Typo="Typo.body2" data-abom-held="@string.Join(",", Held)">
+                    Not counted as yours: @string.Join(", ", Held).
+                </MudText>
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                    gh listed the accounts you belong to and did not name these, so nothing they
+                    hold roots a crawl, a bill of materials or any figure on any page. Undeclare
+                    them, or regain access and check with gh again.
+                </MudText>
+            </MudAlert>
+        }
         <MudSimpleTable Dense="true" Hover="true" Striped="false" Class="abom-grid abom-table mb-2">
             <thead>
                 <tr>
@@ -46,7 +60,16 @@ else
                 {
                     <tr>
                         <td>
-                            <span class="abom-owned-mark">@a.Owner</span>
+                            @if (a.Contradicted)
+                            {
+                                <MudTooltip Text="@($"gh lists the accounts you belong to and {a.Owner} is not among them. The declaration is kept so you can correct it, but nothing it holds is counted as yours.")">
+                                    <span class="abom-unconfirmed" data-abom-declared="@a.Owner">@a.Owner</span>
+                                </MudTooltip>
+                            }
+                            else
+                            {
+                                <span class="abom-owned-mark" data-abom-declared="@a.Owner">@a.Owner</span>
+                            }
                         </td>
                         <td>@(a.Kind == "user" ? "Your account" : "Organization")</td>
                         <td data-abom-role="@a.Owner">
@@ -98,15 +121,36 @@ else
                                 </MudText>
                             }
                         </td>
-                        <td>
-                            @if (Accounts.IsVerified(a.Owner))
+                        <td data-abom-access="@a.Owner">
+                            @switch (a.State)
                             {
-                                <span class="mud-text-secondary">confirmed by gh</span>
+                                case "confirmed":
+                                    <span class="mud-text-secondary">confirmed by gh</span>
+                                    break;
+                                case "contradicted":
+                                    <MudTooltip Text="gh answered and did not list this account. The declaration is kept so you can correct it, and nothing it holds is counted until you do.">
+                                        <span class="abom-unconfirmed">gh does not list this</span>
+                                    </MudTooltip>
+                                    break;
+                                default:
+                                    @if (!Accounts.Identity.CanReadMemberships && Accounts.Identity.Authenticated)
+                                    {
+                                        <MudTooltip Text="Nothing on record says this token can read organization memberships, so gh can neither confirm nor contradict this. Check with gh to record it; if it still says this, the token needs read:org.">
+                                            <span class="abom-unconfirmed" data-abom-uncheckable="@a.Owner">cannot be checked</span>
+                                        </MudTooltip>
+                                    }
+                                    else
+                                    {
+                                        <MudTooltip Text="gh has not answered, so nothing is established either way. Press Check with gh.">
+                                            <span class="abom-unconfirmed">not confirmed by gh</span>
+                                        </MudTooltip>
+                                    }
+                                    break;
                             }
-                            else
+                            @if (a.Unaccounted)
                             {
-                                <MudTooltip Text="You can be responsible for something you have just lost access to, so this is flagged rather than dropped.">
-                                    <span class="abom-unconfirmed">not confirmed by gh</span>
+                                <MudTooltip Text="This row predates the record of how a declaration arrives, so nobody can say who wrote it. Save the declaration to account for it.">
+                                    <div><span class="abom-unconfirmed" data-abom-unaccounted="@a.Owner">source unknown</span></div>
                                 </MudTooltip>
                             }
                         </td>
@@ -210,6 +254,65 @@ else
             <MudText Typo="Typo.body2" Class="abom-unconfirmed">@_saveError</MudText>
         }
     </div>
+
+    @if (_enumerating || _enumeration is not null || _enumerateError is not null)
+    {
+        <MudAlert Dense="true" Variant="Variant.Outlined" Class="mb-6"
+                  Severity="@(_enumerateError is not null || _enumeration?.Failed.Count > 0
+                                ? Severity.Warning : Severity.Info)">
+            <div data-abom-enumeration>
+                @if (_enumerating)
+                {
+                    <MudText Typo="Typo.body2">Asking GitHub what these accounts hold…</MudText>
+                }
+                else if (_enumerateError is not null)
+                {
+                    <MudText Typo="Typo.body2">
+                        The declaration was saved, but nothing was enumerated: @_enumerateError
+                    </MudText>
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                        Until it runs, this declaration bounds what discovery would accept and adds
+                        no repository to it.
+                    </MudText>
+                }
+                else if (_enumeration is not null)
+                {
+                    <MudText Typo="Typo.body2">
+                        @_enumeration.Found @Plural(_enumeration.Found, "repository", "repositories")
+                        found: @_enumeration.Added new,
+                        @_enumeration.Promoted already here as a dependency,
+                        @_enumeration.Unchanged unchanged.
+                    </MudText>
+                    @foreach (var account in _enumeration.Accounts)
+                    {
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
+                            @account.Owner: @account.Found
+                            @Plural(account.Found, "repository", "repositories")
+                        </MudText>
+                    }
+                    @foreach (var failure in _enumeration.Failed)
+                    {
+                        <MudText Typo="Typo.caption" Class="abom-unconfirmed d-block">
+                            @failure.Owner could not be reached: @failure.Error
+                        </MudText>
+                    }
+                    @if (_enumeration.QueueError is not null)
+                    {
+                        <MudText Typo="Typo.caption" Class="abom-unconfirmed d-block">
+                            Recorded, but not queued for analysis: @_enumeration.QueueError
+                        </MudText>
+                    }
+                    else if (_enumeration.Queued > 0)
+                    {
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
+                            @_enumeration.Queued queued for analysis. Nothing runs until you press
+                            Start in Discovery.
+                        </MudText>
+                    }
+                }
+            </div>
+        </MudAlert>
+    }
 }
 
 @if (_problem is not null)
@@ -305,7 +408,7 @@ else
     </MudDataGrid>
 }
 
-<MudText Typo="Typo.subtitle2" Class="mb-1">Accounts holding repositories in scope</MudText>
+<MudText Typo="Typo.subtitle2" Class="mb-1">Accounts holding analyzed repositories</MudText>
 <MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
     Holding an analyzed repository does not make an account yours &mdash; <code>actions</code>
     owns <code>actions/cache</code>, which is why it appears here and why belonging is checked
@@ -337,7 +440,7 @@ else
                 </CellTemplate>
             </TemplateColumn>
             <PropertyColumn Property="x => x.Owner" Title="Account" />
-            <PropertyColumn Property="x => x.Repositories" Title="Repositories in scope" />
+            <PropertyColumn Property="x => x.Repositories" Title="Repositories" />
             <PropertyColumn Property="x => x.Findings" Title="Findings" />
         </Columns>
         <PagerContent>
@@ -359,6 +462,9 @@ else
     private bool _saving;
     private bool _saved;
     private string? _saveError;
+    private bool _enumerating;
+    private EnumerationReport? _enumeration;
+    private string? _enumerateError;
 
     // The whole declaration is edited before any of it is written, matching SetOwnedScope, which
     // replaces wholesale. A page sending a diff would be assembling one nobody could check.
@@ -369,6 +475,20 @@ else
         public bool Enabled { get; set; } = true;
         public bool IncludesOnly { get; set; }
         public string Includes { get; set; } = string.Empty;
+
+        /// <summary>What gh said about the stored row. Server-decided; a row not yet written has
+        /// none, because gh has not been asked about a declaration that does not exist.</summary>
+        public string State { get; init; } = string.Empty;
+
+        public string DeclaredBy { get; init; } = string.Empty;
+
+        /// <summary>Added in this session and not yet written.</summary>
+        public bool IsNew { get; init; }
+
+        public bool Contradicted => State == "contradicted";
+
+        // An unsaved row is not unaccounted for; it is about to be accounted for by the save.
+        public bool Unaccounted => !IsNew && string.IsNullOrEmpty(DeclaredBy);
 
         public bool NamesNothing => Names().Length == 0;
 
@@ -411,6 +531,11 @@ else
         Accounts.Identity.Accounts.FirstOrDefault(
             a => string.Equals(a.Owner, owner, StringComparison.OrdinalIgnoreCase));
 
+    // Declarations the server is refusing to honor. Named rather than counted, because the point
+    // is for the operator to recognize one they never meant to make.
+    private IEnumerable<string> Held =>
+        _draft.Where(a => a.Contradicted).Select(a => a.Owner);
+
     private IEnumerable<OwnerCandidate> Filtered =>
         (_candidates ?? []).Where(c =>
             string.IsNullOrWhiteSpace(_search) ||
@@ -436,6 +561,8 @@ else
                 Enabled = a.Enabled,
                 IncludesOnly = a.IncludesOnly,
                 Includes = string.Join(", ", a.Includes),
+                State = a.State,
+                DeclaredBy = a.DeclaredBy,
             });
         }
         _preview = null;
@@ -444,7 +571,7 @@ else
     private async Task Declare(string owner, string kind)
     {
         if (string.IsNullOrWhiteSpace(owner) || InDraft(owner)) return;
-        _draft.Add(new Draft { Owner = owner.Trim(), Kind = kind, Enabled = true });
+        _draft.Add(new Draft { Owner = owner.Trim(), Kind = kind, Enabled = true, IsNew = true });
         await Changed();
     }
 
@@ -522,6 +649,8 @@ else
     {
         _saving = true;
         _saveError = null;
+        _enumeration = null;
+        _enumerateError = null;
         try
         {
             await Api.SetOwnedScopeAsync(DraftAccounts);
@@ -532,18 +661,55 @@ else
         catch (HttpRequestException e)
         {
             _saveError = "The declaration was not saved: " + e.Message;
+            return;
         }
         finally
         {
             _saving = false;
         }
+
+        await Enumerate();
     }
+
+    /// <summary>
+    /// Turns the saved declaration into repositories.
+    ///
+    /// It runs after the write rather than beside it: enumerating a scope the server has not been
+    /// told about yet would crawl the previous declaration. A failure here leaves the declaration
+    /// saved — it is a separate fact and undoing the write would lose an edit the operator made.
+    /// </summary>
+    private async Task Enumerate()
+    {
+        _enumerating = true;
+        try
+        {
+            _enumeration = await Api.EnumerateOwnedScopeAsync();
+        }
+        catch (HttpRequestException e)
+        {
+            _enumerateError = e.Message;
+        }
+        catch (JsonException)
+        {
+            // The save already succeeded. Letting an unreadable answer take the page down with
+            // it would lose the confirmation of an edit that was written.
+            _enumerateError = "the answer could not be read";
+        }
+        finally
+        {
+            _enumerating = false;
+        }
+    }
+
+    private static string Plural(int n, string one, string many) => n == 1 ? one : many;
 
     private async Task Discard()
     {
         SeedDraft();
         _saved = false;
         _saveError = null;
+        _enumeration = null;
+        _enumerateError = null;
         await Task.CompletedTask;
     }
 

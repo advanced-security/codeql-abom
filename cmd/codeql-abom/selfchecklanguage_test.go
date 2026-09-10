@@ -1,0 +1,49 @@
+package main
+
+import (
+	"io"
+	"strings"
+	"testing"
+)
+
+// The default stays `actions`, because the workflow and `make selfcheck` both call this with no
+// language and must keep analyzing what they always analyzed.
+func TestSelfcheckStillDefaultsToTheActionsWorkflows(t *testing.T) {
+	cfg, err := parseSelfcheck(nil, io.Discard)
+	if err != nil {
+		t.Fatalf("parseSelfcheck: %v", err)
+	}
+	if cfg.language != "actions" {
+		t.Errorf("language = %q, want actions", cfg.language)
+	}
+}
+
+// Naming a language without naming a suite must fail rather than analyze.
+//
+// `runner.DefaultSuite` is the *actions* findings suite, so `--language=go` on its own would build
+// a Go database and run Actions queries against it — which reports zero findings and looks exactly
+// like a clean result. A language and a suite are one decision and have to be made together.
+func TestSelfcheckRefusesALanguageWhoseSuiteWasNotNamed(t *testing.T) {
+	_, err := parseSelfcheck([]string{"--language=go"}, io.Discard)
+	if err == nil {
+		t.Fatal("a language with no suite was accepted, so Actions queries would run against Go")
+	}
+	if !strings.Contains(err.Error(), "suite") {
+		t.Errorf("error = %q, want it to name the missing suite", err)
+	}
+}
+
+func TestSelfcheckAcceptsALanguageWithItsOwnSuite(t *testing.T) {
+	cfg, err := parseSelfcheck([]string{
+		"--language=go", "--suite=codeql/go-queries:codeql-suites/go-code-quality.qls",
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("parseSelfcheck: %v", err)
+	}
+	if cfg.language != "go" {
+		t.Errorf("language = %q, want go", cfg.language)
+	}
+	if !strings.Contains(cfg.suite, "go-code-quality") {
+		t.Errorf("suite = %q, want the suite that was asked for", cfg.suite)
+	}
+}

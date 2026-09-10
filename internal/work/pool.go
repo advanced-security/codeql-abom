@@ -40,6 +40,9 @@ type Prepared struct {
 	SarifPath string
 	// Commit is the database revision the result came from, for ledger bookkeeping.
 	Commit string
+	// AnalyzedRef is the reference that revision was checked out at, alongside Commit for the
+	// same reason: a finding whose provenance stops at a commit cannot name its branch.
+	AnalyzedRef string
 	// AlreadyRecorded means the ledger has this exact work on record and nothing was run. It
 	// travels as a result rather than as ErrSkip because the job still has to be settled, and
 	// only Consume may write.

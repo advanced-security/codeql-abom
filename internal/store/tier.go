@@ -80,7 +80,20 @@ func (s *Store) RequeueTier(tier string) (int, error) {
 type TierCount struct {
 	Total    int `json:"total"`
 	Analyzed int `json:"analyzed"`
+	// Repositories are queue rows for the operator's own repositories, which enumeration writes
+	// at depth 0. They joined the owned tier when enumeration started queueing them, and one
+	// number for both hid that on the reference corpus all 91 analyzed rows were repositories
+	// and not one of the 44 owned dependencies had been looked at.
+	Repositories         int `json:"repositories"`
+	RepositoriesAnalyzed int `json:"repositoriesAnalyzed"`
 }
+
+// Dependencies is the tier's work that is somebody's dependency rather than the operator's own
+// repository. Derived so the two halves cannot drift out of agreement with the total.
+func (c TierCount) Dependencies() int { return c.Total - c.Repositories }
+
+// DependenciesAnalyzed counts the analyzed half of Dependencies.
+func (c TierCount) DependenciesAnalyzed() int { return c.Analyzed - c.RepositoriesAnalyzed }
 
 // TierCounts reports how much work each tier holds, so the cost of re-processing one is stated
 // before it is spent rather than discovered afterwards.
@@ -90,7 +103,9 @@ func (s *Store) TierCounts() (map[string]TierCount, error) {
 	}
 	rows, err := s.db.Query(`
 		SELECT ` + tierOfRow + `, COUNT(*),
-		       SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END)
+		       SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END),
+		       SUM(CASE WHEN depth = 0 THEN 1 ELSE 0 END),
+		       SUM(CASE WHEN depth = 0 AND status = 'done' THEN 1 ELSE 0 END)
 		FROM abom_frontier GROUP BY 1`)
 	if err != nil {
 		return nil, fmt.Errorf("counting tiers: %w", err)
@@ -98,11 +113,12 @@ func (s *Store) TierCounts() (map[string]TierCount, error) {
 	defer rows.Close()
 	for rows.Next() {
 		var tier string
-		var total, analyzed int
-		if err := rows.Scan(&tier, &total, &analyzed); err != nil {
+		var c TierCount
+		if err := rows.Scan(&tier, &c.Total, &c.Analyzed,
+			&c.Repositories, &c.RepositoriesAnalyzed); err != nil {
 			return nil, err
 		}
-		out[tier] = TierCount{Total: total, Analyzed: analyzed}
+		out[tier] = c
 	}
 	return out, rows.Err()
 }

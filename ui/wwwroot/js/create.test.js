@@ -51,6 +51,10 @@ function install() {
     // it would recurse until the stack gave out.
     globalThis.requestAnimationFrame = () => 0;
     globalThis.ResizeObserver = class {
+        // Takes the callback the real API takes, and never runs it: the graph re-arms itself on
+        // every frame, so a stub that fired would recurse. A no-argument stub instead makes every
+        // caller look like it passes one argument too many.
+        constructor(callback) { this.callback = callback; }
         observe() { }
         disconnect() { }
     };

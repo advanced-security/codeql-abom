@@ -21,9 +21,13 @@ type fakeSource struct {
 	listCall int32
 }
 
-func (f *fakeSource) ListRepositories(context.Context, string) ([]string, error) {
+func (f *fakeSource) ListRepositories(context.Context, string) ([]catalog.Repository, error) {
 	atomic.AddInt32(&f.listCall, 1)
-	return f.repos, f.listErr
+	out := make([]catalog.Repository, 0, len(f.repos))
+	for _, r := range f.repos {
+		out = append(out, catalog.Repository{FullName: r})
+	}
+	return out, f.listErr
 }
 
 func (f *fakeSource) FindDatabase(_ context.Context, repo, lang string) (catalog.Database, error) {

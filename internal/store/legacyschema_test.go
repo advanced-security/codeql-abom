@@ -11,6 +11,13 @@ import (
 // has to be added to addedColumns as well. Forgetting that produced "table abom_suite_query has
 // no column named pack_digest" against a real corpus, after unit tests on fresh databases passed.
 const legacySchema = `
+CREATE TABLE abom_owned_scope (
+  owner         TEXT PRIMARY KEY,
+  kind          TEXT NOT NULL,
+  enabled       INTEGER NOT NULL DEFAULT 1,
+  includes_only INTEGER NOT NULL DEFAULT 0,
+  declared_at   TEXT NOT NULL
+);
 CREATE TABLE abom_query_run (
   row_id       INTEGER PRIMARY KEY,
   run_key      TEXT NOT NULL UNIQUE,

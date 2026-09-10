@@ -66,7 +66,7 @@ func TestARowSeparatesTheRepositoriesTheOperatorOwns(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.SetOwnedScope([]DeclaredAccount{
 		{Owner: "octo", Kind: AccountOrganization, Enabled: true},
-	}); err != nil {
+	}, DeclaredByCLI); err != nil {
 		t.Fatalf("SetOwnedScope: %v", err)
 	}
 	seedUsers(t, s, "v4", "octo/app", "stranger/app")

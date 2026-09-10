@@ -1,83 +1,60 @@
-# An expression ABOM could not resolve is not a dependency
+# `$/` is a self reference, not an expression ABOM could not resolve
 
-**Status:** planned. Found by the interface audit on 2026-09-07.
+**Status:** The parser is fixed and verified. The corpus cannot re-heal itself, because the expand
+lane has no way to say that interpretation changed.
 
 ## Why this exists
 
-A workflow may write `uses: ${{ matrix.action }}`. ABOM cannot resolve that without evaluating the
-expression, and it does not. What reaches the graph is a node whose key begins with `$`.
+`$/` is [GitHub's self repository
+reference](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsuses):
+it names an action stored in the same repository as the workflow or action currently running, and
+resolves to that repository at the running commit. It carries no `@{ref}` — a ref suffix is invalid
+— and it always resolves against the repository of the file it appears in, not the repository that
+called it.
 
-Three of them are components of the audited bill of materials:
+Splitting it on the first slash yields something shaped like `owner/repo`, and everything
+downstream then treats it as one. That is how **73 relationships were classified `cross-owner`**,
+so ABOM stated that the organization depended on a third-party account named `$` — the fabricated
+verdict the first architectural invariant refuses.
 
-```text
-$/
-$/.github/actions/ci-setup
-$/.github/actions/setup-bot-auth
-```
+A self reference is repository-relative, exactly like `./`. `$/x` and `./x` are one node, `$/` alone
+collapses onto the repository node, and nothing is reported as unresolved because nothing is: a
+resolved reference called a coverage gap is the same error as an unresolved one called a dependency.
 
-They sort before every real component, so **the first three rows of the document are artifacts**.
-Worse, `db/edge-relationships.md` classifies them: splitting `$/.github/actions/ci-setup` on the
-first slash yields the owner `$`, which differs from the containing repository's owner, so **five
-relationships are recorded as `cross-owner`**. ABOM is stating that the organization has a
-third-party dependency on an account named `$`.
+## Pending
 
-That is a verdict the data does not support, produced by ABOM rather than by a query — the failure
-the first architectural invariant exists to prevent. The boundary classification was careful about
-the case it anticipated: a target that names no repository at all stays unknown, and `$/` is
-correctly among the 81 unclassified. It was not careful about the case where an unresolved
-expression happens to *look* like `owner/name`.
+1. **The expand lane cannot be told that interpretation changed.** `expand.pendingWork` decides
+   from `store.QueryRunExists` — repository, commit, query id, query version, pack — so a Go-side
+   parser fix invalidates nothing and re-analysis of the same commit is *skipped*. Measured:
+   `astral-sh/setup-uv` at `e105c8fb…` was requeued, resolved to the commit already on record and
+   never re-ran, leaving its 17 pre-fix rows in place. The seed lane already solves this — `build
+   --extractor-version` exists and `store.LedgerUnit.ExtractorVersion` participates in the unit key
+   so that changing how results are interpreted re-runs the work — and the expand lane has no
+   equivalent. **This decides how every future interpretation change reaches the corpus, not only
+   this one.**
+2. **The remaining `$`-owned nodes.** **63** edges across `Homebrew/actions`,
+   `mongodb-labs/drivers-github-tools` and `zizmorcore/zizmor-action` still point at them, and will
+   until those repositories are re-analyzed, which needs 1. The orphaned nodes are then ordinary
+   prune candidates.
 
-## What is already true
+## The constraint that must not be broken
 
-| | |
-| --- | --- |
-| `$/` | `node_kind = 'action'`, owner `$`, repo NULL — unclassified, correctly |
-| `$/.github/actions/ci-setup` | owner `$`, repo `.github/actions/ci-setup` — classified **cross-owner** |
-| relationships targeting `$…` | 7, of which **5 cross-owner** and 2 unknown |
-| bill of materials | all three listed as components, sorted first |
-| Explorer | drawn as ordinary action nodes |
-| any marking as unresolved | **none** |
+**A reference ABOM does not understand is not a dependency on an account.** A new syntax has to be
+refused explicitly rather than fall through to the owner/repo split — that fall-through is what
+turned a documented self reference into 73 third-party dependencies on an account named `$`.
 
-The count is small. The defect is that it is a fabricated claim of the exact kind the architecture
-is built to refuse, and it is the first thing a reader sees.
-
-## The design
-
-An unresolved reference is a **state**, not a name. It is recorded, it is counted, and it is
-reported as something ABOM could not resolve — never as a component with an owner.
-
-- **Detected where it is extracted**, not pattern-matched downstream. The query knows it emitted
-  an expression; the Go side is guessing if it looks for a leading `$`.
-- **Excluded from boundary classification**, joining the unknown class that `docker://` targets
-  already occupy for the same reason: it does not cross an account boundary, because there is no
-  account.
-- **Kept in the document and counted in coverage.** Dropping them would be the opposite failure —
-  a workflow that uses an unresolvable action is a real gap in the picture, and the bill of
-  materials states gaps rather than hiding them.
-- **Reported as a coverage figure**: "N references could not be resolved", beside the analyzed and
-  unanalyzed counts, which is where a reader already looks for what is not known.
-
-## Phases
-
-1. The extraction-side signal, and what the query can actually tell us.
-2. A node state for unresolved, and exclusion from classification.
-3. Coverage counts it, in the bill of materials and on Discovery.
-4. The interface renders it as unresolved rather than as an action named `$`.
+**A genuine unevaluated expression is still refused a package.** `normalize.PackageURL` returns
+`""` for an owner containing `.`, `/` or `$`, and `frontier.namesARepository` keeps it out of the
+queue. CodeQL emits `${{ }}` verbatim through `bqrs decode`, so an expression that reaches the
+graph reaches it intact and must stay unroutable.
 
 ## Verification
 
-- No relationship targeting an unresolved expression carries a boundary class.
-- The bill of materials counts them and does not sort them first.
-- A workflow using `uses: ${{ ... }}` is still visible as a gap, not silently dropped: the
-  component count including unresolved, and the count excluding them, both stated.
-- On the audited corpus: 3 components and 7 relationships change treatment, 5 of them stop being
-  reported as cross-owner.
-
-## Open questions
-
-- **Whether some expressions are resolvable.** `${{ env.ACTION_REF }}` with a literal `env:` block
-  is resolvable in principle. Doing that is a CodeQL dataflow question and a much larger plan;
-  this one only stops ABOM asserting an answer it does not have.
-- **Whether `docker://` should share the state.** Both are "not a GitHub repository", but a
-  container image is a resolved reference to a real thing, and an unevaluated expression is not.
-  Probably two states, both unknown to the boundary classifier.
+- Verify the world before touching the data. Three measurements settled this one: `gh api` returned
+  the `uses:` line literally, a scratch actions database decoded `${{ }}` with the braces intact,
+  and all 27 `$`-containing nodes in the corpus were `$/…`.
+- The `AbomEdges` query test covers `$/.github/actions/greet` and a `$/…` reusable workflow call.
+- The edge upsert clears `boundary` when re-analysis moves an edge's target, so a reclassification
+  is visible rather than sticky.
+- A re-analysis after an interpretation change actually re-runs. Today it does not, and the count
+  of surviving `cross-owner` `$/` edges is the number that has to reach zero.

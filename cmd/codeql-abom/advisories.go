@@ -4,12 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os/exec"
-	"strings"
 	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/advisory"
-	"github.com/advanced-security/codeql-abom/internal/ghauth"
 	"github.com/advanced-security/codeql-abom/internal/store"
 	"github.com/advanced-security/codeql-abom/internal/work"
 )
@@ -29,7 +26,9 @@ type fetcher func(ctx context.Context, packages []string) ([]advisory.Advisory, 
 // exhausts in one pass, so a gh login is used when the environment provides no token.
 func newAdvisor(s *store.Store, logTo io.Writer) func(context.Context) (int, error) {
 	client := &advisory.Client{
-		Token: advisoryToken(),
+		// Background because this is startup wiring, not a request: the credential is read
+		// once, before there is a cycle to cancel.
+		Token: githubToken(context.Background()),
 		Pace:  work.NewLimiter(advisoryRateLimitPerHour),
 	}
 	return advisorFor(s, client.Fetch, logTo)
@@ -108,22 +107,6 @@ func storeAdvisories(advisories []advisory.Advisory) []store.Advisory {
 
 // advisoryToken prefers the environment, then a gh login.
 //
-// serve is normally run by hand on a workstation where gh is already authenticated and no token
-// is exported, so reading only the environment would silently leave every refresh on the
+// serve is normally run by hand on a workstation where gh is already authenticated and no token is
+// exported, so reading only the environment would silently leave every refresh on the
 // 60-an-hour unauthenticated budget.
-func advisoryToken() string {
-	if token := githubToken(); token != "" {
-		return token
-	}
-	if _, err := exec.LookPath("gh"); err != nil {
-		return ""
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	out, err := ghauth.Exec(ctx, "gh", "auth", "token")
-	if err != nil {
-		return ""
-	}
-	// gh writes a trailing newline, which would travel into an Authorization header.
-	return strings.TrimSpace(string(out))
-}

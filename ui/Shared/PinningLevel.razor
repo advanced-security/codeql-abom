@@ -153,7 +153,7 @@ else
     private string ComparedToCorpus(double share) =>
         Baseline <= 0
             ? $"{share:P0} of pinnable references name a commit"
-            : $"{share:P0} against {Baseline:P0} across everything in scope";
+            : $"{share:P0} against {Baseline:P0} across the whole corpus";
 
     /// <summary>Carries the row's scope and the active filters into the graph.</summary>
     private string ExplorerLink(PinningRow row)

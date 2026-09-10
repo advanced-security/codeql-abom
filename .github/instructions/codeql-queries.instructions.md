@@ -43,6 +43,20 @@ codeql query compile ql/actions/graph-extraction/src/AbomEdges.ql
 `bqrs info --format=json` uses short codes (`s`, `i`, `e`); `bqrs decode --format=json` uses long
 names (`String`, `Integer`, `Entity`).
 
+## Exact pins are load-bearing, and live in three places
+
+A floating upstream version means the same command on the same commit reports a different number
+tomorrow, and a baseline that moves on its own is not a baseline. The pinned version is written in
+the suite, the pack manifest and the lock file — and `codeql pack upgrade` rewrites two of them,
+never the one inside the `.qls`.
+
+A suite is identified as `<pack>:codeql-suites/<name>.qls` and is offered simply by being dropped
+into a pack — no release, and no CLI call on the request path. Pack names are scoped before
+publication, because renaming afterwards is not a rename.
+
+CLI calls that take a pack reference need `--additional-packs ql`, since these packs are not
+published.
+
 ## Tests
 
 Test trees double as Go fixture sources — see the `regenerate-abom-fixtures` skill.

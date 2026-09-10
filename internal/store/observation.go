@@ -55,8 +55,13 @@ type StoredObservation struct {
 
 // AddObservations records what a query said, returning how many rows were written.
 //
-// Re-running the same query against the same database refreshes its answers rather than adding
-// to them, so a count drawn from this table cannot drift upward on its own.
+// A statement already on record is not written again, whichever run made it: the row is keyed on
+// the fact and its value, so re-analysis at a new commit refreshes attribution rather than adding
+// a copy. Until 2026-09-11 the key led with the run, and this comment promised the opposite of
+// what the table did — the reference corpus had accumulated 3.38 copies of the average fact.
+//
+// Two runs that state *different* values are two statements and both are kept, because choosing
+// between them is a judgement this layer does not make.
 func (s *Store) AddObservations(runID int64, obs []Observation) (int, error) {
 	if len(obs) == 0 {
 		return 0, nil
@@ -75,8 +80,8 @@ func (s *Store) AddObservations(runID int64, obs []Observation) (int, error) {
 		INSERT INTO abom_observation
 			(query_run_id, subject_kind, subject_key, name, value, value_num, file_path, start_line)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(query_run_id, subject_kind, subject_key, name) DO UPDATE SET
-			value = excluded.value,
+		ON CONFLICT(subject_kind, subject_key, name, value) DO UPDATE SET
+			query_run_id = excluded.query_run_id,
 			value_num = excluded.value_num,
 			file_path = excluded.file_path,
 			start_line = excluded.start_line`)
@@ -101,7 +106,7 @@ func (s *Store) AddObservations(runID int64, obs []Observation) (int, error) {
 			line = o.StartLine
 		}
 		if _, err := insert.Exec(runID, o.SubjectKind, o.SubjectKey, o.Name,
-			nullable(o.Value), num, nullable(o.FilePath), line); err != nil {
+			o.Value, num, nullable(o.FilePath), line); err != nil {
 			return written, fmt.Errorf("recording observation %q: %w", o.Name, err)
 		}
 		written++
@@ -112,10 +117,34 @@ func (s *Store) AddObservations(runID int64, obs []Observation) (int, error) {
 	return written, nil
 }
 
+// observationsOfQuery is named so its plan can be asserted. It filters by subject, which is what
+// the fact key leads with.
+const observationsOfQuery = `
+		SELECT q.query_id, o.subject_kind, o.subject_key, o.name,
+		       o.value, o.value_num, COALESCE(o.file_path,''), o.start_line
+		FROM abom_observation o
+		JOIN abom_query_run q ON q.row_id = o.query_run_id
+		WHERE o.subject_kind = ? AND o.subject_key = ?
+		ORDER BY q.query_id, o.name`
+
+// ConditionObservationsQuery reads every step condition on record, newest last.
+//
+// It lives here rather than in the traversal that consumes it because it is the second reader of
+// this table and the one the fact key cannot serve: it asks by attribute name across all
+// subjects, where UNIQUE leads with the subject. `idx_observation_name` exists for this query,
+// and keeping the text beside the schema is what stops the two drifting apart.
+const ConditionObservationsQuery = `
+		SELECT n.row_id, o.value
+		FROM abom_observation o
+		JOIN abom_node_live n ON n.node_key = o.subject_key
+		WHERE o.subject_kind = ? AND o.name = ?
+		ORDER BY o.row_id`
+
 // ObservationsOf returns everything any query has said about one subject.
 //
 // Several queries may disagree; all of them are returned. Picking a winner is a judgement, and
-// this layer records statements rather than making them.
+// this layer records statements rather than making them. What is *not* returned is the same
+// statement twice: re-confirmation refreshes the row rather than adding one.
 func (s *Store) ObservationsOf(subjectKind, subjectKey string) ([]StoredObservation, error) {
 	return queryAll(s, "reading observations", func(r *sql.Rows) (StoredObservation, error) {
 		var o StoredObservation
@@ -126,13 +155,7 @@ func (s *Store) ObservationsOf(subjectKind, subjectKey string) ([]StoredObservat
 		o.Number, o.HasNumber = num.Float64, num.Valid
 		o.StartLine = int(line.Int64)
 		return o, err
-	}, `
-		SELECT q.query_id, o.subject_kind, o.subject_key, o.name,
-		       COALESCE(o.value,''), o.value_num, COALESCE(o.file_path,''), o.start_line
-		FROM abom_observation o
-		JOIN abom_query_run q ON q.row_id = o.query_run_id
-		WHERE o.subject_kind = ? AND o.subject_key = ?
-		ORDER BY q.query_id, o.name`, subjectKind, subjectKey)
+	}, observationsOfQuery, subjectKind, subjectKey)
 }
 
 // QueryRunExists reports whether this exact query has already run against this exact database.

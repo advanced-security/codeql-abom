@@ -18,8 +18,11 @@ Unit tests passed through every architectural bug this repository has had. Snaps
 database before a pipeline change and diff the headline metrics after:
 
 ```bash
-cp abom.db abom-before.db   # then compare blast radius, node/edge counts, findings per rule
+sqlite3 abom.db ".backup abom-before.db"   # then compare blast radius, node/edge counts, findings per rule
 ```
+
+**Not `cp`** — the database is in WAL mode, so a file copy silently drops everything committed
+since the last checkpoint and you diff against a baseline that is quietly wrong.
 
 Never point work at the live database when a copy will do.
 
@@ -32,6 +35,38 @@ Before touching traversal code, check whether the data supports the result at al
 
 `actions/download-artifact@v8` looked like corruption; `git ls-remote --tags` confirmed v1–v8 all
 exist. Verify the world first.
+
+## A refactor proves it changed nothing, or it is not a refactor
+
+Capture the endpoint responses before and after and compare them byte for byte with `cmp`.
+
+## An instrument that changes what it measures is worse than none
+
+Its numbers look like evidence. No `-race` in a benchmark, no per-row timing, and every benchmark
+states the corpus and the cache state it ran against. Rebuild before measuring — a served binary
+from the previous build produces byte-identical "after" numbers, and they read as a null result
+rather than as the mistake they are.
+
+An instrument earns its place by contradicting the person who installed it. Prefer a proof to a
+stopwatch: assert a query plan or a call count, not elapsed time.
+
+## Zero from a tool that cannot see a defect reads like health
+
+A category no check covers reports zero, and zero looks like a clean bill. Say which categories are
+unguarded rather than quoting the total.
+
+## A gate turns on last, and is never weakened to pass
+
+Run a new check in report mode until the threshold is already met, then make it blocking. If a
+threshold has to be raised to go green, the work is not finished — that is not evidence the
+threshold was wrong.
+
+## End-to-end beats argument
+
+A cycle of defects that `make verify` passed: six predicates parsed and ignored, a scope reading the
+wrong column, a total that double-counted, a frame rate off by an order of magnitude. Each was found
+by driving the real thing against the real corpus. Where work can be checked end to end, check it
+there before claiming it.
 
 ## Comments
 
