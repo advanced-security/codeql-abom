@@ -51,8 +51,8 @@ Two routes out, in order:
 1. **A gate that refuses the pull request** that introduces the exposure, which beats reporting it
    after it merges — ABOM holds the only transitive Actions graph, so it is the only thing that can
    refuse a change on that basis. The policy has a life before it has teeth: drafted, simulated
-   against stored state, and adopted only if what it would have blocked is acceptable.
-   `plans/api/policy-lifecycle.md`, `plans/api/verdict-gate.md`, `plans/api/abom-check.md`
+   against stored state, and adopted only if what it would have blocked is acceptable — which is
+   built. `plans/api/verdict-gate.md`, `plans/api/abom-check.md`
 2. **Findings that reach GitHub's own alert surface**, so they arrive where developers already
    look and can join a security campaign. Gated on a standing rule rather than on the upload: no
    alert may exist that a person did not choose. `plans/api/code-scanning-upload.md`

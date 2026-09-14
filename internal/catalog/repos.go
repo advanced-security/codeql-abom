@@ -27,6 +27,13 @@ type Repository struct {
 	// that is the case the creation-ordered walk exists for.
 	CreatedAt time.Time
 	PushedAt  time.Time
+	// Properties is what the organization administers about this repository, one entry per value
+	// so that a multi-select property is several rows rather than a string somebody has to parse.
+	Properties []PropertyValue
+	// PropertiesTruncated says the answer could not carry them all. Properties is then empty on
+	// purpose: a partial dividing line puts a repository in the wrong unit, which is worse than
+	// having no line at all.
+	PropertiesTruncated bool
 }
 
 // ListRepositories returns the non-archived repositories an account holds.

@@ -113,6 +113,15 @@ func (s *Store) Migrate() error {
 	if _, err := s.db.Exec(enumerationStateDDL); err != nil {
 		return fmt.Errorf("creating the enumeration state table: %w", err)
 	}
+	if _, err := s.db.Exec(repositoryPropertyDDL); err != nil {
+		return fmt.Errorf("creating the repository property table: %w", err)
+	}
+	if _, err := s.db.Exec(propertySchemaDDL); err != nil {
+		return fmt.Errorf("creating the property schema table: %w", err)
+	}
+	if _, err := s.db.Exec(policyDDL); err != nil {
+		return fmt.Errorf("creating the policy tables: %w", err)
+	}
 	for _, c := range addedColumns {
 		has, err := s.hasColumn(c.table, c.column)
 		if err != nil {

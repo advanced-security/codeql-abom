@@ -43,9 +43,15 @@ type Server struct {
 	// answers that this build cannot enumerate, which is not the same answer as an account
 	// holding nothing.
 	Enumerate enumerate.Read
+	// EnumerateSchema reads what an account declares its custom properties to be. Nil leaves the
+	// organization's defaults unknown, so no bucket is labeled as the one nobody chose.
+	EnumerateSchema enumerate.ReadSchema
 	// FullListingEvery is how often every page of an account is read rather than a prefix of it.
 	// Zero takes enumerate.DefaultFullListingEvery.
 	FullListingEvery time.Duration
+	// UnitProperty names the custom property that carries the dividing line between business
+	// units. Empty means the operator named none, and nothing is guessed in its place.
+	UnitProperty string
 	// QueueOwned puts the operator's own repositories in the analysis queue. Nil leaves them
 	// recorded and never analyzed, which is the state enumeration exists to end.
 	QueueOwned func() (int, error)
@@ -106,6 +112,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/pinning/totals", s.pinningTotals)
 	mux.HandleFunc("GET /api/accounts", s.accounts)
 	mux.HandleFunc("GET /api/owned-scope", s.ownedScope)
+	mux.HandleFunc("GET /api/units", s.units)
+	mux.HandleFunc("GET /api/policies", s.policies)
+	mux.HandleFunc("PUT /api/policies", s.savePolicy)
+	mux.HandleFunc("POST /api/policies/{name}/simulate", s.simulatePolicy)
+	mux.HandleFunc("POST /api/policies/{name}/adopt", s.adoptPolicy)
+	mux.HandleFunc("POST /api/policies/{name}/waivers", s.grantWaiver)
+	mux.HandleFunc("GET /api/policy-waivers", s.policyWaivers)
 	mux.HandleFunc("GET /api/match", s.match)
 	mux.HandleFunc("GET /api/views", s.views)
 	mux.HandleFunc("PUT /api/views/{name}", s.saveView)

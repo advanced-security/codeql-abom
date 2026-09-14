@@ -71,6 +71,22 @@ type AccountEnumeration struct {
 	// reporting zero there would say nothing is gone when the truth is that nobody looked.
 	Missing      int  `json:"missing"`
 	MissingKnown bool `json:"missingKnown"`
+
+	// PropertiesRead says the custom property values arrived with the listing. False leaves the
+	// grouping unknown rather than empty — a token that cannot read them is a permission problem,
+	// not an organization that divides its repositories into nothing.
+	PropertiesRead bool `json:"propertiesRead"`
+	// PropertiesUnread says why they did not, when they did not.
+	PropertiesUnread string `json:"propertiesUnread,omitempty"`
+	// PropertiesTruncated counts repositories whose values could not be carried whole. Their
+	// stored values are left as they were, because half a dividing line is a placement nobody
+	// chose.
+	PropertiesTruncated int `json:"propertiesTruncated"`
+	// SchemaRead says the organization's property definitions were read, which is what separates
+	// the bucket a repository lands in by choosing nothing from a unit somebody joined.
+	SchemaRead bool `json:"schemaRead"`
+	// SchemaUnread says why they were not.
+	SchemaUnread string `json:"schemaUnread,omitempty"`
 }
 
 // AccountFailure is an account that could not be enumerated, named with the reason.
@@ -82,10 +98,17 @@ type AccountFailure struct {
 // Read lists an account, bounded by what a previous read established. Zero marks read everything.
 type Read func(ctx context.Context, account string, since catalog.Marks) (catalog.Listing, error)
 
+// ReadSchema reads what an account declares its custom properties to be. Nil skips it, which leaves
+// whether a value is the organization's default unknown rather than assumed either way.
+type ReadSchema func(ctx context.Context, account string) ([]catalog.PropertyDefinition, error)
+
 // Options is one enumeration run.
 type Options struct {
 	Store *store.Store
 	Read  Read
+	// Schema is read once per account, not per repository. Without it the bucket a repository
+	// lands in by choosing nothing looks like a unit somebody joined.
+	Schema ReadSchema
 	// QueueOwned may be nil, which records without analyzing.
 	QueueOwned func() (int, error)
 	// FullListingEvery overrides DefaultFullListingEvery. Sweeping forever is how a corpus keeps
@@ -137,6 +160,9 @@ func Run(ctx context.Context, o Options) (Report, error) {
 
 		one, err := record(o.Store, account, listing, &report)
 		if err != nil {
+			return Report{}, err
+		}
+		if err := o.rememberSchema(ctx, account.Owner, &one); err != nil {
 			return Report{}, err
 		}
 		if err := o.remember(account.Owner, listing); err != nil {
@@ -202,11 +228,13 @@ func record(
 	s *store.Store, account store.DeclaredAccount, listing catalog.Listing, report *Report,
 ) (AccountEnumeration, error) {
 	one := AccountEnumeration{
-		Owner:    account.Owner,
-		Found:    len(listing.Repositories),
-		Route:    listing.Route,
-		Fallback: listing.Fallback,
-		Full:     listing.Full,
+		Owner:            account.Owner,
+		Found:            len(listing.Repositories),
+		Route:            listing.Route,
+		Fallback:         listing.Fallback,
+		Full:             listing.Full,
+		PropertiesRead:   listing.PropertiesRead,
+		PropertiesUnread: listing.PropertiesUnread,
 	}
 	seen := make(map[string]struct{}, len(listing.Repositories))
 	for _, repository := range listing.Repositories {
@@ -233,6 +261,9 @@ func record(
 				return one, err
 			}
 		}
+		if err := recordProperties(s, repository, listing.PropertiesRead, &one); err != nil {
+			return one, err
+		}
 		switch before {
 		case "":
 			one.Added++
@@ -256,8 +287,64 @@ func record(
 	return one, nil
 }
 
-// absentFrom counts repositories the corpus holds for an account that a full listing did not name.
+// rememberSchema records what the account declares its properties to be.
 //
+// A failure is reported and not fatal: the schema only decides whether a bucket is labeled as the
+// default, and losing the whole enumeration over that would trade a large fact for a small one.
+func (o Options) rememberSchema(ctx context.Context, owner string, one *AccountEnumeration) error {
+	if o.Schema == nil {
+		return nil
+	}
+	defs, why := schemaOrReason(ctx, o.Schema, owner)
+	if why != "" {
+		one.SchemaUnread = why
+		return nil
+	}
+	stored := make([]store.PropertyDefinition, 0, len(defs))
+	for _, d := range defs {
+		stored = append(stored, store.PropertyDefinition{
+			Name: d.Name, HasDefault: d.HasDefault, DefaultValue: d.DefaultValue})
+	}
+	one.SchemaRead = true
+	return o.Store.ReplacePropertySchema(owner, stored)
+}
+
+// schemaOrReason turns a refused schema read into a reason rather than an error, because not
+// knowing the organization's defaults is a smaller fact than the listing it arrived with.
+func schemaOrReason(
+	ctx context.Context, read ReadSchema, owner string,
+) ([]catalog.PropertyDefinition, string) {
+	defs, err := read(ctx, owner)
+	if err != nil {
+		return nil, err.Error()
+	}
+	return defs, ""
+}
+
+// recordProperties writes what the organization says a repository is.
+//
+// Nothing is written when the read did not carry the values: overwriting with an empty set would
+// turn "nobody could ask" into "the organization puts this in no unit", and the second is a claim.
+// A truncated answer is treated the same way, because half a dividing line places a repository
+// somewhere the organization did not.
+func recordProperties(
+	s *store.Store, repository catalog.Repository, read bool, one *AccountEnumeration,
+) error {
+	if !read {
+		return nil
+	}
+	if repository.PropertiesTruncated {
+		one.PropertiesTruncated++
+		return nil
+	}
+	values := make([]store.PropertyValue, 0, len(repository.Properties))
+	for _, p := range repository.Properties {
+		values = append(values, store.PropertyValue{Name: p.Name, Value: p.Value})
+	}
+	return s.ReplacePropertyValues(repository.FullName, values)
+}
+
+// absentFrom counts repositories the corpus holds for an account that a full listing did not name.//
 // Counted and not removed. Whether such a repository is pruned, kept as coverage or labeled
 // orphaned is an open decision, and taking it here — silently, inside an enumeration — would
 // destroy coverage nobody agreed to lose.

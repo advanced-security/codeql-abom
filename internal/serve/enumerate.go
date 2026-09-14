@@ -33,6 +33,7 @@ func (s *Server) enumerate(w http.ResponseWriter, r *http.Request) {
 	report, err := enumerate.Run(r.Context(), enumerate.Options{
 		Store:            s.Store,
 		Read:             s.Enumerate,
+		Schema:           s.EnumerateSchema,
 		QueueOwned:       s.QueueOwned,
 		FullListingEvery: s.FullListingEvery,
 	})

@@ -29,49 +29,42 @@ The ranking is itself a plan, and is subject to change.
 
 ## Ranked next
 
-1. **[A business unit is read from the organization, never guessed](db/business-units.md)** — an
-   organization has nobody who can act on a finding in it. Repository custom properties already
-   carry the dividing line, and ABOM reads none of them today. The distinct values become a scoping
-   dimension across discovery, filters, the Explorer, the bill of materials and policy, which is
-   what makes remediation addressable to somebody. **The walk it rides on now exists**:
-   `repositoryCustomPropertyValues` is another field on a query already being made, and adding it
-   leaves the page at the same measured **1 point**.
-2. **[A rule the security team can try before it bites](api/policy-lifecycle.md)** — the half of
-   enforcement that needs no ingress, no server a pull request can reach and no published action.
-   Asking what a rule *would have* refused is a query against stored state, and it is what decides
-   whether the gate below ever gets switched on. Exclusions and exceptions are designed here rather
-   than bolted on later by someone who needs a build to go green.
-3. **[Make the browser suite blocking](ui/testing.md)** — `make e2e` exists and passes, and is in
+1. **[Make the browser suite blocking](ui/testing.md)** — `make e2e` exists and passes, and is in
    report mode on purpose because the gate turns on last. It joins `verify` once the Chromium
    download is dependable and the suite has run clean repeatedly rather than once. The same entry
    carries the populated-corpus assertions, which now have a corpus to point `ABOM_E2E_DB` at.
-4. **[Only one read still scales with the organization](api/org-enumeration.md)** — the listing is
+2. **[A business unit nothing can yet filter by](db/business-units.md)** — the dividing line is read
+   from the organization, stored and reported: **7 distinct `business_id` values over 25
+   repositories**, reconciling exactly with GitHub's own figures. What is missing is a predicate
+   term, and it has to land **with an executor** — a term the spec parses and no query applies
+   returns unfiltered results to somebody who believes they filtered. The screens follow it.
+3. **[Only one read still scales with the organization](api/org-enumeration.md)** — the listing is
    bounded by what moved and **the per-repository CodeQL probe is not**: there is no code-scanning
    field on `Repository` in the GraphQL schema, checked by introspection, so it is one REST request
    each. At twenty thousand repositories that is now the entire bill. The same entry owes the
    interface the state the API already carries — which route answered, when the account was last
    listed in full, when last swept.
-5. **[A gate that blocks, and can say whose rule it was](api/verdict-gate.md)** — ABOM holds the
+4. **[A gate that blocks, and can say whose rule it was](api/verdict-gate.md)** — ABOM holds the
    only transitive Actions graph, so it is the only thing that can refuse a pull request on that
-   basis. What remains is the base-versus-head closure diff, the verdict endpoint and the check run.
-   No longer blocked on a reachable server: both halves stay local until they are mature. Depends
-   on 2 for the policy artifact, and its client is deferred in
+   basis. **The policy half is built** — drafted, simulated, adopted, waived and auditable — so what
+   remains is the base-versus-head closure diff, the verdict endpoint and the check run, over
+   `store.EvaluatePolicy` rather than a second engine. Its client is deferred in
    [`api/abom-check.md`](api/abom-check.md).
-6. **[The purl names a version Dependabot can match](db/version-resolution.md)** — the submitted
+5. **[The purl names a version Dependabot can match](db/version-resolution.md)** — the submitted
    purl carries a version for most commit-pinned dependencies ABOM submits, with no request to
    GitHub. The open half is the direct commit-pinned entries that are not submitted at all, and
    closing that is not obviously safe. Both the size of that set and the tags API for the pins the
    queue cannot reach are owed a measurement against a crawled organization.
-7. **[A finding that stops being reported is never removed](db/finding-lifecycle.md)** — sightings
+6. **[A finding that stops being reported is never removed](db/finding-lifecycle.md)** — sightings
    are recorded and the sweep is written, but nothing has been sighted, so the sweep correctly
    condemns nothing and the report says nothing. The tombstone and the `_live` view wait on a crawl
    that has run the findings suites, which the edges-only crawl has not.
-8. **[Code quality, measured by our own tool](tools/code-quality.md)** — the gate already holds new
+7. **[Code quality, measured by our own tool](tools/code-quality.md)** — the gate already holds new
    findings at zero in all four languages. What is left is complexity: **50 production functions
    over 10**, and `runServe` is the one that keeps tripping the limit when anything is added to it.
    Measured from source, so unaffected by the corpus retirement. Cleanup rather than risk
    reduction, which is why it sits here.
-9. **[The coverage strip orphans a cell](ui/theme.md)** — with nothing declared the strip renders
+8. **[The coverage strip orphans a cell](ui/theme.md)** — with nothing declared the strip renders
    four items into a three-column grid, so the fourth sits alone on a second row on every page.
    Confirmed in a browser, and held by a `test.fail()` that will break the run when it is fixed.
 
@@ -126,11 +119,25 @@ refusal.
   older reference produces. **`store.SubmissionClosure` already does it properly**, joining
   `query_run.db_commit` to the frontier's `resolved_sha`, which corrected a live submission. The
   Explorer could be made exact by the same join.
+- **A finding nobody attributed is invisible to a policy.** The evaluation runs through
+  `abom_finding_node`, so a finding no node carries cannot be refused by a gate. Measured on the
+  reference corpus: `facebook/install-dotslash` holds **15 `actions/*` findings, none linked**,
+  which is the difference between a simulation reporting 40 repositories and the findings table
+  saying 41. A simulation now reports the gap rather than hiding it. **The decision is whether
+  attribution should be repaired, or whether an unattributable finding is a permanent class the
+  gate names and steps around.**
 - **Seeded repositories in no declared account.** The interface no longer misreports them as owned.
   **The decision is whether such a repository is pruned, kept as coverage, or labeled orphaned.**
   A full listing now counts the same thing from the other direction — `missing` on an enumeration
   report names how many repositories the corpus holds that the account no longer lists — and it
   deliberately removes none, because that is the same undecided question.
+- **A configured property key can group an organization into a unit nobody chose.** GitHub lets a
+  custom property be required with a default, so every repository carries a value and none is
+  unset. Measured on the reference organization: `business_id` places **8 of 25 repositories in the
+  default `0`**, and `phi-scan` places all 25 in `scan-pending`. The breakdown marks the declared
+  default so it can be told from a choice. **The decision is whether a default bucket may scope a
+  policy, a campaign or a report at all**, or whether being in one is grounds for asking somebody to
+  pick.
 - **Three places show a reader a number they cannot reconcile.** The Discovery queue table sorts by
   score while the crawl claims by depth, so the order shown is not the order that will happen.
   Discovery's tier chips and its objective panel decompose one queue two ways that do not sum alike,

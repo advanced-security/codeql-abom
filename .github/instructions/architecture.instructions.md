@@ -112,6 +112,22 @@ inferred from severity alone. A verdict records both the evidence and the policy
 because a block nobody can explain gets switched off. **Inconclusive is never silently a pass** —
 fail-closed and fail-open are configured choices.
 
+**A policy nobody simulated is not adopted**, and one evaluation answers both. Adoption records the
+simulation it was adopted against, because a policy that cannot say what it was expected to block
+cannot be argued about afterwards; a gate enabled on a backlog is switched off within a week.
+`store.SelectorFor` is the single path from predicate to selector — two constructions of one
+predicate are two policy engines, and the one nobody simulated is the one that refuses a pull
+request. A simulation also reports what it **could not see**: findings the rules name that no node
+carries are invisible to the evaluation, and an answer that omits them looks complete and is not.
+
+**An exclusion is enumerated. An exception is enumerated and expires. Neither is ever a pattern.**
+A pattern cannot be audited and silently covers a repository created after it was written, which is
+a waiver nobody granted. Expiry is read at evaluation time, never swept, so an exception stops
+applying the moment it runs out rather than when a job next runs. A waiver excuses a repository and
+does not hide its findings — folding the two would make an excused repository indistinguishable
+from a clean one. Every waiver, expired ones included, stays listable in full: removing one when its
+time runs out erases the fact that somebody granted it.
+
 **A person chooses every alert.** Nothing uploads by itself. The tool name and category ABOM writes
 are constants, never read from a source SARIF: changing either moves every alert, which reads as a
 batch of new findings and a batch of fixes that never happened.

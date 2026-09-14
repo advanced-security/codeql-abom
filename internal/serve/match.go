@@ -41,13 +41,9 @@ func (s *Server) match(w http.ResponseWriter, r *http.Request) {
 			"view: "+strings.Join(refused, ", ")+" shape a graph and cannot narrow a set")
 		return
 	}
-	matched, err := s.Store.NodesMatching(store.FindingSelector{
-		Rules:        spec.Rules,
-		Exclude:      spec.NotRules,
-		Provider:     spec.Provider,
-		Severity:     spec.Severity,
-		Repositories: spec.Repositories,
-	})
+	// The same selector a policy is evaluated through. Two constructions of one predicate is two
+	// policy engines, and the one nobody simulated is the one that refuses a pull request.
+	matched, err := s.Store.NodesMatching(store.SelectorFor(spec))
 	if err != nil {
 		writeJSON(w, nil, err)
 		return

@@ -27,7 +27,8 @@ the operator both has the privilege to analyze and the responsibility to remedia
 
    **A policy exclusion is a different object and is not this.** It waives a rule for something
    already in scope, and never widens or narrows what is discovered. It is refused as a pattern for
-   the same reason this one is — see [`../api/policy-lifecycle.md`](../api/policy-lifecycle.md).
+   the same reason this one is — see the waiver rules in
+   [`../../.github/instructions/architecture.instructions.md`](../../.github/instructions/architecture.instructions.md).
 2. **Deferred by decision: repository-level declaration across accounts.** A repository owned by an
    account you do not own — a fork you maintain — has no representation here. Deferred until
    someone needs it.

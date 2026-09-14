@@ -166,6 +166,14 @@ construction and an arbitrary node filter is not.
 **Purls are the join key.** `pkg:githubactions/{owner}/{name}[/{subpath}]@{version}`, matching what
 GitHub emits, is what lets a component in an ABOM export correspond to anything outside it.
 
+**A rule can be tried before it bites.** A policy is a predicate, a scope — organization, business
+unit or one repository — and a state. It arrives as a draft and is adopted only against a
+simulation: an evaluation over stored state that reports what the rule matches, what it would
+refuse, what a waiver excuses and what it could not see. Simulation and the gate share one
+evaluation, so they cannot disagree. Exclusions and exceptions are enumerated per repository and
+never written as patterns, an exception carries an expiry that is read at evaluation time, and
+`/api/policy-waivers` lists every one of them on demand.
+
 ## What the design refuses
 
 These are invariants, not preferences. They are enforced in

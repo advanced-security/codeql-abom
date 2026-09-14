@@ -70,8 +70,14 @@ type Listing struct {
 	// Pages is how many round trips the read took. An account whose full listing fits on one page
 	// costs less to read whole than to sweep, because a sweep is two ordered walks: measured at
 	// 1 point against 2 on a 27 repository organization.
-	Pages int   `json:"pages"`
-	Marks Marks `json:"marks"`
+	Pages int `json:"pages"`
+	// PropertiesRead says the custom property values were actually read. False leaves them
+	// unknown rather than known to be empty, which is the difference between a repository the
+	// organization puts in no unit and one nobody was allowed to ask about.
+	PropertiesRead bool `json:"propertiesRead"`
+	// PropertiesUnread says why, when they were not.
+	PropertiesUnread string `json:"propertiesUnread,omitempty"`
+	Marks            Marks  `json:"marks"`
 }
 
 // ListAll reads every page of an account. It is the only read that can establish absence.
@@ -115,19 +121,36 @@ func (c *Client) read(ctx context.Context, account string, since Marks) (Listing
 }
 
 // readGraphQL answers both questions over the preferred route.
+//
+// The property values arrive on the same pages as the repositories, so there is nothing extra to
+// fetch and nothing to correlate afterwards.
 func (c *Client) readGraphQL(ctx context.Context, account string, since Marks) (Listing, error) {
-	return readVia(RouteGraphQL, since,
+	listing, err := readVia(RouteGraphQL, since,
 		func(field string, bound time.Time) ([]Repository, Marks, int, error) {
 			return c.walkGraphQL(ctx, account, field, bound)
 		})
+	if err != nil {
+		return Listing{}, err
+	}
+	listing.PropertiesRead = true
+	return listing, nil
 }
 
 // readREST answers both questions over the fallback route, which must stay able to answer both.
+//
+// The repository listing carries no properties here, so they cost a second walk of the whole
+// organization — paginated a hundred repositories at a time, not a request each.
 func (c *Client) readREST(ctx context.Context, account string, since Marks) (Listing, error) {
-	return readVia(RouteREST, since,
+	listing, err := readVia(RouteREST, since,
 		func(field string, bound time.Time) ([]Repository, Marks, int, error) {
 			return c.walkREST(ctx, account, field, bound)
 		})
+	if err != nil {
+		return Listing{}, err
+	}
+	listing.PropertiesRead, listing.PropertiesUnread = c.attachRESTProperties(
+		ctx, account, listing.Repositories)
+	return listing, nil
 }
 
 // walk is one ordered pass over an account, stopping below bound. A zero bound reads everything.
@@ -189,12 +212,15 @@ func mergeByName(first, second []Repository) []Repository {
 // and answers the wrong list for the wrong one. `rateLimit` rides along so the price is GitHub's
 // figure rather than ours.
 const repositoriesQuery = `
-query($login:String!,$after:String,$field:RepositoryOrderField!,$first:Int!){
+query($login:String!,$after:String,$field:RepositoryOrderField!,$first:Int!,$properties:Int!){
   rateLimit{cost remaining limit}
   repositoryOwner(login:$login){
     repositories(first:$first,after:$after,orderBy:{field:$field,direction:DESC}){
       pageInfo{hasNextPage endCursor}
-      nodes{nameWithOwner isArchived createdAt pushedAt defaultBranchRef{name}}
+      nodes{
+        nameWithOwner isArchived createdAt pushedAt defaultBranchRef{name}
+        repositoryCustomPropertyValues(first:$properties){totalCount nodes{propertyName value}}
+      }
     }
   }
 }`
@@ -225,11 +251,18 @@ func (c *Client) walkGraphQL(
 						DefaultBranchRef *struct {
 							Name string `json:"name"`
 						} `json:"defaultBranchRef"`
+						Properties struct {
+							TotalCount int            `json:"totalCount"`
+							Nodes      []propertyNode `json:"nodes"`
+						} `json:"repositoryCustomPropertyValues"`
 					} `json:"nodes"`
 				} `json:"repositories"`
 			} `json:"repositoryOwner"`
 		}
-		vars := map[string]any{"login": account, "field": field, "first": reposPerGraphQLPage}
+		vars := map[string]any{
+			"login": account, "field": field,
+			"first": reposPerGraphQLPage, "properties": maxRepositoryProperties,
+		}
 		if cursor != "" {
 			vars["after"] = cursor
 		}
@@ -249,6 +282,15 @@ func (c *Client) walkGraphQL(
 			}
 			if node.DefaultBranchRef != nil {
 				repo.DefaultBranch = node.DefaultBranchRef.Name
+			}
+			// Kept whole or not at all. Half the values would read as a deliberate placement in
+			// a unit the organization did not choose.
+			if node.Properties.TotalCount > len(node.Properties.Nodes) {
+				repo.PropertiesTruncated = true
+			} else {
+				for _, p := range node.Properties.Nodes {
+					repo.Properties = append(repo.Properties, p.values()...)
+				}
 			}
 			if stop := absorb(&repos, &marks, repo, node.IsArchived, field, bound); stop {
 				return repos, marks, pages, nil

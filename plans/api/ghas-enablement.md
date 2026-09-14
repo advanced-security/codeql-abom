@@ -34,7 +34,7 @@ which repositories hold `.github/workflows/**`. That is the one language gap the
 4. **Contribute the `actions` gap back**, so a repository holding workflows with no Actions analysis
    is reported as a gap by whichever surface the operator is looking at. Depends on 2.
 5. **Enablement as something a policy may reference**, on the same footing as an advisory. The rule
-   stays the operator's. Depends on 2 and [`policy-lifecycle.md`](policy-lifecycle.md).
+   stays the operator's. Depends on 2, and on a predicate term the policy language can carry.
 
 ## The constraints that must not be broken
 

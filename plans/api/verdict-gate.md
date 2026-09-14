@@ -2,8 +2,10 @@
 
 **Status:** not built. A gate is only a gate once it runs in somebody's CI, which needs a server for
 it to ask and a client to ask from — and both stay on this workstation until they are mature. The
-policy design is settled and stated below. How a policy is drafted, simulated and adopted is
-[`policy-lifecycle.md`](policy-lifecycle.md); the client is [`abom-check.md`](abom-check.md).
+policy design is settled and stated below. **Drafting, simulating and adopting a policy is built**:
+`store.EvaluatePolicy` is the evaluation this gate must reuse rather than reimplement, and
+`store.SelectorFor` is the one path from predicate to selector. The client is
+[`abom-check.md`](abom-check.md).
 
 ## Why this exists
 
