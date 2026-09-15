@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/advanced-security/codeql-abom/internal/store"
+	viewspec "github.com/advanced-security/codeql-abom/internal/view"
 )
 
 // Closure is every repository reachable from a declared account by dependency edges.
@@ -94,6 +95,36 @@ func (b *Builder) KeepList() ([]string, *Closure, error) {
 		}
 	}
 	return keep, closure, nil
+}
+
+// GroupingKeepList names the repositories a property filter admits: the owned repositories the
+// organization says match, plus everything they reach.
+//
+// The closure is the point. A group's own workflows without the chain leaving them answer a
+// narrower question than the one asked, and it is the chain this project exists to draw.
+func (b *Builder) GroupingKeepList(include, exclude []viewspec.PropertyMatch) ([]string, error) {
+	sources, err := b.Store.SourceRepositoriesFor(include, exclude)
+	if err != nil {
+		return nil, err
+	}
+	if len(sources) == 0 {
+		return nil, nil
+	}
+	closure, err := b.ClosureFrom(sources)
+	if err != nil {
+		return nil, err
+	}
+	all, err := b.Store.AllRepositories()
+	if err != nil {
+		return nil, err
+	}
+	keep := make([]string, 0, len(all))
+	for _, name := range all {
+		if closure.Contains(name) {
+			keep = append(keep, name)
+		}
+	}
+	return keep, nil
 }
 
 // ClosureFrom walks outward from an explicit root set, so a declaration that has not been stored

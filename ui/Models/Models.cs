@@ -810,6 +810,50 @@ public sealed record CycleTotal
 }
 
 /// <summary>
+/// How one custom property divides the repositories under review.
+///
+/// The key travels beside the counts because a reader shown "7 repositories in 3" and not told
+/// which property that came from has no way to check it against the organization.
+/// </summary>
+public sealed record PropertiesView
+{
+    public string Configured { get; init; } = string.Empty;
+    public IReadOnlyList<string> Keys { get; init; } = [];
+    public PropertyBreakdown Breakdown { get; init; } = new();
+}
+
+/// <summary>The values one property takes, and how many repositories carry each.</summary>
+public sealed record PropertyBreakdown
+{
+    public string Name { get; init; } = string.Empty;
+    public int Repositories { get; init; }
+    public int WithValue { get; init; }
+    public int WithoutValue { get; init; }
+    public IReadOnlyList<PropertyCount> Values { get; init; } = [];
+    public bool HasDefault { get; init; }
+    public string DefaultValue { get; init; } = string.Empty;
+}
+
+/// <summary>One value of the grouping property.</summary>
+public sealed record PropertyCount
+{
+    public string Value { get; init; } = string.Empty;
+    public int Repositories { get; init; }
+
+    /// <summary>
+    /// How many of them have been examined. A repository nothing has queued counts toward the
+    /// group and not toward this, because it has not been examined and found clean.
+    /// </summary>
+    public int Analyzed { get; init; }
+
+    /// <summary>
+    /// Supplied by the organization rather than chosen by anybody. The largest group is often this
+    /// one, and a reader who is not told cannot tell an inherited value from a decision.
+    /// </summary>
+    public bool IsDefault { get; init; }
+}
+
+/// <summary>
 /// A bill of materials: what a set of roots is composed of, and what was examined to say so.
 ///
 /// Coverage travels inside the document rather than beside it, because a reader holding only this

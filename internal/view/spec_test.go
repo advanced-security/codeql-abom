@@ -1,6 +1,10 @@
 package view
 
-import "testing"
+import (
+	"net/url"
+	"slices"
+	"testing"
+)
 
 // The canonical form is the query string, so one text is simultaneously the shareable URL, the API
 // parameters and the stored value. Every test here defends that identity: if a spec and its text
@@ -205,5 +209,98 @@ func TestTheCanonicalTextIsExactlyThis(t *testing.T) {
 		if got := back.String(); got != c.canonical {
 			t.Errorf("reparsing %q produced %q", c.canonical, got)
 		}
+	}
+}
+
+// A scope is the ground between "one repository" and "the whole account", and it enters the
+// predicate language once so the Explorer, the API and the gate cannot spell it three ways.
+//
+// The key is carried with the value. Without it the same text means different things on two
+// servers configured with different properties, and `business_id:ABC` *and* `app_name:ABC app`
+// cannot be asked at all — which is what a business unit, an application and a campaign each are.
+func TestAScopeNamesBothTheKeyAndTheValue(t *testing.T) {
+	spec, err := Parse("properties=business_id:3&properties=app_name:ps-codeql&scope=owned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []PropertyMatch{{Name: "app_name", Value: "ps-codeql"}, {Name: "business_id", Value: "3"}}
+	if !slices.Equal(spec.Properties, want) {
+		t.Fatalf("Properties = %v, want %v", spec.Properties, want)
+	}
+
+	again, err := Parse(spec.String())
+	if err != nil {
+		t.Fatalf("re-parsing %q: %v", spec.String(), err)
+	}
+	if !slices.Equal(again.Properties, spec.Properties) {
+		t.Errorf("round trip turned %v into %v", spec.Properties, again.Properties)
+	}
+}
+
+// Exclusion follows the precedent `notRules` set, rather than inventing a second negation.
+func TestAScopeCanExcludeAsWellAsInclude(t *testing.T) {
+	spec, err := Parse("properties=business_id:3&notProperties=business_id:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(spec.Properties, []PropertyMatch{{Name: "business_id", Value: "3"}}) {
+		t.Errorf("Properties = %v", spec.Properties)
+	}
+	if !slices.Equal(spec.NotProperties, []PropertyMatch{{Name: "business_id", Value: "0"}}) {
+		t.Errorf("NotProperties = %v", spec.NotProperties)
+	}
+}
+
+// One repeated parameter per match, never a comma-joined list: a property value is operator text
+// and a value containing a comma must not become two values. The store refuses to reproduce that
+// limitation in its schema and the language must not reintroduce it in the text.
+func TestAPropertyValueMayContainACommaAndASpace(t *testing.T) {
+	spec, err := Parse("properties=" + url.QueryEscape("app_name:Billing, Payments and Fraud"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []PropertyMatch{{Name: "app_name", Value: "Billing, Payments and Fraud"}}
+	if !slices.Equal(spec.Properties, want) {
+		t.Fatalf("Properties = %v, want the one value whole", spec.Properties)
+	}
+	again, err := Parse(spec.String())
+	if err != nil {
+		t.Fatalf("re-parsing %q: %v", spec.String(), err)
+	}
+	if !slices.Equal(again.Properties, want) {
+		t.Errorf("round trip split the value: %v", again.Properties)
+	}
+}
+
+// A value may itself contain the separator, so only the first one divides the term.
+func TestOnlyTheFirstSeparatorDividesAPropertyTerm(t *testing.T) {
+	spec, err := Parse("properties=" + url.QueryEscape("owner:octo-org:platform"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []PropertyMatch{{Name: "owner", Value: "octo-org:platform"}}
+	if !slices.Equal(spec.Properties, want) {
+		t.Errorf("Properties = %v, want %v", spec.Properties, want)
+	}
+}
+
+// A term missing either half would match on whatever the server happened to be configured with,
+// which is the silent widening `Parse` exists to refuse.
+func TestAPropertyTermMissingEitherHalfIsRefused(t *testing.T) {
+	for _, bad := range []string{
+		"properties=business_id", "properties=:3", "properties=business_id:",
+		"notProperties=business_id", "properties=" + url.QueryEscape(" :3"),
+	} {
+		if _, err := Parse(bad); err == nil {
+			t.Errorf("Parse(%q) was accepted; a scope needs both a key and a value", bad)
+		}
+	}
+}
+
+// `units` named a value and left the key to server configuration. Nothing parses it now: this
+// project is unpublished, so a week-old term is replaced rather than carried as a second spelling.
+func TestUnitsIsNoLongerATerm(t *testing.T) {
+	if _, err := Parse("units=3"); err == nil {
+		t.Error("units= was accepted; the key must travel with the value")
 	}
 }

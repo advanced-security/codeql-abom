@@ -7,6 +7,7 @@ import {
     nodeRadius, isSelected, particleSpeed, needsRender, collapseGroups, ungroupedName,
     mergeInto, placeArrivals, neighborhood, discoveryColor, escapesGraph,
     simulationSet, visibleSignature, restLevel, REST_DELAY, REST_FPS, fullyAnalyzed, labelFor,
+    graphHeight,
 } from './graph.js';
 
 // These are the pure decisions behind the whole view: which edges are drawn, how big a node is,
@@ -187,6 +188,46 @@ test('a different grouping folds to a different set of groups', () => {
 
     assert.equal(byOwner.nodes.length, 1, 'both repositories belong to one owner');
     assert.equal(byRepo.nodes.length, 2, 'each repository is its own group');
+});
+
+test('owned nodes group by repository grouping and nothing else claims one', () => {
+    // The one grouping that cannot be derived from a node's key. It is a property of a repository
+    // inside the owned organization, so the server labels the node and the browser reads the
+    // label rather than parsing it out of the key.
+    const nodes = [
+        { key: 'octo/app/.github/workflows/ci.yml', kind: 'workflow', repository: 'octo/app', grouping: '3' },
+        { key: 'octo/pay/.github/workflows/ci.yml', kind: 'workflow', repository: 'octo/pay', grouping: '3' },
+        { key: 'octo/web/.github/workflows/ci.yml', kind: 'workflow', repository: 'octo/web', grouping: '7' },
+        { key: 'actions/checkout', kind: 'action', repository: '' },
+    ];
+
+    const byGroup = collapseGroups({ groupBy: 'grouping' }, nodes, []);
+    const names = byGroup.nodes.map(n => n.path).sort();
+
+    assert.deepEqual(names, ['(no grouping)', '3', '7']);
+    assert.equal(byGroup.nodes.find(n => n.path === '3').members, 2,
+        'two repositories carrying the same value fold together');
+});
+
+test('a dependency several groups reach stays one node with an edge from each', () => {
+    // The chain leaving an owned node is the reason to draw this view at all, so a dependency
+    // keeps its edges to every group that reaches it. Duplicating it into each group would invent
+    // a placement, and dropping it for having none of its own would hide the supply chain.
+    const nodes = [
+        { key: 'octo/app/.github/workflows/ci.yml', kind: 'workflow', repository: 'octo/app', grouping: '3' },
+        { key: 'octo/web/.github/workflows/ci.yml', kind: 'workflow', repository: 'octo/web', grouping: '7' },
+        { key: 'actions/checkout', kind: 'action', repository: '' },
+    ];
+    const links = [
+        { source: nodes[0].key, target: nodes[2].key, shown: true },
+        { source: nodes[1].key, target: nodes[2].key, shown: true },
+    ];
+
+    const byGroup = collapseGroups({ groupBy: 'grouping' }, nodes, links);
+
+    assert.equal(byGroup.nodes.filter(n => n.path === '(no grouping)').length, 1,
+        'one bucket, not one per group that reaches it');
+    assert.equal(byGroup.links.length, 2, 'both groups keep their edge to the shared dependency');
 });
 
 test('a collapsed graph classifies its edges by the real relationship', () => {
@@ -666,4 +707,26 @@ test('priorities set the scale the priority force divides by', () => {
 
     assert.match(body, /maxPriority/,
         'setPriorities must refresh maxPriority, or the force divides by a stale scale');
+});
+
+// The graph is the page's whole point, and it collapsed to its floor whenever the reader had
+// scrolled. `getBoundingClientRect().top` is already viewport-relative; adding `window.scrollY`
+// made it document-relative and then subtracted that from a viewport height, so the further down
+// the page the reader was, the shorter the graph got. Measured on a 1440x1200 window after
+// scrolling: 360px, the floor, against the ~700px the layout had for it.
+test('the graph fills the window below itself, wherever the page is scrolled', () => {
+    // Unscrolled: the host sits 200px down a 1000px window, so it takes the rest bar the gutter.
+    // This is the case that always worked, which is why the defect survived every fresh load.
+    assert.equal(graphHeight({ top: 200, innerHeight: 1000, gutter: 64 }), 736);
+
+    // Scrolled far enough that the host's top has left the top of the window. It has not become
+    // smaller — there is more room below it, not less — so it takes the whole window bar the
+    // gutter. The old arithmetic returned the floor here.
+    assert.equal(graphHeight({ top: -400, innerHeight: 1000, gutter: 64 }), 936);
+});
+
+test('a host with no room below it still gets a usable floor', () => {
+    // Pushed near the bottom of the window there is genuinely nothing to give it, and a graph
+    // 36px tall is not a graph. The floor is what a reader can still read.
+    assert.equal(graphHeight({ top: 900, innerHeight: 1000, gutter: 64 }), 360);
 });

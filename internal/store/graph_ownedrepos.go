@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/advanced-security/codeql-abom/internal/normalize"
 )
@@ -17,7 +18,19 @@ import (
 // Derived at read time rather than stored, for the reason attachOwners gives: it is a view over
 // facts the store already holds, and writing it would create a second source of truth for which
 // repositories exist.
-func (s *Store) attachOwnedRepositories(nodes []GraphNode) ([]GraphNode, error) {
+//
+// A property filter applies here too. Backfilling past it would put every declared repository into
+// a graph narrowed to one part of the organization — the same silent widening the filter exists to
+// prevent, arriving after the query rather than inside it.
+func (s *Store) attachOwnedRepositories(nodes []GraphNode, opts FullGraphOptions) ([]GraphNode, error) {
+	var admitted map[string]bool
+	if opts.GroupFiltered {
+		admitted = map[string]bool{}
+		for _, name := range opts.GroupClosure {
+			admitted[strings.ToLower(name)] = true
+		}
+	}
+
 	drawn := map[string]bool{}
 	for _, n := range nodes {
 		if n.Kind == "repo" && n.Repository != "" {
@@ -45,6 +58,9 @@ func (s *Store) attachOwnedRepositories(nodes []GraphNode) ([]GraphNode, error) 
 			return nodes, fmt.Errorf("scanning a declared repository: %w", err)
 		}
 		if drawn[fullName] {
+			continue
+		}
+		if admitted != nil && !admitted[strings.ToLower(fullName)] {
 			continue
 		}
 		nodes = append(nodes, GraphNode{

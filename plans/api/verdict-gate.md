@@ -49,7 +49,12 @@ the common case on first adoption.
 
 - **The policy is the operator's; ABOM only evaluates it.** No rule may be implied, defaulted to
   blocking, or inferred from severity alone.
-- **A verdict records both inputs** — evidence and policy, together — or the block cannot be
+**A rule may only be written in terms the evaluation actually applies.** A policy predicate is a
+saved view, and the language it is written in drops the terms it cannot enforce without saying so —
+which would let this gate refuse a pull request for something wider than the rule its author read.
+What a rule may say, and what an advisory or a reachability term is allowed to assert, is
+[`policy-language.md`](policy-language.md). This plan enforces that vocabulary; it does not invent
+one of its own.- **A verdict records both inputs** — evidence and policy, together — or the block cannot be
   explained afterwards and will be disabled the first time it is disputed.
 - **Inconclusive is never silently a pass.** A check that passes when it could not analyze the head
   commit manufactures confidence, which is worse than no check. Which way it falls is a stated

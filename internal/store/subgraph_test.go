@@ -640,7 +640,7 @@ func TestSearchNodesLabelsEveryFocusableKind(t *testing.T) {
 
 	kinds := map[string]string{}
 	for _, q := range []string{"octo-org", "checkout"} {
-		matches, err := s.SearchNodes(q, 50)
+		matches, err := s.SearchNodes(q, 50, RepositoryScope{})
 		if err != nil {
 			t.Fatalf("SearchNodes(%q): %v", q, err)
 		}
@@ -664,7 +664,7 @@ func TestSearchNodesLabelsEveryFocusableKind(t *testing.T) {
 func TestSearchNodesOmitsStepsAndJobs(t *testing.T) {
 	s := subgraphFixture(t)
 
-	matches, err := s.SearchNodes("step:", 50)
+	matches, err := s.SearchNodes("step:", 50, RepositoryScope{})
 	if err != nil {
 		t.Fatalf("SearchNodes: %v", err)
 	}
@@ -684,7 +684,7 @@ func TestSearchNodesWithoutAQueryRanksByReach(t *testing.T) {
 		t.Fatalf("seeding blast radius: %v", err)
 	}
 
-	matches, err := s.SearchNodes("", 10)
+	matches, err := s.SearchNodes("", 10, RepositoryScope{})
 	if err != nil {
 		t.Fatalf("SearchNodes: %v", err)
 	}

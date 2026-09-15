@@ -95,6 +95,25 @@ does not reach; the walk is inductive from declared roots. Four notions stay sep
 for) and `abom_account` (what `gh` reports). Only the third implies anyone can change anything, and
 only `owner` or `admin` roles are eligible to be declared. Belonging is not being answerable.
 
+**Only something owned can be included or excluded by a repository property.** A grouping is read
+from custom properties, which are collected for owned repositories and nowhere else, because the
+permission to read anybody else's does not exist. So an upstream or external node carries no
+grouping and enters an answer only by being reached from an owned node that does. A node that
+resolves to no repository is *ungrouped* — never the organization's default value, and never the
+repository that happened to observe it.
+
+**A property filter names sources, and the answer is their closure.** Exclusion is taken over the
+sources and the closure is computed afterward, so a repository one group owns and another group
+depends on survives its owner's exclusion. Removing it would answer "what does this group depend on"
+by deleting part of the answer, which is the failure that made the filter worth applying to a graph
+rather than refusing on it.
+
+**A route declaring a term is not evidence every branch applies it.** `/api/exposure` answers by
+repository or by advisory depending on `by`; the route declared `properties`, the handler parsed it
+before the switch, and only one arm used it — so the other returned the whole organization under a
+predicate that said otherwise. Refusing unknown parameters proves a term was read, never that it was
+applied. Where a handler branches, follow the scope into every arm.
+
 **No capability may exist only in a client.** If the interface can do it, an endpoint can do it. A
 client renders; it does not decide — filtering, folding and layout are rendering, and anything that
 changes what the corpus holds, or what it asserts, belongs behind the API. Guarding is a property of
@@ -187,3 +206,8 @@ re-measured, and a stored measurement time must still be the time something was 
 crawl, and an exhausted one must not read as unlimited because the arithmetic rounded to zero.
 Pacing guards against exhaustion; it is not a governor, and a budget with room must leave the crawl
 alone.
+
+**Spend is what the API charged, never a delta between two readings of what is left.** GraphQL's
+`remaining` is not an instrument: three consecutive probes each reported `cost=1` while `remaining`
+did not move at all. Read `rateLimit { cost }`. A figure subtracted from a counter somebody else
+also decrements measures the whole account's traffic, not this crawl's.

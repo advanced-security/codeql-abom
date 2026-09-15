@@ -3,6 +3,7 @@
 
 <MudTextField T="string" Value="Value" ValueChanged="ValueChanged"
               Immediate="true" DebounceInterval="200" Placeholder="@Placeholder"
+              Label="@Label" ShrinkLabel="true"
               Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true"
               Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
               Class="@($"abom-search {Class}")" />
@@ -11,5 +12,6 @@
     [Parameter] public string Value { get; set; } = string.Empty;
     [Parameter] public EventCallback<string> ValueChanged { get; set; }
     [Parameter] public string Placeholder { get; set; } = "Filter";
+    [Parameter] public string? Label { get; set; }
     [Parameter] public string? Class { get; set; }
 }

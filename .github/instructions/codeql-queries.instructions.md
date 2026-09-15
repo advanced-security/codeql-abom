@@ -5,14 +5,28 @@ applyTo: "ql/**"
 
 # CodeQL queries in codeql-abom
 
-## Extract structure, never verdicts
+## Extract structure, and author findings under `abom/`
 
-`codeql/actions-queries` decides whether a use is a problem; ABOM's queries extract what
-references what, and where. Queries here carry an `abom/` id prefix so they stay separable from
-upstream rule ids downstream.
+ABOM writes its own queries: extraction queries that say what references what, and findings
+queries that augment the upstream set. Both carry an `abom/` id prefix, which is what keeps them
+separable from upstream rule ids downstream and lets a consumer filter on either.
+
+`codeql/actions-queries` is the upstream security set. The default suite happens to select it
+unchanged today; that is where things stand rather than a rule, and an ABOM-authored query belongs
+there as soon as it earns a place in the default.
 
 A structural query has no `@kind`, so it yields BQRS and no SARIF. Deliberate: the hosted MRVA
-backend will not run it, which is why the graph is built by local evaluation.
+backend will not run it, which is why the graph is built by local evaluation. A findings query
+needs `@kind` and, for `problem`, `@problem.severity` to reach SARIF at all.
+
+## An Actions file with no `jobs:` is not a `Workflow`
+
+The extractor creates no `Workflow` entity for a file under `.github/workflows/` that declares no
+jobs — PrintAST shows `OnImpl` and `EventImpl` and no `WorkflowImpl`. So
+`exists(Workflow w | not exists(Job j | j.getWorkflow() = w))` is unreachable rather than strict.
+Per-workflow coverage comes from `Job` alone, which is sound because a valid workflow declares at
+least one. `CompositeAction` is the case a job-only query misses: a repository that *is* an action
+has no jobs at all.
 
 ## `concat` is total
 

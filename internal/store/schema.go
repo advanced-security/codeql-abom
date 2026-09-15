@@ -224,8 +224,7 @@ CREATE TABLE IF NOT EXISTS abom_database_catalog (
   checked_at   TEXT NOT NULL
 );
 
--- Aggregate reach per referenceable node. Only counts are materialized; the full pairwise
--- dependent set is quadratic in the worst case and is computed on demand instead.
+-- Aggregate reach per referenceable node.
 CREATE TABLE IF NOT EXISTS abom_blast_radius (
   node_row_id         INTEGER PRIMARY KEY REFERENCES abom_node(row_id),
   dependent_repos     INTEGER NOT NULL,
@@ -233,6 +232,29 @@ CREATE TABLE IF NOT EXISTS abom_blast_radius (
   direct_dependents   INTEGER NOT NULL,
   max_depth           INTEGER NOT NULL
 );
+
+-- Which repositories reach each node, behind the count above.
+--
+-- A count cannot be filtered: bounding an inventory to a repository grouping means recounting
+-- reach within that grouping, and dependent_repos alone offers nothing to recount from. Both are
+-- written from the same walk, so the count is always this table's cardinality.
+--
+-- Only seed repositories appear, for the same reason they are the only ones counted: an upstream
+-- repository is not one the operator can act on. Growth is bounded by referenceable nodes times
+-- seed repositories, which is quadratic in the worst case; measured on a crawled organization of
+-- 25 repositories it is 155 rows against 448 counts, because most nodes are reached by few.
+CREATE TABLE IF NOT EXISTS abom_node_reach (
+  node_row_id       INTEGER NOT NULL REFERENCES abom_node(row_id),
+  repository_row_id INTEGER NOT NULL REFERENCES repository(row_id),
+  -- Fewest hops from the repository to the node. One means the repository names the dependency
+  -- itself; more means it inherits it, and the two are different remediation work.
+  hops              INTEGER NOT NULL,
+  PRIMARY KEY (node_row_id, repository_row_id)
+) WITHOUT ROWID;
+
+-- The filtering direction: the nodes a named set of repositories reaches.
+CREATE INDEX IF NOT EXISTS idx_node_reach_repository
+  ON abom_node_reach(repository_row_id);
 
 -- Accounts the operator is verified to belong to, and can therefore plausibly remediate.
 --

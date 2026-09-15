@@ -16,13 +16,16 @@ tags are the API contract.
 - `make js` — `node --test` over `wwwroot/js/*.test.js`. Owns the browser module, which no
   compiler reads. A bad edit inside `create()` shows only as a red Blazor error bar at runtime.
 - `make e2e` — Playwright in `tests/e2e/`, driving the published interface in a real browser.
-  Owns *geometry*, the boot path and the API contract as the page actually exercises it. **Not in
-  `verify`**: it needs npm and a downloaded Chromium, so it is opt-in like `itest` and `selfcheck`.
-  `ABOM_E2E_DB=<copy>` points it at a real corpus; `ABOM_E2E_CHANNEL=chrome` borrows the system
-  browser when the pinned download will not complete.
+  Owns *geometry*, the boot path and the API contract as the page actually exercises it. **In
+  `verify`**, and blocking: it resolves its own browser through `tests/e2e/browser.mjs`, which
+  prefers the pinned build, falls back to system Chrome when that build is missing *or
+  half-extracted*, and refuses outright when there is neither. Checking the launcher alone is not
+  enough — a stalled download leaves it in place without the framework beside it, and every test
+  then dies in `dlopen` rather than saying "no browser". `ABOM_E2E_DB=<copy>` points it at a real
+  corpus; `ABOM_E2E_CHANNEL` overrides the choice and is never second-guessed.
 - The screenshot pass in the `verify-abom-ui` skill. Owns *appearance* and taste.
 
-`make ui` only compiles Razor. All but `e2e` are in `make verify`.
+`make ui` only compiles Razor. All four are in `make verify`.
 
 **5xx means ABOM is broken; 4xx means the reader has not done something yet.** The browser suite
 fails on the first and not the second, and handlers must keep that line: a precondition the reader
@@ -86,6 +89,11 @@ from `OnAfterRenderAsync`, after pages have already armed timers on the default.
   proves nothing about what a reader can see.
 - **`Immediate="true"` binds to `oninput`**, while bUnit's `Change()` raises `change`. The input is
   silently ignored and the test passes for the wrong reason.
+- **A component parameter needs `@` to be an expression.** `Value="_search"` passes the literal
+  string `_search`; only `Value="@_search"` passes the field. Every page using the shared search box
+  did this, so each grid filtered correctly on the C# value while the control above it displayed the
+  variable's name — the one place a reader looks to find out what they are filtered by. No data or
+  CSS check can see it; assert what the control renders.
 
 ## Color is checked as arithmetic
 

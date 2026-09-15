@@ -19,7 +19,12 @@ type GraphNode struct {
 	Path      string `json:"path"`
 	Container string `json:"container,omitempty"`
 	// Owner is the account a dependency lives under, which is the coarsest grouping available.
-	Owner      string `json:"owner,omitempty"`
+	Owner string `json:"owner,omitempty"`
+	// Grouping is the value of the configured repository property for the repository this node
+	// lives in, empty unless that repository is inside the owned organization and carries it. A
+	// dependency never inherits one: a placement is read from the organization, never guessed from
+	// an edge, and upstream repositories are not somewhere ABOM reads properties from at all.
+	Grouping   string `json:"grouping,omitempty"`
 	IsExternal bool   `json:"isExternal"`
 	// DependentRepos is blast radius, and is what sizes a node.
 	DependentRepos int `json:"dependentRepos"`
@@ -75,6 +80,10 @@ type Graph struct {
 	Nodes         []GraphNode `json:"nodes"`
 	Edges         []GraphEdge `json:"edges"`
 	IncludesSteps bool        `json:"includesSteps"`
+	// ClientApplied names the predicate terms this payload was not narrowed by, because whoever
+	// draws it applies them. The Explorer filters one payload rather than asking again; any other
+	// caller has to be told it was handed work rather than having it done.
+	ClientApplied []string `json:"clientApplied,omitempty"`
 }
 
 // FullGraphOptions selects what the whole-corpus view contains.
@@ -102,6 +111,17 @@ type FullGraphOptions struct {
 	// RefStyle keeps only nodes some edge names by a commit id (`sha`) or by anything else
 	// (`tag`). Empty asks nothing; `any` is the interface's word for the same.
 	RefStyle string
+	// GroupProperty names the repository property a reader is grouping by. It labels nodes rather
+	// than filtering them: grouping is not narrowing, so a graph labeled by a property still draws
+	// everything those repositories reach. Empty labels nothing.
+	GroupProperty string
+	// GroupClosure is the repositories a property filter admits — the owned ones the organization
+	// says match, plus everything they reach. Computed rather than asked for, because the sources
+	// are what include and exclude act on and the chain leaving them is the answer.
+	GroupClosure []string
+	// GroupFiltered says a property filter was asked for at all, so a filter matching no repository
+	// draws nothing rather than everything. Absent and empty are different questions here too.
+	GroupFiltered bool
 }
 
 // Reference styles, lexical only: whether a reference is *safe* is a query's verdict, never this
@@ -241,8 +261,7 @@ const onExposureRoute = `(SELECT j.value FROM abom_exposure ex, json_each(ex.pat
 // has a word for is what they own and what it pulls in.
 const ScopeOwned = "owned"
 
-// closureCTE is every live node the declared closure reaches, as a CTE the scope filter selects
-// from.
+// closureCTE is every live node a closure reaches, as a named CTE the scope filter selects from.
 //
 // A CTE rather than repeating the predicate: the filter appears five times across two queries, and
 // binding the closure once per query instead of once per occurrence is the difference between
@@ -253,10 +272,13 @@ const ScopeOwned = "owned"
 // or when a live edge belonging to one names it — that last clause is what makes this a closure
 // rather than a filter, and re-deriving it here instead of mirroring it is how the picture and the
 // pruning come to disagree about what is in scope.
-func closureCTE(closure []string) (string, []any) {
+//
+// Named, because the owned scope and a property filter each bring their own and a graph asked for
+// both must intersect them rather than let one silently win.
+func closureCTE(name string, closure []string) (string, []any) {
 	list, names := inList(closure)
 	args := append(append(append([]any{}, names...), names...), names...)
-	return `, closure AS (
+	return `, ` + name + ` AS (
 		SELECT n.node_key
 		  FROM abom_node_live n
 		  LEFT JOIN repository r ON r.row_id = n.repository_row_id
@@ -268,13 +290,19 @@ func closureCTE(closure []string) (string, []any) {
 		                 AND LOWER(er.repository_full_name) IN ` + list + `))`, args
 }
 
-// scopeParts is the CTE a scope needs and the arguments that bind it. Empty for every scope that
+// scopeParts is the CTEs a query needs and the arguments that bind them. Empty for every scope that
 // reads from stored rows, which is why the exposure scope needs neither.
 func scopeParts(opts FullGraphOptions) (string, []any) {
-	if opts.Scope != ScopeOwned || len(opts.Closure) == 0 {
-		return "", nil
+	cte, args := "", []any{}
+	if opts.Scope == ScopeOwned && len(opts.Closure) > 0 {
+		text, a := closureCTE("closure", opts.Closure)
+		cte, args = cte+text, append(args, a...)
 	}
-	return closureCTE(opts.Closure)
+	if len(opts.GroupClosure) > 0 {
+		text, a := closureCTE("grouped", opts.GroupClosure)
+		cte, args = cte+text, append(args, a...)
+	}
+	return cte, args
 }
 
 // scopeFilter restricts a query to the chosen scope, as a fragment appended to its WHERE clause.
@@ -282,18 +310,26 @@ func scopeParts(opts FullGraphOptions) (string, []any) {
 // Applied in SQL rather than to the assembled graph: filtering afterwards still paid for all
 // 9,811 nodes and their per-node advisory and frontier subqueries in order to return 277.
 func scopeFilter(opts FullGraphOptions, column string) string {
+	out := ""
 	switch opts.Scope {
 	case ScopeExposure:
-		return " AND " + column + " IN " + onExposureRoute
+		out += " AND " + column + " IN " + onExposureRoute
 	case ScopeOwned:
 		// Declaring nothing shows nothing. Falling through to the whole corpus would answer a
 		// question about the operator's own supply chain with somebody else's.
 		if len(opts.Closure) == 0 {
 			return " AND 0"
 		}
-		return " AND " + column + " IN (SELECT node_key FROM closure)"
+		out += " AND " + column + " IN (SELECT node_key FROM closure)"
 	}
-	return ""
+	switch {
+	case len(opts.GroupClosure) > 0:
+		out += " AND " + column + " IN (SELECT node_key FROM grouped)"
+	case opts.GroupFiltered:
+		// A filter nobody matches shows nothing, for the reason an undeclared scope does.
+		return " AND 0"
+	}
+	return out
 }
 
 // display folds steps and jobs into the container that holds them.
@@ -375,7 +411,7 @@ func (s *Store) FullGraph(opts FullGraphOptions) (Graph, error) {
 
 	// Before owners are attached, so an account holds every repository the operator declared
 	// rather than only the ones something has managed to analyze.
-	nodes, err = s.attachOwnedRepositories(nodes)
+	nodes, err = s.attachOwnedRepositories(nodes, opts)
 	if err != nil {
 		return out, err
 	}
@@ -424,6 +460,20 @@ const advisoryRollup = `, adv AS (
 	 WHERE a.withdrawn_at IS NULL
 	 GROUP BY p.package_name)`
 
+// groupingRollup resolves each owned repository's grouping value once rather than per node. A
+// correlated lookup here runs for every node in the graph, which is what the cost guard on this
+// query exists to stop.
+//
+// MIN picks one value for a multi-select property. Grouping needs a node to sit in exactly one
+// place, and choosing the first by name is at least stable across rebuilds. The owned-scope
+// predicate is the point: a grouping divides what the operator owns, and a property on somebody
+// else's repository is their administration rather than a dividing line here.
+var groupingRollup = `, grouping AS (
+	SELECT p.repository_full_name AS repo, MIN(p.value) AS value
+	  FROM abom_repository_property p
+	 WHERE p.property_name = ? AND ` + ownedFullName("p.repository_full_name") + `
+	 GROUP BY p.repository_full_name)`
+
 // rolledFrontierState reads the same ranking frontierState does, from the rollup. The least
 // settled reference still wins, so a node with four analyzed refs and one queued is not analyzed.
 const rolledFrontierState = `(CASE
@@ -438,7 +488,7 @@ const rolledFrontierState = `(CASE
 // is a structural property, not something a stopwatch should be asked about.
 func graphNodesQuery(display string, since int64, opts FullGraphOptions) (string, []any) {
 	cte, args := scopeParts(opts)
-	return `WITH ` + display + cte + frontierRollup + advisoryRollup + `
+	return `WITH ` + display + cte + frontierRollup + advisoryRollup + groupingRollup + `
 		SELECT n.node_key, n.node_kind, COALESCE(r.repository_full_name, ''),
 		       COALESCE(r.origin, ''), COALESCE(n.path, ''), COALESCE(c.node_key, ''),
 		       COALESCE(n.owner, ''),
@@ -449,15 +499,17 @@ func graphNodesQuery(display string, since int64, opts FullGraphOptions) (string
 		       COALESCE(fs.min_depth, 0),
 		       COALESCE(fs.max_score, 0),
 		       COALESCE(fs.refs, 0),
-		       COALESCE(fs.done, 0)
+		       COALESCE(fs.done, 0),
+		       COALESCE(u.value, '')
 		FROM abom_node_live n
 		LEFT JOIN repository r ON r.row_id = n.repository_row_id
 		LEFT JOIN abom_node_live c ON c.row_id = n.container_node_row_id
 		LEFT JOIN abom_blast_radius b ON b.node_row_id = n.row_id
 		LEFT JOIN fstate fs ON fs.mk = n.node_key
 		LEFT JOIN adv ON adv.pkg = n.owner || '/' || n.repo
+		LEFT JOIN grouping u ON u.repo = r.repository_full_name
 		WHERE n.row_id IN (SELECT shown FROM disp WHERE row_id > ?)` +
-		scopeFilter(opts, "n.node_key"), append(args, since)
+		scopeFilter(opts, "n.node_key"), append(args, opts.GroupProperty, since)
 }
 
 // graphNodes reads the displayed nodes. A non-zero since restricts them to those a node added
@@ -476,7 +528,7 @@ func (s *Store) graphNodes(display string, since int64, opts FullGraphOptions) (
 		if err := rows.Scan(&n.Key, &n.Kind, &n.Repository, &n.Origin, &n.Path, &n.Container,
 			&n.Owner, &n.IsExternal, &n.DependentRepos, &n.ReachKnown, &n.Advisories,
 			&n.Analyzed, &n.Discovery, &n.Depth, &n.QueueScore,
-			&n.RefsInUse, &n.RefsAnalyzed); err != nil {
+			&n.RefsInUse, &n.RefsAnalyzed, &n.Grouping); err != nil {
 			return nil, nil, fmt.Errorf("scanning graph node: %w", err)
 		}
 		n.Rules = []string{}

@@ -260,6 +260,8 @@ func (s *Store) Compact() (PruneReport, error) {
 		   (SELECT row_id FROM abom_node WHERE removed_at IS NOT NULL)`,
 		`DELETE FROM abom_blast_radius WHERE node_row_id IN
 		   (SELECT row_id FROM abom_node WHERE removed_at IS NOT NULL)`,
+		`DELETE FROM abom_node_reach WHERE node_row_id IN
+		   (SELECT row_id FROM abom_node WHERE removed_at IS NOT NULL)`,
 		`DELETE FROM abom_exposure WHERE node_row_id IN
 		   (SELECT row_id FROM abom_node WHERE removed_at IS NOT NULL)`,
 		`DELETE FROM abom_edge WHERE removed_at IS NOT NULL

@@ -65,13 +65,22 @@ export function boundaryClass(stored, s, t) {
     return STORED_BOUNDARY[stored] || edgeClass(s, t);
 }
 
-/** What a node is grouped under, derived from its own key so no extra payload is needed. */
+/**
+ * What a node is grouped under.
+ *
+ * Derived from the node's own key, with one exception: a repository grouping is a property of a
+ * repository inside the owned organization, so it cannot be parsed out of a key and arrives
+ * labeled on the node instead. A node with no grouping has none — it is never inherited from
+ * whatever reached it.
+ */
 export function groupOf(node, by) {
     switch (by) {
         case 'owner':
             return node.kind === 'org' ? (node.owner || '') : orgOf(node);
         case 'repo':
             return node.kind === 'org' ? '' : repoOf(node);
+        case 'grouping':
+            return node.grouping || '';
         case 'workflow':
             // A step or job belongs to the file holding it, and a workflow is its own group. An
             // action is *referenced* by workflows rather than living in one, so it has no
@@ -90,6 +99,7 @@ export function ungroupedName(by) {
     switch (by) {
         case 'owner': return '(no account)';
         case 'repo': return '(not in a repository)';
+        case 'grouping': return '(no grouping)';
         default: return '(not in a workflow)';
     }
 }

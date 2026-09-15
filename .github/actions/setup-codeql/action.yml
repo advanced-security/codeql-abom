@@ -45,5 +45,7 @@ runs:
       shell: bash
       # `pack install` takes a single pack directory; each dependent pack needs its own call.
       run: |
-        codeql pack install ql/actions/abom/src
-        codeql pack install ql/actions/abom/test
+        codeql pack install ql/actions/graph-extraction/src
+        codeql pack install ql/actions/graph-extraction/test
+        codeql pack install ql/actions/findings/src
+        codeql pack install ql/actions/findings/test

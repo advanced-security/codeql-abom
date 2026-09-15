@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { detect } from './browser.mjs';
 
 // Paths come from the Makefile so `make e2e` and a bare `npx playwright test` agree. Defaults
 // exist only so the second one works at all; the Makefile always passes them explicitly.
@@ -6,6 +7,12 @@ const port = process.env.ABOM_E2E_PORT ?? '8231';
 const bin = process.env.ABOM_E2E_BIN ?? '../../../bin/codeql-abom';
 const db = process.env.ABOM_E2E_DB ?? '/tmp/abom-e2e/abom.db';
 const ui = process.env.ABOM_E2E_UI ?? '/tmp/abom-ui/wwwroot';
+
+// Resolved once, and loudly: a machine with no usable browser has to say so, not fail every test
+// with a launch error. Throws when there is nothing to run in, which is the only honest outcome
+// for a suite that gates.
+const browser = detect(process.env.ABOM_E2E_CHANNEL);
+console.log(`e2e: running in ${browser.channel} \u2014 ${browser.reason}`);
 
 export default defineConfig({
     testDir: './specs',
@@ -41,7 +48,11 @@ export default defineConfig({
                 // use because it is the same everywhere. `ABOM_E2E_CHANNEL=chrome` borrows the
                 // system install instead, which is the difference between a usable suite and a
                 // blocked one on a machine where that 130 MB download will not complete.
-                channel: process.env.ABOM_E2E_CHANNEL ?? 'chromium',
+                //
+                // Chosen by `browser.mjs` rather than read straight from the environment, because
+                // a pinned build can be present and unlaunchable and only checking its files can
+                // tell.
+                channel: browser.channel,
                 // Fixed, because every geometry assertion in this suite is stated at a width.
                 // A viewport that follows the window makes a wrap regression reproduce on one
                 // machine and not another.

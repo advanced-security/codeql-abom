@@ -643,10 +643,33 @@ function applySettleBudget(it) {
 
 const CAPTION_GUTTER = 64;
 
+// The shortest graph worth drawing. Below this the force layout has nowhere to separate anything
+// and the view reads as a smear rather than a structure.
+const MIN_GRAPH_HEIGHT = 360;
+
+/**
+ * How tall the graph host should be, given where it sits in the window.
+ *
+ * `top` is viewport-relative, as `getBoundingClientRect()` reports it, and scroll position is
+ * deliberately not an input: the host's distance from the bottom of the window is what decides how
+ * much room it has, and that does not change because the document moved under it. Adding
+ * `window.scrollY` here made the height shrink as the reader scrolled, collapsing a 700px graph to
+ * its 360px floor on every resize after the first.
+ *
+ * A host scrolled above the top of the window is clamped to zero rather than allowed to go
+ * negative, which would otherwise make it taller than the window it is being fitted to.
+ */
+export function graphHeight({ top, innerHeight, gutter = CAPTION_GUTTER, floor = MIN_GRAPH_HEIGHT }) {
+    const below = innerHeight - Math.max(top, 0) - gutter;
+    return Math.max(floor, Math.round(below));
+}
+
 function fitHost(el) {
     if (!el || !el.isConnected) return;
-    const top = el.getBoundingClientRect().top + window.scrollY;
-    el.style.height = `${Math.max(360, Math.round(window.innerHeight - top - CAPTION_GUTTER))}px`;
+    el.style.height = `${graphHeight({
+        top: el.getBoundingClientRect().top,
+        innerHeight: window.innerHeight,
+    })}px`;
 }
 
 const EDITABLE_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT']);

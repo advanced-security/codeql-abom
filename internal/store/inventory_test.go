@@ -17,7 +17,7 @@ func TestActionsInventoryRanksByReach(t *testing.T) {
 		t.Fatalf("seeding blast radius: %v", err)
 	}
 
-	got, err := s.ActionsInventory("", 0)
+	got, err := s.ActionsInventory("", 0, RepositoryScope{})
 	if err != nil {
 		t.Fatalf("ActionsInventory: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestActionsInventoryCountsAdvisoriesWithoutJudging(t *testing.T) {
 	seedDependency(t, s, "octo-org/app", "github/codeql-action/init", "v3", 10)
 	advisoryAgainst(t, s, "GHSA-inv", "high", "github/codeql-action", "3.0", "")
 
-	got, err := s.ActionsInventory("", 0)
+	got, err := s.ActionsInventory("", 0, RepositoryScope{})
 	if err != nil {
 		t.Fatalf("ActionsInventory: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestActionsInventorySearchIsLiteral(t *testing.T) {
 	seedDependency(t, s, "octo-org/app", "actions/checkout", "v4", 10)
 	seedDependency(t, s, "octo-org/app", "actions/cache", "v4", 12)
 
-	got, err := s.ActionsInventory("checkout", 0)
+	got, err := s.ActionsInventory("checkout", 0, RepositoryScope{})
 	if err != nil {
 		t.Fatalf("ActionsInventory: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestActionsInventorySearchIsLiteral(t *testing.T) {
 	}
 
 	// A wildcard typed by a user is a literal, not a pattern.
-	if wild, err := s.ActionsInventory("%", 0); err != nil {
+	if wild, err := s.ActionsInventory("%", 0, RepositoryScope{}); err != nil {
 		t.Fatalf("ActionsInventory: %v", err)
 	} else if len(wild) != 0 {
 		t.Errorf("a literal %% matched %d actions", len(wild))
@@ -86,7 +86,7 @@ func TestRepositoriesOverviewExcludesUpstream(t *testing.T) {
 		t.Fatalf("InsertUpstreamRepository: %v", err)
 	}
 
-	got, err := s.RepositoriesOverview("", 0)
+	got, err := s.RepositoriesOverview("", 0, RepositoryScope{})
 	if err != nil {
 		t.Fatalf("RepositoriesOverview: %v", err)
 	}

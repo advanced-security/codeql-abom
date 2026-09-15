@@ -132,9 +132,10 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		"which API reads an account: graphql, rest, or empty to prefer graphql and fall back")
 	// Named by the operator, discovered by nobody. A dividing line inferred from a repository-name
 	// prefix agrees with the organization by coincidence and disagrees the first time somebody
-	// creates a repository. Empty means no grouping, which is honest rather than unhelpful.
-	unitProperty := fs.String("unit-property", "",
-		"repository custom property carrying the business unit, for example business_id")
+	// creates a repository. Empty means no grouping, which is honest rather than unhelpful. It
+	// chooses only what a screen opens on; what a filter means travels in the filter.
+	groupProperty := fs.String("group-property", "",
+		"repository custom property to group by on screen, for example business_id")
 	// Empty by default, and an empty list submits nowhere. A dependency snapshot replaces data on
 	// somebody else's repository and cannot be withdrawn, so the targets are named explicitly or
 	// this build can only preview.
@@ -257,7 +258,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	srv.Enumerate = reader.Sweep
 	srv.EnumerateSchema = reader.PropertySchema
 	srv.FullListingEvery = *listEvery
-	srv.UnitProperty = *unitProperty
+	srv.GroupProperty = *groupProperty
 	srv.QueueOwned = func() (int, error) { return expand.SeedOwnedRepositories(s, loop.Queue) }
 	// The same enumeration the button performs, on a period. A person clicking and a loop on a
 	// timer take one path, so a repository created after the last read is not invisible until

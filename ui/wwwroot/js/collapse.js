@@ -88,6 +88,11 @@ function identityOf(name, by) {
     switch (by) {
         case 'repo':
             return { repository: name, owner: name.split('/')[0] };
+        case 'grouping':
+            // A grouping divides one organization; it is not an account and has no repository of
+            // its own. Left blank so two groups read as crossing rather than as sharing an account
+            // neither of them is.
+            return { owner: '' };
         case 'workflow':
             return {
                 repository: name.split('/').slice(0, 2).join('/'),

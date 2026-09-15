@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/bomexport"
 	"github.com/advanced-security/codeql-abom/internal/store"
+	viewspec "github.com/advanced-security/codeql-abom/internal/view"
 )
 
 // bom answers with a bill of materials for a root set.
@@ -21,12 +23,20 @@ import (
 // with anywhere to put run keys, pack digests and result hashes; the others cannot express
 // provenance at this granularity.
 func (s *Server) bom(w http.ResponseWriter, r *http.Request) {
+	include, exclude, err := documentScope(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	doc, err := s.Store.BillOfMaterials(store.BOMOptions{
-		Roots: r.URL.Query()["root"],
+		Roots:         r.URL.Query()["root"],
+		Properties:    include,
+		NotProperties: exclude,
 	})
-	// Nothing declared yet is a state the reader is in, not a fault the server is in. Reported as
-	// a 500 it reads as a broken server and leaves the page unable to say what would fix it.
-	if errors.Is(err, store.ErrNoBOMRoot) {
+	// Each of these is a state the reader is in, not a fault the server is in. Reported as a 500
+	// they read as a broken server and leave the page unable to say what would fix it.
+	if errors.Is(err, store.ErrNoBOMRoot) ||
+		errors.Is(err, store.ErrGroupingHasNoRepositories) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -56,8 +66,45 @@ func (s *Server) bom(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// SerializeBOM renders the document in one of the supported formats.
+// documentParams are the parameters this endpoint applies. Anything else is refused by name.
 //
+// It reads its own parameters rather than the whole predicate, so nothing here would otherwise
+// notice a term it does not apply. Measured on a crawled organization: `units=3`, the term
+// `properties` replaced, was answered with all 25 roots — a saved link handing a reader the whole
+// organization under the name of one part of it.
+var documentParams = map[string]bool{
+	"root": true, "format": true, "download": true,
+	"properties": true, "notProperties": true,
+}
+
+// documentScope refuses a parameter this endpoint does not apply, then reads the grouping terms.
+func documentScope(q url.Values) (include, exclude []viewspec.PropertyMatch, err error) {
+	for key := range q {
+		if !documentParams[key] {
+			return nil, nil, fmt.Errorf(
+				"view: a bill of materials applies no %q; it is not a term this document is about", key)
+		}
+	}
+	return propertyMatches(q)
+}
+
+// propertyMatches reads the grouping terms through the shared parser rather than beside it, so a
+// malformed term is refused in the same words the graph and the gate refuse it in.
+func propertyMatches(q url.Values) (include, exclude []viewspec.PropertyMatch, err error) {
+	only := url.Values{}
+	for _, key := range []string{"properties", "notProperties"} {
+		if values, ok := q[key]; ok {
+			only[key] = values
+		}
+	}
+	spec, err := viewspec.Parse(only.Encode())
+	if err != nil {
+		return nil, nil, err
+	}
+	return spec.Properties, spec.NotProperties, nil
+}
+
+// SerializeBOM renders the document in one of the supported formats.//
 // Exported so the `bom` command and this endpoint share one implementation: a document written
 // from the command line and one downloaded from the page must not be able to differ.
 func SerializeBOM(doc store.BOM, format string) (body []byte, contentType, ext string, err error) {

@@ -40,6 +40,14 @@ exist. Verify the world first.
 
 Capture the endpoint responses before and after and compare them byte for byte with `cmp`.
 
+## An unpublished project has no legacy
+
+Nothing here ships to anyone yet, so a name introduced this week is replaced rather than deprecated:
+no compatibility shim, no second spelling parsed "for now", no migration for data written before the
+change. Calling week-old work legacy is how a wrong name becomes permanent, and every shim is a
+second code path that has to be tested and will drift. Stored predicates and databases are rebuilt
+from the crawl, not carried forward.
+
 ## An instrument that changes what it measures is worse than none
 
 Its numbers look like evidence. No `-race` in a benchmark, no per-row timing, and every benchmark

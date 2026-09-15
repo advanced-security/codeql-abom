@@ -1,6 +1,7 @@
 # Data efficiency: measured cost of the graph, and what breaks first
 
-**Status:** The correlated-subquery family is closed. Three items are open, one of them a
+**Status:** The correlated-subquery family is closed, and the indexes a read needs now exist on
+every database rather than only on one built by the seed. Four items are open, one of them a
 disagreement between a passing unit test and the stored data.
 
 ## Why this exists
@@ -14,11 +15,18 @@ standing record for the review described in
 
 ## Pending
 
-1. **`ReachOfNode` calls `Builder.load()` per request** — a full in-memory graph load to answer
-   one node's reach.
-2. **Steps are focus-scoped but not focus-*fetched*.** The toggle requires a selection, which
+1. **`/api/actions` still issues one query per row.** `ActionsInventory` calls `referencesTo` in a
+   loop, so cost stays linear in rows returned — **172 ms for 1,585** on the crawled organization,
+   against 7.8 ms for 1,778 rows from `/api/nodes`, which has no such loop. That is down from 2.7 s,
+   because the index the query needed was declared and had never been built; the remaining gap is
+   the loop itself. Fold the references into the main query as a grouped join. Lower priority now
+   that the page default (`top=200`) answers in 48 ms, but the linear factor returns at scale.
+2. **`ReachOfNode` calls `Builder.load()` per request** — a full in-memory graph load to answer
+   one node's reach. `abom_node_reach` now stores the pairs with their hop count, so this can be a
+   read rather than a walk; `graph.Dependents` has the same shape and no caller at all.
+3. **Steps are focus-scoped but not focus-*fetched*.** The toggle requires a selection, which
    stops the global case, but the payload behind it is still `/api/graph/full?steps=true`.
-3. **The frontier's repository arm and the stored data disagree, and the unit test passes anyway.**
+4. **The frontier's repository arm and the stored data disagree, and the unit test passes anyway.**
    That arm requires `f.depth = 0`. Measured once against a corpus that has since been retired, no
    depth-0 rows existed at all, so no repository node reached a queue row through it — while
    `TestARepositoryCarriesTheAnalysisStateOfItsOwnQueueRow` passes, because it enqueues at depth

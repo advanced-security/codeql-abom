@@ -126,6 +126,31 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
     </MudAlert>
 }
 
+@if (_properties is not null && _properties.Breakdown.Values.Count > 0)
+{
+    <MudPaper Elevation="0" Outlined="true" Class="pa-3 mb-3">
+        <MudText Typo="Typo.body1">Coverage by @_properties.Breakdown.Name</MudText>
+        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2">
+            How much of each group has been examined. A repository nothing has queued counts
+            toward its group and not toward what was examined, because it has not been looked at
+            rather than looked at and found clean.
+        </MudText>
+        <div class="d-flex flex-wrap gap-4">
+            @foreach (var group in _properties.Breakdown.Values)
+            {
+                <div class="d-flex flex-column">
+                    <MudText Typo="Typo.body2">
+                        @group.Value@(group.IsDefault ? " (organization default)" : string.Empty)
+                    </MudText>
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                        @group.Analyzed of @group.Repositories examined
+                    </MudText>
+                </div>
+            }
+        </div>
+    </MudPaper>
+}
+
 <MudPaper Elevation="0" Outlined="true" Class="pa-3 mb-3">
     <div class="d-flex align-center flex-wrap gap-3">
         <MudButton Size="Size.Small" Variant="Variant.Filled"
@@ -770,6 +795,7 @@ else
     // Queued first: this grid is about what is left to do. Ordering by score alone buries every
     // pending item under work that has already finished.
     private string _status = "queued";
+    private PropertiesView? _properties;
 
     private sealed record Filter(string Value, string Label);
 
@@ -1270,6 +1296,7 @@ else
         _state = await Api.GetDiscoveryAsync();
         _declared = await Api.GetOwnedScopeAsync();
         _objective = await Api.GetObjectiveAsync();
+        _properties = await Api.GetPropertiesAsync();
         _items = await Api.GetFrontierAsync(_status, top: 400);
         _suites = await Api.GetTierSuitesAsync();
         // Skipped rather than attempted when nothing is declared: the server refuses to prune

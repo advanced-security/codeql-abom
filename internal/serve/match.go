@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/advanced-security/codeql-abom/internal/store"
-	viewspec "github.com/advanced-security/codeql-abom/internal/view"
 )
 
 // Match is the answer to "which nodes match", for a caller with no picture to draw.
@@ -16,14 +15,6 @@ type Match struct {
 	// Findings counts each finding once however many nodes carry it.
 	Findings int `json:"findings"`
 }
-
-// graphOnlyParams are predicates that shape a graph and mean nothing to a set.
-//
-// Refused rather than ignored. Four predicates in this language have already been accepted and
-// silently dropped — `origins`, `minReach`, `flags` and `ref` — and each time the corpus, not a
-// test, is what noticed. A caller who asks this endpoint for `kinds=workflow` and is handed every
-// kind has no way to tell.
-var graphOnlyParams = []string{"kinds", "edges", "boundary", "minReach", "origins", "ref", "steps"}
 
 // match answers a set rather than a graph.
 //
@@ -36,16 +27,17 @@ func (s *Server) match(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if refused := refusedForMatching(r); len(refused) > 0 {
-		writeError(w, http.StatusBadRequest,
-			"view: "+strings.Join(refused, ", ")+" shape a graph and cannot narrow a set")
+	if refused := spec.UnenforceableAsSet(); len(refused) > 0 {
+		writeError(w, http.StatusBadRequest, unenforceable(refused))
 		return
 	}
 	// The same selector a policy is evaluated through. Two constructions of one predicate is two
 	// policy engines, and the one nobody simulated is the one that refuses a pull request.
 	matched, err := s.Store.NodesMatching(store.SelectorFor(spec))
 	if err != nil {
-		writeJSON(w, nil, err)
+		// A unit filter with no configured key is the reader asking for something this
+		// installation cannot answer, not a fault.
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, Match{
@@ -53,29 +45,9 @@ func (s *Server) match(w http.ResponseWriter, r *http.Request) {
 	}, nil)
 }
 
-// refusedForMatching names the graph-shaping parameters a request carried, resolving a named view
-// first so a view holding one is refused for the same reason a literal one is.
-func refusedForMatching(r *http.Request) []string {
-	q := r.URL.Query()
-	present := func(key string) bool { return q.Get(key) != "" }
-	if name := q.Get(viewNameParam); name != "" {
-		b, ok := viewspec.BuiltinNamed(name)
-		if !ok {
-			return nil
-		}
-		inView, err := viewspec.Parse(b.Predicate)
-		if err != nil {
-			return nil
-		}
-		present = func(key string) bool {
-			return strings.Contains(inView.String(), key+"=")
-		}
-	}
-	var refused []string
-	for _, key := range graphOnlyParams {
-		if present(key) {
-			refused = append(refused, key)
-		}
-	}
-	return refused
+// unenforceable is the one wording, so a term refused at the endpoint and the same term refused on
+// a policy do not read as two different objections.
+func unenforceable(terms []string) string {
+	return "view: " + strings.Join(terms, ", ") +
+		" cannot narrow a set; a term is enforced or refused, never dropped"
 }

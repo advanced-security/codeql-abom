@@ -85,7 +85,7 @@ rendered as though ABOM measured it.
 
 | Word | Source | Means |
 | --- | --- | --- |
-| **Business unit** | A repository custom property GitHub holds | A distinct value of a configured key, used to group and filter the estate |
+| **Repository grouping** | A repository custom property GitHub holds | A distinct value of a configured key, used to group and filter the estate. ABOM names the key the operator chose rather than what it might mean: `business_id` yields business units, `team` yields teams, and asserting either from the other would be a meaning read from nowhere |
 | **No value** | The absence of that property | Its own state, reported as such |
 
 The key or keys are configured by the operator — `business_unit`, `app_name`, whatever the

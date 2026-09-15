@@ -58,6 +58,9 @@ make build
 # Follow dependencies upstream, then refresh every aggregate.
 ./bin/codeql-abom expand-all --db abom.db
 
+# Recompute the derived tables without crawling, which is what an upgrade needs.
+./bin/codeql-abom refresh --db abom.db
+
 # Read the result.
 ./bin/codeql-abom report --db abom.db
 ./bin/codeql-abom serve --db abom.db --ui-dir <published-wwwroot>

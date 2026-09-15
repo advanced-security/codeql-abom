@@ -42,11 +42,13 @@ type PolicyOutcome struct {
 // until a pull request is refused for a reason the simulation never showed.
 func SelectorFor(spec viewspec.Spec) FindingSelector {
 	return FindingSelector{
-		Rules:        spec.Rules,
-		Exclude:      spec.NotRules,
-		Provider:     spec.Provider,
-		Severity:     spec.Severity,
-		Repositories: spec.Repositories,
+		Rules:             spec.Rules,
+		Exclude:           spec.NotRules,
+		Provider:          spec.Provider,
+		Severity:          spec.Severity,
+		Repositories:      spec.Repositories,
+		Properties:        spec.Properties,
+		ExcludeProperties: spec.NotProperties,
 	}
 }
 
@@ -73,6 +75,12 @@ func (s *Store) EvaluatePolicy(name, unitProperty string) (PolicyOutcome, error)
 		// Refuses nothing rather than everything: a gate whose policy failed to parse would
 		// otherwise fail every pull request instead of none.
 		return out, fmt.Errorf("store: policy %q does not parse: %w", name, err)
+	}
+	// Checked again here, not only where it was saved: the gate reads this, and a policy stored
+	// before the rule existed would otherwise enforce the wider half of its own text forever.
+	if refused := spec.UnenforceableAsSet(); len(refused) > 0 {
+		return out, fmt.Errorf("store: policy %q carries %s, which it cannot enforce",
+			name, strings.Join(refused, ", "))
 	}
 
 	inScope, err := s.policyScope(policy, unitProperty)

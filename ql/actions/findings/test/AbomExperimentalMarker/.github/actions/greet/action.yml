@@ -1,0 +1,14 @@
+name: Greet
+description: A composite action, which has no jobs and would produce nothing from a job-only query.
+
+inputs:
+  who-to-greet:
+    description: Who to greet
+    required: true
+    default: World
+
+runs:
+  using: composite
+  steps:
+    - run: echo "Hello ${{ inputs.who-to-greet }}"
+      shell: bash

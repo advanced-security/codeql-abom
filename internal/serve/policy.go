@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/store"
+	viewspec "github.com/advanced-security/codeql-abom/internal/view"
 )
 
 // policies serves every policy, drafts included. A draft is the interesting one: it is the rule
@@ -26,6 +27,17 @@ func (s *Server) savePolicy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "a policy is a name, a predicate and a scope")
 		return
 	}
+	// Refused while the operator is still looking at it. A policy whose text carries more than it
+	// enforces blocks pull requests for something wider than anybody read.
+	spec, err := viewspec.Parse(p.Predicate)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if refused := spec.UnenforceableAsSet(); len(refused) > 0 {
+		writeError(w, http.StatusBadRequest, unenforceable(refused))
+		return
+	}
 	p.CreatedBy = store.DeclaredByInterface
 	if err := s.Store.SavePolicy(p); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -40,7 +52,7 @@ func (s *Server) simulatePolicy(w http.ResponseWriter, r *http.Request) {
 	if !s.allowControl(w, r) {
 		return
 	}
-	outcome, _, err := s.Store.SimulatePolicy(r.PathValue("name"), s.UnitProperty)
+	outcome, _, err := s.Store.SimulatePolicy(r.PathValue("name"), s.GroupProperty)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

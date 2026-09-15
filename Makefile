@@ -20,7 +20,7 @@ GO_FILES := $(shell find . -name '*.go' -not -path './ui/*')
 .PHONY: bench build check-corrupt check-versions clean e2e fmt itest js lint logs package publish ql \
 	quality restart selfcheck serve start status stop style test ui ui-test verify vet
 
-verify: check-corrupt check-versions fmt vet lint test js style ql ui ui-test
+verify: check-corrupt check-versions fmt vet lint test js style ql ui ui-test e2e
 
 ## bench: time the store read paths against a real corpus.
 ##
@@ -76,6 +76,12 @@ ABOM_E2E_DIR   ?= /tmp/abom-e2e
 ABOM_E2E_DB    ?= $(ABOM_E2E_DIR)/abom.db
 ABOM_E2E_PORT  ?= 8231
 ABOM_E2E_FLAGS ?=
+# Which browser runs the suite. Empty takes the pinned Chromium, which is what CI should use
+# because it is identical everywhere. `chrome` borrows the system install, and is the way through
+# on a machine where that download will not complete — a partial one leaves a directory that looks
+# installed and an app bundle with no framework inside, which fails as a launch error rather than
+# as a missing browser.
+ABOM_E2E_CHANNEL ?=
 e2e: build publish
 	@if [ "$(abspath $(ABOM_E2E_DB))" = "$(abspath $(ABOM_DB))" ]; then \
 		echo "e2e: refusing to run against $(ABOM_DB), which is the working database."; \
@@ -93,6 +99,7 @@ e2e: build publish
 		ABOM_E2E_DB="$(ABOM_E2E_DB)" \
 		ABOM_E2E_UI="$(ABOM_UI)/wwwroot" \
 		ABOM_E2E_PORT="$(ABOM_E2E_PORT)" \
+		ABOM_E2E_CHANNEL="$(ABOM_E2E_CHANNEL)" \
 		npx playwright test $(ABOM_E2E_FLAGS)
 
 fmt:
@@ -102,7 +109,7 @@ fmt:
 
 ## js: the browser code is a third of the interface's behavior and none of it is typechecked.
 js:
-	@node --test ui/wwwroot/js/*.test.js && echo "js: ok"
+	@node --test ui/wwwroot/js/*.test.js ui/tests/e2e/*.test.mjs && echo "js: ok"
 
 # Part of `verify`, because CI runs it: a check that only runs in CI is one that fails after the
 # push rather than before it. A missing tool is reported as missing, not silently skipped.
@@ -131,7 +138,7 @@ publish:
 	@echo "publish: $(ABOM_UI)/wwwroot"
 
 ql:
-	@codeql test run ql/actions/graph-extraction/test
+	@codeql test run ql/actions/graph-extraction/test ql/actions/findings/test
 
 restart: stop start
 

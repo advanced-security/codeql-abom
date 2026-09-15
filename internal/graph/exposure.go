@@ -104,11 +104,24 @@ type reachPath struct {
 	conditions []StepCondition
 }
 
+// reachedNode is a node the walk has arrived at, together with the commit a consumer must have
+// pinned for the route through it to exist. Empty constrains nothing.
+type reachedNode struct {
+	node   int64
+	commit string
+}
+
 // exposureOf walks dependents from target, keeping the shortest route to each repository.
 //
 // Breadth-first order means the first time a repository is reached is by its shortest route,
 // which is the one worth reporting: a repository that uses an action directly does not need to
 // hear about a longer path to the same action.
+//
+// A route stays inside the version that was pinned. The edges inside a dependency were read from
+// one commit of it, so they belong to whoever pinned that commit and to nobody else; ABOM analyzes
+// many references of a popular action, and without this a repository on v4 is told to act on a
+// dependency that only enters at v5. The submission closure enforces the same rule walking the
+// other way, and the two are held together by the tests in exposureagreement_test.go.
 func (m *model) exposureOf(target int64, maxDepth int) map[int64]reachPath {
 	out := map[int64]reachPath{}
 
@@ -117,39 +130,47 @@ func (m *model) exposureOf(target int64, maxDepth int) map[int64]reachPath {
 	// enteredBy records the step that made the reference, which is where an `if:` sits. The
 	// container alone cannot say it: a workflow has many steps and only one of them named this.
 	enteredBy := map[int64]int64{}
-	visited := map[int64]bool{target: true}
-	frontier := []int64{target}
+	start := reachedNode{node: target}
+	visited := map[reachedNode]bool{start: true}
+	frontier := []reachedNode{start}
 
 	for depth := 1; len(frontier) > 0; depth++ {
 		if maxDepth > 0 && depth > maxDepth {
 			break
 		}
-		var next []int64
-		for _, node := range frontier {
-			for _, src := range m.reverse[node] {
-				if visited[src] {
+		var next []reachedNode
+		for _, cur := range frontier {
+			for _, in := range m.reverse[cur.node] {
+				// Leaving a dependency: only a consumer that pinned the version these edges
+				// were read from can be standing here.
+				if cur.commit != "" && m.resolved[m.keyOf[cur.node]+"\x00"+in.ref] != cur.commit {
 					continue
 				}
-				visited[src] = true
 
 				// Steps are an implementation detail; what a caller references is the
 				// workflow or composite action holding them.
-				via := src
-				if c, ok := m.container[src]; ok {
-					via = c
+				via := reachedNode{node: in.src}
+				if c, ok := m.container[in.src]; ok {
+					via.node = c
+					// Crossing into a dependency. The edge was read out of one commit of it,
+					// so everything onward belongs to that commit.
+					if m.isExternal[c] {
+						via.commit = in.commit
+					}
 				}
-				if _, ok := from[via]; !ok && via != target {
-					from[via] = node
-					enteredBy[via] = src
+				if _, ok := from[via.node]; !ok && via.node != target {
+					from[via.node] = cur.node
+					enteredBy[via.node] = in.src
 				}
 
-				if repo, ok := m.repoOf[src]; ok && m.seedRepo[repo] {
+				if repo, ok := m.repoOf[in.src]; ok && m.seedRepo[repo] {
 					if _, seen := out[repo]; !seen {
-						path, conditions := m.routeFrom(via, target, from, enteredBy)
+						path, conditions := m.routeFrom(via.node, target, from, enteredBy)
 						out[repo] = reachPath{hops: depth, path: path, conditions: conditions}
 					}
 				}
-				if via != src && !visited[via] {
+				if via.node != in.src && !visited[via] {
+					visited[via] = true
 					next = append(next, via)
 				}
 			}

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	viewspec "github.com/advanced-security/codeql-abom/internal/view"
 )
 
 // ErrNoBOMRoot reports that nothing has been declared and no root was named, so there is nothing
@@ -15,6 +17,13 @@ import (
 // yet, and every other one means ABOM has.
 var ErrNoBOMRoot = errors.New(
 	"store: a bill of materials needs a root; declare an owned scope or name one")
+
+// ErrGroupingHasNoRepositories reports that the grouping exists as a question and holds nothing.
+//
+// Distinct from ErrNoBOMRoot, which means nothing has been declared at all. Collapsing the two
+// sends a reader to declare a scope they have already declared.
+var ErrGroupingHasNoRepositories = errors.New(
+	"store: no repository in the declared scope carries that property value")
 
 // BOM is a bill of materials: what a set of roots is composed of, what is known about each piece,
 // and what was examined to produce the answer.
@@ -137,6 +146,12 @@ type BOMOptions struct {
 	// Roots defaults to the declared owned scope. Naming them explicitly is how a document for
 	// one repository or one workflow is asked for.
 	Roots []string
+	// Properties narrows the roots to the repositories the organization says carry these key/value
+	// pairs. It narrows a set rather than choosing one, so it composes with Roots instead of
+	// replacing it.
+	Properties []viewspec.PropertyMatch
+	// NotProperties drops a root matching any of them, and beats Properties.
+	NotProperties []viewspec.PropertyMatch
 }
 
 // BillOfMaterials reads everything the roots depend on, at any depth.
@@ -165,6 +180,13 @@ func (s *Store) BillOfMaterials(opts BOMOptions) (BOM, error) {
 	if len(roots) == 0 {
 		return out, ErrNoBOMRoot
 	}
+	if len(opts.Properties) > 0 || len(opts.NotProperties) > 0 {
+		narrowed, err := s.narrowToProperties(roots, opts.Properties, opts.NotProperties)
+		if err != nil {
+			return out, err
+		}
+		roots = narrowed
+	}
 	out.Roots = append(out.Roots, roots...)
 	sort.Strings(out.Roots)
 
@@ -178,6 +200,78 @@ func (s *Store) BillOfMaterials(opts BOMOptions) (BOM, error) {
 		return out, err
 	}
 	return out, nil
+}
+
+// narrowToProperties keeps the roots the organization says match, and drops the ones it says to
+// exclude.
+//
+// A grouping holding nothing is its own error rather than ErrNoBOMRoot: telling a reader to
+// declare a scope they have already declared sends them to fix the wrong thing.
+func (s *Store) narrowToProperties(roots []string, include, exclude []viewspec.PropertyMatch) (
+	[]string, error) {
+	members, err := s.repositoriesMatching(include)
+	if err != nil {
+		return nil, err
+	}
+	dropped, err := s.repositoriesMatching(exclude)
+	if err != nil {
+		return nil, err
+	}
+
+	var kept []string
+	for _, root := range roots {
+		low := strings.ToLower(root)
+		if len(include) > 0 && !members[low] {
+			continue
+		}
+		if dropped[low] {
+			continue
+		}
+		kept = append(kept, root)
+	}
+	if len(kept) == 0 {
+		return nil, fmt.Errorf("%w: %s", ErrGroupingHasNoRepositories, describeMatches(include))
+	}
+	return kept, nil
+}
+
+// repositoriesMatching answers the repositories carrying every key asked for, at any of the values
+// asked for it. Keys intersect and values of one key union, the same way the set endpoint reads
+// the same term.
+func (s *Store) repositoriesMatching(matches []viewspec.PropertyMatch) (map[string]bool, error) {
+	names, by := valuesByKey(matches)
+	var out map[string]bool
+	for _, name := range names {
+		perKey := map[string]bool{}
+		for _, value := range by[name] {
+			in, err := s.repositoriesWithValue(name, value)
+			if err != nil {
+				return nil, err
+			}
+			for repo := range in {
+				perKey[repo] = true
+			}
+		}
+		if out == nil {
+			out = perKey
+			continue
+		}
+		for repo := range out {
+			if !perKey[repo] {
+				delete(out, repo)
+			}
+		}
+	}
+	return out, nil
+}
+
+// describeMatches names what was asked for, so the error says which scope held nothing.
+func describeMatches(matches []viewspec.PropertyMatch) string {
+	out := make([]string, 0, len(matches))
+	for _, m := range matches {
+		out = append(out, m.String())
+	}
+	return strings.Join(out, ", ")
 }
 
 // bomEdge is one dependency relationship as the closure walk needs it.

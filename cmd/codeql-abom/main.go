@@ -27,6 +27,7 @@ var subcommands = []subcommand{
 	{"discover", runDiscover, "Find repositories in an organization that have CodeQL databases."},
 	{"build", runBuild, "Fetch, query and ingest seed repositories."},
 	{"expand-all", runExpandAll, "Follow dependencies upstream, then refresh every aggregate."},
+	{"refresh", runRefresh, "Recompute the derived tables without crawling."},
 	{"report", runReport, "Print a summary of the collected ABOM."},
 	{"serve", runServe, "Serve the ABOM over HTTP for the user interface."},
 	{"accounts", runAccounts, "Show the accounts you are verified to belong to."},

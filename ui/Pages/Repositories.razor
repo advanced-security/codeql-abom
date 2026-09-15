@@ -1,5 +1,6 @@
 @page "/repositories"
 @inject AbomApi Api
+@inject NavigationManager Nav
 
 <PageTitle>Repositories — ABOM</PageTitle>
 
@@ -8,7 +9,7 @@
     these depend on, and are listed separately because nobody here can change them.
 </PageHeader>
 
-<SearchField Value="_search" ValueChanged="OnSearch" Placeholder="Filter by name" Class="mb-3" />
+<SearchField Value="@_search" ValueChanged="OnSearch" Placeholder="Filter by name" Class="mb-3" />
 
 @if (_loading)
 {
@@ -81,12 +82,19 @@ else
 }
 
 @code {
+    // The address is the filter, so a narrowed list can be shared, bookmarked and returned to.
+    [SupplyParameterFromQuery(Name = "q")] public string? SearchParam { get; set; }
+
     private IReadOnlyList<RepositorySummary> _items = [];
     private RepositoryDetail? _detail;
     private string _search = string.Empty;
     private bool _loading = true;
 
-    protected override async Task OnInitializedAsync() => await Load();
+    protected override async Task OnInitializedAsync()
+    {
+        _search = SearchParam ?? string.Empty;
+        await Load();
+    }
 
     private async Task Load()
     {
@@ -103,7 +111,10 @@ else
 
     private async Task OnSearch(string value)
     {
-        _search = value;
+        _search = value ?? string.Empty;
+        Nav.NavigateTo(_search.Length == 0
+            ? "/repositories"
+            : $"/repositories?q={Uri.EscapeDataString(_search)}", forceLoad: false);
         await Load();
     }
 }

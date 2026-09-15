@@ -32,6 +32,41 @@ only to columns inside a UNIQUE constraint.
 
 `COUNT` returns 0; `SUM`, `MIN` and `MAX` return NULL. Use `COALESCE(SUM(...), 0)`.
 
+## Return an empty slice, never a nil one
+
+`var out []T` returns `nil` when no row matched, which marshals to JSON `null`; the interface calls
+`.Select()` on it and throws rather than rendering nothing. Write `out := []T{}`. This is dormant
+for as long as every answer is organization-wide over a populated corpus, and reachable the instant
+an answer can be bounded — `/api/exposure?properties=business_id:dev` returned `null` the day the
+grouping filter landed. Curl every value, not one: the ones with rows all look fine.
+
+## A restriction on an aggregate belongs before the aggregation
+
+A report whose rows are repositories narrows by dropping rows, and where the restriction goes does
+not matter. A report whose rows are advisories carrying counts of affected repositories narrows by
+*recounting*, and a restriction applied to the finished rows yields a correctly bounded row list
+where every count still spans the organization. Join the restricted table into the query and filter
+before `GROUP BY`. Verify by arithmetic — a bounded count must be strictly smaller — because the
+wrong version looks right on screen.
+
+## Filter by driving from the small set, not by testing the large one
+
+`WHERE ... AND (SELECT COUNT(*) FROM pairs WHERE pairs.node = n.row_id AND ...) > 0` plans as
+`SCAN` over the big table with a correlated subquery per row. The same condition as
+`n.row_id IN (SELECT node FROM pairs WHERE ...)` plans as a covering index scan over the small
+side feeding a primary key lookup. Measured 2026-09-15: 11,235 per-node evaluations to return 38
+rows, against an index scan of 155 pairs. Both are fast on a small corpus, so assert the plan
+rather than the clock — `inventorycost_test.go` and `graphnodecost_test.go` are the pattern.
+
+## A derived table that has not been derived must refuse, not answer zero
+
+Wholesale-recomputed tables are empty after an upgrade until the next rebuild, and a query that
+filters on one then returns nothing — reporting "this grouping depends on nothing" when the truth is
+"nobody has measured". Measured 2026-09-15: 1,585 rows unfiltered, 0 bounded, with 448 rollup rows
+still asserting reach. Detect it by asking whether the rollup claims something the breakdown cannot
+account for, and return a named error. Same rule as the pinning split refusing to print `0 yours`
+with no verified identity.
+
 ## A scalar subquery returns an arbitrary row, not an error
 
 `(SELECT status ... WHERE node_key = ?)` was correct until the queue was re-keyed
@@ -53,15 +88,22 @@ AND COALESCE(r.db_commit, '') <> ''
 expansion runs for weeks, so a new column must never require a rebuild. Add it to `addedColumns`
 as well as the `CREATE TABLE`.
 
-## Indexes after bulk load, except the ones a page reads
+## Indexes after bulk load, and on every other open
 
-`CreateIndexes()` runs after loading, and
-`TestIndexesAreNotCreatedByMigrateOnTheTablesItLoadsInBulk` guards the tables that rationale
-protects — not indexes as such. `serve` never calls it, so an index a page needs on a small table
-belongs in `Migrate()`. One missing index cost 198 ms a page against 9.7 ms.
+`Migrate()` now calls `CreateIndexes()` unless the store was opened with `BulkLoad`, so a serving,
+expanding or CLI-read database gets every declared index and an ingest still defers them. Rebuilding
+one that exists costs a catalog lookup.
 
-An index added only to `indexDDL` therefore **never reaches an established database**. Nothing calls
-`CreateIndexes()` again after the first bulk load.
+This replaced a trap that had already been patched twice, one index at a time, each with a comment
+naming the same cause: `CreateIndexes()` was called only by the seed build, so an index added to
+`indexDDL` **never reached a database that already existed**. Measured 2026-09-15 on the crawled
+organization: **20 of 22 declared indexes were absent**, and the missing `idx_edge_dst` made every
+per-node reference lookup scan all 14,196 edges — the Inventory endpoint took 2.7 s, and 172 ms once
+the index existed.
+
+`TestMigrateBuildsEveryDeclaredIndexWhenNotBulkLoading` reads the names out of the DDL with a regex
+rather than listing them, so a new index is covered without anyone remembering to add it.
+`TestABulkLoadDefersIndexesUntilItIsFinished` holds the other half.
 
 ```bash
 sqlite3 abom.db "EXPLAIN QUERY PLAN <the query>;"   # SCAN on the inner side is the warning

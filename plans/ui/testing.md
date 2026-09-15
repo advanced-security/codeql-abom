@@ -1,8 +1,8 @@
 # Interface testing
 
-**Status:** four layers, three of them in `make verify`. Browser measurement is now a suite —
-Playwright under `ui/tests/e2e`, run by `make e2e` — and is outside `verify` until its browser
-install is dependable. The component catalog is still an open decision, and deliberately so.
+**Status:** four layers, all four in `make verify`, and the browser suite blocks a pull request
+through its own CI job. It resolves its own browser rather than trusting a download. The component
+catalog is still an open decision, and deliberately so.
 
 ## Why this exists
 
@@ -22,20 +22,39 @@ Four layers, each blind to what the next one sees:
 
 Green in one says nothing about the others.
 
+## What making it blocking actually took
+
+**A gate in `verify` is not a gate in CI.** This plan said the suite would join `verify` "and CI
+runs the same target". CI does not: pull requests run the individual targets across
+`build-and-test-go.yml` and `build-and-test-ui.yml`, and `make verify` appears only in the CodeQL
+bump workflow. Adding `e2e` to `verify` alone would have gated this workstation and nothing else,
+so the suite has its own step in the interface workflow — which is also why that workflow now
+triggers on `internal/serve/**`, since the suite asserts the server's API contract.
+
+**The browser is resolved, not assumed.** A stalled download leaves `Contents/MacOS/Chromium` in
+place with no `Chromium Framework.framework` beside it, so every test dies in `dlopen` and a
+directory check reports the build as installed. `tests/e2e/browser.mjs` checks the framework as
+well as the launcher, falls back to system Chrome, and refuses outright when there is neither. The
+escape hatch it replaces existed in the Playwright config and **was never passed by `make e2e`**,
+so the documented way out could not be reached through the documented entry point.
+
 ## Pending
 
-1. **Make `make e2e` blocking, once it is dependable.** It is in report mode on purpose: the gate
-   turns on last. Two things have to hold first — the Chromium download must complete reliably
-   (three attempts on this workstation stalled mid-extraction and had to be cleared by hand, which
-   is why `ABOM_E2E_CHANNEL=chrome` exists as an escape hatch), and the suite has to run clean
-   repeatedly rather than once. Then it joins `verify`, and CI runs the same target.
-2. **A populated-corpus suite.** The current specs run against a database the target creates and
-   throws away, so they reach the first-run states and nothing else. Grids, wrapping under real
-   labels and the Explorer under load need `make e2e ABOM_E2E_DB=<a copy>`, and the assertions that
-   only make sense there are not written. A crawl of a declared organization produces the copy.
-3. **Shared fixtures.** The empty database is honest but narrow, and a hand-built graph fixture
-   drifts from real ingestion. A seeded corpus produced by the real pipeline, small enough to keep,
-   is what both this suite and any catalog should share.
+1. **More populated-corpus assertions.** The suite branches on `corpusSize` and two checks now use
+   it — the coverage strip, which orphans a cell only when nothing is declared, and the graph's
+   share of the window, which needs a graph to measure. Grids under real labels, wrapping under long
+   repository names and the Explorer under load are still unwritten.
+2. **Shared fixtures.** A seeded corpus produced by the real pipeline now exists — 25 seed
+   repositories, 50 property rows, 1,495 findings, 6.2 MB as a `.backup` — so the hand-built graph
+   fixture that drifts from real ingestion is no longer the only alternative to an empty database.
+   What is missing is making it *shared*: checked in, or rebuildable from a recorded input. Until
+   then the populated assertions still run only where somebody has crawled an organization, and CI
+   reaches the empty half alone. A `.backup` of a WAL database cannot be opened `-readonly` until
+   its journal mode is reset, which is worth knowing before it becomes a fixture.
+3. **A corpus that can exercise a shared owned dependency.** The crawled organization holds **zero**
+   dependency edges from one owned repository to another, so nothing in it can show that excluding
+   one repository grouping leaves a repository another grouping still reaches. A Go fixture covers
+   the rule; no real data does. Whatever 2 produces should carry the case.
 4. **Decide the component catalog.** Deferred rather than answered: Playwright covers geometry and
    integration, which was the row with no owner, and a catalog answers a different question — the
    appearance of a state no database produces. The alternatives stay named: **BlazingStory**,
@@ -59,14 +78,20 @@ the first and not on the second. Banning every console error instead would make 
 behavior — asking for a bill of materials before declaring a scope — indistinguishable from a fault.
 
 **A known defect is recorded, never silenced.** `test.fail()` marks one that is expected to fail,
-so it reports, and so the run breaks when somebody fixes it. A skip reports as a pass.
+so it reports, and so the run breaks when somebody fixes it. A skip reports as a pass. **Mark it
+only where it actually fails**: an unconditional `test.fail()` on a defect that only appears with
+an empty corpus made every populated run report a failure, so the suite could never be green
+against real data — which is the run that has to gate.
 
 **What bUnit can state without a browser, it should.** A layout constraint expressed as a DOM count
-needs no CSS engine, and the browser suite is minutes where bUnit is seconds.
+needs no CSS engine, and the browser suite is minutes where bUnit is seconds. The same goes for
+arithmetic: the graph's height and the browser choice are pure functions under `make js`, which
+needs neither a browser nor a server.
 
 ## Verification
 
-- `make e2e` against a fresh database: 38 checks, about a minute.
+- `make e2e` against a fresh database: 39 checks, about a minute. Five consecutive runs clean —
+  three empty, two populated — which is the bar for a gate rather than a report.
 - For any new test: break the production code on purpose, watch it fail, restore.
 - For any geometry claim, read `window.innerWidth` in the same call as the measurement — a
   requested 1920 can be reported as something else, and a media query that never matched looks

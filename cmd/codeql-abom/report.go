@@ -50,7 +50,7 @@ func runReport(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	}
 	writePinning(stdout, totals, verified)
 
-	items, err := s.RemediationPriority(*top)
+	items, err := s.RemediationPriority(*top, store.RepositoryScope{})
 	if err != nil {
 		return fmt.Errorf("report: %w", err)
 	}

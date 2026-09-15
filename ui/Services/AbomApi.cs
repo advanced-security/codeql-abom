@@ -248,22 +248,36 @@ public sealed class AbomApi(HttpClient http)
     /// usual case and the only one that needs no argument.
     /// </summary>
     public async Task<Bom?> GetBomAsync(
-        IEnumerable<string>? roots = null, CancellationToken ct = default)
+        IEnumerable<string>? roots = null, IEnumerable<string>? properties = null,
+        CancellationToken ct = default)
     {
-        var query = string.Join("&", (roots ?? []).Select(
-            r => "root=" + Uri.EscapeDataString(r)));
-        var path = string.IsNullOrEmpty(query) ? "api/bom" : $"api/bom?{query}";
+        var parts = new List<string>();
+        parts.AddRange((roots ?? []).Select(r => "root=" + Uri.EscapeDataString(r)));
+        parts.AddRange((properties ?? []).Select(p => "properties=" + Uri.EscapeDataString(p)));
+        var path = parts.Count == 0 ? "api/bom" : "api/bom?" + string.Join("&", parts);
         return await GetAsync<Bom>(path, ct);
     }
 
     /// <summary>
+    /// Reads how the configured property divides the repositories under review. An answer with no
+    /// values means the operator named no key, which is a state rather than a failure.
+    /// </summary>
+    public async Task<PropertiesView?> GetPropertiesAsync(CancellationToken ct = default)
+        => await GetAsync<PropertiesView>("api/properties", ct);
+
+    /// <summary>
     /// The address a download link points at. Built here rather than in markup so the page and
     /// the API cannot drift apart about what the parameters are called.
+    ///
+    /// The scope belongs here for a sharper reason: a download that ignored the filter on screen
+    /// would hand somebody a document about the whole organization under the name of one part.
     /// </summary>
-    public static string BomDownloadUrl(string format, IEnumerable<string>? roots = null)
+    public static string BomDownloadUrl(string format, IEnumerable<string>? roots = null,
+        IEnumerable<string>? properties = null)
     {
         var parts = new List<string> { "format=" + Uri.EscapeDataString(format), "download=true" };
         parts.AddRange((roots ?? []).Select(r => "root=" + Uri.EscapeDataString(r)));
+        parts.AddRange((properties ?? []).Select(p => "properties=" + Uri.EscapeDataString(p)));
         return "api/bom?" + string.Join("&", parts);
     }
 
@@ -280,9 +294,11 @@ public sealed class AbomApi(HttpClient http)
             $"api/pinning?scope={Uri.EscapeDataString(scope)}" +
             $"&parent={Uri.EscapeDataString(parent ?? string.Empty)}{filter.Query}", ct);
 
+    // No scope: the totals are over everything by construction, so the `scope=all` this used to
+    // send asserted something the endpoint cannot vary and never read.
     public async Task<PinningRow?> GetPinningTotalsAsync(
         PinningQuery filter, CancellationToken ct = default) =>
-        await GetAsync<PinningRow>($"api/pinning/totals?scope=all{filter.Query}", ct);
+        await GetAsync<PinningRow>($"api/pinning/totals?{filter.Query.TrimStart('&')}", ct);
 
     public async Task<IReadOnlyList<FrontierItem>> GetFrontierAsync(
         string? status = null, int top = 500, CancellationToken ct = default) =>

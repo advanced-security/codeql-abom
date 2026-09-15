@@ -3,6 +3,7 @@
 @using Abom.WebAssembly.Services
 @inject AbomApi Api
 @inject AccountService Accounts
+@inject NavigationManager Nav
 
 <PageTitle>Version Pinning — ABOM</PageTitle>
 
@@ -76,11 +77,8 @@ else
 
     <MudPaper Elevation="0" Outlined="true" Class="pa-2 mb-3 abom-filters">
         <div class="d-flex flex-wrap align-center gap-3">
-            <MudTextField T="string" Value="_search" ValueChanged="OnSearchChanged"
-                          DebounceInterval="350" Immediate="true" Label="Name contains"
-                          Placeholder="owner, repo, workflow or action" Variant="Variant.Outlined"
-                          Margin="Margin.Dense" Clearable="true" ShrinkLabel="true"
-                          Class="abom-filter-wide" />
+            <SearchField Value="@_search" ValueChanged="OnSearchChanged" Label="Name contains"
+                         Placeholder="owner, repo, workflow or action" Class="abom-filter-wide" />
 
             <MudTooltip Text="How the reference is written, not whether it is safe.">
                 <MudSelect T="string" Label="Reference" Value="_refStyle"
@@ -119,6 +117,11 @@ else
 }
 
 @code {
+    // The address is the filter, so a narrowed view can be shared, bookmarked and returned to.
+    [SupplyParameterFromQuery(Name = "q")] public string? SearchParam { get; set; }
+    [SupplyParameterFromQuery(Name = "style")] public string? RefStyleParam { get; set; }
+    [SupplyParameterFromQuery(Name = "flagged")] public bool? FlaggedParam { get; set; }
+
     private PinningRow? _totals;
     private PinningQuery _filter = new();
     private string _search = string.Empty;
@@ -144,6 +147,9 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        _search = SearchParam ?? string.Empty;
+        _refStyle = RefStyleParam ?? string.Empty;
+        _flaggedOnly = FlaggedParam ?? false;
         await Accounts.EnsureLoadedAsync();
         await Reload();
     }
@@ -174,6 +180,17 @@ else
             RefStyle = _refStyle,
             FlaggedOnly = _flaggedOnly,
         };
+        SyncAddress();
         _totals = await Api.GetPinningTotalsAsync(_filter);
+    }
+
+    private void SyncAddress()
+    {
+        var query = new List<string>();
+        if (_search.Length > 0) query.Add($"q={Uri.EscapeDataString(_search)}");
+        if (_refStyle.Length > 0) query.Add($"style={Uri.EscapeDataString(_refStyle)}");
+        if (_flaggedOnly) query.Add("flagged=true");
+        Nav.NavigateTo(query.Count == 0 ? "/pinning" : "/pinning?" + string.Join("&", query),
+            forceLoad: false);
     }
 }

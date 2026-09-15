@@ -48,7 +48,13 @@ type RemediationItem struct {
 // Scores that describe an advisory rather than its reach here — CVSS and EPSS — are reported
 // alongside but deliberately left out of the arithmetic, so the number means exactly what it
 // says: severity times reach.
-func (s *Store) RemediationPriority(limit int) ([]RemediationItem, error) {
+func (s *Store) RemediationPriority(limit int, sc RepositoryScope) ([]RemediationItem, error) {
+	// Before the GROUP BY, so the counts are recomputed for the grouping rather than narrowed
+	// after the fact while still spanning the organization.
+	bound, bindings, err := s.restrict(sc, "er.repository_full_name")
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.Query(`
 		SELECT e.ghsa_id, COALESCE(a.cve_id,''), COALESCE(a.severity,''),
 		       COALESCE(a.summary,''), a.cvss_v3_score, a.epss_percentage,
@@ -60,16 +66,17 @@ func (s *Store) RemediationPriority(limit int) ([]RemediationItem, error) {
 		FROM abom_exposure e
 		JOIN abom_advisory a ON a.ghsa_id = e.ghsa_id
 		JOIN abom_node_live n ON n.row_id = e.node_row_id
+		JOIN repository er ON er.row_id = e.repository_row_id
 		LEFT JOIN abom_advisory_package p ON p.advisory_row_id = a.row_id
-		WHERE a.withdrawn_at IS NULL
+		WHERE a.withdrawn_at IS NULL`+bound+`
 		GROUP BY e.ghsa_id, a.cve_id, a.severity, a.summary,
-		         a.cvss_v3_score, a.epss_percentage`)
+		         a.cvss_v3_score, a.epss_percentage`, bindings...)
 	if err != nil {
 		return nil, fmt.Errorf("ranking remediation: %w", err)
 	}
 	defer rows.Close()
 
-	var out []RemediationItem
+	out := []RemediationItem{}
 	for rows.Next() {
 		var it RemediationItem
 		var cvss, epss sql.NullFloat64

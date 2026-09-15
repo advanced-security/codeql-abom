@@ -8,11 +8,11 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
-func readUnits(t *testing.T, srv *Server, query string) unitsView {
+func readUnits(t *testing.T, srv *Server, query string) propertiesView {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/units"+query, nil))
-	var out unitsView
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/properties"+query, nil))
+	var out propertiesView
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decoding %s: %v", rec.Body.String(), err)
 	}
@@ -23,7 +23,7 @@ func withUnits(t *testing.T) (*Server, *store.Store) {
 	t.Helper()
 	srv, st := newServer(t)
 	declare(t, st, "has-ghas")
-	srv.UnitProperty = "business_id"
+	srv.GroupProperty = "business_id"
 	for repo, unit := range map[string]string{
 		"has-ghas/a": "3", "has-ghas/b": "3", "has-ghas/c": "1",
 	} {

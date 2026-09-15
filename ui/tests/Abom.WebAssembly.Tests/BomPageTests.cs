@@ -38,6 +38,75 @@ public class BomPageTests : AbomTestContext
                      "findingsWithoutHash":0,"findingsWithoutDigest":0}}
         """;
 
+    private const string Properties = """
+        {"configured":"business_id","keys":["business_id"],
+         "breakdown":{"name":"business_id","repositories":12,"withValue":12,"withoutValue":0,
+           "values":[{"value":"0","repositories":8,"isDefault":true},
+                     {"value":"3","repositories":4,"isDefault":false}],
+           "hasDefault":true,"defaultValue":"0"}}
+        """;
+
+    // The key the operator configured is shown verbatim rather than translated into what it might
+    // mean: `business_id` yields business units and `team` yields teams, and ABOM knows which it
+    // was told, not which it is. Stated outside the select because MudSelect renders its items only
+    // once opened, so anything said only in an item is invisible until a reader goes looking.
+    [Fact]
+    public void TheConfiguredKeyIsNamedWithoutOpeningAnything()
+    {
+        Answer("api/bom", Document);
+        Answer("api/properties", Properties);
+
+        var cut = Render<Pages.BillOfMaterials>();
+
+        cut.WaitForAssertion(() => Assert.Contains("Grouped by business_id", cut.Markup));
+        Assert.Contains("business_id 0 is the organization default", cut.Markup);
+        Assert.Contains("not a decision", cut.Markup);
+    }
+
+    // The control cannot offer a dividing line it never asked for.
+    [Fact]
+    public void ThePageAsksHowTheOrganizationIsDividedBeforeItRenders()
+    {
+        Answer("api/bom", Document);
+        Answer("api/properties", Properties);
+
+        var cut = Render<Pages.BillOfMaterials>();
+
+        cut.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("api/properties")));
+    }
+
+    // With no key configured the server answers an empty breakdown, and a control offering nothing
+    // to choose is worse than no control: it implies the organization divides into nothing.
+    [Fact]
+    public void NoConfiguredKeyOffersNoGroupControlAtAll()
+    {
+        Answer("api/bom", Document);
+        Answer("api/properties", """
+            {"configured":"","keys":[],"breakdown":{"name":"","repositories":0,"withValue":0,
+             "withoutValue":0,"values":[],"hasDefault":false,"defaultValue":""}}
+            """);
+
+        var cut = Render<Pages.BillOfMaterials>();
+
+        cut.WaitForAssertion(() => Assert.Contains("actions/checkout", cut.Markup));
+        Assert.DoesNotContain("Grouped by", cut.Markup);
+    }
+
+    // A download that ignored the filter on screen would hand somebody a document about the whole
+    // organization under the name of one part of it. The key travels with the value, because a
+    // bare value would be read against whatever the server was configured with.
+    [Fact]
+    public void ADownloadCarriesTheScopeRatherThanTheWholeOrganization()
+    {
+        var bounded = WebAssembly.Services.AbomApi.BomDownloadUrl(
+            "cyclonedx", properties: ["business_id:3"]);
+
+        Assert.Contains("properties=business_id%3A3", bounded);
+        Assert.Contains("format=cyclonedx", bounded);
+        Assert.DoesNotContain(
+            "properties=", WebAssembly.Services.AbomApi.BomDownloadUrl("cyclonedx"));
+    }
+
     // Leaving an unexamined component out would make the document look complete.
     [Fact]
     public void AComponentNothingAnalyzedIsListedAndMarked()

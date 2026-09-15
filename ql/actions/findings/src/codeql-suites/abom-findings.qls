@@ -1,13 +1,13 @@
-- description: Upstream Actions queries whose findings ABOM records and attributes
+- description: Actions queries whose findings ABOM records and attributes
 
-# ABOM reaches no security conclusion of its own, so this suite may only ever *select*
-# upstream queries. Every result keeps the `@id` of the query that produced it, and that rule
-# id is the whole basis of the verdict downstream. Adding a query written here would make ABOM
-# the author of a finding it also reports, which the model has no way to represent.
+# What this suite selects **today** is the upstream set unchanged, so that owning the file changed
+# nothing on the day it landed. That is where it stands, not a rule about what it may contain:
+# ABOM writes its own findings queries, and one belongs here as soon as it earns a place in the
+# default. Adding it is a reviewable diff, which is the point of owning the file.
 #
-# This is deliberately the same 35 queries as the upstream suite it replaces, so that owning
-# the file changes nothing on the day it lands. Filters belong below, one reviewable diff at a
-# time.
+# Every result keeps the `@id` of the query that produced it, and an ABOM-authored one is prefixed
+# `abom/`. That prefix is what lets a consumer tell ours from upstream's and filter on either — it
+# does the work that keeping the two in separate suites would otherwise have to.
 #
 # Pinned exactly rather than by range: without `version:` the CLI resolves the most recent pack,
 # so the set of rules ABOM attributes could change with no commit here.
@@ -15,6 +15,6 @@
   from: codeql/actions-queries
   version: 0.6.35
 
-# The nine `experimental/` queries stay in. Precision is a property of the rule, and ABOM
-# attributes rather than adjudicates: a consumer filtering on rule id can always drop them,
-# whereas a finding never collected cannot be recovered.
+# The nine `experimental/` queries stay in. Precision is a property of the rule, and a consumer
+# filtering on rule id can always drop them — whereas a finding never collected cannot be
+# recovered.

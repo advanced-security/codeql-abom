@@ -421,7 +421,7 @@ else
 }
 else
 {
-    <SearchField Value="_search" ValueChanged="@(v => _search = v)"
+    <SearchField Value="@_search" ValueChanged="@(v => _search = v)"
                  Placeholder="Filter accounts" Class="mb-3" />
 
     <MudDataGrid T="OwnerCandidate" Items="Filtered" Dense="true" Hover="true" Bordered="false"

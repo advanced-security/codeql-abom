@@ -2,7 +2,9 @@
 // them rather than asking anyone to maintain a second copy. They arrive on the walk the listing was
 // already making; REST has no such field and pays an organization-wide walk instead.
 //
-// See plans/db/business-units.md.
+// `repositoryCustomPropertyValues` is a connection rather than a list, and a multi-select property's
+// value is itself a list — reading only the single-select shape drops every multi-select value
+// silently.
 
 package catalog
 

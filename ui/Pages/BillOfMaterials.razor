@@ -2,6 +2,7 @@
 @using Abom.WebAssembly.Models
 @using Abom.WebAssembly.Services
 @inject AbomApi Api
+@inject NavigationManager Nav
 
 <PageTitle>Bill of Materials — ABOM</PageTitle>
 
@@ -99,35 +100,60 @@ else
         </MudText>
     </MudPaper>
 
-    <MudToolBar Dense="true" Class="px-0 abom-bom-controls">
-        <MudTextField @bind-Value="_search" Immediate="true" Clearable="true"
-                      Placeholder="Filter components" Variant="Variant.Outlined"
-                      Margin="Margin.Dense" Adornment="Adornment.Start"
-                      AdornmentIcon="@Icons.Material.Outlined.Search" Class="abom-bom-search" />
+    <MudPaper Elevation="0" Outlined="true" Class="pa-2 mb-3 abom-filters">
+      <div class="d-flex flex-wrap align-center gap-3">
+        <SearchField Value="@_search" ValueChanged="OnSearchChanged"
+                     Placeholder="Filter components" />
         <MudSelect T="string" @bind-Value="_boundary" Label="Boundary" Dense="true"
-                   Margin="Margin.Dense" Variant="Variant.Outlined" Class="ml-3 abom-bom-select">
+                   Margin="Margin.Dense" Variant="Variant.Outlined" Class="abom-filter">
             <MudSelectItem Value="@("")">Any</MudSelectItem>
             <MudSelectItem Value="@("cross-owner")">Another account</MudSelectItem>
             <MudSelectItem Value="@("same-owner")">Same account</MudSelectItem>
             <MudSelectItem Value="@("same-repository")">Same repository</MudSelectItem>
         </MudSelect>
-        <MudSwitch T="bool" @bind-Value="_unanalyzedOnly" Color="Color.Primary" Class="ml-3"
+        @if (_properties is not null && _properties.Breakdown.Values.Count > 0)
+        {
+            <MudSelect T="string" Value="@_value" ValueChanged="OnGroupChanged" Dense="true"
+                       Label="@($"Grouped by {_properties.Breakdown.Name}")"
+                       Margin="Margin.Dense" Variant="Variant.Outlined"
+                       Class="abom-filter-wide">
+                <MudSelectItem Value="@("")">
+                    Every value (@_properties.Breakdown.Repositories)
+                </MudSelectItem>
+                @foreach (var value in _properties.Breakdown.Values)
+                {
+                    <MudSelectItem Value="@value.Value">@GroupLabel(value)</MudSelectItem>
+                }
+            </MudSelect>
+        }
+        <MudSwitch T="bool" @bind-Value="_unanalyzedOnly" Color="Color.Primary"
                    Label="Not analyzed only" />
         <MudSpacer />
         @* Buttons rather than a menu: an export hidden behind a click is not discoverable, and
            MudMenu renders its items only once opened, so nothing can check they are offered. *@
         <MudButtonGroup Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small">
-            <MudButton Href="@AbomApi.BomDownloadUrl("native")"
+            <MudButton Href="@AbomApi.BomDownloadUrl("native", properties: SelectedProperties)"
                        StartIcon="@Icons.Material.Outlined.Download">ABOM JSON</MudButton>
-            <MudButton Href="@AbomApi.BomDownloadUrl("cyclonedx")">CycloneDX 1.6</MudButton>
-            <MudButton Href="@AbomApi.BomDownloadUrl("spdx")">SPDX 2.3</MudButton>
+            <MudButton Href="@AbomApi.BomDownloadUrl("cyclonedx", properties: SelectedProperties)">CycloneDX 1.6</MudButton>
+            <MudButton Href="@AbomApi.BomDownloadUrl("spdx", properties: SelectedProperties)">SPDX 2.3</MudButton>
         </MudButtonGroup>
-    </MudToolBar>
+      </div>
+    </MudPaper>
 
     <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2">
         ABOM JSON is the only one of the three that can carry run keys, pack digests and result
         hashes; the other two have nowhere to put them.
     </MudText>
+
+    @* Outside the dropdown on purpose: a reader has to open a select to see its items, and which
+       value nobody chose is the thing most likely to be misread if it stays hidden. *@
+    @if (_properties is not null && _properties.Breakdown.HasDefault)
+    {
+        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2">
+            @_properties.Breakdown.Name @_properties.Breakdown.DefaultValue is the organization default, so
+            repositories sit in it unless somebody moved them. It is a placement, not a decision.
+        </MudText>
+    }
 
     <MudText Typo="Typo.body2" Class="mud-text-secondary my-2">
         Showing @Shown.Count.ToString("N0") of @_bom.Components.Count.ToString("N0") components
@@ -250,6 +276,35 @@ else
     private string _search = string.Empty;
     private string _boundary = string.Empty;
     private bool _unanalyzedOnly;
+    private PropertiesView? _properties;
+    private string _value = string.Empty;
+
+    // The address is the filter, so a narrowed document can be shared, bookmarked and returned to.
+    [SupplyParameterFromQuery(Name = "q")] public string? SearchParam { get; set; }
+
+    private void OnSearchChanged(string value)
+    {
+        _search = value ?? string.Empty;
+        Nav.NavigateTo(_search.Length == 0
+            ? "/bom"
+            : $"/bom?q={Uri.EscapeDataString(_search)}", forceLoad: false);
+    }
+
+    // The downloads carry the filter the page is showing. A document about the whole organization
+    // arriving under the name of one part of it is the failure this exists to prevent. The key is
+    // sent with the value, because a bare value would be read against whatever the server was
+    // configured with rather than against the property this control is showing.
+    private string[]? SelectedProperties =>
+        _value.Length == 0 ? null : [$"{_properties?.Breakdown.Name}:{_value}"];
+
+    // A value the organization supplies rather than anybody choosing is named as one, because the
+    // largest group is usually the default and it otherwise reads as a decision.
+    private static string GroupLabel(PropertyCount value)
+    {
+        var repositories = value.Repositories == 1 ? "repository" : "repositories";
+        var suffix = value.IsDefault ? ", the organization default" : string.Empty;
+        return $"{value.Value} — {value.Repositories} {repositories}{suffix}";
+    }
 
     private int Unanalyzed =>
         _bom is null ? 0 : _bom.Coverage.ComponentsInUse - _bom.Coverage.ComponentsAnalyzed;
@@ -284,6 +339,12 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        _search = SearchParam ?? string.Empty;
+
+        // Asked for before the document, so the control is populated by the time the page renders
+        // and does not appear after the reader has already started reading.
+        _properties = await Api.GetPropertiesAsync();
+
         // AbomApi swallows transport failures and answers null, so a missing document arrives
         // here as an absent value rather than an exception.
         _bom = await Api.GetBomAsync();
@@ -295,5 +356,24 @@ else
             _error = "No accounts are declared yet, so there is no scope to describe.";
             _detail = Api.LastError;
         }
+    }
+
+    private async Task OnGroupChanged(string value)
+    {
+        _value = value;
+        _error = null;
+        _detail = null;
+        _bom = await Api.GetBomAsync(properties: SelectedProperties);
+        if (_bom is not null)
+        {
+            return;
+        }
+        // A group holding no repository is a different state from nothing being declared, and the
+        // server distinguishes them. Saying "declare a scope" to somebody who has one sends them
+        // to fix the wrong thing.
+        _error = value.Length == 0
+            ? "No accounts are declared yet, so there is no scope to describe."
+            : $"None of your repositories carries {_properties?.Breakdown.Name} {value}.";
+        _detail = Api.LastError;
     }
 }

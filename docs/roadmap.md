@@ -31,7 +31,7 @@ fallback for the organizations that will not permit it. `plans/api/org-enumerati
 An organization has no single person who can act on a finding in it. Repository custom properties
 already carry the dividing line the organization uses, and the distinct values ABOM discovers become
 a scoping dimension across discovery, filters, the Explorer, the bill of materials and policy. It is
-what makes the remediation phase addressable to somebody. `plans/db/business-units.md`
+what makes the remediation phase addressable to somebody.
 
 ## Enablement, so a coverage gap names its cause
 
@@ -56,6 +56,13 @@ Two routes out, in order:
 2. **Findings that reach GitHub's own alert surface**, so they arrive where developers already
    look and can join a security campaign. Gated on a standing rule rather than on the upload: no
    alert may exist that a person did not choose. `plans/api/code-scanning-upload.md`
+
+**What a rule can be about is the half that is not built.** A policy is written in the same filter
+terms a reader narrows the corpus with, and that language can name a rule id, a provider and a
+severity. It cannot yet say *carries a live advisory* or *is reached from something you own*, which
+is most of what an Actions supply-chain rule is for — and it silently drops the terms it cannot
+enforce, so a rule can bite wider than the view it was written from.
+`plans/api/policy-language.md`
 
 Both need a server a pull request can reach, which this project does not yet have.
 

@@ -1,4 +1,4 @@
-import { test, expect, ready, ROUTES } from '../harness.mjs';
+import { test, expect, ready, ROUTES, corpusSize } from '../harness.mjs';
 
 // Geometry is the layer nothing else owns. bUnit has no CSS engine, so a grid that overflows by
 // 288px and a label that wraps onto its own row are both green everywhere until somebody looks.
@@ -36,17 +36,26 @@ test.describe('geometry', () => {
         }
     }
 
-    test('the coverage strip fills whole rows rather than orphaning a cell', async ({ page }) => {
-        // Known to fail, and recorded rather than silenced: with nothing declared the strip
-        // renders four items into a three-column grid, so the fourth sits alone on a second row
-        // at every page. `plans/ui/theme.md` owns it as "four- and five-item strip wrapping".
-        //
-        // test.fail rather than skip, because a skip reports as a pass and this will start
-        // passing when somebody fixes it — at which point this line is what says so.
-        test.fail();
-
+    test('the coverage strip fills whole rows rather than orphaning a cell', async ({
+        page,
+        request,
+        baseURL,
+    }) => {
         // The strip's column counts are 2, 3 and 6 because they divide six. A count that does
         // not divide them orphans a cell, on every page, and no markup assertion can see it.
+        //
+        // The defect is empty-state only, and measured: with nothing declared the strip renders
+        // four items into three columns and the fourth sits alone; with a corpus behind it there
+        // are six across three, which divides. `plans/ui/theme.md` owns it as "four- and five-item
+        // strip wrapping".
+        //
+        // So the expectation branches on what the server is holding, the same way the rest of the
+        // suite does. An unconditional `test.fail()` was wrong in the direction that matters: it
+        // made a populated run report this as a failure, so the suite could never be green against
+        // real data — which is the run that has to gate.
+        const summary = await corpusSize(request, baseURL);
+        if (!summary.seedRepos) test.fail();
+
         await page.goto('/');
         await ready(page);
 
@@ -77,5 +86,45 @@ test.describe('geometry', () => {
                 .map((el) => `${el.className}: "${el.textContent.trim().slice(0, 40)}"`),
         );
         expect(clipped, 'elements whose text is clipped').toEqual([]);
+    });
+
+    test('the graph keeps the room the window has for it, scrolled or not', async ({
+        page,
+        request,
+        baseURL,
+    }) => {
+        // The graph is the page. `integration.spec.mjs` already checks the canvas matches its
+        // container, and that passed throughout a defect where the container itself collapsed to
+        // its 360px floor — sized against the document instead of the window, so the further down
+        // the reader had scrolled the smaller the graph got. Matching a container proves nothing
+        // about whether the container got the room.
+        const summary = await corpusSize(request, baseURL);
+        test.skip(!summary.nodes, 'no graph to size without a corpus');
+
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto('/explore');
+        await ready(page);
+        await expect(page.locator('.abom-graph-host')).toBeVisible();
+
+        // Scroll, then resize: resize is what re-fits the host, and doing it while scrolled is
+        // the state the old arithmetic got wrong.
+        const fitted = await page.evaluate(async () => {
+            document.documentElement.scrollTop = 300;
+            window.dispatchEvent(new Event('resize'));
+            await new Promise((r) => setTimeout(r, 500));
+            const box = document.querySelector('.abom-graph-host').getBoundingClientRect();
+            return {
+                height: Math.round(box.height),
+                top: Math.round(box.top),
+                innerHeight: window.innerHeight,
+            };
+        });
+
+        // The gutter the module leaves for the caption under the canvas.
+        const expected = fitted.innerHeight - Math.max(fitted.top, 0) - 64;
+        expect(
+            Math.abs(fitted.height - expected),
+            `graph is ${fitted.height}px in a window with ${expected}px below its top edge`,
+        ).toBeLessThanOrEqual(2);
     });
 });

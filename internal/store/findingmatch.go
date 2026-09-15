@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	viewspec "github.com/advanced-security/codeql-abom/internal/view"
 )
 
 // FindingSelector names a set of findings, and through them the nodes carrying them.
@@ -28,6 +30,15 @@ type FindingSelector struct {
 	// accounts in the reference corpus spell themselves both ways, and a case-sensitive compare
 	// once misclassified 211 edges.
 	Repositories []string
+	// Properties narrows by what the organization says a repository is. Several keys are an AND and
+	// several values of one key are an OR, which is a plain join because the store holds one row
+	// per value. Matched against the repository the finding was *found* in, the same column the
+	// repository filter uses: a node inside an external composite action belongs to no repository
+	// and so to no grouping, and must not be swept in by one.
+	Properties []viewspec.PropertyMatch
+	// ExcludeProperties drops a repository matching any of them, and beats Properties, so a scope
+	// cannot be both asked for and refused and quietly resolve to asked for.
+	ExcludeProperties []viewspec.PropertyMatch
 }
 
 // MatchedNode is one node the selector chose, carrying enough to explain why it was chosen.
@@ -56,7 +67,32 @@ type FindingMatch struct {
 
 // asked reports whether the selector names anything at all.
 func (f FindingSelector) asked() bool {
-	return len(f.Rules) > 0 || len(f.Exclude) > 0 || f.Provider != "" || f.Severity != ""
+	return len(f.Rules) > 0 || len(f.Exclude) > 0 || f.Provider != "" || f.Severity != "" ||
+		len(f.Properties) > 0 || len(f.ExcludeProperties) > 0
+}
+
+// propertyClause tests one key against every value asked for it, against the repository named by
+// `column`. Values of one key are an OR; the caller ANDs the clauses of different keys.
+func propertyClause(column string, name string, values []string) (string, []any) {
+	list, args := inList(values)
+	return `EXISTS (SELECT 1 FROM abom_repository_property p
+	                 WHERE p.repository_full_name = ` + column + `
+	                   AND p.property_name = ?
+	                   AND p.value IN ` + list + `)`, append([]any{name}, args...)
+}
+
+// valuesByKey groups matches by key, in a stable order so two runs produce one query.
+func valuesByKey(matches []viewspec.PropertyMatch) ([]string, map[string][]string) {
+	by := map[string][]string{}
+	names := []string{}
+	for _, m := range matches {
+		if _, seen := by[m.Name]; !seen {
+			names = append(names, m.Name)
+		}
+		by[m.Name] = append(by[m.Name], m.Value)
+	}
+	sort.Strings(names)
+	return names, by
 }
 
 // ruleClause turns include patterns into SQL. A trailing `*` is a prefix; anything else is exact.
@@ -110,6 +146,23 @@ func (s *Store) NodesMatching(sel FindingSelector) (FindingMatch, error) {
 		list, names := inList(lowered)
 		where = append(where, "LOWER(fr.repository_full_name) IN "+list)
 		args = append(args, names...)
+	}
+
+	if len(sel.Properties) > 0 {
+		names, by := valuesByKey(sel.Properties)
+		for _, name := range names {
+			clause, a := propertyClause("fr.repository_full_name", name, by[name])
+			where = append(where, clause)
+			args = append(args, a...)
+		}
+	}
+	if len(sel.ExcludeProperties) > 0 {
+		names, by := valuesByKey(sel.ExcludeProperties)
+		for _, name := range names {
+			clause, a := propertyClause("fr.repository_full_name", name, by[name])
+			where = append(where, "NOT "+clause)
+			args = append(args, a...)
+		}
 	}
 
 	exclusion := ""

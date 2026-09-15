@@ -2,6 +2,9 @@ package store
 
 import (
 	"fmt"
+	"strings"
+
+	viewspec "github.com/advanced-security/codeql-abom/internal/view"
 )
 
 // repositoryPropertyDDL holds what GitHub says a repository is, as the organization administers it.
@@ -14,7 +17,7 @@ import (
 // An absent row means the organization sets nothing, and that is its own state rather than a
 // default bucket. Whether anything has ever been read at all is answered by
 // `abom_enumeration_state`, because the values arrive on the same walk as the listing.
-// See plans/db/business-units.md.
+// See docs/vocabulary.md.
 const repositoryPropertyDDL = `
 CREATE TABLE IF NOT EXISTS abom_repository_property (
   repository_full_name TEXT NOT NULL COLLATE NOCASE,
@@ -55,6 +58,10 @@ type PropertyBreakdown struct {
 type PropertyCount struct {
 	Value        string `json:"value"`
 	Repositories int    `json:"repositories"`
+	// Analyzed is how many of them have been examined, read the same way TierCounts reads it: a
+	// depth-zero frontier row that is done. A repository nothing has queued counts toward the
+	// unit and not toward this, because it has not been examined and found clean.
+	Analyzed int `json:"analyzed"`
 	// IsDefault marks the bucket a repository lands in by not choosing. Counting it like any
 	// other unit tells a reader that eight teams picked it when none of them did.
 	IsDefault bool `json:"isDefault"`
@@ -135,10 +142,15 @@ SELECT COUNT(DISTINCT r.repository_full_name)
 	}
 	out.WithoutValue = out.Repositories - out.WithValue
 
+	// Analyzed is counted from the frontier rather than from a column of its own, so a unit and a
+	// tier cannot come to different conclusions about the same repository.
 	rows, err := s.db.Query(`
-SELECT p.value, COUNT(DISTINCT r.repository_full_name) AS n
+SELECT p.value, COUNT(DISTINCT r.repository_full_name) AS n,
+       COUNT(DISTINCT CASE WHEN f.status = 'done' THEN r.repository_full_name END) AS analyzed
   FROM repository r
   JOIN abom_repository_property p ON p.repository_full_name = r.repository_full_name
+  LEFT JOIN abom_frontier f
+         ON f.depth = 0 AND f.owner || '/' || f.repo = r.repository_full_name
  WHERE p.property_name = ?
    AND `+ownedFullName("r.repository_full_name")+`
  GROUP BY p.value
@@ -150,7 +162,7 @@ SELECT p.value, COUNT(DISTINCT r.repository_full_name) AS n
 
 	for rows.Next() {
 		var c PropertyCount
-		if err := rows.Scan(&c.Value, &c.Repositories); err != nil {
+		if err := rows.Scan(&c.Value, &c.Repositories, &c.Analyzed); err != nil {
 			return out, err
 		}
 		out.Values = append(out.Values, c)
@@ -167,6 +179,43 @@ SELECT p.value, COUNT(DISTINCT r.repository_full_name) AS n
 		for i := range out.Values {
 			out.Values[i].IsDefault = out.Values[i].Value == out.DefaultValue
 		}
+	}
+	return out, nil
+}
+
+// SourceRepositoriesFor names the owned repositories a property filter selects as its sources.
+//
+// Only what the operator owns can be named. A grouping is read from the organization's custom
+// properties, which are collected for owned repositories and nowhere else, so a dependency is
+// never a source — it enters an answer by being reached from one.
+//
+// Exclusion is taken here, over the sources, and not over every node the walk later reaches: a
+// repository one group owns and another group depends on is still that second group's dependency,
+// and removing it would answer "what does this group depend on" by deleting part of the answer.
+func (s *Store) SourceRepositoriesFor(include, exclude []viewspec.PropertyMatch) ([]string, error) {
+	owned, err := s.OwnedRepositories()
+	if err != nil {
+		return nil, err
+	}
+	members, err := s.repositoriesMatching(include)
+	if err != nil {
+		return nil, err
+	}
+	dropped, err := s.repositoriesMatching(exclude)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]string, 0, len(owned))
+	for _, name := range owned {
+		low := strings.ToLower(name)
+		if len(include) > 0 && !members[low] {
+			continue
+		}
+		if dropped[low] {
+			continue
+		}
+		out = append(out, name)
 	}
 	return out, nil
 }

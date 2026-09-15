@@ -40,16 +40,12 @@ not invent the branch. Telling the two apart over REST costs a request per repos
 fan-out this design exists to avoid, so the difference is stated rather than papered over — and
 `abom_enumeration_state.route` is what makes it attributable.
 
-**GraphQL's own `remaining` is not an instrument.** Three consecutive probes each reported `cost=1`
-while `remaining` did not move. Spend is measured from `rateLimit { cost }`, never from a delta
-between two readings of what is left.
-
 ## GraphQL is the preference; REST is the fallback that must keep working
 
 One call returning a hundred repositories with `name`, `pushedAt`, `createdAt`, `isArchived` and the
 default branch costs **1 point**, ordering is a first-class argument, and the budget is **separate
-from REST's**. Adding `repositoryCustomPropertyValues` keeps it at 1, which is where
-[`../db/business-units.md`](../db/business-units.md) takes its scoping dimension from.
+from REST's**. Adding `repositoryCustomPropertyValues` keeps it at 1, which is where the repository
+grouping in [`../../docs/vocabulary.md`](../../docs/vocabulary.md) comes from.
 
 REST's `/orgs/{org}/properties/values` returns every repository's values a hundred at a time, so
 properties do *not* cost a request each and both routes are roughly two hundred calls. What survives

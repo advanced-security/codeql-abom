@@ -290,11 +290,12 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     color: var(--mud-palette-success);
 }
 
-/* The filter row above the bill of materials. Fixed widths on the two controls, because flexbox
-   wraps on content width and a grown search field pushes the export menu onto a second line. */
-.abom-bom-search { max-width: 320px; flex: 0 0 320px; }
-.abom-bom-select { max-width: 200px; flex: 0 0 200px; }
-.abom-bom-controls { flex-wrap: nowrap; }
+/* The filter row above the bill of materials. Fixed widths on the controls, because flexbox wraps
+   on content width and a grown search field pushes the export menu onto a second line. Wrapping is
+   allowed even so: with a third filter the row no longer fits the content column at 1440, and a
+   second line reads where a row running past the edge does not. */
+/* One filter row, shared: `.abom-filters` holds it and the widths come from the variables above,
+   so a control added to one page is positioned once rather than again per page. */
 
 /* Several references to one component are several lines, and each must stay copyable whole. */
 .abom-bom-ref { white-space: nowrap; }

@@ -82,6 +82,7 @@
                    ShrinkLabel="true" Class="abom-filter">
             <MudSelectItem T="string" Value="@("owner")">Owner</MudSelectItem>
             <MudSelectItem T="string" Value="@("repo")">Repository</MudSelectItem>
+            <MudSelectItem T="string" Value="@("grouping")">Repository grouping</MudSelectItem>
             <MudSelectItem T="string" Value="@("workflow")">Workflow path</MudSelectItem>
             <MudSelectItem T="string" Value="@("none")">Nothing</MudSelectItem>
         </MudSelect>
@@ -726,6 +727,7 @@
     private string GroupByLabel => _groupBy switch
     {
         "repo" => "repository",
+        "grouping" => "repository grouping",
         "workflow" => "workflow path",
         _ => "owner",
     };

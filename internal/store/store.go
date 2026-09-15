@@ -166,6 +166,17 @@ func (s *Store) Migrate() error {
 	if _, err := s.db.Exec(observationIndexDDL); err != nil {
 		return fmt.Errorf("indexing observations by name: %w", err)
 	}
+	// And the rest of them, for the same reason, once there is no bulk load to slow down.
+	// `CreateIndexes` is called by the seed build alone, so every other database — one being
+	// served, expanded or read by the CLI — carried whatever indexes existed when it was first
+	// built and none added since. Measured 2026-09-15: 20 of 22 were missing from the reference
+	// corpus, and the absent `idx_edge_dst` alone made the Inventory scan all 14,196 edges once
+	// per row. Rebuilding an index that exists costs a catalog lookup.
+	if !s.bulkMode {
+		if err := s.CreateIndexes(); err != nil {
+			return err
+		}
+	}
 	// After the columns, which the views select on.
 	if _, err := s.db.Exec(liveViewDDL); err != nil {
 		return fmt.Errorf("creating the live views: %w", err)

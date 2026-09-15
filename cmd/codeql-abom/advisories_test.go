@@ -156,7 +156,7 @@ func TestAFetchedAdvisoryReachesTheStore(t *testing.T) {
 		t.Errorf("asked about %v, want the packages the graph names", named)
 	}
 
-	held, err := s.AdvisoriesByReach(10)
+	held, err := s.AdvisoriesByReach(10, store.RepositoryScope{})
 	if err != nil {
 		t.Fatalf("AdvisoriesByReach: %v", err)
 	}

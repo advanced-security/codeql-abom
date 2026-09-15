@@ -146,6 +146,26 @@ operator drafts it, **simulates it against stored state** to see what it would h
 adopts it only if that answer is acceptable. The graph is already there; the simulation costs no
 crawl and no ingress.
 
+A rule is written in the same terms a reader narrows the corpus with, because *what should block a
+pull request* and *what am I looking at* are one question asked twice. **A saved view and a gate
+policy are the same object with different consequences**, which is what keeps a refusal explainable
+in terms somebody has already seen on a screen.
+
+What those terms must be able to say is decided by what this project is for, and it is three things
+rather than everything:
+
+- **An advisory**, reported with its range and the observed references beside it — never adjudicated.
+- **A finding**, by the rule id that produced it, which is the only source of a security verdict.
+- **Reachability from something owned**, direct where a repository can fix it itself and transitive
+  where it waits on an intermediary somebody else owns.
+
+The third is the reason any of this exists. GitHub's dependency graph stops at the first hop, so a
+rule about the second hop is a rule only ABOM can evaluate — and severity against reach is already
+the arithmetic remediation is ordered by, so a policy written in those two axes is not a new model,
+it is the existing one given teeth. **A rule is never about a specific reference, and never about
+something the operator does not own.** Pinning is `actions/unpinned-tag`'s call, and a repository
+outside the declared scope is somebody else's to fix.
+
 Enforcement has to start somewhere narrower than everything, which is what business-unit scope is
 for, and it has to survive contact with the exceptions every real organization carries.
 

@@ -6,8 +6,8 @@ package store
 // It exists for one reason: a required property with a default has no unset state. Every repository
 // carries a value whether anybody chose one or not, so the largest bucket can be the one nobody
 // picked — measured on has-ghas, where `business_id` is required with `default_value: "0"` and 8 of
-// 25 repositories sit in it. Without the schema there is no way to tell that apart from a unit
-// eight teams deliberately joined. See plans/db/business-units.md.
+// 25 repositories sit in it. Without the schema there is no way to tell that apart from a group
+// eight teams deliberately joined. See docs/vocabulary.md.
 const propertySchemaDDL = `
 CREATE TABLE IF NOT EXISTS abom_property_schema (
   owner         TEXT NOT NULL COLLATE NOCASE,

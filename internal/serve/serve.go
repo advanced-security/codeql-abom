@@ -49,9 +49,10 @@ type Server struct {
 	// FullListingEvery is how often every page of an account is read rather than a prefix of it.
 	// Zero takes enumerate.DefaultFullListingEvery.
 	FullListingEvery time.Duration
-	// UnitProperty names the custom property that carries the dividing line between business
-	// units. Empty means the operator named none, and nothing is guessed in its place.
-	UnitProperty string
+	// GroupProperty names the custom property a screen opens on when grouping repositories. Empty
+	// means the operator named none, and nothing is guessed in its place. It is configuration and
+	// never a term of a predicate: what a filter means travels in the filter.
+	GroupProperty string
 	// QueueOwned puts the operator's own repositories in the analysis queue. Nil leaves them
 	// recorded and never analyzed, which is the state enumeration exists to end.
 	QueueOwned func() (int, error)
@@ -89,10 +90,11 @@ func (s *Server) Handler() http.Handler {
 	}
 
 	mux.HandleFunc("GET /api/summary", s.summary)
-	mux.HandleFunc("GET /api/remediation", s.remediation)
-	mux.HandleFunc("GET /api/advisories", s.advisories)
-	mux.HandleFunc("GET /api/exposure", s.exposure)
-	mux.HandleFunc("GET /api/graph", s.graph)
+	mux.HandleFunc("GET /api/remediation", reading(s.remediation, "top", "properties", "notProperties"))
+	mux.HandleFunc("GET /api/advisories", reading(s.advisories, "top", "properties", "notProperties"))
+	mux.HandleFunc("GET /api/exposure", reading(s.exposure, "by", "top", "properties", "notProperties"))
+	mux.HandleFunc("GET /api/graph", reading(s.graph,
+		"focus", "hops", "max", "direction", "granularity", "expand"))
 	mux.HandleFunc("GET /api/graph/full", s.fullGraph)
 	mux.HandleFunc("GET /api/graph/version", s.graphVersion)
 	mux.HandleFunc("GET /api/graph/delta", s.graphDelta)
@@ -106,13 +108,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/discovery/suites", s.tierSuites)
 	mux.HandleFunc("GET /api/discovery/objective", s.objective)
 	mux.HandleFunc("PUT /api/discovery/suites/{tier}", s.setTierSuites)
-	mux.HandleFunc("GET /api/nodes", s.nodes)
+	mux.HandleFunc("GET /api/nodes", reading(s.nodes, "q", "top", "properties", "notProperties"))
 	mux.HandleFunc("GET /api/node/{key...}", s.node)
-	mux.HandleFunc("GET /api/pinning", s.pinning)
-	mux.HandleFunc("GET /api/pinning/totals", s.pinningTotals)
+	mux.HandleFunc("GET /api/pinning", reading(s.pinning,
+		"scope", "parent", "q", "style", "flagged", "top", "properties", "notProperties"))
+	mux.HandleFunc("GET /api/pinning/totals", reading(s.pinningTotals,
+		"q", "style", "flagged", "properties", "notProperties"))
 	mux.HandleFunc("GET /api/accounts", s.accounts)
 	mux.HandleFunc("GET /api/owned-scope", s.ownedScope)
-	mux.HandleFunc("GET /api/units", s.units)
+	mux.HandleFunc("GET /api/properties", reading(s.properties, "property"))
 	mux.HandleFunc("GET /api/policies", s.policies)
 	mux.HandleFunc("PUT /api/policies", s.savePolicy)
 	mux.HandleFunc("POST /api/policies/{name}/simulate", s.simulatePolicy)
@@ -131,9 +135,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/prune/compact", s.pruneCompact)
 	mux.HandleFunc("POST /api/accounts/refresh", s.refreshAccounts)
 	mux.HandleFunc("GET /api/owner-candidates", s.ownerCandidates)
-	mux.HandleFunc("GET /api/frontier", s.frontier)
-	mux.HandleFunc("GET /api/actions", s.actions)
-	mux.HandleFunc("GET /api/repositories", s.repositories)
+	mux.HandleFunc("GET /api/frontier", reading(s.frontier, "status", "top"))
+	mux.HandleFunc("GET /api/actions", reading(s.actions, "q", "top", "properties", "notProperties"))
+	mux.HandleFunc("GET /api/repositories",
+		reading(s.repositories, "q", "top", "properties", "notProperties"))
 	mux.HandleFunc("GET /api/repositories/{owner}/{name}", s.repository)
 	mux.HandleFunc("POST /api/repositories/{owner}/{name}/snapshot/preview", s.snapshotPreview)
 	mux.HandleFunc("POST /api/repositories/{owner}/{name}/snapshot/submit", s.snapshotSubmit)
@@ -280,22 +285,37 @@ func (s *Server) summary(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) remediation(w http.ResponseWriter, r *http.Request) {
-	items, err := s.Store.RemediationPriority(intParam(r, "top", 50))
+	scope, err := repositoryScope(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	items, err := s.Store.RemediationPriority(intParam(r, "top", 50), scope)
 	writeJSON(w, items, err)
 }
 
 func (s *Server) advisories(w http.ResponseWriter, r *http.Request) {
-	items, err := s.Store.AdvisoriesByReach(intParam(r, "top", 50))
+	scope, err := repositoryScope(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	items, err := s.Store.AdvisoriesByReach(intParam(r, "top", 50), scope)
 	writeJSON(w, items, err)
 }
 
 func (s *Server) exposure(w http.ResponseWriter, r *http.Request) {
+	scope, err := repositoryScope(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	switch r.URL.Query().Get("by") {
 	case "repository", "repo":
-		items, err := s.Store.ExposuresByRepository(intParam(r, "top", 200))
+		items, err := s.Store.ExposuresByRepository(intParam(r, "top", 200), scope)
 		writeJSON(w, items, err)
 	default:
-		items, err := s.Store.ExposureByAdvisory()
+		items, err := s.Store.ExposureByAdvisory(scope)
 		writeJSON(w, items, err)
 	}
 }
@@ -330,13 +350,24 @@ func (s *Server) fullGraph(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if refused := spec.UnenforceableAsGraph(); len(refused) > 0 {
+		writeError(w, http.StatusBadRequest, undrawable(refused))
+		return
+	}
 	opts, err := s.graphOptions(spec)
 	if err != nil {
 		writeJSON(w, store.Graph{}, err)
 		return
 	}
 	g, err := s.Store.FullGraph(opts)
+	g.ClientApplied = spec.ClientApplied()
 	writeJSON(w, g, err)
+}
+
+// undrawable is the wording for a term the graph neither applies nor hands to whoever draws it.
+func undrawable(terms []string) string {
+	return "view: " + strings.Join(terms, ", ") +
+		" is applied by nothing here; a term is enforced or refused, never dropped"
 }
 
 // graphPredicate reads the shared predicate from a request, ignoring the named parameters that are
@@ -369,6 +400,10 @@ func (s *Server) graphPredicate(r *http.Request, cursors ...string) (viewspec.Sp
 // Measured 2026-09-10, they sever 74% to 99% of their own match's edges, because the graph is
 // bipartite by kind — applying them here would ship a scatter instead of a graph. They belong to
 // the set-answering endpoint the gate needs, where structure is irrelevant.
+//
+// `properties` is the exception, and the reason it is not one of them: it names repositories
+// rather than findings, so it narrows to a set of sources and then keeps everything they reach.
+// That is a subgraph rather than a scatter, and it is the same mechanism `scope=owned` uses.
 func (s *Server) graphOptions(spec viewspec.Spec) (store.FullGraphOptions, error) {
 	opts := store.FullGraphOptions{
 		IncludeSteps:   spec.Steps,
@@ -378,6 +413,9 @@ func (s *Server) graphOptions(spec viewspec.Spec) (store.FullGraphOptions, error
 		MinReach:       spec.MinReach,
 		RefStyle:       spec.RefStyle,
 		UnanalyzedOnly: slices.Contains(spec.Flags, viewspec.FlagUnanalyzed),
+		// Configuration rather than a term of the question: it labels nodes so the browser can
+		// group by them, and labeling is not narrowing.
+		GroupProperty: s.GroupProperty,
 	}
 	// The same KeepList pruning acts on, so what the operator is shown and what removal would
 	// keep are one answer rather than two that can drift apart.
@@ -387,6 +425,17 @@ func (s *Server) graphOptions(spec viewspec.Spec) (store.FullGraphOptions, error
 			return store.FullGraphOptions{}, err
 		}
 		opts.Closure = keep
+	}
+	if len(spec.Properties) > 0 || len(spec.NotProperties) > 0 {
+		// Recorded separately from the list, so a filter matching no repository draws nothing
+		// rather than everything.
+		opts.GroupFiltered = true
+		keep, err := (&graph.Builder{Store: s.Store}).
+			GroupingKeepList(spec.Properties, spec.NotProperties)
+		if err != nil {
+			return store.FullGraphOptions{}, err
+		}
+		opts.GroupClosure = keep
 	}
 	return opts, nil
 }
@@ -403,6 +452,10 @@ func (s *Server) graphDelta(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if refused := spec.UnenforceableAsGraph(); len(refused) > 0 {
+		writeError(w, http.StatusBadRequest, undrawable(refused))
+		return
+	}
 	opts, err := s.graphOptions(spec)
 	if err != nil {
 		writeJSON(w, store.GraphDelta{}, err)
@@ -416,7 +469,12 @@ func (s *Server) graphDelta(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) nodes(w http.ResponseWriter, r *http.Request) {
-	items, err := s.Store.SearchNodes(r.URL.Query().Get("q"), intParam(r, "top", 50))
+	scope, err := repositoryScope(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	items, err := s.Store.SearchNodes(r.URL.Query().Get("q"), intParam(r, "top", 50), scope)
 	writeJSON(w, items, err)
 }
 
@@ -462,13 +520,23 @@ func (s *Server) node(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) pinning(w http.ResponseWriter, r *http.Request) {
+	f, err := pinningFilter(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	rows, err := s.Store.PinningLevel(r.URL.Query().Get("scope"), r.URL.Query().Get("parent"),
-		pinningFilter(r), intParam(r, "top", 1000))
+		f, intParam(r, "top", 1000))
 	writeJSON(w, rows, err)
 }
 
 func (s *Server) pinningTotals(w http.ResponseWriter, r *http.Request) {
-	total, err := s.Store.PinningTotals(pinningFilter(r))
+	f, err := pinningFilter(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	total, err := s.Store.PinningTotals(f)
 	writeJSON(w, total, err)
 }
 
@@ -728,12 +796,56 @@ func (s *Server) ownerCandidates(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, candidates, err)
 }
 
-func pinningFilter(r *http.Request) store.PinningFilter {
+func pinningFilter(r *http.Request) (store.PinningFilter, error) {
 	q := r.URL.Query()
+	scope, err := repositoryScope(r)
+	if err != nil {
+		return store.PinningFilter{}, err
+	}
 	return store.PinningFilter{
 		Search:      q.Get("q"),
 		RefStyle:    q.Get("style"),
 		FlaggedOnly: q.Get("flagged") == "true",
+		Scope:       scope,
+	}, nil
+}
+
+// wholeNumber names the parameters that must parse as a whole number wherever they appear.
+//
+// Listed once rather than per route because the same word means the same thing on every endpoint
+// that takes it, and a reader who writes `top=lots` and is handed the default has been answered
+// with a question they did not ask.
+var wholeNumber = map[string]bool{"top": true, "hops": true, "max": true}
+
+// reading declares the query parameters an endpoint applies, and refuses every other one by name.
+//
+// The graph endpoints refuse an unknown term already, because they parse the shared predicate.
+// These read their own parameters and so had nothing to refuse with: measured on a crawled
+// organization, `/api/repositories?severity=error` returned all 7 matches and
+// `/api/actions?properties=business_id:3` all 200 — the whole answer, wearing the name of a
+// narrowed one.
+func reading(h http.HandlerFunc, params ...string) http.HandlerFunc {
+	applies := make(map[string]bool, len(params))
+	for _, p := range params {
+		applies[p] = true
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		for name, values := range r.URL.Query() {
+			if !applies[name] {
+				writeError(w, http.StatusBadRequest,
+					fmt.Sprintf("view: this answer applies no %q", name))
+				return
+			}
+			if !wholeNumber[name] {
+				continue
+			}
+			if n, err := strconv.Atoi(values[0]); err != nil || n < 0 {
+				writeError(w, http.StatusBadRequest,
+					fmt.Sprintf("view: %s must be a whole number, got %q", name, values[0]))
+				return
+			}
+		}
+		h(w, r)
 	}
 }
 
@@ -744,13 +856,34 @@ func (s *Server) frontier(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) actions(w http.ResponseWriter, r *http.Request) {
-	items, err := s.Store.ActionsInventory(r.URL.Query().Get("q"), intParam(r, "top", 200))
+	scope, err := repositoryScope(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	items, err := s.Store.ActionsInventory(r.URL.Query().Get("q"), intParam(r, "top", 200), scope)
 	writeJSON(w, items, err)
 }
 
 func (s *Server) repositories(w http.ResponseWriter, r *http.Request) {
-	items, err := s.Store.RepositoriesOverview(r.URL.Query().Get("q"), intParam(r, "top", 500))
+	scope, err := repositoryScope(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	items, err := s.Store.RepositoriesOverview(
+		r.URL.Query().Get("q"), intParam(r, "top", 500), scope)
 	writeJSON(w, items, err)
+}
+
+// repositoryScope reads the grouping terms through the shared parser, so a malformed one is
+// refused here in the same words the graph and the gate refuse it in.
+func repositoryScope(r *http.Request) (store.RepositoryScope, error) {
+	include, exclude, err := propertyMatches(r.URL.Query())
+	if err != nil {
+		return store.RepositoryScope{}, err
+	}
+	return store.RepositoryScope{Include: include, Exclude: exclude}, nil
 }
 
 func (s *Server) repository(w http.ResponseWriter, r *http.Request) {
