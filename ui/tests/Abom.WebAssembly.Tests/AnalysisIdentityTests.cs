@@ -14,6 +14,18 @@ public class AnalysisIdentityTests : AbomTestContext
         Answer("api/discovery/suites", suites);
         Answer("api/discovery/status", (state ?? DiscoveryStateBuilder.Drained()).ToJson());
         Answer("api/frontier", frontier);
+        Answer("api/views", """[{"name":"owned","title":"What you own","predicate":"scope=owned","builtin":true}]""");
+        Answer("api/actions", """{"items":[],"total":0}""");
+    }
+
+    // The queue is a unit of the Inventory, so a test about its rows selects that unit exactly as
+    // a reader would.
+    private IRenderedComponent<Pages.Inventory> Coverage()
+    {
+        var page = Render<Pages.Inventory>();
+        page.WaitForAssertion(() => Assert.NotNull(page.Find("[data-abom-unit='coverage']")));
+        page.Find("[data-abom-unit='coverage']").Click();
+        return page;
     }
 
     // Re-analyzing a tier moves every row out of `done`, so a header counting only analyzed rows
@@ -29,7 +41,7 @@ public class AnalysisIdentityTests : AbomTestContext
             """,
             state: DiscoveryStateBuilder.Drained().WithTiers(522, 691).WithDirectAnalyzed(0));
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
 
         // The counts live inside the fold; the buttons above it state the analyzed figure only.
         cut.WaitForAssertion(() => cut.Find(".abom-fold-toggle"));
@@ -55,7 +67,7 @@ public class AnalysisIdentityTests : AbomTestContext
               "supplyChain":"runtime","analyzedAt":"2026-01-01T00:00:00Z","tier":"direct"}]
             """);
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Coverage();
 
         cut.WaitForAssertion(() => Assert.Contains("actions/checkout", cut.Markup));
         Assert.Contains(">Tier<", cut.Markup);
@@ -77,13 +89,9 @@ public class AnalysisIdentityTests : AbomTestContext
               "supplyChain":"runtime","analyzedAt":"2026-01-01T00:00:00Z","tier":"direct"}]
             """);
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Coverage();
 
-        // The queue opens on `queued`, where nothing has been analyzed and the column would be
-        // empty for every row by construction. Staleness is a question about analyzed work.
-        cut.WaitForAssertion(() => Assert.Contains("Analyzed", cut.Markup));
-        cut.FindAll("button").First(b => b.TextContent.Contains("Analyzed")).Click();
-
+        // The queue opens on every state, so an analyzed row is present without narrowing first.
         cut.WaitForAssertion(() => Assert.Contains("Last analyzed", cut.Markup));
     }
 
@@ -102,7 +110,7 @@ public class AnalysisIdentityTests : AbomTestContext
               "supplyChain":"runtime","analyzedAt":"","tier":"transitive"}]
             """);
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Coverage();
 
         cut.WaitForAssertion(() => Assert.Contains("actions/never", cut.Markup));
         Assert.DoesNotContain("Analyzed 1970", cut.Markup);
@@ -127,10 +135,7 @@ public class AnalysisIdentityTests : AbomTestContext
               "cliVersion":"2.26.4"}]
             """);
 
-        var cut = Render<Pages.Discovery>();
-
-        cut.WaitForAssertion(() => Assert.Contains("Analyzed", cut.Markup));
-        cut.FindAll("button").First(b => b.TextContent.Contains("Analyzed")).Click();
+        var cut = Coverage();
 
         cut.WaitForAssertion(() => Assert.Contains("Analyzed with", cut.Markup));
         Assert.Contains("actions-queries", cut.Markup);
@@ -152,10 +157,7 @@ public class AnalysisIdentityTests : AbomTestContext
               "suites":[],"suitesKnown":false,"cliVersion":""}]
             """);
 
-        var cut = Render<Pages.Discovery>();
-
-        cut.WaitForAssertion(() => Assert.Contains("Analyzed", cut.Markup));
-        cut.FindAll("button").First(b => b.TextContent.Contains("Analyzed")).Click();
+        var cut = Coverage();
 
         cut.WaitForAssertion(() => Assert.Contains("not recorded", cut.Markup));
     }

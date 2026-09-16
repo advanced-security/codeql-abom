@@ -26,6 +26,47 @@ export function discoveryColor(node, palette) {
     return states[node.discovery] || palette.muted;
 }
 
+/**
+ * Color by how much of a node has been analyzed, for the view whose legend promises exactly that.
+ *
+ * A queue state answers "has anything been looked at", which is the same question while every node
+ * carries one reference — the split makes all 955 on the real corpus all-or-nothing. A collapsed
+ * group is where they differ: it sums its members' references and carries no queue state at all, so
+ * coloring by state painted every group muted, which this legend reads as "never a dependency".
+ *
+ * No references in use keeps the state, because "not a dependency" is a fact about a workflow
+ * inside the corpus under review and must not be drawn as "we have not looked yet".
+ */
+export function coverageColor(node, palette) {
+    const inUse = node.refsInUse || 0;
+    if (inUse <= 0) return discoveryColor(node, palette);
+    const states = palette.discovery || {};
+    const done = node.refsAnalyzed || 0;
+    if (done >= inUse) return states.done || palette.muted;
+    if (done <= 0) return states.queued || palette.muted;
+    // Partly covered is its own answer, not a rounding of either end.
+    return mix(states.queued || palette.muted, states.done || palette.muted, done / inUse);
+}
+
+/** Blends two colors, so a partial coverage reads as between its two ends rather than beside them. */
+function mix(from, to, t) {
+    const a = channels(from), b = channels(to);
+    if (!a || !b) return from;
+    const at = (i) => Math.round(a[i] + (b[i] - a[i]) * t);
+    return `rgb(${at(0)},${at(1)},${at(2)})`;
+}
+
+function channels(color) {
+    const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec((color || '').trim());
+    if (hex) {
+        const h = hex[1].length === 3 ? hex[1].replace(/./g, c => c + c) : hex[1];
+        const n = parseInt(h, 16);
+        return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    }
+    const rgb = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i.exec((color || '').trim());
+    return rgb ? [+rgb[1], +rgb[2], +rgb[3]] : null;
+}
+
 export function edgeColor(link, palette) {
     switch (link.cls) {
         case 'sameRepo': return palette.edgeSameRepo;
@@ -40,6 +81,25 @@ export function faded(color) {
     if (color.startsWith('rgba')) return color.replace(/[\d.]+\)\s*$/, '0.06)');
     if (color.startsWith('rgb(')) return color.replace('rgb(', 'rgba(').replace(')', ',0.06)');
     return color;
+}
+
+/**
+ * The same color at a chosen weight.
+ *
+ * `faded` has one weight, 0.06, which is right for emphasis and far too faint for an edge that is
+ * still meant to be followed. The palette hands out hex and both rgb notations, so reading all
+ * three is the difference between de-emphasizing an edge and silently leaving it at full strength.
+ */
+export function withAlpha(color, a) {
+    if (typeof color !== 'string') return color;
+    const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color.trim());
+    if (hex) {
+        const h = hex[1].length === 3 ? hex[1].replace(/./g, c => c + c) : hex[1];
+        const n = parseInt(h, 16);
+        return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+    }
+    const rgb = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i.exec(color.trim());
+    return rgb ? `rgba(${rgb[1]},${rgb[2]},${rgb[3]},${a})` : color;
 }
 
 /** Reach spans orders of magnitude, so radius follows a log scale or hubs swamp everything. */
@@ -144,7 +204,7 @@ export function buildNodeObject(it, node) {
     const geometry = geometryFor(node.kind);
     // The mesh carries its own color, so a view that recolors has to be honored here as well as
     // on the accessor; the accessor alone is ignored the moment shapes are in use.
-    const color = it.view === 'frontier' ? discoveryColor : nodeColor;
+    const color = it.view === 'frontier' ? coverageColor : nodeColor;
     const mesh = new T.Mesh(
         geometry,
         new Material({

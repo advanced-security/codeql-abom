@@ -119,8 +119,11 @@ They answer the same question from opposite ends, and no single native surface h
 - The **findings** half lands centrally. ABOM's interface is where a security team reviews what
   its queries found across the whole estate — dependency management, code security, code quality,
   and patterns of use across public and private actions alike — before any of it reaches a
-  developer's queue. Central review is the first half of a job whose second half — the path from a
-  reviewed finding to an assigned fix — is [in the vision](vision.md) and is not built yet.
+  developer's queue. Review at that size is only possible if the team can narrow to a scope that
+  means something to them and then act on what it selected, which is why the scope is a named,
+  saved predicate and the actions belong to the selection rather than to a page. Central review is
+  the first half of a job whose second half — the path from a reviewed finding to an assigned fix —
+  is [in the vision](vision.md) and is not built yet.
 
 There is also a gap in native org-scale reporting that makes the central view necessary rather
 than merely convenient: GitHub notes that dependencies contributed through the submission API

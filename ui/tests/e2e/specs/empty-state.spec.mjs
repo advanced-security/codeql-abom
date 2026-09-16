@@ -53,12 +53,12 @@ test.describe('nothing declared yet', () => {
             .toMatch(/settings|declare|discovery|get started/);
     });
 
-    test('Discovery distinguishes "not started" from "paused"', async ({ page }) => {
-        await page.goto('/discovery');
+    test('Settings distinguishes "not started" from "paused"', async ({ page }) => {
+        await page.goto('/settings');
         await ready(page);
 
         const body = (await page.locator('body').innerText()).toLowerCase();
-        expect(body, 'Discovery states that nothing has started').toMatch(/not started|never started|idle|stopped/);
+        expect(body, 'the crawl states that nothing has started').toMatch(/not started|never started|idle|stopped/);
         expect(body, 'a crawl that never ran is not described as paused').not.toMatch(/pausing/);
     });
 

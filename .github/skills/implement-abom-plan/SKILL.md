@@ -187,9 +187,11 @@ Back to **`maintain-abom-plans`**:
   approximation" is a status; "in progress" is not.
 - **Remove what landed from the plan.** Delete the pending item outright rather than striking it
   through — plans describe what is next, and git history is the record of what shipped. If that was
-  the plan's last pending item, **retire the whole file**: move any durable rule to
-  `.github/instructions/**`, any statement of what the system now does to `docs/architecture.md`,
-  then delete the plan, fix every reference to it, and drop its entry from `next.md`.
+  the plan's last pending item, **retire the whole file**: move any statement of what the system now
+  does to `docs/architecture.md`, and a rule that outlives the workstream to a skill under
+  `.github/skills/**`, then delete the plan, fix every reference to it, and drop its entry from
+  `next.md`. **Never add to `.github/instructions/**`**, which is fixed — see
+  `.github/instructions/agents.instructions.md`.
 - **Record what turned out wrong**, in `plans/implemented.md`. A record that only lists successes
   teaches nothing. The corpus check exists to falsify the design, and when it does, that paragraph is
   the most valuable one written. The advisory plan's trigger was inert on a drained queue and its

@@ -6,9 +6,10 @@ namespace Abom.WebAssembly.Tests;
 
 // A filter that does not survive a reload is a setting on one screen, not a scope.
 //
-// The Explorer, Discovery and the node page already carry their state in the address. These four
-// lost everything on a reload, so a filtered view could not be shared, bookmarked, or returned to
-// after following a link out of it.
+// The Explorer, Discovery and the node page already carried their state in the address. The four
+// surfaces named here lost everything on a reload, so a filtered view could not be shared,
+// bookmarked, or returned to after following a link out of it. Three of those four are units of
+// Inventory now, and each is still asked for by the address that names it.
 public sealed class FilterPersistenceTests : AbomTestContext
 {
     private const string Document = """
@@ -33,6 +34,12 @@ public sealed class FilterPersistenceTests : AbomTestContext
          "withoutValue":0,"values":[],"hasDefault":false,"defaultValue":""}}
         """;
 
+    private const string Views = """
+        [{"name":"owned","title":"What you own","predicate":"scope=owned","builtin":true}]
+        """;
+
+    private const string Page = """{"items":[],"total":0}""";
+
     private void Go(string url) =>
         Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.NavigateTo(url);
 
@@ -52,29 +59,26 @@ public sealed class FilterPersistenceTests : AbomTestContext
     [Fact]
     public void VersionPinningAsksTheServerForWhatTheAddressAskedFor()
     {
-        Answer("api/pinning/totals", """
-            {"scope":"all","scopeKey":"","label":"All","references":0,"commits":0,"flagged":0,
-             "children":0}
-            """);
-        Answer("api/pinning", "[]");
-        Go("/pinning?q=checkout&style=tag&flagged=true");
+        Answer("api/views", Views);
+        Answer("api/actions", Page);
+        Go("/inventory?ref=tag&q=checkout");
 
-        var cut = Render<Pages.Pinning>();
+        var cut = Render<Pages.Inventory>();
 
-        cut.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("api/pinning/totals")));
-        var asked = Sent.First(r => r.Url.Contains("api/pinning/totals")).Url;
+        cut.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("api/actions")));
+        var asked = Sent.First(r => r.Url.Contains("api/actions")).Url;
         Assert.Contains("q=checkout", asked);
-        Assert.Contains("style=tag", asked);
-        Assert.Contains("flagged=true", asked);
+        Assert.Contains("ref=tag", asked);
     }
 
     [Fact]
     public void RepositoriesAsksTheServerForWhatTheAddressAskedFor()
     {
-        Answer("api/repositories", "[]");
-        Go("/repositories?q=codeql");
+        Answer("api/views", Views);
+        Answer("api/repositories", """{"items":[],"total":0}""");
+        Go("/inventory?unit=repositories&q=codeql");
 
-        var cut = Render<Pages.Repositories>();
+        var cut = Render<Pages.Inventory>();
 
         cut.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("api/repositories")));
         Assert.Contains("q=codeql", Sent.First(r => r.Url.Contains("api/repositories")).Url);
@@ -83,7 +87,8 @@ public sealed class FilterPersistenceTests : AbomTestContext
     [Fact]
     public void ActionsAndWorkflowsAsksTheServerForWhatTheAddressAskedFor()
     {
-        Answer("api/actions", "[]");
+        Answer("api/views", Views);
+        Answer("api/actions", Page);
         Go("/inventory?q=checkout");
 
         var cut = Render<Pages.Inventory>();
@@ -101,12 +106,13 @@ public sealed class FilterPersistenceTests : AbomTestContext
     [Fact]
     public void TheSearchBoxShowsTheTermItIsFilteringBy()
     {
-        Answer("api/repositories", "[]");
-        Go("/repositories?q=codeql");
+        Answer("api/views", Views);
+        Answer("api/actions", Page);
+        Go("/inventory?q=codeql");
 
-        var cut = Render<Pages.Repositories>();
+        var cut = Render<Pages.Inventory>();
 
-        cut.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("api/repositories")));
+        cut.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("api/actions")));
         Assert.Equal("codeql", cut.Find(".abom-search input").GetAttribute("value"));
     }
 
@@ -115,11 +121,12 @@ public sealed class FilterPersistenceTests : AbomTestContext
     [Fact]
     public void ChangingAFilterWritesItToTheAddress()
     {
-        Answer("api/repositories", "[]");
-        Go("/repositories");
+        Answer("api/views", Views);
+        Answer("api/actions", Page);
+        Go("/inventory");
 
-        var cut = Render<Pages.Repositories>();
-        cut.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("api/repositories")));
+        var cut = Render<Pages.Inventory>();
+        cut.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("api/actions")));
         cut.Find(".abom-search input").Input("codeql");
 
         cut.WaitForAssertion(() => Assert.Contains(

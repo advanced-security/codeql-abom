@@ -10,5 +10,10 @@ inputs:
 runs:
   using: composite
   steps:
-    - run: echo "Hello ${{ inputs.who-to-greet }}"
+    # Through env rather than interpolated into the script: an input reaching `run:` directly is
+    # code injection, and this fixture exists to be a composite action with no jobs, not to be a
+    # vulnerable one. The self-audit reads this tree like any other.
+    - run: echo "Hello $WHO_TO_GREET"
       shell: bash
+      env:
+        WHO_TO_GREET: ${{ inputs.who-to-greet }}

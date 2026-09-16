@@ -72,9 +72,73 @@ public sealed class ExplorerHarnessTests : AbomTestContext
         Assert.DoesNotContain("hidden by filters", page.Markup);
     }
 
+    /// <summary>
+    /// The view opens flat. A third axis projects unrelated groups through each other, and on the
+    /// reference corpus at one moment that was the difference between drawing 16 of 21 boundaries
+    /// honestly and drawing 10 of 23 — the rest being refused for enclosing somebody else's node.
+    /// </summary>
+    [Fact]
+    public void TheExplorerOpensFlat()
+    {
+        var module = StubGraphModule();
+
+        Render<Explorer>();
+
+        var create = Assert.Single(module.Invocations["create"]);
+        Assert.False((bool)create.Arguments[1]!, "the Explorer opened in 3D");
+    }
+
+    /// <summary>
+    /// An edge is drawn only when both of its ends survive the filter, so a scope that keeps 15%
+    /// of the nodes keeps well under 1% of the relationships. Measured on the reference corpus:
+    /// 395 of 2,639 nodes left 39 of 7,552 edges, and the view read as a bug — a dependency graph
+    /// with almost no dependencies in it, and nothing on screen admitting to it.
+    /// </summary>
+    [Fact]
+    public void AnEdgeNeedsBothEndsAndTheViewSaysSo()
+    {
+        StubGraphModule(new Explorer.Counts(
+            Nodes: 395, Edges: 39, Hidden: 2244, Total: 2639, EdgeTotal: 7552));
+
+        var page = Render<Explorer>();
+
+        Assert.Contains("39", page.Markup);
+        Assert.Contains("7,552", page.Markup);
+        Assert.Contains("both ends", page.Markup);
+    }
+
+    /// <summary>
+    /// A node that failed a scope question is greyed rather than removed, because cutting it took
+    /// the relationships with it. It is on screen without having matched, so it is counted apart.
+    /// </summary>
+    [Fact]
+    public void NodesDrawnOnlyAsContextAreCountedApart()
+    {
+        StubGraphModule(new Explorer.Counts(
+            Nodes: 2639, Edges: 7552, Hidden: 0, Total: 2639, EdgeTotal: 7552, Context: 2244));
+
+        var page = Render<Explorer>();
+
+        Assert.Contains("2,244", page.Markup);
+        Assert.Contains("greyed out", page.Markup);
+        Assert.Contains("not because they matched", page.Markup);
+    }
+
+    /// Nothing elided, nothing to disclose: the same rule the hidden-node clause follows.
+    [Fact]
+    public void EveryRelationshipDrawnDrawsNoClause()
+    {
+        StubGraphModule(new Explorer.Counts(
+            Nodes: 7, Edges: 3, Hidden: 0, Total: 7, EdgeTotal: 3));
+
+        var page = Render<Explorer>();
+
+        Assert.DoesNotContain("both ends", page.Markup);
+    }
+
     /// A stub that answers only what the page happens to call today is a stub that breaks on the
     /// next call added. Naming the contract is what makes the harness reusable.
-    private void StubGraphModule(Explorer.Counts? counts = null)
+    private BunitJSModuleInterop StubGraphModule(Explorer.Counts? counts = null)
     {
         var module = JSInterop.SetupModule("./js/graph.js");
         module.Setup<bool>("create", _ => true).SetResult(true);
@@ -93,5 +157,6 @@ public sealed class ExplorerHarnessTests : AbomTestContext
         module.SetupVoid("setSelection", _ => true).SetVoidResult();
         module.SetupVoid("resize", _ => true).SetVoidResult();
         module.SetupVoid("rebuildNodes", _ => true).SetVoidResult();
+        return module;
     }
 }

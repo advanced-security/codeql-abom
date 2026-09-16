@@ -2,7 +2,8 @@
 
 **Status:** every term in the language is applied by the server, applied by the client, or refused
 by name, on both the set path and the graph. Every endpoint that can be bounded to a repository
-grouping is. What remains is a second narrowing mechanism inside policies.
+grouping is. What remains is a second narrowing mechanism inside policies, a term the language
+cannot spell, and a consumer that applies more than it asks for.
 
 ## Why this exists
 
@@ -11,7 +12,7 @@ saw. The set path did exactly that, and the widest version of a predicate is the
 pull request.
 
 The eleven endpoints that read their own parameters now refuse a term they do not apply. Eight apply
-`properties`; the two that refuse it do so for a reason stated below.
+`properties`; the three that do not are below, and one of them has no stated reason.
 
 ## Pending
 
@@ -20,11 +21,30 @@ The eleven endpoints that read their own parameters now refuse a term they do no
    must agree are how two policy engines start. Existing unit-scoped policies migrate into
    predicates. `plans/api/policy-language.md` once chose the other direction, when a predicate could
    not name a property key; it can now. Depends on nothing.
+2. **The language cannot say that a list is empty.** An absent term and a deliberately emptied one
+   write identically, so a consumer whose default for a term is non-empty has to read silence as
+   its default — and most links into a surface name three terms out of seventeen. The Explorer
+   therefore cannot share "every finding flag off". Either an empty list gets a spelling, or the
+   rule that silence means the consumer's default is stated and every consumer follows it. Both
+   halves are `internal/view` before they are anything else. Depends on nothing.
+3. **Name the side that applies each term, per consumer.** `graphTerms` says the graph applies
+   `origins`, `minReach`, `ref`, `flags` and `boundary`, and it does — when it is sent them. The
+   Explorer sends none of them, filtering the one payload itself so an interaction costs no round
+   trip. **The two agree**: on the crawled organization the server and the browser select identical
+   node sets for `minReach` at 5 and 20, `origins=seed`, `ref=tag` and `ref=sha` — 0 rows either way.
+   So this is a declaration to write down rather than a divergence to repair, and a test that
+   re-measures it is what keeps it true. Depends on nothing.
 
 **Two endpoints refuse it for a reason and should keep refusing.** `/api/properties` enumerates the
 groupings, so bounding it by a grouping is circular; `/api/frontier` reports crawl queue state for
 repositories that may not be owned or even known yet, and so have no properties to match. Neither is
 an oversight.
+
+**`/api/graph` is the third, and nobody wrote down why.** The focus walk takes `focus`, `hops`,
+`max`, `direction`, `granularity` and `expand`, and refuses the property terms — while
+`/api/graph/full`, which parses the shared predicate, applies them. *Show me what this node reaches,
+within my business unit* is a question somebody will ask. Either the reason is stated here or the
+terms are added, and finding out which is part of item 3.
 
 ## The constraints that must not be broken
 
@@ -40,11 +60,6 @@ unbounded one over a populated corpus never was — so a slice left at its zero 
 `null` and the interface throws instead of rendering nothing. The filter did not introduce this; it
 made it reachable.
 
-**A narrowed answer says what it excluded.** `PropertyBreakdown.WithoutValue` already counts the
-owned repositories carrying no value for a key. Those repositories vanish from every filtered answer,
-and a reader who is not told believes they scoped when they truncated. This is the same rule the
-simulation already follows by reporting what it could not attribute.
-
 **Refusing is not a fallback to matching everything.** An empty selector matches nothing, deliberately:
 a gate whose policy failed to parse would otherwise fail every pull request instead of none. A
 refusal added here must not become the widest possible answer by another route.
@@ -58,9 +73,6 @@ payload instead — but a caller that is not the Explorer has to be told it was 
 **One evaluation, never two.** `TestASimulationAndTheMatchEndpointAgreeOnTheSameInputs` exists
 because a simulation and the gate acting on it have to be the same code. Retiring the policy scope
 must not reintroduce a second path.
-
-**A security verdict still comes only from a rule id.** Choosing which findings matter and where is
-what a filter does. Inventing one is not, and there is no filter-shaped route around that.
 
 ## Verification
 
@@ -82,3 +94,7 @@ what a filter does. Inventing one is not, and there is no filter-shaped route ar
   accept it and the test that everything else refuses it, so the pair cannot come to disagree.
 - Every filtered answer reports the owned repositories that carry no value for the key it filtered on.
 - Migrated unit-scoped policies select the same repositories before and after `scope_kind` is retired.
+- The same term, applied by the server and applied by the browser over the unfiltered payload,
+  selects the same nodes on the crawled organization. Run per term, because one agreeing proves
+  nothing about the others.
+- A term deliberately emptied survives a reload, or the consumer says which default it fell back to.

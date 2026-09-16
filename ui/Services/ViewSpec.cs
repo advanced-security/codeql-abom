@@ -15,8 +15,12 @@ namespace Abom.WebAssembly.Services;
 /// The canonical form is the query string, and it has to be byte-identical to what Go's
 /// <c>internal/view</c> writes, because the same text is read by the browser and by the API.
 /// </para>
+/// <para>
+/// A record, so a caller changing one term writes `with` rather than re-listing the other sixteen
+/// — which is how a term added later gets silently dropped by whoever forgot to copy it.
+/// </para>
 /// </summary>
-public sealed class ViewSpec
+public sealed record ViewSpec
 {
     public string Scope { get; init; } = "";
     public string Search { get; init; } = "";
@@ -44,6 +48,20 @@ public sealed class ViewSpec
     public string RefStyle { get; init; } = "";
     public string Boundary { get; init; } = "";
 
+    /// <summary>
+    /// Repositories carrying this custom property, which is how a business unit or an application
+    /// is named. The key travels with the value: carrying the value alone filtered by whichever
+    /// property each server happened to be configured with, so one shared link asked two questions.
+    /// </summary>
+    public IReadOnlyList<PropertyMatch> Properties { get; init; } = [];
+
+    /// <summary>
+    /// Drops an owned node where it is a <em>source</em>. A node an included property still reaches
+    /// stays, as a dependency: excluding part of an organization must not sever the supply chain
+    /// of a part that was kept.
+    /// </summary>
+    public IReadOnlyList<PropertyMatch> NotProperties { get; init; } = [];
+
     /// <summary>A floor. Zero means the question was not asked, not asked about zero.</summary>
     public int MinReach { get; init; }
 
@@ -70,6 +88,11 @@ public sealed class ViewSpec
     private const string ParamMinReach = "minReach";
     private const string ParamFlags = "flags";
     private const string ParamSteps = "steps";
+    private const string ParamProperties = "properties";
+    private const string ParamNotProperties = "notProperties";
+
+    // Only the first one divides, so a value may contain it; GitHub property names cannot.
+    private const char PropertySeparator = ':';
 
     /// <summary>
     /// Writes the canonical text: keys ordinally sorted, list values sorted and deduplicated,
@@ -77,7 +100,9 @@ public sealed class ViewSpec
     /// </summary>
     public string ToQueryString()
     {
-        var pairs = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        // A list rather than a dictionary because a property term repeats its key, and Go's
+        // url.Values.Encode sorts by key while keeping each key's values in the order added.
+        var pairs = new List<(string Key, string Value)>();
 
         foreach (var (key, value) in new[]
                  {
@@ -86,7 +111,7 @@ public sealed class ViewSpec
                      (ParamProvider, Provider), (ParamSeverity, Severity),
                  })
         {
-            if (!string.IsNullOrEmpty(value)) pairs[key] = value;
+            if (!string.IsNullOrEmpty(value)) pairs.Add((key, value));
         }
 
         foreach (var (key, values) in new[]
@@ -98,13 +123,25 @@ public sealed class ViewSpec
                  })
         {
             var normalized = Normalize(values);
-            if (normalized.Count > 0) pairs[key] = string.Join(",", normalized);
+            if (normalized.Count > 0) pairs.Add((key, string.Join(",", normalized)));
         }
 
-        if (MinReach > 0) pairs[ParamMinReach] = MinReach.ToString(CultureInfo.InvariantCulture);
-        if (Steps) pairs[ParamSteps] = "true";
+        // One parameter per match rather than a comma-joined list: a property value is operator
+        // text, and a value containing a comma must not become two values.
+        foreach (var (key, matches) in new[]
+                 {
+                     (ParamProperties, Properties), (ParamNotProperties, NotProperties),
+                 })
+        {
+            foreach (var match in NormalizeMatches(matches)) pairs.Add((key, match.ToString()));
+        }
 
-        return string.Join("&", pairs.Select(p => $"{Escape(p.Key)}={Escape(p.Value)}"));
+        if (MinReach > 0) pairs.Add((ParamMinReach, MinReach.ToString(CultureInfo.InvariantCulture)));
+        if (Steps) pairs.Add((ParamSteps, "true"));
+
+        return string.Join("&", pairs
+            .OrderBy(p => p.Key, StringComparer.Ordinal)
+            .Select(p => $"{Escape(p.Key)}={Escape(p.Value)}"));
     }
 
     /// <summary>
@@ -117,6 +154,7 @@ public sealed class ViewSpec
     {
         string scope = "", search = "", refStyle = "", boundary = "", provider = "", severity = "";
         IReadOnlyList<string> kinds = [], origins = [], rules = [], edges = [], flags = [], notRules = [], repositories = [];
+        List<PropertyMatch> properties = [], notProperties = [];
         var minReach = 0;
         var steps = false;
 
@@ -146,6 +184,8 @@ public sealed class ViewSpec
                 case ParamSeverity: severity = raw; break;
                 case ParamEdgeClass: edges = Normalize(raw.Split(',')); break;
                 case ParamFlags: flags = Normalize(raw.Split(',')); break;
+                case ParamProperties: properties.Add(ParseMatch(key, raw)); break;
+                case ParamNotProperties: notProperties.Add(ParseMatch(key, raw)); break;
                 case ParamMinReach:
                     if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture,
                             out minReach) || minReach < 0)
@@ -172,13 +212,31 @@ public sealed class ViewSpec
             Provider = provider, Severity = severity,
             Kinds = kinds, Origins = origins, Rules = rules, NotRules = notRules,
             Repositories = repositories,
+            Properties = properties, NotProperties = notProperties,
             EdgeClass = edges, Flags = flags,
             MinReach = minReach, Steps = steps,
         };
     }
 
-    public override bool Equals(object? obj) =>
-        obj is ViewSpec other && ToQueryString() == other.ToQueryString();
+    // Either half missing is refused rather than defaulted: a term carrying only a value would
+    // match against whichever property the server happened to be configured with.
+    private static PropertyMatch ParseMatch(string key, string raw)
+    {
+        var at = raw.IndexOf(PropertySeparator);
+        var name = at < 0 ? "" : raw[..at].Trim();
+        var value = at < 0 ? "" : raw[(at + 1)..].Trim();
+        if (name.Length == 0 || value.Length == 0)
+        {
+            throw new FormatException(
+                $"view: {key} must be name{PropertySeparator}value, got \"{raw}\"");
+        }
+        return new PropertyMatch(name, value);
+    }
+
+    // Declared rather than left to the record, whose generated equality compares list instances by
+    // reference: two specs asking the same question are the same question.
+    public bool Equals(ViewSpec? other) =>
+        other is not null && ToQueryString() == other.ToQueryString();
 
     public override int GetHashCode() => ToQueryString().GetHashCode(StringComparison.Ordinal);
 
@@ -189,9 +247,17 @@ public sealed class ViewSpec
             .OrderBy(v => v, StringComparer.Ordinal)
             .ToList();
 
+    private static IReadOnlyList<PropertyMatch> NormalizeMatches(
+        IEnumerable<PropertyMatch> matches) =>
+        matches.Where(m => m.Name.Length > 0 && m.Value.Length > 0)
+            .Distinct()
+            .OrderBy(m => m.Name, StringComparer.Ordinal)
+            .ThenBy(m => m.Value, StringComparer.Ordinal)
+            .ToList();
+
     // Go's url.Values.Encode is the reference, and it differs from Uri.EscapeDataString in one
     // way that matters: a space becomes '+' rather than "%20".
-    private static string Escape(string value)
+    internal static string Escape(string value)
     {
         var builder = new StringBuilder(value.Length);
         foreach (var b in Encoding.UTF8.GetBytes(value))
@@ -204,7 +270,7 @@ public sealed class ViewSpec
         return builder.ToString();
     }
 
-    private static string Unescape(string value)
+    internal static string Unescape(string value)
     {
         var bytes = new List<byte>(value.Length);
         for (var i = 0; i < value.Length; i++)
@@ -225,4 +291,16 @@ public sealed class ViewSpec
         }
         return Encoding.UTF8.GetString([.. bytes]);
     }
+}
+
+/// <summary>
+/// One custom property key and one value a repository must carry for it.
+/// </summary>
+/// <remarks>
+/// A record, so two matches naming the same thing are equal and deduplicate — the canonical text
+/// is a storage key, and the order somebody happened to click in must not produce a second text.
+/// </remarks>
+public sealed record PropertyMatch(string Name, string Value)
+{
+    public override string ToString() => $"{Name}:{Value}";
 }

@@ -66,6 +66,12 @@ A tier binds to a suite in `abom_tier_suite`, editable while the server runs. An
 legitimate and means "do not analyze this tier", which is why `abom_tier_configured` exists to tell
 it apart from a tier nobody has configured.
 
+An account is read over **GraphQL where it answers, REST where it does not**, and both routes answer
+the same three questions — what is new, what changed, what is gone. GraphQL is preferred because one
+call returns a hundred repositories with their marks, their custom properties and their default
+branch for a single point, against a REST budget it does not share. `abom_enumeration_state.route`
+records which route produced a listing, because the two do not agree about everything.
+
 ## The data model
 
 Everything is one SQLite file. `internal/store` is the only package that writes SQL.
@@ -101,9 +107,15 @@ Everything is one SQLite file. `internal/store` is the only package that writes 
 | Table | |
 | --- | --- |
 | `abom_node`, `abom_edge` | Actions, workflows, repositories and images, and the `uses:` relationships between them |
-| `abom_observation` | Facts a query stated about a subject, keyed by the statement rather than the run |
+| `abom_observation` | Facts a query stated about a subject, keyed by the statement rather than the run. Every job-level fact — permissions, triggers, runner, privilege — attaches to a `job` node, never to the workflow above it |
 | `abom_graph_generation` | Generation and epoch, so a client can ask for a delta |
-| `abom_surface` | Denormalized read model |
+| `abom_surface` | A denormalized read model that is **declared and not written to**. The observation table is the only source for these facts |
+
+Containment is recorded two ways, and they answer different questions. `container_node_row_id` is
+the file a node was declared in, so a workflow contains both its jobs and its steps by that link. A
+step's parent **job** is carried by `job_id` with `step_index`, and the node key spells it out:
+`step:owner/repo:path:JOB:INDEX` against `job:owner/repo:path:JOB`. A workflow is never an edge
+source; edges leave its steps and its jobs.
 
 ### Findings
 
@@ -120,7 +132,7 @@ Everything is one SQLite file. `internal/store` is the only package that writes 
 | `abom_blast_radius`, `abom_exposure` | Reach, recomputed wholesale rather than incrementally |
 | `abom_advisory`, `abom_advisory_package` | GHSA records, stored as attributed external statements |
 | `abom_submission` | What was sent to GitHub, because GitHub offers no way to ask |
-| `abom_saved_view` | Named predicates, shared by the Explorer, the API and the CLI |
+| `abom_saved_view` | Named predicates, read by the API and the CLI |
 | `abom_http_cache` | Validators GitHub gave for a URL, so an unchanged answer costs no quota |
 | `abom_discovery_state` | Whether the operator wants discovery running, so a restart does not decide |
 
@@ -152,16 +164,76 @@ assert an order between jobs that actually run in parallel.
 | Surface | |
 | --- | --- |
 | HTTP API | The whole capability set. Reads are open; anything that writes is guarded at the endpoint |
-| Explorer | A force-directed graph over a scoped closure, with saved views |
+| Dashboard | Where to start: each entry opens the Inventory already narrowed to it |
+| Inventory | Which things match, in tabs that are named views, reprojected by a unit switch |
+| Explorer | A force-directed graph over a scoped closure |
+| Settings | What the operator claims, and what discovery runs: analysis is started here and each tier is bound to its suites here |
 | `report` | Terminal summary |
 | `bom` | CycloneDX 1.6 and SPDX 2.3, with purls |
 | `submit` | A dependency snapshot sent to GitHub's submission API |
 
-**One filter language, three consumers.** A view is a predicate — scope, kinds, findings, rules,
+**Four surfaces, one scope.** A security team asks one question in two shapes — *which things match
+this*, and *what do they touch* — so a table and a graph are two renderings of one scope object,
+which owns the predicate and the selection and round-trips both through the address. An action then
+belongs to the scope rather than to a page: export a bill of materials for these, open these in the
+graph. A fifth navigation entry is a finding, not a feature — a page per question has to invent its
+own scope, and an operator who narrowed somewhere else cannot carry that narrowing to it. A question
+that becomes a unit takes its address with it: the page and its route are deleted rather than left
+forwarding, because a redirect is a second name for one thing and this is not a published tool.
+
+**A unit is a shape, not a scope.** Inventory reprojects one scope as actions, workflows, jobs,
+repositories, advisories or coverage, each asking its own endpoint for its own columns. A unit only
+exists once its columns are its own: listing repositories as nodes drew six absent measurements as
+zeroes for all 193 of them, which is the same rule the graph follows about an unmeasured node.
+Relationships are the shape with no unit yet, because an edge has no identity a reader can select
+by.
+
+**A listing states what it is not showing.** It reports the size of the match beside the size of the
+page, orders across the whole match on the server rather than within the page, and when a findings
+term matched nodes of a kind outside the view it says so and offers them — every
+`actions/unpinned-tag` finding sits on a `step` or `job` node, so the most important rule in a
+typical corpus answers zero among the dependency kinds, and a zero that means "measured elsewhere"
+is otherwise indistinguishable from "nothing is wrong".
+
+**One filter language, several consumers.** A view is a predicate — scope, kinds, findings, rules,
 origins, reach, reference style — serialized as text, and the Explorer, the API and the CLI all
 parse the same string. Predicates that cut along the graph's structure are applied in SQL;
 predicates that cut across it are applied after the query, because a closure is edge-closed by
 construction and an arbitrary node filter is not.
+
+**A term is applied or refused by name, never dropped.** Each consumer declares the terms it
+enforces, and every term in the language is enforced by at least one of them. A predicate carrying a
+term this surface cannot apply still travels, because widening somebody else's question in passing
+is worse than admitting the surface does not narrow by it — and the refusal names the term, which is
+the only thing that tells a reader which surface does answer it. A term means one thing everywhere:
+`repositories` is the repository a finding sits in on both the listing and the set path, and "which
+dependencies does this repository use" is a different question with a different term.
+
+**A scope can be kept.** The catalog is the built-in questions merged with whatever the operator
+named and saved, offered through one endpoint so a caller asking "what can I ask" consults one
+place. A built-in is code and cannot be overwritten or deleted. A saved view carries the terms the
+listing cannot draw, so a tab that will refuse itself says so before it is clicked rather than
+after.
+
+**A container is a boundary, and `Group by` decides what a filter costs.** The Explorer draws each
+group as a shape around its members rather than a point beside them, and withholds any boundary that
+would enclose somebody else's node, saying how many it withheld. Because an edge needs both of its
+ends, a filter that removes what it did not match removes the relationships too — so a grouped view
+removes, keeping its boundaries honest, and an ungrouped one greys instead, keeping every
+relationship on screen. The reader picks which, and each option says so.
+
+**The Explorer arrives at the closure of what you own.** Not the whole corpus: drawn over everything
+the crawl walked through it is a starburst nothing can be followed through. The arrival is that
+closure filtered to what carries a finding, and a page handing over a node arrives focused on it,
+resolved to whichever per-reference nodes the graph holds for that name. Naming a node suspends the
+arrival filters, because otherwise the neighborhood the reader asked for is deleted by the filter
+that got them there.
+
+**The bill of materials is a document, not a listing.** It is reached from the scope it describes,
+and states its own coverage, direct-versus-indirect depth, "not examined" as distinct from "none
+found", and that advisories are reported against a repository rather than evaluated against the
+references in use. Those are claims no listing makes, which is why it is a rendering of its own
+rather than a unit.
 
 **Purls are the join key.** `pkg:githubactions/{owner}/{name}[/{subpath}]@{version}`, matching what
 GitHub emits, is what lets a component in an ABOM export correspond to anything outside it.

@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -54,13 +55,20 @@ func (s *Store) MarkOutsideClosure(inClosure []string) (PruneReport, error) {
 	return s.pruneOutsideClosure(inClosure, true)
 }
 
+// ErrEmptyClosure is pruning refusing to act on a corpus nothing has been enumerated into.
+//
+// Named rather than described, because a read asking what a prune would cost has to tell it apart
+// from a real failure: it is the state every install passes through between declaring an account
+// and the first enumeration finishing.
+var ErrEmptyClosure = errors.New(
+	"store: refusing to prune against an empty closure; declare an owned scope first")
+
 func (s *Store) pruneOutsideClosure(inClosure []string, act bool) (PruneReport, error) {
 	var out PruneReport
 	// An undeclared corpus produces an empty closure, and pruning everything on the strength of
 	// a configuration nobody has written yet is the most destructive thing this could do.
 	if len(inClosure) == 0 {
-		return out, fmt.Errorf(
-			"store: refusing to prune against an empty closure; declare an owned scope first")
+		return out, ErrEmptyClosure
 	}
 
 	list, args := inList(inClosure)

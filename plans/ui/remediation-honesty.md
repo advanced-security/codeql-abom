@@ -1,6 +1,6 @@
 # Remediation summarizes two things into their more reassuring halves
 
-**Status:** the strongest surface in the interface, and it rounds twice in the same direction.
+**Status:** the advisories unit of Inventory, and it rounds once in the reassuring direction.
 
 ## Why this exists
 
@@ -15,7 +15,8 @@ correct and is the invariant working: those advisories name actions that appear 
 repositories' own CI, which is nobody's supply chain, so telling an operator to fix them would be
 the worse failure. But one of the eight is **critical**, and a reader who notices that has no way to
 learn why it is absent. Silence reads as completeness, which is the one thing this project refuses
-to let a screen do.
+to let a screen do. *Resolved:* the unit carries an `unreached` count beside its total and states
+it under the table, so the two populations are both on screen and the difference is named.
 
 **One boolean over an advisory with two answers.** The `Fix` column reads *available*, from a single
 `fixable` flag on the advisory. The expanded row shows the advisory carries two ranges — one *fixed
@@ -25,20 +26,15 @@ expanded row tells them the truth, and nothing marks the row as worth expanding.
 
 ## Pending
 
-1. **The strip and the table agree, or the difference is on screen.** The fork: make the strip count
-   the same population the table shows, so *11* becomes *3 reaching your repositories*; keep both
-   figures and show them together, which is more honest and more crowded; or keep the count and give
-   the table a footer naming what it excluded and why. The third is the smallest change and the only
-   one that teaches a reader the distinction rather than hiding it.
-2. **Fix availability is reported per range, not per advisory.** `fixable` is computed as "some
+1. **Fix availability is reported per range, not per advisory.** `fixable` is computed as "some
    range has a patch", which is the right input and the wrong summary. The alternatives: report the
    worst case, so an advisory with any unfixed range reads as *partial*; report against the
    references actually observed, which is the most useful and the closest this screen has come to
    adjudicating a range; or drop the column from the collapsed row and make the ranges the only
    place fix availability is stated. The second needs a decision about whether it crosses the line
    the footnote draws.
-3. **A row whose expansion changes the answer says so.** Both faults above are invisible until
-   somebody expands a row, and nothing suggests expanding one. Depends on 2 only if the column stays.
+2. **A row whose expansion changes the answer says so.** The fault above is invisible until somebody
+   expands a row, and nothing suggests expanding one. Depends on 1 only if the column stays.
 
 ## The constraints that must not be broken
 

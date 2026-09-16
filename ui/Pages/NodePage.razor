@@ -19,7 +19,7 @@ else if (_detail is null && IsAccount)
         <MudText Typo="Typo.caption">
             It stands for everything it owns rather than for anything recorded in its own right.
             See <MudLink Href="@($"/explore?q={AccountName}")" Typo="Typo.caption">its dependencies</MudLink>,
-            or <MudLink Href="/pinning" Typo="Typo.caption">how its references are pinned</MudLink>.
+            or <MudLink Href="/inventory?ref=tag" Typo="Typo.caption">how its references are pinned</MudLink>.
         </MudText>
     </MudAlert>
 }
@@ -29,7 +29,7 @@ else if (_detail is null)
         <MudText Typo="Typo.body2">Nothing here is named <span class="abom-rule">@Key</span>.</MudText>
         <MudText Typo="Typo.caption">
             That is not the same as it being unused: it may sit behind a dependency that has not
-            been analyzed. <MudLink Href="/discovery" Typo="Typo.caption">Check coverage</MudLink>.
+            been analyzed. <MudLink Href="/inventory?unit=coverage" Typo="Typo.caption">Check coverage</MudLink>.
         </MudText>
     </MudAlert>
 }
@@ -161,7 +161,7 @@ else
                         No repository here reaches this. That is not the same as it being
                         unreachable: anything that arrives only through a dependency that
                         has not been analyzed cannot appear here.
-                        <MudLink Href="/discovery" Typo="Typo.body2">Check coverage</MudLink>.
+                        <MudLink Href="/inventory?unit=coverage" Typo="Typo.body2">Check coverage</MudLink>.
                     </MudText>
                 }
                 else
@@ -180,7 +180,7 @@ else
                             {
                                 <tr>
                                     <td>
-                                        <MudLink Href="@($"/repositories/{r.Repository}")" Typo="Typo.caption" Class="abom-rule">
+                                        <MudLink Href="@($"/inventory?unit=repositories&q={Uri.EscapeDataString(r.Repository)}")" Typo="Typo.caption" Class="abom-rule">
                                             @r.Repository
                                         </MudLink>
                                         <MudTooltip Text="@HopsHelp(r.Hops)">
@@ -282,7 +282,7 @@ else
                                                     @foreach (var u in _users.Repos)
                                                     {
                                                         <li>
-                                                            <MudLink Href="@($"/repositories/{u.FullName}")"
+                                                            <MudLink Href="@($"/inventory?unit=repositories&q={Uri.EscapeDataString(u.FullName)}")"
                                                                      Typo="Typo.caption">@u.FullName</MudLink>
                                                             <span class="mud-text-secondary">@UseLabel(u)</span>
                                                         </li>

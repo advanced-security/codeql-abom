@@ -80,44 +80,6 @@ public sealed record AdvisoryReach
     public int MaxDependentRepos { get; init; }
 }
 
-/// <summary>One repository's route to an affected action. Hops of 1 is fixable in place.</summary>
-public sealed record Exposure
-{
-    public string Repository { get; init; } = string.Empty;
-    public string GhsaId { get; init; } = string.Empty;
-    public string CveId { get; init; } = string.Empty;
-    public string Severity { get; init; } = string.Empty;
-    public string Summary { get; init; } = string.Empty;
-    public string NodeKey { get; init; } = string.Empty;
-    public int Hops { get; init; }
-    public IReadOnlyList<string> Path { get; init; } = [];
-    public IReadOnlyList<string> References { get; init; } = [];
-
-    public bool IsDirect => Hops == 1;
-}
-
-public sealed record ExposureSummary
-{
-    public string GhsaId { get; init; } = string.Empty;
-    public string Severity { get; init; } = string.Empty;
-    public string Summary { get; init; } = string.Empty;
-    public int Direct { get; init; }
-    public int Transitive { get; init; }
-}
-
-public sealed record SubgraphNode
-{
-    public string Key { get; init; } = string.Empty;
-    public string Kind { get; init; } = string.Empty;
-    public string Repository { get; init; } = string.Empty;
-    public string Origin { get; init; } = string.Empty;
-    public bool IsExternal { get; init; }
-    public string Path { get; init; } = string.Empty;
-    public int Hops { get; init; }
-    public int DependentRepos { get; init; }
-    public int Findings { get; init; }
-}
-
 /// <summary>Something the operator has to fix, with the exact way to fix it.</summary>
 public sealed record DiscoveryProblem
 {
@@ -222,23 +184,6 @@ public sealed record DiscoveryState
     public int Unresolved => Count("queued") + Count("retrying") + Running;
 }
 
-public sealed record SubgraphEdge
-{
-    public string Source { get; init; } = string.Empty;
-    public string Target { get; init; } = string.Empty;
-    public string Kind { get; init; } = string.Empty;
-    public IReadOnlyList<string> Refs { get; init; } = [];
-    public int Count { get; init; }
-}
-
-public sealed record Subgraph
-{
-    public string Focus { get; init; } = string.Empty;
-    public IReadOnlyList<SubgraphNode> Nodes { get; init; } = [];
-    public IReadOnlyList<SubgraphEdge> Edges { get; init; } = [];
-    public bool Truncated { get; init; }
-}
-
 public sealed record FrontierItem
 {
     public string NodeKey { get; init; } = string.Empty;
@@ -313,6 +258,123 @@ public sealed record FrontierItem
     };
 }
 
+/// <summary>A question worth asking repeatedly, named. A tab is one of these, not a page.</summary>
+///
+/// A built-in ships with the product; a saved one is an operator's own. `Builtin` is what tells a
+/// reader which they are looking at, and the two sit side by side deliberately.
+public sealed record NamedView
+{
+    public string Name { get; init; } = string.Empty;
+    public string Title { get; init; } = string.Empty;
+    public string Predicate { get; init; } = string.Empty;
+    public bool Builtin { get; init; }
+    public string CreatedBy { get; init; } = string.Empty;
+
+    /// <summary>Terms Inventory cannot narrow by, so a tab that will refuse itself can say so.</summary>
+    public IReadOnlyList<string> ListingRefuses { get; init; } = [];
+
+    /// <summary>What to show on the tab. A saved view has only the name its author gave it.</summary>
+    public string Label => Title.Length > 0 ? Title : Name;
+}
+
+/// <summary>One workflow as its unit lists it.</summary>
+///
+/// None of these measure being depended upon — a workflow is a consumer, which is why it has a unit
+/// rather than a row in the actions grid.
+public sealed record WorkflowRow
+{
+    public string NodeKey { get; init; } = string.Empty;
+    public string Kind { get; init; } = string.Empty;
+    public string Repository { get; init; } = string.Empty;
+    public string Path { get; init; } = string.Empty;
+    public string Triggers { get; init; } = string.Empty;
+    public int Jobs { get; init; }
+    public int Steps { get; init; }
+    public int Dependencies { get; init; }
+    public int PrivilegedJobs { get; init; }
+    public int Findings { get; init; }
+    public int DependedOnBy { get; init; }
+}
+
+public sealed record WorkflowsPage
+{
+    public IReadOnlyList<WorkflowRow> Items { get; init; } = [];
+    public int Total { get; init; }
+}
+
+/// <summary>One job, with the facts the extraction recorded against it rather than aggregated.</summary>
+public sealed record JobRow
+{
+    public string NodeKey { get; init; } = string.Empty;
+    public string JobId { get; init; } = string.Empty;
+    public string Workflow { get; init; } = string.Empty;
+    public string RunsOn { get; init; } = string.Empty;
+    public string PermissionsScope { get; init; } = string.Empty;
+    public bool Privileged { get; init; }
+    public bool ExternallyTriggerable { get; init; }
+    public bool SecretsInherit { get; init; }
+    public int Steps { get; init; }
+    public int Dependencies { get; init; }
+    public int Findings { get; init; }
+}
+
+public sealed record JobsPage
+{
+    public IReadOnlyList<JobRow> Items { get; init; } = [];
+    public int Total { get; init; }
+}
+
+/// <summary>One page of a listing, and the size of the match it was cut from.</summary>
+///
+/// The total is not decoration: a page that does not carry it reads as the whole answer, and a
+/// column sorted within it answers a narrower question than its header claims.
+public sealed record InventoryPage
+{
+    public IReadOnlyList<ActionSummary> Items { get; init; } = [];
+    public int Total { get; init; }
+
+    /// <summary>Kinds outside this view that the findings terms also matched.</summary>
+    ///
+    /// Without it a findings question answers 0 and the zero reads as "nothing is wrong": every
+    /// `actions/unpinned-tag` finding sits on a step or job node, which are not dependency kinds.
+    public IReadOnlyList<KindCount> Elsewhere { get; init; } = [];
+}
+
+/// <summary>How many nodes of one kind a predicate matched.</summary>
+public sealed record KindCount
+{
+    public string Kind { get; init; } = string.Empty;
+    public int Count { get; init; }
+}
+
+/// <summary>One page of advisories, the size of the match, and what the match excludes.</summary>
+public sealed record AdvisoriesPage
+{
+    public IReadOnlyList<RemediationItem> Items { get; init; } = [];
+    public int Total { get; init; }
+
+    /// <summary>
+    /// Live advisories that name no action anything under review uses.
+    /// </summary>
+    ///
+    /// The exclusion is correct and was invisible: a strip counting 11 over a table holding 3 told
+    /// a reader eight had gone somewhere without saying where, and one of them was critical.
+    public int Unreached { get; init; }
+}
+
+/// <summary>One page of repositories, and the size of the match it was cut from.</summary>
+public sealed record RepositoriesPage
+{
+    public IReadOnlyList<RepositorySummary> Items { get; init; } = [];
+    public int Total { get; init; }
+}
+
+/// <summary>A refusal the server states deliberately, carried back by name.</summary>
+public sealed record ApiError
+{
+    public string Error { get; init; } = string.Empty;
+}
+
 public sealed record ActionSummary
 {
     public string NodeKey { get; init; } = string.Empty;
@@ -346,72 +408,6 @@ public sealed record RuleCount
 {
     public string RuleId { get; init; } = string.Empty;
     public int Count { get; init; }
-}
-
-public sealed record WorkflowSummary
-{
-    public string NodeKey { get; init; } = string.Empty;
-    public string Path { get; init; } = string.Empty;
-    public int Dependencies { get; init; }
-    public int Findings { get; init; }
-}
-
-public sealed record RepositoryDetail
-{
-    public string FullName { get; init; } = string.Empty;
-    public string Origin { get; init; } = string.Empty;
-    public IReadOnlyList<RuleCount> FindingsByRule { get; init; } = [];
-    public IReadOnlyList<WorkflowSummary> Workflows { get; init; } = [];
-    public IReadOnlyList<Exposure> Exposures { get; init; } = [];
-}
-
-/// <summary>
-/// One scope's reference pinning, measured two independent ways: how references are written,
-/// and what <c>actions/unpinned-tag</c> objected to. They are never combined.
-/// </summary>
-/// <summary>The filter every pinning level is computed from, so parents match their children.</summary>
-public sealed record PinningQuery
-{
-    public string Search { get; init; } = string.Empty;
-    /// <summary>`commit`, `tag`, or empty. Lexical: how the reference is written.</summary>
-    public string RefStyle { get; init; } = string.Empty;
-    public bool FlaggedOnly { get; init; }
-
-    public bool IsActive =>
-        !string.IsNullOrWhiteSpace(Search) || !string.IsNullOrEmpty(RefStyle) || FlaggedOnly;
-
-    public string Query =>
-        $"&q={Uri.EscapeDataString(Search)}&style={Uri.EscapeDataString(RefStyle)}" +
-        $"&flagged={(FlaggedOnly ? "true" : "false")}";
-}
-
-public sealed record PinningRow
-{
-    public string Scope { get; init; } = string.Empty;
-    public string ScopeKey { get; init; } = string.Empty;
-    public string Label { get; init; } = string.Empty;
-    public string Ref { get; init; } = string.Empty;
-    public string Kind { get; init; } = string.Empty;
-    public int Pinnable { get; init; }
-    public int Commit { get; init; }
-    public int Floating { get; init; }
-    public int Flagged { get; init; }
-    public int FloatingUnflagged { get; init; }
-    public bool HasChildren { get; init; }
-    /// <summary>Marks a row in an account the operator belongs to. A mark, never a filter.</summary>
-    public bool Owned { get; init; }
-    public OwnedSplit Yours { get; init; } = new();
-    public OwnedSplit FlaggedSplit { get; init; } = new();
-
-    public double CommitShare => Pinnable == 0 ? 0 : (double)Commit / Pinnable;
-}
-
-/// <summary>A figure divided into what the operator can act on and what they cannot.</summary>
-public sealed record OwnedSplit
-{
-    public int Yours { get; init; }
-    public int Elsewhere { get; init; }
-    public int Total => Yours + Elsewhere;
 }
 
 public sealed record OwnerCandidate
@@ -724,6 +720,10 @@ public sealed record PruneView
     /// the page report what it would do as what it did.</summary>
     public bool Applied { get; init; }
 
+    /// <summary>Why no removal could be measured, empty when one could. Distinct from a zero
+    /// report, which says nothing is outside the closure rather than that nothing is known.</summary>
+    public string Unavailable { get; init; } = string.Empty;
+
     public bool RemovesNothing => Removed.Nodes == 0 && Removed.Edges == 0 && Removed.Queued == 0;
 }
 
@@ -1020,6 +1020,39 @@ public sealed record NodeNeighbor
     public string Origin { get; init; } = string.Empty;
     public IReadOnlyList<string> Refs { get; init; } = [];
     public int Count { get; init; }
+}
+
+/// <summary>
+/// What the graph module tells the page about a hovered node.
+///
+/// A projection of the graph payload rather than a second source: the canvas keeps a name and one
+/// line of context, and everything else is typeset beside the graph. Absent measurements travel as
+/// their own flag, because a node ingested since reach was last rebuilt has no measurement and
+/// reporting it as zero asserts one nobody made.
+/// </summary>
+public sealed record GraphNodeBrief
+{
+    public string Key { get; init; } = string.Empty;
+    public string Kind { get; init; } = string.Empty;
+    public string Origin { get; init; } = string.Empty;
+    public string Repository { get; init; } = string.Empty;
+    public string Owner { get; init; } = string.Empty;
+    public string Path { get; init; } = string.Empty;
+    public string Container { get; init; } = string.Empty;
+    public string Grouping { get; init; } = string.Empty;
+    public string Ref { get; init; } = string.Empty;
+    public int DependentRepos { get; init; }
+    public bool ReachKnown { get; init; }
+    public int Findings { get; init; }
+    public IReadOnlyList<string> Rules { get; init; } = [];
+    public int Advisories { get; init; }
+
+    /// <summary>References in use and analyzed. Both zero means nothing ever queued it.</summary>
+    public int RefsInUse { get; init; }
+    public int RefsAnalyzed { get; init; }
+    public string Discovery { get; init; } = string.Empty;
+    public int Depth { get; init; }
+    public bool IsExternal { get; init; }
 }
 
 /// <summary>Everything known about one node, as its own page shows it.</summary>

@@ -4,13 +4,12 @@ using Xunit;
 namespace Abom.WebAssembly.Tests;
 
 /// <summary>
-/// Discovery has to say which of the two acts a control performs.
+/// The crawl controls have to say which of the two acts each one performs.
 ///
 /// <para>Enumeration lists the repositories under a declared account. Analysis builds a database
 /// for each one and runs the suites. They cost wildly different things — seconds against minutes
-/// per repository — and shipped, one button said "Start" and the other act had no presence on
-/// this page at all, so a first-run operator could not tell that anything had happened before
-/// they pressed it.</para>
+/// per repository — and shipped, one button said "Start" and the other act had no presence at all,
+/// so a first-run operator could not tell that anything had happened before they pressed it.</para>
 /// </summary>
 public sealed class DiscoveryActTests : AbomTestContext
 {
@@ -27,7 +26,7 @@ public sealed class DiscoveryActTests : AbomTestContext
     {
         Serve(DiscoveryStateBuilder.NeverStarted().WithOwned(198, 0), "[{\"owner\":\"octo-org\"}]");
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
 
         var run = cut.Find("[data-abom-run]");
         Assert.Contains("analysis", run.TextContent, StringComparison.OrdinalIgnoreCase);
@@ -40,7 +39,7 @@ public sealed class DiscoveryActTests : AbomTestContext
     {
         Serve(DiscoveryStateBuilder.NeverStarted(), "[]");
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
 
         cut.WaitForAssertion(() =>
         {
@@ -58,7 +57,7 @@ public sealed class DiscoveryActTests : AbomTestContext
         Serve(DiscoveryStateBuilder.NeverStarted().WithOwned(198, 12),
               "[{\"owner\":\"octo-org\"}]");
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
 
         cut.WaitForAssertion(() =>
         {
@@ -75,7 +74,7 @@ public sealed class DiscoveryActTests : AbomTestContext
     {
         Serve(DiscoveryStateBuilder.NeverStarted().WithOwned(0, 0), "[{\"owner\":\"octo-org\"}]");
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
 
         cut.WaitForAssertion(() =>
         {

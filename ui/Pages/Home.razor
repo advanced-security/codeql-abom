@@ -3,42 +3,39 @@
 
 <PageTitle>ABOM — Actions Bill of Materials</PageTitle>
 
+@* No coverage strip here. How complete the picture is belongs to Discovery, which answers it per
+   depth, per queue state and per business unit; a second, shorter answer on the landing page was
+   read as the whole one. This surface hands over a scope and states nothing it is not the best
+   place to state. *@
 <PageHeader Title="Actions Bill of Materials">
-    Every GitHub Actions dependency reached by the @_summary.SeedRepos repositories discovery
-    started from. Nothing here is a verdict this tool
-    invented: each claim traces back to the query that produced it.
+    Where do you want to start? Each of these opens the Inventory already narrowed to it.
 </PageHeader>
 
 <MudGrid Spacing="3">
-    @foreach (var s in Sections)
+    @foreach (var s in Entries)
     {
         <MudItem xs="12" sm="6" md="4">
             <MudPaper Elevation="0" Outlined="true" Class="pa-4 abom-section-card"
-                      @onclick="@(() => Go(s.Href))">
+                      @onclick="@(() => Go(s.Href))" data-abom-entry="@s.Key">
                 <div class="d-flex align-center gap-2 mb-2">
                     <MudIcon Icon="@s.Icon" Color="Color.Primary" Size="Size.Small" />
                     <MudLink Href="@s.Href" Typo="Typo.subtitle1">@s.Title</MudLink>
                 </div>
-                <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">@s.Question</MudText>
-                <MudText Typo="Typo.caption" Class="abom-section-figure">@s.Figure</MudText>
+                <MudText Typo="Typo.h5" Class="abom-num">@s.Count.ToString("N0")</MudText>
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">@s.Measures</MudText>
             </MudPaper>
         </MudItem>
     }
 </MudGrid>
 
-@* Coverage is stated on the landing page too, so the first impression is not a complete one. *@
-<MudAlert Severity="MudBlazor.Severity.Normal" Variant="Variant.Outlined" Dense="true"
-          Class="mt-4" Icon="@Icons.Material.Outlined.HelpOutline">
-    <MudText Typo="Typo.body2">
-        @_summary.PendingDependencies dependencies have not been analyzed yet, and
-        @(_summary.Findings - _summary.LinkedFindings) findings could not be attached to a
-        specific reference.
-    </MudText>
-    <MudText Typo="Typo.caption">
-        Anything downstream of an unanalyzed dependency is not represented anywhere in this
-        interface. <MudLink Href="/discovery" Typo="Typo.caption">See what is missing</MudLink>.
-    </MudText>
-</MudAlert>
+<div class="d-flex flex-wrap align-center gap-2 mt-4">
+    <MudText Typo="Typo.caption" Class="mud-text-secondary">Or go straight to</MudText>
+    <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
+               StartIcon="@Icons.Material.Outlined.Hub" Href="/explore">the graph</MudButton>
+    <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
+               StartIcon="@Icons.Material.Outlined.TravelExplore" Href="/inventory?unit=coverage"
+               data-abom-entry="coverage">what has and has not been analyzed</MudButton>
+</div>
 
 @code {
     private Summary _summary = new();
@@ -49,31 +46,27 @@
 
     private void Go(string href) => Nav.NavigateTo(href);
 
-    private sealed record Section(string Title, string Question, string Href, string Icon,
-        string Figure);
+    private sealed record Entry(string Key, string Title, int Count, string Measures, string Href,
+        string Icon);
 
-    // Each card names the question its section answers, because the section names alone do not.
-    private IEnumerable<Section> Sections =>
+    // Every control names a count it can produce and the scope that produces it. Nothing here
+    // exists because the page looked empty.
+    private IEnumerable<Entry> Entries =>
     [
-        new("Explorer",
-            "How does it all connect? Start from everything and filter down to what you care about.",
-            "/explore", Icons.Material.Outlined.Hub,
-            $"{_summary.Nodes:N0} nodes · {_summary.Edges:N0} relationships"),
-        new("Discovery",
-            "How complete is this picture, and what has not been analyzed yet?",
-            "/discovery", Icons.Material.Outlined.TravelExplore,
-            $"{_summary.AnalyzedUpstreams:N0} analyzed · {_summary.PendingDependencies:N0} pending"),
-        new("Actions & Workflows",
-            "What do we depend on, and at which exact references?",
-            "/inventory", Icons.Material.Outlined.Extension,
-            $"{_summary.Findings:N0} findings across {_summary.Rules} rules"),
-        new("Repositories",
-            "What does each repository pull in, and how much of it is theirs to fix?",
-            "/repositories", Icons.Material.Outlined.FolderOpen,
-            $"{_summary.SeedRepos:N0} starting points · {_summary.UpstreamRepos:N0} upstream"),
-        new("Remediation",
-            "What should we fix first, and why that order?",
-            "/remediation", Icons.Material.Outlined.Build,
-            $"{_summary.Advisories:N0} advisories · {_summary.AffectedActions:N0} actions in use"),
+        new("findings", "Workflows with findings", _summary.Findings,
+            $"findings across {_summary.Rules} rules, in what you run",
+            "/inventory?unit=workflows&flags=findings", Icons.Material.Outlined.PlayCircleOutline),
+        new("advisories", "Advisories reaching you", _summary.Advisories,
+            $"published advisories, naming {_summary.AffectedActions:N0} actions in use",
+            "/inventory?unit=advisories", Icons.Material.Outlined.Build),
+        new("actions", "Actions you depend on", _summary.Nodes,
+            "nodes in the graph, at every depth",
+            "/inventory", Icons.Material.Outlined.Extension),
+        new("repositories", "Repositories you own", _summary.OwnedRepos,
+            $"declared, reaching {_summary.UpstreamRepos:N0} upstream",
+            "/inventory?unit=repositories&scope=owned", Icons.Material.Outlined.FolderOpen),
+        new("exposure", "On a route to an advisory", _summary.Exposures,
+            "routes from something you own to a live advisory",
+            "/inventory?scope=exposure", Icons.Material.Outlined.Route),
     ];
 }

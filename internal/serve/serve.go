@@ -90,7 +90,8 @@ func (s *Server) Handler() http.Handler {
 	}
 
 	mux.HandleFunc("GET /api/summary", s.summary)
-	mux.HandleFunc("GET /api/remediation", reading(s.remediation, "top", "properties", "notProperties"))
+	mux.HandleFunc("GET /api/remediation", reading(s.remediation,
+		"top", "offset", "sort", "desc", "view", "properties", "notProperties"))
 	mux.HandleFunc("GET /api/advisories", reading(s.advisories, "top", "properties", "notProperties"))
 	mux.HandleFunc("GET /api/exposure", reading(s.exposure, "by", "top", "properties", "notProperties"))
 	mux.HandleFunc("GET /api/graph", reading(s.graph,
@@ -136,9 +137,20 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/accounts/refresh", s.refreshAccounts)
 	mux.HandleFunc("GET /api/owner-candidates", s.ownerCandidates)
 	mux.HandleFunc("GET /api/frontier", reading(s.frontier, "status", "top"))
-	mux.HandleFunc("GET /api/actions", reading(s.actions, "q", "top", "properties", "notProperties"))
+	mux.HandleFunc("GET /api/actions", reading(s.actions,
+		"q", "top", "offset", "sort", "desc", "view",
+		"kinds", "origins", "minReach", "scope", "flags", "ref",
+		"rules", "notRules", "provider", "severity", "repositories",
+		"properties", "notProperties"))
+	mux.HandleFunc("GET /api/workflows", reading(s.workflows,
+		"q", "top", "offset", "sort", "desc", "view",
+		"scope", "flags", "properties", "notProperties"))
+	mux.HandleFunc("GET /api/jobs", reading(s.jobs,
+		"q", "top", "offset", "sort", "desc", "view",
+		"scope", "flags", "properties", "notProperties"))
 	mux.HandleFunc("GET /api/repositories",
-		reading(s.repositories, "q", "top", "properties", "notProperties"))
+		reading(s.repositories, "q", "top", "offset", "sort", "desc", "view",
+			"scope", "properties", "notProperties"))
 	mux.HandleFunc("GET /api/repositories/{owner}/{name}", s.repository)
 	mux.HandleFunc("POST /api/repositories/{owner}/{name}/snapshot/preview", s.snapshotPreview)
 	mux.HandleFunc("POST /api/repositories/{owner}/{name}/snapshot/submit", s.snapshotSubmit)
@@ -284,14 +296,27 @@ func (s *Server) summary(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, sum, err)
 }
 
+// remediation lists one page of the advisories unit, worst first across the whole match.
+//
+// The page carries how many live advisories reach nothing under review, because that exclusion is
+// correct and invisible: a coverage strip counting 11 over a table holding 3 taught a reader that
+// eight had gone somewhere, without saying where.
 func (s *Server) remediation(w http.ResponseWriter, r *http.Request) {
-	scope, err := repositoryScope(r)
+	spec, err := s.graphPredicate(r, "top", "offset", "sort", "desc")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	items, err := s.Store.RemediationPriority(intParam(r, "top", 50), scope)
-	writeJSON(w, items, err)
+	if refused := spec.UnenforceableAsAdvisories(); len(refused) > 0 {
+		writeError(w, http.StatusBadRequest, unlistable(refused))
+		return
+	}
+	page, err := s.Store.AdvisoriesPage(store.AdvisoriesQuery{
+		Offset:   intParam(r, "offset", 0),
+		Limit:    intParam(r, "top", 50),
+		Grouping: scopeFromSpec(spec),
+	})
+	writeJSON(w, page, err)
 }
 
 func (s *Server) advisories(w http.ResponseWriter, r *http.Request) {
@@ -855,25 +880,174 @@ func (s *Server) frontier(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, items, err)
 }
 
+// actions lists one page of the inventory, ordered across the whole match.
+//
+// The predicate is the shared one, so a scope built on any surface narrows this listing too, and a
+// term the listing cannot apply is refused by name rather than dropped. `top`, `offset`, `sort` and
+// `desc` are cursors into the answer rather than clauses of the question.
 func (s *Server) actions(w http.ResponseWriter, r *http.Request) {
-	scope, err := repositoryScope(r)
+	spec, err := s.graphPredicate(r, "top", "offset", "sort", "desc")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	items, err := s.Store.ActionsInventory(r.URL.Query().Get("q"), intParam(r, "top", 200), scope)
-	writeJSON(w, items, err)
+	if refused := spec.UnenforceableAsInventory(); len(refused) > 0 {
+		writeError(w, http.StatusBadRequest, unlistable(refused))
+		return
+	}
+	query := store.InventoryQuery{
+		Search:   spec.Search,
+		Kinds:    spec.Kinds,
+		Origins:  spec.Origins,
+		MinReach: spec.MinReach,
+		Scope:    spec.Scope,
+		Flags:    spec.Flags,
+		RefStyle: spec.RefStyle,
+		Rules:    spec.Rules,
+		NotRules: spec.NotRules,
+		Provider: spec.Provider,
+		Severity: spec.Severity,
+
+		Repositories: spec.Repositories,
+
+		Sort:     r.URL.Query().Get("sort"),
+		Desc:     r.URL.Query().Get("desc") == "true",
+		Offset:   intParam(r, "offset", 0),
+		Limit:    intParam(r, "top", 50),
+		Grouping: scopeFromSpec(spec),
+	}
+	// The same closure the graph and pruning read, so what a listing shows and what removal would
+	// keep are one answer rather than two that drift.
+	if query.Scope == store.ScopeOwned {
+		keep, _, err := (&graph.Builder{Store: s.Store}).KeepList()
+		if err != nil {
+			writeJSON(w, store.InventoryPage{}, err)
+			return
+		}
+		query.Closure = keep
+	}
+	page, err := s.Store.ActionsInventoryPage(query)
+	writeJSON(w, page, err)
 }
 
+// unlistable is the wording for a term a node listing cannot apply.
+func unlistable(terms []string) string {
+	return "view: " + strings.Join(terms, ", ") +
+		" describes a relationship or a finding, which a list of nodes cannot answer; " +
+		"ask /api/graph/full or /api/match for it"
+}
+
+// repositories lists one page of the repositories unit, ordered across the whole match.
+//
+// A unit of its own rather than a kind in the node listing: a repository's measurements are its
+// own, and a `repo:` node carries none of them.
 func (s *Server) repositories(w http.ResponseWriter, r *http.Request) {
-	scope, err := repositoryScope(r)
+	spec, err := s.graphPredicate(r, "top", "offset", "sort", "desc")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	items, err := s.Store.RepositoriesOverview(
-		r.URL.Query().Get("q"), intParam(r, "top", 500), scope)
-	writeJSON(w, items, err)
+	if refused := spec.UnenforceableAsRepositories(); len(refused) > 0 {
+		writeError(w, http.StatusBadRequest, unlistable(refused))
+		return
+	}
+	query := store.RepositoriesQuery{
+		Search:   spec.Search,
+		Scope:    spec.Scope,
+		Sort:     r.URL.Query().Get("sort"),
+		Desc:     r.URL.Query().Get("desc") == "true",
+		Offset:   intParam(r, "offset", 0),
+		Limit:    intParam(r, "top", 50),
+		Grouping: scopeFromSpec(spec),
+	}
+	// The same closure the node listing reads, so "what you own" means one population across units.
+	if query.Scope == store.ScopeOwned {
+		keep, _, err := (&graph.Builder{Store: s.Store}).KeepList()
+		if err != nil {
+			writeJSON(w, store.RepositoriesPage{}, err)
+			return
+		}
+		query.Closure = keep
+	}
+	page, err := s.Store.RepositoriesPage(query)
+	writeJSON(w, page, err)
+}
+
+// workflows and jobs list the units whose columns are their own.
+//
+// Separate endpoints rather than a unit parameter on /api/actions, because a unit asks for its own
+// columns: a workflow has jobs, steps and triggers, and none of them fits the shape a caller
+// expecting an action summary would parse.
+func (s *Server) workflows(w http.ResponseWriter, r *http.Request) {
+	req, ok := s.unitRequest(w, r, viewspec.Spec.UnenforceableAsWorkflows)
+	if !ok {
+		return
+	}
+	page, err := s.Store.WorkflowsPage(store.WorkflowsQuery{
+		Search: req.Spec.Search, Scope: req.Spec.Scope, Flags: req.Spec.Flags,
+		Closure: req.Closure, Sort: req.Sort, Desc: req.Desc,
+		Offset: req.Offset, Limit: req.Limit, Grouping: req.Grouping,
+	})
+	writeJSON(w, page, err)
+}
+
+func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
+	req, ok := s.unitRequest(w, r, viewspec.Spec.UnenforceableAsJobs)
+	if !ok {
+		return
+	}
+	page, err := s.Store.JobsPage(store.JobsQuery{
+		Search: req.Spec.Search, Scope: req.Spec.Scope, Flags: req.Spec.Flags,
+		Closure: req.Closure, Sort: req.Sort, Desc: req.Desc,
+		Offset: req.Offset, Limit: req.Limit, Grouping: req.Grouping,
+	})
+	writeJSON(w, page, err)
+}
+
+// unitRequest is everything a unit listing reads from a request, parsed once.
+type unitRequest struct {
+	Spec     viewspec.Spec
+	Sort     string
+	Desc     bool
+	Offset   int
+	Limit    int
+	Grouping store.RepositoryScope
+	Closure  []string
+}
+
+// unitRequest parses the predicate, refuses the terms this unit cannot apply, and resolves the
+// owned closure when the scope names one. It answers false once it has written the refusal, so a
+// handler that ignored the flag could not accidentally serve an unscoped answer.
+func (s *Server) unitRequest(
+	w http.ResponseWriter, r *http.Request, refuse func(viewspec.Spec) []string,
+) (unitRequest, bool) {
+	spec, err := s.graphPredicate(r, "top", "offset", "sort", "desc")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return unitRequest{}, false
+	}
+	if refused := refuse(spec); len(refused) > 0 {
+		writeError(w, http.StatusBadRequest, unlistable(refused))
+		return unitRequest{}, false
+	}
+	req := unitRequest{
+		Spec:     spec,
+		Sort:     r.URL.Query().Get("sort"),
+		Desc:     r.URL.Query().Get("desc") == "true",
+		Offset:   intParam(r, "offset", 0),
+		Limit:    intParam(r, "top", 50),
+		Grouping: scopeFromSpec(spec),
+	}
+	// The same closure the node listing reads, so "what you own" means one population across units.
+	if spec.Scope == store.ScopeOwned {
+		keep, _, err := (&graph.Builder{Store: s.Store}).KeepList()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return unitRequest{}, false
+		}
+		req.Closure = keep
+	}
+	return req, true
 }
 
 // repositoryScope reads the grouping terms through the shared parser, so a malformed one is
@@ -884,6 +1058,12 @@ func repositoryScope(r *http.Request) (store.RepositoryScope, error) {
 		return store.RepositoryScope{}, err
 	}
 	return store.RepositoryScope{Include: include, Exclude: exclude}, nil
+}
+
+// scopeFromSpec takes the property terms off a parsed predicate, so an endpoint reading the shared
+// predicate does not parse the same two parameters a second time and disagree about them.
+func scopeFromSpec(spec viewspec.Spec) store.RepositoryScope {
+	return store.RepositoryScope{Include: spec.Properties, Exclude: spec.NotProperties}
 }
 
 func (s *Server) repository(w http.ResponseWriter, r *http.Request) {

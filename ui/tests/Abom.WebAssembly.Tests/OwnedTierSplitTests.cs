@@ -43,9 +43,9 @@ public class OwnedTierSplitTests : AbomTestContext
 
     // The per-tier counts live in the "What each tier is analyzed with" fold, which is closed on
     // arrival, so a test about them has to open it exactly as a reader would.
-    private static IRenderedComponent<Pages.Discovery> Opened(AbomTestContext ctx)
+    private static IRenderedComponent<Shared.DiscoveryControls> Opened(AbomTestContext ctx)
     {
-        var cut = ctx.Render<Pages.Discovery>();
+        var cut = ctx.Render<Shared.DiscoveryControls>();
         cut.WaitForAssertion(() => Assert.NotNull(cut.Find(".abom-fold-toggle")));
         cut.Find(".abom-fold-toggle").Click();
         return cut;

@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 function install() {
     const documentListeners = [];
     const windowListeners = [];
+    const elementListeners = [];
     const registered = {};
 
     const graph = new Proxy({}, {
@@ -27,6 +28,14 @@ function install() {
         getBoundingClientRect: () => ({ top: 0, left: 0, width: 800, height: 600 }),
         appendChild() { },
         set innerHTML(_v) { },
+        // The renderer writes its own control hint into the host, and the view rebinds gestures
+        // on it, so the stub has to answer both the way a real element does.
+        querySelector: () => null,
+        addEventListener: (...a) => elementListeners.push(a),
+        removeEventListener: (...a) => {
+            const i = elementListeners.findIndex(([t, f]) => t === a[0] && f === a[1]);
+            if (i >= 0) elementListeners.splice(i, 1);
+        },
     };
 
     globalThis.document = {
@@ -60,7 +69,7 @@ function install() {
     };
     globalThis.performance = { now: () => 0 };
 
-    return { documentListeners, windowListeners, registered };
+    return { documentListeners, windowListeners, elementListeners, registered };
 }
 
 function fakeDotNet() {
@@ -75,14 +84,34 @@ test('the graph can actually be created', () => {
     assert.equal(create('abom-graph', true, fakeDotNet()), true);
 });
 
+// Driven through the listeners the view binds itself, because the renderer's own click callbacks
+// are gone: a node is drawn at half a pixel, so its hit test answered "empty space" for gestures
+// aimed straight at one.
 test('a click on empty canvas asks the page to drop the selection', () => {
     const net = fakeDotNet();
     create('abom-graph', true, net);
+    const fire = (type, event) => {
+        for (const [t, f] of env.elementListeners) if (t === type) f(event);
+    };
 
-    const onBackground = env.registered.onBackgroundClick[0];
-    onBackground();
+    fire('pointerdown', { clientX: 10, clientY: 10 });
+    fire('click', { clientX: 10, clientY: 10 });
 
     assert.deepEqual(net.calls, [['OnGraphCleared']]);
+});
+
+// A camera drag that happens to end over empty space is not the reader saying "never mind".
+test('a drag that ends on empty canvas is not a click', () => {
+    const net = fakeDotNet();
+    create('abom-graph', true, net);
+    const fire = (type, event) => {
+        for (const [t, f] of env.elementListeners) if (t === type) f(event);
+    };
+
+    fire('pointerdown', { clientX: 10, clientY: 10 });
+    fire('click', { clientX: 120, clientY: 90 });
+
+    assert.deepEqual(net.calls, []);
 });
 
 test('escape asks the page to drop the selection', () => {
@@ -115,4 +144,25 @@ test('leaving the view takes its key listener with it', () => {
 
     const after = env.documentListeners.filter(([type]) => type === 'keydown').length;
     assert.equal(before - after, 1);
+});
+
+// The gesture listeners exist because a rested view stops polling the camera, so they are bound
+// for the lifetime of the view rather than per frame. Left behind, every rebuild adds another
+// that wakes an instance no longer on screen.
+test('leaving the view takes its gesture listeners with it', () => {
+    create('abom-graph', true, fakeDotNet());
+    const count = type => env.elementListeners.filter(([t]) => t === type).length;
+    const before = {
+        pointerdown: count('pointerdown'), wheel: count('wheel'), dblclick: count('dblclick'),
+        pointermove: count('pointermove'), pointerleave: count('pointerleave'),
+        // Owned here rather than left to the renderer, so they are ours to clean up too.
+        pointerup: count('pointerup'), click: count('click'), contextmenu: count('contextmenu'),
+    };
+
+    dispose('abom-graph');
+
+    for (const [type, had] of Object.entries(before)) {
+        assert.ok(had > 0, `create() never bound ${type}`);
+        assert.equal(count(type), had - 1, `${type} survived dispose`);
+    }
 });

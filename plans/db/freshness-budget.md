@@ -28,7 +28,7 @@ hand once and cannot be reproduced by asking the system.
    table: `abom_observation` has `query_run_id NOT NULL` and is keyed by node, edge or repository,
    so it is for CodeQL output about subjects, never for what a cycle cost.
 3. **The recheck gated on completeness rather than on a momentarily empty queue**, and the
-   Discovery page stating the objective and the spend. A crawl whose priorities are invisible is
+   Settings stating the objective and the spend. A crawl whose priorities are invisible is
    one nobody can steer.
 4. **Deferred by decision: iterative deepening.** `MaxDepth` is a static flag read once and changed
    by nothing, and a crawl that deepens on its own can surprise an operator with a bill.

@@ -7,45 +7,52 @@ Capture at 1440×900 unless a check says otherwise.
 
 | # | Surface | Interaction before capture | Exists to catch |
 | --- | --- | --- | --- |
-| 1 | Landing (remediation) | none | Whether the first screen answers "what do I fix first"; coverage strip present |
-| 2 | Landing, top row expanded | expand highest-priority row | Ranges, observed refs and direct/transitive split shown together |
-| 3 | Remediation, unfixable advisory | find one with no published fix | That "no fix available" is distinguishable from "fixed in X" |
-| 4 | Explorer — Topology, repository granularity | focus `actions/checkout`, hops 1 | Hub occlusion, label collision at ~200 nodes |
-| 5 | Explorer — Topology, workflow granularity | same focus | Hairball threshold; whether truncation is disclosed |
-| 6 | Explorer — Risk force | same scope, switch force | Whether urgency reads from position |
-| 7 | Explorer — same scope, after switching back | switch force again | View-switch continuity and node trackability |
-| 8 | Explorer — reloaded | reload the identical scope | Layout determinism |
-| 9 | Explorer — transitive exposure path | focus `pypa/gh-action-pypi-publish`, hops 3 | Whether a multi-repository route reads as a chain |
-| 10 | Explorer — 3D | toggle 3D on a dense scope | Whether 3D resolves overlap or worsens it |
-| 11 | Actions inventory | none | Density, sort affordances, search discoverability |
-| 12 | Repository detail | open a repo with many findings | Findings grouped by rule; rule IDs visible |
-| 13 | Discovery, nothing started | fresh database, discovery never started | "Not started" distinguishable from "paused"; what pressing Start will cost is stated before it is spent |
-| 14 | Discovery, each queue state | click each state filter in turn | Every empty result explains itself; counts on the filters make "none" unambiguous |
-| 15 | Discovery, live | start discovery, watch two cycles | Whether motion communicates progress; whether Pause visibly takes effect before the cycle ends |
+| 1 | Dashboard | none | Whether the first screen says how complete the picture is; coverage strip present; four nav entries and no more |
+| 2 | Inventory — dependencies | none | Density, the *Showing N of M* line, tabs and units both legible at once |
+| 3 | Inventory — sorted by findings | click Findings twice | The first row matches `?sort=findings&desc=true` from the API, not the page |
+| 4 | Inventory — repositories unit | switch unit | Repository-shaped columns; no node column reading 0 for every row |
+| 5 | Inventory — advisories unit | switch unit | Direct/transitive split; the line naming advisories that reach nothing |
+| 6 | Inventory — a named view | click a tab | The tab reads as selected and the scope in the address matches its predicate |
+| 7 | Inventory — property scope | narrow by a property value | The count of repositories carrying no value is stated beside the filtered total |
+| 8 | Inventory — a refused scope | arrive with `?severity=high` | The refusal names the term rather than showing an empty grid |
+| 9 | Explorer — neighborhood, repository granularity | focus `actions/checkout`, hops 1 | Hub occlusion, label collision at ~200 nodes |
+| 10 | Explorer — workflow granularity | same focus | Hairball threshold; whether truncation is disclosed |
+| 11 | Explorer — Priority force | same scope, switch force | Whether urgency reads from position |
+| 12 | Explorer — same scope, after switching back | switch force again | View-switch continuity and node trackability |
+| 13 | Explorer — reloaded | reload the identical scope | Layout determinism |
+| 14 | Explorer — transitive exposure path | focus a dependency three hops deep | Whether a multi-repository route reads as a chain |
+| 15 | Explorer — 3D | toggle 3D on a dense scope | Whether 3D resolves overlap or worsens it |
 | 16 | Explorer — Coverage view | switch to Coverage on the whole graph | Legend swaps with the encoding; nodes that were never dependencies are not drawn as unknown |
 | 17 | Explorer — following a run | enable Follow while discovery runs | New nodes arrive near their neighbors; the layout does not jump and the camera does not move |
-| 18 | Follow control, nothing running | discovery stopped | Checkbox disabled and empty, with a reason; the interval stays settable |
-| 19 | Empty state | point at a database with no advisories | That "nothing found" is distinct from "not yet analyzed" |
-| 20 | Server unreachable | stop the server with a page open and following | The page says it lost the server rather than freezing on stale data |
-| 21 | Narrow viewport | 900×700 | Reflow, truncation, whether the graph becomes unusable |
+| 18 | Discovery, nothing started | fresh database, discovery never started | "Not started" distinguishable from "paused"; what pressing Start will cost is stated before it is spent |
+| 19 | Discovery, each queue state | click each state filter in turn | Every empty result explains itself; counts on the filters make "none" unambiguous |
+| 20 | Discovery, live | start discovery, watch two cycles | Whether motion communicates progress; whether Pause visibly takes effect before the cycle ends |
+| 21 | Follow control, nothing running | discovery stopped | Checkbox disabled and empty, with a reason; the interval stays settable |
+| 22 | Empty state | point at a database with no advisories | That "nothing found" is distinct from "not yet analyzed" |
+| 23 | Server unreachable | stop the server with a page open and following | The page says it lost the server rather than freezing on stale data |
+| 24 | Narrow viewport | 900×700 | Reflow, truncation, whether the graph becomes unusable; whether tabs and units wrap readably |
 
 ## Notes
 
 **Use a populated database.** Every crowding, truncation and overlap failure needs real density
-to appear. `/tmp/abom-real/abom.db` (204 repos, 23.5k nodes, 4.5k findings) is the reference
-corpus.
+to appear. An empty database skips exactly the captures worth taking.
 
-**Capture 6, 7 and 8 are a set.** They only mean something compared with each other: continuity
-across a force switch, and determinism across a reload.
+**Captures 2 to 8 are the Inventory set**, and they are where this interface's claims live now.
+Four questions that used to be pages are units, tabs and actions here; each was folded in only
+once its columns were its own, so the thing to look for is a column that belongs to a different
+unit reading zero.
 
-**Capture 15 matters more than it looks.** The distinction between "we looked and found nothing"
+**Captures 11, 12 and 13 are a set.** They only mean something compared with each other:
+continuity across a force switch, and determinism across a reload.
+
+**Capture 22 matters more than it looks.** The distinction between "we looked and found nothing"
 and "we have not looked here" is one ABOM takes seriously everywhere else, and an empty state is
 where an interface usually loses it.
 
-**Captures 13, 14 and 18 are the pre-start set.** Most of a discovery interface's life is spent
+**Captures 18, 19 and 21 are the pre-start set.** Most of a discovery interface's life is spent
 with a full queue and nothing analyzed, and that is the state least likely to have been designed.
 A bare grid with a pager reading `0-0 of 0` is the failure to look for.
 
-**Capture 20 needs the server actually stopped**, not a throttled network: `make stop` while the
+**Capture 23 needs the server actually stopped**, not a throttled network: `make stop` while the
 page is open. A view that follows a run has to say when it can no longer reach the server, or it
 reports stale numbers indefinitely with no sign anything is wrong.

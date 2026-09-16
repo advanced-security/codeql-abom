@@ -20,6 +20,8 @@ var appliesGrouping = map[string]string{
 	"/api/pinning/totals": "",
 	"/api/nodes":          "",
 	"/api/actions":        "",
+	"/api/workflows":      "",
+	"/api/jobs":           "",
 	"/api/advisories":     "",
 }
 
@@ -38,11 +40,17 @@ func TestAnEndpointRefusesAParameterItDoesNotApply(t *testing.T) {
 	for _, path := range []string{
 		"/api/remediation", "/api/advisories", "/api/exposure", "/api/nodes",
 		"/api/pinning", "/api/pinning/totals", "/api/frontier", "/api/actions",
+		"/api/workflows", "/api/jobs",
 		"/api/repositories", "/api/properties", "/api/graph",
 	} {
 		_, applies := appliesGrouping[path]
 		for _, param := range []string{"severity=error", "properties=business_id:3", "units=3"} {
 			if applies && param == "properties=business_id:3" {
+				continue
+			}
+			// The node listing answers the findings terms now: a node carries a finding of that
+			// severity or it does not. Every other endpoint here still has nothing to apply it to.
+			if path == "/api/actions" && param == "severity=error" {
 				continue
 			}
 			rec := httptest.NewRecorder()
@@ -80,6 +88,43 @@ func TestTheReportsThatApplyAGroupingAcceptIt(t *testing.T) {
 					path, query, rec.Code, http.StatusOK, rec.Body.String())
 			}
 		}
+	}
+}
+
+// The findings terms the node listing answers, accepted rather than refused.
+//
+// The refusal test above skips `/api/actions?severity=error` now, and a skip with nothing on the
+// other side of it is how a term goes back to being silently ignored: it would drop out of the
+// listing, stop being refused, and both tests would still pass.
+func TestTheNodeListingAcceptsTheFindingsTermsItApplies(t *testing.T) {
+	srv, _ := unitServer(t)
+
+	for _, term := range []string{
+		"severity=error", "rules=actions%2Funpinned-tag", "notRules=actions%2Funpinned-tag",
+		"provider=codeql",
+	} {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/actions?"+term, nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("/api/actions?%s answered %d, want %d: %s",
+				term, rec.Code, http.StatusOK, rec.Body.String())
+		}
+	}
+}
+
+// `repositories` on the node listing means the repository a finding sits in, which is the meaning
+// the set path already gives it. The alternative reading — "dependencies used by these" — is a
+// different question answered by `scope` and by the graph; one word for both is the divergence the
+// enforcement split exists to prevent.
+func TestTheNodeListingAppliesRepositoriesWithTheSetPathsMeaning(t *testing.T) {
+	srv, _ := unitServer(t)
+
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(
+		http.MethodGet, "/api/actions?repositories=octo-org%2Fapp", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 }
 

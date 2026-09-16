@@ -280,9 +280,11 @@ A sweep produces three kinds of output, and they go to three different places.
 
 - **What is still to do** goes to `plans/db/data-efficiency.md` as pending items, and is ranked into
   `plans/next.md`. Keep it to the open work: the plan is a queue, not a logbook.
-- **A rule the next author must not break** goes to `.github/instructions/store-sqlite.instructions.md`
-  or `ui.instructions.md` — for example that a function on an indexed column defeats the index, or
-  that a frame-rate probe must prove the thing it timed actually moved.
+- **A rule the next author must not break** stays in the plan that found it — for example that a
+  function on an indexed column defeats the index, or that a frame-rate probe must prove the thing
+  it timed actually moved. It moves to a skill under `.github/skills/**` only when the plan retires
+  and the rule still changes what somebody does. `.github/instructions/**` is fixed and never
+  receives it.
 - **The reasoning**, including predictions that did not hold, goes to `plans/implemented.md`, which is
   git-ignored. Those are the most valuable rows there are, and they are also exactly what nobody
   wants to read in a tracked plan a year later.

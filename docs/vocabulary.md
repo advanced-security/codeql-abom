@@ -8,6 +8,17 @@ than a convention.
 
 Three notions, and only one of them means responsibility.
 
+```mermaid
+flowchart LR
+  DECL["Yours<br/>abom_owned_scope"] --> RESP{"can you<br/>change it?"}
+  MEMB["A member of<br/>abom_account"] --> RESP
+  REACH["Reached<br/>the graph"] --> RESP
+  RESP -->|yes| Y["only what you declared"]
+  RESP -->|no| N["membership proves nothing;<br/>reached is somebody else's"]
+  style MEMB fill:#3d2d1d
+  style REACH fill:#3d2d1d
+```
+
 | Word | Source | Means |
 | --- | --- | --- |
 | **Yours** | `abom_owned_scope` | Declared by the operator. The only one that implies you can change anything. |
@@ -97,12 +108,20 @@ property was never set.
 
 ## Waivers
 
-Two notions, and the difference is whether it ends.
+Two notions, and the difference is whether the work happens and whether it ends.
 
-| Word | Means | Required shape |
-| --- | --- | --- |
-| **Exclusion** | The rule does not apply here | Enumerated |
-| **Exception** | The rule applies here and is waived | Enumerated, and expires |
+| Word | Means | Effect | Required shape |
+| --- | --- | --- | --- |
+| **Exclusion** | Do not do this work | Nothing is analyzed, nothing is recorded | Enumerated |
+| **Exception** | Do the work, do not act on the result | The work runs and records; the result is waived, or hidden | Enumerated, and expires |
+
+They govern the estate, not only a rule: excluding a repository from analysis is not writing a
+policy. Each carries a reason nobody may omit and an author, and an exception carries the date it
+comes back.
+
+**Hiding is not destruction.** An exception filters a read. Pruning removes what the declared
+closure no longer reaches, which is a different operation with different consequences, and neither
+is a synonym for the other.
 
 Both must be listable in full at any moment. **Neither is ever an open-ended pattern**, because a
 pattern cannot be audited and silently covers a repository created after it was written — a waiver

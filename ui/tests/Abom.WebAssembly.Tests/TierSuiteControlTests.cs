@@ -30,7 +30,7 @@ public class TierSuiteControlTests : AbomTestContext
     {
         Serve(TwoSuites);
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
 
         cut.WaitForAssertion(() => Assert.Contains("What each tier is analyzed with", cut.Markup));
         Assert.Contains("522", cut.Markup);
@@ -44,7 +44,7 @@ public class TierSuiteControlTests : AbomTestContext
     {
         Serve(TwoSuites);
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
         cut.WaitForAssertion(() => cut.Find(".abom-fold-toggle"));
         cut.Find(".abom-fold-toggle").Click();
 
@@ -59,7 +59,7 @@ public class TierSuiteControlTests : AbomTestContext
     {
         Serve(TwoSuites);
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
 
         cut.WaitForAssertion(() =>
             Assert.Contains("Nothing is bound to transitive", cut.Markup));
@@ -72,7 +72,7 @@ public class TierSuiteControlTests : AbomTestContext
     {
         Serve("""{"available":[],"tiers":{"direct":[],"transitive":[]},"counts":{}}""");
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
 
         cut.WaitForAssertion(() =>
             Assert.Contains("No suites were found on disk", cut.Markup));
@@ -87,7 +87,7 @@ public class TierSuiteControlTests : AbomTestContext
         Serve(TwoSuites);
         var release = Withhold("api/discovery/suites");
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
 
         cut.WaitForAssertion(() => Assert.Contains("What each tier is analyzed with", cut.Markup));
         Assert.DoesNotContain("Nothing is bound to", cut.Markup);
@@ -105,7 +105,7 @@ public class TierSuiteControlTests : AbomTestContext
         Answer("api/discovery/status", DiscoveryStateBuilder.Drained().WithTiers(522, 691).ToJson());
         Answer("api/frontier", "[]");
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
 
         cut.WaitForAssertion(() =>
             Assert.Contains("Could not read what each tier is bound to", cut.Markup));
@@ -119,7 +119,7 @@ public class TierSuiteControlTests : AbomTestContext
     {
         Serve(TwoSuites);
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
 
         cut.WaitForAssertion(() => Assert.Contains("What each tier is analyzed with", cut.Markup));
         Assert.Contains("direct: abom-dependency-graph", cut.Markup);
@@ -135,20 +135,20 @@ public class TierSuiteControlTests : AbomTestContext
         Answer("api/discovery/status", DiscoveryStateBuilder.Drained().WithTiers(522, 691).ToJson());
         Answer("api/frontier", "[]");
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
 
         cut.WaitForAssertion(() =>
             Assert.Contains("Could not read what each tier is bound to", cut.Markup));
         Assert.DoesNotContain("abom-fold-toggle", cut.Markup);
     }
 
-    // What the crawl is doing is why the page is open; only configuration folds.
+    // What the crawl is doing is why these controls exist; only configuration folds.
     [Fact]
     public void TheRunControlsAreNeverFoldedAway()
     {
         Serve(TwoSuites);
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
 
         // Asserted on the controls rather than their wording: the verb moved to a label shared by
         // the row when a third tier made repeating it wrap the last button onto its own line.
@@ -177,7 +177,7 @@ public class TierSuiteControlTests : AbomTestContext
     {
         Serve(WithContents);
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
         cut.WaitForAssertion(() => cut.Find(".abom-fold-toggle"));
         cut.Find(".abom-fold-toggle").Click();
 
@@ -195,7 +195,7 @@ public class TierSuiteControlTests : AbomTestContext
     {
         Serve(WithContents);
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
         cut.WaitForAssertion(() => cut.Find(".abom-fold-toggle"));
         cut.Find(".abom-fold-toggle").Click();
         cut.WaitForAssertion(() => cut.Find(".abom-suite-toggle"));
@@ -212,7 +212,7 @@ public class TierSuiteControlTests : AbomTestContext
     {
         Serve(TwoSuites);
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
         cut.WaitForAssertion(() => cut.Find(".abom-fold-toggle"));
         cut.Find(".abom-fold-toggle").Click();
 

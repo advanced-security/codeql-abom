@@ -48,17 +48,41 @@ fine, but do not run `make verify`, `make ql` or `make selfcheck` at the same ti
 
 ## Procedure
 
-### 1. Establish ground truth from the API
+### The shape of the interface
+
+Four surfaces, and everything else is a unit, a tab or an action on one of them:
+
+| Surface | Answers |
+| --- | --- |
+| **Dashboard** (`/`) | How complete the picture is, and what discovery is configured to do |
+| **Inventory** (`/inventory`) | Which things match — in tabs that are named views, reprojected by a unit switch, with actions on the scope |
+| **Explorer** (`/explore`) | What those things touch |
+| **Settings** (`/settings`) | What the operator claims and how ABOM is configured |
+
+A fifth nav entry is a finding: a question grew its own page again, and a page has to invent its
+own scope. `/repositories`, `/pinning`, `/remediation`, `/bom` and `/discovery` still **answer** at
+their old addresses so no link breaks, and none of them is in the navigation.
+
+Inventory's units are `dependencies`, `repositories` and `advisories`, chosen with `?unit=`.
+Relationships is missing on purpose until an edge carries its own identity.
+
+## 1. Establish ground truth from the API
 
 The API is the oracle. Record the numbers before looking at any pixels, so the comparison later
 is against fact rather than expectation.
 
 ```bash
 curl -sS localhost:8099/api/summary | python3 -m json.tool
-curl -sS "localhost:8099/api/remediation?top=10"
+curl -sS "localhost:8099/api/actions?top=1" | python3 -c "import json,sys; print(json.load(sys.stdin)['total'], 'matching')"
+curl -sS "localhost:8099/api/remediation?top=1" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['total'], 'reaching you,', d['unreached'], 'reaching nothing')"
+curl -sS localhost:8099/api/views | python3 -m json.tool
 curl -sS "localhost:8099/api/graph?focus=actions/checkout&hops=1&granularity=repository" \
   | python3 -c "import json,sys; g=json.load(sys.stdin); print(len(g['nodes']), len(g['edges']), g['truncated'])"
 ```
+
+**A listing answers with `{items, total}`.** `total` is the size of the match, `items` is the page.
+Every figure a listing renders is checked against `total`, never against the row count — that
+distinction is the whole reason the envelope exists.
 
 ### 2. Open the interface and enumerate routes
 
@@ -93,6 +117,15 @@ Now view each capture and judge it. Go through the invariant audit below and the
 Read the figures off the screenshot and compare to step 1. Mismatches here are real bugs:
 truncated counts, rounding that changes meaning, a total that silently excludes upstream repos.
 
+**Check the listing figures three ways**, because they have failed all three:
+
+- the *Showing N of M* line against `total` from the endpoint;
+- the pager's own "1-30 of M" against the same `total`;
+- the first row under a sorted column against `?sort=<col>&desc=true` from the endpoint.
+
+For the advisories unit, `total` and `unreached` are two populations and both belong on screen. A
+strip counting 11 over a table holding 3 is what this check exists to catch.
+
 ## Invariant audit
 
 These derive from ABOM's architecture. A violation is a correctness bug, not a style note,
@@ -111,6 +144,11 @@ because each one makes the interface assert something the data does not support.
 | 9 | Every distinguishable queue state is visible | Work waiting on a retry shown identically to work nothing has touched; Pause leaving the status unchanged while a cycle finishes | A control that appears to do nothing, and a queue that hides what it has already spent |
 | 10 | The interface speaks the reader's language | "reach", "cycle", "claimed", "frontier", "corpus", "hops", "folded", "unplaced" in user-facing text | These are names for internal machinery. A security engineer should not have to learn the scheduler to read the page |
 | 11 | Owning a repository ≠ having a database for it | A repository shown as un-analyzable, or left out of coverage, because code scanning is off there | ABOM builds its own actions databases; `has_database` is provenance, not eligibility. Treating it as a limit understates what is owned |
+| 12 | A page says what it is not showing | A grid with a pager and no statement of the match size, or a pager counting a fetch cap rather than the match | It held 500 of 1,585 with nothing saying so. A pager makes truncation look like completeness |
+| 13 | A column sorts the match, not the page | The first row under a sorted column disagrees with `?sort=&desc=true` from the API | Sorting a page answers "the worst row on this page". It named a row with 39 findings while the real answer had 50 |
+| 14 | A unit's columns are its own | A repository, an advisory or a relationship rendered in node columns — reach, refs, findings — reading 0 | A `repo:` node carries none of them, so the screen asserts 193 repositories depend on nothing. This is invariant 8 wearing a different hat |
+| 15 | A term is applied or refused, never dropped | A scope in the address that narrows nothing, with no refusal on screen | The reader believes they scoped when they did not. The refusal names the term, and the name is the only thing that teaches them which surface answers it |
+| 16 | An action carries the scope on screen | An export or a hand-off that widens to the whole organization | A bill of materials named after one part, describing all of it, is the worst document this project can emit |
 
 For each: **PASS**, **FAIL** with the screenshot region, or **N/A** if that surface is absent.
 

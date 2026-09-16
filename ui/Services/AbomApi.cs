@@ -152,33 +152,132 @@ public sealed class AbomApi(HttpClient http)
 
     public async Task<IReadOnlyList<RemediationItem>> GetRemediationAsync(
         int top = 50, CancellationToken ct = default) =>
-        await GetListAsync<RemediationItem>($"api/remediation?top={top}", ct);
+        (await GetAdvisoriesPageAsync("", top, 0, null, false, ct)).Page?.Items ?? [];
 
-    public async Task<IReadOnlyList<AdvisoryReach>> GetAdvisoriesAsync(
-        int top = 50, CancellationToken ct = default) =>
-        await GetListAsync<AdvisoryReach>($"api/advisories?top={top}", ct);
-
-    public async Task<IReadOnlyList<ExposureSummary>> GetExposureByAdvisoryAsync(
+    /// <summary>
+    /// One page of the advisories unit, worst first across the whole match.
+    /// </summary>
+    public async Task<(AdvisoriesPage? Page, string? Refusal)> GetAdvisoriesPageAsync(
+        string predicate, int top, int offset, string? sort, bool desc,
         CancellationToken ct = default) =>
-        await GetListAsync<ExposureSummary>("api/exposure?by=advisory", ct);
+        await GetPageAsync<AdvisoriesPage>("api/remediation", predicate, top, offset, sort, desc, ct);
 
-    public async Task<IReadOnlyList<Exposure>> GetExposuresAsync(
-        int top = 200, CancellationToken ct = default) =>
-        await GetListAsync<Exposure>($"api/exposure?by=repository&top={top}", ct);
+    /// <summary>
+    /// The named views on offer: the built-in catalog merged with whatever the operator saved.
+    /// </summary>
+    public async Task<IReadOnlyList<NamedView>> GetViewsAsync(CancellationToken ct = default) =>
+        await GetListAsync<NamedView>("api/views", ct);
 
-    public async Task<IReadOnlyList<ActionSummary>> GetActionsAsync(
-        string? search = null, int top = 200, CancellationToken ct = default) =>
-        await GetListAsync<ActionSummary>(
-            $"api/actions?top={top}&q={Uri.EscapeDataString(search ?? string.Empty)}", ct);
+    /// <summary>
+    /// Keeps the scope under a name, answering the catalog the save produced.
+    /// </summary>
+    ///
+    /// The predicate is sent, never the name of the tab it came from: a view recording "whatever
+    /// `owned` means" would change meaning when the built-in did.
+    public async Task<IReadOnlyList<NamedView>?> SaveViewAsync(
+        string name, string predicate, CancellationToken ct = default) =>
+        await WriteViewAsync(HttpMethod.Put, name, predicate, ct);
 
-    public async Task<IReadOnlyList<RepositorySummary>> GetRepositoriesAsync(
-        string? search = null, int top = 500, CancellationToken ct = default) =>
-        await GetListAsync<RepositorySummary>(
-            $"api/repositories?top={top}&q={Uri.EscapeDataString(search ?? string.Empty)}", ct);
+    public async Task<IReadOnlyList<NamedView>?> ForgetViewAsync(
+        string name, CancellationToken ct = default) =>
+        await WriteViewAsync(HttpMethod.Delete, name, null, ct);
 
-    public async Task<RepositoryDetail?> GetRepositoryAsync(
-        string fullName, CancellationToken ct = default) =>
-        await GetAsync<RepositoryDetail>($"api/repositories/{fullName}", ct);
+    private async Task<IReadOnlyList<NamedView>?> WriteViewAsync(
+        HttpMethod method, string name, string? predicate, CancellationToken ct)
+    {
+        var url = $"api/views/{Uri.EscapeDataString(name)}";
+        using var request = new HttpRequestMessage(method, url);
+        if (predicate is not null)
+        {
+            request.Content = JsonContent.Create(new { predicate });
+        }
+        request.Headers.Add("X-Abom-Control", "1");
+        try
+        {
+            using var response = await http.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
+                LastError = refusal?.Error ?? $"the server refused it ({(int)response.StatusCode})";
+                return null;
+            }
+            LastError = null;
+            return await response.Content.ReadFromJsonAsync<List<NamedView>>(Json, ct) ?? [];
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
+        {
+            LastError = $"{url}: {ex.Message}";
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// One page of the repositories unit, ordered across the whole match by the server.
+    /// </summary>
+    public async Task<(RepositoriesPage? Page, string? Refusal)> GetRepositoriesPageAsync(
+        string predicate, int top, int offset, string? sort, bool desc,
+        CancellationToken ct = default) =>
+        await GetPageAsync<RepositoriesPage>("api/repositories", predicate, top, offset, sort, desc, ct);
+
+    /// <summary>
+    /// One page of the inventory, ordered across the whole match by the server.
+    /// </summary>
+    public async Task<(InventoryPage? Page, string? Refusal)> GetActionsPageAsync(
+        string predicate, int top, int offset, string? sort, bool desc,
+        CancellationToken ct = default) =>
+        await GetPageAsync<InventoryPage>("api/actions", predicate, top, offset, sort, desc, ct);
+
+    /// <summary>One page of the workflows unit.</summary>
+    public async Task<(WorkflowsPage? Page, string? Refusal)> GetWorkflowsPageAsync(
+        string predicate, int top, int offset, string? sort, bool desc,
+        CancellationToken ct = default) =>
+        await GetPageAsync<WorkflowsPage>("api/workflows", predicate, top, offset, sort, desc, ct);
+
+    /// <summary>One page of the jobs unit.</summary>
+    public async Task<(JobsPage? Page, string? Refusal)> GetJobsPageAsync(
+        string predicate, int top, int offset, string? sort, bool desc,
+        CancellationToken ct = default) =>
+        await GetPageAsync<JobsPage>("api/jobs", predicate, top, offset, sort, desc, ct);
+
+    /// <summary>
+    /// One page of a listing, with the server's refusal carried back verbatim.
+    /// </summary>
+    /// <remarks>
+    /// The refusal is not swallowed: the endpoint names the terms its unit cannot answer, and that
+    /// name is the only thing that tells a reader why their scope is not narrowing this screen.
+    /// Sorting and paging are the server's, because ordering a page answers a different question
+    /// from ordering the match.
+    /// </remarks>
+    private async Task<(T? Page, string? Refusal)> GetPageAsync<T>(
+        string path, string predicate, int top, int offset, string? sort, bool desc,
+        CancellationToken ct)
+    {
+        var parts = new List<string> { $"top={top}", $"offset={offset}" };
+        if (!string.IsNullOrEmpty(sort))
+        {
+            parts.Add($"sort={Uri.EscapeDataString(sort)}");
+            if (desc) parts.Add("desc=true");
+        }
+        if (predicate.Length > 0) parts.Add(predicate);
+        var url = path + "?" + string.Join("&", parts);
+
+        try
+        {
+            using var response = await http.GetAsync(url, ct);
+            if (response.IsSuccessStatusCode)
+            {
+                LastError = null;
+                return (await response.Content.ReadFromJsonAsync<T>(Json, ct), null);
+            }
+            var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
+            return (default, refusal?.Error ?? $"the server refused this view ({(int)response.StatusCode})");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
+        {
+            LastError = $"{url}: {ex.Message}";
+            return (default, null);
+        }
+    }
 
     // The key contains slashes of its own, so it is appended as a path rather than escaped.
     public async Task<NodeDetail?> GetNodeAsync(string key, CancellationToken ct = default) =>
@@ -259,11 +358,17 @@ public sealed class AbomApi(HttpClient http)
     }
 
     /// <summary>
-    /// Reads how the configured property divides the repositories under review. An answer with no
-    /// values means the operator named no key, which is a state rather than a failure.
+    /// Reads how one property divides the repositories under review, defaulting to the configured
+    /// key. An answer with no values means the organization sets that key nowhere, which is a state
+    /// rather than a failure.
     /// </summary>
-    public async Task<PropertiesView?> GetPropertiesAsync(CancellationToken ct = default)
-        => await GetAsync<PropertiesView>("api/properties", ct);
+    public async Task<PropertiesView?> GetPropertiesAsync(
+        string? property = null, CancellationToken ct = default)
+        => await GetAsync<PropertiesView>(
+            string.IsNullOrEmpty(property)
+                ? "api/properties"
+                : "api/properties?property=" + Uri.EscapeDataString(property),
+            ct);
 
     /// <summary>
     /// The address a download link points at. Built here rather than in markup so the page and
@@ -288,31 +393,10 @@ public sealed class AbomApi(HttpClient http)
         await GetAsync<NodeUsers>(
             $"api/node/{key}/-/users?ref={Uri.EscapeDataString(reference)}", ct);
 
-    public async Task<IReadOnlyList<PinningRow>> GetPinningAsync(
-        string scope, string? parent, PinningQuery filter, CancellationToken ct = default) =>
-        await GetListAsync<PinningRow>(
-            $"api/pinning?scope={Uri.EscapeDataString(scope)}" +
-            $"&parent={Uri.EscapeDataString(parent ?? string.Empty)}{filter.Query}", ct);
-
-    // No scope: the totals are over everything by construction, so the `scope=all` this used to
-    // send asserted something the endpoint cannot vary and never read.
-    public async Task<PinningRow?> GetPinningTotalsAsync(
-        PinningQuery filter, CancellationToken ct = default) =>
-        await GetAsync<PinningRow>($"api/pinning/totals?{filter.Query.TrimStart('&')}", ct);
-
     public async Task<IReadOnlyList<FrontierItem>> GetFrontierAsync(
         string? status = null, int top = 500, CancellationToken ct = default) =>
         await GetListAsync<FrontierItem>(
             $"api/frontier?top={top}&status={Uri.EscapeDataString(status ?? string.Empty)}", ct);
-
-    public async Task<Subgraph> GetGraphAsync(
-        string focus, int hops, string granularity, string direction,
-        int max = 2000, CancellationToken ct = default)
-    {
-        var url = $"api/graph?focus={Uri.EscapeDataString(focus)}&hops={hops}" +
-                  $"&granularity={granularity}&direction={direction}&max={max}";
-        return await GetAsync<Subgraph>(url, ct) ?? new Subgraph { Focus = focus };
-    }
 
     private async Task<T?> GetAsync<T>(string url, CancellationToken ct)
     {

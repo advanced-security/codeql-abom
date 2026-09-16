@@ -20,6 +20,8 @@ GO_FILES := $(shell find . -name '*.go' -not -path './ui/*')
 .PHONY: bench build check-corrupt check-versions clean e2e fmt itest js lint logs package publish ql \
 	quality restart selfcheck serve start status stop style test ui ui-test verify vet
 
+.DEFAULT_GOAL := build
+
 verify: check-corrupt check-versions fmt vet lint test js style ql ui ui-test e2e
 
 ## bench: time the store read paths against a real corpus.

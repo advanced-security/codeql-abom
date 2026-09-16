@@ -73,6 +73,114 @@ public class ViewSpecTests
     public void AnUnknownParameterIsRefusedRatherThanIgnored() =>
         Assert.Throws<FormatException>(() => ViewSpec.Parse("kindz=action"));
 
+    /// <summary>
+    /// Scoping to a business unit is written as a custom property, and this class could not say it
+    /// at all: <c>properties</c> parsed as an unknown filter, so the one term the interface needs
+    /// to name an application or a team was the one it refused. Go has carried it since the term
+    /// was added.
+    /// </summary>
+    [Fact]
+    public void APropertyScopeSurvivesBeingWrittenAndReadBack()
+    {
+        var want = new ViewSpec
+        {
+            Scope = "owned",
+            Properties = [new("business_id", "3"), new("team", "core")],
+            NotProperties = [new("tier", "experimental")],
+        };
+
+        var got = ViewSpec.Parse(want.ToQueryString());
+
+        Assert.True(got.Equals(want), $"round trip lost something: {got.ToQueryString()}");
+    }
+
+    /// <summary>
+    /// One parameter per match rather than a comma-joined list: a property value is operator text,
+    /// and a value containing a comma must not silently become two values.
+    /// </summary>
+    [Fact]
+    public void EachPropertyMatchIsItsOwnParameter()
+    {
+        var spec = new ViewSpec
+        {
+            Properties = [new("team", "core"), new("business_id", "3")],
+        };
+
+        Assert.Equal("properties=business_id%3A3&properties=team%3Acore", spec.ToQueryString());
+    }
+
+    [Fact]
+    public void APropertyValueMayContainAComma()
+    {
+        var want = new ViewSpec { Properties = [new("owners", "core,platform")] };
+
+        var got = ViewSpec.Parse(want.ToQueryString());
+
+        var match = Assert.Single(got.Properties);
+        Assert.Equal("core,platform", match.Value);
+    }
+
+    /// <summary>
+    /// Half a match would filter against whichever property the server happened to be configured
+    /// with, which is the silent widening the predicate language exists to prevent.
+    /// </summary>
+    [Theory]
+    [InlineData("properties=3")]
+    [InlineData("properties=:3")]
+    [InlineData("properties=business_id:")]
+    [InlineData("notProperties=tier")]
+    public void HalfAPropertyMatchIsRefused(string text) =>
+        Assert.Throws<FormatException>(() => ViewSpec.Parse(text));
+
+    /// <summary>A value may itself contain the separator, so only the first one divides.</summary>
+    [Fact]
+    public void OnlyTheFirstSeparatorDividesAPropertyTerm()
+    {
+        var got = ViewSpec.Parse("properties=owner%3Aocto-org%3Aplatform");
+
+        var match = Assert.Single(got.Properties);
+        Assert.Equal("owner", match.Name);
+        Assert.Equal("octo-org:platform", match.Value);
+    }
+
+    /// <summary>
+    /// Go encodes a space as <c>+</c> rather than <c>%20</c>, and the text has to be byte-identical
+    /// across the two because the same string is a storage key on one side and a link on the other.
+    /// </summary>
+    /// <remarks>
+    /// The expected text is not hand-derived: it was read back from <c>GET /api/views</c> after Go
+    /// canonicalized it on write, so this is the two implementations compared rather than one
+    /// implementation compared with a reading of the other.
+    /// </remarks>
+    [Fact]
+    public void ThePropertyTextIsByteIdenticalToWhatGoWrites()
+    {
+        var spec = new ViewSpec
+        {
+            Scope = "owned",
+            Properties = [new("app_name", "Billing, Payments and Fraud"), new("business_id", "3")],
+        };
+
+        Assert.Equal(
+            "properties=app_name%3ABilling%2C+Payments+and+Fraud&properties=business_id%3A3&scope=owned",
+            spec.ToQueryString());
+        Assert.Equal("Billing, Payments and Fraud",
+            ViewSpec.Parse(spec.ToQueryString()).Properties[0].Value);
+    }
+
+    /// <summary>The canonical text is a storage key, so the order they were typed in cannot show.</summary>
+    [Fact]
+    public void PropertyMatchesAreSortedAndDeduplicated()
+    {
+        var a = new ViewSpec
+        {
+            Properties = [new("team", "core"), new("business_id", "3"), new("team", "core")],
+        };
+        var b = new ViewSpec { Properties = [new("business_id", "3"), new("team", "core")] };
+
+        Assert.Equal(b.ToQueryString(), a.ToQueryString());
+    }
+
     [Theory]
     [InlineData("minReach=lots")]
     [InlineData("minReach=-1")]

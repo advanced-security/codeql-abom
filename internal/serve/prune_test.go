@@ -180,6 +180,41 @@ func TestExplainingDoesNotTouchTheQueue(t *testing.T) {
 	}
 }
 
+// The state every new install passes through: an account is declared and enumeration has not
+// produced a repository yet, so the closure is empty. Asking what a prune would cost changes
+// nothing and must not be a fault — it was answered with a 500, which the Discovery page reported
+// as "could not reach the server" on the one visit where nothing has gone wrong at all.
+func TestAskingWhatAPruneCostsBeforeAnythingIsEnumerated(t *testing.T) {
+	srv, s := newServer(t)
+	declareOcto(t, s)
+
+	rec := get(t, srv, "/api/prune")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	got := decode[PruneView](t, rec)
+
+	if got.Unavailable == "" {
+		t.Error("an empty closure was reported as a measurement rather than as unavailable")
+	}
+	// The trap this guards: a zero report reads as "nothing is outside your scope", which on an
+	// unmeasured corpus is a false reassurance rather than a missing one.
+	if got.Removed.Nodes != 0 || got.Removed.Edges != 0 || got.Removed.Repositories != 0 {
+		t.Errorf("removal counted against an empty closure: %+v", got.Removed)
+	}
+}
+
+// The destructive half keeps refusing outright: there is nothing to say no to on a read, and
+// everything to say no to on a write that would tombstone the whole corpus.
+func TestPruningRefusesAgainstAnEmptyClosure(t *testing.T) {
+	srv, s := newServer(t)
+	declareOcto(t, s)
+
+	if rec := postControl(t, srv, "/api/prune/apply"); rec.Code == http.StatusOK {
+		t.Fatalf("applying a prune against an empty closure was allowed: %s", rec.Body.String())
+	}
+}
+
 func queue(t *testing.T, s *store.Store, owner, repo string) {
 	t.Helper()
 	if _, err := s.DB().Exec(`

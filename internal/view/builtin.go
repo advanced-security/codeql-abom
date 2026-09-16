@@ -11,12 +11,14 @@ type Builtin struct {
 	Predicate string `json:"predicate"`
 }
 
-// Builtins are the four questions the interface already answers, named so an API caller and the
-// pull request gate can ask them without reconstructing the predicate.
+// Builtins are the questions the interface answers repeatedly, named so an API caller and the
+// pull request gate can ask them without reconstructing the predicate, and so the interface can
+// offer them as tabs rather than as pages that each invent their own scope.
 //
 // Each predicate is written in the canonical form `Spec.String()` produces, and
 // `TestEveryBuiltinIsAlreadyCanonical` holds them to it: a built-in that had to be normalized on
-// read would compare unequal to the same question typed by hand.
+// read would compare unequal to the same question typed by hand — which is also what lets a
+// surface tell whether the scope it is showing *is* one of these.
 var Builtins = []Builtin{
 	{
 		Name:  "owned-findings",
@@ -29,6 +31,13 @@ var Builtins = []Builtin{
 		Name:      "owned",
 		Title:     "What you own",
 		Predicate: "scope=owned",
+	},
+	{
+		Name:  "unpinned",
+		Title: "Floating references",
+		// Lexical: what is referenced by a tag or branch rather than a commit. Whether that is
+		// safe is `actions/unpinned-tag`'s call, never this catalog's.
+		Predicate: "ref=tag",
 	},
 	{
 		Name:      "advisory-routes",

@@ -23,14 +23,29 @@ type NamedView struct {
 	Builtin   bool   `json:"builtin"`
 	CreatedBy string `json:"createdBy,omitempty"`
 	CreatedAt string `json:"createdAt,omitempty"`
+	// ListingRefuses names the terms Inventory cannot narrow by, so a tab that will refuse itself
+	// can say so before it is clicked rather than after. A view is saved wherever it was built and
+	// drawn wherever it is offered, and the Explorer answers terms a list cannot.
+	ListingRefuses []string `json:"listingRefuses,omitempty"`
+}
+
+// named describes one catalog entry, working out where it can be drawn from the predicate rather
+// than from where it happened to be saved.
+func named(name, title, predicate string, builtin bool, by, at string) NamedView {
+	v := NamedView{
+		Name: name, Title: title, Predicate: predicate, Builtin: builtin,
+		CreatedBy: by, CreatedAt: at,
+	}
+	if spec, err := viewspec.Parse(predicate); err == nil {
+		v.ListingRefuses = spec.UnenforceableAsInventory()
+	}
+	return v
 }
 
 func (s *Server) views(w http.ResponseWriter, r *http.Request) {
 	out := []NamedView{}
 	for _, b := range viewspec.Builtins {
-		out = append(out, NamedView{
-			Name: b.Name, Title: b.Title, Predicate: b.Predicate, Builtin: true,
-		})
+		out = append(out, named(b.Name, b.Title, b.Predicate, true, "", ""))
 	}
 	saved, err := s.Store.SavedViews()
 	if err != nil {
@@ -38,10 +53,7 @@ func (s *Server) views(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, v := range saved {
-		out = append(out, NamedView{
-			Name: v.Name, Predicate: v.Predicate,
-			CreatedBy: v.CreatedBy, CreatedAt: v.CreatedAt,
-		})
+		out = append(out, named(v.Name, "", v.Predicate, false, v.CreatedBy, v.CreatedAt))
 	}
 	writeJSON(w, out, nil)
 }

@@ -169,6 +169,74 @@ public sealed class ExplorerSelectionTests : AbomTestContext
         Assert.DoesNotContain("c/three", page.Markup);
     }
 
+    /// <summary>
+    /// Remediation is where a reader finds the dependency they have to do something about, and
+    /// its Explore link is the one hand-off into the narrow view. It named <c>focus</c>, which the
+    /// page does not read, so the reader arrived at the whole estate with their node nowhere in
+    /// particular — the narrow view unreachable from the one place that tries to reach it.
+    /// </summary>
+    [Fact]
+    public void TheHandOffFromRemediationArrivesAtTheNodeItNamed()
+    {
+        StubGraphModule();
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+                .NavigateTo("/explore?focus=actions%2Fcheckout");
+
+        var page = Render<Explorer>();
+
+        Assert.Contains("only actions/checkout", page.Markup);
+    }
+
+    /// <summary>
+    /// `direction` is checked against the options and `view` was not, on adjacent lines. A link
+    /// naming a view that does not exist left the toggle group with nothing selected, and the bad
+    /// name then propagated into the address bar and out into every link shared from there.
+    /// </summary>
+    [Fact]
+    public async Task AViewNobodyOffersIsIgnoredRatherThanApplied()
+    {
+        StubGraphModule();
+        var nav = Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!;
+        nav.NavigateTo("/explore?view=risk");
+
+        var page = Render<Explorer>();
+        await page.InvokeAsync(() => page.Instance.SyncAddress());
+
+        Assert.Contains("view=neighborhood", nav.Uri);
+        Assert.DoesNotContain("view=risk", nav.Uri);
+    }
+
+    /// <summary>
+    /// A handed-over key can name nothing this graph holds — the scope may exclude it, or a kind
+    /// filter may have dropped it. Drawing an empty canvas under a banner naming the node states
+    /// the opposite of what happened: that the node is here and touches nothing.
+    /// </summary>
+    [Fact]
+    public void AFocusThatNamesNothingInTheGraphSaysSoRatherThanDrawingNothing()
+    {
+        StubGraphModule(new Explorer.Counts(0, 0, 0, 2639, FocusFound: 0));
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+                .NavigateTo("/explore?focus=octo%2Fnot-here");
+
+        var page = Render<Explorer>();
+
+        Assert.Contains("not in this view", page.Markup);
+    }
+
+    /// <summary>The same banner must stay quiet when the focus did resolve.</summary>
+    [Fact]
+    public void AFocusThatResolvedSaysNothingAboutBeingMissing()
+    {
+        StubGraphModule(new Explorer.Counts(7, 6, 0, 2639, FocusFound: 2));
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+                .NavigateTo("/explore?focus=actions%2Fcheckout");
+
+        var page = Render<Explorer>();
+
+        Assert.Contains("only actions/checkout", page.Markup);
+        Assert.DoesNotContain("not in this view", page.Markup);
+    }
+
     private BunitJSModuleInterop StubGraphModule(Explorer.Counts? counts = null)
     {
         var module = JSInterop.SetupModule("./js/graph.js");

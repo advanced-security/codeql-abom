@@ -11,6 +11,16 @@ them with CodeQL, follows their Actions dependencies upstream one measured hop a
 serves the resulting transitive graph with findings, reach and coverage attached. It exports a bill
 of materials, submits a dependency snapshot to GitHub, and explains what it has not looked at.
 
+```mermaid
+flowchart LR
+  MEAS["measure<br/>discover · analyze · expand"] --> HOLD["hold<br/>graph · findings · reach"]
+  HOLD --> OUT["bill of materials ·<br/>dependency snapshot"]
+  HOLD -. "not built" .-> ACT["act<br/>gate · alert · campaign"]
+  HOLD -. "not built" .-> ASK["ask<br/>one scope, two renderings"]
+  style ACT fill:#3d2d1d
+  style ASK fill:#3d2d1d
+```
+
 See [how it works](architecture.md) for the current shape.
 
 ## An organization that stays current at scale
@@ -25,6 +35,28 @@ organization poses have different costs: what is new and what changed can be ans
 prefix, while **what is gone can only be answered by reading everything**. GraphQL is the efficient
 way to ask the first two and to carry whatever else is wanted about a repository, with REST as the
 fallback for the organizations that will not permit it. `plans/api/org-enumeration.md`
+
+## One scope, two renderings
+
+A security team asks one question in two shapes: which things match this, and what do they touch.
+The interface is four surfaces — a Dashboard that hands over a scope rather than reporting on one,
+an Inventory for which things match, an Explorer for what they touch, and Settings for what the
+operator claims. An action belongs to the selection rather than to a page, so exporting a bill of
+materials, re-analyzing, or opening something in the graph are all the same verb over whatever was
+just narrowed to.
+
+What the Inventory shows is a node kind at a time, because a unit only exists once its columns are
+its own: a workflow is a consumer rather than a dependency, so a grid that measures how far it
+reaches can only answer zero for it. Built; see [`architecture.md`](architecture.md).
+
+The scope that narrows is the predicate language, named and saved, so the same scope means the same
+thing on every surface and can be loaded again next month. Built; see
+[`architecture.md`](architecture.md).
+
+Relationships are part of it. A `uses:` line is an edge, so *which references float on a tag* and
+*what sits on a route to a live advisory* are questions about edges, and an edge has to carry enough
+to answer them — stored once and read everywhere rather than derived per request.
+`plans/db/edge-facts.md`
 
 ## Business units, read from the organization
 
@@ -86,12 +118,26 @@ Separately, a finding that stops being reported is currently never removed. The 
 exists and the sweep is written; it waits on a crawl to make its report believable.
 `plans/db/finding-lifecycle.md`
 
+## Decisions not to look, and not to act yet
+
+Every organization carries things it has decided not to analyze and things it has decided not to act
+on yet. Both are legitimate, neither may be silent, and they are different decisions: an exclusion
+stops the work, an exception lets the work run and record while the result is set aside. Each is a
+governed record with a reason nobody may omit and, for an exception, a date it comes back.
+
+The shape exists and reaches only a policy verdict today. What is owed is a scope beyond one rule,
+an exclusion that actually stops work, an exception that hides a result while the evidence survives
+it, and a screen that refuses to write either without a reason.
+`plans/db/exclusions-and-exceptions.md`
+
 ## Scale
 
 The interface is legible at the sizes an operator actually arrives at, and the endpoints behind it
 answer in well under a second at the sizes measured so far. The known ceilings are the browser's
-node count and the fact that reach is recomputed wholesale. Neither is urgent; both are measured
-rather than guessed, and both have to be re-measured against a real organization rather than carried
+node count, the fact that reach is recomputed wholesale, and that boundaries and relationships
+cannot yet be drawn at once — the layout does not separate accounts well enough, so the reader
+chooses between them and the canvas says which it is showing. None is urgent; all are measured
+rather than guessed, and all have to be re-measured against a real organization rather than carried
 forward as remembered numbers. `plans/db/data-efficiency.md`
 
 ## Deliberately not on the roadmap

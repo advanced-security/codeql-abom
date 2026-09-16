@@ -56,11 +56,13 @@ test.describe('geometry', () => {
         const summary = await corpusSize(request, baseURL);
         if (!summary.seedRepos) test.fail();
 
-        await page.goto('/');
+        // The Dashboard hands over a scope and states no coverage of its own, so the strip is not
+        // there to measure; Inventory is the nearest surface that carries it.
+        await page.goto('/inventory');
         await ready(page);
 
         const strip = page.locator('.abom-coverage').first();
-        if (!(await strip.count())) test.skip(true, 'no coverage strip on this page');
+        expect(await strip.count(), 'the strip renders where this measures it').toBeGreaterThan(0);
 
         const items = await strip.locator('.abom-coverage-item').count();
         const columns = await strip.evaluate(
@@ -127,4 +129,49 @@ test.describe('geometry', () => {
             `graph is ${fitted.height}px in a window with ${expected}px below its top edge`,
         ).toBeLessThanOrEqual(2);
     });
+
+    // A column past the right-hand edge is not a smaller version of the same page: the reader has
+    // no way to know it is there. Measured before this was fixed, Jobs laid out 1,817px of table
+    // and put Findings — the column it sorts by — off screen at every width anyone uses.
+    const UNITS = ['dependencies', 'workflows', 'jobs', 'repositories', 'advisories'];
+
+    for (const unit of UNITS) {
+        test(`${unit} puts none of its columns past the right-hand edge at narrow (1280px)`, async ({
+            page,
+            request,
+            baseURL,
+        }) => {
+            const summary = await corpusSize(request, baseURL);
+            test.skip(!summary.seedRepos, 'no corpus, so no rows to size the columns');
+
+            await page.setViewportSize({ width: 1280, height: 900 });
+            await page.goto(`/inventory?unit=${unit}`);
+            await ready(page);
+
+            // Wait for a real row. An empty grid renders one cell spanning the table, which fits
+            // every width there is — this assertion passed against exactly that while Jobs was
+            // 149px over, because /api/jobs takes over two seconds on this corpus.
+            await expect(page.locator('.abom-grid tbody tr td').nth(3)).toBeVisible();
+
+            const measured = await page.evaluate(() => {
+                const scroller = document.querySelector('.abom-grid .mud-table-container');
+                const table = scroller?.querySelector('table');
+                if (!table) return null;
+                const edge = scroller.getBoundingClientRect().right;
+                return {
+                    over: Math.round(table.scrollWidth - scroller.clientWidth),
+                    hidden: [...table.querySelectorAll('thead th')]
+                        .filter((th) => th.getBoundingClientRect().right > edge + 1)
+                        .map((th) => th.textContent.trim().replace(/\s+/g, ' '))
+                        .filter(Boolean),
+                };
+            });
+            test.skip(!measured, 'no grid on this unit');
+
+            expect(
+                measured.hidden,
+                `${unit} hides these columns, ${measured.over}px past the edge`,
+            ).toEqual([]);
+        });
+    }
 });

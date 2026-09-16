@@ -1,8 +1,10 @@
 @page "/bom"
 @using Abom.WebAssembly.Models
 @using Abom.WebAssembly.Services
+@implements IDisposable
 @inject AbomApi Api
 @inject NavigationManager Nav
+@inject ScopeService Scope
 
 <PageTitle>Bill of Materials — ABOM</PageTitle>
 
@@ -111,21 +113,6 @@ else
             <MudSelectItem Value="@("same-owner")">Same account</MudSelectItem>
             <MudSelectItem Value="@("same-repository")">Same repository</MudSelectItem>
         </MudSelect>
-        @if (_properties is not null && _properties.Breakdown.Values.Count > 0)
-        {
-            <MudSelect T="string" Value="@_value" ValueChanged="OnGroupChanged" Dense="true"
-                       Label="@($"Grouped by {_properties.Breakdown.Name}")"
-                       Margin="Margin.Dense" Variant="Variant.Outlined"
-                       Class="abom-filter-wide">
-                <MudSelectItem Value="@("")">
-                    Every value (@_properties.Breakdown.Repositories)
-                </MudSelectItem>
-                @foreach (var value in _properties.Breakdown.Values)
-                {
-                    <MudSelectItem Value="@value.Value">@GroupLabel(value)</MudSelectItem>
-                }
-            </MudSelect>
-        }
         <MudSwitch T="bool" @bind-Value="_unanalyzedOnly" Color="Color.Primary"
                    Label="Not analyzed only" />
         <MudSpacer />
@@ -139,6 +126,11 @@ else
         </MudButtonGroup>
       </div>
     </MudPaper>
+
+    @* The same control Inventory narrows with, over the same scope object. Its own select was
+       what "one scope" removes: an operator who narrowed elsewhere and followed the export here
+       met a second control that started empty, and empty read as the whole organization. *@
+    <ScopeControl />
 
     <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2">
         ABOM JSON is the only one of the three that can carry run keys, pack digests and result
@@ -277,7 +269,6 @@ else
     private string _boundary = string.Empty;
     private bool _unanalyzedOnly;
     private PropertiesView? _properties;
-    private string _value = string.Empty;
 
     // The address is the filter, so a narrowed document can be shared, bookmarked and returned to.
     [SupplyParameterFromQuery(Name = "q")] public string? SearchParam { get; set; }
@@ -290,21 +281,18 @@ else
             : $"/bom?q={Uri.EscapeDataString(_search)}", forceLoad: false);
     }
 
-    // The downloads carry the filter the page is showing. A document about the whole organization
-    // arriving under the name of one part of it is the failure this exists to prevent. The key is
-    // sent with the value, because a bare value would be read against whatever the server was
-    // configured with rather than against the property this control is showing.
+    // The downloads carry the scope the document was built from. A document about the whole
+    // organization arriving under the name of one part of it is the failure this exists to
+    // prevent. The key travels with the value, because a bare value would be read against
+    // whatever the server was configured with rather than against the property that narrowed it.
     private string[]? SelectedProperties =>
-        _value.Length == 0 ? null : [$"{_properties?.Breakdown.Name}:{_value}"];
+        Scope.Spec.Properties.Count == 0
+            ? null
+            : [.. Scope.Spec.Properties.Select(p => p.ToString())];
 
-    // A value the organization supplies rather than anybody choosing is named as one, because the
-    // largest group is usually the default and it otherwise reads as a decision.
-    private static string GroupLabel(PropertyCount value)
-    {
-        var repositories = value.Repositories == 1 ? "repository" : "repositories";
-        var suffix = value.IsDefault ? ", the organization default" : string.Empty;
-        return $"{value.Value} — {value.Repositories} {repositories}{suffix}";
-    }
+    // A value the organization supplies rather than anybody choosing is named as one in
+    // ScopeControl, because the largest group is usually the default and it otherwise reads as a
+    // decision.
 
     private int Unanalyzed =>
         _bom is null ? 0 : _bom.Coverage.ComponentsInUse - _bom.Coverage.ComponentsAnalyzed;
@@ -340,40 +328,45 @@ else
     protected override async Task OnInitializedAsync()
     {
         _search = SearchParam ?? string.Empty;
+        Scope.ReadFrom(Nav.Uri);
+        Scope.Changed += OnScopeChanged;
 
         // Asked for before the document, so the control is populated by the time the page renders
         // and does not appear after the reader has already started reading.
         _properties = await Api.GetPropertiesAsync();
 
-        // AbomApi swallows transport failures and answers null, so a missing document arrives
-        // here as an absent value rather than an exception.
-        _bom = await Api.GetBomAsync();
-        if (_bom is null)
-        {
-            // The server refuses a document for an undeclared scope, which is the expected
-            // first-run state. The underlying error is kept so a genuine fault is not misread as
-            // one.
-            _error = "No accounts are declared yet, so there is no scope to describe.";
-            _detail = Api.LastError;
-        }
+        await LoadDocument();
     }
 
-    private async Task OnGroupChanged(string value)
+    public void Dispose() => Scope.Changed -= OnScopeChanged;
+
+    private async void OnScopeChanged()
     {
-        _value = value;
+        Nav.NavigateTo(Scope.ToQueryString() is { Length: > 0 } q ? $"/bom?{q}" : "/bom",
+            new NavigationOptions { ReplaceHistoryEntry = true });
+        await LoadDocument();
+        StateHasChanged();
+    }
+
+    private async Task LoadDocument()
+    {
         _error = null;
         _detail = null;
+
+        // AbomApi swallows transport failures and answers null, so a missing document arrives
+        // here as an absent value rather than an exception.
         _bom = await Api.GetBomAsync(properties: SelectedProperties);
         if (_bom is not null)
         {
             return;
         }
+
         // A group holding no repository is a different state from nothing being declared, and the
         // server distinguishes them. Saying "declare a scope" to somebody who has one sends them
         // to fix the wrong thing.
-        _error = value.Length == 0
+        _error = Scope.Spec.Properties.Count == 0
             ? "No accounts are declared yet, so there is no scope to describe."
-            : $"None of your repositories carries {_properties?.Breakdown.Name} {value}.";
+            : "None of your repositories carries the property this scope names.";
         _detail = Api.LastError;
     }
 }

@@ -46,7 +46,7 @@ public class ObjectivePanelTests : AbomTestContext
     {
         Serve(Working);
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
 
         cut.WaitForAssertion(() => Assert.Contains("depth 2", cut.Markup));
     }
@@ -58,7 +58,7 @@ public class ObjectivePanelTests : AbomTestContext
     {
         Serve(Complete);
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
 
         cut.WaitForAssertion(() => Assert.Contains("Nothing outstanding", cut.Markup));
         Assert.DoesNotContain("depth 0", cut.Markup);
@@ -71,7 +71,7 @@ public class ObjectivePanelTests : AbomTestContext
     {
         Serve(Complete);
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
 
         cut.WaitForAssertion(() => Assert.Contains("5", cut.Markup));
         Assert.Contains("as far as", cut.Markup);
@@ -83,7 +83,7 @@ public class ObjectivePanelTests : AbomTestContext
     {
         Serve(Working);
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
 
         cut.WaitForAssertion(() => Assert.Contains("15.3", cut.Markup));
         Assert.Contains("40", cut.Markup);
@@ -96,7 +96,7 @@ public class ObjectivePanelTests : AbomTestContext
     {
         Serve(Complete);
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
 
         cut.WaitForAssertion(() => Assert.Contains("50", cut.Markup));
         Assert.Contains("probe", cut.Markup);
@@ -112,7 +112,7 @@ public class ObjectivePanelTests : AbomTestContext
                                    "evaluations":0,"probes":0,"analyzed":0,"discovered":0}}
             """);
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
 
         cut.WaitForAssertion(() => Assert.Contains("No cycle has run yet", cut.Markup));
     }
@@ -137,7 +137,7 @@ public class ObjectivePanelTests : AbomTestContext
     {
         Serve(WithUnavailable);
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
 
         // The chip keeps counting settled, because a depth whose remaining rows can never be
         // fetched is finished and must not read as permanently incomplete.
@@ -154,7 +154,7 @@ public class ObjectivePanelTests : AbomTestContext
     {
         Serve(WithUnavailable);
 
-        var cut = Render<Pages.Discovery>();
+        var cut = Render<Shared.DiscoveryControls>();
 
         cut.WaitForAssertion(() => Assert.Contains("9 of 10", Flat(cut.Markup)));
         var chip = cut.Find(".abom-objective-depths [title]");

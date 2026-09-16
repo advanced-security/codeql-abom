@@ -5,6 +5,9 @@ applyTo: "**/*_test.go"
 
 # Go tests in codeql-abom
 
+**Fixed file.** Do not edit or extend it. Work goes in `plans/**`, what the system does in
+`docs/*.md`, a lasting lesson in `.github/skills/**`. A rule here that is wrong: say so and stop.
+
 ## Fail first
 
 Run a new test and confirm it fails for the reason you expect. One here asserted a string the

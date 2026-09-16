@@ -1,7 +1,7 @@
 # Per-tier suite controls
 
 **Status:** tiers are `owned`, `direct` and `transitive` by precedence; each binds a set of suites
-chosen in a grid on the Discovery page, and each can be re-analyzed on its own.
+chosen in a grid in Settings, and each can be re-analyzed on its own.
 
 ## Why this exists
 
@@ -20,18 +20,25 @@ duration.
 1. **Cost guidance measured, not guessed.** "This tier, this suite, ~N repositories at ~M seconds
    each" needs the cycle timings that are already logged and that nothing surfaces. A count says
    how much work there is, never how long a reader will be waiting for it.
-2. **Re-analyze a selection**, not only a whole tier. The Discovery table already filters; the
-   layout this lands in is `ui/discovery-config.md`.
+2. **Re-analyze a selection**, not only a whole tier. The Inventory's Coverage unit already filters
+   by queue state; acting on the current filter is the natural extension. It is the control that
+   spends minutes of cloning and database building, so it states the size of what it is about to
+   re-run before it runs it.
 3. **Staleness per suite.** A row says *when* it was last analyzed, not *with what*. Once the
    run's pack is joined to the row, a tier can show which of its suites are behind instead of
    offering an undifferentiated re-analysis of everything. Depends on the run's pack version being
    recorded at all; see `ql/packs.md`.
-4. **The suite grid is the largest thing between a reader and the queue.** Folding it into the
-   configuration box is a page-layout problem rather than a control problem, and belongs with
-   `ui/discovery-config.md`.
+4. **Decide what a section whose read failed does.** A panel that could not reach
+   `/api/discovery/suites` has no setting to summarize. It states the failure rather than folding
+   over it; what it does not yet do is offer a way to try again.
 
 ## The constraint that must not be broken
 
+- **A collapsed section still states what it is set to.** The rule against printing a number nobody
+  measured applies to controls as much as to data: a fold that hides the binding turns "direct runs
+  findings" into something a reader has to go looking for, and a reader who does not know to look
+  assumes the default. The header carries the current setting; only the means of *changing* it
+  folds away. Collapsed is a sensible default only because the summary is not.
 - **The tiers are exclusive, and precedence is what makes them so**: `owned` first, then `direct`
   at depth ≤ 1, then `transitive`. A dependency counted twice makes the three counts exceed the
   queue. `tierWhere` feeds both the counts and the requeue, or the two drift.

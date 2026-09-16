@@ -63,7 +63,7 @@ ABOM is not a manifest for GitHub. That asymmetry is why the comparison is inter
 2. **A reading of each disagreement class.** *GitHub only* is the interesting one and the reason to
    build this: it is either an extraction defect or a reference ABOM cannot represent. *ABOM only*
    is expected, and quantifying it is what turns the value proposition into a measurement.
-3. **Where it surfaces.** A per-repository figure on the Repositories page is the obvious home, but a
+3. **Where it surfaces.** A per-repository figure in the Inventory's repositories unit is the obvious home, but a
    number nobody looks at is not worth an API call, so this may be a report rather than a screen.
    Decide after the first measurement says how often the two disagree.
 

@@ -5,10 +5,11 @@
 @inject AbomApi Api
 @inject AccountService Accounts
 
-<PageTitle>Your Accounts — ABOM</PageTitle>
+<PageTitle>Settings — ABOM</PageTitle>
 
-<PageHeader Title="Your Accounts">
-    Which GitHub accounts are yours is something you state, not something we infer. Discovery
+<PageHeader Title="Settings">
+    What you claim as yours, and what discovery does with it. Which GitHub accounts are yours is
+    something you state, not something we infer. Discovery
     crawls only what these accounts reach, and every page reports its figures split into what you
     can change and what you cannot &mdash; both halves, always. <code>gh</code> is asked whether
     you still have the access you claim; it never decides what is yours.
@@ -236,12 +237,10 @@ else
             <span data-abom-next-action>
                 @if (Accounts.ScopeDeclared)
                 {
-                    <MudTooltip Text="Analyze what these accounts reach. Nothing runs until you press Start there.">
-                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Href="/discovery"
-                                   EndIcon="@Icons.Material.Filled.ArrowForward">
-                            Open Discovery
-                        </MudButton>
-                    </MudTooltip>
+                    <MudText Typo="Typo.body2">
+                        Saved. Analysis of what these accounts reach starts under
+                        <b>How discovery runs</b> below; nothing runs until you press Start.
+                    </MudText>
                 }
                 else
                 {
@@ -408,7 +407,20 @@ else
     </MudDataGrid>
 }
 
-<MudText Typo="Typo.subtitle2" Class="mb-1">Accounts holding analyzed repositories</MudText>
+<MudText Typo="Typo.subtitle2" Class="mt-8 mb-1">How discovery runs</MudText>
+<MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
+    Analysis starts here, and what each tier is analyzed with is decided here. How far it has got
+    is read where the results are: the
+    <MudLink Href="/inventory?unit=coverage">Coverage unit</MudLink> lists what is analyzed, queued
+    and unavailable one dependency at a time, and the
+    <MudLink Href="/explore">Explorer</MudLink> colors the graph by it.
+</MudText>
+
+<DiscoveryControls LinkToSettings="false" />
+
+<PruneControl />
+
+<MudText Typo="Typo.subtitle2" Class="mt-8 mb-1">Accounts holding analyzed repositories</MudText>
 <MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
     Holding an analyzed repository does not make an account yours &mdash; <code>actions</code>
     owns <code>actions/cache</code>, which is why it appears here and why belonging is checked

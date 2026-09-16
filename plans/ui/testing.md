@@ -22,22 +22,6 @@ Four layers, each blind to what the next one sees:
 
 Green in one says nothing about the others.
 
-## What making it blocking actually took
-
-**A gate in `verify` is not a gate in CI.** This plan said the suite would join `verify` "and CI
-runs the same target". CI does not: pull requests run the individual targets across
-`build-and-test-go.yml` and `build-and-test-ui.yml`, and `make verify` appears only in the CodeQL
-bump workflow. Adding `e2e` to `verify` alone would have gated this workstation and nothing else,
-so the suite has its own step in the interface workflow — which is also why that workflow now
-triggers on `internal/serve/**`, since the suite asserts the server's API contract.
-
-**The browser is resolved, not assumed.** A stalled download leaves `Contents/MacOS/Chromium` in
-place with no `Chromium Framework.framework` beside it, so every test dies in `dlopen` and a
-directory check reports the build as installed. `tests/e2e/browser.mjs` checks the framework as
-well as the launcher, falls back to system Chrome, and refuses outright when there is neither. The
-escape hatch it replaces existed in the Playwright config and **was never passed by `make e2e`**,
-so the documented way out could not be reached through the documented entry point.
-
 ## Pending
 
 1. **More populated-corpus assertions.** The suite branches on `corpusSize` and two checks now use
@@ -45,24 +29,24 @@ so the documented way out could not be reached through the documented entry poin
    share of the window, which needs a graph to measure. Grids under real labels, wrapping under long
    repository names and the Explorer under load are still unwritten.
 2. **Shared fixtures.** A seeded corpus produced by the real pipeline now exists — 25 seed
-   repositories, 50 property rows, 1,495 findings, 6.2 MB as a `.backup` — so the hand-built graph
+   repositories, 50 property rows, 1,495 findings, 18 MB as a `.backup` — so the hand-built graph
    fixture that drifts from real ingestion is no longer the only alternative to an empty database.
    What is missing is making it *shared*: checked in, or rebuildable from a recorded input. Until
    then the populated assertions still run only where somebody has crawled an organization, and CI
    reaches the empty half alone. A `.backup` of a WAL database cannot be opened `-readonly` until
    its journal mode is reset, which is worth knowing before it becomes a fixture.
-3. **A corpus that can exercise a shared owned dependency.** The crawled organization holds **zero**
-   dependency edges from one owned repository to another, so nothing in it can show that excluding
-   one repository grouping leaves a repository another grouping still reaches. A Go fixture covers
-   the rule; no real data does. Whatever 2 produces should carry the case.
+3. **A corpus that can exercise a shared owned dependency.** The crawled organization holds **no
+   dependency edge from one owned repository to another distinct one**, so nothing in it can show
+   that excluding one repository grouping leaves a repository another grouping still reaches. The 5
+   edges that match the obvious query are repositories using their own composite action, which is
+   worth stating because the next person to measure it will find 5. Only a Go fixture covers it.
 4. **Decide the component catalog.** Deferred rather than answered: Playwright covers geometry and
    integration, which was the row with no owner, and a catalog answers a different question — the
    appearance of a state no database produces. The alternatives stay named: **BlazingStory**,
    Blazor-native with no npm, whose own README calls it a personal hobby project; **a dev-only
    `/stories` route**, no new dependency and the chrome is ours to build; **neither**, with seeded
-   fixture databases. Three entries in the capture matrix still need a specific database today —
-   "nothing started", "no advisories", "server unreachable" — and the first two are now reachable
-   from an empty one.
+   fixture databases. Three entries in the capture matrix still need a specific database — "nothing
+   started", "no advisories", "server unreachable".
 
 ## The constraint that must not be broken
 
@@ -90,8 +74,8 @@ needs neither a browser nor a server.
 
 ## Verification
 
-- `make e2e` against a fresh database: 39 checks, about a minute. Five consecutive runs clean —
-  three empty, two populated — which is the bar for a gate rather than a report.
+- `make e2e` against a fresh database, in about a minute. Five consecutive runs clean — three
+  empty, two populated — which is the bar for a gate rather than a report.
 - For any new test: break the production code on purpose, watch it fail, restore.
 - For any geometry claim, read `window.innerWidth` in the same call as the measurement — a
   requested 1920 can be reported as something else, and a media query that never matched looks

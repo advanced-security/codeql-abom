@@ -156,13 +156,13 @@ func TestGraphEndpointHonoursGranularity(t *testing.T) {
 func TestRemediationEndpoint(t *testing.T) {
 	srv, _ := newServer(t)
 
-	got := decode[[]store.RemediationItem](t, get(t, srv, "/api/remediation?top=5"))
-	if got == nil {
-		// An empty database legitimately has nothing to remediate.
-		got = []store.RemediationItem{}
+	got := decode[store.AdvisoriesPage](t, get(t, srv, "/api/remediation?top=5"))
+	if len(got.Items) != 0 {
+		t.Errorf("empty database returned %d items", len(got.Items))
 	}
-	if len(got) != 0 {
-		t.Errorf("empty database returned %d items", len(got))
+	// The total is what the page was cut from, so it has to be reported even when it is zero.
+	if got.Total != 0 {
+		t.Errorf("empty database reported a match of %d", got.Total)
 	}
 }
 

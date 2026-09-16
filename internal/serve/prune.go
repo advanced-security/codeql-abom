@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/advanced-security/codeql-abom/internal/graph"
@@ -22,11 +23,23 @@ type PruneView struct {
 	// Applied distinguishes "this is what it would cost" from "this is what it cost". The same
 	// shape answering both would let a page report an estimate as an outcome.
 	Applied bool `json:"applied"`
+	// Unavailable names why no removal can be measured, and is empty when one can. A zero report
+	// means "nothing is outside the closure"; this means "nothing can be said about it", and a
+	// page showing the first for the second reports an unmeasured corpus as a clean one.
+	Unavailable string `json:"unavailable,omitempty"`
 }
 
 // prune explains what leaving the declared closure would remove, changing nothing.
 func (s *Server) prune(w http.ResponseWriter, r *http.Request) {
 	out, err := s.pruneReport(false)
+	// Asking the question changes nothing, so an empty closure is an answer rather than a fault.
+	// Returned as a 500 it reached the Discovery page as "could not reach the server", on the one
+	// visit — the first — where nothing has gone wrong.
+	if errors.Is(err, store.ErrEmptyClosure) {
+		out.Unavailable = "Nothing has been enumerated yet, so there is no closure to be outside of."
+		writeJSON(w, out, nil)
+		return
+	}
 	writeJSON(w, out, err)
 }
 

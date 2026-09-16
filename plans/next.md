@@ -10,8 +10,14 @@ thing in themes rather than tasks, [`docs/roadmap.md`](../docs/roadmap.md).
 House rules:
 
 - **Plans describe what is next, never what was done.** Git history is the record of what shipped.
-  When a plan's last pending item lands, the plan file goes away; if it held a rule, the rule moves
-  to `.github/instructions/**` or `docs/**` first.
+  When a plan's last pending item lands, the plan file goes away; important updates to what the
+  system now does move to `docs/*.md` first, and a rule that outlives the workstream moves to
+  `.github/skills/**`. Conversely, `.github/instructions/**` is immutable from the agent perspective,
+  where any exception to this immutability needs a loud prompt to the user with an explicit "ack".
+- **A plan is as long as the work needs.** There is no line limit: a plan carries the measurement
+  behind a claim, the alternative that was rejected and the query that produced a number, so the
+  work can be planned and then implemented from the file alone. What it may not carry is narration
+  of work already finished.
 - **One entry is one piece of work, never a phase of one.** A plan with a cheap half and an
   expensive half is sequencing, and sequencing belongs inside the plan. Splitting it here spends two
   slots on one plan and pushes everything below it down twice.
@@ -29,35 +35,68 @@ The ranking is itself a plan, and is subject to change.
 
 ## Ranked next
 
-1. **[The Explorer draws hundreds of points and names none of them](ui/explorer-legibility.md)** —
-   the view this project is named after opens on **395 of 2,639 nodes** with no labels at any zoom,
-   and its collapsed view folds them into 8 groups and draws two points. 2 depends on it: grouping
-   that is correct and invisible is not grouping.
-2. **[A scope you cannot build, name or keep](ui/scope-control.md)** — the API can be asked for
-   `properties=business_id:3`, and no screen can ask. `ViewSpec.cs` does not carry the term,
-   `abom_saved_view` and its three routes have no interface at all, and the one screen that writes a
-   predicate to the address bar is the only one that reads one. Policies, reports and campaigns each
-   start by naming a set of repositories, and today that set can be produced by hand-editing a URL
-   and in no other way.
-3. **[A term is enforced or refused, and today one is neither](api/filter-enforcement.md)** — every
-   term is now applied by the server, applied by the client, or refused by name, and every endpoint
-   that can be bounded to a repository grouping is. What is left is one thing: `abom_policy` still
-   carries `scope_kind` and `scope_value`, a second narrowing mechanism evaluated by different code
-   for what a predicate now says directly. **Demoted from 1**, because the half that made this
-   urgent has landed and the remainder is a deduplication no reader can see, while 1 and 2 are what
-   make the filter reachable by anyone who is not editing a URL by hand.
-4. **[One seeded corpus, shared](ui/testing.md)** — the corpus now exists: 25 seed repositories, 50
-   property rows, **1,495 findings**, 6.2 MB. What it is not is *shared*. It lives on one
+1. **[The interface asserts things in ways a reader cannot check](ui/interface-honesty.md)** — up
+   from 3, because measuring it found several times the defect that was written down. **Fifty-six
+   controls have no accessible name**, 45 of them on the Explorer — 21 checkbox inputs, 12 colour
+   swatches, the seven scope buttons — none labelled by anything but a hover tooltip. That is not a
+   polish item: it is the Explorer being unusable without a mouse. **Kind is encoded by hue and
+   nothing else** — no shape channel exists anywhere — so `action` red against `workflow` green is
+   the commonest pair in the corpus, and `job` and `step` are two greys a shade apart, which
+   excludes a second group of readers from telling nodes apart at all. The strip's *"25 yours of
+   25"* counts what was declared while reading as what was examined, and **8 of those 25 have never
+   been analyzed**; it has left the Dashboard and still renders on four other surfaces. And
+   `view: this answer applies no "boundary"` puts a Go error namespace on a security engineer's
+   screen without naming the surface that would answer them. It also holds the fact that **the force
+   graph has never been visually verified**: the audit's browser was backgrounded and recorded 0
+   animation frames in 2 seconds, so every layout check is untested rather than passing.
+2. **[An edge carries what a reader wants to filter on](db/edge-facts.md)** — a `uses:` line *is* an
+   edge, so *which references float on a tag*, *what crosses into another account* and *what sits on
+   a route to a live advisory* are all questions about relationships, and none of them can be asked
+   as one. The boundary is stored and the browser derives it again anyway; `boundary` accepts a
+   value outside its three and filters nothing; no term filters `edge_kind`; `edge_key` is a stable
+   key no response carries. Now also carries the **relationships unit** of Inventory: actions,
+   workflows, jobs, repositories, advisories and coverage all landed without it, and relationships
+   are the one shape left, because
+   a unit only exists once its columns are its own and an edge's columns are exactly what this plan
+   stores. It is also where the `step`/`job` rows go: every `actions/unpinned-tag` finding sits on
+   one, because a `uses:` line *is* a step. Storing the two relationships the graph draws and does
+   not keep is part of it, and must move no aggregate.
+3. **[A unit is a node kind, and its columns are its own](ui/inventory-units.md)** — down from 1,
+   because what is left of it is the smallest work in the top three. The rule holds for what a row
+   says and not for what a reader can do with it. **Four actions sit above the unit strip, so all
+   five units offer all four**: three bill-of-materials exports that ignore which unit they were
+   pressed on, and *show these in the graph*, which hands the scope to a surface that draws nodes —
+   and an advisory is not a node, nor is a repository. The bill of materials is also still a page
+   that is neither a surface nor a unit, holding coverage and hop-depth claims no listing makes,
+   reachable only by an address the navigation does not offer.
+4. **[A term is enforced or refused, and today one is neither](api/filter-enforcement.md)** — it
+   stopped being cosmetic. It still holds `abom_policy.scope_kind`, a second
+   narrowing mechanism no reader can see. It now also holds the language's inability to say that a
+   list is deliberately empty, so *every finding flag off* is a view nobody can share; and the
+   question of which side applies each term, now that a third side is declared for listings. The
+   divergence that was feared is not there — server and browser select **identical node sets** for
+   `minReach`, `origins` and `ref` on the crawled organization — so what is owed is writing the
+   split down, not repairing it.
+5. **[Hiding something is a decision somebody signs](db/exclusions-and-exceptions.md)** — every
+   organization carries things it has decided not to look at and things it has decided not to act on
+   yet. `abom_policy_waiver` already models both, with a required reason, an author, and an expiry
+   that is required for an exception and read when the decision is applied. It reaches nothing but a
+   policy verdict. What is owed is a scope beyond one policy, an exclusion that actually stops work,
+   an exception that hides a result while the work still runs and records, and a screen that refuses
+   to write either without a reason and a review date.
+6. **[One seeded corpus, shared](ui/testing.md)** — the corpus now exists: 25 seed repositories, 50
+   property rows, **1,495 findings**, 18 MB. What it is not is *shared*. It lives on one
    workstation, so the browser suite still gates only the empty half in CI and the populated
-   assertions run nowhere anybody else can reach. It also holds **zero** dependency edges between two
-   owned repositories, so one rule about excluding a repository grouping has no real data behind it.
-5. **[Only one read still scales with the organization](api/org-enumeration.md)** — the listing is
+   assertions run nowhere anybody else can reach. It also holds **no dependency edge between two
+   distinct owned repositories** — the 5 that look like one are repositories using their own
+   composite action — so one rule about excluding a repository grouping has no real data behind it.
+7. **[Only one read still scales with the organization](api/org-enumeration.md)** — the listing is
    bounded by what moved and **the per-repository CodeQL probe is not**: there is no code-scanning
    field on `Repository` in the GraphQL schema, checked by introspection, so it is one REST request
    each. At twenty thousand repositories that is now the entire bill. The same entry owes the
    interface the state the API already carries — which route answered, when the account was last
    listed in full, when last swept.
-6. **[GitHub already parsed the first hop, and we never compare](api/dependency-graph-crosscheck.md)**
+8. **[GitHub already parsed the first hop, and we never compare](api/dependency-graph-crosscheck.md)**
    — our central claim is that the native Actions dependency graph stops at the first hop, and that
    claim is sourced from documentation rather than evidence. Nothing checks our CodeQL extraction
    against an independent reading of the same files either. `PackageURLs()` already reads GitHub's
@@ -65,57 +104,64 @@ The ranking is itself a plan, and is subject to change.
    that blocks somebody's pull request should not be the first thing to discover the graph was
    wrong. Accuracy only — the seeding path is refused in the plan, because an SBOM describes a
    default branch and we analyze a pinned commit.
-7. **[A policy can only say what the filter language can say](api/policy-language.md)** — its first
-   item moved to 2 and its fourth is reversed there, so what remains is the half that matters: the
-   language cannot say *carries a live advisory* or *is reached from something you own*, which is
-   most of what an Actions rule is for. **Above the gate deliberately, because the gate enforces
-   whatever this says** — and the vision now names these terms as what a rule is about.
-8. **[A gate that blocks, and can say whose rule it was](api/verdict-gate.md)** — ABOM holds the
-    only transitive Actions graph, so it is the only thing that can refuse a pull request on that
-    basis. **The policy half is built** — drafted, simulated, adopted, waived and auditable — so what
-    remains is the base-versus-head closure diff, the verdict endpoint and the check run, over
-    `store.EvaluatePolicy` rather than a second engine. The ground under it is firmer than it was:
-    exposure and the submission closure now agree about which version a route belongs to, held by
-    tests, so a verdict and a submission cannot disagree about the same supply chain. Depends on 7
-    for what a rule may say. Its client is deferred in [`api/abom-check.md`](api/abom-check.md).
-9. **[The purl names a version Dependabot can match](db/version-resolution.md)** — the submitted
+9. **[A policy can only say what the filter language can say](api/policy-language.md)** — down to
+   the half that matters: the language cannot say *carries a live advisory* or *is reached from
+   something you own*, which is most of what an Actions rule is for. Both terms are unblocked and
+   depend on nothing; each needs adding to the enforceable declaration in `internal/view` or the
+   set path refuses it. **Above the gate deliberately, because the gate enforces whatever this
+   says** — and the vision now names these terms as what a rule is about.
+10. **[A gate that blocks, and can say whose rule it was](api/verdict-gate.md)** — ABOM holds the
+   only transitive Actions graph, so it is the only thing that can refuse a pull request on that
+   basis. **The policy half is built** — drafted, simulated, adopted, waived and auditable — so what
+   remains is the base-versus-head closure diff, the verdict endpoint and the check run, over
+   `store.EvaluatePolicy` rather than a second engine. The ground under it is firmer than it was:
+   exposure and the submission closure now agree about which version a route belongs to, held by
+   tests, so a verdict and a submission cannot disagree about the same supply chain. Depends on 8
+   for what a rule may say. Its client is deferred in [`api/abom-check.md`](api/abom-check.md).
+11. **[The purl names a version Dependabot can match](db/version-resolution.md)** — the submitted
     purl carries a version for most commit-pinned dependencies ABOM submits, with no request to
     GitHub. The open half is the direct commit-pinned entries that are not submitted at all, and
     closing that is not obviously safe. The measurement it was owed is now available rather than
     hypothetical: a crawled organization with **571 recorded ref resolutions** is on disk.
-10. **[A finding that stops being reported is never removed](db/finding-lifecycle.md)** — unblocked.
+12. **[A finding that stops being reported is never removed](db/finding-lifecycle.md)** — unblocked.
     The sweep was written against a corpus where nothing had ever been sighted, so it correctly
     condemned nothing and proved nothing. There are now **1,724 sighting rows** from a crawl that ran
     the findings suites, so the tombstone and the `_live` view can finally be exercised against a
     finding that really does stop being reported.
-11. **[Remediation summarizes two things into their more reassuring halves](ui/remediation-honesty.md)**
-    — the strip counts **11 live advisories** and the table shows **3**, with a *critical* among the
-    absent and nothing on screen saying why; and `Fix: available` is one boolean over an advisory
-    whose ranges include **no fix published**, with 5 repositories sitting in exactly that range.
-    Both exclusions are correct underneath; what is wrong is that a reader is told the comfortable
-    half.
-12. **[Reach counts a repository that pins a version without the dependency](db/reach-version-constraint.md)**
+13. **[Remediation summarizes two things into their more reassuring halves](ui/remediation-honesty.md)**
+    — down to one half. The strip-versus-table gap is closed: the advisories unit carries an
+    `unreached` count and states it under the table, so **3 reaching you** and **8 reaching
+    nothing** are both on screen and sum to the 11 the strip counts. What is left is `Fix:
+    available`, one boolean over an advisory whose ranges include **no fix published**, with 5
+    repositories sitting in exactly that range — a reader is still told the comfortable half.
+14. **[Reach counts a repository that pins a version without the dependency](db/reach-version-constraint.md)**
     — exposure and the submission closure now agree about which version a route belongs to; reach
     carries none of it, and reach is what orders the crawl. **132 of 225** dependencies are analyzed
     at more than one reference. It sits below the interface entries because it is invisible to
     everyone and its first step is a decision that may legitimately conclude no change.
-13. **[Code quality, measured by our own tool](tools/code-quality.md)** — the gate already holds new
+15. **[Code quality, measured by our own tool](tools/code-quality.md)** — the gate already holds new
     findings at zero in all four languages. What is left is complexity: **50 production functions
     over 10**, and `runServe` is the one that keeps tripping the limit when anything is added to it.
     Measured from source, so unaffected by the corpus retirement. Cleanup rather than risk
     reduction, which is why it sits here.
-14. **[The coverage strip orphans a cell](ui/theme.md)** — with nothing declared the strip renders
-    four items into a three-column grid, so the fourth sits alone on a second row on every page.
-    Only the 4 and 5 item cases are affected; a populated corpus renders 6 and divides cleanly,
-    which is why this is invisible in exactly the runs most likely to be looked at. Held by a
-    `test.fail()` that will break the run when it is fixed.
+16. **[The coverage strip orphans a cell](ui/theme.md)** — with nothing declared the strip renders
+   four items into a three-column grid, so the fourth sits alone on a second row of every surface
+   that carries it: Inventory, the Explorer, Settings and the bill of materials. Only the 4 and 5
+   item cases are affected; a populated corpus renders 6 and divides cleanly, which is why this is
+   invisible in exactly the runs most likely to be looked at. Held by a `test.fail()` that will
+   break the run when it is fixed.
+The top five are one refactoring, split because they are five workstreams rather than five phases of
+one: the units can be built against the edge facts that exist today, the edge facts are worth having
+in the graph whether or not a grid renders them, the honesty defects are owed to a reader whatever
+shape the surfaces end up, the filter work is owed to the gate whatever the interface does, and the
+governed exclusions are owed to the policy engine regardless. Adding them is a decision about
+everything below, so it is said plainly: the enumeration and crosscheck work beneath is no less
+urgent than it was — the interface has acquired work that gates what an operator can do at all.
+Disagreeing with that is the point of writing it down.
 
-The filter block held the top slot on the grounds that scoping to a business unit or an application
-is what a policy, a report and a remediation campaign each start with. That argument has been
-honored rather than abandoned: the server half is built, so the block now sits at 3 holding only a
-schema deduplication, and the two interface entries that make the filter usable by somebody who is
-not editing a URL by hand have taken its place. Said plainly, because this file has demoted things
-silently before. Disagreeing with it is the point of writing it down.
+**Three of the top five came from looking at the running interface rather than from a green build**,
+which is now the pattern rather than an anecdote. `make verify` passed throughout the work that
+introduced every one of them.
 
 ## Deferred, and why
 
@@ -151,11 +197,14 @@ refusal.
 
 ## Built, with refinements nobody has ranked
 
-These fifteen plans describe workstreams that are **built and carrying real data**, and each keeps a
-short list of refinements — 43 items between them. They are not ranked because none of them is the
-next thing to build; they are the backlog a workstream leaves behind, and a reader asking "what
-next" should not have to read past them. They are listed because a plan in neither the ranking nor
-*Deferred* is invisible, and all fifteen were, which is how an index stops being one.
+These **thirteen** plans describe workstreams that are **built and carrying real data**, and each
+keeps a short list of refinements. They are not ranked because none of them is the next thing to
+build; they are the backlog a workstream leaves behind, and a reader asking "what next" should not
+have to read past them. They are listed because a plan in neither the ranking nor *Deferred* is
+invisible, and all of them were, which is how an index stops being one.
+
+Being unranked is not being unread. A refinement list is a fine place for polish and a poor place
+for a failing verification criterion: one sitting here unread is one nobody is measuring against.
 
 Promote from here when a refinement stops being polish — when it blocks something ranked, or when a
 measurement makes it urgent.
@@ -174,8 +223,6 @@ measurement makes it urgent.
 | [db/pruning.md](db/pruning.md) | tombstones, compaction and what a delta reports |
 | [db/ref-provenance.md](db/ref-provenance.md) | requested versus analyzed refs through the ledger |
 | [db/supply-chain.md](db/supply-chain.md) | classification over the seed-reachable closure |
-| [ui/closure-first-explorer.md](ui/closure-first-explorer.md) | what the Explorer opens on |
-| [ui/discovery-config.md](ui/discovery-config.md) | the run controls as one box |
 | [ui/tier-suites.md](ui/tier-suites.md) | per-tier suite binding and its precedence |
 
 ## Gaps with a decision to make
@@ -199,9 +246,8 @@ measurement makes it urgent.
   Explorer could be made exact by the same join.
 - **A finding nobody attributed is invisible to a policy.** The evaluation runs through
   `abom_finding_node`, so a finding no node carries cannot be refused by a gate. Measured on the
-  reference corpus: `facebook/install-dotslash` holds **15 `actions/*` findings, none linked**,
-  which is the difference between a simulation reporting 40 repositories and the findings table
-  saying 41. A simulation now reports the gap rather than hiding it. **The decision is whether
+  current corpus: **14 findings across 3 repositories are linked to no node**, 8 of them in
+  `has-ghas/codeql`. A simulation reports the gap rather than hiding it. **The decision is whether
   attribution should be repaired, or whether an unattributable finding is a permanent class the
   gate names and steps around.**
 - **Seeded repositories in no declared account.** The interface no longer misreports them as owned.
@@ -216,7 +262,7 @@ measurement makes it urgent.
   default so it can be told from a choice. **The decision is whether a default bucket may scope a
   policy, a campaign or a report at all**, or whether being in one is grounds for asking somebody to
   pick.
-- **Three places show a reader a number they cannot reconcile.** The Discovery queue table sorts by
+- **Three places show a reader a number they cannot reconcile.** The Coverage unit sorts by
   score while the crawl claims by depth, so the order shown is not the order that will happen.
   Discovery's tier chips and its objective panel decompose one queue two ways that do not sum alike,
   with nothing saying why. And the Bill of Materials states how many findings lack a run key, hash or
@@ -224,6 +270,13 @@ measurement makes it urgent.
   **A fourth:** `expand-all` ends with "N repositories", and N is the number of analyses — a crawl
   reporting 319 left 101 rows in `repository` and 317 in `abom_query_run`. The word is wrong rather
   than the count.
+- **`abom_surface` is a read model nothing writes to.** It declares `permissions`,
+  `permissions_scope`, `triggers`, `runs_on`, `uses_secrets_inherit`, `is_privileged` and
+  `is_externally_trigger` — note the truncated column name — and holds **0 rows** on a corpus whose
+  `abom_observation` carries all seven facts, 21,098 rows of them, keyed to `job` nodes. Anything
+  built against the table would render seven blank columns. **The decision is whether it is
+  populated and becomes the fast path for the job and workflow columns, or dropped.** Until then the
+  observation table is the only source, and a reader of the schema has no way to tell.
 - **`org:$` is a parse artifact presented to a reader as an account.** An unexpanded `${{ }}`
   expression promoted to an owner; `org:docker:` carries a trailing colon.
   [`db/unresolved-references.md`](db/unresolved-references.md) owns the root cause and does not

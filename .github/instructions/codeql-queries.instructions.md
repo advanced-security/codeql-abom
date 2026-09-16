@@ -5,6 +5,9 @@ applyTo: "ql/**"
 
 # CodeQL queries in codeql-abom
 
+**Fixed file.** Do not edit or extend it. Work goes in `plans/**`, what the system does in
+`docs/*.md`, a lasting lesson in `.github/skills/**`. A rule here that is wrong: say so and stop.
+
 ## Extract structure, and author findings under `abom/`
 
 ABOM writes its own queries: extraction queries that say what references what, and findings

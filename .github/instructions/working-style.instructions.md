@@ -5,6 +5,9 @@ applyTo: "{cmd,internal,ql,ui}/**"
 
 # Working style and verification
 
+**Fixed file.** Do not edit or extend it. Work goes in `plans/**`, what the system does in
+`docs/*.md`, a lasting lesson in `.github/skills/**`. A rule here that is wrong: say so and stop.
+
 ## TDD, strictly
 
 Write the test, run it, watch it fail for the expected reason, then implement. A test that has

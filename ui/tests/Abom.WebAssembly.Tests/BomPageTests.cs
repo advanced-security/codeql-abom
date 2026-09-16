@@ -48,8 +48,7 @@ public class BomPageTests : AbomTestContext
 
     // The key the operator configured is shown verbatim rather than translated into what it might
     // mean: `business_id` yields business units and `team` yields teams, and ABOM knows which it
-    // was told, not which it is. Stated outside the select because MudSelect renders its items only
-    // once opened, so anything said only in an item is invisible until a reader goes looking.
+    // was told, not which it is.
     [Fact]
     public void TheConfiguredKeyIsNamedWithoutOpeningAnything()
     {
@@ -58,21 +57,47 @@ public class BomPageTests : AbomTestContext
 
         var cut = Render<Pages.BillOfMaterials>();
 
-        cut.WaitForAssertion(() => Assert.Contains("Grouped by business_id", cut.Markup));
+        cut.WaitForAssertion(() => Assert.Contains("business_id", cut.Markup));
         Assert.Contains("business_id 0 is the organization default", cut.Markup);
         Assert.Contains("not a decision", cut.Markup);
     }
 
-    // The control cannot offer a dividing line it never asked for.
+    /// <summary>
+    /// The document is a rendering of the scope, not a page with a scope of its own. Its own
+    /// grouping select was the thing "one scope" exists to remove: an operator who narrowed on
+    /// Inventory and followed the export here got the whole organization, because the second
+    /// control started empty and empty read as everything.
+    /// </summary>
     [Fact]
-    public void ThePageAsksHowTheOrganizationIsDividedBeforeItRenders()
+    public void TheDocumentIsBuiltFromTheScopeInTheAddress()
     {
         Answer("api/bom", Document);
         Answer("api/properties", Properties);
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+                .NavigateTo("/bom?properties=business_id%3A3");
 
         var cut = Render<Pages.BillOfMaterials>();
 
-        cut.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("api/properties")));
+        cut.WaitForAssertion(() => Assert.Contains(
+            "properties=business_id%3A3", Sent.Last(r => r.Url.Contains("api/bom")).Url));
+    }
+
+    /// <summary>
+    /// And the export leaving this page carries that same scope, or it is named after one part of
+    /// the organization and describes all of it.
+    /// </summary>
+    [Fact]
+    public void TheExportCarriesTheScopeTheDocumentWasBuiltFrom()
+    {
+        Answer("api/bom", Document);
+        Answer("api/properties", Properties);
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+                .NavigateTo("/bom?properties=business_id%3A3");
+
+        var cut = Render<Pages.BillOfMaterials>();
+
+        cut.WaitForAssertion(() => Assert.Contains("format=cyclonedx", cut.Markup));
+        Assert.Contains("properties=business_id%3A3", cut.Markup);
     }
 
     // With no key configured the server answers an empty breakdown, and a control offering nothing
@@ -89,7 +114,7 @@ public class BomPageTests : AbomTestContext
         var cut = Render<Pages.BillOfMaterials>();
 
         cut.WaitForAssertion(() => Assert.Contains("actions/checkout", cut.Markup));
-        Assert.DoesNotContain("Grouped by", cut.Markup);
+        Assert.DoesNotContain("data-abom-property-key", cut.Markup);
     }
 
     // A download that ignored the filter on screen would hand somebody a document about the whole

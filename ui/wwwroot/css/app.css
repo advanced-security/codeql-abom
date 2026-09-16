@@ -169,6 +169,10 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 .abom-filter-wide { width: var(--abom-filter-wide-w); }
 .abom-filter-narrow { width: var(--abom-filter-narrow-w); }
 
+/* A property key and value are text the operator matches against GitHub's own settings, and
+   MudBlazor uppercases button labels. `BUSINESS_ID` is not the key; `business_id` is. */
+.abom-scope .mud-button-root { text-transform: none; }
+
 /* The frontier key: a filled dot carrying the discovery color, matching the graph's own nodes. */
 .abom-legend-dot {
     width: var(--abom-icon-sm);
@@ -178,26 +182,6 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     display: inline-block;
     flex: 0 0 auto;
     margin-right: 0.5rem;
-}
-
-/* Each nesting step is indented and ruled, so depth is visible without repeating the full path
-   on every row. */
-.abom-pinning-child {
-    padding: 4px 0 8px 10px;
-    border-left: 2px solid var(--mud-palette-lines-default);
-    margin-left: 6px;
-}
-
-/* Nested levels are narrower than the one above, so headings wrap onto three lines unless they
-   are told not to. The heading still names the level, which is how depth is read. */
-.abom-pinning-child .mud-table-head .mud-table-cell {
-    font-size: var(--abom-text-xs);
-    white-space: nowrap;
-    padding: 4px 6px;
-}
-.abom-pinning-child .mud-table-body .mud-table-cell {
-    font-size: var(--abom-text-sm);
-    padding: 4px 6px;
 }
 
 /* Left unconstrained a tooltip stretches to the viewport, covering the controls it describes. */
@@ -257,17 +241,104 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
    widths from the body widths and the columns stop lining up. The third class is only there to
    outrank MudBlazor's own dense-cell rule. */
 .abom-grid .mud-table-root .mud-table-cell {
-    padding-left: 8px;
-    padding-right: 8px;
+    padding-left: 6px;
+    padding-right: 6px;
 }
 
-/* Summaries are prose and may be clipped; the full text stays in the tooltip. */
-.abom-summary {
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
+/* A header is a label for the column, not one of its values, and at nine columns the difference
+   between naming them and showing them is about 60px. */
+.abom-grid thead th {
+    font-size: var(--abom-text-xs);
+}
+
+/* An identity is two facts, and one line spends the width of both to show one of them. */
+.abom-id {
+    display: inline-block;
+    line-height: 1.3;
+    min-width: 0;
+}
+
+.abom-id-where {
+    display: block;
+    font-family: var(--abom-mono);
+    font-size: var(--abom-text-xs);
+    opacity: 0.6;
+}
+
+/* A header is prose and a cell under it is often one word, so the header was setting the width:
+   "Externally triggerable" made a 175px column to hold "yes", and seven of those pushed Findings —
+   the column the grid is sorted by — off the right-hand edge. Wrapping lets the header take two
+   short lines over the data instead of one long line beside it. */
+.abom-grid thead th,
+.abom-grid thead th .mud-table-sort-label {
+    white-space: normal;
+}
+
+.abom-grid thead th .mud-table-sort-label {
+    display: inline-flex;
+    align-items: flex-end;
+}
+
+/* A list of trigger events is several short words that happened to be written on one line, which
+   made it the widest column in the table. It wraps between events — never inside one, which is
+   how "workflow_dispatch" became six lines of nonsense. 18ch is that longest event name, so this
+   is as narrow as the column goes without breaking a word. */
+.abom-triggers {
+    display: inline-block;
+    max-width: 18ch;
+    white-space: normal;
+    overflow-wrap: break-word;
+}
+
+/* An identity is the widest thing in any row, and left alone it takes the width the counts need.
+   Cut here so that every unit fits the narrow viewport the suite checks; the whole key is still a
+   hover away, and still in the link. */
+.abom-id {
+    max-width: 18ch;
+}
+
+/* The same cut, for an identity that is already one line and needs no stacking. */
+.abom-trunc {
+    display: inline-block;
+    max-width: 18ch;
     overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+}
+
+/* 18ch is what the narrowest supported window can spare, not what a name deserves. Given a wide
+   one, spend the surplus on the column the reader is actually identifying rows by. */
+@media (min-width: 1600px) {
+    .abom-id,
+    .abom-trunc {
+        max-width: 34ch;
+    }
+}
+
+.abom-id .abom-rule,
+.abom-id-where {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Nine columns do not fit a narrow window, and the honest answer is to say so rather than to drop
+   one. The shadow appears at whichever edge has more table behind it: the two `local` layers
+   travel with the content and cover the shadow once that edge is reached, so it is present exactly
+   when there is something to scroll to. */
+.abom-grid .mud-table-container {
+    background:
+        linear-gradient(to right, var(--mud-palette-surface) 40%, transparent) 0 0 / 32px 100% no-repeat local,
+        linear-gradient(to left, var(--mud-palette-surface) 40%, transparent) 100% 0 / 32px 100% no-repeat local,
+        radial-gradient(farthest-side at 0 50%, color-mix(in srgb, var(--mud-palette-text-primary) 30%, transparent), transparent) 0 0 / 18px 100% no-repeat scroll,
+        radial-gradient(farthest-side at 100% 50%, color-mix(in srgb, var(--mud-palette-text-primary) 30%, transparent), transparent) 100% 0 / 18px 100% no-repeat scroll;
+}
+
+/* The shadow is drawn on the container, so the rows above it must not paint over it. */
+.abom-grid .mud-table-container .mud-table-root,
+.abom-grid .mud-table-container .mud-table-body .mud-table-row {
+    background: transparent;
 }
 
 /* Something ABOM has not established: an account gh has not confirmed, or a component nothing
@@ -398,13 +469,6 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     width: 14rem;
 }
 
-/* Takes the leftover width and gives it back under pressure, which keeps the re-analyze controls
-   on one line: a flex-grow spacer would hold that width and wrap them instead. */
-.abom-run-note {
-    flex: 1 1 auto;
-    min-width: 0;
-}
-
 /* Flexbox breaks lines from each item's content width and only then shrinks what is left on the
    line, so a shrinkable sentence cannot rescue a row that is already allowed to wrap. Once a
    third tier existed the controls no longer fitted beside the sentence, and wrapping them cost
@@ -495,6 +559,47 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 
 .abom-key-row:hover { background: var(--mud-palette-action-default-hover); }
 
+/* The kind the node panel is describing. The panel names a kind and the key is where a reader
+   already learned what that kind looks like; marking the row joins them without a second legend. */
+.abom-key-row-shown {
+    background: var(--mud-palette-action-default-hover);
+    box-shadow: inset 2px 0 0 var(--mud-palette-primary);
+}
+
+/* The hovered node, typeset rather than painted. On the canvas this box was the largest thing on
+   screen and covered the neighbors a reader hovers a node in order to compare it against. */
+.abom-nodecard {
+    border-left: 3px solid var(--abom-node-color, var(--mud-palette-lines-default));
+    padding: 0.35rem 0.5rem 0.4rem;
+    margin-bottom: 0.35rem;
+    background: var(--mud-palette-background-gray);
+    border-radius: 0 3px 3px 0;
+}
+
+.abom-node-name {
+    font-weight: 600;
+    word-break: break-word;
+}
+
+/* The full key stays available and stops being the headline: at owner level it is the whole path. */
+.abom-node-key {
+    font-size: var(--abom-text-xs);
+    opacity: 0.65;
+    word-break: break-all;
+    margin-bottom: 0.25rem;
+}
+
+.abom-node-facts {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.05rem 0.5rem;
+    margin: 0.25rem 0;
+    font-size: var(--abom-text-xs);
+}
+
+.abom-node-facts dt { opacity: 0.65; white-space: nowrap; }
+.abom-node-facts dd { margin: 0; word-break: break-word; }
+
 /* A guide rail down each nested level, so a row's parent is findable without counting pixels. */
 .abom-key-row[style*="--abom-key-depth"] { border-left: 1px solid var(--mud-palette-lines-default); }
 
@@ -520,7 +625,6 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 .abom-glyph { width: 14px; height: 14px; flex: none; }
 
 .abom-legend { display: flex; flex-wrap: wrap; gap: 1rem; font-size: var(--abom-text-sm); }
-.abom-legend-item { display: flex; align-items: center; gap: 0.35rem; }
 .abom-legend-dot { width: 10px; height: 10px; border-radius: 50%; }
 
 /* Selection is a state, not a category, so it is drawn as a bright edge on the node's own
@@ -550,15 +654,12 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     transform: translateY(-2px);
 }
 
-.abom-section-figure { font-variant-numeric: tabular-nums; opacity: 0.7; }
-
 /* Utilities that existed only as inline styles, repeated across pages with slightly different
    values each time. Naming them is what lets the checker forbid the inline form. */
 
 /* Digits line up column-wise, so a reader compares magnitudes rather than glyph widths. */
 .abom-num { font-variant-numeric: tabular-nums; }
 
-.abom-dim { opacity: var(--abom-dim); }
 .abom-faint { opacity: 0.4; }
 .abom-strong { font-weight: 600; }
 .abom-nowrap { white-space: nowrap; }
@@ -579,7 +680,6 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 }
 
 /* Secondary figures sit a step below the number they qualify. */
-.abom-metric-note { font-size: var(--abom-text-xs); white-space: nowrap; }
 
 /* One search box width everywhere, set by token rather than by each page. */
 .abom-search { max-width: var(--abom-search-w); }
@@ -602,12 +702,6 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 /* The page heading block: one title, one standfirst, one rhythm below it. */
 .abom-page-head { margin-bottom: 1rem; }
 .abom-page-title { margin: 0 0 0.25rem 0; }
-
-.abom-legend-dot-sm {
-    width: 0.5rem;
-    height: 0.5rem;
-    margin-right: 0.35rem;
-}
 
 /* The queue as a bar: composition, never a percentage. Sized to read at a glance without
    crowding out the status beside it. */
@@ -647,31 +741,24 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 }
 .abom-sev-label { font-size: var(--abom-text-sm); font-weight: 500; }
 
-/* The commit-share cell: bar, figure and trend on one baseline, at a fixed width so the
-   column does not jump as percentages change length. */
-.abom-share { min-width: 150px; }
-.abom-share-bar { flex: 1; }
-.abom-share-pct { min-width: 34px; text-align: right; }
-.abom-share-trend { font-size: var(--abom-text-xs); }
-
 .abom-ref-empty { font-size: var(--abom-text-sm); }
 
 /* Frontier status is a closed set, so each state names a class instead of building a style. */
-.abom-status-done { font-weight: 500; }
 .abom-status-unavailable { opacity: 0.55; font-style: italic; }
-.abom-status-queued { opacity: 0.8; }
 
 /* The dot keys the state to the filter above it, so it has to sit beside the word rather than
    wrap onto its own line and double the row height. */
 .abom-status-cell { white-space: nowrap; display: inline-flex; align-items: center; }
 
-/* Remediation columns are sized by what they hold, so the width is named rather than repeated
-   as a number in two attributes. */
-.abom-col-score { width: 74px; }
-.abom-col-severity { width: 132px; }
-.abom-col-direct { width: 72px; }
-.abom-col-transitive { width: 88px; }
-.abom-col-fix { width: 92px; }
+/* The hue is a queue state from the live palette, so it arrives as a property rather than a rule. */
+.abom-state-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+    flex: none;
+    background: var(--abom-state-color);
+}
 
 /* Legend swatches take their hue from the live palette, which is why it arrives inline. */
 .abom-legend-line { background: var(--abom-legend-color); }
@@ -697,11 +784,6 @@ code {
 /* Top-level grid headings are deliberately allowed to wrap. Holding them on one line widens the
    table past its container and pushes the last column off screen, which is the failure the cell
    padding above exists to prevent: a wrapped heading is ugly, a hidden column is wrong. */
-
-/* The used-by disclosure: a version can be named by hundreds of repositories, so the row shows
-   a count and opens to a preview rather than laying them out. */
-.abom-usedby summary { cursor: pointer; font-size: var(--abom-text-sm); }
-.abom-usedby ul { margin: 4px 0 0; padding-left: 16px; font-size: var(--abom-text-sm); }
 
 /* A reference on the node page opens the rest of that list. A button rather than a link because
    it reveals a row in place; styled flat so the table still reads as a table. */

@@ -5,6 +5,9 @@ applyTo: "internal/store/**/*.go"
 
 # Store and SQLite rules
 
+**Fixed file.** Do not edit or extend it. Work goes in `plans/**`, what the system does in
+`docs/*.md`, a lasting lesson in `.github/skills/**`. A rule here that is wrong: say so and stop.
+
 Only this package writes SQL. Derivation lives in `internal/graph`, delivery in `internal/serve`.
 `serve` marshals these structs directly, so `json:` tags are the API contract and are camelCase.
 

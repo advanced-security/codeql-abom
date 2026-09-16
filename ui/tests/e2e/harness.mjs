@@ -2,17 +2,19 @@ import { test as base, expect } from '@playwright/test';
 
 // Every route the interface serves. `/node/{*Key}` is omitted: it needs a node key, so it belongs
 // to the populated suite rather than to a list of things that must render from nothing.
-export const ROUTES = [
-    '/',
-    '/bom',
-    '/discovery',
-    '/explore',
-    '/inventory',
-    '/pinning',
-    '/remediation',
-    '/repositories',
-    '/settings',
-];
+//
+// Every address the interface actually serves. Nothing retired is kept alive here: this project is
+// unpublished, so a question that moved is moved, not forwarded. `/bom` is the one page that is not
+// in the navigation — see plans/ui/inventory-units.md.
+export const ROUTES = ['/', '/bom', '/explore', '/inventory', '/settings'];
+
+// The four surfaces, in nav order. Anything else a reader needs is a unit, a tab or an action on
+// one of them; a fifth entry here means a question grew its own page again.
+export const SURFACES = ['/', '/inventory', '/explore', '/settings'];
+
+// The units Inventory reprojects one scope into. Relationships is absent until an edge carries its
+// own identity — see plans/db/edge-facts.md.
+export const UNITS = ['dependencies', 'workflows', 'jobs', 'repositories', 'advisories', 'coverage'];
 
 // Blazor reports an unhandled exception by revealing this element rather than by failing the
 // navigation, so a page that has thrown still answers 200 and still renders its chrome. Nothing

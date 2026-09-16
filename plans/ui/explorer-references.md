@@ -25,8 +25,11 @@ attribute. What is left is the parts of the interface that still read a boolean.
    whether the filter is enough needs deciding rather than leaving to chance, because conflating
    the two is a stated invariant — see `docs/architecture.md`.
 
-The Coverage force and the Reference filter's scope are the other two consumers of the ratio; both
-are tracked in `ui/closure-first-explorer.md`.
+The Coverage force reads the ratio directly: a collapsed group blends by the share of its members'
+references that have been analyzed, and an expanded node carries exactly one reference, so there is
+nothing to average. The Reference filter selects by how something references a node, which is a
+different question from the reference it was analyzed at — stated in its tooltip, because 215 of
+2,639 nodes are referenced both ways.
 
 ## Deferred by decision
 

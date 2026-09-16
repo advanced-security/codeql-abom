@@ -86,8 +86,9 @@ administers — and the distinct values ABOM discovers become a first-class scop
 
 | Surface | What business-unit scope does there |
 | --- | --- |
+| Dashboard | Offers each unit as a way into the Inventory, already scoped to it |
 | Discovery | States coverage and queue progress per unit, not only per organization |
-| Filters | One predicate language, so the same scope means the same thing on every surface |
+| Inventory | Which things in the unit match, with the actions that operate on them |
 | Explorer | Group and filter the closure by unit, beside owner, repository and workflow |
 | Bill of Materials | A document bounded to one unit, which is the scope somebody will actually read |
 | Policy | A rule that binds to one unit, so enforcement can start where it is wanted |
@@ -96,6 +97,32 @@ administers — and the distinct values ABOM discovers become a first-class scop
 from a repository-name prefix or a team's spelling of itself. A repository carrying no value for the
 configured key is its own state and is reported as such, never folded into a default bucket — the
 same rule coverage already follows, for the same reason.
+
+## One scope, two renderings
+
+A security team asks one question in two shapes: *which things match this*, and *what do they
+touch*. A table answers the first and a graph answers the second, and they are only worth having
+together if they are two renderings of one scope and one selection.
+
+So the interface is four surfaces and no more: a **Dashboard** that is a way in rather than a report,
+an **Inventory** for which things match, an **Explorer** for what they touch, and **Settings** for
+what the operator claims.
+
+**The Dashboard states nothing it is not the best place to state.** Its job is to hand a reader a
+scope: controls that name a count and open the Inventory already narrowed to what produced it. How
+complete the picture is belongs to Discovery, which answers it per depth, per queue state and per
+business unit; a shorter second answer on the landing page was read as the whole one.
+
+An action belongs to the selection rather than to a page. *Export a bill of materials for these*,
+*re-analyze these*, *show me these in the graph* — each is the same verb over whatever the operator
+has just narrowed to, which is why none of them is a destination of its own. A page per action has
+to invent its own scope, and an operator who narrowed somewhere else cannot carry that narrowing to
+it.
+
+The scope is the predicate language, so **a saved scope, a bill of materials, a report and a gate
+policy are one object with different consequences** — and a relationship is as filterable as a node,
+because *which references float on a tag* and *what crosses into another account* are questions
+about edges that a reader has to be able to ask as edges.
 
 ## The path from a finding to a fix
 
@@ -169,10 +196,18 @@ outside the declared scope is somebody else's to fix.
 Enforcement has to start somewhere narrower than everything, which is what business-unit scope is
 for, and it has to survive contact with the exceptions every real organization carries.
 
-| | Means | Required shape |
-| --- | --- | --- |
-| **Exclusion** | The rule does not apply here | Enumerated |
-| **Exception** | The rule applies and is waived | Enumerated, and expires |
+| | Means | Effect | Required shape |
+| --- | --- | --- | --- |
+| **Exclusion** | Do not do this work | Nothing is analyzed, nothing is recorded | Enumerated |
+| **Exception** | Do the work, do not act on the result | The work runs and records; the result is waived, or hidden | Enumerated, and expires |
+
+**These govern the estate, not only a rule.** An operator excluding a repository from analysis is
+not writing a policy, and a team hiding a result it has decided not to act on yet is not either.
+Both are the same governed record: a reason nobody may omit, an author, and — for an exception — a
+review date, because a hidden result with no expiry is a permanent hole nobody decided to dig.
+
+**Hiding is never destruction.** An exception filters a read; the analysis still runs and still
+records, so the decision stays reviewable and the evidence survives it.
 
 **Both are listable in full at any moment, and neither is ever an open-ended pattern.** A pattern
 cannot be audited, and it silently adopts a repository created after it was written — a waiver
@@ -216,11 +251,12 @@ get an exemption from them.
   timer or by inference.
 - **Say what was excluded.** A scoped view states what it left out.
 
-Three the vision adds:
+Four the vision adds:
 
 - **A business unit is read, never guessed.**
 - **A policy nobody simulated is not adopted.**
 - **An exclusion is enumerated; an exception is enumerated and expires.**
+- **Hiding a result is a decision somebody signs**, with a reason and a date it comes back.
 
 ## Deliberately not the vision
 

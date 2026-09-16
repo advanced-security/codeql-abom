@@ -32,6 +32,7 @@ public abstract class AbomTestContext : BunitContext
         Services.AddSingleton<AbomApi>();
         Services.AddSingleton<ThemeService>();
         Services.AddSingleton<AccountService>();
+        Services.AddSingleton<ScopeService>();
         Services.AddSingleton<FollowService>();
     }
 

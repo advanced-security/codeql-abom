@@ -15,6 +15,9 @@ builder.Services.AddScoped(_ => new HttpClient
 builder.Services.AddScoped<AbomApi>();
 builder.Services.AddScoped<ThemeService>();
 builder.Services.AddScoped<AccountService>();
+// Singleton because the surfaces answering "which things match this" and "what do they touch" are
+// two renderings of one scope, and an action over a selection has to mean the same on both.
+builder.Services.AddSingleton<ScopeService>();
 // Singleton because Discovery and the Explorer are two views of one run, and following them on
 // different beats would read as two different pictures.
 builder.Services.AddSingleton<FollowService>();

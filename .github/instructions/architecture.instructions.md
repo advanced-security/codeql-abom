@@ -5,6 +5,9 @@ applyTo: "{cmd,internal}/**/*.go"
 
 # codeql-abom architecture
 
+**Fixed file.** Do not edit or extend it. Work goes in `plans/**`, what the system does in
+`docs/*.md`, a lasting lesson in `.github/skills/**`. A rule here that is wrong: say so and stop.
+
 Builds an Actions Bill of Materials for a GitHub organization from CodeQL results. Go 1.25,
 single binary, SQLite store. Layering: `store` (SQL) → `graph`/`ingest`/`expand` (derivation) →
 `serve`/`cmd` (delivery). Only `store` writes SQL.

@@ -1,5 +1,4 @@
 import { test, expect, ready, corpusSize, ROUTES } from '../harness.mjs';
-
 // Cross-component integration: every route boots the Blazor runtime, loads its ES modules, calls
 // the API and renders. `make js` type-checks none of it and `make ui-test` runs none of it, so a
 // bad edit inside graph.js `create()` reaches a reader as a red bar and reaches CI as nothing.
@@ -38,7 +37,57 @@ test.describe('the Explorer draws', () => {
         expect(fits.canvas, 'canvas width against its host').toBeLessThanOrEqual(fits.host + 1);
         expect(fits.canvas, 'canvas was given a real width').toBeGreaterThan(0);
     });
+
+    test('a view that has come to rest still answers the pointer', async ({ page, request, baseURL }) => {
+        // At rest `drawLabels` stops rescheduling and the renderer is paused, so nothing polls the
+        // camera. The same drag once moved 97% of the pixels on a fresh view and 0% on a settled
+        // one, and no unit test can see it: the wake path is only real inside a browser.
+        const summary = await corpusSize(request, baseURL);
+        test.skip(!summary.nodes, 'nothing to settle without a corpus');
+
+        await page.goto('/explore');
+        await ready(page);
+
+        // Inside the suite's own budget, so a slow settle reports what did not happen rather than
+        // a bare test timeout. Measured at ten seconds on the reference corpus.
+        // `expect.poll`, not `waitForFunction`: an async predicate returns a promise, which
+        // `waitForFunction` treats as truthy and resolves against immediately — it reported the
+        // view as settled before the layout had started.
+        await expect.poll(() => restStateOf(page), {
+            timeout: 22_000,
+            message: 'the view never came to rest',
+        }).toBe('still');
+
+        const box = await page.locator('.abom-graph-host').boundingBox();
+        const before = await cameraOf(page);
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(box.x + box.width / 2 + 120, box.y + box.height / 2 + 60, { steps: 8 });
+        await page.mouse.up();
+        await page.waitForTimeout(600);
+
+        const after = await cameraOf(page);
+        expect(after, 'the camera did not move for a drag on a settled view').not.toEqual(before);
+    });
 });
+
+/** What the label loop thinks the view is doing: `none`, `idle` or `still`. */
+async function restStateOf(page) {
+    return page.evaluate(async () => {
+        const { instances } = await import('/js/state.js');
+        const it = instances.get('abom-graph');
+        return it ? it.resting : 'gone';
+    });
+}
+
+/** Where the camera is, which is the only proof a gesture reached the scene. */
+async function cameraOf(page) {
+    return page.evaluate(async () => {
+        const { instances } = await import('/js/state.js');
+        const c = instances.get('abom-graph').graph.camera();
+        return [c.position.x, c.position.y, c.position.z].map((v) => Math.round(v));
+    });
+}
 
 test.describe('the API answers what the interface asks of it', () => {
     test('a rejected view parameter is an error, not a silent empty graph', async ({ request, baseURL }) => {
@@ -50,7 +99,9 @@ test.describe('the API answers what the interface asks of it', () => {
 
     test('the summary the strip renders is the summary the API reports', async ({ page, request, baseURL }) => {
         const summary = await corpusSize(request, baseURL);
-        await page.goto('/');
+        // Not the Dashboard: that surface hands over a scope and states nothing else, because a
+        // second, shorter coverage answer beside the entry points was read as the whole one.
+        await page.goto('/inventory');
         await ready(page);
 
         const strip = page.locator('.abom-coverage').first();

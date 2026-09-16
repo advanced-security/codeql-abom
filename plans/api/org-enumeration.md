@@ -23,39 +23,6 @@ current and quietly rots.
 broader and so safer — is false: **17 of 27 repositories on the reference organization carry a
 `pushedAt` later than their `updatedAt`**, which cannot happen if one contained the other.
 
-## What measuring changed about the design
-
-**A sweep is two walks, so it has a floor of two reads.** One ordered page costs 1 point, measured
-directly; a full listing of N repositories costs ⌈N/100⌉. So sweeping an account that fits on one
-page costs **2 points against the listing's 1**, and gives up seeing deletions to do it. The saving
-only begins at three pages. `enumerate.sweepWorthIt` encodes that, and an account at or below two
-pages is read whole — which is why the reference organization is fully listed on every cycle and
-still answers what is gone. The incremental path is for the twenty-thousand repository case it was
-designed for, and the small case now takes the cheaper road rather than the cleverer one.
-
-**REST names a default branch that does not exist.** `has-ghas/codeql-clone` has zero branches and
-REST reports `main`, because `default_branch` is a repository *setting*. GraphQL answers
-`defaultBranchRef: null`, which is the honest answer, and the preferred route is the one that does
-not invent the branch. Telling the two apart over REST costs a request per repository, which is the
-fan-out this design exists to avoid, so the difference is stated rather than papered over — and
-`abom_enumeration_state.route` is what makes it attributable.
-
-## GraphQL is the preference; REST is the fallback that must keep working
-
-One call returning a hundred repositories with `name`, `pushedAt`, `createdAt`, `isArchived` and the
-default branch costs **1 point**, ordering is a first-class argument, and the budget is **separate
-from REST's**. Adding `repositoryCustomPropertyValues` keeps it at 1, which is where the repository
-grouping in [`../../docs/vocabulary.md`](../../docs/vocabulary.md) comes from.
-
-REST's `/orgs/{org}/properties/values` returns every repository's values a hundred at a time, so
-properties do *not* cost a request each and both routes are roughly two hundred calls. What survives
-is the separate budget; one walk that arrives already correlated, where two REST walks join on a
-name a repository can change between them; and every further fact being another field rather than
-another endpoint.
-
-`shurcooL/githubv4` is the usual answer and is not: **no tagged release**, and three dependencies
-added to a module of three whose purpose is measuring dependency risk, to avoid a JSON `POST`.
-
 ## Pending
 
 1. **The per-repository database probe is the remaining cost.** There is no code-scanning or CodeQL
@@ -78,6 +45,12 @@ added to a module of three whose purpose is measuring dependency risk, to avoid 
 
 ## The constraints that must not be broken
 
+**A sweep is two walks, so it has a floor of two reads.** One ordered page costs 1 point; a full
+listing of N repositories costs ⌈N/100⌉. An account that fits on one page therefore costs **2 points
+swept against 1 listed**, and gives up seeing deletions to do it; the saving begins at three pages.
+`enumerate.sweepWorthIt` encodes that, and an account at or below two pages is read whole. Making
+the incremental path unconditional would cost more and answer less.
+
 **A sorted prefix cannot report a deletion.** A repository that no longer exists appears in no
 listing, so no early-stopping sweep can mention it. Only a full listing establishes absence, and a
 design that quietly stops doing them keeps dead repositories while looking current. **Never
@@ -85,7 +58,10 @@ enumerated is not enumerated and empty**: an account with no listing has an unkn
 
 **Neither route may be the only route.** A capability that exists on one route only makes an
 organization unreadable rather than slower. The two must agree — same repositories, same marks — or
-the route becomes a hidden variable in every figure downstream.
+the route becomes a hidden variable in every figure downstream. They do not agree about everything:
+REST reports a `default_branch` for a repository with no branches, because it is a setting, where
+GraphQL answers `defaultBranchRef: null`. `abom_enumeration_state.route` is what makes a figure
+attributable to the route that produced it.
 
 **Pagination ordered by activity is unstable.** A push landing mid-pagination reorders the pages
 still to come, so a sweep may see one repository twice and miss another. It tolerates both; the

@@ -112,11 +112,68 @@ func (s *Store) RemediationPriority(limit int, sc RepositoryScope) ([]Remediatio
 	return out, nil
 }
 
-// sortRemediation puts the most work first, breaking ties towards advisories that can actually
-// be fixed and then towards those the affected repositories can fix themselves.
-func sortRemediation(items []RemediationItem) {
-	sort.SliceStable(items, func(i, j int) bool {
-		a, b := items[i], items[j]
+// AdvisoriesQuery cuts one page out of the advisories unit.
+type AdvisoriesQuery struct {
+	Offset   int
+	Limit    int
+	Grouping RepositoryScope
+}
+
+// AdvisoriesPage is one page of advisories, the size of the match, and what the match excludes.
+type AdvisoriesPage struct {
+	Items []RemediationItem `json:"items"`
+	Total int               `json:"total"`
+	// Unreached counts live advisories that name no action anything under review uses.
+	//
+	// The exclusion is the invariant working — those advisories name actions that appear only in
+	// upstream repositories' own CI, which is nobody's supply chain — but it is why a coverage
+	// strip counting 11 sat above a table holding 3, with a critical among the absent and nothing
+	// on screen accounting for it. Silence reads as completeness.
+	Unreached int `json:"unreached"`
+}
+
+// AdvisoriesPage lists advisories that reach something under review, worst first.
+//
+// Ordered across the whole match before the page is cut, because priority is severity times reach
+// and the worst advisory on a page is not the worst advisory.
+func (s *Store) AdvisoriesPage(q AdvisoriesQuery) (AdvisoriesPage, error) {
+	all, err := s.RemediationPriority(0, q.Grouping)
+	if err != nil {
+		return AdvisoriesPage{}, err
+	}
+	unreached, err := s.advisoriesReachingNothing()
+	if err != nil {
+		return AdvisoriesPage{}, err
+	}
+
+	page := AdvisoriesPage{Total: len(all), Unreached: unreached, Items: []RemediationItem{}}
+	if q.Offset < len(all) {
+		end := len(all)
+		if q.Limit > 0 && q.Offset+q.Limit < end {
+			end = q.Offset + q.Limit
+		}
+		page.Items = all[q.Offset:end]
+	}
+	return page, nil
+}
+
+// advisoriesReachingNothing counts live advisories with no exposure row at all.
+func (s *Store) advisoriesReachingNothing() (int, error) {
+	var n int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM abom_advisory a
+		 WHERE a.withdrawn_at IS NULL
+		   AND NOT EXISTS (SELECT 1 FROM abom_exposure e WHERE e.ghsa_id = a.ghsa_id)`).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("counting advisories that reach nothing: %w", err)
+	}
+	return n, nil
+}
+
+// sortRemediation orders by priority, then by whether a fix exists, then by direct reach.
+func sortRemediation(out []RemediationItem) {
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
 		if a.Priority != b.Priority {
 			return a.Priority > b.Priority
 		}

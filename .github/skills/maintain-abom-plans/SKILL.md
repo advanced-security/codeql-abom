@@ -11,14 +11,18 @@ what is pending, and the constraint that must not be broken. `plans/next.md` ind
 the order.
 
 **Git history is the record of what was implemented.** A plan is not a logbook, a changelog, or a
-chronicle of how the work went. The three-way split:
+chronicle of how the work went. Where things go:
 
 | Goes to | |
 | --- | --- |
-| `plans/**` | Pending work, open decisions, and the constraints around them |
-| `docs/**` | The big picture — what ABOM does now, and the roadmap |
-| `.github/instructions/**` | Rules that govern code somebody writes next year |
+| `plans/**` | Pending work, open decisions, the constraints around them, and whatever else it takes to plan and then implement the thing |
+| `docs/*.md` | The big picture, kept terse — what ABOM does, why it is worth doing, where it is going, and the words the interface uses |
+| `.github/skills/**` | A procedure worth repeating, or a lesson with a life beyond one workstream |
 | `plans/implemented.md` | The reasoning: what the corpus refuted, what did not move. Git-ignored |
+
+**`.github/instructions/**` is fixed and is not one of the destinations.** Those files are injected
+on every agent call in their `applyTo` scope, so anything added there is paid for forever. If a rule
+there is wrong, say so and stop — see `.github/instructions/agents.instructions.md`.
 
 The point is that someone six months from now can tell a deliberate decision from an accident, and
 does not re-derive a constraint by breaking it — without reading a year of arrival states to do it.
@@ -60,8 +64,10 @@ the number drift.
 
 ## Writing a plan
 
-Structure, loosely — aim for 25 to 60 lines, and **100 is the maximum**. A plan past it is either
-two workstreams or a plan narrating itself:
+Structure, loosely. **There is no length limit.** A plan carries whatever it takes to plan the work
+and then implement it from the file alone — the measurement behind a claim, the alternative that was
+rejected, the query that produced a number. What a plan may not carry is narration of work already
+finished, and that is the thing to cut, not length.
 
 - **Status** in one line, at the top, present tense, no date. "Built with a known approximation" is
   a status; "in progress" is not.
@@ -79,8 +85,8 @@ Rules that keep these documents worth reading:
   with most of the phases done, no before/after table for work that is finished. If it is done, it
   leaves the file.
 - **Name the invariant, not just the behavior.** "Advisories enrich, they never adjudicate" is
-  reusable; "don't set vulnerable=true here" is not. A rule this general belongs in
-  `.github/instructions/**`, where it reaches the person editing the code.
+  reusable; "don't set vulnerable=true here" is not. State it in the plan, and if it outlives the
+  plan, carry it into a skill when the plan retires.
 - **An open question is a fork with named alternatives.** If the answer already follows from an
   architectural invariant, it is a decision to record, not a question to ask.
 - **Answer a question in place.** Write the decision as a decision. Do not keep the question and the
@@ -92,9 +98,10 @@ Rules that keep these documents worth reading:
 When the last pending item lands, **the plan file goes away.** Before deleting it, move anything
 durable out:
 
-1. A rule that governs future code → the matching `.github/instructions/*.instructions.md`.
+1. A rule or procedure that outlives this workstream → a skill under `.github/skills/**`, but only
+   if it changes what somebody does next time. Most constraints die with their plan, and should.
 2. A fact about what the system now does → `docs/architecture.md`, or `docs/vocabulary.md` if it is
-   a word the interface uses.
+   a word the interface uses. Terse: these are read by people deciding whether to trust ABOM.
 3. A theme somebody should know is coming → `docs/roadmap.md`.
 4. The reasoning — what was refuted, what did not move and why that was right →
    `plans/implemented.md`.
@@ -143,6 +150,6 @@ the plan rather than working around it.
 ## Related
 
 - `docs/architecture.md` — what the system does now; a plan must not restate it.
-- `.github/instructions/architecture.instructions.md` — architectural invariants; a plan must not
-  contradict them, and a rule general enough to belong there should not stay in a plan.
+- `.github/instructions/architecture.instructions.md` — architectural invariants a plan must not
+  contradict. Read-only: see `.github/instructions/agents.instructions.md`.
 - `.github/skills/verify-abom-ui/` — how the interface layers are verified.
