@@ -25,6 +25,24 @@ the large nodes swamp everything.
 - Tables: is the most decision-relevant column visible without horizontal scrolling?
 - Graph: can you separate one edge from its neighbors anywhere in the view?
 
+## One visual vocabulary
+
+Sizes, families and control shapes are defined once and taken from there: the type scale in
+`ui/wwwroot/css/app.css` under `:root`, and the MudBlazor `Typography` block in
+`ui/Services/ThemeService.cs`. `make style` enforces the mechanical half — no inline styles, no
+literal colors, no literal font sizes, no heading outside `PageHeader`, no unsized icon.
+
+What the checker cannot see, and a visual review must:
+
+- Does the same role look the same on every page? A page title, a section heading, a help line
+  and a table figure should each be recognisable as themselves anywhere.
+- Does anything sit *between* two steps of the scale, so it reads as neither one thing nor the
+  other?
+- Do controls of the same kind share a size and density across pages, or does one page's filter
+  bar sit taller than another's?
+- Do dark and light both hold? Contrast that works on one can vanish on the other, and only one
+  of them is usually captured.
+
 ## Hierarchy
 
 Look at the capture for two seconds and note what drew the eye first. On the landing page that
@@ -42,6 +60,17 @@ earns its keep.
   analyzed" must not look alike.
 - Is coverage visible without hunting for it?
 - When the API reported truncation, does the view admit it?
+
+## Empty states
+
+An empty screen is a stage in a process, not an error. Judge it by whether a first-time reader
+could act.
+
+- Does it say *why* it is empty — nothing declared, nothing run yet, or a filter that matched
+  none? Those are three different screens.
+- Does it name the next action, and is that action reachable from here?
+- After taking it, does something visibly change? Two empty screens in a row is the failure this
+  section exists to catch.
 
 ## Motion
 

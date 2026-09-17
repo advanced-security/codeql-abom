@@ -43,7 +43,23 @@ runs:
     - name: Setup CodeQL - Install query packs
       if: inputs.install-packs == 'true'
       shell: bash
-      # `pack install` takes a single pack directory; each dependent pack needs its own call.
+      # Every pack in the workspace, found rather than listed. A hand-written list is only as
+      # current as the last person who remembered it, and the pack it forgets fails much later:
+      # `database analyze` resolves the local pack off the search path, then reports its *upstream*
+      # dependency as missing -- "The QL pack 'codeql/go-queries@1.6.10' cannot be found" -- which
+      # reads as a broken suite rather than as a pack nobody installed. That is how the Go, C# and
+      # JavaScript self-audit jobs failed on PR #3 while the Actions job, whose packs were listed,
+      # passed.
+      #
+      # `pack install` takes a single pack directory; it has no recursive mode.
       run: |
-        codeql pack install ql/actions/abom/src
-        codeql pack install ql/actions/abom/test
+        manifests=$(find ql -name codeql-pack.yml | sort)
+        if [ -z "$manifests" ]; then
+          echo "::error::no CodeQL packs found under ql/; nothing was installed"
+          exit 1
+        fi
+        while IFS= read -r manifest; do
+          echo "::group::codeql pack install $(dirname "$manifest")"
+          codeql pack install "$(dirname "$manifest")"
+          echo "::endgroup::"
+        done <<< "$manifests"

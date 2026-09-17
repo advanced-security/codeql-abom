@@ -2,8 +2,8 @@ package store
 
 import "testing"
 
-// The declaration marks rows; it must never remove them. A reader has to be able to see the
-// whole corpus and their part of it at the same time.
+// Verification marks rows; it must never remove them. A reader has to be able to see the whole
+// corpus and their part of it at the same time.
 func TestOwnedSplitLeavesTheUndividedTotalIntact(t *testing.T) {
 	s := subgraphFixture(t)
 
@@ -12,16 +12,18 @@ func TestOwnedSplitLeavesTheUndividedTotalIntact(t *testing.T) {
 		t.Fatalf("PinningTotals: %v", err)
 	}
 
-	if err := s.SetOwnedOrgs([]string{"octo-org"}); err != nil {
-		t.Fatalf("SetOwnedOrgs: %v", err)
+	if err := s.SetOwnedScope([]DeclaredAccount{
+		{Owner: "octo-org", Kind: AccountOrganization, Enabled: true},
+	}, DeclaredByCLI); err != nil {
+		t.Fatalf("SetOwnedScope: %v", err)
 	}
 	after, err := s.PinningTotals(PinningFilter{})
 	if err != nil {
-		t.Fatalf("PinningTotals after declaring: %v", err)
+		t.Fatalf("PinningTotals after verifying: %v", err)
 	}
 
 	if before.Pinnable != after.Pinnable || before.Flagged != after.Flagged {
-		t.Errorf("declaring an owner changed the totals: %d/%d became %d/%d",
+		t.Errorf("verifying an owner changed the totals: %d/%d became %d/%d",
 			before.Pinnable, before.Flagged, after.Pinnable, after.Flagged)
 	}
 }
@@ -30,8 +32,10 @@ func TestOwnedSplitLeavesTheUndividedTotalIntact(t *testing.T) {
 // does not support.
 func TestOwnedSplitReconcilesToTheTotal(t *testing.T) {
 	s := subgraphFixture(t)
-	if err := s.SetOwnedOrgs([]string{"octo-org"}); err != nil {
-		t.Fatalf("SetOwnedOrgs: %v", err)
+	if err := s.SetOwnedScope([]DeclaredAccount{
+		{Owner: "octo-org", Kind: AccountOrganization, Enabled: true},
+	}, DeclaredByCLI); err != nil {
+		t.Fatalf("SetOwnedScope: %v", err)
 	}
 
 	total, err := s.PinningTotals(PinningFilter{})
@@ -51,8 +55,10 @@ func TestOwnedSplitReconcilesToTheTotal(t *testing.T) {
 // Rows carry the mark so a reader can sort and scan by it.
 func TestPinningRowsAreMarkedOwned(t *testing.T) {
 	s := subgraphFixture(t)
-	if err := s.SetOwnedOrgs([]string{"octo-org"}); err != nil {
-		t.Fatalf("SetOwnedOrgs: %v", err)
+	if err := s.SetOwnedScope([]DeclaredAccount{
+		{Owner: "octo-org", Kind: AccountOrganization, Enabled: true},
+	}, DeclaredByCLI); err != nil {
+		t.Fatalf("SetOwnedScope: %v", err)
 	}
 
 	rows, err := s.PinningLevel(PinningByOwner, "", PinningFilter{}, 0)
@@ -64,17 +70,17 @@ func TestPinningRowsAreMarkedOwned(t *testing.T) {
 		if r.Owned {
 			marked++
 			if r.ScopeKey != "octo-org" {
-				t.Errorf("%s is marked owned but was never declared", r.ScopeKey)
+				t.Errorf("%s is marked owned but was never verified", r.ScopeKey)
 			}
 		}
 	}
 	if marked == 0 {
-		t.Error("declared octo-org, no owner row is marked")
+		t.Error("verified octo-org, no owner row is marked")
 	}
 }
 
-// With nothing declared, nothing is marked and both halves of every split read as elsewhere.
-func TestNoDeclarationMarksNothing(t *testing.T) {
+// With nothing verified, nothing is marked and both halves of every split read as elsewhere.
+func TestNoVerifiedIdentityMarksNothing(t *testing.T) {
 	s := subgraphFixture(t)
 
 	rows, err := s.PinningLevel(PinningByOwner, "", PinningFilter{}, 0)
@@ -83,7 +89,7 @@ func TestNoDeclarationMarksNothing(t *testing.T) {
 	}
 	for _, r := range rows {
 		if r.Owned {
-			t.Errorf("%s is marked owned with no declaration", r.ScopeKey)
+			t.Errorf("%s is marked owned with nothing verified", r.ScopeKey)
 		}
 	}
 
@@ -92,10 +98,10 @@ func TestNoDeclarationMarksNothing(t *testing.T) {
 		t.Fatalf("PinningTotals: %v", err)
 	}
 	if total.Yours.Yours != 0 {
-		t.Errorf("nothing declared, yet %d references count as yours", total.Yours.Yours)
+		t.Errorf("nothing verified, yet %d references count as yours", total.Yours.Yours)
 	}
 	if total.Yours.Elsewhere != total.Pinnable {
-		t.Errorf("undeclared corpus should all be elsewhere: %d of %d",
+		t.Errorf("unverified corpus should all be elsewhere: %d of %d",
 			total.Yours.Elsewhere, total.Pinnable)
 	}
 }

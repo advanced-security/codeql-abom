@@ -18,7 +18,7 @@ import (
 
 // Source enumerates repositories and looks up their databases.
 type Source interface {
-	ListRepositories(ctx context.Context, org string) ([]string, error)
+	ListRepositories(ctx context.Context, org string) ([]catalog.Repository, error)
 	FindDatabase(ctx context.Context, repository, language string) (catalog.Database, error)
 }
 
@@ -33,9 +33,13 @@ type Discoverer struct {
 
 // Run enumerates the organization and records a catalog entry for every repository.
 func (d *Discoverer) Run(ctx context.Context, org string) (work.Stats, error) {
-	repos, err := d.Source.ListRepositories(ctx, org)
+	found, err := d.Source.ListRepositories(ctx, org)
 	if err != nil {
 		return work.Stats{}, err
+	}
+	repos := make([]string, 0, len(found))
+	for _, r := range found {
+		repos = append(repos, r.FullName)
 	}
 	return d.RunRepositories(ctx, repos)
 }

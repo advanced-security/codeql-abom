@@ -18,6 +18,8 @@ const (
 	edgeStepUsesAction      = "step-uses-action"
 	edgeCompositeUsesAction = "composite-step-uses-action"
 	edgeJobUsesReusableWF   = "job-uses-reusable-workflow"
+	// The one edge that is ordering rather than use: both ends are jobs in the same file.
+	edgeJobNeedsJob = store.EdgeKindJobNeedsJob
 )
 
 // Node kinds for source-side vertices.
@@ -39,6 +41,9 @@ type Options struct {
 	Provenance string
 	// QueryRunID ties every emitted row back to the query and pack version that produced it.
 	QueryRunID int64
+	// CLIVersion is the CodeQL the ledger recorded for this run. When set, SARIF that names a
+	// different one is refused rather than attributed to the wrong analyzer.
+	CLIVersion string
 }
 
 // Ingester writes graph rows for one repository at a time.
@@ -139,6 +144,14 @@ func (i *Ingester) edge(
 		return err
 	}
 
+	if edgeKind == edgeJobNeedsJob {
+		return i.needsEdge(needsTarget{
+			repository: opts.Repository, srcPath: srcPath, srcKey: srcKey, neededJobID: usesRaw,
+			repoID: repoID, queryRunID: opts.QueryRunID, provenance: provenance, seen: seen,
+			startLine: startLine, startColumn: startColumn, endLine: endLine, endColumn: endColumn,
+		})
+	}
+
 	ref := normalize.ParseUses(usesRaw, pinComment)
 	dstKey := ref.NodeKeyIn(opts.Repository)
 
@@ -221,6 +234,24 @@ func (i *Ingester) sourceChain(
 		return stepKey, nil
 
 	case edgeJobUsesReusableWF:
+		workflowKey := normalize.WorkflowKey(repository, srcPath)
+		if err := addOnce(store.Node{
+			Key: workflowKey, Kind: nodeWorkflow, Repo: repository, Path: srcPath,
+			DisplayName: srcPath, RepositoryID: repoID,
+		}); err != nil {
+			return "", err
+		}
+		jobKey := normalize.JobKey(repository, srcPath, srcJobID)
+		if err := addOnce(store.Node{
+			Key: jobKey, Kind: nodeJob, Repo: repository, Path: srcPath, JobID: srcJobID,
+			DisplayName: srcJobID, StepIndex: -1, RepositoryID: repoID,
+			ContainerKey: workflowKey,
+		}); err != nil {
+			return "", err
+		}
+		return jobKey, nil
+
+	case edgeJobNeedsJob:
 		workflowKey := normalize.WorkflowKey(repository, srcPath)
 		if err := addOnce(store.Node{
 			Key: workflowKey, Kind: nodeWorkflow, Repo: repository, Path: srcPath,

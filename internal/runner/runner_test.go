@@ -64,6 +64,17 @@ func TestExtractRejectsAbsolutePaths(t *testing.T) {
 	}
 }
 
+// An entry with no name resolves to the destination directory itself, and extracting it means
+// opening a directory for writing. That surfaces as "is a directory" from the copy, which reads
+// as a broken extractor rather than as the malformed archive it is.
+func TestSafeJoinRejectsAnEntryThatNamesNoFile(t *testing.T) {
+	root := t.TempDir()
+
+	if target, err := safeJoin(root, ""); err == nil {
+		t.Errorf("safeJoin(root, %q) = %q, want an error", "", target)
+	}
+}
+
 func TestExtractFindsDatabaseRoot(t *testing.T) {
 	zipPath := writeZip(t, map[string]string{
 		"actions-database/codeql-database.yml":  "sourceLocationPrefix: /src",

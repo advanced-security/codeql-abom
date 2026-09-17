@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/advanced-security/codeql-abom/internal/frontier"
+	"github.com/advanced-security/codeql-abom/internal/graph"
 	"github.com/advanced-security/codeql-abom/internal/ingest"
 	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/store"
@@ -17,7 +18,7 @@ import (
 
 // Fetcher materializes a repository's source tree.
 type Fetcher interface {
-	Fetch(ctx context.Context, dest, owner, repo string) (Tree, error)
+	Fetch(ctx context.Context, dest, owner, repo, ref string) (Tree, error)
 }
 
 // Builder creates a CodeQL database from a source tree.
@@ -25,9 +26,22 @@ type Builder interface {
 	CreateDatabase(ctx context.Context, srcDir, dbDir, language string) error
 }
 
-// QueryRunner evaluates a query against a database.
+// QueryRunner evaluates queries against a database.
+//
+// The whole set at once rather than one at a time: the cost of a query is dominated by the
+// process around it, not by the evaluation, so a lane of three costs three times the setup and
+// once the answer.
 type QueryRunner interface {
-	RunQuery(ctx context.Context, dbPath, queryPath, outputPath string) error
+	// RunQueries returns the BQRS each query wrote, keyed by the query path asked for.
+	RunQueries(ctx context.Context, dbPath string, queryPaths []string) (map[string]string, error)
+}
+
+// Analyzer evaluates findings-shaped queries against a database, writing SARIF.
+//
+// This is the second lane. `database analyze` is the only way to run a `@kind problem` query,
+// and the rule id it reports is the only thing in ABOM that carries a security verdict.
+type Analyzer interface {
+	AnalyzeQueries(ctx context.Context, dbPath string, targets []string, sarifPath string) error
 }
 
 // Decoder converts BQRS into the JSON the ingester consumes.
@@ -37,7 +51,10 @@ type Decoder func(ctx context.Context, bqrsPath, jsonPath string) error
 type Options struct {
 	QueryPath string
 	QueryID   string
-	WorkDir   string
+	// Suite names a query suite to run instead of QueryPath. The set of queries ABOM runs is
+	// meant to grow, so what runs is read from the suite at run time rather than compiled in.
+	Suite   string
+	WorkDir string
 	// Limit caps how many queued dependencies a round claims.
 	Limit       int
 	Concurrency int
@@ -47,8 +64,11 @@ type Options struct {
 
 // Stats summarizes a round.
 type Stats struct {
-	// Processed counts repositories analyzed; Items counts the dependencies they settled.
-	Processed   int
+	// Processed counts analyses, not repositories: a repository reached at three references is
+	// three databases and three sets of results. A crawl of 101 repositories reported 319.
+	Processed int
+	// Skipped counts repositories the ledger already had on record, settled without analysis.
+	Skipped     int
 	Items       int
 	Failed      int
 	Unavailable int
@@ -66,29 +86,82 @@ type Expander struct {
 	Ingester *ingest.Ingester
 	Writer   *store.Writer
 	Fetcher  Fetcher
-	Builder  Builder
-	CodeQL   QueryRunner
-	Decode   Decoder
+	// Probe resolves a reference without fetching it, so the commit that decides whether any
+	// work is outstanding is known before a clone is paid for. Nil fetches first, as before.
+	Probe   RefProbe
+	Builder Builder
+	CodeQL  QueryRunner
+	Decode  Decoder
+	// Resolver expands Options.Suite. Only needed when a suite is used.
+	Resolver Resolver
+	// Analyzer runs the findings lane. Only needed when a suite holds findings-shaped queries.
+	Analyzer Analyzer
 	// Pace caps the rate of outbound requests across workers; nil means unlimited.
 	Pace    *work.Limiter
 	OnEvent func(work.Event)
+
+	// digests remembers each pack's content hash for the life of a round. A pack cannot change
+	// while the round that resolved it is running.
+	digests runner.DigestCache
 }
 
-// batch is the set of queued dependencies answered by analyzing one repository.
+// batch is the set of queued dependencies answered by analyzing one repository at one reference.
 type batch struct {
 	owner string
 	repo  string
+	// ref is what gets checked out. Two references of one repository are two batches: they are
+	// different trees, and analyzing them together would produce one answer for both.
+	ref   string
 	items []frontier.Item
 	// depth is the shallowest depth among the items, and what discoveries are measured from.
 	depth int
 }
 
+// revision is the exact tree a round's results describe, and what every ledger row is attributed
+// to. The requested ref and the one actually analyzed are both kept: a moving ref resolves to a
+// commit, and losing which ref was asked for makes a re-analysis look like a different dependency.
+type revision struct {
+	repository string
+	commit     string
+	ref        string
+	analyzed   string
+}
+
+func (b batch) revision(p work.Prepared) revision {
+	return revision{
+		repository: b.full(), commit: p.Commit, ref: b.ref, analyzed: p.AnalyzedRef,
+	}
+}
+
 func (b batch) full() string { return b.owner + "/" + b.repo }
+
+// key distinguishes work; full() names the repository. A batch is claimed, directoried and
+// consumed by key, while the ledger and the graph are keyed by the repository.
+func (b batch) key() string {
+	if b.ref == "" {
+		return b.full()
+	}
+	return b.full() + "@" + b.ref
+}
 
 // Run claims a round of work, analyzes it, and enqueues what it discovers.
 func (e *Expander) Run(ctx context.Context, opts Options) (Stats, error) {
-	if opts.QueryPath == "" || opts.WorkDir == "" {
-		return Stats{}, fmt.Errorf("expand: QueryPath and WorkDir are required")
+	if opts.WorkDir == "" {
+		return Stats{}, fmt.Errorf("expand: WorkDir is required")
+	}
+
+	plans, err := e.plansByTier(ctx, opts)
+	if err != nil {
+		return Stats{}, err
+	}
+	// A binding that names findings queries with nothing able to run them is the defect this
+	// lane exists to fix, so it fails loudly here rather than quietly producing no findings.
+	for tier, p := range plans {
+		if len(p.findings) > 0 && e.Analyzer == nil {
+			return Stats{}, fmt.Errorf(
+				"expand: %s is bound to %d findings queries but no Analyzer is configured",
+				tier, len(p.findings))
+		}
 	}
 
 	claimed, err := e.Queue.Claim(opts.Limit)
@@ -100,21 +173,35 @@ func (e *Expander) Run(ctx context.Context, opts Options) (Stats, error) {
 	}
 	batches := groupByRepository(claimed)
 
+	// Read once for the round: ownership decides a batch's tier and cannot change mid-round.
+	owned, err := e.Store.OwnedSet()
+	if err != nil {
+		return Stats{}, err
+	}
+
 	var stats Stats
 	jobs := make([]work.Job, 0, len(batches))
 	byRepo := make(map[string]batch, len(batches))
 	for _, b := range batches {
-		jobs = append(jobs, work.Job{Repository: b.full()})
-		byRepo[b.full()] = b
+		jobs = append(jobs, work.Job{Repository: b.key()})
+		byRepo[b.key()] = b
 	}
 
 	pool := &work.Pool{
 		Concurrency: opts.Concurrency,
 		Prepare: func(ctx context.Context, job work.Job) (work.Prepared, error) {
-			return e.prepare(ctx, byRepo[job.Repository], opts)
+			b, err := batchFor(byRepo, job.Repository)
+			if err != nil {
+				return work.Prepared{}, err
+			}
+			return e.prepare(ctx, b, opts, plans[tierOf(b, owned)])
 		},
 		Consume: func(ctx context.Context, p work.Prepared) (int, error) {
-			return e.consume(ctx, byRepo[p.Job.Repository], p, opts, &stats)
+			b, err := batchFor(byRepo, p.Job.Repository)
+			if err != nil {
+				return 0, err
+			}
+			return e.consume(ctx, b, p, opts, plans[tierOf(b, owned)], &stats)
 		},
 		OnEvent: func(ev work.Event) {
 			if ev.Kind == work.EventFailed {
@@ -130,9 +217,22 @@ func (e *Expander) Run(ctx context.Context, opts Options) (Stats, error) {
 	if err != nil {
 		return stats, err
 	}
-	stats.Processed = poolStats.Processed
+	stats.Processed = poolStats.Processed - stats.Skipped
 	stats.Edges = poolStats.Rows
 	return stats, nil
+}
+
+// batchFor resolves the batch a job names.
+//
+// A miss used to yield the zero batch, which holds no items and calls itself "/": analysis ran,
+// was filed under that name, and the dependencies it answered were never taken out of the queue.
+// Failing here instead means the round reports the problem rather than silently losing work.
+func batchFor(byRepo map[string]batch, key string) (batch, error) {
+	b, ok := byRepo[key]
+	if !ok {
+		return batch{}, fmt.Errorf("expand: no batch claimed for %q", key)
+	}
+	return b, nil
 }
 
 // groupByRepository collapses claimed dependencies onto the repositories that answer them.
@@ -143,10 +243,10 @@ func groupByRepository(items []frontier.Item) []batch {
 		if it.Owner == "" || it.Repo == "" {
 			continue
 		}
-		key := it.Owner + "/" + it.Repo
+		key := it.Owner + "/" + it.Repo + "@" + it.Ref
 		b, ok := seen[key]
 		if !ok {
-			b = &batch{owner: it.Owner, repo: it.Repo, depth: it.Depth}
+			b = &batch{owner: it.Owner, repo: it.Repo, ref: it.Ref, depth: it.Depth}
 			seen[key] = b
 			order = append(order, key)
 		}
@@ -163,33 +263,209 @@ func groupByRepository(items []frontier.Item) []batch {
 	return out
 }
 
+// pending is the part of a plan that is not yet on record for one database.
+type pending struct {
+	bqrs     []plannedQuery
+	findings bool
+}
+
+func (p pending) empty() bool { return len(p.bqrs) == 0 && !p.findings }
+
+// pendingWork reports which lanes still have something to prove against this exact database.
+//
+// Per lane rather than per repository, because the lanes come from different packs with different
+// digests and nothing about running one requires running the other. On a real repository the
+// database build is 13% of the cost and the two lanes are 87%, so re-running the lane that did
+// not change is most of the bill for a re-analysis.
+//
+// An unknown commit leaves everything outstanding: an empty one would collide with every other
+// unknown, so it can never be treated as a match.
+//
+// The digest is the same argument one level down. A release moves a tag over a rebuilt `dist/`
+// and touches nothing the extractor reads, so the commit is new but the database is not; where
+// the content is known to match, an earlier commit's run answers for this one. Every other part
+// of the run identity still has to match, and nothing is written for the new commit — the run
+// stays recorded where it happened.
+func (e *Expander) pendingWork(
+	planned tierPlan, repository, commit, digest string,
+) (pending, error) {
+	if commit == "" {
+		return pending{bqrs: planned.bqrs, findings: len(planned.findings) > 0}, nil
+	}
+
+	done := func(q store.QueryRun) (bool, error) {
+		ran, err := e.Store.QueryRunExists(q)
+		if err != nil || ran {
+			return ran, err
+		}
+		return e.Store.QueryRunExistsForContent(q, digest)
+	}
+
+	var out pending
+	// No ref: this asks whether the evaluation is on record, and the ref is not part of a run's
+	// identity. Putting one here would make the skip miss whenever a second reference reached
+	// content already analyzed, which is the case it exists for.
+	at := revision{repository: repository, commit: commit}
+	for _, q := range planned.bqrs {
+		ran, err := done(planned.queryRun(q.id, at))
+		if err != nil {
+			return pending{}, err
+		}
+		if !ran {
+			out.bqrs = append(out.bqrs, q)
+		}
+	}
+	if len(planned.findings) > 0 {
+		ran, err := done(planned.findingsRun(at))
+		if err != nil {
+			return pending{}, err
+		}
+		out.findings = !ran
+	}
+	return out, nil
+}
+
+// analyzedRef names the reference a checkout produced. Shared with the skip path, which settles
+// without a checkout and still has to describe the reference the same way.
+func analyzedRef(ref string) string {
+	if ref == "" {
+		return "HEAD"
+	}
+	return ref
+}
+
+// refSuffix names a reference for a directory. Refs contain slashes and dots — `refs/heads/main`,
+// `v4.2.2` — so they cannot go into a path unaltered without escaping the work directory.
+func refSuffix(ref string) string {
+	if ref == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("@")
+	for _, r := range ref {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	return b.String()
+}
+
 func (e *Expander) prepare(
-	ctx context.Context, b batch, opts Options,
+	ctx context.Context, b batch, opts Options, planned tierPlan,
 ) (work.Prepared, error) {
-	dir := filepath.Join(opts.WorkDir, b.owner+"_"+b.repo)
+	// One directory per reference: two refs of a repository are two trees, and sharing a path
+	// would have the second overwrite the first mid-round.
+	dir := filepath.Join(opts.WorkDir, b.owner+"_"+b.repo+refSuffix(b.ref))
 	src := filepath.Join(dir, "src")
+
+	settled, ok, err := e.settleWithoutFetching(ctx, b, planned)
+	if err != nil {
+		return work.Prepared{}, err
+	}
+	if ok {
+		return settled, nil
+	}
 
 	if err := e.Pace.Wait(ctx); err != nil {
 		return work.Prepared{}, err
 	}
-	tree, err := e.Fetcher.Fetch(ctx, src, b.owner, b.repo)
+	tree, err := e.Fetcher.Fetch(ctx, src, b.owner, b.repo, b.ref)
 	if err != nil {
 		return work.Prepared{}, err
 	}
 
+	// What the extractor would read, recorded whether or not this round goes on to analyze it:
+	// the value of knowing it is that a later commit can be recognized as the same database.
+	digest, err := IndexedDigest(tree.Dir)
+	if err != nil {
+		return work.Prepared{}, err
+	}
+	if digest != "" && tree.SHA != "" {
+		if err := e.Store.RecordCommitContent(b.full(), tree.SHA, digest); err != nil {
+			return work.Prepared{}, err
+		}
+	}
+
+	// The commit is only knowable once the source is in hand, so the checkout is not avoidable
+	// here. Deciding from abom_frontier.resolved_sha instead would skip precisely when a ref had
+	// moved, which is the case re-analysis exists for.
+	outstanding, err := e.pendingWork(planned, b.full(), tree.SHA, digest)
+	if err != nil {
+		return work.Prepared{}, err
+	}
+	if outstanding.empty() {
+		if !opts.KeepArtifacts {
+			os.RemoveAll(src)
+		}
+		return work.Prepared{
+			Job:             work.Job{Repository: b.key()},
+			Commit:          tree.SHA,
+			AnalyzedRef:     tree.Ref,
+			AlreadyRecorded: true,
+		}, nil
+	}
+
+	return e.analyzeTree(ctx, b, opts, planned, dir, src, tree, outstanding)
+}
+
+// settleWithoutFetching answers a batch that needs no checkout, reporting whether it did.
+//
+// Before the clone, not after: the ledger only needs the commit, and a reference resolves
+// remotely for a fraction of what fetching it costs. A tier requeue puts back everything
+// including what is already current, and those are settled here without a checkout.
+func (e *Expander) settleWithoutFetching(
+	ctx context.Context, b batch, planned tierPlan,
+) (work.Prepared, bool, error) {
+	sha, ok := e.commitWithoutFetching(ctx, b)
+	if !ok {
+		return work.Prepared{}, false, nil
+	}
+	// A commit seen before has its content on record, so the equivalence is available here
+	// too. A commit never seen has none, and an absent digest matches nothing.
+	digest, _, err := e.Store.CommitContentDigest(b.full(), sha)
+	if err != nil {
+		return work.Prepared{}, false, err
+	}
+	outstanding, err := e.pendingWork(planned, b.full(), sha, digest)
+	if err != nil {
+		return work.Prepared{}, false, err
+	}
+	if !outstanding.empty() {
+		return work.Prepared{}, false, nil
+	}
+	return work.Prepared{
+		Job:             work.Job{Repository: b.key()},
+		Commit:          sha,
+		AnalyzedRef:     analyzedRef(b.ref),
+		AlreadyRecorded: true,
+	}, true, nil
+}
+
+// analyzeTree builds the database for a checkout and runs everything the tier still wants.
+func (e *Expander) analyzeTree(
+	ctx context.Context, b batch, opts Options, planned tierPlan,
+	dir, src string, tree Tree, outstanding pending,
+) (work.Prepared, error) {
 	dbDir := filepath.Join(dir, "db")
 	if err := e.Builder.CreateDatabase(ctx, tree.Dir, dbDir, "actions"); err != nil {
 		return work.Prepared{}, err
 	}
 
-	bqrsPath := filepath.Join(dir, "results.bqrs")
-	if err := e.CodeQL.RunQuery(ctx, dbDir, opts.QueryPath, bqrsPath); err != nil {
+	jsonPath, edgesID, extra, err := e.runQueries(ctx, dbDir, dir, outstanding.bqrs)
+	if err != nil {
 		return work.Prepared{}, err
 	}
 
-	jsonPath := filepath.Join(dir, "results.json")
-	if err := e.Decode(ctx, bqrsPath, jsonPath); err != nil {
-		return work.Prepared{}, err
+	// The findings lane runs against the same database, before it is removed below.
+	var sarifPath string
+	if outstanding.findings {
+		sarifPath = filepath.Join(dir, "findings.sarif")
+		if err := e.Analyzer.AnalyzeQueries(ctx, dbDir, planned.findings, sarifPath); err != nil {
+			return work.Prepared{}, err
+		}
 	}
 
 	// The checkout and database are the bulk of the disk cost and are finished with here, so
@@ -198,105 +474,272 @@ func (e *Expander) prepare(
 		os.RemoveAll(src)
 		os.RemoveAll(dbDir)
 	}
-	return work.Prepared{Job: work.Job{Repository: b.full()}, ResultPath: jsonPath, Commit: tree.SHA}, nil
+	return work.Prepared{
+		Job:           work.Job{Repository: b.key()},
+		ResultPath:    jsonPath,
+		ResultQueryID: edgesID,
+		SarifPath:     sarifPath,
+		Extra:         extra,
+		Commit:        tree.SHA,
+		AnalyzedRef:   tree.Ref,
+	}, nil
 }
 
 func (e *Expander) consume(
-	_ context.Context, b batch, p work.Prepared, opts Options, stats *Stats,
+	_ context.Context, b batch, p work.Prepared, opts Options, planned tierPlan, stats *Stats,
 ) (int, error) {
+	if p.AlreadyRecorded {
+		stats.Skipped++
+		if err := e.attachRefs(b, p, planned); err != nil {
+			return 0, err
+		}
+		return 0, e.settle(b, p, opts, stats)
+	}
 	// The repository is being analyzed because something depends on it, not because it is
 	// under review, so its own CI must not register as dependency pressure.
 	if _, err := e.Store.InsertUpstreamRepository(b.full()); err != nil {
 		return 0, err
 	}
 
-	runID, err := e.Store.RecordQueryRun(store.QueryRun{
-		QueryID: opts.QueryID, Repository: b.full(), DBCommit: p.Commit,
-	})
+	// A suite decides which query supplied the edges, so the ledger records that query rather
+	// than whatever --query-id happened to say. There may be none: a round that had only the
+	// findings lane left to prove built a database and never ran an edges query.
+	at := b.revision(p)
+	rows, err := e.ingestEdges(p, opts, planned, at)
 	if err != nil {
 		return 0, err
 	}
 
-	f, err := os.Open(p.ResultPath)
-	if err != nil {
-		return 0, fmt.Errorf("opening results: %w", err)
+	// Everything else the suite produced. A query that fails to ingest must not lose the
+	// dependency edges already written for this repository, so these are reported and skipped
+	// rather than aborting the round.
+	for queryID, path := range p.Extra {
+		e.report(at.repository, queryID, e.ingestExtra(queryID, path, at, planned))
 	}
-	rows, err := e.Ingester.EdgesFromBQRS(f, ingest.Options{
-		Repository: b.full(), QueryRunID: runID,
-	})
-	f.Close()
-	if err != nil {
-		return 0, err
+
+	if p.SarifPath != "" {
+		e.report(at.repository, "findings", e.ingestFindings(p.SarifPath, at, planned))
 	}
+
 	if err := e.Writer.Flush(); err != nil {
 		return 0, err
 	}
 	e.Writer.ResetLocal()
 
-	discovered, err := e.enqueueDiscoveries(b)
+	return rows, e.settle(b, p, opts, stats)
+}
+
+// ingestEdges records the dependency edges one round produced, and how many rows they were.
+func (e *Expander) ingestEdges(
+	p work.Prepared, opts Options, planned tierPlan, at revision,
+) (int, error) {
+	if p.ResultPath == "" {
+		return 0, nil
+	}
+	queryID := p.ResultQueryID
+	if queryID == "" {
+		queryID = opts.QueryID
+	}
+	runID, err := e.Store.RecordQueryRun(planned.queryRun(queryID, at))
 	if err != nil {
 		return 0, err
 	}
+	f, err := os.Open(p.ResultPath)
+	if err != nil {
+		return 0, fmt.Errorf("opening results: %w", err)
+	}
+	defer f.Close()
+	return e.Ingester.EdgesFromBQRS(f, ingest.Options{
+		Repository: at.repository, QueryRunID: runID,
+	})
+}
+
+// report surfaces a failure that must not abort the round, naming what failed.
+func (e *Expander) report(repository, what string, err error) {
+	if err == nil || e.OnEvent == nil {
+		return
+	}
+	e.OnEvent(work.Event{
+		Kind: work.EventFailed,
+		Job:  work.Job{Repository: repository},
+		Err:  fmt.Errorf("%s: %w", what, err),
+	})
+}
+
+// settle enqueues what the repository revealed and takes its dependencies out of the queue.
+//
+// A skipped repository goes through this too. The ledger row is written before discoveries are
+// enqueued, so a run interrupted between the two would otherwise skip on the next pass and never
+// discover what it had already paid to find.
+func (e *Expander) settle(b batch, p work.Prepared, opts Options, stats *Stats) error {
+	discovered, err := e.enqueueDiscoveries(b)
+	if err != nil {
+		return err
+	}
 	stats.Discovered += discovered
 
-	res := frontier.Resolution{Ref: "HEAD", SHA: p.Commit}
+	// The reference this batch checked out, not the default branch. Recording HEAD for a row
+	// pinned to a SHA would make Resolution.Mutable() call an immutable reference movable.
+	ref := b.ref
+	if ref == "" {
+		ref = frontier.HeadRef
+	}
+	res := frontier.Resolution{Ref: ref, SHA: p.Commit}
 	for _, it := range b.items {
-		if err := e.Queue.Complete(it.NodeKey, res); err != nil {
-			return 0, err
+		if err := e.Queue.Complete(it.Key(), res); err != nil {
+			return err
 		}
 		stats.Items++
 	}
 
-	if !opts.KeepArtifacts {
+	if !opts.KeepArtifacts && p.ResultPath != "" {
 		os.RemoveAll(filepath.Dir(p.ResultPath))
 	}
-	return rows, nil
+	return nil
 }
 
-// enqueueDiscoveries queues whatever the freshly analyzed repository depends on.
-//
-// Only dependencies reached through something another repository actually references are
-// pursued. An upstream repository is fetched to learn what its published actions and reusable
-// workflows pull in; its own CI is nobody's supply chain, and queueing those dependencies
-// spends expansion budget on repositories no one under review depends on.
-//
-// Enqueue already ignores dependencies that are finished or known, so everything reached this
-// way can be offered without further filtering.
 func (e *Expander) enqueueDiscoveries(b batch) (int, error) {
-	rows, err := e.Store.DB().Query(`
-		SELECT DISTINCT n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''), COALESCE(n.path,'')
-		FROM abom_edge e
-		JOIN abom_node n ON n.row_id = e.dst_node_row_id
-		JOIN abom_node src ON src.row_id = e.src_node_row_id
-		JOIN repository r ON r.row_id = e.repository_row_id
-		WHERE r.repository_full_name = ?
-		  AND n.is_external = 1 AND n.owner IS NOT NULL AND n.repo IS NOT NULL
-		  AND EXISTS (
-		        SELECT 1 FROM abom_edge ref
-		        WHERE ref.dst_node_row_id = src.container_node_row_id
-		          AND ref.repository_row_id IS NOT e.repository_row_id)`, b.full())
+	chain, err := (&graph.Builder{Store: e.Store}).ClassifyDependencies()
 	if err != nil {
-		return 0, fmt.Errorf("reading discoveries for %s: %w", b.full(), err)
+		return 0, err
 	}
+	closure, err := (&graph.Builder{Store: e.Store}).OwnedClosure()
+	if err != nil {
+		return 0, err
+	}
+	// Nothing owned reaches this repository, so what it names is somebody else's supply chain.
+	if !closure.Contains(b.full()) {
+		return 0, nil
+	}
+	items, err := discoveriesOf(e.Store, chain, b.full(), b.depth)
+	if err != nil {
+		return 0, err
+	}
+	return e.Queue.Enqueue(items)
+}
 
-	var items []frontier.Item
+// ReclassifySupplyChain re-derives how every queued dependency is classified from the whole
+// graph, and is what lets a tightened rule reach a corpus that is already built.
+func ReclassifySupplyChain(s *store.Store, q *frontier.Queue) (int, error) {
+	chain, err := (&graph.Builder{Store: s}).ClassifyDependencies()
+	if err != nil {
+		return 0, err
+	}
+	return q.Reclassify(chain)
+}
+
+// SweepDiscoveries re-applies the discovery rule to every repository already analyzed.
+//
+// enqueueDiscoveries runs only at the moment a repository is analyzed, so a change to what
+// counts as a dependency reaches an existing database only when something is re-analyzed — and
+// on a drained queue nothing ever is. Enqueue ignores what it already holds, so this settles to
+// zero once the rule and the stored graph agree.
+func SweepDiscoveries(s *store.Store, q *frontier.Queue) (int, error) {
+	chain, err := (&graph.Builder{Store: s}).ClassifyDependencies()
+	if err != nil {
+		return 0, err
+	}
+	closure, err := (&graph.Builder{Store: s}).OwnedClosure()
+	if err != nil {
+		return 0, err
+	}
+	rows, err := s.DB().Query(`
+		SELECT r.repository_full_name, COALESCE(MIN(f.depth), 0)
+		FROM repository r
+		LEFT JOIN abom_frontier f ON f.owner || '/' || f.repo = r.repository_full_name
+		GROUP BY r.repository_full_name`)
+	if err != nil {
+		return 0, fmt.Errorf("listing analyzed repositories: %w", err)
+	}
+	type source struct {
+		full  string
+		depth int
+	}
+	var sources []source
 	for rows.Next() {
-		var it frontier.Item
-		if err := rows.Scan(&it.NodeKey, &it.Owner, &it.Repo, &it.Subpath); err != nil {
+		var src source
+		if err := rows.Scan(&src.full, &src.depth); err != nil {
 			rows.Close()
 			return 0, err
 		}
-		it.Depth = b.depth + 1
-		it.DiscoveredFrom = b.full()
-		items = append(items, it)
+		sources = append(sources, src)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
 
+	added := 0
+	for _, src := range sources {
+		// The sweep re-applies the discovery rule to everything analyzed, which before the
+		// boundary meant every repository in the table — including the 895 upstream ones nothing
+		// owned reaches.
+		if !closure.Contains(src.full) {
+			continue
+		}
+		items, err := discoveriesOf(s, chain, src.full, src.depth)
+		if err != nil {
+			return added, err
+		}
+		n, err := q.Enqueue(items)
+		if err != nil {
+			return added, err
+		}
+		added += n
+	}
+	return added, nil
+}
+
+// discoveriesOf lists the external dependencies one analyzed repository names, classified by
+// whether anything under review executes them.
+//
+// What contains a `uses:` is decided by CodeQL, not here: `AbomEdges.qll` emits
+// `composite-step-uses-action` for a step inside a `runs:` block and `step-uses-action` for one
+// inside a workflow job. Re-deriving that from file paths would reinvent the parser and get it
+// wrong — an earlier gate required the container to be referenced from *another* repository,
+// which dropped every composite action called only by its own repository's workflows, and with
+// it dependencies that run whenever the organization uses the parent action.
+//
+// Classification is a whole-graph question and is answered by graph.ClassifyDependencies, not
+// from the rows below: what this repository can see is whether it names a dependency, never
+// whether anyone under review reaches the file that names it.
+func discoveriesOf(
+	s *store.Store, chain *graph.SupplyChain, full string, depth int,
+) ([]frontier.Item, error) {
+	rows, err := s.DB().Query(`
+		SELECT n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''), COALESCE(n.path,''),
+		       COALESCE(e.ref_value, '')
+		FROM abom_edge_live e
+		JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
+		JOIN repository r ON r.row_id = e.repository_row_id
+		WHERE r.repository_full_name = ?
+		  AND n.is_external = 1 AND n.owner IS NOT NULL AND n.repo IS NOT NULL
+		GROUP BY n.node_key, COALESCE(e.ref_value, '')`, full)
+	if err != nil {
+		return nil, fmt.Errorf("reading discoveries for %s: %w", full, err)
+	}
+	defer rows.Close()
+
+	var items []frontier.Item
+	for rows.Next() {
+		var it frontier.Item
+		if err := rows.Scan(&it.NodeKey, &it.Owner, &it.Repo, &it.Subpath, &it.Ref); err != nil {
+			return nil, err
+		}
+		it.Depth = depth + 1
+		it.DiscoveredFrom = full
+		it.SupplyChain = frontier.SupplyChainBuild
+		if runtime, _ := chain.Of(it.NodeKey); runtime {
+			it.SupplyChain = frontier.SupplyChainRuntime
+		}
+		items = append(items, it)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	sort.Slice(items, func(i, j int) bool { return items[i].NodeKey < items[j].NodeKey })
-	return e.Queue.Enqueue(items)
+	return items, nil
 }
 
 // settleFailure decides whether a failed repository is worth trying again.
@@ -308,10 +751,10 @@ func (e *Expander) settleFailure(b batch, cause error, stats *Stats) {
 		// explains what actually went wrong. An item whose state was not recorded stays claimed
 		// and is retried on a later run.
 		if permanent {
-			_ = e.Queue.Unavailable(it.NodeKey, reasonOf(cause))
+			_ = e.Queue.Unavailable(it.Key(), reasonOf(cause))
 			continue
 		}
-		_ = e.Queue.Fail(it.NodeKey, reasonOf(cause))
+		_ = e.Queue.Fail(it.Key(), reasonOf(cause))
 	}
 	if permanent {
 		stats.Unavailable++

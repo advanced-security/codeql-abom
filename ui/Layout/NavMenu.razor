@@ -1,27 +1,20 @@
 <MudNavMenu>
     <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Outlined.Home">
-        Overview
+        Dashboard
+    </MudNavLink>
+    <MudNavLink Href="/inventory" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Outlined.Extension">
+        Inventory
     </MudNavLink>
     <MudNavLink Href="/explore" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Outlined.Hub">
         Explorer
     </MudNavLink>
-    <MudNavLink Href="/discovery" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Outlined.TravelExplore">
-        Discovery
-    </MudNavLink>
-    <MudNavLink Href="/inventory" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Outlined.Extension">
-        Actions &amp; Workflows
-    </MudNavLink>
-    <MudNavLink Href="/repositories" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Outlined.FolderOpen">
-        Repositories
-    </MudNavLink>
-    <MudNavLink Href="/pinning" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Outlined.PushPin">
-        Version Pinning
-    </MudNavLink>
-    <MudNavLink Href="/remediation" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Outlined.Build">
-        Remediation
-    </MudNavLink>
+    @* Four surfaces. Repositories, version pinning, remediation and the bill of materials were
+       pages that each invented their own scope; they are now units, tabs and an action on
+       Inventory, and their routes still answer so a link nobody updated still lands. Discovery
+       was consolidated rather than retired: starting the crawl and binding its suites are in
+       Settings, and what it has reached is the Inventory's Coverage unit. *@
     <MudDivider Class="my-2" />
     <MudNavLink Href="/settings" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Outlined.ManageAccounts">
-        Your Accounts
+        Settings
     </MudNavLink>
 </MudNavMenu>

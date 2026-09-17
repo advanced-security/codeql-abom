@@ -6,11 +6,8 @@
 package bqrs
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"os/exec"
 	"strconv"
 )
 
@@ -118,6 +115,25 @@ func (r Row) Int(column string) (int, error) {
 	return 0, fmt.Errorf("column %q is not an integer", column)
 }
 
+// Float returns the named column as a float, accepting the quoted numbers CodeQL emits.
+func (r Row) Float(column string) (float64, error) {
+	raw, err := r.raw(column)
+	if err != nil {
+		return 0, err
+	}
+	var f float64
+	if err := json.Unmarshal(raw, &f); err == nil {
+		return f, nil
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		if f, convErr := strconv.ParseFloat(s, 64); convErr == nil {
+			return f, nil
+		}
+	}
+	return 0, fmt.Errorf("column %q is not a number", column)
+}
+
 func (r Row) raw(column string) (json.RawMessage, error) {
 	i, err := r.set.ColumnIndex(column)
 	if err != nil {
@@ -127,21 +143,4 @@ func (r Row) raw(column string) (json.RawMessage, error) {
 		return nil, fmt.Errorf("row has %d values, want column %d (%q)", len(r.values), i, column)
 	}
 	return r.values[i], nil
-}
-
-// DecodeFile runs `codeql bqrs decode` on path and parses the result.
-func DecodeFile(ctx context.Context, codeqlPath, path string) (Decoded, error) {
-	if codeqlPath == "" {
-		codeqlPath = "codeql"
-	}
-	cmd := exec.CommandContext(ctx, codeqlPath, "bqrs", "decode", "--format=json", "--entities=all", path)
-	out, err := cmd.Output()
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return nil, fmt.Errorf("codeql bqrs decode %s: %w: %s", path, err, exitErr.Stderr)
-		}
-		return nil, fmt.Errorf("codeql bqrs decode %s: %w", path, err)
-	}
-	return Parse(out)
 }

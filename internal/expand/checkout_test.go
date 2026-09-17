@@ -9,13 +9,23 @@ import (
 	"testing"
 )
 
+// requireGit states a prerequisite of `make test` rather than sniffing for one.
+//
+// These tests clone from a local path to exercise checkout against git itself, which is the only
+// thing that proves the argument order and the error text. Skipping when git is absent would let
+// the suite report success having quietly stopped testing the part most likely to break.
+func requireGit(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Fatalf("git is not on PATH, and these tests need it: %v", err)
+	}
+}
+
 // originRepo builds a real git repository on disk so checkout behavior is exercised against
 // git itself rather than a mock of it. Cloning from a local path keeps the test hermetic.
 func originRepo(t *testing.T, files map[string]string) string {
 	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
+	requireGit(t)
 
 	dir := t.TempDir()
 	for name, body := range files {
@@ -53,7 +63,7 @@ func fetch(t *testing.T, origin string) Tree {
 	t.Helper()
 	c := newCheckout(t, origin)
 	tree, err := c.Fetch(context.Background(), filepath.Join(t.TempDir(), "work"),
-		"", filepath.Base(origin))
+		"", filepath.Base(origin), "")
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -139,7 +149,7 @@ func TestFetchReportsNothingToAnalyze(t *testing.T) {
 
 	c := newCheckout(t, origin)
 	_, err := c.Fetch(context.Background(), filepath.Join(t.TempDir(), "work"),
-		"", filepath.Base(origin))
+		"", filepath.Base(origin), "")
 	if !IsUnavailable(err) {
 		t.Fatalf("err = %v, want an unavailable error", err)
 	}
@@ -148,13 +158,11 @@ func TestFetchReportsNothingToAnalyze(t *testing.T) {
 // A deleted, renamed or private repository is likewise permanent: retrying costs quota and
 // cannot succeed.
 func TestFetchReportsMissingRepository(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
+	requireGit(t)
 	c := &Checkout{BaseURL: t.TempDir()}
 
 	_, err := c.Fetch(context.Background(), filepath.Join(t.TempDir(), "work"),
-		"", "does-not-exist")
+		"", "does-not-exist", "")
 	if !IsUnavailable(err) {
 		t.Fatalf("err = %v, want an unavailable error", err)
 	}
@@ -165,11 +173,11 @@ func TestFetchIsRepeatableIntoTheSameWorkDir(t *testing.T) {
 	c := newCheckout(t, origin)
 	dest := filepath.Join(t.TempDir(), "work")
 
-	first, err := c.Fetch(context.Background(), dest, "", filepath.Base(origin))
+	first, err := c.Fetch(context.Background(), dest, "", filepath.Base(origin), "")
 	if err != nil {
 		t.Fatalf("first Fetch: %v", err)
 	}
-	second, err := c.Fetch(context.Background(), dest, "", filepath.Base(origin))
+	second, err := c.Fetch(context.Background(), dest, "", filepath.Base(origin), "")
 	if err != nil {
 		t.Fatalf("second Fetch: %v", err)
 	}

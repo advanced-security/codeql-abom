@@ -6,6 +6,7 @@ import (
 	"io"
 	"strconv"
 
+	"github.com/advanced-security/codeql-abom/internal/normalize"
 	"github.com/advanced-security/codeql-abom/internal/sarifin"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
@@ -32,6 +33,9 @@ func (i *Ingester) FindingsFromSARIF(r io.Reader, opts Options) (int, error) {
 	// Rule metadata carries security-severity and arrives before the results it describes, so
 	// it is held here and joined by rule id as each result streams past.
 	rules := make(map[string]sarifin.Rule)
+	// The producer, as the document spells it. Empty until a tool is seen, and left empty if the
+	// document names none — substituting CodeQL there would invent the provenance.
+	var producer string
 
 	var batch []store.Finding
 	stored := 0
@@ -50,6 +54,15 @@ func (i *Ingester) FindingsFromSARIF(r io.Reader, opts Options) (int, error) {
 	}
 
 	err = sarifin.Stream(r, sarifin.Handler{
+		OnTool: func(tool sarifin.Tool) error {
+			producer = tool.Name
+			if opts.CLIVersion == "" || tool.SemanticVersion == opts.CLIVersion {
+				return nil
+			}
+			return fmt.Errorf(
+				"%s: the ledger records CodeQL %s but the SARIF was written by %q",
+				opts.Repository, opts.CLIVersion, tool.SemanticVersion)
+		},
 		OnRule: func(rule sarifin.Rule) error {
 			rules[rule.ID] = rule
 			return nil
@@ -63,6 +76,7 @@ func (i *Ingester) FindingsFromSARIF(r io.Reader, opts Options) (int, error) {
 			}
 
 			batch = append(batch, store.Finding{
+				Provider:         producer,
 				QueryRunID:       opts.QueryRunID,
 				RuleID:           res.RuleID,
 				RepositoryID:     repoID,
@@ -75,6 +89,12 @@ func (i *Ingester) FindingsFromSARIF(r io.Reader, opts Options) (int, error) {
 				Severity:         severity,
 				SecuritySeverity: parseSeverity(rule.SecuritySeverity),
 				Fingerprint:      res.Fingerprints["primaryLocationLineHash"],
+				ResultHash: normalize.ResultHash(
+					res.RuleID, res.FilePath, res.Fingerprints["primaryLocationLineHash"],
+					normalize.Region{
+						StartLine: res.Region.StartLine, StartColumn: res.Region.StartColumn,
+						EndLine: res.Region.EndLine, EndColumn: res.Region.EndColumn,
+					}),
 			})
 
 			if len(batch) >= findingBatch {
@@ -85,6 +105,13 @@ func (i *Ingester) FindingsFromSARIF(r io.Reader, opts Options) (int, error) {
 	})
 	if err != nil {
 		return stored, fmt.Errorf("streaming sarif for %s: %w", opts.Repository, err)
+	}
+	// Searching and finding nothing is a result; searching for nothing is not, and the two are
+	// the same row once stored. CodeQL lists every rule it ran whether or not it matched, so an
+	// empty rule set means the analysis covered no query at all.
+	if len(rules) == 0 {
+		return 0, fmt.Errorf(
+			"%s: the analysis named no rules, so nothing was searched for", opts.Repository)
 	}
 	if err := flush(); err != nil {
 		return stored, err

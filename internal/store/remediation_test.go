@@ -70,7 +70,7 @@ func TestRemediationRanksBySeverityTimesReach(t *testing.T) {
 	}
 	exposeRepo(t, s, "octo-org/e", "GHSA-high-narrow", "actions/cache", 1)
 
-	items, err := s.RemediationPriority(0)
+	items, err := s.RemediationPriority(0, RepositoryScope{})
 	if err != nil {
 		t.Fatalf("RemediationPriority: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestRemediationSeparatesDirectFromTransitive(t *testing.T) {
 	exposeRepo(t, s, "octo-org/via-a", "GHSA-mixed", "actions/checkout", 2)
 	exposeRepo(t, s, "octo-org/via-b", "GHSA-mixed", "actions/checkout", 3)
 
-	items, err := s.RemediationPriority(0)
+	items, err := s.RemediationPriority(0, RepositoryScope{})
 	if err != nil {
 		t.Fatalf("RemediationPriority: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestRemediationFlagsUnfixableAdvisories(t *testing.T) {
 	advisoryAgainst(t, s, "GHSA-nofix", "high", "actions/checkout", "", "")
 	exposeRepo(t, s, "octo-org/a", "GHSA-nofix", "actions/checkout", 1)
 
-	items, err := s.RemediationPriority(0)
+	items, err := s.RemediationPriority(0, RepositoryScope{})
 	if err != nil {
 		t.Fatalf("RemediationPriority: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestRemediationPrefersFixableOnTies(t *testing.T) {
 	exposeRepo(t, s, "octo-org/a", "GHSA-aaa-nofix", "actions/checkout", 1)
 	exposeRepo(t, s, "octo-org/a", "GHSA-zzz-fixed", "actions/cache", 1)
 
-	items, err := s.RemediationPriority(0)
+	items, err := s.RemediationPriority(0, RepositoryScope{})
 	if err != nil {
 		t.Fatalf("RemediationPriority: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestRemediationExcludesWithdrawnAdvisories(t *testing.T) {
 		"2026-01-01T00:00:00Z")
 	exposeRepo(t, s, "octo-org/a", "GHSA-gone", "actions/checkout", 1)
 
-	items, err := s.RemediationPriority(0)
+	items, err := s.RemediationPriority(0, RepositoryScope{})
 	if err != nil {
 		t.Fatalf("RemediationPriority: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestRemediationScoreIsSeverityTimesReachOnly(t *testing.T) {
 	}
 	exposeRepo(t, s, "octo-org/a", "GHSA-scored", "actions/checkout", 1)
 
-	items, err := s.RemediationPriority(0)
+	items, err := s.RemediationPriority(0, RepositoryScope{})
 	if err != nil {
 		t.Fatalf("RemediationPriority: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestRemediationScoreIsSeverityTimesReachOnly(t *testing.T) {
 
 func TestRemediationOfEmptyDatabase(t *testing.T) {
 	s := advisoryStore(t)
-	items, err := s.RemediationPriority(0)
+	items, err := s.RemediationPriority(0, RepositoryScope{})
 	if err != nil {
 		t.Fatalf("RemediationPriority: %v", err)
 	}

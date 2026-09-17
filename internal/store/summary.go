@@ -1,12 +1,17 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 )
 
 // Summary is the state of the whole pipeline, for an operator deciding what to run next.
 type Summary struct {
-	SeedRepos     int `json:"seedRepos"`
+	SeedRepos int `json:"seedRepos"`
+	// OwnedRepos are the seeded repositories the declaration claims. Reported separately because
+	// the two are independent: the reference corpus holds 204 seeded and owns none of them, and
+	// printing the first as the operator's is a claim of responsibility nobody made.
+	OwnedRepos    int `json:"ownedRepos"`
 	UpstreamRepos int `json:"upstreamRepos"`
 	Nodes         int `json:"nodes"`
 	Edges         int `json:"edges"`
@@ -15,6 +20,10 @@ type Summary struct {
 	// LinkedFindings are attached to a graph node; the rest are known only per repository.
 	LinkedFindings int `json:"linkedFindings"`
 	Advisories     int `json:"advisories"`
+	// AdvisoriesFetchedAt is when advisory statements were last collected, empty if never.
+	// Nothing in this tool fetches them, so their age is the difference between an action no
+	// advisory names and one nobody has checked.
+	AdvisoriesFetchedAt string `json:"advisoriesFetchedAt"`
 	// AffectedActions counts graph nodes an advisory covers.
 	AffectedActions   int            `json:"affectedActions"`
 	Exposures         int            `json:"exposures"`
@@ -37,9 +46,11 @@ func (s *Store) Summary() (Summary, error) {
 		args  []any
 	}{
 		{`SELECT COUNT(*) FROM repository WHERE origin = ?`, &out.SeedRepos, []any{OriginSeed}},
+		{`SELECT COUNT(*) FROM repository WHERE ` + ownedFullName("repository_full_name"),
+			&out.OwnedRepos, nil},
 		{`SELECT COUNT(*) FROM repository WHERE origin = ?`, &out.UpstreamRepos, []any{OriginUpstream}},
-		{`SELECT COUNT(*) FROM abom_node`, &out.Nodes, nil},
-		{`SELECT COUNT(*) FROM abom_edge`, &out.Edges, nil},
+		{`SELECT COUNT(*) FROM abom_node_live`, &out.Nodes, nil},
+		{`SELECT COUNT(*) FROM abom_edge_live`, &out.Edges, nil},
 		{`SELECT COUNT(*) FROM abom_finding`, &out.Findings, nil},
 		{`SELECT COUNT(DISTINCT rule_id) FROM abom_finding`, &out.Rules, nil},
 		{`SELECT COUNT(DISTINCT finding_row_id) FROM abom_finding_node`, &out.LinkedFindings, nil},
@@ -50,7 +61,7 @@ func (s *Store) Summary() (Summary, error) {
 		{`SELECT COUNT(DISTINCT n.row_id)
 		  FROM abom_advisory a
 		  JOIN abom_advisory_package p ON p.advisory_row_id = a.row_id
-		  JOIN abom_node n ON n.owner IS NOT NULL AND n.repo IS NOT NULL
+		  JOIN abom_node_live n ON n.owner IS NOT NULL AND n.repo IS NOT NULL
 		                  AND n.owner || '/' || n.repo = p.package_name
 		  WHERE a.withdrawn_at IS NULL`, &out.AffectedActions, nil},
 	}
@@ -73,5 +84,14 @@ func (s *Store) Summary() (Summary, error) {
 		}
 		out.Frontier[status] = n
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+
+	var fetched sql.NullString
+	if err := s.db.QueryRow(`SELECT MAX(fetched_at) FROM abom_advisory`).Scan(&fetched); err != nil {
+		return out, fmt.Errorf("summarizing advisory age: %w", err)
+	}
+	out.AdvisoriesFetchedAt = fetched.String
+	return out, nil
 }

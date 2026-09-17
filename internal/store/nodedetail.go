@@ -35,6 +35,10 @@ type NodeDetail struct {
 	Path       string `json:"path"`
 	IsExternal bool   `json:"isExternal"`
 	Analyzed   bool   `json:"analyzed"`
+	// RefsInUse and RefsAnalyzed say how much of the dependency was looked at. Analyzed alone is
+	// true as soon as one reference has results, which on this corpus is routinely 1 of 27.
+	RefsInUse    int `json:"refsInUse"`
+	RefsAnalyzed int `json:"refsAnalyzed"`
 
 	DependentRepos   int `json:"dependentRepos"`
 	DirectDependents int `json:"directDependents"`
@@ -85,10 +89,10 @@ func (s *Store) BumpImpactOf(key string) (BumpImpact, error) {
 
 	rows, err := s.db.Query(`
 		WITH RECURSIVE reach(node_row_id, hops) AS (
-			SELECT row_id, 0 FROM abom_node WHERE node_key = ?
+			SELECT row_id, 0 FROM abom_node_live WHERE node_key = ?
 			UNION
 			SELECT e.src_node_row_id, r.hops + 1
-			FROM abom_edge e
+			FROM abom_edge_live e
 			JOIN reach r ON e.dst_node_row_id = r.node_row_id
 			WHERE r.hops < 8
 			UNION
@@ -97,13 +101,13 @@ func (s *Store) BumpImpactOf(key string) (BumpImpact, error) {
 			-- repository. Without this the walk stops at the first step and every result looks
 			-- purely direct.
 			SELECT n.container_node_row_id, r.hops
-			FROM abom_node n
+			FROM abom_node_live n
 			JOIN reach r ON n.row_id = r.node_row_id
 			WHERE n.container_node_row_id IS NOT NULL AND r.hops < 8
 		)
 		SELECT rep.repository_full_name, COALESCE(rep.origin, ''), MIN(reach.hops)
 		FROM reach
-		JOIN abom_node n ON n.row_id = reach.node_row_id
+		JOIN abom_node_live n ON n.row_id = reach.node_row_id
 		JOIN repository rep ON rep.row_id = n.repository_row_id
 		WHERE reach.hops > 0
 		  -- Upstream repositories contribute edges but are not dependents: they were fetched
@@ -153,8 +157,8 @@ func (s *Store) BumpImpactOf(key string) (BumpImpact, error) {
 func (s *Store) attachAffectedRefs(key string, repos []AffectedRepo) error {
 	rows, err := s.db.Query(`
 		SELECT rep.repository_full_name, e.ref_value
-		FROM abom_edge e
-		JOIN abom_node dst ON dst.row_id = e.dst_node_row_id
+		FROM abom_edge_live e
+		JOIN abom_node_live dst ON dst.row_id = e.dst_node_row_id
 		JOIN repository rep ON rep.row_id = e.repository_row_id
 		WHERE dst.node_key = ? AND e.ref_value IS NOT NULL AND e.ref_value <> ''
 		GROUP BY rep.repository_full_name, e.ref_value
@@ -192,13 +196,17 @@ func (s *Store) NodeDetailOf(key string) (NodeDetail, error) {
 		SELECT n.node_key, n.node_kind, r.repository_full_name, r.origin, n.path, n.is_external,
 		       COALESCE(b.dependent_repos, 0), COALESCE(b.direct_dependents, 0),
 		       EXISTS (SELECT 1 FROM abom_frontier f
-		                WHERE f.node_key = n.node_key AND f.status = 'done')
-		FROM abom_node n
+		                WHERE f.node_key = n.node_key AND f.status = 'done'),
+		       (SELECT COUNT(*) FROM abom_frontier f WHERE f.node_key = n.node_key),
+		       (SELECT COUNT(*) FROM abom_frontier f
+		         WHERE f.node_key = n.node_key AND f.status = 'done')
+		FROM abom_node_live n
 		LEFT JOIN repository r ON r.row_id = n.repository_row_id
 		LEFT JOIN abom_blast_radius b ON b.node_row_id = n.row_id
 		WHERE n.node_key = ?`, key).
 		Scan(&d.Key, &d.Kind, &repo, &origin, &path, &d.IsExternal,
-			&d.DependentRepos, &d.DirectDependents, &d.Analyzed)
+			&d.DependentRepos, &d.DirectDependents, &d.Analyzed,
+			&d.RefsInUse, &d.RefsAnalyzed)
 	if err == sql.ErrNoRows {
 		return d, fmt.Errorf("no node %q", key)
 	}
@@ -227,8 +235,8 @@ func (s *Store) NodeDetailOf(key string) (NodeDetail, error) {
 func (s *Store) refUsage(key string) ([]RefUsage, error) {
 	rows, err := s.db.Query(`
 		SELECT e.ref_value, COUNT(*), COUNT(DISTINCT e.repository_row_id)
-		FROM abom_edge e
-		JOIN abom_node n ON n.row_id = e.dst_node_row_id
+		FROM abom_edge_live e
+		JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 		WHERE n.node_key = ? AND e.ref_value IS NOT NULL AND e.ref_value <> ''
 		GROUP BY e.ref_value
 		ORDER BY COUNT(*) DESC, e.ref_value`, key)
@@ -252,7 +260,7 @@ func (s *Store) nodeRules(key string) ([]RuleCount, error) {
 	rows, err := s.db.Query(`
 		SELECT f.rule_id, COUNT(*)
 		FROM abom_finding_node fn
-		JOIN abom_node n ON n.row_id = fn.node_row_id
+		JOIN abom_node_live n ON n.row_id = fn.node_row_id
 		JOIN abom_finding f ON f.row_id = fn.finding_row_id
 		WHERE n.node_key = ?
 		GROUP BY f.rule_id
@@ -285,10 +293,10 @@ func (s *Store) nodeNeighbors(key string, incoming bool) ([]NodeNeighbor, error)
 		SELECT shown.node_key, shown.node_kind, COALESCE(r.repository_full_name, ''),
 		       COALESCE(r.origin, ''), COUNT(*),
 		       COALESCE(GROUP_CONCAT(DISTINCT e.ref_value), '')
-		FROM abom_edge e
-		JOIN abom_node target ON target.row_id = e.%s
-		JOIN abom_node far ON far.row_id = e.%s
-		JOIN abom_node shown ON shown.row_id = COALESCE(far.container_node_row_id, far.row_id)
+		FROM abom_edge_live e
+		JOIN abom_node_live target ON target.row_id = e.%s
+		JOIN abom_node_live far ON far.row_id = e.%s
+		JOIN abom_node_live shown ON shown.row_id = COALESCE(far.container_node_row_id, far.row_id)
 		LEFT JOIN repository r ON r.row_id = shown.repository_row_id
 		WHERE target.node_key = ?
 		GROUP BY shown.node_key, shown.node_kind, r.repository_full_name, r.origin

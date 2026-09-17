@@ -89,6 +89,39 @@ func (s *Store) Migrate() error {
 	if _, err := s.db.Exec(schemaDDL); err != nil {
 		return fmt.Errorf("creating schema: %w", err)
 	}
+	// Every remaining CREATE TABLE runs before the column pass, because that pass is one sweep of
+	// ALTER TABLE and a table it names but that does not exist yet fails on every fresh database.
+	// Additive, so a corpus upgraded in place gains them without a rebuild.
+	if _, err := s.db.Exec(commitContentDDL); err != nil {
+		return fmt.Errorf("creating the commit content table: %w", err)
+	}
+	if _, err := s.db.Exec(ownedScopeDDL); err != nil {
+		return fmt.Errorf("creating the declared scope tables: %w", err)
+	}
+	if _, err := s.db.Exec(cycleSpendDDL); err != nil {
+		return fmt.Errorf("creating the cycle spend table: %w", err)
+	}
+	if _, err := s.db.Exec(savedViewDDL); err != nil {
+		return fmt.Errorf("creating the saved view table: %w", err)
+	}
+	if _, err := s.db.Exec(httpCacheDDL); err != nil {
+		return fmt.Errorf("creating the response cache table: %w", err)
+	}
+	if _, err := s.db.Exec(discoveryStateDDL); err != nil {
+		return fmt.Errorf("creating the discovery state table: %w", err)
+	}
+	if _, err := s.db.Exec(enumerationStateDDL); err != nil {
+		return fmt.Errorf("creating the enumeration state table: %w", err)
+	}
+	if _, err := s.db.Exec(repositoryPropertyDDL); err != nil {
+		return fmt.Errorf("creating the repository property table: %w", err)
+	}
+	if _, err := s.db.Exec(propertySchemaDDL); err != nil {
+		return fmt.Errorf("creating the property schema table: %w", err)
+	}
+	if _, err := s.db.Exec(policyDDL); err != nil {
+		return fmt.Errorf("creating the policy tables: %w", err)
+	}
 	for _, c := range addedColumns {
 		has, err := s.hasColumn(c.table, c.column)
 		if err != nil {
@@ -102,7 +135,62 @@ func (s *Store) Migrate() error {
 			return fmt.Errorf("adding %s.%s: %w", c.table, c.column, err)
 		}
 	}
-	return nil
+	// After the additive pass, so a column this drops can never be one that pass just added.
+	for _, c := range droppedColumns {
+		has, err := s.hasColumn(c.table, c.column)
+		if err != nil {
+			return err
+		}
+		if !has {
+			continue
+		}
+		stmt := fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", c.table, c.column)
+		if _, err := s.db.Exec(stmt); err != nil {
+			return fmt.Errorf("dropping %s.%s: %w", c.table, c.column, err)
+		}
+	}
+	// After the columns exist, because the rebuild copies every one of them forward.
+	if err := s.migrateFrontierRefKey(); err != nil {
+		return err
+	}
+	if err := s.migrateObservationFactKey(); err != nil {
+		return err
+	}
+	// The one index a read-only server cannot wait for CreateIndexes to build.
+	if _, err := s.db.Exec(queryRunIndexDDL); err != nil {
+		return fmt.Errorf("indexing run identity: %w", err)
+	}
+	// The observation table's other reader asks by attribute name, which the fact key cannot
+	// serve. Here rather than in indexDDL because that only runs after a bulk load, so an index
+	// added there never reaches a database that already exists.
+	if _, err := s.db.Exec(observationIndexDDL); err != nil {
+		return fmt.Errorf("indexing observations by name: %w", err)
+	}
+	// And the rest of them, for the same reason, once there is no bulk load to slow down.
+	// `CreateIndexes` is called by the seed build alone, so every other database — one being
+	// served, expanded or read by the CLI — carried whatever indexes existed when it was first
+	// built and none added since. Measured 2026-09-15: 20 of 22 were missing from the reference
+	// corpus, and the absent `idx_edge_dst` alone made the Inventory scan all 14,196 edges once
+	// per row. Rebuilding an index that exists costs a catalog lookup.
+	if !s.bulkMode {
+		if err := s.CreateIndexes(); err != nil {
+			return err
+		}
+	}
+	// After the columns, which the views select on.
+	if _, err := s.db.Exec(liveViewDDL); err != nil {
+		return fmt.Errorf("creating the live views: %w", err)
+	}
+	// Selects on abom_account.scopes, which the column pass above may have just added.
+	if _, err := s.db.Exec(honoredScopeDDL); err != nil {
+		return fmt.Errorf("creating the honored scope view: %w", err)
+	}
+	// Before seeding, so a binding that only needs renaming still counts as configured and the
+	// defaults are not written over it.
+	if err := s.migrateSuiteNames(); err != nil {
+		return err
+	}
+	return s.seedTierSuites()
 }
 
 // dropStaleDerivedTables removes derived tables that no longer have a consumer.
@@ -115,6 +203,13 @@ func (s *Store) dropStaleDerivedTables() error {
 	// findings it summarized. Callers now count from abom_finding directly.
 	if _, err := s.db.Exec(`DROP TABLE IF EXISTS abom_pinning`); err != nil {
 		return fmt.Errorf("dropping abom_pinning: %w", err)
+	}
+	// abom_owned_org held accounts the operator typed in. A declaration cannot be told apart from
+	// a guess, yet it decided which findings were reported as theirs to fix, so those rows are
+	// discarded rather than carried into abom_account: they were never verified and there is no
+	// way to verify them retroactively.
+	if _, err := s.db.Exec(`DROP TABLE IF EXISTS abom_owned_org`); err != nil {
+		return fmt.Errorf("dropping abom_owned_org: %w", err)
 	}
 	return nil
 }

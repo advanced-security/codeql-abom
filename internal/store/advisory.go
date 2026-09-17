@@ -187,22 +187,31 @@ type AdvisoryReach struct {
 // No judgement is made about whether a given reference falls inside a vulnerable range. The
 // ranges and the observed references are reported side by side so that decision stays with the
 // reader, or with a query written to make it.
-func (s *Store) AdvisoriesByReach(limit int) ([]AdvisoryReach, error) {
+func (s *Store) AdvisoriesByReach(limit int, sc RepositoryScope) ([]AdvisoryReach, error) {
+	reach, reachArgs, err := s.reachWithin(sc)
+	if err != nil {
+		return nil, err
+	}
+	keep, keepArgs, err := s.reachedByScope(sc)
+	if err != nil {
+		return nil, err
+	}
+	args := append(append([]any{}, reachArgs...), keepArgs...)
 	rows, err := s.db.Query(`
 		SELECT a.ghsa_id, COALESCE(a.cve_id,''), COALESCE(a.severity,''),
 		       COALESCE(a.summary,''), COALESCE(a.html_url,''),
 		       a.cvss_v3_score, a.epss_percentage,
 		       p.package_name, p.vulnerable_version_range,
 		       COALESCE(p.first_patched_version,''),
-		       n.node_key, COALESCE(b.dependent_repos, 0)
+		       n.node_key, `+reach+`
 		FROM abom_advisory a
 		JOIN abom_advisory_package p ON p.advisory_row_id = a.row_id
-		JOIN abom_node n
+		JOIN abom_node_live n
 		  ON n.owner IS NOT NULL AND n.repo IS NOT NULL
 		 AND n.owner || '/' || n.repo = p.package_name
 		LEFT JOIN abom_blast_radius b ON b.node_row_id = n.row_id
-		WHERE a.withdrawn_at IS NULL
-		ORDER BY a.ghsa_id, p.package_name, n.node_key`)
+		WHERE a.withdrawn_at IS NULL`+keep+`
+		ORDER BY a.ghsa_id, p.package_name, n.node_key`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("reading advisory reach: %w", err)
 	}
@@ -289,8 +298,8 @@ func (s *Store) AdvisoriesByReach(limit int) ([]AdvisoryReach, error) {
 func (s *Store) referencesTo(nodeKey string) ([]string, error) {
 	rows, err := s.db.Query(`
 		SELECT COALESCE(e.ref_value, ''), COUNT(*)
-		FROM abom_edge e
-		JOIN abom_node n ON n.row_id = e.dst_node_row_id
+		FROM abom_edge_live e
+		JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 		JOIN repository r ON r.row_id = e.repository_row_id
 		WHERE n.node_key = ? AND r.origin = ?
 		GROUP BY e.ref_value
@@ -335,22 +344,27 @@ type Exposure struct {
 //
 // Direct routes come first within a repository: they are the ones the repository can fix
 // itself, whereas a transitive route waits on an intermediary that may belong to someone else.
-func (s *Store) ExposuresByRepository(limit int) ([]Exposure, error) {
+func (s *Store) ExposuresByRepository(limit int, sc RepositoryScope) ([]Exposure, error) {
+	bound, bindings, err := s.restrict(sc, "r.repository_full_name")
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.Query(`
 		SELECT r.repository_full_name, e.ghsa_id, COALESCE(a.cve_id,''),
 		       COALESCE(a.severity,''), COALESCE(a.summary,''),
 		       n.node_key, e.hops, e.path
 		FROM abom_exposure e
 		JOIN repository r ON r.row_id = e.repository_row_id
-		JOIN abom_node n ON n.row_id = e.node_row_id
+		JOIN abom_node_live n ON n.row_id = e.node_row_id
 		JOIN abom_advisory a ON a.ghsa_id = e.ghsa_id
-		ORDER BY e.hops ASC, r.repository_full_name, e.ghsa_id`)
+		WHERE 1`+bound+`
+		ORDER BY e.hops ASC, r.repository_full_name, e.ghsa_id`, bindings...)
 	if err != nil {
 		return nil, fmt.Errorf("reading exposures: %w", err)
 	}
 	defer rows.Close()
 
-	var out []Exposure
+	var out = []Exposure{}
 	for rows.Next() {
 		var e Exposure
 		var raw string
@@ -387,8 +401,8 @@ func (s *Store) ExposuresByRepository(limit int) ([]Exposure, error) {
 func (s *Store) referencesFrom(repository, nodeKey string) ([]string, error) {
 	rows, err := s.db.Query(`
 		SELECT DISTINCT COALESCE(e.ref_value, '')
-		FROM abom_edge e
-		JOIN abom_node n ON n.row_id = e.dst_node_row_id
+		FROM abom_edge_live e
+		JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 		JOIN repository r ON r.row_id = e.repository_row_id
 		WHERE n.node_key = ? AND r.repository_full_name = ?
 		ORDER BY 1`, nodeKey, repository)
@@ -424,21 +438,29 @@ type ExposureSummary struct {
 //
 // Direct and transitive are kept apart because they call for different work: one is a version
 // bump in the affected repository, the other is a fix somewhere upstream of it.
-func (s *Store) ExposureByAdvisory() ([]ExposureSummary, error) {
+//
+// A row here is an advisory and its numbers count repositories, so the scope restricts the rows
+// being counted rather than the rows being returned — see `restrict`.
+func (s *Store) ExposureByAdvisory(sc RepositoryScope) ([]ExposureSummary, error) {
+	bound, bindings, err := s.restrict(sc, "er.repository_full_name")
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.Query(`
 		SELECT e.ghsa_id, COALESCE(a.severity,''), COALESCE(a.summary,''),
 		       COUNT(DISTINCT CASE WHEN e.hops = 1 THEN e.repository_row_id END),
 		       COUNT(DISTINCT CASE WHEN e.hops > 1 THEN e.repository_row_id END)
 		FROM abom_exposure e
 		JOIN abom_advisory a ON a.ghsa_id = e.ghsa_id
+		JOIN repository er ON er.row_id = e.repository_row_id`+bound+`
 		GROUP BY e.ghsa_id, a.severity, a.summary
-		ORDER BY 4 + 5 DESC, e.ghsa_id`)
+		ORDER BY 4 + 5 DESC, e.ghsa_id`, bindings...)
 	if err != nil {
 		return nil, fmt.Errorf("summarizing exposure: %w", err)
 	}
 	defer rows.Close()
 
-	var out []ExposureSummary
+	out := []ExposureSummary{}
 	for rows.Next() {
 		var e ExposureSummary
 		if err := rows.Scan(&e.GHSAID, &e.Severity, &e.Summary, &e.Direct, &e.Transitive); err != nil {
@@ -449,6 +471,26 @@ func (s *Store) ExposureByAdvisory() ([]ExposureSummary, error) {
 	return out, rows.Err()
 }
 
+// AdvisoriesFetchedAt reports when advisories were last collected, and false if never.
+//
+// A crawl that has drained never ingests again, so a refresh keyed only on arrival would leave
+// this frozen; a caller enforcing an age ceiling needs to seed it from what is already held
+// rather than re-fetch on every restart.
+func (s *Store) AdvisoriesFetchedAt() (time.Time, bool, error) {
+	var fetched sql.NullString
+	if err := s.db.QueryRow(`SELECT MAX(fetched_at) FROM abom_advisory`).Scan(&fetched); err != nil {
+		return time.Time{}, false, fmt.Errorf("reading advisory age: %w", err)
+	}
+	if !fetched.Valid || fetched.String == "" {
+		return time.Time{}, false, nil
+	}
+	at, err := time.Parse(time.RFC3339, fetched.String)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("parsing advisory age %q: %w", fetched.String, err)
+	}
+	return at, true, nil
+}
+
 // AdvisoryPackages returns the repository-scoped package names worth querying: every external
 // action the organization depends on.
 //
@@ -457,7 +499,7 @@ func (s *Store) ExposureByAdvisory() ([]ExposureSummary, error) {
 func (s *Store) AdvisoryPackages() ([]string, error) {
 	rows, err := s.db.Query(`
 		SELECT DISTINCT n.owner || '/' || n.repo
-		FROM abom_node n
+		FROM abom_node_live n
 		WHERE n.is_external = 1 AND n.owner IS NOT NULL AND n.repo IS NOT NULL
 		  AND n.node_kind IN ('action', 'composite_action', 'reusable_workflow', 'workflow')
 		ORDER BY 1`)

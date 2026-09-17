@@ -1,7 +1,44 @@
+/* One vocabulary for every size, spacing and family in the interface.
+ *
+ * The scale exists because six sizes had accumulated between 0.68rem and 0.8rem, which reads as
+ * unevenness rather than as hierarchy. Anything that needs a size takes one of these. */
+:root {
+    --abom-text-xs: 0.72rem;
+    --abom-text-sm: 0.78rem;
+    --abom-text-md: 0.85rem;
+    --abom-text-lg: 1rem;
+
+    --abom-icon-sm: 1rem;
+    --abom-icon-md: 1.05rem;
+
+    /* Evidence a reader compares character by character is monospaced, everywhere. */
+    --abom-mono: "Cascadia Code", "Fira Code", ui-monospace, Consolas, Monaco, monospace;
+
+    --abom-gap-xs: 0.35rem;
+    --abom-gap-sm: 0.4rem;
+    --abom-gap-md: 0.5rem;
+    --abom-gap-lg: 1rem;
+
+    --abom-radius: 3px;
+    --abom-cell-pad: 4px 6px;
+
+    /* Filter widths are fixed so the bar does not reflow as values change length. */
+    --abom-filter-w: 150px;
+    --abom-filter-wide-w: 215px;
+    --abom-filter-narrow-w: 100px;
+    /* One search width. Two pages used 420px and one 280px, for no reason either could state. */
+    --abom-search-w: 340px;
+
+    --abom-dim: 0.7;
+}
+
 html, body {
     margin: 0;
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
+
+/* style-check: off — everything to the `on` marker paints before MudBlazor is running, so no
+   palette variable or type token exists yet to refer to. */
 
 /* Applied before Blazor loads so the boot screen matches the resolved scheme. */
 html[data-theme="dark"] body { background: #1A1B1E; color: #E9ECEF; }
@@ -34,17 +71,35 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 
 #blazor-error-ui .dismiss { cursor: pointer; float: right; }
 #blazor-error-ui .reload { color: #fff; text-decoration: underline; }
+/* style-check: on */
 
-/* The coverage strip states what is not known, so it stays visible on every page. */
+/* The coverage strip states what is not known, so it stays visible on every page.
+
+   A grid rather than a flex row because the items are ragged — 107px to 193px — and packing them
+   greedily left the sixth alone on a second line, reading as an afterthought rather than the last
+   of six. One line is not available at the middle widths at any gap: the items want 1,062px and
+   the strip has 880px at 1152. So the column count is stated rather than fitted, because only 2,
+   3 and 6 divide six evenly and `auto-fit` will happily choose 5 and orphan one. Four and five
+   items — when nothing is unresolved — can still leave a short last row; six is the case that
+   occurs while discovery has anything left to do. */
 .abom-coverage {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
     align-items: center;
-    gap: 1.25rem;
+    gap: 0.4rem 1.25rem;
     padding: 0.4rem 1rem;
-    font-size: 0.78rem;
+    font-size: var(--abom-text-sm);
     border-bottom: 1px solid var(--mud-palette-lines-default);
     background: var(--mud-palette-background-grey);
+}
+
+@media (min-width: 900px) {
+    .abom-coverage { grid-template-columns: repeat(3, 1fr); }
+}
+
+/* Six across needs about 1,300px of strip, and the drawer takes 240px of the window. */
+@media (min-width: 1600px) {
+    .abom-coverage { grid-template-columns: repeat(6, 1fr); }
 }
 
 .abom-coverage-item { display: flex; align-items: baseline; gap: 0.35rem; }
@@ -88,56 +143,51 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 .abom-filters .mud-input.mud-input-outlined > div.mud-input-slot {
     padding-top: 6px;
     padding-bottom: 6px;
-    font-size: 0.8rem;
+    font-size: var(--abom-text-sm);
     min-height: 20px;
 }
 
-.abom-filters .mud-input-label { font-size: 0.8rem; }
-.abom-filters .mud-chip { font-size: 0.75rem; height: 26px; }
-.abom-filters .mud-toggle-item { font-size: 0.75rem; }
+.abom-filters .mud-input-label { font-size: var(--abom-text-sm); }
+.abom-filters .mud-chip { font-size: var(--abom-text-sm); height: 26px; }
+.abom-filters .mud-toggle-item { font-size: var(--abom-text-sm); }
 
 /* The second row was never covered by the rules above, so switches, buttons and links stayed at
    full size and the bar outshouted the graph it controls. */
-.abom-filters .mud-button-root { font-size: 0.75rem; padding: 3px 10px; min-height: 28px; }
-.abom-filters .mud-button-root .mud-icon-root { font-size: 1rem; }
-.abom-filters .mud-checkbox .mud-typography { font-size: 0.78rem; }
-.abom-filters .mud-checkbox .mud-icon-root { font-size: 1.05rem; }
+.abom-filters .mud-button-root { font-size: var(--abom-text-sm); padding: 3px 10px; min-height: 28px; }
+.abom-filters .mud-button-root .mud-icon-root { font-size: var(--abom-icon-sm); }
+.abom-filters .mud-checkbox .mud-typography { font-size: var(--abom-text-sm); }
+.abom-filters .mud-checkbox .mud-icon-root { font-size: var(--abom-icon-md); }
 .abom-filters .mud-checkbox .mud-button-root { padding: 4px; min-height: 0; }
-.abom-filters .mud-typography-caption { font-size: 0.72rem; }
-.abom-filters a.mud-typography { font-size: 0.75rem; }
+.abom-filters .mud-typography-caption { font-size: var(--abom-text-xs); }
+.abom-filters a.mud-typography { font-size: var(--abom-text-sm); }
 
 /* Labels sit above every box, so the value lines all start at the same place. */
 .abom-filters .mud-input-slot,
 .abom-filters input.mud-input-root { text-align: left; }
 
-.abom-filter { width: 150px; }
-.abom-filter-wide { width: 215px; }
-.abom-filter-narrow { width: 100px; }
+.abom-filter { width: var(--abom-filter-w); }
+.abom-filter-wide { width: var(--abom-filter-wide-w); }
+.abom-filter-narrow { width: var(--abom-filter-narrow-w); }
 
-/* Each nesting step is indented and ruled, so depth is visible without repeating the full path
-   on every row. */
-.abom-pinning-child {
-    padding: 4px 0 8px 10px;
-    border-left: 2px solid var(--mud-palette-lines-default);
-    margin-left: 6px;
-}
+/* A property key and value are text the operator matches against GitHub's own settings, and
+   MudBlazor uppercases button labels. `BUSINESS_ID` is not the key; `business_id` is. */
+.abom-scope .mud-button-root { text-transform: none; }
 
-/* Nested levels are narrower than the one above, so headings wrap onto three lines unless they
-   are told not to. The heading still names the level, which is how depth is read. */
-.abom-pinning-child .mud-table-head .mud-table-cell {
-    font-size: 0.72rem;
-    white-space: nowrap;
-    padding: 4px 6px;
-}
-.abom-pinning-child .mud-table-body .mud-table-cell {
-    font-size: 0.78rem;
-    padding: 4px 6px;
+/* The frontier key: a filled dot carrying the discovery color, matching the graph's own nodes. */
+.abom-legend-dot {
+    width: var(--abom-icon-sm);
+    height: var(--abom-icon-sm);
+    border-radius: 50%;
+    background: var(--abom-legend-color);
+    display: inline-block;
+    flex: 0 0 auto;
+    margin-right: 0.5rem;
 }
 
 /* Left unconstrained a tooltip stretches to the viewport, covering the controls it describes. */
 .mud-tooltip {
     max-width: 320px;
-    font-size: 0.75rem;
+    font-size: var(--abom-text-sm);
     line-height: 1.35;
 }
 
@@ -145,15 +195,15 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 .abom-key-note {    display: flex;
     align-items: flex-start;
     gap: 0.4rem;
-    font-size: 0.72rem;
+    font-size: var(--abom-text-xs);
     opacity: 0.75;
     padding: 2px 0;
 }
 /* The ring keeps its size against a label that wraps to two lines. */
 .abom-key-note .abom-legend-ring { flex: none; margin-top: 2px; }
 .abom-key-selected {
-    font-family: "Cascadia Code", "Fira Code", ui-monospace, monospace;
-    font-size: 0.7rem;
+    font-family: var(--abom-mono);
+    font-size: var(--abom-text-xs);
     overflow-wrap: anywhere;
 }
 
@@ -178,8 +228,8 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 }
 /* Monospace anywhere a value is evidence a reader compares character by character. */
 .abom-ref, .abom-path, .abom-rule {
-    font-family: "Cascadia Code", "Fira Code", Consolas, Monaco, monospace;
-    font-size: 0.78rem;
+    font-family: var(--abom-mono);
+    font-size: var(--abom-text-sm);
 }
 
 /* An identifier broken across lines cannot be read or copied, so it never wraps. */
@@ -191,17 +241,276 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
    widths from the body widths and the columns stop lining up. The third class is only there to
    outrank MudBlazor's own dense-cell rule. */
 .abom-grid .mud-table-root .mud-table-cell {
-    padding-left: 8px;
-    padding-right: 8px;
+    padding-left: 6px;
+    padding-right: 6px;
 }
 
-/* Summaries are prose and may be clipped; the full text stays in the tooltip. */
-.abom-summary {
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
+/* A header is a label for the column, not one of its values, and at nine columns the difference
+   between naming them and showing them is about 60px. */
+.abom-grid thead th {
+    font-size: var(--abom-text-xs);
+}
+
+/* An identity is two facts, and one line spends the width of both to show one of them. */
+.abom-id {
+    display: inline-block;
+    line-height: 1.3;
+    min-width: 0;
+}
+
+.abom-id-where {
+    display: block;
+    font-family: var(--abom-mono);
+    font-size: var(--abom-text-xs);
+    opacity: 0.6;
+}
+
+/* A header is prose and a cell under it is often one word, so the header was setting the width:
+   "Externally triggerable" made a 175px column to hold "yes", and seven of those pushed Findings —
+   the column the grid is sorted by — off the right-hand edge. Wrapping lets the header take two
+   short lines over the data instead of one long line beside it. */
+.abom-grid thead th,
+.abom-grid thead th .mud-table-sort-label {
+    white-space: normal;
+}
+
+.abom-grid thead th .mud-table-sort-label {
+    display: inline-flex;
+    align-items: flex-end;
+}
+
+/* A list of trigger events is several short words that happened to be written on one line, which
+   made it the widest column in the table. It wraps between events — never inside one, which is
+   how "workflow_dispatch" became six lines of nonsense. 18ch is that longest event name, so this
+   is as narrow as the column goes without breaking a word. */
+.abom-triggers {
+    display: inline-block;
+    max-width: 18ch;
+    white-space: normal;
+    overflow-wrap: break-word;
+}
+
+/* An identity is the widest thing in any row, and left alone it takes the width the counts need.
+   Cut here so that every unit fits the narrow viewport the suite checks; the whole key is still a
+   hover away, and still in the link. */
+.abom-id {
+    max-width: 18ch;
+}
+
+/* The same cut, for an identity that is already one line and needs no stacking. */
+.abom-trunc {
+    display: inline-block;
+    max-width: 18ch;
     overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+}
+
+/* 18ch is what the narrowest supported window can spare, not what a name deserves. Given a wide
+   one, spend the surplus on the column the reader is actually identifying rows by. */
+@media (min-width: 1600px) {
+    .abom-id,
+    .abom-trunc {
+        max-width: 34ch;
+    }
+}
+
+.abom-id .abom-rule,
+.abom-id-where {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Nine columns do not fit a narrow window, and the honest answer is to say so rather than to drop
+   one. The shadow appears at whichever edge has more table behind it: the two `local` layers
+   travel with the content and cover the shadow once that edge is reached, so it is present exactly
+   when there is something to scroll to. */
+.abom-grid .mud-table-container {
+    background:
+        linear-gradient(to right, var(--mud-palette-surface) 40%, transparent) 0 0 / 32px 100% no-repeat local,
+        linear-gradient(to left, var(--mud-palette-surface) 40%, transparent) 100% 0 / 32px 100% no-repeat local,
+        radial-gradient(farthest-side at 0 50%, color-mix(in srgb, var(--mud-palette-text-primary) 30%, transparent), transparent) 0 0 / 18px 100% no-repeat scroll,
+        radial-gradient(farthest-side at 100% 50%, color-mix(in srgb, var(--mud-palette-text-primary) 30%, transparent), transparent) 100% 0 / 18px 100% no-repeat scroll;
+}
+
+/* The shadow is drawn on the container, so the rows above it must not paint over it. */
+.abom-grid .mud-table-container .mud-table-root,
+.abom-grid .mud-table-container .mud-table-body .mud-table-row {
+    background: transparent;
+}
+
+/* Something ABOM has not established: an account gh has not confirmed, or a component nothing
+   analyzed. Deliberately not the muted secondary color, which reads as "less important" — this
+   is not less important, it is unknown, and an unexamined component that looks like a clean one
+   is the failure the coverage statement exists to prevent. */
+.abom-unconfirmed {
+    color: var(--mud-palette-warning-darken);
+    font-style: italic;
+}
+
+/* A repository the operator has declared. A mark rather than a color alone, so it survives being
+   printed and does not rely on hue to carry the meaning. */
+.abom-owned-mark {
+    font-weight: 600;
+}
+
+.abom-owned-mark::before {
+    content: "\2713\00a0";
+    color: var(--mud-palette-success);
+}
+
+/* The filter row above the bill of materials. Fixed widths on the controls, because flexbox wraps
+   on content width and a grown search field pushes the export menu onto a second line. Wrapping is
+   allowed even so: with a third filter the row no longer fits the content column at 1440, and a
+   second line reads where a row running past the edge does not. */
+/* One filter row, shared: `.abom-filters` holds it and the widths come from the variables above,
+   so a control added to one page is positioned once rather than again per page. */
+
+/* Several references to one component are several lines, and each must stay copyable whole. */
+.abom-bom-ref { white-space: nowrap; }
+
+/* The objective sits above the controls because it is the reason to press them. Depth chips wrap
+   rather than scroll: a corpus five deep has five of them and they must all stay visible. */
+.abom-objective-depths {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+/* A disclosure whose header keeps stating the setting, so folding hides the control and never
+   the fact. Built from a real button so it is reachable by keyboard and reports its own state. */
+.abom-fold-toggle {
+    display: flex;
+    align-items: flex-start;
+    /* MudBlazor centers button content globally, which would indent the header past the grid. */
+    justify-content: flex-start;
+    gap: 0.35rem;
+    width: 100%;
+    padding: 0;
+    background: none;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    color: inherit;
+    font: inherit;
+}
+
+.abom-fold-text {
+    display: flex;
+    flex-direction: column;
+}
+
+.abom-fold-title {
+    font-size: var(--abom-text-md);
+    font-weight: 600;
+}
+
+.abom-fold-summary {
+    font-size: var(--abom-text-xs);
+    color: var(--mud-palette-text-secondary);
+}
+
+/* One suite per row, disclosing the packs behind it. Same shape as the section fold, one level in. */
+.abom-suite-toggle {
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: var(--abom-gap-xs);
+    padding: 0;
+    background: none;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    color: inherit;
+    font: inherit;
+}
+
+.abom-pack {
+    display: flex;
+    align-items: baseline;
+    gap: var(--abom-gap-md);
+}
+
+/* The query list is the audit trail, so it scrolls rather than pushing the queue off the page. */
+.abom-query-list {
+    margin: 0 0 var(--abom-gap-md) 1.2rem;
+    padding: 0;
+    max-height: 12rem;
+    overflow-y: auto;
+    list-style: none;
+    font-size: var(--abom-text-xs);
+}
+
+/* Full width would put the tier checkboxes a screen away from the suite they belong to. */
+.abom-config-grid {
+    max-width: 52rem;
+}
+
+/* MudBlazor uppercases button labels, which made "Re-analyze direct (423)" wrap to two lines and
+   cost the row 18px it did not need. Sentence case is also what the rest of the page uses. */
+.abom-requeue {
+    text-transform: none;
+    white-space: nowrap;
+}
+
+/* The verb is stated once for the row rather than on each button, so a third tier does not push
+   the third button onto a line of its own. */
+.abom-requeue-label {
+    margin-right: 0.25rem;
+    white-space: nowrap;
+}
+
+/* A repository name is two short segments, so the field is sized for one rather than taking the
+   row's leftover width and pushing the button it belongs to onto the next line. */
+.abom-requeue-field {
+    flex: 0 0 auto;
+    width: 14rem;
+}
+
+/* Flexbox breaks lines from each item's content width and only then shrinks what is left on the
+   line, so a shrinkable sentence cannot rescue a row that is already allowed to wrap. Once a
+   third tier existed the controls no longer fitted beside the sentence, and wrapping them cost
+   the queue 38px. Holding the row on one line makes the sentence give up the width instead.
+   Below this the sentence has no width left to give, so wrapping is the better failure. */
+.abom-run-row {
+    flex-wrap: wrap;
+}
+
+@media (min-width: 1100px) {
+    .abom-run-row {
+        flex-wrap: nowrap;
+    }
+
+    .abom-run-row .abom-requeue,
+    .abom-run-row .abom-requeue-label {
+        flex-shrink: 0;
+    }
+}
+
+/* A tier column header carries three facts of decreasing weight: which tier, why it differs
+   from the other, and how much work a tick would apply to. Stacking them keeps that reasoning
+   next to the checkbox it governs instead of in a paragraph above the grid. */
+.abom-grid thead th {
+    vertical-align: bottom;
+}
+
+.abom-tier-head {
+    line-height: 1.35;
+}
+
+.abom-tier-name {
+    display: block;
+    text-transform: capitalize;
+}
+
+.abom-tier-why,
+.abom-tier-count {
+    display: block;
+    font-weight: 400;
+    font-size: var(--abom-text-xs);
+    color: var(--mud-palette-text-secondary);
 }
 
 .abom-ref {
@@ -232,9 +541,9 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 }
 
 /* Legend and filter in one place, so a key entry is something you can act on. */
-.abom-keypanel { font-size: 0.8rem; }
+.abom-keypanel { font-size: var(--abom-text-sm); }
 .abom-key-head { margin-bottom: 0.15rem; }
-.abom-key-title { font-size: 0.7rem; letter-spacing: 0.08em; opacity: 0.7; }
+.abom-key-title { font-size: var(--abom-text-xs); letter-spacing: 0.08em; opacity: 0.7; }
 
 .abom-key-row {
     display: flex;
@@ -243,11 +552,62 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     cursor: pointer;
     padding-right: 0.5rem;
     border-radius: 3px;
+    /* Containment is the whole point of the key now that the graph arrives folded: a reader has
+       to see which level the fold is happening at, not just which kinds are switched on. */
+    padding-left: calc(var(--abom-key-depth, 0) * 0.85rem);
 }
 
 .abom-key-row:hover { background: var(--mud-palette-action-default-hover); }
 
+/* The kind the node panel is describing. The panel names a kind and the key is where a reader
+   already learned what that kind looks like; marking the row joins them without a second legend. */
+.abom-key-row-shown {
+    background: var(--mud-palette-action-default-hover);
+    box-shadow: inset 2px 0 0 var(--mud-palette-primary);
+}
+
+/* The hovered node, typeset rather than painted. On the canvas this box was the largest thing on
+   screen and covered the neighbors a reader hovers a node in order to compare it against. */
+.abom-nodecard {
+    border-left: 3px solid var(--abom-node-color, var(--mud-palette-lines-default));
+    padding: 0.35rem 0.5rem 0.4rem;
+    margin-bottom: 0.35rem;
+    background: var(--mud-palette-background-gray);
+    border-radius: 0 3px 3px 0;
+}
+
+.abom-node-name {
+    font-weight: 600;
+    word-break: break-word;
+}
+
+/* The full key stays available and stops being the headline: at owner level it is the whole path. */
+.abom-node-key {
+    font-size: var(--abom-text-xs);
+    opacity: 0.65;
+    word-break: break-all;
+    margin-bottom: 0.25rem;
+}
+
+.abom-node-facts {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.05rem 0.5rem;
+    margin: 0.25rem 0;
+    font-size: var(--abom-text-xs);
+}
+
+.abom-node-facts dt { opacity: 0.65; white-space: nowrap; }
+.abom-node-facts dd { margin: 0; word-break: break-word; }
+
+/* A guide rail down each nested level, so a row's parent is findable without counting pixels. */
+.abom-key-row[style*="--abom-key-depth"] { border-left: 1px solid var(--mud-palette-lines-default); }
+
 .abom-key-label { cursor: pointer; flex: 1; }
+
+/* The fold control sits with the kind it folds, and stays quiet until it is the active one. */
+.abom-key-fold { opacity: 0.45; }
+.abom-key-fold-on { opacity: 1; }
 
 /* A native color input is the one control every browser already knows how to present. */
 .abom-swatch {
@@ -264,8 +624,7 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 /* The legend glyph is the same shape the renderer draws, so the key reads as a key. */
 .abom-glyph { width: 14px; height: 14px; flex: none; }
 
-.abom-legend { display: flex; flex-wrap: wrap; gap: 1rem; font-size: 0.75rem; }
-.abom-legend-item { display: flex; align-items: center; gap: 0.35rem; }
+.abom-legend { display: flex; flex-wrap: wrap; gap: 1rem; font-size: var(--abom-text-sm); }
 .abom-legend-dot { width: 10px; height: 10px; border-radius: 50%; }
 
 /* Selection is a state, not a category, so it is drawn as a bright edge on the node's own
@@ -295,4 +654,152 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     transform: translateY(-2px);
 }
 
-.abom-section-figure { font-variant-numeric: tabular-nums; opacity: 0.7; }
+/* Utilities that existed only as inline styles, repeated across pages with slightly different
+   values each time. Naming them is what lets the checker forbid the inline form. */
+
+/* Digits line up column-wise, so a reader compares magnitudes rather than glyph widths. */
+.abom-num { font-variant-numeric: tabular-nums; }
+
+.abom-faint { opacity: 0.4; }
+.abom-strong { font-weight: 600; }
+.abom-nowrap { white-space: nowrap; }
+.abom-clickable { cursor: pointer; }
+
+/* A row of items sharing one baseline: a figure beside its unit, a label beside its value. */
+.abom-inline {
+    display: flex;
+    align-items: baseline;
+    gap: var(--abom-gap-md);
+}
+
+.abom-inline-center {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--abom-gap-sm);
+}
+
+/* Secondary figures sit a step below the number they qualify. */
+
+/* One search box width everywhere, set by token rather than by each page. */
+.abom-search { max-width: var(--abom-search-w); }
+
+/* An account name needs room to be recognized: truncating one is how an operator declares the
+   wrong org and cannot see that they did. */
+.abom-owner-field { min-width: 16rem; }
+
+/* Simple tables carry the grid's metrics, so a page that uses one does not look like a
+   different application from the page beside it. */
+.abom-table .mud-table-cell {
+    padding: var(--abom-cell-pad);
+    font-size: var(--abom-text-sm);
+}
+.abom-table .mud-table-head .mud-table-cell {
+    font-size: var(--abom-text-xs);
+    white-space: nowrap;
+}
+
+/* The page heading block: one title, one standfirst, one rhythm below it. */
+.abom-page-head { margin-bottom: 1rem; }
+.abom-page-title { margin: 0 0 0.25rem 0; }
+
+/* The queue as a bar: composition, never a percentage. Sized to read at a glance without
+   crowding out the status beside it. */
+.abom-queue-bar {
+    display: flex;
+    align-items: stretch;
+    height: 0.5rem;
+    border-radius: 999px;
+    overflow: hidden;
+    background: var(--mud-palette-lines-default);
+    flex: 1 1 200px;
+    min-width: 140px;
+    max-width: 340px;
+}
+
+.abom-queue-seg {
+    width: var(--abom-seg-w);
+    background: var(--abom-seg-color);
+}
+
+/* Blazor's FocusOnNavigate moves focus to the page heading so a screen reader announces the new
+   page. It is the only thing that ever focuses this element: FocusOnNavigate sets tabindex="-1",
+   so no amount of tabbing reaches it. There is therefore no keyboard case to preserve, and a
+   ring around a heading only offers a sighted reader something to do that does not exist.
+   :focus-visible is not enough on its own; browsers still match it after a page load. */
+.abom-page-title:focus { outline: none; }
+
+/* Severity reads as a labelled dot. The hue arrives as a custom property because it is
+   theme-dependent and defined once in ThemeService. */
+.abom-sev { display: inline-flex; align-items: center; gap: var(--abom-gap-xs); }
+.abom-sev-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex: none;
+    background: var(--abom-sev-color);
+}
+.abom-sev-label { font-size: var(--abom-text-sm); font-weight: 500; }
+
+.abom-ref-empty { font-size: var(--abom-text-sm); }
+
+/* Frontier status is a closed set, so each state names a class instead of building a style. */
+.abom-status-unavailable { opacity: 0.55; font-style: italic; }
+
+/* The dot keys the state to the filter above it, so it has to sit beside the word rather than
+   wrap onto its own line and double the row height. */
+.abom-status-cell { white-space: nowrap; display: inline-flex; align-items: center; }
+
+/* The hue is a queue state from the live palette, so it arrives as a property rather than a rule. */
+.abom-state-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+    flex: none;
+    background: var(--abom-state-color);
+}
+
+/* Legend swatches take their hue from the live palette, which is why it arrives inline. */
+.abom-legend-line { background: var(--abom-legend-color); }
+.abom-legend-ring { border-color: var(--abom-legend-color); }
+
+/* A node's title is its key, so it is monospaced — but at heading size. The inline key class
+   carries a size of its own, which silently demoted the page title to caption size. */
+.abom-title-mono { font-family: var(--abom-mono); }
+
+/* Inline code appears in half the standfirsts. Left unstyled the browser picks its own family
+   and an absolute size, which is where the stray sizes on those pages came from. */
+code {
+    font-family: var(--abom-mono);
+    font-size: 0.95em;
+}
+
+/* MudBlazor's own internals sit outside the Typography block, so a form label rendered at 16px
+   — larger than any body text on the page — and chip text at a size the scale never chose. The
+   filter bar had already been overriding both locally; this states it once instead. */
+.mud-input-label { font-size: var(--abom-text-md); }
+.mud-chip-content { font-size: var(--abom-text-xs); }
+
+/* Top-level grid headings are deliberately allowed to wrap. Holding them on one line widens the
+   table past its container and pushes the last column off screen, which is the failure the cell
+   padding above exists to prevent: a wrapped heading is ugly, a hidden column is wrong. */
+
+/* A reference on the node page opens the rest of that list. A button rather than a link because
+   it reveals a row in place; styled flat so the table still reads as a table. */
+.abom-ref-users {
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+}
+.abom-ref-users:hover .abom-ref { text-decoration: underline; }
+.abom-ref-users-cell { padding-top: 0 !important; }
+.abom-ref-users-list {
+    margin: 0;
+    padding-left: 16px;
+    font-size: var(--abom-text-sm);
+    columns: 2;
+}

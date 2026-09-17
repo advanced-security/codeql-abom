@@ -6,12 +6,16 @@ on:
       - '.github/workflows/build-and-test-ui.yml'
       - 'Makefile'
       - 'ui/**'
+      # The browser suite asserts the server's API contract as the page exercises it, so a change
+      # here can break the interface without touching a file under ui/.
+      - 'internal/serve/**'
   push:
     branches: ['main']
     paths:
       - '.github/workflows/build-and-test-ui.yml'
       - 'Makefile'
       - 'ui/**'
+      - 'internal/serve/**'
 
 permissions:
   contents: read
@@ -34,6 +38,10 @@ jobs:
       - name: Interface - Test the browser code
         run: make js
 
+      # Visual drift passes every other check in this workflow.
+      - name: Interface - Check style
+        run: make style
+
       - name: Interface - Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -42,11 +50,43 @@ jobs:
       - name: Interface - Build
         run: make ui
 
+      # A Razor build proves the markup parses and nothing about what it renders.
+      - name: Interface - Test components
+        run: make ui-test
+
+      # Geometry, the boot path and the API contract as the page actually exercises it. None of
+      # the steps above can see any of it: bUnit has no CSS engine, and a grid that overflows by
+      # 288px is green everywhere until a browser lays it out.
+      #
+      # Go is here only because `make e2e` builds the server the suite drives.
+      - name: Interface - Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Interface - Install the browser suite
+        working-directory: ui/tests/e2e
+        run: npm ci --no-fund --no-audit
+
+      # `--with-deps` because a GitHub runner has none of Chromium's shared libraries. The suite
+      # falls back to a system browser when this is missing or half-extracted, but CI should run
+      # the pinned build so every run is the same one.
+      - name: Interface - Install the pinned browser
+        working-directory: ui/tests/e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Interface - Browser suite
+        run: make e2e
+
       - name: Interface - Summary
         run: |
           {
             echo "## Interface"
             echo ""
             echo "- Browser module tests passed"
+            echo "- Style check passed"
             echo "- Blazor build succeeded"
+            echo "- Component tests passed"
+            echo "- Browser suite passed"
           } >> "$GITHUB_STEP_SUMMARY"

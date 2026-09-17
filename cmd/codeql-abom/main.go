@@ -27,9 +27,15 @@ var subcommands = []subcommand{
 	{"discover", runDiscover, "Find repositories in an organization that have CodeQL databases."},
 	{"build", runBuild, "Fetch, query and ingest seed repositories."},
 	{"expand-all", runExpandAll, "Follow dependencies upstream, then refresh every aggregate."},
+	{"refresh", runRefresh, "Recompute the derived tables without crawling."},
 	{"report", runReport, "Print a summary of the collected ABOM."},
 	{"serve", runServe, "Serve the ABOM over HTTP for the user interface."},
-	{"owned", runOwned, "Declare which accounts you own."},
+	{"accounts", runAccounts, "Show the accounts you are verified to belong to."},
+	{"own", runOwned, "Declare which accounts you own, which is what discovery is bounded by."},
+	{"prune", runPrune, "Remove what the declared scope does not reach."},
+	{"bom", runBOM, "Write a bill of materials for the declared scope, or for a named root."},
+	{"stale", runStale, "Report findings no tracked run of their suite still reports."},
+	{"branches", runBranches, "Record which branches the declared repositories protect."},
 	{"selfcheck", runSelfcheck, "Analyze a source tree with a CodeQL suite as a smoke test."},
 }
 

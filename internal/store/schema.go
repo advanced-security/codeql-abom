@@ -7,9 +7,6 @@ CREATE TABLE IF NOT EXISTS repository (
   repository_full_name   TEXT NOT NULL UNIQUE,
   repository_url         TEXT,
   analysis_status        TEXT,
-  result_count           INTEGER,
-  artifact_size_in_bytes INTEGER,
-  analysis_id            TEXT,
   -- Seed repositories are the ones under review. Upstream repositories are fetched only to
   -- resolve what the seeds depend on, so their own CI must not be counted as dependency
   -- pressure on the organization.
@@ -71,10 +68,45 @@ CREATE TABLE IF NOT EXISTS abom_query_run (
   run_key      TEXT NOT NULL UNIQUE,
   query_id     TEXT NOT NULL,
   query_version TEXT,
+  pack         TEXT,
   pack_version TEXT,
+  -- Content hash of the pack that supplied the query. The version cannot serve as identity:
+  -- ABOM's own packs track the CodeQL CLI and do not move when a query is edited.
+  pack_digest  TEXT,
+  -- The CodeQL that ran, not the one pinned in .codeql-version.
+  cli_version  TEXT,
   repository   TEXT NOT NULL,
   db_commit    TEXT,
   ran_at       TEXT NOT NULL
+);
+
+-- Which references an evaluation was reached through. A relation rather than a column on the run,
+-- because the run key hashes the commit: two analyses of one repository at one commit are one
+-- ledger row by design, and on the seeded corpus 392 repository/commit pairs are reached by more
+-- than one ref. A column would name one of them and drop the rest.
+--
+-- A missing row means nobody recorded a reference, which is not the same as the default branch --
+-- the frontier already spells that as the empty ref.
+CREATE TABLE IF NOT EXISTS abom_query_run_ref (
+  query_run_id INTEGER NOT NULL REFERENCES abom_query_run(row_id),
+  -- The reference as asked for. Empty means the default branch, matching the frontier.
+  ref          TEXT NOT NULL,
+  -- The reference as checked out, which is 'HEAD' when nothing was asked for. Kept apart from
+  -- ref for the reason checkout.go states: a row for v4 that reported HEAD could never be told
+  -- apart from one analyzed at the default branch.
+  analyzed_ref TEXT NOT NULL,
+  PRIMARY KEY (query_run_id, ref, analyzed_ref)
+);
+
+-- Which branches a repository protects. A relation because a repository has many, and whether a
+-- branch is protected is what decides if a pull request check can block a merge or only comment.
+--
+-- Emptiness here is only meaningful next to repository.branches_checked_at: no rows and no check
+-- is "nobody asked", no rows and a check is "this repository protects nothing".
+CREATE TABLE IF NOT EXISTS abom_protected_branch (
+  repository_row_id INTEGER NOT NULL REFERENCES repository(row_id),
+  branch_name       TEXT NOT NULL,
+  PRIMARY KEY (repository_row_id, branch_name)
 );
 
 -- Findings from any query, upstream actions/* or our own abom/*, always carrying the rule that
@@ -82,6 +114,10 @@ CREATE TABLE IF NOT EXISTS abom_query_run (
 -- rule_id here, never by an ABOM-owned verdict column.
 CREATE TABLE IF NOT EXISTS abom_finding (
   row_id            INTEGER PRIMARY KEY,
+  -- Which producer made the claim, as the SARIF tool driver name spells it. NULL is unknown, never
+  -- a stand-in for CodeQL: a finding written before this column existed was never attributed, and
+  -- naming a producer on its behalf would fabricate the provenance the column is for.
+  provider          TEXT,
   query_run_id      INTEGER REFERENCES abom_query_run(row_id),
   rule_id           TEXT NOT NULL,
   repository_row_id INTEGER NOT NULL REFERENCES repository(row_id),
@@ -96,6 +132,9 @@ CREATE TABLE IF NOT EXISTS abom_finding (
   -- Empty rather than NULL: SQLite treats NULLs as distinct in a UNIQUE constraint, so a
   -- nullable fingerprint would let identical findings insert repeatedly.
   fingerprint       TEXT NOT NULL DEFAULT '',
+  -- Content identity of the finding, excluding the repository so that one defect reached through
+  -- many repositories is a group-by rather than a traversal.
+  result_hash       TEXT,
   UNIQUE(rule_id, repository_row_id, file_path, start_line, start_column, fingerprint)
 );
 
@@ -103,6 +142,16 @@ CREATE TABLE IF NOT EXISTS abom_finding_node (
   finding_row_id INTEGER NOT NULL REFERENCES abom_finding(row_id),
   node_row_id    INTEGER NOT NULL REFERENCES abom_node(row_id),
   PRIMARY KEY (finding_row_id, node_row_id)
+);
+
+-- Which run reported which finding. A finding row is unique on a key that spans commits, so it
+-- represents something seen at possibly many references while naming exactly one run: "is this
+-- still reported" is a missing relation, not a missing WHERE clause. Priced against the corpus,
+-- the rule that consulted the single run condemned 2,420 findings other references still report.
+CREATE TABLE IF NOT EXISTS abom_finding_sighting (
+  finding_row_id INTEGER NOT NULL REFERENCES abom_finding(row_id),
+  query_run_id   INTEGER NOT NULL REFERENCES abom_query_run(row_id),
+  PRIMARY KEY (finding_row_id, query_run_id)
 );
 
 CREATE TABLE IF NOT EXISTS abom_edge (
@@ -121,7 +170,10 @@ CREATE TABLE IF NOT EXISTS abom_edge (
   end_line            INTEGER,
   end_column          INTEGER,
   repository_row_id   INTEGER REFERENCES repository(row_id),
-  provenance          TEXT
+  provenance          TEXT,
+  -- Which boundary the reference crosses: same repository, same account, or another account.
+  -- NULL while nothing could name both ends, which is not the same as crossing an account.
+  boundary            TEXT
 );
 
 CREATE TABLE IF NOT EXISTS abom_surface (
@@ -172,8 +224,7 @@ CREATE TABLE IF NOT EXISTS abom_database_catalog (
   checked_at   TEXT NOT NULL
 );
 
--- Aggregate reach per referenceable node. Only counts are materialized; the full pairwise
--- dependent set is quadratic in the worst case and is computed on demand instead.
+-- Aggregate reach per referenceable node.
 CREATE TABLE IF NOT EXISTS abom_blast_radius (
   node_row_id         INTEGER PRIMARY KEY REFERENCES abom_node(row_id),
   dependent_repos     INTEGER NOT NULL,
@@ -182,52 +233,73 @@ CREATE TABLE IF NOT EXISTS abom_blast_radius (
   max_depth           INTEGER NOT NULL
 );
 
--- Accounts the operator says they control, and can therefore actually remediate.
+-- Which repositories reach each node, behind the count above.
 --
--- This is a declaration, not a measurement, and it is the only one of the three ownership
--- notions here that cannot be derived. repository.origin records how a repository entered the
--- corpus; an account holding a seed repository is "in scope". Neither means the operator can
--- change anything: the actions account owns a seed repository and nobody running this tool
--- controls it.
-CREATE TABLE IF NOT EXISTS abom_owned_org (
-  owner    TEXT PRIMARY KEY,
-  added_at TEXT NOT NULL
+-- A count cannot be filtered: bounding an inventory to a repository grouping means recounting
+-- reach within that grouping, and dependent_repos alone offers nothing to recount from. Both are
+-- written from the same walk, so the count is always this table's cardinality.
+--
+-- Only seed repositories appear, for the same reason they are the only ones counted: an upstream
+-- repository is not one the operator can act on. Growth is bounded by referenceable nodes times
+-- seed repositories, which is quadratic in the worst case; measured on a crawled organization of
+-- 25 repositories it is 155 rows against 448 counts, because most nodes are reached by few.
+CREATE TABLE IF NOT EXISTS abom_node_reach (
+  node_row_id       INTEGER NOT NULL REFERENCES abom_node(row_id),
+  repository_row_id INTEGER NOT NULL REFERENCES repository(row_id),
+  -- Fewest hops from the repository to the node. One means the repository names the dependency
+  -- itself; more means it inherits it, and the two are different remediation work.
+  hops              INTEGER NOT NULL,
+  PRIMARY KEY (node_row_id, repository_row_id)
+) WITHOUT ROWID;
+
+-- The filtering direction: the nodes a named set of repositories reaches.
+CREATE INDEX IF NOT EXISTS idx_node_reach_repository
+  ON abom_node_reach(repository_row_id);
+
+-- Accounts the operator is verified to belong to, and can therefore plausibly remediate.
+--
+-- Every row is evidence rather than assertion: it exists because an authenticated gh call said
+-- the account in verified_as belongs to this owner, and it records when and against which host.
+-- That is the same standard the rest of ABOM holds itself to, where a finding carries the rule
+-- that produced it.
+--
+-- It is kept apart from the other two ownership notions. repository.origin records how a
+-- repository entered the corpus; an account holding a seed repository is "in scope". Neither
+-- means the operator can change anything: the actions account owns a seed repository and nobody
+-- running this tool controls it.
+CREATE TABLE IF NOT EXISTS abom_account (
+  owner       TEXT PRIMARY KEY,
+  kind        TEXT NOT NULL,
+  role        TEXT NOT NULL,
+  host        TEXT NOT NULL,
+  verified_as TEXT NOT NULL,
+  verified_at TEXT NOT NULL
 );
 
 -- The upstream discovery queue. Expanding a dependency reveals further dependencies, so this
 -- is a persisted queue rather than a batch: consumers are also producers, and expansion may
 -- span weeks across process restarts.
 --
--- depth bounds how far exploration may run; it is deliberately NOT a priority signal, because
--- depth is path-dependent while commonality is a property of the dependency itself.
-CREATE TABLE IF NOT EXISTS abom_frontier (
-  node_key        TEXT PRIMARY KEY,
-  owner           TEXT,
-  repo            TEXT,
-  subpath         TEXT,
-  depth           INTEGER NOT NULL,
-  status          TEXT NOT NULL,
-  attempts        INTEGER NOT NULL DEFAULT 0,
-  score           REAL NOT NULL DEFAULT 0,
-  cost_estimate   REAL NOT NULL DEFAULT 1,
-  reason          TEXT,
-  discovered_from TEXT,
-  enqueued_at     TEXT NOT NULL,
-  next_attempt_at TEXT,
-  completed_at    TEXT,
-  -- What was analyzed, and what it pointed at when it was analyzed. Mutable refs move, so a
-  -- recorded SHA is the only way to tell whether the graph still describes the current code.
-  -- resolved_sha always names the commit the stored graph came FROM, never a newer one.
-  analyzed_ref    TEXT,
-  resolved_sha    TEXT,
-  analyzed_at     TEXT,
-  -- checked_at tracks the cheap ref probe, which runs far more often than a full re-analysis.
-  checked_at      TEXT,
-  analysis_count  INTEGER NOT NULL DEFAULT 0
-);
+-- depth bounds how far exploration may run, and since 2026-09-07 it is also the outer key of the
+-- claim order. It was deliberately not a priority signal before, on the grounds that depth is
+-- path-dependent while commonality is a property of the dependency itself. That reasoning ranked
+-- individual items well and gave the crawl no objective: ordering by commonality first meant it
+-- could work depth 3 while depth 1 was still incomplete, and "complete at depth 1" is the only
+-- claim of the two that the queue can prove. Commonality still decides within a depth.
+` + frontierDDL + `
 
--- Advisories are recorded as attributed external statements, keyed by GHSA id, exactly as a
--- CodeQL result is keyed by its rule id. ABOM derives no verdict of its own from them.
+-- Anything a query says that is neither a dependency edge nor a security finding.
+--
+-- The set of queries ABOM runs is open-ended by design: the inspection engine is reprogrammable,
+-- so a query written next year must be able to contribute facts without a schema change and
+-- without a line of Go. What it may never do is contribute an *unattributed* fact, which is why
+-- query_run_id is NOT NULL — the same rule that makes a finding name its rule id.
+--
+-- Subjects are named by key rather than row id: a query emits the node key it saw, and the
+-- observation must survive being recorded before the subject it names.
+` + observationDDL + `
+
+-- Advisories are recorded as attributed external statements, keyed by GHSA id, exactly as a-- CodeQL result is keyed by its rule id. ABOM derives no verdict of its own from them.
 CREATE TABLE IF NOT EXISTS abom_advisory (
   row_id          INTEGER PRIMARY KEY,
   ghsa_id         TEXT NOT NULL UNIQUE,
@@ -278,18 +350,161 @@ CREATE TABLE IF NOT EXISTS abom_exposure (
   path              TEXT NOT NULL,
   UNIQUE(repository_row_id, node_row_id, ghsa_id)
 );
+
+-- What each dependency tier runs, as configuration rather than a command-line flag.
+--
+-- A tier binds to a *set* of suites, so no combined per-tier suite artifact ever has to be
+-- generated. The companion table records that a tier was configured at all, which is what makes
+-- "analyze nothing in this tier" expressible: without it, an empty binding is indistinguishable
+-- from one nobody has set, and the defaults would be seeded back over a deliberate choice.
+CREATE TABLE IF NOT EXISTS abom_tier_suite (
+  tier  TEXT NOT NULL,
+  suite TEXT NOT NULL,
+  PRIMARY KEY (tier, suite)
+);
+
+CREATE TABLE IF NOT EXISTS abom_tier_configured (
+  tier TEXT PRIMARY KEY
+);
+
+-- What each suite last resolved to, and which pack supplied each query.
+--
+-- A suite is a program over packs — locate, filter, compose — so its contents are only knowable
+-- by asking the CLI to resolve it. Resolving costs one process per query, which is why this
+-- records what the crawl already resolved rather than being recomputed on a read: the interface
+-- polls, and every codeql invocation shares one compilation cache with the crawl.
+--
+-- The pack is the level that carries a version, since a suite has none of its own. A suite
+-- nobody has resolved has no rows here, which is deliberately different from resolving to none.
+CREATE TABLE IF NOT EXISTS abom_suite_query (
+  suite        TEXT NOT NULL,
+  pack         TEXT NOT NULL,
+  pack_version TEXT,
+  pack_digest  TEXT,
+  query_id     TEXT NOT NULL,
+  kind         TEXT,
+  resolved_at  TEXT NOT NULL,
+  PRIMARY KEY (suite, query_id)
+);
+
+-- A marker the interface polls to learn the graph changed, carrying the row ids the change is
+-- measured from. Sound only because abom_node and abom_edge are never deleted from, which
+-- TestGraphTablesAreAppendOnly pins.
+--
+-- rebuild_ms and the counts beside it record what recomputing reach actually cost on this
+-- corpus, so the schedule deciding how often to pay it can be tuned against measurement.
+CREATE TABLE IF NOT EXISTS abom_graph_generation (
+  generation     INTEGER PRIMARY KEY AUTOINCREMENT,
+  node_watermark INTEGER NOT NULL,
+  edge_watermark INTEGER NOT NULL,
+  created_at     TEXT NOT NULL,
+  reach_rebuilt  INTEGER NOT NULL DEFAULT 0,
+  rebuild_ms     INTEGER,
+  rebuilt_nodes  INTEGER,
+  rebuilt_edges  INTEGER
+);
+
+-- Every snapshot ABOM has written to GitHub. Append-only, because superseding a submission is a
+-- second write rather than an edit, and the earlier row is the only record of what was on the
+-- repository before it.
+--
+-- This exists because a submission cannot be withdrawn: there is no delete endpoint, and the only
+-- repair is another write. An artifact nobody wrote down is an artifact nobody can find.
+-- released marks a submission of nothing, which hands the path back to GitHub's static analysis
+-- and is the one mechanism that does. It must be distinguishable from never having submitted.
+CREATE TABLE IF NOT EXISTS abom_submission (
+  row_id       INTEGER PRIMARY KEY,
+  repository   TEXT NOT NULL,
+  sha          TEXT,
+  correlator   TEXT NOT NULL,
+  detector     TEXT NOT NULL,
+  manifest     TEXT,
+  package_urls INTEGER NOT NULL DEFAULT 0,
+  -- Content identity of what was sent. The count above cannot answer "has this changed": a
+  -- version bump keeps it identical while changing what every consumer is told.
+  package_digest TEXT,
+  released     INTEGER NOT NULL DEFAULT 0,
+  result       TEXT,
+  message      TEXT,
+  submitted_at TEXT NOT NULL
+);
+` + refResolutionDDL + `
 `
 
 // addedColumns are applied to databases created before the column existed. The frontier is
 // built to survive weeks-long expansions, so gaining a column must not require rebuilding a
 // graph that took hours to produce.
+// droppedColumns are removed from a database that still has them.
+//
+// The only non-additive migration here. These three are a `gh mrva` era's leavings: nothing in
+// this repository reads or writes them, and they describe an analysis model ABOM does not use.
+// Dropping is safe for the reason additive migrations are not usually needed to prove — SQLite
+// rewrites the table, so the guard is `TestDroppingVestigialColumnsKeepsEveryRepositoryRow`
+// rather than the absence of risk.
+var droppedColumns = []struct{ table, column string }{
+	{"repository", "result_count"},
+	{"repository", "artifact_size_in_bytes"},
+	{"repository", "analysis_id"},
+}
+
 var addedColumns = []struct{ table, column, decl string }{
 	{"abom_frontier", "analyzed_ref", "TEXT"},
 	{"abom_frontier", "resolved_sha", "TEXT"},
 	{"abom_frontier", "analyzed_at", "TEXT"},
 	{"abom_frontier", "checked_at", "TEXT"},
 	{"abom_frontier", "analysis_count", "INTEGER NOT NULL DEFAULT 0"},
+	{"abom_frontier", "claimed_at", "TEXT"},
+	// Existing rows predate the distinction and were all enqueued under a rule that required an
+	// external reference, so runtime is the right answer for them rather than a guess.
+	{"abom_frontier", "supply_chain", "TEXT NOT NULL DEFAULT 'runtime'"},
 	{"repository", "origin", "TEXT NOT NULL DEFAULT 'seed'"},
+	// Nullable on purpose. NULL is "nobody enumerated this repository", which a gate has to be
+	// able to tell apart from a branch it knows the name of.
+	{"repository", "default_branch", "TEXT"},
+	// When the branch listing was last read. NULL means nobody asked, which is not the same as a
+	// repository that protects nothing.
+	{"repository", "branches_checked_at", "TEXT"},
+	// Rows written before the identity chain existed keep a run key computed without these, so
+	// they will not match a current key and their pairs re-run once. That is the correct
+	// outcome: nothing verified them.
+	{"abom_query_run", "pack", "TEXT"},
+	{"abom_query_run", "pack_digest", "TEXT"},
+	{"abom_query_run", "cli_version", "TEXT"},
+	{"abom_suite_query", "pack_digest", "TEXT"},
+	// Nullable, and rows written before it stay NULL. Defaulting them to a source would invent the
+	// provenance the column exists to establish — a corpus once declared accounts the operator had
+	// never owned, and no row could say who wrote it.
+	{"abom_owned_scope", "declared_by", "TEXT"},
+	// What the token could see when the accounts were read. NULL means nobody asked, which must
+	// not be read as "carried none": one is an unanswered question, the other an answer.
+	{"abom_account", "scopes", "TEXT"},
+	{"abom_finding", "result_hash", "TEXT"},
+	// Which producer made the claim. Nullable on purpose, and the 11,370 findings already on the
+	// reference corpus stay NULL: they came from CodeQL, but nothing recorded that at the time,
+	// and back-filling a producer from what the code happens to run today is how a ledger starts
+	// attesting to things nobody checked.
+	{"abom_finding", "provider", "TEXT"},
+	{"abom_frontier", "expedited_at", "TEXT"},
+	// Added here as well as in the DDL so an old table has the column before the rebuild that
+	// makes it part of the key copies rows forward.
+	{"abom_frontier", "ref", "TEXT NOT NULL DEFAULT ''"},
+	// Tombstones. A DELETE would invalidate every delta cursor, which is a row-id watermark; a
+	// mark keeps the ids monotonic and lets the delta say what disappeared. The generation is
+	// what a cursor is expressed in, so a removal carries one or a client cannot be told about it
+	// exactly once.
+	{"abom_node", "removed_at", "TEXT"},
+	{"abom_edge", "removed_at", "TEXT"},
+	{"abom_node", "removed_generation", "INTEGER"},
+	{"abom_edge", "removed_generation", "INTEGER"},
+	// Databases that recorded submissions before renewal existed keep NULL here, which reads as
+	// "what was sent is unknown" rather than "nothing was sent". Renewal treats that as needing a
+	// submission, which is the safe direction: it re-sends rather than assuming still-current.
+	{"abom_submission", "package_digest", "TEXT"},
+	// Bumped by compaction, which deletes rows and so ends the meaning of every row-id cursor.
+	{"abom_graph_generation", "epoch", "INTEGER NOT NULL DEFAULT 0"},
+	// Derivable from rows already stored, so existing edges are filled by
+	// ClassifyEdgeBoundaries rather than by re-analysis.
+	{"abom_edge", "boundary", "TEXT"},
 }
 
 // indexDDL is applied only after bulk loading. Maintaining these indexes during a multi-million
@@ -301,8 +516,8 @@ CREATE INDEX IF NOT EXISTS idx_edge_repo       ON abom_edge(repository_row_id);
 CREATE INDEX IF NOT EXISTS idx_finding_rule    ON abom_finding(rule_id);
 CREATE INDEX IF NOT EXISTS idx_finding_loc     ON abom_finding(repository_row_id, file_path, start_line);
 CREATE INDEX IF NOT EXISTS idx_finding_node    ON abom_finding_node(node_row_id);
-CREATE INDEX IF NOT EXISTS idx_frontier_claim  ON abom_frontier(status, score);
-CREATE INDEX IF NOT EXISTS idx_frontier_check  ON abom_frontier(status, checked_at);
+` + frontierIndexDDL + `
+` + refResolutionIndexDDL + `
 CREATE INDEX IF NOT EXISTS idx_advisory_pkg    ON abom_advisory_package(package_name);
 CREATE INDEX IF NOT EXISTS idx_exposure_repo   ON abom_exposure(repository_row_id);
 CREATE INDEX IF NOT EXISTS idx_exposure_ghsa   ON abom_exposure(ghsa_id, hops);
@@ -315,5 +530,25 @@ CREATE INDEX IF NOT EXISTS idx_alert_rule_repo ON alert(rule_row_id, repository_
 CREATE INDEX IF NOT EXISTS idx_alert_location  ON alert(repository_row_id, file_path, start_line);
 CREATE INDEX IF NOT EXISTS idx_link_node       ON abom_alert_link(node_row_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_status   ON abom_ingest_ledger(status);
+` + queryRunIndexDDL + `
+` + observationIndexDDL + `
 CREATE INDEX IF NOT EXISTS idx_catalog_has_db   ON abom_database_catalog(has_database);
 `
+
+// queryRunIndexDDL is created on open rather than after bulk loading, unlike every other index.
+//
+// Suite provenance joins each queue row to the runs on its commit, so the Discovery page needs
+// it on a server that only ever reads and never loads. The deferral exists to keep million-row
+// inserts cheap, and this table holds thousands.
+const queryRunIndexDDL = `
+CREATE INDEX IF NOT EXISTS idx_query_run_repo  ON abom_query_run(repository, db_commit);`
+
+// observationIndexDDL serves the reader the fact key cannot: the traversal asks by attribute
+// name across every subject, where UNIQUE leads with the subject.
+//
+// Created on open for the same reason as the run index, and for one more: an index added to
+// indexDDL alone never reaches a database that already exists, because CreateIndexes runs only
+// after a bulk load. That is why the reference corpus carried no observation index at all while
+// the DDL had declared one for months.
+const observationIndexDDL = `
+CREATE INDEX IF NOT EXISTS idx_observation_name ON abom_observation(subject_kind, name);`

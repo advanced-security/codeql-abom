@@ -1,0 +1,372 @@
+@page "/bom"
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@implements IDisposable
+@inject AbomApi Api
+@inject NavigationManager Nav
+@inject ScopeService Scope
+
+<PageTitle>Bill of Materials — ABOM</PageTitle>
+
+<PageHeader Title="Bill of Materials">
+    Everything the repositories you have declared depend on, at any depth, with the reference each
+    was named by and what was examined to say so. A component nothing has analyzed is listed and
+    marked rather than left out, because a shorter document that looks complete is worse than a
+    longer one that is honest.
+</PageHeader>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Warning" Class="my-4">
+        @_error
+        <MudText Typo="Typo.body2" Class="mt-2">
+            Declare which accounts are yours in <MudLink Href="/settings">Your Accounts</MudLink>,
+            or a document would report that you depend on nothing.
+        </MudText>
+        @if (_detail is not null)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2">@_detail</MudText>
+        }
+    </MudAlert>
+}
+else if (_bom is null)
+{
+    <MudProgressLinear Indeterminate="true" Class="my-8" />
+}
+else
+{
+    <MudGrid Class="mb-2">
+        <MudItem xs="12" md="3">
+            <MudPaper Class="pa-4" Elevation="0" Outlined="true">
+                <MudText Typo="Typo.overline" Class="mud-text-secondary">Components</MudText>
+                <MudText Typo="Typo.h4">@_bom.Coverage.ComponentsInUse.ToString("N0")</MudText>
+                <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                    depended on by @_bom.Roots.Count.ToString("N0")
+                    @(_bom.Roots.Count == 1 ? "repository" : "repositories")
+                </MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" md="3">
+            <MudPaper Class="pa-4" Elevation="0" Outlined="true">
+                <MudText Typo="Typo.overline" Class="mud-text-secondary">Analyzed</MudText>
+                <MudText Typo="Typo.h4">@_bom.Coverage.ComponentsAnalyzed.ToString("N0")</MudText>
+                @* Both halves always, so partial coverage cannot read as complete. *@
+                <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                    @Unanalyzed.ToString("N0") not examined
+                </MudText>
+                <MudProgressLinear Color="Color.Primary" Value="@(AnalyzedShare * 100)"
+                                   Class="mt-3" Rounded="true" Size="Size.Small" />
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" md="3">
+            <MudPaper Class="pa-4" Elevation="0" Outlined="true">
+                <MudText Typo="Typo.overline" Class="mud-text-secondary">References in use</MudText>
+                <MudText Typo="Typo.h4">@_bom.Coverage.ReferencesInUse.ToString("N0")</MudText>
+                <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                    @_bom.Coverage.ReferencesAnalyzed.ToString("N0") analyzed
+                </MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" md="3">
+            <MudPaper Class="pa-4" Elevation="0" Outlined="true">
+                <MudText Typo="Typo.overline" Class="mud-text-secondary">Findings</MudText>
+                <MudText Typo="Typo.h4">@_bom.Coverage.Findings.ToString("N0")</MudText>
+                @if (_bom.Coverage.FindingsUntraced > 0)
+                {
+                    @* Analyzed but unattributable is a third state, and hiding it would let the
+                       document imply provenance it does not have. *@
+                    <MudText Typo="Typo.body2" Class="abom-unconfirmed">
+                        @_bom.Coverage.FindingsUntraced.ToString("N0") not traceable to a run
+                    </MudText>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                        all traceable to a recorded run
+                    </MudText>
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    <MudPaper Class="pa-4 mb-4" Elevation="0" Outlined="true">
+        <MudText Typo="Typo.subtitle2">What this document is, and is not</MudText>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary mt-1">
+            Generated @_bom.GeneratedAt from @string.Join(", ", _bom.Roots).
+            @_bom.Coverage.FindingsWithoutHash.ToString("N0") of
+            @_bom.Coverage.Findings.ToString("N0") findings carry no result hash and
+            @_bom.Coverage.FindingsWithoutDigest.ToString("N0") carry no pack digest, so those
+            claims cannot be independently reproduced. Advisories are listed beside a component's
+            observed references and are <b>not</b> evaluated against them: whether a given
+            reference falls inside a published range is a judgment ABOM has not made.
+        </MudText>
+    </MudPaper>
+
+    <MudPaper Elevation="0" Outlined="true" Class="pa-2 mb-3 abom-filters">
+      <div class="d-flex flex-wrap align-center gap-3">
+        <SearchField Value="@_search" ValueChanged="OnSearchChanged"
+                     Placeholder="Filter components" />
+        <MudSelect T="string" @bind-Value="_boundary" Label="Boundary" Dense="true"
+                   Margin="Margin.Dense" Variant="Variant.Outlined" Class="abom-filter">
+            <MudSelectItem Value="@("")">Any</MudSelectItem>
+            <MudSelectItem Value="@("cross-owner")">Another account</MudSelectItem>
+            <MudSelectItem Value="@("same-owner")">Same account</MudSelectItem>
+            <MudSelectItem Value="@("same-repository")">Same repository</MudSelectItem>
+        </MudSelect>
+        <MudSwitch T="bool" @bind-Value="_unanalyzedOnly" Color="Color.Primary"
+                   Label="Not analyzed only" />
+        <MudSpacer />
+        @* Buttons rather than a menu: an export hidden behind a click is not discoverable, and
+           MudMenu renders its items only once opened, so nothing can check they are offered. *@
+        <MudButtonGroup Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small">
+            <MudButton Href="@AbomApi.BomDownloadUrl("native", properties: SelectedProperties)"
+                       StartIcon="@Icons.Material.Outlined.Download">ABOM JSON</MudButton>
+            <MudButton Href="@AbomApi.BomDownloadUrl("cyclonedx", properties: SelectedProperties)">CycloneDX 1.6</MudButton>
+            <MudButton Href="@AbomApi.BomDownloadUrl("spdx", properties: SelectedProperties)">SPDX 2.3</MudButton>
+        </MudButtonGroup>
+      </div>
+    </MudPaper>
+
+    @* The same control Inventory narrows with, over the same scope object. Its own select was
+       what "one scope" removes: an operator who narrowed elsewhere and followed the export here
+       met a second control that started empty, and empty read as the whole organization. *@
+    <ScopeControl />
+
+    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2">
+        ABOM JSON is the only one of the three that can carry run keys, pack digests and result
+        hashes; the other two have nowhere to put them.
+    </MudText>
+
+    @* Outside the dropdown on purpose: a reader has to open a select to see its items, and which
+       value nobody chose is the thing most likely to be misread if it stays hidden. *@
+    @if (_properties is not null && _properties.Breakdown.HasDefault)
+    {
+        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2">
+            @_properties.Breakdown.Name @_properties.Breakdown.DefaultValue is the organization default, so
+            repositories sit in it unless somebody moved them. It is a placement, not a decision.
+        </MudText>
+    }
+
+    <MudText Typo="Typo.body2" Class="mud-text-secondary my-2">
+        Showing @Shown.Count.ToString("N0") of @_bom.Components.Count.ToString("N0") components
+    </MudText>
+
+    <MudDataGrid T="BomComponent" Items="@Shown" Dense="true" Hover="true"
+                 Class="abom-grid" Groupable="false" Filterable="false" SortMode="SortMode.Single">
+        <Columns>
+            <PropertyColumn Property="x => x.Key" Title="Component">
+                <CellTemplate>
+                    <MudLink Href="@($"/node/{Uri.EscapeDataString(context.Item.Key)}")">
+                        @context.Item.Key
+                    </MudLink>
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
+                        @context.Item.Kind
+                    </MudText>
+                </CellTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Depth" Title="Reached">
+                <CellTemplate>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
+                             Color="@(context.Item.Direct ? Color.Primary : Color.Default)">
+                        @(context.Item.Direct ? "direct" : $"indirect, {context.Item.Depth} hops")
+                    </MudChip>
+                </CellTemplate>
+            </PropertyColumn>
+            <TemplateColumn Title="Referenced as" Sortable="false">
+                <CellTemplate>
+                    @if (context.Item.References.Count == 0)
+                    {
+                        <MudText Typo="Typo.body2" Class="mud-text-secondary">—</MudText>
+                    }
+                    else
+                    {
+                        @foreach (var reference in context.Item.References)
+                        {
+                            <MudText Typo="Typo.body2" Class="abom-bom-ref">
+                                <code>@(string.IsNullOrEmpty(reference.Raw)
+                                          ? reference.Value : reference.Raw)</code>
+                                @if (!string.IsNullOrEmpty(reference.ResolvedSha))
+                                {
+                                    <span class="mud-text-secondary">
+                                        → @reference.ResolvedSha[..Math.Min(7, reference.ResolvedSha.Length)]
+                                    </span>
+                                }
+                            </MudText>
+                        }
+                    }
+                </CellTemplate>
+            </TemplateColumn>
+            <TemplateColumn Title="Examined" Sortable="false">
+                <CellTemplate>
+                    @if (context.Item.RefsInUse == 0)
+                    {
+                        <MudText Typo="Typo.body2" Class="mud-text-secondary">not referenced</MudText>
+                    }
+                    else if (context.Item.Analyzed)
+                    {
+                        <MudText Typo="Typo.body2">
+                            @context.Item.RefsAnalyzed of @context.Item.RefsInUse references
+                        </MudText>
+                    }
+                    else
+                    {
+                        @* Never a bare dash: "not examined" and "examined, nothing found" are
+                           different answers and must not look alike. *@
+                        <MudText Typo="Typo.body2" Class="abom-unconfirmed">not analyzed</MudText>
+                    }
+                </CellTemplate>
+            </TemplateColumn>
+            <TemplateColumn Title="Findings" Sortable="false">
+                <CellTemplate>
+                    @if (context.Item.Findings.Count == 0)
+                    {
+                        <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                            @(context.Item.Analyzed ? "none found" : "not examined")
+                        </MudText>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2">@context.Item.Findings.Count.ToString("N0")</MudText>
+                        @if (context.Item.Findings.Any(f => string.IsNullOrEmpty(f.RunKey)))
+                        {
+                            <MudText Typo="Typo.caption" Class="abom-unconfirmed d-block">
+                                some not traceable
+                            </MudText>
+                        }
+                    }
+                </CellTemplate>
+            </TemplateColumn>
+            <TemplateColumn Title="Advisories" Sortable="false">
+                <CellTemplate>
+                    @if (context.Item.Advisories.Count == 0)
+                    {
+                        <MudText Typo="Typo.body2" Class="mud-text-secondary">—</MudText>
+                    }
+                    else
+                    {
+                        @* The caveat is written out, not left to a tooltip: whether a reference
+                           falls inside a published range is a judgment ABOM has not made, and a
+                           reader who never hovers would not learn that. *@
+                        <MudChip T="string" Size="Size.Small" Color="Color.Warning"
+                                 Variant="Variant.Text">
+                            @context.Item.Advisories.Count named
+                        </MudChip>
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
+                            not evaluated against the references in use
+                        </MudText>
+                    }
+                </CellTemplate>
+            </TemplateColumn>
+        </Columns>
+    </MudDataGrid>
+}
+
+@code {
+    private Bom? _bom;
+    private string? _error;
+    private string? _detail;
+    private string _search = string.Empty;
+    private string _boundary = string.Empty;
+    private bool _unanalyzedOnly;
+    private PropertiesView? _properties;
+
+    // The address is the filter, so a narrowed document can be shared, bookmarked and returned to.
+    [SupplyParameterFromQuery(Name = "q")] public string? SearchParam { get; set; }
+
+    private void OnSearchChanged(string value)
+    {
+        _search = value ?? string.Empty;
+        Nav.NavigateTo(_search.Length == 0
+            ? "/bom"
+            : $"/bom?q={Uri.EscapeDataString(_search)}", forceLoad: false);
+    }
+
+    // The downloads carry the scope the document was built from. A document about the whole
+    // organization arriving under the name of one part of it is the failure this exists to
+    // prevent. The key travels with the value, because a bare value would be read against
+    // whatever the server was configured with rather than against the property that narrowed it.
+    private string[]? SelectedProperties =>
+        Scope.Spec.Properties.Count == 0
+            ? null
+            : [.. Scope.Spec.Properties.Select(p => p.ToString())];
+
+    // A value the organization supplies rather than anybody choosing is named as one in
+    // ScopeControl, because the largest group is usually the default and it otherwise reads as a
+    // decision.
+
+    private int Unanalyzed =>
+        _bom is null ? 0 : _bom.Coverage.ComponentsInUse - _bom.Coverage.ComponentsAnalyzed;
+
+    // Zero of zero is not full coverage, so an empty document reports none rather than all.
+    private double AnalyzedShare =>
+        _bom is null || _bom.Coverage.ComponentsInUse == 0
+            ? 0
+            : (double)_bom.Coverage.ComponentsAnalyzed / _bom.Coverage.ComponentsInUse;
+
+    private IReadOnlyList<BomComponent> Shown
+    {
+        get
+        {
+            if (_bom is null)
+            {
+                return [];
+            }
+            var targets = _boundary.Length == 0
+                ? null
+                : _bom.Relationships
+                    .Where(r => r.Boundary == _boundary)
+                    .Select(r => r.Target)
+                    .ToHashSet();
+            return _bom.Components.Where(c =>
+                (_search.Length == 0
+                 || c.Key.Contains(_search, StringComparison.OrdinalIgnoreCase))
+                && (!_unanalyzedOnly || !c.Analyzed)
+                && (targets is null || targets.Contains(c.Key))).ToList();
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _search = SearchParam ?? string.Empty;
+        Scope.ReadFrom(Nav.Uri);
+        Scope.Changed += OnScopeChanged;
+
+        // Asked for before the document, so the control is populated by the time the page renders
+        // and does not appear after the reader has already started reading.
+        _properties = await Api.GetPropertiesAsync();
+
+        await LoadDocument();
+    }
+
+    public void Dispose() => Scope.Changed -= OnScopeChanged;
+
+    private async void OnScopeChanged()
+    {
+        Nav.NavigateTo(Scope.ToQueryString() is { Length: > 0 } q ? $"/bom?{q}" : "/bom",
+            new NavigationOptions { ReplaceHistoryEntry = true });
+        await LoadDocument();
+        StateHasChanged();
+    }
+
+    private async Task LoadDocument()
+    {
+        _error = null;
+        _detail = null;
+
+        // AbomApi swallows transport failures and answers null, so a missing document arrives
+        // here as an absent value rather than an exception.
+        _bom = await Api.GetBomAsync(properties: SelectedProperties);
+        if (_bom is not null)
+        {
+            return;
+        }
+
+        // A group holding no repository is a different state from nothing being declared, and the
+        // server distinguishes them. Saying "declare a scope" to somebody who has one sends them
+        // to fix the wrong thing.
+        _error = Scope.Spec.Properties.Count == 0
+            ? "No accounts are declared yet, so there is no scope to describe."
+            : "None of your repositories carries the property this scope names.";
+        _detail = Api.LastError;
+    }
+}

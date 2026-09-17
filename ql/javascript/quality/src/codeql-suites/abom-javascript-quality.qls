@@ -1,0 +1,8 @@
+- description: Code quality queries ABOM runs against its own browser code
+
+# Pinned for the reason abom-go-quality.qls states. Vendored minified libraries need no exclusion
+# here: measured 2026-09-10, the JavaScript extractor skips *.min.js by itself, so 1.3 MB of
+# vendored code never reaches these queries.
+- import: codeql-suites/javascript-code-quality.qls
+  from: codeql/javascript-queries
+  version: 2.4.5

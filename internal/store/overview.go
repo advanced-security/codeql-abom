@@ -21,12 +21,12 @@ func (s *Store) overview(opts SubgraphOptions) (Subgraph, error) {
 	rows, err := s.db.Query(`
 		SELECT COALESCE(srep.node_key, sn.node_key), COALESCE(drep.node_key, dn.node_key),
 		       e.edge_kind, COALESCE(e.ref_value, '')
-		FROM abom_edge e
-		JOIN abom_node sn ON sn.row_id = e.src_node_row_id
-		JOIN abom_node dn ON dn.row_id = e.dst_node_row_id
-		LEFT JOIN abom_node srep ON srep.node_kind = 'repo'
+		FROM abom_edge_live e
+		JOIN abom_node_live sn ON sn.row_id = e.src_node_row_id
+		JOIN abom_node_live dn ON dn.row_id = e.dst_node_row_id
+		LEFT JOIN abom_node_live srep ON srep.node_kind = 'repo'
 		                        AND srep.repository_row_id = sn.repository_row_id
-		LEFT JOIN abom_node drep ON drep.node_kind = 'repo'
+		LEFT JOIN abom_node_live drep ON drep.node_kind = 'repo'
 		                        AND drep.repository_row_id = dn.repository_row_id`)
 	if err != nil {
 		return out, fmt.Errorf("reading the overview: %w", err)
@@ -138,7 +138,7 @@ func (s *Store) nodesByKey(keys []string) ([]SubgraphNode, error) {
 		       COALESCE(r.origin, ''), COALESCE(n.path, ''), n.is_external,
 		       COALESCE(b.dependent_repos, 0),
 		       (SELECT COUNT(*) FROM abom_finding_node fn WHERE fn.node_row_id = n.row_id)
-		FROM abom_node n
+		FROM abom_node_live n
 		LEFT JOIN repository r ON r.row_id = n.repository_row_id
 		LEFT JOIN abom_blast_radius b ON b.node_row_id = n.row_id
 		WHERE n.node_key IN (?`+strings.Repeat(",?", len(keys)-1)+`)`, args...)

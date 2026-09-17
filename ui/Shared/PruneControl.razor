@@ -1,0 +1,141 @@
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@inject AbomApi Api
+
+@* Deliberately quiet: removal is rare, and the two halves are separated because only one of them
+   is reversible. It sits with the declaration because that is what defines the closure it prunes
+   against. *@
+<MudText Typo="Typo.subtitle2" Class="mt-8 mb-1">Removing what you no longer own</MudText>
+@if (_readError is { Length: > 0 } failed)
+{
+    @* A read that failed and a read still arriving look identical if both just wait, and this one
+       waited for ever. *@
+    <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3" data-abom-prune-error>
+        This view could not reach the server: @failed
+    </MudAlert>
+}
+else if (_declared is null)
+{
+    <MudText Typo="Typo.body2" Class="mud-text-secondary">Reading what is outside your scope&hellip;</MudText>
+}
+else if (_declared.Count == 0)
+{
+    @* Pruning is defined against a declared closure, so with none the server refuses. That is a
+       state this can explain, and it is not read at all rather than reported as a fault. *@
+    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-8" data-abom-prune-undeclared>
+        Nothing is declared, so there is no closure to be outside of. Declare an account above
+        before removing anything.
+    </MudText>
+}
+else if (_prune is null)
+{
+    <MudText Typo="Typo.body2" Class="mud-text-secondary">Reading what is outside your scope&hellip;</MudText>
+}
+else if (_prune.Unavailable.Length > 0)
+{
+    @* Declared, but nothing enumerated under it yet — the state every new install passes through.
+       The server says so rather than failing, because a zero report here would read as "nothing is
+       outside your scope", which is a reassurance nobody has earned. *@
+    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-8" data-abom-prune-unavailable>
+        @_prune.Unavailable
+    </MudText>
+}
+else if (_prune.RemovesNothing)
+{
+    <MudText Typo="Typo.body2" Class="mud-text-secondary" data-abom-prune-clean>
+        Everything here is reachable from what you declared. Nothing to remove.
+        @if (_pruneOutcome is not null)
+        {
+            <span data-abom-prune-outcome> @_pruneOutcome</span>
+        }
+    </MudText>
+    @if (_prune.Tombstoned > 0)
+    {
+        <div class="d-flex flex-wrap align-center gap-3 mb-8 mt-2">
+            <MudTooltip Text="Delete what is already removed, permanently. Only re-analysis can rebuild it, and every open page reloads.">
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
+                           Disabled="_pruning" OnClick="@(() => Prune(true))" data-abom-prune-compact>
+                    Delete @_prune.Tombstoned.ToString("N0") permanently
+                </MudButton>
+            </MudTooltip>
+        </div>
+    }
+}
+else
+{
+    <MudText Typo="Typo.body2" Class="mb-2" data-abom-prune-summary>
+        @_prune.Declared declared @(_prune.Declared == 1 ? "repository reaches" : "repositories reach")
+        @_prune.Reachable. Outside that: <b>@_prune.Removed.Nodes.ToString("N0")</b> nodes and
+        <b>@_prune.Removed.Edges.ToString("N0")</b> edges across
+        <b>@_prune.Removed.Repositories.ToString("N0")</b> repositories@(_prune.Removed.Queued > 0
+            ? $", and {_prune.Removed.Queued:N0} queued dependencies that would otherwise be analyzed and come back"
+            : "").
+    </MudText>
+    <div class="d-flex flex-wrap align-center gap-3 mb-8">
+        <MudTooltip Text="Take these out of every view. Nothing is deleted yet, and re-analysis brings back anything you declare again.">
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_pruning"
+                       OnClick="@(() => Prune(false))" data-abom-prune-mark>
+                @(_pruning ? "Working…" : "Remove from view")
+            </MudButton>
+        </MudTooltip>
+        <MudTooltip Text="Delete what is already removed, permanently. Only re-analysis can rebuild it, and every open page reloads.">
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
+                       Disabled="_pruning" OnClick="@(() => Prune(true))" data-abom-prune-compact>
+                Delete permanently
+            </MudButton>
+        </MudTooltip>
+        @if (_pruneOutcome is not null)
+        {
+            <MudText Typo="Typo.body2" data-abom-prune-outcome>@_pruneOutcome</MudText>
+        }
+    </div>
+}
+
+@code {
+    private IReadOnlyList<DeclaredAccount>? _declared;
+    private PruneView? _prune;
+    private string? _readError;
+    private bool _pruning;
+    private string? _pruneOutcome;
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        _declared = await Api.GetOwnedScopeAsync();
+        // Skipped rather than attempted when nothing is declared: the server refuses to prune
+        // against an empty closure, and that refusal would otherwise land in LastError and be
+        // reported as an unreachable server on every first run.
+        _prune = _declared is { Count: 0 } ? null : await Api.GetPruneAsync();
+        _readError = _declared is { Count: > 0 } && _prune is null
+            ? Api.LastError ?? "the prune endpoint did not answer"
+            : null;
+    }
+
+    private async Task Prune(bool compact)
+    {
+        _pruning = true;
+        _pruneOutcome = null;
+        try
+        {
+            var done = await Api.PruneAsync(compact);
+            _pruneOutcome = done is null
+                ? "Nothing came back."
+                : compact
+                    ? $"Deleted {done.Removed.Nodes:N0} nodes and {done.Removed.Edges:N0} edges."
+                    : $"Removed {done.Removed.Nodes:N0} nodes and {done.Removed.Edges:N0} edges from view"
+                      + (done.Removed.Queued > 0 ? $", and {done.Removed.Queued:N0} queued dependencies." : ".");
+            // Re-read rather than trusting the response: what is left is the question the next
+            // decision turns on, and the answer to "what did that cost" is a different one.
+            await Load();
+        }
+        catch (HttpRequestException e)
+        {
+            _pruneOutcome = "Nothing was removed: " + e.Message;
+        }
+        finally
+        {
+            _pruning = false;
+        }
+    }
+}

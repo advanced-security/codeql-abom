@@ -1,0 +1,738 @@
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@using Microsoft.AspNetCore.Components.Web
+@implements IDisposable
+@inject AbomApi Api
+@inject FollowService Follow
+
+@* Starting the crawl and deciding what it runs, in one box. Per-dependency progress is read where
+   the data is — the Inventory's Coverage unit and the Explorer — so what is here is only what the
+   crawl itself is doing. *@
+@if (_objective is { } objective)
+{
+    <MudPaper Elevation="0" Outlined="true" Class="pa-3 mb-3 abom-objective">
+        <MudText Typo="Typo.subtitle2">What the crawl is working on</MudText>
+        <MudText Typo="Typo.body2" Class="mt-1">
+            @if (objective.HasOutstanding)
+            {
+                <span>
+                    Completing <b>depth @objective.Working</b>, and nothing deeper is started
+                    until it is done.
+                </span>
+            }
+            else if (objective.Progress.Count == 0)
+            {
+                @* An empty closure and a drained one both report nothing outstanding. Reading
+                   the first as the second announces complete coverage of nothing, which is the
+                   one claim a first run must not make. *@
+                <span>
+                    <b>Nothing has been enumerated yet</b>, so there is nothing to be outstanding.
+                    This is not a statement about coverage.
+                </span>
+            }
+            else
+            {
+                @* Not "depth 0": a complete closure is a different statement from work at the
+                   shallowest depth, and reporting a number would invent one. *@
+                <span>
+                    <b>Nothing outstanding.</b> Every reference reached has been analyzed
+                    &mdash; as far as depth @objective.MaxDepth, which is the cap exploration
+                    may not pass.
+                </span>
+            }
+        </MudText>
+
+        @if (objective.Progress.Count > 0)
+        {
+            <div class="abom-objective-depths mt-2">
+                @foreach (var depth in objective.Progress)
+                {
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
+                             Color="@(depth.Available == 0 ? Color.Success : Color.Default)"
+                             title="@DepthSplit(depth)">
+                        depth @depth.Depth: @depth.Settled.ToString("N0") of
+                        @depth.Total.ToString("N0")
+                    </MudChip>
+                }
+            </div>
+            @* These count settled work and the tier chips count analyzed, so on a corpus with
+               anything unavailable the two decompositions of one queue do not sum alike. Stating
+               the rule once is what lets a reader reconcile them. *@
+            @if (UnavailableAcrossDepths > 0)
+            {
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                    Settled counts what is finished: analyzed, plus
+                    <b>@UnavailableAcrossDepths.ToString("N0")</b> that could not be fetched and
+                    will not be attempted again. Tier figures elsewhere count analyzed only.
+                </MudText>
+            }
+        }
+
+        @if (LastCycle is { } last)
+        {
+            <MudText Typo="Typo.body2" Class="mud-text-secondary mt-2">
+                Last cycle took <b>@Seconds(last.Millis)s</b>: @last.Fetches.ToString("N0")
+                fetches, @last.Builds.ToString("N0") database builds,
+                @last.Probes.ToString("N0") reference probes. It analyzed
+                @last.Analyzed.ToString("N0"), skipped @last.Skipped.ToString("N0") already on
+                record and discovered @last.Discovered.ToString("N0").
+                @if (last.Drifted > 0)
+                {
+                    <span>@last.Drifted.ToString("N0") had moved since they were analyzed.</span>
+                }
+            </MudText>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                @objective.Totals.Cycles.ToString("N0") cycles recorded, totalling
+                @Seconds(objective.Totals.Millis)s across
+                @objective.Totals.Fetches.ToString("N0") fetches and
+                @objective.Totals.Probes.ToString("N0") probes.
+            </MudText>
+        }
+        else
+        {
+            @* Nothing recorded is not zero spend. *@
+            <MudText Typo="Typo.body2" Class="mud-text-secondary mt-2">
+                No cycle has run yet, so there is nothing to say about what discovery costs here.
+            </MudText>
+        }
+    </MudPaper>
+}
+
+@if (_state.Status.Problem is { } problem)
+{
+    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">
+        @problem.Reason — @problem.Remedy
+    </MudAlert>
+}
+else if (!string.IsNullOrEmpty(_state.Status.LastError))
+{
+    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">
+        Discovery hit a problem and carried on: @_state.Status.LastError
+    </MudAlert>
+}
+
+<MudPaper Elevation="0" Outlined="true" Class="pa-3 mb-3">
+    <div class="d-flex align-center flex-wrap gap-3">
+        <MudButton Size="Size.Small" Variant="Variant.Filled"
+                   Color="@(IsRunning ? Color.Default : Color.Primary)"
+                   StartIcon="@(IsRunning ? Icons.Material.Filled.Pause : Icons.Material.Filled.PlayArrow)"
+                   Disabled="@(_busy || _state.Status.IsPausing)" OnClick="ToggleRunning"
+                   data-abom-run
+                   title="Analysis clones each repository, builds a CodeQL database and runs the bound suites. Enumeration, which only lists what is under a declared account, is a separate act and happens when the declaration is saved.">
+            @(_state.Status.IsPausing ? "Pausing…" : IsRunning ? "Pause analysis" : "Start analysis")
+        </MudButton>
+        <QueueBar State="_state" />
+        <MudText Typo="Typo.body2">@StateSentence</MudText>
+        <MudSpacer />
+        <FollowControl LastUpdated="_lastPoll" />
+    </div>
+
+    @if (_pollError is { Length: > 0 } failed)
+    {
+        <MudAlert Severity="Severity.Error" Dense="true" Class="mt-2">
+            This view could not reach the server: @failed
+        </MudAlert>
+    }
+
+    @* The other act. Enumeration lists what is under a declared account and costs seconds;
+       analysis builds a database per repository and costs minutes. Nothing records enumeration as
+       an event, so its result is read from the owned tier, which is what it writes at depth 0. *@
+    @if (_declared is { } declared)
+    {
+        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1"
+                 data-abom-enumeration>
+            @if (declared.Count == 0)
+            {
+                <span>
+                    No account is declared, so nothing has been enumerated as yours.
+                    @if (LinkToSettings)
+                    {
+                        <span>
+                            Declare one in <MudLink Href="/settings">Settings</MudLink> to list
+                            the repositories underneath it.
+                        </span>
+                    }
+                    else
+                    {
+                        <span>Declare one above to list the repositories underneath it.</span>
+                    }
+                    Anything already in the queue arrived as a dependency.
+                </span>
+            }
+            else if (TierOf("owned").Total == 0)
+            {
+                @* Not "0 repositories": a declaration that has enumerated nothing yet is a
+                   different state from an account that turned out to be empty. *@
+                <span>
+                    @string.Join(", ", declared.Select(a => a.Owner)) declared. Nothing has been
+                    enumerated under it yet.
+                </span>
+            }
+            else
+            {
+                <span>
+                    Enumeration found <b>@TierOf("owned").Total.ToString("N0")</b> repositories
+                    under @string.Join(", ", declared.Select(a => a.Owner)); analysis has covered
+                    @TierOf("owned").Analyzed.ToString("N0").
+                </span>
+            }
+        </MudText>
+    }
+
+    @* Wrapping is owned by .abom-run-row, not by the flex-wrap utility, whose !important would
+       win against the media query that holds the controls on one line. *@
+    <div class="d-flex align-center gap-2 mt-1 abom-run-row">
+        @* The verb once, the tiers three times, because three buttons repeating "Re-analyze" spend
+           the width on the word rather than on what it applies to. *@
+        <MudText Typo="Typo.caption" Class="mud-text-secondary abom-requeue-label">Re-analyze</MudText>
+        @* What it will cost is on the button, because pressing it spends minutes of cloning and
+           database building that nothing here can take back. *@
+        @foreach (var tier in Tiers)
+        {
+            <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="@_busy"
+                       StartIcon="@Icons.Material.Filled.Refresh"
+                       Class="abom-requeue abom-requeue-tier"
+                       OnClick="@(() => Requeue(tier))"
+                       title="@RequeueHint(tier)">
+                @($"{tier} ({TierOf(tier).Analyzed:N0})")
+            </MudButton>
+        }
+        @* No count on this one, deliberately: how much is out of date is only knowable by
+           resolving the bound packs through CodeQL, and doing that on every poll would spend a
+           subprocess a minute to price a button. *@
+        <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="@_busy"
+                   StartIcon="@Icons.Material.Filled.Refresh"
+                   Class="abom-requeue abom-requeue-stale"
+                   OnClick="RequeueStale"
+                   title="Re-analyze only what has not been analyzed by the packs and CodeQL version currently in use. Cheaper than a tier: everything already on record is left alone. How much that is has to be worked out by resolving the packs, so it is reported after it runs rather than before.">
+            out of date
+        </MudButton>
+    </div>
+
+    @* Its own line rather than beside the tier buttons: a field that takes typing is a different
+       kind of control from a button that takes one press, and the row above already wraps. *@
+    <div class="d-flex align-center gap-2 mt-1 abom-run-row abom-requeue-repo">
+        <MudText Typo="Typo.caption" Class="mud-text-secondary abom-requeue-label">Or one repository</MudText>
+        <MudTextField T="string" @bind-Value="_requeueRepo" Placeholder="owner/name"
+                      Immediate="true" Disabled="@_busy" Margin="Margin.Dense"
+                      Variant="Variant.Text" Class="abom-requeue-field"
+                      Label="Repository to re-analyze" OnKeyDown="OnRequeueKey" />
+        @* Ahead of the ranking, because someone who has just fixed something is asking for that
+           one answer, and filing it behind nine hundred better-scored items refuses the request
+           in all but name. *@
+        <MudButton Size="Size.Small" Variant="Variant.Text"
+                   Disabled="@(_busy || string.IsNullOrWhiteSpace(_requeueRepo))"
+                   StartIcon="@Icons.Material.Filled.Refresh" Class="abom-requeue"
+                   OnClick="RequeueRepository"
+                   title="Re-analyze the dependencies this repository names, ahead of everything else in the queue.">
+            Re-analyze
+        </MudButton>
+        @if (_requeueNote is { } note)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">@note</MudText>
+        }
+    </div>
+
+    @* One box: what the crawl is doing and what it is configured to do belong together, and a
+       second outlined panel cost 40px of chrome to say so. *@
+    <MudDivider Class="my-2" />
+
+    @if (_loading && _suites is null)
+    {
+        <MudText Typo="Typo.subtitle2">What each tier is analyzed with</MudText>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">Reading the binding&hellip;</MudText>
+    }
+    else if (_suites is null)
+    {
+        @* A read that failed and a read still arriving look identical if both just wait, and a
+           section with no binding to summarize must not fold shut over the reason it has none. *@
+        <MudText Typo="Typo.subtitle2">What each tier is analyzed with</MudText>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">
+            Could not read what each tier is bound to, so nothing is shown rather than a binding
+            that might be wrong. A server older than this interface has no such endpoint.
+        </MudText>
+    }
+    else if (_suites.Available.Count == 0)
+    {
+        <MudText Typo="Typo.subtitle2">What each tier is analyzed with</MudText>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">
+            No suites were found on disk. That is not the same as none being configured &mdash;
+            a tier may name a suite from an installed pack, which would still run.
+        </MudText>
+    }
+    else
+    {
+        @* The binding stays on screen folded or not: hiding it would turn "direct runs findings"
+           into something a reader has to go looking for, and assume the default otherwise. *@
+        <button type="button" class="abom-fold-toggle" @onclick="ToggleConfig"
+                aria-expanded="@(_configOpen ? "true" : "false")">
+            <MudIcon Size="Size.Small" Icon="@(_configOpen
+                ? Icons.Material.Filled.ExpandMore
+                : Icons.Material.Filled.ChevronRight)" />
+            <span class="abom-fold-text">
+                <span class="abom-fold-title">What each tier is analyzed with</span>
+                <span class="abom-fold-summary">@BindingSummary()</span>
+            </span>
+        </button>
+        @foreach (var tier in Tiers.Where(t => BoundCount(t) == 0))
+        {
+            @* An empty binding is a legitimate instruction, so it is stated rather than corrected,
+               and stated outside the fold because it is state rather than a control. *@
+            <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1">
+                Nothing is bound to @tier, so its dependencies are fetched and left unanalyzed.
+            </MudText>
+        }
+        @if (_configOpen)
+        {
+            <MudSimpleTable Dense="true" Hover="true" Striped="false"
+                            Class="abom-grid abom-table abom-config-grid mt-2">
+                <thead>
+                    <tr>
+                        <th>Suite</th>
+                        @foreach (var tier in Tiers)
+                        {
+                            @* Size decides what binding a suite here costs; analyzed decides what
+                               re-analyzing costs. Stating only the second made a tier read as
+                               empty the moment it was re-analyzed. *@
+                            <th class="abom-tier-head">
+                                <span class="abom-tier-name">@tier</span>
+                                <span class="abom-tier-why">@TierWhy(tier)</span>
+                                @if (TierOf(tier).HoldsRepositories)
+                                {
+                                    @* Two different kinds of work, and the operator's own
+                                       repositories are not something they depend on. *@
+                                    <span class="abom-tier-count" data-abom-tier-split="@tier">
+                                        @TierOf(tier).Repositories.ToString("N0") repositories,
+                                        @TierOf(tier).Dependencies.ToString("N0") dependencies
+                                    </span>
+                                    <span class="abom-tier-count mud-text-secondary">
+                                        @TierOf(tier).RepositoriesAnalyzed.ToString("N0") and
+                                        @TierOf(tier).DependenciesAnalyzed.ToString("N0") analyzed
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="abom-tier-count">
+                                        @TierOf(tier).Total.ToString("N0") dependencies
+                                    </span>
+                                    <span class="abom-tier-count mud-text-secondary">
+                                        @TierOf(tier).Analyzed.ToString("N0") analyzed
+                                    </span>
+                                }
+                            </th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var suite in _suites.Available)
+                    {
+                        <tr>
+                            <td>
+                                <button type="button" class="abom-suite-toggle"
+                                        @onclick="@(() => ToggleSuiteDetail(suite))"
+                                        aria-expanded="@(IsSuiteOpen(suite) ? "true" : "false")">
+                                    <MudIcon Size="Size.Small" Icon="@(IsSuiteOpen(suite)
+                                        ? Icons.Material.Filled.ExpandMore
+                                        : Icons.Material.Filled.ChevronRight)" />
+                                    <span class="abom-fold-text">
+                                        <span class="abom-path">@SuiteLabel(suite)</span>
+                                        <span class="abom-fold-summary">@SuiteSummary(suite)</span>
+                                    </span>
+                                </button>
+                            </td>
+                            @foreach (var tier in Tiers)
+                            {
+                                <td>
+                                    <MudTooltip Text="@BindHint(tier, suite)">
+                                        <MudCheckBox T="bool" Dense="true" Size="Size.Small"
+                                                     Color="Color.Primary" Disabled="@_busy"
+                                                     Value="@IsBound(tier, suite)"
+                                                     aria-label="@BindHint(tier, suite)"
+                                                     ValueChanged="@(_ => ToggleSuite(tier, suite))" />
+                                    </MudTooltip>
+                                </td>
+                            }
+                        </tr>
+                        @if (IsSuiteOpen(suite) && Detail(suite) is { } detail)
+                        {
+                            <tr>
+                                <td colspan="@(Tiers.Length + 1)">
+                                    @foreach (var p in detail.Packs)
+                                    {
+                                        <div class="abom-pack">
+                                            <span class="abom-path">@p.Name</span>
+                                            <span class="abom-fold-summary">@p.Version</span>
+                                        </div>
+                                        <ul class="abom-query-list">
+                                            @foreach (var id in p.Queries)
+                                            {
+                                                <li class="abom-path">@id</li>
+                                            }
+                                        </ul>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </MudSimpleTable>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2">
+                A change takes effect on the next round. Dependencies already analyzed keep their
+                current results until that tier is re-analyzed.
+            </MudText>
+        }
+    }
+</MudPaper>
+
+@if (_properties is not null && _properties.Breakdown.Values.Count > 0)
+{
+    <MudPaper Elevation="0" Outlined="true" Class="pa-3 mb-3">
+        <MudText Typo="Typo.body1">Coverage by @_properties.Breakdown.Name</MudText>
+        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2">
+            How much of each group has been examined. A repository nothing has queued counts
+            toward its group and not toward what was examined, because it has not been looked at
+            rather than looked at and found clean.
+        </MudText>
+        <div class="d-flex flex-wrap gap-4">
+            @foreach (var group in _properties.Breakdown.Values)
+            {
+                <div class="d-flex flex-column">
+                    <MudText Typo="Typo.body2">
+                        @group.Value@(group.IsDefault ? " (organization default)" : string.Empty)
+                    </MudText>
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                        @group.Analyzed of @group.Repositories examined
+                    </MudText>
+                </div>
+            }
+        </div>
+    </MudPaper>
+}
+
+@code {
+    /// <summary>Raised after anything here changes the queue, so a host showing it can re-read.</summary>
+    [Parameter] public EventCallback Changed { get; set; }
+
+    /// <summary>False where the accounts editor is already on the page.</summary>
+    [Parameter] public bool LinkToSettings { get; set; } = true;
+
+    private DiscoveryState _state = new();
+    private IReadOnlyList<DeclaredAccount>? _declared;
+    private SuiteBinding? _suites;
+    private Objective? _objective;
+    private PropertiesView? _properties;
+    private bool _loading = true;
+    private bool _busy;
+    private DateTime? _lastPoll;
+    private string? _pollError;
+    private Timer? _timer;
+    private TimeSpan _beat;
+    private string? _requeueRepo;
+    private string? _requeueNote;
+
+    /// <summary>The beat a state that is on its way somewhere else is watched on.</summary>
+    private static readonly TimeSpan Settling = TimeSpan.FromSeconds(2);
+
+    // The most recent cycle, or null when none has been recorded. Never a zero-valued stand-in: a
+    // database that has never run a cycle is not one that ran and cost nothing.
+    private CycleSpend? LastCycle =>
+        _objective is { Recent.Count: > 0 } ? _objective.Recent[0] : null;
+
+    // Settled is analyzed plus what could not be fetched, so a depth chip and a tier chip count
+    // different things and only agree when nothing is unavailable.
+    private int UnavailableAcrossDepths =>
+        _objective is { } o ? o.Progress.Sum(d => d.Settled - d.Done) : 0;
+
+    private static string DepthSplit(DepthProgress d)
+    {
+        var unavailable = d.Settled - d.Done;
+        return unavailable > 0
+            ? $"{d.Done:N0} analyzed, {unavailable:N0} unavailable — {d.Settled:N0} settled of {d.Total:N0}."
+            : $"{d.Done:N0} analyzed of {d.Total:N0}.";
+    }
+
+    private static string Seconds(long millis) => (millis / 1000.0).ToString("N1");
+
+    // Owned is offered only once an identity has established it. With none, a column reading zero
+    // would assert the operator owns no dependency, which nothing has shown.
+    private string[] Tiers => _suites?.Verified == true
+        ? ["owned", "direct", "transitive"]
+        : ["direct", "transitive"];
+
+    private TierCount TierOf(string tier) =>
+        _state.Tiers.TryGetValue(tier, out var c) ? c : new TierCount();
+
+    private bool IsRunning => _state.Status.IsRunning;
+
+    private string StateSentence => _state.Status.State switch
+    {
+        "working" => $"Analyzing {_state.Status.Concurrency} repositories at a time.{SkipSuffix}",
+        "idle" => $"Running, nothing to analyze right now.{SkipSuffix}",
+        "pausing" => _state.Running > 0
+            ? $"Finishing {_state.Running} already started."
+            : "Finishing what has already started.",
+        "paused" => $"Stopped.{SkipSuffix}",
+        // Never started is not the same as interrupted, and saying "paused" sends the reader
+        // looking for the failure that stopped it.
+        _ => "Not started.",
+    };
+
+    private string SkipSuffix =>
+        _state.Status.Skipped > 0
+            ? $" Settled {_state.Status.Skipped:N0} already on record without re-analyzing them."
+            : string.Empty;
+
+    private IReadOnlyList<string> BoundTo(string tier) =>
+        _suites is not null && _suites.Tiers.TryGetValue(tier, out var s) ? s : [];
+
+    private bool IsBound(string tier, string suite) => BoundTo(tier).Contains(suite);
+
+    private int BoundCount(string tier) => BoundTo(tier).Count;
+
+    // Stated per column, because the whole point of the grid is that the tiers deserve different
+    // work, and a reader deciding that is looking at the column.
+    private static string TierWhy(string tier) => tier switch
+    {
+        "owned" => "you own these",
+        "direct" => "your repositories name these",
+        _ => "reached through something else",
+    };
+
+    // Configuration is changed a few times a month, so the control folds. What it is set to does
+    // not: see plans/ui/discovery-config.md.
+    private bool _configOpen;
+
+    private void ToggleConfig() => _configOpen = !_configOpen;
+
+    private string BindingSummary() => string.Join(" · ", Tiers.Select(tier =>
+    {
+        var bound = BoundTo(tier);
+        return bound.Count == 0
+            ? $"{tier}: nothing"
+            : $"{tier}: {string.Join(", ", bound.Select(SuiteLabel))}";
+    }));
+
+    private readonly HashSet<string> _openSuites = [];
+
+    private bool IsSuiteOpen(string suite) => _openSuites.Contains(suite);
+
+    private void ToggleSuiteDetail(string suite)
+    {
+        if (!_openSuites.Remove(suite))
+        {
+            _openSuites.Add(suite);
+        }
+    }
+
+    private SuiteDetail? Detail(string suite) =>
+        _suites is not null && _suites.Contents.TryGetValue(suite, out var d) ? d : null;
+
+    // A suite has no version of its own, so the line carries the packs behind it. A suite no
+    // crawl has resolved has no count to state, and saying 0 would assert a measurement.
+    private string SuiteSummary(string suite)
+    {
+        if (Detail(suite) is not { } detail)
+        {
+            return "not yet resolved";
+        }
+        var versions = string.Join(", ", detail.Packs.Select(p => p.Version).Distinct());
+        var queries = $"{detail.QueryCount:N0} {(detail.QueryCount == 1 ? "query" : "queries")}";
+        return string.IsNullOrEmpty(versions) ? queries : $"{versions} · {queries}";
+    }
+
+    // The path is how the binding is stored and what an operator would grep for, so the label
+    // shortens it without inventing a name the suite does not have.
+    private static string SuiteLabel(string suite)
+    {
+        var name = suite.Split('/').LastOrDefault() ?? suite;
+        return name.EndsWith(".qls", StringComparison.Ordinal) ? name[..^4] : name;
+    }
+
+    private string BindHint(string tier, string suite) => IsBound(tier, suite)
+        ? $"Stop running {SuiteLabel(suite)} on the {tier} tier. Results already recorded stay until that tier is re-analyzed."
+        : $"Run {SuiteLabel(suite)} on the {tier} tier from the next round. Its {TierOf(tier).Analyzed:N0} analyzed dependencies pick it up only when re-analyzed.";
+
+    private async Task ToggleSuite(string tier, string suite)
+    {
+        _busy = true;
+        try
+        {
+            var next = BoundTo(tier).ToList();
+            if (!next.Remove(suite))
+            {
+                next.Add(suite);
+            }
+            _suites = await Api.SetTierSuitesAsync(tier, next);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private string RequeueHint(string tier) => tier switch
+    {
+        "owned" => TierOf(tier).HoldsRepositories
+            ? $"Re-analyze the {TierOf(tier).Repositories:N0} repositories you own ({TierOf(tier).RepositoriesAnalyzed:N0} analyzed) and the {TierOf(tier).Dependencies:N0} dependencies in those same accounts ({TierOf(tier).DependenciesAnalyzed:N0} analyzed). These are the ones you can change yourself."
+            : $"Re-analyze the {TierOf(tier).Analyzed:N0} analyzed of {TierOf(tier).Total:N0} dependencies belonging to accounts you are verified against. These are the ones you can change yourself, whatever depth they were reached at.",
+        "direct" => $"Re-analyze the {TierOf(tier).Analyzed:N0} analyzed of {TierOf(tier).Total:N0} dependencies your repositories name directly, with the query suite currently configured. Nothing already known is cleared while it runs.",
+        _ => $"Re-analyze the {TierOf(tier).Analyzed:N0} analyzed of {TierOf(tier).Total:N0} dependencies reached through an intermediary. This is the larger tier and takes correspondingly longer.",
+    };
+
+    private async Task Requeue(string tier)
+    {
+        _busy = true;
+        try
+        {
+            _state = await Api.RequeueTierAsync(tier);
+            await Load();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task RequeueStale() => await Select(
+        () => Api.RequeueStaleAsync(),
+        got => got.Requeued > 0
+            ? $"{got.Requeued:N0} requeued as out of date against CodeQL {got.CliVersion} "
+              + $"and {got.Packs} packs."
+            // A current corpus is the normal outcome after a crawl, and silence here reads as a
+            // button that did not work.
+            : $"Nothing is out of date against CodeQL {got.CliVersion} and {got.Packs} packs.");
+
+    private async Task RequeueRepository()
+    {
+        var name = (_requeueRepo ?? string.Empty).Trim();
+        if (name.Length == 0)
+        {
+            return;
+        }
+        await Select(
+            () => Api.RequeueRepositoryAsync(name),
+            got => got switch
+            {
+                { Requeued: > 0 } =>
+                    $"{got.Requeued:N0} requeued for {name}, {got.Expedited:N0} ahead of the ranking.",
+                // Already queued is not the same as unknown, and the request — run this next —
+                // was still answered.
+                { Expedited: > 0 } =>
+                    $"{name} was already queued. {got.Expedited:N0} moved ahead of the ranking.",
+                // Otherwise the operator is left watching a crawl that will never reach what
+                // they asked about.
+                _ => $"Nothing analyzed for {name} to requeue.",
+            });
+    }
+
+    private async Task OnRequeueKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await RequeueRepository();
+        }
+    }
+
+    private async Task Select(Func<Task<RequeueResult>> ask, Func<RequeueResult, string> say)
+    {
+        _busy = true;
+        try
+        {
+            var got = await ask();
+            _requeueNote = say(got);
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            _requeueNote = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ToggleRunning()
+    {
+        _busy = true;
+        try
+        {
+            _state = await Api.SetDiscoveryAsync(!IsRunning);
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            // A refused or failed control request must say so: the button otherwise appears to
+            // work and the loop never starts.
+            _pollError = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Follow.Changed += OnFollowChanged;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        _state = await Api.GetDiscoveryAsync();
+        _declared = await Api.GetOwnedScopeAsync();
+        _suites = await Api.GetTierSuitesAsync();
+        _objective = await Api.GetObjectiveAsync();
+        _properties = await Api.GetPropertiesAsync();
+        // A read that failed returns an empty result rather than throwing, so the transport's own
+        // account of what went wrong is the only thing that separates "nothing here" from "could
+        // not ask".
+        _pollError = Api.LastError;
+        _lastPoll = DateTime.UtcNow;
+        _loading = false;
+        ApplyFollow();
+        await Changed.InvokeAsync();
+    }
+
+    private void OnFollowChanged()
+    {
+        ApplyFollow();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void ApplyFollow()
+    {
+        // A loop on its way out of a state has disabled the control that would say it arrived, so
+        // it is watched on its own beat rather than the reader's: five minutes of "Pausing…" after
+        // the pause finished reads as a page that stopped working.
+        var beat = _state.Status.IsPausing && Follow.Interval > Settling ? Settling : Follow.Interval;
+        if (_timer is not null && beat == _beat)
+        {
+            return;
+        }
+        _timer?.Dispose();
+        _beat = beat;
+        _timer = new Timer(async _ =>
+        {
+            // Nothing awaits a timer callback, so an exception raised inside it is discarded:
+            // following would keep ticking against a server that had stopped answering, with the
+            // page frozen on stale data and no sign of why.
+            try
+            {
+                await Load();
+            }
+            catch (Exception ex)
+            {
+                _pollError = ex.Message;
+            }
+            await InvokeAsync(StateHasChanged);
+        }, null, beat, beat);
+    }
+
+    public void Dispose()
+    {
+        Follow.Changed -= OnFollowChanged;
+        _timer?.Dispose();
+    }
+}

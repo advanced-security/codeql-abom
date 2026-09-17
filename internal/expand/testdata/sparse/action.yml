@@ -1,0 +1,9 @@
+name: Sparse filter fixture
+description: >
+  A root action manifest. This is the case a scope of `.github/**` alone would miss, and the
+  only shape that makes the sparse-filter check able to fail.
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+      shell: bash

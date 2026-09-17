@@ -50,8 +50,15 @@ type Result struct {
 	Fingerprints map[string]string
 }
 
+// Tool identifies the analyzer that wrote a run.
+type Tool struct {
+	Name            string
+	SemanticVersion string
+}
+
 // Handler receives streamed SARIF content. Rules arrive before any result of that run.
 type Handler struct {
+	OnTool   func(Tool) error
 	OnRule   func(Rule) error
 	OnResult func(Result) error
 }
@@ -131,7 +138,9 @@ func streamRun(dec *json.Decoder, h Handler) error {
 func streamTool(dec *json.Decoder, h Handler) error {
 	var tool struct {
 		Driver struct {
-			Rules []rawRule `json:"rules"`
+			Name            string    `json:"name"`
+			SemanticVersion string    `json:"semanticVersion"`
+			Rules           []rawRule `json:"rules"`
 		} `json:"driver"`
 		Extensions []struct {
 			Rules []rawRule `json:"rules"`
@@ -139,6 +148,13 @@ func streamTool(dec *json.Decoder, h Handler) error {
 	}
 	if err := dec.Decode(&tool); err != nil {
 		return fmt.Errorf("decoding tool: %w", err)
+	}
+	if h.OnTool != nil {
+		if err := h.OnTool(Tool{
+			Name: tool.Driver.Name, SemanticVersion: tool.Driver.SemanticVersion,
+		}); err != nil {
+			return err
+		}
 	}
 	if h.OnRule == nil {
 		return nil

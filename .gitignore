@@ -1,19 +1,27 @@
-# Build output
+## Build output
 /dist/
 /bin/
 
-# CodeQL
+## CodeQL
+.cache/
 .codeql/
+# BQRS and SARIF files are blanket-ignored, because every run of the tool drops them wherever it
+# was invoked. The negations below exempt `testdata/`, where the same extensions mean the opposite
+# thing: a fixture the CLI generated once and the suite now depends on.
+#
+# Without them `git add` skips the fixture silently, and the test then passes on the machine that
+# generated it and fails in CI as "no such file or directory" -- which reads as a broken test
+# rather than as a file that was never committed. That cost a red build on PR #3.
 *.bqrs
 *.sarif
-!/internal/archive/testdata/findings.sarif
-.cache/
+!**/testdata/**/*.bqrs
+!**/testdata/**/*.sarif
 
-# CodeQL query-test artifacts (.expected files are checked in; these are not)
+## CodeQL query-test artifacts (.expected files are checked in; these are not)
 *.testproj/
 *.actual
 
-# ABOM artifacts and databases
+## ABOM artifacts and databases
 /analyses/
 /output/
 *.db
@@ -22,12 +30,43 @@
 abom-graph.json
 abom-dashboard.json
 
-# Logs
+# A local declaration of the accounts this machine is responsible for. Untracked because ownership
+# is one operator's statement, not a property of the repository — checking one in would declare
+# somebody else's organization on every clone. It only ever fills a vacuum, and `gh` still decides
+# whether what it declares is honored.
+/abom.local.json
+
+## Logs
 /logs/
 
-# .NET
+## Browser test harness. The lock file is checked in on purpose — it is the only record of what
+## the one npm dependency actually resolved to.
+ui/tests/e2e/node_modules/
+ui/tests/e2e/test-results/
+ui/tests/e2e/playwright-report/
+ui/tests/e2e/blob-report/
+
+# Agent working notes, deliberately untracked. Git history is already the record of what shipped;
+# a markdown summary of it becomes a second copy that drifts from the log it duplicates. The
+# reasoning behind each entry is worth keeping locally, so agents keep it here.
+/plans/implemented.md
+
+## .NET
 [Bb]in/
 [Oo]bj/
 
-# macOS
+## Everything this repository writes at runtime: the working corpus, logs, scratch, the published
+## interface, the Go test framework's TMPDIR, and the prebuilt databases `make itest` reuses.
+##
+## One directory inside the checkout rather than the OS temp directory, which is world-writable,
+## shared with every other process, and cleared on reboot on Linux -- where it would have taken
+## the corpus with it. `make clean` deliberately does not remove it.
+/.abom/
+
+## OS generated, hidden files
 .DS_Store
+
+## Temporary by nature
+*.swo
+*.swp
+

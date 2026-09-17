@@ -1,0 +1,5 @@
+name: advanced-security/abom-actions-graph-extraction-test
+version: 2.27.0
+dependencies:
+  advanced-security/abom-actions-graph-extraction-src: ${workspace}
+extractor: actions

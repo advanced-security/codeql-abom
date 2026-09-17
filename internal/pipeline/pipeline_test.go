@@ -13,11 +13,8 @@ import (
 )
 
 // abomDatabaseEnv points at a prebuilt CodeQL actions database. Building one takes far longer
-// than a unit test should, so the integration test runs only when a database is supplied:
-//
-//	codeql database create /tmp/abom-itest-db --language=actions \
-//	  --source-root=ql/actions/abom/test/AbomEdges
-//	ABOM_ITEST_DB=/tmp/abom-itest-db go test ./internal/pipeline/
+// than a unit test should, so the integration test runs only when a database is supplied.
+// `make itest` builds it and sets this.
 const abomDatabaseEnv = "ABOM_ITEST_DB"
 
 // Exercises the real chain: CodeQL CLI evaluates the query, BQRS is streamed and classified,
@@ -27,15 +24,18 @@ func TestEndToEndQueryToGraph(t *testing.T) {
 	if dbPath == "" {
 		t.Skipf("set %s to a prebuilt actions database to run this test", abomDatabaseEnv)
 	}
+	// Setting the variable is the opt-in, so a missing CLI past this point is a broken
+	// environment, not a reason to report success having run nothing.
 	if _, err := exec.LookPath("codeql"); err != nil {
-		t.Skip("codeql CLI not on PATH")
+		t.Fatalf("%s is set, so this test was asked for, but codeql is not on PATH: %v",
+			abomDatabaseEnv, err)
 	}
 
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatalf("resolving repo root: %v", err)
 	}
-	queryPath := filepath.Join(repoRoot, "ql", "actions", "abom", "src", "AbomEdges.ql")
+	queryPath := filepath.Join(repoRoot, "ql", "actions", "graph-extraction", "src", "AbomEdges.ql")
 
 	bqrsPath := filepath.Join(t.TempDir(), "edges.bqrs")
 	r := &runner.Runner{}
@@ -68,11 +68,33 @@ func TestEndToEndQueryToGraph(t *testing.T) {
 	if err := w.Flush(); err != nil {
 		t.Fatalf("Flush: %v", err)
 	}
-	if n != 13 {
-		t.Errorf("ingested %d edges, want 13", n)
-	}
 	if err := s.CreateIndexes(); err != nil {
 		t.Fatalf("CreateIndexes: %v", err)
+	}
+
+	// By kind rather than as a total. This read 13 for as long as the test was skipped, and the
+	// three that arrived are `job-needs-job` — ordering, not use — which a bare count would have
+	// been bumped past without anyone noticing which kind moved.
+	want := map[string]int{
+		"step-uses-action":           9,
+		"job-uses-reusable-workflow": 2,
+		"composite-step-uses-action": 2,
+		"job-needs-job":              3,
+	}
+	total := 0
+	for kind, expected := range want {
+		var got int
+		if err := s.DB().QueryRow(
+			`SELECT COUNT(*) FROM abom_edge WHERE edge_kind = ?`, kind).Scan(&got); err != nil {
+			t.Fatalf("counting %s: %v", kind, err)
+		}
+		if got != expected {
+			t.Errorf("%s edges = %d, want %d", kind, got, expected)
+		}
+		total += expected
+	}
+	if n != total {
+		t.Errorf("ingested %d edges, want %d across the kinds above", n, total)
 	}
 
 	// actions/checkout is used by both workflows in the fixture.

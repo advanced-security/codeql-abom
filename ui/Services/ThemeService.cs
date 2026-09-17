@@ -58,9 +58,9 @@ public sealed class ThemeService(IJSRuntime js)
         {
             return map;
         }
-        foreach (var pair in raw.Split(';', StringSplitOptions.RemoveEmptyEntries))
+        foreach (var parts in raw.Split(';', StringSplitOptions.RemoveEmptyEntries)
+                     .Select(pair => pair.Split('=', 2)))
         {
-            var parts = pair.Split('=', 2);
             if (parts.Length != 2)
             {
                 continue;
@@ -155,6 +155,10 @@ public sealed class ThemeService(IJSRuntime js)
             ThemeChoice.Dark => true,
             _ => systemPrefersDark,
         };
+        // index.html paints the page from a data-theme attribute before Blazor exists, and
+        // nothing else keeps it current; left behind it inverts the interface. Not awaited
+        // because the system can change scheme outside any async path of ours.
+        _ = js.InvokeVoidAsync("abomTheme.applyResolved", IsDark);
         Changed?.Invoke();
     }
 
@@ -188,12 +192,13 @@ public sealed class ThemeService(IJSRuntime js)
             Label: "#E9ECEF",
             Muted: "#5C5F66",
             Kinds: KindColors(DarkKinds),
+            Discovery: DarkDiscovery,
             EdgeSameRepo: "rgba(91,200,255,0.85)",
             EdgeSameOwner: "rgba(255,200,72,0.85)",
             EdgeCrossOwner: "rgba(255,110,156,0.85)")
         : new GraphPalette(
             Background: "#FFFFFF",
-            Focus: "#F08C00",
+            Focus: "#B35C00",
             Seed: "#1971C2",
             Upstream: "#6741D9",
             External: "#0CA678",
@@ -201,6 +206,7 @@ public sealed class ThemeService(IJSRuntime js)
             Label: "#212529",
             Muted: "#ADB5BD",
             Kinds: KindColors(LightKinds),
+            Discovery: LightDiscovery,
             EdgeSameRepo: "rgba(11,127,199,0.8)",
             EdgeSameOwner: "rgba(178,106,0,0.8)",
             EdgeCrossOwner: "rgba(194,37,92,0.8)");
@@ -221,7 +227,7 @@ public sealed class ThemeService(IJSRuntime js)
 
     private static readonly Dictionary<string, string> LightKinds = new()
     {
-        ["org"] = "#F08C00",
+        ["org"] = "#B35C00",
         ["repo"] = "#1971C2",
         ["workflow"] = "#0CA678",
         ["reusable_workflow"] = "#087F5B",
@@ -232,9 +238,75 @@ public sealed class ThemeService(IJSRuntime js)
         ["step"] = "#868E96",
     };
 
-    /// <summary>Human-readable names for the node kinds, used by the legend and filters.</summary>
-    public static readonly Dictionary<string, string> KindNames = new()
+    // The semantic colors, stated once. MudBlazor's components read them from the theme and the
+    // graph canvas cannot read CSS at all, so without a single source here the same state ends up
+    // two different colors depending on which half of the interface drew it.
+    private const string SuccessDark = "#51CF66";
+    private const string InfoDark = "#4DABF7";
+    // Bolder and darker than the orange this was, so it clears the yellow "queued" now sits at.
+    // It is the semantic warning, so every warning in the interface moves with it — which is the
+    // point: a legend with a private orange would drift from the components beside it.
+    private const string WarningDark = "#FF922B";
+    private const string ErrorDark = "#FF6B6B";
+
+    // Success and Warning are darker than the Open Color values they were. On white, #2F9E44
+    // measured 3.45:1 and #E8590C 3.58:1 — fine for a swatch, short of the 4.5:1 an outlined chip
+    // needs, and this interface draws "build-time only" and every pinning level as exactly that.
+    // Dark mode was never the problem, which is the point: it is the scheme that gets looked at.
+    private const string SuccessLight = "#2A833B";
+    private const string InfoLight = "#1971C2";
+    private const string WarningLight = "#C25100";
+    private const string ErrorLight = "#C92A2A";
+
+    // Discovery state, for the views that are about coverage rather than about structure.
+    //
+    // Colour may be reclaimed between pages: an overlap is a problem only when two different
+    // kinds of thing claim one colour on the same page. The Discovery page draws no node kinds at
+    // all, and on the Explorer's frontier view the kind swatches are filters rather than what the
+    // canvas is coloured by.
+    //
+    // Queued was grey twice. First as `Muted` exactly — the colour reserved for a node that was
+    // never a dependency — and then as a slate that cleared both the contrast floor and the
+    // distance from `Muted` while still being about 9% saturated. Dark mode is greyscale by
+    // construction, so a category drawn in grey reads as chrome; it is now a yellow, and the
+    // warning orange beside it moved to keep the pair apart.
+    //
+    // There is still no colour for a node that was never queued, because that is a fact rather
+    // than a stage.
+    private static readonly Dictionary<string, string> DarkDiscovery = new()
     {
+        ["queued"] = "#F5D90A",
+        ["retrying"] = WarningDark,
+        ["running"] = InfoDark,
+        ["done"] = SuccessDark,
+        ["unavailable"] = ErrorDark,
+    };
+
+    // A yellow bright enough to read as yellow cannot clear 3:1 against white — `#F5D90A` manages
+    // about 1.5:1 — so the light-mode queue colour is necessarily dark and reads closer to olive.
+    // That is the cost of the contrast floor, not a different choice of hue: it sits at the same
+    // 48 degrees its dark counterpart does.
+    private static readonly Dictionary<string, string> LightDiscovery = new()
+    {
+        ["queued"] = "#9A7B00",
+        ["retrying"] = WarningLight,
+        ["running"] = InfoLight,
+        ["done"] = SuccessLight,
+        ["unavailable"] = ErrorLight,
+    };
+
+    /// <summary>Human-readable names for the discovery states, used by the frontier legend.</summary>
+    public static readonly Dictionary<string, string> DiscoveryNames = new()
+    {
+        ["queued"] = "Queued",
+        ["retrying"] = "Retrying",
+        ["running"] = "Discovering",
+        ["done"] = "Analyzed",
+        ["unavailable"] = "Unavailable",
+    };
+
+    /// <summary>Human-readable names for the node kinds, used by the legend and filters.</summary>
+    public static readonly Dictionary<string, string> KindNames = new()    {
         ["org"] = "Owner",
         ["repo"] = "Repository",
         ["workflow"] = "Workflow",
@@ -251,6 +323,10 @@ public sealed class ThemeService(IJSRuntime js)
         PaletteLight = new PaletteLight
         {
             Primary = "#1971C2",
+            Success = SuccessLight,
+            Info = InfoLight,
+            Warning = WarningLight,
+            Error = ErrorLight,
             AppbarBackground = "#F1F3F5",
             AppbarText = "#212529",
             Background = "#FFFFFF",
@@ -259,13 +335,47 @@ public sealed class ThemeService(IJSRuntime js)
         PaletteDark = new PaletteDark
         {
             Primary = "#4DABF7",
+            Success = SuccessDark,
+            Info = InfoDark,
+            Warning = WarningDark,
+            Error = ErrorDark,
             AppbarBackground = "#212529",
             AppbarText = "#E9ECEF",
             Background = "#1A1B1E",
             Surface = "#25262B",
             DrawerBackground = "#212529",
         },
+        // Stated rather than inherited. With no typography of its own the interface took
+        // MudBlazor's defaults, which are sized for prose, and every dense page then talked its
+        // own way back down to something readable.
+        Typography = new Typography
+        {
+            Default = new DefaultTypography
+            {
+                FontFamily = Sans,
+                FontSize = "0.875rem",
+                LineHeight = "1.45",
+            },
+            H5 = new H5Typography { FontFamily = Sans, FontSize = "1.35rem", FontWeight = "500" },
+            H6 = new H6Typography { FontFamily = Sans, FontSize = "1.05rem", FontWeight = "500" },
+            Subtitle1 = new Subtitle1Typography { FontFamily = Sans, FontSize = "0.95rem", FontWeight = "500" },
+            Subtitle2 = new Subtitle2Typography { FontFamily = Sans, FontSize = "0.85rem", FontWeight = "600" },
+            Body1 = new Body1Typography { FontFamily = Sans, FontSize = "0.875rem", LineHeight = "1.45" },
+            Body2 = new Body2Typography { FontFamily = Sans, FontSize = "0.8rem", LineHeight = "1.45" },
+            Caption = new CaptionTypography { FontFamily = Sans, FontSize = "0.72rem", LineHeight = "1.4" },
+            Overline = new OverlineTypography
+            {
+                FontFamily = Sans,
+                FontSize = "0.68rem",
+                FontWeight = "600",
+                LetterSpacing = "0.08em",
+            },
+            Button = new ButtonTypography { FontFamily = Sans, FontSize = "0.78rem", FontWeight = "500" },
+        },
     };
+
+    private static readonly string[] Sans =
+        ["system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"];
 }
 
 /// <summary>Colors the canvas graph draws with.</summary>
@@ -279,6 +389,7 @@ public sealed record GraphPalette(
     string Label,
     string Muted,
     IReadOnlyDictionary<string, string> Kinds,
+    IReadOnlyDictionary<string, string> Discovery,
     string EdgeSameRepo,
     string EdgeSameOwner,
     string EdgeCrossOwner);

@@ -151,7 +151,7 @@ func TestAdvisoriesReachSubpathActions(t *testing.T) {
 		t.Fatalf("AddAdvisories: %v", err)
 	}
 
-	reach, err := s.AdvisoriesByReach(0)
+	reach, err := s.AdvisoriesByReach(0, RepositoryScope{})
 	if err != nil {
 		t.Fatalf("AdvisoriesByReach: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestAdvisoryReachGroupsRangesAndNodes(t *testing.T) {
 		t.Fatalf("AddAdvisories: %v", err)
 	}
 
-	reach, err := s.AdvisoriesByReach(0)
+	reach, err := s.AdvisoriesByReach(0, RepositoryScope{})
 	if err != nil {
 		t.Fatalf("AdvisoriesByReach: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestAdvisoryReachDistinguishesUnscoredFromZero(t *testing.T) {
 		t.Fatalf("AddAdvisories: %v", err)
 	}
 
-	reach, err := s.AdvisoriesByReach(0)
+	reach, err := s.AdvisoriesByReach(0, RepositoryScope{})
 	if err != nil {
 		t.Fatalf("AdvisoriesByReach: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestWithdrawnAdvisoriesAreNotReported(t *testing.T) {
 		t.Fatalf("AddAdvisories: %v", err)
 	}
 
-	reach, err := s.AdvisoriesByReach(0)
+	reach, err := s.AdvisoriesByReach(0, RepositoryScope{})
 	if err != nil {
 		t.Fatalf("AdvisoriesByReach: %v", err)
 	}
@@ -245,7 +245,7 @@ func TestAdvisoryReachCarriesObservedReferences(t *testing.T) {
 		t.Fatalf("AddAdvisories: %v", err)
 	}
 
-	reach, err := s.AdvisoriesByReach(0)
+	reach, err := s.AdvisoriesByReach(0, RepositoryScope{})
 	if err != nil {
 		t.Fatalf("AdvisoriesByReach: %v", err)
 	}

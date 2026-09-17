@@ -1,0 +1,2 @@
+| .github/workflows/conditions.yml | build | 1 | condition | github.ref == 'refs/heads/main' |
+| .github/workflows/conditions.yml | build | 3 | condition | failure() |

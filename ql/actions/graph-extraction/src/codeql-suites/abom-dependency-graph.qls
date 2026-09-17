@@ -1,0 +1,14 @@
+- description: Structural extraction that builds the Actions Bill of Materials graph
+
+# Everything here yields BQRS and no SARIF, so this suite is run through `codeql query run`
+# rather than `database analyze`. Each query declares how its results are to be read — an
+# `abom-edges` or `abom-observation` tag, or a `@kind` — and is ingested on that basis alone, so
+# adding a query to this file is all it takes to have it run and stored.
+#
+# Security findings deliberately live in abom-findings.qls instead. They are a different lane
+# with a different cost, and which tier pays that cost is configuration rather than a property
+# of the query set.
+
+- query: AbomEdges.ql
+- query: AbomSurface.ql
+- query: AbomStepConditions.ql

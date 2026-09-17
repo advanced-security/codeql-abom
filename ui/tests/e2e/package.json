@@ -1,0 +1,13 @@
+{
+  "name": "abom-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser tests for the ABOM interface. The only npm dependency in this repository, deliberately scoped to the test harness so nothing it pulls in can reach a shipped artifact.",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  }
+}

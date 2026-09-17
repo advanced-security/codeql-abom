@@ -1,0 +1,20 @@
+- description: Actions queries whose findings ABOM records and attributes
+
+# What this suite selects **today** is the upstream set unchanged, so that owning the file changed
+# nothing on the day it landed. That is where it stands, not a rule about what it may contain:
+# ABOM writes its own findings queries, and one belongs here as soon as it earns a place in the
+# default. Adding it is a reviewable diff, which is the point of owning the file.
+#
+# Every result keeps the `@id` of the query that produced it, and an ABOM-authored one is prefixed
+# `abom/`. That prefix is what lets a consumer tell ours from upstream's and filter on either — it
+# does the work that keeping the two in separate suites would otherwise have to.
+#
+# Pinned exactly rather than by range: without `version:` the CLI resolves the most recent pack,
+# so the set of rules ABOM attributes could change with no commit here.
+- import: codeql-suites/actions-all.qls
+  from: codeql/actions-queries
+  version: 0.6.35
+
+# The nine `experimental/` queries stay in. Precision is a property of the rule, and a consumer
+# filtering on rule id can always drop them — whereas a finding never collected cannot be
+# recovered.

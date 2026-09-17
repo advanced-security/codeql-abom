@@ -1,12 +1,10 @@
 package bqrs
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"os/exec"
 )
 
 // RowFunc receives one decoded row. Returning an error aborts the stream.
@@ -113,34 +111,4 @@ func expectDelim(dec *json.Decoder, want rune) error {
 func skipValue(dec *json.Decoder) error {
 	var discard json.RawMessage
 	return dec.Decode(&discard)
-}
-
-// StreamFile pipes `codeql bqrs decode` straight into the row handler.
-//
-// The CLI's stdout is consumed as it is produced rather than buffered, so a result set larger
-// than available memory still decodes.
-func StreamFile(ctx context.Context, codeqlPath, path string, fn RowFunc) (int, error) {
-	if codeqlPath == "" {
-		codeqlPath = "codeql"
-	}
-	cmd := exec.CommandContext(ctx, codeqlPath, "bqrs", "decode", "--format=json", "--entities=all", path)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return 0, fmt.Errorf("piping codeql stdout: %w", err)
-	}
-	if err := cmd.Start(); err != nil {
-		return 0, fmt.Errorf("starting codeql bqrs decode: %w", err)
-	}
-
-	count, streamErr := StreamSelect(stdout, fn)
-
-	// Drain any remainder so the child never blocks on a full pipe when fn aborted early.
-	_, _ = io.Copy(io.Discard, stdout)
-	if waitErr := cmd.Wait(); waitErr != nil && streamErr == nil {
-		return count, fmt.Errorf("codeql bqrs decode %s: %w", path, waitErr)
-	}
-	if streamErr != nil {
-		return count, fmt.Errorf("decoding %s: %w", path, streamErr)
-	}
-	return count, nil
 }

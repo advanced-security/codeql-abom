@@ -1,6 +1,9 @@
 package normalize
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // ParseUses is identity resolution only. It must decompose a reference correctly and assert
 // nothing about whether that reference is safe, pinned, or current — those are query results.
@@ -71,6 +74,21 @@ func TestParseUses(t *testing.T) {
 			name: "local reusable workflow",
 			raw:  "./.github/workflows/reusable.yml",
 			want: Ref{Subpath: ".github/workflows/reusable.yml", NodeKind: NodeLocalWorkflow},
+		},
+		{
+			name: "self reference to an action in the same repository",
+			raw:  "$/.github/actions/ci-setup",
+			want: Ref{Subpath: ".github/actions/ci-setup", NodeKind: NodeLocalAction},
+		},
+		{
+			name: "self reference to the repository's own root action",
+			raw:  "$/",
+			want: Ref{NodeKind: NodeLocalAction},
+		},
+		{
+			name: "self reference to a reusable workflow in the same repository",
+			raw:  "$/.github/workflows/release.yml",
+			want: Ref{Subpath: ".github/workflows/release.yml", NodeKind: NodeLocalWorkflow},
 		},
 		{
 			name: "remote reusable workflow",
@@ -153,6 +171,9 @@ func TestNodeKey(t *testing.T) {
 		{"octo-org/shared/.github/workflows/build.yml@v1", "octo-org/shared/.github/workflows/build.yml"},
 		{"./.github/actions/greet", "octo-org/app/.github/actions/greet"},
 		{"./.github/workflows/reusable.yml", "octo-org/app/.github/workflows/reusable.yml"},
+		{"$/.github/actions/greet", "octo-org/app/.github/actions/greet"},
+		{"$/.github/workflows/reusable.yml", "octo-org/app/.github/workflows/reusable.yml"},
+		{"$/", "octo-org/app"},
 		{"docker://Alpine:3.20", "docker://alpine:3.20"},
 	}
 
@@ -171,5 +192,35 @@ func TestNodeKeyDistinguishesSubpaths(t *testing.T) {
 	analyze := ParseUses("github/codeql-action/analyze@v3", "").NodeKeyIn("o/r")
 	if init == analyze {
 		t.Errorf("sibling subpath actions collapsed onto one key: %q", init)
+	}
+}
+
+// `$/` is GitHub's self repository reference: the repository of the file it appears in, at the
+// running commit. It is fully resolved, and reading the leading `$` as an account name states
+// that the organization depends on a third party called `$` — a verdict from ABOM rather than
+// from a query. See plans/db/unresolved-references.md.
+func TestASelfReferenceNamesTheContainingRepository(t *testing.T) {
+	for _, raw := range []string{"$/", "$/setup", "$/.github/actions/ci-setup"} {
+		ref := ParseUses(raw, "")
+		if ref.Owner != "" || ref.Repo != "" {
+			t.Errorf("ParseUses(%q) took %q/%q as an account: `$` is not an owner",
+				raw, ref.Owner, ref.Repo)
+		}
+		if ref.IsExternal {
+			t.Errorf("ParseUses(%q) is external: a self reference never leaves its repository", raw)
+		}
+		if key := ref.NodeKeyIn("changesets/action"); !strings.HasPrefix(key, "changesets/action") {
+			t.Errorf("NodeKeyIn(%q) = %q, want it under the containing repository", raw, key)
+		}
+	}
+}
+
+// `$/x` and `./x` name the same file. Their only difference is what they resolve against at run
+// time, which is not identity, so one action must not become two nodes.
+func TestASelfReferenceAndARelativePathAreOneNode(t *testing.T) {
+	self := ParseUses("$/.github/actions/greet", "").NodeKeyIn("octo-org/app")
+	relative := ParseUses("./.github/actions/greet", "").NodeKeyIn("octo-org/app")
+	if self != relative {
+		t.Errorf("one action, two keys: %q != %q", self, relative)
 	}
 }

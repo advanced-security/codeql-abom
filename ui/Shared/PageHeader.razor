@@ -1,0 +1,19 @@
+@* One heading block for every page.
+   Six pages wrapped an h1 in a style reset and three did not, so the document outline depended
+   on which page you were on. HtmlTag gives the h1 directly, with no element nested inside a
+   heading of another rank. *@
+
+<div class="abom-page-head">
+    <MudText Typo="Typo.h5" HtmlTag="h1" Class="abom-page-title">@Title</MudText>
+    @if (ChildContent is not null)
+    {
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">@ChildContent</MudText>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = string.Empty;
+
+    /// <summary>The standfirst: what the page answers, and what it declines to.</summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

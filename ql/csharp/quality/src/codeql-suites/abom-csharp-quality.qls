@@ -1,0 +1,21 @@
+- description: Code quality queries ABOM runs against its own C#
+
+# Pinned for the reason abom-go-quality.qls states: an unpinned reference downloads whatever is
+# newest, so the finding count moves without the code moving.
+- import: codeql-suites/csharp-code-quality.qls
+  from: codeql/csharp-queries
+  version: 1.9.3
+
+# Read and rejected, 2026-09-10 — the only rule this suite excludes, and it stays the exception.
+#
+# All four hits are Blazor boundaries: two timer callbacks and two button handlers. Nothing
+# encloses them, so an exception allowed to escape is not reported anywhere — it tears down the
+# circuit or silently stops the poll, leaving the page frozen on stale data with no sign of why.
+# Each of the four already records the message into a field the reader can see, which is the
+# behavior this rule exists to get. Narrowing them would mean enumerating the exception types
+# `ReadFromJsonAsync` can raise and being wrong about one.
+#
+# It is excluded rather than removed from the pack so a fifth occurrence in a *service* — where an
+# outer handler does exist — still has to be argued for here rather than passing unnoticed.
+- exclude:
+    id: cs/catch-of-all-exceptions

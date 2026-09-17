@@ -23,6 +23,9 @@ type PinningFilter struct {
 	// RefStyle is `commit`, `tag`, or empty for both. Lexical: how the reference is written.
 	RefStyle    string
 	FlaggedOnly bool
+	// Scope bounds every level to one grouping's repositories. A pinning row describes a file in
+	// a repository somebody owns, so the sources are the answer here rather than their closure.
+	Scope RepositoryScope
 }
 
 // PinningRow is one scope's reference pinning, measured two independent ways.
@@ -56,7 +59,8 @@ type PinningRow struct {
 	// GitHub-owned. Naming it keeps the gap between the two measures visible.
 	FloatingUnflagged int  `json:"floatingUnflagged"`
 	HasChildren       bool `json:"hasChildren"`
-	// Owned marks a row the operator declared they control. A mark, never a filter: the row is
+	// Owned marks a row in an account the operator is verified to belong to. A mark, never a
+	// filter: the row is
 	// present either way.
 	Owned bool `json:"owned"`
 	// Yours and FlaggedSplit divide the totals. Both halves are always reported, so the
@@ -82,8 +86,8 @@ const pinnableReferences = `ref AS (
 	       CASE WHEN LENGTH(e.ref_value) = 40
 	             AND e.ref_value GLOB '[0-9a-f]*' THEN 1 ELSE 0 END AS is_commit,
 	       CASE WHEN f.row_id IS NULL THEN 0 ELSE 1 END AS flagged
-	FROM abom_edge e
-	JOIN abom_node dn ON dn.row_id = e.dst_node_row_id
+	FROM abom_edge_live e
+	JOIN abom_node_live dn ON dn.row_id = e.dst_node_row_id
 	JOIN repository rep ON rep.row_id = e.repository_row_id
 	LEFT JOIN abom_finding f
 	       ON f.repository_row_id = e.repository_row_id
@@ -103,7 +107,11 @@ const pinningMeasures = `COUNT(*),
 	COALESCE(SUM(CASE WHEN flagged = 0 AND is_commit = 0 THEN 1 ELSE 0 END), 0)`
 
 // where builds the filter clause shared by every level.
-func (f PinningFilter) where(parentColumn, parent string) (string, []any) {
+//
+// `bound` is the grouping restriction, already resolved by the store, and is applied here with
+// everything else so it lands before the GROUP BY and the measures are recomputed rather than
+// narrowed after the fact.
+func (f PinningFilter) where(parentColumn, parent, bound string, boundArgs []any) (string, []any) {
 	clauses := []string{}
 	args := []any{}
 
@@ -112,6 +120,10 @@ func (f PinningFilter) where(parentColumn, parent string) (string, []any) {
 	if parentColumn != "" && parent != "" {
 		clauses = append(clauses, parentColumn+" = ?")
 		args = append(args, parent)
+	}
+	if bound != "" {
+		clauses = append(clauses, bound)
+		args = append(args, boundArgs...)
 	}
 	if f.Search != "" {
 		// Matched against the whole path so filtering by an action name still narrows the
@@ -142,6 +154,10 @@ func (s *Store) PinningLevel(scope, parent string, f PinningFilter, limit int) (
 	if err != nil {
 		return nil, err
 	}
+	bound, boundArgs, err := s.restrictClause(f.Scope, "repo_key")
+	if err != nil {
+		return nil, err
+	}
 
 	var key, label, parentColumn, group string
 	switch scope {
@@ -164,7 +180,7 @@ func (s *Store) PinningLevel(scope, parent string, f PinningFilter, limit int) (
 		selected += ", '', ''"
 	}
 
-	where, args := f.where(parentColumn, parent)
+	where, args := f.where(parentColumn, parent, bound, boundArgs)
 	query := `WITH ` + pinnableReferences + `
 		SELECT ` + selected + `, ` + pinningMeasures + `
 		FROM ref` + where + `
@@ -195,7 +211,11 @@ func ownerOfKey(key string) string {
 
 // PinningTotals is the same measurement across everything the filter admits.
 func (s *Store) PinningTotals(f PinningFilter) (PinningRow, error) {
-	where, args := f.where("", "")
+	bound, boundArgs, err := s.restrictClause(f.Scope, "repo_key")
+	if err != nil {
+		return PinningRow{}, err
+	}
+	where, args := f.where("", "", bound, boundArgs)
 	args = append([]any{OriginSeed}, args...)
 
 	row := s.db.QueryRow(`WITH `+pinnableReferences+`

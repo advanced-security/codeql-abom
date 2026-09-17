@@ -20,12 +20,7 @@ import (
 
 // fixtureEdges is real `codeql bqrs decode --format=json` output. Regenerate with:
 //
-//	codeql database create --language=actions \
-//	    --source-root=ql/actions/abom/test/AbomEdges /tmp/abom-fixture-db
-//	codeql query run --database=/tmp/abom-fixture-db --output=/tmp/edges.bqrs \
-//	    ql/actions/abom/src/AbomEdges.ql
-//	codeql bqrs decode --format=json \
-//	    --output=internal/expand/testdata/abom-edges.json /tmp/edges.bqrs
+//	.github/skills/regenerate-abom-fixtures/scripts/regen-edges-fixture.sh
 //
 // Hand-written BQRS is not a substitute. Edge identity includes source location, so invented
 // tuples that share a line silently collapse into one edge and hide whatever is under test.
@@ -40,26 +35,91 @@ type harness struct {
 	store    *store.Store
 	queue    *frontier.Queue
 	expander *Expander
+	probe    *harnessProbe
 
 	mu       sync.Mutex
 	fetched  []string
 	built    []string
+	queried  []string
 	fetchErr map[string]error
 }
 
-func (h *harness) Fetch(_ context.Context, dest, owner, repo string) (Tree, error) {
+// harnessProbe answers what a reference points at without a fetch, agreeing with what Fetch
+// reports so the pre-check and the checkout cannot disagree by construction.
+type harnessProbe struct {
+	mu      sync.Mutex
+	asked   []string
+	moved   string
+	content string
+	failed  bool
+}
+
+// state is the commit every reference resolves to and the content found there. Empty commit
+// means "whatever the repository's own default is", which is what an unmoved corpus looks like.
+func (p *harnessProbe) state() (string, string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	content := p.content
+	if content == "" {
+		content = "name: ci\n"
+	}
+	return p.moved, content
+}
+
+func (p *harnessProbe) Resolve(_ context.Context, owner, repo, ref string) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.asked = append(p.asked, owner+"/"+repo+"@"+ref)
+	if p.failed {
+		return "", errTransient
+	}
+	if p.moved != "" {
+		return p.moved, nil
+	}
+	return "sha-" + repo, nil
+}
+
+func (p *harnessProbe) moveEverythingTo(sha string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.moved = sha
+}
+
+// rewriteContent changes what a fetch finds, which is what a rebuild has to depend on.
+func (p *harnessProbe) rewriteContent(body string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.content = body
+}
+
+func (p *harnessProbe) failEverything() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.failed = true
+}
+
+func (h *harness) Fetch(_ context.Context, dest, owner, repo, ref string) (Tree, error) {
 	h.mu.Lock()
 	full := owner + "/" + repo
 	h.fetched = append(h.fetched, full)
 	err := h.fetchErr[full]
+	sha, content := h.probe.state()
 	h.mu.Unlock()
 	if err != nil {
 		return Tree{}, err
 	}
-	if err := os.MkdirAll(dest, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dest, ".github", "workflows"), 0o755); err != nil {
 		return Tree{}, err
 	}
-	return Tree{Dir: dest, Ref: "HEAD", SHA: "sha-" + repo}, nil
+	// Real content, so a commit can move without it changing and the two can be told apart.
+	if err := os.WriteFile(
+		filepath.Join(dest, ".github", "workflows", "ci.yml"), []byte(content), 0o644); err != nil {
+		return Tree{}, err
+	}
+	if sha == "" {
+		sha = "sha-" + repo
+	}
+	return Tree{Dir: dest, Ref: "HEAD", SHA: sha}, nil
 }
 
 func (h *harness) CreateDatabase(_ context.Context, srcDir, dbDir, _ string) error {
@@ -69,11 +129,22 @@ func (h *harness) CreateDatabase(_ context.Context, srcDir, dbDir, _ string) err
 	return os.MkdirAll(dbDir, 0o755)
 }
 
-func (h *harness) RunQuery(_ context.Context, _, _, outputPath string) error {
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
-		return err
+func (h *harness) RunQueries(
+	_ context.Context, _ string, queryPaths []string,
+) (map[string]string, error) {
+	out := make(map[string]string, len(queryPaths))
+	dir := h.t.TempDir()
+	for _, q := range queryPaths {
+		h.mu.Lock()
+		h.queried = append(h.queried, q)
+		h.mu.Unlock()
+		bqrs := filepath.Join(dir, filepath.Base(q)+".bqrs")
+		if err := os.WriteFile(bqrs, []byte("bqrs"), 0o644); err != nil {
+			return nil, err
+		}
+		out[q] = bqrs
 	}
-	return os.WriteFile(outputPath, []byte("bqrs"), 0o644)
+	return out, nil
 }
 
 // decode stands in for the CodeQL decoder by serving the recorded query output.
@@ -99,6 +170,7 @@ func newHarness(t *testing.T) *harness {
 	h := &harness{
 		t: t, store: s,
 		queue:    &frontier.Queue{Store: s, MaxDepth: 3},
+		probe:    &harnessProbe{},
 		fetchErr: map[string]error{},
 	}
 	w := store.NewWriter(s, 0)
@@ -108,6 +180,7 @@ func newHarness(t *testing.T) *harness {
 		Ingester: ingest.New(s, w),
 		Writer:   w,
 		Fetcher:  h,
+		Probe:    h.probe,
 		Builder:  h,
 		CodeQL:   h,
 		Decode:   h.decode,
@@ -134,7 +207,43 @@ func (h *harness) run(limit int) Stats {
 	return stats
 }
 
+// enqueue puts items in the queue and declares their accounts.
+//
+// A directly enqueued item is a root, and since 2026-09-07 roots come from the declared scope —
+// `SeedFrontier` produces nothing else. Declaring here is what this helper always meant by "a
+// repository under review"; use enqueueUnowned to queue something deliberately outside it.
 func (h *harness) enqueue(items ...frontier.Item) {
+	h.t.Helper()
+	h.own(items...)
+	h.enqueueUnowned(items...)
+}
+
+// own adds each item's account to the declaration without discarding what is already there.
+func (h *harness) own(items ...frontier.Item) {
+	h.t.Helper()
+	declared, err := h.store.OwnedScope()
+	if err != nil {
+		h.t.Fatalf("OwnedScope: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, a := range declared {
+		seen[strings.ToLower(a.Owner)] = true
+	}
+	for _, it := range items {
+		if it.Owner == "" || seen[strings.ToLower(it.Owner)] {
+			continue
+		}
+		seen[strings.ToLower(it.Owner)] = true
+		declared = append(declared, store.DeclaredAccount{
+			Owner: it.Owner, Kind: store.AccountOrganization, Enabled: true,
+		})
+	}
+	if err := h.store.SetOwnedScope(declared, store.DeclaredByCLI); err != nil {
+		h.t.Fatalf("SetOwnedScope: %v", err)
+	}
+}
+
+func (h *harness) enqueueUnowned(items ...frontier.Item) {
 	h.t.Helper()
 	if _, err := h.queue.Enqueue(items); err != nil {
 		h.t.Fatalf("Enqueue: %v", err)
@@ -167,6 +276,16 @@ func queuedDepth(t *testing.T, s *store.Store, key string) (int, bool) {
 		return 0, false
 	}
 	return depth, true
+}
+
+func queuedSupplyChain(t *testing.T, s *store.Store, key string) string {
+	t.Helper()
+	var chain string
+	if err := s.DB().QueryRow(
+		`SELECT supply_chain FROM abom_frontier WHERE node_key=?`, key).Scan(&chain); err != nil {
+		t.Fatalf("reading supply_chain for %s: %v", key, err)
+	}
+	return chain
 }
 
 // Several actions commonly live in one repository, and cloning plus building a database once
@@ -279,39 +398,217 @@ func TestExpandEnqueuesNewlyDiscoveredDependencies(t *testing.T) {
 	}
 }
 
-// An upstream repository's own CI is not part of any consumer's supply chain, so following its
-// dependencies would spend expansion budget on repositories nobody under review depends on.
-func TestExpandIgnoresDependenciesOfUnreferencedUpstreamCI(t *testing.T) {
+// Local references resolve inside the repository being analyzed rather than becoming new work:
+// `./.github/actions/greet` is already part of the tree that was just cloned.
+func TestExpandDoesNotQueueLocalReferencesAsNewRepositories(t *testing.T) {
 	h := newHarness(t)
 	h.enqueue(item("octo", "composite", "", 1))
 
-	stats := h.run(10)
+	h.run(10)
 
-	if stats.Discovered != 0 {
-		t.Errorf("Discovered = %d, want none: nothing references this repository's workflows",
-			stats.Discovered)
-	}
-	if _, ok := queuedDepth(t, h.store, "actions/checkout"); ok {
-		t.Error("queued a dependency reachable only through an upstream repository's own CI")
+	for _, key := range []string{"./.github/actions/greet", "./.github/workflows/reusable.yml"} {
+		if _, ok := queuedDepth(t, h.store, key); ok {
+			t.Errorf("%s was enqueued, but a local path names nothing to fetch", key)
+		}
 	}
 }
 
-// The fixture references the same action at two different refs. Identity is the action, not the
-// ref, so it is one unit of work rather than two.
-func TestExpandQueuesAnActionOnceAcrossRefs(t *testing.T) {
+// A composite action's own steps run inside whoever calls the action, so what they pull in has
+// to be followed. Requiring some *other* repository to reference the container first dropped
+// these: on the real corpus 93 runtime dependencies were never analyzed, including
+// chef/common-github-actions' azure-login pulling lancemccarthy/akeyless-action.
+//
+// Following is a separate question from how they are labeled, which is why this asserts only
+// that they are queued.
+func TestExpandFollowsACompositeActionsOwnSteps(t *testing.T) {
+	h := newHarness(t)
+	h.enqueue(item("octo", "composite", "", 1))
+
+	h.run(10)
+
+	for _, want := range []string{"actions/cache", "actions/setup-python"} {
+		if _, ok := queuedDepth(t, h.store, want); !ok {
+			t.Errorf("%s was not enqueued: a composite action's steps run for every caller", want)
+		}
+	}
+}
+
+// "Runs for every caller" is a claim about callers, so it needs one. Once a repository under
+// review names the composite action, its steps run inside that repository and what they pull in
+// is executed here.
+func TestACompositeActionsStepsAreRuntimeOnceSomethingUnderReviewCallsIt(t *testing.T) {
+	h := newHarness(t)
+	h.enqueue(item("octo", "composite", "", 1))
+	h.referencedFromSeed("org/app", "octo/composite/.github/actions/greet")
+
+	h.run(10)
+
+	for _, want := range []string{"actions/cache", "actions/setup-python"} {
+		if chain := queuedSupplyChain(t, h.store, want); chain != frontier.SupplyChainRuntime {
+			t.Errorf("%s supply_chain = %q, want %q",
+				want, chain, frontier.SupplyChainRuntime)
+		}
+	}
+}
+
+// The same steps, with nobody under review calling the action holding them. Being inside a
+// `runs:` block says they run for whoever invokes it, not that anyone here does — and a rule
+// that read the edge kind alone carried that claim one hop past its evidence.
+func TestACompositeActionNothingUnderReviewCallsIsBuildTime(t *testing.T) {
+	h := newHarness(t)
+	h.enqueue(item("octo", "composite", "", 1))
+
+	h.run(10)
+
+	if chain := queuedSupplyChain(t, h.store, "actions/cache"); chain != frontier.SupplyChainBuild {
+		t.Errorf("supply_chain = %q, want %q while nothing under review calls the action",
+			chain, frontier.SupplyChainBuild)
+	}
+}
+
+// An upstream project's own CI is still followed, because compromising a release pipeline is how
+// a consumer gets a malicious version. It is labeled, not skipped: it is not executed by anyone
+// under review, and reporting it as though it were would overstate what runs here.
+func TestExpandLabelsUpstreamCIAsBuildTime(t *testing.T) {
+	h := newHarness(t)
+	h.enqueue(item("octo", "composite", "", 1))
+
+	h.run(10)
+
+	if _, ok := queuedDepth(t, h.store, "actions/setup-node"); !ok {
+		t.Fatal("actions/setup-node was not enqueued from the repository's own CI")
+	}
+	if chain := queuedSupplyChain(t, h.store, "actions/setup-node"); chain != frontier.SupplyChainBuild {
+		t.Errorf("supply_chain = %q, want %q", chain, frontier.SupplyChainBuild)
+	}
+}
+
+// Once something under review calls the workflow, its steps are executed by that caller, so the
+// same dependency is runtime rather than build-time. The stronger claim has to win, or the order
+// repositories happen to be analyzed in would decide how a dependency is reported.
+func TestExpandUpgradesBuildTimeToRuntimeWhenSomethingCallsIt(t *testing.T) {
 	h := newHarness(t)
 	h.enqueue(item("octo", "composite", "", 1))
 	h.referencedFromSeed("org/app", "octo/composite/.github/workflows/main.yml")
 
 	h.run(10)
 
-	var n int
-	if err := h.store.DB().QueryRow(
-		`SELECT COUNT(*) FROM abom_frontier WHERE node_key='actions/checkout'`).Scan(&n); err != nil {
-		t.Fatalf("counting: %v", err)
+	if chain := queuedSupplyChain(t, h.store, "actions/setup-node"); chain != frontier.SupplyChainRuntime {
+		t.Errorf("supply_chain = %q, want %q once a repository under review calls the workflow",
+			chain, frontier.SupplyChainRuntime)
 	}
-	if n != 1 {
-		t.Errorf("actions/checkout queued %d times, want 1", n)
+}
+
+// Discovery only enqueues when a repository is analyzed, so a change to what counts as a
+// dependency reaches an already-analyzed database only if something re-analyzes it — and on a
+// drained queue nothing ever does. The sweep re-applies the current rule to what is already
+// known, which is what makes a rule change take effect without re-cloning the world.
+func TestSweepEnqueuesWhatTheCurrentRuleNowAdmits(t *testing.T) {
+	h := newHarness(t)
+	h.enqueue(item("octo", "composite", "", 1))
+	h.referencedFromSeed("org/app", "octo/composite/.github/actions/greet")
+	h.run(10)
+
+	// Forget the discoveries, keeping the analyzed repository and its edges, so the sweep has
+	// the same starting point as a database analyzed under an older rule.
+	if _, err := h.store.DB().Exec(
+		`DELETE FROM abom_frontier WHERE node_key LIKE 'actions/%'`); err != nil {
+		t.Fatalf("clearing discoveries: %v", err)
+	}
+	if _, ok := queuedDepth(t, h.store, "actions/cache"); ok {
+		t.Fatal("fixture setup failed: the discovery is still queued")
+	}
+
+	n, err := SweepDiscoveries(h.store, h.queue)
+	if err != nil {
+		t.Fatalf("SweepDiscoveries: %v", err)
+	}
+	if n == 0 {
+		t.Error("the sweep enqueued nothing, so a rule change could never reach an existing database")
+	}
+	if _, ok := queuedDepth(t, h.store, "actions/cache"); !ok {
+		t.Error("actions/cache was not recovered by the sweep")
+	}
+	if chain := queuedSupplyChain(t, h.store, "actions/cache"); chain != frontier.SupplyChainRuntime {
+		t.Errorf("supply_chain = %q, want %q", chain, frontier.SupplyChainRuntime)
+	}
+}
+
+// Running it twice must not keep finding work, or a drained queue would never stay drained and
+// the loop would spin re-offering the same dependencies for ever.
+func TestSweepIsIdempotent(t *testing.T) {
+	h := newHarness(t)
+	h.enqueue(item("octo", "composite", "", 1))
+	h.run(10)
+
+	if _, err := SweepDiscoveries(h.store, h.queue); err != nil {
+		t.Fatalf("first sweep: %v", err)
+	}
+	n, err := SweepDiscoveries(h.store, h.queue)
+	if err != nil {
+		t.Fatalf("second sweep: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("second sweep enqueued %d, want none", n)
+	}
+}
+
+// Enqueue may only ever strengthen a classification, so tightening the rule cannot on its own
+// correct a row an older, looser rule already labeled runtime. On the reference corpus 254 rows
+// were stuck that way, and re-crawling would not have moved one of them.
+func TestReclassifyingCorrectsALabelAnOlderRuleLeftBehind(t *testing.T) {
+	h := newHarness(t)
+	h.enqueue(item("octo", "composite", "", 1))
+	h.run(10)
+
+	if _, err := h.store.DB().Exec(
+		`UPDATE abom_frontier SET supply_chain = ? WHERE node_key = 'actions/cache'`,
+		frontier.SupplyChainRuntime); err != nil {
+		t.Fatalf("staging a stale label: %v", err)
+	}
+
+	if _, err := ReclassifySupplyChain(h.store, h.queue); err != nil {
+		t.Fatalf("ReclassifySupplyChain: %v", err)
+	}
+
+	if chain := queuedSupplyChain(t, h.store, "actions/cache"); chain != frontier.SupplyChainBuild {
+		t.Errorf("supply_chain = %q, want %q: nothing under review calls the action holding it",
+			chain, frontier.SupplyChainBuild)
+	}
+}
+
+// The fixture references the same action at two different refs. Each ref is its own tree, its own
+// database and its own findings, so each is its own unit of work — the action is the identity in
+// the graph, and the reference is the identity of the analysis.
+func TestExpandQueuesAnActionOncePerRef(t *testing.T) {
+	h := newHarness(t)
+	h.enqueue(item("octo", "composite", "", 1))
+	h.referencedFromSeed("org/app", "octo/composite/.github/workflows/main.yml")
+
+	h.run(10)
+
+	rows, err := h.store.DB().Query(
+		`SELECT ref FROM abom_frontier WHERE node_key='actions/checkout' ORDER BY ref`)
+	if err != nil {
+		t.Fatalf("reading refs: %v", err)
+	}
+	defer rows.Close()
+	var refs []string
+	for rows.Next() {
+		var ref string
+		if err := rows.Scan(&ref); err != nil {
+			t.Fatalf("scanning: %v", err)
+		}
+		refs = append(refs, ref)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("reading refs: %v", err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("actions/checkout queued as %v, want one row per referenced ref", refs)
+	}
+	if refs[0] == refs[1] {
+		t.Errorf("both rows are %q, so the refs were collapsed after all", refs[0])
 	}
 }
 

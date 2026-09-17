@@ -1,0 +1,24 @@
+@* The headline figure tile: label above, number, qualifier below.
+   Pinning and Discovery both drew this, with different markup and different type. *@
+
+<MudPaper Class="pa-4" Elevation="0" Outlined="true">
+    <MudText Typo="Typo.overline" Class="mud-text-secondary">@Label</MudText>
+    <MudText Typo="Typo.h4" Class="abom-num">@Value</MudText>
+    @if (ChildContent is not null)
+    {
+        @ChildContent
+    }
+    else if (!string.IsNullOrEmpty(Note))
+    {
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">@Note</MudText>
+    }
+</MudPaper>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public string Value { get; set; } = string.Empty;
+
+    /// <summary>What the figure does not say on its own.</summary>
+    [Parameter] public string? Note { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

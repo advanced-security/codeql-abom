@@ -33,7 +33,7 @@ func TestListRepositoriesPaginates(t *testing.T) {
 		t.Fatalf("ListRepositories: %v", err)
 	}
 	want := []string{"octo-org/a", "octo-org/b", "octo-org/c"}
-	if strings.Join(repos, ",") != strings.Join(want, ",") {
+	if strings.Join(names(repos), ",") != strings.Join(want, ",") {
 		t.Errorf("got %v, want %v", repos, want)
 	}
 }
@@ -52,7 +52,7 @@ func TestListRepositoriesSkipsArchived(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListRepositories: %v", err)
 	}
-	if len(repos) != 1 || repos[0] != "octo-org/a" {
+	if len(repos) != 1 || repos[0].FullName != "octo-org/a" {
 		t.Errorf("got %v, want [octo-org/a]", repos)
 	}
 }

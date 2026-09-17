@@ -1,0 +1,32 @@
+@using Abom.WebAssembly.Services
+
+@* Where a thing lives, above what it is called.
+   One line holding "owner/repo/.github/workflows/ci.yml" is 57 characters of which the reader
+   needs the last six to tell the row apart, and it was pushing the counts off the edge of the
+   table. Stacking keeps both facts and costs the column the width of the wider one. *@
+<MudTooltip Text="@Reference">
+    <span class="abom-id">
+        @if (Identity.Repository.Length > 0)
+        {
+            <span class="abom-id-where">@Identity.Repository</span>
+        }
+        @if (Href is { Length: > 0 })
+        {
+            <MudLink Href="@Href" Class="abom-rule">@Identity.Name</MudLink>
+        }
+        else
+        {
+            <span class="abom-rule">@Identity.Name</span>
+        }
+    </span>
+</MudTooltip>
+
+@code {
+    /// <summary>The whole key. Shown on hover, and split for display.</summary>
+    [Parameter, EditorRequired] public string Reference { get; set; } = "";
+
+    /// <summary>Where the name links to. Omitted, the name is plain text.</summary>
+    [Parameter] public string? Href { get; set; }
+
+    private KeyText.Identity Identity => KeyText.Split(Reference);
+}

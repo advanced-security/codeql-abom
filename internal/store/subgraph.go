@@ -125,7 +125,7 @@ func (s *Store) walk(opts SubgraphOptions) (Subgraph, error) {
 	out := Subgraph{Focus: opts.Focus, Granularity: opts.Granularity}
 
 	var focusID int64
-	err := s.db.QueryRow(`SELECT row_id FROM abom_node WHERE node_key = ?`, opts.Focus).Scan(&focusID)
+	err := s.db.QueryRow(`SELECT row_id FROM abom_node_live WHERE node_key = ?`, opts.Focus).Scan(&focusID)
 	if err == sql.ErrNoRows {
 		out.Nodes, out.Edges = []SubgraphNode{}, []SubgraphEdge{}
 		return out, nil
@@ -214,11 +214,11 @@ type neighbor struct {
 
 func (v *subgraphWalk) neighbors(node int64) ([]neighbor, error) {
 	// A displayed node stands for its members, so their edges are its edges.
-	members := `SELECT ? UNION SELECT row_id FROM abom_node WHERE container_node_row_id = ?`
+	members := `SELECT ? UNION SELECT row_id FROM abom_node_live WHERE container_node_row_id = ?`
 	if v.opts.Granularity == GranularityRepository {
-		members = `SELECT ? UNION SELECT row_id FROM abom_node
+		members = `SELECT ? UNION SELECT row_id FROM abom_node_live
 		           WHERE repository_row_id = (
-		                 SELECT repository_row_id FROM abom_node WHERE row_id = ?)`
+		                 SELECT repository_row_id FROM abom_node_live WHERE row_id = ?)`
 	}
 
 	var parts []string
@@ -226,7 +226,7 @@ func (v *subgraphWalk) neighbors(node int64) ([]neighbor, error) {
 	add := func(side, other string, outgoing int) {
 		parts = append(parts, fmt.Sprintf(`
 			SELECT e.%s, e.edge_kind, COALESCE(e.ref_value, ''), %d
-			FROM abom_edge e
+			FROM abom_edge_live e
 			WHERE e.%s IN (%s)`, other, outgoing, side, members))
 		args = append(args, node, node)
 	}
@@ -302,9 +302,9 @@ func (v *subgraphWalk) resolveDisplay(id int64) (int64, error) {
 		var repoNode sql.NullInt64
 		err := v.store.db.QueryRow(`
 			SELECT owner.row_id
-			FROM abom_node n
+			FROM abom_node_live n
 			JOIN repository r ON r.row_id = n.repository_row_id
-			JOIN abom_node owner ON owner.node_kind = 'repo'
+			JOIN abom_node_live owner ON owner.node_kind = 'repo'
 			                    AND owner.repository_row_id = r.row_id
 			WHERE n.row_id = ?`, id).Scan(&repoNode)
 		if err != nil && err != sql.ErrNoRows {
@@ -324,7 +324,7 @@ func (v *subgraphWalk) resolveDisplay(id int64) (int64, error) {
 		var kind string
 		var container sql.NullInt64
 		err := v.store.db.QueryRow(
-			`SELECT node_kind, container_node_row_id FROM abom_node WHERE row_id = ?`, current).
+			`SELECT node_kind, container_node_row_id FROM abom_node_live WHERE row_id = ?`, current).
 			Scan(&kind, &container)
 		if err != nil {
 			return 0, fmt.Errorf("resolving container of %d: %w", current, err)
@@ -400,7 +400,7 @@ func (v *subgraphWalk) node(id int64) (SubgraphNode, error) {
 		SELECT n.node_key, n.node_kind, r.repository_full_name, r.origin, n.path, n.is_external,
 		       COALESCE(b.dependent_repos, 0),
 		       (SELECT COUNT(*) FROM abom_finding_node fn WHERE fn.node_row_id = n.row_id)
-		FROM abom_node n
+		FROM abom_node_live n
 		LEFT JOIN repository r ON r.row_id = n.repository_row_id
 		LEFT JOIN abom_blast_radius b ON b.node_row_id = n.row_id
 		WHERE n.row_id = ?`, id).

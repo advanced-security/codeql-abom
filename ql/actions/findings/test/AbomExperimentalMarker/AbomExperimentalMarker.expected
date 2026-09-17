@@ -1,0 +1,4 @@
+| .github/actions/greet/action.yml:1:1:19:49 | name: Greet | ABOM experimental marker for a composite action. |
+| .github/workflows/calls-reusable.yml:9:5:9:60 | Job: delegate | ABOM experimental marker for job 'delegate'. |
+| .github/workflows/two-jobs.yml:6:5:11:2 | Job: build | ABOM experimental marker for job 'build'. |
+| .github/workflows/two-jobs.yml:12:5:15:26 | Job: test | ABOM experimental marker for job 'test'. |

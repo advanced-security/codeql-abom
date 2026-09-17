@@ -3,29 +3,71 @@ package catalog
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // reposPerPage is the maximum GitHub allows, chosen because enumerating a 20,000 repository
 // organization costs one request per page and pages are the only lever available.
 const reposPerPage = 100
 
-// ListRepositories returns the non-archived repositories in an organization.
+// Repository is what the listing already tells us about a repository.
+//
+// DefaultBranch is empty when GitHub named none, which it does for a repository with no commits.
+// Empty is "nobody said", never a stand-in for `main`: naming a branch on the repository's behalf
+// would invent the fact the field exists to carry.
+type Repository struct {
+	FullName      string
+	DefaultBranch string
+	// CreatedAt and PushedAt are what a sorted read stops below. Zero means GitHub named none,
+	// which a repository with no commits genuinely has: it was created and never pushed, and
+	// that is the case the creation-ordered walk exists for.
+	CreatedAt time.Time
+	PushedAt  time.Time
+	// Properties is what the organization administers about this repository, one entry per value
+	// so that a multi-select property is several rows rather than a string somebody has to parse.
+	Properties []PropertyValue
+	// PropertiesTruncated says the answer could not carry them all. Properties is then empty on
+	// purpose: a partial dividing line puts a repository in the wrong unit, which is worse than
+	// having no line at all.
+	PropertiesTruncated bool
+}
+
+// ListRepositories returns the non-archived repositories an account holds.
+//
+// A declaration names accounts, and an account is an organization or a person. GitHub keeps those
+// on different endpoints and answers 404 for the wrong one, so an organization is tried first and
+// a user second — an organization asked through the user endpoint gets an answer, with the wrong
+// list, which is worse than an error.
 //
 // Code scanning endpoints are per-repository, so this enumeration is the first of two
 // repository-scoped passes: this one to discover repositories, then one lookup each to find
 // which of them actually have a CodeQL database.
-func (c *Client) ListRepositories(ctx context.Context, org string) ([]string, error) {
-	if org == "" || strings.ContainsAny(org, "/?#") {
-		return nil, fmt.Errorf("organization %q is not a valid name", org)
+func (c *Client) ListRepositories(ctx context.Context, account string) ([]Repository, error) {
+	if account == "" || strings.ContainsAny(account, "/?#") {
+		return nil, fmt.Errorf("account %q is not a valid name", account)
 	}
 
-	next := fmt.Sprintf("%s/orgs/%s/repos?per_page=%d&type=all",
-		c.baseURL, url.PathEscape(org), reposPerPage)
+	repos, err := c.listRepositoriesFrom(ctx, fmt.Sprintf("%s/orgs/%s/repos?per_page=%d&type=all",
+		c.baseURL, url.PathEscape(account), reposPerPage), account)
+	if err == nil {
+		return repos, nil
+	}
+	if !errors.Is(err, ErrNoDatabase) {
+		return nil, err
+	}
+	// Not an organization. `type=all` is not a parameter the user endpoint takes.
+	return c.listRepositoriesFrom(ctx, fmt.Sprintf("%s/users/%s/repos?per_page=%d",
+		c.baseURL, url.PathEscape(account), reposPerPage), account)
+}
 
-	var repos []string
+func (c *Client) listRepositoriesFrom(
+	ctx context.Context, next, account string,
+) ([]Repository, error) {
+	var repos []Repository
 	for next != "" {
 		resp, err := c.do(ctx, next, "application/vnd.github+json")
 		if err != nil {
@@ -35,10 +77,12 @@ func (c *Client) ListRepositories(ctx context.Context, org string) ([]string, er
 		var page []struct {
 			FullName string `json:"full_name"`
 			Archived bool   `json:"archived"`
+			// Already in this payload, so knowing it costs no additional request.
+			DefaultBranch string `json:"default_branch"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
 			resp.Body.Close()
-			return nil, fmt.Errorf("decoding repository page for %s: %w", org, err)
+			return nil, fmt.Errorf("decoding repository page for %s: %w", account, err)
 		}
 		link := resp.Header.Get("Link")
 		resp.Body.Close()
@@ -49,7 +93,8 @@ func (c *Client) ListRepositories(ctx context.Context, org string) ([]string, er
 			if r.Archived || r.FullName == "" {
 				continue
 			}
-			repos = append(repos, r.FullName)
+			repos = append(repos, Repository{
+				FullName: r.FullName, DefaultBranch: r.DefaultBranch})
 		}
 		next = nextLink(link)
 	}

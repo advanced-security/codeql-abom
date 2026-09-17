@@ -2,213 +2,146 @@ package store
 
 import "testing"
 
-// The whole point of the declaration. An account can hold a repository that was analyzed and
-// still be one nobody here controls: the actions account owns actions/cache, which arrives as a
-// seed, and no operator can change it.
-func TestInScopeOwnerIsNotOwnedUntilDeclared(t *testing.T) {
-	s := subgraphFixture(t)
-
-	owned, err := s.OwnedSet()
-	if err != nil {
-		t.Fatalf("OwnedSet: %v", err)
-	}
-	if len(owned) != 0 {
-		t.Fatalf("nothing was declared, yet %d accounts report as owned", len(owned))
-	}
-
-	candidates, err := s.OwnerCandidates()
-	if err != nil {
-		t.Fatalf("OwnerCandidates: %v", err)
-	}
-	if len(candidates) == 0 {
-		t.Fatal("no candidates; the fixture holds seed repositories")
-	}
-	for _, c := range candidates {
-		if c.Owned {
-			t.Errorf("%s is suggested as owned before anything was declared", c.Owner)
-		}
-	}
-}
-
-// Declaring an account says who can act. It must not touch how repositories entered the corpus.
-func TestDeclaringAnOwnerLeavesRepositoryOriginAlone(t *testing.T) {
-	s := subgraphFixture(t)
-
-	before := originCounts(t, s)
-	if err := s.SetOwnedOrgs([]string{"octo-org"}); err != nil {
-		t.Fatalf("SetOwnedOrgs: %v", err)
-	}
-	after := originCounts(t, s)
-
-	for origin, n := range before {
-		if after[origin] != n {
-			t.Errorf("origin %s went from %d to %d repositories after a declaration",
-				origin, n, after[origin])
-		}
-	}
-}
-
-func originCounts(t *testing.T, s *Store) map[string]int {
+// ownedRow queues a dependency belonging to a named account, which is what decides its tier
+// regardless of how far from a seed it was reached.
+func ownedRow(t *testing.T, st *Store, key, owner string, depth int) {
 	t.Helper()
-	rows, err := s.DB().Query(`SELECT origin, COUNT(*) FROM repository GROUP BY origin`)
-	if err != nil {
-		t.Fatalf("reading origins: %v", err)
-	}
-	defer rows.Close()
-	out := map[string]int{}
-	for rows.Next() {
-		var origin string
-		var n int
-		if err := rows.Scan(&origin, &n); err != nil {
-			t.Fatalf("scanning origin: %v", err)
-		}
-		out[origin] = n
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("reading origins: %v", err)
-	}
-	return out
-}
-
-// GitHub does not distinguish account names by case, so neither may the declaration.
-func TestOwnedOrgsIgnoreCaseAndDuplicates(t *testing.T) {
-	s := subgraphFixture(t)
-
-	if err := s.SetOwnedOrgs([]string{"Octo-Org", "octo-org", "  ", "OCTO-ORG"}); err != nil {
-		t.Fatalf("SetOwnedOrgs: %v", err)
-	}
-	owners, err := s.OwnedOrgs()
-	if err != nil {
-		t.Fatalf("OwnedOrgs: %v", err)
-	}
-	if len(owners) != 1 {
-		t.Fatalf("declared one account four ways, stored %d: %v", len(owners), owners)
-	}
-
-	owned, err := s.OwnedSet()
-	if err != nil {
-		t.Fatalf("OwnedSet: %v", err)
-	}
-	if !owned["octo-org"] {
-		t.Error("membership test is case-sensitive; it must not be")
+	if _, err := st.DB().Exec(`
+		INSERT INTO abom_frontier (node_key, owner, repo, depth, status, score, enqueued_at,
+			analysis_count, resolved_sha)
+		VALUES (?, ?, ?, ?, 'done', 1, '2026-01-01T00:00:00Z', 1, 'sha')`,
+		key, owner, key, depth); err != nil {
+		t.Fatalf("inserting %s: %v", key, err)
 	}
 }
 
-// With nothing declared the feature has to be invisible: every page reads as it did before.
-func TestNothingDeclaredMeansNothingIsDivided(t *testing.T) {
-	s := subgraphFixture(t)
-
-	declared, err := s.Declared()
-	if err != nil {
-		t.Fatalf("Declared: %v", err)
-	}
-	if declared {
-		t.Error("a fresh database reports a declaration")
-	}
-
-	if err := s.SetOwnedOrgs([]string{"octo-org"}); err != nil {
-		t.Fatalf("SetOwnedOrgs: %v", err)
-	}
-	if declared, _ = s.Declared(); !declared {
-		t.Error("declared an account, still reports none")
-	}
-
-	// Clearing has to return the corpus to undivided, or the feature is one-way.
-	if err := s.SetOwnedOrgs(nil); err != nil {
-		t.Fatalf("SetOwnedOrgs(nil): %v", err)
-	}
-	if declared, _ = s.Declared(); declared {
-		t.Error("cleared the declaration, still reports one")
-	}
-}
-
-// The declaration says who can act. Deriving it from anything the corpus already knows would
-// make it a measurement, and the whole point is that it cannot be measured: an account can hold
-// analyzed repositories and still be one nobody here controls.
-func TestOwnershipIsDeclaredRatherThanDerived(t *testing.T) {
-	s := newTestStore(t)
-
-	cols, err := s.DB().Query(`SELECT name FROM pragma_table_info('abom_owned_org')`)
-	if err != nil {
-		t.Fatalf("reading columns: %v", err)
-	}
-	defer cols.Close()
-
-	got := map[string]bool{}
-	for cols.Next() {
-		var name string
-		if err := cols.Scan(&name); err != nil {
-			t.Fatalf("scanning column: %v", err)
-		}
-		got[name] = true
-	}
-	if err := cols.Err(); err != nil {
-		t.Fatalf("reading columns: %v", err)
-	}
-
-	// A column tying the declaration to how a repository entered the corpus would let the two
-	// notions be read as one.
-	for _, forbidden := range []string{"origin", "is_seed", "seed", "derived", "in_scope"} {
-		if got[forbidden] {
-			t.Errorf("abom_owned_org carries %q, which makes the declaration derivable", forbidden)
-		}
-	}
-	if !got["owner"] {
-		t.Error("abom_owned_org has no owner column")
-	}
-}
-
-// Migrating a database built when findings-per-rule were cached must discard that table.
+// declares states that the accounts are the operator's, which is what decides the owned tier.
 //
-// It held nothing that could not be counted from abom_finding on demand, and a cache of a count
-// can only ever be right or stale. Dropping it is safe precisely because it was derived.
-func TestMigrateDiscardsTheCachedFindingRollup(t *testing.T) {
-	s := newTestStore(t)
-
-	if _, err := s.DB().Exec(`
-		CREATE TABLE abom_pinning (
-		  scope_kind TEXT NOT NULL, scope_key TEXT NOT NULL, rule_id TEXT NOT NULL,
-		  findings INTEGER NOT NULL, references_total INTEGER NOT NULL,
-		  PRIMARY KEY (scope_kind, scope_key, rule_id))`); err != nil {
-		t.Fatalf("recreating the old shape: %v", err)
+// It replaced `verifies` on 2026-09-07. Every test below still protects what it always did —
+// ownership beats depth, the tiers are exclusive, a requeue takes what it counted — and only the
+// source of ownership moved, from what `gh` says you belong to, to what you have said is yours.
+func declares(t *testing.T, st *Store, owners ...string) {
+	t.Helper()
+	accounts := make([]DeclaredAccount, 0, len(owners))
+	for _, o := range owners {
+		accounts = append(accounts, DeclaredAccount{
+			Owner: o, Kind: AccountOrganization, Enabled: true,
+		})
 	}
-	if _, err := s.DB().Exec(
-		`INSERT INTO abom_pinning VALUES ('org','','actions/unpinned-tag',3,15736)`); err != nil {
-		t.Fatalf("seeding: %v", err)
-	}
-
-	if err := s.Migrate(); err != nil {
-		t.Fatalf("Migrate over the old shape: %v", err)
-	}
-
-	var n int
-	err := s.DB().QueryRow(
-		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='abom_pinning'`).Scan(&n)
-	if err != nil {
-		t.Fatalf("inspecting: %v", err)
-	}
-	if n != 0 {
-		t.Error("the cached rollup survived the migration")
+	if err := st.SetOwnedScope(accounts, DeclaredByCLI); err != nil {
+		t.Fatalf("SetOwnedScope: %v", err)
 	}
 }
 
-// Migrate runs on every subcommand, so it has to be safe to repeat.
-func TestMigrateIsRepeatable(t *testing.T) {
-	s := newTestStore(t)
-
-	for i := range 3 {
-		if err := s.Migrate(); err != nil {
-			t.Fatalf("Migrate %d: %v", i, err)
-		}
+func verifies(t *testing.T, st *Store, owners ...string) {
+	t.Helper()
+	accounts := make([]Account, 0, len(owners))
+	for _, o := range owners {
+		accounts = append(accounts, Account{Owner: o, Kind: "organization", Role: "member"})
 	}
-
-	var tables int
-	if err := s.DB().QueryRow(
-		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'abom_%'`).
-		Scan(&tables); err != nil {
-		t.Fatalf("counting tables: %v", err)
+	if err := st.ReplaceAccounts(Verification{
+		Login: "octocat", Host: "github.com", Accounts: accounts,
+	}); err != nil {
+		t.Fatalf("ReplaceAccounts: %v", err)
 	}
-	if tables == 0 {
-		t.Error("repeated migration left no abom tables")
+}
+
+// What a reader can do about a dependency is the whole point of the split, and owning it is a
+// different answer from naming it. Depth cannot express that: a dependency you own is reached at
+// whatever distance the graph happens to place it.
+func TestOwnershipDecidesTheTierRegardlessOfDepth(t *testing.T) {
+	st := newTestStore(t)
+	declares(t, st, "octo-org")
+	ownedRow(t, st, "near", "octo-org", 1)
+	ownedRow(t, st, "far", "octo-org", 4)
+	ownedRow(t, st, "theirs", "someone-else", 1)
+
+	counts, err := st.TierCounts()
+	if err != nil {
+		t.Fatalf("TierCounts: %v", err)
+	}
+	if counts[TierOwned].Total != 2 {
+		t.Errorf("owned = %d, want both of the operator's own regardless of depth",
+			counts[TierOwned].Total)
+	}
+	if counts[TierDirect].Total != 1 {
+		t.Errorf("direct = %d, want only the dependency nobody here owns", counts[TierDirect].Total)
+	}
+}
+
+// The columns are exclusive, so a dependency counted in two of them makes the totals exceed the
+// queue and the cost stated on a re-analyze button becomes a lie.
+func TestEveryQueuedDependencyLandsInExactlyOneTier(t *testing.T) {
+	st := newTestStore(t)
+	declares(t, st, "octo-org")
+	ownedRow(t, st, "mine-near", "octo-org", 1)
+	ownedRow(t, st, "mine-far", "octo-org", 3)
+	ownedRow(t, st, "direct", "someone-else", 1)
+	ownedRow(t, st, "transitive", "someone-else", 2)
+
+	counts, err := st.TierCounts()
+	if err != nil {
+		t.Fatalf("TierCounts: %v", err)
+	}
+	total := counts[TierOwned].Total + counts[TierDirect].Total + counts[TierTransitive].Total
+	if total != 4 {
+		t.Errorf("the tiers hold %d of 4 dependencies, so they overlap or drop one", total)
+	}
+}
+
+// GitHub treats account names case-insensitively, so a differently-cased owner is the same owner
+// and must not fall out of the tier the operator can act on.
+func TestOwnershipIgnoresCase(t *testing.T) {
+	st := newTestStore(t)
+	declares(t, st, "Octo-Org")
+	ownedRow(t, st, "mine", "octo-org", 1)
+
+	counts, err := st.TierCounts()
+	if err != nil {
+		t.Fatalf("TierCounts: %v", err)
+	}
+	if counts[TierOwned].Total != 1 {
+		t.Errorf("owned = %d, want the differently-cased account to match", counts[TierOwned].Total)
+	}
+}
+
+// Requeueing has to select the same rows the count promised, or the button spends a different
+// amount of work than the number beside it.
+func TestRequeueingTheOwnedTierTakesWhatItCounted(t *testing.T) {
+	st := newTestStore(t)
+	declares(t, st, "octo-org")
+	ownedRow(t, st, "mine", "octo-org", 3)
+	ownedRow(t, st, "theirs", "someone-else", 3)
+
+	n, err := st.RequeueTier(TierOwned)
+	if err != nil {
+		t.Fatalf("RequeueTier: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("requeued %d, want only the owned dependency", n)
+	}
+	if got := statusOfKey(t, st, "theirs"); got != "done" {
+		t.Errorf("a transitive dependency was requeued as owned (%q)", got)
+	}
+}
+
+// With nothing verified the operator owns nothing that anything established, so the tier is empty
+// rather than absent from the map: a caller asking for the count of a tier that exists gets zero,
+// and it is the interface that decides not to draw a column it cannot justify.
+func TestWithNoVerifiedAccountsNothingIsOwned(t *testing.T) {
+	st := newTestStore(t)
+	ownedRow(t, st, "near", "octo-org", 1)
+	ownedRow(t, st, "far", "octo-org", 4)
+
+	counts, err := st.TierCounts()
+	if err != nil {
+		t.Fatalf("TierCounts: %v", err)
+	}
+	if counts[TierOwned].Total != 0 {
+		t.Errorf("owned = %d with nothing verified, want 0", counts[TierOwned].Total)
+	}
+	if counts[TierDirect].Total != 1 || counts[TierTransitive].Total != 1 {
+		t.Errorf("direct/transitive = %d/%d, want the split to read as it did before accounts",
+			counts[TierDirect].Total, counts[TierTransitive].Total)
 	}
 }

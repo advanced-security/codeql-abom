@@ -1,0 +1,23 @@
+- description: Experimental Actions queries, ABOM's own and upstream's
+
+# Separate from `abom-findings.qls` so that what ABOM reports by default and what it reports to
+# seed a corpus are two decisions. A finding from here carries an `abom/experimental/` rule id,
+# which is what lets a consumer tell it from an upstream one and drop it.
+#
+# The point of the suite is coverage rather than security: a repository with no upstream findings
+# produces nothing, and nothing is indistinguishable from a repository nobody analyzed. Seeding a
+# marker per job gives the ingest, attribution and interface paths something real to carry without
+# waiting for a corpus that happens to have problems in it.
+
+# This pack's own queries. `.` is exact while every query here is experimental; a query that
+# graduates into the default suite gets an explicit filter rather than a second pack.
+- queries: .
+
+# Upstream's experimental set. Precision is a property of the rule, and a consumer filtering on
+# rule id can always drop these — whereas a finding never collected cannot be recovered.
+#
+# Pinned exactly rather than by range: without `version:` the CLI resolves the most recent pack,
+# so the set of rules ABOM attributes could change with no commit here.
+- queries: experimental
+  from: codeql/actions-queries
+  version: 0.6.35

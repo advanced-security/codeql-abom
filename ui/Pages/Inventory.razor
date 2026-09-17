@@ -1,132 +1,998 @@
 @page "/inventory"
+@implements IDisposable
 @inject AbomApi Api
 @inject NavigationManager Nav
+@inject ScopeService Scope
+@inject ThemeService Theme
 
-<PageTitle>Actions &amp; Workflows — ABOM</PageTitle>
+<PageTitle>Inventory — ABOM</PageTitle>
 
-<MudText Typo="Typo.h5"><h1 style="all:unset;">Actions &amp; Workflows</h1></MudText>
-<MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">
-    Every external dependency the organization reaches, widest reach first. The advisory count
-    is how many published advisories name the action's repository — not a claim that the
-    references below fall inside them.
-</MudText>
+@* The heading follows the unit. A third unit added while this asked about two put advisories
+   under a paragraph about external dependencies, and every test stayed green. *@
+<PageHeader Title="@UnitLabel(_unit)">
+    @if (_unit == UnitRepositories)
+    {
+        @("The repositories you own, most findings first. Advisory routes are split because only " +
+          "the direct ones are this repository's own to close — the rest wait on an intermediary.")
+    }
+    else if (_unit == UnitAdvisories)
+    {
+        @("Published advisories that reach something you own, ranked by severity against how many " +
+          "repositories reach them. The rank is a scheduling aid, not a judgement: both inputs " +
+          "stay on screen so you can disagree with it.")
+    }
+    else if (_unit == UnitWorkflows)
+    {
+        @("The workflows and reusable workflows in your repositories, most findings first. These " +
+          "are what runs, so they are measured by what they contain and what they reach out to — " +
+          "nothing depends on a workflow, which is why reach is not a column here.")
+    }
+    else if (_unit == UnitJobs)
+    {
+        @("Every job, privileged ones first. A job is where permissions, the runner and the " +
+          "triggering events are decided, so these are recorded against the job rather than " +
+          "inferred from the workflow around it.")
+    }
+    else
+    {
+        @("Every action, composite action and image the organization depends on, widest reach " +
+          "first. Origin says whose each one is. The advisory count is how many published " +
+          "advisories name the component's repository, not a claim that the references below " +
+          "fall inside them.")
+    }
+</PageHeader>
 
-<MudTextField T="string" Value="_search" ValueChanged="OnSearch" Immediate="false"
-              DebounceInterval="400" Placeholder="Filter by name" Variant="Variant.Outlined"
-              Margin="Margin.Dense" Adornment="Adornment.Start"
-              AdornmentIcon="@Icons.Material.Filled.Search" Class="mb-3" Style="max-width:420px;" />
+@* One scope bar. Five stacked control rows put the first data row at y=580 of a 900px viewport,
+   so the named views became a menu and the unit switch became the tab strip below. *@
+<div class="abom-scopebar d-flex flex-wrap align-center gap-2 mb-2">
+    <SearchField Value="@_search" ValueChanged="OnSearch" Placeholder="Filter by name" />
 
-@if (_loading)
+    @* A view is a predicate, so choosing one sets the scope rather than navigating anywhere.
+       Chips rather than a menu, for the reason the exports are not in one either: MudMenu renders
+       its items only once opened, so what is on offer is neither discoverable nor checkable. One
+       this unit cannot draw is disabled with the reason, since the refusal it would otherwise
+       raise arrives one click too late to help. *@
+    <div class="abom-views d-flex flex-wrap align-center gap-1" data-abom-views="1">
+        @foreach (var view in _views)
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                     Color="@(IsSelected(view) ? Color.Primary : Color.Default)"
+                     Class="@(IsSelected(view) ? "abom-view-selected" : null)"
+                     Disabled="@(view.ListingRefuses.Count > 0)"
+                     title="@Undrawable(view)"
+                     OnClick="@(() => ChooseView(view))"
+                     data-abom-view="@view.Name">@view.Label</MudChip>
+            @* A built-in is code: the server refuses to delete it, so offering the control would
+               be an affordance that cannot work. *@
+            @if (!view.Builtin)
+            {
+                <MudIconButton Size="Size.Small" Icon="@Icons.Material.Outlined.Close"
+                               aria-label="@($"Forget {view.Label}")"
+                               OnClick="@(() => ForgetView(view))"
+                               data-abom-forget-view="@view.Name" />
+            }
+        }
+    </div>
+
+    <MudTextField T="string" @bind-Value="_scopeName" Placeholder="Name this scope"
+                  Immediate="true" Margin="Margin.Dense"
+                  Variant="Variant.Outlined" Class="abom-scope-name"
+                  data-abom-scope-name="1" />
+    <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
+               StartIcon="@Icons.Material.Outlined.BookmarkAdd" OnClick="SaveScope"
+               Disabled="@(_scopeName.Trim().Length == 0 || Scope.ToQueryString().Length == 0)"
+               data-abom-save-scope="1">Keep</MudButton>
+
+    <MudSpacer />
+
+    @* An action belongs to the scope, not to a page of its own. *@
+    <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
+               StartIcon="@Icons.Material.Outlined.Description"
+               Href="@($"/bom?{Scope.ToQueryString()}")" data-abom-action="bom-preview">
+        Bill of materials
+    </MudButton>
+    <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
+               StartIcon="@Icons.Material.Outlined.Inventory2"
+               Href="@BomUrl("cyclonedx")" Target="_blank" data-abom-action="bom-cyclonedx">
+        CycloneDX
+    </MudButton>
+    <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
+               StartIcon="@Icons.Material.Outlined.Inventory2"
+               Href="@BomUrl("spdx")" Target="_blank" data-abom-action="bom-spdx">
+        SPDX
+    </MudButton>
+    <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
+               StartIcon="@Icons.Material.Outlined.Hub"
+               Href="@($"/explore?{Scope.ToQueryString()}")" data-abom-action="open-in-explorer">
+        Show these in the graph
+    </MudButton>
+</div>
+
+@* The surface that owns the scope carries the control that builds it. Without this, a property
+   scope arriving in the address narrowed every count on screen and said nothing about doing so. *@
+<ScopeControl Changed="OnScopeControlChanged" />
+
+@if (_writeError is { Length: > 0 } wrote)
 {
-    <MudProgressLinear Indeterminate="true" />
+    <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true" Class="mb-3">
+        This scope could not be saved: @wrote
+    </MudAlert>
 }
-else
+
+@if (_refusal is { Length: > 0 } refused)
 {
-    <MudDataGrid T="ActionSummary" Items="_items" Dense="true" Hover="true"
-                 SortMode="SortMode.Multiple" Filterable="false" RowsPerPage="30"
-                 Class="abom-grid">
+    <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true" Class="mb-3">@refused</MudAlert>
+}
+
+@* One scope, reprojected. A unit is a node kind and its columns are its own: listing workflows
+   through the actions grid drew reach, total refs and distinct refs as zero for 1,107 of 1,585
+   rows, because a workflow is a consumer and nothing depends on it. *@
+<div class="abom-units d-flex flex-wrap align-center gap-1 mb-3" role="tablist">
+    @foreach (var (key, label) in Units)
+    {
+        <MudButton Size="Size.Small" DropShadow="false"
+                   Variant="@(_unit == key ? Variant.Filled : Variant.Text)"
+                   Color="@(_unit == key ? Color.Primary : Color.Default)"
+                   Class="@(_unit == key ? "abom-unit-selected" : null)"
+                   OnClick="@(() => ChooseUnit(key))"
+                   data-abom-unit="@key">@label</MudButton>
+    }
+</div>
+
+@if (_unit == UnitDependencies)
+{
+<MudDataGrid T="ActionSummary" ServerData="LoadPage" @ref="_grid" Dense="true" Hover="true"
+             Bordered="false" SortMode="SortMode.Single" Filterable="false" RowsPerPage="30"
+             ShowColumnOptions="false" Class="abom-grid">
+    <Columns>
+        <PropertyColumn Property="x => x.NodeKey" Title="Name">
+            <CellTemplate>
+                @* A name goes to the thing itself. The graph is a pivot you choose, not
+                   somewhere a list drops you. *@
+                <IdentityCell Reference="@context.Item.NodeKey"
+                              Href="@($"/node/{Uri.EscapeDataString(context.Item.NodeKey)}")" />
+            </CellTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Kind" Title="Type">
+            <CellTemplate>
+                <MudText Typo="Typo.caption">@TypeLabel(context.Item.Kind)</MudText>
+            </CellTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Origin" Title="Origin">
+            <CellTemplate>
+                <MudText Typo="Typo.caption">
+                    @(context.Item.Origin switch
+                    {
+                        "seed" => "starting point",
+                        "upstream" => "upstream",
+                        _ => "external",
+                    })
+                </MudText>
+            </CellTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.DependentRepos" Title="Repos reached" />
+        <PropertyColumn Property="x => x.DirectDependents" Title="Total refs" />
+
+        @* One action pinned at forty commits is forty upgrade decisions, which a total
+           reference count hides entirely. *@
+        <PropertyColumn Property="x => x.DistinctRefs" Title="Distinct refs">
+            <CellTemplate>
+                <MudTooltip Text="How many different references point at this. Each one is a separate decision to make.">
+                    <span class="abom-num">@context.Item.DistinctRefs</span>
+                </MudTooltip>
+            </CellTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Findings" Title="Findings" />
+
+        <PropertyColumn Property="x => x.Advisories" Title="Advisories">
+            <CellTemplate>
+                @if (context.Item.Advisories > 0)
+                {
+                    <MudTooltip Text="Published advisories naming this repository. Compare the ranges against the references before concluding anything.">
+                        <span class="abom-num">@context.Item.Advisories</span>
+                    </MudTooltip>
+                }
+                else
+                {
+                    <span class="abom-faint">0</span>
+                }
+            </CellTemplate>
+        </PropertyColumn>
+
+        @* Whether the dependency itself was expanded decides if anything downstream is known. *@
+        <PropertyColumn Property="x => x.Analyzed" Title="Analyzed">
+            <CellTemplate>
+                @if (context.Item.Analyzed)
+                {
+                    <MudText Typo="Typo.caption">yes</MudText>
+                }
+                else
+                {
+                    <MudTooltip Text="This dependency has not been analyzed, so whatever it pulls in is missing from this interface.">
+                        <MudText Typo="Typo.caption" Class="abom-coverage-unknown">not yet</MudText>
+                    </MudTooltip>
+                }
+            </CellTemplate>
+        </PropertyColumn>
+    </Columns>
+    <PagerContent>
+        <MudDataGridPager T="ActionSummary" />
+    </PagerContent>
+</MudDataGrid>
+}
+
+@* A workflow's columns are about what it contains and what it reaches out to, never about being
+   reached: nothing depends on a workflow, which is why it left the actions grid. *@
+@if (_unit == UnitWorkflows)
+{
+    <MudDataGrid T="WorkflowRow" ServerData="LoadWorkflows" @ref="_workflowGrid" Dense="true"
+                 Hover="true" Bordered="false" SortMode="SortMode.Single" Filterable="false"
+                 RowsPerPage="30" ShowColumnOptions="false" Class="abom-grid">
         <Columns>
-            <PropertyColumn Property="x => x.NodeKey" Title="Name">
+            <PropertyColumn Property="x => x.NodeKey" Title="Workflow">
                 <CellTemplate>
-                    @* A name goes to the thing itself. The graph is a pivot you choose, not
-                       somewhere a list drops you. *@
-                    <MudLink Href="@($"/node/{context.Item.NodeKey}")" Class="abom-rule">
-                        @context.Item.NodeKey
-                    </MudLink>
-                </CellTemplate>
-            </PropertyColumn>
-
-            <PropertyColumn Property="x => x.Kind" Title="Type">
-                <CellTemplate>
-                    <MudText Typo="Typo.caption">@TypeLabel(context.Item.Kind)</MudText>
-                </CellTemplate>
-            </PropertyColumn>
-
-            <PropertyColumn Property="x => x.Origin" Title="Origin">
-                <CellTemplate>
-                    <MudText Typo="Typo.caption">
-                        @(context.Item.Origin switch
-                        {
-                            "seed" => "in scope",
-                            "upstream" => "upstream",
-                            _ => "external",
-                        })
-                    </MudText>
-                </CellTemplate>
-            </PropertyColumn>
-
-            <PropertyColumn Property="x => x.DependentRepos" Title="Repos reached" />
-            <PropertyColumn Property="x => x.DirectDependents" Title="Total refs" />
-
-            @* One action pinned at forty commits is forty upgrade decisions, which a total
-               reference count hides entirely. *@
-            <PropertyColumn Property="x => x.DistinctRefs" Title="Distinct refs">
-                <CellTemplate>
-                    <MudTooltip Text="How many different references point at this. Each one is a separate decision to make.">
-                        <span style="font-variant-numeric:tabular-nums;">@context.Item.DistinctRefs</span>
+                    <MudTooltip Text="@context.Item.Path">
+                        <MudLink Href="@($"/node/{Uri.EscapeDataString(context.Item.NodeKey)}")"
+                                 Class="abom-rule abom-trunc">@WorkflowLabel(context.Item)</MudLink>
                     </MudTooltip>
                 </CellTemplate>
             </PropertyColumn>
-
+            <PropertyColumn Property="x => x.Repository" Title="Repository" />
+            <PropertyColumn Property="x => x.Triggers" Title="Runs on">
+                <CellTemplate>
+                    @if (context.Item.Triggers.Length > 0)
+                    {
+                        @* Space after each comma so the list wraps between events. *@
+                        <span class="abom-ref abom-triggers">@context.Item.Triggers.Replace(",", ", ")</span>
+                    }
+                    else
+                    {
+                        @* Absent is not "no triggers": nothing stated them for this workflow. *@
+                        <MudTooltip Text="Nothing recorded the events for this workflow.">
+                            <span class="abom-coverage-unknown">not recorded</span>
+                        </MudTooltip>
+                    }
+                </CellTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Jobs" Title="Jobs" />
+            <PropertyColumn Property="x => x.Steps" Title="Steps" />
+            <PropertyColumn Property="x => x.Dependencies" Title="Dependencies" />
+            @* A count, not a flag: two of nine privileged jobs is a different situation from nine
+               of nine, and a yes/no reports them alike. *@
+            <PropertyColumn Property="x => x.PrivilegedJobs" Title="Privileged jobs">
+                <CellTemplate>
+                    @if (context.Item.PrivilegedJobs > 0)
+                    {
+                        <MudTooltip Text="@($"{context.Item.PrivilegedJobs} of {context.Item.Jobs} jobs run with write access or secrets.")">
+                            <span class="abom-num">@context.Item.PrivilegedJobs</span>
+                        </MudTooltip>
+                    }
+                    else
+                    {
+                        <span class="abom-faint">0</span>
+                    }
+                </CellTemplate>
+            </PropertyColumn>
             <PropertyColumn Property="x => x.Findings" Title="Findings" />
-
-            <PropertyColumn Property="x => x.Advisories" Title="Advisories">
-                <CellTemplate>
-                    @if (context.Item.Advisories > 0)
-                    {
-                        <MudTooltip Text="Published advisories naming this repository. Compare the ranges against the references before concluding anything.">
-                            <span style="font-variant-numeric:tabular-nums;">@context.Item.Advisories</span>
-                        </MudTooltip>
-                    }
-                    else
-                    {
-                        <span style="opacity:0.35;">0</span>
-                    }
-                </CellTemplate>
-            </PropertyColumn>
-
-            @* Whether the dependency itself was expanded decides if anything downstream is known. *@
-            <PropertyColumn Property="x => x.Analyzed" Title="Analyzed">
-                <CellTemplate>
-                    @if (context.Item.Analyzed)
-                    {
-                        <MudText Typo="Typo.caption">yes</MudText>
-                    }
-                    else
-                    {
-                        <MudTooltip Text="This dependency has not been expanded, so whatever it pulls in is not represented anywhere in this interface.">
-                            <MudText Typo="Typo.caption" Class="abom-coverage-unknown">not yet</MudText>
-                        </MudTooltip>
-                    }
-                </CellTemplate>
-            </PropertyColumn>
         </Columns>
         <PagerContent>
-            <MudDataGridPager T="ActionSummary" />
+            <MudDataGridPager T="WorkflowRow" />
         </PagerContent>
     </MudDataGrid>
 }
 
-@code {
-    private IReadOnlyList<ActionSummary> _items = [];
-    private string _search = string.Empty;
-    private bool _loading = true;
+@* Every fact the extraction records about a job is recorded against the job, so nothing here is
+   aggregated and nothing is inferred from a sibling. *@
+@if (_unit == UnitJobs)
+{
+    <MudDataGrid T="JobRow" ServerData="LoadJobs" @ref="_jobGrid" Dense="true"
+                 Hover="true" Bordered="false" SortMode="SortMode.Single" Filterable="false"
+                 RowsPerPage="30" ShowColumnOptions="false" Class="abom-grid">
+        <Columns>
+            <PropertyColumn Property="x => x.JobId" Title="Job" />
+            <PropertyColumn Property="x => x.Workflow" Title="Workflow">
+                <CellTemplate>
+                    <IdentityCell Reference="@context.Item.Workflow"
+                                  Href="@($"/node/{Uri.EscapeDataString(context.Item.Workflow)}")" />
+                </CellTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.RunsOn" Title="Runner">
+                <CellTemplate>
+                    @if (context.Item.RunsOn.Length > 0)
+                    {
+                        <span class="abom-ref abom-nowrap">@context.Item.RunsOn</span>
+                    }
+                    else
+                    {
+                        @* A job that calls a reusable workflow has no runner of its own: the
+                           called workflow decides. Blank would read as "no runner". *@
+                        <MudTooltip Text="This job calls another workflow, which chooses the runner.">
+                            <span class="abom-faint">decided elsewhere</span>
+                        </MudTooltip>
+                    }
+                </CellTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Privileged" Title="Privileged">
+                <CellTemplate>
+                    @if (context.Item.Privileged)
+                    {
+                        <MudTooltip Text="This job can write to the repository or read its secrets.">
+                            <span class="abom-num">yes</span>
+                        </MudTooltip>
+                    }
+                    else
+                    {
+                        <span class="abom-faint">no</span>
+                    }
+                </CellTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.ExternallyTriggerable" Title="Externally triggerable">
+                <CellTemplate>
+                    <span class="@(context.Item.ExternallyTriggerable ? "abom-num" : "abom-faint")">
+                        @(context.Item.ExternallyTriggerable ? "yes" : "no")
+                    </span>
+                </CellTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.PermissionsScope" Title="Permissions set at" />
+            <PropertyColumn Property="x => x.Steps" Title="Steps" />
+            <PropertyColumn Property="x => x.Dependencies" Title="Dependencies" />
+            <PropertyColumn Property="x => x.Findings" Title="Findings" />
+        </Columns>
+        <PagerContent>
+            <MudDataGridPager T="JobRow" />
+        </PagerContent>
+    </MudDataGrid>
+}
 
+@if (_unit == UnitRepositories)
+{
+    <MudDataGrid T="RepositorySummary" ServerData="LoadRepositories" @ref="_repoGrid" Dense="true"
+                 Hover="true" Bordered="false" SortMode="SortMode.Single" Filterable="false"
+                 RowsPerPage="30" ShowColumnOptions="false" Class="abom-grid">
+        <Columns>
+            <PropertyColumn Property="x => x.FullName" Title="Repository">
+                <CellTemplate>
+                    <MudLink Href="@($"/inventory?unit=repositories&q={Uri.EscapeDataString(context.Item.FullName)}")" Class="abom-rule">
+                        @context.Item.FullName
+                    </MudLink>
+                </CellTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Workflows" Title="Workflows" />
+            <PropertyColumn Property="x => x.Dependencies" Title="Dependencies" />
+            <PropertyColumn Property="x => x.Findings" Title="Findings" />
+            @* Direct is the half this repository can fix itself; the rest wait on an
+               intermediary, and collapsing the two would say every route is theirs to close. *@
+            <PropertyColumn Property="x => x.DirectExposures" Title="Direct advisory routes" />
+            <PropertyColumn Property="x => x.Exposures" Title="All advisory routes" />
+        </Columns>
+        <PagerContent>
+            <MudDataGridPager T="RepositorySummary" />
+        </PagerContent>
+    </MudDataGrid>
+}
+
+@if (_unit == UnitAdvisories)
+{
+    <MudDataGrid T="RemediationItem" ServerData="LoadAdvisories" @ref="_advisoryGrid" Dense="true"
+                 Hover="true" Bordered="false" SortMode="SortMode.None" Filterable="false"
+                 RowsPerPage="30" ShowColumnOptions="false" Class="abom-grid">
+        <Columns>
+            <PropertyColumn Property="x => x.Priority" Title="Score">
+                <CellTemplate>
+                    <MudTooltip Text="Published severity multiplied by how many repositories reach it. CVSS and EPSS are context and are deliberately not part of this.">
+                        <span class="abom-num">@context.Item.Priority</span>
+                    </MudTooltip>
+                </CellTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Severity" Title="Severity">
+                <CellTemplate><SeverityChip Severity="@context.Item.Severity" /></CellTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.GhsaId" Title="Advisory">
+                <CellTemplate>
+                    <MudLink Href="@($"https://github.com/advisories/{context.Item.GhsaId}")"
+                             Target="_blank" Class="abom-rule">@context.Item.GhsaId</MudLink>
+                </CellTemplate>
+            </PropertyColumn>
+            @* Direct and transitive are different work: one is a version bump here, the other
+               waits on somebody else. One combined figure would say they are the same job. *@
+            <PropertyColumn Property="x => x.DirectRepos" Title="Direct" />
+            <PropertyColumn Property="x => x.TransitiveRepos" Title="Transitive" />
+            <PropertyColumn Property="x => x.Summary" Title="Summary" />
+        </Columns>
+        <PagerContent>
+            <MudDataGridPager T="RemediationItem" />
+        </PagerContent>
+    </MudDataGrid>
+
+    @* The exclusion is correct — these name actions only upstream repositories' own CI uses — and
+       it was invisible, which is how a critical one went missing between a strip and a table. *@
+    @if (_unreached > 0)
+    {
+        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1">
+            @_unreached.ToString("N0") more live @(_unreached == 1 ? "advisory names an action" :
+            "advisories name actions") nothing you own uses, so @(_unreached == 1 ? "it is" :
+            "they are") not listed here. Not a judgement that @(_unreached == 1 ? "it" : "they")
+            cannot matter — no route from anything you own reaches
+            @(_unreached == 1 ? "it" : "them") today.
+        </MudText>
+    }
+}
+
+@* What the crawl has reached and what it has not. Its columns are the queue's own — a state, the
+   tier it was claimed under, how far out it sits and what looked at it — none of which any other
+   unit carries. *@
+@if (_unit == UnitCoverage)
+{
+    <div class="d-flex align-center flex-wrap gap-1 mb-3" role="tablist">
+        @foreach (var (value, label) in CoverageStates)
+        {
+            <MudButton Size="Size.Small" DropShadow="false"
+                       Variant="@(_coverageState == value ? Variant.Filled : Variant.Text)"
+                       Color="@(_coverageState == value ? Color.Primary : Color.Default)"
+                       OnClick="@(() => ChooseCoverageState(value))"
+                       data-abom-coverage-state="@value">@label</MudButton>
+        }
+    </div>
+
+    @if (_coverageLoading)
+    {
+        <MudProgressLinear Indeterminate="true" Class="my-4" />
+    }
+    else
+    {
+        <MudDataGrid T="FrontierItem" Items="_coverage" Dense="true" Hover="true" Bordered="false"
+                     SortMode="SortMode.Single" Filterable="false" RowsPerPage="30"
+                     ShowColumnOptions="false" Class="abom-grid">
+            <Columns>
+                <PropertyColumn Property="x => x.NodeKey" Title="Dependency">
+                    <CellTemplate>
+                        <IdentityCell Reference="@context.Item.NodeKey"
+                                      Href="@($"/node/{Uri.EscapeDataString(context.Item.NodeKey)}")" />
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.State" Title="State">
+                    <CellTemplate>
+                        <span class="abom-status-cell">
+                            <span class="abom-state-dot mr-1"
+                                  style="--abom-state-color:@CoverageColor(context.Item.State)"></span>
+                            @CoverageStateLabel(context.Item.State)
+                        </span>
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.Tier" Title="Tier">
+                    <CellTemplate>
+                        <MudText Typo="Typo.caption">
+                            @(string.IsNullOrEmpty(context.Item.Tier) ? "—" : context.Item.Tier)
+                        </MudText>
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.Depth" Title="Hops" />
+                <PropertyColumn Property="x => x.Attempts" Title="Attempts">
+                    <CellTemplate>
+                        @if (context.Item.Attempts > 0)
+                        {
+                            <span class="abom-num">@context.Item.Attempts</span>
+                        }
+                        else
+                        {
+                            <span class="abom-faint">0</span>
+                        }
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.AnalyzedAt" Title="Last analyzed">
+                    <CellTemplate>
+                        @if (context.Item.AnalyzedAt is { Length: > 0 } at)
+                        {
+                            <MudText Typo="Typo.caption">@TimeText.DayAndTime(at)</MudText>
+                        }
+                        else
+                        {
+                            @* Nothing has analyzed it, so it has no date. A stand-in would be a
+                               measurement nobody took. *@
+                            <span class="abom-faint">—</span>
+                        }
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.Suites" Title="Analyzed with" Sortable="false">
+                    <CellTemplate>
+                        @if (context.Item.SuitesKnown)
+                        {
+                            <MudTooltip Text="@string.Join("\n", context.Item.Suites)">
+                                <span class="abom-rule">@CoverageSuites(context.Item)</span>
+                            </MudTooltip>
+                        }
+                        else
+                        {
+                            @* Analyzed before the suites that ran were recorded: unknown, not none. *@
+                            <MudTooltip Text="This row was analyzed before the suites that ran were recorded, so what looked at it is unknown. Re-analyzing it records them.">
+                                <span class="abom-coverage-unknown">not recorded</span>
+                            </MudTooltip>
+                        }
+                    </CellTemplate>
+                </PropertyColumn>
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="FrontierItem" />
+            </PagerContent>
+        </MudDataGrid>
+    }
+}
+
+@* Stated rather than implied by a pager: the grid used to hold 500 of 1,585 with nothing saying
+   so, and a column sorted inside that page answered about the page rather than about the estate. *@
+@if (_unit == UnitCoverage)
+{
+    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2">
+        Showing @_shown.ToString("N0")@(_shown >= CoverageCap
+            ? $" — the first {CoverageCap:N0} the crawl will claim, not the whole queue"
+            : ", which is all of them"), ordered by what the crawl will claim next.
+    </MudText>
+}
+else
+{
+    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2">
+        Showing @_shown.ToString("N0") of @_total.ToString("N0") matching, ordered by
+        @(_sort is { Length: > 0 } s ? ColumnLabel(s) : DefaultOrder(_unit)) across everything that
+        matched.
+    </MudText>
+}
+
+@* A zero that means "measured somewhere you are not looking" is indistinguishable from "nothing is
+   wrong" unless the page says where it matched. Every `actions/unpinned-tag` finding sits on a step
+   or job node, so the most important rule in the corpus answers 0 among the dependency kinds. *@
+@if (_elsewhere.Count > 0)
+{
+    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1">
+        This question also matches @ElsewhereText() — not listed here, because
+        @(_elsewhere.Count == 1 ? "that kind is" : "those kinds are") inside your workflows rather
+        than dependencies of them.
+        <MudLink Href="@ElsewhereHref()" Typo="Typo.caption">Show @(_elsewhere.Count == 1
+            ? TypeLabel(_elsewhere[0].Kind).ToLowerInvariant() : "them")</MudLink>
+    </MudText>
+}
+
+@code {
+    private const string UnitDependencies = "dependencies";
+    private const string UnitWorkflows = "workflows";
+    private const string UnitJobs = "jobs";
+    private const string UnitRepositories = "repositories";
+    private const string UnitAdvisories = "advisories";
+    private const string UnitCoverage = "coverage";
+
+    // Relationships is a unit too, and is not here yet: an edge has to carry its own identity
+    // before a reader can select one. See plans/db/edge-facts.md.
+    private static readonly (string Key, string Label)[] Units =
+    [
+        (UnitDependencies, "Actions"),
+        (UnitWorkflows, "Workflows"),
+        (UnitJobs, "Jobs"),
+        (UnitRepositories, "Repositories"),
+        (UnitAdvisories, "Advisories"),
+        (UnitCoverage, "Coverage"),
+    ];
+
+    private MudDataGrid<ActionSummary>? _grid;
+    private MudDataGrid<WorkflowRow>? _workflowGrid;
+    private MudDataGrid<JobRow>? _jobGrid;
+    private MudDataGrid<RepositorySummary>? _repoGrid;
+    private MudDataGrid<RemediationItem>? _advisoryGrid;
+    private IReadOnlyList<NamedView> _views = [];
+    private string _unit = UnitDependencies;
+    private string _search = string.Empty;
+    private string _scopeName = string.Empty;
+    private string? _writeError;
+    private string? _sort;
+    private string? _refusal;
+    private int _total;
+    private int _shown;
+    private int _unreached;
+    private IReadOnlyList<KindCount> _elsewhere = [];
+
+    // A tab is the one the scope already is, compared as canonical text. That comparison is the
+    // whole reason a built-in's predicate is stored canonical rather than however it was typed.
+    private bool IsSelected(NamedView view) => Scope.Spec.ToQueryString() == view.Predicate;
+
+    // What the scope bar marks as in force.
+    private NamedView? ActiveView => _views.FirstOrDefault(IsSelected);
+
+    private static readonly Dictionary<string, string> SortLabels = new()
+    {
+        ["nodeKey"] = "name",
+        ["kind"] = "type",
+        ["origin"] = "origin",
+        ["dependentRepos"] = "reach",
+        ["directDependents"] = "total refs",
+        ["distinctRefs"] = "distinct refs",
+        ["findings"] = "findings",
+        ["advisories"] = "advisories",
+        ["analyzed"] = "analyzed",
+    };
+
+    // The grid names a sort by its property; the endpoint names it by its own term. A name absent
+    // here is not sent at all, and the server refuses any term it does not have.
+    private static readonly Dictionary<string, string> SortTerms = new()
+    {
+        ["NodeKey"] = "nodeKey",
+        ["Kind"] = "kind",
+        ["Origin"] = "origin",
+        ["DependentRepos"] = "dependentRepos",
+        ["DirectDependents"] = "directDependents",
+        ["DistinctRefs"] = "distinctRefs",
+        ["Findings"] = "findings",
+        ["Advisories"] = "advisories",
+        ["Analyzed"] = "analyzed",
+    };
+
+    private static readonly Dictionary<string, string> RepositorySortTerms = new()
+    {
+        ["FullName"] = "fullName",
+        ["Workflows"] = "workflows",
+        ["Dependencies"] = "dependencies",
+        ["Findings"] = "findings",
+        ["Exposures"] = "exposures",
+        ["DirectExposures"] = "directExposures",
+    };
+
+    private static readonly Dictionary<string, string> WorkflowSortTerms = new()
+    {
+        ["NodeKey"] = "nodeKey",
+        ["Repository"] = "repository",
+        ["Triggers"] = "triggers",
+        ["Jobs"] = "jobs",
+        ["Steps"] = "steps",
+        ["Dependencies"] = "dependencies",
+        ["PrivilegedJobs"] = "privileged",
+        ["Findings"] = "findings",
+    };
+
+    private static readonly Dictionary<string, string> JobSortTerms = new()
+    {
+        ["JobId"] = "jobId",
+        ["Workflow"] = "workflow",
+        ["RunsOn"] = "runsOn",
+        ["Privileged"] = "privileged",
+        ["ExternallyTriggerable"] = "externally",
+        ["Steps"] = "steps",
+        ["Dependencies"] = "dependencies",
+        ["Findings"] = "findings",
+    };
+
+    private static string ColumnLabel(string sort) =>
+        SortLabels.TryGetValue(sort, out var l) ? l : sort;
+
+    // Named before the click rather than refused after it. The refusal that arrives on selecting a
+    // tab is correct and one click too late to be useful.
+    private static string Undrawable(NamedView view) =>
+        view.ListingRefuses.Count == 0
+            ? ""
+            : $"This list cannot narrow by {string.Join(", ", view.ListingRefuses)}. "
+              + "Open it in the Explorer.";
+
+    private string ElsewhereText() => string.Join(" and ", _elsewhere.Select(
+        e => $"{e.Count:N0} {TypeLabel(e.Kind).ToLowerInvariant()}{(e.Count == 1 ? "" : "s")}"));
+
+    // The same scope, naming the kinds it matched, so the reader arrives at the rows rather than at
+    // an empty grid a second time.
+    private string ElsewhereHref()
+    {
+        var kinds = "kinds=" + string.Join(",", _elsewhere.Select(e => e.Kind));
+        var scope = Scope.ToQueryString();
+        return "/inventory?" + (scope.Length > 0 ? kinds + "&" + scope : kinds);
+    }
+
+    private static string UnitLabel(string unit) =>
+        Units.FirstOrDefault(u => u.Key == unit).Label ?? "Actions";
+
+    // A workflow's key is its full path, which is unreadable at grid width; the repository is its
+    // own column, and every workflow in the corpus lives under the same directory, so neither is
+    // what tells this row from the next.
+    private static string WorkflowLabel(WorkflowRow w) =>
+        w.Path.Length > 0 ? KeyText.WorkflowFile(w.Path) : KeyText.Split(w.NodeKey).Name;
+
+    // Each endpoint has its own default, and the line under the grid has to name the one in force.
+    private static string DefaultOrder(string unit) => unit switch
+    {
+        UnitRepositories => "findings",
+        UnitAdvisories => "severity and reach",
+        UnitWorkflows => "findings",
+        UnitJobs => "whether the job is privileged",
+        UnitCoverage => "what the crawl will claim next",
+        _ => "reach",
+    };
     private static string TypeLabel(string kind) =>
         ThemeService.KindNames.TryGetValue(kind, out var n) ? n : kind;
 
-    protected override async Task OnInitializedAsync() => await Load();
+    // The export carries the scope on screen. One that ignored it would hand somebody a document
+    // about the whole organization under the name of one part.
+    private string BomUrl(string format) =>
+        AbomApi.BomDownloadUrl(format, properties: Scope.Spec.Properties.Select(p => p.ToString()));
 
-    private async Task Load()
+    // The unit is how the scope is being drawn rather than what it selects, so ScopeService leaves
+    // it alone and it travels as its own parameter.
+    [SupplyParameterFromQuery(Name = "unit")] public string? UnitParam { get; set; }
+
+    protected override void OnInitialized()
     {
-        _loading = true;
-        _items = await Api.GetActionsAsync(_search, 500);
-        _loading = false;
+        ReadAddress();
+        // Blazor keeps the component when only the query changes, so without this the address says
+        // one thing and the grid goes on answering the last one. Browser Back is the same gap.
+        Nav.LocationChanged += OnLocationChanged;
+    }
+
+    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
+
+    private void ReadAddress()
+    {
+        Scope.ReadFrom(Nav.Uri);
+        _search = Scope.Spec.Search;
+        _unit = Units.Any(u => u.Key == UnitParam) ? UnitParam! : UnitDependencies;
+    }
+
+    private async void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        var before = Scope.ToQueryString() + "&unit=" + _unit;
+        ReadAddress();
+        if (Scope.ToQueryString() + "&unit=" + _unit == before)
+        {
+            return;
+        }
+        StateHasChanged();
+        await Reload();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _views = await Api.GetViewsAsync();
+        // Every other unit is pulled by its grid's ServerData; this one has no server pager, so
+        // arriving straight at its address has to fetch it.
+        if (_unit == UnitCoverage)
+        {
+            await LoadCoverage();
+        }
+    }
+
+    /// <summary>Reprojects the same scope as a different shape.</summary>
+    private async Task ChooseUnit(string unit)
+    {
+        if (_unit == unit) return;
+        _unit = unit;
+        _sort = null;
+        Sync();
+        await Reload();
+    }
+
+    private void Sync()
+    {
+        var parts = new List<string> { $"unit={_unit}" };
+        var scope = Scope.ToQueryString();
+        if (scope.Length > 0) parts.Add(scope);
+        Nav.NavigateTo($"/inventory?{string.Join("&", parts)}",
+            new NavigationOptions { ReplaceHistoryEntry = true });
+    }
+
+    private async Task Reload()
+    {
+        if (_unit == UnitCoverage) await LoadCoverage();
+        else if (_unit == UnitRepositories && _repoGrid is not null) await _repoGrid.ReloadServerData();
+        else if (_unit == UnitAdvisories && _advisoryGrid is not null) await _advisoryGrid.ReloadServerData();
+        else if (_unit == UnitWorkflows && _workflowGrid is not null) await _workflowGrid.ReloadServerData();
+        else if (_unit == UnitJobs && _jobGrid is not null) await _jobGrid.ReloadServerData();
+        else if (_grid is not null) await _grid.ReloadServerData();
+    }
+
+    // The frontier answers with a capped list and no total, so this unit states the cap rather
+    // than a figure it was never given. Every other unit is paged by the server.
+    private const int CoverageCap = 500;
+
+    private IReadOnlyList<FrontierItem> _coverage = [];
+    private string _coverageState = "";
+    private bool _coverageLoading;
+
+    private static readonly (string Value, string Label)[] CoverageStates =
+    [
+        ("", "All"),
+        ("done", "Analyzed"),
+        ("queued", "Queued"),
+        ("running", "Discovering"),
+        ("retrying", "Retrying"),
+        ("unavailable", "Unavailable"),
+    ];
+
+    private async Task LoadCoverage()
+    {
+        _coverageLoading = true;
+        _coverage = [];
+        StateHasChanged();
+        _coverage = await Api.GetFrontierAsync(_coverageState, top: CoverageCap);
+        _shown = _coverage.Count;
+        _total = _coverage.Count;
+        _coverageLoading = false;
+    }
+
+    private async Task ChooseCoverageState(string state)
+    {
+        _coverageState = state;
+        await LoadCoverage();
+    }
+
+    private static string CoverageStateLabel(string state) => state switch
+    {
+        "done" => "analyzed",
+        "running" => "discovering",
+        _ => state,
+    };
+
+    private string CoverageColor(string state) =>
+        Theme.Palette.Discovery.TryGetValue(state, out var c) ? c : Theme.Palette.Muted;
+
+    private static string CoverageSuites(FrontierItem item) =>
+        string.Join(", ", item.Suites.Select(s =>
+        {
+            var name = s.Split('@')[0].Split('/').LastOrDefault() ?? s;
+            return name.EndsWith(".qls", StringComparison.Ordinal) ? name[..^4] : name;
+        }));
+
+    /// <summary>
+    /// Loads a named view's predicate into the scope.
+    /// </summary>
+    ///
+    /// Its predicate rather than its name: the endpoint treats `?view=` as the whole question and
+    /// refuses it combined with anything else, so sending the name would refuse the next thing the
+    /// reader narrowed by.
+    private async Task ChooseView(NamedView view)
+    {
+        Scope.Set(ViewSpec.Parse(view.Predicate));
+        _search = Scope.Spec.Search;
+        Sync();
+        await Reload();
+    }
+
+    private async Task OnScopeControlChanged()
+    {
+        _search = Scope.Spec.Search;
+        Sync();
+        await Reload();
+    }
+
+    /// <summary>Keeps the scope on screen under a name, so it can be returned to as a tab.</summary>
+    private async Task SaveScope()
+    {
+        var saved = await Api.SaveViewAsync(_scopeName.Trim(), Scope.ToQueryString());
+        _writeError = saved is null ? Api.LastError : null;
+        if (saved is not null)
+        {
+            _views = saved;
+            _scopeName = string.Empty;
+        }
+    }
+
+    private async Task ForgetView(NamedView view)
+    {
+        var left = await Api.ForgetViewAsync(view.Name);
+        _writeError = left is null ? Api.LastError : null;
+        if (left is not null)
+        {
+            _views = left;
+        }
+    }
+
+    /// <summary>
+    /// Asks the server for one page, ordered across the whole match.
+    ///
+    /// The whole predicate is sent, including terms a listing cannot apply, because the endpoint
+    /// names those in its refusal and that name is the only thing that tells a reader why their
+    /// scope is not narrowing this screen. Deciding here which terms to drop would be a second
+    /// copy of the server's declaration, drifting quietly.
+    /// </summary>
+    private async Task<GridData<ActionSummary>> LoadPage(GridState<ActionSummary> state)
+    {
+        var sort = state.SortDefinitions.FirstOrDefault();
+        _sort = sort is not null && SortTerms.TryGetValue(sort.SortBy, out var term) ? term : null;
+
+        var (page, refusal) = await Api.GetActionsPageAsync(
+            Scope.Spec.ToQueryString(), state.PageSize, state.Page * state.PageSize,
+            _sort, sort?.Descending ?? false);
+
+        _refusal = refusal;
+        _total = page?.Total ?? 0;
+        _shown = page?.Items.Count ?? 0;
+        _elsewhere = page?.Elsewhere ?? [];
+        // The line stating what was left out sits outside the grid, and the grid re-renders only
+        // itself, so without this it keeps reporting the page before last.
+        StateHasChanged();
+        return new GridData<ActionSummary> { Items = page?.Items ?? [], TotalItems = _total };
+    }
+
+    /// <summary>One page of the workflows unit, with its own columns and its own endpoint.</summary>
+    private async Task<GridData<WorkflowRow>> LoadWorkflows(GridState<WorkflowRow> state)
+    {
+        var sort = state.SortDefinitions.FirstOrDefault();
+        _sort = sort is not null && WorkflowSortTerms.TryGetValue(sort.SortBy, out var term)
+            ? term : null;
+
+        var (page, refusal) = await Api.GetWorkflowsPageAsync(
+            Scope.Spec.ToQueryString(), state.PageSize, state.Page * state.PageSize,
+            _sort, sort?.Descending ?? false);
+
+        _refusal = refusal;
+        _total = page?.Total ?? 0;
+        _shown = page?.Items.Count ?? 0;
+        _elsewhere = [];
+        StateHasChanged();
+        return new GridData<WorkflowRow> { Items = page?.Items ?? [], TotalItems = _total };
+    }
+
+    /// <summary>One page of the jobs unit, whose facts are recorded against the job itself.</summary>
+    private async Task<GridData<JobRow>> LoadJobs(GridState<JobRow> state)
+    {
+        var sort = state.SortDefinitions.FirstOrDefault();
+        _sort = sort is not null && JobSortTerms.TryGetValue(sort.SortBy, out var term)
+            ? term : null;
+
+        var (page, refusal) = await Api.GetJobsPageAsync(
+            Scope.Spec.ToQueryString(), state.PageSize, state.Page * state.PageSize,
+            _sort, sort?.Descending ?? false);
+
+        _refusal = refusal;
+        _total = page?.Total ?? 0;
+        _shown = page?.Items.Count ?? 0;
+        _elsewhere = [];
+        StateHasChanged();
+        return new GridData<JobRow> { Items = page?.Items ?? [], TotalItems = _total };
+    }
+
+    /// <summary>One page of the repositories unit, with its own columns and its own endpoint.</summary>
+    private async Task<GridData<RepositorySummary>> LoadRepositories(
+        GridState<RepositorySummary> state)
+    {
+        var sort = state.SortDefinitions.FirstOrDefault();
+        _sort = sort is not null && RepositorySortTerms.TryGetValue(sort.SortBy, out var term)
+            ? term : null;
+
+        var (page, refusal) = await Api.GetRepositoriesPageAsync(
+            Scope.Spec.ToQueryString(), state.PageSize, state.Page * state.PageSize,
+            _sort, sort?.Descending ?? false);
+
+        _refusal = refusal;
+        _total = page?.Total ?? 0;
+        _shown = page?.Items.Count ?? 0;
+        _elsewhere = [];
+        StateHasChanged();
+        return new GridData<RepositorySummary> { Items = page?.Items ?? [], TotalItems = _total };
+    }
+
+    /// <summary>
+    /// One page of the advisories unit, worst first across the whole match.
+    /// </summary>
+    ///
+    /// Ordered by the server and not sortable here: priority is severity times reach, and a column
+    /// header offering to re-rank it would invite a reader to ask a question the score cannot
+    /// answer.
+    private async Task<GridData<RemediationItem>> LoadAdvisories(GridState<RemediationItem> state)
+    {
+        _sort = null;
+        var (page, refusal) = await Api.GetAdvisoriesPageAsync(
+            Scope.Spec.ToQueryString(), state.PageSize, state.Page * state.PageSize, null, false);
+
+        _refusal = refusal;
+        _total = page?.Total ?? 0;
+        _shown = page?.Items.Count ?? 0;
+        _unreached = page?.Unreached ?? 0;
+        _elsewhere = [];
+        StateHasChanged();
+        return new GridData<RemediationItem> { Items = page?.Items ?? [], TotalItems = _total };
     }
 
     private async Task OnSearch(string value)
     {
-        _search = value;
-        await Load();
+        _search = value ?? string.Empty;
+        Scope.Set(Scope.Spec with { Search = _search });
+        // The address is the scope, so a narrowed list can be shared and returned to.
+        Sync();
+        await Reload();
     }
 }

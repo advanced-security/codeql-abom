@@ -4,6 +4,8 @@
 @inject ThemeService Theme
 @inject IJSRuntime Js
 @inject NavigationManager Nav
+@inject FollowService Follow
+@inject ScopeService Scope
 
 <PageTitle>Explorer — ABOM</PageTitle>
 
@@ -19,7 +21,7 @@
                    SelectedValuesChanged="OnOriginsChanged" Dense="true" Margin="Margin.Dense"
                    Variant="Variant.Outlined" Class="abom-filter" ShrinkLabel="true"
                    MultiSelectionTextFunc="@(v => v.Count == 0 ? "any" : $"{v.Count} selected")">
-            <MudSelectItem T="string" Value="@("seed")">In scope</MudSelectItem>
+            <MudSelectItem T="string" Value="@("seed")">Starting point</MudSelectItem>
             <MudSelectItem T="string" Value="@("upstream")">Upstream</MudSelectItem>
             <MudSelectItem T="string" Value="@("external")">Dependency</MudSelectItem>
         </MudSelect>
@@ -34,8 +36,11 @@
             }
         </MudSelect>
 
-        @* Lexical only. Whether a reference is safe is actions/unpinned-tag's call, not ours. *@
-        <MudTooltip Text="How the reference is written, not whether it is safe. For that, filter by the actions/unpinned-tag rule.">
+        @* Lexical only. Whether a reference is safe is actions/unpinned-tag's call, not ours.
+           It selects nodes by how something references them, which is a different question from
+           the reference each was analyzed at: 215 of 2,639 nodes on the working corpus are
+           referenced both ways, so this may not narrow what Coverage claims about them. *@
+        <MudTooltip Text="How something references it, not whether that is safe, and not which reference was analyzed. A node referenced both by tag and by commit matches either.">
             <MudSelect T="string" Label="Reference" Value="_refStyle" ValueChanged="OnRefStyleChanged"
                        Dense="true" Margin="Margin.Dense" Variant="Variant.Outlined"
                        ShrinkLabel="true" Class="abom-filter">
@@ -60,6 +65,16 @@
         </MudChipSet>
     </div>
 
+    @if (Scope.LastError is { Length: > 0 } scopeRefusal)
+    {
+        <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true" Class="mt-2">
+            @scopeRefusal — this link names a filter ABOM does not have, so it is showing the
+            default scope instead.
+        </MudAlert>
+    }
+
+    <ScopeControl Changed="OnScopeControlChanged" />
+
     <div class="d-flex flex-wrap align-center gap-3 mt-2">
         <MudToggleGroup T="string" Value="_view" ValueChanged="OnViewChanged"
                         Size="Size.Small" Color="Color.Primary" CheckMark="false"
@@ -76,25 +91,51 @@
         </MudToggleGroup>
         <MudCheckBox T="bool" Value="_use3d" ValueChanged="On3dChanged" Color="Color.Primary"
                      Size="Size.Small" Dense="true" Label="3D" />
+        @* The tooltip sits on a span inside the item, following the view toggle above: a native
+           title survives the popover, where a MudTooltip around a select item does not. *@
         <MudSelect T="string" Label="Group by" Value="_groupBy" ValueChanged="OnGroupByChanged"
                    Dense="true" Margin="Margin.Dense" Variant="Variant.Outlined"
                    ShrinkLabel="true" Class="abom-filter">
-            <MudSelectItem T="string" Value="@("owner")">Owner</MudSelectItem>
-            <MudSelectItem T="string" Value="@("repo")">Repository</MudSelectItem>
-            <MudSelectItem T="string" Value="@("workflow")">Workflow path</MudSelectItem>
-            <MudSelectItem T="string" Value="@("none")">Nothing</MudSelectItem>
+            @foreach (var (key, label) in GroupByOptions)
+            {
+                <MudSelectItem T="string" Value="@key">
+                    <span title="@GroupByTooltip(key)">@label</span>
+                </MudSelectItem>
+            }
         </MudSelect>
-        <MudTooltip Text="Fold each group into a single node. Click one to expand it again.">
+        <MudTooltip Text="Collapse each group into a single node. Click one to open it again.">
             <MudCheckBox T="bool" Value="_collapsed" ValueChanged="OnCollapsedChanged"
                          Color="Color.Primary" Size="Size.Small" Dense="true" Label="Collapse"
                          Disabled="@(_groupBy == "none")" />
         </MudTooltip>
+        <MudTooltip Text="Reach one hop beyond the scope and draw what a shown node uses, greyed. The scope's own relationships are drawn either way.">
+            <MudCheckBox T="bool" Value="_dependencies" ValueChanged="OnDependenciesChanged"
+                         Color="Color.Primary" Size="Size.Small" Dense="true" Label="What they use" />
+        </MudTooltip>
+        @* A toggle group rather than a checkbox: the scope that is not the default is the one a
+           reader has to be able to see exists. *@
+        <MudToggleGroup T="string" Value="_scope" ValueChanged="OnScopeChanged"
+                        Size="Size.Small" Color="Color.Primary" CheckMark="false"
+                        SelectionMode="SelectionMode.SingleSelection" Class="abom-views">
+            @foreach (var s in Scopes)
+            {
+                <MudToggleItem T="string" Value="@s.Key">
+                    <span class="abom-view-label" title="@s.Help">@s.Label</span>
+                </MudToggleItem>
+            }
+        </MudToggleGroup>
         @if (_groupBy == "workflow" && !ShowSteps)
         {
             @* Actions are referenced by workflows rather than held in one, so with steps folded
                away there is little left for this grouping to gather. *@
             <MudText Typo="Typo.caption" Class="mud-text-secondary">
                 turn on Step to group by workflow
+            </MudText>
+        }
+        @if (StepsNeedFocus)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                pick a node to see its steps
             </MudText>
         }
         <MudTooltip Text="Watch the layout arrange itself and the selection's dependencies flow, or hold everything still.">
@@ -109,6 +150,23 @@
                      OnClose="ClearSelection" CloseIcon="@Icons.Material.Filled.Close">
                 only @_isolated
             </MudChip>
+            @* A key handed over by another page may name nothing this graph holds — a different
+               answer from a neighborhood that is genuinely empty, and one an empty canvas under a
+               banner naming the node states as the opposite of what happened. *@
+            @if (_counts.FocusFound == 0)
+            {
+                <MudText Typo="Typo.caption" Color="Color.Warning" data-abom-focus-unknown>
+                    not in this view — it may sit outside the scope, or be filtered out by kind
+                </MudText>
+            }
+            @* Naming a node is itself a scope. Suspending the flags silently would be a second
+               filter the reader cannot see, which is the thing this view keeps promising not to do. *@
+            @if (SuspendedFilters is { Length: > 0 } suspended)
+            {
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                    @suspended suspended inside the focus
+                </MudText>
+            }
             <MudSelect T="int" Label="Hops" Value="_hops" ValueChanged="OnHopsChanged" Dense="true"
                        Margin="Margin.Dense" Variant="Variant.Outlined" ShrinkLabel="true"
                        Class="abom-filter-narrow">
@@ -119,10 +177,27 @@
                     <MudSelectItem T="int" Value="@v">@v</MudSelectItem>
                 }
             </MudSelect>
+            <MudTooltip Text="@DirectionMeaning">
+                <MudSelect T="string" Label="Follow" Value="_direction"
+                           ValueChanged="OnDirectionChanged" Dense="true" Margin="Margin.Dense"
+                           Variant="Variant.Outlined" ShrinkLabel="true" Class="abom-filter">
+                    @foreach (var d in Directions)
+                    {
+                        <MudSelectItem T="string" Value="@d.Key">@d.Label</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudTooltip>
             <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default"
                        StartIcon="@Icons.Material.Filled.ArrowBack" OnClick="ClearSelection">
                 Back to the whole graph
             </MudButton>
+            @if (CameFromDiscovery)
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Search" Href="@BackToDiscovery">
+                    Back to Discovery
+                </MudButton>
+            }
         }
         else if (HasSelection)
         {
@@ -154,7 +229,35 @@
     <MudPaper Elevation="0" Outlined="true" Class="pa-0 abom-explore-canvas">
         <div class="abom-graph-wrap">
             <div id="abom-graph" class="abom-graph-host"></div>
-            @if (_busy)
+            @* Before the spinner, not after it. `_busy` is cleared only by the simulation calling
+               OnLayoutSettled, and an empty graph gives it nothing to lay out — so a page with
+               nothing to draw would otherwise claim to be laying it out forever. *@
+            @if (Frame is not null)
+            {
+                <div class="abom-graph-busy abom-graph-busy-opaque" data-abom-explorer-frame="@Frame">
+                    @if (Frame == "declare")
+                    {
+                        <MudText Typo="Typo.body1">Nothing is declared yet.</MudText>
+                        <MudText Typo="Typo.caption" Class="mt-2 mud-text-secondary">
+                            Declare the accounts you own in
+                            <MudLink Href="/settings">Settings</MudLink>, and the repositories
+                            under them appear here.
+                        </MudText>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body1">
+                            Waiting for @string.Join(", ", _declared!.Select(a => a.Owner)).
+                        </MudText>
+                        @* Names what has not happened rather than asserting a crawl is running:
+                           the page cannot see the queue from here. *@
+                        <MudText Typo="Typo.caption" Class="mt-2 mud-text-secondary">
+                            Nothing has been drawn for it yet; analysis has not run.
+                        </MudText>
+                    }
+                </div>
+            }
+            else if (_busy)
             {
                 <div class="@(_animate ? "abom-graph-busy" : "abom-graph-busy abom-graph-busy-opaque")">
                     <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Medium" />
@@ -167,6 +270,69 @@
     @if (_showLegend)
     {
         <MudPaper Elevation="0" Outlined="true" Class="pa-2 abom-explore-key abom-keypanel">
+            @if (_view == "frontier")
+            {
+                @* Hue means something else in this view, so the key has to say so where the
+                   reader is looking, not leave the kind colors below to be misread. *@
+                <div class="d-flex align-center abom-key-head">
+                    <span class="abom-key-title">COLOR: HOW MUCH IS ANALYZED</span>
+                </div>
+                @foreach (var state in ThemeService.DiscoveryNames)
+                {
+                    <div class="abom-key-row">
+                        <span class="abom-legend-dot"
+                              style="--abom-legend-color:@DiscoveryColor(state.Key)"></span>
+                        <span class="abom-key-label">@state.Value</span>
+                    </div>
+                }
+                @* Only a fold can be part-way: expanded, every node carries one reference and is
+                   analyzed or not. A group sums its members', and reads between the two ends. *@
+                <div class="abom-key-row">
+                    <span class="abom-legend-dot"
+                          style="--abom-legend-color:@DiscoveryColor("done")"></span>
+                    <span class="abom-key-label">partly analyzed — between these, by share</span>
+                </div>
+                <div class="abom-key-row">
+                    <span class="abom-legend-dot"
+                          style="--abom-legend-color:@Theme.Palette.Muted"></span>
+                    <span class="abom-key-label">never a dependency</span>
+                </div>
+                <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1">
+                    Rings are how far each dependency sits from the repositories you review. The
+                    colors below filter which nodes are shown, not what they are colored.
+                </MudText>
+            }
+            @if (_detail is not null)
+            {
+                @* The node under the pointer, typeset rather than painted. On the canvas this box
+                   was the largest thing on screen and covered the neighbors a reader hovers a node
+                   to compare it against. *@
+                <div class="d-flex align-center abom-key-head">
+                    <span class="abom-key-title">NODE</span>
+                    <MudSpacer />
+                    <MudTooltip Text="Put this away. The panel stays after the pointer leaves, so it takes a deliberate act to clear.">
+                        <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small"
+                                       OnClick="ClearNodeDetail" />
+                    </MudTooltip>
+                </div>
+                <div class="abom-nodecard" style="--abom-node-color:@KindColor(_detail.Kind)">
+                    <div class="abom-node-name">@DetailName</div>
+                    @* An account's key is the graph's own address for it, `org:actions`, which is
+                       not a name anybody uses and not a thing to go looking for. *@
+                    @if (DetailName != _detail.Key && _detail.Kind != "org")
+                    {
+                        <div class="abom-node-key">@_detail.Key</div>
+                    }
+                    <dl class="abom-node-facts">
+                        @foreach (var fact in DetailFacts)
+                        {
+                            <dt>@fact.Label</dt>
+                            <dd>@fact.Value</dd>
+                        }
+                    </dl>
+                    <MudLink Href="@($"/node/{_detail.Key}")" Typo="Typo.caption">open details</MudLink>
+                </div>
+            }
             <div class="d-flex align-center abom-key-head">
                 <MudCheckBox T="bool?" Value="@AllNodesChecked" ValueChanged="OnAllNodesChanged"
                              TriState="true" Dense="true" Size="Size.Small" Color="Color.Primary" />
@@ -179,23 +345,46 @@
                     </MudTooltip>
                 }
             </div>
-            @foreach (var kind in ThemeService.KindNames)
+            @foreach (var row in KindTree.Where(IsRowShown))
             {
-                var k = kind.Key;
-                <div class="abom-key-row">
+                var k = row.Kind;
+                @* The panel names a kind; the key is where the reader already learned what that
+                   kind looks like. Marking the row ties the two together without a second legend. *@
+                <div class="@(_detail?.Kind == k ? "abom-key-row abom-key-row-shown" : "abom-key-row")"
+                     style="--abom-key-depth:@row.Depth">
                     <MudCheckBox T="bool" Value="@_kinds.Contains(k)" Dense="true"
                                  Size="Size.Small" Color="Color.Primary"
                                  ValueChanged="@(_ => ToggleKind(k))" />
                     @KindGlyph(k)
                     <MudTooltip Text="@KindHelp(k)" Placement="Placement.Left">
-                        <span class="abom-key-label" @onclick="@(() => ToggleKind(k))">@kind.Value</span>
+                        <span class="abom-key-label" @onclick="@(() => ToggleKind(k))">@Kinds[k]</span>
                     </MudTooltip>
+                    @if (FoldGrouping.ContainsKey(k))
+                    {
+                        <MudTooltip Text="@FoldHelp(k)" Placement="Placement.Left">
+                            @* A chevron, not the unfold glyphs: at this size those collapse into
+                               something that reads as a close button. *@
+                            <MudIconButton Icon="@(IsFoldedAt(k) ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ExpandLess)"
+                                           Size="Size.Small" OnClick="@(() => ToggleFold(k))"
+                                           Class="@(IsFoldedAt(k) ? "abom-key-fold abom-key-fold-on" : "abom-key-fold")" />
+                        </MudTooltip>
+                    }
                     @* Color is reassignable per kind and per scheme: a hue that reads well on
                        black rarely does on white. *@
                     <MudTooltip Text="Change this kind's color.">
                         <input type="color" class="abom-swatch" value="@KindColor(k)"
                                @onchange="@(e => SetColor(k, e.Value?.ToString()))" />
                     </MudTooltip>
+                </div>
+            }
+            @if (FoldedKinds is { Count: > 0 } folded)
+            {
+                @* The rows are gone from the key because their nodes are gone from the canvas.
+                   Naming what went, and what the next step opens into, keeps the fold from
+                   reading as kinds having been switched off. *@
+                <div class="abom-key-note" style="--abom-key-depth:@(FoldDepth + 1)">
+                    <span>@string.Join(", ", folded.Select(k => Kinds[k].ToLowerInvariant()))
+                          folded in &mdash; @NextStepLabel</span>
                 </div>
             }
 
@@ -208,11 +397,12 @@
             {
                 var c = e.Key;
                 <MudTooltip Text="@e.Help" Placement="Placement.Left">
-                    <div class="abom-key-row" @onclick="@(() => ToggleEdge(c))">
+                    <div class="abom-key-row" style="--abom-key-depth:@e.Depth"
+                         @onclick="@(() => ToggleEdge(c))">
                         <MudCheckBox T="bool" Value="@_edgeClasses.Contains(c)" Dense="true"
                                      Size="Size.Small" Color="Color.Primary"
                                      ValueChanged="@(_ => ToggleEdge(c))" />
-                        <span class="abom-legend-line" style="background:@EdgeColor(c)"></span>
+                        <span class="abom-legend-line" style="--abom-legend-color:@EdgeColor(c)"></span>
                         <span>@e.Label</span>
                     </div>
                 </MudTooltip>
@@ -221,7 +411,7 @@
             <div class="abom-key-head mt-3"><span class="abom-key-title">STATE</span></div>
             @* A caption, not a control: the rows above are clickable and this one never was. *@
             <div class="abom-key-note">
-                <span class="abom-legend-ring" style="border-color:@Theme.Palette.Focus"></span>
+                <span class="abom-legend-ring" style="--abom-legend-color:@Theme.Palette.Focus"></span>
                 @if (!HasSelection)
                 {
                     <span>nothing selected &mdash; click a node to mark it and dim the rest</span>
@@ -232,9 +422,10 @@
                 }
             </div>
             @* Color carries kind and only kind. Saying so stops the key implying that a
-               repository under review and one fetched as a dependency look different here. *@
+               repository discovery started from and one fetched as a dependency look different
+               here. *@
             <div class="abom-key-note">
-                <span>in scope and upstream are not colored apart &mdash; use the Origin filter</span>
+                <span>starting points and upstream are not colored apart &mdash; use the Origin filter</span>
             </div>
             <MudText Typo="Typo.caption" Class="mud-text-secondary mt-2 d-block">
                 @PositionMeaning
@@ -247,14 +438,19 @@
     <MudText Typo="Typo.caption" Class="mud-text-secondary">
         @if (_loading)
         {
-            <span>Loading the whole graph…</span>
+            <span>@ScopeBusyMessage</span>
         }
         else if (_collapsed)
         {
-            @* Folded, not filtered: nothing was removed, so saying "hidden" would be wrong. *@
+            @* Grouping removes nothing, so the groups are not "hidden" — but a filter running
+               underneath a fold still is, and omitting it reported a filtered view as whole. *@
             <span>
-                <b>@_counts.Nodes.ToString("N0")</b> groups by @GroupByLabel, folded from
+                <b>@_counts.Nodes.ToString("N0")</b> groups by @GroupByLabel, gathered from
                 @_counts.Total.ToString("N0") nodes
+                @if (_counts.Hidden > 0)
+                {
+                    <span>(@_counts.Hidden.ToString("N0") nodes hidden by filters)</span>
+                }
                 <span class="mud-text-secondary">· click a group to expand it</span>
             </span>
         }
@@ -272,30 +468,85 @@
                 @if (!ShowSteps)
                 {
                     <span class="mud-text-secondary">
-                        · individual <code>uses:</code> steps folded into their workflow
+                        · individual <code>uses:</code> steps counted as part of their workflow
+                    </span>
+                }
+                @* An edge needs both its ends, so a scope keeping a sixth of the nodes keeps far
+                   less than a sixth of the relationships. Without this the canvas reads as a
+                   dependency graph that has lost its dependencies. *@
+                @if (_counts.EdgeTotal > _counts.Edges)
+                {
+                    <span class="mud-text-secondary">
+                        · @_counts.Edges.ToString("N0") of @_counts.EdgeTotal.ToString("N0")
+                        relationships, because an edge is drawn only when both ends are
+                    </span>
+                }
+                @* Greyed rather than removed. Cutting them took the relationships with them, and
+                   an edge needs both of its ends. *@
+                @if (_counts.Context > 0)
+                {
+                    <span class="mud-text-secondary">
+                        · @_counts.Context.ToString("N0") greyed out: on screen so relationships
+                        keep both ends, not because they matched
                     </span>
                 }
             </span>
         }
+        @if (_arrived > 0)
+        {
+            <span class="mud-text-secondary">
+                · @_arrived.ToString("N0") arrived from a running expansion
+            </span>
+        }
+        @if (_pollError is { } failure)
+        {
+            <span class="abom-status-unavailable">· could not refresh: @failure</span>
+        }
     </MudText>
+    <MudSpacer />
+    <FollowControl LastUpdated="_lastPoll" />
 </div>
 
 @code {
-    [SupplyParameterFromQuery(Name = "selection")] public string? SelectionParam { get; set; }
+    // Presentation only. Everything that says *what* is on screen arrives through ScopeService,
+    // which reads the address once with the same parser the API and the gate use — a second list
+    // of parameter names here is how `ref` came to be written and `refStyle` read.
     [SupplyParameterFromQuery(Name = "view")] public string? ViewParam { get; set; }
-    [SupplyParameterFromQuery(Name = "q")] public string? SearchParam { get; set; }
-    [SupplyParameterFromQuery(Name = "refStyle")] public string? RefStyleParam { get; set; }
-    [SupplyParameterFromQuery(Name = "rules")] public string? RulesParam { get; set; }
-    [SupplyParameterFromQuery(Name = "origins")] public string? OriginsParam { get; set; }
-    [SupplyParameterFromQuery(Name = "kinds")] public string? KindsParam { get; set; }
-    [SupplyParameterFromQuery(Name = "flags")] public string? FlagsParam { get; set; }
-    [SupplyParameterFromQuery(Name = "minReach")] public int? MinReachParam { get; set; }
+    [SupplyParameterFromQuery(Name = "direction")] public string? DirectionParam { get; set; }
+    [SupplyParameterFromQuery(Name = "from")] public string? FromParam { get; set; }
+    [SupplyParameterFromQuery(Name = "status")] public string? StatusParam { get; set; }
 
     // NeedsSelection marks a view whose force reads hop distance from a selected node. Without
     // one it has nothing to measure from, so it is disabled rather than silently inert.
     private sealed record ViewOption(string Key, string Label, string Meaning,
         bool NeedsSelection = false);
-    private sealed record Counts(int Nodes, int Edges, int Hidden, int Total);
+    internal sealed record Counts(int Nodes, int Edges, int Hidden, int Total, int EdgeTotal = 0,
+        int Context = 0, int FocusFound = 0);
+
+    private sealed record MergeResult(
+        bool Reset, long Generation, int Nodes, int Edges, IReadOnlyList<string> Rules)
+    {
+        public IReadOnlyList<string> Rules { get; init; } = Rules ?? [];
+    }
+
+    private long _generation;
+    private int _arrived;
+    private DateTime? _lastPoll;
+    private string? _pollError;
+    private Timer? _followTimer;
+
+    // Which way a neighborhood is walked. "What does this pull in" and "who is waiting on this"
+    // are different questions, and a queued dependency has no answer to the first at all.
+    private string _direction = "both";
+
+    private sealed record DirectionOption(string Key, string Label, string Meaning);
+
+    private static readonly DirectionOption[] Directions =
+    [
+        new("both", "Both ways", "Everything connected to the selection, either way round."),
+        new("out", "What it uses", "Only what the selection depends on, recursively."),
+        new("in", "What uses it", "Only what depends on the selection, recursively."),
+    ];
 
     private static readonly ViewOption[] Views =
     [
@@ -308,32 +559,150 @@
             NeedsSelection: true),
         new("distance", "Distance",
             "Rings are hops from the selected node.", NeedsSelection: true),
+        new("frontier", "Coverage",
+            "Color is how much is known about each dependency. Rings are how far it sits from "
+            + "the repositories you review. Grey means it was never a dependency."),
     ];
 
     private static readonly Dictionary<string, string> Kinds = ThemeService.KindNames;
 
-    private sealed record EdgeKind(string Key, string Label, string Help);
+    /// <summary>One legend row: a kind, and how deep it sits in what contains it.</summary>
+    ///
+    /// A kind appears wherever it can be contained, so `step` shows up under both a job and a
+    /// composite action. The checkbox is the same filter in each place, which is the truth: a
+    /// step is a step. What differs is the containment the reader is being shown.
+    private sealed record KindRow(string Kind, int Depth);
 
+    private static readonly KindRow[] KindTree =
+    [
+        new("org", 0),
+        new("repo", 1),
+        new("workflow", 2),
+        new("job", 3),
+        new("step", 4),
+        new("reusable_workflow", 2),
+        new("job", 3),
+        new("step", 4),
+        new("composite_action", 2),
+        new("step", 3),
+        new("action", 2),
+        new("docker_image", 2),
+    ];
+
+    /// <summary>The grouping each foldable kind folds its contents into.</summary>
+    ///
+    /// Only these three exist as groupings, so only these three can carry a fold control. A kind
+    /// with no grouping behind it would offer a button that quietly did nothing.
+    private static readonly Dictionary<string, string> FoldGrouping = new()
+    {
+        ["org"] = "owner",
+        ["repo"] = "repo",
+        ["workflow"] = "workflow",
+    };
+
+    /// <summary>The fold ladder, coarsest first.</summary>
+    public static readonly string[] FoldLadder = ["owner", "repo", "workflow"];
+
+    /// <summary>The grouping one rung finer, or null when the next step is the whole graph.</summary>
+    ///
+    /// Expanding steps down this ladder rather than off it. Treating the fold as a single switch
+    /// meant opening the owner view dropped the reader straight from 603 nodes to 9,811, which is
+    /// the view that cannot be drawn at all.
+    public static string? FinerFold(string groupBy)
+    {
+        var i = Array.IndexOf(FoldLadder, groupBy);
+        return i >= 0 && i + 1 < FoldLadder.Length ? FoldLadder[i + 1] : null;
+    }
+
+    private bool IsFoldedAt(string kind) =>
+        _collapsed && FoldGrouping.TryGetValue(kind, out var by) && _groupBy == by;
+
+    /// <summary>How deep the fold sits, or null when nothing is folded.</summary>
+    private int? FoldDepth
+    {
+        get
+        {
+            foreach (var row in KindTree)
+            {
+                if (IsFoldedAt(row.Kind)) return row.Depth;
+            }
+            return null;
+        }
+    }
+
+    // A row below the fold has no node of its own on the canvas, so leaving it in the key made
+    // folding look like it had done nothing.
+    private bool IsRowShown(KindRow row) => FoldDepth is not int depth || row.Depth <= depth;
+
+    private List<string> FoldedKinds => FoldDepth is not int depth
+        ? []
+        : KindTree.Where(r => r.Depth > depth).Select(r => r.Kind).Distinct().ToList();
+
+    /// <summary>What opening the current fold one rung would show.</summary>
+    private string NextStepLabel => FinerFold(_groupBy) is { } finer
+        ? $"open one level for {LadderLabel(finer)}s"
+        : "open the last level for every node";
+
+    private string FoldHelp(string kind)
+    {
+        if (!IsFoldedAt(kind)) return $"Fold everything back into one node per {Kinds[kind].ToLowerInvariant()}.";
+        var finer = FinerFold(FoldGrouping[kind]);
+        return finer is null
+            ? "Open the last level: every node individually. This is the whole graph."
+            : $"Open one level, into one node per {LadderLabel(finer)}. Everything below stays folded.";
+    }
+
+    private static string LadderLabel(string grouping) => grouping switch
+    {
+        "owner" => "owner",
+        "repo" => "repository",
+        _ => "workflow",
+    };
+
+    private async Task ToggleFold(string kind)
+    {
+        if (!FoldGrouping.TryGetValue(kind, out var by)) return;
+        if (!IsFoldedAt(kind))
+        {
+            _groupBy = by;
+            await OnCollapsedChanged(true);
+            return;
+        }
+        // One rung finer, not off the ladder: everything below the new level stays folded.
+        var finer = FinerFold(by);
+        if (finer is null)
+        {
+            await OnCollapsedChanged(false);
+            return;
+        }
+        _groupBy = finer;
+        await OnCollapsedChanged(true);
+    }
+
+    private sealed record EdgeKind(string Key, string Label, string Help, int Depth);
+
+    @* One boundary vocabulary, following the Bill of Materials because that is where a
+       non-expert reads these words. The stored values are unchanged. *@
     private static readonly EdgeKind[] EdgeKinds =
     [
-        new("sameRepo", "Same repo",
-            "Both ends live in the same repository: internal wiring rather than a supply-chain hop."),
-        new("sameOwner", "Same org/owner",
-            "Crosses repositories but stays with one account. Same repo wins over this."),
-        new("crossOwner", "Cross org/owner",
-            "The two ends belong to different accounts. This is where the supply chain starts."),
+        new("sameOwner", "Same account",
+            "Crosses repositories but stays with one account. Same repository wins over this.", 0),
+        new("sameRepo", "Same repository",
+            "Both ends live in the same repository: internal wiring rather than a supply-chain hop.", 1),
+        new("crossOwner", "Another account",
+            "The two ends belong to different accounts. This is where the supply chain starts.", 0),
     ];
 
     private static readonly Dictionary<string, string> KindHelpText = new()
     {
-        ["org"] = "An account, user or organization alike. Holds the repositories and actions beneath it, and is the coarsest way to see who the corpus depends on.",
+        ["org"] = "An account, user or organization alike. Holds the repositories and actions beneath it, and is the broadest way to see who your organization depends on.",
         ["repo"] = "A repository. Connected to the workflows and composite actions it holds.",
         ["workflow"] = "A workflow file. Where `uses:` references are written.",
         ["reusable_workflow"] = "A workflow other repositories can call. Its own dependencies become theirs.",
         ["composite_action"] = "An action built from steps. Counts as an action, not a workflow.",
         ["action"] = "An action being depended on.",
         ["docker_image"] = "A container image referenced by a step.",
-        ["job"] = "A job within a workflow. Only present when steps are shown; otherwise folded into its workflow.",
+        ["job"] = "A job within a workflow. Only present when steps are shown; otherwise counted as part of its workflow.",
         ["step"] = "One individual `uses:` line. Off by default: there are 14,645 of them.",
     };
 
@@ -431,7 +800,10 @@
     private string _refStyle = "any";
     private int? _minReach;
     private int _hops;
-    private bool _use3d = true;
+    // 2D by default. Measured on the reference corpus at one moment: 2D could draw 16 of 21
+    // boundaries honestly where 3D managed 10 of 23, because a third axis projects unrelated groups
+    // through each other and every one of those is a boundary the view then has to refuse.
+    private bool _use3d;
     private bool _animate = true;
     // Open by default: the key is beside the canvas rather than over it, and its checkboxes are
     // the primary way to narrow the graph.
@@ -440,14 +812,63 @@
     private bool _busy = true;
     private string _busyMessage = "Loading the whole graph…";
     private List<string> _selected = [];
+    // Grouping supplies the owner and repository context each node is drawn inside. It arrives
+    // *uncollapsed*: once findings have cut the population, folding gathers away the very nodes
+    // this scope exists to show. Collapsing stays a tool for whoever widens the scope back out.
     private string _groupBy = "owner";
+    // Folding is for the whole-graph view, which is 9,811 nodes and renders at under four frames
+    // a second unfolded. The exposure scope is 213 and must *not* fold, or the routes it exists
+    // to show are gathered away into their owners.
     private bool _collapsed;
+
+    // Off by default, and that is a measured choice rather than a timid one. This reaches a hop
+    // beyond the scope entirely, which drew 1,195 nodes and cost the picture — honest boundaries
+    // fell from 24 of 24 to 14 of 44. The relationships *inside* the scope no longer depend on it:
+    // what fails a filter is greyed rather than removed, so both of an edge's ends survive.
+    private bool _dependencies;
+
+    private async Task OnDependenciesChanged(bool value)
+    {
+        _dependencies = value;
+        await Refilter();
+    }
 
     private string GroupByLabel => _groupBy switch
     {
         "repo" => "repository",
+        "grouping" => "repository grouping",
         "workflow" => "workflow path",
         _ => "owner",
+    };
+
+    private static readonly (string Key, string Label)[] GroupByOptions =
+    [
+        ("owner", "Owner"),
+        ("repo", "Repository"),
+        ("grouping", "Repository grouping"),
+        ("workflow", "Workflow path"),
+        ("none", "None"),
+    ];
+
+    /// <summary>
+    /// Boundaries and relationships cannot both survive a filter, and this is where the reader
+    /// chooses between them. A boundary drawn around only the nodes that matched claims the group
+    /// is only those, so a grouped view removes what it filters — and an edge needs both its ends.
+    /// </summary>
+    private static string GroupByTooltip(string key) => key switch
+    {
+        "none" => "No boundaries to keep honest, so nothing is removed: every relationship stays "
+            + "on screen, and what a filter did not match is greyed rather than gone.",
+        _ => $"Draws a boundary around each {GroupByNoun(key)}. Filtered-out nodes are removed so "
+            + "the boundaries stay true, which also removes the relationships that ran through them.",
+    };
+
+    private static string GroupByNoun(string key) => key switch
+    {
+        "repo" => "repository",
+        "grouping" => "repository grouping",
+        "workflow" => "workflow path",
+        _ => "account",
     };
     private string _isolated = string.Empty;
     // Everything visible on arrival except steps and jobs, which only exist in the expanded
@@ -460,14 +881,51 @@
     private IReadOnlyCollection<string> _rules = [];
     private IReadOnlyCollection<string> _edgeClasses =
         new HashSet<string> { "sameRepo", "sameOwner", "crossOwner" };
-    private IReadOnlyCollection<string> _flags = [];
+    // The second half of the arrival scope. Owned alone is the right population and an unreadable
+    // starburst — 4,805 nodes, 1,564 groups by repository; with findings it is 177. The page is
+    // for "what do I depend on that something is wrong with", not "what do I depend on".
+    private IReadOnlyCollection<string> _flags = ["findings"];
     private IReadOnlyList<string> _ruleIds = [];
     private Counts _counts = new(0, 0, 0, 0);
     private IJSObjectReference? _module;
     private DotNetObjectReference<Explorer>? _self;
     private bool _ready;
 
-    private bool ShowSteps => _kinds.Contains("step") || _kinds.Contains("job");
+    // The view arrives showing what the operator declared and what it pulls in — the one scope
+    // they already have a word for.
+    private string _scope = "owned";
+
+    private sealed record ScopeChoice(string Key, string Label, string Help);
+
+    // Every scope is bounded by something the operator can name. The whole corpus used to be
+    // offered here as a research view and is not a question about their estate; it grows with
+    // what the crawl walked through, and at 12,550 nodes it drew at 1.5 FPS.
+    private static readonly ScopeChoice[] Scopes =
+    [
+        new("owned", "What you own",
+            "The accounts you declared and everything they reach. Empty until you declare one."),
+        new("exposure", "Advisory routes",
+            "Only the routes by which analyzed repositories reach an action an advisory names."),
+    ];
+
+    /// <summary>The scopes a reader can choose. An empty one would ask the API for everything.</summary>
+    public static IReadOnlyList<string> ScopeKeys => [.. Scopes.Select(s => s.Key)];
+
+    /// <summary>How something references a node. "any" is the absent question, not a fourth style.</summary>
+    public static readonly string[] RefStyles = ["any", "sha", "tag"];
+
+    private bool IsExposureScope => _scope == "exposure";
+
+    private bool IsOwnedScope => _scope == "owned";
+
+    private bool ShowSteps => (_kinds.Contains("step") || _kinds.Contains("job"))
+                              && !string.IsNullOrEmpty(_isolated);
+
+    // Steps exist to answer reachability, and reachability is only ever asked from the
+    // perspective of one action or workflow. Loaded globally they are 54,508 nodes and 28.7 MB
+    // that no view can draw, so they arrive only inside a focus.
+    private bool StepsNeedFocus => (_kinds.Contains("step") || _kinds.Contains("job"))
+                                   && string.IsNullOrEmpty(_isolated);
 
     // Kinds and edge classes are allow-lists that start full, so "narrowed" means something has
     // been switched *off*, not that a list is non-empty.
@@ -482,6 +940,123 @@
         Views.FirstOrDefault(v => v.Key == _view)?.Meaning ?? string.Empty;
 
     private bool HasSelection => _selected.Count > 0;
+
+    /// <summary>
+    /// The arrival-scope filters the focus is ignoring, named so the reader is not left comparing
+    /// a chip that looks on against a view that is not applying it.
+    /// </summary>
+    private string SuspendedFilters
+    {
+        get
+        {
+            // A focus that named nothing suspends nothing, so saying it does describes a view
+            // that is not on screen.
+            if (string.IsNullOrEmpty(_isolated) || _counts.FocusFound == 0) return string.Empty;
+            var off = new List<string>();
+            if (_flags.Contains("findings")) off.Add("has findings");
+            if (_flags.Contains("advisory")) off.Add("has advisory");
+            if (_flags.Contains("unanalyzed")) off.Add("not analyzed");
+            if (_minReach > 0) off.Add($"used by \u2265 {_minReach}");
+            return off.Count == 0 ? string.Empty : string.Join(", ", off);
+        }
+    }
+
+    // The node under the pointer, kept after the pointer leaves so a reader can move towards what
+    // they are reading. Cleared only by the close button.
+    private GraphNodeBrief? _detail;
+
+    /// <summary>The panel's heading: the leaf name, with the container it already states removed.</summary>
+    private string DetailName
+    {
+        get
+        {
+            if (_detail is null) return string.Empty;
+            var key = _detail.Key;
+            // A container's key is synthetic: `org:actions` is not a name anybody uses for that
+            // account.
+            if (_detail.Kind == "org") return _detail.Owner is { Length: > 0 } o ? o : key[4..];
+            var leaf = key.Split('/')[^1];
+            return ShortRef(string.IsNullOrEmpty(leaf) ? key : leaf);
+        }
+    }
+
+    // A commit-pinned reference is forty hex characters of a name that is already long, and it is
+    // repeated verbatim on the key line below.
+    private static string ShortRef(string name)
+    {
+        var at = name.LastIndexOf('@');
+        if (at < 0 || name.Length - at - 1 != 40) return name;
+        var sha = name[(at + 1)..];
+        return sha.All(Uri.IsHexDigit) ? $"{name[..at]}@{sha[..7]}" : name;
+    }
+
+    private sealed record Fact(string Label, string Value);
+
+    /// <summary>
+    /// What is known about the node under the pointer, and what is not.
+    ///
+    /// Absent is never printed as zero: a node ingested since reach was last rebuilt has no
+    /// measurement, and a dependency nothing ever queued has no coverage. Both say so.
+    /// </summary>
+    private IEnumerable<Fact> DetailFacts
+    {
+        get
+        {
+            if (_detail is null) yield break;
+            var d = _detail;
+
+            if (Kinds.TryGetValue(d.Kind, out var kind)) yield return new Fact("Kind", kind);
+            if (!string.IsNullOrEmpty(d.Origin)) yield return new Fact("Origin", OriginLabel(d.Origin));
+            if (!string.IsNullOrEmpty(d.Repository) && d.Repository != d.Key)
+            {
+                yield return new Fact("Repository", d.Repository);
+            }
+            else if (!string.IsNullOrEmpty(d.Owner) && d.Owner != d.Key && d.Owner != DetailName)
+            {
+                yield return new Fact("Owner", d.Owner);
+            }
+            if (!string.IsNullOrEmpty(d.Grouping)) yield return new Fact("Grouping", d.Grouping);
+            if (!string.IsNullOrEmpty(d.Ref)) yield return new Fact("Version", ShortRef($"@{d.Ref}")[1..]);
+            if (!string.IsNullOrEmpty(d.Container) && d.Container != d.Repository)
+            {
+                yield return new Fact("In", d.Container);
+            }
+
+            yield return new Fact("Reach", d.ReachKnown
+                ? $"{d.DependentRepos:N0} repositories reach it"
+                : "not measured");
+
+            if (d.Findings > 0)
+            {
+                var rules = d.Rules.Count > 0 ? $" · {string.Join(", ", d.Rules)}" : string.Empty;
+                yield return new Fact("Findings", $"{d.Findings:N0}{rules}");
+            }
+            // A count of statements, not a judgement that any observed reference is affected.
+            if (d.Advisories > 0) yield return new Fact("Advisories", $"{d.Advisories:N0} name it");
+
+            // Coverage is a claim about a dependency. An account or a repository is a container the
+            // graph draws, and "never queued" about one reads as a gap somebody should close.
+            if (d.IsExternal && d.Kind is not ("org" or "repo"))
+            {
+                yield return new Fact("Analyzed", d.RefsInUse == 0 && d.RefsAnalyzed == 0
+                    ? "never queued"
+                    : $"{d.RefsAnalyzed:N0} of {d.RefsInUse:N0} references");
+            }
+            if (!string.IsNullOrEmpty(d.Discovery))
+            {
+                var depth = d.Depth > 0 ? $" · {d.Depth} hops out" : string.Empty;
+                yield return new Fact("Discovery", $"{d.Discovery}{depth}");
+            }
+        }
+    }
+
+    private static string OriginLabel(string origin) => origin switch
+    {
+        "seed" => "starting point",
+        "upstream" => "upstream",
+        "external" => "dependency",
+        _ => origin,
+    };
 
     private string SelectionLabel => _selected.Count switch
     {
@@ -510,31 +1085,84 @@
     private string KindColor(string kind) =>
         Theme.Palette.Kinds.TryGetValue(kind, out var c) ? c : Theme.Palette.Muted;
 
+    private string DiscoveryColor(string state) =>
+        Theme.Palette.Discovery.TryGetValue(state, out var c) ? c : Theme.Palette.Muted;
+
     protected override void OnInitialized()
     {
-        _isolated = SelectionParam ?? string.Empty;
-        _selected = string.IsNullOrEmpty(_isolated) ? [] : [_isolated];
-        if (!string.IsNullOrEmpty(_isolated)) _hops = 1;
-        if (!string.IsNullOrEmpty(ViewParam)) _view = ViewParam;
+        ReadScopeFromAddress();
 
-        // Handed over from another page, so the reader arrives at what they were already looking
-        // at rather than at the whole corpus again.
-        _search = SearchParam ?? string.Empty;
-        if (!string.IsNullOrEmpty(RefStyleParam)) _refStyle = RefStyleParam;
-        if (MinReachParam is > 0) _minReach = MinReachParam;
-        if (SplitParam(RulesParam) is { Count: > 0 } rules) _rules = rules;
-        if (SplitParam(OriginsParam) is { Count: > 0 } origins) _origins = origins;
-        if (SplitParam(FlagsParam) is { Count: > 0 } flags) _flags = flags;
-        if (SplitParam(KindsParam) is { Count: > 0 } kinds) _kinds = kinds;
+        // Checked against what is on offer, like the direction below it: an unknown name left the
+        // toggle group with nothing selected and then rode out into every link shared from here.
+        if (Views.Any(v => v.Key == ViewParam)) _view = ViewParam!;
+        if (Directions.Any(d => d.Key == DirectionParam)) _direction = DirectionParam!;
 
         Theme.Changed += OnThemeChanged;
+        Follow.Changed += OnFollowChanged;
     }
 
-    private static HashSet<string> SplitParam(string? value) =>
-        string.IsNullOrWhiteSpace(value)
-            ? []
-            : value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                   .ToHashSet();
+    /// <summary>
+    /// The address is the scope, read through the one parser the API and the gate also read.
+    ///
+    /// <para>
+    /// A term the address names wins; a term it does not name keeps this page's arrival default,
+    /// because almost every link in is partial — Discovery hands over a node and a direction and
+    /// nothing else, and reading the kinds it never mentioned as an empty set would draw a blank
+    /// canvas. The cost is that emptying a list whose default is non-empty does not survive a
+    /// reload: the shared language cannot spell an empty list, and giving it one is a change Go
+    /// has to make too.
+    /// </para>
+    /// </summary>
+    private void ReadScopeFromAddress()
+    {
+        Scope.ReadFrom(Nav.Uri);
+        var spec = Scope.Spec;
+
+        if (Scope.Names("q")) _search = spec.Search;
+        if (Scope.Names("minReach")) _minReach = spec.MinReach > 0 ? spec.MinReach : null;
+        if (Scope.Names("rules")) _rules = [.. spec.Rules];
+        if (Scope.Names("origins")) _origins = [.. spec.Origins];
+        if (Scope.Names("flags")) _flags = [.. spec.Flags];
+        if (Scope.Names("kinds")) _kinds = spec.Kinds.ToHashSet();
+        if (Scope.Names("edges")) _edgeClasses = spec.EdgeClass.ToHashSet();
+
+        // Two terms are checked against what is on offer rather than taken literally: an empty
+        // scope asks the API for the whole corpus, and an unknown reference style filters nothing
+        // while the control shows something else.
+        if (ScopeKeys.Contains(spec.Scope)) _scope = spec.Scope;
+        if (RefStyles.Contains(spec.RefStyle)) _refStyle = spec.RefStyle;
+
+        _isolated = Scope.Selection.Count > 0 ? Scope.Selection[0] : string.Empty;
+        _selected = string.IsNullOrEmpty(_isolated) ? [] : [_isolated];
+        if (!string.IsNullOrEmpty(_isolated)) _hops = 1;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Read before the first frame is drawn, so the page never shows the wrong stage and then
+        // corrects itself.
+        try
+        {
+            _declared = await Api.GetOwnedScopeAsync();
+        }
+        catch (HttpRequestException)
+        {
+            // Swallowed on purpose: _declared stays null, which draws no frame at all. Reporting
+            // a transport failure here would put an error over the first-run stages, before the
+            // reader has done anything that could have caused one.
+        }
+    }
+
+    private IReadOnlyList<DeclaredAccount>? _declared;
+
+    // Which of the three first-run stages the page is at, or none once there is a picture.
+    //
+    // Null until the declaration has been read: saying "nothing is here" before the answer
+    // arrives is an absent measurement drawn as a measurement.
+    private string? Frame =>
+        _declared is null || _loading || _counts.Nodes > 0 ? null
+        : _declared.Count == 0 ? "declare"
+        : "waiting";
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -544,19 +1172,46 @@
         await _module.InvokeAsync<bool>("create", "abom-graph", _use3d, _self);
         await _module.InvokeVoidAsync("setPalette", "abom-graph", Theme.Palette);
         await _module.InvokeVoidAsync("setAnimate", "abom-graph", _animate);
+        // The fold is the arrival state, so the renderer has to be told before the first draw
+        // rather than only when the checkbox is touched.
+        await _module.InvokeVoidAsync("setGroupBy", "abom-graph", _groupBy);
+        await _module.InvokeVoidAsync("setCollapsed", "abom-graph", _collapsed, FilterSpec());
         _ready = true;
         await LoadGraph();
+        ApplyFollow();
     }
 
-    private async Task LoadGraph()
+    private async Task LoadGraph(bool force = false)
     {
         if (_module is null) return;
         _loading = true;
-        Busy("Loading the whole graph…");
+        Busy(ScopeBusyMessage);
 
-        var url = ShowSteps ? "/api/graph/full?steps=true" : "/api/graph/full";
-        var loaded = await _module.InvokeAsync<LoadResult>("loadFull", "abom-graph", url);
+        var query = new List<string>();
+        if (ShowSteps) query.Add("steps=true");
+        if (!string.IsNullOrEmpty(_scope)) query.Add("scope=" + _scope);
+        // A node carries one grouping value, for the configured key only, so the browser cannot
+        // narrow by an arbitrary property at all. These two terms are asked of the server or they
+        // are not applied anywhere. The URL is the payload cache key, so a change refetches.
+        query.AddRange(Scope.Spec.Properties.Select(p => "properties=" + Uri.EscapeDataString(p.ToString())));
+        query.AddRange(Scope.Spec.NotProperties.Select(p => "notProperties=" + Uri.EscapeDataString(p.ToString())));
+        var url = "/api/graph/full" + (query.Count > 0 ? "?" + string.Join("&", query) : "");
+        var loaded = await _module.InvokeAsync<LoadResult>("loadFull", "abom-graph", url, force);
         _ruleIds = loaded.Rules;
+
+        // A cached copy comes back with its positions intact, which is what makes returning to
+        // this page instant. It also comes back as old as the visit that built it, so the
+        // generation it holds is the cursor to catch up from rather than the current one.
+        var caughtUp = loaded.Cached && loaded.Generation > 0;
+        if (caughtUp)
+        {
+            _generation = loaded.Generation;
+        }
+        else
+        {
+            _generation = (await Api.GetGraphVersionAsync()).Generation;
+            await _module.InvokeVoidAsync("setGeneration", "abom-graph", _generation);
+        }
 
         if (_view == "priority") await PushPriorities();
         await _module.InvokeVoidAsync("setView", "abom-graph", _view);
@@ -564,6 +1219,72 @@
         _loading = false;
         Busy("Laying out the graph…");
         await Refilter();
+
+        if (caughtUp) await FollowGraph();
+    }
+
+    /// <summary>
+    /// Folds in what a running expansion has added since the last look.
+    ///
+    /// The version is checked first because it is a few bytes against a corpus, and because
+    /// re-laying-out an unchanged graph every interval would move the picture for nothing.
+    /// </summary>
+    private async Task FollowGraph()
+    {
+        if (_module is null || !_ready || _loading) return;
+
+        var version = await Api.GetGraphVersionAsync();
+        _lastPoll = DateTime.UtcNow;
+        if (version.Generation == _generation)
+        {
+            StateHasChanged();
+            return;
+        }
+
+        var url = ShowSteps
+            ? $"/api/graph/delta?since={_generation}&steps=true"
+            : $"/api/graph/delta?since={_generation}";
+        var merged = await _module.InvokeAsync<MergeResult>("mergeDelta", "abom-graph", url);
+        if (merged.Reset)
+        {
+            // The cursor is older than the server will answer for, so the held copy cannot be
+            // brought up to date and has to be replaced rather than reused.
+            await LoadGraph(force: true);
+            return;
+        }
+
+        _generation = merged.Generation;
+        _arrived = merged.Nodes;
+        if (merged.Rules.Count > 0) _ruleIds = merged.Rules;
+        await Refilter();
+    }
+
+    private void OnFollowChanged()
+    {
+        ApplyFollow();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void ApplyFollow()
+    {
+        _followTimer?.Dispose();
+        _followTimer = new Timer(async _ =>
+        {
+            // Nothing awaits a timer callback, so a failed fetch or a JS interop error raised
+            // here is discarded, and the graph silently stops following.
+            try
+            {
+                await InvokeAsync(FollowGraph);
+                // A read that failed returns an empty result rather than throwing, so the
+                // transport's own account is the only sign the picture has stopped moving.
+                _pollError = Api.LastError;
+            }
+            catch (Exception ex)
+            {
+                _pollError = ex.Message;
+            }
+            await InvokeAsync(StateHasChanged);
+        }, null, Follow.Interval, Follow.Interval);
     }
 
     private void Busy(string message)
@@ -594,13 +1315,19 @@
         hasFindings = _flags.Contains("findings"),
         hasAdvisory = _flags.Contains("advisory"),
         unanalyzedOnly = _flags.Contains("unanalyzed"),
+        grouped = _groupBy != "none",
+        dependencies = _dependencies,
         selection = _isolated,
         hops = _hops,
+        direction = _direction,
     };
 
     private async Task Refilter()
     {
         if (_module is null || !_ready) return;
+        // Every control that narrows the view goes through here, and until it synced, nine of them
+        // changed what was on screen without changing the link the reader would share.
+        SyncAddress();
         _counts = await _module.InvokeAsync<Counts>("applyFilters", "abom-graph", FilterSpec());
         // Only the filter knows how many nodes the simulation was actually given; naming the
         // corpus size here claimed work that is not being done.
@@ -622,37 +1349,128 @@
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// The node under the pointer, for the panel beside the graph.
+    ///
+    /// <para>Only arrivals are reported. The panel outlives the pointer on purpose — a reader has
+    /// to be able to move towards what they are reading — so a leave would blank it exactly when
+    /// it became useful.</para>
+    /// </summary>
+    [JSInvokable]
+    public Task OnNodeHovered(GraphNodeBrief? node)
+    {
+        if (node is null || string.IsNullOrEmpty(node.Key)) return Task.CompletedTask;
+        _detail = node;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Dismisses the node panel, which the pointer never does on its own.</summary>
+    public Task ClearNodeDetail()
+    {
+        _detail = null;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
     /// <summary>Narrows the view to everything touching a node, both directions.</summary>
     [JSInvokable]
     public async Task OnNodeIsolated(string key)
     {
         if (string.IsNullOrEmpty(key)) return;
+        var wasShowingSteps = ShowSteps;
         _isolated = key == _isolated ? string.Empty : key;
         _selected = string.IsNullOrEmpty(_isolated) ? [] : [_isolated];
         // Start at the immediate neighbors. The graph is largely one connected component, so an
         // unbounded walk from any node reaches nearly all of it and drilling in shows no change.
         _hops = string.IsNullOrEmpty(_isolated) ? 0 : 1;
         SyncAddress();
+        // Gaining or losing a focus is what makes steps available, so the payload changes with it.
+        if (ShowSteps != wasShowingSteps) await LoadGraph();
         await Refilter();
     }
 
-    private void SyncAddress()
+    /// <summary>Escape, or a click on empty canvas: the short way back out of a selection.</summary>
+    [JSInvokable]
+    public async Task OnGraphCleared()
     {
-        var query = string.IsNullOrEmpty(_isolated)
-            ? $"/explore?view={_view}"
-            : $"/explore?selection={Uri.EscapeDataString(_isolated)}&view={_view}";
-        Nav.NavigateTo(query, forceLoad: false);
+        if (string.IsNullOrEmpty(_isolated) && _selected.Count == 0) return;
+        // Only isolation changed which nodes are on screen, so only isolation has earned a camera
+        // move. Recentering after merely dropping a highlight loses the reader's place for nothing.
+        await ClearSelection(recenter: !string.IsNullOrEmpty(_isolated));
+        StateHasChanged();
     }
 
-    private async Task ClearSelection()
+    /// <summary>
+    /// Puts the whole view back in the address: the scope in its canonical form, and the
+    /// presentation that decides how it is drawn.
+    ///
+    /// <para>
+    /// Written through <see cref="ScopeService"/> rather than assembled inline because the same
+    /// text is read by the graph API and by the pull request gate, and three hand-rolled
+    /// serializers drift without anything reporting it — which is how this page came to write
+    /// <c>ref</c> and read <c>refStyle</c>.
+    /// </para>
+    /// </summary>
+    public void SyncAddress()
     {
+        Scope.Set(CurrentSpec());
+        Scope.Select(string.IsNullOrEmpty(_isolated) ? [] : [_isolated]);
+
+        var presentation = new List<string> { $"view={_view}" };
+        if (_direction != "both") presentation.Add($"direction={_direction}");
+        // Where the reader came from, so the way back out survives touching a filter.
+        if (!string.IsNullOrEmpty(FromParam)) presentation.Add($"from={Uri.EscapeDataString(FromParam)}");
+        if (!string.IsNullOrEmpty(StatusParam)) presentation.Add($"status={Uri.EscapeDataString(StatusParam)}");
+
+        var scope = Scope.ToQueryString();
+        var query = string.Join("&", presentation);
+        if (scope.Length > 0) query = $"{query}&{scope}";
+
+        // Replaced rather than pushed: the address mirrors what is on screen, and now that every
+        // control syncs, pushing would cost a press of Back for each checkbox touched.
+        Nav.NavigateTo($"/explore?{query}", new NavigationOptions { ReplaceHistoryEntry = true });
+    }
+
+    /// <summary>The portable half of what is on screen. Presentation is deliberately absent.</summary>
+    private ViewSpec CurrentSpec() => new()
+    {
+        // Terms this page has no control for still travel. A scope built on another surface, or
+        // by hand, must not be quietly widened by being looked at here.
+        Provider = Scope.Spec.Provider,
+        Severity = Scope.Spec.Severity,
+        Boundary = Scope.Spec.Boundary,
+        Repositories = Scope.Spec.Repositories,
+        NotRules = Scope.Spec.NotRules,
+        Properties = Scope.Spec.Properties,
+        NotProperties = Scope.Spec.NotProperties,
+        Steps = Scope.Spec.Steps,
+
+        Scope = _scope,
+        Search = _search,
+        Kinds = [.. _kinds],
+        Origins = [.. _origins],
+        Rules = [.. _rules],
+        EdgeClass = [.. _edgeClasses],
+        RefStyle = _refStyle,
+        MinReach = _minReach ?? 0,
+        Flags = [.. _flags],
+    };
+
+    private async Task ClearSelection() => await ClearSelection(recenter: true);
+
+    private async Task ClearSelection(bool recenter)
+    {
+        var wasShowingSteps = ShowSteps;
         _isolated = string.Empty;
         _selected = [];
         _hops = 0;
         await FallBackFromSelectionOnlyView();
         SyncAddress();
+        if (ShowSteps != wasShowingSteps) await LoadGraph();
         await Refilter();
-        await _module!.InvokeVoidAsync("fit", "abom-graph");
+        await _module!.InvokeVoidAsync("setSelection", "abom-graph", Array.Empty<string>());
+        if (recenter) await _module!.InvokeVoidAsync("fit", "abom-graph");
     }
 
     /// <summary>Leaving a view that places nodes by hop distance, once there is nothing to measure from.</summary>
@@ -697,13 +1515,32 @@
 
     private async Task OnGroupByChanged(string value)
     {
+        var wasGrouped = _groupBy != "none";
         _groupBy = value;
         // Collapsing by nothing would fold the whole graph into one node.
         if (_groupBy == "none" && _collapsed) await OnCollapsedChanged(false);
         await _module!.InvokeVoidAsync("setGroupBy", "abom-graph", _groupBy);
-        if (_collapsed) await Refilter();
+        // Crossing in or out of None changes whether a filter removes or greys, which is a
+        // different node set and not something a repaint can reach.
+        if (_collapsed || wasGrouped != (_groupBy != "none")) await Refilter();
     }
 
+    private string ScopeBusyMessage => _scope switch
+    {
+        "owned" => "Loading what you own…",
+        "exposure" => "Loading what reaches an advisory…",
+        _ => "Loading…",
+    };
+
+    private async Task OnScopeChanged(string value)
+    {
+        _scope = value;
+        await LoadGraph(force: true);
+        _groupBy = "owner";
+        // Every scope is now small enough to draw, and folding gathers away the nodes it exists
+        // to show.
+        await OnCollapsedChanged(false);
+    }
     private async Task OnCollapsedChanged(bool value)
     {
         _collapsed = value;
@@ -731,6 +1568,22 @@
     private async Task OnMinReachChanged(int? v) { _minReach = v; await Refilter(); }
     private async Task OnHopsChanged(int v) { _hops = v; await Refilter(); }
 
+    // A property term is applied by the server, so the payload has to be fetched again rather than
+    // re-filtered. Forced, because the previous answer is cached under its own URL and a stale
+    // copy would read as the filter doing nothing.
+    private async Task OnScopeControlChanged() => await LoadGraph(force: true);
+
+    private async Task OnDirectionChanged(string v) { _direction = v; await Refilter(); }
+
+    // Arriving from another page is a one-way trip otherwise: the browser's Back works, but
+    // nothing on screen says so, and the reader has usually changed something by then.
+    private bool CameFromDiscovery => FromParam == "discovery";
+
+    private string BackToDiscovery => "/inventory?unit=coverage";
+
+    private string DirectionMeaning =>
+        Directions.FirstOrDefault(d => d.Key == _direction)?.Meaning ?? string.Empty;
+
     private async Task OnFlagsChanged(IEnumerable<string> v)
     {
         var wasShowingSteps = ShowSteps;
@@ -749,16 +1602,21 @@
         StateHasChanged();
     }
 
-    private sealed record LoadResult(int Nodes, int Edges, IReadOnlyList<string> Rules);
+    internal sealed record LoadResult(
+        int Nodes, int Edges, IReadOnlyList<string> Rules, bool Cached, long Generation);
 
     public async ValueTask DisposeAsync()
     {
         Theme.Changed -= OnThemeChanged;
+        Follow.Changed -= OnFollowChanged;
+        _followTimer?.Dispose();
         if (_module is not null)
         {
             try
             {
-                await _module.InvokeVoidAsync("dispose", "abom-graph");
+                // Keep the entry: it holds the parsed graph and the positions it settled into,
+                // which is the whole cost of coming back to this page.
+                await _module.InvokeVoidAsync("dispose", "abom-graph", true);
                 await _module.DisposeAsync();
             }
             catch (JSDisconnectedException) { /* the circuit is already gone */ }

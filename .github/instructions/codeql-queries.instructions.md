@@ -1,71 +1,79 @@
 ---
-description: "Use when writing, editing or debugging CodeQL queries, libraries or query tests in the codeql-abom ql/ pack. Covers the abom/ id prefix, why concat is total, recovering YAML pin comments, LSP false negatives on internal imports, and query test workflow."
+description: "Use when writing, editing or debugging CodeQL queries or libraries in the codeql-abom ql/ pack. Covers the abom/ id prefix, why concat is total, pin comments outside the scalar, LSP false negatives on internal imports, and BQRS kind-code differences."
 applyTo: "ql/**"
 ---
 
 # CodeQL queries in codeql-abom
 
-## Trust the upstream queries
+**Fixed file.** Do not edit or extend it. Work goes in `plans/**`, what the system does in
+`docs/*.md`, a lasting lesson in `.github/skills/**`. A rule here that is wrong: say so and stop.
 
-ABOM does not reimplement security analysis. `codeql/actions-queries` decides whether a use is a
-problem; ABOM's own queries extract *structure* — what references what, and where.
+## Extract structure, and author findings under `abom/`
 
-Queries here therefore carry an `abom/` id prefix, which keeps them separable from upstream rule
-ids everywhere downstream:
+ABOM writes its own queries: extraction queries that say what references what, and findings
+queries that augment the upstream set. Both carry an `abom/` id prefix, which is what keeps them
+separable from upstream rule ids downstream and lets a consumer filter on either.
 
-```ql
- * @id abom/edges
-```
+`codeql/actions-queries` is the upstream security set. The default suite happens to select it
+unchanged today; that is where things stand rather than a rule, and an ABOM-authored query belongs
+there as soon as it earns a place in the default.
 
-A structural query has no `@kind`, so it yields BQRS and no SARIF. That is deliberate — the
-hosted MRVA backend will not run it, which is why the graph is built by local evaluation.
+A structural query has no `@kind`, so it yields BQRS and no SARIF. Deliberate: the hosted MRVA
+backend will not run it, which is why the graph is built by local evaluation. A findings query
+needs `@kind` and, for `problem`, `@problem.severity` to reach SARIF at all.
+
+## An Actions file with no `jobs:` is not a `Workflow`
+
+The extractor creates no `Workflow` entity for a file under `.github/workflows/` that declares no
+jobs — PrintAST shows `OnImpl` and `EventImpl` and no `WorkflowImpl`. So
+`exists(Workflow w | not exists(Job j | j.getWorkflow() = w))` is unreachable rather than strict.
+Per-workflow coverage comes from `Job` alone, which is sound because a valid workflow declares at
+least one. `CompositeAction` is the case a job-only query misses: a repository that *is* an action
+has no jobs at all.
 
 ## `concat` is total
 
-`concat(...)` returns `""` for an empty set rather than no result, so `exists(concatHelper(x))`
-is **always true**. This silently mislabelled every job's permissions scope once.
-
-Guard on the underlying set instead:
+It returns `""` for an empty set, so `exists(concatHelper(x))` is **always true**. This silently
+mislabelled every job's permissions scope once. Guard the underlying set:
 
 ```ql
-// wrong: always holds
-exists(jobPermissions(job))
-// right
-exists(job.getPermissions().getAPermission())
+exists(job.getPermissions().getAPermission())   // not exists(jobPermissions(job))
 ```
 
 ## Pin comments are not part of the scalar
 
-A trailing YAML comment such as `# v4.2.2` is not in the `uses:` value. Recover it through
-`codeql.actions.ast.internal.Ast::Comment`, matched by same line and `startColumn` beyond the
-uses node's `endColumn`. These are evidence and are stored verbatim — never normalized.
+A trailing `# v4.2.2` is not in the `uses:` value. Recover it via
+`codeql.actions.ast.internal.Ast::Comment`, matched on same line with `startColumn` beyond the
+uses node's `endColumn`. Evidence — store verbatim, never normalized.
 
-## The VS Code QL extension lies about internal imports
+## The QL extension lies about internal imports
 
 `private import codeql.actions.ast.internal.*` reports "could not resolve module", and one
-unresolved import cascades into "could not resolve type" for every type in the file. The
-extension is wrong. Confirm with the compiler before believing it:
+unresolved import cascades into every type in the file. Confirm with the compiler:
 
 ```bash
-codeql query compile ql/actions/abom/src/AbomEdges.ql
+codeql query compile ql/actions/graph-extraction/src/AbomEdges.ql
 ```
 
-## Query tests
+## BQRS kind codes differ by command
 
-```bash
-codeql pack install ql/actions/abom/test   # from the workspace root, so ${workspace} resolves
-codeql test run ql/actions/abom/test
-```
+`bqrs info --format=json` uses short codes (`s`, `i`, `e`); `bqrs decode --format=json` uses long
+names (`String`, `Integer`, `Entity`).
 
-A test with no `.expected` file reports as failing. Read the `.actual` and review it **before**
-`codeql test accept` — accepting blind bakes in whatever the query currently does, including its
-bugs.
+## Exact pins are load-bearing, and live in three places
 
-The test source trees under `ql/actions/abom/test/` double as fixture sources for Go tests.
-Changing one means regenerating the fixtures that were produced from it.
+A floating upstream version means the same command on the same commit reports a different number
+tomorrow, and a baseline that moves on its own is not a baseline. The pinned version is written in
+the suite, the pack manifest and the lock file — and `codeql pack upgrade` rewrites two of them,
+never the one inside the `.qls`.
 
-## BQRS format notes
+A suite is identified as `<pack>:codeql-suites/<name>.qls` and is offered simply by being dropped
+into a pack — no release, and no CLI call on the request path. Pack names are scoped before
+publication, because renaming afterwards is not a rename.
 
-`bqrs info --format=json` uses short kind codes (`s`, `i`, `e`); `bqrs decode --format=json` uses
-long names (`String`, `Integer`, `Entity`). They do not match, and code that assumes they do
-fails only on the paths it was not tested against.
+CLI calls that take a pack reference need `--additional-packs ql`, since these packs are not
+published.
+
+## Tests
+
+Test trees double as Go fixture sources — see the `regenerate-abom-fixtures` skill.

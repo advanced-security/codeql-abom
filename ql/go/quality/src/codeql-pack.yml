@@ -1,0 +1,7 @@
+name: advanced-security/abom-go-quality-src
+version: 2.27.0
+description: "Code quality queries ABOM runs against its own Go"
+library: false
+suites: codeql-suites
+dependencies:
+  codeql/go-queries: 1.6.10

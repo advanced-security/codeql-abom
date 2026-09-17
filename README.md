@@ -2,6 +2,16 @@
 
 An Actions Bill of Materials for a GitHub organization, built from CodeQL results.
 
+Self-hosted, and meant for a central security team responsible for GitHub Actions across one
+GitHub organization. It contributes what GitHub's dependency graph cannot see about Actions, and
+holds the findings that cannot travel the advisory database at all.
+
+**[Why ABOM exists](docs/abom-value-proposition.md)** — the two documented gaps in the native
+experience that justify a separate tool, and the boundary it will not cross.
+**[How it works](docs/architecture.md)** — the pipeline, the data model, and the rules that shape
+them. **[Vision](docs/vision.md)** — where it is going and why. **[Roadmap](docs/roadmap.md)** —
+what is next.
+
 `codeql-abom` answers questions a list of dependencies cannot:
 
 - **What is the blast radius of an action?** How many repositories reach it, directly and
@@ -11,6 +21,19 @@ An Actions Bill of Materials for a GitHub organization, built from CodeQL result
 - **What breaks if we bump this?** Which repositories are affected, split into those that name
   the action themselves and those that reach it through someone else's.
 - **How are references pinned?** Per owner, repository, workflow and individual `uses:` line.
+
+```mermaid
+flowchart LR
+  OWN["own<br/>declare your accounts"] --> DB
+  GH["GitHub"] --> DISC["discover<br/>repositories in an org"]
+  DISC --> BUILD["build<br/>fetch, query, ingest"]
+  BUILD --> DB[("abom.db")]
+  DB --> EXP["expand-all<br/>follow dependencies upstream"]
+  EXP --> DB
+  DB --> SERVE["serve<br/>interface and API"]
+  DB --> REPORT["report"]
+  DB --> BOM["bom<br/>bill of materials"]
+```
 
 ## What it is not
 
@@ -33,28 +56,37 @@ make build
 ./bin/codeql-abom build --db abom.db
 
 # Follow dependencies upstream, then refresh every aggregate.
-./bin/codeql-abom expand-all --db abom.db --query ql/actions/abom/src/AbomEdges.ql
+./bin/codeql-abom expand-all --db abom.db
+
+# Recompute the derived tables without crawling, which is what an upgrade needs.
+./bin/codeql-abom refresh --db abom.db
 
 # Read the result.
 ./bin/codeql-abom report --db abom.db
 ./bin/codeql-abom serve --db abom.db --ui-dir <published-wwwroot>
 ```
 
-`codeql-abom --help` lists every subcommand.
+`codeql-abom --help` lists every subcommand, and `make start` builds both halves and serves them.
 
-## Declaring what you own
+## Confirming what is yours
 
-Most figures split into what you can change and what you cannot, once you say which accounts are
-yours:
+Most figures split into what you can change and what you cannot, once ABOM knows which accounts
+are yours. It never asks you: it reads the answer from an authenticated
+[`gh`](https://cli.github.com) session.
 
 ```bash
-./bin/codeql-abom owned --db abom.db --suggest
-./bin/codeql-abom owned --db abom.db --add my-org
+gh auth login                                   # once, with the read:org scope
+./bin/codeql-abom accounts --db abom.db --refresh
+./bin/codeql-abom own --db abom.db --org <name> # declare what you are responsible for
 ```
 
-This is a declaration, not a measurement, and it cannot be derived: an account can hold
-repositories that were analyzed and still be one nobody can change. `actions` owns
-`actions/cache`, which is why it appears among the suggestions and why the choice is yours.
+An account counts because GitHub says you belong to it, never because it was typed in. That
+matters because holding an analyzed repository proves nothing about who can change it: `actions`
+owns `actions/cache`, which is reached by many organizations and controlled by none of them.
+
+Until an identity is verified, every figure is reported undivided — which is not a claim that
+you own nothing. If `gh` is missing, logged out, or lacks `read:org`, the interface says so and
+names the command that fixes it.
 
 ## Layout
 
@@ -64,8 +96,13 @@ repositories that were analyzed and still be one nobody can change. `actions` ow
 | `internal/store` | SQLite. The only package that writes SQL |
 | `internal/graph`, `ingest`, `expand` | Derivation from CodeQL results |
 | `internal/serve` | HTTP API |
+| `internal/submit` | Dependency graph snapshots sent to GitHub |
 | `ui` | Blazor WebAssembly interface |
-| `ql/actions/abom` | The CodeQL queries that produce the graph |
+| `ql/actions/graph-extraction` | The CodeQL queries that produce the graph |
+| `ql/actions/findings` | The suite whose results become findings |
+| `ql/actions/selfcheck` | Our own workflows, analyzed by our own queries |
+| [`docs/`](docs/architecture.md) | How it works, why it exists, and where it is going |
+| [`plans/`](plans/next.md) | What is next, and the reasoning behind it |
 
 ## Development
 

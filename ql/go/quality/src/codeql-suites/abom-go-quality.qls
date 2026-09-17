@@ -1,0 +1,9 @@
+- description: Code quality queries ABOM runs against its own Go
+
+# Pinned, like every other suite here, because an unpinned reference resolves to whatever the
+# cache last downloaded. Measured 2026-09-10: running this unpinned pulled newer packs mid-run,
+# so the same command on the same commit could report a different number of findings. A baseline
+# that moves on its own cannot be a baseline, and a gate built on one cannot be a gate.
+- import: codeql-suites/go-code-quality.qls
+  from: codeql/go-queries
+  version: 1.6.10

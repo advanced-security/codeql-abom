@@ -1,0 +1,18 @@
+| composite-step-uses-action | composite_action | .github/actions/greet/action.yml |  | 0 |  | actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 | v4.2.0 | 12 | 13 | 12 | 66 |
+| composite-step-uses-action | composite_action | .github/actions/greet/action.yml |  | 1 |  | actions/setup-python@v5 |  | 17 | 13 | 17 | 35 |
+| job-needs-job | workflow | .github/workflows/main.yml | needs-many | -1 |  | build |  | 48 | 13 | 48 | 17 |
+| job-needs-job | workflow | .github/workflows/main.yml | needs-many | -1 |  | needs-one |  | 48 | 20 | 48 | 28 |
+| job-needs-job | workflow | .github/workflows/main.yml | needs-one | -1 |  | build |  | 42 | 12 | 42 | 16 |
+| job-uses-reusable-workflow | workflow | .github/workflows/main.yml | call-local-reusable | -1 |  | ./.github/workflows/reusable.yml |  | 37 | 11 | 37 | 42 |
+| job-uses-reusable-workflow | workflow | .github/workflows/main.yml | call-remote-reusable | -1 |  | octo-org/shared/.github/workflows/build.yml@v1 |  | 33 | 11 | 33 | 56 |
+| job-uses-reusable-workflow | workflow | .github/workflows/main.yml | call-self-reusable | -1 |  | $/.github/workflows/reusable.yml |  | 63 | 11 | 63 | 42 |
+| step-uses-action | job | .github/workflows/main.yml | build | 0 | checkout | actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 | v4.2.2 | 16 | 15 | 16 | 71 |
+| step-uses-action | job | .github/workflows/main.yml | build | 1 |  | actions/setup-node@v4 |  | 18 | 15 | 18 | 35 |
+| step-uses-action | job | .github/workflows/main.yml | build | 2 |  | actions/upload-artifact@v4.6.2 |  | 20 | 15 | 20 | 44 |
+| step-uses-action | job | .github/workflows/main.yml | build | 3 |  | actions/stale@main |  | 22 | 15 | 22 | 32 |
+| step-uses-action | job | .github/workflows/main.yml | build | 4 |  | actions/labeler |  | 24 | 15 | 24 | 29 |
+| step-uses-action | job | .github/workflows/main.yml | build | 5 |  | ./.github/actions/greet |  | 26 | 15 | 26 | 37 |
+| step-uses-action | job | .github/workflows/main.yml | build | 6 |  | docker://alpine:3.20 |  | 28 | 15 | 28 | 34 |
+| step-uses-action | job | .github/workflows/main.yml | build | 7 |  | github/codeql-action/init@v3 |  | 30 | 15 | 30 | 42 |
+| step-uses-action | job | .github/workflows/main.yml | self-reference | 0 |  | $/.github/actions/greet |  | 60 | 15 | 60 | 37 |
+| step-uses-action | job | .github/workflows/reusable.yml | reusable-job | 0 |  | actions/checkout@v4 |  | 12 | 15 | 12 | 33 |

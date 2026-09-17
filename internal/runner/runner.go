@@ -29,6 +29,17 @@ type Runner struct {
 	// RAMMB caps evaluator memory; zero lets CodeQL choose. Worth setting when many workers
 	// share one machine, since the default sizes itself against total system memory.
 	RAMMB int
+	// Lock serializes the invocations that share CodeQL's compilation cache. Nil means none,
+	// which is right for a one-shot command with nothing to contend with.
+	Lock *Lock
+	// Server answers the small commands from one long-lived JVM. Nil runs every command as its
+	// own process, which is what a one-shot invocation wants.
+	Server *CLIServer
+	// Evaluator runs the BQRS lane against a session that outlives the repository. Nil evaluates
+	// each batch in its own process.
+	Evaluator Evaluator
+
+	versionState
 }
 
 func (r *Runner) codeql() string {
@@ -56,6 +67,12 @@ func (r *Runner) RunQuery(ctx context.Context, dbPath, queryPath, outputPath str
 		args = append(args, fmt.Sprintf("--ram=%d", r.RAMMB))
 	}
 	args = append(args, queryPath)
+
+	release, err := r.Lock.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	cmd := exec.CommandContext(ctx, r.codeql(), args...)
 	var stderr bytes.Buffer
@@ -131,23 +148,30 @@ func writeEntry(entry *zip.File, target string) error {
 	if err != nil {
 		return fmt.Errorf("creating %s: %w", entry.Name, err)
 	}
-	defer dst.Close()
 
-	if _, err := io.Copy(dst, src); err != nil {
-		return fmt.Errorf("extracting %s: %w", entry.Name, err)
+	_, copyErr := io.Copy(dst, src)
+	// Close is where a buffered write finally reports failure, so discarding it would let a
+	// truncated file out of an extraction that returned success. The copy error wins when both
+	// fail, because it says what went wrong first.
+	closeErr := dst.Close()
+	if copyErr != nil {
+		return fmt.Errorf("extracting %s: %w", entry.Name, copyErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("writing %s: %w", entry.Name, closeErr)
 	}
 	return nil
 }
 
 // safeJoin resolves an archive entry name under root, rejecting anything that escapes it.
+//
+// filepath.IsLocal rather than a prefix check: it decides per platform, so it also catches a
+// Windows reserved device name and a drive-relative path, and it is a guard CodeQL can see
+// holding -- the prefix check it replaced let `target == root` through as a second way past.
 func safeJoin(root, name string) (string, error) {
-	if filepath.IsAbs(name) || strings.HasPrefix(name, "/") || strings.HasPrefix(name, `\`) {
-		return "", fmt.Errorf("archive entry %q is an absolute path", name)
-	}
-
-	target := filepath.Join(root, filepath.FromSlash(name))
-	if target != root && !strings.HasPrefix(target, root+string(os.PathSeparator)) {
+	entry := filepath.FromSlash(name)
+	if !filepath.IsLocal(entry) {
 		return "", fmt.Errorf("archive entry %q escapes the destination directory", name)
 	}
-	return target, nil
+	return filepath.Join(root, entry), nil
 }

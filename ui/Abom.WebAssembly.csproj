@@ -19,8 +19,23 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The bUnit harness has to supply a result for every typed call into ./js/graph.js, and it
+         cannot name a private nested record. Visibility only; nothing changes at runtime. -->
+    <InternalsVisibleTo Include="Abom.WebAssembly.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Tests run under node, not in the browser; shipping them would serve dead bytes. -->
     <Content Remove="wwwroot/js/*.test.js" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The component tests live under this directory but are not part of the app. Without this
+         the SDK's `**/*.cs` glob compiles them into the assembly, which then fails on the test
+         framework it cannot see. -->
+    <Compile Remove="tests/**" />
+    <Content Remove="tests/**" />
+    <None Remove="tests/**" />
   </ItemGroup>
 
 </Project>

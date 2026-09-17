@@ -1,0 +1,9 @@
+# A job that calls a reusable workflow rather than declaring steps. `ExternalJob` extends `Job`,
+# so it must be marked like any other — a repository whose workflows only delegate would otherwise
+# produce nothing.
+name: Calls a reusable workflow
+on: [push]
+
+jobs:
+  delegate:
+    uses: octo-org/shared/.github/workflows/reusable.yml@v1

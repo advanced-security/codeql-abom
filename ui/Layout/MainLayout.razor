@@ -2,6 +2,7 @@
 @implements IDisposable
 @inject ThemeService Theme
 @inject AbomApi Api
+@inject FollowService Follow
 
 <MudThemeProvider @ref="_themeProvider" Theme="Theme.Theme" IsDarkMode="Theme.IsDark" />
 <MudPopoverProvider />
@@ -28,7 +29,12 @@
     </MudDrawer>
 
     <MudMainContent>
-        <CoverageStrip Summary="_summary" />
+        @* Not on the Dashboard: that surface hands over a scope and states nothing else, because a
+           second, shorter coverage answer beside the entry points was read as the whole one. *@
+        @if (!IsDashboard)
+        {
+            <CoverageStrip Summary="_summary" />
+        }
         <MudContainer MaxWidth="MaxWidth.False" Class="pa-4">
             @Body
         </MudContainer>
@@ -40,6 +46,11 @@
     private bool _drawerOpen = true;
     private bool _systemPrefersDark;
     private Summary? _summary;
+
+    [Inject] private NavigationManager Nav { get; set; } = default!;
+
+    private bool IsDashboard =>
+        Nav.ToBaseRelativePath(Nav.Uri).TrimStart('/').Split('?')[0].Length == 0;
 
     protected override void OnInitialized() => Theme.Changed += OnThemeChanged;
 
@@ -55,6 +66,7 @@
         _systemPrefersDark = await _themeProvider.GetSystemDarkModeAsync();
         await Theme.InitialiseAsync(_systemPrefersDark);
         await _themeProvider.WatchSystemDarkModeAsync(OnSystemPreferenceChanged);
+        await Follow.InitializeAsync();
 
         _summary = await Api.GetSummaryAsync();
         StateHasChanged();

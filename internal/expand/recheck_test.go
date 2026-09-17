@@ -3,8 +3,10 @@ package expand
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,13 +21,37 @@ type probeFunc struct {
 	asked   []string
 }
 
-func (p *probeFunc) Resolve(_ context.Context, owner, repo string) (string, error) {
-	full := owner + "/" + repo
-	p.asked = append(p.asked, full)
-	if err := p.errs[full]; err != nil {
+// probeKey is how the script addresses one reference of one repository, because resolving a tag
+// and resolving the default branch are different questions with different answers.
+func probeKey(owner, repo, ref string) string {
+	if ref == "" {
+		ref = frontier.HeadRef
+	}
+	return owner + "/" + repo + "@" + ref
+}
+
+func (p *probeFunc) Resolve(_ context.Context, owner, repo, ref string) (string, error) {
+	key := probeKey(owner, repo, ref)
+	p.asked = append(p.asked, key)
+	if err := p.errs[key]; err != nil {
 		return "", err
 	}
-	return p.answers[full], nil
+	return p.answers[key], nil
+}
+
+// analyzedAtRef puts a completed analysis of one reference in the queue, as an expansion would.
+func analyzedAtRef(t *testing.T, q *frontier.Queue, owner, repo, ref, sha string) {
+	t.Helper()
+	key := owner + "/" + repo
+	if _, err := q.Enqueue([]frontier.Item{
+		{NodeKey: key, Owner: owner, Repo: repo, Ref: ref, Depth: 1},
+	}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if err := q.Complete(frontier.Key{NodeKey: key, Ref: ref},
+		frontier.Resolution{Ref: ref, SHA: sha}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
 }
 
 // analyzed puts a completed analysis in the queue, as a finished expansion would.
@@ -37,7 +63,7 @@ func analyzed(t *testing.T, q *frontier.Queue, owner, repo, ref, sha string) {
 	}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
-	if err := q.Complete(key, frontier.Resolution{Ref: ref, SHA: sha}); err != nil {
+	if err := q.Complete(frontier.Of(key), frontier.Resolution{Ref: ref, SHA: sha}); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 }
@@ -77,7 +103,7 @@ func frontierStatus(t *testing.T, s *store.Store, key string) string {
 func TestRecheckRequeuesDriftedRefs(t *testing.T) {
 	r, q, p, s := newRechecker(t)
 	analyzed(t, q, "actions", "checkout", frontier.HeadRef, "old-sha")
-	p.answers["actions/checkout"] = "new-sha"
+	p.answers["actions/checkout@HEAD"] = "new-sha"
 	stale(q, 48*time.Hour)
 
 	stats, err := r.Run(context.Background(), 24*time.Hour, 10)
@@ -97,7 +123,7 @@ func TestRecheckRequeuesDriftedRefs(t *testing.T) {
 func TestRecheckLeavesUnchangedRefsAnalyzed(t *testing.T) {
 	r, q, p, s := newRechecker(t)
 	analyzed(t, q, "actions", "checkout", frontier.HeadRef, "same-sha")
-	p.answers["actions/checkout"] = "same-sha"
+	p.answers["actions/checkout@HEAD"] = "same-sha"
 	stale(q, 48*time.Hour)
 
 	stats, err := r.Run(context.Background(), 24*time.Hour, 10)
@@ -118,7 +144,7 @@ func TestRecheckLeavesUnchangedRefsAnalyzed(t *testing.T) {
 func TestRecheckFailureKeepsTheExistingAnalysis(t *testing.T) {
 	r, q, p, s := newRechecker(t)
 	analyzed(t, q, "actions", "checkout", frontier.HeadRef, "old-sha")
-	p.errs["actions/checkout"] = fmt.Errorf("connection reset")
+	p.errs["actions/checkout@HEAD"] = fmt.Errorf("connection reset")
 	stale(q, 48*time.Hour)
 
 	stats, err := r.Run(context.Background(), 24*time.Hour, 10)
@@ -146,7 +172,7 @@ func TestRecheckFailureKeepsTheExistingAnalysis(t *testing.T) {
 func TestRecheckMarksVanishedRepositoriesUnavailable(t *testing.T) {
 	r, q, p, s := newRechecker(t)
 	analyzed(t, q, "octo", "gone", frontier.HeadRef, "old-sha")
-	p.errs["octo/gone"] = fmt.Errorf("%w: repository not found", ErrUnavailable)
+	p.errs["octo/gone@HEAD"] = fmt.Errorf("%w: repository not found", ErrUnavailable)
 	stale(q, 48*time.Hour)
 
 	stats, err := r.Run(context.Background(), 24*time.Hour, 10)
@@ -186,7 +212,7 @@ func TestRecheckRespectsTheLimit(t *testing.T) {
 	r, q, p, _ := newRechecker(t)
 	for _, name := range []string{"one", "two", "three", "four"} {
 		analyzed(t, q, "octo", name, frontier.HeadRef, "old-sha")
-		p.answers["octo/"+name] = "old-sha"
+		p.answers["octo/"+name+"@HEAD"] = "old-sha"
 	}
 	stale(q, 48*time.Hour)
 
@@ -196,6 +222,34 @@ func TestRecheckRespectsTheLimit(t *testing.T) {
 	}
 	if stats.Checked != 2 {
 		t.Errorf("Checked = %d, want 2", stats.Checked)
+	}
+}
+
+// A row requesting `v4` is asking about `v4`, and the drift question is whether *that* tag has
+// moved. Probing the default branch instead compares two unrelated commits, so a tag that has
+// not moved reads as drifted — and re-analyzing it produces the identical result, which makes it
+// due again next pass. On the real corpus that is 800 of the 1,997 mutable rows on a permanent
+// 24-hour treadmill, indistinguishable from real drift.
+func TestARefIsProbedAgainstItselfRatherThanTheDefaultBranch(t *testing.T) {
+	r, q, p, s := newRechecker(t)
+	analyzedAtRef(t, q, "actions", "checkout", "v4", "v4-sha")
+	p.answers["actions/checkout@v4"] = "v4-sha"
+	p.answers["actions/checkout@HEAD"] = "main-sha"
+	stale(q, 48*time.Hour)
+
+	stats, err := r.Run(context.Background(), 24*time.Hour, 10)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if stats.Unchanged != 1 || stats.Drifted != 0 {
+		t.Errorf("stats = %+v, want the unmoved tag reported unchanged", stats)
+	}
+	if got := frontierStatus(t, s, "actions/checkout"); got != frontier.StatusDone {
+		t.Errorf("status = %q, want it left analyzed", got)
+	}
+	if len(p.asked) != 1 || p.asked[0] != "actions/checkout@v4" {
+		t.Errorf("probed %v, want only the reference the row is for", p.asked)
 	}
 }
 
@@ -218,7 +272,7 @@ func TestResolveReadsHeadFromARealRepository(t *testing.T) {
 	origin := originRepo(t, map[string]string{"action.yml": "name: test\n"})
 	c := newCheckout(t, origin)
 
-	got, err := c.Resolve(context.Background(), "", filepath.Base(origin))
+	got, err := c.Resolve(context.Background(), "", filepath.Base(origin), "")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -234,13 +288,64 @@ func TestResolveReadsHeadFromARealRepository(t *testing.T) {
 	}
 }
 
-func TestResolveReportsMissingRepository(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
+// A tag resolves to the commit the tag names, not to whatever the default branch has moved on
+// to. Only real git can say whether the ls-remote output for a tag parses the same way.
+func TestResolveReadsATagRatherThanTheDefaultBranch(t *testing.T) {
+	origin := originRepo(t, map[string]string{"action.yml": "name: test\n"})
+	tagged := commitOf(t, origin, "HEAD")
+	tag(t, origin, "v4")
+	// Move the default branch on, so a probe that ignored the tag would answer differently.
+	addCommit(t, origin, "action.yml", "name: moved\n")
+
+	c := newCheckout(t, origin)
+	got, err := c.Resolve(context.Background(), "", filepath.Base(origin), "v4")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
 	}
+
+	if got != tagged {
+		t.Errorf("Resolve(v4) = %q, want the tagged commit %q", got, tagged)
+	}
+	if head := commitOf(t, origin, "HEAD"); got == head {
+		t.Errorf("Resolve(v4) returned the default branch commit %q", head)
+	}
+}
+
+func TestResolveReportsMissingRepository(t *testing.T) {
+	requireGit(t)
 	c := &Checkout{BaseURL: t.TempDir()}
 
-	if _, err := c.Resolve(context.Background(), "", "does-not-exist"); !IsUnavailable(err) {
+	if _, err := c.Resolve(context.Background(), "", "does-not-exist", ""); !IsUnavailable(err) {
 		t.Errorf("err = %v, want an unavailable error", err)
 	}
+}
+
+func gitIn(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func commitOf(t *testing.T, dir, rev string) string {
+	t.Helper()
+	return gitIn(t, dir, "rev-parse", rev)
+}
+
+func tag(t *testing.T, dir, name string) {
+	t.Helper()
+	gitIn(t, dir, "tag", name)
+}
+
+func addCommit(t *testing.T, dir, name, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+		t.Fatalf("writing %s: %v", name, err)
+	}
+	gitIn(t, dir, "add", name)
+	gitIn(t, dir, "commit", "-m", "move")
 }
