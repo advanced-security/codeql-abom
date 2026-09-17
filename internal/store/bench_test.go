@@ -14,8 +14,8 @@ import (
 //
 // Point it at a snapshot, never the live database:
 //
-//	sqlite3 -readonly "file:$ABOM_DB?immutable=1" ".backup /tmp/abom-bench.db"
-//	make bench ABOM_BENCH_DB=/tmp/abom-bench.db
+//	sqlite3 -readonly "file:$ABOM_DB?immutable=1" ".backup .abom/bench.db"
+//	make bench ABOM_BENCH_DB=.abom/bench.db
 func benchStore(b *testing.B) *Store {
 	b.Helper()
 

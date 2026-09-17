@@ -54,7 +54,7 @@ name it:
 
 ## Procedure
 
-1. Confirm the fact is real and measure it: `sqlite3 /tmp/abom-real/abom.db "<query>"`. Check it
+1. Confirm the fact is real and measure it: `sqlite3 .abom/db/abom.db "<query>"`. Check it
    is not already rendered somewhere hidden by a filter.
 2. Write the store test first, run it, watch it fail to compile or assert.
 3. Work the layers in order, skipping the ones the table says are not needed.
@@ -65,8 +65,8 @@ name it:
    in SQL. Agreement must be exact; a plausible-looking ratio does not catch a bad join.
 
 ```bash
-cp /tmp/abom-real/abom.db /tmp/abom-after.db
-bin/codeql-abom serve --db /tmp/abom-after.db --addr 127.0.0.1:8100 &
+sqlite3 .abom/db/abom.db ".backup .abom/after.db"
+bin/codeql-abom serve --db .abom/after.db --addr 127.0.0.1:8100 &
 curl -sS 127.0.0.1:8100/api/frontier?limit=500
 ```
 

@@ -7,7 +7,13 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-DB=${DB:-/tmp/abom-fixture-db}
+# Scratch goes under the repository's own runtime directory, which is gitignored. Nothing this
+# repository writes belongs in the OS temp directory: it is world-writable, and Linux clears it.
+ABOM_TMP=${ABOM_TMP:-$PWD/.abom}
+SCRATCH=$ABOM_TMP/fixtures
+mkdir -p "$SCRATCH"
+
+DB=${DB:-$SCRATCH/edges-db}
 SRC=ql/actions/graph-extraction/test/AbomEdges
 QUERY=ql/actions/graph-extraction/src/AbomEdges.ql
 TARGETS=(internal/bqrs internal/expand internal/ingest)
@@ -23,11 +29,11 @@ fi
 # codeql refuses to write into an existing directory, which re-running would otherwise hit.
 rm -rf "$DB"
 codeql database create --language=actions --source-root="$SRC" "$DB"
-codeql query run --database="$DB" --output=/tmp/abom-edges.bqrs "$QUERY"
-codeql bqrs decode --format=json --output=/tmp/abom-edges.json /tmp/abom-edges.bqrs
+codeql query run --database="$DB" --output="$SCRATCH/abom-edges.bqrs" "$QUERY"
+codeql bqrs decode --format=json --output="$SCRATCH/abom-edges.json" "$SCRATCH/abom-edges.bqrs"
 
 for target in "${TARGETS[@]}"; do
-    cp /tmp/abom-edges.json "$target/testdata/abom-edges.json"
+    cp "$SCRATCH/abom-edges.json" "$target/testdata/abom-edges.json"
     echo "wrote $target/testdata/abom-edges.json"
 done
 

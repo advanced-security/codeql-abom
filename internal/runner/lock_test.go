@@ -4,10 +4,31 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+// A machine-wide lock file in the OS temp directory is world-writable: any other local user can
+// hold it, or leave a symlink where it is about to be created. Declining the cross-process half is
+// the safer answer, and the in-process half still serializes this process's own workers.
+func TestSharedLockNeverFallsBackToTheOSTempDirectory(t *testing.T) {
+	// What os.UserCacheDir reads, per platform. Emptying them all is the only way to reach the
+	// branch this covers.
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CACHE_HOME", "")
+	t.Setenv("LocalAppData", "")
+
+	l := SharedLock()
+
+	if l.Path != "" {
+		t.Errorf("Path = %q, want no cross-process lock when there is no cache directory", l.Path)
+	}
+	if tmp := os.TempDir(); l.Path != "" && strings.HasPrefix(l.Path, tmp) {
+		t.Errorf("Path = %q is under the OS temp directory %q", l.Path, tmp)
+	}
+}
 
 // Two CodeQL processes sharing the compilation cache can return wrong answers to both, so the
 // pipeline may run four repositories at once but only one CodeQL invocation.

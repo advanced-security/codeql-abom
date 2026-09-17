@@ -107,7 +107,7 @@ If discovery is running, pause it from the Discovery page or `make stop`, and sa
 ## 3. Snapshot the corpus
 
 ```bash
-sqlite3 "$ABOM_DB" ".backup /tmp/abom-before.db"
+sqlite3 "$ABOM_DB" ".backup .abom/before.db"
 ```
 
 Before any code changes. Step 6 has nothing to diff against otherwise, and the snapshot costs
@@ -161,7 +161,7 @@ it. Layout is the screenshot pass in the **`verify-abom-ui`** skill.
 `make verify` green is necessary and not sufficient. Unit tests passed through every
 architectural bug listed in `.github/instructions/architecture.instructions.md`.
 
-Run the change against the copy, then compare the headline numbers with `/tmp/abom-before.db`:
+Run the change against the copy, then compare the headline numbers with `.abom/before.db`:
 node and edge counts, frontier status counts, findings per rule, blast radius, and whatever
 number the plan itself quoted.
 

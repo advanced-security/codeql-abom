@@ -62,7 +62,7 @@ produces. Three separate false alarms:
 Check reality before changing code:
 
 ```bash
-sqlite3 /tmp/abom-real/abom.db \
+sqlite3 .abom/db/abom.db \
   "SELECT node_key, node_kind, path, owner, repo FROM abom_node LIMIT 5;"
 ```
 

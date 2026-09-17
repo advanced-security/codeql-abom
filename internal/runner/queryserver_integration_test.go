@@ -33,8 +33,11 @@ func realDatabase(t *testing.T) string {
 	if db == "" {
 		t.Skipf("set %s to a prebuilt actions database to run this test", itestDatabaseEnv)
 	}
+	// Setting the variable is the opt-in, so a missing CLI past this point is a broken
+	// environment, not a reason to report success having run nothing.
 	if _, err := exec.LookPath("codeql"); err != nil {
-		t.Skip("codeql CLI not on PATH")
+		t.Fatalf("%s is set, so this test was asked for, but codeql is not on PATH: %v",
+			itestDatabaseEnv, err)
 	}
 	return db
 }

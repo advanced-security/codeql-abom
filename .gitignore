@@ -55,6 +55,14 @@ ui/tests/e2e/blob-report/
 [Bb]in/
 [Oo]bj/
 
+## Everything this repository writes at runtime: the working corpus, logs, scratch, the published
+## interface, the Go test framework's TMPDIR, and the prebuilt databases `make itest` reuses.
+##
+## One directory inside the checkout rather than the OS temp directory, which is world-writable,
+## shared with every other process, and cleared on reboot on Linux -- where it would have taken
+## the corpus with it. `make clean` deliberately does not remove it.
+/.abom/
+
 ## OS generated, hidden files
 .DS_Store
 

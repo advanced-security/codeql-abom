@@ -3,12 +3,12 @@
 Exact commands, and the traps that make a number wrong without making it look wrong.
 
 All of it runs against a **snapshot**, never the live database. Substitute `$DB` for the snapshot
-path throughout; `$ABOM_DB` defaults to `/tmp/abom-real/abom.db`.
+path throughout; `$ABOM_DB` defaults to `.abom/db/abom.db`.
 
 ```bash
 make status                                                          # discovery must be stopped
-sqlite3 -readonly "file:$ABOM_DB?immutable=1" ".backup /tmp/abom-review.db"   # .backup, never cp
-DB=/tmp/abom-review.db
+sqlite3 -readonly "file:$ABOM_DB?immutable=1" ".backup .abom/review.db"   # .backup, never cp
+DB=.abom/review.db
 sqlite3 -readonly "file:$DB?immutable=1" "PRAGMA integrity_check;"
 ```
 
@@ -118,10 +118,10 @@ signature 4.
 
 ```bash
 make start                                       # resident server; see the timing note below
-curl -sS "localhost:8099/api/graph/full?steps=false" > /tmp/g-all.json
+curl -sS "localhost:8099/api/graph/full?steps=false" > .abom/g-all.json
 python3 - <<'PY'
 import json, collections
-g = json.load(open('/tmp/g-all.json'))
+g = json.load(open('.abom/g-all.json'))
 nodes, edges = g['nodes'], g['edges']
 adj = collections.defaultdict(set)
 for e in edges:
@@ -155,7 +155,7 @@ is slower and easier to get wrong.
 ```bash
 python3 - <<'PY'
 import json, collections
-g = json.load(open('/tmp/g-all.json'))
+g = json.load(open('.abom/g-all.json'))
 adj = collections.defaultdict(set)
 for e in g['edges']:
     adj[e['source']].add(e['target'])
@@ -203,11 +203,11 @@ Do not keep copies of the queries in this skill — they drift from `internal/st
 plan read from a stale copy is worse than no plan. Extract them per review:
 
 ```bash
-mkdir -p /tmp/abom-review-sql
+mkdir -p .abom/review-sql
 grep -n 'SELECT' internal/store/*.go | less        # locate the read paths worth the sweep
 # then write each into its own .sql file, keeping the ? placeholders
 scripts_dir=.github/skills/refine-abom-data-structures-and-algorithms/scripts
-"$scripts_dir/query-plans.sh" "$DB" /tmp/abom-review-sql
+"$scripts_dir/query-plans.sh" "$DB" .abom/review-sql
 ```
 
 Start with the heaviest known shapes: `graphNodesQuery` (four CTEs), the frontier rollup,
@@ -237,14 +237,14 @@ single run silently reports one or the other depending on what ran before it.
 For payload decomposition:
 
 ```bash
-curl -sS "localhost:8099/api/graph/full" > /tmp/p.json
-wc -c /tmp/p.json
-gzip -c /tmp/p.json | wc -c
+curl -sS "localhost:8099/api/graph/full" > .abom/p.json
+wc -c .abom/p.json
+gzip -c .abom/p.json | wc -c
 python3 -c "
 import json,collections
-g=json.load(open('/tmp/p.json'))
+g=json.load(open('.abom/p.json'))
 n=len(g['nodes'])
-print('bytes/node', round(len(open('/tmp/p.json','rb').read())/n))
+print('bytes/node', round(len(open('.abom/p.json','rb').read())/n))
 print(collections.Counter(e['kind'] for e in g['edges']).most_common())
 "
 ```
@@ -271,7 +271,7 @@ assertion is flaky and proves nothing; a call-count assertion catches N+1 and ke
 
 ```bash
 scripts_dir=.github/skills/refine-abom-data-structures-and-algorithms/scripts
-"$scripts_dir/subsample-corpus.sh" "$DB" /tmp/abom-scale 10 25 50 100
+"$scripts_dir/subsample-corpus.sh" "$DB" .abom/scale 10 25 50 100
 ```
 
 At each size: rerun the phase 1 census and the phase 2 timings, then fit

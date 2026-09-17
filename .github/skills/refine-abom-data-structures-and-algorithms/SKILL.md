@@ -56,7 +56,7 @@ in flight makes every timing in this review meaningless, and worse, plausibly me
 numbers look fine and rank the wrong things first.
 
 ```bash
-sqlite3 -readonly "file:$ABOM_DB?immutable=1" ".backup /tmp/abom-review.db"
+sqlite3 -readonly "file:$ABOM_DB?immutable=1" ".backup .abom/review.db"
 ```
 
 **`.backup`, never `cp`.** The database is in WAL mode, so a file copy drops everything committed
@@ -128,7 +128,7 @@ a census taken only when something looks suspicious cannot produce a curve.
 ### The query planner is flying blind, and confirming that is step one
 
 ```bash
-sqlite3 -readonly "file:/tmp/abom-review.db?immutable=1" \
+sqlite3 -readonly "file:.abom/review.db?immutable=1" \
   "SELECT count(*) FROM sqlite_master WHERE name='sqlite_stat1';"
 ```
 
@@ -148,7 +148,7 @@ inside the spread of the before-runs, with a byte-identical plan**. Where cost c
 
 ```bash
 .github/skills/refine-abom-data-structures-and-algorithms/scripts/query-plans.sh \
-  /tmp/abom-review.db /tmp/abom-review-sql
+  .abom/review.db .abom/review-sql
 ```
 
 `EXPLAIN QUERY PLAN` appears in exactly **two** Go test files in this repository —
@@ -199,7 +199,7 @@ asserting that something "should scale".
 
 ```bash
 .github/skills/refine-abom-data-structures-and-algorithms/scripts/subsample-corpus.sh \
-  /tmp/abom-review.db /tmp/abom-scale 10 25 50 100
+  .abom/review.db .abom/scale 10 25 50 100
 ```
 
 The script builds corpora at each fraction **preserving closure**: a dependency node reached by a

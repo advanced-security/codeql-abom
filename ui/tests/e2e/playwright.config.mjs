@@ -5,8 +5,8 @@ import { detect } from './browser.mjs';
 // exist only so the second one works at all; the Makefile always passes them explicitly.
 const port = process.env.ABOM_E2E_PORT ?? '8231';
 const bin = process.env.ABOM_E2E_BIN ?? '../../../bin/codeql-abom';
-const db = process.env.ABOM_E2E_DB ?? '/tmp/abom-e2e/abom.db';
-const ui = process.env.ABOM_E2E_UI ?? '/tmp/abom-ui/wwwroot';
+const db = process.env.ABOM_E2E_DB ?? '../../../.abom/e2e/abom.db';
+const ui = process.env.ABOM_E2E_UI ?? '../../../.abom/ui/wwwroot';
 
 // Resolved once, and loudly: a machine with no usable browser has to say so, not fail every test
 // with a launch error. Throws when there is nothing to run in, which is the only honest outcome

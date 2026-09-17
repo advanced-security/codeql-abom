@@ -35,12 +35,16 @@ type Lock struct {
 
 // SharedLock is the lock every abom process takes before invoking CodeQL.
 //
-// One path per machine, so a crawl and a hand-run `expand-all` serialize against each other
-// rather than corrupting the cache they share.
+// One path per user per machine, matching the scope of the compilation cache it protects, so a
+// crawl and a hand-run `expand-all` serialize against each other rather than corrupting it.
+//
+// Where there is no cache directory there is no correct place for that lock, and it returns one
+// that only serializes this process. Claiming a narrower scope than the cache has would be worse
+// than claiming none: it reads as protection and is not.
 func SharedLock() *Lock {
 	dir, err := os.UserCacheDir()
 	if err != nil {
-		dir = os.TempDir()
+		return &Lock{}
 	}
 	return &Lock{Path: filepath.Join(dir, "codeql-abom", "codeql.lock")}
 }

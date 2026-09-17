@@ -1,7 +1,9 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -48,10 +50,32 @@ func TestDiscoveryStartsOnceSomethingIsDeclared(t *testing.T) {
 	}, store.DeclaredByCLI); err != nil {
 		t.Fatalf("SetOwnedScope: %v", err)
 	}
+	stubToolchain(t)
 
 	if problem := preflight(s, "", "", t.TempDir())(); problem != nil {
 		t.Errorf("a declared scope should start: %s (%s)", problem.Reason, problem.Remedy)
 	}
+}
+
+// stubToolchain puts a `codeql` and a `git` on a PATH holding nothing else.
+//
+// The gate checks the toolchain as well as the scope, so a test that a declared scope starts has
+// to say which tools it assumes. Reading them off the machine made this assert "a dev workstation
+// has enough installed", which is true there and false on a runner. preflight only looks the two
+// up, so neither stub has to do anything.
+func stubToolchain(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stub is posix-only")
+	}
+
+	dir := t.TempDir()
+	for _, tool := range []string{"codeql", "git"} {
+		if err := os.WriteFile(filepath.Join(dir, tool), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatalf("writing the %s stub: %v", tool, err)
+		}
+	}
+	t.Setenv("PATH", dir)
 }
 
 // The scope is checked before the tools, because "declare what you own" is something the operator

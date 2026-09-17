@@ -3,12 +3,21 @@
 # Targets are in alphabetical order. Grouping them by theme meant every addition needed a
 # judgement about where it belonged, and the answer drifted.
 
+# Everything this repository writes at runtime lives under one directory inside the checkout,
+# gitignored, rather than in the OS temp directory. /tmp is world-writable and shared with every
+# other process on the machine, and on Linux it is cleared on reboot -- which would have taken the
+# working corpus with it, since that is what ABOM_DB names.
+#
+# Not ".abom-tmp": only `work` and `gotest` below are actually temporary. The corpus under `db`
+# is the expensive thing here, and a directory whose name says "tmp" is one somebody deletes.
+ABOM_TMP  ?= $(CURDIR)/.abom
+
 ABOM_ADDR ?= 127.0.0.1:8099
-ABOM_DB   ?= /tmp/abom-real/abom.db
-ABOM_LOG  ?= /tmp/abom-serve.log
-ABOM_PID  ?= /tmp/abom-serve.pid
-ABOM_UI   ?= /tmp/abom-ui
-ABOM_WORK ?= /tmp/abom-work
+ABOM_DB   ?= $(ABOM_TMP)/db/abom.db
+ABOM_LOG  ?= $(ABOM_TMP)/logs/serve.log
+ABOM_PID  ?= $(ABOM_TMP)/serve.pid
+ABOM_UI   ?= $(ABOM_TMP)/ui
+ABOM_WORK ?= $(ABOM_TMP)/work
 
 # Extra flags for the server, so the common case needs no editing here. Discovery does not start
 # on its own: `make start ABOM_SERVE_FLAGS=--expand` opts in.
@@ -32,7 +41,7 @@ verify: check-corrupt check-versions fmt vet lint test js style ql ui ui-test e2
 ## ABOM_BENCH_DB must name a snapshot, not the live database. Without it every benchmark skips
 ## rather than measuring an empty store, because a fast nothing is how a CLI timing ranked work
 ## first that the served path was never paying for.
-ABOM_BENCH_DB ?= /tmp/abom-bench.db
+ABOM_BENCH_DB ?= $(ABOM_TMP)/bench.db
 bench:
 	@if [ ! -f "$(ABOM_BENCH_DB)" ]; then \
 		echo "bench: no corpus at $(ABOM_BENCH_DB); take one with"; \
@@ -72,9 +81,9 @@ clean:
 ## Runs against a database it creates and throws away. Point it at a *copy* of a real corpus to
 ## reach the assertions an empty one cannot show:
 ##
-##   make e2e ABOM_E2E_DB=/tmp/abom-copy.db
+##   make e2e ABOM_E2E_DB=.abom/copy.db
 ##   make e2e ABOM_E2E_FLAGS="--headed --project=chromium"
-ABOM_E2E_DIR   ?= /tmp/abom-e2e
+ABOM_E2E_DIR   ?= $(ABOM_TMP)/e2e
 ABOM_E2E_DB    ?= $(ABOM_E2E_DIR)/abom.db
 ABOM_E2E_PORT  ?= 8231
 ABOM_E2E_FLAGS ?=
@@ -88,7 +97,7 @@ e2e: build publish
 	@if [ "$(abspath $(ABOM_E2E_DB))" = "$(abspath $(ABOM_DB))" ]; then \
 		echo "e2e: refusing to run against $(ABOM_DB), which is the working database."; \
 		echo "e2e: take a copy first, and note that cp does not read the WAL:"; \
-		echo "  sqlite3 \"$(ABOM_DB)\" \".backup /tmp/abom-copy.db\""; exit 1; \
+		echo "  sqlite3 \"$(ABOM_DB)\" \".backup $(ABOM_TMP)/copy.db\""; exit 1; \
 	fi
 	@if [ ! -d ui/tests/e2e/node_modules ]; then \
 		echo "e2e: installing the harness into ui/tests/e2e"; \
@@ -148,14 +157,18 @@ restart: stop start
 ## it builds a database and takes tens of seconds. The query server is the CLI's IDE-facing
 ## plumbing, so its message shapes are not a stable interface and drift silently. Serialized with
 ## -p 1: each package shells out to CodeQL, and every invocation shares one compilation cache.
-ABOM_ITEST_DB ?= /tmp/abom-itest-db
+ABOM_ITEST_DB ?= $(ABOM_TMP)/itest-db
 ## A second database, from a tree with a root action.yml: the sparse-filter check cannot fail
 ## against a source that has nothing outside .github/, which is the shape it exists to catch.
-ABOM_ITEST_SPARSE_DB ?= /tmp/abom-itest-sparse-db
+ABOM_ITEST_SPARSE_DB ?= $(ABOM_TMP)/itest-sparse-db
 ## A third, built with --overlay-base: the CLI accepts that flag for actions and exits 0 while
 ## writing overlayBaseDatabase: false, so the blocker is asserted rather than remembered.
-ABOM_ITEST_OVERLAY_DB ?= /tmp/abom-itest-overlay-db
+ABOM_ITEST_OVERLAY_DB ?= $(ABOM_TMP)/itest-overlay-db
 itest:
+	@if ! command -v codeql >/dev/null 2>&1; then \
+		echo "the CodeQL CLI is not installed, and every test here shells out to it"; exit 1; \
+	fi
+	@mkdir -p "$(ABOM_TMP)/gotest"
 	@if [ ! -d "$(ABOM_ITEST_DB)" ]; then \
 		codeql database create "$(ABOM_ITEST_DB)" --language=actions \
 			--source-root=ql/actions/graph-extraction/test/AbomEdges; \
@@ -169,7 +182,7 @@ itest:
 			--source-root=internal/expand/testdata/sparse; \
 	fi
 	@ABOM_ITEST_DB="$(ABOM_ITEST_DB)" ABOM_ITEST_SPARSE_DB="$(ABOM_ITEST_SPARSE_DB)" \
-		ABOM_ITEST_OVERLAY_DB="$(ABOM_ITEST_OVERLAY_DB)" \
+		ABOM_ITEST_OVERLAY_DB="$(ABOM_ITEST_OVERLAY_DB)" TMPDIR="$(ABOM_TMP)/gotest" \
 		go test -p 1 ./internal/runner/ ./internal/pipeline/ ./internal/expand/ -count=1
 	@echo "itest: ok"
 
@@ -193,8 +206,11 @@ selfcheck:
 		--suite advanced-security/abom-actions-selfcheck-src:codeql-suites/abom-selfcheck.qls
 
 ## serve: run in the foreground, for watching it work. `make start` for the background.
+##
+## The database and log directories are made here because nothing else does: store.Open does not
+## create its parent, and a redirect into a missing directory fails before the server ever runs.
 serve: build publish
-	@mkdir -p "$(ABOM_WORK)"
+	@mkdir -p "$(ABOM_WORK)" "$(dir $(ABOM_DB))" "$(dir $(ABOM_LOG))"
 	@$(BIN) serve --db "$(ABOM_DB)" --addr "$(ABOM_ADDR)" \
 		--ui-dir "$(ABOM_UI)/wwwroot" --work-dir "$(ABOM_WORK)" $(ABOM_SERVE_FLAGS)
 
@@ -215,7 +231,7 @@ start: build publish
 		ps -o pid=,args= -p $$running; \
 		echo "start: use 'make restart', or 'make stop' first"; exit 1; \
 	fi
-	@mkdir -p "$(ABOM_WORK)"
+	@mkdir -p "$(ABOM_WORK)" "$(dir $(ABOM_DB))" "$(dir $(ABOM_LOG))"
 	@$(BIN) serve --db "$(ABOM_DB)" --addr "$(ABOM_ADDR)" \
 		--ui-dir "$(ABOM_UI)/wwwroot" --work-dir "$(ABOM_WORK)" $(ABOM_SERVE_FLAGS) \
 		>> "$(ABOM_LOG)" 2>&1 & echo $$! > "$(ABOM_PID)"
@@ -274,8 +290,18 @@ style:
 check-versions:
 	@./scripts/check-versions.sh
 
+## test: needs git, which several tests clone from a local path to exercise checkout against the
+## real thing. Reported here rather than 30 seconds in, and never skipped: a suite that shrinks
+## to fit the machine reports success for tests it did not run.
+##
+## TMPDIR is what `t.TempDir()` reads, so all 144 of them land under $(ABOM_TMP) without a single
+## test naming a path.
 test:
-	@go test ./... -count=1 -race
+	@if ! command -v git >/dev/null 2>&1; then \
+		echo "git is not installed, and the checkout tests need it"; exit 1; \
+	fi
+	@mkdir -p "$(ABOM_TMP)/gotest"
+	@TMPDIR="$(ABOM_TMP)/gotest" go test ./... -count=1 -race
 
 ## ui: a Razor syntax error passes every Go check and fails in CI.
 ui:

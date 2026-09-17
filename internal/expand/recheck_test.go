@@ -312,9 +312,7 @@ func TestResolveReadsATagRatherThanTheDefaultBranch(t *testing.T) {
 }
 
 func TestResolveReportsMissingRepository(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
+	requireGit(t)
 	c := &Checkout{BaseURL: t.TempDir()}
 
 	if _, err := c.Resolve(context.Background(), "", "does-not-exist", ""); !IsUnavailable(err) {

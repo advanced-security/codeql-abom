@@ -100,8 +100,21 @@ func forEachGoFile(t *testing.T, root string, fn func(path string, file *ast.Fil
 	t.Helper()
 	fset := token.NewFileSet()
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
+		if err != nil {
 			return err
+		}
+		// Directories holding no Go source of this module: git metadata, the npm and .NET trees,
+		// and `.abom`, which since `make test` points TMPDIR inside the checkout also holds the
+		// toolchain's build scratch. Those come and go while the walk is running.
+		if d.IsDir() && path != root {
+			name := d.Name()
+			if strings.HasPrefix(name, ".") || name == "node_modules" ||
+				name == "bin" || name == "obj" {
+				return filepath.SkipDir
+			}
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") {
+			return nil
 		}
 		parsed, perr := parser.ParseFile(fset, path, nil, 0)
 		if perr != nil {

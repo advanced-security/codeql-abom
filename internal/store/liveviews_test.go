@@ -36,9 +36,15 @@ func TestReadsGoThroughTheLiveViews(t *testing.T) {
 	direct := regexp.MustCompile(`(?:FROM|JOIN)\s+(abom_node|abom_edge)\b(?:_live)?`)
 
 	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") ||
-			strings.HasSuffix(path, "_test.go") {
+		if err != nil {
 			return err
+		}
+		if skip := skipNonSource(root, path, d); skip != nil {
+			return skip
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") ||
+			strings.HasSuffix(path, "_test.go") {
+			return nil
 		}
 		rel, _ := filepath.Rel(root, path)
 		if allowed[filepath.ToSlash(rel)] {
@@ -79,9 +85,15 @@ func TestOwnershipReadsGoThroughTheHonoredView(t *testing.T) {
 	direct := regexp.MustCompile(`(?:FROM|JOIN)\s+(abom_owned_scope)\b(?:_honored)?`)
 
 	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") ||
-			strings.HasSuffix(path, "_test.go") {
+		if err != nil {
 			return err
+		}
+		if skip := skipNonSource(root, path, d); skip != nil {
+			return skip
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") ||
+			strings.HasSuffix(path, "_test.go") {
+			return nil
 		}
 		rel, _ := filepath.Rel(root, path)
 		if allowed[filepath.ToSlash(rel)] {

@@ -24,8 +24,11 @@ func TestEndToEndQueryToGraph(t *testing.T) {
 	if dbPath == "" {
 		t.Skipf("set %s to a prebuilt actions database to run this test", abomDatabaseEnv)
 	}
+	// Setting the variable is the opt-in, so a missing CLI past this point is a broken
+	// environment, not a reason to report success having run nothing.
 	if _, err := exec.LookPath("codeql"); err != nil {
-		t.Skip("codeql CLI not on PATH")
+		t.Fatalf("%s is set, so this test was asked for, but codeql is not on PATH: %v",
+			abomDatabaseEnv, err)
 	}
 
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
