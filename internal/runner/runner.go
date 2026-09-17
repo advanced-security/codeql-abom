@@ -164,14 +164,14 @@ func writeEntry(entry *zip.File, target string) error {
 }
 
 // safeJoin resolves an archive entry name under root, rejecting anything that escapes it.
+//
+// filepath.IsLocal rather than a prefix check: it decides per platform, so it also catches a
+// Windows reserved device name and a drive-relative path, and it is a guard CodeQL can see
+// holding -- the prefix check it replaced let `target == root` through as a second way past.
 func safeJoin(root, name string) (string, error) {
-	if filepath.IsAbs(name) || strings.HasPrefix(name, "/") || strings.HasPrefix(name, `\`) {
-		return "", fmt.Errorf("archive entry %q is an absolute path", name)
-	}
-
-	target := filepath.Join(root, filepath.FromSlash(name))
-	if target != root && !strings.HasPrefix(target, root+string(os.PathSeparator)) {
+	entry := filepath.FromSlash(name)
+	if !filepath.IsLocal(entry) {
 		return "", fmt.Errorf("archive entry %q escapes the destination directory", name)
 	}
-	return target, nil
+	return filepath.Join(root, entry), nil
 }

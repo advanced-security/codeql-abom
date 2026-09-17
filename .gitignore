@@ -5,13 +5,17 @@
 ## CodeQL
 .cache/
 .codeql/
-# BQRS and SARIF files are blanket-ignored, so a
-# checked-in fixture needs its own negation here
-# or in a more specific `.gitignore` -- Without a
-# negation, `git add` skips it silently, which looks
-# exactly like a fixture that was never generated.
+# BQRS and SARIF files are blanket-ignored, because every run of the tool drops them wherever it
+# was invoked. The negations below exempt `testdata/`, where the same extensions mean the opposite
+# thing: a fixture the CLI generated once and the suite now depends on.
+#
+# Without them `git add` skips the fixture silently, and the test then passes on the machine that
+# generated it and fails in CI as "no such file or directory" -- which reads as a broken test
+# rather than as a file that was never committed. That cost a red build on PR #3.
 *.bqrs
 *.sarif
+!**/testdata/**/*.bqrs
+!**/testdata/**/*.sarif
 
 ## CodeQL query-test artifacts (.expected files are checked in; these are not)
 *.testproj/

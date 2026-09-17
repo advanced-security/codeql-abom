@@ -1,0 +1,28 @@
+name: 'ABOM code scanning'
+
+## This CodeQL config file is pointed to by `github-codeql-config-file` repository property
+## such that Code Scanning uses this config for Default Setup.
+
+## What is excluded via `paths-ignore` config, and why each one is test code rather than an
+## inconvenient finding.
+##
+## `ui/tests` is the Playwright harness. `ui/tests/e2e/browser.mjs` reads
+## PLAYWRIGHT_BROWSERS_PATH and stats the directory it names, which is `js/path-injection` three
+## times over and is also the entire feature: an operator points the suite at a browser cache.
+##
+## `**/*.test.js` is the Node unit suite that lives beside the browser code it tests, because
+## `make js` runs `node --test ui/wwwroot/js/*.test.js`. `theme.test.js` evaluates theme.js with
+## `new Function`, which is `js/code-injection` at critical severity. theme.js is deliberately a
+## plain script -- index.html loads it before Blazor exists so the page does not paint in the
+## wrong scheme -- so there is no module to import and evaluating the source is the only way to
+## reach it from Node.
+##
+## Narrow on purpose. Neither pattern reaches a line that is served to anyone, and nothing that
+## ships is excluded. Path filters apply to the languages CodeQL extracts from source, so this
+## has no effect on the Go and C# analyses; a finding in either still has to be answered.
+##
+paths-ignore:
+  - 'ui/tests'
+  - '**/*.test.js'
+  - '**/*.test.mjs'
+

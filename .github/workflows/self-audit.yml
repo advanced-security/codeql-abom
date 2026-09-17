@@ -15,7 +15,9 @@ on:
     paths:
       - '.codeql-version'
       - '.github/**'
-      - 'cmd/codeql-abom/selfcheck.go'
+      # The whole command tree, not just selfcheck.go: the Go job analyzes the repository from
+      # the root, so every file under cmd/ is subject to the suite it runs.
+      - 'cmd/**'
       - 'internal/**'
       - 'ql/**'
       - 'ui/**'
@@ -25,7 +27,7 @@ on:
     paths:
       - '.codeql-version'
       - '.github/**'
-      - 'cmd/codeql-abom/selfcheck.go'
+      - 'cmd/**'
       - 'internal/**'
       - 'ql/**'
       - 'ui/**'
