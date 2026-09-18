@@ -103,6 +103,10 @@ func selfcheckVerdict(s selfcheckSummary, maxFindings int) error {
 // It fails when database creation or analysis fails, and when the findings exceed --max-findings,
 // which defaults to zero. Findings were report-only until 2026-09-10, when the count reached zero
 // in all four languages and there was finally something for a nonzero exit to protect.
+// codeScanningConfig is the configuration Default Setup scans this repository with. Selfcheck
+// extracts through the same file so its exclusions are neither wider nor narrower.
+const codeScanningConfig = ".github/codeql/codeql-config.yml"
+
 func runSelfcheck(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	cfg, err := parseSelfcheck(args, stderr)
 	if err != nil {
@@ -125,6 +129,8 @@ func runSelfcheck(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		Lock:       runner.SharedLock(),
 		// Matches this repository's Default Setup, which scans with remote *and local* sources.
 		ThreatModel: "local",
+		// And with the same exclusions, so this is neither wider nor narrower than what reports.
+		CodeScanningConfig: codeScanningConfig,
 	}
 	if err := r.CreateDatabase(ctx, cfg.sourceRoot, dbDir, cfg.language); err != nil {
 		return fmt.Errorf("selfcheck: creating a database: %w", err)

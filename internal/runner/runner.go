@@ -51,6 +51,14 @@ type Runner struct {
 	// product decision, and widening it here would silently change what every repository reports.
 	ThreatModel string
 
+	// CodeScanningConfig names a code scanning configuration whose `paths-ignore` the extractor
+	// applies. Empty extracts everything.
+	//
+	// The other half of matching Default Setup: without it a selfcheck is *stricter* than the
+	// analysis that reports, and fails on a file the repository has already agreed to exclude.
+	// `theme.test.js` evaluates its subject with `new Function`, which is `js/code-injection`.
+	CodeScanningConfig string
+
 	versionState
 }
 
