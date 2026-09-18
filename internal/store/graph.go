@@ -193,7 +193,17 @@ func (w *Writer) flushEdges() error {
 				-- ClassifyEdgeBoundaries only fills what is unset, so an edge whose target
 				-- moved would keep the class of a target it no longer points at.
 				boundary        = CASE WHEN abom_edge.dst_node_row_id = excluded.dst_node_row_id
-				                       THEN abom_edge.boundary END`)
+				                       THEN abom_edge.boundary END,
+				-- The same for every fact derived from where the edge points. They return as
+				-- unknown rather than as a guess, and the next aggregate pass fills them again.
+				-- owned_depth is not here: it measures the source side, which a repoint leaves
+				-- alone.
+				ref_style       = CASE WHEN abom_edge.dst_node_row_id = excluded.dst_node_row_id
+				                       THEN abom_edge.ref_style END,
+				advisory_route  = CASE WHEN abom_edge.dst_node_row_id = excluded.dst_node_row_id
+				                       THEN abom_edge.advisory_route END,
+				finding_route   = CASE WHEN abom_edge.dst_node_row_id = excluded.dst_node_row_id
+				                       THEN abom_edge.finding_route END`)
 		if err != nil {
 			return fmt.Errorf("preparing edge insert: %w", err)
 		}
