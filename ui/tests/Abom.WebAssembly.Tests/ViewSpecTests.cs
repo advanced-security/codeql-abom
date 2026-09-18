@@ -23,9 +23,9 @@ public class ViewSpecTests
             Kinds = ["action", "workflow"],
             Origins = ["seed"],
             Rules = ["abom/unpinned", "actions/missing-workflow-permissions"],
-            EdgeClass = ["external"],
-            RefStyle = "pinned",
-            Boundary = "external",
+            EdgeClass = ["crossOwner"],
+            RefStyle = "sha",
+            Boundary = "cross-owner",
             MinReach = 5,
             Flags = ["advisory", "findings"],
         };
@@ -208,7 +208,7 @@ public class ViewSpecTests
     [InlineData("kinds=action%2Cworkflow")]
     [InlineData("flags=advisory%2Cfindings&scope=owned")]
     [InlineData("minReach=5&q=checkout")]
-    [InlineData("boundary=external&edges=external&ref=pinned")]
+    [InlineData("boundary=cross-owner&edges=crossOwner&ref=sha")]
     [InlineData("origins=seed%2Cupstream&rules=abom%2Funpinned")]
     [InlineData("notRules=abom%2Fnoisy&rules=actions%2F%2A")]
     [InlineData("provider=CodeQL&severity=error")]

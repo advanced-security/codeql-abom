@@ -107,12 +107,32 @@ func (l *Lock) lockProcess(ctx context.Context) error {
 }
 
 func (l *Lock) lockFile(ctx context.Context) error {
-	if err := os.MkdirAll(filepath.Dir(l.Path), 0o755); err != nil {
+	dir, name := filepath.Split(l.Path)
+	if name == "" {
+		return fmt.Errorf("%s names a directory rather than a lock file", l.Path)
+	}
+	if dir == "" {
+		dir = "."
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("creating the lock directory: %w", err)
 	}
+
+	// Opened relative to the directory rather than by its whole path. `Path` is derived from the
+	// user's cache directory, which comes from the environment, and O_CREATE|O_RDONLY follows a
+	// symlink silently — so a link planted at the lock's name would flock a file elsewhere on the
+	// machine. A root confines the open to the directory ABOM chose, and a single-element name
+	// cannot traverse out of it.
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return fmt.Errorf("opening the lock directory: %w", err)
+	}
+	// The root is only a handle for the open below; the locked file outlives it.
+	defer func() { _ = root.Close() }()
+
 	// Read-only: nothing is ever written to the lock file, only flocked. Opening it for writing
 	// would claim an access this never uses and make every close a potential lost write.
-	f, err := os.OpenFile(l.Path, os.O_CREATE|os.O_RDONLY, 0o644)
+	f, err := root.OpenFile(name, os.O_CREATE|os.O_RDONLY, 0o644)
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", l.Path, err)
 	}

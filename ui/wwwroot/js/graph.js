@@ -1169,9 +1169,16 @@ export function nodeDetail(n) {
     if (n.container && n.container !== n.repository) lines.push(`in ${shortKey(n.container)}`);
     if (n.grouping) lines.push(`grouping ${n.grouping}`);
     // Absent is not zero, so an unmeasured node says so rather than reporting none.
-    lines.push(n.reachKnown ? `${n.dependentRepos} repositories reach it` : 'reach not measured');
-    if (n.findings) lines.push(`${n.findings} findings`);
+    lines.push(n.reachKnown
+        ? `${counted(n.dependentRepos, 'repository reaches', 'repositories reach')} it`
+        : 'reach not measured');
+    if (n.findings) lines.push(counted(n.findings, 'finding', 'findings'));
     return lines;
+}
+
+/** A count and the noun it counts, agreeing. "1 repos" is a number the interface did not read. */
+export function counted(n, singular, plural) {
+    return `${n} ${n === 1 ? singular : plural}`;
 }
 
 function shortKey(key) {
@@ -1231,7 +1238,9 @@ export function nodeBrief(n) {
 export function labelFor(n, container) {
     const name = shortRef(leafLabel(n, container));
     const key = name.length > 60 ? name.slice(0, 59) + '\u2026' : name;
-    return n.dependentRepos ? `${key} \u00b7 ${n.dependentRepos} repos` : key;
+    return n.dependentRepos
+        ? `${key} \u00b7 ${counted(n.dependentRepos, 'repository', 'repositories')}`
+        : key;
 }
 
 /** A commit-pinned reference, short enough to read. The panel carries the whole key. */

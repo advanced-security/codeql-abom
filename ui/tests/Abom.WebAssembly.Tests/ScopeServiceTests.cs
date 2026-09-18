@@ -15,8 +15,10 @@ public class ScopeServiceTests
     /// this object exists to make impossible, and listing them individually let three of them be
     /// forgotten for as long as nobody wrote the fourth test.
     /// </summary>
+    // `boundary=crossOwner` sat here until the language started refusing it: that is the canvas's
+    // spelling of an edge class, and the server's boundary filter drops anything but its own three.
     private const string EveryTerm =
-        "boundary=crossOwner&edges=crossOwner%2CsameOwner&flags=advisory%2Cfindings"
+        "boundary=cross-owner&edges=crossOwner%2CsameOwner&flags=advisory%2Cfindings"
         + "&kinds=action%2Cworkflow&minReach=3&notProperties=team%3Aplatform&notRules=abom%2Fnoisy"
         + "&origins=seed&properties=business_id%3A3&provider=CodeQL&q=checkout&ref=tag"
         + "&repositories=octo-org%2Fbilling&rules=abom%2Funpinned&scope=owned"

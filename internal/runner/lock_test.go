@@ -198,3 +198,25 @@ func TestEveryCacheContendingInvocationTakesTheLock(t *testing.T) {
 		t.Errorf("%d of 3 invocations waited for the lock", len(held))
 	}
 }
+
+// A lock file is opened at a path derived from the user's cache directory, which comes from the
+// environment. Following a symlink out of that directory would flock a file ABOM was never meant
+// to touch, and O_CREATE|O_RDONLY follows one silently.
+func TestALockRefusesToFollowASymlinkOutOfItsDirectory(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "elsewhere.lock")
+	if err := os.WriteFile(outside, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "codeql.lock")
+	if err := os.Symlink(outside, path); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	lock := &Lock{Path: path}
+	release, err := lock.Acquire(context.Background())
+	if err == nil {
+		release()
+		t.Fatal("acquired a lock through a symlink pointing outside its own directory")
+	}
+}

@@ -68,8 +68,7 @@
     @if (Scope.LastError is { Length: > 0 } scopeRefusal)
     {
         <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true" Class="mt-2">
-            @scopeRefusal — this link names a filter ABOM does not have, so it is showing the
-            default scope instead.
+            @scopeRefusal — the default scope is showing instead.
         </MudAlert>
     }
 
@@ -334,8 +333,11 @@
                 </div>
             }
             <div class="d-flex align-center abom-key-head">
+                @* The heading beside it is a span rather than a label, so the name has to be
+                   carried by the control itself or a reader not using a mouse meets nothing. *@
                 <MudCheckBox T="bool?" Value="@AllNodesChecked" ValueChanged="OnAllNodesChanged"
-                             TriState="true" Dense="true" Size="Size.Small" Color="Color.Primary" />
+                             TriState="true" Dense="true" Size="Size.Small" Color="Color.Primary"
+                             aria-label="Show all nodes" />
                 <span class="abom-key-title">SHOW ALL NODES</span>
                 @if (Theme.HasKindOverrides)
                 {
@@ -354,7 +356,8 @@
                      style="--abom-key-depth:@row.Depth">
                     <MudCheckBox T="bool" Value="@_kinds.Contains(k)" Dense="true"
                                  Size="Size.Small" Color="Color.Primary"
-                                 ValueChanged="@(_ => ToggleKind(k))" />
+                                 ValueChanged="@(_ => ToggleKind(k))"
+                                 aria-label="@($"Show {Kinds[k]} nodes")" />
                     @KindGlyph(k)
                     <MudTooltip Text="@KindHelp(k)" Placement="Placement.Left">
                         <span class="abom-key-label" @onclick="@(() => ToggleKind(k))">@Kinds[k]</span>
@@ -366,6 +369,7 @@
                                something that reads as a close button. *@
                             <MudIconButton Icon="@(IsFoldedAt(k) ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ExpandLess)"
                                            Size="Size.Small" OnClick="@(() => ToggleFold(k))"
+                                           aria-label="@FoldHelp(k)"
                                            Class="@(IsFoldedAt(k) ? "abom-key-fold abom-key-fold-on" : "abom-key-fold")" />
                         </MudTooltip>
                     }
@@ -373,6 +377,7 @@
                        black rarely does on white. *@
                     <MudTooltip Text="Change this kind's color.">
                         <input type="color" class="abom-swatch" value="@KindColor(k)"
+                               aria-label="@($"Color for {Kinds[k]} nodes")"
                                @onchange="@(e => SetColor(k, e.Value?.ToString()))" />
                     </MudTooltip>
                 </div>
@@ -390,7 +395,8 @@
 
             <div class="d-flex align-center abom-key-head mt-3">
                 <MudCheckBox T="bool?" Value="@AllEdgesChecked" ValueChanged="OnAllEdgesChanged"
-                             TriState="true" Dense="true" Size="Size.Small" Color="Color.Primary" />
+                             TriState="true" Dense="true" Size="Size.Small" Color="Color.Primary"
+                             aria-label="Show all relationships" />
                 <span class="abom-key-title">SHOW ALL EDGES</span>
             </div>
             @foreach (var e in EdgeKinds)
@@ -401,7 +407,8 @@
                          @onclick="@(() => ToggleEdge(c))">
                         <MudCheckBox T="bool" Value="@_edgeClasses.Contains(c)" Dense="true"
                                      Size="Size.Small" Color="Color.Primary"
-                                     ValueChanged="@(_ => ToggleEdge(c))" />
+                                     ValueChanged="@(_ => ToggleEdge(c))"
+                                     aria-label="@($"Show {e.Label.ToLowerInvariant()} relationships")" />
                         <span class="abom-legend-line" style="--abom-legend-color:@EdgeColor(c)"></span>
                         <span>@e.Label</span>
                     </div>
@@ -445,11 +452,11 @@
             @* Grouping removes nothing, so the groups are not "hidden" — but a filter running
                underneath a fold still is, and omitting it reported a filtered view as whole. *@
             <span>
-                <b>@_counts.Nodes.ToString("N0")</b> groups by @GroupByLabel, gathered from
-                @_counts.Total.ToString("N0") nodes
+                <b>@CountText.Of(_counts.Nodes, "group", "groups")</b> by @GroupByLabel,
+                gathered from @CountText.Of(_counts.Total, "node", "nodes")
                 @if (_counts.Hidden > 0)
                 {
-                    <span>(@_counts.Hidden.ToString("N0") nodes hidden by filters)</span>
+                    <span>(@CountText.Of(_counts.Hidden, "node", "nodes") hidden by filters)</span>
                 }
                 <span class="mud-text-secondary">· click a group to expand it</span>
             </span>
@@ -457,11 +464,11 @@
         else
         {
             <span>
-                Showing <b>@_counts.Nodes.ToString("N0")</b> nodes out of
-                @_counts.Total.ToString("N0") total
+                Showing <b>@CountText.Of(_counts.Nodes, "node", "nodes")</b> out of
+                @CountText.Number(_counts.Total) total
                 @if (_counts.Hidden > 0)
                 {
-                    <span>(@_counts.Hidden.ToString("N0") nodes hidden by filters)</span>
+                    <span>(@CountText.Of(_counts.Hidden, "node", "nodes") hidden by filters)</span>
                 }
                 @* Folding is a different mechanism from the filters, so it gets its own clause
                    rather than being counted as "hidden". *@
@@ -477,8 +484,9 @@
                 @if (_counts.EdgeTotal > _counts.Edges)
                 {
                     <span class="mud-text-secondary">
-                        · @_counts.Edges.ToString("N0") of @_counts.EdgeTotal.ToString("N0")
-                        relationships, because an edge is drawn only when both ends are
+                        · @CountText.Number(_counts.Edges) of
+                        @CountText.Of(_counts.EdgeTotal, "relationship", "relationships"),
+                        because an edge is drawn only when both ends are
                     </span>
                 }
                 @* Greyed rather than removed. Cutting them took the relationships with them, and

@@ -26,7 +26,7 @@ ABOM_SERVE_FLAGS ?=
 BIN      := bin/codeql-abom
 GO_FILES := $(shell find . -name '*.go' -not -path './ui/*')
 
-.PHONY: bench build check-corrupt check-versions clean e2e fmt itest js lint logs package publish ql \
+.PHONY: bench build check-corrupt corpus check-versions clean e2e fmt itest js lint logs package publish ql \
 	quality restart selfcheck serve start status stop style test ui ui-test verify vet
 
 .DEFAULT_GOAL := build
@@ -69,6 +69,21 @@ check-corrupt:
 clean:
 	@rm -rf bin dist
 
+## corpus: build a populated database from the recorded fixtures under testdata/corpus.
+##
+## Offline and deterministic: the CodeQL half is recorded, not re-run, so this needs no CLI, no
+## network and no token. Regenerating what it reads is the separate, slower step in
+## scripts/regenerate-corpus-fixtures.sh, which does need the CLI.
+##
+## Refuses ABOM_DB for the reason `e2e` does — a builder that replaces its output must not be
+## pointed at the working corpus.
+ABOM_CORPUS_DB ?= $(ABOM_TMP)/corpus/abom.db
+corpus:
+	@if [ "$(abspath $(ABOM_CORPUS_DB))" = "$(abspath $(ABOM_DB))" ]; then \
+		echo "corpus: refusing to overwrite $(ABOM_DB), which is the working database."; exit 1; \
+	fi
+	@go run ./cmd/abom-corpus --db "$(ABOM_CORPUS_DB)"
+
 ## e2e: drive the published interface in a real browser.
 ##
 ## Outside `verify` for the same reason `itest` and `selfcheck` are: it needs tools the repository
@@ -78,10 +93,12 @@ clean:
 ## It owns geometry. `ui-test` has no CSS engine, so a grid that overflows and a label that wraps
 ## onto its own row are green everywhere else.
 ##
-## Runs against a database it creates and throws away. Point it at a *copy* of a real corpus to
-## reach the assertions an empty one cannot show:
+## Runs against a database it creates and throws away. `make corpus` builds a seeded one from
+## recorded CodeQL output, and pointing this at it reaches the assertions an empty database cannot
+## show — 5 of them fail there today, because the fixture is 3 repositories and carries no
+## advisory. Growing it until that run is green is what `plans/ui/testing.md` owes:
 ##
-##   make e2e ABOM_E2E_DB=.abom/copy.db
+##   make corpus && make e2e ABOM_E2E_DB=.abom/corpus/abom.db
 ##   make e2e ABOM_E2E_FLAGS="--headed --project=chromium"
 ABOM_E2E_DIR   ?= $(ABOM_TMP)/e2e
 ABOM_E2E_DB    ?= $(ABOM_E2E_DIR)/abom.db

@@ -391,7 +391,7 @@ func (s *Server) fullGraph(w http.ResponseWriter, r *http.Request) {
 
 // undrawable is the wording for a term the graph neither applies nor hands to whoever draws it.
 func undrawable(terms []string) string {
-	return "view: " + strings.Join(terms, ", ") +
+	return strings.Join(terms, ", ") +
 		" is applied by nothing here; a term is enforced or refused, never dropped"
 }
 
@@ -857,8 +857,7 @@ func reading(h http.HandlerFunc, params ...string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		for name, values := range r.URL.Query() {
 			if !applies[name] {
-				writeError(w, http.StatusBadRequest,
-					fmt.Sprintf("view: this answer applies no %q", name))
+				writeError(w, http.StatusBadRequest, misdirected(name))
 				return
 			}
 			if !wholeNumber[name] {
@@ -866,11 +865,28 @@ func reading(h http.HandlerFunc, params ...string) http.HandlerFunc {
 			}
 			if n, err := strconv.Atoi(values[0]); err != nil || n < 0 {
 				writeError(w, http.StatusBadRequest,
-					fmt.Sprintf("view: %s must be a whole number, got %q", name, values[0]))
+					fmt.Sprintf("%s must be a whole number, got %q", name, values[0]))
 				return
 			}
 		}
 		h(w, r)
+	}
+}
+
+// misdirected is the wording for a parameter an endpoint does not apply.
+//
+// Three different things arrive here and a reader needs them told apart: a term of the filter
+// language that another surface answers, a term nothing answers, and a name ABOM has never had.
+// One wording for all three sends somebody hunting for a surface that does not exist, or hunting
+// for a typo in a word that was spelled correctly.
+func misdirected(name string) string {
+	switch {
+	case viewspec.AppliedByExplorer(name):
+		return fmt.Sprintf("this list does not narrow by %q. The Explorer does.", name)
+	case viewspec.IsTerm(name):
+		return fmt.Sprintf("this list does not narrow by %q, and no surface here does.", name)
+	default:
+		return fmt.Sprintf("ABOM has no filter called %q.", name)
 	}
 }
 
@@ -931,10 +947,14 @@ func (s *Server) actions(w http.ResponseWriter, r *http.Request) {
 }
 
 // unlistable is the wording for a term a node listing cannot apply.
+//
+// It names the Explorer rather than the endpoint behind it: a reader who has been refused is a
+// reader who asked a reasonable question in the wrong place, and an API route is not a place they
+// can go.
 func unlistable(terms []string) string {
-	return "view: " + strings.Join(terms, ", ") +
-		" describes a relationship or a finding, which a list of nodes cannot answer; " +
-		"ask /api/graph/full or /api/match for it"
+	return strings.Join(terms, ", ") +
+		" describes a relationship or a finding, which a list of nodes cannot answer. " +
+		"The Explorer does."
 }
 
 // repositories lists one page of the repositories unit, ordered across the whole match.

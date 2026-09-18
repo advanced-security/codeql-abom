@@ -78,6 +78,23 @@ public class CoverageStripTests : AbomTestContext
     }
 
     /// <summary>
+    /// The cell counts declarations and sits in a row of measurements — beside "upstream analyzed"
+    /// it reads as a claim about what was examined, and on the working corpus those are very
+    /// different: 25 of 25 declared, 17 of them ever analyzed.
+    ///
+    /// <para>So the label has to carry the word. A seventh cell stating the never-analyzable
+    /// remainder belongs to <c>plans/ui/theme.md</c>, whose grid is tuned for six.</para>
+    /// </summary>
+    [Fact]
+    public void TheOwnedFigureSaysItIsADeclarationRatherThanAMeasurement()
+    {
+        var cut = Render<Shared.CoverageStrip>(p => p.Add(s => s.Summary, Corpus(204, 198)));
+
+        var owned = cut.Find("[data-abom-owned-count]");
+        Assert.Contains("declared", owned.TextContent, System.StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// The strip is a grid whose column counts are chosen so the last row is never one orphaned
     /// item: 2, 3 and 6 all divide six. Seven items cannot avoid an orphan at any of them, and a
     /// seventh was added and measured doing exactly that before this test existed.

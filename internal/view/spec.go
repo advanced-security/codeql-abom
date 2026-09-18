@@ -10,6 +10,7 @@ package view
 import (
 	"fmt"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -164,7 +165,7 @@ func (s Spec) String() string {
 func Parse(text string) (Spec, error) {
 	q, err := url.ParseQuery(strings.TrimPrefix(text, "?"))
 	if err != nil {
-		return Spec{}, fmt.Errorf("view: unreadable filter %q: %w", text, err)
+		return Spec{}, fmt.Errorf("this filter cannot be read: %q: %w", text, err)
 	}
 
 	var s Spec
@@ -202,27 +203,30 @@ func Parse(text string) (Spec, error) {
 		raw := strings.Join(values, ",")
 		if raw == "" {
 			return Spec{}, fmt.Errorf(
-				"view: %q has no value; absent and empty are different questions", key)
+				"%q has no value; absent and empty are different questions", key)
 		}
 		switch {
 		case scalars[key] != nil:
+			if err := checkVocabulary(key, raw); err != nil {
+				return Spec{}, err
+			}
 			*scalars[key] = raw
 		case lists[key] != nil:
 			*lists[key] = normalize(strings.Split(raw, ","))
 		case key == paramMinReach:
 			n, err := strconv.Atoi(raw)
 			if err != nil || n < 0 {
-				return Spec{}, fmt.Errorf("view: %s must be a whole number, got %q", key, raw)
+				return Spec{}, fmt.Errorf("%s must be a whole number, got %q", key, raw)
 			}
 			s.MinReach = n
 		case key == paramSteps:
 			b, err := strconv.ParseBool(raw)
 			if err != nil {
-				return Spec{}, fmt.Errorf("view: %s must be true or false, got %q", key, raw)
+				return Spec{}, fmt.Errorf("%s must be true or false, got %q", key, raw)
 			}
 			s.Steps = b
 		default:
-			return Spec{}, fmt.Errorf("view: unknown filter %q", key)
+			return Spec{}, fmt.Errorf("ABOM has no filter called %q", key)
 		}
 	}
 	return s, nil
@@ -230,6 +234,74 @@ func Parse(text string) (Spec, error) {
 
 // Equal reports whether two specs ask the same question, regardless of how either was built.
 func (s Spec) Equal(other Spec) bool { return s.String() == other.String() }
+
+// IsTerm reports whether a name is part of the filter language at all.
+//
+// The difference a reader needs: a term ABOM has and this answer does not apply is a question in
+// the wrong place, and a name ABOM has never heard of is a typo. Refusing both the same way tells
+// somebody to go looking for a surface that does not exist.
+func IsTerm(name string) bool { return termNames[name] }
+
+// The scalar terms whose values are fixed in code rather than read from the corpus.
+//
+// Listed here because this package is below every consumer of the language: the store's own
+// constants are checked against these rather than the other way round. A rule, a saved view and a
+// shared link all parse through here, so this is the only place a value can be refused once.
+//
+// Deliberately not every term. `q`, `rules`, `repositories`, `provider`, `severity` and the
+// property matches take values out of the data, where an unknown one is a question with no
+// answer rather than a question the language cannot express.
+const (
+	ScopeOwned    = "owned"
+	ScopeExposure = "exposure"
+
+	BoundarySameRepository = "same-repository"
+	BoundarySameOwner      = "same-owner"
+	BoundaryCrossOwner     = "cross-owner"
+
+	RefStyleAny = "any"
+	RefStyleSHA = "sha"
+	RefStyleTag = "tag"
+)
+
+var vocabulary = map[string][]string{
+	paramScope:    {ScopeOwned, ScopeExposure},
+	paramBoundary: {BoundarySameRepository, BoundarySameOwner, BoundaryCrossOwner},
+	paramRefStyle: {RefStyleAny, RefStyleSHA, RefStyleTag},
+}
+
+// checkVocabulary refuses a value the term does not have.
+//
+// Silently keeping one is the failure this exists to stop: `store.boundaryFilter` is right to
+// return an empty fragment for a value it does not recognize, because a query string must never
+// reach the statement — but that made an unrecognized boundary filter nothing at all, and
+// `store.scopeFilter` falls through to the whole corpus the same way.
+//
+// The refusal names the alternatives because the near-misses are real: the browser draws
+// `crossOwner` while the store spells it `cross-owner`, and version pinning says `commit` where
+// the graph says `sha`.
+func checkVocabulary(term, value string) error {
+	allowed, ok := vocabulary[term]
+	if !ok || slices.Contains(allowed, value) {
+		return nil
+	}
+	return fmt.Errorf("%s does not take %q; it takes %s",
+		term, value, strings.Join(allowed, ", "))
+}
+
+// AppliedByExplorer reports whether the graph applies a term, or hands it to whoever draws it.
+//
+// Which makes the Explorer the surface a refused term can be redirected to — and, for a term
+// neither side applies, makes it honest to say that nothing here answers it.
+func AppliedByExplorer(name string) bool { return graphTerms[name] || clientTerms[name] }
+
+var termNames = map[string]bool{
+	paramScope: true, paramSearch: true, paramKinds: true, paramOrigins: true,
+	paramRules: true, paramNotRules: true, paramRepos: true, paramProperties: true,
+	paramNotProperties: true, paramProvider: true, paramSeverity: true, paramEdgeClass: true,
+	paramRefStyle: true, paramBoundary: true, paramMinReach: true, paramFlags: true,
+	paramSteps: true,
+}
 
 // setTerms are the terms the set path applies — `/api/match`, and a policy, which are one
 // evaluation rather than two.
@@ -328,7 +400,7 @@ func parseMatches(key string, values []string) ([]PropertyMatch, error) {
 		name, value = strings.TrimSpace(name), strings.TrimSpace(value)
 		if !found || name == "" || value == "" {
 			return nil, fmt.Errorf(
-				"view: %s must be name%svalue, got %q", key, propertySeparator, raw)
+				"%s must be name%svalue, got %q", key, propertySeparator, raw)
 		}
 		out = append(out, PropertyMatch{Name: name, Value: value})
 	}

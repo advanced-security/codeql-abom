@@ -43,7 +43,7 @@ public sealed class ExplorerHarnessTests : AbomTestContext
         var page = Render<Explorer>();
 
         Assert.DoesNotContain("Loading the whole graph", page.Markup);
-        Assert.Contains("nodes out of", page.Markup);
+        Assert.Contains("nodes</b> out of", page.Markup);
     }
 
     /// A page that draws nothing must not report nodes it does not have. The counts are the
@@ -55,9 +55,22 @@ public sealed class ExplorerHarnessTests : AbomTestContext
 
         var page = Render<Explorer>();
 
-        Assert.Contains("<b>7</b> nodes out of", page.Markup);
+        Assert.Contains("<b>7 nodes</b> out of", page.Markup);
         Assert.Contains("9 total", page.Markup);
         Assert.Contains("2 nodes hidden by filters", page.Markup);
+    }
+
+    /// A count and the noun beside it have to agree, and one is the only value where they can
+    /// disagree — so it is the only value that ever catches this.
+    [Fact]
+    public void ACountOfOneTakesASingularNoun()
+    {
+        StubGraphModule(new Explorer.Counts(Nodes: 1, Edges: 0, Hidden: 1, Total: 2));
+
+        var page = Render<Explorer>();
+
+        Assert.Contains("<b>1 node</b> out of", page.Markup);
+        Assert.Contains("1 node hidden by filters", page.Markup);
     }
 
     /// Filters removing nothing must not produce a "0 hidden" clause: absent and zero are

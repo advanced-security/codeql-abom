@@ -132,8 +132,8 @@ const viewNameParam = "view"
 type unknownViewError struct{ name string }
 
 func (e *unknownViewError) Error() string {
-	return "view: no view named " + strconv.Quote(e.name)
+	return "there is no view named " + strconv.Quote(e.name)
 }
 
 var errViewNotAlone = errors.New(
-	"view: a named view is the whole question and cannot be combined with other filters")
+	"a named view is the whole question and cannot be combined with other filters")

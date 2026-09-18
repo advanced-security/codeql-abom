@@ -25,4 +25,3 @@ paths-ignore:
   - 'ui/tests'
   - '**/*.test.js'
   - '**/*.test.mjs'
-
