@@ -1,0 +1,21 @@
+name: CI
+on:
+  push:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # An owned repository depending on another owned repository, which the crawled
+      # organization never contained: every candidate turned out to be a repository using its
+      # own composite action.
+      - uses: octo-org/shared-action@v2
+      - run: make build
+
+  package:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@a1b2c3d4e5f60718293a4b5c6d7e8f9012345678
+      - run: make package

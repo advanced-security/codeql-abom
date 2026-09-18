@@ -25,6 +25,12 @@ What remains is the properties no number covers yet.
 2. **Four- and five-item coverage strips can still orphan their last row.** Only 2, 3 and 6 divide
    six, which is why the column counts are stated rather than fitted. The strip renders 4, 5 or 6
    items depending on what is unresolved, and the two short cases are unmeasured.
+
+   **A seventh cell is waiting on this.** The owned figure now reads *"25 · yours, declared of 25"*,
+   which says what it counts and stops there. What a reader still cannot see is how much of that
+   declaration was ever examined: on the seeded corpus 17 of 25 are analyzed and **6 never can be**,
+   and stating the unavailable needs a cell this grid has no room for. Whatever replaces the six
+   column counts decides whether that cell can exist.
 3. **Component-level layout is checked only by screenshot.** `ui-test` has no CSS engine, and
    every layout defect this plan found was invisible to it and visible in one browser measurement.
    Whether that measurement becomes a build step is `ui/testing.md`'s decision.

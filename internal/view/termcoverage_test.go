@@ -35,6 +35,20 @@ func TestEveryTermIsAppliedBySomeConsumer(t *testing.T) {
 	}
 }
 
+// And `IsTerm` knows about all of them, or a refusal calls a real term a typo and tells the reader
+// to go looking for a spelling mistake that is not there.
+func TestIsTermKnowsEveryTermTheLanguageWrites(t *testing.T) {
+	for _, term := range everyTerm(t) {
+		if !IsTerm(term) {
+			t.Errorf("IsTerm(%q) is false, so a refusal would report it as a name ABOM never had",
+				term)
+		}
+	}
+	if IsTerm("kindz") {
+		t.Error("IsTerm accepts a typo, so nothing is ever reported as one")
+	}
+}
+
 // everyTerm reads the term names out of a spec that carries all of them, so this cannot drift from
 // the serializer the way a hand-written list would.
 func everyTerm(t *testing.T) []string {

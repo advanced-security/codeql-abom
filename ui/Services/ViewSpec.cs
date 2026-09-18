@@ -94,6 +94,29 @@ public sealed record ViewSpec
     // Only the first one divides, so a value may contain it; GitHub property names cannot.
     private const char PropertySeparator = ':';
 
+    // The terms whose values are fixed in code rather than read from the corpus, mirroring
+    // `internal/view`. An unrecognized one used to be kept and then filter nothing: the server's
+    // `boundaryFilter` drops a value it does not know rather than letting it reach the SQL, and
+    // `scopeFilter` falls through to no scope at all.
+    private static readonly Dictionary<string, string[]> Vocabulary = new()
+    {
+        [ParamScope] = ["owned", "exposure"],
+        [ParamBoundary] = ["same-repository", "same-owner", "cross-owner"],
+        [ParamRefStyle] = ["any", "sha", "tag"],
+    };
+
+    // The near-misses are real: the canvas draws `crossOwner` where the store spells it
+    // `cross-owner`, so the refusal lists what would have worked.
+    private static string Vetted(string term, string value)
+    {
+        if (!Vocabulary.TryGetValue(term, out var allowed) || allowed.Contains(value))
+        {
+            return value;
+        }
+        throw new FormatException(
+            $"{term} does not take \"{value}\"; it takes {string.Join(", ", allowed)}");
+    }
+
     /// <summary>
     /// Writes the canonical text: keys ordinally sorted, list values sorted and deduplicated,
     /// defaults omitted. Two specs asking the same question produce the same text.
@@ -166,15 +189,15 @@ public sealed record ViewSpec
             if (raw.Length == 0)
             {
                 throw new FormatException(
-                    $"view: \"{key}\" has no value; absent and empty are different questions");
+                    $"\"{key}\" has no value; absent and empty are different questions");
             }
 
             switch (key)
             {
-                case ParamScope: scope = raw; break;
+                case ParamScope: scope = Vetted(key, raw); break;
                 case ParamSearch: search = raw; break;
-                case ParamRefStyle: refStyle = raw; break;
-                case ParamBoundary: boundary = raw; break;
+                case ParamRefStyle: refStyle = Vetted(key, raw); break;
+                case ParamBoundary: boundary = Vetted(key, raw); break;
                 case ParamKinds: kinds = Normalize(raw.Split(',')); break;
                 case ParamOrigins: origins = Normalize(raw.Split(',')); break;
                 case ParamRules: rules = Normalize(raw.Split(',')); break;
@@ -191,18 +214,18 @@ public sealed record ViewSpec
                             out minReach) || minReach < 0)
                     {
                         throw new FormatException(
-                            $"view: {ParamMinReach} must be a whole number, got \"{raw}\"");
+                            $"{ParamMinReach} must be a whole number, got \"{raw}\"");
                     }
                     break;
                 case ParamSteps:
                     if (!bool.TryParse(raw, out steps))
                     {
                         throw new FormatException(
-                            $"view: {ParamSteps} must be true or false, got \"{raw}\"");
+                            $"{ParamSteps} must be true or false, got \"{raw}\"");
                     }
                     break;
                 default:
-                    throw new FormatException($"view: unknown filter \"{key}\"");
+                    throw new FormatException($"ABOM has no filter called \"{key}\"");
             }
         }
 
@@ -228,7 +251,7 @@ public sealed record ViewSpec
         if (name.Length == 0 || value.Length == 0)
         {
             throw new FormatException(
-                $"view: {key} must be name{PropertySeparator}value, got \"{raw}\"");
+                $"{key} must be name{PropertySeparator}value, got \"{raw}\"");
         }
         return new PropertyMatch(name, value);
     }

@@ -100,6 +100,26 @@ function checkVocabulary(file, text, off) {
     });
 }
 
+/**
+ * A reader met `view: this answer applies no "boundary"` on the Explorer. `view:` is the Go
+ * package the refusal was written in, and the browser's parser mirrors its wording, so the same
+ * stack frame reached the screen from both sides.
+ *
+ * Only inside a quoted string: `view:` is ordinary English in a doc comment about a view.
+ */
+const machineText = [
+    [/"[^"]*\bview:/, 'a refusal carrying "view:"; that is a Go package name, not a sentence'],
+];
+
+function checkMachineText(file, text, off) {
+    text.split('\n').forEach((line, i) => {
+        if (off.has(i + 1)) return;
+        for (const [re, message] of machineText) {
+            if (re.test(line)) report(file, i + 1, message);
+        }
+    });
+}
+
 /** Headings belong to PageHeader, which is what keeps the document outline stable. */
 function checkHeadings(file, text, off) {    text.split('\n').forEach((line, i) => {
         if (off.has(i + 1) || file.endsWith('PageHeader.razor')) return;
@@ -136,12 +156,17 @@ async function* walk(dir) {
 
 console.log('checking interface style...');
 
-for (const dir of ['Pages', 'Shared', 'Layout', 'wwwroot/css']) {
+// `Services` is here for one reason: its refusal strings are rendered verbatim, so a message
+// written for a log reaches a reader unchanged.
+for (const dir of ['Pages', 'Shared', 'Layout', 'Services', 'wwwroot/css']) {
     for await (const path of walk(join(root, dir))) {
-        if (!/\.(razor|css)$/.test(path)) continue;
+        if (!/\.(razor|css|cs)$/.test(path)) continue;
         const file = relative(root, path);
         const text = await readFile(path, 'utf8');
         const off = suppressed(text);
+
+        checkMachineText(file, text, off);
+        if (path.endsWith('.cs')) continue;
 
         checkColors(file, text, off);
         checkFontSizes(file, text, off);

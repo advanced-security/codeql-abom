@@ -48,6 +48,6 @@ func (s *Server) match(w http.ResponseWriter, r *http.Request) {
 // unenforceable is the one wording, so a term refused at the endpoint and the same term refused on
 // a policy do not read as two different objections.
 func unenforceable(terms []string) string {
-	return "view: " + strings.Join(terms, ", ") +
+	return strings.Join(terms, ", ") +
 		" cannot narrow a set; a term is enforced or refused, never dropped"
 }

@@ -1,0 +1,18 @@
+name: Library CI
+on:
+  push:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      # A floating tag beside app's commit pin, so reference style has both readings to filter.
+      - uses: actions/checkout@v4
+      - run: make test
+
+  release:
+    needs: test
+    # A reusable workflow in another repository of the same account.
+    uses: octo-org/app/.github/workflows/release.yml@v1
+    with:
+      tag: latest

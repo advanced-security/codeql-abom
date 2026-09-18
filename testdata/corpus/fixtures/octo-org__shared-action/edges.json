@@ -1,0 +1,16 @@
+{"#select":{"columns":[
+   {"name":"edgeKind","kind":"String"}
+  ,{"name":"srcKind","kind":"String"}
+  ,{"name":"srcPath","kind":"String"}
+  ,{"name":"srcJobId","kind":"String"}
+  ,{"name":"srcStepIndex","kind":"Integer"}
+  ,{"name":"srcStepId","kind":"String"}
+  ,{"name":"usesRaw","kind":"String"}
+  ,{"name":"pinComment","kind":"String"}
+  ,{"name":"startLine","kind":"Integer"}
+  ,{"name":"startColumn","kind":"Integer"}
+  ,{"name":"endLine","kind":"Integer"}
+  ,{"name":"endColumn","kind":"Integer"}]
+ ,"tuples":[
+   ["composite-step-uses-action","composite_action","action.yml","",0,"","actions/setup-node@v4","",8,13,8,33]]
+ }}

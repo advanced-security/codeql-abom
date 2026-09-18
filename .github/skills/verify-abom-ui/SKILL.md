@@ -112,6 +112,13 @@ record the missing pagination as a finding rather than working around it in sile
 Now view each capture and judge it. Go through the invariant audit below and the
 [UX rubric](./references/ux-rubric.md). For every finding, quote what in the image led you to it.
 
+**Re-read the Explorer key with hue removed.** Desaturate the capture, or describe each row by
+its glyph alone, and check every node kind is still tellable apart. Colour is the channel that
+fails first and silently: `action` red against `workflow` green is the commonest pair in the
+corpus, and `job` against `step` is two greys a shade apart. The second channel exists — the
+legend draws a per-kind glyph and the canvas a per-kind geometry — so this is checking it still
+survives a theme change, not checking whether it is there.
+
 ### 6. Cross-check rendered numbers against the API
 
 Read the figures off the screenshot and compare to step 1. Mismatches here are real bugs:
@@ -149,12 +156,20 @@ because each one makes the interface assert something the data does not support.
 | 14 | A unit's columns are its own | A repository, an advisory or a relationship rendered in node columns — reach, refs, findings — reading 0 | A `repo:` node carries none of them, so the screen asserts 193 repositories depend on nothing. This is invariant 8 wearing a different hat |
 | 15 | A term is applied or refused, never dropped | A scope in the address that narrows nothing, with no refusal on screen | The reader believes they scoped when they did not. The refusal names the term, and the name is the only thing that teaches them which surface answers it |
 | 16 | An action carries the scope on screen | An export or a hand-off that widens to the whole organization | A bill of materials named after one part, describing all of it, is the worst document this project can emit |
+| 17 | A categorical encoding has a channel besides hue | Kinds, states or boundaries told apart by colour alone, or by colour plus a shape they all share | Hue alone excludes a reader who cannot judge it, and at this density it is hard to judge against neighbouring hues anyway. Severity pairs its dot with a word; kind pairs its colour with a glyph and a geometry |
 
 For each: **PASS**, **FAIL** with the screenshot region, or **N/A** if that surface is absent.
 
 ## Force-directed graph checks
 
 Only a viewer can make these calls.
+
+**Three of them are no longer yours.** `ui/tests/e2e/specs/forcegraph.spec.mjs` measures whether
+the simulation advances at all, whether a reload reproduces the layout, and whether a force switch
+re-orients rather than reshuffles — in a foreground browser, stated as numbers. Run it and quote
+what it measured instead of judging those three by eye; a screenshot cannot tell a settled layout
+from a paused one, which is how an earlier audit reported two pixel-identical captures 90 seconds
+apart as determinism. What remains below is what only a viewer can answer.
 
 - **Hairball test.** Pick any node and try to follow one edge to its other end. If edges are
   visually inseparable, the scope is too large — the fix is repository granularity or fewer
@@ -165,12 +180,6 @@ Only a viewer can make these calls.
   alone. If you cannot, the semantic force is not doing its job.
 - **One semantic force at a time.** If position appears to encode two things at once, that is a
   design regression: position must have exactly one meaning.
-- **View-switch continuity.** Screenshot the same scope before and after switching force, then
-  pick a node in the first image and find it in the second. Angular position is meant to be
-  preserved so a switch reads as re-orientation rather than reshuffle. Report whether you could
-  actually track it.
-- **Determinism.** Reload the same scope and compare screenshots. Layout should be identical;
-  drift destroys spatial memory.
 - **Truncation honesty.** When the API reports `truncated: true`, the view must say so.
 
 ## Report format

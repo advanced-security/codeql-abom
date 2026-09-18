@@ -58,8 +58,11 @@
                         · @value.Repositories.ToString("N0")
                     </MudButton>
                     <MudTooltip Text="@($"Exclude {breakdown.Name}:{value.Value}")">
+                        @* The tooltip is a hover popover, so the same words have to be on the
+                           button itself: it carries an icon and no text. *@
                         <MudButton StartIcon="@Icons.Material.Filled.Block"
                                    OnClick="@(() => Narrow(value.Value, exclude: true))"
+                                   aria-label="@($"Exclude {breakdown.Name}:{value.Value}")"
                                    data-abom-property-exclude="@($"{breakdown.Name}:{value.Value}")" />
                     </MudTooltip>
                 </MudButtonGroup>

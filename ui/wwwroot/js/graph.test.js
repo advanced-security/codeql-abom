@@ -440,9 +440,20 @@ test('a group folds its reference coverage rather than only its boolean', () => 
 // one now, so it has to carry the reach the tooltip used to add.
 test('a label names the node and its reach in one string', () => {
     assert.equal(labelFor({ key: 'actions/checkout@v4', dependentRepos: 77 }),
-        'actions/checkout@v4 \u00b7 77 repos');
+        'actions/checkout@v4 \u00b7 77 repositories');
     assert.equal(labelFor({ key: 'actions/checkout@v4', dependentRepos: 0 }),
         'actions/checkout@v4', 'nothing depending on it is not a count worth printing');
+});
+
+// A count and the noun beside it have to agree. "1 repos" is the interface reporting a number it
+// did not read, on the label a reader meets most often.
+test('a count of one takes a singular noun', () => {
+    assert.equal(labelFor({ key: 'actions/checkout@v4', dependentRepos: 1 }),
+        'actions/checkout@v4 \u00b7 1 repository');
+    assert.deepEqual(
+        nodeDetail({ kind: 'action', owner: 'actions', reachKnown: true, dependentRepos: 1,
+            findings: 1 }),
+        ['action', 'actions', '1 repository reaches it', '1 finding']);
 });
 
 // A version labels itself, because the key is already `name@ref` once the queue analyzes per
@@ -740,6 +751,30 @@ test('a delta that removes an edge leaves its endpoints alone', () => {
 
     assert.equal(all.links.length, 0);
     assert.deepEqual(all.nodes.map(n => n.key), ['a', 'b']);
+});
+
+// The test above hands `mergeInto` a link carrying `key`, and for a long time the server sent no
+// such field: `GraphEdge` serialized source, target, kind, boundary, refs and count, so `e.key` was
+// undefined for every real edge and `removedEdges` matched nothing. Removal was a silent no-op
+// against the only payload that actually exists, and the fixture above was the reason nobody saw
+// it. This one is shaped like the wire.
+test('an edge from the real payload can be removed by the key the delta names', () => {
+    const fromServer = {
+        key: 'octo/app:.github/workflows/ci.yml:8:15',
+        source: 'a', target: 'b', kind: 'step-uses-action', refs: ['v4'], count: 1,
+    };
+    const all = {
+        nodes: [{ key: 'a', refStyles: new Set(), edgeClasses: new Set() },
+                { key: 'b', refStyles: new Set(), edgeClasses: new Set() }],
+        links: [fromServer],
+    };
+
+    mergeInto(all, {
+        nodes: [], edges: [], removedNodes: [],
+        removedEdges: ['octo/app:.github/workflows/ci.yml:8:15'],
+    });
+
+    assert.equal(all.links.length, 0, 'the delta named this edge and it is still drawn');
 });
 
 // A rested view has paused its renderer, so a mutator that changes what a frame shows and does

@@ -93,8 +93,10 @@ else
                             }
                         </td>
                         <td>
+                            @* The column heading names the whole column, not this row's box. *@
                             <MudCheckBox T="bool" Dense="true" Size="Size.Small" Value="a.Enabled"
                                          ValueChanged="@(v => SetEnabled(a, v))"
+                                         aria-label="@($"Crawl {a.Owner}")"
                                          data-abom-enabled="@a.Owner" />
                         </td>
                         <td>
@@ -211,7 +213,7 @@ else
             @if (p.ReachesNothing && _draft.Count > 0)
             {
                 <MudText Typo="Typo.body2" Class="mt-1">
-                    This declaration reaches nothing the corpus holds yet. That is a statement of
+                    This declaration reaches nothing discovery has found yet. That is a statement of
                     intent rather than a mistake, and every figure stays empty until discovery
                     finds something under it.
                 </MudText>
@@ -277,7 +279,7 @@ else
                 else if (_enumeration is not null)
                 {
                     <MudText Typo="Typo.body2">
-                        @_enumeration.Found @Plural(_enumeration.Found, "repository", "repositories")
+                        @CountText.Of(_enumeration.Found, "repository", "repositories")
                         found: @_enumeration.Added new,
                         @_enumeration.Promoted already here as a dependency,
                         @_enumeration.Unchanged unchanged.
@@ -285,8 +287,7 @@ else
                     @foreach (var account in _enumeration.Accounts)
                     {
                         <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
-                            @account.Owner: @account.Found
-                            @Plural(account.Found, "repository", "repositories")
+                            @account.Owner: @CountText.Of(account.Found, "repository", "repositories")
                         </MudText>
                     }
                     @foreach (var failure in _enumeration.Failed)
@@ -712,8 +713,6 @@ else
             _enumerating = false;
         }
     }
-
-    private static string Plural(int n, string one, string many) => n == 1 ? one : many;
 
     private async Task Discard()
     {

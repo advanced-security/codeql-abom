@@ -1,0 +1,10 @@
+name: Greet
+description: A composite action that itself depends on something.
+runs:
+  using: composite
+  steps:
+    # `composite-step-uses-action` is the only genuine transitive Actions relationship, so the
+    # corpus has to contain one or nothing exercises the hop that matters.
+    - uses: actions/setup-node@v4
+    - run: echo "hello"
+      shell: bash

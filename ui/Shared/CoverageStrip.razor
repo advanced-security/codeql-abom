@@ -14,11 +14,15 @@ else
            the six-column breakpoint a cell is 205px, and spelling it out needs 219px. *@
         <MudTooltip Text="Repositories under an account you declared, against the number discovery started from. Nothing else on this strip is a claim about who owns anything.">
             <span class="abom-coverage-item" data-abom-owned-count>
+                @* "declared", in both branches. The cell counts a claim and sits in a row of
+                   measurements, so beside "upstream analyzed" it was read as one: on the working
+                   corpus 25 of 25 are declared and 17 have ever been analyzed. Stating the
+                   never-analyzable remainder needs a seventh cell, which is theme.md's work. *@
                 @if (Summary.OwnedRepos > 0)
                 {
                     <span class="abom-coverage-value">@Summary.OwnedRepos.ToString("N0")</span>
                     <span class="abom-coverage-label">
-                        yours of @Summary.SeedRepos.ToString("N0")
+                        yours, declared of @Summary.SeedRepos.ToString("N0")
                     </span>
                 }
                 else

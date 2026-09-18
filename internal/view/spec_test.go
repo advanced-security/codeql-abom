@@ -17,9 +17,9 @@ func TestASpecSurvivesBeingWrittenAndReadBack(t *testing.T) {
 		Kinds:     []string{"action", "workflow"},
 		Origins:   []string{"seed"},
 		Rules:     []string{"abom/unpinned", "actions/missing-workflow-permissions"},
-		EdgeClass: []string{"external"},
-		RefStyle:  "pinned",
-		Boundary:  "external",
+		EdgeClass: []string{"crossOwner"},
+		RefStyle:  "sha",
+		Boundary:  "cross-owner",
 		MinReach:  5,
 		Flags:     []string{"advisory", "findings"},
 	}
@@ -178,8 +178,8 @@ func TestTheCanonicalTextIsExactlyThis(t *testing.T) {
 		},
 		{Spec{Search: "checkout", MinReach: 5}, "minReach=5&q=checkout"},
 		{
-			Spec{RefStyle: "pinned", Boundary: "external", EdgeClass: []string{"external"}},
-			"boundary=external&edges=external&ref=pinned",
+			Spec{RefStyle: "sha", Boundary: "cross-owner", EdgeClass: []string{"crossOwner"}},
+			"boundary=cross-owner&edges=crossOwner&ref=sha",
 		},
 		{
 			Spec{Origins: []string{"upstream", "seed"}, Rules: []string{"abom/unpinned"}},

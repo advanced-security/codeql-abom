@@ -1,0 +1,18 @@
+{"#select":{"columns":[
+   {"name":"edgeKind","kind":"String"}
+  ,{"name":"srcKind","kind":"String"}
+  ,{"name":"srcPath","kind":"String"}
+  ,{"name":"srcJobId","kind":"String"}
+  ,{"name":"srcStepIndex","kind":"Integer"}
+  ,{"name":"srcStepId","kind":"String"}
+  ,{"name":"usesRaw","kind":"String"}
+  ,{"name":"pinComment","kind":"String"}
+  ,{"name":"startLine","kind":"Integer"}
+  ,{"name":"startColumn","kind":"Integer"}
+  ,{"name":"endLine","kind":"Integer"}
+  ,{"name":"endColumn","kind":"Integer"}]
+ ,"tuples":[
+   ["job-uses-reusable-workflow","workflow",".github/workflows/ci.yml","release",-1,"","octo-org/app/.github/workflows/release.yml@v1","",16,11,16,55]
+  ,["step-uses-action","job",".github/workflows/ci.yml","test",0,"","actions/checkout@v4","",10,15,10,33]
+  ,["job-needs-job","workflow",".github/workflows/ci.yml","release",-1,"","test","",14,12,14,15]]
+ }}

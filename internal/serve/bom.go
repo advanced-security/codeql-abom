@@ -82,7 +82,7 @@ func documentScope(q url.Values) (include, exclude []viewspec.PropertyMatch, err
 	for key := range q {
 		if !documentParams[key] {
 			return nil, nil, fmt.Errorf(
-				"view: a bill of materials applies no %q; it is not a term this document is about", key)
+				"a bill of materials does not narrow by %q; it is not a term this document is about", key)
 		}
 	}
 	return propertyMatches(q)
