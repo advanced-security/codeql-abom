@@ -30,6 +30,15 @@ at 20. Three complexity linters run as a ratchet and report zero at their defaul
 
 ## The constraint that must not be broken
 
+**Our own analysis evaluates what Code Scanning evaluates, or it is weaker than the thing that
+reports.** Default Setup for this repository scans with **remote and local sources**, which is the
+right choice for a tool whose inputs are the filesystem, `argv` and the environment. `selfcheck`
+took CodeQL's default of remote sources alone, and the gap was not theoretical: two `go/path-injection`
+alerts sat on a pull request while `make quality` reported **0 findings**, and the same suite run
+with `--threat-model=local` reproduced one of them at the exact line. `Runner.ThreatModel` is set
+to `local` for selfcheck and left empty for the crawl, because what ABOM records about somebody
+else's action is a product decision rather than a CI setting.
+
 **Total excess over the threshold is the metric that moves, not the count of functions above it.**
 The count is insensitive to depth: taking one function from 22 to 11 leaves 50 over 10 and scores
 nothing, which is how a ratchet stops being believed. Quote both; only one is evidence.

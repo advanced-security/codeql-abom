@@ -39,6 +39,18 @@ type Runner struct {
 	// each batch in its own process.
 	Evaluator Evaluator
 
+	// ThreatModel widens which sources count as tainted. Empty takes CodeQL's default, which is
+	// remote sources alone.
+	//
+	// Analyzing our own code has to name `local`, because that is what this repository's Default
+	// Setup is configured with and an analysis evaluating fewer sources than the one that reports
+	// is a gate that passes what CI then fails. Two path-injection alerts were found that way,
+	// against a selfcheck reporting zero.
+	//
+	// Deliberately not set on the crawl: what ABOM records about somebody else's action is a
+	// product decision, and widening it here would silently change what every repository reports.
+	ThreatModel string
+
 	versionState
 }
 

@@ -2,7 +2,9 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
@@ -109,13 +111,13 @@ func (l *Lock) lockProcess(ctx context.Context) error {
 func (l *Lock) lockFile(ctx context.Context) error {
 	dir, name := filepath.Split(l.Path)
 	if name == "" {
-		return fmt.Errorf("%s names a directory rather than a lock file", l.Path)
+		return fmt.Errorf("%q names a directory rather than a lock file", l.Path)
 	}
 	if dir == "" {
 		dir = "."
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("creating the lock directory: %w", err)
+	if err := makeLockDir(dir); err != nil {
+		return err
 	}
 
 	// Opened relative to the directory rather than by its whole path. `Path` is derived from the
@@ -134,7 +136,7 @@ func (l *Lock) lockFile(ctx context.Context) error {
 	// would claim an access this never uses and make every close a potential lost write.
 	f, err := root.OpenFile(name, os.O_CREATE|os.O_RDONLY, 0o644)
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", l.Path, err)
+		return fmt.Errorf("opening %q: %w", l.Path, err)
 	}
 
 	// Non-blocking, polled, so cancellation is observed. A blocking flock would ignore ctx.
@@ -146,7 +148,7 @@ func (l *Lock) lockFile(ctx context.Context) error {
 		}
 		if err != syscall.EWOULDBLOCK {
 			f.Close()
-			return fmt.Errorf("locking %s: %w", l.Path, err)
+			return fmt.Errorf("locking %q: %w", l.Path, err)
 		}
 		select {
 		case <-ctx.Done():
@@ -160,3 +162,31 @@ func (l *Lock) lockFile(ctx context.Context) error {
 // lockPollInterval trades a little latency for cancellability. A CodeQL invocation runs for
 // seconds at least, so waking 20 times a second costs nothing against it.
 const lockPollInterval = 50 * time.Millisecond
+
+// makeLockDir creates the one directory ABOM owns, inside a parent it does not.
+//
+// `MkdirAll` on the whole path would build an arbitrary tree wherever the path led, and the path
+// is derived from the user's cache directory. Only the final element is ABOM's to create, so it
+// is created relative to its parent: a single element cannot traverse, and a root refuses to
+// follow a symlink out of the directory it was opened on.
+func makeLockDir(dir string) error {
+	parent, leaf := filepath.Split(filepath.Clean(dir))
+	if leaf == "" || leaf == "." || leaf == string(filepath.Separator) {
+		// Nothing of ABOM's own to create; the directory is one the caller already chose.
+		return nil
+	}
+	if parent == "" {
+		parent = "."
+	}
+
+	root, err := os.OpenRoot(filepath.Clean(parent))
+	if err != nil {
+		return fmt.Errorf("opening the lock directory's parent: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+
+	if err := root.Mkdir(leaf, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+		return fmt.Errorf("creating the lock directory: %w", err)
+	}
+	return nil
+}

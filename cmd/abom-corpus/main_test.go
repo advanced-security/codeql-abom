@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/advanced-security/codeql-abom/internal/store"
@@ -126,5 +128,36 @@ func TestBuildingTwiceProducesTheSameCorpus(t *testing.T) {
 	}
 	if first, second := read(), read(); first != second {
 		t.Errorf("rebuild changed the corpus: %v then %v", first, second)
+	}
+}
+
+// The path comes from a flag and is echoed back, so a newline in it would forge a line of output
+// that reads like the tool's own. Quoting is what stops that, and `%q` also keeps a path with a
+// space in it readable.
+func TestAPathCannotForgeALineOfOutput(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "abom.db")
+	if err := build(path, filepath.Join("..", "..", "testdata", "corpus", "fixtures")); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	s, err := store.Open(path, store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	var out bytes.Buffer
+	forged := path + "\ncorpus: /etc/shadow"
+	if err := report(&out, s, forged); err != nil {
+		t.Fatalf("report: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	last := lines[len(lines)-1]
+	if !strings.HasPrefix(last, "corpus: ") {
+		t.Fatalf("last line is %q", last)
+	}
+	if strings.Contains(last, "/etc/shadow") && !strings.Contains(last, `\n`) {
+		t.Errorf("the newline was not escaped, so the path forged a line: %q", last)
 	}
 }

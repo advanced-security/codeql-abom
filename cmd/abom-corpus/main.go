@@ -9,6 +9,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -52,7 +53,7 @@ func build(dbPath, fixtures string) error {
 
 	s, err := store.Open(dbPath, store.Options{})
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", dbPath, err)
+		return fmt.Errorf("opening %q: %w", dbPath, err)
 	}
 	defer s.Close()
 	if err := s.Migrate(); err != nil {
@@ -64,7 +65,7 @@ func build(dbPath, fixtures string) error {
 		return err
 	}
 	if len(repos) == 0 {
-		return fmt.Errorf("no fixtures under %s; run scripts/regenerate-corpus-fixtures.sh", fixtures)
+		return fmt.Errorf("no fixtures under %q; run scripts/regenerate-corpus-fixtures.sh", fixtures)
 	}
 
 	if err := s.SetOwnedScope([]store.DeclaredAccount{
@@ -75,7 +76,7 @@ func build(dbPath, fixtures string) error {
 
 	for _, r := range repos {
 		if err := ingestRepository(s, fixtures, r); err != nil {
-			return fmt.Errorf("%s: %w", r, err)
+			return fmt.Errorf("%q: %w", r, err)
 		}
 	}
 
@@ -91,7 +92,7 @@ func build(dbPath, fixtures string) error {
 		return fmt.Errorf("rebuilding aggregates: %w", err)
 	}
 
-	return report(s, dbPath)
+	return report(os.Stdout, s, dbPath)
 }
 
 func ingestRepository(s *store.Store, fixtures, full string) error {
@@ -134,7 +135,7 @@ func ingestRepository(s *store.Store, fixtures, full string) error {
 func recorded(fixtures string) ([]string, error) {
 	entries, err := os.ReadDir(fixtures)
 	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", fixtures, err)
+		return nil, fmt.Errorf("reading %q: %w", fixtures, err)
 	}
 	out := []string{}
 	for _, e := range entries {
@@ -149,7 +150,10 @@ func recorded(fixtures string) ([]string, error) {
 
 // report prints what was built, because a builder that says only "done" is one nobody notices has
 // started producing an empty database.
-func report(s *store.Store, dbPath string) error {
+//
+// The path is quoted rather than interpolated: it arrives from a flag, and a newline in it would
+// otherwise forge a line that reads like the tool's own.
+func report(w io.Writer, s *store.Store, dbPath string) error {
 	for _, c := range []struct{ label, query string }{
 		{"repositories", `SELECT COUNT(*) FROM repository`},
 		{"owned", `SELECT COUNT(*) FROM repository WHERE origin = 'seed'`},
@@ -162,8 +166,8 @@ func report(s *store.Store, dbPath string) error {
 		if err := s.DB().QueryRow(c.query).Scan(&n); err != nil {
 			return fmt.Errorf("counting %s: %w", c.label, err)
 		}
-		fmt.Printf("%-20s %5d\n", c.label, n)
+		fmt.Fprintf(w, "%-20s %5d\n", c.label, n)
 	}
-	fmt.Printf("corpus: %s\n", dbPath)
+	fmt.Fprintf(w, "corpus: %q\n", dbPath)
 	return nil
 }
