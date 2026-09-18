@@ -1,3 +1,8 @@
+---
+description: "Use before changing any code in codeql-abom. Points Copilot to the Knowledge Base routing index so it opens only the generated knowledge relevant to the task, and treats the code as authoritative when it disagrees with that knowledge."
+applyTo: "**"
+---
+
 <!-- github-knowledge-base-start -->
 ## Knowledge Base
 
