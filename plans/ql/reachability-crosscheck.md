@@ -1,7 +1,6 @@
 # Reach is computed one way, and nothing checks it
 
-**Status:** Blocked on [`ql/account-database.md`](account-database.md), which is itself blocked on
-[`ql/uses-resolution.md`](uses-resolution.md).
+**Status:** Blocked on [`ql/closure-database.md`](closure-database.md).
 
 ## Why this exists
 
@@ -15,14 +14,20 @@ exists to close for extraction — our reading of the first hop has never been c
 else's. This is the same argument one level up: our reading of the *closure* has never been
 compared with anything either.
 
-An account database makes a second derivation available for the first time. The same edges, walked
-by CodeQL rather than by Go, over one database rather than stitched from many — a genuinely
-independent path to the same number, sharing no code with the first.
+An owned repository's closure database makes a second derivation available for the first time. The
+same edges, walked by CodeQL rather than by Go, over a database that already holds the whole closure
+— a genuinely independent path to the same number, sharing no code with the first.
+
+**One closure per owned repository is a better shape for this than one database for the account**,
+and not only because the account variant is refused. A closure is pinned at the references its root
+repository actually uses, so the two walks are comparing the same version of the same supply chain.
+A whole-account database would collapse **132 of 225** dependencies to a single reference and then
+disagree with the Go walk for a reason that is about the layout rather than about reach.
 
 ## Pending
 
-1. **A `@kind graph` query producing the closure.** Over the account database, one result set for
-   the whole corpus. Depends on `account-database`.
+1. **A `@kind graph` query producing the closure.** Over one owned repository's closure database,
+   one result set per closure. Depends on `closure-database`.
 2. **Compare, and name what disagrees.** Per node: dependents according to `abom_blast_radius`,
    dependents according to the query, and the set difference in both directions. Depends on 1.
 3. **Report the comparison where a reader can see it.** A disagreement nobody looks at is not a
@@ -42,10 +47,14 @@ output of a comparison is the disagreement, and a pass that quietly picks a winn
 **A difference is a question, not a defect.** The two walks do not see the same corpus. CodeQL sees
 what was extracted; the Go walk sees every edge ever ingested, including from repositories no longer
 fetched. Coverage has to be subtracted before a difference means anything, and a crosscheck that
-reports its own coverage gap as an error will cry wolf until nobody reads it.
+reports its own coverage gap as an error will cry wolf until nobody reads it. Two narrower sources
+of the same kind of gap are known and named rather than investigated each time:
+[`ql/closure-database.md`](closure-database.md) stages one reference per dependency, so a dependency
+named twice inside one closure is walked once; and a staged dependency's own `./` local references
+resolve to nothing, so CodeQL's walk stops where the Go walk continues.
 
-**Absence on one side is not zero on the other.** A node the account database never extracted has
-no CodeQL answer, which is not the answer zero.
+**Absence on one side is not zero on the other.** A node no closure database ever extracted has no
+CodeQL answer, which is not the answer zero.
 
 ## Verification
 

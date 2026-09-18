@@ -73,10 +73,44 @@ configuration, execution, freshness or language coverage — an enablement task 
 exchange runs both ways: GitHub's language statistics do not report `actions`, so ABOM supplies the
 one gap that audit cannot see. `plans/api/ghas-enablement.md`
 
+## Two shapes of database, answering two different questions
+
+Every database ABOM builds is one repository's own sparse checkout — the shape GitHub's Default
+Setup builds too, so a rule firing in one of ours is reporting something a developer could also be
+shown by their own code scanning.
+
+A second shape stages an owned repository's whole transitive closure under
+`.github/actions/external/${owner}/${repo}/`, which is a convention `codeql/actions-all` already
+recognizes. Dataflow then crosses `uses:` boundaries at any depth: taint from an externally
+controlled value in a workflow, through three staged dependencies, into the deepest `run:`. Nothing
+native reports that, and nothing else could.
+
+The two must never be confused, which is why an analysis records the shape it was built from and a
+reader can filter on it. Same rule, same repository, opposite meanings: one predicts an alert
+somebody will see, the other names exposure GitHub will never report. The ceiling is that a
+closure holds one reference per dependency, which is survivable only because it is rooted at one
+owned repository. `plans/ql/closure-database.md`, `plans/db/analysis-mode.md`
+
+## The questions are the organization's own
+
+The set of questions anybody can ask of the graph is fixed: whatever `codeql/actions-queries` ships,
+plus one marker ABOM writes. They are not the organization's own questions, and writing those needs
+QL, the `actions` library and a fixture — which the person who knows the organization's Actions
+patterns usually does not have.
+
+So ABOM drives the authoring loop rather than asking anybody to learn it. An operator supplies an
+example that should match and one that should not; the
+[CodeQL development MCP server](https://github.com/advanced-security/codeql-development-mcp-server)
+scaffolds, extracts, compiles, tests and reviews against fixtures the CLI built. The result is
+cataloged beside the upstream and ABOM-authored queries, told apart by the pack it came from rather
+than by a prefix, run against whatever scope the operator has already narrowed to, and its results
+land on the graph like any other. `plans/ql/query-authoring.md`, `plans/db/query-catalog.md`,
+`plans/api/scope-to-databases.md`, `plans/api/on-demand-analysis.md`
+
 ## From a finding to a fix
 
-**This is the gap that matters most.** ABOM currently holds thousands of findings that terminate on
-its own screen. A security team cannot act on a dashboard nobody is assigned to.
+**This is the gap that matters most.** ABOM holds thousands of findings that terminate on its own
+screen, and a security team cannot act on a dashboard nobody is assigned to.
 
 Two routes out, in order:
 
@@ -85,9 +119,15 @@ Two routes out, in order:
    refuse a change on that basis. The policy has a life before it has teeth: drafted, simulated
    against stored state, and adopted only if what it would have blocked is acceptable — which is
    built. `plans/api/verdict-gate.md`, `plans/api/abom-check.md`
-2. **Findings that reach GitHub's own alert surface**, so they arrive where developers already
-   look and can join a security campaign. Gated on a standing rule rather than on the upload: no
-   alert may exist that a person did not choose. `plans/api/code-scanning-upload.md`
+2. **A pack the organization publishes and its own Default Setup adopts**, through the
+   `github-codeql-config-file` repository property, which merges a configuration file with the one
+   Default Setup generates. ABOM produces the configuration; GitHub produces the alerts, where
+   developers already look and where a campaign can pick them up. Simulation comes first, because
+   publishing changes what every developer sees and the author is not who gets asked about it.
+   `plans/api/query-simulation.md`, `plans/ql/pack-promotion.md`
+
+**ABOM's own findings stay in ABOM.** They are what a publication decision is made from, not
+something to live with afterwards.
 
 **What a rule can be about is the half that is not built.** A policy is written in the same filter
 terms a reader narrows the corpus with, and that language can name a rule id, a provider and a
@@ -145,6 +185,11 @@ forward as remembered numbers. `plans/db/data-efficiency.md`
 - **Enterprise scope, or federation across organizations.** The boundary is what makes the
   efficiency target mean anything, and a tool spanning organizations inherits no permission model it
   can rely on.
+- **Uploading SARIF to code scanning.** Refused rather than deferred. An alert ABOM wrote would sit
+  in somebody else's Security tab, and an upload replaces rather than adds — a wrong category
+  deletes alerts that cannot be recovered. Publishing a pack achieves the same outcome through the
+  organization's own consent mechanism, and writing nothing is a stronger guarantee than writing
+  carefully.
 - **Re-implementing what `gh-ghas-audit` measures.** Enablement has an owner; ABOM consumes the
   answer and contributes the one gap that tool cannot see.
 - **Evaluating an `if:` condition.** Conditions are reported verbatim. Deciding whether one holds is
