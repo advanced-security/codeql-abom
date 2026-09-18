@@ -116,18 +116,14 @@ func (l *Lock) lockFile(ctx context.Context) error {
 	if dir == "" {
 		dir = "."
 	}
-	if err := makeLockDir(dir); err != nil {
-		return err
-	}
-
 	// Opened relative to the directory rather than by its whole path. `Path` is derived from the
 	// user's cache directory, which comes from the environment, and O_CREATE|O_RDONLY follows a
 	// symlink silently — so a link planted at the lock's name would flock a file elsewhere on the
 	// machine. A root confines the open to the directory ABOM chose, and a single-element name
 	// cannot traverse out of it.
-	root, err := os.OpenRoot(dir)
+	root, err := openLockDir(dir)
 	if err != nil {
-		return fmt.Errorf("opening the lock directory: %w", err)
+		return err
 	}
 	// The root is only a handle for the open below; the locked file outlives it.
 	defer func() { _ = root.Close() }()
@@ -163,30 +159,45 @@ func (l *Lock) lockFile(ctx context.Context) error {
 // seconds at least, so waking 20 times a second costs nothing against it.
 const lockPollInterval = 50 * time.Millisecond
 
-// makeLockDir creates the one directory ABOM owns, inside a parent it does not.
+// openLockDir returns a root confined to the directory the lock file lives in, creating the one
+// element ABOM owns along the way.
 //
 // `MkdirAll` on the whole path would build an arbitrary tree wherever the path led, and the path
 // is derived from the user's cache directory. Only the final element is ABOM's to create, so it
-// is created relative to its parent: a single element cannot traverse, and a root refuses to
-// follow a symlink out of the directory it was opened on.
-func makeLockDir(dir string) error {
-	parent, leaf := filepath.Split(filepath.Clean(dir))
+// is created relative to its parent, and the root handed back is opened relative to that parent
+// too: `Mkdir` reporting ErrExist says the name is taken, not that it is a directory, and
+// reopening the pathname afterwards would follow a symlink planted there straight out of the
+// cache. `Root.OpenRoot` refuses that, which is the whole reason the parent stays open.
+//
+// The parent itself is created with `MkdirAll` because `os.UserCacheDir` only names it: on a
+// fresh account `~/.cache` does not exist yet, and the lock has to work on that account's first
+// CodeQL invocation rather than failing before it.
+func openLockDir(dir string) (*os.Root, error) {
+	clean := filepath.Clean(dir)
+	parent, leaf := filepath.Split(clean)
 	if leaf == "" || leaf == "." || leaf == string(filepath.Separator) {
 		// Nothing of ABOM's own to create; the directory is one the caller already chose.
-		return nil
+		return os.OpenRoot(clean)
 	}
 	if parent == "" {
 		parent = "."
 	}
 
-	root, err := os.OpenRoot(filepath.Clean(parent))
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return nil, fmt.Errorf("creating the lock directory's parent: %w", err)
+	}
+	parentRoot, err := os.OpenRoot(filepath.Clean(parent))
 	if err != nil {
-		return fmt.Errorf("opening the lock directory's parent: %w", err)
+		return nil, fmt.Errorf("opening the lock directory's parent: %w", err)
 	}
-	defer func() { _ = root.Close() }()
+	defer func() { _ = parentRoot.Close() }()
 
-	if err := root.Mkdir(leaf, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
-		return fmt.Errorf("creating the lock directory: %w", err)
+	if err := parentRoot.Mkdir(leaf, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+		return nil, fmt.Errorf("creating the lock directory: %w", err)
 	}
-	return nil
+	root, err := parentRoot.OpenRoot(leaf)
+	if err != nil {
+		return nil, fmt.Errorf("opening the lock directory: %w", err)
+	}
+	return root, nil
 }

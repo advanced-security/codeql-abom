@@ -205,9 +205,9 @@ itest:
 
 ## quality: analyze our own source with our own tool, in every language we write.
 ## Separate from `verify` on purpose: `verify` answers "is this change correct" on every edit,
-## this answers "what does our own analyzer say about this codebase" and builds four databases
-## to do it. Fails above zero findings, in every language; `self-audit.yml` runs the same four
-## as a matrix. Pass --max-findings=-1 to take a measurement without failing.
+## this answers "what does our own analyzer say about this codebase" and builds a database per
+## language to do it. Fails above zero findings, in every language; `self-audit.yml` runs the
+## same set as a matrix. Pass --max-findings=-1 to take a measurement without failing.
 quality: selfcheck
 	@go run ./cmd/codeql-abom selfcheck --language=go \
 		--suite advanced-security/abom-go-quality-src:codeql-suites/abom-go-quality.qls

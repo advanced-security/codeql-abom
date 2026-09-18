@@ -84,6 +84,39 @@ func TestAnalyzeDatabasePassesResourceLimits(t *testing.T) {
 	}
 }
 
+// Code Scanning analyzes this repository with local sources included, so selfcheck has to ask
+// for the same threat model or the two disagree about what a finding is and the gate passes on a
+// narrower question than the one being answered upstream.
+func TestAnalyzeDatabasePassesTheThreatModel(t *testing.T) {
+	stub, argsFile := stubCodeQL(t, "exit 0\n")
+	r := &Runner{CodeQLPath: stub, ThreatModel: "local"}
+
+	if err := r.AnalyzeDatabase(context.Background(), "/db", "suite.qls",
+		filepath.Join(t.TempDir(), "o.sarif")); err != nil {
+		t.Fatalf("AnalyzeDatabase: %v", err)
+	}
+
+	if args := string(mustRead(t, argsFile)); !strings.Contains(args, "--threat-model=local") {
+		t.Errorf("args %q missing --threat-model=local", args)
+	}
+}
+
+// Unset means "whatever the CLI defaults to". Passing an empty value instead would name a threat
+// model of "", which the CLI rejects, so every caller that never set one would stop working.
+func TestAnUnsetThreatModelIsNotPassedAtAll(t *testing.T) {
+	stub, argsFile := stubCodeQL(t, "exit 0\n")
+	r := &Runner{CodeQLPath: stub}
+
+	if err := r.AnalyzeDatabase(context.Background(), "/db", "suite.qls",
+		filepath.Join(t.TempDir(), "o.sarif")); err != nil {
+		t.Fatalf("AnalyzeDatabase: %v", err)
+	}
+
+	if args := string(mustRead(t, argsFile)); strings.Contains(args, "--threat-model") {
+		t.Errorf("args %q names a threat model that was never chosen", args)
+	}
+}
+
 func TestAnalyzeDatabasePropagatesFailure(t *testing.T) {
 	stub, _ := stubCodeQL(t, "echo 'suite not found' >&2\nexit 3\n")
 	r := &Runner{CodeQLPath: stub}

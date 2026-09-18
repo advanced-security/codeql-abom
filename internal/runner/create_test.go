@@ -70,6 +70,40 @@ func TestCreateDatabasePassesResourceLimits(t *testing.T) {
 	}
 }
 
+// The config file decides which paths enter the database, so selfcheck and Code Scanning see the
+// same source set. Losing or misspelling the option analyzes a different tree and still exits 0,
+// which reads as a clean result rather than as a question nobody asked.
+func TestCreateDatabasePassesTheCodeScanningConfig(t *testing.T) {
+	stub, argsFile := stubCodeQL(t, "exit 0\n")
+	r := &Runner{CodeQLPath: stub, CodeScanningConfig: ".github/codeql/codeql-config.yml"}
+
+	db := filepath.Join(t.TempDir(), "db")
+	if err := r.CreateDatabase(context.Background(), "/src", db, "actions"); err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+
+	args := string(mustRead(t, argsFile))
+	if !strings.Contains(args, "--codescanning-config=.github/codeql/codeql-config.yml") {
+		t.Errorf("args %q missing the Code Scanning config", args)
+	}
+}
+
+// Unset means the CLI's own default. An empty value would name a config file of "", which it
+// reports as missing, so every caller that never set one would stop building databases.
+func TestAnUnsetCodeScanningConfigIsNotPassedAtAll(t *testing.T) {
+	stub, argsFile := stubCodeQL(t, "exit 0\n")
+	r := &Runner{CodeQLPath: stub}
+
+	db := filepath.Join(t.TempDir(), "db")
+	if err := r.CreateDatabase(context.Background(), "/src", db, "actions"); err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+
+	if args := string(mustRead(t, argsFile)); strings.Contains(args, "--codescanning-config") {
+		t.Errorf("args %q names a config file that was never chosen", args)
+	}
+}
+
 // A repository with no workflows and no action manifest yields no database, and that is a
 // permanent answer rather than a failure to retry.
 func TestCreateDatabaseReportsNoSourceCode(t *testing.T) {

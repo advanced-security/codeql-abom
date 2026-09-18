@@ -220,3 +220,43 @@ func TestALockRefusesToFollowASymlinkOutOfItsDirectory(t *testing.T) {
 		t.Fatal("acquired a lock through a symlink pointing outside its own directory")
 	}
 }
+
+// The same redirection one level up. `Mkdir` returning ErrExist says only that the name is
+// taken, not that it is a directory, so a symlink planted where ABOM's own directory belongs
+// survives that check -- and reopening the path by name afterwards follows it. The lock would
+// then be held on a file somewhere else entirely, which serializes nothing and says nothing.
+func TestALockRefusesADirectorySymlinkOutOfTheCacheParent(t *testing.T) {
+	cache := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(cache, "codeql-abom")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	lock := &Lock{Path: filepath.Join(cache, "codeql-abom", "codeql.lock")}
+	release, err := lock.Acquire(context.Background())
+	if err == nil {
+		release()
+		t.Error("acquired a lock through a directory symlink leaving the cache parent")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "codeql.lock")); err == nil {
+		t.Errorf("the lock file was created outside the cache directory, in %s", outside)
+	}
+}
+
+// os.UserCacheDir names a directory; it does not create one. On a fresh account nothing has
+// written to `~/.cache` yet, and the lock has to work there rather than failing before the first
+// CodeQL invocation of that account's life.
+func TestALockIsTakenEvenWhenTheCacheRootDoesNotExistYet(t *testing.T) {
+	absent := filepath.Join(t.TempDir(), "cache", "codeql-abom")
+
+	lock := &Lock{Path: filepath.Join(absent, "codeql.lock")}
+	release, err := lock.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("Acquire with no cache root yet: %v", err)
+	}
+	defer release()
+
+	if _, err := os.Stat(filepath.Join(absent, "codeql.lock")); err != nil {
+		t.Errorf("the lock file was not created: %v", err)
+	}
+}

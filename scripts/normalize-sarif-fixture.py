@@ -27,7 +27,9 @@ def inside_repo(path):
     """
     resolved = os.path.realpath(path)
     if not resolved.startswith(ROOT + os.sep):
-        raise SystemExit(f"refusing to rewrite {path!r}: outside {ROOT}")
+        # Both repr'd: ROOT is a filesystem path too, decided by where the checkout was placed,
+        # so a newline in it would forge a line of output just as readily as one in the argument.
+        raise SystemExit(f"refusing to rewrite {path!r}: outside {ROOT!r}")
     return resolved
 
 
