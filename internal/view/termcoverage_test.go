@@ -60,7 +60,7 @@ func everyTerm(t *testing.T) []string {
 		NotProperties: []PropertyMatch{{Name: "k", Value: "v"}},
 		Provider:      "p", Severity: "high", EdgeClass: []string{"e"},
 		EdgeKinds: []string{EdgeKindJobNeedsJob},
-		RefStyle: "tag", Boundary: "cross-owner", MinReach: 1,
+		RefStyle:  "tag", Boundary: "cross-owner", MinReach: 1,
 		Flags: []string{"findings"}, Steps: true,
 	}
 	held, err := url.ParseQuery(spec.String())

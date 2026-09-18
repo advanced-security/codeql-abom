@@ -162,6 +162,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/jobs", reading(s.jobs,
 		"q", "top", "offset", "sort", "desc", "view",
 		"scope", "flags", "properties", "notProperties"))
+	mux.HandleFunc("GET /api/relationships", reading(s.relationships,
+		"q", "top", "offset", "sort", "desc", "view",
+		"scope", "boundary", "edgeKinds", "ref", "properties", "notProperties"))
 	mux.HandleFunc("GET /api/repositories",
 		reading(s.repositories, "q", "top", "offset", "sort", "desc", "view",
 			"scope", "properties", "notProperties"))
@@ -958,6 +961,48 @@ func (s *Server) actions(w http.ResponseWriter, r *http.Request) {
 		query.Closure = keep
 	}
 	page, err := s.Store.ActionsInventoryPage(query)
+	writeJSON(w, page, err)
+}
+
+// relationships lists one page of declared relationships, ordered across the whole match.
+//
+// The unit the rest of the language could not answer: every other listing is a set of nodes, and a
+// boundary, a reference style and a route are facts about the line between two of them. Containment
+// is absent because nothing declares it, so the total here counts what a reader could go and edit.
+func (s *Server) relationships(w http.ResponseWriter, r *http.Request) {
+	spec, err := s.graphPredicate(r, "top", "offset", "sort", "desc")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if refused := spec.UnenforceableAsRelationships(); len(refused) > 0 {
+		writeError(w, http.StatusBadRequest, strings.Join(refused, ", ")+
+			" describes a node or a finding, which a list of relationships cannot answer. "+
+			"The Explorer does.")
+		return
+	}
+	query := store.RelationshipsQuery{
+		Search:    spec.Search,
+		EdgeKinds: spec.EdgeKinds,
+		Boundary:  spec.Boundary,
+		RefStyle:  spec.RefStyle,
+		Scope:     spec.Scope,
+		Sort:      r.URL.Query().Get("sort"),
+		Desc:      r.URL.Query().Get("desc") == "true",
+		Offset:    intParam(r, "offset", 0),
+		Limit:     intParam(r, "top", 50),
+		Grouping:  scopeFromSpec(spec),
+	}
+	// The same closure every other unit reads, so "what you own" means one population across them.
+	if query.Scope == store.ScopeOwned {
+		keep, _, err := (&graph.Builder{Store: s.Store}).KeepList()
+		if err != nil {
+			writeJSON(w, store.RelationshipsPage{}, err)
+			return
+		}
+		query.Closure = keep
+	}
+	page, err := s.Store.RelationshipsPage(query)
 	writeJSON(w, page, err)
 }
 

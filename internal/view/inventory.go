@@ -99,3 +99,24 @@ var advisoryTerms = map[string]bool{
 func (s Spec) UnenforceableAsAdvisories() []string {
 	return s.carried(func(t string) bool { return advisoryTerms[t] })
 }
+
+// relationshipTerms are the terms the relationships unit applies.
+//
+// A row here is a `uses:` line rather than a node, so the node half of the language says nothing
+// about it: a kind, a reach floor and a rule are all facts about an end, and an edge has two.
+// What it does apply is what a relationship is — its kind, what it crosses, and how its reference
+// is written — which is the half no other unit can answer.
+var relationshipTerms = map[string]bool{
+	paramSearch:        true,
+	paramScope:         true,
+	paramBoundary:      true,
+	paramEdgeKinds:     true,
+	paramRefStyle:      true,
+	paramProperties:    true,
+	paramNotProperties: true,
+}
+
+// UnenforceableAsRelationships names the terms the relationships unit cannot apply.
+func (s Spec) UnenforceableAsRelationships() []string {
+	return s.carried(func(t string) bool { return relationshipTerms[t] })
+}
