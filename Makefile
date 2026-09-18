@@ -215,6 +215,8 @@ quality: selfcheck
 		--suite advanced-security/abom-csharp-quality-src:codeql-suites/abom-csharp-quality.qls
 	@go run ./cmd/codeql-abom selfcheck --language=javascript --source-root=ui/wwwroot \
 		--suite advanced-security/abom-javascript-quality-src:codeql-suites/abom-javascript-quality.qls
+	@go run ./cmd/codeql-abom selfcheck --language=python --source-root=scripts \
+		--suite advanced-security/abom-python-quality-src:codeql-suites/abom-python-quality.qls
 
 ## selfcheck: run our own analysis over our own workflows, through our own database-creation
 ## path. Not in `verify`: it needs the CodeQL CLI and takes tens of seconds.

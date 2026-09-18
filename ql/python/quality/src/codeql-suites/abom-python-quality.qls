@@ -1,0 +1,12 @@
+- description: Security and quality queries ABOM runs against its own Python
+
+# Security *and* quality, unlike the three older packs beside this one, which import only the
+# code-quality suite. This repository's Default Setup scans with the Extended suite, so a
+# quality-only selfcheck is narrower than the analysis that actually reports: two `go/path-injection`
+# alerts and one `py/path-injection` alert were all raised by CI against a green `make quality`.
+#
+# Pinned, like every other suite here, because an unpinned reference resolves to whatever the
+# cache last downloaded. A baseline that moves on its own cannot be a baseline.
+- import: codeql-suites/python-security-and-quality.qls
+  from: codeql/python-queries
+  version: 1.8.10

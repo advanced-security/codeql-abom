@@ -9,9 +9,26 @@ Only fields ABOM's ingest path never reads are touched. The driver name and `sem
 stay, because the ingest path refuses SARIF produced by a different CodeQL.
 """
 import json
+import os
 import sys
 
 PLACEHOLDER = "file:///codeql/"
+
+# Fixtures live in this repository and nowhere else, so that is the whole of what this may rewrite.
+ROOT = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+
+
+def inside_repo(path):
+    """Resolves a path and refuses one that leaves the repository.
+
+    The argument comes from the command line, and this rewrites whatever it names in place. Links
+    are followed before the comparison, so a symlink inside the tree cannot point out of it, and
+    the separator is part of the prefix because `/repo-elsewhere` starts with `/repo`.
+    """
+    resolved = os.path.realpath(path)
+    if not resolved.startswith(ROOT + os.sep):
+        raise SystemExit(f"refusing to rewrite {path!r}: outside {ROOT}")
+    return resolved
 
 
 def scrub_uri(value):
@@ -39,14 +56,15 @@ def walk(node):
 
 def main(paths):
     for path in paths:
-        with open(path) as handle:
+        fixture = inside_repo(path)
+        with open(fixture) as handle:
             doc = json.load(handle)
         for run in doc.get("runs", []):
             # Wall-clock times and the command line that produced them: different on every run,
             # and read by nothing.
             run.pop("invocations", None)
             walk(run.get("tool", {}))
-        with open(path, "w") as handle:
+        with open(fixture, "w") as handle:
             json.dump(doc, handle, indent=1, sort_keys=True)
             handle.write("\n")
 
