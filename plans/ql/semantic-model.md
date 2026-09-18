@@ -1,7 +1,10 @@
 # A reference is known, or it is unknown in a way that can be named
 
-**Status:** Blocked on a measurement. The vocabulary could be designed today; every case worth
-designing it for needs [`ql/uses-resolution.md`](uses-resolution.md) to have paid off.
+**Status:** Unblocked for design; item 3 is narrower than hoped. Dataflow-resolved candidates are
+confined to whatever [`ql/account-database.md`](account-database.md) can lay a repository out
+bare for — a callee needing exactly one checkout, never a reference or a commit in its path
+(`plans/implemented.md`) — so most of this vocabulary's value has to come from naming and storing
+the states in items 1 and 2, not from resolving them.
 
 ## Why this exists
 
@@ -37,9 +40,10 @@ the one that matters here: canonical data must carry structured values, never di
    so this is a naming exercise over a table that exists. Depends on 1.
 3. **Resolve what dataflow can resolve.** `MatrixExpressionImpl.getLiteralValues()` and
    `getAMatrixVarExpr` already enumerate a literal matrix; an environment variable needs the flow
-   that only the account database makes available. Each resolved candidate is a statement with its
-   own provenance, never a replacement for the reference as written. Depends on 1 and on
-   [`ql/account-database.md`](account-database.md).
+   that only the account database makes available, and only for a callee it can lay out bare — one
+   needing exactly one checkout, by that plan's own layout constraint. Each resolved candidate is a
+   statement with its own provenance, never a replacement for the reference as written. Depends on
+   1 and on [`ql/account-database.md`](account-database.md).
 4. **A remote-derived reference is reported as a finding, by a rule.** Not as a property of a node
    that the interface colours differently. Depends on 3.
 

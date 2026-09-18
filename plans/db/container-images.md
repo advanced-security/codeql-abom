@@ -48,8 +48,8 @@ invites a reader to believe there is an account there to go and look at.
 **Any modeling of what a container image contains.** The image's layers, its base image, its
 packages, the Dockerfile behind `runs.using: docker` — all of it needs analysis ABOM does not do,
 and would need the shared model and the adapter shape in
-[`ql/semantic-model.md`](../ql/semantic-model.md), which is itself blocked on
-[`ql/uses-resolution.md`](../ql/uses-resolution.md). This plan is the reference, not the image.
+[`ql/semantic-model.md`](../ql/semantic-model.md), which is still designing that model. This plan
+is the reference, not the image.
 
 **A package-url for containers.** It was investigated and refused. The GitHub Advisory Database's
 supported ecosystems are Composer, Erlang, Go, GitHub Actions, Maven, npm, NuGet, pip, Pub,

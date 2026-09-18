@@ -1,7 +1,6 @@
 # Reach is computed one way, and nothing checks it
 
-**Status:** Blocked on [`ql/account-database.md`](account-database.md), which is itself blocked on
-[`ql/uses-resolution.md`](uses-resolution.md).
+**Status:** Blocked on [`ql/account-database.md`](account-database.md).
 
 ## Why this exists
 
@@ -42,7 +41,11 @@ output of a comparison is the disagreement, and a pass that quietly picks a winn
 **A difference is a question, not a defect.** The two walks do not see the same corpus. CodeQL sees
 what was extracted; the Go walk sees every edge ever ingested, including from repositories no longer
 fetched. Coverage has to be subtracted before a difference means anything, and a crosscheck that
-reports its own coverage gap as an error will cry wolf until nobody reads it.
+reports its own coverage gap as an error will cry wolf until nobody reads it. A dependency analyzed
+at more than one reference is a narrower source of the same kind of gap:
+[`ql/account-database.md`](account-database.md) resolves a `uses:` only where a repository is laid
+out bare, so CodeQL's walk is expected to stop one hop early there, for a known and namable reason
+rather than a wrong one.
 
 **Absence on one side is not zero on the other.** A node the account database never extracted has
 no CodeQL answer, which is not the answer zero.
