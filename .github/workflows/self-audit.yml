@@ -69,7 +69,10 @@ jobs:
             dotnet: true
           - name: JavaScript
             language: javascript
-            source-root: 'ui/wwwroot'
+            # The repository root, because that is what Default Setup reads and what the Code
+            # Scanning config's `paths-ignore` is resolved against. A root of `ui/wwwroot` misses
+            # `ui/tools`, and a root of `ui` silently drops every exclusion written `ui/...`.
+            source-root: '.'
             suite: >-
               advanced-security/abom-javascript-quality-src:codeql-suites/abom-javascript-quality.qls
             dotnet: false

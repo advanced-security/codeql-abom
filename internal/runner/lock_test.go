@@ -135,6 +135,28 @@ func TestTheLockFileIsCreatedWhereItWasConfigured(t *testing.T) {
 	}
 }
 
+// A path that could not be opened is named in the error, and these paths descend from the cache
+// directory the environment chose. A newline in one would print as a second line of output --
+// which reads as a separate log entry that somebody else wrote.
+func TestAFailingPathCannotForgeALineInTheError(t *testing.T) {
+	// A file standing where the lock directory belongs: the name is taken, so creating it is
+	// tolerated, and opening it as a directory is what fails.
+	blocker := filepath.Join(t.TempDir(), "a\nb")
+	if err := os.WriteFile(blocker, nil, 0o644); err != nil {
+		t.Fatalf("writing the blocker: %v", err)
+	}
+
+	lock := &Lock{Path: filepath.Join(blocker, "codeql.lock")}
+	release, err := lock.Acquire(context.Background())
+	if err == nil {
+		release()
+		t.Fatal("a file standing in for the lock directory was accepted")
+	}
+	if strings.Contains(err.Error(), "\n") {
+		t.Errorf("the error spans more than one line: %q", err.Error())
+	}
+}
+
 // A runner with no lock configured still runs. Unit tests and one-shot commands have no second
 // process to contend with, and requiring a lock file would make the zero value useless.
 func TestAnUnconfiguredLockIsNotAnError(t *testing.T) {
@@ -253,6 +275,25 @@ func TestALockIsTakenEvenWhenTheCacheRootDoesNotExistYet(t *testing.T) {
 	release, err := lock.Acquire(context.Background())
 	if err != nil {
 		t.Fatalf("Acquire with no cache root yet: %v", err)
+	}
+	defer release()
+
+	if _, err := os.Stat(filepath.Join(absent, "codeql.lock")); err != nil {
+		t.Errorf("the lock file was not created: %v", err)
+	}
+}
+
+// The cache root is one missing element; a relocated XDG_CACHE_HOME can leave several. The chain
+// is built inside a root anchored at the deepest directory that does exist, so finding it means
+// walking up more than one level -- a search that stopped at the first parent would create
+// nothing and give no reason.
+func TestALockIsTakenWhenSeveralPathElementsAreMissing(t *testing.T) {
+	absent := filepath.Join(t.TempDir(), "cache", "deeply", "nested", "codeql-abom")
+
+	lock := &Lock{Path: filepath.Join(absent, "codeql.lock")}
+	release, err := lock.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("Acquire with several elements missing: %v", err)
 	}
 	defer release()
 
