@@ -2,6 +2,12 @@ name: Copilot Setup Steps
 
 # Everything an agent needs before it can run `make verify`: Go, Node, .NET, the CodeQL CLI and
 # the linter. Without this the agent discovers each missing tool one failed command at a time.
+#
+# Installing a tool is not the same as being able to use it. The agent runs behind a firewall
+# once these steps finish, so anything `make verify` would otherwise fetch on first use has to be
+# fetched here: the CodeQL packs its query tests resolve, the NuGet packages the bUnit project
+# restores, and the browser the end-to-end suite drives. A job that goes green having installed
+# five tools and warmed none of their caches still leaves the agent stuck on the first command.
 
 on:
   push:
@@ -10,24 +16,34 @@ on:
       - '.github/actions/setup-codeql/action.yml'
       - '.github/workflows/copilot-setup-steps.yml'
       - '.golangci.yml'
+      - '.node-version'
       - 'go.mod'
       - 'go.sum'
       - 'Makefile'
       - '**/codeql-pack.yml'
       - '**/codeql-pack.lock.yml'
       - 'ui/Abom.WebAssembly.csproj'
+      - 'ui/tests/Abom.WebAssembly.Tests/Abom.WebAssembly.Tests.csproj'
+      - 'ui/tests/e2e/.npmrc'
+      - 'ui/tests/e2e/package.json'
+      - 'ui/tests/e2e/package-lock.json'
   pull_request:
     paths:
       - '.codeql-version'
       - '.github/actions/setup-codeql/action.yml'
       - '.github/workflows/copilot-setup-steps.yml'
       - '.golangci.yml'
+      - '.node-version'
       - 'go.mod'
       - 'go.sum'
       - 'Makefile'
       - '**/codeql-pack.yml'
       - '**/codeql-pack.lock.yml'
       - 'ui/Abom.WebAssembly.csproj'
+      - 'ui/tests/Abom.WebAssembly.Tests/Abom.WebAssembly.Tests.csproj'
+      - 'ui/tests/e2e/.npmrc'
+      - 'ui/tests/e2e/package.json'
+      - 'ui/tests/e2e/package-lock.json'
 
 jobs:
   # The job MUST be called `copilot-setup-steps` or Copilot will not pick it up.
@@ -46,10 +62,15 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Pinned in .node-version so the agent, CI and a developer resolve the same Node, exactly
+      # as .codeql-version does for the CLI. The floor lives in the harness's own package.json,
+      # and ui/tests/e2e/.npmrc is what makes npm enforce it instead of warning and carrying on.
       - name: Copilot Setup - Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version-file: '.node-version'
+          cache: 'npm'
+          cache-dependency-path: 'ui/tests/e2e/package-lock.json'
 
       - name: Copilot Setup - Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
@@ -58,6 +79,11 @@ jobs:
 
       # Version pinned in .codeql-version so the agent, CI and a developer all resolve the same
       # CLI. Shared with every other workflow that needs it.
+      #
+      # Its default `install-packs: true` installs every pack under ql/ into ~/.codeql/packages,
+      # which is the cache `make ql` would otherwise fetch on first use. Every one of those packs
+      # has a committed lock file, so this resolves to the same versions CI and a developer get
+      # rather than to whatever is newest. One installation path, not two.
       - name: Copilot Setup - Setup CodeQL
         uses: ./.github/actions/setup-codeql
 
@@ -72,7 +98,21 @@ jobs:
           go build ./...
 
       - name: Copilot Setup - Restore .NET dependencies
-        run: dotnet restore ui/Abom.WebAssembly.csproj
+        run: |
+          dotnet restore ui/Abom.WebAssembly.csproj
+          # `make ui-test` drives this project, and bunit, xunit.v3 and the test SDK are declared
+          # only here -- restoring the application alone leaves every one of them missing.
+          dotnet restore ui/tests/Abom.WebAssembly.Tests/Abom.WebAssembly.Tests.csproj
+
+      # `make e2e` is part of `make verify`, and installs the harness itself when node_modules is
+      # absent. That install is a network call the agent will not be able to make, so it happens
+      # here. The browser is the pinned Chromium rather than a system one, because CI and the
+      # agent reporting the same geometry is the whole point of pinning it.
+      - name: Copilot Setup - Install the end-to-end harness and its browser
+        working-directory: ui/tests/e2e
+        run: |
+          npm ci --no-fund --no-audit
+          npx playwright install --with-deps chromium
 
       - name: Copilot Setup - Verify the toolchain
         run: |
@@ -81,3 +121,20 @@ jobs:
           echo "dotnet:        $(dotnet --version)"
           echo "codeql:        $(codeql version --format=terse)"
           echo "golangci-lint: $(golangci-lint --version)"
+
+      # Proving the caches are warm, not just that the tools exist. Each of these is something
+      # `make verify` would otherwise reach the network for on its first run, which is the one
+      # thing the agent cannot do.
+      - name: Copilot Setup - Verify the caches are warm
+        run: |
+          packs=$(find ~/.codeql/packages -name qlpack.yml | wc -l)
+          [ "$packs" -gt 0 ] || { echo "no CodeQL packs installed; make ql would fetch"; exit 1; }
+          echo "codeql packs:  $packs installed"
+
+          test -d ui/tests/e2e/node_modules \
+            || { echo "no e2e harness; make e2e would npm ci"; exit 1; }
+          echo "e2e harness:   $(cd ui/tests/e2e && npx playwright --version)"
+
+          test -d ~/.cache/ms-playwright \
+            || { echo "no browser; make e2e would download one"; exit 1; }
+          echo "browsers:      $(ls ~/.cache/ms-playwright | tr '\n' ' ')"

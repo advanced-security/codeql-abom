@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Browser tests for the ABOM interface. The only npm dependency in this repository, deliberately scoped to the test harness so nothing it pulls in can reach a shipped artifact.",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "test": "playwright test"
   },
