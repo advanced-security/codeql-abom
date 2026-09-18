@@ -86,13 +86,20 @@ The ranking is itself a plan, and is subject to change.
    policy verdict. What is owed is a scope beyond one policy, an exclusion that actually stops work,
    an exception that hides a result while the work still runs and records, and a screen that refuses
    to write either without a reason and a review date.
-6. **[Only one read still scales with the organization](api/org-enumeration.md)** — the listing is
+6. **[A container image is not an account](db/container-images.md)** — `uses: docker://alpine:3.20`
+   is parsed correctly, marked external and given no owner, and the graph then groups it by
+   splitting its key on the first slash — which for `docker://` is the second character of `//`.
+   Every container image in the corpus is drawn inside a boundary labelled `docker:`, an account
+   nobody can be a member of and nobody can declare. The same fall-through once had ABOM reporting
+   third-party dependencies on an account named `$`, so the fix is to refuse the branch rather than
+   to correct its output. Cheap, visible, and startable against the corpus that exists.
+7. **[Only one read still scales with the organization](api/org-enumeration.md)** — the listing is
    bounded by what moved and **the per-repository CodeQL probe is not**: there is no code-scanning
    field on `Repository` in the GraphQL schema, checked by introspection, so it is one REST request
    each. At twenty thousand repositories that is now the entire bill. The same entry owes the
    interface the state the API already carries — which route answered, when the account was last
    listed in full, when last swept.
-7. **[GitHub already parsed the first hop, and we never compare](api/dependency-graph-crosscheck.md)**
+8. **[GitHub already parsed the first hop, and we never compare](api/dependency-graph-crosscheck.md)**
    — our central claim is that the native Actions dependency graph stops at the first hop, and that
    claim is sourced from documentation rather than evidence. Nothing checks our CodeQL extraction
    against an independent reading of the same files either. `PackageURLs()` already reads GitHub's
@@ -100,47 +107,72 @@ The ranking is itself a plan, and is subject to change.
    that blocks somebody's pull request should not be the first thing to discover the graph was
    wrong. Accuracy only — the seeding path is refused in the plan, because an SBOM describes a
    default branch and we analyze a pinned commit.
-8. **[A policy can only say what the filter language can say](api/policy-language.md)** — down to
-   the half that matters: the language cannot say *carries a live advisory* or *is reached from
-   something you own*, which is most of what an Actions rule is for. Both terms are unblocked and
-   depend on nothing; each needs adding to the enforceable declaration in `internal/view` or the
-   set path refuses it. **Above the gate deliberately, because the gate enforces whatever this
-   says** — and the vision now names these terms as what a rule is about.
-9. **[A gate that blocks, and can say whose rule it was](api/verdict-gate.md)** — ABOM holds the
-   only transitive Actions graph, so it is the only thing that can refuse a pull request on that
-   basis. **The policy half is built** — drafted, simulated, adopted, waived and auditable — so what
-   remains is the base-versus-head closure diff, the verdict endpoint and the check run, over
-   `store.EvaluatePolicy` rather than a second engine. The ground under it is firmer than it was:
-   exposure and the submission closure now agree about which version a route belongs to, held by
-   tests, so a verdict and a submission cannot disagree about the same supply chain. Depends on 8
-   for what a rule may say. Its client is deferred in [`api/abom-check.md`](api/abom-check.md).
-10. **[The purl names a version Dependabot can match](db/version-resolution.md)** — the submitted
+9. **[Does CodeQL resolve a `uses:` across repositories, and at the right reference](ql/uses-resolution.md)**
+   — a measurement three plans rest on, and none of them is worth starting before it has run.
+   `codeql/actions-all` already models a `uses:` step as an interprocedural call, with composite
+   actions as callables and their `inputs:` as parameters, so taint would cross the boundary if the
+   callee's source sat in the same database. It never does. Whether one database over every checkout
+   changes that — and whether it can be pointed at the **right** reference rather than whichever copy
+   it finds first — is undocumented either way. Ranked here because the answer is cheap and because
+   a refutation retires three deferred plans, which is worth as much as a confirmation.
+10. **[A policy can only say what the filter language can say](api/policy-language.md)** — down to
+    the half that matters: the language cannot say *carries a live advisory* or *is reached from
+    something you own*, which is most of what an Actions rule is for. Both terms are unblocked and
+    depend on nothing; each needs adding to the enforceable declaration in `internal/view` or the
+    set path refuses it. **Above the gate deliberately, because the gate enforces whatever this
+    says** — and the vision now names these terms as what a rule is about.
+11. **[A gate that blocks, and can say whose rule it was](api/verdict-gate.md)** — ABOM holds the
+    only transitive Actions graph, so it is the only thing that can refuse a pull request on that
+    basis. **The policy half is built** — drafted, simulated, adopted, waived and auditable — so what
+    remains is the base-versus-head closure diff, the verdict endpoint and the check run, over
+    `store.EvaluatePolicy` rather than a second engine. The ground under it is firmer than it was:
+    exposure and the submission closure now agree about which version a route belongs to, held by
+    tests, so a verdict and a submission cannot disagree about the same supply chain. Depends on 10
+    for what a rule may say. Its client is deferred in [`api/abom-check.md`](api/abom-check.md).
+12. **[The purl names a version Dependabot can match](db/version-resolution.md)** — the submitted
     purl carries a version for most commit-pinned dependencies ABOM submits, with no request to
     GitHub. The open half is the direct commit-pinned entries that are not submitted at all, and
     closing that is not obviously safe. The measurement it was owed is now available rather than
     hypothetical: a crawled organization with **571 recorded ref resolutions** is on disk.
-11. **[A finding that stops being reported is never removed](db/finding-lifecycle.md)** — unblocked.
+13. **[A finding that stops being reported is never removed](db/finding-lifecycle.md)** — unblocked.
     The sweep was written against a corpus where nothing had ever been sighted, so it correctly
     condemned nothing and proved nothing. There are now **1,724 sighting rows** from a crawl that ran
     the findings suites, so the tombstone and the `_live` view can finally be exercised against a
     finding that really does stop being reported.
-12. **[Remediation summarizes two things into their more reassuring halves](ui/remediation-honesty.md)**
+14. **[The same graph draws a different picture every time](ui/graph-layout.md)** — the force
+    simulation has no fixed seed, so no two runs agree and nothing downstream can rest on a
+    position: the screenshot layer and the browser suite's geometry claims are both looking at
+    something different every time, which is why a test named *switching force preserves angle*
+    exists at all. Graphviz clusters are non-overlapping by construction and report a bounding box,
+    which is the ceiling `docs/roadmap.md` records — boundaries and relationships cannot be drawn
+    at once. **Not a performance fix, and must not be sold as one**: removing every edge from the
+    whole-corpus view still reaches 4.8 FPS, so the ceiling is the renderer. The encoder half is
+    startable today; the layout half needs entry 2's corpus, because twenty nodes cannot carry a
+    layout claim.
+15. **[Remediation summarizes two things into their more reassuring halves](ui/remediation-honesty.md)**
     — down to one half. The strip-versus-table gap is closed: the advisories unit carries an
     `unreached` count and states it under the table, so **3 reaching you** and **8 reaching
     nothing** are both on screen and sum to the 11 the strip counts. What is left is `Fix:
     available`, one boolean over an advisory whose ranges include **no fix published**, with 5
     repositories sitting in exactly that range — a reader is still told the comfortable half.
-13. **[Reach counts a repository that pins a version without the dependency](db/reach-version-constraint.md)**
+16. **[Reach counts a repository that pins a version without the dependency](db/reach-version-constraint.md)**
     — exposure and the submission closure now agree about which version a route belongs to; reach
     carries none of it, and reach is what orders the crawl. **132 of 225** dependencies are analyzed
     at more than one reference. It sits below the interface entries because it is invisible to
     everyone and its first step is a decision that may legitimately conclude no change.
-14. **[Code quality, measured by our own tool](tools/code-quality.md)** — the gate already holds new
+17. **[A backup is a command, not a thing everybody is told to remember](db/backup-and-restore.md)**
+    — the correct incantation is written in the working-style instructions, printed by `make e2e`
+    when it refuses the working database, and implemented nowhere. Getting it wrong raises no error:
+    `cp` does not read the WAL, so the baseline is silently missing recent commits and a change that
+    did nothing looks the same as a change that worked. The half that is a correctness fix rather
+    than an ergonomic one is the epoch — a restore moves generation history backwards underneath
+    every connected client, and nothing currently tells them to reload.
+18. **[Code quality, measured by our own tool](tools/code-quality.md)** — the gate already holds new
     findings at zero in all four languages. What is left is complexity: **50 production functions
     over 10**, and `runServe` is the one that keeps tripping the limit when anything is added to it.
     Measured from source, so unaffected by the corpus retirement. Cleanup rather than risk
     reduction, which is why it sits here.
-15. **[The coverage strip orphans a cell](ui/theme.md)** — with nothing declared the strip renders
+19. **[The coverage strip orphans a cell](ui/theme.md)** — with nothing declared the strip renders
    four items into a three-column grid, so the fourth sits alone on a second row of every surface
    that carries it: Inventory, the Explorer, Settings and the bill of materials. Only the 4 and 5
    item cases are affected; a populated corpus renders 6 and divides cleanly, which is why this is
@@ -198,6 +230,24 @@ refusal.
 - **[Does a transitive alert open a pull request?](api/dependency-submission.md)** — the last link in
   the remediation chain is an inference from GitHub's documentation, and `codeql-abom-test1` is where
   to measure it. Not to be softened in prose.
+- **[One database for the account](ql/account-database.md)** — blocked on entry 9, which decides
+  whether it buys anything. Its own cost argument is weak and says so: the database build is 20.3%
+  of a repository's cost, and the per-repository read that actually scales with the organization is
+  the code-scanning probe, which this changes not at all. It is the workaround for an extractor that
+  cannot do overlays yet, and shares the test watching for that.
+- **[A reference is known, or it is unknown in a way that can be named](ql/semantic-model.md)** —
+  blocked on entry 9 for every case worth having. One bucket currently holds a literal matrix, an
+  environment variable set two jobs earlier, and `uses:` built from `github.event`, which is an
+  attacker choosing what runs. `abom_observation` already keeps both readings of a changed fact and
+  already refuses to pick a winner between two, so the storage for this exists and the work is
+  naming. Shaped so a second adapter — a Dockerized action's image, a JavaScript action's own
+  dependencies, a shell script a composite action calls — is addable; none of those is in scope.
+- **[Reach is computed one way, and nothing checks it](ql/reachability-crosscheck.md)** — blocked on
+  the account database. One in-memory walk produces reach, and reach orders the crawl, sizes every
+  node drawn and is half the remediation arithmetic. Entry 8 is this argument one level down.
+- **[A report somebody can hand to somebody else](ui/printable-report.md)** — blocked on entry 14. A
+  drawing that is different every run cannot be printed, and the bill of materials is already half
+  of this: a document that states its own coverage, with no way to carry the picture.
 
 ## Built, with refinements nobody has ranked
 
