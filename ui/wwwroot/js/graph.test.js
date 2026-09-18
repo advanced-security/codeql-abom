@@ -744,7 +744,7 @@ test('a delta that removes an edge leaves its endpoints alone', () => {
     const all = {
         nodes: [{ key: 'a', refStyles: new Set(), edgeClasses: new Set() },
                 { key: 'b', refStyles: new Set(), edgeClasses: new Set() }],
-        links: [{ key: 'e1', source: 'a', target: 'b', refs: [], count: 1 }],
+        links: [{ keys: ['e1'], source: 'a', target: 'b', refs: [], count: 1 }],
     };
 
     mergeInto(all, { nodes: [], edges: [], removedNodes: [], removedEdges: ['e1'] });
@@ -753,14 +753,15 @@ test('a delta that removes an edge leaves its endpoints alone', () => {
     assert.deepEqual(all.nodes.map(n => n.key), ['a', 'b']);
 });
 
-// The test above hands `mergeInto` a link carrying `key`, and for a long time the server sent no
-// such field: `GraphEdge` serialized source, target, kind, boundary, refs and count, so `e.key` was
-// undefined for every real edge and `removedEdges` matched nothing. Removal was a silent no-op
-// against the only payload that actually exists, and the fixture above was the reason nobody saw
-// it. This one is shaped like the wire.
+// The test above hands `mergeInto` a link carrying `keys`, which is what the wire carries: a line
+// stands for every relationship between its endpoints, and the delta names removals by the same
+// `edge_key`. For a long time the server sent no key at all — `GraphEdge` serialized source,
+// target, kind, boundary, refs and count — so `e.key` was undefined for every real edge and
+// `removedEdges` matched nothing. Removal was a silent no-op against the only payload that
+// actually exists, and a fixture inventing a field was the reason nobody saw it.
 test('an edge from the real payload can be removed by the key the delta names', () => {
     const fromServer = {
-        key: 'octo/app:.github/workflows/ci.yml:8:15',
+        keys: ['octo/app:.github/workflows/ci.yml:8:15'],
         source: 'a', target: 'b', kind: 'step-uses-action', refs: ['v4'], count: 1,
     };
     const all = {
@@ -775,6 +776,69 @@ test('an edge from the real payload can be removed by the key the delta names', 
     });
 
     assert.equal(all.links.length, 0, 'the delta named this edge and it is still drawn');
+});
+
+// Two steps using one action are two relationships and one line. Taking the line away because one
+// of them was removed would hide a relationship that is still declared.
+test('a delta removes the relationship it names and leaves the rest of the line', () => {
+    const all = {
+        nodes: [{ key: 'a', refStyles: new Set(), edgeClasses: new Set() },
+                { key: 'b', refStyles: new Set(), edgeClasses: new Set() }],
+        links: [{ keys: ['e1', 'e2'], source: 'a', target: 'b', refs: ['v4'], count: 2 }],
+    };
+
+    mergeInto(all, { nodes: [], edges: [], removedNodes: [], removedEdges: ['e1'] });
+
+    assert.equal(all.links.length, 1, 'e2 is still declared and the line is gone');
+    assert.deepEqual(all.links[0].keys, ['e2']);
+    assert.equal(all.links[0].count, 1, 'the line still claims two relationships');
+});
+
+// A delta carries the rows that arrived, not the pair's whole history, so a second relationship
+// between an already drawn pair arrives alone. Overwriting would forget the first one, and its
+// later removal would match nothing — the silent no-op again, one step further along.
+test('a pair sent again names the union of its relationships', () => {
+    const all = {
+        nodes: [{ key: 'a', refStyles: new Set(), edgeClasses: new Set() },
+                { key: 'b', refStyles: new Set(), edgeClasses: new Set() }],
+        links: [{ keys: ['e1'], source: 'a', target: 'b', kind: 'step-uses-action',
+                  refs: ['v4'], count: 1, refStyle: 'tag' }],
+    };
+
+    mergeInto(all, {
+        nodes: [], removedNodes: [], removedEdges: [], metrics: [],
+        edges: [{ keys: ['e2'], source: 'a', target: 'b', kind: 'step-uses-action',
+                  refs: ['v3'], count: 1, refStyle: 'tag' }],
+    });
+
+    assert.equal(all.links.length, 1, 'the same pair is one line');
+    assert.deepEqual(all.links[0].keys, ['e1', 'e2']);
+    assert.equal(all.links[0].count, 2);
+    assert.deepEqual(all.links[0].refs, ['v4', 'v3'], 'a reference still in use was dropped');
+});
+
+// The server reports a fact as shared or as mixed, and merging has to reach the same answer: a
+// line whose arriving relationship is pinned and whose drawn one is not is mixed, and keeping
+// either value would state as the pair's what is true of one of them.
+test('a fact the merged relationships disagree about becomes mixed', () => {
+    const all = {
+        nodes: [{ key: 'a', refStyles: new Set(), edgeClasses: new Set() },
+                { key: 'b', refStyles: new Set(), edgeClasses: new Set() }],
+        links: [{ keys: ['e1'], source: 'a', target: 'b', kind: 'step-uses-action',
+                  refs: ['v4'], count: 1, refStyle: 'tag', boundary: 'cross-owner' }],
+    };
+
+    mergeInto(all, {
+        nodes: [], removedNodes: [], removedEdges: [], metrics: [],
+        edges: [{ keys: ['e2'], source: 'a', target: 'b', kind: 'step-uses-action',
+                  refs: ['abc'], count: 1, refStyle: 'commit', boundary: 'cross-owner' }],
+    });
+
+    const line = all.links[0];
+    assert.ok((line.mixed || []).includes('refStyle'), 'one is pinned and one is not');
+    assert.ok(!line.refStyle, 'a disagreed fact is still reported as a value');
+    assert.equal(line.boundary, 'cross-owner', 'a shared fact was thrown away');
+    assert.ok(!(line.mixed || []).includes('boundary'));
 });
 
 // A rested view has paused its renderer, so a mutator that changes what a frame shows and does

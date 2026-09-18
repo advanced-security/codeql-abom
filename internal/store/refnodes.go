@@ -241,7 +241,22 @@ func retargetEdges(
 			if ref == "" {
 				split.Refs = []string{}
 			}
+			// Only the relationships that named this version. Copying the merged edge wholesale
+			// would tell a reader selecting v3 that they had selected the line that pinned v4.
+			split.parts = partsAtRef(e.parts, ref)
+			split.summarize()
 			out = append(out, split)
+		}
+	}
+	return out
+}
+
+// partsAtRef keeps the relationships that named one version.
+func partsAtRef(parts []edgePart, ref string) []edgePart {
+	out := make([]edgePart, 0, len(parts))
+	for _, p := range parts {
+		if p.ref == ref {
+			out = append(out, p)
 		}
 	}
 	return out
