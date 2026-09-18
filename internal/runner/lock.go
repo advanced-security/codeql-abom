@@ -127,7 +127,8 @@ func (l *Lock) lockFile(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("opening the lock directory: %w", err)
 	}
-	defer root.Close()
+	// The root is only a handle for the open below; the locked file outlives it.
+	defer func() { _ = root.Close() }()
 
 	// Read-only: nothing is ever written to the lock file, only flocked. Opening it for writing
 	// would claim an access this never uses and make every close a potential lost write.
