@@ -16,6 +16,7 @@ on:
       - '.github/actions/setup-codeql/action.yml'
       - '.github/workflows/copilot-setup-steps.yml'
       - '.golangci.yml'
+      - '.node-version'
       - 'go.mod'
       - 'go.sum'
       - 'Makefile'
@@ -23,6 +24,8 @@ on:
       - '**/codeql-pack.lock.yml'
       - 'ui/Abom.WebAssembly.csproj'
       - 'ui/tests/Abom.WebAssembly.Tests/Abom.WebAssembly.Tests.csproj'
+      - 'ui/tests/e2e/.npmrc'
+      - 'ui/tests/e2e/package.json'
       - 'ui/tests/e2e/package-lock.json'
   pull_request:
     paths:
@@ -30,6 +33,7 @@ on:
       - '.github/actions/setup-codeql/action.yml'
       - '.github/workflows/copilot-setup-steps.yml'
       - '.golangci.yml'
+      - '.node-version'
       - 'go.mod'
       - 'go.sum'
       - 'Makefile'
@@ -37,6 +41,8 @@ on:
       - '**/codeql-pack.lock.yml'
       - 'ui/Abom.WebAssembly.csproj'
       - 'ui/tests/Abom.WebAssembly.Tests/Abom.WebAssembly.Tests.csproj'
+      - 'ui/tests/e2e/.npmrc'
+      - 'ui/tests/e2e/package.json'
       - 'ui/tests/e2e/package-lock.json'
 
 jobs:
@@ -56,10 +62,15 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Pinned in .node-version so the agent, CI and a developer resolve the same Node, exactly
+      # as .codeql-version does for the CLI. The floor lives in the harness's own package.json,
+      # and ui/tests/e2e/.npmrc is what makes npm enforce it instead of warning and carrying on.
       - name: Copilot Setup - Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version-file: '.node-version'
+          cache: 'npm'
+          cache-dependency-path: 'ui/tests/e2e/package-lock.json'
 
       - name: Copilot Setup - Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
