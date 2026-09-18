@@ -79,6 +79,11 @@ jobs:
 
       # Version pinned in .codeql-version so the agent, CI and a developer all resolve the same
       # CLI. Shared with every other workflow that needs it.
+      #
+      # Its default `install-packs: true` installs every pack under ql/ into ~/.codeql/packages,
+      # which is the cache `make ql` would otherwise fetch on first use. Every one of those packs
+      # has a committed lock file, so this resolves to the same versions CI and a developer get
+      # rather than to whatever is newest. One installation path, not two.
       - name: Copilot Setup - Setup CodeQL
         uses: ./.github/actions/setup-codeql
 
@@ -91,17 +96,6 @@ jobs:
         run: |
           go mod download
           go build ./...
-
-      # `make ql` runs `codeql test run`, which resolves each test pack's dependencies through
-      # codeql-workspace.yml and downloads them into ~/.codeql/packages on first use. Every pack
-      # here has a committed lock file, so this resolves to the same versions CI and a developer
-      # get rather than to whatever is newest.
-      - name: Copilot Setup - Install the CodeQL packs
-        run: |
-          for pack in $(find ql -name codeql-pack.lock.yml -exec dirname {} \; | sort); do
-            echo "pack install: $pack"
-            codeql pack install "$pack"
-          done
 
       - name: Copilot Setup - Restore .NET dependencies
         run: |
