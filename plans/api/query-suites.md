@@ -1,7 +1,10 @@
 # Query suites as configuration
 
 **Status:** tiers bind to suites as stored configuration, editable while the server runs, and both
-the BQRS and findings lanes run from the same resolved plan.
+the BQRS and findings lanes run from the same resolved plan. **Query identity, version and origin
+have moved to [`db/query-catalog.md`](../db/query-catalog.md)** — a suite is a program over packs,
+so it is the wrong unit to hang either on, and the two must not both grow a notion of what a query
+is.
 
 ## Why this exists
 
@@ -18,7 +21,8 @@ calling the API by hand.
 ## Pending
 
 1. **`analyzed_suite` and `analyzed_suite_version` per frontier row**, so staleness is visible per
-   suite rather than per tier and re-processing under a new suite is expressible.
+   suite rather than per tier and re-processing under a new suite is expressible. The version comes
+   from the catalog rather than being derived here.
 2. **Skip what has not changed.** `QueryRunExists` makes this cheap — only queries or databases
    that actually changed need to run again — and nothing consumes it.
 3. **`StreamResultSet(name)`** in `internal/bqrs`, a sibling to `StreamSelect`. Every named result

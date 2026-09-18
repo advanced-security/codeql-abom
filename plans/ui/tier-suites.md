@@ -20,14 +20,14 @@ duration.
 1. **Cost guidance measured, not guessed.** "This tier, this suite, ~N repositories at ~M seconds
    each" needs the cycle timings that are already logged and that nothing surfaces. A count says
    how much work there is, never how long a reader will be waiting for it.
-2. **Re-analyze a selection**, not only a whole tier. The Inventory's Coverage unit already filters
-   by queue state; acting on the current filter is the natural extension. It is the control that
-   spends minutes of cloning and database building, so it states the size of what it is about to
-   re-run before it runs it.
+2. **Re-analyze a selection**, not only a whole tier. The mechanism belongs to
+   [`api/on-demand-analysis.md`](../api/on-demand-analysis.md), which resolves a scope to a database
+   set and runs a chosen plan over it; what is owed here is the control, and the rule that it states
+   the size of what it is about to re-run before it runs it.
 3. **Staleness per suite.** A row says *when* it was last analyzed, not *with what*. Once the
-   run's pack is joined to the row, a tier can show which of its suites are behind instead of
-   offering an undifferentiated re-analysis of everything. Depends on the run's pack version being
-   recorded at all; see `ql/packs.md`.
+   run's pack version is joined to the row, a tier can show which of its suites are behind instead
+   of offering an undifferentiated re-analysis of everything. Depends on the pack version being
+   recorded at all; see [`db/query-catalog.md`](../db/query-catalog.md).
 4. **Decide what a section whose read failed does.** A panel that could not reach
    `/api/discovery/suites` has no setting to summarize. It states the failure rather than folding
    over it; what it does not yet do is offer a way to try again.

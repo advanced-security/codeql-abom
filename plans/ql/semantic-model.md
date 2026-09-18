@@ -1,10 +1,10 @@
 # A reference is known, or it is unknown in a way that can be named
 
-**Status:** Unblocked for design; item 3 is narrower than hoped. Dataflow-resolved candidates are
-confined to whatever [`ql/account-database.md`](account-database.md) can lay a repository out
-bare for — a callee needing exactly one checkout, never a reference or a commit in its path
-(`plans/implemented.md`) — so most of this vocabulary's value has to come from naming and storing
-the states in items 1 and 2, not from resolving them.
+**Status:** Unblocked for design, and item 3 is wider than it looked. Dataflow crosses a `uses:`
+boundary at any depth once the callee is staged under `.github/actions/external/${owner}/${repo}/`,
+so the flow item 3 needs is reachable through
+[`ql/closure-database.md`](closure-database.md) rather than confined to a repository that happens to
+appear once. What that plan cannot give it is two references to one dependency inside one closure.
 
 ## Why this exists
 
@@ -39,11 +39,12 @@ the one that matters here: canonical data must carry structured values, never di
    refuses to pick a winner between two. That refusal is exactly what several candidates requires,
    so this is a naming exercise over a table that exists. Depends on 1.
 3. **Resolve what dataflow can resolve.** `MatrixExpressionImpl.getLiteralValues()` and
-   `getAMatrixVarExpr` already enumerate a literal matrix; an environment variable needs the flow
-   that only the account database makes available, and only for a callee it can lay out bare — one
-   needing exactly one checkout, by that plan's own layout constraint. Each resolved candidate is a
-   statement with its own provenance, never a replacement for the reference as written. Depends on
-   1 and on [`ql/account-database.md`](account-database.md).
+   `getAMatrixVarExpr` already enumerate a literal matrix; an environment variable needs flow across
+   a `uses:` boundary, which a staged closure provides. Each resolved candidate is a statement with
+   its own provenance, never a replacement for the reference as written. **A dependency named at two
+   references inside one closure can only be staged at one of them**, so a candidate resolved there
+   is a statement about the staged reference and says so. Depends on 1 and on
+   [`ql/closure-database.md`](closure-database.md).
 4. **A remote-derived reference is reported as a finding, by a rule.** Not as a property of a node
    that the interface colours differently. Depends on 3.
 

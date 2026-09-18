@@ -124,6 +124,33 @@ policy are one object with different consequences** — and a relationship is as
 because *which references float on a tag* and *what crosses into another account* are questions
 about edges that a reader has to be able to ask as edges.
 
+## The questions are the organization's own
+
+ABOM holds the only transitive Actions graph the organization has, and the set of questions anybody
+can ask of it is currently fixed: whatever `codeql/actions-queries` ships, plus one marker ABOM
+writes. Those are good general questions, and they are not *this organization's* questions — which
+runner labels are permitted, which internal action must never appear beneath a privileged job, which
+of last quarter's incident patterns still exists anywhere.
+
+CodeQL can express all of those. What stops a security team writing them is that doing so needs QL,
+the `actions` library, and a fixture — and the person who knows the organization's Actions patterns
+is usually not that person. So ABOM drives the authoring loop instead of asking somebody to learn
+it: an operator supplies an example that should match and one that should not, and the
+[CodeQL development MCP server](https://github.com/advanced-security/codeql-development-mcp-server)
+scaffolds, extracts, compiles, tests and reviews against fixtures the CLI built. **The negative
+example is the part that matters**, because it is how somebody who does not read QL can tell a
+query is not too broad.
+
+A query authored that way is a first-class thing rather than a side channel. It is cataloged beside
+the upstream and ABOM-authored ones, distinguishable from them by where it came from rather than by
+a prefix on its rule id; it runs against whatever scope the operator has already narrowed to, which
+is the same predicate language every surface uses; and its results land on the graph, so a custom
+pattern gets the same reach and blast-radius arithmetic as anything else.
+
+**This does not lower the bar on what a finding means.** A query somebody wrote on Tuesday carries a
+rule id like any other, and the verdict is still the rule's. What changes is who gets to write the
+rule.
+
 ## The path from a finding to a fix
 
 Detection is not the goal. On GitHub, every mechanism that makes remediation scale across an
@@ -131,8 +158,15 @@ organization takes the same object as input: a **code scanning alert**. Security
 assign them, Agentic Autofix triggers on them, and an alert in a campaign can be handed to a
 developer or to the Copilot coding agent, which opens the pull request.
 
-A finding that never becomes an alert cannot join a campaign, cannot be assigned, and cannot become
-a pull request — however correct it is, and however well it is displayed somewhere else.
+So a finding has to reach an alert to matter — and **ABOM does not write one, ever.** An alert
+appears in somebody else's repository, in the Security tab their developers read and in the numbers
+their leadership is measured on. A tool that can create those is a tool that eventually creates them
+by accident.
+
+The route out is the organization's own configuration instead. A CodeQL configuration file applied
+through the `github-codeql-config-file` repository property is merged with the configuration Default
+Setup generates, so an organization can add a query pack without switching to advanced setup and
+without anybody editing a workflow. **ABOM produces the configuration; GitHub produces the alerts.**
 
 ```mermaid
 flowchart LR
@@ -142,23 +176,37 @@ flowchart LR
     DG --> DA["Dependabot alert"]
   end
   subgraph gap["Not built: the findings route"]
-    FIND["CodeQL findings,<br/>public and private actions"] --> REV["central review in ABOM"]
-    REV -. "no upload path exists" .-> CS["code scanning alert"]
+    FIND["CodeQL findings,<br/>authored, upstream and ABOM's"] --> SIM["simulate across<br/>the organization"]
+    SIM -. "not built" .-> PUB["publish the pack"]
+    PUB --> CFG["Default Setup adopts it"]
+    CFG --> CS["code scanning alert"]
     CS --> CAMP["security campaign"]
     CAMP --> PR["Autofix, or assign to a<br/>developer or Copilot"]
   end
+  style PUB fill:#3d2d1d
+  style CFG fill:#3d2d1d
   style CS fill:#3d2d1d
   style CAMP fill:#3d2d1d
   style PR fill:#3d2d1d
 ```
 
-Review comes first. A central team decides what deserves a developer's attention before it becomes
-an alert, rather than every query result landing in every repository unfiltered. **No alert may
-exist that a person did not choose**, which is why the upload is gated on the review and not the
-other way round.
+Simulation comes first, and it is the step that makes the rest defensible. Publishing a pack changes
+what every developer in the organization sees, and the person who wrote the query is not the person
+who will be asked about the four hundred alerts it raised. So ABOM answers the question first —
+*which repositories would raise how many alerts, and how many of those are already there* — from the
+databases it already holds. **No alert exists that a person did not choose**, satisfied by
+construction rather than by a gate: the choice is the publication, and removing the pack from the
+configuration file stops the alerts at the next scan.
 
-The gate below is the second route to the same place, and the faster one: refusing the pull request
-that introduces the exposure beats reporting it after it merges.
+That prediction has a stated boundary. ABOM analyzes a pinned commit; Default Setup scans a default
+branch. Where those agree the prediction is a measurement, and where they do not it is an
+extrapolation, and it says which it is.
+
+**ABOM's own findings stay in ABOM, permanently and by design.** They are what publication decisions
+are made from, not something to live with afterwards.
+
+The gate below is the second route, and the faster one: refusing the pull request that introduces
+the exposure beats reporting it after it merges.
 
 ## The security team owns the rule, and can try it before it bites
 
@@ -243,12 +291,13 @@ These carry forward unchanged from [the architecture](architecture.md), and the 
 get an exemption from them.
 
 - **A security verdict comes only from a CodeQL rule id.** A rule that did not flag a reference is
-  reported as a rule that did not look.
+  reported as a rule that did not look. This holds for a rule the operator wrote as much as for one
+  GitHub ships.
 - **Advisories enrich; they never adjudicate.** So does an enablement status, for the same reason
   and under the same rule.
 - **An absent measurement is not a measurement of zero.**
 - **A person chooses every alert.** Nothing writes to another repository's security surface on a
-  timer or by inference.
+  timer or by inference — and now nothing writes to it at all.
 - **Say what was excluded.** A scoped view states what it left out.
 
 Four the vision adds:
@@ -269,5 +318,8 @@ Four the vision adds:
   moment is not something static analysis settles.
 - **Deriving vulnerability from an advisory.**
 - **A hosted service.** Self-hosted, in the organization it measures.
-- **A second code scanning interface.** ABOM is where findings are reviewed before they become
-  alerts, not where they are lived with afterwards.
+- **Uploading SARIF to code scanning.** Refused rather than deferred. The route to an alert is the
+  organization publishing a pack its own Default Setup adopts, which is reversible by the people it
+  affects and needs no write from ABOM at all.
+- **A second code scanning interface.** ABOM is where a detection is authored, measured and decided
+  on. Once published, it is lived with in the place developers already look.
