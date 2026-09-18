@@ -7,7 +7,7 @@ name: Self Audit
 # path every upstream expansion depends on -- a path no unit test can cover, because a real
 # extractor and a real source tree are the only honest fixture for it.
 #
-# One job per language rather than one job for all four. They share nothing, they take minutes
+# One job per language rather than one job for all of them. They share nothing, they take minutes
 # each, and a single job would report "self audit failed" without saying which language.
 
 on:
@@ -20,6 +20,7 @@ on:
       - 'cmd/**'
       - 'internal/**'
       - 'ql/**'
+      - 'scripts/**'
       - 'ui/**'
       - 'go.mod'
   push:
@@ -30,6 +31,7 @@ on:
       - 'cmd/**'
       - 'internal/**'
       - 'ql/**'
+      - 'scripts/**'
       - 'ui/**'
       - 'go.mod'
   schedule:
@@ -67,9 +69,18 @@ jobs:
             dotnet: true
           - name: JavaScript
             language: javascript
-            source-root: 'ui/wwwroot'
+            # The repository root, because that is what Default Setup reads and what the Code
+            # Scanning config's `paths-ignore` is resolved against. A root of `ui/wwwroot` misses
+            # `ui/tools`, and a root of `ui` silently drops every exclusion written `ui/...`.
+            source-root: '.'
             suite: >-
               advanced-security/abom-javascript-quality-src:codeql-suites/abom-javascript-quality.qls
+            dotnet: false
+          - name: Python
+            language: python
+            source-root: 'scripts'
+            suite: >-
+              advanced-security/abom-python-quality-src:codeql-suites/abom-python-quality.qls
             dotnet: false
 
     steps:
@@ -83,7 +94,7 @@ jobs:
           cache: true
 
       # The C# extractor builds the project to read it, so the SDK has to be present before the
-      # database is created. The other three extract from source alone.
+      # database is created. Every other language here extracts from source alone.
       - name: Self Audit - Setup .NET
         if: matrix.dotnet
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0

@@ -1,9 +1,13 @@
 - description: Code quality queries ABOM runs against its own Go
 
+# Security *and* quality, matching the Extended suite this repository's Default Setup scans with.
+# A quality-only selfcheck is narrower than the analysis that reports: two `go/path-injection`
+# alerts were raised by CI against a green `make quality`, because neither is a quality query.
+#
 # Pinned, like every other suite here, because an unpinned reference resolves to whatever the
 # cache last downloaded. Measured 2026-09-10: running this unpinned pulled newer packs mid-run,
 # so the same command on the same commit could report a different number of findings. A baseline
 # that moves on its own cannot be a baseline, and a gate built on one cannot be a gate.
-- import: codeql-suites/go-code-quality.qls
+- import: codeql-suites/go-security-and-quality.qls
   from: codeql/go-queries
   version: 1.6.10

@@ -42,6 +42,9 @@ func (r *Runner) CreateDatabase(ctx context.Context, srcDir, dbDir, language str
 	if r.RAMMB > 0 {
 		args = append(args, fmt.Sprintf("--ram=%d", r.RAMMB))
 	}
+	if r.CodeScanningConfig != "" {
+		args = append(args, "--codescanning-config="+r.CodeScanningConfig)
+	}
 	args = append(args, dbDir)
 
 	release, err := r.Lock.Acquire(ctx)

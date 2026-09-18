@@ -55,6 +55,9 @@ func (r *Runner) AnalyzeQueries(
 	if r.RAMMB > 0 {
 		args = append(args, fmt.Sprintf("--ram=%d", r.RAMMB))
 	}
+	if r.ThreatModel != "" {
+		args = append(args, "--threat-model="+r.ThreatModel)
+	}
 
 	release, err := r.Lock.Acquire(ctx)
 	if err != nil {

@@ -97,12 +97,16 @@ func selfcheckVerdict(s selfcheckSummary, maxFindings int) error {
 		s.Results, maxFindings, strings.Join(named, ", "))
 }
 
+// codeScanningConfig is the configuration Default Setup scans this repository with. Selfcheck
+// extracts through the same file so its exclusions are neither wider nor narrower.
+const codeScanningConfig = ".github/codeql/codeql-config.yml"
+
 // runSelfcheck builds a CodeQL database from a source tree and analyzes it with a suite, as a
 // smoke test of the exact path every upstream expansion depends on.
 //
 // It fails when database creation or analysis fails, and when the findings exceed --max-findings,
-// which defaults to zero. Findings were report-only until 2026-09-10, when the count reached zero
-// in all four languages and there was finally something for a nonzero exit to protect.
+// which defaults to zero. Findings were report-only until the count reached zero in every language
+// the self audit covers and there was finally something for a nonzero exit to protect.
 func runSelfcheck(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	cfg, err := parseSelfcheck(args, stderr)
 	if err != nil {
@@ -120,7 +124,14 @@ func runSelfcheck(ctx context.Context, args []string, stdout, stderr io.Writer) 
 
 	// Vendored minified libraries need no exclusion: measured 2026-09-10, the JavaScript
 	// extractor skips *.min.js of its own accord, so 1.3 MB of vendored code never enters.
-	r := &runner.Runner{CodeQLPath: cfg.codeqlPath, Lock: runner.SharedLock()}
+	r := &runner.Runner{
+		CodeQLPath: cfg.codeqlPath,
+		Lock:       runner.SharedLock(),
+		// Matches this repository's Default Setup, which scans with remote *and local* sources.
+		ThreatModel: "local",
+		// And with the same exclusions, so this is neither wider nor narrower than what reports.
+		CodeScanningConfig: codeScanningConfig,
+	}
 	if err := r.CreateDatabase(ctx, cfg.sourceRoot, dbDir, cfg.language); err != nil {
 		return fmt.Errorf("selfcheck: creating a database: %w", err)
 	}

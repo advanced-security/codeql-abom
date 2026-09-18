@@ -205,16 +205,24 @@ itest:
 
 ## quality: analyze our own source with our own tool, in every language we write.
 ## Separate from `verify` on purpose: `verify` answers "is this change correct" on every edit,
-## this answers "what does our own analyzer say about this codebase" and builds four databases
-## to do it. Fails above zero findings, in every language; `self-audit.yml` runs the same four
-## as a matrix. Pass --max-findings=-1 to take a measurement without failing.
+## this answers "what does our own analyzer say about this codebase" and builds a database per
+## language to do it. Fails above zero findings, in every language; `self-audit.yml` runs the
+## same set as a matrix. Pass --max-findings=-1 to take a measurement without failing.
+##
+## The JavaScript root is the repository, not `ui/wwwroot`. Two reasons, and the second is the
+## one that bites: `ui/tools` holds JavaScript too, and `paths-ignore` in the Code Scanning config
+## is resolved against whatever root is passed -- so `ui/bin` excludes nothing unless the root is
+## the one Default Setup reads. A narrower root both misses files and silently loses the
+## exclusions that keep this answering the same question Default Setup answers.
 quality: selfcheck
 	@go run ./cmd/codeql-abom selfcheck --language=go \
 		--suite advanced-security/abom-go-quality-src:codeql-suites/abom-go-quality.qls
 	@go run ./cmd/codeql-abom selfcheck --language=csharp --source-root=ui \
 		--suite advanced-security/abom-csharp-quality-src:codeql-suites/abom-csharp-quality.qls
-	@go run ./cmd/codeql-abom selfcheck --language=javascript --source-root=ui/wwwroot \
+	@go run ./cmd/codeql-abom selfcheck --language=javascript \
 		--suite advanced-security/abom-javascript-quality-src:codeql-suites/abom-javascript-quality.qls
+	@go run ./cmd/codeql-abom selfcheck --language=python --source-root=scripts \
+		--suite advanced-security/abom-python-quality-src:codeql-suites/abom-python-quality.qls
 
 ## selfcheck: run our own analysis over our own workflows, through our own database-creation
 ## path. Not in `verify`: it needs the CodeQL CLI and takes tens of seconds.

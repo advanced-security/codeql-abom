@@ -21,7 +21,17 @@ name: 'ABOM code scanning'
 ## ships is excluded. Path filters apply to the languages CodeQL extracts from source, so this
 ## has no effect on the Go and C# analyses; a finding in either still has to be answered.
 ##
+## `ui/bin` and `ui/obj` are .NET build output -- the generated WebAssembly runtime, none of it
+## ours. Without this the JavaScript answer would depend on whether the tree happened to have been
+## built: `make quality` runs the C# pass first, which builds, and a fresh checkout has not. A gate
+## that says something different once you have compiled is not one.
+##
+## These are resolved against the source root the analysis was given, so selfcheck has to pass the
+## same root Default Setup uses or they match nothing at all.
+##
 paths-ignore:
   - 'ui/tests'
+  - 'ui/bin'
+  - 'ui/obj'
   - '**/*.test.js'
   - '**/*.test.mjs'

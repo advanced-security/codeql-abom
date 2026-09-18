@@ -317,11 +317,22 @@ else
                     .Where(r => r.Boundary == _boundary)
                     .Select(r => r.Target)
                     .ToHashSet();
-            return _bom.Components.Where(c =>
-                (_search.Length == 0
-                 || c.Key.Contains(_search, StringComparison.OrdinalIgnoreCase))
-                && (!_unanalyzedOnly || !c.Analyzed)
-                && (targets is null || targets.Contains(c.Key))).ToList();
+
+            var matching = _bom.Components.AsEnumerable();
+            if (_search.Length > 0)
+            {
+                matching = matching.Where(
+                    c => c.Key.Contains(_search, StringComparison.OrdinalIgnoreCase));
+            }
+            if (_unanalyzedOnly)
+            {
+                matching = matching.Where(c => !c.Analyzed);
+            }
+            if (targets is not null)
+            {
+                matching = matching.Where(c => targets.Contains(c.Key));
+            }
+            return matching.ToList();
         }
     }
 

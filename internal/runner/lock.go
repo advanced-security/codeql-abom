@@ -2,7 +2,9 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
@@ -109,23 +111,19 @@ func (l *Lock) lockProcess(ctx context.Context) error {
 func (l *Lock) lockFile(ctx context.Context) error {
 	dir, name := filepath.Split(l.Path)
 	if name == "" {
-		return fmt.Errorf("%s names a directory rather than a lock file", l.Path)
+		return fmt.Errorf("%q names a directory rather than a lock file", l.Path)
 	}
 	if dir == "" {
 		dir = "."
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("creating the lock directory: %w", err)
-	}
-
 	// Opened relative to the directory rather than by its whole path. `Path` is derived from the
 	// user's cache directory, which comes from the environment, and O_CREATE|O_RDONLY follows a
 	// symlink silently — so a link planted at the lock's name would flock a file elsewhere on the
 	// machine. A root confines the open to the directory ABOM chose, and a single-element name
 	// cannot traverse out of it.
-	root, err := os.OpenRoot(dir)
+	root, err := openLockDir(dir)
 	if err != nil {
-		return fmt.Errorf("opening the lock directory: %w", err)
+		return err
 	}
 	// The root is only a handle for the open below; the locked file outlives it.
 	defer func() { _ = root.Close() }()
@@ -134,7 +132,7 @@ func (l *Lock) lockFile(ctx context.Context) error {
 	// would claim an access this never uses and make every close a potential lost write.
 	f, err := root.OpenFile(name, os.O_CREATE|os.O_RDONLY, 0o644)
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", l.Path, err)
+		return pathFault("opening", l.Path, err)
 	}
 
 	// Non-blocking, polled, so cancellation is observed. A blocking flock would ignore ctx.
@@ -146,7 +144,7 @@ func (l *Lock) lockFile(ctx context.Context) error {
 		}
 		if err != syscall.EWOULDBLOCK {
 			f.Close()
-			return fmt.Errorf("locking %s: %w", l.Path, err)
+			return fmt.Errorf("locking %q: %w", l.Path, err)
 		}
 		select {
 		case <-ctx.Done():
@@ -160,3 +158,113 @@ func (l *Lock) lockFile(ctx context.Context) error {
 // lockPollInterval trades a little latency for cancellability. A CodeQL invocation runs for
 // seconds at least, so waking 20 times a second costs nothing against it.
 const lockPollInterval = 50 * time.Millisecond
+
+// openLockDir returns a root confined to the directory the lock file lives in, creating the one
+// element ABOM owns along the way.
+//
+// Two different trust decisions, and they are not the same. The cache root is the *user's*: they
+// named it through the environment, and symlinking `~/.cache` onto another disk is an ordinary
+// thing to do, so a link there is followed. ABOM's own directory inside it is ABOM's, so a link
+// standing where that belongs was put there by somebody else and is refused -- `Mkdir` reporting
+// ErrExist says only that the name is taken, and reopening it by name afterwards would follow it
+// straight out of the cache. `Root.OpenRoot` will not, which is why the parent stays open.
+func openLockDir(dir string) (*os.Root, error) {
+	clean := filepath.Clean(dir)
+	parent, leaf := filepath.Split(clean)
+	if leaf == "" || leaf == "." || leaf == string(filepath.Separator) {
+		// Nothing of ABOM's own to create; the directory is one the caller already chose.
+		return os.OpenRoot(clean)
+	}
+	if parent == "" {
+		parent = "."
+	}
+
+	parentRoot, err := openParentDir(filepath.Clean(parent))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = parentRoot.Close() }()
+
+	if err := parentRoot.Mkdir(leaf, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+		return nil, pathFault("creating the lock directory", clean, err)
+	}
+	root, err := parentRoot.OpenRoot(leaf)
+	if err != nil {
+		return nil, pathFault("opening the lock directory", clean, err)
+	}
+	return root, nil
+}
+
+// openParentDir opens the lock directory's parent, creating it when the account is new enough not
+// to have a cache root yet.
+//
+// `os.MkdirAll` would do this in one call and resolve every element by name as it went, following
+// any symlink it met and re-resolving the prefix between one element and the next. The path comes
+// from the environment, so that is both a way out of the cache and a race: a link dropped where a
+// missing element belongs, at the moment between creating it and creating its child, relocates
+// the whole tree. Anchoring a root at the deepest directory that already exists and building
+// downward through it closes both -- a root holds the directory open rather than re-resolving it,
+// and refuses any link that leaves it.
+func openParentDir(parent string) (*os.Root, error) {
+	root, err := os.OpenRoot(parent)
+	if err == nil {
+		return root, nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return nil, pathFault("opening the lock directory's parent", parent, err)
+	}
+
+	anchor, rest, err := deepestExisting(parent)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = anchor.Close() }()
+
+	if err := anchor.MkdirAll(rest, 0o755); err != nil {
+		return nil, pathFault("creating the lock directory's parent", parent, err)
+	}
+	root, err = anchor.OpenRoot(rest)
+	if err != nil {
+		return nil, pathFault("opening the lock directory's parent", parent, err)
+	}
+	return root, nil
+}
+
+// deepestExisting opens the nearest ancestor of path that exists and names the remainder relative
+// to it, so the caller can create that remainder inside a root rather than by absolute path.
+func deepestExisting(path string) (*os.Root, string, error) {
+	rest := ""
+	for probe := path; ; {
+		parent, leaf := filepath.Split(probe)
+		if leaf == "" {
+			return nil, "", fmt.Errorf("no existing directory above %q", path)
+		}
+		rest = filepath.Join(leaf, rest)
+
+		parent = filepath.Clean(parent)
+		root, err := os.OpenRoot(parent)
+		if err == nil {
+			return root, rest, nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return nil, "", pathFault("opening", parent, err)
+		}
+		if parent == probe {
+			return nil, "", fmt.Errorf("no existing directory above %q", path)
+		}
+		probe = parent
+	}
+}
+
+// pathFault names a filesystem failure without letting the path it happened to forge a line.
+//
+// `*fs.PathError` prints its own path raw, and every path here descends from the cache directory,
+// which the environment names. A newline in one would print as what looks like a second line of
+// output. Only the underlying cause is wrapped, and the path is quoted.
+func pathFault(doing, path string, err error) error {
+	var perr *fs.PathError
+	if errors.As(err, &perr) {
+		err = perr.Err
+	}
+	return fmt.Errorf("%s %q: %w", doing, path, err)
+}
