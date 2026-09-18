@@ -1,0 +1,18 @@
+name: Deploy
+on:
+  workflow_dispatch:
+
+jobs:
+  # A second consumer of the same reusable workflow, so a dependency has more than one dependent
+  # and reach is a number rather than a constant.
+  release:
+    uses: octo-org/app/.github/workflows/release.yml@v1
+    with:
+      tag: stable
+
+  announce:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: octo-org/shared-action@v2
+      - run: echo deployed

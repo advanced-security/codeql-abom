@@ -358,54 +358,78 @@ else
 
 @if (Accounts.Identity.Accounts.Count > 0)
 {
-    <div class="d-flex flex-wrap align-center gap-3 mb-1">
-        <MudText Typo="Typo.subtitle2">Accounts you can declare</MudText>
-        <MudTooltip Text="gh reports every account you belong to. Only owner and admin roles can change anything in one, so only those are offered.">
-            <span data-abom-show-all>
-                <MudCheckBox T="bool" Dense="true" Size="Size.Small" Value="_showAll"
-                             ValueChanged="@(v => _showAll = v)"
-                             Label="@($"Show all {Accounts.Identity.Accounts.Count}")" />
-            </span>
-        </MudTooltip>
+    @* Collapsed by default. Thirty-three memberships of which thirteen are declarable is a list
+       that buries its own answer, and this is a page people come to for one row at a time. *@
+    <div data-abom-memberships class="mb-6">
+        <MudExpansionPanels Elevation="0" Dense="true">
+            <MudExpansionPanel @bind-Expanded="_membershipsOpen">
+                <TitleContent>
+                    <div class="d-flex flex-wrap align-center gap-3">
+                        <MudText Typo="Typo.subtitle2">Accounts you can declare</MudText>
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                            @Accounts.Identity.Accounts.Count(a => a.CanDeclare) of
+                            @Accounts.Identity.Accounts.Count gh reports are yours to change
+                        </MudText>
+                    </div>
+                </TitleContent>
+                <ChildContent>
+                    @* Rendered only once open. A panel that merely hides thirty-three rows with
+                       CSS still builds them, and "collapsed" then means present but invisible. *@
+                    @if (_membershipsOpen)
+                    {
+                        <MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
+                            gh reports every account you belong to. Only owner and admin roles can
+                            change anything in one, so the rest are listed without a button rather
+                            than left out &mdash; an absent name reads as gh not reporting the
+                            account at all.
+                        </MudText>
+                        <MudDataGrid T="OwnedAccount" Items="Memberships" Dense="true" Hover="true"
+                                     Bordered="false" Filterable="false" SortMode="SortMode.Multiple"
+                                     RowsPerPage="10" Class="abom-grid">
+                        <Columns>
+                            <PropertyColumn Property="x => x.Owner" Title="Account" />
+                            <TemplateColumn Title="Kind" SortBy="x => x.Kind">
+                                <CellTemplate>
+                                    @(context.Item.Kind == "user" ? "Your account" : "Organization")
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <PropertyColumn Property="x => x.Role" Title="Role" />
+                            <TemplateColumn Title="" Sortable="false">
+                                <CellTemplate>
+                                    <span data-abom-membership="@context.Item.Owner">
+                                        @if (InDraft(context.Item.Owner))
+                                        {
+                                            <MudText Typo="Typo.caption" Class="mud-text-secondary">declared</MudText>
+                                        }
+                                        else if (!context.Item.CanDeclare)
+                                        {
+                                            <MudTooltip Text="@($"You are a {context.Item.Role} here, which cannot change anything in this account.")">
+                                                <MudText Typo="Typo.caption" Class="mud-text-secondary">not yours to declare</MudText>
+                                            </MudTooltip>
+                                        }
+                                        else
+                                        {
+                                            <MudTooltip Text="@($"State that {context.Item.Owner} is yours. Nothing is written until you save.")">
+                                                <MudButton Size="Size.Small" Variant="Variant.Outlined"
+                                                           OnClick="@(() => Declare(context.Item.Owner, context.Item.Kind))"
+                                                           data-abom-declare="@context.Item.Owner">
+                                                    Declare
+                                                </MudButton>
+                                            </MudTooltip>
+                                        }
+                                    </span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                        </Columns>
+                        <PagerContent>
+                            <MudDataGridPager T="OwnedAccount" />
+                        </PagerContent>
+                    </MudDataGrid>
+                    }
+                </ChildContent>
+            </MudExpansionPanel>
+        </MudExpansionPanels>
     </div>
-    <MudDataGrid T="OwnedAccount" Items="Memberships" Dense="true" Hover="true" Bordered="false"
-                 Filterable="false" Class="abom-grid mb-6">
-        <Columns>
-            <PropertyColumn Property="x => x.Owner" Title="Account" />
-            <TemplateColumn Title="Kind">
-                <CellTemplate>
-                    @(context.Item.Kind == "user" ? "Your account" : "Organization")
-                </CellTemplate>
-            </TemplateColumn>
-            <PropertyColumn Property="x => x.Role" Title="Role" />
-            <TemplateColumn Title="" Sortable="false">
-                <CellTemplate>
-                    <span data-abom-membership="@context.Item.Owner">
-                        @if (InDraft(context.Item.Owner))
-                        {
-                            <MudText Typo="Typo.caption" Class="mud-text-secondary">declared</MudText>
-                        }
-                        else if (!context.Item.CanDeclare)
-                        {
-                            <MudTooltip Text="@($"You are a {context.Item.Role} here, which cannot change anything in this account.")">
-                                <MudText Typo="Typo.caption" Class="mud-text-secondary">not yours to declare</MudText>
-                            </MudTooltip>
-                        }
-                        else
-                        {
-                            <MudTooltip Text="@($"State that {context.Item.Owner} is yours. Nothing is written until you save.")">
-                                <MudButton Size="Size.Small" Variant="Variant.Outlined"
-                                           OnClick="@(() => Declare(context.Item.Owner, context.Item.Kind))"
-                                           data-abom-declare="@context.Item.Owner">
-                                    Declare
-                                </MudButton>
-                            </MudTooltip>
-                        }
-                    </span>
-                </CellTemplate>
-            </TemplateColumn>
-        </Columns>
-    </MudDataGrid>
 }
 
 <MudText Typo="Typo.subtitle2" Class="mt-8 mb-1">How discovery runs</MudText>
@@ -419,13 +443,54 @@ else
 
 <DiscoveryControls LinkToSettings="false" />
 
+@* Raised rather than waited for. The check runs at startup off the request path, and what it
+   found is a decision somebody has to make rather than a section they have to go and find.
+   Removal is never automatic: this asks, and "Not now" is a complete answer.
+
+   Rendered only while it is open. A MudDialog that is merely invisible still renders its focus
+   trap, whose four sentinels are focusable and have no accessible name. *@
+@if (_stalePrompt && _staleness is not null)
+{
+    <MudDialog @bind-Visible="_stalePrompt" Options="@(new DialogOptions {
+                   CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true })">
+        <TitleContent>
+            <MudText Typo="Typo.h6">Some of this is no longer reachable from what you own</MudText>
+        </TitleContent>
+        <DialogContent>
+            <MudText Typo="Typo.body2" Class="mb-2" data-abom-stale-summary>
+                Checked at startup: your @_staleness.View.Declared declared
+                @(_staleness.View.Declared == 1 ? "repository reaches" : "repositories reach")
+                @_staleness.View.Reachable. Outside that sit
+                <b>@_staleness.View.Removed.Nodes.ToString("N0")</b>
+                @(_staleness.View.Removed.Nodes == 1 ? "node" : "nodes") and
+                <b>@_staleness.View.Removed.Edges.ToString("N0")</b>
+                @(_staleness.View.Removed.Edges == 1 ? "edge" : "edges") across
+                <b>@_staleness.View.Removed.Repositories.ToString("N0")</b>
+                @(_staleness.View.Removed.Repositories == 1 ? "repository" : "repositories").
+            </MudText>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                Removing takes them out of every view. Nothing is deleted, and re-analysis brings
+                back anything you declare again.
+            </MudText>
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="DismissStale" data-abom-stale-dismiss>Not now</MudButton>
+            <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="_stalePruning"
+                       OnClick="AcceptStale" data-abom-stale-accept>
+                @(_stalePruning ? "Working\u2026" : "Remove from view")
+            </MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
 <PruneControl />
 
-<MudText Typo="Typo.subtitle2" Class="mt-8 mb-1">Accounts holding analyzed repositories</MudText>
+<MudText Typo="Typo.subtitle2" Class="mt-8 mb-1">Accounts holding repositories discovery started from</MudText>
 <MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
-    Holding an analyzed repository does not make an account yours &mdash; <code>actions</code>
-    owns <code>actions/cache</code>, which is why it appears here and why belonging is checked
-    rather than assumed.
+    Seeded repositories, not analyzed ones &mdash; an account can hold every one of its seeds with
+    nothing analyzed yet, which is what the figures above report. Holding one does not make an
+    account yours either: <code>actions</code> owns <code>actions/cache</code>, which arrives as a
+    seed, and that is why it appears here and why belonging is checked rather than assumed.
 </MudText>
 
 @if (_candidates is null)
@@ -453,7 +518,7 @@ else
                 </CellTemplate>
             </TemplateColumn>
             <PropertyColumn Property="x => x.Owner" Title="Account" />
-            <PropertyColumn Property="x => x.Repositories" Title="Repositories" />
+            <PropertyColumn Property="x => x.Repositories" Title="Seeded" />
             <PropertyColumn Property="x => x.Findings" Title="Findings" />
         </Columns>
         <PagerContent>
@@ -464,13 +529,16 @@ else
 
 @code {
     private IReadOnlyList<OwnerCandidate>? _candidates;
+    private Staleness? _staleness;
+    private bool _stalePrompt;
+    private bool _stalePruning;
     private string _search = string.Empty;
     private bool _checking;
     private AccountProblem? _problem;
 
     private readonly List<Draft> _draft = [];
     private string _typedOwner = string.Empty;
-    private bool _showAll;
+    private bool _membershipsOpen;
     private ScopePreview? _preview;
     private bool _saving;
     private bool _saved;
@@ -536,9 +604,12 @@ else
     private bool InDraft(string owner) =>
         _draft.Any(d => string.Equals(d.Owner, owner, StringComparison.OrdinalIgnoreCase));
 
-    // Thirty-three memberships of which thirteen are declarable buries the answer in the list.
+    // Declarable first, then by name: the rest are listed so that the absence of a button beside a
+    // name is the answer, but they are not what anybody opened this to do.
     private IEnumerable<OwnedAccount> Memberships =>
-        Accounts.Identity.Accounts.Where(a => _showAll || a.CanDeclare);
+        Accounts.Identity.Accounts
+            .OrderByDescending(a => a.CanDeclare)
+            .ThenBy(a => a.Owner, StringComparer.OrdinalIgnoreCase);
 
     private OwnedAccount? Membership(string owner) =>
         Accounts.Identity.Accounts.FirstOrDefault(
@@ -560,6 +631,29 @@ else
         _problem = Accounts.Identity.Problem;
         SeedDraft();
         _candidates = await Api.GetOwnerCandidatesAsync();
+        _staleness = await Api.GetStalenessAsync();
+        // Only a finished check that could measure and found something opens this. A check still
+        // running, or one that had no closure to measure against, says nothing at all.
+        _stalePrompt = _staleness?.HasSomethingToRemove ?? false;
+    }
+
+    private void DismissStale() => _stalePrompt = false;
+
+    private async Task AcceptStale()
+    {
+        _stalePruning = true;
+        try
+        {
+            await Api.PruneAsync(compact: false);
+            // Re-read rather than trusting the response: what is left is what the next decision
+            // turns on, and "what did that cost" is a different question.
+            _staleness = await Api.GetStalenessAsync();
+        }
+        finally
+        {
+            _stalePruning = false;
+            _stalePrompt = false;
+        }
     }
 
     private void SeedDraft()

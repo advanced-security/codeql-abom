@@ -173,9 +173,12 @@ public class EnumerationTests : AbomTestContext
         cut.Find("[data-abom-enumeration]").TextContent;
 
     // A save is only offered on a dirty draft, so a test that wants to save has to declare
-    // something first.
+    // something first. The membership list is collapsed until asked for, so this opens it.
     private static void Declare(IRenderedComponent<Pages.Settings> cut)
     {
+        cut.WaitForAssertion(
+            () => Assert.NotNull(cut.Find("[data-abom-memberships] .mud-expand-panel-header")));
+        cut.Find("[data-abom-memberships] .mud-expand-panel-header").Click();
         cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-declare='advanced-security']")));
         cut.Find("[data-abom-declare='advanced-security']").Click();
     }

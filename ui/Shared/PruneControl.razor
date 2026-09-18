@@ -78,12 +78,18 @@ else
                 @(_pruning ? "Working…" : "Remove from view")
             </MudButton>
         </MudTooltip>
-        <MudTooltip Text="Delete what is already removed, permanently. Only re-analysis can rebuild it, and every open page reloads.">
-            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
-                       Disabled="_pruning" OnClick="@(() => Prune(true))" data-abom-prune-compact>
-                Delete permanently
-            </MudButton>
-        </MudTooltip>
+        @* Offered only when there is something tombstoned for it to delete. Shown regardless, it
+           answers "Deleted 0 nodes and 0 edges", which reads as a corpus that turned out clean
+           rather than as a button that could never have done anything. *@
+        @if (_prune.Tombstoned > 0)
+        {
+            <MudTooltip Text="Delete what is already removed, permanently. Only re-analysis can rebuild it, and every open page reloads.">
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
+                           Disabled="_pruning" OnClick="@(() => Prune(true))" data-abom-prune-compact>
+                    Delete @_prune.Tombstoned.ToString("N0") permanently
+                </MudButton>
+            </MudTooltip>
+        }
         @if (_pruneOutcome is not null)
         {
             <MudText Typo="Typo.body2" data-abom-prune-outcome>@_pruneOutcome</MudText>

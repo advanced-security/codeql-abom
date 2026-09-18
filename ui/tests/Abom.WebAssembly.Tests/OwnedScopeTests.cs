@@ -265,11 +265,23 @@ public class OwnedScopeTests : AbomTestContext
     {
         ServeEditable("[]");
         var cut = Render<Pages.Settings>();
-        cut.WaitForAssertion(() => Assert.Contains("ops-team", cut.Markup));
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-memberships]")));
+        OpenMemberships(cut);
 
         cut.Find("[data-abom-declare='ops-team']").Click();
 
         Assert.Empty(cut.FindAll("[data-abom-unaccounted='ops-team']"));
+    }
+
+    // The membership list is collapsed until asked for, so anything reaching into it opens it
+    // first. Stated once here rather than as a click repeated in every test that declares.
+    private static void OpenMemberships(IRenderedComponent<Pages.Settings> cut)
+    {
+        cut.WaitForAssertion(
+            () => Assert.NotNull(cut.Find("[data-abom-memberships] .mud-expand-panel-header")));
+        cut.Find("[data-abom-memberships] .mud-expand-panel-header").Click();
+        cut.WaitForAssertion(
+            () => Assert.NotEmpty(cut.FindAll("[data-abom-membership='ops-team']")));
     }
 
     private void ServeEditable(string scope)
@@ -292,7 +304,8 @@ public class OwnedScopeTests : AbomTestContext
     {
         ServeEditable("[]");
         var cut = Render<Pages.Settings>();
-        cut.WaitForAssertion(() => Assert.Contains("ops-team", cut.Markup));
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-memberships]")));
+        OpenMemberships(cut);
 
         cut.Find("[data-abom-declare='ops-team']").Click();
         cut.Find("[data-abom-save]").Click();
@@ -303,31 +316,47 @@ public class OwnedScopeTests : AbomTestContext
 
     // Being in an organization is not being answerable for it. Offering every membership is how a
     // corpus came to assert this operator owns `facebook`, so a role that can change nothing is
-    // not offered at all.
+    // listed without a button rather than offered.
     [Fact]
     public void AnAccountYouAreOnlyAMemberOfIsNotOfferedForDeclaring()
     {
         ServeEditable("[]");
         var cut = Render<Pages.Settings>();
-        cut.WaitForAssertion(() => Assert.Contains("ops-team", cut.Markup));
-
-        cut.Find("[data-abom-show-all] input").Change(true);
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-memberships]")));
+        OpenMemberships(cut);
 
         cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-abom-membership='docs']")));
         Assert.Empty(cut.FindAll("[data-abom-declare='docs']"));
     }
 
-    // Thirty-three accounts of which thirteen are declarable is a list that buries its own answer.
-    // Asserted on the membership grid rather than the markup: `docs` also holds repositories in
-    // the corpus, so it legitimately appears further down the page.
+    // Thirty-three accounts of which thirteen are declarable is a list that buries its own answer,
+    // and this is a page people come to for one row at a time. Nothing is listed until it is asked
+    // for — asserted on the membership grid, because `docs` also holds repositories in the corpus
+    // and legitimately appears further down the page.
     [Fact]
-    public void AnAccountYouCannotDeclareIsOutOfTheWayUntilAskedFor()
+    public void NoMembershipIsListedUntilTheSectionIsOpened()
     {
         ServeEditable("[]");
         var cut = Render<Pages.Settings>();
-        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-abom-membership='ops-team']")));
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-memberships]")));
 
+        Assert.Empty(cut.FindAll("[data-abom-membership='ops-team']"));
         Assert.Empty(cut.FindAll("[data-abom-membership='docs']"));
+    }
+
+    // Opening it lists every account, including the ones that cannot be declared: the absence of a
+    // button beside a name is the answer, and leaving the name out entirely was read as gh not
+    // reporting the account at all.
+    [Fact]
+    public void OpeningTheSectionListsEveryAccountOnRecord()
+    {
+        ServeEditable("[]");
+        var cut = Render<Pages.Settings>();
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-memberships]")));
+        OpenMemberships(cut);
+
+        Assert.NotEmpty(cut.FindAll("[data-abom-membership='ops-team']"));
+        Assert.NotEmpty(cut.FindAll("[data-abom-membership='docs']"));
     }
 
     // The role is half of what "confirmed by gh" is confirming, and a declaration carrying a role
@@ -366,7 +395,7 @@ public class OwnedScopeTests : AbomTestContext
     {
         ServeEditable("[]");
         var cut = Render<Pages.Settings>();
-        cut.WaitForAssertion(() => Assert.Contains("ops-team", cut.Markup));
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-memberships]")));
 
         cut.Find("[data-abom-new-owner] input").Change("private-org");
         cut.Find("[data-abom-declare-typed]").Click();
@@ -422,7 +451,8 @@ public class OwnedScopeTests : AbomTestContext
     {
         ServeEditable("[]");
         var cut = Render<Pages.Settings>();
-        cut.WaitForAssertion(() => Assert.Contains("ops-team", cut.Markup));
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-memberships]")));
+        OpenMemberships(cut);
 
         cut.Find("[data-abom-declare='ops-team']").Click();
 
@@ -436,7 +466,8 @@ public class OwnedScopeTests : AbomTestContext
     {
         ServeEditable("[]");
         var cut = Render<Pages.Settings>();
-        cut.WaitForAssertion(() => Assert.Contains("ops-team", cut.Markup));
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-memberships]")));
+        OpenMemberships(cut);
 
         cut.Find("[data-abom-declare='ops-team']").Click();
         cut.Find("[data-abom-save]").Click();
@@ -451,7 +482,8 @@ public class OwnedScopeTests : AbomTestContext
     {
         ServeEditable("[]");
         var cut = Render<Pages.Settings>();
-        cut.WaitForAssertion(() => Assert.Contains("ops-team", cut.Markup));
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-memberships]")));
+        OpenMemberships(cut);
 
         cut.Find("[data-abom-declare='ops-team']").Click();
 

@@ -64,6 +64,14 @@ for the whole match.
 **The Dashboard does not get a second job.** It is a way into Inventory. Every control on it names a
 count it can produce and a scope it hands over; nothing on it exists because the page looked empty.
 
+**A card names the scope that produced its number, and the two drift apart silently.** Four of the
+five named ownership — *in what you run*, *actions in use*, *you depend on*, *routes from something
+you own* — over figures taken across the whole corpus, and one card read the declared scope and
+said **0**. Nothing could disagree while every seeded repository was also an owned one; a corpus
+where they differ is what separates them. So a figure is bounded to the declaration or the caption
+names the corpus it came from, and where a figure is bounded, *nothing declared* renders as the
+word **none** rather than as a nought, which reads as a corpus examined and found clean.
+
 ## Verification
 
 - Every action a unit offers applies to every row that unit can list, checked by pressing it on

@@ -1,0 +1,21 @@
+name: Plan
+on:
+  pull_request:
+
+jobs:
+  # Every reference pinned to a commit, against the floating tags elsewhere in the corpus, so
+  # reference style has both readings in quantity rather than in a single example.
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@a1b2c3d4e5f60718293a4b5c6d7e8f9012345678
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+      - run: terraform plan
+
+  cost:
+    needs: plan
+    runs-on: ubuntu-latest
+    steps:
+      # A second container image, so the kind is not a single row anywhere it is counted.
+      - uses: docker://hashicorp/terraform:1.9
+      - run: echo estimated

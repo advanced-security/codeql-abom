@@ -136,6 +136,9 @@ public sealed class AbomApi(HttpClient http)
     public async Task<PruneView?> GetPruneAsync(CancellationToken ct = default) =>
         await GetAsync<PruneView>("api/prune", ct);
 
+    public async Task<Staleness?> GetStalenessAsync(CancellationToken ct = default) =>
+        await GetAsync<Staleness>("api/prune/staleness", ct);
+
     /// <summary>
     /// Tombstones what the declaration does not reach, or deletes what is already tombstoned.
     /// Both carry the control header: they remove work that only re-analysis can rebuild.

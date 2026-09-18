@@ -1,0 +1,10 @@
+name: Setup
+description: A composite action inside the repository that uses it.
+# A local action is referenced as a path rather than as `owner/repo`, so its node is qualified by
+# the repository it lives in and it must not be mistaken for a third-party dependency.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+    - run: npm install --global npm@latest
+      shell: bash

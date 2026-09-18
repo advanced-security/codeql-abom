@@ -181,6 +181,9 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		fs.Usage()
 		return errors.New("serve: --db is required")
 	}
+	if reason := volatileDatabase(*dbPath); reason != "" {
+		fmt.Fprintf(stderr, "serve: %s\n", reason)
+	}
 
 	s, err := store.Open(*dbPath, store.Options{})
 	if err != nil {
@@ -248,6 +251,9 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	srv := &serve.Server{
 		Store: s, Discovery: loop, AllowRemoteControl: *allowRemote, Log: stderr,
 		Diagnostics: *diagnostics,
+		// Taken from the loop rather than the flag: the flag may be empty, in which case the
+		// supervisor made a scratch directory and that is where the checkouts actually are.
+		WorkDir: loop.Options.WorkDir,
 	}
 	// Without this the interface can record a declaration and never act on it: declaring names
 	// accounts, and only enumeration turns them into the repositories a report is about.
@@ -273,6 +279,12 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		srv.UI = os.DirFS(*uiDir)
 	}
 	writeIdentityBanner(stdout, s)
+
+	// Off the startup path deliberately: the walk behind this covers the whole declared closure,
+	// and an operator reaching the interface must not wait through it to be told what no longer
+	// belongs. Nothing is removed by it — it records what a prune would cost, and the Settings
+	// page offers that to somebody who can accept it.
+	go srv.CheckStaleness()
 
 	loopCtx, stopLoop := context.WithCancel(ctx)
 	defer stopLoop()

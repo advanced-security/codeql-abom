@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/enumerate"
@@ -77,9 +78,19 @@ type Server struct {
 	// half" and the safe half is the one left running.
 	Diagnostics bool
 
+	// WorkDir is where checkouts are fetched, so a prune can take the working copies of what it
+	// removed. Empty means nothing is known about the disk, which is not the same as nothing
+	// being stale on it.
+	WorkDir string
+
 	// metrics is built by Handler, so a zero Server stays usable and every request is counted
 	// whether or not Log is set.
 	metrics *metrics
+
+	// stale is the last answer to what no longer belongs, written by a check that runs off the
+	// request path. Guarded because startup writes it from a goroutine while requests read it.
+	staleMu sync.RWMutex
+	stale   Staleness
 }
 
 // Handler builds the routing tree.
@@ -97,6 +108,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/graph", reading(s.graph,
 		"focus", "hops", "max", "direction", "granularity", "expand"))
 	mux.HandleFunc("GET /api/graph/full", s.fullGraph)
+	mux.HandleFunc("GET /api/graph/export", s.graphExport)
+	mux.HandleFunc("GET /api/graph/layout", s.graphLayout)
 	mux.HandleFunc("GET /api/graph/version", s.graphVersion)
 	mux.HandleFunc("GET /api/graph/delta", s.graphDelta)
 	mux.HandleFunc("GET /api/bom", s.bom)
@@ -132,6 +145,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/owned-scope/preview", s.previewOwnedScope)
 	mux.HandleFunc("POST /api/owned-scope/enumerate", s.enumerate)
 	mux.HandleFunc("GET /api/prune", s.prune)
+	mux.HandleFunc("GET /api/prune/staleness", s.staleness)
 	mux.HandleFunc("POST /api/prune/apply", s.pruneApply)
 	mux.HandleFunc("POST /api/prune/compact", s.pruneCompact)
 	mux.HandleFunc("POST /api/accounts/refresh", s.refreshAccounts)

@@ -1,7 +1,9 @@
 # A report somebody can hand to somebody else
 
-**Status:** Not started. Depends on [`ui/graph-layout.md`](graph-layout.md), because a drawing that
-is different every run cannot be printed.
+**Status:** Not started, and no longer fully blocked. A deterministic layout exists on the server —
+[`ui/graph-layout.md`](graph-layout.md) built the DOT export and the Graphviz seam, and Graphviz
+renders SVG directly — so the figure no longer waits on the browser drawing the same picture twice.
+What still waits on that plan is the Explorer itself.
 
 ## Why this exists
 
@@ -25,8 +27,11 @@ matters at all, and a table of hops is not how anybody reads a supply chain.
    figure — the same scope object both surfaces use, so the two halves cannot describe different
    sets. Depends on `graph-layout`.
 2. **A static rendering of the graph.** A deterministic layout produces an SVG rather than a live
-   canvas, which is what makes a figure reproducible and printable at all. Depends on
-   `graph-layout` items 4 and 6.
+   canvas, which is what makes a figure reproducible and printable at all. The pieces exist:
+   `/api/graph/export` emits the scoped projection as DOT and Graphviz renders SVG from it, so
+   this needs no browser. What it does need is a shape that fits a page — `dot` returns a 9.2:1
+   ribbon on the corpus projection, which a pannable canvas absorbs and paper does not, and that
+   is [`graph-layout`](graph-layout.md)'s open aspect-ratio question rather than a second one.
 3. **Print styling that is a rendering, not a media query bolted onto the application.** Page
    breaks that do not split a table row from its header, a figure sized to a page rather than to a
    viewport, and no interactive chrome. Depends on 1.

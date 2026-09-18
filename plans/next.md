@@ -35,8 +35,27 @@ The ranking is itself a plan, and is subject to change.
 
 ## Ranked next
 
-1. **[An edge carries what a reader wants to filter on](db/edge-facts.md)** — **unblocked, and back
-   at the top**: a crawl of a real organization is running again, so the before/after diff every
+1. **[One seeded corpus, shared](ui/testing.md)** — **up from 2**, on evidence rather than
+   preference: every product defect found this cycle was invisible to the empty database the gate
+   actually runs — a prune that offered the whole corpus because the declared closure had never
+   been analyzed, a Dashboard counting every node under the word *actions*, a Settings table headed
+   *analyzed* over a count of seeds — and so was an accessibility regression that reached
+   `/settings` and no other route. `make corpus` builds a deterministic database offline from
+   recorded CodeQL output — **7 repositories, 70 nodes, 37 edges, 18 findings**, all four edge
+   kinds, both reference styles, **a dependency between two distinct owned repositories** the
+   crawled organization has never had, a local composite action and two container images. It needs
+   no CLI, no network and no token, which is what lets CI hold a populated database at all.
+   Pointed at it the browser suite runs **48 passed, 5 failed, 7 skipped** — and tripling the
+   corpus moved that by **nothing**, which is the measurement that matters: **four of the five are
+   one missing advisory**, an advisory is not CodeQL output, and no number of added repositories
+   produces one. The fifth is the force layout having no seed and belongs to entry 20. **The two
+   corpora are not interchangeable**: the crawled one answers "did this change the real numbers",
+   the fixture one answers "does this still work where nobody has crawled anything", and only the
+   second can gate a pull request. **Entry 5 depends on it**: a closure database's headline claim
+   is that every existing total is unchanged, and only a deterministic corpus can hold that claim
+   in CI.
+2. **[An edge carries what a reader wants to filter on](db/edge-facts.md)** — **unblocked**: a
+   crawl of a real organization is running again, so the before/after diff every
    remaining item rests on can be taken. A `uses:` line *is* an
    edge, so *which references float on a tag*, *what crosses into another account* and *what sits on
    a route to a live advisory* are all questions about relationships, and none of them can be asked
@@ -49,21 +68,6 @@ The ranking is itself a plan, and is subject to change.
    two relationships the graph draws and does not keep is part of it, and must move no aggregate.
    **Two of its eight items are done** — the browser already read the stored boundary, and a value
    outside a term's vocabulary is now refused rather than dropped.
-2. **[One seeded corpus, shared](ui/testing.md)** — down from 1, deliberately, now that a real
-   corpus exists again and no longer blocks the entry above. What is left here is a **different**
-   corpus with a different job: `make corpus` builds a deterministic one offline from recorded
-   CodeQL output — 3 repositories, 20 nodes, 9 edges, all four edge kinds, both reference styles,
-   **a dependency between two distinct owned repositories** the crawled organization has never
-   had, and 6 markers that all reach a node. It needs no CLI, no network and no token, which is
-   what lets CI hold a populated database at all. It is not yet representative: pointed at it the
-   browser suite runs **48 passed, 5 failed, 7 skipped**, every failure being the fixture rather
-   than the product — no advisories, and too few rows for a column or a layout claim to mean
-   anything. Until that run is green the e2e default stays the empty database, because a gate red
-   for everyone teaches nobody anything. **The two corpora are not interchangeable**: the crawled
-   one answers "did this change the real numbers", the fixture one answers "does this still work
-   where nobody has crawled anything", and only the second can gate a pull request. **Entry 5 now
-   depends on it**: a closure database's headline claim is that every existing total is unchanged,
-   and only a deterministic corpus can hold that claim in CI.
 3. **[A commit is fetched once, not once per reference](db/checkout-cache.md)** — `checkout.go`
    clones into a directory keyed by the **reference**, and what it fetches is a **commit**.
    `run_key` already hashes `db_commit` with no reference in it and `abom_ref_resolution` already
@@ -194,12 +198,14 @@ The ranking is itself a plan, and is subject to change.
     simulation has no fixed seed, so no two runs agree and nothing downstream can rest on a
     position: the screenshot layer and the browser suite's geometry claims are both looking at
     something different every time, which is why a test named *switching force preserves angle*
-    exists at all. Graphviz clusters are non-overlapping by construction and report a bounding box,
-    which is the ceiling `docs/roadmap.md` records — boundaries and relationships cannot be drawn
-    at once. **Not a performance fix, and must not be sold as one**: removing every edge from the
-    whole-corpus view still reaches 4.8 FPS, so the ceiling is the renderer. The encoder half is
-    startable today; the layout half needs entry 2's corpus, because twenty nodes cannot carry a
-    layout claim.
+    exists at all. **The server half is built** — DOT export, cluster subgraphs, a Graphviz seam
+    that degrades by name, and `/api/graph/layout` — and nothing in the browser reads it yet, so
+    what a reader sees has not moved. **Not a performance fix, and must not be sold as one**:
+    removing every edge from the whole-corpus view still reaches 4.8 FPS, so the ceiling is the
+    renderer. Two claims the corpus refuted on contact, both recorded in the plan: cluster boxes
+    are **not** non-overlapping by construction — that is a property of `dot`'s ranking, and
+    `neato` crossed all 21 pairs — and the engine whose canvas is best shaped is the least legible
+    of the set, which an aspect-ratio test selected before a render disqualified it.
 21. **[Remediation summarizes two things into their more reassuring halves](ui/remediation-honesty.md)**
     — down to one half. The strip-versus-table gap is closed: the advisories unit carries an
     `unreached` count and states it under the table, so **3 reaching you** and **8 reaching

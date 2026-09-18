@@ -21,7 +21,10 @@
                     <MudIcon Icon="@s.Icon" Color="Color.Primary" Size="Size.Small" />
                     <MudLink Href="@s.Href" Typo="Typo.subtitle1">@s.Title</MudLink>
                 </div>
-                <MudText Typo="Typo.h5" Class="abom-num">@s.Count.ToString("N0")</MudText>
+                <MudText Typo="Typo.h5" data-abom-count
+                         Class="@(Unclaimed(s) ? "abom-num abom-coverage-unknown" : "abom-num")">
+                    @(Unclaimed(s) ? "none" : s.Count.ToString("N0"))
+                </MudText>
                 <MudText Typo="Typo.caption" Class="mud-text-secondary">@s.Measures</MudText>
             </MudPaper>
         </MudItem>
@@ -47,26 +50,34 @@
     private void Go(string href) => Nav.NavigateTo(href);
 
     private sealed record Entry(string Key, string Title, int Count, string Measures, string Href,
-        string Icon);
+        string Icon, bool Owned = false);
 
-    // Every control names a count it can produce and the scope that produces it. Nothing here
-    // exists because the page looked empty.
+    // Nothing declared is an absence of a claim, not a measurement of zero, and the coverage strip
+    // says so in this same word. A nought here would read as a corpus examined and found clean.
+    private bool Unclaimed(Entry e) => e.Owned && _summary.OwnedRepos == 0;
+
+    // Every control names a count it can produce and the scope that produces it. Where a figure
+    // can be bounded to the declaration it is, and the corpus it was drawn from is named beside
+    // it: a corpus can hold hundreds of repositories and own none of them, and either half on its
+    // own reads as the other.
     private IEnumerable<Entry> Entries =>
     [
-        new("findings", "Workflows with findings", _summary.Findings,
-            $"findings across {_summary.Rules} rules, in what you run",
-            "/inventory?unit=workflows&flags=findings", Icons.Material.Outlined.PlayCircleOutline),
-        new("advisories", "Advisories reaching you", _summary.Advisories,
-            $"published advisories, naming {_summary.AffectedActions:N0} actions in use",
+        new("findings", "Findings in what you own", _summary.OwnedFindings,
+            $"of {_summary.Findings:N0} in the corpus, across {_summary.Rules} rules",
+            "/inventory?unit=workflows&flags=findings", Icons.Material.Outlined.PlayCircleOutline,
+            Owned: true),
+        new("advisories", "Advisories in the corpus", _summary.Advisories,
+            $"published advisories, naming {_summary.AffectedActions:N0} actions it uses",
             "/inventory?unit=advisories", Icons.Material.Outlined.Build),
-        new("actions", "Actions you depend on", _summary.Nodes,
-            "nodes in the graph, at every depth",
+        new("actions", "Dependencies in the graph", _summary.Dependencies,
+            $"actions, composite actions and images, of {_summary.Nodes:N0} nodes at every depth",
             "/inventory", Icons.Material.Outlined.Extension),
         new("repositories", "Repositories you own", _summary.OwnedRepos,
-            $"declared, reaching {_summary.UpstreamRepos:N0} upstream",
-            "/inventory?unit=repositories&scope=owned", Icons.Material.Outlined.FolderOpen),
-        new("exposure", "On a route to an advisory", _summary.Exposures,
-            "routes from something you own to a live advisory",
-            "/inventory?scope=exposure", Icons.Material.Outlined.Route),
+            $"declared of {_summary.SeedRepos:N0}",
+            "/inventory?unit=repositories&scope=owned", Icons.Material.Outlined.FolderOpen,
+            Owned: true),
+        new("exposure", "On a route to an advisory", _summary.OwnedExposures,
+            $"from a repository you declared, of {_summary.Exposures:N0} in the corpus",
+            "/inventory?scope=exposure", Icons.Material.Outlined.Route, Owned: true),
     ];
 }

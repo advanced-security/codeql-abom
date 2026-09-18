@@ -3,8 +3,8 @@
 **Status:** four layers, all four in `make verify`, and the browser suite blocks a pull request
 through its own CI job. It resolves its own browser rather than trusting a download. `make corpus`
 builds a deterministic populated database offline; the suite does **not** run against it by
-default, because the fixture is not yet representative enough for the populated assertions to pass.
-The component catalog is still an open decision, and deliberately so.
+default, because one missing advisory keeps four assertions red. The component catalog is still an
+open decision, and deliberately so.
 
 **Two corpora, two jobs, not interchangeable.** A crawled organization answers *did this change the
 real numbers*, and only ever exists where somebody has a token and has waited. The fixture corpus
@@ -32,27 +32,39 @@ Green in one says nothing about the others.
 
 ## Pending
 
-1. **Grow the seeded corpus until the populated suite is green, then make it the default.**
-   `make corpus` builds one offline from recorded CodeQL output — 3 repositories, 20 nodes, 9
-   edges, all four edge kinds, both reference styles, a dependency between two distinct owned
-   repositories, and 6 marker findings that all reach a node. Pointed at it, the browser suite runs
-   **48 passed, 5 failed, 7 skipped**, and every failure is the fixture rather than the product:
-   - *every unit renders rows rather than a refusal* — there are no advisories, so that unit is
-     empty;
-   - *no unit renders a column that is zero for every row* — a 3-repository corpus leaves whole
-     columns at zero;
-   - *the coverage strip fills whole rows* — with no advisories the strip renders a count the grid
-     does not divide, which is [`theme.md`](theme.md)'s orphaned cell arriving from the other side;
-   - *advisories does not overflow at 1280* and *switching force preserves angle* — both need data
-     the fixture has none of.
-   What is owed is advisories, more repositories and enough nodes for a layout claim to mean
-   something. **Until then the default stays the empty database**, because a gate that is red for
-   everyone teaches nobody anything.
-2. **More populated-corpus assertions.** The suite branches on `corpusSize` and two checks now use
+1. **Seed an advisory into the fixture corpus, because nothing else will move the gate.**
+   `make corpus` builds one offline from recorded CodeQL output — **7 repositories, 70 nodes, 37
+   edges, 18 findings**, all four edge kinds, both reference styles, a dependency between two
+   distinct owned repositories, a local composite action, two container images, and **0
+   advisories**. Growing it from 3 repositories and 20 nodes to that changed the browser suite by
+   **nothing**: it ran **48 passed, 5 failed, 7 skipped** before and after, which is the measurement
+   that matters here, because it says node count was never the blocker.
+
+   Four of the five failures are one missing fact — there is no advisory, so the advisories unit is
+   empty, its columns are all zero, it has nothing to overflow at 1280px, and the coverage strip
+   renders a count the grid does not divide. **An advisory is not CodeQL output**, so
+   `scripts/regenerate-corpus-fixtures.sh` cannot produce one however many repositories are added
+   to it: it comes from GHSA, and the fixture needs a recorded advisory payload and a package that
+   matches something the corpus already uses.
+
+   The fifth — *switching force preserves angle* — is not a fixture problem at all and survived the
+   growth untouched. It is the force layout having no fixed seed, which is
+   [`graph-layout.md`](graph-layout.md)'s subject, and it will not go green here whatever the
+   corpus holds.
+
+   **Until that run is green the e2e default stays the empty database**, because a gate that is red
+   for everyone teaches nobody anything.
+2. **Make the populated run a gate once it is green.** This is the point of the corpus and it is
+   not reached by item 1 alone: the run has to be wired into the CI job that blocks a pull request,
+   alongside the empty-database run rather than instead of it. The two answer different questions
+   and a gate that holds only the empty one is what let a whole class of defect through — every
+   product bug this corpus has caught was invisible to the empty database, and so was an
+   accessibility regression that reached `/settings` and nothing else. Depends on 1.
+3. **More populated-corpus assertions.** The suite branches on `corpusSize` and two checks now use
    it — the coverage strip, which orphans a cell only when nothing is declared, and the graph's
    share of the window, which needs a graph to measure. Grids under real labels, wrapping under long
    repository names and the Explorer under load are still unwritten.
-3. **Decide the component catalog.** Deferred rather than answered: Playwright covers geometry and
+4. **Decide the component catalog.** Deferred rather than answered: Playwright covers geometry and
    integration, which was the row with no owner, and a catalog answers a different question — the
    appearance of a state no database produces. The alternatives stay named: **BlazingStory**,
    Blazor-native with no npm, whose own README calls it a personal hobby project; **a dev-only

@@ -12,14 +12,32 @@ public sealed record Summary
     public int OwnedRepos { get; init; }
     public int UpstreamRepos { get; init; }
     public int Nodes { get; init; }
+
+    /// <summary>
+    /// Nodes that are something depended on, rather than part of the thing doing the depending.
+    /// <see cref="Nodes"/> counts steps, jobs and workflows too and they outnumber these fifty to
+    /// one, so the two are never printed under the same word.
+    /// </summary>
+    public int Dependencies { get; init; }
     public int Edges { get; init; }
     public int Findings { get; init; }
+
+    /// <summary>
+    /// Findings in repositories the declaration claims. Bounded for the reason
+    /// <see cref="OwnedRepos"/> is: a finding in a repository nobody declared is not in what you
+    /// run, and printing the corpus total as yours offers work you cannot do.
+    /// </summary>
+    public int OwnedFindings { get; init; }
     public int Rules { get; init; }
     public int LinkedFindings { get; init; }
     public int Advisories { get; init; }
     public int AffectedActions { get; init; }
     public int Exposures { get; init; }
     public int DirectExposures { get; init; }
+
+    /// <summary>Routes that start in a repository the declaration claims.</summary>
+    public int OwnedExposures { get; init; }
+    public int OwnedDirectExposures { get; init; }
     public int AnalyzedUpstreams { get; init; }
     public IReadOnlyDictionary<string, int> Frontier { get; init; } =
         new Dictionary<string, int>();
@@ -725,6 +743,28 @@ public sealed record PruneView
     public string Unavailable { get; init; } = string.Empty;
 
     public bool RemovesNothing => Removed.Nodes == 0 && Removed.Edges == 0 && Removed.Queued == 0;
+}
+
+/// <summary>The last answer to what no longer belongs, and when it was asked.</summary>
+/// <remarks>
+/// Written by a check that runs at startup off the request path, so the interface can raise what
+/// it found without anybody going looking for it.
+/// </remarks>
+public sealed record Staleness
+{
+    /// <summary>
+    /// False until the first check finishes. "Nothing has looked" and "nothing needs removing"
+    /// are different answers, and offering the second before a check has run would tell an
+    /// operator their corpus is tidy on no evidence.
+    /// </summary>
+    public bool Checked { get; init; }
+    public string CheckedAt { get; init; } = string.Empty;
+    public PruneView View { get; init; } = new();
+    public string Unavailable { get; init; } = string.Empty;
+
+    /// <summary>Whether a check finished, could measure, and found something to act on.</summary>
+    public bool HasSomethingToRemove =>
+        Checked && Unavailable.Length == 0 && !View.RemovesNothing;
 }
 
 public sealed record PruneRemoval
