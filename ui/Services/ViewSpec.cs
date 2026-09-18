@@ -62,6 +62,13 @@ public sealed record ViewSpec
     /// </summary>
     public IReadOnlyList<PropertyMatch> NotProperties { get; init; } = [];
 
+    /// <summary>
+    /// What a relationship is: a step using an action, a job ordered after another, a job calling
+    /// a reusable workflow, a composite step using an action. Separate from <see cref="EdgeClass"/>,
+    /// which is what the relationship crosses.
+    /// </summary>
+    public IReadOnlyList<string> EdgeKinds { get; init; } = [];
+
     /// <summary>A floor. Zero means the question was not asked, not asked about zero.</summary>
     public int MinReach { get; init; }
 
@@ -83,6 +90,7 @@ public sealed record ViewSpec
     private const string ParamProvider = "provider";
     private const string ParamSeverity = "severity";
     private const string ParamEdgeClass = "edges";
+    private const string ParamEdgeKinds = "edgeKinds";
     private const string ParamRefStyle = "ref";
     private const string ParamBoundary = "boundary";
     private const string ParamMinReach = "minReach";
@@ -142,7 +150,8 @@ public sealed record ViewSpec
                      (ParamKinds, Kinds), (ParamOrigins, Origins), (ParamRules, Rules),
                      (ParamNotRules, NotRules),
                      (ParamRepos, Repositories),
-                     (ParamEdgeClass, EdgeClass), (ParamFlags, Flags),
+                     (ParamEdgeClass, EdgeClass), (ParamEdgeKinds, EdgeKinds),
+                     (ParamFlags, Flags),
                  })
         {
             var normalized = Normalize(values);
@@ -176,7 +185,8 @@ public sealed record ViewSpec
     public static ViewSpec Parse(string text)
     {
         string scope = "", search = "", refStyle = "", boundary = "", provider = "", severity = "";
-        IReadOnlyList<string> kinds = [], origins = [], rules = [], edges = [], flags = [], notRules = [], repositories = [];
+        IReadOnlyList<string> kinds = [], origins = [], rules = [], edges = [], edgeKinds = [],
+            flags = [], notRules = [], repositories = [];
         List<PropertyMatch> properties = [], notProperties = [];
         var minReach = 0;
         var steps = false;
@@ -206,6 +216,7 @@ public sealed record ViewSpec
                 case ParamProvider: provider = raw; break;
                 case ParamSeverity: severity = raw; break;
                 case ParamEdgeClass: edges = Normalize(raw.Split(',')); break;
+                case ParamEdgeKinds: edgeKinds = Normalize(raw.Split(',')); break;
                 case ParamFlags: flags = Normalize(raw.Split(',')); break;
                 case ParamProperties: properties.Add(ParseMatch(key, raw)); break;
                 case ParamNotProperties: notProperties.Add(ParseMatch(key, raw)); break;
@@ -236,7 +247,7 @@ public sealed record ViewSpec
             Kinds = kinds, Origins = origins, Rules = rules, NotRules = notRules,
             Repositories = repositories,
             Properties = properties, NotProperties = notProperties,
-            EdgeClass = edges, Flags = flags,
+            EdgeClass = edges, EdgeKinds = edgeKinds, Flags = flags,
             MinReach = minReach, Steps = steps,
         };
     }

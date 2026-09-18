@@ -448,6 +448,7 @@ func (s *Server) graphOptions(spec viewspec.Spec) (store.FullGraphOptions, error
 		IncludeSteps:   spec.Steps,
 		Scope:          spec.Scope,
 		Boundary:       spec.Boundary,
+		EdgeKinds:      spec.EdgeKinds,
 		Origins:        spec.Origins,
 		MinReach:       spec.MinReach,
 		RefStyle:       spec.RefStyle,

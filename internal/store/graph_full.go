@@ -219,6 +219,10 @@ type FullGraphOptions struct {
 	// Boundary keeps only relationships of one class. Empty keeps every class *and* the
 	// unclassified, because absent is not a class to filter on.
 	Boundary string
+	// EdgeKinds keeps only relationships of these kinds. Empty asks nothing. Containment is
+	// unaffected: it is a drawing aid rather than a declared relationship, and filtering it away
+	// would answer a question about `needs:` with a scatter of unattached nodes.
+	EdgeKinds []string
 	// Origins keeps only nodes from repositories of these tiers. A node with no repository reads
 	// as "external", which is what the browser calls it. Empty asks nothing.
 	Origins []string
@@ -721,7 +725,7 @@ func (s *Store) graphEdges(display string, since int64, opts FullGraphOptions) (
 		JOIN abom_node_live sn ON sn.row_id = ds.shown
 		JOIN abom_node_live dn ON dn.row_id = dd.shown
 		WHERE ds.shown <> dd.shown AND e.row_id > ?`+
-		boundaryFilter(opts.Boundary)+
+		boundaryFilter(opts.Boundary)+edgeKindFilter(opts.EdgeKinds)+
 		scopeFilter(opts, "sn.node_key")+scopeFilter(opts, "dn.node_key")+`
 		UNION ALL
 		SELECT owner.node_key, held.node_key, 'repo-contains', '', '', '', '', NULL, NULL, NULL
