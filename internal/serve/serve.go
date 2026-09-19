@@ -212,6 +212,10 @@ func (s *Server) diagnostics(mux *http.ServeMux) {
 // the interface polls continuously, and a line each would bury the failures.
 func (s *Server) observe(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// No handler here composes markup, so a browser that re-reads a body as markup can only
+		// be wrong. Set before the handler runs: a header added after WriteHeader never leaves,
+		// and the error path writes its status first.
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		rec := &recorder{ResponseWriter: w, status: http.StatusOK, marshalNanos: -1}
 		start := time.Now()
 		next.ServeHTTP(rec, r)
@@ -263,6 +267,12 @@ func (r *recorder) WriteHeader(status int) {
 }
 
 func (r *recorder) Write(b []byte) (int, error) {
+	// Name the body before the first byte leaves. net/http types an undeclared response by
+	// looking at it, so a document that merely opens like markup is served as markup. Every
+	// handler names its own; this is the last place that knows one did not.
+	if header := r.Header(); header.Get("Content-Type") == "" {
+		header.Set("Content-Type", "text/plain; charset=utf-8")
+	}
 	// Only a failure's body is kept; a successful response is megabytes of graph.
 	if r.status >= http.StatusBadRequest && r.body.Len() < 2048 {
 		r.body.Write(b)

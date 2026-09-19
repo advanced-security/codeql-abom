@@ -36,13 +36,23 @@ const (
 	Osage Engine = "osage"
 )
 
-var engines = map[Engine]bool{
-	Dot: true, Neato: true, Fdp: true, Sfdp: true, Twopi: true, Circo: true, Osage: true,
-}
-
 // Engines lists what may be asked for, so a caller can offer the set rather than guess at it.
 func Engines() []Engine {
 	return []Engine{Dot, Neato, Fdp, Sfdp, Twopi, Circo, Osage}
+}
+
+// programFor names the program an engine runs, or reports that nothing goes by that name.
+//
+// What it returns is this package's own constant rather than the caller's string, even where the
+// two compare equal: the value that reaches exec is then one of the names above by construction,
+// not one that was checked against them.
+func programFor(e Engine) (string, bool) {
+	for _, known := range Engines() {
+		if e == known {
+			return string(known), true
+		}
+	}
+	return "", false
 }
 
 // Default is the engine used when a caller names none.
@@ -82,10 +92,11 @@ func ErrUnavailable(err error) bool { return errors.Is(err, errUnavailable) }
 
 // Available reports whether an engine can be run at all.
 func Available(e Engine) bool {
-	if !engines[e] {
+	program, known := programFor(e)
+	if !known {
 		return false
 	}
-	_, err := exec.LookPath(string(e))
+	_, err := exec.LookPath(program)
 	return err == nil
 }
 
@@ -137,13 +148,13 @@ type Result struct {
 
 // Compute lays out a DOT document and returns where everything went.
 func Compute(ctx context.Context, document []byte, opts Options) (Result, error) {
-	if !engines[opts.Engine] {
+	program, known := programFor(opts.Engine)
+	if !known {
 		return Result{}, fmt.Errorf("%q is not a layout engine; use one of %v",
 			opts.Engine, Engines())
 	}
-	program := opts.binary
-	if program == "" {
-		program = string(opts.Engine)
+	if opts.binary != "" {
+		program = opts.binary
 	}
 	if _, err := exec.LookPath(program); err != nil {
 		return Result{}, fmt.Errorf("%w: %s", errUnavailable, program)
