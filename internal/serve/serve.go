@@ -162,6 +162,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/jobs", reading(s.jobs,
 		"q", "top", "offset", "sort", "desc", "view",
 		"scope", "flags", "properties", "notProperties"))
+	mux.HandleFunc("GET /api/relationships", reading(s.relationships,
+		"q", "top", "offset", "sort", "desc", "view",
+		"scope", "boundary", "edgeKinds", "ref", "properties", "notProperties"))
 	mux.HandleFunc("GET /api/repositories",
 		reading(s.repositories, "q", "top", "offset", "sort", "desc", "view",
 			"scope", "properties", "notProperties"))
@@ -209,6 +212,10 @@ func (s *Server) diagnostics(mux *http.ServeMux) {
 // the interface polls continuously, and a line each would bury the failures.
 func (s *Server) observe(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// No handler here composes markup, so a browser that re-reads a body as markup can only
+		// be wrong. Set before the handler runs: a header added after WriteHeader never leaves,
+		// and the error path writes its status first.
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		rec := &recorder{ResponseWriter: w, status: http.StatusOK, marshalNanos: -1}
 		start := time.Now()
 		next.ServeHTTP(rec, r)
@@ -260,6 +267,12 @@ func (r *recorder) WriteHeader(status int) {
 }
 
 func (r *recorder) Write(b []byte) (int, error) {
+	// Name the body before the first byte leaves. net/http types an undeclared response by
+	// looking at it, so a document that merely opens like markup is served as markup. Every
+	// handler names its own; this is the last place that knows one did not.
+	if header := r.Header(); header.Get("Content-Type") == "" {
+		header.Set("Content-Type", "text/plain; charset=utf-8")
+	}
 	// Only a failure's body is kept; a successful response is megabytes of graph.
 	if r.status >= http.StatusBadRequest && r.body.Len() < 2048 {
 		r.body.Write(b)
@@ -448,6 +461,7 @@ func (s *Server) graphOptions(spec viewspec.Spec) (store.FullGraphOptions, error
 		IncludeSteps:   spec.Steps,
 		Scope:          spec.Scope,
 		Boundary:       spec.Boundary,
+		EdgeKinds:      spec.EdgeKinds,
 		Origins:        spec.Origins,
 		MinReach:       spec.MinReach,
 		RefStyle:       spec.RefStyle,
@@ -957,6 +971,48 @@ func (s *Server) actions(w http.ResponseWriter, r *http.Request) {
 		query.Closure = keep
 	}
 	page, err := s.Store.ActionsInventoryPage(query)
+	writeJSON(w, page, err)
+}
+
+// relationships lists one page of declared relationships, ordered across the whole match.
+//
+// The unit the rest of the language could not answer: every other listing is a set of nodes, and a
+// boundary, a reference style and a route are facts about the line between two of them. Containment
+// is absent because nothing declares it, so the total here counts what a reader could go and edit.
+func (s *Server) relationships(w http.ResponseWriter, r *http.Request) {
+	spec, err := s.graphPredicate(r, "top", "offset", "sort", "desc")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if refused := spec.UnenforceableAsRelationships(); len(refused) > 0 {
+		writeError(w, http.StatusBadRequest, strings.Join(refused, ", ")+
+			" describes a node or a finding, which a list of relationships cannot answer. "+
+			"The Explorer does.")
+		return
+	}
+	query := store.RelationshipsQuery{
+		Search:    spec.Search,
+		EdgeKinds: spec.EdgeKinds,
+		Boundary:  spec.Boundary,
+		RefStyle:  spec.RefStyle,
+		Scope:     spec.Scope,
+		Sort:      r.URL.Query().Get("sort"),
+		Desc:      r.URL.Query().Get("desc") == "true",
+		Offset:    intParam(r, "offset", 0),
+		Limit:     intParam(r, "top", 50),
+		Grouping:  scopeFromSpec(spec),
+	}
+	// The same closure every other unit reads, so "what you own" means one population across them.
+	if query.Scope == store.ScopeOwned {
+		keep, _, err := (&graph.Builder{Store: s.Store}).KeepList()
+		if err != nil {
+			writeJSON(w, store.RelationshipsPage{}, err)
+			return
+		}
+		query.Closure = keep
+	}
+	page, err := s.Store.RelationshipsPage(query)
 	writeJSON(w, page, err)
 }
 

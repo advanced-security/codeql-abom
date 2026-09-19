@@ -173,7 +173,15 @@ CREATE TABLE IF NOT EXISTS abom_edge (
   provenance          TEXT,
   -- Which boundary the reference crosses: same repository, same account, or another account.
   -- NULL while nothing could name both ends, which is not the same as crossing an account.
-  boundary            TEXT
+  boundary            TEXT,
+  -- Facts about the relationship itself, filled by DeriveEdgeFacts from rows already stored.
+  -- NULL throughout means nobody has computed it yet, never a measured absence.
+  ref_style           TEXT,
+  advisory_route      INTEGER,
+  finding_route       INTEGER,
+  -- Fewest hops from a repository the operator declared. One means that repository declares the
+  -- reference itself, which is the meaning exposure gives hops.
+  owned_depth         INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS abom_surface (
@@ -505,6 +513,14 @@ var addedColumns = []struct{ table, column, decl string }{
 	// Derivable from rows already stored, so existing edges are filled by
 	// ClassifyEdgeBoundaries rather than by re-analysis.
 	{"abom_edge", "boundary", "TEXT"},
+	// Facts about the relationship rather than either endpoint, filled by DeriveEdgeFacts. All
+	// four are nullable because NULL is "nothing computed this": an edge ingested since the last
+	// aggregate pass has no facts, which must not read as a reference in no style, on no route,
+	// at no depth.
+	{"abom_edge", "ref_style", "TEXT"},
+	{"abom_edge", "advisory_route", "INTEGER"},
+	{"abom_edge", "finding_route", "INTEGER"},
+	{"abom_edge", "owned_depth", "INTEGER"},
 }
 
 // indexDDL is applied only after bulk loading. Maintaining these indexes during a multi-million

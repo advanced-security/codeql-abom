@@ -49,8 +49,12 @@ type Spec struct {
 	// supply chain of a part that was kept.
 	NotProperties []PropertyMatch
 	EdgeClass     []string
-	RefStyle      string
-	Boundary      string
+	// EdgeKinds narrows to what a relationship *is*: a step using an action, a job ordered after
+	// another, a job calling a reusable workflow, a composite step using an action. Separate from
+	// EdgeClass, which is what the relationship crosses — "every cross-owner `needs:`" needs both.
+	EdgeKinds []string
+	RefStyle  string
+	Boundary  string
 	// MinReach is a floor, and zero means the question was not asked rather than asked about zero.
 	MinReach int
 	Flags    []string
@@ -91,6 +95,7 @@ const (
 	paramProvider      = "provider"
 	paramSeverity      = "severity"
 	paramEdgeClass     = "edges"
+	paramEdgeKinds     = "edgeKinds"
 	paramRefStyle      = "ref"
 	paramBoundary      = "boundary"
 	paramMinReach      = "minReach"
@@ -128,6 +133,7 @@ func (s Spec) String() string {
 		{paramNotRules, s.NotRules},
 		{paramRepos, s.Repositories},
 		{paramEdgeClass, s.EdgeClass},
+		{paramEdgeKinds, s.EdgeKinds},
 		{paramFlags, s.Flags},
 	} {
 		if v := normalize(f.values); len(v) > 0 {
@@ -184,6 +190,7 @@ func Parse(text string) (Spec, error) {
 		paramNotRules:  &s.NotRules,
 		paramRepos:     &s.Repositories,
 		paramEdgeClass: &s.EdgeClass,
+		paramEdgeKinds: &s.EdgeKinds,
 		paramFlags:     &s.Flags,
 	}
 	matches := map[string]*[]PropertyMatch{
@@ -262,7 +269,29 @@ const (
 	RefStyleAny = "any"
 	RefStyleSHA = "sha"
 	RefStyleTag = "tag"
+
+	// What a relationship is. Four because the extraction produces four, and a reader filtering
+	// by one is asking a question the aggregates already act on: `job-needs-job` is ordering
+	// rather than use, and every dependency traversal excludes it.
+	EdgeKindStepUsesAction          = "step-uses-action"
+	EdgeKindJobNeedsJob             = "job-needs-job"
+	EdgeKindJobUsesReusableWorkflow = "job-uses-reusable-workflow"
+	EdgeKindCompositeStepUsesAction = "composite-step-uses-action"
 )
+
+// EdgeKinds is the vocabulary of `edgeKinds`, in the order a reader should be offered it: what a
+// workflow does, then what it orders, then the two indirections.
+//
+// A list rather than a scalar, so "uses of any kind" is one question. Its values are deliberately
+// *not* refused by checkVocabulary: that check is scalar-only, and whether a list term refuses an
+// unknown value is an open policy question this term must not decide by accident. The store
+// narrows to nothing instead of widening to everything, which is the safe half of the decision.
+func EdgeKinds() []string {
+	return []string{
+		EdgeKindStepUsesAction, EdgeKindJobNeedsJob,
+		EdgeKindJobUsesReusableWorkflow, EdgeKindCompositeStepUsesAction,
+	}
+}
 
 var vocabulary = map[string][]string{
 	paramScope:    {ScopeOwned, ScopeExposure},
@@ -300,7 +329,7 @@ var termNames = map[string]bool{
 	paramRules: true, paramNotRules: true, paramRepos: true, paramProperties: true,
 	paramNotProperties: true, paramProvider: true, paramSeverity: true, paramEdgeClass: true,
 	paramRefStyle: true, paramBoundary: true, paramMinReach: true, paramFlags: true,
-	paramSteps: true,
+	paramSteps: true, paramEdgeKinds: true,
 }
 
 // setTerms are the terms the set path applies — `/api/match`, and a policy, which are one
@@ -334,6 +363,7 @@ func (s Spec) UnenforceableAsSet() []string {
 var graphTerms = map[string]bool{
 	paramScope:         true,
 	paramBoundary:      true,
+	paramEdgeKinds:     true,
 	paramOrigins:       true,
 	paramMinReach:      true,
 	paramRefStyle:      true,

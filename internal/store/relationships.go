@@ -1,0 +1,219 @@
+package store
+
+import (
+	"database/sql"
+	"fmt"
+)
+
+// RelationshipSummary is one declared relationship as a list shows it: what declares it, what it
+// points at, and what has been derived about it.
+//
+// The facts are pointers because each is tri-state. A relationship whose route was never walked is
+// not a relationship on no route, and reporting `false` for both would make "nothing here reaches
+// an advisory" indistinguishable from "nobody looked".
+type RelationshipSummary struct {
+	// EdgeKey is the source location that declares the relationship, and the identity a
+	// selection or a removal names.
+	EdgeKey string `json:"edgeKey"`
+	Kind    string `json:"kind"`
+	Source  string `json:"source"`
+	Target  string `json:"target"`
+	// Ref is the reference verbatim, which is what a reader has to act on.
+	Ref        string `json:"ref"`
+	RefStyle   string `json:"refStyle,omitempty"`
+	Boundary   string `json:"boundary,omitempty"`
+	Repository string `json:"repository"`
+	FilePath   string `json:"filePath"`
+	StartLine  int    `json:"startLine"`
+
+	AdvisoryRoute *bool `json:"advisoryRoute"`
+	FindingRoute  *bool `json:"findingRoute"`
+	OwnedDepth    *int  `json:"ownedDepth"`
+}
+
+// RelationshipsQuery narrows and orders the relationships unit, and cuts one page out of the match.
+type RelationshipsQuery struct {
+	Search    string
+	EdgeKinds []string
+	Boundary  string
+	// RefStyle is the term's spelling — `sha`, `tag` or `any` — not the column's.
+	RefStyle string
+	// Scope is `owned` or `exposure`, read against Closure the way every other unit reads it.
+	Scope    string
+	Closure  []string
+	Sort     string
+	Desc     bool
+	Offset   int
+	Limit    int
+	Grouping RepositoryScope
+}
+
+// RelationshipsPage is one page of relationships and the size of the match it was cut from.
+type RelationshipsPage struct {
+	Items []RelationshipSummary `json:"items"`
+	Total int                   `json:"total"`
+}
+
+// relationshipSorts is the whitelist, for the reason inventorySorts is one: a column name arriving
+// from a query string must never reach the statement.
+var relationshipSorts = map[string]string{
+	"source":     "src.node_key",
+	"target":     "dst.node_key",
+	"kind":       "e.edge_kind",
+	"ref":        "e.ref_value",
+	"refStyle":   "e.ref_style",
+	"boundary":   "e.boundary",
+	"repository": "r.repository_full_name",
+	"ownedDepth": "e.owned_depth",
+}
+
+// relationshipRefFilter narrows by reference style, translating the reader's word into the stored
+// one.
+//
+// The language says `sha` because that is what a reader calls a pinned reference; the derivation
+// says `commit` because that is what the reference is. Reading the stored column rather than
+// re-deriving the lexical test is the point of storing it: a listing and the graph agree by
+// construction instead of by two copies of one regular expression.
+func relationshipRefFilter(style string) (string, []any) {
+	switch style {
+	case RefStyleSHA:
+		return " AND e.ref_style = ?", []any{EdgeRefCommit}
+	case RefStyleTag:
+		return " AND e.ref_style = ?", []any{EdgeRefTag}
+	}
+	return "", nil
+}
+
+// relationshipScopeFilter narrows the listing the way the node listing is narrowed, so one word
+// means one thing across units.
+//
+// `owned` with nothing declared matches nothing rather than everything, for the reason it does
+// everywhere else: falling through answers a question about the operator's estate with somebody
+// else's.
+func relationshipScopeFilter(q RelationshipsQuery) (string, []any) {
+	switch q.Scope {
+	case ScopeExposure:
+		return ` AND (src.node_key IN ` + onExposureRoute +
+			` OR dst.node_key IN ` + onExposureRoute + `)`, nil
+	case ScopeOwned:
+		if len(q.Closure) == 0 {
+			return " AND 0", nil
+		}
+		list, names := inList(q.Closure)
+		return ` AND (LOWER(r.repository_full_name) IN ` + list +
+				` OR LOWER(src.owner || '/' || src.repo) IN ` + list + `)`,
+			append(append([]any{}, names...), names...)
+	}
+	return "", nil
+}
+
+// relationshipsWhere is the predicate, shared by the count and the page so the total cannot
+// describe a different match from the rows.
+func (s *Store) relationshipsWhere(q RelationshipsQuery) (string, []any, error) {
+	where, args := "WHERE 1 = 1", []any{}
+	where += edgeKindFilter(q.EdgeKinds)
+	if clause := boundaryFilter(q.Boundary); clause != "" {
+		where += clause
+	}
+	style, styleArgs := relationshipRefFilter(q.RefStyle)
+	where, args = where+style, append(args, styleArgs...)
+	if q.Search != "" {
+		// Either end, because a reader searching `checkout` wants the relationships that use it
+		// as readily as the ones declared inside it.
+		where += ` AND (src.node_key LIKE ? ESCAPE '\' OR dst.node_key LIKE ? ESCAPE '\')`
+		like := "%" + escapeLike(q.Search) + "%"
+		args = append(args, like, like)
+	}
+	scoped, scopeArgs := relationshipScopeFilter(q)
+	where, args = where+scoped, append(args, scopeArgs...)
+	// The repository grouping, read the same way every other unit reads it.
+	bound, bindings, err := s.restrict(q.Grouping, "r.repository_full_name")
+	if err != nil {
+		return "", nil, err
+	}
+	return where + bound, append(args, bindings...), nil
+}
+
+// relationshipRows is the one join both statements read. `abom_edge_live` excludes what pruning
+// removed, and the endpoints are looked up by row id rather than by scanning the node table.
+const relationshipRows = `
+	FROM abom_edge_live e
+	JOIN abom_node_live src ON src.row_id = e.src_node_row_id
+	JOIN abom_node_live dst ON dst.row_id = e.dst_node_row_id
+	LEFT JOIN repository r ON r.row_id = e.repository_row_id
+	`
+
+// relationshipsPageQuery builds the page statement, exposed to the cost test so the plan can be
+// asserted rather than the clock.
+func (s *Store) relationshipsPageQuery(q RelationshipsQuery) (string, []any, error) {
+	where, args, err := s.relationshipsWhere(q)
+	if err != nil {
+		return "", nil, err
+	}
+
+	ordering := ` ORDER BY src.node_key, dst.node_key, e.file_path, e.start_line, e.edge_key`
+	if column, ok := relationshipSorts[q.Sort]; ok {
+		direction := " ASC"
+		if q.Desc {
+			direction = " DESC"
+		}
+		// The identity breaks every tie, or two pages of an unstable order repeat a row and
+		// skip another.
+		ordering = ` ORDER BY ` + column + direction + `, e.edge_key`
+	}
+
+	query := `
+		SELECT e.edge_key, e.edge_kind, src.node_key, dst.node_key,
+		       COALESCE(e.ref_value, ''), COALESCE(e.ref_style, ''), COALESCE(e.boundary, ''),
+		       COALESCE(r.repository_full_name, ''), COALESCE(e.file_path, ''),
+		       COALESCE(e.start_line, 0), e.advisory_route, e.finding_route, e.owned_depth` +
+		relationshipRows + where + ordering
+	if q.Limit > 0 {
+		query += ` LIMIT ? OFFSET ?`
+		args = append(args, q.Limit, q.Offset)
+	}
+	return query, args, nil
+}
+
+// RelationshipsPage lists one page of declared relationships, ordered across the whole match.
+//
+// A unit of its own because a relationship is not a node: its identity is a source location, its
+// facts are about a route rather than about either end, and a grid of nodes has nowhere to put
+// either. Containment is absent by construction — it is drawn rather than declared, so there is no
+// row here for it to occupy and no total for it to inflate.
+func (s *Store) RelationshipsPage(q RelationshipsQuery) (RelationshipsPage, error) {
+	if q.Sort != "" {
+		if _, ok := relationshipSorts[q.Sort]; !ok {
+			return RelationshipsPage{}, fmt.Errorf(
+				"store: cannot sort relationships by %q; they sort by one of %v",
+				q.Sort, sortNames(relationshipSorts))
+		}
+	}
+	where, args, err := s.relationshipsWhere(q)
+	if err != nil {
+		return RelationshipsPage{}, err
+	}
+
+	var total int
+	if err := s.DB().QueryRow(
+		`SELECT COUNT(*)`+relationshipRows+where, args...).Scan(&total); err != nil {
+		return RelationshipsPage{}, fmt.Errorf("counting relationships: %w", err)
+	}
+
+	query, pageArgs, err := s.relationshipsPageQuery(q)
+	if err != nil {
+		return RelationshipsPage{}, err
+	}
+
+	items, err := queryAll(s, "listing relationships",
+		func(row *sql.Rows) (RelationshipSummary, error) {
+			var r RelationshipSummary
+			return r, row.Scan(&r.EdgeKey, &r.Kind, &r.Source, &r.Target, &r.Ref, &r.RefStyle,
+				&r.Boundary, &r.Repository, &r.FilePath, &r.StartLine,
+				&r.AdvisoryRoute, &r.FindingRoute, &r.OwnedDepth)
+		}, query, pageArgs...)
+	if err != nil {
+		return RelationshipsPage{}, err
+	}
+	return RelationshipsPage{Items: items, Total: total}, nil
+}
