@@ -90,6 +90,37 @@ test.describe('geometry', () => {
         expect(clipped, 'elements whose text is clipped').toEqual([]);
     });
 
+    // A long repository name is the ordinary case, not the edge case: the shared data set carries
+    // `globex-industries/partner-integrations` alongside `octo-org/app`. A name that wraps turns a
+    // dense row into a three-line block, and thirty of those is a different page.
+    test('a long repository name does not wrap its row into a block', async ({
+        page,
+        request,
+        baseURL,
+    }) => {
+        const summary = await corpusSize(request, baseURL);
+        test.skip(!summary.seedRepos, 'no rows, so nothing to wrap');
+
+        await page.setViewportSize({ width: 1280, height: 900 });
+        await page.goto('/inventory?unit=repositories');
+        await ready(page);
+        await expect(page.locator('.abom-grid tbody tr td').nth(2)).toBeVisible();
+
+        const rows = await page.evaluate(() => {
+            const heights = [...document.querySelectorAll('.abom-grid tbody tr')].map(
+                (tr) => Math.round(tr.getBoundingClientRect().height),
+            );
+            return { heights, median: heights.sort((a, b) => a - b)[Math.floor(heights.length / 2)] };
+        });
+        expect(rows.heights.length, 'rows to measure').toBeGreaterThan(0);
+
+        // Against the median rather than a constant, because density is a theme decision and this
+        // is about one row being unlike the others.
+        const tall = rows.heights.filter((h) => h > rows.median * 1.8);
+        expect(tall, `row heights ${rows.heights.join(', ')} against a median of ${rows.median}`)
+            .toEqual([]);
+    });
+
     test('the graph keeps the room the window has for it, scrolled or not', async ({
         page,
         request,
@@ -133,7 +164,7 @@ test.describe('geometry', () => {
     // A column past the right-hand edge is not a smaller version of the same page: the reader has
     // no way to know it is there. Measured before this was fixed, Jobs laid out 1,817px of table
     // and put Findings — the column it sorts by — off screen at every width anyone uses.
-    const UNITS = ['dependencies', 'workflows', 'jobs', 'repositories', 'advisories'];
+    const UNITS = ['dependencies', 'workflows', 'jobs', 'repositories', 'advisories', 'relationships'];
 
     for (const unit of UNITS) {
         test(`${unit} puts none of its columns past the right-hand edge at narrow (1280px)`, async ({

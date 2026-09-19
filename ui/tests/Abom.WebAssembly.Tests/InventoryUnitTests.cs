@@ -41,12 +41,23 @@ public class InventoryUnitTests : AbomTestContext
           "fixable":true,"priority":21}],"total":3,"unreached":8}
         """;
 
+    private const string Relationships = """
+        {"items":[{"edgeKey":"octo-org/app:.github/workflows/ci.yml:20:15",
+          "kind":"step-uses-action","source":"step:octo-org/app:ci.yml::1",
+          "target":"actions/setup-node","ref":"v4","refStyle":"tag",
+          "boundary":"cross-owner","repository":"octo-org/app",
+          "filePath":".github/workflows/ci.yml","startLine":20,
+          "findings":1,"rules":["actions/unpinned-tag"],
+          "advisoryRoute":false,"findingRoute":true,"ownedDepth":1}],"total":37}
+        """;
+
     public InventoryUnitTests()
     {
         Answer("api/views", Views);
         Answer("api/repositories", Repositories);
         Answer("api/actions", Dependencies);
         Answer("api/remediation", Advisories);
+        Answer("api/relationships", Relationships);
     }
 
     private IRenderedComponent<Pages.Inventory> RenderInventory()
@@ -94,6 +105,28 @@ public class InventoryUnitTests : AbomTestContext
             Assert.Contains("octo-org/billing", page.Markup);
             Assert.Contains("Workflows", page.Markup);
             Assert.DoesNotContain("Repos reached", page.Markup);
+        });
+    }
+
+    /// <summary>
+    /// A relationship is a line in a file, not a thing in the corpus. Its columns are the
+    /// reference as written and what was reported against the line itself — neither of which any
+    /// unit of nodes carries, which is why it had to become a unit rather than a filter.
+    /// </summary>
+    [Fact]
+    public void TheRelationshipsUnitRendersTheLineAndWhatFiredOnIt()
+    {
+        var page = RenderInventory();
+        page.Find("[data-abom-unit='relationships']").Click();
+
+        page.WaitForAssertion(() =>
+        {
+            Assert.Contains(Sent, r => r.Url.Contains("api/relationships?"));
+            Assert.Contains("actions/setup-node", page.Markup);
+            Assert.Contains(".github/workflows/ci.yml:20", page.Markup);
+            Assert.Contains("actions/unpinned-tag", page.Markup);
+            // Ordering is not use, so the list must not present either as the other.
+            Assert.Contains("step uses", page.Markup);
         });
     }
 

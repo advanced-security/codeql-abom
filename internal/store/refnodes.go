@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // refNodeKey is how a version appears in the graph. An empty reference keeps the bare name: a
@@ -13,6 +14,15 @@ func refNodeKey(nodeKey, ref string) string {
 		return nodeKey
 	}
 	return nodeKey + "@" + ref
+}
+
+// refBaseKey is the inverse: the undivided node a version was drawn from. Exact rather than a
+// search for the last `@`, because a node key may hold one of its own.
+func refBaseKey(nodeKey, ref string) string {
+	if ref == "" {
+		return nodeKey
+	}
+	return strings.TrimSuffix(nodeKey, "@"+ref)
 }
 
 // refState is one queue row, which is one version of one dependency.

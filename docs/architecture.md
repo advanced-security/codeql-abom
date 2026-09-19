@@ -107,15 +107,29 @@ Everything is one SQLite file. `internal/store` is the only package that writes 
 | Table | |
 | --- | --- |
 | `abom_node`, `abom_edge` | Actions, workflows, repositories and images, and the `uses:` relationships between them |
+| `abom_containment` | What holds what — a repository's own files, an account's repositories. A table of its own because containment is drawn rather than declared |
 | `abom_observation` | Facts a query stated about a subject, keyed by the statement rather than the run. Every job-level fact — permissions, triggers, runner, privilege — attaches to a `job` node, never to the workflow above it |
-| `abom_graph_generation` | Generation and epoch, so a client can ask for a delta |
+| `abom_graph_generation` | Generation and epoch, so a client can ask for a delta. Nodes, edges and containment each keep their own watermark |
 | `abom_surface` | A denormalized read model that is **declared and not written to**. The observation table is the only source for these facts |
 
-Containment is recorded two ways, and they answer different questions. `container_node_row_id` is
-the file a node was declared in, so a workflow contains both its jobs and its steps by that link. A
-step's parent **job** is carried by `job_id` with `step_index`, and the node key spells it out:
-`step:owner/repo:path:JOB:INDEX` against `job:owner/repo:path:JOB`. A workflow is never an edge
-source; edges leave its steps and its jobs.
+An edge carries its own identity and four derived facts. `edge_key` is the source location that
+declares the reference, which is what a selection or a removal names; `ref_style`, `advisory_route`,
+`finding_route` and `owned_depth` are filled by `DeriveEdgeFacts` from rows already stored. Each is
+tri-state, and NULL means *not computed* rather than false or zero.
+
+Containment is stored rather than synthesized. `org-contains` and `repo-contains` are drawn so a
+repository is not an island, but nothing declares them, so they have no `edge_key` and no row in
+`abom_edge` — which is joined by reach, exposure, blast radius, the bill of materials, pinning and
+pruning, none of whose numbers may move because a drawing aid became storable. `DeriveContainment`
+writes the table from the unfiltered projection; the canvas reads it and draws the subset whose
+nodes survive the request. A filter therefore narrows what is drawn and can never add a holding
+nothing states.
+
+Containment *within* a file is recorded two ways, and they answer different questions.
+`container_node_row_id` is the file a node was declared in, so a workflow contains both its jobs and
+its steps by that link. A step's parent **job** is carried by `job_id` with `step_index`, and the
+node key spells it out: `step:owner/repo:path:JOB:INDEX` against `job:owner/repo:path:JOB`. A
+workflow is never an edge source; edges leave its steps and its jobs.
 
 ### Findings
 
@@ -182,11 +196,14 @@ that becomes a unit takes its address with it: the page and its route are delete
 forwarding, because a redirect is a second name for one thing and this is not a published tool.
 
 **A unit is a shape, not a scope.** Inventory reprojects one scope as actions, workflows, jobs,
-repositories, advisories or coverage, each asking its own endpoint for its own columns. A unit only
-exists once its columns are its own: listing repositories as nodes drew six absent measurements as
-zeroes for all 193 of them, which is the same rule the graph follows about an unmeasured node.
-Relationships are the shape with no unit yet, because an edge has no identity a reader can select
-by.
+repositories, advisories, relationships or coverage, each asking its own endpoint for its own
+columns. A unit only exists once its columns are its own: listing repositories as nodes drew six
+absent measurements as zeroes for all 193 of them, which is the same rule the graph follows about
+an unmeasured node. A relationship's columns are what declares it, what it crosses, how its
+reference is written, and what was reported against the line itself — a rule fires on a `uses:`
+line, and no unit of nodes lists the steps those lines are. Containment is absent from it by
+construction: nothing declares a repository holding its own files, so there is no line to go and
+edit and no total for it to inflate.
 
 **A listing states what it is not showing.** It reports the size of the match beside the size of the
 page, orders across the whole match on the server rather than within the page, and when a findings
@@ -245,6 +262,31 @@ refuse, what a waiver excuses and what it could not see. Simulation and the gate
 evaluation, so they cannot disagree. Exclusions and exceptions are enumerated per repository and
 never written as patterns, an exception carries an expiry that is read at evaluation time, and
 `/api/policy-waivers` lists every one of them on demand.
+
+## How it is tested
+
+Four layers, each blind to what the next one sees: `make test` for Go, `make ui-test` (bUnit) for
+markup and state, `make e2e` (Playwright) for geometry and the real API contract in a browser, and
+a screenshot pass for density, colour and hierarchy. A green layer says nothing about the others —
+bUnit has no CSS engine, so a grid overflowing by 288px is green everywhere until a browser lays
+it out.
+
+**Two sets of data, two jobs, not interchangeable.** A crawled organization answers *did this
+change the real numbers*, and only exists where somebody has a token and has waited. The shared
+fixture set answers *does this still work where nobody has crawled anything*: `make corpus` replays
+recorded CodeQL output, so it needs no CLI, no network and no token, and it is the only one that
+can gate a pull request. The browser suite gates on both an empty database and the fixture set,
+because a defect visible only when there is data is exactly the class the empty run cannot see.
+
+The fixture set is ABOM's org-level answer to a per-query unit test. Rather than an `.expected`
+file beside each query, the whole set of findings is mapped onto one fixed dependency graph: **30
+repositories across three accounts, 1,600 nodes, 900 edges, 1,632 findings covering 29 of the 35
+rules the default suite can report**, four advisories that all reach something, and one repository
+that is deliberately clean. Most of it is imported from GitHub's own Actions query tests by
+`scripts/import-actions-test-fixtures.sh`, because the trees known to produce a finding are the
+ones CodeQL tests its own queries with. The six rules nothing exercises are listed with reasons in
+`cmd/abom-corpus`, and the test fails both when a rule is unexplained and when a listed one starts
+firing.
 
 ## What the design refuses
 

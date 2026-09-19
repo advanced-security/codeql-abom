@@ -1,0 +1,27 @@
+{"#select":{"columns":[
+   {"name":"edgeKind","kind":"String"}
+  ,{"name":"srcKind","kind":"String"}
+  ,{"name":"srcPath","kind":"String"}
+  ,{"name":"srcJobId","kind":"String"}
+  ,{"name":"srcStepIndex","kind":"Integer"}
+  ,{"name":"srcStepId","kind":"String"}
+  ,{"name":"usesRaw","kind":"String"}
+  ,{"name":"pinComment","kind":"String"}
+  ,{"name":"startLine","kind":"Integer"}
+  ,{"name":"startColumn","kind":"Integer"}
+  ,{"name":"endLine","kind":"Integer"}
+  ,{"name":"endColumn","kind":"Integer"}]
+ ,"tuples":[
+   ["job-uses-reusable-workflow","workflow",".github/workflows/calling_workflow.yml","call1",-1,"","octo-org/this-repo/.github/workflows/reusable_workflow.yml@172239021f7ba04fe7327647b213799853a9eb89","",8,11,8,109]
+  ,["job-uses-reusable-workflow","workflow",".github/workflows/calling_workflow.yml","call2",-1,"","./.github/workflows/reusable_workflow.yml","",12,11,12,51]
+  ,["job-uses-reusable-workflow","workflow",".github/workflows/calling_workflow.yml","call3",-1,"","octo-org/summary-repo/.github/workflows/workflow.yml@v1","",16,11,16,65]
+  ,["job-uses-reusable-workflow","workflow",".github/workflows/calling_workflow.yml","call4",-1,"","octo-org/source-repo/.github/workflows/workflow.yml@v1","",20,11,20,64]
+  ,["job-uses-reusable-workflow","workflow",".github/workflows/calling_workflow.yml","call5",-1,"","octo-org/sink-repo/.github/workflows/workflow.yml@v1","",22,11,22,62]
+  ,["step-uses-action","job",".github/workflows/calling_composite.yml","hello_world_job",0,"","actions/checkout@v4","",8,15,8,33]
+  ,["step-uses-action","job",".github/workflows/calling_composite.yml","hello_world_job",1,"foo","some-org/test-action@v1","",10,15,10,37]
+  ,["step-uses-action","job",".github/workflows/reusable_workflow.yml","job1",1,"step2","tj-actions/changed-files@v40","",33,15,33,42]
+  ,["job-needs-job","workflow",".github/workflows/calling_workflow.yml","job1",-1,"","call1","",28,12,28,16]
+  ,["job-needs-job","workflow",".github/workflows/calling_workflow.yml","job2",-1,"","call2","",33,12,33,16]
+  ,["job-needs-job","workflow",".github/workflows/calling_workflow.yml","job3",-1,"","call3","",39,12,39,16]
+  ,["job-needs-job","workflow",".github/workflows/calling_workflow.yml","job4",-1,"","call4","",44,12,44,16]]
+ }}

@@ -1,0 +1,24 @@
+name: Publish
+on:
+  workflow_call:
+
+# The callee of storefront's release, so the data set carries a reusable-workflow relationship
+# inside the second account as well as across accounts. No permissions block, again on purpose.
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+      - uses: actions/upload-artifact@v4
+        with:
+          path: dist
+      - run: go build ./...
+
+  ship:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: softprops/action-gh-release@v2
+      - uses: ./.github/actions/announce
+      - run: echo shipped

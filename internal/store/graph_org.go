@@ -14,27 +14,17 @@ const orgKeyPrefix = "org:"
 
 func OrgKey(owner string) string { return orgKeyPrefix + owner }
 
-// attachOwners adds one node per account and the containment edges beneath it.
+// attachOwners adds one node per account.
 //
 // Owners exist in the data only as a string column, so nothing could be asked across them:
 // which accounts a corpus depends on, how far one account reaches, what dropping one would
 // cost. Deriving the node here rather than storing it keeps it a view over the same facts.
 //
-// The containment edges are emitted alongside the nodes for the same reason repositories are:
-// an account with no edges renders as an island and isolating it finds nothing.
-func attachOwners(nodes []GraphNode, edges []GraphEdge) ([]GraphNode, []GraphEdge) {
+// What an account holds is not decided here. It is read from abom_containment, so a filtered
+// canvas draws a subset of what is stored rather than recomputing holdings against whichever
+// nodes survived.
+func attachOwners(nodes []GraphNode) []GraphNode {
 	orgs := map[string]*GraphNode{}
-	held := []GraphEdge{}
-
-	// Not every repository has a node standing for it. Where one is missing the account would
-	// hold nothing and render as an island, so the repository's own top-level nodes take its
-	// place.
-	represented := map[string]bool{}
-	for i := range nodes {
-		if nodes[i].Kind == "repo" && nodes[i].Repository != "" {
-			represented[nodes[i].Repository] = true
-		}
-	}
 
 	for i := range nodes {
 		n := &nodes[i]
@@ -79,12 +69,6 @@ func attachOwners(nodes []GraphNode, edges []GraphEdge) ([]GraphNode, []GraphEdg
 		if !n.Analyzed {
 			org.Analyzed = false
 		}
-
-		if holdsDirectly(n, represented) {
-			held = append(held, GraphEdge{
-				Source: org.Key, Target: n.Key, Kind: "org-contains", Refs: []string{}, Count: 1,
-			})
-		}
 	}
 
 	for _, org := range orgs {
@@ -93,7 +77,7 @@ func attachOwners(nodes []GraphNode, edges []GraphEdge) ([]GraphNode, []GraphEdg
 	}
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Key < nodes[j].Key })
 
-	return nodes, append(edges, held...)
+	return nodes
 }
 
 // ownerOf reports the account a node belongs to, and empty when it belongs to none.

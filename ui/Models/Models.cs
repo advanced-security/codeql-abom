@@ -380,6 +380,41 @@ public sealed record AdvisoriesPage
     public int Unreached { get; init; }
 }
 
+/// <summary>One declared relationship: a `uses:` or `needs:` line, as a row.</summary>
+///
+/// The facts are nullable because each is tri-state. A relationship whose route was never walked
+/// is not a relationship on no route, and rendering `false` for both would make "nothing here
+/// reaches an advisory" look the same as "nobody has looked".
+public sealed record RelationshipSummary
+{
+    /// <summary>The source location that declares it, which is what a selection names.</summary>
+    public string EdgeKey { get; init; } = "";
+    public string Kind { get; init; } = "";
+    public string Source { get; init; } = "";
+    public string Target { get; init; } = "";
+    public string Ref { get; init; } = "";
+    public string RefStyle { get; init; } = "";
+    public string Boundary { get; init; } = "";
+    public string Repository { get; init; } = "";
+    public string FilePath { get; init; } = "";
+    public int StartLine { get; init; }
+
+    /// <summary>What was reported against the line itself, rather than against either end.</summary>
+    public int Findings { get; init; }
+    public IReadOnlyList<string> Rules { get; init; } = [];
+
+    public bool? AdvisoryRoute { get; init; }
+    public bool? FindingRoute { get; init; }
+    public int? OwnedDepth { get; init; }
+}
+
+/// <summary>One page of relationships, and the size of the match it was cut from.</summary>
+public sealed record RelationshipsPage
+{
+    public IReadOnlyList<RelationshipSummary> Items { get; init; } = [];
+    public int Total { get; init; }
+}
+
 /// <summary>One page of repositories, and the size of the match it was cut from.</summary>
 public sealed record RepositoriesPage
 {

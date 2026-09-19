@@ -1,0 +1,23 @@
+{"#select":{"columns":[
+   {"name":"edgeKind","kind":"String"}
+  ,{"name":"srcKind","kind":"String"}
+  ,{"name":"srcPath","kind":"String"}
+  ,{"name":"srcJobId","kind":"String"}
+  ,{"name":"srcStepIndex","kind":"Integer"}
+  ,{"name":"srcStepId","kind":"String"}
+  ,{"name":"usesRaw","kind":"String"}
+  ,{"name":"pinComment","kind":"String"}
+  ,{"name":"startLine","kind":"Integer"}
+  ,{"name":"startColumn","kind":"Integer"}
+  ,{"name":"endLine","kind":"Integer"}
+  ,{"name":"endColumn","kind":"Integer"}]
+ ,"tuples":[
+   ["step-uses-action","job",".github/workflows/ci.yml","build",0,"","actions/checkout@v4","",14,15,14,33]
+  ,["step-uses-action","job",".github/workflows/ci.yml","build",1,"","actions/setup-node@v4","",15,15,15,35]
+  ,["step-uses-action","job",".github/workflows/ci.yml","package",0,"","actions/checkout@v4","",24,15,24,33]
+  ,["step-uses-action","job",".github/workflows/ci.yml","package",1,"","docker/login-action@v3","",25,15,25,36]
+  ,["step-uses-action","job",".github/workflows/ci.yml","package",2,"","docker/build-push-action@v6","",26,15,26,41]
+  ,["step-uses-action","job",".github/workflows/preview.yml","preview",0,"","actions/checkout@v4","",12,15,12,33]
+  ,["step-uses-action","job",".github/workflows/preview.yml","preview",2,"","actions/cache@v4","",17,15,17,30]
+  ,["job-needs-job","workflow",".github/workflows/ci.yml","package",-1,"","build","",19,12,19,16]]
+ }}

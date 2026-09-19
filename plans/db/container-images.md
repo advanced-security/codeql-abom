@@ -64,8 +64,8 @@ return. `normalize.PackageURL` already returns `""` for `docker://` and is right
 
 ## The constraints that must not be broken
 
-**A relationship ABOM does not understand is not a relationship to an account.** Carried from
-[`db/edge-facts.md`](edge-facts.md), which states it for the same reason. A reference whose syntax
+**A relationship ABOM does not understand is not a relationship to an account.** A reference whose
+syntax
 is unrecognized is refused, never split on the first slash and treated as `owner/repo`.
 
 **An absent account is not an account named for the absence.** No `unknown` bucket, no `external`

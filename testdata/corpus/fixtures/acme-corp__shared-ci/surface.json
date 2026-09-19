@@ -1,0 +1,21 @@
+{"#select":{"columns":[
+   {"name":"subjectPath","kind":"String"}
+  ,{"name":"subjectJob","kind":"String"}
+  ,{"name":"name","kind":"String"}
+  ,{"name":"value","kind":"String"}]
+ ,"tuples":[
+   [".github/workflows/publish.yml","build","permissions",""]
+  ,[".github/workflows/publish.yml","build","externallyTriggerable","true"]
+  ,[".github/workflows/publish.yml","build","runsOn","ubuntu-latest"]
+  ,[".github/workflows/publish.yml","build","triggers","workflow_call"]
+  ,[".github/workflows/publish.yml","build","permissionsScope","default"]
+  ,[".github/workflows/publish.yml","build","privileged","false"]
+  ,[".github/workflows/publish.yml","build","secretsInherit","false"]
+  ,[".github/workflows/publish.yml","ship","permissions",""]
+  ,[".github/workflows/publish.yml","ship","externallyTriggerable","true"]
+  ,[".github/workflows/publish.yml","ship","runsOn","ubuntu-latest"]
+  ,[".github/workflows/publish.yml","ship","triggers","workflow_call"]
+  ,[".github/workflows/publish.yml","ship","permissionsScope","default"]
+  ,[".github/workflows/publish.yml","ship","privileged","false"]
+  ,[".github/workflows/publish.yml","ship","secretsInherit","false"]]
+ }}

@@ -53,10 +53,11 @@ The scope that narrows is the predicate language, named and saved, so the same s
 thing on every surface and can be loaded again next month. Built; see
 [`architecture.md`](architecture.md).
 
-Relationships are part of it. A `uses:` line is an edge, so *which references float on a tag* and
-*what sits on a route to a live advisory* are questions about edges, and an edge has to carry enough
-to answer them — stored once and read everywhere rather than derived per request.
-`plans/db/edge-facts.md`
+Relationships are part of it, and are built. A `uses:` line is an edge, so *which references float
+on a tag* and *what sits on a route to a live advisory* are questions about edges, and an edge
+carries enough to answer them — stored once and read everywhere rather than derived per request.
+They are a unit of Inventory in their own right, and the containment the canvas draws is stored
+rather than synthesized.
 
 ## Business units, read from the organization
 

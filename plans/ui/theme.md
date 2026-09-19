@@ -34,7 +34,8 @@ What remains is the properties no number covers yet.
    no room for. Whatever replaces the six column counts decides whether that cell can exist.
 3. **Component-level layout is checked only by screenshot.** `ui-test` has no CSS engine, and
    every layout defect this plan found was invisible to it and visible in one browser measurement.
-   Whether that measurement becomes a build step is `ui/testing.md`'s decision.
+   That measurement is now a build step: the browser suite gates a pull request twice, against an
+   empty database and against the shared fixture set, and the geometry checks run in both.
 
 ## The constraint that must not be broken
 

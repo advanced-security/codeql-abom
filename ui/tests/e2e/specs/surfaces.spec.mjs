@@ -133,10 +133,15 @@ test.describe('Inventory reprojects one scope', () => {
             .locator('.sortable-column-header', { hasText: 'Findings' })
             .first()
             .click();
+        // The last segment, not the whole key: IdentityCell stacks the repository above the name,
+        // so the row's text is "acme-corp/shared-ci" and "announce" on two lines and never the
+        // path between them. Asserting the key matched only while the worst row happened to be a
+        // node whose key renders as one line.
+        const named = worst.nodeKey.split('/').pop();
         await expect(
             page.locator('.mud-table-body .mud-table-row').first(),
             'the first row is the worst across the whole match',
-        ).toContainText(worst.nodeKey, { timeout: 15_000 });
+        ).toContainText(named, { timeout: 15_000 });
     });
 
     // The scope is the address, so it survives a reload and a unit switch, or a unit is a page

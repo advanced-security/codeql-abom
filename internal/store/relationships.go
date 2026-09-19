@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // RelationshipSummary is one declared relationship as a list shows it: what declares it, what it
@@ -26,6 +27,11 @@ type RelationshipSummary struct {
 	FilePath   string `json:"filePath"`
 	StartLine  int    `json:"startLine"`
 
+	// Findings and Rules are what was reported against the line that declares this, which is the
+	// step or the job itself. No unit lists either kind, so this is the only row they reach.
+	Findings int      `json:"findings"`
+	Rules    []string `json:"rules"`
+
 	AdvisoryRoute *bool `json:"advisoryRoute"`
 	FindingRoute  *bool `json:"findingRoute"`
 	OwnedDepth    *int  `json:"ownedDepth"`
@@ -38,6 +44,9 @@ type RelationshipsQuery struct {
 	Boundary  string
 	// RefStyle is the term's spelling — `sha`, `tag` or `any` — not the column's.
 	RefStyle string
+	// Rules and NotRules match what fired on the declaring line, not on either endpoint.
+	Rules    []string
+	NotRules []string
 	// Scope is `owned` or `exposure`, read against Closure the way every other unit reads it.
 	Scope    string
 	Closure  []string
@@ -65,6 +74,41 @@ var relationshipSorts = map[string]string{
 	"boundary":   "e.boundary",
 	"repository": "r.repository_full_name",
 	"ownedDepth": "e.owned_depth",
+	"findings":   findingsOnLine,
+}
+
+// findingsOnLine counts what was reported against the step or job that declares a relationship.
+//
+// The source endpoint rather than either end: a rule fires on the `uses:` line, and the line is
+// the source. Counting the target instead would report a dependency's own findings against every
+// use of it.
+const findingsOnLine = `(SELECT COUNT(*) FROM abom_finding_node fn
+	                          WHERE fn.node_row_id = e.src_node_row_id)`
+
+// rulesOnLine names them, sorted, so a row reads the same on every page.
+const rulesOnLine = `(SELECT GROUP_CONCAT(rule_id) FROM
+	                      (SELECT DISTINCT f.rule_id FROM abom_finding_node fn
+	                         JOIN abom_finding f ON f.row_id = fn.finding_row_id
+	                        WHERE fn.node_row_id = e.src_node_row_id
+	                        ORDER BY f.rule_id))`
+
+// relationshipRuleFilter narrows to the relationships one rule fired on, or away from them.
+func relationshipRuleFilter(rules, notRules []string) (string, []any) {
+	clause, args := "", []any{}
+	matched := `EXISTS (SELECT 1 FROM abom_finding_node fn
+	                     JOIN abom_finding f ON f.row_id = fn.finding_row_id
+	                    WHERE fn.node_row_id = e.src_node_row_id AND LOWER(f.rule_id) IN `
+	if len(rules) > 0 {
+		list, names := inList(rules)
+		clause += " AND " + matched + list + ")"
+		args = append(args, names...)
+	}
+	if len(notRules) > 0 {
+		list, names := inList(notRules)
+		clause += " AND NOT " + matched + list + ")"
+		args = append(args, names...)
+	}
+	return clause, args
 }
 
 // relationshipRefFilter narrows by reference style, translating the reader's word into the stored
@@ -117,6 +161,8 @@ func (s *Store) relationshipsWhere(q RelationshipsQuery) (string, []any, error) 
 	}
 	style, styleArgs := relationshipRefFilter(q.RefStyle)
 	where, args = where+style, append(args, styleArgs...)
+	fired, firedArgs := relationshipRuleFilter(q.Rules, q.NotRules)
+	where, args = where+fired, append(args, firedArgs...)
 	if q.Search != "" {
 		// Either end, because a reader searching `checkout` wants the relationships that use it
 		// as readily as the ones declared inside it.
@@ -166,7 +212,8 @@ func (s *Store) relationshipsPageQuery(q RelationshipsQuery) (string, []any, err
 		SELECT e.edge_key, e.edge_kind, src.node_key, dst.node_key,
 		       COALESCE(e.ref_value, ''), COALESCE(e.ref_style, ''), COALESCE(e.boundary, ''),
 		       COALESCE(r.repository_full_name, ''), COALESCE(e.file_path, ''),
-		       COALESCE(e.start_line, 0), e.advisory_route, e.finding_route, e.owned_depth` +
+		       COALESCE(e.start_line, 0), ` + findingsOnLine + `, ` + rulesOnLine + `,
+		       e.advisory_route, e.finding_route, e.owned_depth` +
 		relationshipRows + where + ordering
 	if q.Limit > 0 {
 		query += ` LIMIT ? OFFSET ?`
@@ -208,9 +255,18 @@ func (s *Store) RelationshipsPage(q RelationshipsQuery) (RelationshipsPage, erro
 	items, err := queryAll(s, "listing relationships",
 		func(row *sql.Rows) (RelationshipSummary, error) {
 			var r RelationshipSummary
-			return r, row.Scan(&r.EdgeKey, &r.Kind, &r.Source, &r.Target, &r.Ref, &r.RefStyle,
-				&r.Boundary, &r.Repository, &r.FilePath, &r.StartLine,
-				&r.AdvisoryRoute, &r.FindingRoute, &r.OwnedDepth)
+			var rules sql.NullString
+			if err := row.Scan(&r.EdgeKey, &r.Kind, &r.Source, &r.Target, &r.Ref, &r.RefStyle,
+				&r.Boundary, &r.Repository, &r.FilePath, &r.StartLine, &r.Findings, &rules,
+				&r.AdvisoryRoute, &r.FindingRoute, &r.OwnedDepth); err != nil {
+				return r, err
+			}
+			// An empty slice rather than null: the interface reads it as a set, and null is not one.
+			r.Rules = []string{}
+			if rules.String != "" {
+				r.Rules = strings.Split(rules.String, ",")
+			}
+			return r, nil
 		}, query, pageArgs...)
 	if err != nil {
 		return RelationshipsPage{}, err

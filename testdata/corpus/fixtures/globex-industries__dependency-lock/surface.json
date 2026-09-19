@@ -1,0 +1,21 @@
+{"#select":{"columns":[
+   {"name":"subjectPath","kind":"String"}
+  ,{"name":"subjectJob","kind":"String"}
+  ,{"name":"name","kind":"String"}
+  ,{"name":"value","kind":"String"}]
+ ,"tuples":[
+   [".github/workflows/rust-ci.yml","build","permissions",""]
+  ,[".github/workflows/rust-ci.yml","build","externallyTriggerable","true"]
+  ,[".github/workflows/rust-ci.yml","build","runsOn","ubuntu-latest"]
+  ,[".github/workflows/rust-ci.yml","build","triggers","pull_request"]
+  ,[".github/workflows/rust-ci.yml","build","permissionsScope","default"]
+  ,[".github/workflows/rust-ci.yml","build","privileged","false"]
+  ,[".github/workflows/rust-ci.yml","build","secretsInherit","false"]
+  ,[".github/workflows/rust-ci.yml","reusable","permissions",""]
+  ,[".github/workflows/rust-ci.yml","reusable","externallyTriggerable","true"]
+  ,[".github/workflows/rust-ci.yml","reusable","runsOn",""]
+  ,[".github/workflows/rust-ci.yml","reusable","triggers","pull_request"]
+  ,[".github/workflows/rust-ci.yml","reusable","permissionsScope","default"]
+  ,[".github/workflows/rust-ci.yml","reusable","privileged","false"]
+  ,[".github/workflows/rust-ci.yml","reusable","secretsInherit","false"]]
+ }}

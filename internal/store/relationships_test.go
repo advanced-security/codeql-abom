@@ -251,3 +251,59 @@ func explain(t *testing.T, s *Store, query string, args ...any) string {
 	}
 	return strings.Join(plan, "\n")
 }
+
+// repoID reads a seeded repository's row, so a test can attach evidence the way ingestion does.
+func repoID(t *testing.T, s *Store, fullName string) int64 {
+	t.Helper()
+	var id int64
+	if err := s.DB().QueryRow(
+		`SELECT row_id FROM repository WHERE repository_full_name = ?`, fullName).Scan(&id); err != nil {
+		t.Fatalf("reading the repository row for %s: %v", fullName, err)
+	}
+	return id
+}
+
+// Every `actions/unpinned-tag` finding sits on a `uses:` line, and a `uses:` line is a step. No
+// unit lists steps, so until the relationship carried them these findings were reachable only
+// through a node that no grid shows.
+func TestARelationshipCarriesTheFindingsOnTheLineThatDeclaresIt(t *testing.T) {
+	s := edgeFactsFixture(t)
+	findingOn(t, s, repoID(t, s, "octo-org/app"), "step:octo-org/app:ci.yml::1")
+
+	page, err := s.RelationshipsPage(RelationshipsQuery{Limit: 50})
+	if err != nil {
+		t.Fatalf("RelationshipsPage: %v", err)
+	}
+	flagged := relationshipTo(t, page.Items, "actions/setup-node")
+	if flagged.Findings != 1 {
+		t.Errorf("Findings = %d on the line a finding sits on, want 1", flagged.Findings)
+	}
+	if len(flagged.Rules) != 1 || flagged.Rules[0] != "actions/unpinned-tag" {
+		t.Errorf("Rules = %v, want the rule recorded against the line", flagged.Rules)
+	}
+
+	clean := relationshipTo(t, page.Items, "actions/checkout")
+	if clean.Findings != 0 || len(clean.Rules) != 0 {
+		t.Errorf("a line carrying nothing reports %d findings %v", clean.Findings, clean.Rules)
+	}
+}
+
+// The payoff of carrying them: "where are my unpinned tags" asked as what it actually is, a
+// question about relationships, rather than answered by a grid of nodes that holds none of them.
+func TestNarrowingRelationshipsByRuleReadsTheDeclaringLine(t *testing.T) {
+	s := edgeFactsFixture(t)
+	findingOn(t, s, repoID(t, s, "octo-org/app"), "step:octo-org/app:ci.yml::1")
+
+	page, err := s.RelationshipsPage(RelationshipsQuery{
+		Rules: []string{"actions/unpinned-tag"}, Limit: 50,
+	})
+	if err != nil {
+		t.Fatalf("RelationshipsPage: %v", err)
+	}
+	if page.Total != 1 {
+		t.Fatalf("Total = %d narrowing to one rule, want the single line it fired on", page.Total)
+	}
+	if page.Items[0].Target != "actions/setup-node" {
+		t.Errorf("narrowing by rule returned %s", page.Items[0].Target)
+	}
+}

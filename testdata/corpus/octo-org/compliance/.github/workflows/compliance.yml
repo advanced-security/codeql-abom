@@ -1,0 +1,29 @@
+name: Compliance
+on:
+  push:
+
+# The clean counterpart. Every action is pinned to a full commit, every job states the least
+# permission it needs, and nothing an author controls reaches a `run:` step — so the default
+# suite reports nothing here at all. A set where every repository is flagged cannot show the
+# difference between a rule that found something and a rule that is always on.
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@a1b2c3d4e5f60718293a4b5c6d7e8f9012345678
+      - uses: actions/setup-node@b2c3d4e5f60718293a4b5c6d7e8f90123456789a
+      - run: npm audit --audit-level=high
+
+  report:
+    needs: audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@a1b2c3d4e5f60718293a4b5c6d7e8f9012345678
+      - run: npm run report

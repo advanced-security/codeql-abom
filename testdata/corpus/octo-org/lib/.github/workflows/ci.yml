@@ -8,6 +8,8 @@ jobs:
     steps:
       # A floating tag beside app's commit pin, so reference style has both readings to filter.
       - uses: actions/checkout@v4
+      # A second advisory, reached by one repository only, so the unit has rows that differ.
+      - uses: reviewdog/action-setup@v1
       - run: make test
 
   release:

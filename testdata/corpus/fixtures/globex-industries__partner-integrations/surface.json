@@ -1,0 +1,14 @@
+{"#select":{"columns":[
+   {"name":"subjectPath","kind":"String"}
+  ,{"name":"subjectJob","kind":"String"}
+  ,{"name":"name","kind":"String"}
+  ,{"name":"value","kind":"String"}]
+ ,"tuples":[
+   [".github/workflows/unpinned_first_party.yml","build","permissions",""]
+  ,[".github/workflows/unpinned_first_party.yml","build","runsOn","ubuntu-latest"]
+  ,[".github/workflows/unpinned_first_party.yml","build","triggers","push"]
+  ,[".github/workflows/unpinned_first_party.yml","build","permissionsScope","default"]
+  ,[".github/workflows/unpinned_first_party.yml","build","privileged","false"]
+  ,[".github/workflows/unpinned_first_party.yml","build","secretsInherit","false"]
+  ,[".github/workflows/unpinned_first_party.yml","build","externallyTriggerable","false"]]
+ }}

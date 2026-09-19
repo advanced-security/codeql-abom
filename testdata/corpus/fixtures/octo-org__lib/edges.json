@@ -12,7 +12,8 @@
   ,{"name":"endLine","kind":"Integer"}
   ,{"name":"endColumn","kind":"Integer"}]
  ,"tuples":[
-   ["job-uses-reusable-workflow","workflow",".github/workflows/ci.yml","release",-1,"","octo-org/app/.github/workflows/release.yml@v1","",16,11,16,55]
+   ["job-uses-reusable-workflow","workflow",".github/workflows/ci.yml","release",-1,"","octo-org/app/.github/workflows/release.yml@v1","",18,11,18,55]
   ,["step-uses-action","job",".github/workflows/ci.yml","test",0,"","actions/checkout@v4","",10,15,10,33]
-  ,["job-needs-job","workflow",".github/workflows/ci.yml","release",-1,"","test","",14,12,14,15]]
+  ,["step-uses-action","job",".github/workflows/ci.yml","test",1,"","reviewdog/action-setup@v1","",12,15,12,39]
+  ,["job-needs-job","workflow",".github/workflows/ci.yml","release",-1,"","test","",16,12,16,15]]
  }}

@@ -540,7 +540,15 @@ func (s *Store) FullGraph(opts FullGraphOptions) (Graph, error) {
 		return out, err
 	}
 
-	nodes, edges = attachOwners(nodes, edges)
+	nodes = attachOwners(nodes)
+
+	// Read rather than recomputed. Containment is a fact about the corpus, so a filter narrows
+	// what is drawn from it and never adds a holding nothing states.
+	held, err := s.Containment()
+	if err != nil {
+		return out, err
+	}
+	edges = append(edges, containmentEdges(nodes, held)...)
 
 	nodes, edges = applyNodePredicates(nodes, edges, opts)
 
@@ -710,10 +718,6 @@ func (s *Store) attachRules(display string, index map[string]*GraphNode) error {
 }
 
 func (s *Store) graphEdges(display string, since int64, opts FullGraphOptions) ([]GraphEdge, error) {
-	// A repository is otherwise an island: nothing in abom_edge points at it, so without the
-	// containment half of this union every repo node renders unattached and isolating one finds
-	// nothing. Containment stops at what the repository directly holds, because wiring every
-	// step to it as well would add tens of thousands of edges saying nothing new.
 	cte, args := scopeParts(opts)
 	rows, err := s.db.Query(`WITH `+display+cte+`
 		SELECT sn.node_key, dn.node_key, e.edge_kind, COALESCE(e.ref_value, ''),
@@ -726,17 +730,8 @@ func (s *Store) graphEdges(display string, since int64, opts FullGraphOptions) (
 		JOIN abom_node_live dn ON dn.row_id = dd.shown
 		WHERE ds.shown <> dd.shown AND e.row_id > ?`+
 		boundaryFilter(opts.Boundary)+edgeKindFilter(opts.EdgeKinds)+
-		scopeFilter(opts, "sn.node_key")+scopeFilter(opts, "dn.node_key")+`
-		UNION ALL
-		SELECT owner.node_key, held.node_key, 'repo-contains', '', '', '', '', NULL, NULL, NULL
-		FROM abom_node_live owner
-		JOIN abom_node_live held ON held.repository_row_id = owner.repository_row_id
-		                   AND held.row_id <> owner.row_id
-		                   AND held.container_node_row_id IS NULL
-		                   AND held.node_kind <> 'repo'
-		WHERE owner.node_kind = 'repo' AND held.row_id > ?`+
-		scopeFilter(opts, "owner.node_key")+scopeFilter(opts, "held.node_key"),
-		append(args, since, since)...)
+		scopeFilter(opts, "sn.node_key")+scopeFilter(opts, "dn.node_key"),
+		append(args, since)...)
 	if err != nil {
 		return nil, fmt.Errorf("reading graph edges: %w", err)
 	}

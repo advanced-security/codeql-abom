@@ -166,6 +166,15 @@ public sealed class AbomApi(HttpClient http)
         await GetPageAsync<AdvisoriesPage>("api/remediation", predicate, top, offset, sort, desc, ct);
 
     /// <summary>
+    /// One page of the relationships unit, ordered across the whole match.
+    /// </summary>
+    public async Task<(RelationshipsPage? Page, string? Refusal)> GetRelationshipsPageAsync(
+        string predicate, int top, int offset, string? sort, bool desc,
+        CancellationToken ct = default) =>
+        await GetPageAsync<RelationshipsPage>(
+            "api/relationships", predicate, top, offset, sort, desc, ct);
+
+    /// <summary>
     /// The named views on offer: the built-in catalog merged with whatever the operator saved.
     /// </summary>
     public async Task<IReadOnlyList<NamedView>> GetViewsAsync(CancellationToken ct = default) =>

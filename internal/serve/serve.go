@@ -164,7 +164,8 @@ func (s *Server) Handler() http.Handler {
 		"scope", "flags", "properties", "notProperties"))
 	mux.HandleFunc("GET /api/relationships", reading(s.relationships,
 		"q", "top", "offset", "sort", "desc", "view",
-		"scope", "boundary", "edgeKinds", "ref", "properties", "notProperties"))
+		"scope", "boundary", "edgeKinds", "ref", "rules", "notRules",
+		"properties", "notProperties"))
 	mux.HandleFunc("GET /api/repositories",
 		reading(s.repositories, "q", "top", "offset", "sort", "desc", "view",
 			"scope", "properties", "notProperties"))
@@ -996,6 +997,8 @@ func (s *Server) relationships(w http.ResponseWriter, r *http.Request) {
 		EdgeKinds: spec.EdgeKinds,
 		Boundary:  spec.Boundary,
 		RefStyle:  spec.RefStyle,
+		Rules:     spec.Rules,
+		NotRules:  spec.NotRules,
 		Scope:     spec.Scope,
 		Sort:      r.URL.Query().Get("sort"),
 		Desc:      r.URL.Query().Get("desc") == "true",

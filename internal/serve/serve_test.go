@@ -78,6 +78,11 @@ func seedGraph(t *testing.T, s *store.Store) {
 	if err := w.Flush(); err != nil {
 		t.Fatalf("Flush: %v", err)
 	}
+	// What holds what is derived rather than drawn on demand, so a seeded corpus has to finish
+	// the way an ingestion does or the canvas shows every node unattached.
+	if _, err := s.DeriveContainment(); err != nil {
+		t.Fatalf("DeriveContainment: %v", err)
+	}
 }
 
 func TestSummaryEndpoint(t *testing.T) {

@@ -377,6 +377,10 @@ func (b *Builder) RebuildAggregates() error {
 	if _, err := b.Store.BackfillRefResolutions(); err != nil {
 		return err
 	}
+	// From nodes alone, so it owes nothing to the walks below and they read none of it.
+	if _, err := b.Store.DeriveContainment(); err != nil {
+		return err
+	}
 	if err := b.BuildBlastRadius(); err != nil {
 		return err
 	}

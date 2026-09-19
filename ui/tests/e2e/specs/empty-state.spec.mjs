@@ -85,6 +85,8 @@ test.describe('vocabulary', () => {
             expect(body, `${route} uses retired wording "in scope"`).not.toContain('in scope');
             expect(body, `${route} uses retired wording "under review"`).not.toContain('under review');
             expect(body, `${route} uses a retired boundary spelling`).not.toContain('cross org');
+            // Jargon for "everything recorded", and it reached the Dashboard on five cards.
+            expect(body, `${route} says "corpus" to a reader`).not.toContain('corpus');
         }
     });
 });

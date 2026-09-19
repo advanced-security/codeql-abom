@@ -1,0 +1,14 @@
+{"#select":{"columns":[
+   {"name":"subjectPath","kind":"String"}
+  ,{"name":"subjectJob","kind":"String"}
+  ,{"name":"name","kind":"String"}
+  ,{"name":"value","kind":"String"}]
+ ,"tuples":[
+   [".github/workflows/arg_injection.yml","test1","permissions",""]
+  ,[".github/workflows/arg_injection.yml","test1","externallyTriggerable","true"]
+  ,[".github/workflows/arg_injection.yml","test1","runsOn","ubuntu-latest"]
+  ,[".github/workflows/arg_injection.yml","test1","triggers","pull_request_target"]
+  ,[".github/workflows/arg_injection.yml","test1","permissionsScope","default"]
+  ,[".github/workflows/arg_injection.yml","test1","privileged","false"]
+  ,[".github/workflows/arg_injection.yml","test1","secretsInherit","false"]]
+ }}

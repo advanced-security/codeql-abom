@@ -89,6 +89,12 @@ const retiredWords = [
     [/\bSame org\/owner\b/, 'boundary wording; the interface says "same account"'],
     [/\bCross org\/owner\b/, 'boundary wording; the interface says "another account"'],
     [/\bSame repo\b(?!sitory)/, 'boundary wording; the interface says "same repository"'],
+    // Only inside a quoted string, because the word is ordinary English in a comment about one.
+    // It reached the Dashboard as "Advisories in the corpus" and was read as jargon, which it is.
+    [
+        /"[^"]*\bcorpus\b/i,
+        'says "corpus" in a string a reader sees; say "recorded", "in the graph" or name the thing',
+    ],
 ];
 
 function checkVocabulary(file, text, off) {

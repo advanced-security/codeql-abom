@@ -14,10 +14,10 @@ of through the grid.
 ## The shape
 
 **One tab per node kind, or per family of kinds that share a column set.** Actions, Workflows, Jobs,
-Repositories and Advisories are built. The sixth shape is **Relationships** — edges, the `uses:`
-lines, which is what a `step` is — and it is not here: an edge's columns are exactly what
-[`../db/edge-facts.md`](../db/edge-facts.md) stores, so the unit follows that plan rather than this
-one.
+Repositories, Advisories and **Relationships** are built. Relationships were the sixth shape and the
+last to arrive, because a unit only exists once its columns are its own and an edge had none: it
+now carries its identity, what it crosses, how its reference is written, and what was reported
+against the declaring line. See [`../../docs/architecture.md`](../../docs/architecture.md).
 
 ## Pending
 

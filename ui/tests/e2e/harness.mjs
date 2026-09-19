@@ -14,7 +14,7 @@ export const SURFACES = ['/', '/inventory', '/explore', '/settings'];
 
 // The units Inventory reprojects one scope into. Relationships is absent until an edge carries its
 // own identity — see plans/db/edge-facts.md.
-export const UNITS = ['dependencies', 'workflows', 'jobs', 'repositories', 'advisories', 'coverage'];
+export const UNITS = ['dependencies', 'workflows', 'jobs', 'repositories', 'advisories', 'relationships', 'coverage'];
 
 // Blazor reports an unhandled exception by revealing this element rather than by failing the
 // navigation, so a page that has thrown still answers 200 and still renders its chrome. Nothing

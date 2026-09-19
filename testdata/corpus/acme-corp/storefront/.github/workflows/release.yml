@@ -1,0 +1,22 @@
+name: Storefront Release
+on:
+  workflow_dispatch:
+
+jobs:
+  # Calls another account's reusable workflow and hands it every secret the caller holds, which
+  # is what `actions/excessive-secrets-exposure` reports on.
+  release:
+    uses: acme-corp/shared-ci/.github/workflows/publish.yml@v3
+    secrets: inherit
+
+  notify:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: peter-evans/create-pull-request@v7
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+      - run: echo notified

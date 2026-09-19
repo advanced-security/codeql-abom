@@ -13,6 +13,12 @@ jobs:
   announce:
     needs: release
     runs-on: ubuntu-latest
+    # A job that can write, so the privilege column has something to report. Every job-level
+    # column reads zero otherwise, which looks like a measured absence rather than a data set
+    # that never contained the shape.
+    permissions:
+      contents: write
+      packages: write
     steps:
       - uses: octo-org/shared-action@v2
       - run: echo deployed

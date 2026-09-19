@@ -107,5 +107,6 @@ func edgeKindFixture(t *testing.T) *Store {
 	if err := w.Flush(); err != nil {
 		t.Fatalf("Flush: %v", err)
 	}
+	deriveContainment(t, s)
 	return s
 }

@@ -1,0 +1,21 @@
+{"#select":{"columns":[
+   {"name":"subjectPath","kind":"String"}
+  ,{"name":"subjectJob","kind":"String"}
+  ,{"name":"name","kind":"String"}
+  ,{"name":"value","kind":"String"}]
+ ,"tuples":[
+   [".github/workflows/ci.yml","check","permissions",""]
+  ,[".github/workflows/ci.yml","check","runsOn","ubuntu-latest"]
+  ,[".github/workflows/ci.yml","check","triggers","push"]
+  ,[".github/workflows/ci.yml","check","permissionsScope","default"]
+  ,[".github/workflows/ci.yml","check","privileged","false"]
+  ,[".github/workflows/ci.yml","check","secretsInherit","false"]
+  ,[".github/workflows/ci.yml","check","externallyTriggerable","false"]
+  ,[".github/workflows/ci.yml","publish","permissions",""]
+  ,[".github/workflows/ci.yml","publish","runsOn","ubuntu-latest"]
+  ,[".github/workflows/ci.yml","publish","triggers","push"]
+  ,[".github/workflows/ci.yml","publish","permissionsScope","default"]
+  ,[".github/workflows/ci.yml","publish","privileged","false"]
+  ,[".github/workflows/ci.yml","publish","secretsInherit","false"]
+  ,[".github/workflows/ci.yml","publish","externallyTriggerable","false"]]
+ }}

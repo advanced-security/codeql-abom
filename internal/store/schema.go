@@ -184,6 +184,24 @@ CREATE TABLE IF NOT EXISTS abom_edge (
   owned_depth         INTEGER
 );
 
+-- What holds what, which the canvas draws and nothing declares.
+--
+-- A table of its own rather than rows in abom_edge: an edge's identity is the source location
+-- that declares it and containment has none, and abom_edge is joined by reach, exposure, blast
+-- radius, the bill of materials, pinning and pruning — every one of which counts dependencies,
+-- none of which may move because a drawing aid became storable.
+--
+-- Keys rather than node row ids. Containment reaches things abom_node does not hold: an account
+-- holds a repository the operator declared and nothing has analyzed, and a dependency split per
+-- version is a node the projection makes. A key is what both of those have.
+CREATE TABLE IF NOT EXISTS abom_containment (
+  row_id    INTEGER PRIMARY KEY,
+  owner_key TEXT NOT NULL,
+  held_key  TEXT NOT NULL,
+  edge_kind TEXT NOT NULL,
+  UNIQUE(owner_key, held_key, edge_kind)
+);
+
 CREATE TABLE IF NOT EXISTS abom_surface (
   row_id                INTEGER PRIMARY KEY,
   node_row_id           INTEGER NOT NULL REFERENCES abom_node(row_id),
@@ -405,6 +423,9 @@ CREATE TABLE IF NOT EXISTS abom_graph_generation (
   generation     INTEGER PRIMARY KEY AUTOINCREMENT,
   node_watermark INTEGER NOT NULL,
   edge_watermark INTEGER NOT NULL,
+  -- Containment keeps a cursor of its own. It was once cut by the edge watermark against a node
+  -- row id, which are independent sequences, so a delta carried an arbitrary slice of the tree.
+  containment_watermark INTEGER NOT NULL DEFAULT 0,
   created_at     TEXT NOT NULL,
   reach_rebuilt  INTEGER NOT NULL DEFAULT 0,
   rebuild_ms     INTEGER,
@@ -493,6 +514,9 @@ var addedColumns = []struct{ table, column, decl string }{
 	// attesting to things nobody checked.
 	{"abom_finding", "provider", "TEXT"},
 	{"abom_frontier", "expedited_at", "TEXT"},
+	// Generations written before containment was stored carry 0, so the first delta after the
+	// upgrade re-sends the tree once. That is the right answer: no client has seen it yet.
+	{"abom_graph_generation", "containment_watermark", "INTEGER NOT NULL DEFAULT 0"},
 	// Added here as well as in the DDL so an old table has the column before the rebuild that
 	// makes it part of the key copies rows forward.
 	{"abom_frontier", "ref", "TEXT NOT NULL DEFAULT ''"},

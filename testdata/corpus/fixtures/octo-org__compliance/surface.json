@@ -1,0 +1,21 @@
+{"#select":{"columns":[
+   {"name":"subjectPath","kind":"String"}
+  ,{"name":"subjectJob","kind":"String"}
+  ,{"name":"name","kind":"String"}
+  ,{"name":"value","kind":"String"}]
+ ,"tuples":[
+   [".github/workflows/compliance.yml","audit","permissions","contents: read"]
+  ,[".github/workflows/compliance.yml","audit","runsOn","ubuntu-latest"]
+  ,[".github/workflows/compliance.yml","audit","triggers","push"]
+  ,[".github/workflows/compliance.yml","audit","permissionsScope","job"]
+  ,[".github/workflows/compliance.yml","audit","privileged","false"]
+  ,[".github/workflows/compliance.yml","audit","secretsInherit","false"]
+  ,[".github/workflows/compliance.yml","audit","externallyTriggerable","false"]
+  ,[".github/workflows/compliance.yml","report","permissions","contents: read"]
+  ,[".github/workflows/compliance.yml","report","runsOn","ubuntu-latest"]
+  ,[".github/workflows/compliance.yml","report","triggers","push"]
+  ,[".github/workflows/compliance.yml","report","permissionsScope","job"]
+  ,[".github/workflows/compliance.yml","report","privileged","false"]
+  ,[".github/workflows/compliance.yml","report","secretsInherit","false"]
+  ,[".github/workflows/compliance.yml","report","externallyTriggerable","false"]]
+ }}

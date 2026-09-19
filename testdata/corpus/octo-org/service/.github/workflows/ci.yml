@@ -13,6 +13,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
+      # The same advisory as shared-action reaches, named here directly, so one advisory has both
+      # a direct and a transitive reader and the two columns cannot be the same number.
+      - uses: tj-actions/changed-files@v45.0.7
       - uses: actions/cache@v4
         with:
           path: ~/.npm

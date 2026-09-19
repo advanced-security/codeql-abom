@@ -110,6 +110,14 @@ ABOM_E2E_FLAGS ?=
 # installed and an app bundle with no framework inside, which fails as a launch error rather than
 # as a missing browser.
 ABOM_E2E_CHANNEL ?=
+## e2e-corpus: the same suite against the shared data set rather than an empty database.
+##
+## A separate target so the path lives here rather than in a workflow: `make e2e` wipes its
+## directory only when pointed at its own default, so naming the corpus database from outside is
+## safe but means two files have to agree about where it is.
+e2e-corpus: corpus
+	@$(MAKE) e2e ABOM_E2E_DB="$(abspath $(ABOM_CORPUS_DB))"
+
 e2e: build publish
 	@if [ "$(abspath $(ABOM_E2E_DB))" = "$(abspath $(ABOM_DB))" ]; then \
 		echo "e2e: refusing to run against $(ABOM_DB), which is the working database."; \

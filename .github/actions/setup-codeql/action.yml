@@ -28,6 +28,19 @@ runs:
         path: ~/.local/share/gh/extensions
         key: gh-codeql-${{ runner.os }}-${{ steps.version.outputs.codeql }}
 
+    # The packs upstream of ours, which `pack install` fetches from the registry every run
+    # otherwise. Keyed on the lock files because they record exactly which versions resolved, and
+    # on the CLI version because a pack is compiled against one.
+    - name: Setup CodeQL - Restore the query pack cache
+      if: inputs.enable-cache == 'true' && inputs.install-packs == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.codeql/packages
+        key: >-
+          codeql-packs-${{ runner.os }}-${{ steps.version.outputs.codeql }}-${{
+          hashFiles('ql/**/codeql-pack.lock.yml') }}
+        restore-keys: codeql-packs-${{ runner.os }}-${{ steps.version.outputs.codeql }}-
+
     - name: Setup CodeQL - Install the CLI
       shell: bash
       env:

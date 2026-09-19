@@ -265,6 +265,11 @@ func (s *Store) nextGeneration(bumpEpoch bool) (int64, error) {
 		`SELECT MAX(row_id) FROM abom_edge`).Scan(&edgeMark); err != nil {
 		return 0, fmt.Errorf("reading the edge watermark: %w", err)
 	}
+	var containMark sql.NullInt64
+	if err := s.db.QueryRow(
+		`SELECT MAX(row_id) FROM abom_containment`).Scan(&containMark); err != nil {
+		return 0, fmt.Errorf("reading the containment watermark: %w", err)
+	}
 	epoch, err := s.currentEpoch()
 	if err != nil {
 		return 0, err
@@ -276,8 +281,9 @@ func (s *Store) nextGeneration(bumpEpoch bool) (int64, error) {
 	}
 	res, err := s.db.Exec(`
 		INSERT INTO abom_graph_generation
-			(node_watermark, edge_watermark, created_at, reach_rebuilt, epoch)
-		VALUES (?, ?, ?, 0, ?)`, nodeMark.Int64, edgeMark.Int64, now(), epoch)
+			(node_watermark, edge_watermark, containment_watermark, created_at, reach_rebuilt, epoch)
+		VALUES (?, ?, ?, ?, 0, ?)`,
+		nodeMark.Int64, edgeMark.Int64, containMark.Int64, now(), epoch)
 	if err != nil {
 		return 0, fmt.Errorf("recording a generation: %w", err)
 	}
