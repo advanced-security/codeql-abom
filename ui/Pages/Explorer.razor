@@ -1198,6 +1198,9 @@
         var query = new List<string>();
         if (ShowSteps) query.Add("steps=true");
         if (!string.IsNullOrEmpty(_scope)) query.Add("scope=" + _scope);
+        // Applied by the server, not handed over: the browser cannot filter by a shape the
+        // payload never carried, because the edges the other shape observed never arrived.
+        if (!string.IsNullOrEmpty(Scope.Spec.Mode)) query.Add("mode=" + Scope.Spec.Mode);
         // A node carries one grouping value, for the configured key only, so the browser cannot
         // narrow by an arbitrary property at all. These two terms are asked of the server or they
         // are not applied anywhere. The URL is the payload cache key, so a change refetches.
@@ -1453,6 +1456,7 @@
         Properties = Scope.Spec.Properties,
         NotProperties = Scope.Spec.NotProperties,
         Steps = Scope.Spec.Steps,
+        Mode = Scope.Spec.Mode,
 
         Scope = _scope,
         Search = _search,

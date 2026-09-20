@@ -95,6 +95,10 @@ type BOMFinding struct {
 	PackDigest string `json:"packDigest,omitempty"`
 	ResultHash string `json:"resultHash,omitempty"`
 	CLIVersion string `json:"cliVersion,omitempty"`
+	// AnalysisModes are the shapes this defect was seen in, sorted. More than one is one defect
+	// two analyses both found, never two defects: a shape is how it was looked for, not what is
+	// wrong. Empty means no run claims it, which is unstated rather than regular.
+	AnalysisModes []string `json:"analysisModes,omitempty"`
 }
 
 // BOMAdvisory is an advisory naming a component's repository.

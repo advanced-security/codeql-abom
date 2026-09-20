@@ -227,6 +227,20 @@ else
                     else
                     {
                         <MudText Typo="Typo.body2">@context.Item.Findings.Count.ToString("N0")</MudText>
+                        @* The shape is stated beside the count rather than behind a filter: a
+                           result from a repository's own checkout and one from its staged closure
+                           are different claims, and a reader who does not know that is exactly
+                           the reader who would read them as one. *@
+                        @foreach (var shape in context.Item.Findings
+                                      .GroupBy(f => f.ShapeText)
+                                      .OrderBy(g => g.Key, StringComparer.Ordinal))
+                        {
+                            <MudText Typo="Typo.caption"
+                                     Class="@(shape.Key == "shape not recorded"
+                                                ? "abom-unconfirmed d-block" : "d-block mud-text-secondary")">
+                                @shape.Count().ToString("N0") @shape.Key
+                            </MudText>
+                        }
                         @if (context.Item.Findings.Any(f => string.IsNullOrEmpty(f.RunKey)))
                         {
                             <MudText Typo="Typo.caption" Class="abom-unconfirmed d-block">

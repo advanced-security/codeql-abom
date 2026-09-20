@@ -1001,6 +1001,24 @@ public sealed record BomFinding
     public string PackDigest { get; init; } = string.Empty;
     public string ResultHash { get; init; } = string.Empty;
     public string CliVersion { get; init; } = string.Empty;
+
+    /// <summary>
+    /// The analysis shapes this defect was seen in. More than one is one defect two analyses both
+    /// found, never two defects. Empty means no run claims it, which is unstated rather than
+    /// regular.
+    /// </summary>
+    public IReadOnlyList<string> AnalysisModes { get; init; } = [];
+
+    /// <summary>
+    /// How to say the shape on a screen. `mixed` for a defect both analyses found, because
+    /// naming both would read as two answers to one question.
+    /// </summary>
+    public string ShapeText => AnalysisModes.Count switch
+    {
+        0 => "shape not recorded",
+        1 => AnalysisModes[0],
+        _ => "mixed",
+    };
 }
 
 /// <summary>
