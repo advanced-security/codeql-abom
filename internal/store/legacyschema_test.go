@@ -110,7 +110,7 @@ func migratedLegacyStoreWith(t *testing.T, seed func(*Store)) *Store {
 func TestAnUpgradedDatabaseAcceptsTheFullRunIdentity(t *testing.T) {
 	s := migratedLegacyStore(t)
 
-	run := QueryRun{
+	run := QueryRun{AnalysisMode: AnalysisModeRegular,
 		QueryID: "abom/edges", QueryVersion: "1.0.0",
 		Pack: "advanced-security/abom-actions-graph-extraction-src", PackVersion: "2.26.4",
 		PackDigest: "ab12cd34", CLIVersion: "2.26.4",

@@ -43,7 +43,7 @@ func settledRow(t *testing.T, h *harness, owner, repo string) {
 
 func analyzedAt(t *testing.T, h *harness, repo, digest, cliVersion string) {
 	t.Helper()
-	if _, err := h.store.RecordQueryRun(store.QueryRun{
+	if _, err := h.store.RecordQueryRun(store.QueryRun{AnalysisMode: store.AnalysisModeRegular,
 		QueryID: "abom/edges", Repository: repo, DBCommit: "sha",
 		Pack: "graph", PackVersion: "1.0.0", PackDigest: digest, CLIVersion: cliVersion,
 	}); err != nil {

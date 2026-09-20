@@ -81,7 +81,7 @@ func TestFindingRequiresRuleID(t *testing.T) {
 
 func TestRecordQueryRunIsIdempotent(t *testing.T) {
 	s := newTestStore(t)
-	run := QueryRun{
+	run := QueryRun{AnalysisMode: AnalysisModeRegular,
 		QueryID: "abom/edges", QueryVersion: "0.1.0", PackVersion: "0.1.0",
 		Repository: "octo-org/app", DBCommit: "abc123",
 	}
@@ -102,7 +102,7 @@ func TestRecordQueryRunIsIdempotent(t *testing.T) {
 // A different query version is a different run, because its results may differ.
 func TestQueryRunVersionDistinguishesRuns(t *testing.T) {
 	s := newTestStore(t)
-	base := QueryRun{QueryID: "abom/edges", Repository: "octo-org/app", QueryVersion: "1"}
+	base := QueryRun{AnalysisMode: AnalysisModeRegular, QueryID: "abom/edges", Repository: "octo-org/app", QueryVersion: "1"}
 	bumped := base
 	bumped.QueryVersion = "2"
 
@@ -121,10 +121,10 @@ func TestQueryRunVersionDistinguishesRuns(t *testing.T) {
 
 func TestRecordQueryRunRejectsIncompleteInput(t *testing.T) {
 	s := newTestStore(t)
-	if _, err := s.RecordQueryRun(QueryRun{Repository: "octo-org/app"}); err == nil {
+	if _, err := s.RecordQueryRun(QueryRun{AnalysisMode: AnalysisModeRegular, Repository: "octo-org/app"}); err == nil {
 		t.Error("expected an error when QueryID is missing")
 	}
-	if _, err := s.RecordQueryRun(QueryRun{QueryID: "abom/edges"}); err == nil {
+	if _, err := s.RecordQueryRun(QueryRun{AnalysisMode: AnalysisModeRegular, QueryID: "abom/edges"}); err == nil {
 		t.Error("expected an error when Repository is missing")
 	}
 }
@@ -164,7 +164,7 @@ func TestReanalysisAttachesTheRunThatReproducedAFinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertRepository: %v", err)
 	}
-	runID, err := s.RecordQueryRun(QueryRun{
+	runID, err := s.RecordQueryRun(QueryRun{AnalysisMode: AnalysisModeRegular,
 		QueryID: "codeql/actions-queries", Repository: "octo-org/app", DBCommit: "sha",
 	})
 	if err != nil {
@@ -215,7 +215,7 @@ func TestAReanalysisWithNoRunLeavesTheRecordedOneAlone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertRepository: %v", err)
 	}
-	runID, err := s.RecordQueryRun(QueryRun{
+	runID, err := s.RecordQueryRun(QueryRun{AnalysisMode: AnalysisModeRegular,
 		QueryID: "codeql/actions-queries", Repository: "octo-org/app", DBCommit: "sha",
 	})
 	if err != nil {

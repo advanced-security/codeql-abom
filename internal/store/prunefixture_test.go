@@ -65,7 +65,7 @@ func pruneFixture(t *testing.T) *Store {
 	}
 
 	// A run and a finding, so the ledger's survival is observable.
-	run, err := s.RecordQueryRun(QueryRun{QueryID: "abom/edges", Repository: "stranger/repo"})
+	run, err := s.RecordQueryRun(QueryRun{AnalysisMode: AnalysisModeRegular, QueryID: "abom/edges", Repository: "stranger/repo"})
 	if err != nil {
 		t.Fatalf("RecordQueryRun: %v", err)
 	}

@@ -32,6 +32,11 @@ type QueryRun struct {
 	// that filter puts files in front of the extractor that this run never saw. Without it here,
 	// a wider crawl would find every commit already on record and decline to look again.
 	SourceFilter string
+	// AnalysisMode says how the database was built, `regular` or `extended`. Absent is refused
+	// rather than defaulted: the same rule id means a defect in code the repository holds in one
+	// shape and exposure across a `uses:` boundary in the other, and a row that cannot say which
+	// silently joins whichever total reads it.
+	AnalysisMode string
 	// Ref and AnalyzedRef are how this evaluation was reached, not what it evaluated. They are
 	// deliberately absent from key(): the run is identified by content, so two refs at one
 	// commit are one evaluation, recorded as two rows in abom_query_run_ref.
@@ -41,32 +46,56 @@ type QueryRun struct {
 
 func (q QueryRun) key() string {
 	h := sha256.New()
-	for _, part := range []string{
+	parts := []string{
 		q.QueryID, q.QueryVersion, q.Pack, q.PackVersion, q.PackDigest,
 		q.CLIVersion, q.Repository, q.DBCommit, q.SourceFilter,
-	} {
+	}
+	// Appended rather than always present, so a regular run hashes exactly the tuple it hashed
+	// before the column existed. A length-prefixed empty field is still a field.
+	if part := analysisModeKeyPart(q.AnalysisMode); part != "" {
+		parts = append(parts, part)
+	}
+	for _, part := range parts {
 		// Length-prefixed, so no two different tuples can concatenate to the same bytes.
 		fmt.Fprintf(h, "%d:%s\x00", len(part), part)
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// identified refuses a run that cannot be traced or aggregated.
+//
+// The mode is checked here rather than at the insert alone, so the skip paths refuse it too: a
+// lookup that defaulted the mode would report an extended evaluation as already done because the
+// regular one was.
+func (q QueryRun) identified() error {
+	if q.QueryID == "" || q.Repository == "" {
+		return fmt.Errorf("store: QueryRun needs QueryID and Repository")
+	}
+	if !ValidAnalysisMode(q.AnalysisMode) {
+		return fmt.Errorf(
+			"store: QueryRun for %s must state how its database was built, one of %v; got %q",
+			q.QueryID, AnalysisModes(), q.AnalysisMode)
+	}
+	return nil
+}
+
 // RecordQueryRun returns the row id for a run, inserting it when absent.
 func (s *Store) RecordQueryRun(q QueryRun) (int64, error) {
-	if q.QueryID == "" || q.Repository == "" {
-		return 0, fmt.Errorf("store: QueryRun needs QueryID and Repository")
+	if err := q.identified(); err != nil {
+		return 0, err
 	}
 	key := q.key()
 
 	if _, err := s.db.Exec(`
 		INSERT INTO abom_query_run
 			(run_key, query_id, query_version, pack, pack_version, pack_digest,
-			 cli_version, repository, db_commit, source_filter, ran_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 cli_version, repository, db_commit, source_filter, analysis_mode, ran_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(run_key) DO UPDATE SET ran_at = excluded.ran_at`,
 		key, q.QueryID, nullable(q.QueryVersion), nullable(q.Pack), nullable(q.PackVersion),
 		nullable(q.PackDigest), nullable(q.CLIVersion),
-		q.Repository, nullable(q.DBCommit), nullable(q.SourceFilter), now()); err != nil {
+		q.Repository, nullable(q.DBCommit), nullable(q.SourceFilter),
+		q.AnalysisMode, now()); err != nil {
 		return 0, fmt.Errorf("recording query run for %s: %w", q.QueryID, err)
 	}
 
@@ -97,6 +126,9 @@ func (s *Store) RecordQueryRun(q QueryRun) (int64, error) {
 func (s *Store) AttachQueryRunRef(q QueryRun) (bool, error) {
 	if q.AnalyzedRef == "" {
 		return false, nil
+	}
+	if err := q.identified(); err != nil {
+		return false, err
 	}
 	var id int64
 	err := s.db.QueryRow(

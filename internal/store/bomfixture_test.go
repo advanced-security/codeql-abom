@@ -98,7 +98,7 @@ func bomFixture(t *testing.T) *Store {
 	}
 
 	// A run that recorded every provenance field.
-	traced, err := s.RecordQueryRun(QueryRun{
+	traced, err := s.RecordQueryRun(QueryRun{AnalysisMode: AnalysisModeRegular,
 		QueryID: "abom/edges", QueryVersion: "1.0.0", Pack: "abom/actions-graph",
 		PackVersion: "0.1.0", PackDigest: "sha256:pack", CLIVersion: "2.26.4",
 		Repository: "octo-org/app", DBCommit: "cafe1234",

@@ -10,7 +10,7 @@ import (
 // ingested, so the join under test is the one the crawl actually produces.
 func recordCondition(t *testing.T, s *store.Store, stepKey, expression string) {
 	t.Helper()
-	run, err := s.RecordQueryRun(store.QueryRun{
+	run, err := s.RecordQueryRun(store.QueryRun{AnalysisMode: store.AnalysisModeRegular,
 		QueryID: "abom/step-conditions", Repository: "octo-org/lib",
 	})
 	if err != nil {

@@ -75,8 +75,8 @@ func (s *Store) CommitContentDigest(repository, commit string) (string, bool, er
 // and the findings stay attributed to it, because recording a run that did not happen is the one
 // way this could turn into a claim ABOM has not earned.
 func (s *Store) QueryRunExistsForContent(q QueryRun, digest string) (bool, error) {
-	if q.QueryID == "" || q.Repository == "" {
-		return false, fmt.Errorf("store: QueryRun needs QueryID and Repository")
+	if err := q.identified(); err != nil {
+		return false, err
 	}
 	// An empty digest is a caller that could not read the tree. Matching on it would make every
 	// unreadable checkout equivalent to every other.
@@ -98,10 +98,14 @@ func (s *Store) QueryRunExistsForContent(q QueryRun, digest string) (bool, error
 		  AND COALESCE(r.pack_digest,'') = ?
 		  AND COALESCE(r.cli_version,'') = ?
 		  AND COALESCE(r.source_filter,'') = ?
+		  -- Content stands in for the commit, never for the shape: a staged closure holds files
+		  -- the repository's own checkout never contained, so a regular run over the same content
+		  -- has not answered the extended question.
+		  AND r.analysis_mode = ?
 		  AND c.indexed_digest = ?
 		LIMIT 1`,
 		q.Repository, q.QueryID, q.QueryVersion, q.Pack, q.PackVersion, q.PackDigest,
-		q.CLIVersion, q.SourceFilter, digest).Scan(&one)
+		q.CLIVersion, q.SourceFilter, q.AnalysisMode, digest).Scan(&one)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}

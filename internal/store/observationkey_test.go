@@ -282,7 +282,7 @@ CREATE TABLE abom_observation (
 
 func observationRunAt(t *testing.T, s *Store, queryID, commit string) int64 {
 	t.Helper()
-	id, err := s.RecordQueryRun(QueryRun{
+	id, err := s.RecordQueryRun(QueryRun{AnalysisMode: AnalysisModeRegular,
 		QueryID: queryID, QueryVersion: "1", PackVersion: "0.1.0",
 		Repository: "octo/app", DBCommit: commit,
 	})

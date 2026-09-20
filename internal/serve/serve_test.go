@@ -226,7 +226,7 @@ func TestNodeObservationsCarryTheirQuery(t *testing.T) {
 	srv, s := newServer(t)
 	seedGraph(t, s)
 
-	run, err := s.RecordQueryRun(store.QueryRun{
+	run, err := s.RecordQueryRun(store.QueryRun{AnalysisMode: store.AnalysisModeRegular,
 		QueryID: "abom/step-conditions", Repository: "octo-org/app",
 	})
 	if err != nil {

@@ -13,10 +13,12 @@ func TestAnAnalyzedRowNamesTheSuitesThatProducedIt(t *testing.T) {
 	s := newTestStore(t)
 	seedAnalyzedRow(t, s, "actions/checkout", "v4", "actions", "checkout", "cafe1234")
 	for _, q := range []QueryRun{
-		{QueryID: "abom/edges", Pack: "advanced-security/abom-actions-graph-extraction-src",
+		{AnalysisMode: AnalysisModeRegular,
+			QueryID: "abom/edges", Pack: "advanced-security/abom-actions-graph-extraction-src",
 			PackVersion: "2.26.4", CLIVersion: "2.26.4",
 			Repository: "actions/checkout", DBCommit: "cafe1234"},
-		{QueryID: "actions/unpinned-tag", Pack: "codeql/actions-queries",
+		{AnalysisMode: AnalysisModeRegular,
+			QueryID: "actions/unpinned-tag", Pack: "codeql/actions-queries",
 			PackVersion: "0.6.34", CLIVersion: "2.26.4",
 			Repository: "actions/checkout", DBCommit: "cafe1234"},
 	} {
@@ -50,7 +52,7 @@ func TestAnAnalyzedRowNamesTheSuitesThatProducedIt(t *testing.T) {
 func TestARowAnalyzedBeforePackIdentityNamesNothingRatherThanClaimingNoSuites(t *testing.T) {
 	s := newTestStore(t)
 	seedAnalyzedRow(t, s, "actions/cache", "", "actions", "cache", "beef5678")
-	if _, err := s.RecordQueryRun(QueryRun{
+	if _, err := s.RecordQueryRun(QueryRun{AnalysisMode: AnalysisModeRegular,
 		QueryID: "abom/edges", Repository: "actions/cache", DBCommit: "beef5678",
 	}); err != nil {
 		t.Fatalf("RecordQueryRun: %v", err)
@@ -70,7 +72,7 @@ func TestARowAnalyzedBeforePackIdentityNamesNothingRatherThanClaimingNoSuites(t 
 func TestSuitesDoNotLeakFromAnotherCommitOfTheSameRepository(t *testing.T) {
 	s := newTestStore(t)
 	seedAnalyzedRow(t, s, "actions/checkout", "v4", "actions", "checkout", "cafe1234")
-	if _, err := s.RecordQueryRun(QueryRun{
+	if _, err := s.RecordQueryRun(QueryRun{AnalysisMode: AnalysisModeRegular,
 		QueryID: "actions/unpinned-tag", Pack: "codeql/actions-queries", PackVersion: "0.6.34",
 		CLIVersion: "2.26.4", Repository: "actions/checkout", DBCommit: "0ther999",
 	}); err != nil {
@@ -94,7 +96,7 @@ func TestARowWithNoCommitMatchesNoRunAtAll(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seeding the queue: %v", err)
 	}
-	if _, err := s.RecordQueryRun(QueryRun{
+	if _, err := s.RecordQueryRun(QueryRun{AnalysisMode: AnalysisModeRegular,
 		QueryID: "abom/edges", Pack: "codeql/actions-queries", PackVersion: "0.6.34",
 		Repository: "actions/stale",
 	}); err != nil {
@@ -117,7 +119,7 @@ func TestARowSettledByEquivalentContentNamesTheSuitesThatRan(t *testing.T) {
 	seedAnalyzedRow(t, s, "actions/checkout", "v4", "actions", "checkout", "new1234")
 	sameContent(t, s, "actions/checkout", "old9999", "digest-a")
 	sameContent(t, s, "actions/checkout", "new1234", "digest-a")
-	if _, err := s.RecordQueryRun(QueryRun{
+	if _, err := s.RecordQueryRun(QueryRun{AnalysisMode: AnalysisModeRegular,
 		QueryID: "actions/unpinned-tag", Pack: "codeql/actions-queries", PackVersion: "0.6.34",
 		CLIVersion: "2.26.4", Repository: "actions/checkout", DBCommit: "old9999",
 	}); err != nil {
@@ -140,7 +142,7 @@ func TestSuitesDoNotLeakFromACommitWhoseContentDiffers(t *testing.T) {
 	seedAnalyzedRow(t, s, "actions/checkout", "v4", "actions", "checkout", "new1234")
 	sameContent(t, s, "actions/checkout", "old9999", "digest-a")
 	sameContent(t, s, "actions/checkout", "new1234", "digest-b")
-	if _, err := s.RecordQueryRun(QueryRun{
+	if _, err := s.RecordQueryRun(QueryRun{AnalysisMode: AnalysisModeRegular,
 		QueryID: "actions/unpinned-tag", Pack: "codeql/actions-queries", PackVersion: "0.6.34",
 		CLIVersion: "2.26.4", Repository: "actions/checkout", DBCommit: "old9999",
 	}); err != nil {

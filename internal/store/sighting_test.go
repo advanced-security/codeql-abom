@@ -241,7 +241,7 @@ func recordRun(t *testing.T, s *Store, repository, commit string) int64 {
 
 func recordRunWithPack(t *testing.T, s *Store, repository, commit, packVersion string) int64 {
 	t.Helper()
-	id, err := s.RecordQueryRun(QueryRun{
+	id, err := s.RecordQueryRun(QueryRun{AnalysisMode: AnalysisModeRegular,
 		QueryID: "actions/unpinned-tag", QueryVersion: "1.0.0",
 		Pack: "codeql/actions-queries", PackVersion: packVersion,
 		Repository: repository, DBCommit: commit,

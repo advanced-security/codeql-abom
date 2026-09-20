@@ -8,7 +8,7 @@ const (
 )
 
 func runAt(repo, commit string) QueryRun {
-	return QueryRun{
+	return QueryRun{AnalysisMode: AnalysisModeRegular,
 		QueryID: "abom/edges", Repository: repo, DBCommit: commit,
 		Pack: "graph", PackVersion: "1.0.0", PackDigest: "aaaa1111", CLIVersion: "2.26.4",
 	}

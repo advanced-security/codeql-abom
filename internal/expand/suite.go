@@ -135,6 +135,9 @@ func (p tierPlan) queryRun(queryID string, at revision) store.QueryRun {
 	return p.identify(queryID, store.QueryRun{
 		QueryID: queryID, Repository: at.repository, DBCommit: at.commit,
 		SourceFilter: at.filter,
+		// One repository's own sparse checkout, which is the only database this lane builds.
+		// Stated rather than left to a default, so a second shape cannot arrive unannounced.
+		AnalysisMode: store.AnalysisModeRegular,
 		Ref:          at.ref, AnalyzedRef: at.analyzed,
 	})
 }
@@ -145,6 +148,7 @@ func (p tierPlan) findingsRun(at revision) store.QueryRun {
 	return p.identifyFindings(store.QueryRun{
 		QueryID: strings.Join(p.findings, " "), Repository: at.repository, DBCommit: at.commit,
 		SourceFilter: at.filter,
+		AnalysisMode: store.AnalysisModeRegular,
 		Ref:          at.ref, AnalyzedRef: at.analyzed,
 	})
 }

@@ -198,6 +198,9 @@ func ingestRepository(s *store.Store, fixtures, full string, without map[string]
 		QueryID:      "abom/surface",
 		QueryVersion: "corpus-fixture",
 		Repository:   full,
+		// The recording replays one repository's own checkout, which is the shape it was taken
+		// from.
+		AnalysisMode: store.AnalysisModeRegular,
 	})
 	if err != nil {
 		return fmt.Errorf("recording the fixture run: %w", err)

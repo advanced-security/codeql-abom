@@ -28,7 +28,7 @@ func observationStore(t *testing.T) *store.Store {
 // If this ever needs a code change to pass, the design has failed.
 func TestAQueryNobodyWroteCodeForCanStillContributeFacts(t *testing.T) {
 	s := observationStore(t)
-	run, err := s.RecordQueryRun(store.QueryRun{
+	run, err := s.RecordQueryRun(store.QueryRun{AnalysisMode: store.AnalysisModeRegular,
 		QueryID: "someone/invented-this-later", QueryVersion: "1",
 		Repository: "octo/app", DBCommit: "abc",
 	})
@@ -76,7 +76,7 @@ func TestAQueryNobodyWroteCodeForCanStillContributeFacts(t *testing.T) {
 // columns would rule out exactly the queries most likely to be written quickly.
 func TestSubjectAndNameAreEnough(t *testing.T) {
 	s := observationStore(t)
-	run, err := s.RecordQueryRun(store.QueryRun{
+	run, err := s.RecordQueryRun(store.QueryRun{AnalysisMode: store.AnalysisModeRegular,
 		QueryID: "abom/minimal", Repository: "octo/app",
 	})
 	if err != nil {
@@ -107,7 +107,7 @@ func TestSubjectAndNameAreEnough(t *testing.T) {
 // ingest is far cheaper than discovering it as a silently empty view later.
 func TestAQueryMissingTheContractIsRefusedWithTheColumnItNeeds(t *testing.T) {
 	s := observationStore(t)
-	run, err := s.RecordQueryRun(store.QueryRun{QueryID: "abom/bad", Repository: "octo/app"})
+	run, err := s.RecordQueryRun(store.QueryRun{AnalysisMode: store.AnalysisModeRegular, QueryID: "abom/bad", Repository: "octo/app"})
 	if err != nil {
 		t.Fatalf("RecordQueryRun: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestObservationsCannotBeIngestedWithoutAQueryRun(t *testing.T) {
 // could not attach a single fact to the job it measured.
 func TestAQueryMayNameASubjectByWhereItSits(t *testing.T) {
 	s := observationStore(t)
-	run, err := s.RecordQueryRun(store.QueryRun{QueryID: "abom/surface", Repository: "octo/app"})
+	run, err := s.RecordQueryRun(store.QueryRun{AnalysisMode: store.AnalysisModeRegular, QueryID: "abom/surface", Repository: "octo/app"})
 	if err != nil {
 		t.Fatalf("RecordQueryRun: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestAQueryMayNameASubjectByWhereItSits(t *testing.T) {
 // rather than a job inside it needs.
 func TestASubjectWithoutAJobIsTheWorkflow(t *testing.T) {
 	s := observationStore(t)
-	run, err := s.RecordQueryRun(store.QueryRun{QueryID: "abom/wf", Repository: "octo/app"})
+	run, err := s.RecordQueryRun(store.QueryRun{AnalysisMode: store.AnalysisModeRegular, QueryID: "abom/wf", Repository: "octo/app"})
 	if err != nil {
 		t.Fatalf("RecordQueryRun: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestASubjectWithoutAJobIsTheWorkflow(t *testing.T) {
 // whole job, which is a different and much weaker claim.
 func TestAQueryMayNameAStepByItsPosition(t *testing.T) {
 	s := observationStore(t)
-	run, err := s.RecordQueryRun(store.QueryRun{QueryID: "abom/conditions", Repository: "octo/app"})
+	run, err := s.RecordQueryRun(store.QueryRun{AnalysisMode: store.AnalysisModeRegular, QueryID: "abom/conditions", Repository: "octo/app"})
 	if err != nil {
 		t.Fatalf("RecordQueryRun: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestAQueryMayNameAStepByItsPosition(t *testing.T) {
 // steps run inside every caller.
 func TestAStepInACompositeActionIsNamedByPositionRatherThanItsFile(t *testing.T) {
 	s := observationStore(t)
-	run, err := s.RecordQueryRun(store.QueryRun{QueryID: "abom/conditions", Repository: "octo/app"})
+	run, err := s.RecordQueryRun(store.QueryRun{AnalysisMode: store.AnalysisModeRegular, QueryID: "abom/conditions", Repository: "octo/app"})
 	if err != nil {
 		t.Fatalf("RecordQueryRun: %v", err)
 	}
