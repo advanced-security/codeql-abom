@@ -28,7 +28,7 @@ func (s *Store) RequeueStale(cliVersion string, packDigests []string) (int, erro
 	if cliVersion == "" || len(packDigests) == 0 {
 		return 0, fmt.Errorf(
 			"store: RequeueStale needs a CodeQL version and at least one pack digest; " +
-				"an empty identity would requeue the whole corpus")
+				"an empty identity would requeue everything recorded")
 	}
 
 	args := make([]any, 0, len(packDigests)+2)

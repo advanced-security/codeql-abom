@@ -172,6 +172,59 @@ const linkKey = e => `${e.source}\u0000${e.target}`;
 // arriving mid-session sees either shape.
 const endpointKey = end => (end && typeof end === 'object' ? end.key : end);
 
+// The facts the server reports as either shared by every relationship behind a line or mixed.
+// Merging has to reach the same answer, or a line the server would call mixed is drawn asserting
+// one of its relationships' facts as the pair's.
+const EDGE_FACTS = ['kind', 'boundary', 'refStyle', 'advisoryRoute', 'findingRoute', 'ownedDepth'];
+
+/**
+ * Drops the relationships a delta removed, and reports whether any are left to draw.
+ *
+ * A line stands for every relationship between its endpoints, so removing one of three leaves the
+ * line and two relationships. Its references cannot follow: the payload carries them per line
+ * rather than per relationship, so a removed reference stays on screen until the next full load.
+ */
+function survivesRemoval(edge, gone) {
+    if (!gone.size || !edge.keys || !edge.keys.length) return true;
+    const left = edge.keys.filter(k => !gone.has(k));
+    if (!left.length) return false;
+    if (left.length !== edge.keys.length) {
+        edge.keys = left;
+        edge.count = left.length;
+    }
+    return true;
+}
+
+/** Everything in both lists, in the order first seen, without duplicates. */
+function union(mine, theirs) {
+    const out = [];
+    for (const v of [...(mine || []), ...(theirs || [])]) {
+        if (!out.includes(v)) out.push(v);
+    }
+    return out;
+}
+
+/** What a line says about a fact: a value, the mixed sentinel, or null for nothing on record. */
+const MIXED = Symbol('mixed');
+const factOf = (edge, name) => {
+    if ((edge.mixed || []).includes(name)) return MIXED;
+    const v = edge[name];
+    return v === undefined || v === null || v === '' ? null : v;
+};
+
+/** Keeps a fact the merged relationships agree on, and names it as mixed when they do not. */
+function mergeEdgeFacts(edge, incoming) {
+    const mixed = new Set(edge.mixed || []);
+    for (const name of EDGE_FACTS) {
+        if (factOf(edge, name) === factOf(incoming, name) && !mixed.has(name)) continue;
+        // Absent, so a client that ignores `mixed` reads the fact as unknown rather than as a
+        // value that is true of one of the relationships behind the line.
+        mixed.add(name);
+        delete edge[name];
+    }
+    if (mixed.size) edge.mixed = [...mixed];
+}
+
 /**
  * Folds newly discovered nodes and edges into a loaded corpus, in place.
  *
@@ -185,7 +238,7 @@ export function mergeInto(all, delta) {
     if (goneNodes.size || goneEdges.size) {
         all.nodes = all.nodes.filter(n => !goneNodes.has(n.key));
         all.links = all.links.filter(e =>
-            !goneEdges.has(e.key) &&
+            survivesRemoval(e, goneEdges) &&
             !goneNodes.has(endpointKey(e.source)) &&
             !goneNodes.has(endpointKey(e.target)));
     }
@@ -209,9 +262,13 @@ export function mergeInto(all, delta) {
 
         let edge = existing.get(linkKey(incoming));
         if (edge) {
-            // The same relationship seen again carries more references, not a second edge.
-            edge.refs = incoming.refs || edge.refs;
-            edge.count = incoming.count;
+            // The same pair seen again carries more relationships, not a second line. A delta
+            // sends only what arrived, so replacing rather than adding would forget the ones
+            // already drawn and make their later removal match nothing.
+            edge.keys = union(edge.keys, incoming.keys);
+            edge.refs = union(edge.refs, incoming.refs);
+            edge.count = edge.keys.length || incoming.count;
+            mergeEdgeFacts(edge, incoming);
         } else {
             edge = incoming;
             existing.set(linkKey(edge), edge);

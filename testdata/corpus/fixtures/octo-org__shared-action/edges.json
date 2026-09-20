@@ -12,5 +12,6 @@
   ,{"name":"endLine","kind":"Integer"}
   ,{"name":"endColumn","kind":"Integer"}]
  ,"tuples":[
-   ["composite-step-uses-action","composite_action","action.yml","",0,"","actions/setup-node@v4","",8,13,8,33]]
+   ["composite-step-uses-action","composite_action","action.yml","",0,"","actions/setup-node@v4","",8,13,8,33]
+  ,["composite-step-uses-action","composite_action","action.yml","",1,"","tj-actions/changed-files@v45.0.7","",11,13,11,44]]
  }}

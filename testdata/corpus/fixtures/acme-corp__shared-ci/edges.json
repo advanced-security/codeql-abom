@@ -1,0 +1,23 @@
+{"#select":{"columns":[
+   {"name":"edgeKind","kind":"String"}
+  ,{"name":"srcKind","kind":"String"}
+  ,{"name":"srcPath","kind":"String"}
+  ,{"name":"srcJobId","kind":"String"}
+  ,{"name":"srcStepIndex","kind":"Integer"}
+  ,{"name":"srcStepId","kind":"String"}
+  ,{"name":"usesRaw","kind":"String"}
+  ,{"name":"pinComment","kind":"String"}
+  ,{"name":"startLine","kind":"Integer"}
+  ,{"name":"startColumn","kind":"Integer"}
+  ,{"name":"endLine","kind":"Integer"}
+  ,{"name":"endColumn","kind":"Integer"}]
+ ,"tuples":[
+   ["step-uses-action","job",".github/workflows/publish.yml","build",0,"","actions/checkout@v4","",11,15,11,33]
+  ,["step-uses-action","job",".github/workflows/publish.yml","build",1,"","actions/setup-go@v5","",12,15,12,33]
+  ,["step-uses-action","job",".github/workflows/publish.yml","build",2,"","actions/upload-artifact@v4","",13,15,13,40]
+  ,["step-uses-action","job",".github/workflows/publish.yml","ship",0,"","softprops/action-gh-release@v2","",22,15,22,44]
+  ,["step-uses-action","job",".github/workflows/publish.yml","ship",1,"","./.github/actions/announce","",23,15,23,40]
+  ,["composite-step-uses-action","composite_action",".github/actions/announce/action.yml","",0,"","actions/github-script@v7","",6,13,6,36]
+  ,["composite-step-uses-action","composite_action",".github/actions/announce/action.yml","",1,"","tj-actions/changed-files@v45.0.7","",11,13,11,44]
+  ,["job-needs-job","workflow",".github/workflows/publish.yml","ship",-1,"","build","",19,12,19,16]]
+ }}

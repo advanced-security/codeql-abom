@@ -6,6 +6,16 @@ name: 'ABOM code scanning'
 ## What is excluded via `paths-ignore` config, and why each one is test code rather than an
 ## inconvenient finding.
 ##
+## `**/testdata/**` is every fixture tree, and it is the one exclusion that is not about
+## convenience. `testdata/corpus` holds ~290 workflows imported from github/codeql's own Actions
+## query tests: they exist to *be* findings, and analyzing them would report someone else's
+## deliberate test cases as ABOM's own code. Measured 2026-09-19: 341 Actions files sit under it.
+##
+## Recursive on purpose. `testdata/**` matches the tree at the root and nothing else — measured,
+## it still extracted `internal/expand/testdata/sparse/action.yml`, because the pattern is
+## anchored where the analysis started. `**/testdata/**` covers both, and covers a file placed
+## directly in one of them.
+##
 ## `ui/tests` is the Playwright harness. `ui/tests/e2e/browser.mjs` reads
 ## PLAYWRIGHT_BROWSERS_PATH and stats the directory it names, which is `js/path-injection` three
 ## times over and is also the entire feature: an operator points the suite at a browser cache.
@@ -17,7 +27,7 @@ name: 'ABOM code scanning'
 ## wrong scheme -- so there is no module to import and evaluating the source is the only way to
 ## reach it from Node.
 ##
-## Narrow on purpose. Neither pattern reaches a line that is served to anyone, and nothing that
+## Narrow on purpose. No pattern here reaches a line that is served to anyone, and nothing that
 ## ships is excluded. Path filters apply to the languages CodeQL extracts from source, so this
 ## has no effect on the Go and C# analyses; a finding in either still has to be answered.
 ##
@@ -33,5 +43,6 @@ paths-ignore:
   - 'ui/tests'
   - 'ui/bin'
   - 'ui/obj'
+  - '**/testdata/**'
   - '**/*.test.js'
   - '**/*.test.mjs'

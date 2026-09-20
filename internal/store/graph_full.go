@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"regexp"
 	"sort"
@@ -73,6 +74,125 @@ type GraphEdge struct {
 	// Refs are the references observed for this relationship, verbatim and unjudged.
 	Refs  []string `json:"refs"`
 	Count int      `json:"count"`
+	// Keys names every stored relationship this line stands for, so a selection or a delta
+	// removal identifies actual edges. Empty on the containment edges the interface synthesizes:
+	// they are drawn from node rows, are declared nowhere, and have nothing to name.
+	Keys []string `json:"keys,omitempty"`
+	// RefStyle, AdvisoryRoute, FindingRoute and OwnedDepth are the derived facts, carried only
+	// where every constituent agrees. Absent means either that nothing computed the fact or that
+	// the constituents disagree, and Mixed is what distinguishes those two.
+	RefStyle      string `json:"refStyle,omitempty"`
+	AdvisoryRoute *bool  `json:"advisoryRoute,omitempty"`
+	FindingRoute  *bool  `json:"findingRoute,omitempty"`
+	OwnedDepth    *int   `json:"ownedDepth,omitempty"`
+	// Mixed names the facts the constituents disagree about. Keeping the first row's value would
+	// report one relationship's fact as the pair's, which is invisible when they agree and wrong
+	// exactly when the difference matters.
+	Mixed []string `json:"mixed,omitempty"`
+
+	// parts are the rows behind the line. Unexported, so they stay out of the payload: a reader
+	// acts on the keys and on shared-or-mixed facts, and these are here only so that splitting a
+	// dependency into its versions can partition them.
+	parts []edgePart
+}
+
+// edgePart is one stored relationship drawn as part of an edge.
+type edgePart struct {
+	key      string
+	ref      string
+	kind     string
+	boundary string
+	refStyle string
+	advisory sql.NullBool
+	finding  sql.NullBool
+	depth    sql.NullInt64
+}
+
+// The facts a merged edge reports, named as the payload names them.
+const (
+	edgeFactKind     = "kind"
+	edgeFactBoundary = "boundary"
+	edgeFactRefStyle = "refStyle"
+	edgeFactAdvisory = "advisoryRoute"
+	edgeFactFinding  = "findingRoute"
+	edgeFactDepth    = "ownedDepth"
+)
+
+// IsMixed reports whether the relationships behind this edge disagree about a fact.
+func (e GraphEdge) IsMixed(fact string) bool {
+	for _, m := range e.Mixed {
+		if m == fact {
+			return true
+		}
+	}
+	return false
+}
+
+// summarize derives the edge's identity and facts from the relationships behind it.
+//
+// Every fact is either shared by all of them or named in Mixed and left absent, so a client that
+// ignores Mixed reads "unknown" rather than a value that is true of one constituent.
+func (e *GraphEdge) summarize() {
+	e.Keys, e.Mixed = []string{}, []string{}
+	e.Count = len(e.parts)
+	e.Kind, e.Boundary, e.RefStyle = "", "", ""
+	e.AdvisoryRoute, e.FindingRoute, e.OwnedDepth = nil, nil, nil
+	if len(e.parts) == 0 {
+		return
+	}
+
+	first := e.parts[0]
+	e.Kind, e.Boundary, e.RefStyle = first.kind, first.boundary, first.refStyle
+	advisory, finding, depth := first.advisory, first.finding, first.depth
+	for _, p := range e.parts[1:] {
+		e.Kind = shared(e, edgeFactKind, e.Kind, p.kind)
+		e.Boundary = shared(e, edgeFactBoundary, e.Boundary, p.boundary)
+		e.RefStyle = shared(e, edgeFactRefStyle, e.RefStyle, p.refStyle)
+		if advisory != p.advisory {
+			e.mix(edgeFactAdvisory)
+		}
+		if finding != p.finding {
+			e.mix(edgeFactFinding)
+		}
+		if depth != p.depth {
+			e.mix(edgeFactDepth)
+		}
+	}
+	if advisory.Valid && !e.IsMixed(edgeFactAdvisory) {
+		e.AdvisoryRoute = &advisory.Bool
+	}
+	if finding.Valid && !e.IsMixed(edgeFactFinding) {
+		e.FindingRoute = &finding.Bool
+	}
+	if depth.Valid && !e.IsMixed(edgeFactDepth) {
+		hops := int(depth.Int64)
+		e.OwnedDepth = &hops
+	}
+
+	for _, p := range e.parts {
+		// Containment carries no key, and a merged edge never mixes it with a declared one.
+		if p.key != "" {
+			e.Keys = append(e.Keys, p.key)
+		}
+	}
+	sort.Strings(e.Keys)
+}
+
+// shared keeps a value only while the relationships agree about it, and records the disagreement
+// once they do not.
+func shared(e *GraphEdge, fact, running, next string) string {
+	if running == next && !e.IsMixed(fact) {
+		return running
+	}
+	e.mix(fact)
+	return ""
+}
+
+func (e *GraphEdge) mix(fact string) {
+	if e.IsMixed(fact) {
+		return
+	}
+	e.Mixed = append(e.Mixed, fact)
 }
 
 // Graph is the whole corpus.
@@ -99,6 +219,10 @@ type FullGraphOptions struct {
 	// Boundary keeps only relationships of one class. Empty keeps every class *and* the
 	// unclassified, because absent is not a class to filter on.
 	Boundary string
+	// EdgeKinds keeps only relationships of these kinds. Empty asks nothing. Containment is
+	// unaffected: it is a drawing aid rather than a declared relationship, and filtering it away
+	// would answer a question about `needs:` with a scatter of unattached nodes.
+	EdgeKinds []string
 	// Origins keeps only nodes from repositories of these tiers. A node with no repository reads
 	// as "external", which is what the browser calls it. Empty asks nothing.
 	Origins []string
@@ -416,7 +540,15 @@ func (s *Store) FullGraph(opts FullGraphOptions) (Graph, error) {
 		return out, err
 	}
 
-	nodes, edges = attachOwners(nodes, edges)
+	nodes = attachOwners(nodes)
+
+	// Read rather than recomputed. Containment is a fact about the corpus, so a filter narrows
+	// what is drawn from it and never adds a holding nothing states.
+	held, err := s.Containment()
+	if err != nil {
+		return out, err
+	}
+	edges = append(edges, containmentEdges(nodes, held)...)
 
 	nodes, edges = applyNodePredicates(nodes, edges, opts)
 
@@ -586,32 +718,20 @@ func (s *Store) attachRules(display string, index map[string]*GraphNode) error {
 }
 
 func (s *Store) graphEdges(display string, since int64, opts FullGraphOptions) ([]GraphEdge, error) {
-	// A repository is otherwise an island: nothing in abom_edge points at it, so without the
-	// containment half of this union every repo node renders unattached and isolating one finds
-	// nothing. Containment stops at what the repository directly holds, because wiring every
-	// step to it as well would add tens of thousands of edges saying nothing new.
 	cte, args := scopeParts(opts)
 	rows, err := s.db.Query(`WITH `+display+cte+`
 		SELECT sn.node_key, dn.node_key, e.edge_kind, COALESCE(e.ref_value, ''),
-		       COALESCE(e.boundary, '')
+		       COALESCE(e.boundary, ''), e.edge_key, COALESCE(e.ref_style, ''),
+		       e.advisory_route, e.finding_route, e.owned_depth
 		FROM abom_edge_live e
 		JOIN disp ds ON ds.row_id = e.src_node_row_id
 		JOIN disp dd ON dd.row_id = e.dst_node_row_id
 		JOIN abom_node_live sn ON sn.row_id = ds.shown
 		JOIN abom_node_live dn ON dn.row_id = dd.shown
 		WHERE ds.shown <> dd.shown AND e.row_id > ?`+
-		boundaryFilter(opts.Boundary)+
-		scopeFilter(opts, "sn.node_key")+scopeFilter(opts, "dn.node_key")+`
-		UNION ALL
-		SELECT owner.node_key, held.node_key, 'repo-contains', '', ''
-		FROM abom_node_live owner
-		JOIN abom_node_live held ON held.repository_row_id = owner.repository_row_id
-		                   AND held.row_id <> owner.row_id
-		                   AND held.container_node_row_id IS NULL
-		                   AND held.node_kind <> 'repo'
-		WHERE owner.node_kind = 'repo' AND held.row_id > ?`+
-		scopeFilter(opts, "owner.node_key")+scopeFilter(opts, "held.node_key"),
-		append(args, since, since)...)
+		boundaryFilter(opts.Boundary)+edgeKindFilter(opts.EdgeKinds)+
+		scopeFilter(opts, "sn.node_key")+scopeFilter(opts, "dn.node_key"),
+		append(args, since)...)
 	if err != nil {
 		return nil, fmt.Errorf("reading graph edges: %w", err)
 	}
@@ -620,20 +740,21 @@ func (s *Store) graphEdges(display string, since int64, opts FullGraphOptions) (
 	merged := map[[2]string]*GraphEdge{}
 	order := [][2]string{}
 	for rows.Next() {
-		var src, dst, kind, ref, boundary string
-		if err := rows.Scan(&src, &dst, &kind, &ref, &boundary); err != nil {
+		var src, dst string
+		var p edgePart
+		if err := rows.Scan(&src, &dst, &p.kind, &p.ref, &p.boundary, &p.key, &p.refStyle,
+			&p.advisory, &p.finding, &p.depth); err != nil {
 			return nil, fmt.Errorf("scanning graph edge: %w", err)
 		}
 		key := [2]string{src, dst}
 		e, ok := merged[key]
 		if !ok {
-			e = &GraphEdge{Source: src, Target: dst, Kind: kind, Boundary: boundary,
-				Refs: []string{}}
+			e = &GraphEdge{Source: src, Target: dst, Refs: []string{}}
 			merged[key] = e
 			order = append(order, key)
 		}
-		e.Count++
-		e.addGraphRef(ref)
+		e.parts = append(e.parts, p)
+		e.addGraphRef(p.ref)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("reading graph edges: %w", err)
@@ -649,6 +770,7 @@ func (s *Store) graphEdges(display string, since int64, opts FullGraphOptions) (
 	for _, key := range order {
 		e := merged[key]
 		sort.Strings(e.Refs)
+		e.summarize()
 		edges = append(edges, *e)
 	}
 	return edges, nil

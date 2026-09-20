@@ -63,23 +63,49 @@ func (s *Store) MarkOutsideClosure(inClosure []string) (PruneReport, error) {
 var ErrEmptyClosure = errors.New(
 	"store: refusing to prune against an empty closure; declare an owned scope first")
 
-func (s *Store) pruneOutsideClosure(inClosure []string, act bool) (PruneReport, error) {
-	var out PruneReport
-	// An undeclared corpus produces an empty closure, and pruning everything on the strength of
-	// a configuration nobody has written yet is the most destructive thing this could do.
-	if len(inClosure) == 0 {
-		return out, ErrEmptyClosure
-	}
+// ErrUnanalyzedClosure is pruning refusing to act on a closure nothing has been analyzed into.
+//
+// A declared account that has only been enumerated has repositories and no edges, so it reaches
+// nothing and the whole corpus falls outside it. That is not a measurement that the corpus is
+// unreachable; it is the absence of one, and acting on it removes everything the closure has not
+// had the chance to reach yet.
+var ErrUnanalyzedClosure = errors.New(
+	"store: refusing to prune against a closure nothing has been analyzed into; " +
+		"what it reaches is unknown until analysis has run, and pruning now would remove " +
+		"everything it is going to reach")
 
+// closureHasEvidence reports whether anything in the closure has produced an edge.
+//
+// The edge is the evidence. Without one the reach of a declared repository is unknown, and every
+// count taken against it describes a corpus nothing has looked at rather than one found wanting.
+func (s *Store) closureHasEvidence(inClosure []string) (bool, error) {
+	list, args := inList(inClosure)
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM abom_edge e
+		  JOIN repository r ON r.row_id = e.repository_row_id
+		 WHERE e.removed_at IS NULL
+		   AND LOWER(r.repository_full_name) IN `+list, args...).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("reading whether the closure has been analyzed: %w", err)
+	}
+	return n > 0, nil
+}
+
+// outsideClosure builds the tests for what the declared closure does not reach.
+//
+// Shared by the count, the marking and the naming so the three cannot drift apart: a list that
+// disagreed with the number printed beside it would be read as one of them being wrong about the
+// corpus rather than about itself.
+func outsideClosure(inClosure []string) (deadEdges, deadNodes, deadQueueRows string, args []any) {
 	list, args := inList(inClosure)
 	// An edge belongs to the repository that contains it, so containment decides admission and
 	// the endpoints follow. A node is live while any live edge names it, or while it belongs to
 	// a repository inside the closure.
-	deadEdges := `abom_edge.row_id IN (
+	deadEdges = `abom_edge.row_id IN (
 		SELECT e.row_id FROM abom_edge e
 		JOIN repository r ON r.row_id = e.repository_row_id
 		WHERE LOWER(r.repository_full_name) NOT IN ` + list + `)`
-	deadNodes := `abom_node.row_id IN (
+	deadNodes = `abom_node.row_id IN (
 		SELECT n.row_id FROM abom_node n
 		LEFT JOIN repository r ON r.row_id = n.repository_row_id
 		WHERE (r.repository_full_name IS NULL
@@ -92,12 +118,70 @@ func (s *Store) pruneOutsideClosure(inClosure []string, act bool) (PruneReport, 
 		         WHERE (e.src_node_row_id = n.row_id OR e.dst_node_row_id = n.row_id)
 		           AND e.removed_at IS NULL
 		           AND LOWER(er.repository_full_name) IN ` + list + `))`
-
 	// A queue row names the repository it will fetch, so the same boundary decides it. Rows with no
 	// repository are left alone: they name nothing the closure can rule on, and guessing would
 	// delete work over a blank field.
-	deadQueueRows := `owner <> '' AND repo <> ''
+	deadQueueRows = `owner <> '' AND repo <> ''
 	                  AND LOWER(owner || '/' || repo) NOT IN ` + list
+	return deadEdges, deadNodes, deadQueueRows, args
+}
+
+// RepositoriesOutsideClosure names the repositories a prune would take something from.
+//
+// The count answers how big a prune is; this answers which working copies on disk it makes dead
+// weight, which is a question only a name can settle.
+func (s *Store) RepositoriesOutsideClosure(inClosure []string) ([]string, error) {
+	if len(inClosure) == 0 {
+		return nil, ErrEmptyClosure
+	}
+	if ok, err := s.closureHasEvidence(inClosure); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, ErrUnanalyzedClosure
+	}
+	deadEdges, deadNodes, _, args := outsideClosure(inClosure)
+	rows, err := s.db.Query(`
+		SELECT DISTINCT name FROM (
+		    SELECT r.repository_full_name AS name FROM abom_node
+		      JOIN repository r ON r.row_id = abom_node.repository_row_id
+		     WHERE `+LiveNode+` AND `+deadNodes+`
+		    UNION
+		    SELECT r.repository_full_name AS name FROM abom_edge
+		      JOIN repository r ON r.row_id = abom_edge.repository_row_id
+		     WHERE `+LiveEdge+` AND `+deadEdges+`)
+		 ORDER BY name`, repeated(args, 4)...)
+	if err != nil {
+		return nil, fmt.Errorf("naming what is outside the closure: %w", err)
+	}
+	defer rows.Close()
+
+	out := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out = append(out, name)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) pruneOutsideClosure(inClosure []string, act bool) (PruneReport, error) {
+	var out PruneReport
+	// An undeclared corpus produces an empty closure, and pruning everything on the strength of
+	// a configuration nobody has written yet is the most destructive thing this could do.
+	if len(inClosure) == 0 {
+		return out, ErrEmptyClosure
+	}
+	// A closure with no edges behind it has never been analyzed, and everything outside it is
+	// everything: this is the empty-closure refusal arriving one enumeration later.
+	if ok, err := s.closureHasEvidence(inClosure); err != nil {
+		return out, err
+	} else if !ok {
+		return out, ErrUnanalyzedClosure
+	}
+
+	deadEdges, deadNodes, deadQueueRows, args := outsideClosure(inClosure)
 
 	counts := []struct {
 		into  *int
@@ -181,6 +265,11 @@ func (s *Store) nextGeneration(bumpEpoch bool) (int64, error) {
 		`SELECT MAX(row_id) FROM abom_edge`).Scan(&edgeMark); err != nil {
 		return 0, fmt.Errorf("reading the edge watermark: %w", err)
 	}
+	var containMark sql.NullInt64
+	if err := s.db.QueryRow(
+		`SELECT MAX(row_id) FROM abom_containment`).Scan(&containMark); err != nil {
+		return 0, fmt.Errorf("reading the containment watermark: %w", err)
+	}
 	epoch, err := s.currentEpoch()
 	if err != nil {
 		return 0, err
@@ -192,8 +281,9 @@ func (s *Store) nextGeneration(bumpEpoch bool) (int64, error) {
 	}
 	res, err := s.db.Exec(`
 		INSERT INTO abom_graph_generation
-			(node_watermark, edge_watermark, created_at, reach_rebuilt, epoch)
-		VALUES (?, ?, ?, 0, ?)`, nodeMark.Int64, edgeMark.Int64, now(), epoch)
+			(node_watermark, edge_watermark, containment_watermark, created_at, reach_rebuilt, epoch)
+		VALUES (?, ?, ?, ?, 0, ?)`,
+		nodeMark.Int64, edgeMark.Int64, containMark.Int64, now(), epoch)
 	if err != nil {
 		return 0, fmt.Errorf("recording a generation: %w", err)
 	}

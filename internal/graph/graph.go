@@ -377,10 +377,20 @@ func (b *Builder) RebuildAggregates() error {
 	if _, err := b.Store.BackfillRefResolutions(); err != nil {
 		return err
 	}
+	// From nodes alone, so it owes nothing to the walks below and they read none of it.
+	if _, err := b.Store.DeriveContainment(); err != nil {
+		return err
+	}
 	if err := b.BuildBlastRadius(); err != nil {
 		return err
 	}
-	return b.BuildExposure()
+	if err := b.BuildExposure(); err != nil {
+		return err
+	}
+	// Last, because the advisory fact reads the routes exposure just stored. Deriving it before
+	// would leave every edge naming the previous cycle's exposure.
+	_, err := b.Store.DeriveEdgeFacts()
+	return err
 }
 
 // BuildAll finishes a run: findings become properties of nodes, then every aggregate is derived

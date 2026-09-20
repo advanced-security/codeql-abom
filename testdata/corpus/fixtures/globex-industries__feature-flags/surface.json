@@ -1,0 +1,21 @@
+{"#select":{"columns":[
+   {"name":"subjectPath","kind":"String"}
+  ,{"name":"subjectJob","kind":"String"}
+  ,{"name":"name","kind":"String"}
+  ,{"name":"value","kind":"String"}]
+ ,"tuples":[
+   [".github/workflows/test1.yml","if-tests","permissions",""]
+  ,[".github/workflows/test1.yml","if-tests","externallyTriggerable","true"]
+  ,[".github/workflows/test1.yml","if-tests","runsOn","ubuntu-latest"]
+  ,[".github/workflows/test1.yml","if-tests","triggers","workflow_dispatch"]
+  ,[".github/workflows/test1.yml","if-tests","permissionsScope","default"]
+  ,[".github/workflows/test1.yml","if-tests","privileged","false"]
+  ,[".github/workflows/test1.yml","if-tests","secretsInherit","false"]
+  ,[".github/workflows/test2.yml","if-tests","permissions",""]
+  ,[".github/workflows/test2.yml","if-tests","externallyTriggerable","true"]
+  ,[".github/workflows/test2.yml","if-tests","runsOn","ubuntu-latest"]
+  ,[".github/workflows/test2.yml","if-tests","triggers","workflow_dispatch"]
+  ,[".github/workflows/test2.yml","if-tests","permissionsScope","default"]
+  ,[".github/workflows/test2.yml","if-tests","privileged","false"]
+  ,[".github/workflows/test2.yml","if-tests","secretsInherit","false"]]
+ }}

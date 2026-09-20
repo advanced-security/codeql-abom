@@ -1,0 +1,19 @@
+{"#select":{"columns":[
+   {"name":"edgeKind","kind":"String"}
+  ,{"name":"srcKind","kind":"String"}
+  ,{"name":"srcPath","kind":"String"}
+  ,{"name":"srcJobId","kind":"String"}
+  ,{"name":"srcStepIndex","kind":"Integer"}
+  ,{"name":"srcStepId","kind":"String"}
+  ,{"name":"usesRaw","kind":"String"}
+  ,{"name":"pinComment","kind":"String"}
+  ,{"name":"startLine","kind":"Integer"}
+  ,{"name":"startColumn","kind":"Integer"}
+  ,{"name":"endLine","kind":"Integer"}
+  ,{"name":"endColumn","kind":"Integer"}]
+ ,"tuples":[
+   ["step-uses-action","job",".github/workflows/compliance.yml","audit",0,"","actions/checkout@a1b2c3d4e5f60718293a4b5c6d7e8f9012345678","",18,15,18,71]
+  ,["step-uses-action","job",".github/workflows/compliance.yml","audit",1,"","actions/setup-node@b2c3d4e5f60718293a4b5c6d7e8f90123456789a","",19,15,19,73]
+  ,["step-uses-action","job",".github/workflows/compliance.yml","report",0,"","actions/checkout@a1b2c3d4e5f60718293a4b5c6d7e8f9012345678","",28,15,28,71]
+  ,["job-needs-job","workflow",".github/workflows/compliance.yml","report",-1,"","audit","",23,12,23,16]]
+ }}

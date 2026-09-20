@@ -40,8 +40,7 @@ aggregate pass and by nothing else. A second derivation that silently corrects t
 readings and no way to tell which is on screen, and the disagreement — the only thing this plan is
 for — disappears at the moment it is found.
 
-**Rows that disagree are named, never reconciled.** Carried from
-[`db/edge-facts.md`](../db/edge-facts.md), which states it for the same reason: the interesting
+**Rows that disagree are named, never reconciled.** The interesting
 output of a comparison is the disagreement, and a pass that quietly picks a winner deletes it.
 
 **A difference is a question, not a defect.** The two walks do not see the same corpus. CodeQL sees

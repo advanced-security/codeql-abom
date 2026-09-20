@@ -26,7 +26,7 @@ func (s *Server) enumerate(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.Enumerate == nil {
 		writeError(w, http.StatusServiceUnavailable,
-			"this build cannot enumerate accounts, so an empty corpus here means untried, not empty")
+			"this build cannot enumerate accounts, so an empty result here means untried, not empty")
 		return
 	}
 

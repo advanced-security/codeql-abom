@@ -26,14 +26,16 @@ What remains is the properties no number covers yet.
    six, which is why the column counts are stated rather than fitted. The strip renders 4, 5 or 6
    items depending on what is unresolved, and the two short cases are unmeasured.
 
-   **A seventh cell is waiting on this.** The owned figure now reads *"25 · yours, declared of 25"*,
+   **A seventh cell is waiting on this.** The owned figure reads *"N · yours, declared of M"*,
    which says what it counts and stops there. What a reader still cannot see is how much of that
-   declaration was ever examined: on the seeded corpus 17 of 25 are analyzed and **6 never can be**,
-   and stating the unavailable needs a cell this grid has no room for. Whatever replaces the six
-   column counts decides whether that cell can exist.
+   declaration was ever examined — and the two are independent enough that a freshly declared
+   account is fully enumerated and **entirely unanalyzed**, which is also what makes a prune
+   against it dangerous. Stating the examined and the never-examinable needs a cell this grid has
+   no room for. Whatever replaces the six column counts decides whether that cell can exist.
 3. **Component-level layout is checked only by screenshot.** `ui-test` has no CSS engine, and
    every layout defect this plan found was invisible to it and visible in one browser measurement.
-   Whether that measurement becomes a build step is `ui/testing.md`'s decision.
+   That measurement is now a build step: the browser suite gates a pull request twice, against an
+   empty database and against the shared fixture set, and the geometry checks run in both.
 
 ## The constraint that must not be broken
 

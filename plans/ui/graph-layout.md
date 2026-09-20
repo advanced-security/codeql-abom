@@ -1,7 +1,9 @@
 # The same graph draws a different picture every time
 
-**Status:** Layout is computed in the browser by a force simulation with no fixed seed, so no two
-runs agree and nothing downstream can depend on a position.
+**Status:** The server computes a repeatable layout and the browser does not read it yet. DOT
+encoding, cluster subgraphs, the Graphviz seam, `/api/graph/export` and `/api/graph/layout` are
+built and degrade by name where Graphviz is absent. The Explorer still draws a force simulation
+with no fixed seed, so what a reader sees is still different every run.
 
 ## Why this exists
 
@@ -19,10 +21,12 @@ enclosing somebody else's node, so the reader chooses between grouping and relat
 boundaries themselves are computed by hand — a convex hull, an inflation pass and a clipping pass
 in `regions.js` — because a force simulation has no notion of a region.
 
-Graphviz has solved both. `cluster` subgraphs are non-overlapping by construction and report their
-own bounding box, `dot` ranks a directed graph so distance from a root is a readable axis, and
-every engine is deterministic given a fixed start. The useful view here is a few hundred nodes — a
-closure around a subset, not the corpus — which is squarely what `dot`, `twopi` and `fdp` are for.
+Graphviz has solved both. `cluster` subgraphs report their own bounding box, `dot` ranks a directed
+graph so distance from a root is a readable axis, and every engine is deterministic given a fixed
+start. The useful view here is a few hundred nodes — a closure around a subset, not the corpus.
+Which engine suits it is measured below rather than assumed, because the measurement contradicts
+the guess twice over: boxes that stay apart are a property of `dot`, not of `cluster` subgraphs in
+general, and the engine with the best-shaped canvas is the least readable of the set.
 
 **What this is not.** Removing *every* edge from the whole-corpus view still reaches only 4.8 FPS,
 so the ceiling is node count in the renderer and layout does not move it. Nothing in this plan is a
@@ -30,26 +34,46 @@ performance fix, and presenting it as one would be false.
 
 ## Pending
 
-1. **An encoder from the graph projection to DOT.** `internal/graphexport`, mirroring
-   `internal/bomexport`, over `store.Graph` — the scoped, filtered projection the API already
-   serves. Sorted output so it is byte-stable and diffable. Depends on nothing.
-2. **An export endpoint**, `serve.SerializeGraph` mirroring `SerializeBOM`, taking the same
-   predicate terms as `/api/graph/full` through the same `reading(...)` declaration, or a term is
-   refused on one path and not the other. Depends on 1.
-3. **Cluster subgraphs for the active grouping** — account, repository, workflow — each uniquely
-   named, because a graph and its subgraphs share one namespace. Depends on 1.
-4. **A layout seam.** `internal/layout` with an engine interface, implemented by writing DOT to a
-   temporary file and running a **fixed argv**. Depends on 1.
-5. **Degrade, and say so.** With no Graphviz on the machine the Explorer keeps the force layout and
-   the interface states which produced the picture. A silent fallback is a layout claim nobody can
-   trust. Depends on 4.
-6. **`/api/graph/layout`** returning the engine, the positions, the cluster bounding boxes and what
-   it dropped. Depends on 4.
-7. **Consume positions in the browser.** `applyLayout` fixes each node and releases the fix on
+1. **Consume positions in the browser.** `applyLayout` fixes each node and releases the fix on
    drag, so the canvas, the hover, the selection and the delta merge are all untouched. Nodes with
-   no position keep the force. `regions.js` draws a server bounding box when it has one. Depends on
-   6, and on a corpus: [`ui/testing.md`](testing.md) says what is owed there is "enough nodes for a
-   layout claim to mean something", and twenty is not.
+   no position keep the force. `regions.js` draws a server bounding box when it has one. The pure
+   half exists — `ui/wwwroot/js/serverlayout.js` fits positions to an extent, flips the axis
+   Graphviz reports bottom-left-first, pins what was placed and reports what was not — and nothing
+   in `graph.js` calls it yet. Depends on nothing further.
+2. **Stop claiming position means something before it does.** The Neighborhood view captions itself
+   "Position is structural: clusters are groups that share dependencies" in
+   [`Explorer.razor`](../../ui/Pages/Explorer.razor), and it is the one view whose position comes
+   from the force simulation with no semantic force behind it. Priority, Coverage and Distance earn
+   their radial claims; this one asserts a meaning the picture does not carry, and the picture
+   changes on every load. Either the caption says it is a settled simulation, or 1 lands and makes
+   the claim true — for the nodes Graphviz placed, and only those. Depends on 1.
+3. **A canvas that is pannable is not a canvas that is legible at 33 nodes.** `dot` returns a
+   9.2:1 ribbon on the corpus projection. Scaling to fit keeps every node on screen and makes them
+   small; the alternatives are `rankdir=LR`, `ratio=compress` with a `size`, or accepting the
+   ribbon and relying on zoom. Undecided, and it wants a reader looking at all three rather than
+   an argument. Depends on 1.
+
+## What placing the real corpus measured
+
+Graphviz 16.1.0, against the seven-repository corpus and a fanned fixture of the same shape.
+
+**Only four of the seven engines box a cluster at all.** `dot`, `neato`, `fdp` and `osage` return
+boundaries; `sfdp`, `twopi` and `circo` accept the subgraphs and return none. An engine that cannot
+do it is not a failure, but a reader who grouped and saw no boundaries with nothing said would take
+it for a corpus where nothing shares a group, so `/api/graph/layout` reports `groupingDrawn` either
+way.
+
+**The compact answer is the wrong one, and the numbers say the opposite of the picture.** `neato`
+returns a canvas near a screen's proportions and `dot` returns a ribbon nine times wider than it is
+tall, so on shape alone `dot` looks like the worse choice. Rendered, it is the only good one:
+`neato` bought its proportions by stacking 75 pairs of nodes on top of each other, and with
+`overlap=false` turned on to fix that, all 21 pairs of its group boxes crossed instead. `dot`
+overlapped no nodes and crossed no boundaries. A wide canvas is a cost that scaling to fit and a
+pannable canvas absorb; a group box drawn across another group box is unreadable at every zoom.
+
+So the default is `dot`, and the test defending it asserts disjoint boundaries rather than a
+pleasing aspect ratio. An aspect-ratio test was written first, selected `neato`, and had to be
+withdrawn — it passed on a layout that a glance at the render showed was illegible.
 
 ## Why ABOM writes its own DOT rather than asking CodeQL for it
 

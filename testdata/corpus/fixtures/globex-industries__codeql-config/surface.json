@@ -1,0 +1,21 @@
+{"#select":{"columns":[
+   {"name":"subjectPath","kind":"String"}
+  ,{"name":"subjectJob","kind":"String"}
+  ,{"name":"name","kind":"String"}
+  ,{"name":"value","kind":"String"}]
+ ,"tuples":[
+   [".github/workflows/defaultable_workflow.yml","analyze","permissions","actions: read,contents: read,security-events: write"]
+  ,[".github/workflows/defaultable_workflow.yml","analyze","externallyTriggerable","true"]
+  ,[".github/workflows/defaultable_workflow.yml","analyze","runsOn","ubuntu-latest"]
+  ,[".github/workflows/defaultable_workflow.yml","analyze","triggers","pull_request,push,schedule"]
+  ,[".github/workflows/defaultable_workflow.yml","analyze","privileged","true"]
+  ,[".github/workflows/defaultable_workflow.yml","analyze","permissionsScope","job"]
+  ,[".github/workflows/defaultable_workflow.yml","analyze","secretsInherit","false"]
+  ,[".github/workflows/should_be_using_advanced_setup.yml","analyze","permissions","actions: read,contents: read,packages: read,security-events: write"]
+  ,[".github/workflows/should_be_using_advanced_setup.yml","analyze","externallyTriggerable","true"]
+  ,[".github/workflows/should_be_using_advanced_setup.yml","analyze","runsOn",""]
+  ,[".github/workflows/should_be_using_advanced_setup.yml","analyze","triggers","pull_request,push"]
+  ,[".github/workflows/should_be_using_advanced_setup.yml","analyze","privileged","true"]
+  ,[".github/workflows/should_be_using_advanced_setup.yml","analyze","permissionsScope","workflow"]
+  ,[".github/workflows/should_be_using_advanced_setup.yml","analyze","secretsInherit","false"]]
+ }}

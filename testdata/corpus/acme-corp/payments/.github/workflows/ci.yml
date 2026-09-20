@@ -1,0 +1,27 @@
+name: Payments CI
+on:
+  push:
+  pull_request:
+
+# Shaped after github/codeql's own Actions query tests: a job with no `permissions:` block at all,
+# which is what `actions/missing-workflow-permissions` reports on. Nothing here ever runs on
+# GitHub — it exists to be parsed by CodeQL and to produce findings.
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+      - run: npm ci && npm test
+
+  package:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+      - uses: docker/build-push-action@v6
+      - run: echo packaged

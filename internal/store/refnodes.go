@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // refNodeKey is how a version appears in the graph. An empty reference keeps the bare name: a
@@ -13,6 +14,15 @@ func refNodeKey(nodeKey, ref string) string {
 		return nodeKey
 	}
 	return nodeKey + "@" + ref
+}
+
+// refBaseKey is the inverse: the undivided node a version was drawn from. Exact rather than a
+// search for the last `@`, because a node key may hold one of its own.
+func refBaseKey(nodeKey, ref string) string {
+	if ref == "" {
+		return nodeKey
+	}
+	return strings.TrimSuffix(nodeKey, "@"+ref)
 }
 
 // refState is one queue row, which is one version of one dependency.
@@ -241,7 +251,22 @@ func retargetEdges(
 			if ref == "" {
 				split.Refs = []string{}
 			}
+			// Only the relationships that named this version. Copying the merged edge wholesale
+			// would tell a reader selecting v3 that they had selected the line that pinned v4.
+			split.parts = partsAtRef(e.parts, ref)
+			split.summarize()
 			out = append(out, split)
+		}
+	}
+	return out
+}
+
+// partsAtRef keeps the relationships that named one version.
+func partsAtRef(parts []edgePart, ref string) []edgePart {
+	out := make([]edgePart, 0, len(parts))
+	for _, p := range parts {
+		if p.ref == ref {
+			out = append(out, p)
 		}
 	}
 	return out

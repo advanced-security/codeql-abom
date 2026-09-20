@@ -59,7 +59,8 @@ func everyTerm(t *testing.T) []string {
 		Properties:    []PropertyMatch{{Name: "k", Value: "v"}},
 		NotProperties: []PropertyMatch{{Name: "k", Value: "v"}},
 		Provider:      "p", Severity: "high", EdgeClass: []string{"e"},
-		RefStyle: "tag", Boundary: "cross-owner", MinReach: 1,
+		EdgeKinds: []string{EdgeKindJobNeedsJob},
+		RefStyle:  "tag", Boundary: "cross-owner", MinReach: 1,
 		Flags: []string{"findings"}, Steps: true,
 	}
 	held, err := url.ParseQuery(spec.String())
@@ -70,8 +71,8 @@ func everyTerm(t *testing.T) []string {
 	for key := range held {
 		out = append(out, key)
 	}
-	if len(out) != 17 {
-		t.Fatalf("the spec wrote %d terms, want all 17; a field was added and not set here", len(out))
+	if len(out) != 18 {
+		t.Fatalf("the spec wrote %d terms, want all 18; a field was added and not set here", len(out))
 	}
 	return out
 }

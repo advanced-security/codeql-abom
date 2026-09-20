@@ -1,0 +1,22 @@
+name: Publish docs
+on:
+  push:
+    branches: [main]
+
+# Depth: this reaches actions/setup-node only through shared-action, so the closure has a hop
+# that exists for no other reason -- which is the hop a first-party dependency graph never shows.
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: octo-org/shared-action@v2
+      - run: make docs
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/deploy-pages@v4
+      - run: echo published

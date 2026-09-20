@@ -141,6 +141,11 @@ func (s *Store) RecordGraphGeneration(r GraphRebuild) (int64, error) {
 	if err := s.db.QueryRow(`SELECT MAX(row_id) FROM abom_edge_live`).Scan(&edgeMark); err != nil {
 		return 0, fmt.Errorf("reading edge watermark: %w", err)
 	}
+	var containMark sql.NullInt64
+	if err := s.db.QueryRow(
+		`SELECT MAX(row_id) FROM abom_containment`).Scan(&containMark); err != nil {
+		return 0, fmt.Errorf("reading containment watermark: %w", err)
+	}
 	// Carried forward rather than left to the column default. A generation written at 0 after a
 	// compaction has bumped the epoch can never match the current one, so the delta answers reset
 	// for the life of the database and every open page reloads the whole payload on every poll.
@@ -155,10 +160,11 @@ func (s *Store) RecordGraphGeneration(r GraphRebuild) (int64, error) {
 	}
 	res, err := s.db.Exec(`
 		INSERT INTO abom_graph_generation
-			(node_watermark, edge_watermark, created_at, reach_rebuilt,
+			(node_watermark, edge_watermark, containment_watermark, created_at, reach_rebuilt,
 			 rebuild_ms, rebuilt_nodes, rebuilt_edges, epoch)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		nodeMark.Int64, edgeMark.Int64, now(), r.ReachRebuilt, ms, r.Nodes, r.Edges, epoch)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		nodeMark.Int64, edgeMark.Int64, containMark.Int64, now(), r.ReachRebuilt,
+		ms, r.Nodes, r.Edges, epoch)
 	if err != nil {
 		return 0, fmt.Errorf("recording graph generation: %w", err)
 	}
@@ -193,10 +199,12 @@ func (s *Store) GraphDelta(since int64, opts FullGraphOptions) (GraphDelta, erro
 	out.Generation = version.Generation
 
 	var nodeMark, edgeMark int64
+	var containMark int64
 	var epoch int64
 	err = s.db.QueryRow(`
-		SELECT node_watermark, edge_watermark, epoch FROM abom_graph_generation
-		 WHERE generation = ?`, since).Scan(&nodeMark, &edgeMark, &epoch)
+		SELECT node_watermark, edge_watermark, containment_watermark, epoch
+		  FROM abom_graph_generation
+		 WHERE generation = ?`, since).Scan(&nodeMark, &edgeMark, &containMark, &epoch)
 	if err == sql.ErrNoRows {
 		out.Reset = true
 		return out, nil
@@ -239,7 +247,25 @@ func (s *Store) GraphDelta(since int64, opts FullGraphOptions) (GraphDelta, erro
 	if err != nil {
 		return out, err
 	}
-	out.Nodes, out.Edges = attachOwners(nodes, edges)
+	out.Nodes = attachOwners(nodes)
+	held, err := s.containmentSince(containMark)
+	if err != nil {
+		return out, err
+	}
+	// Drawn against the whole current projection rather than against the arrivals. A holding can
+	// change without a node arriving — declaring an account whose repositories are already on
+	// screen states what holds them and adds nothing else — and resolved against the arrivals
+	// alone that holding names a key this delta does not carry, so no edge is emitted and the
+	// open page never agrees with a reload. The extra read is paid only when a holding moved.
+	drawnAgainst := out.Nodes
+	if len(held) > 0 {
+		all, _, err := s.graphNodes(display, 0, opts)
+		if err != nil {
+			return out, err
+		}
+		drawnAgainst = attachOwners(all)
+	}
+	out.Edges = append(edges, containmentEdges(drawnAgainst, held)...)
 	// The same predicate the full payload answered, or an arrival the reader's filter excludes
 	// merges into their picture anyway.
 	out.Nodes, out.Edges = applyNodePredicates(out.Nodes, out.Edges, opts)

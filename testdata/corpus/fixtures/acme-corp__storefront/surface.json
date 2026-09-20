@@ -1,0 +1,21 @@
+{"#select":{"columns":[
+   {"name":"subjectPath","kind":"String"}
+  ,{"name":"subjectJob","kind":"String"}
+  ,{"name":"name","kind":"String"}
+  ,{"name":"value","kind":"String"}]
+ ,"tuples":[
+   [".github/workflows/release.yml","release","permissions",""]
+  ,[".github/workflows/release.yml","release","externallyTriggerable","true"]
+  ,[".github/workflows/release.yml","release","runsOn",""]
+  ,[".github/workflows/release.yml","release","triggers","workflow_dispatch"]
+  ,[".github/workflows/release.yml","release","privileged","false"]
+  ,[".github/workflows/release.yml","release","permissionsScope","default"]
+  ,[".github/workflows/release.yml","release","secretsInherit","true"]
+  ,[".github/workflows/release.yml","notify","permissions","contents: read,issues: write"]
+  ,[".github/workflows/release.yml","notify","externallyTriggerable","true"]
+  ,[".github/workflows/release.yml","notify","runsOn","ubuntu-latest"]
+  ,[".github/workflows/release.yml","notify","triggers","workflow_dispatch"]
+  ,[".github/workflows/release.yml","notify","privileged","true"]
+  ,[".github/workflows/release.yml","notify","permissionsScope","job"]
+  ,[".github/workflows/release.yml","notify","secretsInherit","false"]]
+ }}

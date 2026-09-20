@@ -1,0 +1,14 @@
+{"#select":{"columns":[
+   {"name":"subjectPath","kind":"String"}
+  ,{"name":"subjectJob","kind":"String"}
+  ,{"name":"name","kind":"String"}
+  ,{"name":"value","kind":"String"}]
+ ,"tuples":[
+   [".github/workflows/test1.yml","test","permissions",""]
+  ,[".github/workflows/test1.yml","test","externallyTriggerable","true"]
+  ,[".github/workflows/test1.yml","test","runsOn","ubuntu-latest"]
+  ,[".github/workflows/test1.yml","test","triggers","pull_request_target"]
+  ,[".github/workflows/test1.yml","test","privileged","true"]
+  ,[".github/workflows/test1.yml","test","permissionsScope","default"]
+  ,[".github/workflows/test1.yml","test","secretsInherit","false"]]
+ }}

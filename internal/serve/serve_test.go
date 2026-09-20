@@ -78,6 +78,11 @@ func seedGraph(t *testing.T, s *store.Store) {
 	if err := w.Flush(); err != nil {
 		t.Fatalf("Flush: %v", err)
 	}
+	// What holds what is derived rather than drawn on demand, so a seeded corpus has to finish
+	// the way an ingestion does or the canvas shows every node unattached.
+	if _, err := s.DeriveContainment(); err != nil {
+		t.Fatalf("DeriveContainment: %v", err)
+	}
 }
 
 func TestSummaryEndpoint(t *testing.T) {
@@ -317,5 +322,42 @@ func TestUnknownAPIPathIsNotAnsweredWithHTML(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "<html>") {
 		t.Error("an unrouted API path was answered with the interface")
+	}
+}
+
+// Every response says what it is and says not to guess. The export carries corpus names and the
+// caller's own query string, and a document a browser re-reads as markup runs on this origin.
+func TestEveryResponseNamesItsTypeAndRefusesSniffing(t *testing.T) {
+	srv, s := newServer(t)
+	seedGraph(t, s)
+	srv.UI = fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html>abom</html>")}}
+
+	for _, path := range []string{
+		"/api/summary",
+		"/api/graph/export?format=dot",
+		"/api/no-such-endpoint",
+		"/",
+	} {
+		header := get(t, srv, path).Result().Header
+		if header.Get("Content-Type") == "" {
+			t.Errorf("%s: no Content-Type, so net/http types the body by looking at it", path)
+		}
+		if got := header.Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("%s: X-Content-Type-Options = %q, want nosniff", path, got)
+		}
+	}
+}
+
+// A handler that declared nothing is the case net/http answers by sniffing, and it sniffs HTML.
+// The last writer before the wire is the only place that knows the handler is finished deciding.
+func TestAnUndeclaredBodyIsTypedRatherThanSniffed(t *testing.T) {
+	inner := httptest.NewRecorder()
+	rec := &recorder{ResponseWriter: inner, status: http.StatusOK, marshalNanos: -1}
+
+	if _, err := rec.Write([]byte("<html>whatever a handler forgot to name</html>")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if ct := inner.Result().Header.Get("Content-Type"); ct != "text/plain; charset=utf-8" {
+		t.Errorf("Content-Type = %q, want the body named rather than guessed", ct)
 	}
 }

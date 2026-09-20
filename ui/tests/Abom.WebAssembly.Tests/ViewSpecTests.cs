@@ -24,6 +24,7 @@ public class ViewSpecTests
             Origins = ["seed"],
             Rules = ["abom/unpinned", "actions/missing-workflow-permissions"],
             EdgeClass = ["crossOwner"],
+            EdgeKinds = ["job-needs-job", "step-uses-action"],
             RefStyle = "sha",
             Boundary = "cross-owner",
             MinReach = 5,

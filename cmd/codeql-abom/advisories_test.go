@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/advanced-security/codeql-abom/internal/advisory"
+	"github.com/advanced-security/codeql-abom/internal/ingest"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
@@ -42,7 +43,7 @@ func TestConvertingAnAdvisoryCarriesEveryField(t *testing.T) {
 		}},
 	}
 
-	got := storeAdvisories([]advisory.Advisory{from})
+	got := ingest.Advisories([]advisory.Advisory{from})
 
 	want := []store.Advisory{{
 		GHSAID:         from.GHSAID,
@@ -77,7 +78,7 @@ func TestConvertingAnAdvisoryCarriesEveryField(t *testing.T) {
 // A conversion that defaulted the score would turn "no model output yet" into "a probability of
 // zero", which reads as safe and is not a measurement at all.
 func TestAnUnscoredAdvisoryStaysUnscored(t *testing.T) {
-	got := storeAdvisories([]advisory.Advisory{{GHSAID: "GHSA-none", Severity: "low"}})
+	got := ingest.Advisories([]advisory.Advisory{{GHSAID: "GHSA-none", Severity: "low"}})
 
 	if len(got) != 1 {
 		t.Fatalf("converted %d advisories, want 1", len(got))
@@ -93,7 +94,7 @@ func TestAnUnscoredAdvisoryStaysUnscored(t *testing.T) {
 // A retraction is a fact about the advisory, not a reason to forget it: a report that quietly
 // dropped one could never explain why a finding it used to show had disappeared.
 func TestAWithdrawnAdvisoryIsStillRecorded(t *testing.T) {
-	got := storeAdvisories([]advisory.Advisory{{
+	got := ingest.Advisories([]advisory.Advisory{{
 		GHSAID:      "GHSA-gone",
 		WithdrawnAt: "2024-03-04T05:06:07Z",
 	}})

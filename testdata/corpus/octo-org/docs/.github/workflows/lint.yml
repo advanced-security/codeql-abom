@@ -1,0 +1,12 @@
+name: Lint
+on:
+  push:
+
+# Deliberately names no action. The findings suite still reports on it, and with no `uses:` line
+# there is no node for the result to attach to — which is the "findings not in the Explorer"
+# state the coverage strip exists to disclose, and the only shape that produces it.
+jobs:
+  markdown:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npx markdownlint docs/

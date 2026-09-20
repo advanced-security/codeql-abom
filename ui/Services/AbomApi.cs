@@ -136,6 +136,9 @@ public sealed class AbomApi(HttpClient http)
     public async Task<PruneView?> GetPruneAsync(CancellationToken ct = default) =>
         await GetAsync<PruneView>("api/prune", ct);
 
+    public async Task<Staleness?> GetStalenessAsync(CancellationToken ct = default) =>
+        await GetAsync<Staleness>("api/prune/staleness", ct);
+
     /// <summary>
     /// Tombstones what the declaration does not reach, or deletes what is already tombstoned.
     /// Both carry the control header: they remove work that only re-analysis can rebuild.
@@ -161,6 +164,15 @@ public sealed class AbomApi(HttpClient http)
         string predicate, int top, int offset, string? sort, bool desc,
         CancellationToken ct = default) =>
         await GetPageAsync<AdvisoriesPage>("api/remediation", predicate, top, offset, sort, desc, ct);
+
+    /// <summary>
+    /// One page of the relationships unit, ordered across the whole match.
+    /// </summary>
+    public async Task<(RelationshipsPage? Page, string? Refusal)> GetRelationshipsPageAsync(
+        string predicate, int top, int offset, string? sort, bool desc,
+        CancellationToken ct = default) =>
+        await GetPageAsync<RelationshipsPage>(
+            "api/relationships", predicate, top, offset, sort, desc, ct);
 
     /// <summary>
     /// The named views on offer: the built-in catalog merged with whatever the operator saved.

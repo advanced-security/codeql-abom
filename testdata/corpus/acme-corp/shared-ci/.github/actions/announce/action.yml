@@ -1,0 +1,13 @@
+name: Announce
+description: A composite action inside the shared CI repository.
+runs:
+  using: composite
+  steps:
+    - uses: actions/github-script@v7
+      with:
+        script: core.info('announcing')
+    # A second reader of the advisory the other account also reaches, so reach counts more than
+    # one account and the direct-versus-transitive split has something to separate.
+    - uses: tj-actions/changed-files@v45.0.7
+    - run: echo announced
+      shell: bash

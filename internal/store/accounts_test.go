@@ -45,6 +45,41 @@ func TestInScopeOwnerIsNotOwnedUntilVerified(t *testing.T) {
 	}
 }
 
+// The Settings table this feeds was headed "Accounts holding analyzed repositories", and on the
+// same page two other sections said the declared account had been analyzed zero times while this
+// listed 25 against it. The count is seeds — the repositories discovery started from — and an
+// account can hold every one of them with nothing analyzed yet.
+func TestAnAccountCountsItsSeedsEvenWithNothingAnalyzed(t *testing.T) {
+	s := subgraphFixture(t)
+	// Enumerated and never analyzed: repository rows, no nodes, no edges, no findings.
+	for _, name := range []string{"fresh-org/one", "fresh-org/two"} {
+		if _, err := s.UpsertRepository(name, ""); err != nil {
+			t.Fatalf("UpsertRepository(%q): %v", name, err)
+		}
+	}
+
+	candidates, err := s.OwnerCandidates()
+	if err != nil {
+		t.Fatalf("OwnerCandidates: %v", err)
+	}
+	var found bool
+	for _, c := range candidates {
+		if c.Owner != "fresh-org" {
+			continue
+		}
+		found = true
+		if c.Repositories != 2 {
+			t.Errorf("fresh-org counts %d, want its 2 seeded repositories", c.Repositories)
+		}
+		if c.Findings != 0 {
+			t.Errorf("fresh-org reports %d findings with nothing analyzed", c.Findings)
+		}
+	}
+	if !found {
+		t.Error("an account whose repositories are seeded is absent from the candidates")
+	}
+}
+
 // Verifying an account says who can act. It must not touch how repositories entered the corpus.
 func TestVerifyingAnOwnerLeavesRepositoryOriginAlone(t *testing.T) {
 	s := subgraphFixture(t)

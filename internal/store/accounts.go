@@ -181,8 +181,9 @@ func (s *Store) Verified() (bool, error) {
 // OwnerCandidate is an account holding repositories in scope, and whether it is one of yours.
 type OwnerCandidate struct {
 	Owner string `json:"owner"`
-	// Repositories counts only repositories in scope: an account known solely as a dependency
-	// is not one the operator is likely to belong to.
+	// Repositories counts seeded repositories only: an account known solely as a dependency is
+	// not one the operator is likely to belong to. Seeded, not analyzed — an account freshly
+	// enumerated holds all of them with nothing analyzed yet.
 	Repositories int  `json:"repositories"`
 	Findings     int  `json:"findings"`
 	Owned        bool `json:"owned"`

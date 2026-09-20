@@ -6,5 +6,8 @@ runs:
     # `composite-step-uses-action` is the only genuine transitive Actions relationship, so the
     # corpus has to contain one or nothing exercises the hop that matters.
     - uses: actions/setup-node@v4
+    # Named by GHSA-mrrh-fwg8-r2c3, and reached from octo-org/app only through this action — so
+    # an advisory here is transitive for app and direct for whoever uses it themselves.
+    - uses: tj-actions/changed-files@v45.0.7
     - run: echo "hello"
       shell: bash

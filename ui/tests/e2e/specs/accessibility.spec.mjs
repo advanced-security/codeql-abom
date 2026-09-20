@@ -33,8 +33,18 @@ const ANCHOR = {
  * MudBlazor 8.15's `MudDataGridPager` gives its four navigation buttons an `aria-label` and its
  * page-size `MudSelect` none, and the component takes no parameter that reaches the inner input.
  * Every grid on every surface inherits it.
+ *
+ * `MudFocusTrap`, which every `MudDialog` renders, wraps its content in four empty focusable
+ * sentinels that bounce keyboard focus back inside the dialog. They are focus plumbing rather than
+ * controls, and naming them would have a reader announce something that is not there. The
+ * sentinels themselves and not the trap: the dialog's own content sits in a sibling
+ * `.mud-focus-trap-child-container`, so exempting the trap exempted every real control in every
+ * dialog along with them.
  */
-const NOT_OURS = ['.mud-table-pagination-select'];
+const NOT_OURS = [
+    '.mud-table-pagination-select',
+    '.mud-focus-trap > .pointer-events-none',
+];
 
 /**
  * Names every visible, focusable control the browser would announce as nothing.

@@ -1,0 +1,29 @@
+{"#select":{"columns":[
+   {"name":"edgeKind","kind":"String"}
+  ,{"name":"srcKind","kind":"String"}
+  ,{"name":"srcPath","kind":"String"}
+  ,{"name":"srcJobId","kind":"String"}
+  ,{"name":"srcStepIndex","kind":"Integer"}
+  ,{"name":"srcStepId","kind":"String"}
+  ,{"name":"usesRaw","kind":"String"}
+  ,{"name":"pinComment","kind":"String"}
+  ,{"name":"startLine","kind":"Integer"}
+  ,{"name":"startColumn","kind":"Integer"}
+  ,{"name":"endLine","kind":"Integer"}
+  ,{"name":"endColumn","kind":"Integer"}]
+ ,"tuples":[
+   ["step-uses-action","job",".github/workflows/test1.yml","test1",0,"","actions/download-artifact@v1","SECURE",10,15,10,42]
+  ,["step-uses-action","job",".github/workflows/test1.yml","test1",1,"","actions/download-artifact@v1.0.0","SECURE",11,15,11,46]
+  ,["step-uses-action","job",".github/workflows/test1.yml","test1",2,"","actions/download-artifact@v2","SECURE",12,15,12,42]
+  ,["step-uses-action","job",".github/workflows/test1.yml","test1",3,"","actions/download-artifact@v2.1.0","SECURE",13,15,13,46]
+  ,["step-uses-action","job",".github/workflows/test1.yml","test1",4,"","actions/download-artifact@v3","SECURE",14,15,14,42]
+  ,["step-uses-action","job",".github/workflows/test1.yml","test1",5,"","actions/download-artifact@v3.0.2","SECURE",15,15,15,46]
+  ,["step-uses-action","job",".github/workflows/test1.yml","test1",6,"","actions/download-artifact@v4.1.0","",16,15,16,46]
+  ,["step-uses-action","job",".github/workflows/test1.yml","test1",7,"","actions/download-artifact@eaceaf801fd36c7dee90939fad912460b18a1ffe","v4.1.2",17,15,17,80]
+  ,["step-uses-action","job",".github/workflows/test1.yml","test1",8,"","actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a","v3.0.2  # SECURE",18,15,18,80]
+  ,["step-uses-action","job",".github/workflows/test1.yml","test1",9,"","actions/download-artifact@v4","SECURE",19,15,19,42]
+  ,["step-uses-action","job",".github/workflows/test1.yml","test1",10,"","actions/download-artifact@v4.1.7","SECURE",20,15,20,46]
+  ,["step-uses-action","job",".github/workflows/test1.yml","test1",11,"","actions/download-artifact@v4.1.8","SECURE",21,15,21,46]
+  ,["step-uses-action","job",".github/workflows/test1.yml","test1",12,"","actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16","v4.1.8 SECURE",22,15,22,80]
+  ,["step-uses-action","job",".github/workflows/test1.yml","test1",13,"","actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e","v4.1.7 SECURE",23,15,23,80]]
+ }}

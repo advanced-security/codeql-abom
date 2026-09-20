@@ -14,10 +14,10 @@ of through the grid.
 ## The shape
 
 **One tab per node kind, or per family of kinds that share a column set.** Actions, Workflows, Jobs,
-Repositories and Advisories are built. The sixth shape is **Relationships** — edges, the `uses:`
-lines, which is what a `step` is — and it is not here: an edge's columns are exactly what
-[`../db/edge-facts.md`](../db/edge-facts.md) stores, so the unit follows that plan rather than this
-one.
+Repositories, Advisories and **Relationships** are built. Relationships were the sixth shape and the
+last to arrive, because a unit only exists once its columns are its own and an edge had none: it
+now carries its identity, what it crosses, how its reference is written, and what was reported
+against the declaring line. See [`../../docs/architecture.md`](../../docs/architecture.md).
 
 ## Pending
 
@@ -63,6 +63,14 @@ for the whole match.
 
 **The Dashboard does not get a second job.** It is a way into Inventory. Every control on it names a
 count it can produce and a scope it hands over; nothing on it exists because the page looked empty.
+
+**A card names the scope that produced its number, and the two drift apart silently.** Four of the
+five named ownership — *in what you run*, *actions in use*, *you depend on*, *routes from something
+you own* — over figures taken across the whole corpus, and one card read the declared scope and
+said **0**. Nothing could disagree while every seeded repository was also an owned one; a corpus
+where they differ is what separates them. So a figure is bounded to the declaration or the caption
+names the corpus it came from, and where a figure is bounded, *nothing declared* renders as the
+word **none** rather than as a nought, which reads as a corpus examined and found clean.
 
 ## Verification
 

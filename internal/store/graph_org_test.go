@@ -20,12 +20,12 @@ func TestOwnerNodesAreNeverIslands(t *testing.T) {
 		{Key: "actions/checkout", Kind: "action", IsExternal: true, Owner: "actions"},
 	}
 
-	got, edges := attachOwners(nodes, []GraphEdge{})
+	got, held := attachOwners(nodes), containmentOf(nodes)
 
 	for owner, org := range ownerNodes(got) {
 		var attached int
-		for _, e := range edges {
-			if e.Source == org.Key || e.Target == org.Key {
+		for _, c := range held {
+			if c.OwnerKey == org.Key || c.HeldKey == org.Key {
 				attached++
 			}
 		}
@@ -43,7 +43,7 @@ func TestOwnerInScopeWhenItHoldsASeedRepository(t *testing.T) {
 		{Key: "actions/checkout", Kind: "action", IsExternal: true, Owner: "actions"},
 	}
 
-	got, _ := attachOwners(nodes, []GraphEdge{})
+	got := attachOwners(nodes)
 	orgs := ownerNodes(got)
 
 	if orgs["octo-org"].IsExternal {
@@ -64,7 +64,7 @@ func TestOwnerReachIsTheFurthestMemberNotTheSum(t *testing.T) {
 			DependentRepos: 55},
 	}
 
-	got, _ := attachOwners(nodes, []GraphEdge{})
+	got := attachOwners(nodes)
 
 	if reach := ownerNodes(got)["actions"].DependentRepos; reach != 202 {
 		t.Errorf("account reach is %d, want the furthest member's 202", reach)
@@ -81,7 +81,7 @@ func TestOwnerRollupKeepsRuleAttribution(t *testing.T) {
 			Findings: 2, Rules: []string{"actions/unpinned-tag", "actions/code-injection"}},
 	}
 
-	got, _ := attachOwners(nodes, []GraphEdge{})
+	got := attachOwners(nodes)
 	org := ownerNodes(got)["actions"]
 
 	if org.Findings != 5 {
@@ -102,7 +102,7 @@ func TestOwnerRollsUpFindingsFromBeneathTheRepository(t *testing.T) {
 			Rules: []string{"actions/unpinned-tag"}},
 	}
 
-	got, _ := attachOwners(nodes, []GraphEdge{})
+	got := attachOwners(nodes)
 	org := ownerNodes(got)["octo-org"]
 
 	if org.Findings != 7 {
@@ -122,15 +122,15 @@ func TestOwnerReachesRepositoriesWithNoNodeOfTheirOwn(t *testing.T) {
 			Repository: "octo-org/app", Origin: OriginSeed},
 	}
 
-	got, edges := attachOwners(nodes, []GraphEdge{})
+	got, held := attachOwners(nodes), containmentOf(nodes)
 	org := ownerNodes(got)["octo-org"]
 	if org.Key == "" {
 		t.Fatal("no account derived from the workflow's repository")
 	}
 
 	var attached int
-	for _, e := range edges {
-		if e.Source == org.Key {
+	for _, c := range held {
+		if c.OwnerKey == org.Key {
 			attached++
 		}
 	}
@@ -148,12 +148,10 @@ func TestOwnerHoldsOnlyTheTopOfEachRepository(t *testing.T) {
 			Repository: "octo-org/app", Origin: OriginSeed},
 	}
 
-	_, edges := attachOwners(nodes, []GraphEdge{})
-
-	for _, e := range edges {
-		if e.Kind == "org-contains" && e.Target != "octo-org/app" {
+	for _, c := range containmentOf(nodes) {
+		if c.Kind == EdgeKindOrgContains && c.HeldKey != "octo-org/app" {
 			t.Errorf("account holds %s directly; only the repository should hang beneath it",
-				e.Target)
+				c.HeldKey)
 		}
 	}
 }

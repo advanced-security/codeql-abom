@@ -318,6 +318,7 @@ func addRepoNodes(t *testing.T, s *Store) {
 	if err := w.Flush(); err != nil {
 		t.Fatalf("Flush: %v", err)
 	}
+	deriveContainment(t, s)
 }
 
 // Having clicked a node, a reader wants everything touching it, not one side of it. Walking a

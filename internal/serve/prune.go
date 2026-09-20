@@ -2,8 +2,10 @@ package serve
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
+	"github.com/advanced-security/codeql-abom/internal/checkouts"
 	"github.com/advanced-security/codeql-abom/internal/graph"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
@@ -32,11 +34,17 @@ type PruneView struct {
 // prune explains what leaving the declared closure would remove, changing nothing.
 func (s *Server) prune(w http.ResponseWriter, r *http.Request) {
 	out, err := s.pruneReport(false)
-	// Asking the question changes nothing, so an empty closure is an answer rather than a fault.
-	// Returned as a 500 it reached the Discovery page as "could not reach the server", on the one
-	// visit — the first — where nothing has gone wrong.
+	// Asking the question changes nothing, so a closure that cannot be pruned is an answer rather
+	// than a fault. Returned as a 500 it reached the Discovery page as "could not reach the
+	// server", on the one visit — the first — where nothing has gone wrong.
 	if errors.Is(err, store.ErrEmptyClosure) {
 		out.Unavailable = "Nothing has been enumerated yet, so there is no closure to be outside of."
+		writeJSON(w, out, nil)
+		return
+	}
+	if errors.Is(err, store.ErrUnanalyzedClosure) {
+		out.Unavailable = "Nothing you declared has been analyzed yet, so what it reaches is not " +
+			"known. Removing now would take out everything it is going to reach."
 		writeJSON(w, out, nil)
 		return
 	}
@@ -49,11 +57,26 @@ func (s *Server) pruneApply(w http.ResponseWriter, r *http.Request) {
 	if !s.allowControl(w, r) {
 		return
 	}
+	// Resolved before the marking, not after: marking tombstones exactly these rows, and once it
+	// has, nothing reads as both outside the closure and live, so the working copies would be
+	// invisible a moment after they became dead weight.
+	paths, pathErr := s.staleCheckoutPaths()
+
 	out, err := s.pruneReport(true)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// The working copies go with the rows. Leaving them is a corpus that shrinks while the disk
+	// stays exactly as full, and nothing else ever removes them.
+	if pathErr == nil && len(paths) > 0 {
+		if _, err := checkouts.Remove(s.WorkDir, paths); err != nil && s.Log != nil {
+			fmt.Fprintf(s.Log, "serve: removing working copies: %v\n", err)
+		}
+	}
+	// The cached check is what raises the modal, and this just changed its answer. Left alone it
+	// would offer the same removal again over numbers that no longer hold.
+	s.CheckStaleness()
 	writeJSON(w, out, nil)
 }
 
@@ -68,6 +91,7 @@ func (s *Server) pruneCompact(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.CheckStaleness()
 	writeJSON(w, PruneView{Removed: report, Applied: true}, nil)
 }
 

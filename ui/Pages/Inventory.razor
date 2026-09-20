@@ -293,7 +293,15 @@
                  Hover="true" Bordered="false" SortMode="SortMode.Single" Filterable="false"
                  RowsPerPage="30" ShowColumnOptions="false" Class="abom-grid">
         <Columns>
-            <PropertyColumn Property="x => x.JobId" Title="Job" />
+            <PropertyColumn Property="x => x.JobId" Title="Job">
+                <CellTemplate>
+                    @* Bounded, because a job id is written by whoever wrote the workflow and some
+                       are sentences. Unbounded it pushed five columns off the edge at 1280px. *@
+                    <MudTooltip Text="@context.Item.JobId">
+                        <span class="abom-trunc">@context.Item.JobId</span>
+                    </MudTooltip>
+                </CellTemplate>
+            </PropertyColumn>
             <PropertyColumn Property="x => x.Workflow" Title="Workflow">
                 <CellTemplate>
                     <IdentityCell Reference="@context.Item.Workflow"
@@ -304,7 +312,9 @@
                 <CellTemplate>
                     @if (context.Item.RunsOn.Length > 0)
                     {
-                        <span class="abom-ref abom-nowrap">@context.Item.RunsOn</span>
+                        <MudTooltip Text="@context.Item.RunsOn">
+                            <span class="abom-ref abom-trunc">@context.Item.RunsOn</span>
+                        </MudTooltip>
                     }
                     else
                     {
@@ -330,14 +340,25 @@
                     }
                 </CellTemplate>
             </PropertyColumn>
-            <PropertyColumn Property="x => x.ExternallyTriggerable" Title="Externally triggerable">
+            @* Headers carry the prose and the cells hold one word, so the header was setting the
+               width: the two below spelled out cost 73px and put Findings — the column this grid
+               sorts by — off the right-hand edge at 1280px. *@
+            <PropertyColumn Property="x => x.ExternallyTriggerable" Title="External">
                 <CellTemplate>
-                    <span class="@(context.Item.ExternallyTriggerable ? "abom-num" : "abom-faint")">
-                        @(context.Item.ExternallyTriggerable ? "yes" : "no")
-                    </span>
+                    <MudTooltip Text="A trigger somebody outside the repository can fire.">
+                        <span class="@(context.Item.ExternallyTriggerable ? "abom-num" : "abom-faint")">
+                            @(context.Item.ExternallyTriggerable ? "yes" : "no")
+                        </span>
+                    </MudTooltip>
                 </CellTemplate>
             </PropertyColumn>
-            <PropertyColumn Property="x => x.PermissionsScope" Title="Permissions set at" />
+            <PropertyColumn Property="x => x.PermissionsScope" Title="Permissions">
+                <CellTemplate>
+                    <MudTooltip Text="Where this job's permissions are set: on the job, on the workflow, or left at the default.">
+                        <span class="abom-trunc">@context.Item.PermissionsScope</span>
+                    </MudTooltip>
+                </CellTemplate>
+            </PropertyColumn>
             <PropertyColumn Property="x => x.Steps" Title="Steps" />
             <PropertyColumn Property="x => x.Dependencies" Title="Dependencies" />
             <PropertyColumn Property="x => x.Findings" Title="Findings" />
@@ -420,6 +441,85 @@
             @(_unreached == 1 ? "it" : "them") today.
         </MudText>
     }
+}
+
+@* A row is a line in a file, not a thing in the corpus. Its columns are the relationship's own —
+   what declares it, what it crosses, how its reference is written, and what was reported against
+   the line itself — and no other unit carries any of them. *@
+@if (_unit == UnitRelationships)
+{
+    <MudDataGrid T="RelationshipSummary" ServerData="LoadRelationships" @ref="_relationshipGrid"
+                 Dense="true" Hover="true" Bordered="false" SortMode="SortMode.None"
+                 Filterable="false" RowsPerPage="30" ShowColumnOptions="false" Class="abom-grid">
+        <Columns>
+            @* Both endpoints go through IdentityCell, which exists because an unbounded key
+               pushes the counts off the edge — measured here at 380px over, with five of six
+               columns hidden. *@
+            <PropertyColumn Property="x => x.Source" Title="Declared by">
+                <CellTemplate>
+                    <IdentityCell Reference="@context.Item.Source" />
+                    @if (context.Item.FilePath.Length > 0)
+                    {
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block abom-trunc">
+                            @($"{context.Item.FilePath}:{context.Item.StartLine}")
+                        </MudText>
+                    }
+                </CellTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Target" Title="Points at">
+                <CellTemplate>
+                    <IdentityCell Reference="@context.Item.Target" />
+                    @* Absent is not a fourth class: an edge whose ends nobody could name has no
+                       boundary, which is different from staying inside one repository. *@
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
+                        @(context.Item.Boundary.Length > 0 ? context.Item.Boundary : "not known")
+                    </MudText>
+                </CellTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Kind" Title="Relationship">
+                <CellTemplate>
+                    <MudText Typo="Typo.caption">@EdgeKindLabel(context.Item.Kind)</MudText>
+                </CellTemplate>
+            </PropertyColumn>
+            @* The reference verbatim, because that is the text a reader has to go and edit. *@
+            <PropertyColumn Property="x => x.Ref" Title="Reference">
+                <CellTemplate>
+                    @if (context.Item.Ref.Length > 0)
+                    {
+                        <span class="abom-trunc abom-rule">@context.Item.Ref</span>
+                        @if (context.Item.RefStyle.Length > 0)
+                        {
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
+                                @context.Item.RefStyle
+                            </MudText>
+                        }
+                    }
+                </CellTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Findings" Title="Findings">
+                <CellTemplate>
+                    <span class="abom-num">@context.Item.Findings</span>
+                    @if (context.Item.Rules.Count > 0)
+                    {
+                        <MudTooltip Text="@string.Join(", ", context.Item.Rules)">
+                            <MudText Typo="Typo.caption"
+                                     Class="mud-text-secondary d-block abom-trunc">
+                                @string.Join(", ", context.Item.Rules)
+                            </MudText>
+                        </MudTooltip>
+                    }
+                </CellTemplate>
+            </PropertyColumn>
+        </Columns>
+        <PagerContent>
+            <MudDataGridPager T="RelationshipSummary" />
+        </PagerContent>
+    </MudDataGrid>
+
+    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1">
+        Containment is not listed here. A repository holding its workflows is drawn so the canvas
+        has somewhere to put them; nothing declares it, so there is no line to go and edit.
+    </MudText>
 }
 
 @* What the crawl has reached and what it has not. Its columns are the queue's own — a state, the
@@ -561,10 +661,9 @@ else
     private const string UnitJobs = "jobs";
     private const string UnitRepositories = "repositories";
     private const string UnitAdvisories = "advisories";
+    private const string UnitRelationships = "relationships";
     private const string UnitCoverage = "coverage";
 
-    // Relationships is a unit too, and is not here yet: an edge has to carry its own identity
-    // before a reader can select one. See plans/db/edge-facts.md.
     private static readonly (string Key, string Label)[] Units =
     [
         (UnitDependencies, "Actions"),
@@ -572,6 +671,7 @@ else
         (UnitJobs, "Jobs"),
         (UnitRepositories, "Repositories"),
         (UnitAdvisories, "Advisories"),
+        (UnitRelationships, "Relationships"),
         (UnitCoverage, "Coverage"),
     ];
 
@@ -580,6 +680,7 @@ else
     private MudDataGrid<JobRow>? _jobGrid;
     private MudDataGrid<RepositorySummary>? _repoGrid;
     private MudDataGrid<RemediationItem>? _advisoryGrid;
+    private MudDataGrid<RelationshipSummary>? _relationshipGrid;
     private IReadOnlyList<NamedView> _views = [];
     private string _unit = UnitDependencies;
     private string _search = string.Empty;
@@ -700,6 +801,7 @@ else
         UnitAdvisories => "severity and reach",
         UnitWorkflows => "findings",
         UnitJobs => "whether the job is privileged",
+        UnitRelationships => "what declares it",
         UnitCoverage => "what the crawl will claim next",
         _ => "reach",
     };
@@ -781,6 +883,7 @@ else
         else if (_unit == UnitAdvisories && _advisoryGrid is not null) await _advisoryGrid.ReloadServerData();
         else if (_unit == UnitWorkflows && _workflowGrid is not null) await _workflowGrid.ReloadServerData();
         else if (_unit == UnitJobs && _jobGrid is not null) await _jobGrid.ReloadServerData();
+        else if (_unit == UnitRelationships && _relationshipGrid is not null) await _relationshipGrid.ReloadServerData();
         else if (_grid is not null) await _grid.ReloadServerData();
     }
 
@@ -986,6 +1089,33 @@ else
         StateHasChanged();
         return new GridData<RemediationItem> { Items = page?.Items ?? [], TotalItems = _total };
     }
+
+    private async Task<GridData<RelationshipSummary>> LoadRelationships(
+        GridState<RelationshipSummary> state)
+    {
+        _sort = null;
+        var (page, refusal) = await Api.GetRelationshipsPageAsync(
+            Scope.Spec.ToQueryString(), state.PageSize, state.Page * state.PageSize, null, false);
+
+        _refusal = refusal;
+        _total = page?.Total ?? 0;
+        _shown = page?.Items.Count ?? 0;
+        _unreached = 0;
+        _elsewhere = [];
+        StateHasChanged();
+        return new GridData<RelationshipSummary> { Items = page?.Items ?? [], TotalItems = _total };
+    }
+
+    // `needs:` is ordering rather than use, and a list that called it a dependency would be
+    // saying the thing the graph refuses to say.
+    private static string EdgeKindLabel(string kind) => kind switch
+    {
+        "step-uses-action" => "step uses",
+        "composite-step-uses-action" => "composite step uses",
+        "job-uses-reusable-workflow" => "job calls",
+        "job-needs-job" => "job runs after",
+        _ => kind,
+    };
 
     private async Task OnSearch(string value)
     {

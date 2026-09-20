@@ -1,0 +1,42 @@
+name: Service CI
+on:
+  push:
+
+# Fan-out: one repository naming several distinct third-party actions, so blast radius differs
+# between dependencies and a view that sizes a node by reach has something to size.
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+      # The same advisory as shared-action reaches, named here directly, so one advisory has both
+      # a direct and a transitive reader and the two columns cannot be the same number.
+      - uses: tj-actions/changed-files@v45.0.7
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ matrix.node }}
+      - run: npm ci
+
+  scan:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/analyze@v3
+
+  report:
+    needs: scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/upload-artifact@v4
+        with:
+          path: dist
+      # A container action: it has no account, so nothing may group it under one invented from
+      # the first slash of `docker://`.
+      - uses: docker://alpine:3.20

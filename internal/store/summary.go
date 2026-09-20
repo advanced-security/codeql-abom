@@ -14,8 +14,16 @@ type Summary struct {
 	OwnedRepos    int `json:"ownedRepos"`
 	UpstreamRepos int `json:"upstreamRepos"`
 	Nodes         int `json:"nodes"`
-	Edges         int `json:"edges"`
-	Findings      int `json:"findings"`
+	// Dependencies are the nodes that are something depended on rather than part of the thing
+	// doing the depending. Nodes counts steps, jobs and workflows too, and they outnumber the
+	// dependencies fifty to one, so the two must never be printed under the same word.
+	Dependencies int `json:"dependencies"`
+	Edges        int `json:"edges"`
+	Findings     int `json:"findings"`
+	// OwnedFindings are the findings in repositories the declaration claims. The Dashboard prints
+	// this one as findings "in what you run", and a finding in a repository nobody declared is not
+	// in what you run.
+	OwnedFindings int `json:"ownedFindings"`
 	Rules         int `json:"rules"`
 	// LinkedFindings are attached to a graph node; the rest are known only per repository.
 	LinkedFindings int `json:"linkedFindings"`
@@ -25,11 +33,17 @@ type Summary struct {
 	// advisory names and one nobody has checked.
 	AdvisoriesFetchedAt string `json:"advisoriesFetchedAt"`
 	// AffectedActions counts graph nodes an advisory covers.
-	AffectedActions   int            `json:"affectedActions"`
-	Exposures         int            `json:"exposures"`
-	DirectExposures   int            `json:"directExposures"`
-	Frontier          map[string]int `json:"frontier"`
-	AnalyzedUpstreams int            `json:"analyzedUpstreams"`
+	AffectedActions int `json:"affectedActions"`
+	Exposures       int `json:"exposures"`
+	DirectExposures int `json:"directExposures"`
+	// OwnedExposures are the routes that start in a repository the declaration claims, kept apart
+	// from Exposures for the reason OwnedRepos is kept apart from SeedRepos. The reference corpus
+	// holds 253 routes across 115 repositories and owns none of them, so presenting the corpus
+	// figure as the operator's offers them work to do from repositories they cannot change.
+	OwnedExposures       int            `json:"ownedExposures"`
+	OwnedDirectExposures int            `json:"ownedDirectExposures"`
+	Frontier             map[string]int `json:"frontier"`
+	AnalyzedUpstreams    int            `json:"analyzedUpstreams"`
 }
 
 // Summary counts what has been collected so far.
@@ -50,13 +64,27 @@ func (s *Store) Summary() (Summary, error) {
 			&out.OwnedRepos, nil},
 		{`SELECT COUNT(*) FROM repository WHERE origin = ?`, &out.UpstreamRepos, []any{OriginUpstream}},
 		{`SELECT COUNT(*) FROM abom_node_live`, &out.Nodes, nil},
+		// The Inventory's kinds, spelled the same way, because the Dashboard card counting this
+		// links straight to that unit and two definitions would disagree on arrival.
+		{`SELECT COUNT(*) FROM abom_node_live
+		   WHERE node_kind IN ('action', 'composite_action', 'docker_image')`,
+			&out.Dependencies, nil},
 		{`SELECT COUNT(*) FROM abom_edge_live`, &out.Edges, nil},
 		{`SELECT COUNT(*) FROM abom_finding`, &out.Findings, nil},
+		{`SELECT COUNT(*) FROM abom_finding f
+		  JOIN repository r ON r.row_id = f.repository_row_id
+		  WHERE ` + OwnedRepositoryFilter, &out.OwnedFindings, nil},
 		{`SELECT COUNT(DISTINCT rule_id) FROM abom_finding`, &out.Rules, nil},
 		{`SELECT COUNT(DISTINCT finding_row_id) FROM abom_finding_node`, &out.LinkedFindings, nil},
 		{`SELECT COUNT(*) FROM abom_advisory WHERE withdrawn_at IS NULL`, &out.Advisories, nil},
 		{`SELECT COUNT(*) FROM abom_exposure`, &out.Exposures, nil},
 		{`SELECT COUNT(*) FROM abom_exposure WHERE hops = 1`, &out.DirectExposures, nil},
+		{`SELECT COUNT(*) FROM abom_exposure x
+		  JOIN repository r ON r.row_id = x.repository_row_id
+		  WHERE ` + OwnedRepositoryFilter, &out.OwnedExposures, nil},
+		{`SELECT COUNT(*) FROM abom_exposure x
+		  JOIN repository r ON r.row_id = x.repository_row_id
+		  WHERE x.hops = 1 AND ` + OwnedRepositoryFilter, &out.OwnedDirectExposures, nil},
 		{`SELECT COUNT(*) FROM abom_frontier WHERE status = 'done'`, &out.AnalyzedUpstreams, nil},
 		{`SELECT COUNT(DISTINCT n.row_id)
 		  FROM abom_advisory a
