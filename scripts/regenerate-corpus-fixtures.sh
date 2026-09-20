@@ -29,8 +29,15 @@ cd "$root"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 
-# stale reports whether a tree has changed since its output was recorded. Any missing artifact
-# counts as stale, so adding a new recorded query regenerates everything once and no more.
+# The queries are as much an input as the source tree: AbomEdges.ql, AbomSurface.ql, both
+# findings suites and the libraries and locks under them decide what a recording says. Watching
+# only the tree left every artifact looking current after a query changed, so the checked-in
+# output described behavior the pack no longer has.
+inputs=("$root/ql/actions/graph-extraction/src" "$root/ql/actions/findings/src")
+
+# stale reports whether a tree or the queries have changed since its output was recorded. Any
+# missing artifact counts as stale, so adding a new recorded query regenerates everything once
+# and no more.
 stale() {
   local tree="$1" out="$2"
   [ -n "${FORCE:-}" ] && return 0
@@ -38,7 +45,7 @@ stale() {
   for artifact in edges.json surface.json findings.sarif; do
     [ -f "$out/$artifact" ] || return 0
   done
-  [ -n "$(find "$tree" -type f -newer "$out/edges.json" -print -quit)" ]
+  [ -n "$(find "$tree" "${inputs[@]}" -type f -newer "$out/edges.json" -print -quit)" ]
 }
 
 if [ "$#" -gt 0 ]; then

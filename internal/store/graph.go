@@ -198,7 +198,11 @@ func (w *Writer) flushEdges() error {
 				-- unknown rather than as a guess, and the next aggregate pass fills them again.
 				-- owned_depth is not here: it measures the source side, which a repoint leaves
 				-- alone.
+				-- ref_style reads the reference as well as the target, so a line rewritten from
+				-- @v4 to a commit on the same action has to forget it: keeping the old answer
+				-- would report a tag until some later aggregate rebuild.
 				ref_style       = CASE WHEN abom_edge.dst_node_row_id = excluded.dst_node_row_id
+				                        AND abom_edge.ref_value IS excluded.ref_value
 				                       THEN abom_edge.ref_style END,
 				advisory_route  = CASE WHEN abom_edge.dst_node_row_id = excluded.dst_node_row_id
 				                       THEN abom_edge.advisory_route END,

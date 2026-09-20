@@ -9,6 +9,13 @@ on:
       # The populated run is only as good as what it runs against, and both of these decide that:
       # a recorded fixture is what the database is built from, and the builder is what reads it.
       - 'cmd/abom-corpus/**'
+      # What the builder reads the fixture with, and what every endpoint answers from. A change
+      # to the store, the ingestion or the aggregates can empty a grid or break a delta while
+      # only the Go tests run.
+      - 'internal/advisory/**'
+      - 'internal/graph/**'
+      - 'internal/ingest/**'
+      - 'internal/store/**'
       # The browser suite asserts the server's API contract as the page exercises it, so a change
       # here can break the interface without touching a file under ui/.
       - 'internal/serve/**'
@@ -21,6 +28,10 @@ on:
       - '.node-version'
       - 'Makefile'
       - 'cmd/abom-corpus/**'
+      - 'internal/advisory/**'
+      - 'internal/graph/**'
+      - 'internal/ingest/**'
+      - 'internal/store/**'
       - 'internal/serve/**'
       - 'testdata/corpus/**'
       - 'ui/**'

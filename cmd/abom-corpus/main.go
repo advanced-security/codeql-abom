@@ -84,7 +84,7 @@ func build(dbPath, fixtures string, without map[string]bool) error {
 	}
 
 	for _, r := range repos {
-		if err := ingestRepository(s, fixtures, r); err != nil {
+		if err := ingestRepository(s, fixtures, r, without); err != nil {
 			return fmt.Errorf("%q: %w", r, err)
 		}
 	}
@@ -142,7 +142,7 @@ func declaredAccounts(repos []string) []store.DeclaredAccount {
 	return out
 }
 
-func ingestRepository(s *store.Store, fixtures, full string) error {
+func ingestRepository(s *store.Store, fixtures, full string, without map[string]bool) error {
 	if _, err := s.InsertOwnedRepository(full); err != nil {
 		return fmt.Errorf("recording ownership: %w", err)
 	}
@@ -167,13 +167,17 @@ func ingestRepository(s *store.Store, fixtures, full string) error {
 		return fmt.Errorf("flushing edges: %w", err)
 	}
 
-	sarif, err := os.Open(filepath.Join(dir, "findings.sarif"))
-	if err != nil {
-		return err
-	}
-	defer sarif.Close()
-	if _, err := ing.FindingsFromSARIF(sarif, ingest.Options{Repository: full}); err != nil {
-		return fmt.Errorf("findings: %w", err)
+	// Skipped rather than ingested and hidden: --without=findings exists to render the state of
+	// a corpus that has none, and a database that held them anyway would render the other one.
+	if !without["findings"] {
+		sarif, err := os.Open(filepath.Join(dir, "findings.sarif"))
+		if err != nil {
+			return err
+		}
+		defer sarif.Close()
+		if _, err := ing.FindingsFromSARIF(sarif, ingest.Options{Repository: full}); err != nil {
+			return fmt.Errorf("findings: %w", err)
+		}
 	}
 
 	// Recorded later than the rest, so a fixture written before it stays loadable rather than

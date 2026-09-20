@@ -883,6 +883,7 @@ else
         else if (_unit == UnitAdvisories && _advisoryGrid is not null) await _advisoryGrid.ReloadServerData();
         else if (_unit == UnitWorkflows && _workflowGrid is not null) await _workflowGrid.ReloadServerData();
         else if (_unit == UnitJobs && _jobGrid is not null) await _jobGrid.ReloadServerData();
+        else if (_unit == UnitRelationships && _relationshipGrid is not null) await _relationshipGrid.ReloadServerData();
         else if (_grid is not null) await _grid.ReloadServerData();
     }
 

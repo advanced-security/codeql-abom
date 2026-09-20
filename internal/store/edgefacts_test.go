@@ -60,6 +60,45 @@ func TestAReferenceNothingCanClassifyStaysUnknown(t *testing.T) {
 	}
 }
 
+// `ref_style` reads the reference, not only the target. A line rewritten from `@v4` to a commit
+// on the same action keeps its target and changes its style, so preserving the old answer left the
+// relationships list reporting a tag until some later aggregate rebuild happened to run.
+func TestARewrittenReferenceForgetsTheStyleOfTheOldOne(t *testing.T) {
+	s := edgeFactsFixture(t)
+	derive(t, s)
+	if got := factOf(t, s, "floating", "ref_style"); got != EdgeRefTag {
+		t.Fatalf("ref_style = %q, want %q before the reference moves", got, EdgeRefTag)
+	}
+
+	w := NewWriter(s, 0)
+	for _, n := range []Node{
+		{Key: "step:octo-org/app:ci.yml::1", Kind: "step"},
+		{Key: "actions/setup-node", Kind: "action", Owner: "actions", Repo: "setup-node",
+			IsExternal: true},
+	} {
+		if err := w.AddNode(n); err != nil {
+			t.Fatalf("AddNode(%s): %v", n.Key, err)
+		}
+	}
+	if err := w.AddEdge(Edge{
+		Key: "floating", SrcKey: "step:octo-org/app:ci.yml::1", DstKey: "actions/setup-node",
+		Kind: "step-uses-action", RefValue: "0123456789abcdef0123456789abcdef01234567",
+	}); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	if got := factOf(t, s, "floating", "ref_style"); got != "" {
+		t.Errorf("ref_style = %q, want it unset: the reference it classified is gone", got)
+	}
+	derive(t, s)
+	if got := factOf(t, s, "floating", "ref_style"); got != EdgeRefCommit {
+		t.Errorf("ref_style = %q, want %q: the line now names a commit", got, EdgeRefCommit)
+	}
+}
+
 // Settling to zero is what lets the derivation run after every ingest without a second mechanism
 // deciding when it is due.
 func TestDerivingEdgeFactsTwiceChangesNothing(t *testing.T) {

@@ -135,7 +135,7 @@ func (s *Store) storeContainment(want []Containment) (int, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	changed := 0
+	changed, removed := 0, 0
 	for _, c := range want {
 		if stored[c] {
 			continue
@@ -158,9 +158,21 @@ func (s *Store) storeContainment(want []Containment) (int, error) {
 			return 0, fmt.Errorf("removing a holding: %w", err)
 		}
 		changed++
+		removed++
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("storing containment: %w", err)
+	}
+	// A delta names arrivals by row id and has no containment-removal field, so a holding that
+	// disappears cannot be described to a client that already drew it. The epoch moves instead:
+	// every open page is told its cursor is worthless and loads the graph again. That also
+	// settles row-id reuse, which deleting the highest row makes SQLite do on the next insert.
+	// Only on a removal — an ordinary cycle removes nothing, and reloading every page for an
+	// addition the cursor can express would cost the whole payload every crawl.
+	if removed > 0 {
+		if _, err := s.nextGeneration(true); err != nil {
+			return 0, err
+		}
 	}
 	return changed, nil
 }

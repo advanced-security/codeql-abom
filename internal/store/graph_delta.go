@@ -252,7 +252,20 @@ func (s *Store) GraphDelta(since int64, opts FullGraphOptions) (GraphDelta, erro
 	if err != nil {
 		return out, err
 	}
-	out.Edges = append(edges, containmentEdges(out.Nodes, held)...)
+	// Drawn against the whole current projection rather than against the arrivals. A holding can
+	// change without a node arriving — declaring an account whose repositories are already on
+	// screen states what holds them and adds nothing else — and resolved against the arrivals
+	// alone that holding names a key this delta does not carry, so no edge is emitted and the
+	// open page never agrees with a reload. The extra read is paid only when a holding moved.
+	drawnAgainst := out.Nodes
+	if len(held) > 0 {
+		all, _, err := s.graphNodes(display, 0, opts)
+		if err != nil {
+			return out, err
+		}
+		drawnAgainst = attachOwners(all)
+	}
+	out.Edges = append(edges, containmentEdges(drawnAgainst, held)...)
 	// The same predicate the full payload answered, or an arrival the reader's filter excludes
 	// merges into their picture anyway.
 	out.Nodes, out.Edges = applyNodePredicates(out.Nodes, out.Edges, opts)

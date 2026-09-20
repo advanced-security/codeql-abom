@@ -132,3 +132,99 @@ func TestDerivingContainmentTwiceChangesNothingTheSecondTime(t *testing.T) {
 		t.Errorf("a second derivation changed %d holdings, so it does not settle", again)
 	}
 }
+
+// A holding that changes without a node arriving is the case a delta cursor cannot express by
+// arrivals alone: declaring an account whose repository is already on screen adds the holding and
+// nothing else. Resolved against the arrivals, the edge was never sent and the open page
+// disagreed with a reload for as long as it stayed open.
+func TestAHoldingAddedBetweenNodesThatPredateTheCursorReachesTheDelta(t *testing.T) {
+	s := newTestStore(t)
+	seedGraph(t, s, NewWriter(s, 0))
+	deriveContainment(t, s)
+
+	generation, err := s.RecordGraphGeneration(GraphRebuild{})
+	if err != nil {
+		t.Fatalf("RecordGraphGeneration: %v", err)
+	}
+
+	held, err := s.Containment()
+	if err != nil {
+		t.Fatalf("Containment: %v", err)
+	}
+	// Both keys predate the generation, which is the whole point: nothing arrives with it.
+	added := Containment{
+		OwnerKey: OrgKey("octo-org"),
+		HeldKey:  "actions/checkout",
+		Kind:     EdgeKindOrgContains,
+	}
+	if _, err := s.storeContainment(append(held, added)); err != nil {
+		t.Fatalf("storeContainment: %v", err)
+	}
+
+	delta, err := s.GraphDelta(generation, FullGraphOptions{})
+	if err != nil {
+		t.Fatalf("GraphDelta: %v", err)
+	}
+	if delta.Reset {
+		t.Fatal("asked for a reload after an addition, which a cursor can express")
+	}
+	for _, e := range delta.Edges {
+		if e.Source == added.OwnerKey && e.Target == added.HeldKey && e.Kind == added.Kind {
+			return
+		}
+	}
+	t.Errorf("delta carried no edge for a holding added between nodes it already holds: %+v",
+		delta.Edges)
+}
+
+// Removal is the case it cannot express at all: GraphDelta has no containment-removal field, so a
+// holding that disappears has to invalidate the cursor or an open page keeps drawing it forever.
+func TestRemovingAHoldingForcesOpenPagesToReload(t *testing.T) {
+	s := newTestStore(t)
+	seedGraph(t, s, NewWriter(s, 0))
+	deriveContainment(t, s)
+
+	generation, err := s.RecordGraphGeneration(GraphRebuild{})
+	if err != nil {
+		t.Fatalf("RecordGraphGeneration: %v", err)
+	}
+	held, err := s.Containment()
+	if err != nil {
+		t.Fatalf("Containment: %v", err)
+	}
+	if len(held) == 0 {
+		t.Fatal("the fixture stored no holdings, so removing one proves nothing")
+	}
+	if _, err := s.storeContainment(held[1:]); err != nil {
+		t.Fatalf("storeContainment: %v", err)
+	}
+
+	delta, err := s.GraphDelta(generation, FullGraphOptions{})
+	if err != nil {
+		t.Fatalf("GraphDelta: %v", err)
+	}
+	if !delta.Reset {
+		t.Error("a removed holding left the cursor honored, so the page keeps drawing it")
+	}
+}
+
+// And a cycle that removes nothing must not reload every open page for nothing.
+func TestDerivingContainmentAgainDoesNotForceAReload(t *testing.T) {
+	s := newTestStore(t)
+	seedGraph(t, s, NewWriter(s, 0))
+	deriveContainment(t, s)
+
+	generation, err := s.RecordGraphGeneration(GraphRebuild{})
+	if err != nil {
+		t.Fatalf("RecordGraphGeneration: %v", err)
+	}
+	deriveContainment(t, s)
+
+	delta, err := s.GraphDelta(generation, FullGraphOptions{})
+	if err != nil {
+		t.Fatalf("GraphDelta: %v", err)
+	}
+	if delta.Reset {
+		t.Error("a settled derivation asked every open page to reload")
+	}
+}
