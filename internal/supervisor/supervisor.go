@@ -159,6 +159,7 @@ func cycleIngested(s expand.Stats) bool {
 func recordCycle(st *Status, s expand.Stats) {
 	st.Analyzed += s.Processed
 	st.Skipped += s.Skipped
+	st.Reused += s.Reused
 	st.Settled += s.Items
 	st.Failed += s.Failed
 	st.Unavailable += s.Unavailable
@@ -416,9 +417,10 @@ func (s *Supervisor) cycle(ctx context.Context) time.Duration {
 		// Only when something happened: a loop waiting on a queue whose next retry is hours
 		// away would otherwise write two lines a minute all night.
 		s.logf("cycle %d analyzed %d repositories, skipped %d already on record, settled %d "+
-			"dependencies, discovered %d, ingested %d edges (%d failed, %d unavailable)",
+			"dependencies, discovered %d, ingested %d edges (%d fetched, %d reused, %d failed, "+
+			"%d unavailable)",
 			s.Status().Cycle, stats.Processed, stats.Skipped, stats.Items, stats.Discovered,
-			stats.Edges, stats.Failed, stats.Unavailable)
+			stats.Edges, stats.Fetched, stats.Reused, stats.Failed, stats.Unavailable)
 	}
 	if ingested {
 		if _, err := s.Store.LinkFindingsToNodes(); err != nil {
@@ -498,9 +500,11 @@ func (s *Supervisor) recordSpend(stats expand.Stats, progress []frontier.DepthPr
 		Cycle:     st.Cycle,
 		StartedAt: started.UTC().Format(time.RFC3339Nano),
 		Millis:    s.now().Sub(started).Milliseconds(),
-		// A repository is fetched and built once per analysis, so those are the analysis count
-		// rather than separately instrumented counters. Skips cost neither.
-		Fetches:     stats.Processed,
+		// A repository is built and evaluated once per analysis, so those are the analysis count
+		// rather than separately instrumented counters. Fetches is not: a checkout served from
+		// the cache costs nothing, and a settled unit that still had to clone costs one, so it is
+		// counted where the clone happens.
+		Fetches:     stats.Fetched,
 		Builds:      stats.Processed,
 		Evaluations: stats.Processed,
 		Probes:      st.Rechecked - s.lastRechecked,

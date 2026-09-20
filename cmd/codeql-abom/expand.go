@@ -40,6 +40,11 @@ const defaultCacheMaxMB = 2048
 //
 // Outside WorkDir by construction: a scratch directory is removed when the run that made it
 // ends, and a cache that does not outlive the round cannot answer the next one.
+//
+// Owner-only, and tightened even when the directory already exists. The temporary work directory
+// this replaces was private by construction; a persistent cache holds fetched source from private
+// repositories, so leaving it traversable would make a performance option a disclosure. Claimed
+// too: two processes sharing one cache would evict each other's trees mid-analysis.
 func checkoutCache(dir string, maxMB int64) (*expand.CheckoutCache, error) {
 	if dir == "" {
 		return nil, nil
@@ -48,10 +53,19 @@ func checkoutCache(dir string, maxMB int64) (*expand.CheckoutCache, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolving %s: %w", dir, err)
 	}
-	if err := os.MkdirAll(abs, 0o755); err != nil {
+	if err := os.MkdirAll(abs, 0o700); err != nil {
 		return nil, fmt.Errorf("creating %s: %w", abs, err)
 	}
-	return &expand.CheckoutCache{Dir: abs, MaxBytes: maxMB << 20}, nil
+	// MkdirAll leaves an existing directory's mode alone, and a cache reused from an earlier
+	// version was created at 0755.
+	if err := os.Chmod(abs, 0o700); err != nil {
+		return nil, fmt.Errorf("restricting %s: %w", abs, err)
+	}
+	cache := &expand.CheckoutCache{Dir: abs, MaxBytes: maxMB << 20}
+	if err := cache.Claim(); err != nil {
+		return nil, err
+	}
+	return cache, nil
 }
 
 // roundDidWork reports whether a round moved the queue, which is how expand-all recognizes a
@@ -147,6 +161,7 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	if err != nil {
 		return fmt.Errorf("expand-all: %w", err)
 	}
+	defer cache.Release()
 	e := &expand.Expander{
 		Queue:    queue,
 		Store:    s,

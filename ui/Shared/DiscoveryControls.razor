@@ -466,12 +466,12 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
 
     private string StateSentence => _state.Status.State switch
     {
-        "working" => $"Analyzing {_state.Status.Concurrency} repositories at a time.{SkipSuffix}",
-        "idle" => $"Running, nothing to analyze right now.{SkipSuffix}",
+        "working" => $"Analyzing {_state.Status.Concurrency} repositories at a time.{SkipSuffix}{ReuseSuffix}",
+        "idle" => $"Running, nothing to analyze right now.{SkipSuffix}{ReuseSuffix}",
         "pausing" => _state.Running > 0
             ? $"Finishing {_state.Running} already started."
             : "Finishing what has already started.",
-        "paused" => $"Stopped.{SkipSuffix}",
+        "paused" => $"Stopped.{SkipSuffix}{ReuseSuffix}",
         // Never started is not the same as interrupted, and saying "paused" sends the reader
         // looking for the failure that stopped it.
         _ => "Not started.",
@@ -480,6 +480,13 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
     private string SkipSuffix =>
         _state.Status.Skipped > 0
             ? $" Settled {_state.Status.Skipped:N0} already on record without re-analyzing them."
+            : string.Empty;
+
+    // Only once something has been reused: a standing "0 served from the cache" is noise on a
+    // run with no --cache-dir, where the number can never be anything else.
+    private string ReuseSuffix =>
+        _state.Status.Reused > 0
+            ? $" {_state.Status.Reused:N0} checkouts came from the cache rather than a clone."
             : string.Empty;
 
     private IReadOnlyList<string> BoundTo(string tier) =>

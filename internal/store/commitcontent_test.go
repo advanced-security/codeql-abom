@@ -122,3 +122,46 @@ func TestAStoredDigestIsReadableByCommit(t *testing.T) {
 		t.Errorf("an unseen commit reported a digest (ok=%v, err=%v)", ok, err)
 	}
 }
+
+// ABOM fetches only the paths an actions database needs, so a commit names a repository's state
+// and the filter names which of it was read. A run that saw the narrow tree has not answered for
+// the wide one, whatever the commit says.
+func TestARunUnderOneFilterDoesNotAnswerForAnother(t *testing.T) {
+	s := newTestStore(t)
+	narrow := runAt("octo/app", "commit-one")
+	narrow.SourceFilter = "narrow"
+	if _, err := s.RecordQueryRun(narrow); err != nil {
+		t.Fatalf("RecordQueryRun: %v", err)
+	}
+
+	wide := runAt("octo/app", "commit-one")
+	wide.SourceFilter = "wide"
+	done, err := s.QueryRunExists(wide)
+	if err != nil {
+		t.Fatalf("QueryRunExists: %v", err)
+	}
+	if done {
+		t.Error("a wider checkout of the same commit was treated as already analyzed, so the " +
+			"paths the widening added would never be extracted")
+	}
+}
+
+// A commit holds one content row, rewritten every time it is fetched. Widening the filter
+// therefore re-measures the digest of a commit whose runs all happened against the smaller tree,
+// and the equivalence join would credit those runs with content they never saw.
+func TestContentEquivalenceDoesNotCrossFilters(t *testing.T) {
+	s := newTestStore(t)
+	narrow := runAt("octo/app", "commit-one")
+	narrow.SourceFilter = "narrow"
+	if _, err := s.RecordQueryRun(narrow); err != nil {
+		t.Fatalf("RecordQueryRun: %v", err)
+	}
+	// The re-fetch under the wider filter rewrites what the commit is on record as holding.
+	recordContent(t, s, "octo/app", "commit-one", contentB)
+
+	wide := runAt("octo/app", "commit-one")
+	wide.SourceFilter = "wide"
+	if existsForContent(t, s, wide, contentB) {
+		t.Error("a run against the narrow tree was credited with the wide tree's content")
+	}
+}

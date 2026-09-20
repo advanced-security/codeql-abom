@@ -77,6 +77,10 @@ CREATE TABLE IF NOT EXISTS abom_query_run (
   cli_version  TEXT,
   repository   TEXT NOT NULL,
   db_commit    TEXT,
+  -- The checkout filter the database was built from. A commit alone does not name a tree: only
+  -- the paths that were fetched decide what the extractor saw, and content equivalence joins
+  -- runs to commits, so without this a run under a narrow filter answers for a wider one.
+  source_filter TEXT,
   ran_at       TEXT NOT NULL
 );
 
@@ -499,6 +503,9 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_query_run", "pack", "TEXT"},
 	{"abom_query_run", "pack_digest", "TEXT"},
 	{"abom_query_run", "cli_version", "TEXT"},
+	// Same argument one level down, for the tree rather than the query. NULL says the filter was
+	// never recorded, which must not be read as "the one in force now": those rows re-run once.
+	{"abom_query_run", "source_filter", "TEXT"},
 	{"abom_suite_query", "pack_digest", "TEXT"},
 	// Nullable, and rows written before it stay NULL. Defaulting them to a source would invent the
 	// provenance the column exists to establish — a corpus once declared accounts the operator had

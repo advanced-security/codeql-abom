@@ -2,11 +2,14 @@ package expand
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"github.com/advanced-security/codeql-abom/internal/frontier"
 	"github.com/advanced-security/codeql-abom/internal/graph"
@@ -86,6 +89,10 @@ type Stats struct {
 	// Reused counts trees served from the checkout cache: a clone this round did not pay for.
 	// Not a skip — every one of these was analyzed or settled on the ledger's say-so.
 	Reused int
+	// Fetched counts the clones this round did pay for. Measured at the clone rather than
+	// inferred from Processed, which counts neither the fetch a settled unit still made nor the
+	// one a cache hit avoided.
+	Fetched int
 }
 
 // Expander turns queued dependencies into graph data and queues what they reveal.
@@ -118,6 +125,9 @@ type Expander struct {
 	// digests remembers each pack's content hash for the life of a round. A pack cannot change
 	// while the round that resolved it is running.
 	digests runner.DigestCache
+
+	// fetches counts clones across every worker, so a round can report what it spent.
+	fetches atomic.Int64
 }
 
 // batch is the set of queued dependencies answered by analyzing one repository at one reference.
@@ -140,11 +150,15 @@ type revision struct {
 	commit     string
 	ref        string
 	analyzed   string
+	// filter is the checkout filter the tree was fetched under. A commit names a repository's
+	// state; only the commit and the filter together name the files the extractor saw.
+	filter string
 }
 
-func (b batch) revision(p work.Prepared) revision {
+func (b batch) revision(p work.Prepared, filter string) revision {
 	return revision{
 		repository: b.full(), commit: p.Commit, ref: b.ref, analyzed: p.AnalyzedRef,
+		filter: filter,
 	}
 }
 
@@ -172,6 +186,7 @@ func (e *Expander) Run(ctx context.Context, opts Options) (Stats, error) {
 		e.report("checkout-cache", "trimming the checkout cache", err)
 	}
 	reusedBefore := e.Cache.Hits()
+	fetchedBefore := e.fetches.Load()
 
 	plans, err := e.plansByTier(ctx, opts)
 	if err != nil {
@@ -243,6 +258,7 @@ func (e *Expander) Run(ctx context.Context, opts Options) (Stats, error) {
 	stats.Processed = poolStats.Processed - stats.Skipped
 	stats.Edges = poolStats.Rows
 	stats.Reused = int(e.Cache.Hits() - reusedBefore)
+	stats.Fetched = int(e.fetches.Load() - fetchedBefore)
 	return stats, nil
 }
 
@@ -329,7 +345,7 @@ func (e *Expander) pendingWork(
 	// No ref: this asks whether the evaluation is on record, and the ref is not part of a run's
 	// identity. Putting one here would make the skip miss whenever a second reference reached
 	// content already analyzed, which is the case it exists for.
-	at := revision{repository: repository, commit: commit}
+	at := revision{repository: repository, commit: commit, filter: e.sourceFilter()}
 	for _, q := range planned.bqrs {
 		ran, err := done(planned.queryRun(q.id, at))
 		if err != nil {
@@ -407,6 +423,7 @@ func (e *Expander) prepare(
 	if err != nil {
 		return work.Prepared{}, err
 	}
+	digest = scopedDigest(e.sourceFilter(), digest)
 	if digest != "" && tree.SHA != "" {
 		if err := e.Store.RecordCommitContent(b.full(), tree.SHA, digest); err != nil {
 			return work.Prepared{}, err
@@ -546,6 +563,7 @@ func (e *Expander) fetch(ctx context.Context, b batch, dest string) (Tree, error
 	if err := e.Pace.Wait(ctx); err != nil {
 		return Tree{}, err
 	}
+	e.fetches.Add(1)
 	return e.Fetcher.Fetch(ctx, dest, b.owner, b.repo, b.ref)
 }
 
@@ -571,6 +589,48 @@ func sparsePatternsOf(f Fetcher) []string {
 	return filter.SparsePatterns()
 }
 
+// filterID names a pattern set in something short enough to be a path segment and stable enough
+// to be an identity.
+//
+// Fetching nothing in particular is a filter too, with an id of its own: "no patterns" is what a
+// whole-repository fetch means, and it has to be told apart from a narrowed one rather than read
+// as an absence that matches anything.
+func filterID(patterns []string) string {
+	h := sha256.New()
+	for _, p := range patterns {
+		// Length-prefixed, so no two different pattern sets can concatenate to the same bytes.
+		fmt.Fprintf(h, "%d:%s\x00", len(p), p)
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// sourceFilter names the filter this round fetches under, for the identities that have to move
+// when it does.
+func (e *Expander) sourceFilter() string { return filterID(sparsePatternsOf(e.Fetcher)) }
+
+// scopedDigest labels a content hash with the filter that produced it.
+//
+// The hash covers the files that were fetched, and says nothing about the ones that were not, so
+// two filters over one commit can hash the same tree and mean different things. Labelling makes
+// the stored value self-describing: a reader asking under a different filter sees a digest that
+// is not its own instead of a match it did not earn.
+func scopedDigest(filter, digest string) string {
+	if digest == "" {
+		return ""
+	}
+	return filter + ":" + digest
+}
+
+// digestUnderFilter reports a recorded digest if this round's filter is the one that produced it,
+// and nothing otherwise. Nothing is the truthful answer: the content under the current filter has
+// not been measured at that commit, and an unmeasured tree must not settle anything.
+func digestUnderFilter(recorded, filter string) string {
+	if recorded == "" || !strings.HasPrefix(recorded, filter+":") {
+		return ""
+	}
+	return recorded
+}
+
 // settleWithoutFetching answers a batch that needs no checkout, reporting whether it did.
 //
 // Before the clone, not after: the ledger only needs the commit, and a reference resolves
@@ -583,11 +643,14 @@ func (e *Expander) settleWithoutFetching(
 		return work.Prepared{}, false, nil
 	}
 	// A commit seen before has its content on record, so the equivalence is available here
-	// too. A commit never seen has none, and an absent digest matches nothing.
-	digest, _, err := e.Store.CommitContentDigest(b.full(), sha)
+	// too. A commit never seen has none, and an absent digest matches nothing. Neither has one
+	// recorded under a filter this round no longer uses: the files it did not fetch are exactly
+	// what settling here would decline to look at.
+	recorded, _, err := e.Store.CommitContentDigest(b.full(), sha)
 	if err != nil {
 		return work.Prepared{}, false, err
 	}
+	digest := digestUnderFilter(recorded, e.sourceFilter())
 	outstanding, err := e.pendingWork(planned, b.full(), sha, digest)
 	if err != nil {
 		return work.Prepared{}, false, err
@@ -668,7 +731,7 @@ func (e *Expander) consume(
 	// A suite decides which query supplied the edges, so the ledger records that query rather
 	// than whatever --query-id happened to say. There may be none: a round that had only the
 	// findings lane left to prove built a database and never ran an edges query.
-	at := b.revision(p)
+	at := b.revision(p, e.sourceFilter())
 	rows, err := e.ingestEdges(p, opts, planned, at)
 	if err != nil {
 		return 0, err

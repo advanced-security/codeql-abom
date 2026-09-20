@@ -134,7 +134,8 @@ func (p tierPlan) identifyFindings(run store.QueryRun) store.QueryRun {
 func (p tierPlan) queryRun(queryID string, at revision) store.QueryRun {
 	return p.identify(queryID, store.QueryRun{
 		QueryID: queryID, Repository: at.repository, DBCommit: at.commit,
-		Ref: at.ref, AnalyzedRef: at.analyzed,
+		SourceFilter: at.filter,
+		Ref:          at.ref, AnalyzedRef: at.analyzed,
 	})
 }
 
@@ -143,7 +144,8 @@ func (p tierPlan) queryRun(queryID string, at revision) store.QueryRun {
 func (p tierPlan) findingsRun(at revision) store.QueryRun {
 	return p.identifyFindings(store.QueryRun{
 		QueryID: strings.Join(p.findings, " "), Repository: at.repository, DBCommit: at.commit,
-		Ref: at.ref, AnalyzedRef: at.analyzed,
+		SourceFilter: at.filter,
+		Ref:          at.ref, AnalyzedRef: at.analyzed,
 	})
 }
 
@@ -345,7 +347,7 @@ func (e *Expander) attachRefs(b batch, p work.Prepared, planned tierPlan) error 
 		return nil
 	}
 	runs := make([]store.QueryRun, 0, len(planned.bqrs)+1)
-	at := b.revision(p)
+	at := b.revision(p, e.sourceFilter())
 	for _, q := range planned.bqrs {
 		runs = append(runs, planned.queryRun(q.id, at))
 	}

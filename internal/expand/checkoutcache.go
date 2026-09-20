@@ -33,6 +33,8 @@ type CheckoutCache struct {
 	// one commit produce one clone rather than two racing ones. Counted rather than kept: a
 	// server runs for weeks over millions of commits, and a map that only grows is a leak.
 	holds map[string]*commitHold
+	// lock is this process's claim on the directory, held for as long as the cache is in use.
+	lock *os.File
 
 	hits atomic.Int64
 }
@@ -76,7 +78,7 @@ func (c *CheckoutCache) Reuse(owner, repo, sha string, patterns []string) (strin
 	if c == nil || c.Dir == "" {
 		return "", false
 	}
-	entry, ok := c.entry(owner, repo, sha)
+	entry, ok := c.entry(owner, repo, sha, patterns)
 	if !ok {
 		return "", false
 	}
@@ -104,7 +106,7 @@ func (c *CheckoutCache) Stage() (string, error) {
 		return "", fmt.Errorf("checkout cache: no directory configured")
 	}
 	root := filepath.Join(c.Dir, stagingDir)
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	if err := os.MkdirAll(root, 0o700); err != nil {
 		return "", fmt.Errorf("checkout cache: preparing staging: %w", err)
 	}
 	dir, err := os.MkdirTemp(root, "fetch-")
@@ -124,7 +126,7 @@ func (c *CheckoutCache) Retain(
 	if c == nil || c.Dir == "" {
 		return "", fmt.Errorf("checkout cache: no directory configured")
 	}
-	entry, ok := c.entry(owner, repo, sha)
+	entry, ok := c.entry(owner, repo, sha, patterns)
 	if !ok {
 		return "", fmt.Errorf("checkout cache: %s/%s@%s cannot name an entry", owner, repo, sha)
 	}
@@ -155,11 +157,11 @@ func (c *CheckoutCache) Retain(
 	if err := os.WriteFile(filepath.Join(staged, cacheMarker), body, 0o600); err != nil {
 		return "", fmt.Errorf("checkout cache: writing %s: %w", cacheMarker, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(entry), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(entry), 0o700); err != nil {
 		return "", fmt.Errorf("checkout cache: preparing %s: %w", filepath.Dir(entry), err)
 	}
-	// Whatever is there was fetched under a different filter, or is the remains of a run that
-	// did not finish. Neither can serve a request, so neither is worth keeping.
+	// Whatever is there is the remains of a run that did not finish under this same filter: a
+	// tree fetched under a different one lives under its own name and is left alone.
 	if err := os.RemoveAll(entry); err != nil {
 		return "", fmt.Errorf("checkout cache: replacing %s: %w", entry, err)
 	}
@@ -365,7 +367,7 @@ func (c *CheckoutCache) reclaimStaging() (int, error) {
 }
 
 // entry is the directory a commit is held in, or false when the names cannot safely be one.
-func (c *CheckoutCache) entry(owner, repo, sha string) (string, bool) {
+func (c *CheckoutCache) entry(owner, repo, sha string, patterns []string) (string, bool) {
 	ownerSegment, ok := cacheSegment(owner)
 	if !ok {
 		return "", false
@@ -374,7 +376,11 @@ func (c *CheckoutCache) entry(owner, repo, sha string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	commitSegment, ok := cacheSegment(sha)
+	// The filter joins the commit rather than standing beside it, because the two together are
+	// one tree: the same commit under two filters is two different sets of files, and a single
+	// slot for both would have each fetch delete the other's still-valid tree. A commit is
+	// fixed-width hex and the id is hex, so the joined name still reads back unambiguously.
+	commitSegment, ok := cacheSegment(sha + "-" + filterID(patterns))
 	if !ok {
 		return "", false
 	}

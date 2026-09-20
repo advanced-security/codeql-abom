@@ -38,7 +38,11 @@ type Status struct {
 	// Skipped counts repositories the ledger already had on record. Analyzed cannot stand in for
 	// it — Processed excludes skips — so a re-analysis of a current corpus would otherwise move
 	// no number at all and read as a loop doing nothing.
-	Skipped     int `json:"skipped"`
+	Skipped int `json:"skipped"`
+	// Reused counts checkouts served from the cache instead of cloned. Not a skip: each one was
+	// analyzed or settled on the ledger's say-so. Without it, a cycle that fetched nothing and
+	// analyzed everything is indistinguishable from one that cloned the whole corpus again.
+	Reused      int `json:"reused"`
 	Settled     int `json:"settled"`
 	Failed      int `json:"failed"`
 	Unavailable int `json:"unavailable"`

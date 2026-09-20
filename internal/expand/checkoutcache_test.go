@@ -19,12 +19,17 @@ import (
 // fetching. The race is real but not reproducible, and a test that only sometimes exercises the
 // case it names is not evidence.
 type gate struct {
-	mu   sync.Mutex
-	left int
-	open chan struct{}
+	t     *testing.T
+	want  int
+	mu    sync.Mutex
+	left  int
+	open  chan struct{}
+	timed bool
 }
 
-func newGate(n int) *gate { return &gate{left: n, open: make(chan struct{})} }
+func newGate(t *testing.T, n int) *gate {
+	return &gate{t: t, want: n, left: n, open: make(chan struct{})}
+}
 
 func (g *gate) arrive() {
 	g.mu.Lock()
@@ -33,11 +38,28 @@ func (g *gate) arrive() {
 		close(g.open)
 	}
 	g.mu.Unlock()
-	// Bounded, so a test that claims fewer jobs than it gated fails rather than hanging.
+	// Bounded, so a test that claims fewer jobs than it gated fails rather than hanging. The
+	// timeout is a failure and not a release: releasing quietly is how a one-fetch assertion
+	// passes without two resolvers ever having been inside the window it is about.
 	select {
 	case <-g.open:
 	case <-time.After(10 * time.Second):
+		g.timedOut()
 	}
+}
+
+// timedOut reports the shortfall once, from whichever goroutine noticed it. Errorf rather than
+// Fatalf: this runs off the test's own goroutine, where Fatalf would only end that one.
+func (g *gate) timedOut() {
+	g.t.Helper()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.timed {
+		return
+	}
+	g.timed = true
+	g.t.Errorf("only %d of %d participants reached the gate, so the concurrency this test "+
+		"names never happened and its assertions prove nothing", g.want-g.left, g.want)
 }
 
 // runWith is h.run with the round spelled out, for tests that need concurrency or a second
@@ -89,7 +111,7 @@ func itemAt(owner, repo, subpath, ref string, depth int) frontier.Item {
 func TestTwoReferencesAtOneCommitAreFetchedOnce(t *testing.T) {
 	h := newHarness(t)
 	h.retainCheckouts()
-	h.probe.hold(newGate(2))
+	h.probe.hold(newGate(t, 2))
 	h.enqueue(
 		itemAt("gradle", "actions", "setup-gradle", "v4", 1),
 		itemAt("gradle", "actions", "setup-gradle", "v3", 1),
@@ -154,6 +176,12 @@ func TestAMovedTagIsFetchedAtItsNewCommit(t *testing.T) {
 
 // A tree fetched under narrower patterns is a tree that is missing files, which reads downstream
 // as a repository that does not contain them.
+//
+// The query identity deliberately does not move here. A widening is a code change and nothing
+// else: the query, the packs and the CodeQL are the ones that already ran, and the commit is on
+// record with a digest measured under the old filter. Every reuse decision therefore says
+// "already done" unless the filter is part of what they are asked about, and the round settles
+// without ever fetching the files the widening was for.
 func TestAWidenedSparseFilterIsNotServedFromTheCache(t *testing.T) {
 	h := newHarness(t)
 	h.retainCheckouts()
@@ -161,14 +189,19 @@ func TestAWidenedSparseFilterIsNotServedFromTheCache(t *testing.T) {
 	h.drain()
 
 	fetched := h.fetchCount()
+	built := h.databasesBuilt()
 	if n := h.requeueDirect(); n == 0 {
 		t.Fatal("nothing was requeued")
 	}
 	h.widenPatterns("/.github/", "action.yml", "action.yaml")
-	h.runWith(Options{Limit: 100, QueryID: "abom/edges-v2"})
+	h.runWith(Options{Limit: 100})
 
 	if again := h.fetchCount() - fetched; again == 0 {
 		t.Error("a wider filter was answered from a narrower tree, which is missing files")
+	}
+	if h.databasesBuilt() == built {
+		t.Error("the wider tree was fetched and not analyzed, so whatever the added paths hold " +
+			"is still absent from the graph")
 	}
 }
 
@@ -199,11 +232,34 @@ func TestACachePathReadsBackToOwnerRepositoryAndCommit(t *testing.T) {
 	first := retain(t, cache, "foo", "bar_baz", "aaaa1111", patterns, 16)
 	second := retain(t, cache, "foo_bar", "baz", "aaaa1111", patterns, 16)
 
-	if want := filepath.Join(cache.Dir, "foo", "bar_baz", "aaaa1111"); first != want {
-		t.Errorf("entry = %q, want %q", first, want)
+	commit := filepath.Join(cache.Dir, "foo", "bar_baz", "aaaa1111-"+filterID(patterns))
+	if first != commit {
+		t.Errorf("entry = %q, want %q", first, commit)
 	}
 	if first == second {
 		t.Error("foo/bar_baz and foo_bar/baz share an entry, so one would serve the other's tree")
+	}
+}
+
+// The same commit under two filters is two sets of files. One slot for both had each fetch
+// delete the other, so a crawl that alternated filters cloned every time and could take the
+// source out from under a database build that was reading it.
+func TestTwoFiltersOverOneCommitAreHeldSeparately(t *testing.T) {
+	cache := &CheckoutCache{Dir: t.TempDir()}
+	narrow := []string{"/.github/"}
+	wide := []string{"/.github/", "action.yml"}
+
+	first := retain(t, cache, "actions", "checkout", "aaaa1111", narrow, 16)
+	second := retain(t, cache, "actions", "checkout", "aaaa1111", wide, 16)
+
+	if first == second {
+		t.Fatal("both filters share an entry, so the second fetch replaced the first's tree")
+	}
+	if _, ok := cache.Reuse("actions", "checkout", "aaaa1111", narrow); !ok {
+		t.Error("the narrow tree is gone, so switching back would clone it again")
+	}
+	if _, ok := cache.Reuse("actions", "checkout", "aaaa1111", wide); !ok {
+		t.Error("the wide tree is gone")
 	}
 }
 
