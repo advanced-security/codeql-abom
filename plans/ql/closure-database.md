@@ -88,6 +88,13 @@ repository is also the unit a person can act on, and the unit
 [`api/query-simulation.md`](../api/query-simulation.md) needs when it predicts what a published
 pack would report.
 
+The collision test must count **selected commits**, not only distinct requested refs. Native
+lock-aware selection in [actions-lockfile.md](../db/actions-lockfile.md) is a prerequisite: a
+workflow can lock an older SHA than its tag currently names, and different contexts can select
+different SHAs behind identical ref text. A native lockfile does not enlarge CodeQL's staging
+namespace. Any distinct selected revisions of one repository inside a proposed database remain a
+collision to report or refuse, not a choice to make by last-write order.
+
 **The whole-account variant is refused for the same reason.** One database over every repository
 would have to collapse **132 of 225** dependencies to a single reference each, and a graph
 projection built on that is wrong for more than half its rows. The cost argument never justified it
@@ -97,9 +104,11 @@ actually scales with the organization is the code-scanning probe, which this cha
 ## Pending
 
 0. **Measure the collision rate, before anything is built.** Within one owned repository's closure,
-   how many dependencies are named at more than one reference? This is the only number that decides
-   whether the whole shape is sound, it is answerable from the crawled organization today, and
-   **the honest outcome of this plan may be that it stops here.** Depends on nothing.
+   how many dependencies select more than one commit across their governing workflow/lock contexts?
+   Count unresolved selection separately; reference spelling alone is insufficient. This decides
+   whether the whole shape is sound, and **the honest outcome may be that it stops here**. Depends
+   on the compatibility and contextual-selection work in
+   [actions-lockfile.md](../db/actions-lockfile.md), not on lock generation inside this plan.
 1. **Measure what a closure costs to extract.** Fewer databases is not less extraction: every owned
    repository re-extracts its whole closure, and closures overlap heavily because every repository
    uses `actions/checkout`. [`db/checkout-cache.md`](../db/checkout-cache.md) removes the fetch
@@ -109,10 +118,11 @@ actually scales with the organization is the code-scanning probe, which this cha
    Depends on 0.
 2. **Stage the closure.** The owned repository's own tree at the source root, every member of its
    closure at `.github/actions/external/${owner}/${repo}/`, and reusable workflows at
-   `.github/workflows/external/${nwo}/.github/workflows/`. The closure membership is already known:
-   `store.SubmissionClosure` computes it, joining `abom_query_run.db_commit` to the frontier's
-   `resolved_sha` so the version a route belongs to is the analyzed one. Depends on 1 and on the
-   checkout cache.
+   `.github/workflows/external/${nwo}/.github/workflows/`. Consume the effective, context-bound
+   closure rather than a second selector. `store.SubmissionClosure` currently joins through one
+   frontier `resolved_sha`; that is not sufficient for two consumers locking the same ref
+   differently. Stage the selected commits on cache misses as well as hits. Depends on 1, the
+   lock-aware closure contract and the existing checkout cache.
 3. **Index it.** Append a recursive workflow include to `LGTM_INDEX_FILTERS` rather than replacing
    the defaults — the extractor's `autobuild.sh` concatenates a provided value after its own, so a
    replacement would drop `**/action.yml` and silently lose every composite action. Depends on 2.
@@ -130,7 +140,9 @@ actually scales with the organization is the code-scanning probe, which this cha
    `Repository` and a single `DBCommit`, and this database has one root and many members. It needs
    a manifest — the set of `(repository, commit)` pairs staged — hashed in their place, with the
    root repository named separately so a run can still be found by the repository it is about.
-   Depends on 5.
+   Include the governing workflow/lock context and derivation version in the input identity where
+   they affect interpretation; do not replace regular upstream query-run reuse with per-consumer
+   duplicates. Depends on 5.
 7. **Un-stage before findings are linked.** `store.LinkFindingsToNodes` matches on
    `abom_finding.file_path` in all three of its passes. A staged path like
    `.github/actions/external/actions/checkout/action.yml` matches no node in any repository, so
@@ -141,8 +153,9 @@ actually scales with the organization is the code-scanning probe, which this cha
 ## The constraints that must not be broken
 
 **The closure database is never the discovery engine.** Resumability is the property that a run
-dying halfway does not repeat finished work, and it holds because the queue and the ledger are per
-`(dependency, reference)`. A newly discovered hop that forces a whole-closure rebuild destroys it.
+dying halfway does not repeat finished work. The resolution plan binds consumers to reusable
+dependency/commit work; a newly discovered hop must not force a whole-closure rebuild to discover
+the next one.
 Per-repository databases stay, keep producing the graph, and keep being what the crawl claims
 against. This is a periodic artifact that **reads**, in the same class as `report`, `bom` and
 `submit`.
@@ -192,11 +205,13 @@ should be read as the workaround it is.
 ## Verification
 
 - **The collision measurement is taken and written down before item 2 begins**, including the case
-  where it says the shape does not work.
+   where it says the shape does not work. Cover identical requested tags with different selected
+   commits, not only different tag names.
 - Node, edge, reach, bill-of-materials component, submission-closure and pinning totals are
   **byte-identical** before and after, because every row this writes is `extended` and every
-  aggregate reads `regular`. Snapshot with `sqlite3 abom.db ".backup .abom/before.db"` — `cp` does
-  not read the WAL.
+   aggregate reads `regular`. Take the baseline after lock-aware resolution has landed, so its
+   separately explained corrections are not attributed to staging. Snapshot with
+   `sqlite3 abom.db ".backup .abom/before.db"`; `cp` does not read the WAL.
 - Keys produced through a closure database are byte-identical to the keys the per-repository path
   produces for the same repository and commit. Any divergence is named, not reconciled.
 - The spike's fixture is checked in as a query test and repeated at corpus scale: a staged callee

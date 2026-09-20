@@ -3,11 +3,11 @@
 An Actions Bill of Materials for a GitHub organization, built from CodeQL results.
 
 Self-hosted, and meant for a central security team responsible for GitHub Actions across one
-GitHub organization. It contributes what GitHub's dependency graph cannot see about Actions, and
-holds the findings that cannot travel the advisory database at all.
+GitHub organization. It connects dependency source evidence, CodeQL findings, ownership and reach,
+including findings about private code that cannot travel the public advisory route.
 
-**[Why ABOM exists](docs/abom-value-proposition.md)** — the two documented gaps in the native
-experience that justify a separate tool, and the boundary it will not cross.
+**[Why ABOM exists](docs/abom-value-proposition.md)** - how ABOM builds on native GitHub capabilities
+and which organization-wide questions it answers.
 **[How it works](docs/architecture.md)** — the pipeline, the data model, and the rules that shape
 them. **[Vision](docs/vision.md)** — where it is going and why. **[Roadmap](docs/roadmap.md)** —
 what is next.
@@ -43,6 +43,21 @@ a reference, this tool will not tell you it is safe — it will tell you the rul
 
 Coverage, unresolved dependencies and unplaceable findings are reported as first-class output.
 Silence about what was not analyzed reads as completeness, and would be a lie.
+
+## Native Actions lockfiles
+
+**Native lock-aware resolution is ABOM's target baseline; its ingestion is not built yet.**
+GitHub's [gh-actions-lock](https://github.com/github/gh-actions-lock) retains symbolic references
+while selecting immutable commits for onboarded workflows. ABOM will consume that selection at
+the analyzed revision using GitHub's [shared parser](https://github.com/github/actions-lockfile),
+preserving the declared ref, lock context and actually analyzed commit separately. A live tag
+lookup must not replace a locked choice, and a broken lock must not silently become a live lookup.
+
+[Tool adoption](plans/tools/actions-lock.md) and [contextual resolution](plans/db/actions-lockfile.md)
+are distinct planned efforts. Native lock updates, runner enforcement, Dependency Graph ingestion
+and advisory outcomes require [separate verification](plans/api/dependency-graph-crosscheck.md).
+`abom-check` remains a planned verdict client; new submission modes are deferred while that native
+coverage is measured. Existing guarded manual submission is retained, not automatically retired.
 
 ## Quick start
 
@@ -117,6 +132,22 @@ make selfcheck   # run our own analysis over our own workflows
 
 Requires Go (see `go.mod`), .NET 10, Node, and the CodeQL CLI at the version in
 `.codeql-version`.
+
+## Acknowledgements
+
+GitHub's [gh-actions-lock](https://github.com/github/gh-actions-lock) and
+[actions-lockfile](https://github.com/github/actions-lockfile) provide the native pinning tool and
+shared format that ABOM's planned resolution will reuse, rather than reimplement.
+
+Jesse Houwing's
+[actions-dependency-submission](https://github.com/jessehouwing/actions-dependency-submission)
+is valuable prior art for fork and mirror resolution, host-aware GitHub access, container
+declarations and workflow-level dependency submission. Its implementation and tests inform ABOM's
+[planned work](plans/next.md), including the future `abom-check` client, following
+[issue #18](https://github.com/advanced-security/codeql-abom/issues/18). The relevant plans cite
+specific source revisions and distinguish those ideas from capabilities ABOM already implements.
+His [request for native lock-backed reporting](https://github.com/github/gh-actions-lock/issues/122)
+also informs the capability comparison before any expansion of ABOM's publisher.
 
 ## License
 

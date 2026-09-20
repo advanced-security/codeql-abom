@@ -32,6 +32,11 @@ would report that its inputs had changed meaning.
 row is written, because a total that changed for an undeclared reason is exactly the failure
 [`plans/next.md`](../next.md) keeps recording: `make verify` stays green throughout.
 
+Native resolution in [actions-lockfile.md](actions-lockfile.md) is a separate prerequisite for
+staging the right revisions. `regular` versus `extended` describes database shape; lock context
+describes which dependency commits a consumer selected. Neither field can substitute for the other,
+and adopting native locks does not by itself add cross-repository dataflow to a regular database.
+
 ## Pending
 
 1. **`analysis_mode` on `abom_query_run`**, with a fixed vocabulary of `regular` and `extended`,

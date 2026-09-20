@@ -30,6 +30,12 @@ unconditionally. Measured on 12 real action repositories, a probe runs in a medi
 price. `abom_ref_resolution` is *not* consulted: its rows are historical readings whose freshness
 is unknown, and trusting one would defeat the drift detection the recheck lane exists for.
 
+That live-ref rule applies to declared-ref resolution. A native workflow lock deliberately selects
+a historical commit; [actions-lockfile.md](actions-lockfile.md) owns carrying that choice through
+precheck and cold fetch, not just cache hits. The cache remains reusable by repository/commit/input
+set and does not need one stored checkout per consumer. Lock-aware correctness must also work with
+retention disabled; enabling this cache is not permission to start honoring native locks.
+
 This is worth having on its own terms, with nothing else built. It is also the precondition for
 [`ql/closure-database.md`](../ql/closure-database.md), which needs many checkouts present at once
 and cannot afford to fetch each of them once per consumer.
@@ -80,5 +86,7 @@ adapters that widen this set, so the trap is not hypothetical.
   analyses, which is the case that is invisible today.
 - Disk occupancy of the full closure is recorded before retention becomes a default, because it is
   the objection this plan has no answer to yet.
-- A moved tag is still detected: the recheck lane sees the new commit and the cache serves the new
-  tree, not the one it already held for that tag.
+- A moved tag is still detected for declared-ref consumers: the recheck lane sees the new commit
+  and the cache serves the new tree. Locked consumers retain their selected commit on cache hits,
+  misses and no-cache runs; drift does not silently repin them. The resolution plan owns those
+  selection tests, while cache tests continue to assert one fetch for shared commit inputs.

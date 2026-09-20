@@ -15,6 +15,11 @@ alerts and the dependency graph are reported against it, and branch protection d
 check can block at all. A finding reported without its ref is a measurement presented without the
 qualifier that makes it meaningful.
 
+A native lock adds another necessary qualifier: the workflow's requested tag can differ from the
+commit selected by its governing lock, and from where that tag points now. The binding in
+[actions-lockfile.md](actions-lockfile.md) must retain all three rather than overwrite the requested
+ref with a SHA or attribute every consumer to the newest tag observation.
+
 ## Pending
 
 1. **The seed lane records no query run.** `codeql-abom build` ingests with
@@ -31,6 +36,11 @@ qualifier that makes it meaningful.
    `protected` flag is set repository-wide: asked of three declared repositories, `?protected=true`
    returned **58** branches, 48 of them on one repository, including `naman_test` and twenty-odd
    `export-D…` branches. It needs the protected set intersected with the default branch.
+4. **Attach lock context without duplicating evaluations.** Carry consuming repository/root commit,
+   workflow, lock digest/schema and selected commit through both the record and skip paths. Keep
+   requested ref, lock symbolic ref and actually analyzed revision separate. Context-to-run
+   attribution consumes [actions-lockfile.md](actions-lockfile.md); a locked historical selection
+   must not read as a new measurement of where a tag points today.
 
 ## The constraint that must not be broken
 
@@ -46,6 +56,12 @@ are reached by more than one ref**, so a `ref` column would have named one and d
 391 silently. It would also defeat the content-equivalence skip precisely when a second ref reaches
 content already analyzed.
 
+**The lock context is not the identity of an ordinary upstream evaluation.** Two consumers selecting
+one repository/commit can share the query run while retaining separate attribution. Derived closure
+results that consume a lock context need an input identity of their own; a lock-only change cannot
+be hidden by a content-equivalence skip. Neither choice allows claiming that an unanalyzed commit
+was actually examined.
+
 **Absent is not unprotected**, and **an empty ref keeps meaning "as requested, default branch"**. A
 migration must never back-fill `ref = 'main'` into rows that recorded a request.
 
@@ -58,3 +74,7 @@ migration must never back-fill `ref = 'main'` into rows that recorded a request.
   measured as a call count rather than as elapsed time.
 - A repository with no protected branches and one never probed produce **different** answers.
 - Renaming a branch upstream does not change what a historical finding says it was analyzed at.
+- Different locked commits behind one requested tag point at the correct distinct analyses. Two
+   contexts selecting the same commit reuse its evaluation and both remain attributable, including
+   after a skip. Missing lock provenance stays unknown rather than being reconstructed from current
+   default-branch files.

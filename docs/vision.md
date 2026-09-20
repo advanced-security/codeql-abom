@@ -1,8 +1,8 @@
 # Where ABOM is going
 
 The destination, and the reasoning that fixes it. For what the system does today, see
-[how it works](architecture.md). For the documented gaps in GitHub's native experience that justify
-a separate tool at all, see [why ABOM exists](abom-value-proposition.md). For the themes between
+[how it works](architecture.md). For the native capabilities ABOM builds on and the questions it
+adds, see [why ABOM exists](abom-value-proposition.md). For the themes between
 here and there, see [the roadmap](roadmap.md). For the words, see
 [the vocabulary](vocabulary.md).
 
@@ -14,9 +14,15 @@ detection arrives one repository at a time, and nothing assembles it into someth
 can act on.
 
 ABOM is the glue between detection and response for GitHub Actions in that organization. It holds
-the transitive dependency graph nothing else holds, the findings that cannot travel the advisory
-route, the enablement state that explains a gap, and the policy that turns any of those into a
-pull request somebody has to answer for.
+source-linked transitive dependency evidence, findings that cannot travel the public advisory
+route, the enablement state that explains a gap, and the operator policy that makes those results
+actionable. GitHub's native locks are the target basis for effective dependency identity; ABOM
+consumes that foundation rather than claiming to be the only producer of a transitive graph.
+
+Native lock consumption is planned, not built. Requested ref, governing lock and analyzed commit
+must remain explainable together. GitHub owns pinning and update tooling; ABOM adds CodeQL evidence,
+ownership, reach and policy across the organization. A native product filling an inventory or
+publication gap is a reason to integrate and retire redundant work after verification.
 
 ## One organization is the unit
 
@@ -42,12 +48,10 @@ GHAS answers per repository: is this one configured, what did the scan find, whi
 Those are the right questions for the developer who can fix them, and the wrong shape entirely for
 the team accountable across ten thousand of them.
 
-The estate-level questions have no native home. Which business unit carries the most reachable
-exposure. What breaks if this action is bumped. Who has to be told, and in what order. GitHub is
-explicit about one piece of this: dependencies contributed through the submission API "are shown in
-dependency review, but are *not* available in your organization's dependency insights". The very
-closure ABOM contributes is visible per repository and absent from the organization-wide view.
-Producing that view stays ABOM's job, and nothing native is going to take it over.
+The estate-level questions are ABOM's focus: which business unit carries reachable exposure, what
+changes if an action is bumped, and who can act on it. Native inventory and reporting capabilities
+will evolve. Compare their coverage at known revisions rather than assuming a permanent product
+gap; ABOM's contribution is relating that evidence to source-level findings, ownership and policy.
 
 ## Enablement and exposure are different questions
 
@@ -126,8 +130,8 @@ about edges that a reader has to be able to ask as edges.
 
 ## The questions are the organization's own
 
-ABOM holds the only transitive Actions graph the organization has, and the set of questions anybody
-can ask of it is currently fixed: whatever `codeql/actions-queries` ships, plus one marker ABOM
+ABOM relates the organization's dependency graph to source-level query results, and the set of
+questions anybody can ask of it is currently fixed: whatever `codeql/actions-queries` ships, plus one marker ABOM
 writes. Those are good general questions, and they are not *this organization's* questions — which
 runner labels are permitted, which internal action must never appear beneath a privileged job, which
 of last quarter's incident patterns still exists anywhere.
@@ -170,10 +174,10 @@ without anybody editing a workflow. **ABOM produces the configuration; GitHub pr
 
 ```mermaid
 flowchart LR
-  subgraph built["Built: the dependency route"]
+  subgraph built["Existing guarded dependency route"]
     CLOSE["transitive closure,<br/>version resolved where measured"] --> SUB["dependency submission"]
     SUB --> DG["GitHub dependency graph"]
-    DG --> DA["Dependabot alert"]
+    DG -. "supported version matching" .-> DA["Dependabot alert"]
   end
   subgraph gap["Not built: the findings route"]
     FIND["CodeQL findings,<br/>authored, upstream and ABOM's"] --> SIM["simulate across<br/>the organization"]
@@ -189,6 +193,10 @@ flowchart LR
   style CAMP fill:#3d2d1d
   style PR fill:#3d2d1d
 ```
+
+The existing dependency route is not a commitment to expand it. Native lock-backed inventory and
+remediation are [measured separately](../plans/api/dependency-graph-crosscheck.md); new workflow
+submission modes are deferred, and any retirement must account for snapshots already sent.
 
 Simulation comes first, and it is the step that makes the rest defensible. Publishing a pack changes
 what every developer in the organization sees, and the person who wrote the query is not the person
