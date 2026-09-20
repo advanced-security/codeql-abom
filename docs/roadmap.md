@@ -51,6 +51,15 @@ prefix, while **what is gone can only be answered by reading everything**. Graph
 way to ask the first two and to carry whatever else is wanted about a repository, with REST as the
 fallback for the organizations that will not permit it. `plans/api/org-enumeration.md`
 
+Staying current is also about not paying twice for what did not move, and that has the same shape
+one level down. A commit is fetched once however many references name it, and a query is evaluated
+once against a given database — both because the thing is identified by its content rather than by
+the name something reached it through. The unfinished half is the opposite direction: when ABOM
+changes what it fetches, what it runs or how it reads the results, it must put back exactly the work
+that change touched and nothing else. A crawl that cannot name what it invalidated has only one
+safe move left, which is to do all of it again. `plans/db/analysis-ledger.md`,
+`plans/db/checkout-cache.md`
+
 ## One scope, two renderings
 
 A security team asks one question in two shapes: which things match this, and what do they touch.

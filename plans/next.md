@@ -372,7 +372,7 @@ measurement makes it urgent.
 | [api/advisories.md](api/advisories.md) | refresh cadence and what an age ceiling should cost |
 | [api/query-suites.md](api/query-suites.md) | suite staleness, and streaming result sets out of BQRS; query identity belongs to entry 12 |
 | [api/reachability.md](api/reachability.md) | all-routes reach, and `needs:` ordering nothing renders |
-| [db/analysis-ledger.md](db/analysis-ledger.md) | what a run records about the pack that produced it |
+| [db/analysis-ledger.md](db/analysis-ledger.md) | what a run records, and how a change to any of it reaches work already on record |
 | [db/data-efficiency.md](db/data-efficiency.md) | the standing cost review; one endpoint is still linear in rows |
 | [db/declaration-provenance.md](db/declaration-provenance.md) | how a declaration arrived, and what contradicts it |
 | [db/freshness-budget.md](db/freshness-budget.md) | claim order, and depth 2 starting before depth 1 drains |
@@ -385,12 +385,22 @@ measurement makes it urgent.
 
 ## Gaps with a decision to make
 
-- **The expand lane cannot be told that interpretation changed.** `expand.pendingWork` decides from
-  `store.QueryRunExists` — repository, commit, query id, query version, pack — so a Go-side change to
-  how results are *read* invalidates nothing, and re-analysis of an unchanged commit is skipped. The
-  seed lane already solves this with a build-stamped extractor version; the expand lane has no
-  equivalent. **The decision is a flag, a build-stamped constant, or a hash of the interpreting
-  code.** See [`db/unresolved-references.md`](db/unresolved-references.md).
+- **A change can refuse a skip without being able to select the work it made stale.**
+  `expand.pendingWork` now reads repository, commit, query id, pack digest, CodeQL version and the
+  sparse filter the database was built from — but a refusal only moves work that is **queued**, and
+  `store.RequeueStale` selects on `cli_version` and `pack_digest` alone. So widening
+  `sparsePatterns` re-measures whatever happens to be on the queue and silently leaves everything
+  already `done` measured the old way. A Go-side change to how results are *read* is worse: it is
+  not a dimension at all, invalidates nothing, and re-analysis of an unchanged commit is skipped —
+  the seed lane solves that with a build-stamped extractor version and the expand lane has no
+  equivalent. **Two decisions, not one: how a Go interpretation change gets a version (a flag, a
+  build-stamped constant, or a hash of the interpreting code), and what shape a requeue takes so
+  that the next dimension does not need a third one.** `mode` from entry 1 and the version columns
+  from entry 12 are both already ranked to arrive. See
+  [`db/analysis-ledger.md`](db/analysis-ledger.md), which holds both as pending items. **It is here
+  rather than in the ranking because the first is a fork nobody has taken**, and it is ranked the
+  moment one is — the requeue shape is ordinary work after that, and 63 edges are already waiting
+  on it.
 - **The ownership gate is inert on an existing install until somebody refreshes.** A declaration
   roots nothing unless a recorded token scope says the membership list could have been complete, and
   a corpus verified before the `scopes` column carries NULL everywhere, so nothing can be
