@@ -58,6 +58,10 @@ make build
 # Follow dependencies upstream, then refresh every aggregate.
 ./bin/codeql-abom expand-all --db abom.db
 
+# The same crawl, retaining fetched checkouts between runs: a commit is cloned once however
+# many references name it, bounded by --cache-max-mb with the least recently used evicted first.
+./bin/codeql-abom expand-all --db abom.db --cache-dir .abom/cache
+
 # Recompute the derived tables without crawling, which is what an upgrade needs.
 ./bin/codeql-abom refresh --db abom.db
 

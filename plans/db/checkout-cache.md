@@ -1,7 +1,9 @@
 # A commit is fetched once, not once per reference
 
-**Status:** Every reference is cloned separately, including the ones that resolve to a commit
-already on disk, and the tree is deleted before the next cycle can reuse it.
+**Status:** Built and off by default. Naming `--cache-dir` retains fetched trees at
+`${CacheDir}/${owner}/${repo}/${sha}/`, keyed on the commit and the sparse filter, so a commit is
+cloned once however many references name it and however many cycles ask for it. Retention stays
+opt-in until the full closure's disk occupancy is measured.
 
 ## Why this exists
 
@@ -12,13 +14,21 @@ in it**, because two references at one commit are one evaluation, and `abom_ref_
 records which commit a tag pointed at, unique on `(owner, repo, tag, commit_sha)` precisely because
 a tag moves.
 
-So the ledger and the resolution table both treat the commit as the identity, and the fetch is the
-one step that still treats the reference as the identity.
+So the ledger and the resolution table both treat the commit as the identity, and without
+`--cache-dir` the fetch is still the one step that treats the reference as the identity.
 
-**132 of 225 dependencies are analyzed at more than one reference.** Each reference is cloned
-separately even when both resolve to the same commit. Worse, `internal/expand/expand.go` removes
-the checkout and the database after each unit unless `KeepArtifacts` is set, so the next cycle
-re-clones what the previous cycle deleted, for a commit that cannot have changed.
+**132 of 225 dependencies are analyzed at more than one reference.** Uncached, each reference is
+cloned separately even when both resolve to the same commit, and `internal/expand/expand.go`
+removes the checkout after each unit unless `KeepArtifacts` is set, so the next cycle re-clones
+what the previous cycle deleted for a commit that cannot have changed.
+
+The plan originally assumed the resolved SHA was known only *after* the clone. It was not: the
+recheck lane already resolves every mutable reference through `Probe.Resolve`, which is `git
+ls-remote`, before any fetch — so the identity needed to key the cache was already being paid for
+unconditionally. Measured on 12 real action repositories, a probe runs in a median 166 ms against
+614 ms for a sparse clone, so keying on the probe costs nothing extra and saves work 3.7× its
+price. `abom_ref_resolution` is *not* consulted: its rows are historical readings whose freshness
+is unknown, and trusting one would defeat the drift detection the recheck lane exists for.
 
 This is worth having on its own terms, with nothing else built. It is also the precondition for
 [`ql/closure-database.md`](../ql/closure-database.md), which needs many checkouts present at once
@@ -26,24 +36,15 @@ and cannot afford to fetch each of them once per consumer.
 
 ## Pending
 
-1. **Resolve before fetching, and key the cache on the commit.** The resolved SHA is currently
-   known only *after* the clone, from `git rev-parse HEAD`. Two orders are available and the choice
-   is this plan's: ask `abom_ref_resolution` first and fall back to `git ls-remote` on a miss, or
-   fetch into a staging directory and move it into the cache once the SHA is known. The first
-   spends a network round trip to save a clone; the second spends nothing extra and caches one
-   clone later. Measure both against the crawled organization rather than reasoning about it.
+1. **Measure the full closure, then flip the default.** Retention is opt-in because the objection
+   this plan has no answer to is disk, and a ceiling is a bound rather than a measurement. Per
+   checkout the corpus averages **0.18 MiB** retained (1.09 MiB of tree and 1.01 MiB of `.git`
+   across 12 action repositories, so `.git` is roughly 48% of the bytes and is kept because
+   stripping it would change the SCM provenance `codeql database create` records). What is not
+   known is the occupancy of a crawled organization's *full* closure, which is the number that
+   decides both the default ceiling and whether `--cache-dir` should be on without being asked
+   for. Measure that against a real organization, not the fixture corpus, then choose.
    Depends on nothing.
-2. **A cache that outlives the unit.** A directory outside `WorkDir`, laid out
-   `${CacheDir}/${owner}/${repo}/${sha}/`, so a path can be read back to its identity — unlike
-   today's underscore join, where `foo_bar_baz` is both `foo/bar_baz` and `foo_bar/baz` and
-   repository names contain underscores. `KeepArtifacts` stops being the only way to retain
-   anything, and becomes what it says: keep the *database*, which is a different decision.
-   Depends on 1.
-3. **Eviction, with a stated disk cost.** A cache with no ceiling is a disk leak that presents as a
-   crawl failure weeks later. Least-recently-used against a configured ceiling is the obvious
-   choice and is not the only one — a commit no frontier row still names is evictable regardless of
-   recency, and that is cheaper to compute than it sounds. **The disk cost of the crawled
-   organization's full closure is measured before any retention default changes.** Depends on 2.
 
 ## The constraints that must not be broken
 

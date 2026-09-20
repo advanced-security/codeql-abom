@@ -44,6 +44,13 @@ consequence of the declaration rather than a separate configuration.
 **Analysis is queued per dependency *and* reference.** `actions/checkout@v4` and
 `actions/checkout@v5` are different work, because they are different commits.
 
+**A commit is fetched once, however many references name it.** Retained checkouts are keyed on the
+commit and the sparse filter they were fetched under, at `${CacheDir}/${owner}/${repo}/${sha}/`,
+never on the reference — a tag moves, and a cache keyed on one would serve the old tree forever
+with nothing to say it had. Reuse says only that the bytes are already here: whether the analysis
+runs is still the ledger's decision, so a hit is never a skip. Retention is off until a directory
+is named, and bounded by a ceiling that evicts the least recently used first.
+
 **Expansion follows the graph outward.** Edges produced by one analysis name dependencies that are
 enqueued for the next, which is how the transitive closure is built one measured hop at a time.
 
