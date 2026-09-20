@@ -88,7 +88,7 @@ const findingsOnLine = `(SELECT COUNT(*) FROM abom_finding_node fn
 // rulesOnLine names them, sorted, so a row reads the same on every page.
 const rulesOnLine = `(SELECT GROUP_CONCAT(rule_id) FROM
 	                      (SELECT DISTINCT f.rule_id FROM abom_finding_node fn
-	                         JOIN abom_finding f ON f.row_id = fn.finding_row_id
+	                         JOIN abom_finding_regular f ON f.row_id = fn.finding_row_id
 	                        WHERE fn.node_row_id = e.src_node_row_id
 	                        ORDER BY f.rule_id))`
 
@@ -96,7 +96,7 @@ const rulesOnLine = `(SELECT GROUP_CONCAT(rule_id) FROM
 func relationshipRuleFilter(rules, notRules []string) (string, []any) {
 	clause, args := "", []any{}
 	matched := `EXISTS (SELECT 1 FROM abom_finding_node fn
-	                     JOIN abom_finding f ON f.row_id = fn.finding_row_id
+	                     JOIN abom_finding_regular f ON f.row_id = fn.finding_row_id
 	                    WHERE fn.node_row_id = e.src_node_row_id AND LOWER(f.rule_id) IN `
 	if len(rules) > 0 {
 		list, names := inList(rules)
@@ -180,10 +180,10 @@ func (s *Store) relationshipsWhere(q RelationshipsQuery) (string, []any, error) 
 	return where + bound, append(args, bindings...), nil
 }
 
-// relationshipRows is the one join both statements read. `abom_edge_live` excludes what pruning
+// relationshipRows is the one join both statements read. `abom_edge_regular` excludes what pruning
 // removed, and the endpoints are looked up by row id rather than by scanning the node table.
 const relationshipRows = `
-	FROM abom_edge_live e
+	FROM abom_edge_regular e
 	JOIN abom_node_live src ON src.row_id = e.src_node_row_id
 	JOIN abom_node_live dst ON dst.row_id = e.dst_node_row_id
 	LEFT JOIN repository r ON r.row_id = e.repository_row_id

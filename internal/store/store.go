@@ -185,6 +185,10 @@ func (s *Store) Migrate() error {
 	if _, err := s.db.Exec(honoredScopeDDL); err != nil {
 		return fmt.Errorf("creating the honored scope view: %w", err)
 	}
+	// After both: the edge views read the live ones, and all of them read analysis_mode.
+	if _, err := s.db.Exec(analysisModeViewDDL); err != nil {
+		return fmt.Errorf("creating the analysis mode views: %w", err)
+	}
 	// Before seeding, so a binding that only needs renaming still counts as configured and the
 	// defaults are not written over it.
 	if err := s.migrateSuiteNames(); err != nil {

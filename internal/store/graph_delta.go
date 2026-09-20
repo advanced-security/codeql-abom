@@ -75,7 +75,7 @@ type ReachStaleness struct {
 // against the graph rather than a timer alone.
 func (s *Store) ReachStaleness() (ReachStaleness, error) {
 	out := ReachStaleness{Never: true}
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM abom_edge_live`).Scan(&out.TotalEdges); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM abom_edge_regular`).Scan(&out.TotalEdges); err != nil {
 		return out, fmt.Errorf("counting edges: %w", err)
 	}
 
@@ -98,7 +98,7 @@ func (s *Store) ReachStaleness() (ReachStaleness, error) {
 	}
 	out.Never, out.At = false, parsed
 	if err := s.db.QueryRow(
-		`SELECT COUNT(*) FROM abom_edge_live WHERE row_id > ?`, mark.Int64).Scan(&out.NewEdges); err != nil {
+		`SELECT COUNT(*) FROM abom_edge_regular WHERE row_id > ?`, mark.Int64).Scan(&out.NewEdges); err != nil {
 		return out, fmt.Errorf("counting edges since the last rebuild: %w", err)
 	}
 	return out, nil
@@ -123,7 +123,7 @@ func (s *Store) GraphVersion() (GraphVersion, error) {
 		into  *int
 	}{
 		{`SELECT COUNT(*) FROM abom_node_live`, &out.Nodes},
-		{`SELECT COUNT(*) FROM abom_edge_live`, &out.Edges},
+		{`SELECT COUNT(*) FROM abom_edge_regular`, &out.Edges},
 	} {
 		if err := s.db.QueryRow(c.query).Scan(c.into); err != nil {
 			return out, fmt.Errorf("reading graph version: %w", err)
@@ -138,7 +138,7 @@ func (s *Store) RecordGraphGeneration(r GraphRebuild) (int64, error) {
 	if err := s.db.QueryRow(`SELECT MAX(row_id) FROM abom_node_live`).Scan(&nodeMark); err != nil {
 		return 0, fmt.Errorf("reading node watermark: %w", err)
 	}
-	if err := s.db.QueryRow(`SELECT MAX(row_id) FROM abom_edge_live`).Scan(&edgeMark); err != nil {
+	if err := s.db.QueryRow(`SELECT MAX(row_id) FROM abom_edge_regular`).Scan(&edgeMark); err != nil {
 		return 0, fmt.Errorf("reading edge watermark: %w", err)
 	}
 	var containMark sql.NullInt64

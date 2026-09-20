@@ -160,7 +160,7 @@ func (s *Store) directRefsWithin(sc RepositoryScope) (string, []any, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	return `(SELECT COUNT(*) FROM abom_edge_live e
+	return `(SELECT COUNT(*) FROM abom_edge_regular e
 		          JOIN repository er ON er.row_id = e.repository_row_id
 		         WHERE e.dst_node_row_id = n.row_id` + bound + `)`, args, nil
 }
@@ -324,7 +324,7 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 		SELECT n.node_key, n.node_kind, COALESCE(n.owner,''), COALESCE(n.repo,''),
 		       COALESCE(r.origin, '') AS origin,
 		       ` + reach + ` AS dependent_repos, ` + direct + ` AS direct_dependents,
-		       (SELECT COUNT(DISTINCT e.ref_value) FROM abom_edge_live e
+		       (SELECT COUNT(DISTINCT e.ref_value) FROM abom_edge_regular e
 		         WHERE e.dst_node_row_id = n.row_id
 		           AND e.ref_value IS NOT NULL AND e.ref_value <> '') AS distinct_refs,
 		       (SELECT COUNT(*) FROM abom_finding_node fn
@@ -455,7 +455,7 @@ func inventoryFindingFilter(q InventoryQuery) (string, []any) {
 		whereArgs = append(whereArgs, names...)
 	}
 	if len(where) > 0 {
-		out += ` AND EXISTS (SELECT 1 FROM abom_finding f
+		out += ` AND EXISTS (SELECT 1 FROM abom_finding_regular f
 		                      JOIN abom_finding_node fn ON fn.finding_row_id = f.row_id
 		                     WHERE fn.node_row_id = n.row_id AND ` +
 			strings.Join(where, " AND ") + `)`
@@ -463,7 +463,7 @@ func inventoryFindingFilter(q InventoryQuery) (string, []any) {
 	}
 	if len(q.NotRules) > 0 {
 		clause, a := ruleClause("x.rule_id", q.NotRules)
-		out += ` AND NOT EXISTS (SELECT 1 FROM abom_finding x
+		out += ` AND NOT EXISTS (SELECT 1 FROM abom_finding_regular x
 		                          JOIN abom_finding_node xn ON xn.finding_row_id = x.row_id
 		                         WHERE xn.node_row_id = n.row_id AND ` + clause + `)`
 		args = append(args, a...)
@@ -504,10 +504,10 @@ func inventoryRefFilter(style string) string {
 	commit := `LENGTH(e.ref_value) = 40 AND e.ref_value GLOB '[0-9a-f]*'`
 	switch style {
 	case "sha":
-		return ` AND EXISTS (SELECT 1 FROM abom_edge_live e
+		return ` AND EXISTS (SELECT 1 FROM abom_edge_regular e
 		                     WHERE e.dst_node_row_id = n.row_id AND ` + commit + `)`
 	case "tag":
-		return ` AND EXISTS (SELECT 1 FROM abom_edge_live e
+		return ` AND EXISTS (SELECT 1 FROM abom_edge_regular e
 		                     WHERE e.dst_node_row_id = n.row_id
 		                       AND e.ref_value IS NOT NULL AND e.ref_value <> ''
 		                       AND NOT (` + commit + `))`
@@ -649,9 +649,9 @@ func (s *Store) RepositoriesPage(q RepositoriesQuery) (RepositoriesPage, error) 
 		SELECT r.repository_full_name, r.origin,
 		       (SELECT COUNT(*) FROM abom_node_live n
 		         WHERE n.repository_row_id = r.row_id AND n.node_kind = 'workflow') AS workflows,
-		       (SELECT COUNT(*) FROM abom_edge_live e
+		       (SELECT COUNT(*) FROM abom_edge_regular e
 		         WHERE e.repository_row_id = r.row_id) AS dependencies,
-		       (SELECT COUNT(*) FROM abom_finding f
+		       (SELECT COUNT(*) FROM abom_finding_regular f
 		         WHERE f.repository_row_id = r.row_id) AS findings,
 		       (SELECT COUNT(*) FROM abom_exposure x
 		         WHERE x.repository_row_id = r.row_id) AS exposures,
@@ -732,7 +732,7 @@ func (s *Store) RepositoryDetailOf(fullName string) (RepositoryDetail, error) {
 	}
 
 	rules, err := s.db.Query(`
-		SELECT rule_id, COUNT(*) FROM abom_finding
+		SELECT rule_id, COUNT(*) FROM abom_finding_regular
 		WHERE repository_row_id = ? GROUP BY rule_id ORDER BY 2 DESC`, rowID)
 	if err != nil {
 		return out, fmt.Errorf("reading findings for %q: %w", fullName, err)
@@ -752,7 +752,7 @@ func (s *Store) RepositoryDetailOf(fullName string) (RepositoryDetail, error) {
 
 	flows, err := s.db.Query(`
 		SELECT n.node_key, COALESCE(n.path,''),
-		       (SELECT COUNT(*) FROM abom_edge_live e
+		       (SELECT COUNT(*) FROM abom_edge_regular e
 		         JOIN abom_node_live src ON src.row_id = e.src_node_row_id
 		        WHERE src.container_node_row_id = n.row_id OR src.row_id = n.row_id),
 		       (SELECT COUNT(*) FROM abom_finding_node fn WHERE fn.node_row_id = n.row_id)

@@ -40,7 +40,7 @@ const submissionClosureQuery = `
 WITH RECURSIVE closure(manifest, node_row, node_key, owner, repo, subpath, ref, depth, parent_key) AS (
 	SELECT e.file_path, n.row_id, n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''),
 	       COALESCE(n.path,''), COALESCE(e.ref_value,''), 0, ''
-	  FROM abom_edge_live e
+	  FROM abom_edge_regular e
 	  JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 	  JOIN repository r ON r.row_id = e.repository_row_id
 	 WHERE r.repository_full_name = ?
@@ -52,7 +52,7 @@ WITH RECURSIVE closure(manifest, node_row, node_key, owner, repo, subpath, ref, 
 	-- dependency there is: an action.yml is not a manifest to GitHub.
 	SELECT e.file_path, n.row_id, n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''),
 	       COALESCE(n.path,''), COALESCE(e.ref_value,''), 1, ''
-	  FROM abom_edge_live e
+	  FROM abom_edge_regular e
 	  JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 	  JOIN repository r ON r.row_id = e.repository_row_id
 	 WHERE r.repository_full_name = ?
@@ -63,7 +63,7 @@ WITH RECURSIVE closure(manifest, node_row, node_key, owner, repo, subpath, ref, 
 	       COALESCE(dst.path,''), COALESCE(ce.ref_value,''), c.depth + 1, c.node_key
 	  FROM closure c
 	  JOIN abom_node_live st ON st.container_node_row_id = c.node_row
-	  JOIN abom_edge_live ce ON ce.src_node_row_id = st.row_id
+	  JOIN abom_edge_regular ce ON ce.src_node_row_id = st.row_id
 	                        AND ce.edge_kind = 'composite-step-uses-action'
 	  JOIN abom_node_live dst ON dst.row_id = ce.dst_node_row_id
 	  JOIN abom_frontier f ON f.node_key = c.node_key AND f.ref = c.ref

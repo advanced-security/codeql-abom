@@ -303,7 +303,7 @@ func (s *Store) bomEdges() ([]bomEdge, error) {
 		                  WHERE tr.row_id = dn.repository_row_id), ''),
 		       e.edge_kind, COALESCE(e.boundary, ''),
 		       COALESCE(e.ref_raw, ''), COALESCE(e.ref_value, '')
-		FROM abom_edge_live e
+		FROM abom_edge_regular e
 		JOIN disp ds ON ds.row_id = e.src_node_row_id
 		JOIN disp dd ON dd.row_id = e.dst_node_row_id
 		JOIN abom_node_live sn ON sn.row_id = ds.shown

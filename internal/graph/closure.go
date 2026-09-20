@@ -137,7 +137,7 @@ func (b *Builder) ClosureFrom(roots []string) (*Closure, error) {
 	// seen as somebody else's dependency does not have.
 	rows, err := b.Store.DB().Query(`
 		SELECT r.repository_full_name, dst.owner || '/' || dst.repo
-		FROM abom_edge_live e
+		FROM abom_edge_regular e
 		JOIN abom_node_live dst ON dst.row_id = e.dst_node_row_id
 		JOIN repository r ON r.row_id = e.repository_row_id
 		WHERE ` + store.DependencyEdgeFilter + `

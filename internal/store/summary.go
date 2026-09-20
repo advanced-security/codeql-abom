@@ -69,12 +69,12 @@ func (s *Store) Summary() (Summary, error) {
 		{`SELECT COUNT(*) FROM abom_node_live
 		   WHERE node_kind IN ('action', 'composite_action', 'docker_image')`,
 			&out.Dependencies, nil},
-		{`SELECT COUNT(*) FROM abom_edge_live`, &out.Edges, nil},
-		{`SELECT COUNT(*) FROM abom_finding`, &out.Findings, nil},
-		{`SELECT COUNT(*) FROM abom_finding f
+		{`SELECT COUNT(*) FROM abom_edge_regular`, &out.Edges, nil},
+		{`SELECT COUNT(*) FROM abom_finding_regular`, &out.Findings, nil},
+		{`SELECT COUNT(*) FROM abom_finding_regular f
 		  JOIN repository r ON r.row_id = f.repository_row_id
 		  WHERE ` + OwnedRepositoryFilter, &out.OwnedFindings, nil},
-		{`SELECT COUNT(DISTINCT rule_id) FROM abom_finding`, &out.Rules, nil},
+		{`SELECT COUNT(DISTINCT rule_id) FROM abom_finding_regular`, &out.Rules, nil},
 		{`SELECT COUNT(DISTINCT finding_row_id) FROM abom_finding_node`, &out.LinkedFindings, nil},
 		{`SELECT COUNT(*) FROM abom_advisory WHERE withdrawn_at IS NULL`, &out.Advisories, nil},
 		{`SELECT COUNT(*) FROM abom_exposure`, &out.Exposures, nil},

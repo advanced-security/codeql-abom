@@ -70,7 +70,7 @@ func (s *Store) readNodeUsers(out *NodeUsers, budget int) error {
 	rows, err := s.db.Query(`
 		SELECT r.repository_full_name, COALESCE(r.origin, ''), COUNT(*),
 		       `+ownedFullName("r.repository_full_name")+`
-		FROM abom_edge_live e
+		FROM abom_edge_regular e
 		JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 		JOIN repository r ON r.row_id = e.repository_row_id
 		WHERE n.node_key = ? AND COALESCE(e.ref_value, '') = ?
@@ -106,7 +106,7 @@ func (s *Store) countNodeUsers(out *NodeUsers) error {
 		SELECT COUNT(*), COALESCE(SUM(seed), 0), COALESCE(SUM(owned), 0) FROM (
 			SELECT r.origin = ? AS seed,
 			       `+ownedFullName("r.repository_full_name")+` AS owned
-			FROM abom_edge_live e
+			FROM abom_edge_regular e
 			JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 			JOIN repository r ON r.row_id = e.repository_row_id
 			WHERE n.node_key = ? AND COALESCE(e.ref_value, '') = ?

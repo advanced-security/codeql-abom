@@ -226,7 +226,7 @@ func (v *subgraphWalk) neighbors(node int64) ([]neighbor, error) {
 	add := func(side, other string, outgoing int) {
 		parts = append(parts, fmt.Sprintf(`
 			SELECT e.%s, e.edge_kind, COALESCE(e.ref_value, ''), %d
-			FROM abom_edge_live e
+			FROM abom_edge_regular e
 			WHERE e.%s IN (%s)`, other, outgoing, side, members))
 		args = append(args, node, node)
 	}

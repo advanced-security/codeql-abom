@@ -92,7 +92,7 @@ func (s *Store) BumpImpactOf(key string) (BumpImpact, error) {
 			SELECT row_id, 0 FROM abom_node_live WHERE node_key = ?
 			UNION
 			SELECT e.src_node_row_id, r.hops + 1
-			FROM abom_edge_live e
+			FROM abom_edge_regular e
 			JOIN reach r ON e.dst_node_row_id = r.node_row_id
 			WHERE r.hops < 8
 			UNION
@@ -157,7 +157,7 @@ func (s *Store) BumpImpactOf(key string) (BumpImpact, error) {
 func (s *Store) attachAffectedRefs(key string, repos []AffectedRepo) error {
 	rows, err := s.db.Query(`
 		SELECT rep.repository_full_name, e.ref_value
-		FROM abom_edge_live e
+		FROM abom_edge_regular e
 		JOIN abom_node_live dst ON dst.row_id = e.dst_node_row_id
 		JOIN repository rep ON rep.row_id = e.repository_row_id
 		WHERE dst.node_key = ? AND e.ref_value IS NOT NULL AND e.ref_value <> ''
@@ -235,7 +235,7 @@ func (s *Store) NodeDetailOf(key string) (NodeDetail, error) {
 func (s *Store) refUsage(key string) ([]RefUsage, error) {
 	rows, err := s.db.Query(`
 		SELECT e.ref_value, COUNT(*), COUNT(DISTINCT e.repository_row_id)
-		FROM abom_edge_live e
+		FROM abom_edge_regular e
 		JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 		WHERE n.node_key = ? AND e.ref_value IS NOT NULL AND e.ref_value <> ''
 		GROUP BY e.ref_value
@@ -261,7 +261,7 @@ func (s *Store) nodeRules(key string) ([]RuleCount, error) {
 		SELECT f.rule_id, COUNT(*)
 		FROM abom_finding_node fn
 		JOIN abom_node_live n ON n.row_id = fn.node_row_id
-		JOIN abom_finding f ON f.row_id = fn.finding_row_id
+		JOIN abom_finding_regular f ON f.row_id = fn.finding_row_id
 		WHERE n.node_key = ?
 		GROUP BY f.rule_id
 		ORDER BY COUNT(*) DESC, f.rule_id`, key)
@@ -293,7 +293,7 @@ func (s *Store) nodeNeighbors(key string, incoming bool) ([]NodeNeighbor, error)
 		SELECT shown.node_key, shown.node_kind, COALESCE(r.repository_full_name, ''),
 		       COALESCE(r.origin, ''), COUNT(*),
 		       COALESCE(GROUP_CONCAT(DISTINCT e.ref_value), '')
-		FROM abom_edge_live e
+		FROM abom_edge_regular e
 		JOIN abom_node_live target ON target.row_id = e.%s
 		JOIN abom_node_live far ON far.row_id = e.%s
 		JOIN abom_node_live shown ON shown.row_id = COALESCE(far.container_node_row_id, far.row_id)

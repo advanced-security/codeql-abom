@@ -44,3 +44,50 @@ func analysisModeKeyPart(mode string) string {
 	}
 	return mode
 }
+
+// analysisModeViewDDL is applied by Migrate, after the mode column exists and after the live
+// views the edge ones build on.
+//
+// Views rather than a column on every edge and finding row, for a reason that is about
+// correctness before cost. An edge is keyed by its source location, so a closure database
+// re-observing an owned repository's own `uses:` line produces *the same row*; a finding is keyed
+// by rule, location and fingerprint, and the issue this implements requires that one defect seen
+// in two shapes stay one defect. A denormalized column would have to hold one value for a row two
+// shapes saw, so whichever lane wrote last would decide which totals the row joined. Reading the
+// mode through the run instead costs a lookup on an INTEGER PRIMARY KEY, which is a rowid seek.
+//
+// The regular views admit a row whose provenance is absent: `abom_edge.query_run_id` is nullable
+// and 2,759 corpus findings name no run at all. Absent is not extended — those rows were on
+// record before the column existed, all of them from one repository's own checkout, which is the
+// documented backfill. Treating absence as a third mode would silently drop them from the totals
+// this change is required to leave byte-identical.
+const analysisModeViewDDL = `
+CREATE VIEW IF NOT EXISTS abom_edge_any_mode AS SELECT * FROM abom_edge_live;
+
+CREATE VIEW IF NOT EXISTS abom_edge_regular AS
+SELECT e.* FROM abom_edge_live e
+WHERE COALESCE(
+        (SELECT q.analysis_mode FROM abom_query_run q WHERE q.row_id = e.query_run_id),
+        'regular') = 'regular';
+
+CREATE VIEW IF NOT EXISTS abom_edge_extended AS
+SELECT e.* FROM abom_edge_live e
+WHERE (SELECT q.analysis_mode FROM abom_query_run q WHERE q.row_id = e.query_run_id) = 'extended';
+
+CREATE VIEW IF NOT EXISTS abom_finding_any_mode AS SELECT * FROM abom_finding;
+
+-- Through the sighting relation rather than abom_finding.query_run_id, which holds whichever run
+-- most recently reproduced the finding. One defect reported by both shapes is one row, and which
+-- lane ran last must not decide which totals it joins.
+CREATE VIEW IF NOT EXISTS abom_finding_regular AS
+SELECT f.* FROM abom_finding f
+WHERE EXISTS (SELECT 1 FROM abom_finding_sighting s
+              JOIN abom_query_run q ON q.row_id = s.query_run_id
+              WHERE s.finding_row_id = f.row_id AND q.analysis_mode = 'regular')
+   OR NOT EXISTS (SELECT 1 FROM abom_finding_sighting s WHERE s.finding_row_id = f.row_id);
+
+CREATE VIEW IF NOT EXISTS abom_finding_extended AS
+SELECT f.* FROM abom_finding f
+WHERE EXISTS (SELECT 1 FROM abom_finding_sighting s
+              JOIN abom_query_run q ON q.row_id = s.query_run_id
+              WHERE s.finding_row_id = f.row_id AND q.analysis_mode = 'extended');`

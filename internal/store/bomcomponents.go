@@ -231,7 +231,7 @@ func (s *Store) componentFindings(depth map[string]int) (map[string][]BOMFinding
 		FROM abom_finding_node fn
 		JOIN disp d ON d.row_id = fn.node_row_id
 		JOIN abom_node_live shown ON shown.row_id = d.shown
-		JOIN abom_finding f ON f.row_id = fn.finding_row_id
+		JOIN abom_finding_regular f ON f.row_id = fn.finding_row_id
 		JOIN repository fr ON fr.row_id = f.repository_row_id
 		LEFT JOIN abom_query_run q ON q.row_id = f.query_run_id
 		ORDER BY shown.node_key, f.rule_id, f.file_path, f.start_line`)

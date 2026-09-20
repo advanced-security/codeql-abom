@@ -265,8 +265,8 @@ func report(w io.Writer, s *store.Store, dbPath string) error {
 		{"repositories", `SELECT COUNT(*) FROM repository`},
 		{"owned", `SELECT COUNT(*) FROM repository WHERE origin = 'seed'`},
 		{"nodes", `SELECT COUNT(*) FROM abom_node_live`},
-		{"edges", `SELECT COUNT(*) FROM abom_edge_live`},
-		{"findings", `SELECT COUNT(*) FROM abom_finding`},
+		{"edges", `SELECT COUNT(*) FROM abom_edge_regular`},
+		{"findings", `SELECT COUNT(*) FROM abom_finding_regular`},
 		{"findings on a node", `SELECT COUNT(DISTINCT finding_row_id) FROM abom_finding_node`},
 		{"advisories", `SELECT COUNT(*) FROM abom_advisory`},
 		// Reaching is the number that decides whether the unit draws anything, and it is the one

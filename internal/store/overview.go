@@ -21,7 +21,7 @@ func (s *Store) overview(opts SubgraphOptions) (Subgraph, error) {
 	rows, err := s.db.Query(`
 		SELECT COALESCE(srep.node_key, sn.node_key), COALESCE(drep.node_key, dn.node_key),
 		       e.edge_kind, COALESCE(e.ref_value, '')
-		FROM abom_edge_live e
+		FROM abom_edge_regular e
 		JOIN abom_node_live sn ON sn.row_id = e.src_node_row_id
 		JOIN abom_node_live dn ON dn.row_id = e.dst_node_row_id
 		LEFT JOIN abom_node_live srep ON srep.node_kind = 'repo'

@@ -26,7 +26,7 @@ func SeedFrontier(s *store.Store, q *frontier.Queue) (int, error) {
 	rows, err := s.DB().Query(`
 		SELECT n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''), COALESCE(n.path,''),
 		       MIN(r.repository_full_name), COALESCE(e.ref_value, '')
-		FROM abom_edge_live e
+		FROM abom_edge_regular e
 		JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 		JOIN repository r ON r.row_id = e.repository_row_id
 		WHERE ` + store.OwnedRepositoryFilter + `

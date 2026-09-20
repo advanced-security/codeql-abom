@@ -139,7 +139,7 @@ func (s *Store) unattributedFor(
 	clause, args := ruleClause("f.rule_id", spec.Rules)
 	rows, err := s.db.Query(`
 SELECT r.repository_full_name, COUNT(*)
-  FROM abom_finding f
+  FROM abom_finding_regular f
   JOIN repository r ON r.row_id = f.repository_row_id
  WHERE `+clause+`
    AND NOT EXISTS (SELECT 1 FROM abom_finding_node n WHERE n.finding_row_id = f.row_id)

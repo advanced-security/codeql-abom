@@ -45,7 +45,7 @@ func (s *Store) StaleFindings() (StalenessReport, error) {
 		return out, fmt.Errorf("counting sightings: %w", err)
 	}
 	if err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM abom_finding f
+		SELECT COUNT(*) FROM abom_finding_regular f
 		WHERE NOT EXISTS (
 			SELECT 1 FROM abom_finding_sighting sg WHERE sg.finding_row_id = f.row_id)`,
 	).Scan(&out.FindingsWithoutSighting); err != nil {
@@ -80,7 +80,7 @@ func (s *Store) StaleFindings() (StalenessReport, error) {
 		)
 		SELECT f.row_id, rp.repository_full_name, f.rule_id, COALESCE(f.file_path, ''),
 		       COALESCE(f.start_line, 0), f.fingerprint
-		FROM abom_finding f
+		FROM abom_finding_regular f
 		JOIN repository rp ON rp.row_id = f.repository_row_id
 		JOIN owning o ON o.query_id = f.rule_id
 		WHERE EXISTS (

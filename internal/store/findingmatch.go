@@ -169,7 +169,7 @@ func (s *Store) NodesMatching(sel FindingSelector) (FindingMatch, error) {
 	if len(sel.Exclude) > 0 {
 		clause, a := ruleClause("x.rule_id", sel.Exclude)
 		exclusion = `
-		  AND NOT EXISTS (SELECT 1 FROM abom_finding x
+		  AND NOT EXISTS (SELECT 1 FROM abom_finding_regular x
 		                    JOIN abom_finding_node xn ON xn.finding_row_id = x.row_id
 		                   WHERE xn.node_row_id = n.row_id AND ` + clause + `)`
 		args = append(args, a...)
@@ -179,7 +179,7 @@ func (s *Store) NodesMatching(sel FindingSelector) (FindingMatch, error) {
 		SELECT n.node_key, n.node_kind,
 		       GROUP_CONCAT(DISTINCT fr.repository_full_name),
 		       COUNT(*), GROUP_CONCAT(DISTINCT f.rule_id)
-		FROM abom_finding f
+		FROM abom_finding_regular f
 		JOIN abom_finding_node fn ON fn.finding_row_id = f.row_id
 		JOIN abom_node_live n ON n.row_id = fn.node_row_id
 		LEFT JOIN repository fr ON fr.row_id = f.repository_row_id
@@ -208,7 +208,7 @@ func (s *Store) NodesMatching(sel FindingSelector) (FindingMatch, error) {
 	// Counted again rather than summed, because one finding can sit on two nodes.
 	if err := s.db.QueryRow(`
 		SELECT COUNT(DISTINCT f.row_id)
-		FROM abom_finding f
+		FROM abom_finding_regular f
 		JOIN abom_finding_node fn ON fn.finding_row_id = f.row_id
 		JOIN abom_node_live n ON n.row_id = fn.node_row_id
 		LEFT JOIN repository fr ON fr.row_id = f.repository_row_id
