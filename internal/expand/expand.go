@@ -450,42 +450,95 @@ func (e *Expander) materialize(
 		// the same commit arrive here together, and the second waits for the first's fetch
 		// instead of racing it.
 		release := e.Cache.Hold(b.owner, b.repo, sha)
-		defer release()
-
 		if held, ok := e.Cache.Reuse(b.owner, b.repo, sha, patterns); ok {
+			release()
 			return Tree{Dir: held, Ref: analyzedRef(b.ref), SHA: sha}, true, nil
 		}
+		// The lock is carried into the fetch rather than released here, because promoting what
+		// it clones is the other half of the work this commit is held for.
+		return e.fetchAndRetain(ctx, b, src, patterns, sha, release)
 	}
-	return e.fetchAndRetain(ctx, b, src, patterns)
+	return e.fetchAndRetain(ctx, b, src, patterns, "", nil)
 }
 
 // fetchAndRetain clones into staging and promotes the tree once its commit is known.
 //
 // Staged first because the fetch is what answers "which commit is this" for a reference nothing
-// could resolve, and a tree under a commit's name has to be the whole tree.
+// could resolve, and a tree under a commit's name has to be the whole tree. holding names the
+// commit whose lock the caller already took, if any, and release frees it.
 func (e *Expander) fetchAndRetain(
-	ctx context.Context, b batch, src string, patterns []string,
+	ctx context.Context, b batch, src string, patterns []string, holding string, release func(),
 ) (Tree, bool, error) {
+	// Whatever lock is held when this returns is the one released: the commit it is taken for
+	// can change once the clone says which commit it actually is.
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
 	staged, err := e.Cache.Stage()
 	if err != nil {
 		// A cache that cannot stage costs a re-clone next round, not this round's work.
 		tree, err := e.fetch(ctx, b, src)
 		return tree, false, err
 	}
+	// Owned from here: promotion renames this directory away, and every other way out has to
+	// leave nothing behind. A staged fetch nothing promoted keeps a whole checkout, `.git` and
+	// all, until the abandonment sweep a day later.
+	defer os.RemoveAll(staged)
+
 	tree, err := e.fetch(ctx, b, stagedTree(staged))
 	if err != nil {
-		os.RemoveAll(staged)
 		return Tree{}, false, err
 	}
+
+	// Which commit this is may only be known now: a reference nothing could resolve has no lock
+	// yet, and one that moved between the probe and the clone holds the wrong commit's. Two
+	// promotions of one commit running together can each find no entry, and the second replaces
+	// the tree the first is already analyzing.
+	if !strings.EqualFold(tree.SHA, holding) {
+		if release != nil {
+			// Released before the next is taken: a unit waiting on two commit locks at once can
+			// wait on one another unit already holds while holding the one it wants.
+			release()
+		}
+		release = e.Cache.Hold(b.owner, b.repo, tree.SHA)
+		if held, ok := e.Cache.Reuse(b.owner, b.repo, tree.SHA, patterns); ok {
+			tree.Dir = held
+			return tree, true, nil
+		}
+	}
+
 	held, err := e.Cache.Retain(staged, b.owner, b.repo, tree.SHA, patterns)
 	if err != nil {
-		// The clone succeeded and the tree is where it was fetched, so the unit proceeds from
-		// staging and the tree is removed with the rest of the round's artifacts.
+		// The clone succeeded, so the round proceeds from its own directory rather than paying
+		// for the tree again; staging is not somewhere a unit can be left reading from.
 		e.report(b.key(), "retaining a fetched tree", err)
-		return tree, false, nil
+		return e.moveOutOfStaging(ctx, b, staged, src, tree)
 	}
 	tree.Dir = held
 	return tree, true, nil
+}
+
+// moveOutOfStaging puts a tree a promotion refused into the round's own directory, so the unit
+// analyzes it where the round's cleanup can find it.
+func (e *Expander) moveOutOfStaging(
+	ctx context.Context, b batch, staged, src string, tree Tree,
+) (Tree, bool, error) {
+	if err := os.MkdirAll(filepath.Dir(src), 0o755); err != nil {
+		return Tree{}, false, fmt.Errorf("preparing %s: %w", filepath.Dir(src), err)
+	}
+	if err := os.RemoveAll(src); err != nil {
+		return Tree{}, false, fmt.Errorf("clearing %s: %w", src, err)
+	}
+	if err := os.Rename(stagedTree(staged), src); err != nil {
+		// A cache on another filesystem cannot be renamed out of, and a copy of a checkout is
+		// no cheaper than the clone that produced it.
+		fetched, err := e.fetch(ctx, b, src)
+		return fetched, false, err
+	}
+	tree.Dir = src
+	return tree, false, nil
 }
 
 // fetch clones one reference, paying the rate limit that a cache hit does not.

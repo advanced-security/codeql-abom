@@ -364,3 +364,92 @@ func usedAt(t *testing.T, entry string, when time.Time) {
 		t.Fatalf("Chtimes: %v", err)
 	}
 }
+
+// A commit the probe could not name is promoted under that commit's lock too. Without it the two
+// units that cloned one commit promote at once, and the entry one of them is analyzing can be
+// removed by the other's promotion.
+func TestAnUnresolvedReferencePromotesUnderTheCommitLock(t *testing.T) {
+	h := newHarness(t)
+	cache := h.retainCheckouts()
+	h.probe.failEverything()
+	h.enqueue(
+		itemAt("gradle", "actions", "setup-gradle", "v4", 1),
+		itemAt("gradle", "actions", "setup-gradle", "v3", 1),
+	)
+
+	h.runWith(Options{Limit: 10, Concurrency: 2})
+
+	if got := h.fetchCount(); got != 2 {
+		t.Fatalf("fetched %d times, want one clone per reference nothing could resolve", got)
+	}
+	if got := cache.Hits(); got != 1 {
+		t.Errorf("cache hits = %d, want the second promotion to find the first's tree", got)
+	}
+}
+
+// A commit is hex, and hex has two cases. Recognizing only one leaves a reference that cannot
+// move looking unresolvable, so it is cloned again every cycle.
+func TestACommitPinnedInUpperCaseIsNotFetchedTwice(t *testing.T) {
+	h := newHarness(t)
+	h.retainCheckouts()
+	pinned := strings.ToUpper("0ad4b8fadaa221de15dcec353f45205ec38ea70b")
+	h.enqueue(itemAt("actions", "checkout", "", pinned, 1))
+	h.drain()
+
+	fetched := h.fetchCount()
+	if n := h.requeueDirect(); n == 0 {
+		t.Fatal("nothing was requeued, so no second round would run")
+	}
+	h.runWith(Options{Limit: 100, QueryID: "abom/edges-v2"})
+
+	if again := h.fetchCount() - fetched; again != 0 {
+		t.Errorf("a commit pinned in upper case was cloned %d more times", again)
+	}
+}
+
+// A promotion that cannot happen still owns the staging directory it fetched into. Left there,
+// the whole checkout — `.git` included — occupies the cache until the abandonment sweep.
+func TestAFailedPromotionLeavesNothingInStaging(t *testing.T) {
+	h := newHarness(t)
+	cache := h.retainCheckouts()
+	h.enqueue(item("gradle", "actions", "setup-gradle", 1))
+	// A file where the entry's parent has to be is a promotion the cache cannot perform, which
+	// is the failure the round has to survive without leaving its fetch behind.
+	if err := os.MkdirAll(cache.Dir, 0o755); err != nil {
+		t.Fatalf("preparing the cache: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cache.Dir, "gradle"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("blocking the entry: %v", err)
+	}
+
+	h.runWith(Options{Limit: 10})
+
+	if h.databasesBuilt() == 0 {
+		t.Error("a failed promotion stopped the analysis, which the fetched tree can still serve")
+	}
+	staged, err := os.ReadDir(filepath.Join(cache.Dir, stagingDir))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("reading staging: %v", err)
+	}
+	if len(staged) != 0 {
+		t.Errorf("%d staged fetches survived a failed promotion", len(staged))
+	}
+}
+
+// The per-commit locks are bookkeeping, not state: a crawl names millions of commits, and a
+// process that keeps a mutex for each one grows without bound for the life of the server.
+func TestACommitLockIsForgottenOnceNobodyHoldsIt(t *testing.T) {
+	cache := &CheckoutCache{Dir: t.TempDir()}
+
+	for _, sha := range []string{"aaaa1111", "bbbb2222", "cccc3333"} {
+		release := cache.Hold("actions", "checkout", sha)
+		release()
+	}
+
+	cache.mu.Lock()
+	held := len(cache.holds)
+	cache.mu.Unlock()
+	if held != 0 {
+		t.Errorf("%d commit locks are still held after every holder released", held)
+	}
+}

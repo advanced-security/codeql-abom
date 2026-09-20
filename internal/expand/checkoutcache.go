@@ -29,10 +29,10 @@ type CheckoutCache struct {
 	MaxBytes int64
 
 	mu sync.Mutex
-	// holds carries one lock per commit for the life of the process, so two references
-	// resolving to one commit produce one clone rather than two racing ones. Bounded by the
-	// number of distinct commits a crawl touches, at a mutex each.
-	holds map[string]*sync.Mutex
+	// holds carries a lock per commit currently being worked on, so two references resolving to
+	// one commit produce one clone rather than two racing ones. Counted rather than kept: a
+	// server runs for weeks over millions of commits, and a map that only grows is a leak.
+	holds map[string]*commitHold
 
 	hits atomic.Int64
 }
@@ -169,8 +169,17 @@ func (c *CheckoutCache) Retain(
 	return stagedTree(entry), nil
 }
 
+// commitHold is the lock on one commit and the number of units that still want it. The count is
+// what lets the entry be forgotten again.
+type commitHold struct {
+	mu      sync.Mutex
+	waiting int
+}
+
 // Hold serializes work on one commit. Two references that resolve to the same commit arrive
 // together, and without this both miss the cache and both clone.
+//
+// The returned release is idempotent, and the last one to run forgets the commit.
 func (c *CheckoutCache) Hold(owner, repo, sha string) func() {
 	if c == nil || c.Dir == "" {
 		return func() {}
@@ -178,17 +187,31 @@ func (c *CheckoutCache) Hold(owner, repo, sha string) func() {
 	key := strings.ToLower(owner + "/" + repo + "@" + sha)
 	c.mu.Lock()
 	if c.holds == nil {
-		c.holds = make(map[string]*sync.Mutex)
+		c.holds = make(map[string]*commitHold)
 	}
 	held, ok := c.holds[key]
 	if !ok {
-		held = &sync.Mutex{}
+		held = &commitHold{}
 		c.holds[key] = held
 	}
+	// Counted before the lock is taken, so an entry a waiter is queued on is not forgotten and
+	// replaced by a second lock that would let both through at once.
+	held.waiting++
 	c.mu.Unlock()
 
-	held.Lock()
-	return held.Unlock
+	held.mu.Lock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			held.mu.Unlock()
+			c.mu.Lock()
+			held.waiting--
+			if held.waiting == 0 {
+				delete(c.holds, key)
+			}
+			c.mu.Unlock()
+		})
+	}
 }
 
 // Hits counts the trees served from the cache since the process started.

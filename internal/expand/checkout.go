@@ -96,7 +96,7 @@ func (c *Checkout) Fetch(ctx context.Context, dest, owner, repo, ref string) (Tr
 	clone := []string{"clone", "--filter=blob:none", "--no-checkout", "--depth=1"}
 	// A tag or branch is fetched by name at depth 1. A commit cannot be: `clone --branch` only
 	// accepts refs, so a SHA-pinned use is fetched below instead.
-	if ref != "" && !looksLikeSHA(ref) {
+	if ref != "" && !isCommit(ref) {
 		clone = append(clone, "--branch", ref)
 	}
 	clone = append(clone, url, ".")
@@ -109,7 +109,7 @@ func (c *Checkout) Fetch(ctx context.Context, dest, owner, repo, ref string) (Tr
 		return Tree{}, fmt.Errorf("selecting actions content in %s: %s", repo, out)
 	}
 
-	if ref != "" && looksLikeSHA(ref) {
+	if ref != "" && isCommit(ref) {
 		if out, err := c.run(ctx, dest, "fetch", "--depth=1", "origin", ref); err != nil {
 			return Tree{}, fmt.Errorf("%w: fetching %s of %s: %s", ErrUnavailable, ref, repo, out)
 		}
@@ -133,19 +133,6 @@ func (c *Checkout) Fetch(ctx context.Context, dest, owner, repo, ref string) (Tr
 		return Tree{}, fmt.Errorf("%w: %s has no workflows or action manifest", ErrUnavailable, repo)
 	}
 	return tree, nil
-}
-
-// looksLikeSHA reports whether a reference is a full commit id, which git will not clone by name.
-func looksLikeSHA(ref string) bool {
-	if len(ref) != 40 {
-		return false
-	}
-	for _, r := range ref {
-		if !strings.ContainsRune("0123456789abcdefABCDEF", r) {
-			return false
-		}
-	}
-	return true
 }
 
 // hasActionsContent reports whether anything survived the sparse filter.

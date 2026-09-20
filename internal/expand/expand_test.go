@@ -99,6 +99,11 @@ func (p *harnessProbe) Resolve(_ context.Context, owner, repo, ref string) (stri
 		waiting.arrive()
 	}
 
+	// A commit id is not a reference name, so `ls-remote` has nothing to answer with.
+	if pinnedCommit(ref) {
+		return "", fmt.Errorf("%s/%s has no %s", owner, repo, ref)
+	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.failed {
@@ -136,6 +141,18 @@ func (p *harnessProbe) failEverything() {
 	p.failed = true
 }
 
+// pinnedCommit reports whether a reference is a commit id, in either case. Spelled out here
+// rather than borrowed from the code under test, so a fake cannot inherit the bug it is meant
+// to expose.
+func pinnedCommit(ref string) bool {
+	if len(ref) != 40 {
+		return false
+	}
+	return strings.IndexFunc(ref, func(r rune) bool {
+		return !strings.ContainsRune("0123456789abcdefABCDEF", r)
+	}) < 0
+}
+
 func (h *harness) Fetch(_ context.Context, dest, owner, repo, ref string) (Tree, error) {
 	h.mu.Lock()
 	full := owner + "/" + repo
@@ -158,9 +175,10 @@ func (h *harness) Fetch(_ context.Context, dest, owner, repo, ref string) (Tree,
 		sha = "sha-" + repo
 	}
 	// A reference that is already a commit resolves to itself, as git does: fetching a commit
-	// and asking what was checked out gives that commit back, whatever else has moved.
-	if isCommit(ref) {
-		sha = ref
+	// and asking what was checked out gives that commit back, whatever else has moved, and
+	// `rev-parse` writes it in lower case however it was asked for.
+	if pinnedCommit(ref) {
+		sha = strings.ToLower(ref)
 	}
 	return Tree{Dir: dest, Ref: "HEAD", SHA: sha}, nil
 }
