@@ -692,7 +692,7 @@ func (s *Store) attachRules(display string, index map[string]*GraphNode, mode st
 		FROM abom_finding_node fn
 		JOIN disp d ON d.row_id = fn.node_row_id
 		JOIN abom_node_live shown ON shown.row_id = d.shown
-		JOIN `+findingSource(mode)+` f ON f.row_id = fn.finding_row_id
+		JOIN ` + findingSource(mode) + ` f ON f.row_id = fn.finding_row_id
 		GROUP BY shown.node_key, f.rule_id`)
 	if err != nil {
 		return fmt.Errorf("reading findings by rule: %w", err)
