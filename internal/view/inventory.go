@@ -24,6 +24,8 @@ var inventoryTerms = map[string]bool{
 	paramRepos:         true,
 	paramProperties:    true,
 	paramNotProperties: true,
+	// A listing narrows by what was found on a node, and a finding has a shape.
+	paramMode: true,
 }
 
 // UnenforceableAsInventory names the terms a predicate carries that a node listing cannot apply.
@@ -119,6 +121,8 @@ var relationshipTerms = map[string]bool{
 	paramNotRules:      true,
 	paramProperties:    true,
 	paramNotProperties: true,
+	// A row here is an edge, and an edge was observed by a run that states its shape.
+	paramMode: true,
 }
 
 // UnenforceableAsRelationships names the terms the relationships unit cannot apply.

@@ -16,6 +16,10 @@ const (
 	AnalysisModeRegular = "regular"
 	// AnalysisModeExtended is an owned repository plus its staged closure.
 	AnalysisModeExtended = "extended"
+	// AnalysisModeAnyShape is a deliberate union of both, which a reader has to ask for. It is
+	// not a mode a run can be recorded in and it is not in the filter language's vocabulary: a
+	// count spanning two shapes has to say it is mixed, and nothing may arrive at one by default.
+	AnalysisModeAnyShape = "mixed"
 )
 
 // AnalysisModes is the whole vocabulary, in the order a reader should be offered it: the shape
@@ -91,3 +95,34 @@ SELECT f.* FROM abom_finding f
 WHERE EXISTS (SELECT 1 FROM abom_finding_sighting s
               JOIN abom_query_run q ON q.row_id = s.query_run_id
               WHERE s.finding_row_id = f.row_id AND q.analysis_mode = 'extended');`
+
+// edgeSource and findingSource name the view a read should use for a stated mode.
+//
+// A read that interpolates a table name escapes the source-enumerating guard, so these two are the
+// only functions allowed to do it and TestTheModeSourcesNameOnlyDeclaredViews pins what they can
+// return. Every other read spells a view outright.
+//
+// An empty mode is not a third shape. It is a caller that did not ask, and the answer to not
+// asking is `regular` — the shape every aggregate on record reads, and the one that keeps an
+// unasked question answering exactly what it answered before the term existed.
+func edgeSource(mode string) string {
+	switch mode {
+	case AnalysisModeExtended:
+		return "abom_edge_extended"
+	case AnalysisModeAnyShape:
+		return "abom_edge_any_mode"
+	default:
+		return "abom_edge_regular"
+	}
+}
+
+func findingSource(mode string) string {
+	switch mode {
+	case AnalysisModeExtended:
+		return "abom_finding_extended"
+	case AnalysisModeAnyShape:
+		return "abom_finding_any_mode"
+	default:
+		return "abom_finding_regular"
+	}
+}

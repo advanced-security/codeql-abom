@@ -55,6 +55,10 @@ type Spec struct {
 	EdgeKinds []string
 	RefStyle  string
 	Boundary  string
+	// Mode narrows to how the database that produced a result was built. Absent is not a third
+	// shape: every aggregate on record reads `regular`, so a spec that never mentions it asks
+	// exactly what it asked before the term existed.
+	Mode string
 	// MinReach is a floor, and zero means the question was not asked rather than asked about zero.
 	MinReach int
 	Flags    []string
@@ -94,6 +98,7 @@ const (
 	paramNotProperties = "notProperties"
 	paramProvider      = "provider"
 	paramSeverity      = "severity"
+	paramMode          = "mode"
 	paramEdgeClass     = "edges"
 	paramEdgeKinds     = "edgeKinds"
 	paramRefStyle      = "ref"
@@ -118,6 +123,7 @@ func (s Spec) String() string {
 		{paramBoundary, s.Boundary},
 		{paramProvider, s.Provider},
 		{paramSeverity, s.Severity},
+		{paramMode, s.Mode},
 	} {
 		if f.value != "" {
 			q.Set(f.key, f.value)
@@ -182,6 +188,7 @@ func Parse(text string) (Spec, error) {
 		paramBoundary: &s.Boundary,
 		paramProvider: &s.Provider,
 		paramSeverity: &s.Severity,
+		paramMode:     &s.Mode,
 	}
 	lists := map[string]*[]string{
 		paramKinds:     &s.Kinds,
@@ -270,6 +277,13 @@ const (
 	RefStyleSHA = "sha"
 	RefStyleTag = "tag"
 
+	// How the database a result came from was built. `regular` is one repository's own checkout,
+	// which is every database ABOM has built; `extended` is an owned repository plus its staged
+	// closure, where the same rule id reports exposure across a `uses:` boundary instead of a
+	// defect in code the repository holds. The store's constants are checked against these.
+	ModeRegular  = "regular"
+	ModeExtended = "extended"
+
 	// What a relationship is. Four because the extraction produces four, and a reader filtering
 	// by one is asking a question the aggregates already act on: `job-needs-job` is ordering
 	// rather than use, and every dependency traversal excludes it.
@@ -297,6 +311,7 @@ var vocabulary = map[string][]string{
 	paramScope:    {ScopeOwned, ScopeExposure},
 	paramBoundary: {BoundarySameRepository, BoundarySameOwner, BoundaryCrossOwner},
 	paramRefStyle: {RefStyleAny, RefStyleSHA, RefStyleTag},
+	paramMode:     {ModeRegular, ModeExtended},
 }
 
 // checkVocabulary refuses a value the term does not have.
@@ -329,7 +344,7 @@ var termNames = map[string]bool{
 	paramRules: true, paramNotRules: true, paramRepos: true, paramProperties: true,
 	paramNotProperties: true, paramProvider: true, paramSeverity: true, paramEdgeClass: true,
 	paramRefStyle: true, paramBoundary: true, paramMinReach: true, paramFlags: true,
-	paramSteps: true, paramEdgeKinds: true,
+	paramSteps: true, paramEdgeKinds: true, paramMode: true,
 }
 
 // setTerms are the terms the set path applies — `/api/match`, and a policy, which are one
@@ -347,6 +362,7 @@ var setTerms = map[string]bool{
 	paramRepos:         true,
 	paramProperties:    true,
 	paramNotProperties: true,
+	paramMode:          true,
 }
 
 // UnenforceableAsSet names the terms a predicate carries that the set path cannot apply, sorted so
@@ -371,6 +387,7 @@ var graphTerms = map[string]bool{
 	paramSteps:         true,
 	paramProperties:    true,
 	paramNotProperties: true,
+	paramMode:          true,
 }
 
 // clientTerms are the terms the graph hands to the browser rather than applying.

@@ -235,6 +235,10 @@ type FullGraphOptions struct {
 	// RefStyle keeps only nodes some edge names by a commit id (`sha`) or by anything else
 	// (`tag`). Empty asks nothing; `any` is the interface's word for the same.
 	RefStyle string
+	// Mode keeps only what one analysis shape observed. The graph applies it rather than handing
+	// it over: a browser cannot filter by a fact the payload does not carry, and the edges the
+	// mode excluded are exactly the ones it never received. Empty is `regular`.
+	Mode string
 	// GroupProperty names the repository property a reader is grouping by. It labels nodes rather
 	// than filtering them: grouping is not narrowing, so a graph labeled by a property still draws
 	// everything those repositories reach. Empty labels nothing.
@@ -399,7 +403,7 @@ const ScopeOwned = "owned"
 //
 // Named, because the owned scope and a property filter each bring their own and a graph asked for
 // both must intersect them rather than let one silently win.
-func closureCTE(name string, closure []string) (string, []any) {
+func closureCTE(name string, closure []string, mode string) (string, []any) {
 	list, names := inList(closure)
 	args := append(append(append([]any{}, names...), names...), names...)
 	return `, ` + name + ` AS (
@@ -408,7 +412,7 @@ func closureCTE(name string, closure []string) (string, []any) {
 		  LEFT JOIN repository r ON r.row_id = n.repository_row_id
 		 WHERE LOWER(r.repository_full_name) IN ` + list + `
 		    OR LOWER(n.owner || '/' || n.repo) IN ` + list + `
-		    OR EXISTS (SELECT 1 FROM abom_edge_regular e
+		    OR EXISTS (SELECT 1 FROM ` + edgeSource(mode) + ` e
 		                JOIN repository er ON er.row_id = e.repository_row_id
 		               WHERE (e.src_node_row_id = n.row_id OR e.dst_node_row_id = n.row_id)
 		                 AND LOWER(er.repository_full_name) IN ` + list + `))`, args
@@ -419,11 +423,11 @@ func closureCTE(name string, closure []string) (string, []any) {
 func scopeParts(opts FullGraphOptions) (string, []any) {
 	cte, args := "", []any{}
 	if opts.Scope == ScopeOwned && len(opts.Closure) > 0 {
-		text, a := closureCTE("closure", opts.Closure)
+		text, a := closureCTE("closure", opts.Closure, opts.Mode)
 		cte, args = cte+text, append(args, a...)
 	}
 	if len(opts.GroupClosure) > 0 {
-		text, a := closureCTE("grouped", opts.GroupClosure)
+		text, a := closureCTE("grouped", opts.GroupClosure, opts.Mode)
 		cte, args = cte+text, append(args, a...)
 	}
 	return cte, args
@@ -519,7 +523,7 @@ func (s *Store) FullGraph(opts FullGraphOptions) (Graph, error) {
 	if err != nil {
 		return out, err
 	}
-	if err := s.attachRules(display, index); err != nil {
+	if err := s.attachRules(display, index, opts.Mode); err != nil {
 		return out, err
 	}
 	edges, err := s.graphEdges(display, 0, opts)
@@ -682,13 +686,13 @@ func (s *Store) graphNodes(display string, since int64, opts FullGraphOptions) (
 //
 // A finding recorded against a step belongs to the workflow once the step is folded away, or
 // collapsing would silently drop the evidence along with the node.
-func (s *Store) attachRules(display string, index map[string]*GraphNode) error {
+func (s *Store) attachRules(display string, index map[string]*GraphNode, mode string) error {
 	rows, err := s.db.Query(`WITH ` + display + `
 		SELECT shown.node_key, f.rule_id, COUNT(*)
 		FROM abom_finding_node fn
 		JOIN disp d ON d.row_id = fn.node_row_id
 		JOIN abom_node_live shown ON shown.row_id = d.shown
-		JOIN abom_finding_regular f ON f.row_id = fn.finding_row_id
+		JOIN `+findingSource(mode)+` f ON f.row_id = fn.finding_row_id
 		GROUP BY shown.node_key, f.rule_id`)
 	if err != nil {
 		return fmt.Errorf("reading findings by rule: %w", err)
@@ -723,7 +727,7 @@ func (s *Store) graphEdges(display string, since int64, opts FullGraphOptions) (
 		SELECT sn.node_key, dn.node_key, e.edge_kind, COALESCE(e.ref_value, ''),
 		       COALESCE(e.boundary, ''), e.edge_key, COALESCE(e.ref_style, ''),
 		       e.advisory_route, e.finding_route, e.owned_depth
-		FROM abom_edge_regular e
+		FROM `+edgeSource(opts.Mode)+` e
 		JOIN disp ds ON ds.row_id = e.src_node_row_id
 		JOIN disp dd ON dd.row_id = e.dst_node_row_id
 		JOIN abom_node_live sn ON sn.row_id = ds.shown

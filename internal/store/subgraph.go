@@ -91,6 +91,8 @@ type SubgraphOptions struct {
 	Granularity string
 	// Expand keeps steps and jobs instead of folding them into their container.
 	Expand bool
+	// Mode walks only the edges one analysis shape observed. Empty is `regular`.
+	Mode string
 }
 
 func (o SubgraphOptions) maxNodes() int {
@@ -226,8 +228,8 @@ func (v *subgraphWalk) neighbors(node int64) ([]neighbor, error) {
 	add := func(side, other string, outgoing int) {
 		parts = append(parts, fmt.Sprintf(`
 			SELECT e.%s, e.edge_kind, COALESCE(e.ref_value, ''), %d
-			FROM abom_edge_regular e
-			WHERE e.%s IN (%s)`, other, outgoing, side, members))
+			FROM %s e
+			WHERE e.%s IN (%s)`, other, outgoing, edgeSource(v.opts.Mode), side, members))
 		args = append(args, node, node)
 	}
 	switch v.opts.Direction {

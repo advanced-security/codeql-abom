@@ -39,6 +39,10 @@ type FindingSelector struct {
 	// ExcludeProperties drops a repository matching any of them, and beats Properties, so a scope
 	// cannot be both asked for and refused and quietly resolve to asked for.
 	ExcludeProperties []viewspec.PropertyMatch
+	// Mode narrows to how the database that reported a finding was built. Empty is `regular`,
+	// which is what every gate on record already evaluates, so an existing policy keeps refusing
+	// exactly what it refused.
+	Mode string
 }
 
 // MatchedNode is one node the selector chose, carrying enough to explain why it was chosen.
@@ -67,6 +71,10 @@ type FindingMatch struct {
 
 // asked reports whether the selector names anything at all.
 func (f FindingSelector) asked() bool {
+	// Deliberately not the mode. It narrows a set rather than naming one, so a predicate that
+	// says only `mode=regular` is still a predicate that names nothing — and a gate matching
+	// every finding in the corpus because its one term was a shape would refuse every pull
+	// request.
 	return len(f.Rules) > 0 || len(f.Exclude) > 0 || f.Provider != "" || f.Severity != "" ||
 		len(f.Properties) > 0 || len(f.ExcludeProperties) > 0
 }
@@ -169,7 +177,7 @@ func (s *Store) NodesMatching(sel FindingSelector) (FindingMatch, error) {
 	if len(sel.Exclude) > 0 {
 		clause, a := ruleClause("x.rule_id", sel.Exclude)
 		exclusion = `
-		  AND NOT EXISTS (SELECT 1 FROM abom_finding_regular x
+		  AND NOT EXISTS (SELECT 1 FROM ` + findingSource(sel.Mode) + ` x
 		                    JOIN abom_finding_node xn ON xn.finding_row_id = x.row_id
 		                   WHERE xn.node_row_id = n.row_id AND ` + clause + `)`
 		args = append(args, a...)
@@ -179,7 +187,7 @@ func (s *Store) NodesMatching(sel FindingSelector) (FindingMatch, error) {
 		SELECT n.node_key, n.node_kind,
 		       GROUP_CONCAT(DISTINCT fr.repository_full_name),
 		       COUNT(*), GROUP_CONCAT(DISTINCT f.rule_id)
-		FROM abom_finding_regular f
+		FROM `+findingSource(sel.Mode)+` f
 		JOIN abom_finding_node fn ON fn.finding_row_id = f.row_id
 		JOIN abom_node_live n ON n.row_id = fn.node_row_id
 		LEFT JOIN repository fr ON fr.row_id = f.repository_row_id
@@ -208,7 +216,7 @@ func (s *Store) NodesMatching(sel FindingSelector) (FindingMatch, error) {
 	// Counted again rather than summed, because one finding can sit on two nodes.
 	if err := s.db.QueryRow(`
 		SELECT COUNT(DISTINCT f.row_id)
-		FROM abom_finding_regular f
+		FROM `+findingSource(sel.Mode)+` f
 		JOIN abom_finding_node fn ON fn.finding_row_id = f.row_id
 		JOIN abom_node_live n ON n.row_id = fn.node_row_id
 		LEFT JOIN repository fr ON fr.row_id = f.repository_row_id

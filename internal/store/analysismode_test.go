@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	viewspec "github.com/advanced-security/codeql-abom/internal/view"
 )
 
 // A run that does not say how its database was built cannot be told apart from one that does, and
@@ -156,6 +158,10 @@ func TestAnExtendedRunIsNotSkippedByARegularRunOverTheSameContent(t *testing.T) 
 //
 // Enumerating the source is the only check that survives the ordering being wrong: a unit test can
 // only prove the writers it happens to know about.
+//
+// Writing the mode onto a run, not naming it. A reader has to be able to ask for the shape and a
+// read has to be able to pass it along, so the vocabulary is spoken all over the language; what no
+// code may do yet is record a run as having been built that way.
 func TestNoWriterRecordsAnExtendedRunYet(t *testing.T) {
 	root, err := filepath.Abs("../..")
 	if err != nil {
@@ -164,7 +170,7 @@ func TestNoWriterRecordsAnExtendedRunYet(t *testing.T) {
 
 	// analysismode.go declares the vocabulary the guard is written in.
 	allowed := map[string]bool{"internal/store/analysismode.go": true}
-	claims := regexp.MustCompile(`AnalysisModeExtended|"extended"`)
+	claims := regexp.MustCompile(`AnalysisMode\s*[:=]+\s*(\w+\.)?(AnalysisModeExtended|"extended")`)
 
 	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -237,5 +243,59 @@ func TestEveryWriterStatesTheShapeItBuilt(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("walking the repository: %v", err)
+	}
+}
+
+// The filter language decides which values exist; the store decides what they do. Those are two
+// files, and a value renamed in one is a filter that silently stops narrowing in the other.
+func TestTheStoreSpellsEveryModeTheLanguageAccepts(t *testing.T) {
+	for _, c := range []struct{ store, language string }{
+		{AnalysisModeRegular, viewspec.ModeRegular},
+		{AnalysisModeExtended, viewspec.ModeExtended},
+	} {
+		if c.store != c.language {
+			t.Errorf("the store says %q and the language says %q", c.store, c.language)
+		}
+	}
+	// The union is the store's own, not the language's: asking for it has to be a decision inside
+	// ABOM rather than something a shared link can carry.
+	if ValidAnalysisMode(AnalysisModeAnyShape) {
+		t.Error("a run can be recorded as mixed, which is not a shape any database is built in")
+	}
+}
+
+// These two functions are the only reads allowed to interpolate a table name, which means they are
+// also the only way past the source-enumerating guard. What they can return is therefore pinned.
+func TestTheModeSourcesNameOnlyDeclaredViews(t *testing.T) {
+	declared := map[string]bool{
+		"abom_edge_regular": true, "abom_edge_extended": true, "abom_edge_any_mode": true,
+		"abom_finding_regular": true, "abom_finding_extended": true,
+		"abom_finding_any_mode": true,
+	}
+	// The empty string is a caller that did not ask about the shape, which must answer regular.
+	for _, mode := range []string{"", AnalysisModeRegular, AnalysisModeExtended,
+		AnalysisModeAnyShape, "closure", "'; DROP TABLE abom_edge; --"} {
+		for _, got := range []string{edgeSource(mode), findingSource(mode)} {
+			if !declared[got] {
+				t.Errorf("mode %q produced %q, which is not a view this package declares",
+					mode, got)
+			}
+		}
+	}
+	if edgeSource("") != "abom_edge_regular" || findingSource("") != "abom_finding_regular" {
+		t.Error("not asking about the shape stopped meaning regular; every existing aggregate " +
+			"would change what it counts")
+	}
+
+	s := newTestStore(t)
+	for _, view := range []string{
+		edgeSource(AnalysisModeRegular), edgeSource(AnalysisModeExtended),
+		edgeSource(AnalysisModeAnyShape), findingSource(AnalysisModeRegular),
+		findingSource(AnalysisModeExtended), findingSource(AnalysisModeAnyShape),
+	} {
+		var n int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM ` + view).Scan(&n); err != nil {
+			t.Errorf("%s does not exist in a migrated database: %v", view, err)
+		}
 	}
 }

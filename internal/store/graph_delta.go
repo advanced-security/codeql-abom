@@ -240,7 +240,7 @@ func (s *Store) GraphDelta(since int64, opts FullGraphOptions) (GraphDelta, erro
 	if err != nil {
 		return out, err
 	}
-	if err := s.attachRules(display, index); err != nil {
+	if err := s.attachRules(display, index, opts.Mode); err != nil {
 		return out, err
 	}
 	edges, err := s.graphEdges(display, edgeMark, opts)

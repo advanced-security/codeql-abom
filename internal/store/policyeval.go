@@ -49,6 +49,7 @@ func SelectorFor(spec viewspec.Spec) FindingSelector {
 		Repositories:      spec.Repositories,
 		Properties:        spec.Properties,
 		ExcludeProperties: spec.NotProperties,
+		Mode:              spec.Mode,
 	}
 }
 

@@ -152,7 +152,7 @@ func (s *Store) reachWithin(sc RepositoryScope) (string, []any, error) {
 // Unbounded this is the stored count, which includes references made by upstream repositories —
 // they are how a composite action's own dependencies are attributed. Bounded, only references
 // written in the grouping's own files count, because those are the ones it can change.
-func (s *Store) directRefsWithin(sc RepositoryScope) (string, []any, error) {
+func (s *Store) directRefsWithin(sc RepositoryScope, mode string) (string, []any, error) {
 	if !sc.asked() {
 		return `COALESCE(b.direct_dependents, 0)`, nil, nil
 	}
@@ -160,7 +160,7 @@ func (s *Store) directRefsWithin(sc RepositoryScope) (string, []any, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	return `(SELECT COUNT(*) FROM abom_edge_regular e
+	return `(SELECT COUNT(*) FROM ` + edgeSource(mode) + ` e
 		          JOIN repository er ON er.row_id = e.repository_row_id
 		         WHERE e.dst_node_row_id = n.row_id` + bound + `)`, args, nil
 }
@@ -185,6 +185,9 @@ type InventoryQuery struct {
 	Provider     string
 	Severity     string
 	Repositories []string
+	// Mode narrows to how the databases behind this page were built. Empty is `regular`, which is
+	// every database on record, so a listing that does not ask counts what it always counted.
+	Mode string
 	// Sort names a column from inventorySorts. Empty is the default order, widest reach first.
 	Sort   string
 	Desc   bool
@@ -252,7 +255,7 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 	if err != nil {
 		return InventoryPage{}, err
 	}
-	direct, directArgs, err := s.directRefsWithin(q.Grouping)
+	direct, directArgs, err := s.directRefsWithin(q.Grouping, q.Mode)
 	if err != nil {
 		return InventoryPage{}, err
 	}
@@ -294,7 +297,7 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 	where += findings
 	whereArgs = append(whereArgs, findingArgs...)
 	where += inventoryFlagFilter(q.Flags)
-	if style := inventoryRefFilter(q.RefStyle); style != "" {
+	if style := inventoryRefFilter(q.RefStyle, q.Mode); style != "" {
 		where += style
 	}
 	// A floor of zero is not a question about zero, so it must not drop the rows whose reach has
@@ -324,7 +327,7 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 		SELECT n.node_key, n.node_kind, COALESCE(n.owner,''), COALESCE(n.repo,''),
 		       COALESCE(r.origin, '') AS origin,
 		       ` + reach + ` AS dependent_repos, ` + direct + ` AS direct_dependents,
-		       (SELECT COUNT(DISTINCT e.ref_value) FROM abom_edge_regular e
+		       (SELECT COUNT(DISTINCT e.ref_value) FROM ` + edgeSource(q.Mode) + ` e
 		         WHERE e.dst_node_row_id = n.row_id
 		           AND e.ref_value IS NOT NULL AND e.ref_value <> '') AS distinct_refs,
 		       (SELECT COUNT(*) FROM abom_finding_node fn
@@ -455,7 +458,7 @@ func inventoryFindingFilter(q InventoryQuery) (string, []any) {
 		whereArgs = append(whereArgs, names...)
 	}
 	if len(where) > 0 {
-		out += ` AND EXISTS (SELECT 1 FROM abom_finding_regular f
+		out += ` AND EXISTS (SELECT 1 FROM ` + findingSource(q.Mode) + ` f
 		                      JOIN abom_finding_node fn ON fn.finding_row_id = f.row_id
 		                     WHERE fn.node_row_id = n.row_id AND ` +
 			strings.Join(where, " AND ") + `)`
@@ -463,7 +466,7 @@ func inventoryFindingFilter(q InventoryQuery) (string, []any) {
 	}
 	if len(q.NotRules) > 0 {
 		clause, a := ruleClause("x.rule_id", q.NotRules)
-		out += ` AND NOT EXISTS (SELECT 1 FROM abom_finding_regular x
+		out += ` AND NOT EXISTS (SELECT 1 FROM ` + findingSource(q.Mode) + ` x
 		                          JOIN abom_finding_node xn ON xn.finding_row_id = x.row_id
 		                         WHERE xn.node_row_id = n.row_id AND ` + clause + `)`
 		args = append(args, a...)
@@ -500,14 +503,14 @@ func inventoryFlagFilter(flags []string) string {
 //
 // Lexical only, and a different question from which reference was analyzed: a node referenced both
 // by tag and by commit matches either.
-func inventoryRefFilter(style string) string {
+func inventoryRefFilter(style, mode string) string {
 	commit := `LENGTH(e.ref_value) = 40 AND e.ref_value GLOB '[0-9a-f]*'`
 	switch style {
 	case "sha":
-		return ` AND EXISTS (SELECT 1 FROM abom_edge_regular e
+		return ` AND EXISTS (SELECT 1 FROM ` + edgeSource(mode) + ` e
 		                     WHERE e.dst_node_row_id = n.row_id AND ` + commit + `)`
 	case "tag":
-		return ` AND EXISTS (SELECT 1 FROM abom_edge_regular e
+		return ` AND EXISTS (SELECT 1 FROM ` + edgeSource(mode) + ` e
 		                     WHERE e.dst_node_row_id = n.row_id
 		                       AND e.ref_value IS NOT NULL AND e.ref_value <> ''
 		                       AND NOT (` + commit + `))`
