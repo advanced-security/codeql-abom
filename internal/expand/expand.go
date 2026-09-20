@@ -611,7 +611,7 @@ func (e *Expander) sourceFilter() string { return filterID(sparsePatternsOf(e.Fe
 // scopedDigest labels a content hash with the filter that produced it.
 //
 // The hash covers the files that were fetched, and says nothing about the ones that were not, so
-// two filters over one commit can hash the same tree and mean different things. Labelling makes
+// two filters over one commit can hash the same tree and mean different things. Labeling makes
 // the stored value self-describing: a reader asking under a different filter sees a digest that
 // is not its own instead of a match it did not earn.
 func scopedDigest(filter, digest string) string {
