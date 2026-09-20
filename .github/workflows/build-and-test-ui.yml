@@ -1,3 +1,5 @@
+# This workflow is managed by gh actions-lock.
+
 name: Build and Test - Interface
 
 on:
@@ -39,74 +41,190 @@ on:
 permissions:
   contents: read
 
+# A superseded run still holds every runner it claimed, and this workflow now claims several at
+# once. Only pull requests are cancelled: a push to main is the record of what main is, and a
+# cancelled one leaves no answer for the commit that is actually there.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  build-and-test-ui:
-    name: Build and Test - Interface
+  # Two checks that need nothing but Node, kept out of the .NET and Go jobs so they report in
+  # seconds rather than behind a toolchain neither of them uses.
+  browser:
+    name: Interface - Browser code
     runs-on: ubuntu-latest
 
     steps:
-      - name: Interface - Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Browser code - Checkout repository
+        uses: actions/checkout@v7.0.1
 
-      - name: Interface - Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      # No npm cache: `make js` and `make style` run `node --test` and a script with no packages
+      # at all, so there is nothing to restore.
+      - name: Browser code - Setup Node.js
+        uses: actions/setup-node@v7.0.0
         with:
           node-version-file: '.node-version'
-          cache: 'npm'
-          # The only npm dependency in the repository, and it does not live at the root.
-          cache-dependency-path: ui/tests/e2e/package-lock.json
 
       # The browser code carries a third of the interface's behavior and no compiler checks it.
-      - name: Interface - Test the browser code
+      - name: Browser code - Test the browser code
         run: make js
 
       # Visual drift passes every other check in this workflow.
-      - name: Interface - Check style
+      - name: Browser code - Check style
         run: make style
 
-      - name: Interface - Setup .NET
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+  components:
+    name: Interface - Components
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Components - Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Components - Setup .NET
+        uses: actions/setup-dotnet@v6.0.0
         with:
           dotnet-version: '10.0.x'
 
       # Keyed on the project files rather than a lock file, because this repository has no
       # packages.lock.json: restore resolves MudBlazor and the WebAssembly runtime every run
       # otherwise.
-      - name: Interface - Cache NuGet packages
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Components - Cache NuGet packages
+        uses: actions/cache@v6.1.0
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('ui/**/*.csproj') }}
           restore-keys: nuget-${{ runner.os }}-
 
-      - name: Interface - Build
+      - name: Components - Build
         run: make ui
 
       # A Razor build proves the markup parses and nothing about what it renders.
-      - name: Interface - Test components
+      - name: Components - Test components
         run: make ui-test
 
-      # Geometry, the boot path and the API contract as the page actually exercises it. None of
-      # the steps above can see any of it: bUnit has no CSS engine, and a grid that overflows by
-      # 288px is green everywhere until a browser lays it out.
-      #
-      # Go is here only because `make e2e` builds the server the suite drives — and it builds it
-      # twice, once per run, so the build cache is worth keeping.
-      - name: Interface - Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+  # Everything the browser suite drives, built once. Each shard below would otherwise repeat a
+  # `dotnet publish` and a `go build` that together cost more than the tests it then runs.
+  build:
+    name: Interface - Build what the suite drives
+    runs-on: ubuntu-latest
+
+    outputs:
+      specs: ${{ steps.specs.outputs.specs }}
+
+    steps:
+      - name: Build - Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Build - Setup Go
+        uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: true
 
-      - name: Interface - Install the browser suite
+      - name: Build - Setup .NET
+        uses: actions/setup-dotnet@v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build - Cache NuGet packages
+        uses: actions/cache@v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('ui/**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # Offline by construction: `make corpus` replays recorded CodeQL output, so the populated
+      # run needs no CLI, no network and no token.
+      - name: Build - Build the binary, the interface and the shared data set
+        run: make build publish corpus
+
+      # Which spec files exist, read from the directory rather than listed in this file: a suite
+      # split across jobs by a hand-written list is one where a new spec file is silently never
+      # run, and nothing goes red to say so.
+      - name: Build - List the spec files
+        id: specs
+        run: |
+          names=$(cd ui/tests/e2e/specs && ls -1 ./*.spec.mjs | xargs -n1 basename)
+          if [ -z "$names" ]; then
+            echo "no spec files under ui/tests/e2e/specs"; exit 1
+          fi
+          # Each name reaches a shell command line in the shards below, so anything that is not a
+          # plain file name is refused here rather than run there.
+          bad=$(printf '%s\n' "$names" | grep -vE '^[A-Za-z0-9._-]+\.spec\.mjs$' || true)
+          if [ -n "$bad" ]; then
+            echo "spec file names must be plain: $bad"; exit 1
+          fi
+          specs=$(printf '%s\n' "$names" | jq -Rsc 'split("\n") | map(select(length > 0))')
+          echo "specs=$specs" >> "$GITHUB_OUTPUT"
+          echo "$specs"
+
+      # One tarball rather than 216 loose files, because an artifact of a Blazor publish is mostly
+      # `_framework`, and it also carries the executable bit that the artifact format drops.
+      - name: Build - Pack what the suite drives
+        run: tar -czf interface.tar.gz bin/codeql-abom .abom/ui/wwwroot .abom/corpus
+
+      - name: Build - Upload what the suite drives
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: interface
+          path: interface.tar.gz
+          retention-days: 1
+          # Already gzipped; compressing it again costs time and saves nothing.
+          compression-level: 0
+
+  # Geometry, the boot path and the API contract as the page actually exercises it. None of the
+  # jobs above can see any of it: bUnit has no CSS engine, and a grid that overflows by 288px is
+  # green everywhere until a browser lays it out.
+  #
+  # One job per spec file, because the suite runs on a single worker against a single server — the
+  # store allows one writer, so workers within a run are not an option and the only axis left is
+  # the runner. Both databases run here, in the same job: they are different questions, the empty
+  # one answering "does this work where nobody has crawled anything" and the populated one
+  # reaching every assertion an empty database skips, and a second job per spec would pay the
+  # browser install again to save nothing.
+  suite:
+    name: Interface - Browser suite (${{ matrix.spec }})
+    needs: build
+    runs-on: ubuntu-latest
+
+    strategy:
+      # Every shard reports. "Which spec files are broken" is the question a split suite exists to
+      # answer, and cancelling the rest at the first failure answers a different one.
+      fail-fast: false
+      matrix:
+        spec: ${{ fromJSON(needs.build.outputs.specs) }}
+
+    steps:
+      - name: Browser suite - Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Browser suite - Setup Node.js
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: '.node-version'
+          cache: 'npm'
+          # The only npm dependency in the repository, and it does not live at the root.
+          cache-dependency-path: ui/tests/e2e/package-lock.json
+
+      - name: Browser suite - Download what it drives
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: interface
+
+      - name: Browser suite - Unpack what it drives
+        run: tar -xzf interface.tar.gz && rm interface.tar.gz
+
+      - name: Browser suite - Install the harness
         working-directory: ui/tests/e2e
         run: npm ci --no-fund --no-audit
 
       # The browser is ~130 MiB and the lock file pins which one, so the key is the lock file.
       # The install step below still runs: `--with-deps` installs shared libraries through apt,
       # which no cache here covers, and it skips the download when the browser is already there.
-      - name: Interface - Cache the pinned browser
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Browser suite - Cache the pinned browser
+        uses: actions/cache@v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('ui/tests/e2e/package-lock.json') }}
@@ -114,32 +232,48 @@ jobs:
       # `--with-deps` because a GitHub runner has none of Chromium's shared libraries. The suite
       # falls back to a system browser when this is missing or half-extracted, but CI should run
       # the pinned build so every run is the same one.
-      - name: Interface - Install the pinned browser
+      - name: Browser suite - Install the pinned browser
         working-directory: ui/tests/e2e
         run: npx playwright install --with-deps chromium
 
-      - name: Interface - Browser suite
-        run: make e2e
+      # `-run` rather than `make e2e`: the binary, the interface and the data set were built once
+      # and unpacked above, and rebuilding them here would be the whole saving spent again.
+      - name: Browser suite - Against an empty database
+        env:
+          SPEC: ${{ matrix.spec }}
+        run: make e2e-run ABOM_E2E_SPECS="specs/$SPEC"
 
-      # The same suite against a populated database, which is a different question: the run above
-      # answers "does this work where nobody has crawled anything", and this one reaches every
-      # assertion an empty database skips. Every product defect found in the cycle that built this
-      # was invisible to the empty run — a prune offering everything, a Dashboard counting nodes
-      # under the wrong word, a grid putting its sorted column off screen.
-      #
-      # Offline by construction: `make corpus` replays recorded CodeQL output, so this needs no
-      # CLI, no network and no token. Both runs gate, because neither substitutes for the other.
-      - name: Interface - Browser suite against the shared data set
-        run: make e2e-corpus
+      - name: Browser suite - Against the shared data set
+        env:
+          SPEC: ${{ matrix.spec }}
+        run: make e2e-corpus-run ABOM_E2E_SPECS="specs/$SPEC"
 
+  # One check to read, and one name for a ruleset to require. A split workflow otherwise reports
+  # as a list that grows whenever a spec file is added, which no required-check list can follow.
+  interface:
+    name: Build and Test - Interface
+    needs: [browser, build, components, suite]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
       - name: Interface - Summary
+        env:
+          BROWSER: ${{ needs.browser.result }}
+          BUILD: ${{ needs.build.result }}
+          COMPONENTS: ${{ needs.components.result }}
+          SUITE: ${{ needs.suite.result }}
         run: |
           {
             echo "## Interface"
             echo ""
-            echo "- Browser module tests passed"
-            echo "- Style check passed"
-            echo "- Blazor build succeeded"
-            echo "- Component tests passed"
-            echo "- Browser suite passed, empty and populated"
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            echo "| Browser module tests and style | $BROWSER |"
+            echo "| Blazor build and component tests | $COMPONENTS |"
+            echo "| Binary, interface and shared data set | $BUILD |"
+            echo "| Browser suite, empty and populated | $SUITE |"
           } >> "$GITHUB_STEP_SUMMARY"
+          for result in "$BROWSER" "$BUILD" "$COMPONENTS" "$SUITE"; do
+            if [ "$result" != "success" ]; then exit 1; fi
+          done

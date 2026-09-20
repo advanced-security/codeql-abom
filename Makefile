@@ -26,7 +26,8 @@ ABOM_SERVE_FLAGS ?=
 BIN      := bin/codeql-abom
 GO_FILES := $(shell find . -name '*.go' -not -path './ui/*')
 
-.PHONY: bench build check-corrupt corpus check-versions clean e2e fmt itest js lint logs package publish ql \
+.PHONY: bench build check-corrupt corpus check-versions clean e2e e2e-corpus e2e-corpus-run e2e-run \
+	fmt itest js lint logs package publish ql \
 	quality restart selfcheck serve start status stop style test ui ui-test verify vet
 
 .DEFAULT_GOAL := build
@@ -104,6 +105,10 @@ ABOM_E2E_DIR   ?= $(ABOM_TMP)/e2e
 ABOM_E2E_DB    ?= $(ABOM_E2E_DIR)/abom.db
 ABOM_E2E_PORT  ?= 8231
 ABOM_E2E_FLAGS ?=
+# Which spec files to run, as Playwright positional filters. Empty is every one of them, which is
+# what a developer wants. CI names a single file per job, because the suite runs on one worker
+# against one server and its slowest file would otherwise decide how long the check takes.
+ABOM_E2E_SPECS ?=
 # Which browser runs the suite. Empty takes the pinned Chromium, which is what CI should use
 # because it is identical everywhere. `chrome` borrows the system install, and is the way through
 # on a machine where that download will not complete — a partial one leaves a directory that looks
@@ -118,7 +123,21 @@ ABOM_E2E_CHANNEL ?=
 e2e-corpus: corpus
 	@$(MAKE) e2e ABOM_E2E_DB="$(abspath $(ABOM_CORPUS_DB))"
 
-e2e: build publish
+## e2e-run, e2e-corpus-run: the suite on its own, against a binary, an interface and a database
+## that already exist. `make e2e` builds all three every time, which is right on a workstation and
+## wrong across a matrix — CI builds them once and hands the same three to every job, so a job
+## that rebuilt them would pay the slowest part of the run once per spec file.
+e2e-corpus-run:
+	@if [ ! -f "$(ABOM_CORPUS_DB)" ]; then \
+		echo "e2e-corpus-run: no database at $(ABOM_CORPUS_DB); 'make corpus' builds it."; \
+		echo "e2e-corpus-run: the server would otherwise make an empty one, and every"; \
+		echo "e2e-corpus-run: populated assertion would skip and be reported as a pass."; exit 1; \
+	fi
+	@$(MAKE) e2e-run ABOM_E2E_DB="$(abspath $(ABOM_CORPUS_DB))"
+
+e2e: build publish e2e-run
+
+e2e-run:
 	@if [ "$(abspath $(ABOM_E2E_DB))" = "$(abspath $(ABOM_DB))" ]; then \
 		echo "e2e: refusing to run against $(ABOM_DB), which is the working database."; \
 		echo "e2e: take a copy first, and note that cp does not read the WAL:"; \
@@ -136,7 +155,7 @@ e2e: build publish
 		ABOM_E2E_UI="$(ABOM_UI)/wwwroot" \
 		ABOM_E2E_PORT="$(ABOM_E2E_PORT)" \
 		ABOM_E2E_CHANNEL="$(ABOM_E2E_CHANNEL)" \
-		npx playwright test $(ABOM_E2E_FLAGS)
+		npx playwright test $(ABOM_E2E_FLAGS) $(ABOM_E2E_SPECS)
 
 fmt:
 	@out=$$(gofmt -l . 2>&1 | grep -v '^ui/' || true); \

@@ -1,3 +1,5 @@
+# This workflow is managed by gh actions-lock.
+
 name: Self Audit
 
 # Runs ABOM against ABOM, in every language ABOM is written in.
@@ -85,10 +87,10 @@ jobs:
 
     steps:
       - name: Self Audit - Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v7.0.1
 
       - name: Self Audit - Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -97,12 +99,12 @@ jobs:
       # database is created. Every other language here extracts from source alone.
       - name: Self Audit - Setup .NET
         if: matrix.dotnet
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        uses: actions/setup-dotnet@v6.0.0
         with:
           dotnet-version: '10.0.x'
 
       - name: Self Audit - Setup CodeQL
-        uses: ./.github/actions/setup-codeql
+        uses: $/.github/actions/setup-codeql
 
       - name: Self Audit - Analyze our own ${{ matrix.name }}
         # The suite is fetched from the CodeQL registry (ghcr.io) on first use; the CLI reads
