@@ -56,14 +56,17 @@ extractor over the same tree*:
 
 | Axis | Why it is another adapter |
 | --- | --- |
-| Container images behind a Dockerized action | The image is the implementation, and nothing in an `actions` database describes it |
+| Dockerfile base-image declarations | The referenced Dockerfile needs fetching and a parser beyond the action metadata |
 | A JavaScript action's own dependencies | `runs.using: node20` means the behaviour is in `index.js`, which needs the `javascript` extractor and a lockfile that is not checked out |
 | A shell script a composite action calls | The library already parses **embedded** `run:` blocks; a referenced `./scripts/build.sh` is a separate file, unfetched and unparsed |
 
-So an adapter declares four things: **the sparse patterns it needs fetched, the language it needs
-extracted, the queries it runs, and the node kinds it makes statements about.** None of the three
-is in scope, and each would be its own plan. They are written down because a model that cannot hold
-them is the wrong model, and that is cheaper to notice now than later.
+So an adapter declares four things: **the source inputs it needs fetched, the parser or language
+extractor it uses, the queries or analysis it runs, and the node kinds it makes statements about.**
+None of the three adapters is implemented by this plan. Declaration-only container work has its
+own owner in [container-inventory.md](../db/container-inventory.md); image layers and installed
+packages remain outside it. Literal declaration coverage can start without waiting for the
+dataflow resolution in item 3, but it must use the same uncertainty and source-coverage contract.
+JavaScript-action dependencies and referenced shell scripts remain separate, unplanned adapters.
 
 ## The constraints that must not be broken
 

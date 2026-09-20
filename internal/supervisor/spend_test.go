@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/advanced-security/codeql-abom/internal/expand"
 	"github.com/advanced-security/codeql-abom/internal/frontier"
 )
 
@@ -71,6 +72,30 @@ func TestACompleteClosureIsRecordedAsHavingNothingOutstanding(t *testing.T) {
 	}
 	if cycles[0].HasOutstanding {
 		t.Error("an empty queue reported outstanding work")
+	}
+}
+
+// Fetches was the analysis count, which was two guesses at once: a settled unit that still had
+// to clone was not counted, and a tree served from the cache was. With the cache wired into the
+// loop, a cycle that cloned nothing would be billed for the whole corpus.
+func TestTheRecordedSpendCountsClonesRatherThanAnalyses(t *testing.T) {
+	sup, s := newSupervisor(t)
+
+	sup.recordSpend(expand.Stats{Processed: 12, Fetched: 3, Reused: 9}, nil, sup.now())
+
+	cycles, err := s.RecentCycles(1)
+	if err != nil {
+		t.Fatalf("RecentCycles: %v", err)
+	}
+	if len(cycles) == 0 {
+		t.Fatal("no cycle was recorded")
+	}
+	if cycles[0].Fetches != 3 {
+		t.Errorf("fetches = %d, want the 3 clones the cycle paid for", cycles[0].Fetches)
+	}
+	if cycles[0].Builds != 12 {
+		t.Errorf("builds = %d, want 12: a reused tree is still built and evaluated",
+			cycles[0].Builds)
 	}
 }
 

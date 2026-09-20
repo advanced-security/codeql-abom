@@ -119,6 +119,13 @@ public sealed record DiscoveryStatus
     /// re-analysis of a current corpus would otherwise move no number at all.
     /// </summary>
     public int Skipped { get; init; }
+
+    /// <summary>
+    /// Checkouts served from the cache instead of cloned. Not a skip: each one was analyzed or
+    /// settled on the ledger's say-so, so a cycle that fetched nothing and analyzed everything
+    /// would otherwise read exactly like one that cloned the whole corpus again.
+    /// </summary>
+    public int Reused { get; init; }
     public int Settled { get; init; }
     public int Failed { get; init; }
     public int Unavailable { get; init; }

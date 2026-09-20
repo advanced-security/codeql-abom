@@ -20,7 +20,9 @@ func (e *Expander) commitWithoutFetching(ctx context.Context, b batch) (string, 
 	// A reference that is already a commit cannot move. There is no resolution to compare
 	// against yet, which is what Resolution.Mutable() uses, so syntax is the only signal here.
 	if isCommit(b.ref) {
-		return b.ref, true
+		// Lower case is how git writes a commit back, so it is what the ledger and the cache
+		// hold. The same commit asked for in upper case has to reach the same entry.
+		return strings.ToLower(b.ref), true
 	}
 	if e.Probe == nil {
 		return "", false
@@ -32,11 +34,13 @@ func (e *Expander) commitWithoutFetching(ctx context.Context, b batch) (string, 
 	return sha, true
 }
 
+// isCommit reports whether a reference is a full commit id. Hex in either case, because a
+// workflow may pin either and git resolves both to the same commit.
 func isCommit(ref string) bool {
 	if len(ref) != commitLength {
 		return false
 	}
 	return strings.IndexFunc(ref, func(r rune) bool {
-		return !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f')
+		return !strings.ContainsRune("0123456789abcdefABCDEF", r)
 	}) < 0
 }

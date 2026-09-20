@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/expand"
@@ -27,6 +29,44 @@ const maxExpandRounds = 1000
 // A claim is released only by the process holding it, so a crash needs a time bound; an hour is
 // far longer than a clone, database build and query take.
 const staleClaimLease = time.Hour
+
+// defaultCacheMaxMB bounds retained checkouts. Measured across twelve real action repositories
+// at a mean of 0.18 MiB per commit, tree and .git together, so this holds on the order of ten
+// thousand commits — several times the closure of the reference corpus — and the ceiling is what
+// the disk cost is bounded by rather than the crawl's appetite.
+const defaultCacheMaxMB = 2048
+
+// checkoutCache prepares the directory retained checkouts live in, or nil for no retention.
+//
+// Outside WorkDir by construction: a scratch directory is removed when the run that made it
+// ends, and a cache that does not outlive the round cannot answer the next one.
+//
+// Owner-only, and tightened even when the directory already exists. The temporary work directory
+// this replaces was private by construction; a persistent cache holds fetched source from private
+// repositories, so leaving it traversable would make a performance option a disclosure. Claimed
+// too: two processes sharing one cache would evict each other's trees mid-analysis.
+func checkoutCache(dir string, maxMB int64) (*expand.CheckoutCache, error) {
+	if dir == "" {
+		return nil, nil
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("resolving %s: %w", dir, err)
+	}
+	if err := os.MkdirAll(abs, 0o700); err != nil {
+		return nil, fmt.Errorf("creating %s: %w", abs, err)
+	}
+	// MkdirAll leaves an existing directory's mode alone, and a cache reused from an earlier
+	// version was created at 0755.
+	if err := os.Chmod(abs, 0o700); err != nil {
+		return nil, fmt.Errorf("restricting %s: %w", abs, err)
+	}
+	cache := &expand.CheckoutCache{Dir: abs, MaxBytes: maxMB << 20}
+	if err := cache.Claim(); err != nil {
+		return nil, err
+	}
+	return cache, nil
+}
 
 // roundDidWork reports whether a round moved the queue, which is how expand-all recognizes a
 // drained frontier.
@@ -52,6 +92,10 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	limit := fs.Int("limit", 200, "frontier items claimed per round")
 	maxDepth := fs.Int("max-depth", frontier.DefaultMaxDepth, "hops beyond a seed repository to follow")
 	rateLimitPerHour := fs.Int("rate-limit-per-hour", 0, "cap checkouts per hour (0: unlimited)")
+	cacheDir := fs.String("cache-dir", "",
+		"retain fetched checkouts here and reuse each commit across references (default: off)")
+	cacheMaxMB := fs.Int64("cache-max-mb", defaultCacheMaxMB,
+		"ceiling for retained checkouts, least recently used evicted first (0: unbounded)")
 	keepArtifacts := fs.Bool("keep-artifacts", false, "keep downloaded databases and results")
 	requeueStale := fs.Bool("requeue-stale", false,
 		"first requeue analyzed dependencies whose packs or CodeQL have since changed")
@@ -113,6 +157,11 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		Server: server, Evaluator: evaluator,
 	}
 	checkout := &expand.Checkout{}
+	cache, err := checkoutCache(*cacheDir, *cacheMaxMB)
+	if err != nil {
+		return fmt.Errorf("expand-all: %w", err)
+	}
+	defer cache.Release()
 	e := &expand.Expander{
 		Queue:    queue,
 		Store:    s,
@@ -127,6 +176,7 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		Resolver: r,
 		Decode:   expand.Decoder(r.Decode),
 		Pace:     pace,
+		Cache:    cache,
 		OnEvent:  logFailures(stdout),
 	}
 
@@ -156,6 +206,7 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		total.Unavailable += stats.Unavailable
 		total.Discovered += stats.Discovered
 		total.Edges += stats.Edges
+		total.Reused += stats.Reused
 		if !roundDidWork(stats) {
 			break
 		}
@@ -167,6 +218,9 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		"%d failed, %d unavailable, %d newly discovered, %d edges ingested\n",
 		total.Processed, total.Skipped, total.Items, total.Failed, total.Unavailable,
 		total.Discovered, total.Edges)
+	if cache != nil {
+		fmt.Fprintf(stdout, "expand-all: %d checkouts served from %s\n", total.Reused, cache.Dir)
+	}
 
 	if err := reportWorkLeftWaiting(stdout, queue); err != nil {
 		return fmt.Errorf("expand-all: %w", err)

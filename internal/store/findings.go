@@ -27,6 +27,11 @@ type QueryRun struct {
 	CLIVersion string
 	Repository string
 	DBCommit   string
+	// SourceFilter names the checkout filter the database was built from. A commit alone does
+	// not identify a tree: ABOM fetches only the paths an actions database needs, so widening
+	// that filter puts files in front of the extractor that this run never saw. Without it here,
+	// a wider crawl would find every commit already on record and decline to look again.
+	SourceFilter string
 	// Ref and AnalyzedRef are how this evaluation was reached, not what it evaluated. They are
 	// deliberately absent from key(): the run is identified by content, so two refs at one
 	// commit are one evaluation, recorded as two rows in abom_query_run_ref.
@@ -38,7 +43,7 @@ func (q QueryRun) key() string {
 	h := sha256.New()
 	for _, part := range []string{
 		q.QueryID, q.QueryVersion, q.Pack, q.PackVersion, q.PackDigest,
-		q.CLIVersion, q.Repository, q.DBCommit,
+		q.CLIVersion, q.Repository, q.DBCommit, q.SourceFilter,
 	} {
 		// Length-prefixed, so no two different tuples can concatenate to the same bytes.
 		fmt.Fprintf(h, "%d:%s\x00", len(part), part)
@@ -56,12 +61,12 @@ func (s *Store) RecordQueryRun(q QueryRun) (int64, error) {
 	if _, err := s.db.Exec(`
 		INSERT INTO abom_query_run
 			(run_key, query_id, query_version, pack, pack_version, pack_digest,
-			 cli_version, repository, db_commit, ran_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 cli_version, repository, db_commit, source_filter, ran_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(run_key) DO UPDATE SET ran_at = excluded.ran_at`,
 		key, q.QueryID, nullable(q.QueryVersion), nullable(q.Pack), nullable(q.PackVersion),
 		nullable(q.PackDigest), nullable(q.CLIVersion),
-		q.Repository, nullable(q.DBCommit), now()); err != nil {
+		q.Repository, nullable(q.DBCommit), nullable(q.SourceFilter), now()); err != nil {
 		return 0, fmt.Errorf("recording query run for %s: %w", q.QueryID, err)
 	}
 

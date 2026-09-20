@@ -51,3 +51,22 @@ func TestACycleThatOnlySkippedIsVisibleInTheStatus(t *testing.T) {
 		t.Errorf("Settled = %d, want 96", st.Settled)
 	}
 }
+
+// The checkout cache is wired into the loop, so serve is where reuse mostly happens. Accumulating
+// it only in expand-all left the long-lived entrypoint with no way to say a cycle cloned nothing,
+// which reads exactly like a cycle that cloned the whole corpus again.
+func TestCheckoutReuseReachesTheStatus(t *testing.T) {
+	var st Status
+
+	recordCycle(&st, expand.Stats{Processed: 12, Reused: 9, Fetched: 3, Items: 12})
+
+	if st.Reused != 9 {
+		t.Errorf("Reused = %d, want the 9 trees the cycle did not clone", st.Reused)
+	}
+	if st.Analyzed != 12 {
+		t.Errorf("Analyzed = %d, want 12: reuse is not a skip", st.Analyzed)
+	}
+	if st.Skipped != 0 {
+		t.Errorf("Skipped = %d, want 0: a reused tree was still analyzed", st.Skipped)
+	}
+}

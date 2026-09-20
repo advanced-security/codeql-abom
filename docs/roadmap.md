@@ -23,6 +23,21 @@ flowchart LR
 
 See [how it works](architecture.md) for the current shape.
 
+## Native locking is the resolution baseline
+
+GitHub's native workflow lockfiles are the gold standard for ABOM's future effective-dependency
+resolution, not an optional lookup optimization. The declared ref preserves intent; the governing
+workflow lock selects the immutable commit; verified version evidence supports advisory context.
+Each belongs to the analyzed revision, and a current live tag cannot overwrite that selection.
+ABOM does not yet consume these locks.
+
+Use GitHub's [native tooling](../plans/tools/actions-lock.md) for generation, verification and
+updates, and its official parser for [contextual ingestion](../plans/db/actions-lockfile.md).
+Missing native coverage stays explicit; invalid or unsupported locks do not silently fall back to
+different code. Keep parsed coverage, network verification and observed runner enforcement distinct.
+This correctness work precedes closure staging, which must stage the selected commits on cold
+fetches as well as cache hits. Database-shape work remains a separate prerequisite.
+
 ## An organization that stays current at scale
 
 ABOM can be pointed at a declared organization and left alone: one loop reads the account on a
@@ -35,6 +50,15 @@ organization poses have different costs: what is new and what changed can be ans
 prefix, while **what is gone can only be answered by reading everything**. GraphQL is the efficient
 way to ask the first two and to carry whatever else is wanted about a repository, with REST as the
 fallback for the organizations that will not permit it. `plans/api/org-enumeration.md`
+
+Staying current is also about not paying twice for what did not move, and that has the same shape
+one level down. A commit is fetched once however many references name it, and a query is evaluated
+once against a given database — both because the thing is identified by its content rather than by
+the name something reached it through. The unfinished half is the opposite direction: when ABOM
+changes what it fetches, what it runs or how it reads the results, it must put back exactly the work
+that change touched and nothing else. A crawl that cannot name what it invalidated has only one
+safe move left, which is to do all of it again. `plans/db/analysis-ledger.md`,
+`plans/db/checkout-cache.md`
 
 ## One scope, two renderings
 
@@ -84,13 +108,17 @@ A second shape stages an owned repository's whole transitive closure under
 `.github/actions/external/${owner}/${repo}/`, which is a convention `codeql/actions-all` already
 recognizes. Dataflow then crosses `uses:` boundaries at any depth: taint from an externally
 controlled value in a workflow, through three staged dependencies, into the deepest `run:`. Nothing
-native reports that, and nothing else could.
+in ordinary Default Setup stages that dependency closure; the extended analysis addresses that
+different input shape rather than competing with native lock generation.
 
-The two must never be confused, which is why an analysis records the shape it was built from and a
-reader can filter on it. Same rule, same repository, opposite meanings: one predicts an alert
-somebody will see, the other names exposure GitHub will never report. The ceiling is that a
-closure holds one reference per dependency, which is survivable only because it is rooted at one
-owned repository. `plans/ql/closure-database.md`, `plans/db/analysis-mode.md`
+The two must never be confused, which is why the plan requires each analysis to record its shape
+and expose that distinction to readers. The same rule can describe a repository's own source or
+a staged dependency path that ordinary Default Setup did not analyze. The staging namespace holds
+one selected commit per dependency; rooting it at one owned repository bounds the collisions but
+does not eliminate them. Count distinct lock-selected commits, not only different ref names.
+[Closure databases](../plans/ql/closure-database.md) therefore depend on
+[lock-aware resolution](../plans/db/actions-lockfile.md) and
+[analysis modes](../plans/db/analysis-mode.md).
 
 ## The questions are the organization's own
 
@@ -116,10 +144,10 @@ screen, and a security team cannot act on a dashboard nobody is assigned to.
 Two routes out, in order:
 
 1. **A gate that refuses the pull request** that introduces the exposure, which beats reporting it
-   after it merges — ABOM holds the only transitive Actions graph, so it is the only thing that can
-   refuse a change on that basis. The policy has a life before it has teeth: drafted, simulated
-   against stored state, and adopted only if what it would have blocked is acceptable — which is
-   built. `plans/api/verdict-gate.md`, `plans/api/abom-check.md`
+   after it merges. ABOM can apply operator policy to the organization's recorded transitive
+   dependency evidence. Drafting, simulating and adopting that policy against stored state are
+   built; the base/head gate and its workflow client are not.
+   [Verdict gate](../plans/api/verdict-gate.md), [abom-check](../plans/api/abom-check.md).
 2. **A pack the organization publishes and its own Default Setup adopts**, through the
    `github-codeql-config-file` repository property, which merges a configuration file with the one
    Default Setup generates. ABOM produces the configuration; GitHub produces the alerts, where
@@ -141,12 +169,38 @@ Both need a server a pull request can reach, which this project does not yet hav
 
 ## Remediation that GitHub can drive
 
-The submitted dependency snapshot already names versions for most commit-pinned dependencies, which
-is what lets Dependabot match an advisory at all. Two things are open: whether ABOM should submit
-the direct commit-pinned entries it currently withholds, and whether GitHub opens a pull request on
-the parent dependency for a transitive Actions alert. The second is an inference from GitHub's
-documentation and has to be measured, not asserted. `plans/db/version-resolution.md`,
-`plans/api/dependency-submission.md`
+ABOM already has guarded synthetic-path submission with measured version evidence. Its expansion,
+including direct-pin supplements and workflow write grants, is deferred while the
+[native comparison](../plans/api/dependency-graph-crosscheck.md) measures runner enforcement,
+Dependabot lock updates, DG/SBOM inventory, review, alerts and update PRs independently. Native update
+support is visible in source; automatic transitive DG reporting remains a separate capability to
+establish, not a release promise.
+
+Retain the existing [submission guards and ledger](../plans/api/dependency-submission.md).
+If native coverage replaces a use case, retiring it requires a deliberate release of historical
+snapshots, not simply deleting code. Further [version lookup](../plans/db/version-resolution.md)
+enriches evidence without changing a locked execution choice or authorizing a new publisher.
+
+## Workflow integration and dependency provenance
+
+The planned [abom-check](../plans/api/abom-check.md) release is verdict-only. It asks the server
+about exact base/head commits and their governing lock contexts, performs no analysis or native
+fixing, and receives no GitHub contents-write credential. Submission modes remain deferred;
+native lock adoption does not add an implicit workflow publisher.
+
+Jesse Houwing's
+[actions-dependency-submission](https://github.com/jessehouwing/actions-dependency-submission),
+introduced through [issue #18](https://github.com/advanced-security/codeql-abom/issues/18), informs
+this integration and three separate planned efforts: [fork and mirror provenance](../plans/db/fork-provenance.md),
+[host-aware GitHub access](../plans/api/github-hosts.md), and
+[container declaration inventory](../plans/db/container-inventory.md). Upstream identity stays
+attributed evidence, credentials stay at their authorized host, and container declarations do not
+assert image contents or vulnerability. These plans extend ABOM's existing measurements and give
+credit to the reference action's ideas without claiming the additions are already built. GitHub's
+[native tool](https://github.com/github/gh-actions-lock) and
+[shared parser](https://github.com/github/actions-lockfile) own pinning and format semantics.
+Numeric lock IDs do not establish fork ancestry, hostname metadata does not prove GHES support,
+and an action's locked repository commit does not inventory its container images.
 
 ## Staying current without being told
 
@@ -193,6 +247,9 @@ forward as remembered numbers. `plans/db/data-efficiency.md`
   carefully.
 - **Re-implementing what `gh-ghas-audit` measures.** Enablement has an owner; ABOM consumes the
   answer and contributes the one gap that tool cannot see.
+- **A competing Actions lock generator, verifier or updater.** Consume GitHub's supported tooling
+  and versioned evidence. Publication expansion waits for a measured native gap, not a prediction
+  that GitHub will or will not build one.
 - **Evaluating an `if:` condition.** Conditions are reported verbatim. Deciding whether one holds is
   not something static analysis settles.
 - **Deriving vulnerability from an advisory.** Advisories enrich; a verdict comes only from a rule.

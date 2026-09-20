@@ -44,6 +44,24 @@ consequence of the declaration rather than a separate configuration.
 **Analysis is queued per dependency *and* reference.** `actions/checkout@v4` and
 `actions/checkout@v5` are different work, because they are different commits.
 
+**A commit is fetched once, however many references name it.** Retained checkouts are keyed on the
+commit and the sparse filter they were fetched under, at
+`${CacheDir}/${owner}/${repo}/${sha}-${filter}/`, never on the reference — a tag moves, and a cache
+keyed on one would serve the old tree forever with nothing to say it had. The filter is in the path
+because the same commit under two filters is two different sets of files, and it is in the run key
+because a run against the narrow tree has not answered for the wide one. Reuse says only that the
+bytes are already here: whether the analysis runs is still the ledger's decision, so a hit is never
+a skip. Retention is off until a directory is named, bounded by a ceiling that evicts the least
+recently used first, readable only by its owner, and claimed by one process at a time.
+
+**An analysis runs again only when its identity changed.** A unit of work is one query against one
+database, and both are content-addressed: the repository, the resolved commit, the checkout filter,
+the query, the pack and its content digest, and the CodeQL that evaluated it. Match them all and
+CodeQL is deterministic, so nothing needs to run. This is a separate decision from where the bytes
+came from, which is why a cache hit is not a skip. It is also only half of an incremental crawl:
+recognizing an unchanged pair is done, and putting back the work that a change *did* touch selects
+on fewer of those dimensions than the identity holds.
+
 **Expansion follows the graph outward.** Edges produced by one analysis name dependencies that are
 enqueued for the next, which is how the transitive closure is built one measured hop at a time.
 
@@ -97,7 +115,7 @@ Everything is one SQLite file. `internal/store` is the only package that writes 
 
 | Table | |
 | --- | --- |
-| `abom_query_run`, `abom_query_run_ref` | One row per analysis: the resolved commit, pack digest and CLI version that produced it |
+| `abom_query_run`, `abom_query_run_ref` | One row per analysis: the resolved commit, checkout filter, pack digest and CLI version that produced it |
 | `abom_ingest_ledger` | What has already been read, so it is not read twice |
 | `abom_ref_resolution` | Which commit a tag or branch pointed at, when it was measured |
 | `abom_commit_content`, `abom_protected_branch` | Content equivalence, and which branches GitHub protects |

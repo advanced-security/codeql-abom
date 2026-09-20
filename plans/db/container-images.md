@@ -45,22 +45,23 @@ invites a reader to believe there is an account there to go and look at.
 
 ## Deliberately not in this plan
 
-**Any modeling of what a container image contains.** The image's layers, its base image, its
-packages, the Dockerfile behind `runs.using: docker` — all of it needs analysis ABOM does not do,
-and would need the shared model and the adapter shape in
-[`ql/semantic-model.md`](../ql/semantic-model.md), which is still designing that model. This plan
-is the reference, not the image.
+**Additional declaration sources or image contents.** Job/service image declarations, Docker
+action metadata and a referenced Dockerfile's external `FROM` references belong to
+[container-inventory.md](container-inventory.md). That inventory coordinates its adapter contract
+with [semantic-model.md](../ql/semantic-model.md). Image layers and installed packages are outside
+both plans. None of this broader work is a prerequisite of correcting account grouping here.
 
-**A package-url for containers.** It was investigated and refused. The GitHub Advisory Database's
-supported ecosystems are Composer, Erlang, Go, GitHub Actions, Maven, npm, NuGet, pip, Pub,
-RubyGems, Rust and Swift; **containers are not among them**, and the dependency submission API
-alerts only for supported ecosystems. So an OCI purl in a snapshot can never produce a Dependabot
-alert, while a snapshot *replaces* GitHub's own analysis and has no delete endpoint — cost with no
-return. `normalize.PackageURL` already returns `""` for `docker://` and is right to.
+**Submitting container packages to GitHub.** This remains refused. A valid container PURL is not
+evidence that the dependency-submission API matches image vulnerabilities or produces Dependabot
+alerts. There is no established container-alert outcome justifying that external write, and no
+delete endpoint to undo it. `normalize.PackageURL` continues to withhold container references from
+Actions snapshots. Local BOM identity and export interoperability are separate questions owned by
+[container-inventory.md](container-inventory.md), not permission to submit those packages.
 
 **Whether the bill of materials should carry purls at all.** It carries none, for any component:
 `cycloneComponent` sets `BOMRef`, `Name`, `Version`, properties and a VCS link, and never the
-`PackageURL` field. That is a larger question than containers and is not settled here.
+`PackageURL` field. An all-package export change is not settled here; the container inventory plan
+owns only its narrower, compatibility-tested export decision.
 
 ## The constraints that must not be broken
 

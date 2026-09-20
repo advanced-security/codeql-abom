@@ -1,24 +1,41 @@
-# GitHub already parsed the first hop, and we never compare
+# Measure native Actions coverage before filling a gap
 
-**Status:** not started. The client that would read the comparison already exists and is used for
-something else.
+**Status:** comparison is not built; native lockfiles and product ingestion need separate measurements.
 
 ## Why this exists
 
-ABOM's central claim is that GitHub's Actions dependency graph stops at the first hop and ABOM
-carries the rest. That claim is sourced from GitHub's documentation, not from evidence. The house
-rule in [`../next.md`](../next.md) is that a number names the data it was measured against, and this
-one has no number behind it at all.
+Native Actions lockfiles describe transitive pins. Dependabot's source consumes those locks for
+updates. Neither fact, by itself, establishes how a deployed Dependency Graph, SBOM export, review
+or advisory alert consumes them. ABOM must measure that boundary rather than justify a publisher
+with the obsolete claim that nothing native names transitive dependencies.
 
 The same comparison answers a second question that matters more day to day: **is our extraction
 right?** ABOM parses workflows with CodeQL and nothing checks the result against an independent
 reading. GitHub parses the same files for its own dependency graph. Where the two disagree, one of
-them is wrong, and today nobody finds out.
+the readings may be wrong or the declared coverage may differ; today that distinction is not
+measured. A Dependency Graph enriched by a submission action is also not a native-parser baseline.
 
 `internal/submit/client.go` already has `PackageURLs()`, which reads every purl GitHub holds for a
 repository through the asynchronous SBOM flow and refuses to read an unready `202` as an empty
-document. It is used only to verify ABOM's own submissions round-tripped; pointing it at a
-repository ABOM has analyzed is the whole mechanism.
+document. It is used to verify ABOM's submissions round-tripped and can support the product
+comparison, provided the repository revision and the producer of its data can be established.
+
+The parser in Jesse Houwing's `actions-dependency-submission` offers another independent reading,
+including local actions and remote composition. Comparing those results belongs here, not in a
+second production ingestion path. Unlike the native-SBOM comparison, it can use a fixed source tree
+and recorded remote-file responses without submitting anything.
+
+## Capabilities to distinguish
+
+| Capability | Evidence required |
+| --- | --- |
+| Native lock graph and parsed coverage | Supported schema, exact source commit, workflow membership and native parser result |
+| Identity/reachability verification | Native tool version, mode, diagnostics and verification time, including unknowns |
+| Execution-time enforcement | Approved run at a known commit and lock blob on the named host/runner |
+| Dependabot lock updates | Source support plus an observed update of workflow and lock on the target platform |
+| Native DG/SBOM ingestion | Direct/transitive packages and versions observed without custom submissions |
+| Dependency Review and advisory alerts | Separate product results at the corresponding revisions and configuration |
+| Security or version update PR | An actual update and its trigger, not an inference from an alert |
 
 ## What this is not
 
@@ -33,46 +50,51 @@ findings close it off:
 - The SBOM flow is `generate-report` plus polling, against a sparse checkout of `.github`. It is not
   obviously the cheaper of the two.
 
-**And the default branch is the wrong commit.** GitHub's SBOM describes a repository's default
-branch. ABOM analyzes the commit a consumer pinned. For every transitive dependency — 93% of the
-analysis — those are different trees, so an SBOM read cannot seed the frontier without quietly
-substituting HEAD for the pin. Seeding is refused for that reason rather than left to revisit.
-
-## What measuring already showed
-
-Measured on the seed tier of a crawled organization, against the files GitHub says it reads —
-workflows "must be located in the `.github/workflows/` directory of a repository to be recognized as
-manifests":
-
-| Source of the edge | Edges | Distinct targets |
-| --- | --- | --- |
-| `.github/workflows/**`, which GitHub parses | 764 | 70 |
-| Anywhere else, which it does not | **25** | **12** |
-
-So GitHub's reading covers about 97% of direct edges and misses **12 distinct dependencies
-outright** — the ones declared inside the repository's own composite actions, where a first hop for
-ABOM is not a manifest for GitHub. That asymmetry is why the comparison is interesting both ways.
+**A default-branch report is not a pinned revision.** A repository-level SBOM cannot seed a
+consumer's effective graph unless its source revision and semantics match that consumer. Native
+lock ingestion at the analyzed commit is a different operation, owned by
+[actions-lockfile.md](../db/actions-lockfile.md). Nothing here substitutes current default-branch
+data for a dependency selected by an older workflow lock.
 
 ## Pending
 
-1. **A post-check on a repository ABOM has analyzed.** For each seed repository, read
-   `PackageURLs()` and compare against ABOM's direct set for the same repository. Record three
-   figures per repository: present in both, GitHub only, ABOM only. The comparison is on purls, so
-   `internal/normalize/purl.go` is the shared vocabulary and is already derived from GitHub's own
-   exports.
-2. **A reading of each disagreement class.** *GitHub only* is the interesting one and the reason to
-   build this: it is either an extraction defect or a reference ABOM cannot represent. *ABOM only*
-   is expected, and quantifying it is what turns the value proposition into a measurement.
-3. **Where it surfaces.** A per-repository figure in the Inventory's repositories unit is the obvious home, but a
-   number nobody looks at is not worth an API call, so this may be a report rather than a screen.
-   Decide after the first measurement says how often the two disagree.
+1. **Establish an uncontaminated native baseline.** With explicit consent, choose a clean test
+  repository containing a benign nested dependency. Confirm no ABOM or third-party snapshot owns
+  its manifests; historical test1/test2 data cannot be assumed clean. If repair is needed, use the
+  recorded procedure in [dependency-submission.md](dependency-submission.md) before measuring.
+2. **Compare unlocked and natively locked inputs.** Hold workflow dependency choices and selected
+  commits constant except for native onboarding and the lock artifact; account for any narrowing
+  or ref rewrite. Observe runs at each known commit and the default-branch DG/SBOM after processing.
+  Record tool/schema/host versions and configuration. A run-details lockfile and a default-branch
+  report answer different questions. Depends on 1 and coordination with
+  [actions-lock.md](../tools/actions-lock.md).
+3. **Read each product independently.** Record direct/transitive package and version identities,
+  Dependency Review, advisory outcomes and update PRs separately. Use `PackageURLs()` for the
+  SBOM comparison and the existing normalization for matching package identities, keeping raw
+  evidence beside them. Never execute vulnerable code just to see an advisory. Distinguish not
+  processed, denied and unavailable from an empty result. Depends on 2.
+4. **Crosscheck source extraction in isolation.** Compare CodeQL, the native lock graph/CLI JSON,
+  and the reference action's parser over identical source trees and pinned or recorded remote
+  content. Disable writes and invoke parsing components, never a submission entrypoint or default
+  native fix mode. Generate QL results with the CLI. This can start independently of 1 through 3.
+5. **Explain disagreement and decide the remaining need.** Compare raw refs, selected commits,
+  declaring paths, subpaths and direct/transitive meaning before package projections. Include local
+  actions, self references, composites, reusable workflows, multiple entrypoints/refs, cycles and
+  inaccessible inputs. Native package links do not promise CodeQL's edge locations. Classify
+  coverage, parser, provenance and normalization differences, adding container cases only as that
+  reader exists. If native products cover a publication use case, stop planning another publisher;
+  otherwise identify the measured residual gap before revisiting expansion. Depends on the relevant
+  measurements, not on an assumed product roadmap.
+6. **Choose the reporting surface from the results.** Report matched, native-only, ABOM-only and
+  unread/unverified sets with source and revision. A per-repository API/UI field is useful only if
+  the measurement warrants it; a report may suffice. Depends on 5.
 
 ## The constraints that must not be broken
 
 **A disagreement is a question, never an automatic correction.** Neither reading overwrites the
-other. GitHub's graph is not ground truth — it does not read composite actions, and it describes a
-branch rather than a commit — and ABOM's extraction is the thing under test. Writing GitHub's answer
-into `abom_edge` would destroy the evidence the comparison exists to produce.
+other. Native locking supplies execution-selection evidence, not fabricated source declarations,
+and DG output may mix producers or describe a different revision. Preserve the evidence rather
+than writing a comparison result into `abom_edge` to make the answers agree.
 
 **A repository whose dependency graph is off is unknown, never empty.** The feature can be disabled,
 and a token can lack the scope to read it. An unreadable SBOM is a coverage gap that says so, not a
@@ -89,12 +111,40 @@ defect.
 holds purls cannot tell a moved tag from a different action. Keep the raw `uses:` value beside the
 purl in whatever this records.
 
+**An independent reader is not ground truth.** A reference-action result never overwrites ABOM
+rows, and a mismatch does not justify broadening either tool's coverage claims. Separate fetching
+a repository/commit once from visiting every referenced entrypoint within it; a cache key that
+omits the action path cannot prove that all nested dependencies were read.
+
 ## Verification
 
 - On a repository both readings cover, the intersection is most of the set, and every element of
-  *GitHub only* is explained rather than tolerated.
-- The known asymmetry appears where it should: a repository with a composite action under
-  `.github/actions/**` produces *ABOM only* entries, and one without produces few or none.
+  either difference set is explained rather than tolerated. Do not prescribe which reader wins.
+- Nested dependencies distinguish native lock coverage from plain workflow parsing. A package
+  from an earlier custom submission cannot be counted as proof of native ingestion.
 - A repository with the dependency graph disabled is reported as unread, and is distinguishable at a
   glance from one that was read and agreed.
-- Any figure about ABOM's value names the corpus it came from and when it was measured.
+- Any comparison names its source data, commit, reader version, configuration and coverage.
+- The reference-action harness proves no dependency-submission request can leave it. A mutation
+  dropping one subfolder entrypoint or one source-file attribution produces a named disagreement,
+  while expected normalization differences do not appear as missing declarations.
+- Record and explain mismatches on consented, pinned real examples as well as fixtures. A read
+  denied or truncated on either side is reported as incomplete rather than agreement on zero.
+- Each capability in the table has its own evidence or explicit unverified state. No delivery
+  date, GHES availability or automatic transitive-alert claim follows from a public feature request.
+
+## Prior art
+
+[Issue #18](https://github.com/advanced-security/codeql-abom/issues/18) points to Jesse Houwing's
+[actions-dependency-submission](https://github.com/jessehouwing/actions-dependency-submission).
+Its [WorkflowParser](https://github.com/jessehouwing/actions-dependency-submission/blob/aa358ec7aee0a7f2dbaef9702915b28e90879842/src/workflow-parser.ts)
+and [parser tests](https://github.com/jessehouwing/actions-dependency-submission/blob/aa358ec7aee0a7f2dbaef9702915b28e90879842/__tests__/workflow-parser.test.ts)
+are the reference for the isolated comparison. Credit that implementation in comparison reports;
+do not copy its test material without preserving the required notices. Compatibility experiments
+that actually submit are owned by [dependency-submission.md](dependency-submission.md).
+
+GitHub's [native lock graph](https://github.com/github/actions-lockfile/blob/go/v0.0.4/README.md)
+and [Dependabot CLI engine](https://github.com/dependabot/dependabot-core/blob/main/github_actions/lib/dependabot/github_actions/lockfile/cli_engine.rb)
+establish format and updater support in source. Jesse Houwing's
+[request #122](https://github.com/github/gh-actions-lock/issues/122) asks for native DG reporting;
+track it and official release evidence without assuming implementation or a delivery commitment.

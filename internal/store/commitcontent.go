@@ -67,6 +67,10 @@ func (s *Store) CommitContentDigest(repository, commit string) (string, bool, er
 // thing the commit was standing for. An action's release moves a tag over a rebuilt `dist/` and
 // touches nothing the extractor reads, which is the case this exists for.
 //
+// The checkout filter is matched too. A commit holds one content row, re-measured whenever it is
+// fetched, so a widened filter rewrites the digest of a commit whose runs all happened against
+// the smaller tree: without the filter, the join credits those runs with content they never saw.
+//
 // Nothing is written on this path. The run stays recorded against the commit it actually ran at,
 // and the findings stay attributed to it, because recording a run that did not happen is the one
 // way this could turn into a claim ABOM has not earned.
@@ -93,10 +97,11 @@ func (s *Store) QueryRunExistsForContent(q QueryRun, digest string) (bool, error
 		  AND COALESCE(r.pack_version,'') = ?
 		  AND COALESCE(r.pack_digest,'') = ?
 		  AND COALESCE(r.cli_version,'') = ?
+		  AND COALESCE(r.source_filter,'') = ?
 		  AND c.indexed_digest = ?
 		LIMIT 1`,
 		q.Repository, q.QueryID, q.QueryVersion, q.Pack, q.PackVersion, q.PackDigest,
-		q.CLIVersion, digest).Scan(&one)
+		q.CLIVersion, q.SourceFilter, digest).Scan(&one)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}

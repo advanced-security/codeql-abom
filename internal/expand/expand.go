@@ -2,11 +2,14 @@ package expand
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"github.com/advanced-security/codeql-abom/internal/frontier"
 	"github.com/advanced-security/codeql-abom/internal/graph"
@@ -19,6 +22,15 @@ import (
 // Fetcher materializes a repository's source tree.
 type Fetcher interface {
 	Fetch(ctx context.Context, dest, owner, repo, ref string) (Tree, error)
+}
+
+// SparseFilter reports the paths a fetcher takes, for a fetcher that takes only some of them.
+//
+// Part of a cached tree's identity, because a tree fetched under one filter cannot answer a
+// request under a wider one: the files are simply not there, and nothing downstream can tell
+// that apart from a repository that does not contain them.
+type SparseFilter interface {
+	SparsePatterns() []string
 }
 
 // Builder creates a CodeQL database from a source tree.
@@ -74,6 +86,13 @@ type Stats struct {
 	Unavailable int
 	Discovered  int
 	Edges       int
+	// Reused counts trees served from the checkout cache: a clone this round did not pay for.
+	// Not a skip — every one of these was analyzed or settled on the ledger's say-so.
+	Reused int
+	// Fetched counts the clones this round did pay for. Measured at the clone rather than
+	// inferred from Processed, which counts neither the fetch a settled unit still made nor the
+	// one a cache hit avoided.
+	Fetched int
 }
 
 // Expander turns queued dependencies into graph data and queues what they reveal.
@@ -92,6 +111,9 @@ type Expander struct {
 	Builder Builder
 	CodeQL  QueryRunner
 	Decode  Decoder
+	// Cache retains fetched trees by the commit they came from, across references and rounds.
+	// Nil fetches every reference separately and deletes the tree after each unit, as before.
+	Cache *CheckoutCache
 	// Resolver expands Options.Suite. Only needed when a suite is used.
 	Resolver Resolver
 	// Analyzer runs the findings lane. Only needed when a suite holds findings-shaped queries.
@@ -103,6 +125,9 @@ type Expander struct {
 	// digests remembers each pack's content hash for the life of a round. A pack cannot change
 	// while the round that resolved it is running.
 	digests runner.DigestCache
+
+	// fetches counts clones across every worker, so a round can report what it spent.
+	fetches atomic.Int64
 }
 
 // batch is the set of queued dependencies answered by analyzing one repository at one reference.
@@ -125,11 +150,15 @@ type revision struct {
 	commit     string
 	ref        string
 	analyzed   string
+	// filter is the checkout filter the tree was fetched under. A commit names a repository's
+	// state; only the commit and the filter together name the files the extractor saw.
+	filter string
 }
 
-func (b batch) revision(p work.Prepared) revision {
+func (b batch) revision(p work.Prepared, filter string) revision {
 	return revision{
 		repository: b.full(), commit: p.Commit, ref: b.ref, analyzed: p.AnalyzedRef,
+		filter: filter,
 	}
 }
 
@@ -149,6 +178,15 @@ func (e *Expander) Run(ctx context.Context, opts Options) (Stats, error) {
 	if opts.WorkDir == "" {
 		return Stats{}, fmt.Errorf("expand: WorkDir is required")
 	}
+
+	// Between rounds, where nothing is reading a cached tree. A round evicting an entry a unit
+	// is analyzing would take the source out from under a database build.
+	if _, err := e.Cache.Trim(); err != nil {
+		// The crawl is what matters; a cache that cannot be tidied costs disk, not results.
+		e.report("checkout-cache", "trimming the checkout cache", err)
+	}
+	reusedBefore := e.Cache.Hits()
+	fetchedBefore := e.fetches.Load()
 
 	plans, err := e.plansByTier(ctx, opts)
 	if err != nil {
@@ -219,6 +257,8 @@ func (e *Expander) Run(ctx context.Context, opts Options) (Stats, error) {
 	}
 	stats.Processed = poolStats.Processed - stats.Skipped
 	stats.Edges = poolStats.Rows
+	stats.Reused = int(e.Cache.Hits() - reusedBefore)
+	stats.Fetched = int(e.fetches.Load() - fetchedBefore)
 	return stats, nil
 }
 
@@ -305,7 +345,7 @@ func (e *Expander) pendingWork(
 	// No ref: this asks whether the evaluation is on record, and the ref is not part of a run's
 	// identity. Putting one here would make the skip miss whenever a second reference reached
 	// content already analyzed, which is the case it exists for.
-	at := revision{repository: repository, commit: commit}
+	at := revision{repository: repository, commit: commit, filter: e.sourceFilter()}
 	for _, q := range planned.bqrs {
 		ran, err := done(planned.queryRun(q.id, at))
 		if err != nil {
@@ -361,7 +401,10 @@ func (e *Expander) prepare(
 	dir := filepath.Join(opts.WorkDir, b.owner+"_"+b.repo+refSuffix(b.ref))
 	src := filepath.Join(dir, "src")
 
-	settled, ok, err := e.settleWithoutFetching(ctx, b, planned)
+	// Resolved once and carried, because the commit decides both whether anything is
+	// outstanding and which tree answers the fetch.
+	sha, resolved := e.commitWithoutFetching(ctx, b)
+	settled, ok, err := e.settleWithoutFetching(b, planned, sha, resolved)
 	if err != nil {
 		return work.Prepared{}, err
 	}
@@ -369,10 +412,7 @@ func (e *Expander) prepare(
 		return settled, nil
 	}
 
-	if err := e.Pace.Wait(ctx); err != nil {
-		return work.Prepared{}, err
-	}
-	tree, err := e.Fetcher.Fetch(ctx, src, b.owner, b.repo, b.ref)
+	tree, retained, err := e.materialize(ctx, b, src, sha, resolved)
 	if err != nil {
 		return work.Prepared{}, err
 	}
@@ -383,23 +423,21 @@ func (e *Expander) prepare(
 	if err != nil {
 		return work.Prepared{}, err
 	}
+	digest = scopedDigest(e.sourceFilter(), digest)
 	if digest != "" && tree.SHA != "" {
 		if err := e.Store.RecordCommitContent(b.full(), tree.SHA, digest); err != nil {
 			return work.Prepared{}, err
 		}
 	}
 
-	// The commit is only knowable once the source is in hand, so the checkout is not avoidable
-	// here. Deciding from abom_frontier.resolved_sha instead would skip precisely when a ref had
-	// moved, which is the case re-analysis exists for.
+	// Asked of every batch that reaches here, including one whose tree came from the cache: the
+	// bytes being on disk already says nothing about whether this pair has been analyzed.
 	outstanding, err := e.pendingWork(planned, b.full(), tree.SHA, digest)
 	if err != nil {
 		return work.Prepared{}, err
 	}
 	if outstanding.empty() {
-		if !opts.KeepArtifacts {
-			os.RemoveAll(src)
-		}
+		discardTree(opts, tree, retained)
 		return work.Prepared{
 			Job:             work.Job{Repository: b.key()},
 			Commit:          tree.SHA,
@@ -408,7 +446,189 @@ func (e *Expander) prepare(
 		}, nil
 	}
 
-	return e.analyzeTree(ctx, b, opts, planned, dir, src, tree, outstanding)
+	return e.analyzeTree(ctx, b, opts, planned, dir, tree, retained, outstanding)
+}
+
+// materialize puts the batch's source on disk, reusing the tree already held for its commit.
+//
+// The commit is the identity, so a reference the cache has never seen still hits when it
+// resolves to a commit that is held; and a reference that has moved misses, because it now
+// names a different commit.
+func (e *Expander) materialize(
+	ctx context.Context, b batch, src, sha string, resolved bool,
+) (Tree, bool, error) {
+	if e.Cache == nil {
+		tree, err := e.fetch(ctx, b, src)
+		return tree, false, err
+	}
+	patterns := sparsePatternsOf(e.Fetcher)
+	if resolved {
+		// One clone per commit rather than one per reference: two references that resolve to
+		// the same commit arrive here together, and the second waits for the first's fetch
+		// instead of racing it.
+		release := e.Cache.Hold(b.owner, b.repo, sha)
+		if held, ok := e.Cache.Reuse(b.owner, b.repo, sha, patterns); ok {
+			release()
+			return Tree{Dir: held, Ref: analyzedRef(b.ref), SHA: sha}, true, nil
+		}
+		// The lock is carried into the fetch rather than released here, because promoting what
+		// it clones is the other half of the work this commit is held for.
+		return e.fetchAndRetain(ctx, b, src, patterns, sha, release)
+	}
+	return e.fetchAndRetain(ctx, b, src, patterns, "", nil)
+}
+
+// fetchAndRetain clones into staging and promotes the tree once its commit is known.
+//
+// Staged first because the fetch is what answers "which commit is this" for a reference nothing
+// could resolve, and a tree under a commit's name has to be the whole tree. holding names the
+// commit whose lock the caller already took, if any, and release frees it.
+func (e *Expander) fetchAndRetain(
+	ctx context.Context, b batch, src string, patterns []string, holding string, release func(),
+) (Tree, bool, error) {
+	// Whatever lock is held when this returns is the one released: the commit it is taken for
+	// can change once the clone says which commit it actually is.
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
+	staged, err := e.Cache.Stage()
+	if err != nil {
+		// A cache that cannot stage costs a re-clone next round, not this round's work.
+		tree, err := e.fetch(ctx, b, src)
+		return tree, false, err
+	}
+	// Owned from here: promotion renames this directory away, and every other way out has to
+	// leave nothing behind. A staged fetch nothing promoted keeps a whole checkout, `.git` and
+	// all, until the abandonment sweep a day later.
+	defer os.RemoveAll(staged)
+
+	tree, err := e.fetch(ctx, b, stagedTree(staged))
+	if err != nil {
+		return Tree{}, false, err
+	}
+
+	// Which commit this is may only be known now: a reference nothing could resolve has no lock
+	// yet, and one that moved between the probe and the clone holds the wrong commit's. Two
+	// promotions of one commit running together can each find no entry, and the second replaces
+	// the tree the first is already analyzing.
+	if !strings.EqualFold(tree.SHA, holding) {
+		if release != nil {
+			// Released before the next is taken: a unit waiting on two commit locks at once can
+			// wait on one another unit already holds while holding the one it wants.
+			release()
+		}
+		release = e.Cache.Hold(b.owner, b.repo, tree.SHA)
+		if held, ok := e.Cache.Reuse(b.owner, b.repo, tree.SHA, patterns); ok {
+			tree.Dir = held
+			return tree, true, nil
+		}
+	}
+
+	held, err := e.Cache.Retain(staged, b.owner, b.repo, tree.SHA, patterns)
+	if err != nil {
+		// The clone succeeded, so the round proceeds from its own directory rather than paying
+		// for the tree again; staging is not somewhere a unit can be left reading from.
+		e.report(b.key(), "retaining a fetched tree", err)
+		return e.moveOutOfStaging(ctx, b, staged, src, tree)
+	}
+	tree.Dir = held
+	return tree, true, nil
+}
+
+// moveOutOfStaging puts a tree a promotion refused into the round's own directory, so the unit
+// analyzes it where the round's cleanup can find it.
+func (e *Expander) moveOutOfStaging(
+	ctx context.Context, b batch, staged, src string, tree Tree,
+) (Tree, bool, error) {
+	if err := os.MkdirAll(filepath.Dir(src), 0o755); err != nil {
+		return Tree{}, false, fmt.Errorf("preparing %s: %w", filepath.Dir(src), err)
+	}
+	if err := os.RemoveAll(src); err != nil {
+		return Tree{}, false, fmt.Errorf("clearing %s: %w", src, err)
+	}
+	if err := os.Rename(stagedTree(staged), src); err != nil {
+		// A cache on another filesystem cannot be renamed out of, and a copy of a checkout is
+		// no cheaper than the clone that produced it.
+		fetched, err := e.fetch(ctx, b, src)
+		return fetched, false, err
+	}
+	tree.Dir = src
+	return tree, false, nil
+}
+
+// fetch clones one reference, paying the rate limit that a cache hit does not.
+func (e *Expander) fetch(ctx context.Context, b batch, dest string) (Tree, error) {
+	if err := e.Pace.Wait(ctx); err != nil {
+		return Tree{}, err
+	}
+	e.fetches.Add(1)
+	return e.Fetcher.Fetch(ctx, dest, b.owner, b.repo, b.ref)
+}
+
+// discardTree removes a checkout the cache is not holding.
+//
+// A retained tree outlives the unit that fetched it, which is the point of retaining it.
+// KeepArtifacts is a separate question about the database and the results this round produced.
+func discardTree(opts Options, tree Tree, retained bool) {
+	if retained || opts.KeepArtifacts || tree.Dir == "" {
+		return
+	}
+	os.RemoveAll(tree.Dir)
+}
+
+// sparsePatternsOf reports the filter a fetcher applies, or none when it does not narrow the
+// tree. Part of a cached tree's identity: a tree fetched under narrower patterns is missing
+// files, and downstream that is indistinguishable from a repository that does not have them.
+func sparsePatternsOf(f Fetcher) []string {
+	filter, ok := f.(SparseFilter)
+	if !ok {
+		return nil
+	}
+	return filter.SparsePatterns()
+}
+
+// filterID names a pattern set in something short enough to be a path segment and stable enough
+// to be an identity.
+//
+// Fetching nothing in particular is a filter too, with an id of its own: "no patterns" is what a
+// whole-repository fetch means, and it has to be told apart from a narrowed one rather than read
+// as an absence that matches anything.
+func filterID(patterns []string) string {
+	h := sha256.New()
+	for _, p := range patterns {
+		// Length-prefixed, so no two different pattern sets can concatenate to the same bytes.
+		fmt.Fprintf(h, "%d:%s\x00", len(p), p)
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// sourceFilter names the filter this round fetches under, for the identities that have to move
+// when it does.
+func (e *Expander) sourceFilter() string { return filterID(sparsePatternsOf(e.Fetcher)) }
+
+// scopedDigest labels a content hash with the filter that produced it.
+//
+// The hash covers the files that were fetched, and says nothing about the ones that were not, so
+// two filters over one commit can hash the same tree and mean different things. Labeling makes
+// the stored value self-describing: a reader asking under a different filter sees a digest that
+// is not its own instead of a match it did not earn.
+func scopedDigest(filter, digest string) string {
+	if digest == "" {
+		return ""
+	}
+	return filter + ":" + digest
+}
+
+// digestUnderFilter reports a recorded digest if this round's filter is the one that produced it,
+// and nothing otherwise. Nothing is the truthful answer: the content under the current filter has
+// not been measured at that commit, and an unmeasured tree must not settle anything.
+func digestUnderFilter(recorded, filter string) string {
+	if recorded == "" || !strings.HasPrefix(recorded, filter+":") {
+		return ""
+	}
+	return recorded
 }
 
 // settleWithoutFetching answers a batch that needs no checkout, reporting whether it did.
@@ -417,18 +637,20 @@ func (e *Expander) prepare(
 // remotely for a fraction of what fetching it costs. A tier requeue puts back everything
 // including what is already current, and those are settled here without a checkout.
 func (e *Expander) settleWithoutFetching(
-	ctx context.Context, b batch, planned tierPlan,
+	b batch, planned tierPlan, sha string, resolved bool,
 ) (work.Prepared, bool, error) {
-	sha, ok := e.commitWithoutFetching(ctx, b)
-	if !ok {
+	if !resolved {
 		return work.Prepared{}, false, nil
 	}
 	// A commit seen before has its content on record, so the equivalence is available here
-	// too. A commit never seen has none, and an absent digest matches nothing.
-	digest, _, err := e.Store.CommitContentDigest(b.full(), sha)
+	// too. A commit never seen has none, and an absent digest matches nothing. Neither has one
+	// recorded under a filter this round no longer uses: the files it did not fetch are exactly
+	// what settling here would decline to look at.
+	recorded, _, err := e.Store.CommitContentDigest(b.full(), sha)
 	if err != nil {
 		return work.Prepared{}, false, err
 	}
+	digest := digestUnderFilter(recorded, e.sourceFilter())
 	outstanding, err := e.pendingWork(planned, b.full(), sha, digest)
 	if err != nil {
 		return work.Prepared{}, false, err
@@ -447,9 +669,14 @@ func (e *Expander) settleWithoutFetching(
 // analyzeTree builds the database for a checkout and runs everything the tier still wants.
 func (e *Expander) analyzeTree(
 	ctx context.Context, b batch, opts Options, planned tierPlan,
-	dir, src string, tree Tree, outstanding pending,
+	dir string, tree Tree, retained bool, outstanding pending,
 ) (work.Prepared, error) {
 	dbDir := filepath.Join(dir, "db")
+	// A tree served from the cache means nothing has created the round's directory, and the
+	// results written below it are what the serialized phase reads.
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return work.Prepared{}, fmt.Errorf("creating %s: %w", dir, err)
+	}
 	if err := e.Builder.CreateDatabase(ctx, tree.Dir, dbDir, "actions"); err != nil {
 		return work.Prepared{}, err
 	}
@@ -470,8 +697,8 @@ func (e *Expander) analyzeTree(
 
 	// The checkout and database are the bulk of the disk cost and are finished with here, so
 	// they go before the serialized phase rather than after it.
+	discardTree(opts, tree, retained)
 	if !opts.KeepArtifacts {
-		os.RemoveAll(src)
 		os.RemoveAll(dbDir)
 	}
 	return work.Prepared{
@@ -504,7 +731,7 @@ func (e *Expander) consume(
 	// A suite decides which query supplied the edges, so the ledger records that query rather
 	// than whatever --query-id happened to say. There may be none: a round that had only the
 	// findings lane left to prove built a database and never ran an edges query.
-	at := b.revision(p)
+	at := b.revision(p, e.sourceFilter())
 	rows, err := e.ingestEdges(p, opts, planned, at)
 	if err != nil {
 		return 0, err

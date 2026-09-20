@@ -1,7 +1,8 @@
 # `$/` is a self reference, not an expression ABOM could not resolve
 
 **Status:** The parser is fixed and verified. The corpus cannot re-heal itself, because the expand
-lane has no way to say that interpretation changed.
+lane has no way to say that interpretation changed — which is
+[`analysis-ledger.md`](analysis-ledger.md)'s, not this plan's.
 
 ## Why this exists
 
@@ -23,19 +24,13 @@ resolved reference called a coverage gap is the same error as an unresolved one 
 
 ## Pending
 
-1. **The expand lane cannot be told that interpretation changed.** `expand.pendingWork` decides
-   from `store.QueryRunExists` — repository, commit, query id, query version, pack — so a Go-side
-   parser fix invalidates nothing and re-analysis of the same commit is *skipped*. Measured:
-   `astral-sh/setup-uv` at `e105c8fb…` was requeued, resolved to the commit already on record and
-   never re-ran, leaving its 17 pre-fix rows in place. The seed lane already solves this — `build
-   --extractor-version` exists and `store.LedgerUnit.ExtractorVersion` participates in the unit key
-   so that changing how results are interpreted re-runs the work — and the expand lane has no
-   equivalent. **This decides how every future interpretation change reaches the corpus, not only
-   this one.**
-2. **The remaining `$`-owned nodes.** **63** edges across `Homebrew/actions`,
+1. **The remaining `$`-owned nodes.** **63** edges across `Homebrew/actions`,
    `mongodb-labs/drivers-github-tools` and `zizmorcore/zizmor-action` still point at them, and will
-   until those repositories are re-analyzed, which needs 1. The orphaned nodes are then ordinary
-   prune candidates.
+   until those repositories are re-analyzed. Nothing here can cause that: a Go-side parser fix is
+   not a dimension of the run identity, so `expand.pendingWork` skips the same commit however many
+   times it is requeued. [`analysis-ledger.md`](analysis-ledger.md) owns that — **it decides how
+   every interpretation change reaches the corpus, not only this one** — and this plan is one of
+   its callers. The orphaned nodes are then ordinary prune candidates.
 
 ## The constraint that must not be broken
 
