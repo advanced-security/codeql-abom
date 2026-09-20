@@ -39,6 +39,8 @@ type discoveryOptions struct {
 	advisoryMaxAge     time.Duration
 	advisoryMinPeriod  time.Duration
 	rateLimitPerHour   int
+	cacheDir           string
+	cacheMaxMB         int64
 	aggregateAfter     int
 	aggregateMaxAge    time.Duration
 	aggregateMinPeriod time.Duration
@@ -96,6 +98,10 @@ func newSupervisor(s *store.Store, opts discoveryOptions, logTo io.Writer) (*sup
 		},
 	}
 	checkout := &expand.Checkout{}
+	cache, err := checkoutCache(opts.cacheDir, opts.cacheMaxMB)
+	if err != nil {
+		return nil, fmt.Errorf("preparing the checkout cache: %w", err)
+	}
 
 	// Seeded from what is already held so a restart does not re-fetch a set collected minutes ago.
 	fetchedAt, _, err := s.AdvisoriesFetchedAt()
@@ -119,6 +125,7 @@ func newSupervisor(s *store.Store, opts discoveryOptions, logTo io.Writer) (*sup
 			Analyzer: r,
 			Decode:   expand.Decoder(r.Decode),
 			Pace:     pace,
+			Cache:    cache,
 			// Without this a repository that fails every time is invisible: the count moves
 			// and nothing says which one, or why.
 			OnEvent: logDiscoveryFailures(logTo),

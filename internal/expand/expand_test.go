@@ -42,6 +42,26 @@ type harness struct {
 	built    []string
 	queried  []string
 	fetchErr map[string]error
+	patterns []string
+}
+
+// SparsePatterns reports the filter this fetch applies. A cached tree is only a hit for the
+// filter it was fetched under, so the fake states one exactly as the real checkout does.
+func (h *harness) SparsePatterns() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.patterns == nil {
+		return []string{"/.github/"}
+	}
+	return h.patterns
+}
+
+// widenPatterns asks for more of the tree than what is already held, which is what an adapter
+// covering a new ecosystem does.
+func (h *harness) widenPatterns(patterns ...string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.patterns = patterns
 }
 
 // harnessProbe answers what a reference points at without a fetch, agreeing with what Fetch
@@ -52,6 +72,9 @@ type harnessProbe struct {
 	moved   string
 	content string
 	failed  bool
+	// gate holds every prober until enough of them have arrived, so a test can put two
+	// references of one repository inside the window where neither is on record yet.
+	gate *gate
 }
 
 // state is the commit every reference resolves to and the content found there. Empty commit
@@ -68,8 +91,16 @@ func (p *harnessProbe) state() (string, string) {
 
 func (p *harnessProbe) Resolve(_ context.Context, owner, repo, ref string) (string, error) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.asked = append(p.asked, owner+"/"+repo+"@"+ref)
+	waiting := p.gate
+	p.mu.Unlock()
+	// Outside the lock: arriving blocks until the others have, and they need this lock to arrive.
+	if waiting != nil {
+		waiting.arrive()
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.failed {
 		return "", errTransient
 	}
@@ -77,6 +108,13 @@ func (p *harnessProbe) Resolve(_ context.Context, owner, repo, ref string) (stri
 		return p.moved, nil
 	}
 	return "sha-" + repo, nil
+}
+
+// hold makes every prober wait for the others, turning a race into a case a test can name.
+func (p *harnessProbe) hold(g *gate) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.gate = g
 }
 
 func (p *harnessProbe) moveEverythingTo(sha string) {
@@ -118,6 +156,11 @@ func (h *harness) Fetch(_ context.Context, dest, owner, repo, ref string) (Tree,
 	}
 	if sha == "" {
 		sha = "sha-" + repo
+	}
+	// A reference that is already a commit resolves to itself, as git does: fetching a commit
+	// and asking what was checked out gives that commit back, whatever else has moved.
+	if isCommit(ref) {
+		sha = ref
 	}
 	return Tree{Dir: dest, Ref: "HEAD", SHA: sha}, nil
 }

@@ -55,6 +55,11 @@ func (c *Checkout) git() string {
 	return c.Git
 }
 
+// SparsePatterns states the filter this fetch applies, so a cached tree is only reused for a
+// request under the same one. Widening the set here makes every held tree a miss, which is the
+// correct outcome: none of them contain the paths that were added.
+func (c *Checkout) SparsePatterns() []string { return sparsePatterns }
+
 func (c *Checkout) cloneURL(owner, repo string) string {
 	base := c.BaseURL
 	if base == "" {

@@ -168,6 +168,10 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	fs.DurationVar(&d.advisoryMinPeriod, "advisory-min-interval", supervisor.DefaultAdvisoryMinInterval,
 		"shortest gap between two advisory refreshes, however much arrives")
 	fs.IntVar(&d.rateLimitPerHour, "rate-limit-per-hour", 0, "cap checkouts per hour (0: unlimited)")
+	fs.StringVar(&d.cacheDir, "cache-dir", "",
+		"retain fetched checkouts here and reuse each commit across references (default: off)")
+	fs.Int64Var(&d.cacheMaxMB, "cache-max-mb", defaultCacheMaxMB,
+		"ceiling for retained checkouts, least recently used evicted first (0: unbounded)")
 	fs.IntVar(&d.aggregateAfter, "aggregate-after-edges", supervisor.DefaultAfterEdges,
 		"dependencies that must arrive before reach is recomputed")
 	fs.DurationVar(&d.aggregateMaxAge, "aggregate-max-age", supervisor.DefaultMaxAge,
