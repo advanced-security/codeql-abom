@@ -93,12 +93,21 @@ jobs:
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
 
       # `make pins` reports what `.github/workflows/actions.lock` accounts for. Not part of
-      # `make verify`, so this is here for an agent that runs it deliberately. Pinned to the
-      # version the self audit installs, so the agent and CI read the lockfile with the same tool.
+      # `make verify`, so this is here for an agent that runs it deliberately. Built from the same
+      # commit the self audit builds, so the agent and CI read the lockfile with the same tool --
+      # a commit and not a tag, because `--pin` takes only a tag for a binary extension and a tag
+      # can be moved under a step that holds a token.
       - name: Copilot Setup - Install gh actions-lock
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh extension install github/gh-actions-lock --pin v0.1.6
+          # v0.1.6
+          ACTIONS_LOCK_COMMIT: 047fddf38163b304f1e6ef5649f5ac1646edc6a3
+        run: |
+          git clone --no-checkout https://github.com/github/gh-actions-lock \
+            "$RUNNER_TEMP/gh-actions-lock"
+          git -C "$RUNNER_TEMP/gh-actions-lock" checkout --detach "$ACTIONS_LOCK_COMMIT"
+          go build -C "$RUNNER_TEMP/gh-actions-lock" -o gh-actions-lock ./cmd/gh-actions-lock
+          cd "$RUNNER_TEMP/gh-actions-lock" && gh extension install .
 
       - name: Copilot Setup - Warm the Go build and module cache
         run: |

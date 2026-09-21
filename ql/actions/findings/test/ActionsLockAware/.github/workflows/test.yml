@@ -20,6 +20,9 @@ jobs:
     steps:
       - uses: ./.github/actions/local
       - uses: $/.github/actions/selfref
+      # Reaches the composite action, whose `third/party@v1.0.0` this workflow's lock section
+      # does list.
+      - uses: $/.github/actions/shared
       - uses: docker://alpine:3.20
 
   uncovered:

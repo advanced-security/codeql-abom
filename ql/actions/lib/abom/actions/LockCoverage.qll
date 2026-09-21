@@ -44,6 +44,37 @@ class LockableUses extends Uses {
 }
 
 /**
+ * Gets the file a same-repository `uses:` names.
+ *
+ * `./path` and `$/path` both identify either a directory holding an `action.yml` or a reusable
+ * workflow file, and neither carries a ref, so the target is a file in this same checkout.
+ */
+private File sameRepositoryTarget(Uses uses) {
+  exists(string path | path = uses.getCallee().regexpCapture("^[.$]/(.+)$", 1) |
+    result.getRelativePath() = path
+    or
+    result.getParentContainer().getRelativePath() = path and
+    result.getBaseName() = ["action.yml", "action.yaml"]
+  )
+}
+
+/** Holds if `caller` contains a same-repository `uses:` naming `callee`. */
+private predicate callsIntoRepository(File caller, File callee) {
+  exists(Uses uses |
+    uses.getLocation().getFile() = caller and
+    callee = sameRepositoryTarget(uses)
+  )
+}
+
+/**
+ * Gets a workflow file that reaches `f`, directly or through other same-repository definitions.
+ *
+ * What runs an action is the workflow that reaches it, however many composite actions sit in
+ * between, and that workflow is the key `gh actions-lock` files the action's references under.
+ */
+private WorkflowFile reachingWorkflow(File f) { callsIntoRepository+(result, f) }
+
+/**
  * A workflow file, identified by where it sits rather than by what the extractor built from it.
  *
  * Not `Workflow`: a file under `.github/workflows/` that declares no `jobs:` produces no
@@ -106,28 +137,40 @@ class AbomActionsLock extends ActionsLock {
   }
 
   /**
-   * Holds if this lockfile accounts for `uses`: listed at the very ref written there, and
-   * resolved to a commit.
+   * Holds if the section for `workflowPath` accounts for `uses`: listed at the very ref written
+   * there, and resolved to a commit.
    *
    * The ref must match what the workflow says. An entry left at `@v9.2.0` after the workflow
    * moved to `@v9.3.0` describes a commit nothing will run, which is not coverage.
-   *
-   * A composite action is matched against every workflow entry rather than its own path. The
-   * `workflows` section is keyed by workflow, and an action reached through one contributes its
-   * references to whichever workflows use it -- `gh actions-lock` reports a broken reference in
-   * `.github/actions/setup-codeql` against all four workflows that use it, not against the
-   * action.
    */
-  predicate covers(LockableUses uses) {
-    exists(string pin, string nwo, string ref, string workflowPath |
+  pragma[nomagic]
+  private predicate accountsFor(string workflowPath, LockableUses uses) {
+    exists(string pin, string nwo, string ref |
       this.lists(workflowPath, pin, nwo, ref) and
       calleeMatches(uses.getCallee(), nwo) and
       ref = uses.getVersion() and
       this.resolvesToCommit(pin)
-    |
-      workflowPath = uses.getLocation().getFile().getRelativePath()
-      or
-      exists(uses.getEnclosingCompositeAction())
+    )
+  }
+
+  /**
+   * Holds if this lockfile accounts for `uses` under every workflow that runs it.
+   *
+   * A reference written in a workflow is looked up under that workflow. A reference written in a
+   * composite action is looked up under each workflow that reaches the action, because the
+   * `workflows` section is keyed by workflow and the same shared action contributes its
+   * references to every caller separately -- an entry present for one caller says nothing about
+   * another whose section omits it.
+   *
+   * A definition no workflow reaches is nothing this lockfile can be expected to list: `gh
+   * actions-lock` walks out from the workflows, so unreached code has no section to appear in.
+   */
+  predicate covers(LockableUses uses) {
+    this.accountsFor(uses.getLocation().getFile().getRelativePath(), uses)
+    or
+    exists(uses.getEnclosingCompositeAction()) and
+    forall(WorkflowFile caller | caller = reachingWorkflow(uses.getLocation().getFile()) |
+      this.accountsFor(caller.getRelativePath(), uses)
     )
   }
 }

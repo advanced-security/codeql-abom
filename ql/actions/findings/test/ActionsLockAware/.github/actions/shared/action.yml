@@ -1,0 +1,9 @@
+name: Shared composite
+description: >-
+  Reached from two workflows. The lock section for one of them lists this dependency and the
+  section for the other does not, so the reference is uncovered for the second caller.
+
+runs:
+  using: composite
+  steps:
+    - uses: third/party@v1.0.0

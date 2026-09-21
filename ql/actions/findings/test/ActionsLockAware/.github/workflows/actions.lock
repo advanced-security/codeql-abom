@@ -9,6 +9,10 @@ workflows:
         - 'narrowed/action@0123456789abcdef0123456789abcdef01234567'
         - 'stale/action@v1.0.0'
         - 'broken/action@v1.0.0'
+    # The second caller of the shared composite action, whose 'third/party@v1.0.0' this section
+    # leaves out even though the section above lists it.
+    '.github/workflows/caller.yml':
+        - 'actions/checkout@v7.0.1'
 dependencies:
     'third/party@v1.0.0':
         ref: 'v1.0.0'

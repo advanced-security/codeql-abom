@@ -163,12 +163,24 @@ jobs:
       - name: Action pins - Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Pinned: an unpinned tool is a poor one to verify pinning with. `gh` itself is preinstalled
-      # on the runner image, which the lockfile does not and cannot cover.
+      # Pinned to a commit: an unpinned tool is a poor one to verify pinning with, and
+      # `gh extension install --pin` takes only a tag for a binary extension -- a tag the
+      # publisher can move under a token-carrying step. Building the extension from a detached
+      # checkout of the audited commit is what makes the code that runs here immutable. `gh`
+      # itself is preinstalled on the runner image, which the lockfile does not and cannot cover.
       - name: Action pins - Install gh actions-lock
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh extension install github/gh-actions-lock --pin v0.1.6
+          # v0.1.6
+          ACTIONS_LOCK_COMMIT: 047fddf38163b304f1e6ef5649f5ac1646edc6a3
+        # `gh extension install` takes only `OWNER/REPO` or `.`, and names the extension for the
+        # directory it is run in, so the checkout is named for the extension and entered.
+        run: |
+          git clone --no-checkout https://github.com/github/gh-actions-lock \
+            "$RUNNER_TEMP/gh-actions-lock"
+          git -C "$RUNNER_TEMP/gh-actions-lock" checkout --detach "$ACTIONS_LOCK_COMMIT"
+          go build -C "$RUNNER_TEMP/gh-actions-lock" -o gh-actions-lock ./cmd/gh-actions-lock
+          cd "$RUNNER_TEMP/gh-actions-lock" && gh extension install .
 
       # Offline and needs no token, so it cannot fail for a reason outside the commit under test.
       #

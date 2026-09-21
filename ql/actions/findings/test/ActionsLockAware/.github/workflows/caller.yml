@@ -1,0 +1,11 @@
+name: Lock coverage fixture, second caller
+
+on: push
+
+jobs:
+  shared:
+    runs-on: ubuntu-latest
+    steps:
+      # Reaches the composite action, whose `third/party@v1.0.0` this workflow's lock section
+      # does not list.
+      - uses: $/.github/actions/shared
