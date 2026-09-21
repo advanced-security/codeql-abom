@@ -41,11 +41,11 @@ nothing here is shaped around waiting for it.
    [`ui/tier-suites.md`](../ui/tier-suites.md) records the same requirement for tiers — *a count
    says how much work there is, never how long a reader will be waiting for it* — and this is where
    the number comes from. Depends on 1.
-4. **The term for which kind.** `mode=regular` and `mode=extended` already select rows once
-   [`db/analysis-mode.md`](../db/analysis-mode.md) lands; the same term selects which databases a
+4. **The term for which kind.** `mode=regular` and `mode=extended` already
+  [select recorded evidence](../../docs/architecture.md#analysis-modes); the same term selects which databases a
    scope resolves to. A scope asking for `extended` where no closure database exists resolves to a
    stated gap rather than silently falling back to `regular`, because the two answer different
-   questions. Depends on 1 and on the mode term existing.
+  questions. Depends on 1.
 
 ## The constraints that must not be broken
 

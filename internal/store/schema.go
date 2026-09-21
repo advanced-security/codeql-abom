@@ -81,6 +81,10 @@ CREATE TABLE IF NOT EXISTS abom_query_run (
   -- the paths that were fetched decide what the extractor saw, and content equivalence joins
   -- runs to commits, so without this a run under a narrow filter answers for a wider one.
   source_filter TEXT,
+  -- How the database was built: 'regular' is one repository's own checkout, 'extended' is an
+  -- owned repository plus its staged closure. The same rule id means opposite things in the two,
+  -- so every aggregate over edges or findings names the mode it is reading.
+  analysis_mode TEXT NOT NULL DEFAULT 'regular',
   ran_at       TEXT NOT NULL
 );
 
@@ -186,6 +190,12 @@ CREATE TABLE IF NOT EXISTS abom_edge (
   -- Fewest hops from a repository the operator declared. One means that repository declares the
   -- reference itself, which is the meaning exposure gives hops.
   owned_depth         INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS abom_edge_sighting (
+  edge_row_id  INTEGER NOT NULL REFERENCES abom_edge(row_id) ON DELETE CASCADE,
+  query_run_id INTEGER NOT NULL REFERENCES abom_query_run(row_id),
+  PRIMARY KEY (edge_row_id, query_run_id)
 );
 
 -- What holds what, which the canvas draws and nothing declares.
@@ -506,6 +516,13 @@ var addedColumns = []struct{ table, column, decl string }{
 	// Same argument one level down, for the tree rather than the query. NULL says the filter was
 	// never recorded, which must not be read as "the one in force now": those rows re-run once.
 	{"abom_query_run", "source_filter", "TEXT"},
+	// The deliberate exception to not back-filling provenance. `provider` was correctly left NULL
+	// because the tool that produced an old finding genuinely was not recorded; here the opposite
+	// holds — only one writer has ever existed and it builds one repository's own sparse checkout,
+	// so `regular` is a fact about the code that produced every existing row rather than a guess
+	// about it. It stays a fact only while no second database shape can precede this column, which
+	// is what TestNoWriterRecordsAnExtendedRunYet protects.
+	{"abom_query_run", "analysis_mode", "TEXT NOT NULL DEFAULT 'regular'"},
 	{"abom_suite_query", "pack_digest", "TEXT"},
 	// Nullable, and rows written before it stay NULL. Defaulting them to a source would invent the
 	// provenance the column exists to establish — a corpus once declared accounts the operator had

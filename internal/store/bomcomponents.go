@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"sort"
 	"strings"
@@ -227,11 +228,17 @@ func (s *Store) componentFindings(depth map[string]int) (map[string][]BOMFinding
 		       COALESCE(f.severity, ''), COALESCE(f.security_severity, 0),
 		       COALESCE(f.result_hash, ''), COALESCE(q.run_key, ''),
 		       COALESCE(q.pack_digest, ''), COALESCE(q.cli_version, ''),
-		       COALESCE(f.provider, '')
+		       COALESCE(f.provider, ''),
+		       (SELECT GROUP_CONCAT(mode) FROM
+		          (SELECT DISTINCT sq.analysis_mode AS mode
+		             FROM abom_finding_sighting fs
+		             JOIN abom_query_run sq ON sq.row_id = fs.query_run_id
+		            WHERE fs.finding_row_id = f.row_id
+		            ORDER BY sq.analysis_mode))
 		FROM abom_finding_node fn
 		JOIN disp d ON d.row_id = fn.node_row_id
 		JOIN abom_node_live shown ON shown.row_id = d.shown
-		JOIN abom_finding f ON f.row_id = fn.finding_row_id
+		JOIN abom_finding_regular f ON f.row_id = fn.finding_row_id
 		JOIN repository fr ON fr.row_id = f.repository_row_id
 		LEFT JOIN abom_query_run q ON q.row_id = f.query_run_id
 		ORDER BY shown.node_key, f.rule_id, f.file_path, f.start_line`)
@@ -244,11 +251,13 @@ func (s *Store) componentFindings(depth map[string]int) (map[string][]BOMFinding
 	for rows.Next() {
 		var key string
 		var f BOMFinding
+		var modes sql.NullString
 		if err := rows.Scan(&key, &f.RuleID, &f.Repository, &f.FilePath, &f.StartLine,
 			&f.Message, &f.Severity, &f.SecuritySeverity, &f.ResultHash, &f.RunKey,
-			&f.PackDigest, &f.CLIVersion, &f.Provider); err != nil {
+			&f.PackDigest, &f.CLIVersion, &f.Provider, &modes); err != nil {
 			return nil, fmt.Errorf("scanning a component finding: %w", err)
 		}
+		f.AnalysisModes = splitSorted(modes)
 		if KnownProvider(f.Provider) {
 			reproducible := Reproducible(f.Provider)
 			f.Reproducible = &reproducible

@@ -28,7 +28,7 @@ func (s *Store) UnanalyzedCompositePins() ([]CompositePin, error) {
 	rows, err := s.DB().Query(`
 		SELECT n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''), COALESCE(n.path,''),
 		       COALESCE(e.ref_value,''), COUNT(*) AS pins, MIN(r.repository_full_name)
-		  FROM abom_edge_live e
+		  FROM abom_edge_regular e
 		  JOIN repository r ON r.row_id = e.repository_row_id AND r.origin = 'seed'
 		  JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 		 WHERE n.is_external = 1

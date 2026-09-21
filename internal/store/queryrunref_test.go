@@ -14,13 +14,13 @@ import "testing"
 func TestARefIsNotAttachedToARunAtAnotherCommit(t *testing.T) {
 	s := newTestStore(t)
 
-	if _, err := s.RecordQueryRun(QueryRun{
+	if _, err := s.RecordQueryRun(QueryRun{AnalysisMode: AnalysisModeRegular,
 		QueryID: "abom/edges", Repository: "octo/app", DBCommit: "sha-one",
 	}); err != nil {
 		t.Fatalf("RecordQueryRun: %v", err)
 	}
 
-	found, err := s.AttachQueryRunRef(QueryRun{
+	found, err := s.AttachQueryRunRef(QueryRun{AnalysisMode: AnalysisModeRegular,
 		QueryID: "abom/edges", Repository: "octo/app", DBCommit: "sha-two",
 		Ref: "v5", AnalyzedRef: "v5",
 	})
@@ -35,7 +35,7 @@ func TestARefIsNotAttachedToARunAtAnotherCommit(t *testing.T) {
 func TestARunReachedByTwoRefsRecordsBoth(t *testing.T) {
 	s := newTestStore(t)
 
-	run := QueryRun{QueryID: "abom/edges", Repository: "octo/app", DBCommit: "sha-one"}
+	run := QueryRun{AnalysisMode: AnalysisModeRegular, QueryID: "abom/edges", Repository: "octo/app", DBCommit: "sha-one"}
 
 	first := run
 	first.Ref, first.AnalyzedRef = "v4", "v4"
@@ -64,7 +64,7 @@ func TestARunReachedByTwoRefsRecordsBoth(t *testing.T) {
 func TestTheRefIsNotPartOfARunsIdentity(t *testing.T) {
 	s := newTestStore(t)
 
-	run := QueryRun{QueryID: "abom/edges", Repository: "octo/app", DBCommit: "sha-one"}
+	run := QueryRun{AnalysisMode: AnalysisModeRegular, QueryID: "abom/edges", Repository: "octo/app", DBCommit: "sha-one"}
 
 	first := run
 	first.Ref, first.AnalyzedRef = "v4", "v4"
@@ -90,7 +90,7 @@ func TestTheRefIsNotPartOfARunsIdentity(t *testing.T) {
 func TestARunWhoseRefNobodyKnowsRecordsNone(t *testing.T) {
 	s := newTestStore(t)
 
-	id, err := s.RecordQueryRun(QueryRun{
+	id, err := s.RecordQueryRun(QueryRun{AnalysisMode: AnalysisModeRegular,
 		QueryID: "abom/edges", Repository: "octo/app", DBCommit: "sha-one",
 	})
 	if err != nil {

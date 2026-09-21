@@ -143,8 +143,8 @@ once. An absent account, native identity or verification result is not a guessed
 when effective selection is unknown. Do not label that result locked, empty or complete. ABOM does
 not write locks, run fix/relock/accept-moved, widen ownership or create a new publisher here.
 
-**Database shape and lock context are independent.** `regular` versus `extended` remains owned by
-[analysis-mode.md](analysis-mode.md). A lock does not remove CodeQL's staging namespace collisions
+**Database shape and lock context are independent.** Preserve the implemented
+[regular/extended contract](../../docs/architecture.md#analysis-modes). A lock does not remove CodeQL's staging namespace collisions
 or make ordinary single-repository analysis interprocedural across the entire closure.
 
 ## Verification

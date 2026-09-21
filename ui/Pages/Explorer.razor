@@ -72,7 +72,7 @@
         </MudAlert>
     }
 
-    <ScopeControl Changed="OnScopeControlChanged" />
+    <ScopeControl Changed="OnScopeControlChanged" SupportsAnalysisMode="true" />
 
     <div class="d-flex flex-wrap align-center gap-3 mt-2">
         <MudToggleGroup T="string" Value="_view" ValueChanged="OnViewChanged"
@@ -531,7 +531,7 @@
     internal sealed record Counts(int Nodes, int Edges, int Hidden, int Total, int EdgeTotal = 0,
         int Context = 0, int FocusFound = 0);
 
-    private sealed record MergeResult(
+    internal sealed record MergeResult(
         bool Reset, long Generation, int Nodes, int Edges, IReadOnlyList<string> Rules)
     {
         public IReadOnlyList<string> Rules { get; init; } = Rules ?? [];
@@ -1189,20 +1189,35 @@
         ApplyFollow();
     }
 
+    /// <summary>
+    /// The terms the server applies, built once because both the payload and every delta that
+    /// follows it have to ask the same question. A delta built from fewer terms is answered for
+    /// the default shape and the whole corpus, so arrivals from outside the picture merge into it
+    /// under an address that still names the narrowing.
+    /// </summary>
+    private List<string> ServerTerms()
+    {
+        var query = new List<string>();
+        if (ShowSteps) query.Add("steps=true");
+        if (!string.IsNullOrEmpty(_scope)) query.Add("scope=" + _scope);
+        // Applied by the server, not handed over: the browser cannot filter by a shape the
+        // payload never carried, because the edges the other shape observed never arrived.
+        if (!string.IsNullOrEmpty(Scope.Spec.Mode)) query.Add("mode=" + Scope.Spec.Mode);
+        // A node carries one grouping value, for the configured key only, so the browser cannot
+        // narrow by an arbitrary property at all. These two terms are asked of the server or they
+        // are not applied anywhere. The URL is the payload cache key, so a change refetches.
+        query.AddRange(Scope.Spec.Properties.Select(p => "properties=" + Uri.EscapeDataString(p.ToString())));
+        query.AddRange(Scope.Spec.NotProperties.Select(p => "notProperties=" + Uri.EscapeDataString(p.ToString())));
+        return query;
+    }
+
     private async Task LoadGraph(bool force = false)
     {
         if (_module is null) return;
         _loading = true;
         Busy(ScopeBusyMessage);
 
-        var query = new List<string>();
-        if (ShowSteps) query.Add("steps=true");
-        if (!string.IsNullOrEmpty(_scope)) query.Add("scope=" + _scope);
-        // A node carries one grouping value, for the configured key only, so the browser cannot
-        // narrow by an arbitrary property at all. These two terms are asked of the server or they
-        // are not applied anywhere. The URL is the payload cache key, so a change refetches.
-        query.AddRange(Scope.Spec.Properties.Select(p => "properties=" + Uri.EscapeDataString(p.ToString())));
-        query.AddRange(Scope.Spec.NotProperties.Select(p => "notProperties=" + Uri.EscapeDataString(p.ToString())));
+        var query = ServerTerms();
         var url = "/api/graph/full" + (query.Count > 0 ? "?" + string.Join("&", query) : "");
         var loaded = await _module.InvokeAsync<LoadResult>("loadFull", "abom-graph", url, force);
         _ruleIds = loaded.Rules;
@@ -1249,9 +1264,9 @@
             return;
         }
 
-        var url = ShowSteps
-            ? $"/api/graph/delta?since={_generation}&steps=true"
-            : $"/api/graph/delta?since={_generation}";
+        var terms = ServerTerms();
+        var url = $"/api/graph/delta?since={_generation}"
+                  + (terms.Count > 0 ? "&" + string.Join("&", terms) : "");
         var merged = await _module.InvokeAsync<MergeResult>("mergeDelta", "abom-graph", url);
         if (merged.Reset)
         {
@@ -1453,6 +1468,7 @@
         Properties = Scope.Spec.Properties,
         NotProperties = Scope.Spec.NotProperties,
         Steps = Scope.Spec.Steps,
+        Mode = Scope.Spec.Mode,
 
         Scope = _scope,
         Search = _search,

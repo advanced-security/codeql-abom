@@ -106,7 +106,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/advisories", reading(s.advisories, "top", "properties", "notProperties"))
 	mux.HandleFunc("GET /api/exposure", reading(s.exposure, "by", "top", "properties", "notProperties"))
 	mux.HandleFunc("GET /api/graph", reading(s.graph,
-		"focus", "hops", "max", "direction", "granularity", "expand"))
+		"focus", "hops", "max", "direction", "granularity", "expand", "mode"))
 	mux.HandleFunc("GET /api/graph/full", s.fullGraph)
 	mux.HandleFunc("GET /api/graph/export", s.graphExport)
 	mux.HandleFunc("GET /api/graph/layout", s.graphLayout)
@@ -154,7 +154,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/actions", reading(s.actions,
 		"q", "top", "offset", "sort", "desc", "view",
 		"kinds", "origins", "minReach", "scope", "flags", "ref",
-		"rules", "notRules", "provider", "severity", "repositories",
+		"rules", "notRules", "provider", "severity", "repositories", "mode",
 		"properties", "notProperties"))
 	mux.HandleFunc("GET /api/workflows", reading(s.workflows,
 		"q", "top", "offset", "sort", "desc", "view",
@@ -164,7 +164,7 @@ func (s *Server) Handler() http.Handler {
 		"scope", "flags", "properties", "notProperties"))
 	mux.HandleFunc("GET /api/relationships", reading(s.relationships,
 		"q", "top", "offset", "sort", "desc", "view",
-		"scope", "boundary", "edgeKinds", "ref", "rules", "notRules",
+		"scope", "boundary", "edgeKinds", "ref", "rules", "notRules", "mode",
 		"properties", "notProperties"))
 	mux.HandleFunc("GET /api/repositories",
 		reading(s.repositories, "q", "top", "offset", "sort", "desc", "view",
@@ -380,6 +380,11 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "focus is required")
 		return
 	}
+	spec, err := s.graphPredicate(r, "focus", "hops", "max", "direction", "granularity", "expand")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	g, err := s.Store.Subgraph(store.SubgraphOptions{
 		Focus:       focus,
@@ -388,6 +393,7 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 		Direction:   q.Get("direction"),
 		Granularity: q.Get("granularity"),
 		Expand:      q.Get("expand") == "true",
+		Mode:        spec.Mode,
 	})
 	writeJSON(w, g, err)
 }
@@ -466,6 +472,7 @@ func (s *Server) graphOptions(spec viewspec.Spec) (store.FullGraphOptions, error
 		Origins:        spec.Origins,
 		MinReach:       spec.MinReach,
 		RefStyle:       spec.RefStyle,
+		Mode:           spec.Mode,
 		UnanalyzedOnly: slices.Contains(spec.Flags, viewspec.FlagUnanalyzed),
 		// Configuration rather than a term of the question: it labels nodes so the browser can
 		// group by them, and labeling is not narrowing.
@@ -952,6 +959,7 @@ func (s *Server) actions(w http.ResponseWriter, r *http.Request) {
 		NotRules: spec.NotRules,
 		Provider: spec.Provider,
 		Severity: spec.Severity,
+		Mode:     spec.Mode,
 
 		Repositories: spec.Repositories,
 
@@ -1000,6 +1008,7 @@ func (s *Server) relationships(w http.ResponseWriter, r *http.Request) {
 		Rules:     spec.Rules,
 		NotRules:  spec.NotRules,
 		Scope:     spec.Scope,
+		Mode:      spec.Mode,
 		Sort:      r.URL.Query().Get("sort"),
 		Desc:      r.URL.Query().Get("desc") == "true",
 		Offset:    intParam(r, "offset", 0),

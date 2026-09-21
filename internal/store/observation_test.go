@@ -4,7 +4,7 @@ import "testing"
 
 func testRun(t *testing.T, s *Store, queryID string) int64 {
 	t.Helper()
-	id, err := s.RecordQueryRun(QueryRun{
+	id, err := s.RecordQueryRun(QueryRun{AnalysisMode: AnalysisModeRegular,
 		QueryID: queryID, QueryVersion: "1", PackVersion: "0.1.0",
 		Repository: "octo/app", DBCommit: "abc123",
 	})
@@ -121,7 +121,7 @@ func TestAnObservationWithoutASubjectIsRejected(t *testing.T) {
 // only what actually changed has to run again.
 func TestARunAlreadyRecordedIsRecognized(t *testing.T) {
 	s := newTestStore(t)
-	run := QueryRun{
+	run := QueryRun{AnalysisMode: AnalysisModeRegular,
 		QueryID: "abom/edges", QueryVersion: "1", PackVersion: "0.1.0",
 		Repository: "octo/app", DBCommit: "abc123",
 	}

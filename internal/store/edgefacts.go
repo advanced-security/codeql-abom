@@ -32,7 +32,7 @@ unit(node_id, unit_id, unit_key) AS (
 edge(row_id, ref_value, src_unit, dst_unit, src_unit_key, dst_unit_key, target) AS (
 	SELECT e.row_id, e.ref_value, su.unit_id, du.unit_id, su.unit_key, du.unit_key, ` +
 	targetRepository + `
-	  FROM abom_edge_live e
+	  FROM abom_edge_regular e
 	  JOIN unit su ON su.node_id = e.src_node_row_id
 	  JOIN unit du ON du.node_id = e.dst_node_row_id
 	  JOIN abom_node_live dst ON dst.row_id = e.dst_node_row_id
@@ -66,12 +66,13 @@ func (s *Store) DeriveEdgeFacts() (int, error) {
 		flagged(unit_id) AS (
 			SELECT DISTINCT u.unit_id
 			  FROM abom_finding_node fn
+			  JOIN abom_finding_regular evidence ON evidence.row_id = fn.finding_row_id
 			  JOIN unit u ON u.node_id = fn.node_row_id
 			UNION
 			SELECT su.unit_id
 			  FROM flagged f
 			  JOIN unit du ON du.unit_id = f.unit_id
-			  JOIN abom_edge_live e
+			  JOIN abom_edge_regular e
 			    ON e.dst_node_row_id = du.node_id AND `+DependencyEdgeFilter+`
 			  JOIN unit su ON su.node_id = e.src_node_row_id
 		),
@@ -89,7 +90,7 @@ func (s *Store) DeriveEdgeFacts() (int, error) {
 			SELECT du.unit_id, o.hops + 1
 			  FROM owned o
 			  JOIN unit su ON su.unit_id = o.unit_id
-			  JOIN abom_edge_live e
+			  JOIN abom_edge_regular e
 			    ON e.src_node_row_id = su.node_id AND `+DependencyEdgeFilter+`
 			  JOIN unit du ON du.node_id = e.dst_node_row_id
 			 WHERE o.hops < ?
@@ -125,7 +126,9 @@ func (s *Store) DeriveEdgeFacts() (int, error) {
 			         ELSE 0
 			       END,
 			       CASE
-			         WHEN NOT EXISTS (SELECT 1 FROM abom_finding_node) THEN NULL
+			         WHEN NOT EXISTS (SELECT 1 FROM abom_finding_node fn
+			                          JOIN abom_finding_regular f ON f.row_id = fn.finding_row_id)
+			              THEN NULL
 			         WHEN e.dst_unit IN (SELECT unit_id FROM flagged) THEN 1
 			         ELSE 0
 			       END,

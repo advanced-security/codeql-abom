@@ -53,7 +53,7 @@ func findingsPlan(t *testing.T, root, body string) (tierPlan, string) {
 func TestTheFindingsLaneIsIdentifiedByThePacksItDrawsRulesFrom(t *testing.T) {
 	planned, _ := findingsPlan(t, t.TempDir(), "select 1")
 
-	run := planned.identifyFindings(store.QueryRun{Repository: "octo/app"})
+	run := planned.identifyFindings(store.QueryRun{AnalysisMode: store.AnalysisModeRegular, Repository: "octo/app"})
 	if run.Pack != "codeql/actions-queries" || run.PackVersion != "0.6.34" {
 		t.Errorf("findings run attributed to %s@%s, want codeql/actions-queries@0.6.34",
 			run.Pack, run.PackVersion)
@@ -72,8 +72,8 @@ func TestEditingAFindingsQueryChangesWhatTheLaneIsIdentifiedAs(t *testing.T) {
 	}
 	after, _ := findingsPlan(t, root, "select 2")
 
-	b := before.identifyFindings(store.QueryRun{Repository: "octo/app"})
-	a := after.identifyFindings(store.QueryRun{Repository: "octo/app"})
+	b := before.identifyFindings(store.QueryRun{AnalysisMode: store.AnalysisModeRegular, Repository: "octo/app"})
+	a := after.identifyFindings(store.QueryRun{AnalysisMode: store.AnalysisModeRegular, Repository: "octo/app"})
 	if b.PackDigest == a.PackDigest {
 		t.Errorf("editing a rule left the digest at %s, so the run key would not move",
 			a.PackDigest)
@@ -102,7 +102,7 @@ func TestAFindingsLaneSpanningPacksIsIdentifiedByAllOfThem(t *testing.T) {
 		return planned
 	}
 
-	before := plan().identifyFindings(store.QueryRun{Repository: "octo/app"})
+	before := plan().identifyFindings(store.QueryRun{AnalysisMode: store.AnalysisModeRegular, Repository: "octo/app"})
 	if before.Pack != "codeql/actions-queries advanced-security/abom-rules" {
 		t.Errorf("pack recorded as %q, want both packs named", before.Pack)
 	}
@@ -110,7 +110,7 @@ func TestAFindingsLaneSpanningPacksIsIdentifiedByAllOfThem(t *testing.T) {
 	if err := os.WriteFile(ours, []byte("select 3"), 0o644); err != nil {
 		t.Fatalf("edit query: %v", err)
 	}
-	after := plan().identifyFindings(store.QueryRun{Repository: "octo/app"})
+	after := plan().identifyFindings(store.QueryRun{AnalysisMode: store.AnalysisModeRegular, Repository: "octo/app"})
 	if before.PackDigest == after.PackDigest {
 		t.Error("editing the second pack left the combined digest unchanged")
 	}

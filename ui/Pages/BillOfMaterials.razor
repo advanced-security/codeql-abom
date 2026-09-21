@@ -119,10 +119,13 @@ else
         @* Buttons rather than a menu: an export hidden behind a click is not discoverable, and
            MudMenu renders its items only once opened, so nothing can check they are offered. *@
         <MudButtonGroup Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small">
-            <MudButton Href="@AbomApi.BomDownloadUrl("native", properties: SelectedProperties)"
+            @* The shape travels with every export. A download built without it is answered as a
+               regular document at an address naming another shape, which widens the scope
+               silently instead of refusing it the way the page above does. *@
+            <MudButton Href="@DownloadUrl("native")"
                        StartIcon="@Icons.Material.Outlined.Download">ABOM JSON</MudButton>
-            <MudButton Href="@AbomApi.BomDownloadUrl("cyclonedx", properties: SelectedProperties)">CycloneDX 1.6</MudButton>
-            <MudButton Href="@AbomApi.BomDownloadUrl("spdx", properties: SelectedProperties)">SPDX 2.3</MudButton>
+            <MudButton Href="@DownloadUrl("cyclonedx")">CycloneDX 1.6</MudButton>
+            <MudButton Href="@DownloadUrl("spdx")">SPDX 2.3</MudButton>
         </MudButtonGroup>
       </div>
     </MudPaper>
@@ -227,6 +230,20 @@ else
                     else
                     {
                         <MudText Typo="Typo.body2">@context.Item.Findings.Count.ToString("N0")</MudText>
+                        @* The shape is stated beside the count rather than behind a filter: a
+                           result from a repository's own checkout and one from its staged closure
+                           are different claims, and a reader who does not know that is exactly
+                           the reader who would read them as one. *@
+                        @foreach (var shape in context.Item.Findings
+                                      .GroupBy(f => f.ShapeText)
+                                      .OrderBy(g => g.Key, StringComparer.Ordinal))
+                        {
+                            <MudText Typo="Typo.caption"
+                                     Class="@(shape.Key == "shape not recorded"
+                                                ? "abom-unconfirmed d-block" : "d-block mud-text-secondary")">
+                                @shape.Count().ToString("N0") @shape.Key
+                            </MudText>
+                        }
                         @if (context.Item.Findings.Any(f => string.IsNullOrEmpty(f.RunKey)))
                         {
                             <MudText Typo="Typo.caption" Class="abom-unconfirmed d-block">
@@ -289,6 +306,11 @@ else
         Scope.Spec.Properties.Count == 0
             ? null
             : [.. Scope.Spec.Properties.Select(p => p.ToString())];
+
+    // Built from the same scope the document was requested with, so an export cannot answer a
+    // question the page itself was refused.
+    private string DownloadUrl(string format) =>
+        AbomApi.BomDownloadUrl(format, properties: SelectedProperties, mode: Scope.Spec.Mode);
 
     // A value the organization supplies rather than anybody choosing is named as one in
     // ScopeControl, because the largest group is usually the default and it otherwise reads as a
@@ -366,7 +388,7 @@ else
 
         // AbomApi swallows transport failures and answers null, so a missing document arrives
         // here as an absent value rather than an exception.
-        _bom = await Api.GetBomAsync(properties: SelectedProperties);
+        _bom = await Api.GetBomAsync(properties: SelectedProperties, mode: Scope.Spec.Mode);
         if (_bom is not null)
         {
             return;
@@ -375,9 +397,11 @@ else
         // A group holding no repository is a different state from nothing being declared, and the
         // server distinguishes them. Saying "declare a scope" to somebody who has one sends them
         // to fix the wrong thing.
-        _error = Scope.Spec.Properties.Count == 0
-            ? "No accounts are declared yet, so there is no scope to describe."
-            : "None of your repositories carries the property this scope names.";
+        _error = Scope.Spec.Mode.Length > 0
+            ? "A bill of materials does not narrow by analysis mode; its totals use regular analysis."
+            : Scope.Spec.Properties.Count == 0
+                ? "No accounts are declared yet, so there is no scope to describe."
+                : "None of your repositories carries the property this scope names.";
         _detail = Api.LastError;
     }
 }

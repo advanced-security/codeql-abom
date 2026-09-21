@@ -211,7 +211,7 @@ func (s *Store) OwnerCandidates() ([]OwnerCandidate, error) {
 		SELECT SUBSTR(rep.repository_full_name, 1,
 		              INSTR(rep.repository_full_name, '/') - 1) AS owner,
 		       COUNT(DISTINCT rep.row_id),
-		       COALESCE(SUM((SELECT COUNT(*) FROM abom_finding f
+		       COALESCE(SUM((SELECT COUNT(*) FROM abom_finding_regular f
 		                      WHERE f.repository_row_id = rep.row_id)), 0)
 		FROM repository rep
 		WHERE rep.origin = ?

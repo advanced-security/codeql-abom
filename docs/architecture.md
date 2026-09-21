@@ -56,6 +56,7 @@ recently used first, readable only by its owner, and claimed by one process at a
 
 **An analysis runs again only when its identity changed.** A unit of work is one query against one
 database, and both are content-addressed: the repository, the resolved commit, the checkout filter,
+the analysis mode,
 the query, the pack and its content digest, and the CodeQL that evaluated it. Match them all and
 CodeQL is deterministic, so nothing needs to run. This is a separate decision from where the bytes
 came from, which is why a cache hit is not a skip. It is also only half of an incremental crawl:
@@ -115,16 +116,39 @@ Everything is one SQLite file. `internal/store` is the only package that writes 
 
 | Table | |
 | --- | --- |
-| `abom_query_run`, `abom_query_run_ref` | One row per analysis: the resolved commit, checkout filter, pack digest and CLI version that produced it |
+| `abom_query_run`, `abom_query_run_ref` | One row per analysis: the resolved commit, checkout filter, analysis mode, pack digest and CLI version that produced it |
 | `abom_ingest_ledger` | What has already been read, so it is not read twice |
 | `abom_ref_resolution` | Which commit a tag or branch pointed at, when it was measured |
 | `abom_commit_content`, `abom_protected_branch` | Content equivalence, and which branches GitHub protects |
+
+### Analysis modes
+
+Every run writer states `regular` or `extended`; absent and unsupported modes are refused.
+Regular means one repository's checkout. Extended means an owned repository with its staged
+dependency closure, not a promise that every finding crosses a repository boundary. The shape
+belongs to the run, never to the query. Existing runs backfill to regular because that is the
+only shape their writers built; regular run keys remain unchanged.
+
+Edges and findings retain one identity across shapes. `abom_edge_sighting` and
+`abom_finding_sighting` record their producing runs; mode reads join that evidence rather than
+letting the latest writer choose membership. Regular provenance is preserved when an extended
+run observes the same row. Conflicting cross-mode edge targets or references are refused rather
+than replacing regular evidence. Historical unattributed rows remain in regular totals without
+inventing a run or a displayed provenance label.
+
+Existing reach, blast radius, coverage, pinning, BOM, submission and derived-route totals read
+regular evidence. `mode=` selects evidence on the policy/match path, graph and supported Inventory
+units (dependencies and relationships); unsupported listings and documents refuse it by name.
+Inventory and Explorer expose the selection and preserve it in shared URLs. Findings in the BOM
+state their recorded shapes; a shared defect is labeled mixed, not duplicated. Extended views
+identify the regular coverage and reach measurements that remain alongside them.
 
 ### The graph — a projection of the evidence
 
 | Table | |
 | --- | --- |
 | `abom_node`, `abom_edge` | Actions, workflows, repositories and images, and the `uses:` relationships between them |
+| `abom_edge_sighting` | Each run that observed a shared edge, without creating a second edge identity |
 | `abom_containment` | What holds what — a repository's own files, an account's repositories. A table of its own because containment is drawn rather than declared |
 | `abom_observation` | Facts a query stated about a subject, keyed by the statement rather than the run. Every job-level fact — permissions, triggers, runner, privilege — attaches to a `job` node, never to the workflow above it |
 | `abom_graph_generation` | Generation and epoch, so a client can ask for a delta. Nodes, edges and containment each keep their own watermark |

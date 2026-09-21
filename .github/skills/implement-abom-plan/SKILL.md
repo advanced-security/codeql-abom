@@ -106,6 +106,21 @@ If discovery is running, pause it from the Discovery page or `make stop`, and sa
 
 ## 3. Snapshot the corpus
 
+Resolve `ABOM_DB` from the environment and Makefile before declaring a database missing. Check
+the configured local database and existing snapshots; `.abom/db/abom.db` is the default, not the
+only possible path. An absent local crawl is not a reason to skip populated verification:
+
+```bash
+make corpus ABOM_CORPUS_DB="$PWD/.abom/verification/corpus.db"
+make e2e-corpus ABOM_CORPUS_DB="$PWD/.abom/verification/corpus.db"
+```
+
+The shared corpus is built offline from checked-in CLI recordings. It needs neither a GitHub
+token nor a CodeQL installation to ingest, and must never replace `ABOM_DB`. Use it for
+populated API and browser checks even in a development sandbox. Identify the dataset in the
+report: a shared fixture validates behavior but is not a crawled-organization measurement.
+When a crawl is available, use both. Never hand-write BQRS or SARIF to fill a missing dataset.
+
 ```bash
 sqlite3 "$ABOM_DB" ".backup .abom/before.db"
 ```
@@ -122,6 +137,12 @@ symptom is a step-6 number that moved when nothing should have moved. `.backup` 
 
 Never point work at the live database when a copy will do. Run a second server on its own port
 and its own copy rather than disturbing the one that is up.
+
+Build the pre-change executable from a detached worktree and the changed executable separately.
+Keep each server on its own backup and publish UI assets into a separate `ABOM_UI` directory.
+Compare canonical responses, excluding only named volatile fields and newly added metadata;
+do not normalize away changed counts or membership. A metadata-mutation fixture belongs on a
+third disposable copy and must be labeled as a mutation, never as an actual extended analysis.
 
 ## 4. Work test-first, and watch the failure
 
@@ -237,6 +258,19 @@ where it is and the run reports why — that is a useful outcome, not a failure.
 
 Everything else here is convenience. This is the part that stops the planning documents becoming
 status theatre.
+
+## Analysis-mode checks that survive closure staging
+
+- A database mode is a run fact. Preserve per-run sightings when an edge or finding is shared
+  by regular and extended runs; latest-run provenance alone loses evidence from the other mode.
+- Test both write orders, historical rows without a run, and conflicting shared-edge references.
+  Conflicting cross-mode payloads are refused until the edge model can represent both truthfully.
+- Test `mode=` alone as well as with a rule. Counts over `abom_finding_node`, graph updates,
+  policy coverage, reference details and export links must not bypass the selected mode.
+- Measure the join with `BenchmarkAnalysisModeMembership` on an `ABOM_BENCH_DB` snapshot,
+  without `-race`. Inspect scan/search targets, not index-name substrings, in cost guards.
+- Existing coverage, reach, BOM and submission totals remain regular. A view selecting extended
+  evidence must name that regular context, and unsupported exports must refuse rather than widen.
 
 ## Related
 

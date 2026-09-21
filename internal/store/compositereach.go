@@ -43,7 +43,7 @@ func (s *Store) ActionsReachedThroughComposites() ([]ReachedAction, error) {
 			       lower(COALESCE(src.path, '')) AS holder_path,
 			       lower(dst.node_key) AS reached,
 			       COALESCE(e.ref_value, '') AS ref
-			FROM abom_edge_live e
+			FROM abom_edge_regular e
 			JOIN abom_node_live src ON src.row_id = e.src_node_row_id
 			JOIN abom_node_live dst ON dst.row_id = e.dst_node_row_id
 			JOIN repository r ON r.row_id = src.repository_row_id
@@ -84,7 +84,7 @@ func (s *Store) ActionsReachedThroughComposites() ([]ReachedAction, error) {
 			       COALESCE(e.start_line, 0) AS start_line,
 			       lower(dst.node_key) AS through,
 			       COALESCE(e.ref_value, '') AS ref
-			FROM abom_edge_live e
+			FROM abom_edge_regular e
 			JOIN abom_node_live dst ON dst.row_id = e.dst_node_row_id
 			JOIN repository r ON r.row_id = e.repository_row_id
 			WHERE e.edge_kind = 'step-uses-action'

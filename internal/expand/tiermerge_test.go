@@ -40,7 +40,7 @@ func TestARunRecordedForATierNamesTheCodeQLThatEvaluatedIt(t *testing.T) {
 		t.Fatalf("plansByTier: %v", err)
 	}
 
-	run := plans[store.TierDirect].identify("abom/Edges.ql", store.QueryRun{Repository: "octo/app"})
+	run := plans[store.TierDirect].identify("abom/Edges.ql", store.QueryRun{AnalysisMode: store.AnalysisModeRegular, Repository: "octo/app"})
 	if run.CLIVersion != "2.26.4" {
 		t.Errorf("recorded CLI version %q, want 2.26.4", run.CLIVersion)
 	}

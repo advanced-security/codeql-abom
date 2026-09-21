@@ -48,8 +48,11 @@ type RelationshipsQuery struct {
 	Rules    []string
 	NotRules []string
 	// Scope is `owned` or `exposure`, read against Closure the way every other unit reads it.
-	Scope    string
-	Closure  []string
+	Scope   string
+	Closure []string
+	// Mode narrows to how the database that observed these `uses:` lines was built. Empty is
+	// `regular`, which is every edge on record.
+	Mode     string
 	Sort     string
 	Desc     bool
 	Offset   int
@@ -74,29 +77,23 @@ var relationshipSorts = map[string]string{
 	"boundary":   "e.boundary",
 	"repository": "r.repository_full_name",
 	"ownedDepth": "e.owned_depth",
-	"findings":   findingsOnLine,
+	"findings":   "findings",
 }
 
-// findingsOnLine counts what was reported against the step or job that declares a relationship.
-//
-// The source endpoint rather than either end: a rule fires on the `uses:` line, and the line is
-// the source. Counting the target instead would report a dependency's own findings against every
-// use of it.
-const findingsOnLine = `(SELECT COUNT(*) FROM abom_finding_node fn
-	                          WHERE fn.node_row_id = e.src_node_row_id)`
-
 // rulesOnLine names them, sorted, so a row reads the same on every page.
-const rulesOnLine = `(SELECT GROUP_CONCAT(rule_id) FROM
+func rulesOnLine(mode string) string {
+	return `(SELECT GROUP_CONCAT(rule_id) FROM
 	                      (SELECT DISTINCT f.rule_id FROM abom_finding_node fn
-	                         JOIN abom_finding f ON f.row_id = fn.finding_row_id
+	                         JOIN ` + findingSource(mode) + ` f ON f.row_id = fn.finding_row_id
 	                        WHERE fn.node_row_id = e.src_node_row_id
 	                        ORDER BY f.rule_id))`
+}
 
 // relationshipRuleFilter narrows to the relationships one rule fired on, or away from them.
-func relationshipRuleFilter(rules, notRules []string) (string, []any) {
+func relationshipRuleFilter(rules, notRules []string, mode string) (string, []any) {
 	clause, args := "", []any{}
 	matched := `EXISTS (SELECT 1 FROM abom_finding_node fn
-	                     JOIN abom_finding f ON f.row_id = fn.finding_row_id
+	                     JOIN ` + findingSource(mode) + ` f ON f.row_id = fn.finding_row_id
 	                    WHERE fn.node_row_id = e.src_node_row_id AND LOWER(f.rule_id) IN `
 	if len(rules) > 0 {
 		list, names := inList(rules)
@@ -161,7 +158,7 @@ func (s *Store) relationshipsWhere(q RelationshipsQuery) (string, []any, error) 
 	}
 	style, styleArgs := relationshipRefFilter(q.RefStyle)
 	where, args = where+style, append(args, styleArgs...)
-	fired, firedArgs := relationshipRuleFilter(q.Rules, q.NotRules)
+	fired, firedArgs := relationshipRuleFilter(q.Rules, q.NotRules, q.Mode)
 	where, args = where+fired, append(args, firedArgs...)
 	if q.Search != "" {
 		// Either end, because a reader searching `checkout` wants the relationships that use it
@@ -180,14 +177,17 @@ func (s *Store) relationshipsWhere(q RelationshipsQuery) (string, []any, error) 
 	return where + bound, append(args, bindings...), nil
 }
 
-// relationshipRows is the one join both statements read. `abom_edge_live` excludes what pruning
-// removed, and the endpoints are looked up by row id rather than by scanning the node table.
-const relationshipRows = `
-	FROM abom_edge_live e
+// relationshipRows is the one join both statements read. The mode view excludes what pruning
+// removed as well as what another analysis shape observed, and the endpoints are looked up by row
+// id rather than by scanning the node table.
+func relationshipRows(mode string) string {
+	return `
+	FROM ` + edgeSource(mode) + ` e
 	JOIN abom_node_live src ON src.row_id = e.src_node_row_id
 	JOIN abom_node_live dst ON dst.row_id = e.dst_node_row_id
 	LEFT JOIN repository r ON r.row_id = e.repository_row_id
 	`
+}
 
 // relationshipsPageQuery builds the page statement, exposed to the cost test so the plan can be
 // asserted rather than the clock.
@@ -212,9 +212,10 @@ func (s *Store) relationshipsPageQuery(q RelationshipsQuery) (string, []any, err
 		SELECT e.edge_key, e.edge_kind, src.node_key, dst.node_key,
 		       COALESCE(e.ref_value, ''), COALESCE(e.ref_style, ''), COALESCE(e.boundary, ''),
 		       COALESCE(r.repository_full_name, ''), COALESCE(e.file_path, ''),
-		       COALESCE(e.start_line, 0), ` + findingsOnLine + `, ` + rulesOnLine + `,
+		       COALESCE(e.start_line, 0), ` + nodeFindingCount(q.Mode, "e.src_node_row_id") +
+		` AS findings, ` + rulesOnLine(q.Mode) + `,
 		       e.advisory_route, e.finding_route, e.owned_depth` +
-		relationshipRows + where + ordering
+		relationshipRows(q.Mode) + where + ordering
 	if q.Limit > 0 {
 		query += ` LIMIT ? OFFSET ?`
 		args = append(args, q.Limit, q.Offset)
@@ -243,7 +244,7 @@ func (s *Store) RelationshipsPage(q RelationshipsQuery) (RelationshipsPage, erro
 
 	var total int
 	if err := s.DB().QueryRow(
-		`SELECT COUNT(*)`+relationshipRows+where, args...).Scan(&total); err != nil {
+		`SELECT COUNT(*)`+relationshipRows(q.Mode)+where, args...).Scan(&total); err != nil {
 		return RelationshipsPage{}, fmt.Errorf("counting relationships: %w", err)
 	}
 

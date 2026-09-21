@@ -152,7 +152,7 @@ func (s *Store) reachWithin(sc RepositoryScope) (string, []any, error) {
 // Unbounded this is the stored count, which includes references made by upstream repositories —
 // they are how a composite action's own dependencies are attributed. Bounded, only references
 // written in the grouping's own files count, because those are the ones it can change.
-func (s *Store) directRefsWithin(sc RepositoryScope) (string, []any, error) {
+func (s *Store) directRefsWithin(sc RepositoryScope, mode string) (string, []any, error) {
 	if !sc.asked() {
 		return `COALESCE(b.direct_dependents, 0)`, nil, nil
 	}
@@ -160,7 +160,7 @@ func (s *Store) directRefsWithin(sc RepositoryScope) (string, []any, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	return `(SELECT COUNT(*) FROM abom_edge_live e
+	return `(SELECT COUNT(*) FROM ` + edgeSource(mode) + ` e
 		          JOIN repository er ON er.row_id = e.repository_row_id
 		         WHERE e.dst_node_row_id = n.row_id` + bound + `)`, args, nil
 }
@@ -185,6 +185,9 @@ type InventoryQuery struct {
 	Provider     string
 	Severity     string
 	Repositories []string
+	// Mode narrows to how the databases behind this page were built. Empty is `regular`, which is
+	// every database on record, so a listing that does not ask counts what it always counted.
+	Mode string
 	// Sort names a column from inventorySorts. Empty is the default order, widest reach first.
 	Sort   string
 	Desc   bool
@@ -252,7 +255,7 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 	if err != nil {
 		return InventoryPage{}, err
 	}
-	direct, directArgs, err := s.directRefsWithin(q.Grouping)
+	direct, directArgs, err := s.directRefsWithin(q.Grouping, q.Mode)
 	if err != nil {
 		return InventoryPage{}, err
 	}
@@ -269,7 +272,7 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 	if len(q.Kinds) > 0 {
 		where = `WHERE n.node_kind IN (` + placeholders(len(q.Kinds)) + `)`
 	}
-	where += keep
+	where += keep + nodeModeFilter(q.Mode)
 	// Tracked apart from the select-list arguments, because the count runs the same WHERE without
 	// the select list and the two argument orders would otherwise have to be kept in step by hand.
 	var whereArgs []any
@@ -293,8 +296,8 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 	findings, findingArgs := inventoryFindingFilter(q)
 	where += findings
 	whereArgs = append(whereArgs, findingArgs...)
-	where += inventoryFlagFilter(q.Flags)
-	if style := inventoryRefFilter(q.RefStyle); style != "" {
+	where += inventoryFlagFilter(q.Flags, q.Mode)
+	if style := inventoryRefFilter(q.RefStyle, q.Mode); style != "" {
 		where += style
 	}
 	// A floor of zero is not a question about zero, so it must not drop the rows whose reach has
@@ -324,11 +327,10 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 		SELECT n.node_key, n.node_kind, COALESCE(n.owner,''), COALESCE(n.repo,''),
 		       COALESCE(r.origin, '') AS origin,
 		       ` + reach + ` AS dependent_repos, ` + direct + ` AS direct_dependents,
-		       (SELECT COUNT(DISTINCT e.ref_value) FROM abom_edge_live e
+		       (SELECT COUNT(DISTINCT e.ref_value) FROM ` + edgeSource(q.Mode) + ` e
 		         WHERE e.dst_node_row_id = n.row_id
 		           AND e.ref_value IS NOT NULL AND e.ref_value <> '') AS distinct_refs,
-		       (SELECT COUNT(*) FROM abom_finding_node fn
-		         WHERE fn.node_row_id = n.row_id) AS findings,
+		       ` + nodeFindingCount(q.Mode, "n.row_id") + ` AS findings,
 		       (SELECT COUNT(DISTINCT a.ghsa_id)
 		          FROM abom_advisory a
 		          JOIN abom_advisory_package p ON p.advisory_row_id = a.row_id
@@ -361,7 +363,7 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 	}
 
 	for i := range out {
-		refs, err := s.referencesTo(out[i].NodeKey)
+		refs, err := s.referencesTo(out[i].NodeKey, q.Mode)
 		if err != nil {
 			return InventoryPage{}, err
 		}
@@ -455,7 +457,7 @@ func inventoryFindingFilter(q InventoryQuery) (string, []any) {
 		whereArgs = append(whereArgs, names...)
 	}
 	if len(where) > 0 {
-		out += ` AND EXISTS (SELECT 1 FROM abom_finding f
+		out += ` AND EXISTS (SELECT 1 FROM ` + findingSource(q.Mode) + ` f
 		                      JOIN abom_finding_node fn ON fn.finding_row_id = f.row_id
 		                     WHERE fn.node_row_id = n.row_id AND ` +
 			strings.Join(where, " AND ") + `)`
@@ -463,7 +465,7 @@ func inventoryFindingFilter(q InventoryQuery) (string, []any) {
 	}
 	if len(q.NotRules) > 0 {
 		clause, a := ruleClause("x.rule_id", q.NotRules)
-		out += ` AND NOT EXISTS (SELECT 1 FROM abom_finding x
+		out += ` AND NOT EXISTS (SELECT 1 FROM ` + findingSource(q.Mode) + ` x
 		                          JOIN abom_finding_node xn ON xn.finding_row_id = x.row_id
 		                         WHERE xn.node_row_id = n.row_id AND ` + clause + `)`
 		args = append(args, a...)
@@ -475,12 +477,13 @@ func inventoryFindingFilter(q InventoryQuery) (string, []any) {
 //
 // `unanalyzed` asks about the dependency, not about its findings: a row nothing has queued is a
 // coverage gap whether or not a rule ever looked at it.
-func inventoryFlagFilter(flags []string) string {
+func inventoryFlagFilter(flags []string, mode string) string {
 	out := ""
 	for _, f := range flags {
 		switch f {
 		case "findings":
 			out += ` AND EXISTS (SELECT 1 FROM abom_finding_node fn
+			                     JOIN ` + findingSource(mode) + ` f ON f.row_id = fn.finding_row_id
 			                     WHERE fn.node_row_id = n.row_id)`
 		case "advisory":
 			out += ` AND EXISTS (SELECT 1 FROM abom_advisory a
@@ -500,14 +503,14 @@ func inventoryFlagFilter(flags []string) string {
 //
 // Lexical only, and a different question from which reference was analyzed: a node referenced both
 // by tag and by commit matches either.
-func inventoryRefFilter(style string) string {
+func inventoryRefFilter(style, mode string) string {
 	commit := `LENGTH(e.ref_value) = 40 AND e.ref_value GLOB '[0-9a-f]*'`
 	switch style {
 	case "sha":
-		return ` AND EXISTS (SELECT 1 FROM abom_edge_live e
+		return ` AND EXISTS (SELECT 1 FROM ` + edgeSource(mode) + ` e
 		                     WHERE e.dst_node_row_id = n.row_id AND ` + commit + `)`
 	case "tag":
-		return ` AND EXISTS (SELECT 1 FROM abom_edge_live e
+		return ` AND EXISTS (SELECT 1 FROM ` + edgeSource(mode) + ` e
 		                     WHERE e.dst_node_row_id = n.row_id
 		                       AND e.ref_value IS NOT NULL AND e.ref_value <> ''
 		                       AND NOT (` + commit + `))`
@@ -649,9 +652,9 @@ func (s *Store) RepositoriesPage(q RepositoriesQuery) (RepositoriesPage, error) 
 		SELECT r.repository_full_name, r.origin,
 		       (SELECT COUNT(*) FROM abom_node_live n
 		         WHERE n.repository_row_id = r.row_id AND n.node_kind = 'workflow') AS workflows,
-		       (SELECT COUNT(*) FROM abom_edge_live e
+		       (SELECT COUNT(*) FROM abom_edge_regular e
 		         WHERE e.repository_row_id = r.row_id) AS dependencies,
-		       (SELECT COUNT(*) FROM abom_finding f
+		       (SELECT COUNT(*) FROM abom_finding_regular f
 		         WHERE f.repository_row_id = r.row_id) AS findings,
 		       (SELECT COUNT(*) FROM abom_exposure x
 		         WHERE x.repository_row_id = r.row_id) AS exposures,
@@ -732,7 +735,7 @@ func (s *Store) RepositoryDetailOf(fullName string) (RepositoryDetail, error) {
 	}
 
 	rules, err := s.db.Query(`
-		SELECT rule_id, COUNT(*) FROM abom_finding
+		SELECT rule_id, COUNT(*) FROM abom_finding_regular
 		WHERE repository_row_id = ? GROUP BY rule_id ORDER BY 2 DESC`, rowID)
 	if err != nil {
 		return out, fmt.Errorf("reading findings for %q: %w", fullName, err)
@@ -752,10 +755,12 @@ func (s *Store) RepositoryDetailOf(fullName string) (RepositoryDetail, error) {
 
 	flows, err := s.db.Query(`
 		SELECT n.node_key, COALESCE(n.path,''),
-		       (SELECT COUNT(*) FROM abom_edge_live e
+		       (SELECT COUNT(*) FROM abom_edge_regular e
 		         JOIN abom_node_live src ON src.row_id = e.src_node_row_id
 		        WHERE src.container_node_row_id = n.row_id OR src.row_id = n.row_id),
-		       (SELECT COUNT(*) FROM abom_finding_node fn WHERE fn.node_row_id = n.row_id)
+		       (SELECT COUNT(*) FROM abom_finding_node fn
+		         JOIN abom_finding_regular f ON f.row_id = fn.finding_row_id
+		         WHERE fn.node_row_id = n.row_id)
 		FROM abom_node_live n
 		WHERE n.repository_row_id = ? AND n.node_kind IN ('workflow', 'composite_action')
 		ORDER BY n.path`, rowID)

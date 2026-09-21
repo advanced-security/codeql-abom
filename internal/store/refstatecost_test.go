@@ -43,16 +43,9 @@ func TestTheReferenceStateQueryDoesNotWalkTheEdgeTablePerQueueRow(t *testing.T) 
 
 	// A correlated subquery reading the edge table is the per-row walk. Reading it once to build
 	// an aggregate is a scan, and is the fix rather than the defect.
-	inCorrelated := false
-	for _, step := range plan {
-		if strings.Contains(step, "CORRELATED") {
-			inCorrelated = true
-		}
-		if inCorrelated && strings.Contains(step, "abom_edge") {
-			t.Errorf("the reference state query still walks the edge table per queue row:\n\t%s",
-				strings.Join(plan, "\n\t"))
-			break
-		}
+	if hasCorrelatedEdgeRead(plan) {
+		t.Errorf("the reference state query still walks the edge table per queue row:\n\t%s",
+			strings.Join(plan, "\n\t"))
 	}
 }
 

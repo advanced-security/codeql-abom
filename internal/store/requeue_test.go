@@ -6,7 +6,7 @@ import "testing"
 // re-analyzing it would learn anything.
 func ranAt(t *testing.T, s *Store, repo, pack, digest, cliVersion string) {
 	t.Helper()
-	if _, err := s.RecordQueryRun(QueryRun{
+	if _, err := s.RecordQueryRun(QueryRun{AnalysisMode: AnalysisModeRegular,
 		QueryID: "abom/edges", Repository: repo, DBCommit: "sha",
 		Pack: pack, PackVersion: "1.0.0", PackDigest: digest, CLIVersion: cliVersion,
 	}); err != nil {

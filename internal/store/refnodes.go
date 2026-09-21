@@ -284,7 +284,7 @@ func partsAtRef(parts []edgePart, ref string) []edgePart {
 // different things to everyone downstream.
 const usersPerRef = `SELECT n.node_key AS nk, COALESCE(e.ref_value, '') AS rf,
 	       COUNT(DISTINCT e.repository_row_id) AS cnt
-	  FROM abom_edge_live e
+	  FROM abom_edge_regular e
 	  JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 	 GROUP BY n.node_key, COALESCE(e.ref_value, '')`
 

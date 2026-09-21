@@ -252,7 +252,7 @@ func TestIngestingSARIFUnderARunRecordsASighting(t *testing.T) {
 	s := newTestStore(t)
 	ing := New(s, store.NewWriter(s, 0))
 
-	runID, err := s.RecordQueryRun(store.QueryRun{
+	runID, err := s.RecordQueryRun(store.QueryRun{AnalysisMode: store.AnalysisModeRegular,
 		QueryID: "actions/unpinned-tag", QueryVersion: "1.0.0",
 		Pack: "codeql/actions-queries", PackVersion: "0.6.35",
 		Repository: "octo-org/app", DBCommit: "cafe1234",

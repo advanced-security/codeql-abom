@@ -89,6 +89,65 @@ async function cameraOf(page) {
     });
 }
 
+test.describe('analysis modes', () => {
+    for (const surface of [
+        { route: '/inventory', endpoint: '/api/actions' },
+        { route: '/explore', endpoint: '/api/graph/full' },
+    ]) {
+        test(`${surface.route} selects a shape, reloads it and keeps the control visible`, async ({ page }, testInfo) => {
+            await page.goto(surface.route);
+            await ready(page);
+            const control = page.locator('[data-abom-analysis-mode]');
+            await expect(control).toBeVisible();
+
+            const isExtended = (response) => {
+                const address = new URL(response.url());
+                return address.pathname === surface.endpoint && address.searchParams.get('mode') === 'extended';
+            };
+            const selected = page.waitForResponse(isExtended);
+            await control.locator('[data-abom-mode="extended"]').click();
+            const response = await selected;
+            expect(response.status()).toBe(200);
+            await expect(page).toHaveURL(/mode=extended/);
+            const answer = await response.json();
+            if (surface.endpoint === '/api/actions') {
+                await expect(page.getByText(/Showing .* of .* matching/).first())
+                    .toContainText(`of ${answer.total.toLocaleString('en-US')} matching`);
+            } else {
+                const keys = new Set(answer.nodes.map((node) => node.key));
+                for (const edge of answer.edges) {
+                    expect(keys.has(edge.source) && keys.has(edge.target)).toBe(true);
+                }
+            }
+
+            const reloaded = page.waitForResponse(isExtended);
+            await page.reload();
+            await ready(page);
+            expect((await reloaded).status()).toBe(200);
+            await expect(page).toHaveURL(/mode=extended/);
+            await page.screenshot({ path: testInfo.outputPath('analysis-mode-desktop.png') });
+            await page.setViewportSize({ width: 390, height: 844 });
+            await expect(control).toBeVisible();
+            await control.scrollIntoViewIfNeeded();
+            const geometry = await control.evaluate((element) => {
+                const bounds = element.getBoundingClientRect();
+                return { left: bounds.left, right: bounds.right, viewport: innerWidth };
+            });
+            expect(geometry.left).toBeGreaterThanOrEqual(0);
+            expect(geometry.right).toBeLessThanOrEqual(geometry.viewport);
+            await page.screenshot({ path: testInfo.outputPath('analysis-mode-mobile.png') });
+
+            const regular = page.waitForResponse((reply) => {
+                const address = new URL(reply.url());
+                return address.pathname === surface.endpoint && address.searchParams.get('mode') !== 'extended';
+            });
+            await control.locator('[data-abom-mode="regular"]').click();
+            expect((await regular).status()).toBe(200);
+            await expect(page).not.toHaveURL(/mode=extended/);
+        });
+    }
+});
+
 test.describe('the API answers what the interface asks of it', () => {
     test('a rejected view parameter is an error, not a silent empty graph', async ({ request, baseURL }) => {
         // A predicate that parses and is then ignored returns 200 and an answer that looks real.

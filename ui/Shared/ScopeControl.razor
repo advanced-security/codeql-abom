@@ -8,6 +8,32 @@
 @inject ScopeService Scope
 
 <div class="abom-scope">
+    @if (SupportsAnalysisMode || Scope.Spec.Mode.Length > 0)
+    {
+        <div class="d-flex flex-wrap align-center gap-2 mb-2">
+            <MudText Typo="Typo.caption" Class="mud-text-secondary abom-scope-label">
+                Analysis mode
+            </MudText>
+            <MudToggleGroup T="string" Value="@(Scope.Spec.Mode.Length == 0 ? "regular" : Scope.Spec.Mode)"
+                            ValueChanged="ChooseMode" Size="Size.Small" Color="Color.Primary"
+                            CheckMark="true" SelectionMode="SelectionMode.SingleSelection"
+                            aria-label="Analysis mode" data-abom-analysis-mode="1">
+                <MudToggleItem T="string" Value="@("regular")" data-abom-mode="regular">
+                    <span title="The repository's own checkout">Regular</span>
+                </MudToggleItem>
+                <MudToggleItem T="string" Value="@("extended")" Disabled="@(!SupportsAnalysisMode)"
+                               data-abom-mode="extended">
+                    <span title="The repository and its staged dependency closure">Extended</span>
+                </MudToggleItem>
+            </MudToggleGroup>
+            @if (Scope.Spec.Mode == "extended")
+            {
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                    Coverage and dependency reach use regular analysis.
+                </MudText>
+            }
+        </div>
+    }
     <div class="d-flex flex-wrap align-center gap-2">
         <MudText Typo="Typo.caption" Class="mud-text-secondary abom-scope-label">
             Repository property
@@ -86,6 +112,8 @@
     /// <summary>Raised after the scope changed, so the host can re-read and re-draw.</summary>
     [Parameter] public EventCallback Changed { get; set; }
 
+    [Parameter] public bool SupportsAnalysisMode { get; set; }
+
     private IReadOnlyList<string> _keys = [];
     private string _key = string.Empty;
     private PropertyBreakdown? _breakdown;
@@ -100,6 +128,13 @@
         excluded ? $"not {match}" : match.ToString();
 
     protected override async Task OnInitializedAsync() => await Read(null);
+
+    private async Task ChooseMode(string mode)
+    {
+        if (mode is not ("regular" or "extended")) return;
+        Scope.Set(Scope.Spec with { Mode = mode == "regular" ? "" : mode });
+        await Changed.InvokeAsync();
+    }
 
     /// <summary>
     /// Reads the breakdown for one key. A null key takes the server's configured one, which is a

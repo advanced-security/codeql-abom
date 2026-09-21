@@ -283,7 +283,7 @@ func (s *Store) AdvisoriesByReach(limit int, sc RepositoryScope) ([]AdvisoryReac
 			return out[i].Nodes[a].DependentRepos > out[i].Nodes[b].DependentRepos
 		})
 		for j := range out[i].Nodes {
-			refs, err := s.referencesTo(out[i].Nodes[j].NodeKey)
+			refs, err := s.referencesTo(out[i].Nodes[j].NodeKey, AnalysisModeRegular)
 			if err != nil {
 				return nil, err
 			}
@@ -295,10 +295,10 @@ func (s *Store) AdvisoriesByReach(limit int, sc RepositoryScope) ([]AdvisoryReac
 
 // referencesTo returns the distinct references the corpus uses for a node, with how often each
 // appears. These are the evidence a reader needs to decide whether a range applies.
-func (s *Store) referencesTo(nodeKey string) ([]string, error) {
+func (s *Store) referencesTo(nodeKey, mode string) ([]string, error) {
 	rows, err := s.db.Query(`
 		SELECT COALESCE(e.ref_value, ''), COUNT(*)
-		FROM abom_edge_live e
+		FROM `+edgeSource(mode)+` e
 		JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 		JOIN repository r ON r.row_id = e.repository_row_id
 		WHERE n.node_key = ? AND r.origin = ?
@@ -401,7 +401,7 @@ func (s *Store) ExposuresByRepository(limit int, sc RepositoryScope) ([]Exposure
 func (s *Store) referencesFrom(repository, nodeKey string) ([]string, error) {
 	rows, err := s.db.Query(`
 		SELECT DISTINCT COALESCE(e.ref_value, '')
-		FROM abom_edge_live e
+		FROM abom_edge_regular e
 		JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 		JOIN repository r ON r.row_id = e.repository_row_id
 		WHERE n.node_key = ? AND r.repository_full_name = ?

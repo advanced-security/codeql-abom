@@ -126,7 +126,7 @@ func (b *Builder) load() (*model, error) {
 	edges, err := b.Store.DB().Query(`
 		SELECT e.src_node_row_id, e.dst_node_row_id,
 		       COALESCE(q.db_commit, ''), COALESCE(e.ref_value, '')
-		  FROM abom_edge_live e
+		  FROM abom_edge_regular e
 		  LEFT JOIN abom_query_run q ON q.row_id = e.query_run_id
 		 WHERE ` + store.DependencyEdgeFilter)
 	if err != nil {

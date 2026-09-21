@@ -49,6 +49,14 @@ public sealed record ViewSpec
     public string Boundary { get; init; } = "";
 
     /// <summary>
+    /// The analysis shape the databases behind an answer were built in. Empty is <c>regular</c>,
+    /// so a reader who never spells it keeps the totals they always had. There is deliberately no
+    /// word here for both at once: a union across shapes is a decision something makes on
+    /// purpose, never something a shared link carries.
+    /// </summary>
+    public string Mode { get; init; } = "";
+
+    /// <summary>
     /// Repositories carrying this custom property, which is how a business unit or an application
     /// is named. The key travels with the value: carrying the value alone filtered by whichever
     /// property each server happened to be configured with, so one shared link asked two questions.
@@ -93,6 +101,7 @@ public sealed record ViewSpec
     private const string ParamEdgeKinds = "edgeKinds";
     private const string ParamRefStyle = "ref";
     private const string ParamBoundary = "boundary";
+    private const string ParamMode = "mode";
     private const string ParamMinReach = "minReach";
     private const string ParamFlags = "flags";
     private const string ParamSteps = "steps";
@@ -111,6 +120,7 @@ public sealed record ViewSpec
         [ParamScope] = ["owned", "exposure"],
         [ParamBoundary] = ["same-repository", "same-owner", "cross-owner"],
         [ParamRefStyle] = ["any", "sha", "tag"],
+        [ParamMode] = ["regular", "extended"],
     };
 
     // The near-misses are real: the canvas draws `crossOwner` where the store spells it
@@ -140,6 +150,7 @@ public sealed record ViewSpec
                      (ParamScope, Scope), (ParamSearch, Search),
                      (ParamRefStyle, RefStyle), (ParamBoundary, Boundary),
                      (ParamProvider, Provider), (ParamSeverity, Severity),
+                     (ParamMode, Mode),
                  })
         {
             if (!string.IsNullOrEmpty(value)) pairs.Add((key, value));
@@ -184,7 +195,8 @@ public sealed record ViewSpec
     /// <exception cref="FormatException">The text names something that is not a predicate.</exception>
     public static ViewSpec Parse(string text)
     {
-        string scope = "", search = "", refStyle = "", boundary = "", provider = "", severity = "";
+        string scope = "", search = "", refStyle = "", boundary = "", provider = "", severity = "",
+            mode = "";
         IReadOnlyList<string> kinds = [], origins = [], rules = [], edges = [], edgeKinds = [],
             flags = [], notRules = [], repositories = [];
         List<PropertyMatch> properties = [], notProperties = [];
@@ -208,6 +220,7 @@ public sealed record ViewSpec
                 case ParamSearch: search = raw; break;
                 case ParamRefStyle: refStyle = Vetted(key, raw); break;
                 case ParamBoundary: boundary = Vetted(key, raw); break;
+                case ParamMode: mode = Vetted(key, raw); break;
                 case ParamKinds: kinds = Normalize(raw.Split(',')); break;
                 case ParamOrigins: origins = Normalize(raw.Split(',')); break;
                 case ParamRules: rules = Normalize(raw.Split(',')); break;
@@ -243,7 +256,7 @@ public sealed record ViewSpec
         return new ViewSpec
         {
             Scope = scope, Search = search, RefStyle = refStyle, Boundary = boundary,
-            Provider = provider, Severity = severity,
+            Provider = provider, Severity = severity, Mode = mode,
             Kinds = kinds, Origins = origins, Rules = rules, NotRules = notRules,
             Repositories = repositories,
             Properties = properties, NotProperties = notProperties,

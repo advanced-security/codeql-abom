@@ -110,7 +110,8 @@
 
 @* The surface that owns the scope carries the control that builds it. Without this, a property
    scope arriving in the address narrowed every count on screen and said nothing about doing so. *@
-<ScopeControl Changed="OnScopeControlChanged" />
+<ScopeControl Changed="OnScopeControlChanged"
+              SupportsAnalysisMode="@(_unit is UnitDependencies or UnitRelationships)" />
 
 @if (_writeError is { Length: > 0 } wrote)
 {
@@ -811,7 +812,8 @@ else
     // The export carries the scope on screen. One that ignored it would hand somebody a document
     // about the whole organization under the name of one part.
     private string BomUrl(string format) =>
-        AbomApi.BomDownloadUrl(format, properties: Scope.Spec.Properties.Select(p => p.ToString()));
+        AbomApi.BomDownloadUrl(format, properties: Scope.Spec.Properties.Select(p => p.ToString()),
+            mode: Scope.Spec.Mode);
 
     // The unit is how the scope is being drawn rather than what it selects, so ScopeService leaves
     // it alone and it travels as its own parameter.

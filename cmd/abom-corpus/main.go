@@ -211,6 +211,9 @@ func ingestRepository(s *store.Store, fixtures, full string, without map[string]
 		QueryID:      "abom/surface",
 		QueryVersion: "corpus-fixture",
 		Repository:   full,
+		// The recording replays one repository's own checkout, which is the shape it was taken
+		// from.
+		AnalysisMode: store.AnalysisModeRegular,
 	})
 	if err != nil {
 		return fmt.Errorf("recording the fixture run: %w", err)
@@ -275,9 +278,10 @@ func report(w io.Writer, s *store.Store, dbPath string) error {
 		{"repositories", `SELECT COUNT(*) FROM repository`},
 		{"owned", `SELECT COUNT(*) FROM repository WHERE origin = 'seed'`},
 		{"nodes", `SELECT COUNT(*) FROM abom_node_live`},
-		{"edges", `SELECT COUNT(*) FROM abom_edge_live`},
-		{"findings", `SELECT COUNT(*) FROM abom_finding`},
-		{"findings on a node", `SELECT COUNT(DISTINCT finding_row_id) FROM abom_finding_node`},
+		{"edges", `SELECT COUNT(*) FROM abom_edge_regular`},
+		{"findings", `SELECT COUNT(*) FROM abom_finding_regular`},
+		{"findings on a node", `SELECT COUNT(DISTINCT fn.finding_row_id) FROM abom_finding_node fn
+			JOIN abom_finding_regular f ON f.row_id = fn.finding_row_id`},
 		{"advisories", `SELECT COUNT(*) FROM abom_advisory`},
 		// Reaching is the number that decides whether the unit draws anything, and it is the one
 		// that was silently zero while the data set grew.

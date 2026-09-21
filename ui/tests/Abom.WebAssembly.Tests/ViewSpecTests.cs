@@ -214,8 +214,21 @@ public class ViewSpecTests
     [InlineData("notRules=abom%2Fnoisy&rules=actions%2F%2A")]
     [InlineData("provider=CodeQL&severity=error")]
     [InlineData("repositories=octo-org%2Fapp%2Cocto-org%2Ftool")]
+    [InlineData("mode=extended")]
+    [InlineData("mode=regular&rules=actions%2F%2A")]
     public void TheCanonicalTextIsIdenticalToTheOneGoWrites(string canonical) =>
         Assert.Equal(canonical, ViewSpec.Parse(canonical).ToQueryString());
+
+    /// <summary>
+    /// A shape outside the vocabulary is refused rather than dropped. `mixed` is the one that
+    /// matters: the store has its own word for a union across both shapes, and a shared link that
+    /// could ask for one would turn a deliberate internal decision into a term anybody can spell.
+    /// </summary>
+    [Theory]
+    [InlineData("mode=mixed")]
+    [InlineData("mode=full")]
+    public void AShapeNothingIsBuiltInIsRefused(string text) =>
+        Assert.Throws<FormatException>(() => ViewSpec.Parse(text));
 
     [Fact]
     public void AnEmptyValueIsRefusedRatherThanTreatedAsAbsent() =>

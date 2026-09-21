@@ -21,7 +21,7 @@ func (s *Store) overview(opts SubgraphOptions) (Subgraph, error) {
 	rows, err := s.db.Query(`
 		SELECT COALESCE(srep.node_key, sn.node_key), COALESCE(drep.node_key, dn.node_key),
 		       e.edge_kind, COALESCE(e.ref_value, '')
-		FROM abom_edge_live e
+		FROM ` + edgeSource(opts.Mode) + ` e
 		JOIN abom_node_live sn ON sn.row_id = e.src_node_row_id
 		JOIN abom_node_live dn ON dn.row_id = e.dst_node_row_id
 		LEFT JOIN abom_node_live srep ON srep.node_kind = 'repo'
@@ -80,7 +80,7 @@ func (s *Store) overview(opts SubgraphOptions) (Subgraph, error) {
 	for k := range kept {
 		keys = append(keys, k)
 	}
-	nodes, err := s.nodesByKey(keys)
+	nodes, err := s.nodesByKey(keys, opts.Mode)
 	if err != nil {
 		return out, err
 	}
@@ -123,7 +123,7 @@ func busiest(degree map[string]int, max int) map[string]bool {
 	return kept
 }
 
-func (s *Store) nodesByKey(keys []string) ([]SubgraphNode, error) {
+func (s *Store) nodesByKey(keys []string, mode string) ([]SubgraphNode, error) {
 	out := []SubgraphNode{}
 	if len(keys) == 0 {
 		return out, nil
@@ -137,7 +137,7 @@ func (s *Store) nodesByKey(keys []string) ([]SubgraphNode, error) {
 		SELECT n.node_key, n.node_kind, COALESCE(r.repository_full_name, ''),
 		       COALESCE(r.origin, ''), COALESCE(n.path, ''), n.is_external,
 		       COALESCE(b.dependent_repos, 0),
-		       (SELECT COUNT(*) FROM abom_finding_node fn WHERE fn.node_row_id = n.row_id)
+		       `+nodeFindingCount(mode, "n.row_id")+`
 		FROM abom_node_live n
 		LEFT JOIN repository r ON r.row_id = n.repository_row_id
 		LEFT JOIN abom_blast_radius b ON b.node_row_id = n.row_id

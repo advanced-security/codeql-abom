@@ -49,6 +49,7 @@ func SelectorFor(spec viewspec.Spec) FindingSelector {
 		Repositories:      spec.Repositories,
 		Properties:        spec.Properties,
 		ExcludeProperties: spec.NotProperties,
+		Mode:              spec.Mode,
 	}
 }
 
@@ -133,13 +134,16 @@ func (s *Store) EvaluatePolicy(name, unitProperty string) (PolicyOutcome, error)
 func (s *Store) unattributedFor(
 	spec viewspec.Spec, inScope func(string) bool,
 ) (int, []string, error) {
-	if len(spec.Rules) == 0 {
+	if len(spec.Rules) == 0 && spec.Mode == "" {
 		return 0, []string{}, nil
 	}
-	clause, args := ruleClause("f.rule_id", spec.Rules)
+	clause, args := "1", []any{}
+	if len(spec.Rules) > 0 {
+		clause, args = ruleClause("f.rule_id", spec.Rules)
+	}
 	rows, err := s.db.Query(`
 SELECT r.repository_full_name, COUNT(*)
-  FROM abom_finding f
+  FROM `+findingSource(spec.Mode)+` f
   JOIN repository r ON r.row_id = f.repository_row_id
  WHERE `+clause+`
    AND NOT EXISTS (SELECT 1 FROM abom_finding_node n WHERE n.finding_row_id = f.row_id)

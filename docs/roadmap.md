@@ -111,14 +111,14 @@ controlled value in a workflow, through three staged dependencies, into the deep
 in ordinary Default Setup stages that dependency closure; the extended analysis addresses that
 different input shape rather than competing with native lock generation.
 
-The two must never be confused, which is why the plan requires each analysis to record its shape
-and expose that distinction to readers. The same rule can describe a repository's own source or
+The two must never be confused. Each analysis already records its shape and exposes that
+distinction to readers. The same rule can describe a repository's own source or
 a staged dependency path that ordinary Default Setup did not analyze. The staging namespace holds
 one selected commit per dependency; rooting it at one owned repository bounds the collisions but
 does not eliminate them. Count distinct lock-selected commits, not only different ref names.
 [Closure databases](../plans/ql/closure-database.md) therefore depend on
-[lock-aware resolution](../plans/db/actions-lockfile.md) and
-[analysis modes](../plans/db/analysis-mode.md).
+[lock-aware resolution](../plans/db/actions-lockfile.md) and must preserve the implemented
+[analysis-mode isolation](architecture.md#analysis-modes).
 
 ## The questions are the organization's own
 

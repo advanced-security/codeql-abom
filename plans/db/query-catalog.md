@@ -49,8 +49,8 @@ catalog entry cannot say what version of itself last ran.
    resolved from, which is knowable at resolution time and is not a string convention. Recorded on
    the catalog row and carried onto the run, so a finding's origin survives the pack being upgraded
    or the query being renamed. Depends on 2.
-4. **A `origin=` term in the filter language**, alongside the `mode=` term
-   [`db/analysis-mode.md`](analysis-mode.md) adds, and enforced on the same three sides. Depends
+4. **A `origin=` term in the filter language**, alongside the implemented
+  [`mode=` term](../../docs/architecture.md#analysis-modes), and enforced on the same three sides. Depends
    on 3.
 5. **The interface differentiates, visibly.** Upstream, ABOM and operator-written queries are
    distinguishable wherever a finding or a rule id is shown, and the catalog is somewhere a reader

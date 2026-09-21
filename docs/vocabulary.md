@@ -79,6 +79,19 @@ A reader must be able to tell "we have not looked" from "there was nothing to lo
 only one of them is work somebody can do. Partial coverage is its own state, not a rounding of
 `analyzed` in either direction.
 
+## Analysis modes
+
+| Word | Means |
+| --- | --- |
+| **Regular** | One repository's own checkout, the input shape ordinary Default Setup analyzes |
+| **Extended** | An owned repository plus staged dependencies, which ordinary Default Setup does not stage |
+| **Mixed** | One defect observed in both shapes, counted once; not a writable mode or a filter value |
+| **Shape not recorded** | No recorded run establishes the finding's shape |
+
+A mode describes inputs, not whether GitHub enabled a query or will publish an alert. Coverage
+and dependency reach continue to describe regular analysis even when a view selects extended
+evidence. Neither a lock context nor a query's origin substitutes for this database shape.
+
 ## Enablement
 
 **Coverage** is whether ABOM looked. **Enablement** is whether the product feature is switched on,

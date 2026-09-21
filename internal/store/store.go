@@ -80,8 +80,6 @@ func (s *Store) applyPragmas(opts Options) error {
 // DB exposes the handle for read paths and analytics that need raw SQL.
 func (s *Store) DB() *sql.DB { return s.db }
 
-// Migrate creates all tables and adds any columns introduced since the database was created.
-// It is safe to call on an existing database.
 // createTables are the CREATE TABLE statements that follow the main schema, in the order they run.
 //
 // Every one runs before the column pass, because that pass is one sweep of ALTER TABLE and a table
@@ -104,6 +102,8 @@ var createTables = []struct {
 	{"the policy tables", policyDDL},
 }
 
+// Migrate creates all tables and adds any columns introduced since the database was created.
+// It is safe to call on an existing database.
 func (s *Store) Migrate() error {
 	if err := s.dropStaleDerivedTables(); err != nil {
 		return err
@@ -178,6 +178,10 @@ func (s *Store) Migrate() error {
 	// Selects on abom_account.scopes, which the column pass above may have just added.
 	if _, err := s.db.Exec(honoredScopeDDL); err != nil {
 		return fmt.Errorf("creating the honored scope view: %w", err)
+	}
+	// After both: the edge views read the live ones, and all of them read analysis_mode.
+	if _, err := s.db.Exec(analysisModeViewDDL); err != nil {
+		return fmt.Errorf("creating the analysis mode views: %w", err)
 	}
 	// Before seeding, so a binding that only needs renaming still counts as configured and the
 	// defaults are not written over it.

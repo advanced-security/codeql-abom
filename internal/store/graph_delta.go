@@ -75,7 +75,7 @@ type ReachStaleness struct {
 // against the graph rather than a timer alone.
 func (s *Store) ReachStaleness() (ReachStaleness, error) {
 	out := ReachStaleness{Never: true}
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM abom_edge_live`).Scan(&out.TotalEdges); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM abom_edge_regular`).Scan(&out.TotalEdges); err != nil {
 		return out, fmt.Errorf("counting edges: %w", err)
 	}
 
@@ -98,7 +98,7 @@ func (s *Store) ReachStaleness() (ReachStaleness, error) {
 	}
 	out.Never, out.At = false, parsed
 	if err := s.db.QueryRow(
-		`SELECT COUNT(*) FROM abom_edge_live WHERE row_id > ?`, mark.Int64).Scan(&out.NewEdges); err != nil {
+		`SELECT COUNT(*) FROM abom_edge_regular WHERE row_id > ?`, mark.Int64).Scan(&out.NewEdges); err != nil {
 		return out, fmt.Errorf("counting edges since the last rebuild: %w", err)
 	}
 	return out, nil
@@ -123,7 +123,7 @@ func (s *Store) GraphVersion() (GraphVersion, error) {
 		into  *int
 	}{
 		{`SELECT COUNT(*) FROM abom_node_live`, &out.Nodes},
-		{`SELECT COUNT(*) FROM abom_edge_live`, &out.Edges},
+		{`SELECT COUNT(*) FROM abom_edge_regular`, &out.Edges},
 	} {
 		if err := s.db.QueryRow(c.query).Scan(c.into); err != nil {
 			return out, fmt.Errorf("reading graph version: %w", err)
@@ -138,7 +138,7 @@ func (s *Store) RecordGraphGeneration(r GraphRebuild) (int64, error) {
 	if err := s.db.QueryRow(`SELECT MAX(row_id) FROM abom_node_live`).Scan(&nodeMark); err != nil {
 		return 0, fmt.Errorf("reading node watermark: %w", err)
 	}
-	if err := s.db.QueryRow(`SELECT MAX(row_id) FROM abom_edge_live`).Scan(&edgeMark); err != nil {
+	if err := s.db.QueryRow(`SELECT MAX(row_id) FROM abom_edge_regular`).Scan(&edgeMark); err != nil {
 		return 0, fmt.Errorf("reading edge watermark: %w", err)
 	}
 	var containMark sql.NullInt64
@@ -240,7 +240,7 @@ func (s *Store) GraphDelta(since int64, opts FullGraphOptions) (GraphDelta, erro
 	if err != nil {
 		return out, err
 	}
-	if err := s.attachRules(display, index); err != nil {
+	if err := s.attachRules(display, index, opts.Mode); err != nil {
 		return out, err
 	}
 	edges, err := s.graphEdges(display, edgeMark, opts)
@@ -270,7 +270,7 @@ func (s *Store) GraphDelta(since int64, opts FullGraphOptions) (GraphDelta, erro
 	// merges into their picture anyway.
 	out.Nodes, out.Edges = applyNodePredicates(out.Nodes, out.Edges, opts)
 
-	out.Metrics, err = s.graphMetrics(display)
+	out.Metrics, err = s.graphMetrics(display, opts.Mode)
 	if err != nil {
 		return out, err
 	}
@@ -279,10 +279,11 @@ func (s *Store) GraphDelta(since int64, opts FullGraphOptions) (GraphDelta, erro
 
 // graphMetrics carries the counts that change for nodes the client already holds. Reach is
 // recomputed wholesale, so there is no cheaper way to know which of them moved.
-func (s *Store) graphMetrics(display string) ([]GraphMetric, error) {
+func (s *Store) graphMetrics(display, mode string) ([]GraphMetric, error) {
 	rows, err := s.db.Query(`WITH ` + display + `
 		SELECT n.node_key, COALESCE(b.dependent_repos, 0), ` + reachKnown + `,
 		       (SELECT COUNT(*) FROM abom_finding_node fn
+		         JOIN ` + findingSource(mode) + ` f ON f.row_id = fn.finding_row_id
 		         JOIN disp d ON d.row_id = fn.node_row_id
 		        WHERE d.shown = n.row_id),
 		       (SELECT COUNT(DISTINCT a.ghsa_id)
@@ -299,7 +300,7 @@ func (s *Store) graphMetrics(display string) ([]GraphMetric, error) {
 		         WHERE f.node_key = n.node_key AND f.status = 'done')
 		FROM abom_node_live n
 		LEFT JOIN abom_blast_radius b ON b.node_row_id = n.row_id
-		WHERE n.row_id IN (SELECT shown FROM disp)`)
+		WHERE n.row_id IN (SELECT shown FROM disp)` + nodeModeFilter(mode))
 	if err != nil {
 		return nil, fmt.Errorf("reading graph metrics: %w", err)
 	}

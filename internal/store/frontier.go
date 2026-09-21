@@ -97,7 +97,7 @@ var usedByRollup = `WITH users AS (
 	               ` + ownedFullName("r.repository_full_name") + ` AS owned,
 	               DENSE_RANK() OVER (PARTITION BY n.node_key, COALESCE(e.ref_value, '')
 	                                  ORDER BY r.repository_full_name) AS rank
-	          FROM abom_edge_live e
+	          FROM abom_edge_regular e
 	          JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 	          LEFT JOIN repository r ON r.row_id = e.repository_row_id)
 	 GROUP BY nk, rf)
@@ -199,7 +199,7 @@ type RefCoverage struct {
 // images are excluded for the same reason they are never queued: nothing can be cloned for one.
 const observedRefs = `
 	SELECT DISTINCT n.node_key AS node_key, COALESCE(e.ref_value, '') AS ref
-	FROM abom_edge_live e
+	FROM abom_edge_regular e
 	JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 	WHERE n.is_external = 1 AND n.node_kind IN ('action', 'reusable_workflow')`
 

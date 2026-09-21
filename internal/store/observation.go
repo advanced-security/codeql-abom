@@ -164,8 +164,8 @@ func (s *Store) ObservationsOf(subjectKind, subjectKey string) ([]StoredObservat
 // produce a different answer. Recognizing that is what makes re-processing affordable to offer:
 // only the queries or databases that actually changed have to run again.
 func (s *Store) QueryRunExists(q QueryRun) (bool, error) {
-	if q.QueryID == "" || q.Repository == "" {
-		return false, fmt.Errorf("store: QueryRun needs QueryID and Repository")
+	if err := q.identified(); err != nil {
+		return false, err
 	}
 	var one int
 	err := s.db.QueryRow(
