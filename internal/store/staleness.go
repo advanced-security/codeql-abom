@@ -22,7 +22,9 @@ type StaleFinding struct {
 // did, so a reader has to be able to tell "nothing is stale" from "nothing has been re-analyzed
 // yet" — and on a corpus mid-recrawl the answer is the second one.
 type StalenessReport struct {
-	// Sightings is every finding-to-run row on record.
+	// Sightings is every finding-to-run row this report can draw on: a run of the repository's
+	// own checkout. A closure run looked at another database, so what it did or did not report
+	// is not evidence about a finding regular analysis found.
 	Sightings int
 	// RepositoriesWithSightings counts repositories where some tracked run attributed something,
 	// which is the population the sweep is entitled to draw a conclusion about.
@@ -35,19 +37,27 @@ type StalenessReport struct {
 
 // StaleFindings reports findings that no run of their owning suite reports at any tracked commit.
 //
+// Regular analysis throughout: the report is drawn over `abom_finding_regular`, and only runs of
+// that shape are evidence about it. An extended run reads a different database, so its silence
+// about a finding the repository's own checkout reports says nothing at all.
+//
 // A run that sighted nothing is excluded. It is indistinguishable from a run whose sightings were
 // never recorded, and treating it as evidence of absence condemned 2,420 findings other references
 // still report when this was priced against the corpus.
 func (s *Store) StaleFindings() (StalenessReport, error) {
 	var out StalenessReport
-	if err := s.db.QueryRow(
-		`SELECT COUNT(*) FROM abom_finding_sighting`).Scan(&out.Sightings); err != nil {
+	if err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM abom_finding_sighting sg
+		JOIN abom_query_run q ON q.row_id = sg.query_run_id
+		WHERE q.analysis_mode = 'regular'`).Scan(&out.Sightings); err != nil {
 		return out, fmt.Errorf("counting sightings: %w", err)
 	}
 	if err := s.db.QueryRow(`
 		SELECT COUNT(*) FROM abom_finding_regular f
 		WHERE NOT EXISTS (
-			SELECT 1 FROM abom_finding_sighting sg WHERE sg.finding_row_id = f.row_id)`,
+			SELECT 1 FROM abom_finding_sighting sg
+			JOIN abom_query_run q ON q.row_id = sg.query_run_id
+			WHERE sg.finding_row_id = f.row_id AND q.analysis_mode = 'regular')`,
 	).Scan(&out.FindingsWithoutSighting); err != nil {
 		return out, fmt.Errorf("counting unsighted findings: %w", err)
 	}
@@ -66,11 +76,13 @@ func (s *Store) StaleFindings() (StalenessReport, error) {
 			FROM abom_query_run r
 			JOIN owning o ON o.query_id = r.query_id
 			WHERE r.db_commit IS NOT NULL
+			  AND r.analysis_mode = 'regular'
 			  AND r.row_id = (
 				SELECT MAX(r2.row_id) FROM abom_query_run r2
 				WHERE r2.repository = r.repository
 				  AND r2.db_commit = r.db_commit
-				  AND r2.query_id = r.query_id)
+				  AND r2.query_id = r.query_id
+				  AND r2.analysis_mode = 'regular')
 		),
 		-- A run that attributed nothing is not evidence that anything went away.
 		attributing AS (
@@ -115,11 +127,13 @@ func (s *Store) StaleFindings() (StalenessReport, error) {
 			SELECT r.row_id, r.repository
 			FROM abom_query_run r
 			WHERE r.db_commit IS NOT NULL
+			  AND r.analysis_mode = 'regular'
 			  AND r.row_id = (
 				SELECT MAX(r2.row_id) FROM abom_query_run r2
 				WHERE r2.repository = r.repository
 				  AND r2.db_commit = r.db_commit
-				  AND r2.query_id = r.query_id)
+				  AND r2.query_id = r.query_id
+				  AND r2.analysis_mode = 'regular')
 		)
 		SELECT COUNT(DISTINCT n.repository) FROM newest n
 		WHERE EXISTS (SELECT 1 FROM abom_finding_sighting sg WHERE sg.query_run_id = n.row_id)`,

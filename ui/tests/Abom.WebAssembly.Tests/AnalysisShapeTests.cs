@@ -170,6 +170,32 @@ public class AnalysisShapeTests : AbomTestContext
     }
 
     /// <summary>
+    /// A document the endpoint refuses to narrow must not be downloadable under a narrowing it
+    /// does not apply. A link built without the term answers 200 with a regular document at an
+    /// address that names another shape, which is a silent widening rather than a refusal.
+    ///
+    /// Asked with `regular` because that is the shape whose document renders: the endpoint
+    /// refuses the term whatever its value, so with `extended` the page shows the refusal and no
+    /// buttons at all.
+    /// </summary>
+    [Fact]
+    public void EveryBillOfMaterialsDownloadCarriesTheShapeTheAddressNames()
+    {
+        Answer("api/bom", Document);
+        Answer("api/properties", Properties);
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+                .NavigateTo("/bom?mode=regular");
+
+        var page = Render<Pages.BillOfMaterials>();
+
+        page.WaitForAssertion(() => Assert.Equal(3, page.FindAll("a[href*='api/bom']").Count));
+        foreach (var link in page.FindAll("a[href*='api/bom']"))
+        {
+            Assert.Contains("mode=regular", link.GetAttribute("href"));
+        }
+    }
+
+    /// <summary>
     /// The graph applies the shape itself rather than handing it to the browser, so the term has
     /// to reach the request. The Explorer assembles that URL by hand from its own controls, and a
     /// term it offers no control for is dropped there — which does not narrow the picture, it
@@ -212,6 +238,47 @@ public class AnalysisShapeTests : AbomTestContext
             Assert.True(JSInterop.Invocations["loadFull"].Count > requests);
             Assert.DoesNotContain("mode=extended",
             (string)JSInterop.Invocations["loadFull"].Last().Arguments[1]!);
+        });
+    }
+
+    /// <summary>
+    /// Following is the same question asked again, so it has to carry the same terms. A delta
+    /// built from `since` alone answers for the default shape, which merges regular arrivals into
+    /// an extended picture and leaves the address claiming something the graph no longer shows.
+    /// </summary>
+    [Fact]
+    public void TheGraphFollowsInTheShapeItWasDrawnIn()
+    {
+        Answer("api/owned-scope", """[{"owner":"octo-org"}]""");
+        Answer("api/graph/version", """{"generation":9,"nodes":0,"edges":0}""");
+        var module = JSInterop.SetupModule("./js/graph.js");
+        module.Setup<bool>("create", _ => true).SetResult(true);
+        // Cached, so the page holds a cursor and catches up rather than loading afresh.
+        module.Setup<Pages.Explorer.LoadResult>("loadFull", _ => true)
+              .SetResult(new Pages.Explorer.LoadResult(0, 0, [], true, 7));
+        module.Setup<Pages.Explorer.MergeResult>("mergeDelta", _ => true)
+              .SetResult(new Pages.Explorer.MergeResult(false, 9, 0, 0, []));
+        module.Setup<Pages.Explorer.Counts>("applyFilters", _ => true)
+              .SetResult(new Pages.Explorer.Counts(0, 0, 0, 0));
+        foreach (var name in new[]
+                 {
+                     "setPalette", "setAnimate", "setGroupBy", "setCollapsed", "setView",
+                     "setGeneration",
+                 })
+        {
+            module.SetupVoid(name, _ => true).SetVoidResult();
+        }
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+            .NavigateTo("/explore?mode=extended&scope=owned");
+
+        var page = Render<Pages.Explorer>();
+
+        page.WaitForAssertion(() => Assert.NotEmpty(JSInterop.Invocations["mergeDelta"]));
+        Assert.All(JSInterop.Invocations["mergeDelta"], call =>
+        {
+            var url = (string)call.Arguments[1]!;
+            Assert.Contains("mode=extended", url);
+            Assert.Contains("scope=owned", url);
         });
     }
 }

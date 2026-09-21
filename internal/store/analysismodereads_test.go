@@ -434,3 +434,96 @@ func TestFlippingARunsModeMovesOnlyTheTotalsThatDeclareIt(t *testing.T) {
 		}
 	}
 }
+
+// observeEdge writes one `uses:` line as a run of the given shape saw it.
+func observeEdge(t *testing.T, s *Store, repository int64, mode, key string) {
+	t.Helper()
+	run, err := s.RecordQueryRun(QueryRun{
+		QueryID: "abom/edges", Repository: "octo/app", DBCommit: "cafe1234", AnalysisMode: mode,
+	})
+	if err != nil {
+		t.Fatalf("recording the %s run: %v", mode, err)
+	}
+	w := NewWriter(s, 0)
+	for _, n := range []Node{
+		{Key: "octo/app/.github/workflows/ci.yml", Kind: "workflow", RepositoryID: repository,
+			Path: ".github/workflows/ci.yml"},
+		{Key: "actions/checkout", Kind: "action", Owner: "actions", Repo: "checkout",
+			IsExternal: true},
+	} {
+		if err := w.AddNode(n); err != nil {
+			t.Fatalf("AddNode: %v", err)
+		}
+	}
+	if err := w.AddEdge(Edge{
+		Key: key, SrcKey: "octo/app/.github/workflows/ci.yml", DstKey: "actions/checkout",
+		Kind: "step-uses-action", RefRaw: "actions/checkout@v4", RefValue: "v4",
+		RepositoryID: repository, QueryRunID: run, FilePath: ".github/workflows/ci.yml",
+		StartLine: 12,
+	}); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+}
+
+// An edge both shapes observe enters the second shape's view by gaining a sighting, not by
+// gaining a row. A delta hands out arrivals by row id, so an extended graph left open across the
+// closure's first look at a line the repository's own checkout already reported would never hear
+// about it, and would keep drawing a picture a reload contradicts.
+func TestAnEdgeSharedWithASecondShapeReachesAnAlreadyOpenGraph(t *testing.T) {
+	s := newTestStore(t)
+	app, err := s.UpsertRepository("octo/app", "")
+	if err != nil {
+		t.Fatalf("UpsertRepository: %v", err)
+	}
+	observeEdge(t, s, app, AnalysisModeRegular, "e-own")
+	generation, err := s.RecordGraphGeneration(GraphRebuild{})
+	if err != nil {
+		t.Fatalf("RecordGraphGeneration: %v", err)
+	}
+
+	observeEdge(t, s, app, AnalysisModeExtended, "e-own")
+
+	delta, err := s.GraphDelta(generation, FullGraphOptions{Mode: AnalysisModeExtended})
+	if err != nil {
+		t.Fatalf("GraphDelta: %v", err)
+	}
+	if delta.Reset {
+		return
+	}
+	for _, e := range delta.Edges {
+		if e.Target == "actions/checkout" {
+			return
+		}
+	}
+	t.Errorf("an edge the closure has just started sharing reached an open extended graph "+
+		"neither as an arrival nor as a reset; delta = %+v", delta)
+}
+
+// The other half of the same rule: an ordinary crawl re-observing what it already saw broadens
+// nothing, and invalidating every open cursor for it would cost the whole payload every cycle.
+func TestReObservingAnEdgeInTheSameShapeLeavesOpenCursorsAlone(t *testing.T) {
+	s := newTestStore(t)
+	app, err := s.UpsertRepository("octo/app", "")
+	if err != nil {
+		t.Fatalf("UpsertRepository: %v", err)
+	}
+	observeEdge(t, s, app, AnalysisModeRegular, "e-own")
+	generation, err := s.RecordGraphGeneration(GraphRebuild{})
+	if err != nil {
+		t.Fatalf("RecordGraphGeneration: %v", err)
+	}
+
+	observeEdge(t, s, app, AnalysisModeRegular, "e-own")
+
+	delta, err := s.GraphDelta(generation, FullGraphOptions{})
+	if err != nil {
+		t.Fatalf("GraphDelta: %v", err)
+	}
+	if delta.Reset {
+		t.Error("a repeat observation in the shape already on record reset an open cursor; " +
+			"every following page would reload the whole graph every crawl")
+	}
+}

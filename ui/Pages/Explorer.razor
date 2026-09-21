@@ -531,7 +531,7 @@
     internal sealed record Counts(int Nodes, int Edges, int Hidden, int Total, int EdgeTotal = 0,
         int Context = 0, int FocusFound = 0);
 
-    private sealed record MergeResult(
+    internal sealed record MergeResult(
         bool Reset, long Generation, int Nodes, int Edges, IReadOnlyList<string> Rules)
     {
         public IReadOnlyList<string> Rules { get; init; } = Rules ?? [];
@@ -1189,12 +1189,14 @@
         ApplyFollow();
     }
 
-    private async Task LoadGraph(bool force = false)
+    /// <summary>
+    /// The terms the server applies, built once because both the payload and every delta that
+    /// follows it have to ask the same question. A delta built from fewer terms is answered for
+    /// the default shape and the whole corpus, so arrivals from outside the picture merge into it
+    /// under an address that still names the narrowing.
+    /// </summary>
+    private List<string> ServerTerms()
     {
-        if (_module is null) return;
-        _loading = true;
-        Busy(ScopeBusyMessage);
-
         var query = new List<string>();
         if (ShowSteps) query.Add("steps=true");
         if (!string.IsNullOrEmpty(_scope)) query.Add("scope=" + _scope);
@@ -1206,6 +1208,16 @@
         // are not applied anywhere. The URL is the payload cache key, so a change refetches.
         query.AddRange(Scope.Spec.Properties.Select(p => "properties=" + Uri.EscapeDataString(p.ToString())));
         query.AddRange(Scope.Spec.NotProperties.Select(p => "notProperties=" + Uri.EscapeDataString(p.ToString())));
+        return query;
+    }
+
+    private async Task LoadGraph(bool force = false)
+    {
+        if (_module is null) return;
+        _loading = true;
+        Busy(ScopeBusyMessage);
+
+        var query = ServerTerms();
         var url = "/api/graph/full" + (query.Count > 0 ? "?" + string.Join("&", query) : "");
         var loaded = await _module.InvokeAsync<LoadResult>("loadFull", "abom-graph", url, force);
         _ruleIds = loaded.Rules;
@@ -1252,9 +1264,9 @@
             return;
         }
 
-        var url = ShowSteps
-            ? $"/api/graph/delta?since={_generation}&steps=true"
-            : $"/api/graph/delta?since={_generation}";
+        var terms = ServerTerms();
+        var url = $"/api/graph/delta?since={_generation}"
+                  + (terms.Count > 0 ? "&" + string.Join("&", terms) : "");
         var merged = await _module.InvokeAsync<MergeResult>("mergeDelta", "abom-graph", url);
         if (merged.Reset)
         {

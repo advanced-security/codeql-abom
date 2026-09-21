@@ -275,3 +275,54 @@ func sightingsOf(t *testing.T, s *Store, fingerprint string) []int64 {
 	}
 	return out
 }
+
+// Extended analysis cannot supersede regular evidence: it looks at a different database, so a
+// finding it does not reproduce is not a finding that went away. A sweep that let the closure run
+// at the same commit stand as the newest evidence would condemn the repository's own results.
+func TestAnExtendedRunDoesNotCondemnAFindingRegularAnalysisReports(t *testing.T) {
+	s := newTestStore(t)
+	repoID, regular := sightingFixture(t, s, "octo-org/app", "cafe1234")
+	extended, err := s.RecordQueryRun(QueryRun{AnalysisMode: AnalysisModeExtended,
+		QueryID: "actions/unpinned-tag", QueryVersion: "1.0.0",
+		Pack: "codeql/actions-queries", PackVersion: "0.6.35",
+		Repository: "octo-org/app", DBCommit: "cafe1234",
+	})
+	if err != nil {
+		t.Fatalf("recording the extended run: %v", err)
+	}
+	if extended == regular {
+		t.Fatal("the extended run collapsed into the regular one; the test proves nothing")
+	}
+
+	if _, err := s.AddFindings([]Finding{{
+		Provider: ProviderCodeQL, QueryRunID: regular, RuleID: "actions/unpinned-tag",
+		RepositoryID: repoID, FilePath: ".github/workflows/ci.yml", StartLine: 1,
+		Fingerprint: "own-checkout",
+	}}); err != nil {
+		t.Fatalf("AddFindings: %v", err)
+	}
+	// The closure reports something of its own, so the extended run has attributed something and
+	// is not mistaken for a run that reported nothing.
+	if _, err := s.AddFindings([]Finding{{
+		Provider: ProviderCodeQL, QueryRunID: extended, RuleID: "actions/unpinned-tag",
+		RepositoryID: repoID, FilePath: "closure/vendor/toolkit/action.yml", StartLine: 4,
+		Fingerprint: "closure-only",
+	}}); err != nil {
+		t.Fatalf("AddFindings: %v", err)
+	}
+
+	report, err := s.StaleFindings()
+	if err != nil {
+		t.Fatalf("StaleFindings: %v", err)
+	}
+	for _, f := range report.Stale {
+		if f.Fingerprint == "own-checkout" {
+			t.Error("a finding the repository's own analysis still reports was condemned by a " +
+				"run of the closure, which never looked at the same database")
+		}
+	}
+	if report.Sightings != 1 {
+		t.Errorf("Sightings = %d, want only the regular evidence this report is drawn from",
+			report.Sightings)
+	}
+}

@@ -206,6 +206,36 @@ func guardEdgeAnalysisMode(tx *sql.Tx, edge Edge, targetID int64) error {
 	return nil
 }
 
+// edgeModeBroadens reports whether this observation moves an edge already on record into a shape
+// it was not a member of.
+//
+// Asked before the row is written, because both halves of a broadening are invisible afterwards:
+// the sighting adds a membership without changing `row_id`, and the upsert can hand the row to a
+// run of another shape. A delta selects edges newer than the cursor's watermark, so neither
+// reaches a graph somebody already has open — it has to be told to load again instead. A first
+// observation broadens nothing: its row is newer than every cursor, so the delta carries it.
+func edgeModeBroadens(tx *sql.Tx, edge Edge) (bool, error) {
+	if edge.QueryRunID <= 0 {
+		return false, nil
+	}
+	var broadens bool
+	err := tx.QueryRow(`WITH incoming(mode) AS (
+		SELECT COALESCE((SELECT analysis_mode FROM abom_query_run WHERE row_id = ?), 'regular')
+	)
+	SELECT EXISTS (SELECT 1 FROM abom_edge_live e, incoming
+		WHERE e.edge_key = ?
+		  AND COALESCE((SELECT q.analysis_mode FROM abom_query_run q
+		                WHERE q.row_id = e.query_run_id), 'regular') <> incoming.mode
+		  AND NOT EXISTS (SELECT 1 FROM abom_edge_sighting s
+		                  JOIN abom_query_run q ON q.row_id = s.query_run_id
+		                  WHERE s.edge_row_id = e.row_id AND q.analysis_mode = incoming.mode))`,
+		edge.QueryRunID, edge.Key).Scan(&broadens)
+	if err != nil {
+		return false, fmt.Errorf("checking whether an edge gains an analysis mode: %w", err)
+	}
+	return broadens, nil
+}
+
 func recordEdgeSighting(tx *sql.Tx, edge Edge) error {
 	_, err := tx.Exec(`INSERT OR IGNORE INTO abom_edge_sighting (edge_row_id, query_run_id)
 		SELECT row_id, ? FROM abom_edge_live WHERE edge_key = ? AND ? > 0`,
