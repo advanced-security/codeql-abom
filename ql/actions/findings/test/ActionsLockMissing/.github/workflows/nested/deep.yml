@@ -1,0 +1,10 @@
+# GitHub does not run workflows from subdirectories, so this must not be counted.
+name: Not A Workflow
+
+on: push
+
+jobs:
+  ignored:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4

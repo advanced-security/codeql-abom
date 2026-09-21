@@ -1,0 +1,16 @@
+# This workflow is managed by gh actions-lock.
+
+name: Release
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/

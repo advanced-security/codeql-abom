@@ -12,8 +12,7 @@
   ,{"name":"endLine","kind":"Integer"}
   ,{"name":"endColumn","kind":"Integer"}]
  ,"tuples":[
-   ["job-uses-reusable-workflow","workflow",".github/workflows/perms12.yml","call-workflow",-1,"","./.github/workflows/perms11.yml","",11,11,11,41]
-  ,["step-uses-action","job",".github/workflows/perms1.yml","build",0,"","actions/checkout@v2","",9,13,9,31]
+   ["step-uses-action","job",".github/workflows/perms1.yml","build",0,"","actions/checkout@v2","",9,13,9,31]
   ,["step-uses-action","job",".github/workflows/perms10.yml","build",0,"","actions/ai-inference","",10,13,10,32]
   ,["step-uses-action","job",".github/workflows/perms11.yml","build",0,"","actions/deploy-pages","",9,13,9,32]
   ,["step-uses-action","job",".github/workflows/perms2.yml","build",0,"","actions/checkout@v2","",9,13,9,31]
@@ -25,5 +24,6 @@
   ,["step-uses-action","job",".github/workflows/perms6.yml","build",1,"","actions/jekyll-build-pages","",11,13,11,38]
   ,["step-uses-action","job",".github/workflows/perms7.yml","build",0,"","actions/add-to-project@v2","",10,13,10,37]
   ,["step-uses-action","job",".github/workflows/perms8.yml","build",0,"","actions/deploy-pages","",10,13,10,32]
-  ,["step-uses-action","job",".github/workflows/perms9.yml","build",0,"","actions/delete-package-versions","",10,13,10,43]]
+  ,["step-uses-action","job",".github/workflows/perms9.yml","build",0,"","actions/delete-package-versions","",10,13,10,43]
+  ,["job-uses-reusable-workflow","workflow",".github/workflows/perms12.yml","call-workflow",-1,"","./.github/workflows/perms11.yml","",11,11,11,41]]
  }}

@@ -80,21 +80,26 @@ func (s *Store) applyPragmas(opts Options) error {
 // DB exposes the handle for read paths and analytics that need raw SQL.
 func (s *Store) DB() *sql.DB { return s.db }
 
-// createdTables are the remaining CREATE TABLE groups, in the order Migrate runs them. All of
-// them run before the column pass, because that pass is one sweep of ALTER TABLE and a table it
-// names but that does not exist yet fails on every fresh database. Additive, so a corpus
+// createTables are the CREATE TABLE statements that follow the main schema, in the order they run.
+//
+// Every one runs before the column pass, because that pass is one sweep of ALTER TABLE and a table
+// it names but that does not exist yet fails on every fresh database. Additive, so a corpus
 // upgraded in place gains them without a rebuild.
-var createdTables = []struct{ ddl, what string }{
-	{commitContentDDL, "the commit content table"},
-	{ownedScopeDDL, "the declared scope tables"},
-	{cycleSpendDDL, "the cycle spend table"},
-	{savedViewDDL, "the saved view table"},
-	{httpCacheDDL, "the response cache table"},
-	{discoveryStateDDL, "the discovery state table"},
-	{enumerationStateDDL, "the enumeration state table"},
-	{repositoryPropertyDDL, "the repository property table"},
-	{propertySchemaDDL, "the property schema table"},
-	{policyDDL, "the policy tables"},
+var createTables = []struct {
+	what string
+	ddl  string
+}{
+	{"the commit content table", commitContentDDL},
+	{"the lock coverage table", lockCoverageDDL},
+	{"the declared scope tables", ownedScopeDDL},
+	{"the cycle spend table", cycleSpendDDL},
+	{"the saved view table", savedViewDDL},
+	{"the response cache table", httpCacheDDL},
+	{"the discovery state table", discoveryStateDDL},
+	{"the enumeration state table", enumerationStateDDL},
+	{"the repository property table", repositoryPropertyDDL},
+	{"the property schema table", propertySchemaDDL},
+	{"the policy tables", policyDDL},
 }
 
 // Migrate creates all tables and adds any columns introduced since the database was created.
@@ -106,9 +111,9 @@ func (s *Store) Migrate() error {
 	if _, err := s.db.Exec(schemaDDL); err != nil {
 		return fmt.Errorf("creating schema: %w", err)
 	}
-	for _, d := range createdTables {
-		if _, err := s.db.Exec(d.ddl); err != nil {
-			return fmt.Errorf("creating %s: %w", d.what, err)
+	for _, t := range createTables {
+		if _, err := s.db.Exec(t.ddl); err != nil {
+			return fmt.Errorf("creating %s: %w", t.what, err)
 		}
 	}
 	for _, c := range addedColumns {

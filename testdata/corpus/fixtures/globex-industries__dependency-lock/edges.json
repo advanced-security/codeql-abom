@@ -12,12 +12,12 @@
   ,{"name":"endLine","kind":"Integer"}
   ,{"name":"endColumn","kind":"Integer"}]
  ,"tuples":[
-   ["job-uses-reusable-workflow","workflow",".github/workflows/rust-ci.yml","reusable",-1,"","dtolnay/rust-toolchain/.github/workflows/reusable.yml@v1","$ Alert",16,11,16,66]
-  ,["step-uses-action","job",".github/workflows/rust-ci.yml","build",0,"","dtolnay/rust-toolchain@v1","",8,13,8,37]
+   ["step-uses-action","job",".github/workflows/rust-ci.yml","build",0,"","dtolnay/rust-toolchain@v1","",8,13,8,37]
   ,["step-uses-action","job",".github/workflows/rust-ci.yml","build",1,"","DToLnAy/RuSt-ToOlChAiN/save@v1","",9,13,9,42]
   ,["step-uses-action","job",".github/workflows/rust-ci.yml","build",2,"","dtolnay/rust-toolchain@V1","$ Alert",10,13,10,37]
   ,["step-uses-action","job",".github/workflows/rust-ci.yml","build",3,"","other-workflow/action@v1","$ Alert",11,13,11,36]
   ,["step-uses-action","job",".github/workflows/rust-ci.yml","build",4,"","mismatched/action@v1","$ Alert",12,13,12,32]
   ,["step-uses-action","job",".github/workflows/rust-ci.yml","build",5,"","malformed/action@v1","$ Alert",13,13,13,31]
-  ,["step-uses-action","job",".github/workflows/rust-ci.yml","build",6,"","missing/action@v1","$ Alert",14,13,14,29]]
+  ,["step-uses-action","job",".github/workflows/rust-ci.yml","build",6,"","missing/action@v1","$ Alert",14,13,14,29]
+  ,["job-uses-reusable-workflow","workflow",".github/workflows/rust-ci.yml","reusable",-1,"","dtolnay/rust-toolchain/.github/workflows/reusable.yml@v1","$ Alert",16,11,16,66]]
  }}

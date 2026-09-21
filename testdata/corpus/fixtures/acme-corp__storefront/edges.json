@@ -12,9 +12,9 @@
   ,{"name":"endLine","kind":"Integer"}
   ,{"name":"endColumn","kind":"Integer"}]
  ,"tuples":[
-   ["job-uses-reusable-workflow","workflow",".github/workflows/release.yml","release",-1,"","acme-corp/shared-ci/.github/workflows/publish.yml@v3","",9,11,9,62]
-  ,["step-uses-action","job",".github/workflows/release.yml","notify",0,"","actions/checkout@v4","",19,15,19,33]
+   ["step-uses-action","job",".github/workflows/release.yml","notify",0,"","actions/checkout@v4","",19,15,19,33]
   ,["step-uses-action","job",".github/workflows/release.yml","notify",1,"","peter-evans/create-pull-request@v7","",20,15,20,48]
   ,["step-uses-action","job",".github/workflows/release.yml","notify",2,"","hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd","",21,15,21,80]
+  ,["job-uses-reusable-workflow","workflow",".github/workflows/release.yml","release",-1,"","acme-corp/shared-ci/.github/workflows/publish.yml@v3","",9,11,9,62]
   ,["job-needs-job","workflow",".github/workflows/release.yml","notify",-1,"","release","",13,12,13,18]]
  }}

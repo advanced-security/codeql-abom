@@ -10,7 +10,7 @@
  */
 
 import actions
-import AbomEdges
+import abom.actions.Edges
 
 from
   string edgeKind, string srcKind, string srcPath, string srcJobId, int srcStepIndex,

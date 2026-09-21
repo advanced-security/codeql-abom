@@ -39,10 +39,18 @@ name: 'ABOM code scanning'
 ## These are resolved against the source root the analysis was given, so selfcheck has to pass the
 ## same root Default Setup uses or they match nothing at all.
 ##
+## `ql/**/test/**` is the CodeQL query test fixtures, and it is `**/testdata/**`'s reason again:
+## a fixture exists to *be* a finding. Only composite actions leak in, because the extractor
+## includes `**/action.yml` recursively while `.github/workflows/*.yml` is anchored at the source
+## root -- so a nested fixture workflow is invisible and a nested fixture `action.yml` is not.
+## Measured 2026-09-20: `ql/actions/graph-extraction/test/AbomEdges/.github/actions/greet/`
+## supplied the only two `abom/actions/uncovered-action-ref` findings in the whole repository.
+##
 paths-ignore:
   - 'ui/tests'
   - 'ui/bin'
   - 'ui/obj'
   - '**/testdata/**'
+  - 'ql/**/test/**'
   - '**/*.test.js'
   - '**/*.test.mjs'

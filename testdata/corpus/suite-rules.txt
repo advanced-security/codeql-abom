@@ -1,3 +1,5 @@
+abom/actions/actions-lock-missing-for-workflow
+abom/actions/uncovered-action-ref
 actions/argument-injection/critical
 actions/argument-injection/medium
 actions/artifact-poisoning/critical

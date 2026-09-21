@@ -1,3 +1,5 @@
+# This workflow is managed by gh actions-lock.
+
 name: Self Audit
 
 # Runs ABOM against ABOM, in every language ABOM is written in.
@@ -9,6 +11,10 @@ name: Self Audit
 #
 # One job per language rather than one job for all of them. They share nothing, they take minutes
 # each, and a single job would report "self audit failed" without saying which language.
+#
+# `action-pins` at the bottom audits no code at all. It is here because it shares these triggers
+# exactly -- including the weekly schedule, for the same reason: an upstream tag can move while
+# nothing in this repository changes.
 
 on:
   pull_request:
@@ -55,7 +61,10 @@ jobs:
           - name: Actions
             language: actions
             source-root: '.'
-            suite: ''
+            # Named for the same reason every row below names one: without it the run falls back
+            # to `runner.DefaultSuite`, which is the corpus attribution suite rather than the
+            # gate, and this job then checks something `make selfcheck` never runs.
+            suite: 'advanced-security/abom-actions-selfcheck-src:codeql-suites/abom-selfcheck.qls'
             dotnet: false
           - name: Go
             language: go
@@ -85,10 +94,10 @@ jobs:
 
     steps:
       - name: Self Audit - Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v7.0.1
 
       - name: Self Audit - Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -97,12 +106,12 @@ jobs:
       # database is created. Every other language here extracts from source alone.
       - name: Self Audit - Setup .NET
         if: matrix.dotnet
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        uses: actions/setup-dotnet@v6.0.0
         with:
           dotnet-version: '10.0.x'
 
       - name: Self Audit - Setup CodeQL
-        uses: ./.github/actions/setup-codeql
+        uses: $/.github/actions/setup-codeql
 
       - name: Self Audit - Analyze our own ${{ matrix.name }}
         # The suite is fetched from the CodeQL registry (ghcr.io) on first use; the CLI reads
@@ -136,4 +145,68 @@ jobs:
             echo ""
             echo "ABOM's own code-quality suite run against this repository, using ABOM's own"
             echo "database-creation path. The threshold is zero findings."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The supply chain the jobs above run on. `.github/workflows/actions.lock` is what decides
+  # which commit each `uses:` resolves to, and the runner is on record doing it: a run of this
+  # branch logged `Download action repository 'actions/checkout@v7.0.1'
+  # (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)`, the commit the lock names. A ref the lock
+  # does not account for does not fall back to the tag -- the run is refused before any job
+  # starts, under the repository's `require_lockfile` Actions policy. So this gates.
+  action-pins:
+    name: Self Audit - Action pins
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Action pins - Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      # Pinned to a commit: an unpinned tool is a poor one to verify pinning with, and
+      # `gh extension install --pin` takes only a tag for a binary extension -- a tag the
+      # publisher can move under a token-carrying step. Building the extension from a detached
+      # checkout of the audited commit is what makes the code that runs here immutable. `gh`
+      # itself is preinstalled on the runner image, which the lockfile does not and cannot cover.
+      - name: Action pins - Install gh actions-lock
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # v0.1.6
+          ACTIONS_LOCK_COMMIT: 047fddf38163b304f1e6ef5649f5ac1646edc6a3
+        # `gh extension install` takes only `OWNER/REPO` or `.`, and names the extension for the
+        # directory it is run in, so the checkout is named for the extension and entered.
+        run: |
+          git clone --no-checkout https://github.com/github/gh-actions-lock \
+            "$RUNNER_TEMP/gh-actions-lock"
+          git -C "$RUNNER_TEMP/gh-actions-lock" checkout --detach "$ACTIONS_LOCK_COMMIT"
+          go build -C "$RUNNER_TEMP/gh-actions-lock" -o gh-actions-lock ./cmd/gh-actions-lock
+          cd "$RUNNER_TEMP/gh-actions-lock" && gh extension install .
+
+      # Offline and needs no token, so it cannot fail for a reason outside the commit under test.
+      # It answers the same question the platform answers at startup, early enough to name the
+      # offending ref rather than failing the whole run with nothing to read.
+      - name: Action pins - Verify every ref is in the lockfile
+        run: gh actions-lock --verify-local --no-fix --no-interactive
+
+      # The other half, and the one that needs the network: a tag that has moved since it was
+      # locked, which is what a hijacked release looks like. On the schedule only. Nothing in a
+      # contributor's branch can cause it and nothing in their branch can fix it, so it belongs
+      # nowhere near their pull request.
+      - name: Action pins - Re-verify every pin upstream
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh actions-lock --verify --no-fix --no-interactive
+
+      - name: Action pins - Summary
+        if: always()
+        env:
+          OUTCOME: ${{ job.status }}
+        run: |
+          {
+            echo "## Self Audit - Action pins"
+            echo ""
+            echo "Result: **$OUTCOME**"
+            echo ""
+            echo "Every \`uses:\` in the tree is accounted for by \`.github/workflows/actions.lock\`,"
+            echo "which is what the runner resolves each ref through. A ref the lock does not cover"
+            echo "is refused at startup, so this check fails the build rather than reporting."
           } >> "$GITHUB_STEP_SUMMARY"

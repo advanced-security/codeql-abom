@@ -18,6 +18,7 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/advisory"
 	"github.com/advanced-security/codeql-abom/internal/graph"
 	"github.com/advanced-security/codeql-abom/internal/ingest"
+	"github.com/advanced-security/codeql-abom/internal/lockfile"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
@@ -145,6 +146,18 @@ func declaredAccounts(repos []string) []store.DeclaredAccount {
 func ingestRepository(s *store.Store, fixtures, full string, without map[string]bool) error {
 	if _, err := s.InsertOwnedRepository(full); err != nil {
 		return fmt.Errorf("recording ownership: %w", err)
+	}
+
+	// The lockfile is not CodeQL output, so no recording carries it; it is read from the source
+	// tree beside them. Keyed by the fixture provenance rather than a commit, because a corpus
+	// tree has no revision and a synthesized SHA would read as one.
+	lock, workflows, err := lockfile.Survey(filepath.Join(filepath.Dir(fixtures), full))
+	if err != nil {
+		return fmt.Errorf("reading the lockfile: %w", err)
+	}
+	if err := s.RecordLockCoverage(full, "corpus-fixture", store.LockCoverageRows(
+		string(lock.Coverage), lock.Schema, lock.Digest, lock.Reason, workflows)); err != nil {
+		return fmt.Errorf("recording lock coverage: %w", err)
 	}
 
 	dir := filepath.Join(fixtures, strings.ReplaceAll(full, "/", "__"))

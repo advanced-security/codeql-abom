@@ -54,6 +54,12 @@ test.describe('the force-directed graph', () => {
     // The precondition every other check here was blocked on. A probe that times a paused
     // renderer counts the browser's idle loop and reads 60 FPS for everything, so the frame
     // count is only evidence beside proof that something moved.
+    //
+    // It waits for the frames rather than timing them. Counting how many arrive in a fixed window
+    // measures the host: three runs of identical code read 15, 28 and 37 on GitHub's runners
+    // against a bar of 30, so the bar decided which machine it got rather than whether the
+    // simulation advanced. The same thirty frames still have to arrive, and a paused renderer
+    // still fails, now on the deadline.
     test('the simulation actually advances in this browser', async ({ page, request, baseURL }) => {
         const summary = await corpusSize(request, baseURL);
         test.skip(!summary.nodes, 'nothing to lay out');
@@ -74,19 +80,35 @@ test.describe('the force-directed graph', () => {
             const before = [sample.x, sample.y];
             it.graph.resumeAnimation();
             it.graph.d3ReheatSimulation();
+            const want = 30;
+            const started = performance.now();
             let frames = 0;
-            const tick = () => {
-                frames += 1;
+            await new Promise((done) => {
+                // The deadline is a timer and not a check inside the callback, because a renderer
+                // that delivers no frames at all would never reach the check.
+                const deadline = setTimeout(done, 10_000);
+                const tick = () => {
+                    frames += 1;
+                    if (frames >= want) {
+                        clearTimeout(deadline);
+                        done();
+                        return;
+                    }
+                    requestAnimationFrame(tick);
+                };
                 requestAnimationFrame(tick);
+            });
+            return {
+                frames,
+                want,
+                millis: Math.round(performance.now() - started),
+                moved: sample.x !== before[0] || sample.y !== before[1],
             };
-            requestAnimationFrame(tick);
-            await new Promise((done) => setTimeout(done, 2000));
-            return { frames, moved: sample.x !== before[0] || sample.y !== before[1] };
         });
 
-        expect(run.frames, 'animation frames in two seconds').toBeGreaterThan(30);
+        expect(run.frames, `animation frames within ${run.millis}ms`).toBe(run.want);
         expect(run.moved, 'a sampled node moved, so the frames were drawing something').toBe(true);
-        console.log(`  measured: ${run.frames} animation frames in 2s, node moved`);
+        console.log(`  measured: ${run.frames} animation frames in ${run.millis}ms, node moved`);
     });
 
     // Spatial memory is the whole reason the layout is worth having. `seedAt` is deterministic in

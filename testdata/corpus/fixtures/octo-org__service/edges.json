@@ -12,8 +12,7 @@
   ,{"name":"endLine","kind":"Integer"}
   ,{"name":"endColumn","kind":"Integer"}]
  ,"tuples":[
-   ["job-uses-reusable-workflow","workflow",".github/workflows/deploy.yml","release",-1,"","octo-org/app/.github/workflows/release.yml@v1","",9,11,9,55]
-  ,["step-uses-action","job",".github/workflows/ci.yml","build",0,"","actions/checkout@v4","",14,15,14,33]
+   ["step-uses-action","job",".github/workflows/ci.yml","build",0,"","actions/checkout@v4","",14,15,14,33]
   ,["step-uses-action","job",".github/workflows/ci.yml","build",1,"","actions/setup-node@v4","",15,15,15,35]
   ,["step-uses-action","job",".github/workflows/ci.yml","build",2,"","tj-actions/changed-files@v45.0.7","",18,15,18,46]
   ,["step-uses-action","job",".github/workflows/ci.yml","build",3,"","actions/cache@v4","",19,15,19,30]
@@ -23,6 +22,7 @@
   ,["step-uses-action","job",".github/workflows/ci.yml","report",0,"","actions/upload-artifact@v4","",37,15,37,40]
   ,["step-uses-action","job",".github/workflows/ci.yml","report",1,"","docker://alpine:3.20","",42,15,42,34]
   ,["step-uses-action","job",".github/workflows/deploy.yml","announce",0,"","octo-org/shared-action@v2","",23,15,23,39]
+  ,["job-uses-reusable-workflow","workflow",".github/workflows/deploy.yml","release",-1,"","octo-org/app/.github/workflows/release.yml@v1","",9,11,9,55]
   ,["job-needs-job","workflow",".github/workflows/ci.yml","scan",-1,"","build","",26,12,26,16]
   ,["job-needs-job","workflow",".github/workflows/ci.yml","report",-1,"","scan","",34,12,34,15]
   ,["job-needs-job","workflow",".github/workflows/deploy.yml","announce",-1,"","release","",14,12,14,18]]

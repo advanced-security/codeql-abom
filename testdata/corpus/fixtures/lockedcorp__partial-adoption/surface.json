@@ -1,0 +1,21 @@
+{"#select":{"columns":[
+   {"name":"subjectPath","kind":"String"}
+  ,{"name":"subjectJob","kind":"String"}
+  ,{"name":"name","kind":"String"}
+  ,{"name":"value","kind":"String"}]
+ ,"tuples":[
+   [".github/workflows/build.yml","build","permissions",""]
+  ,[".github/workflows/build.yml","build","externallyTriggerable","false"]
+  ,[".github/workflows/build.yml","build","runsOn","ubuntu-latest"]
+  ,[".github/workflows/build.yml","build","triggers","push"]
+  ,[".github/workflows/build.yml","build","permissionsScope","default"]
+  ,[".github/workflows/build.yml","build","privileged","false"]
+  ,[".github/workflows/build.yml","build","secretsInherit","false"]
+  ,[".github/workflows/local-only.yml","package","permissions",""]
+  ,[".github/workflows/local-only.yml","package","externallyTriggerable","true"]
+  ,[".github/workflows/local-only.yml","package","runsOn","ubuntu-latest"]
+  ,[".github/workflows/local-only.yml","package","triggers","workflow_dispatch"]
+  ,[".github/workflows/local-only.yml","package","permissionsScope","default"]
+  ,[".github/workflows/local-only.yml","package","privileged","false"]
+  ,[".github/workflows/local-only.yml","package","secretsInherit","false"]]
+ }}

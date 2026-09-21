@@ -1,0 +1,7 @@
+name: Compile
+description: A local composite action, which the lockfile format does not describe.
+runs:
+  using: composite
+  steps:
+    - run: make build
+      shell: bash

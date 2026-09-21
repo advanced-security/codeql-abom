@@ -23,7 +23,7 @@ runs:
 
     - name: Setup CodeQL - Restore the CLI cache
       if: inputs.enable-cache == 'true'
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      uses: actions/cache@v6.1.0
       with:
         path: ~/.local/share/gh/extensions
         key: gh-codeql-${{ runner.os }}-${{ steps.version.outputs.codeql }}
@@ -33,7 +33,7 @@ runs:
     # on the CLI version because a pack is compiled against one.
     - name: Setup CodeQL - Restore the query pack cache
       if: inputs.enable-cache == 'true' && inputs.install-packs == 'true'
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      uses: actions/cache@v6.1.0
       with:
         path: ~/.codeql/packages
         key: >-
@@ -45,9 +45,13 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
+        # Through the environment rather than interpolated into the script: the value is the
+        # contents of a file in the tree being analyzed, so on a pull request a contributor
+        # chooses it. `actions/code-injection` reports the interpolated form, correctly.
+        CODEQL_VERSION: ${{ steps.version.outputs.codeql }}
       run: |
         gh extension install github/gh-codeql --force
-        gh codeql set-version "${{ steps.version.outputs.codeql }}"
+        gh codeql set-version "$CODEQL_VERSION"
         # `make ql` and the selfcheck subcommand invoke `codeql` directly, not through gh.
         # install-stub takes the target directory positionally; it has no --path flag.
         gh codeql install-stub /usr/local/bin

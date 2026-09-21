@@ -23,15 +23,27 @@ ABOM_WORK ?= $(ABOM_TMP)/work
 # on its own: `make start ABOM_SERVE_FLAGS=--expand` opts in.
 ABOM_SERVE_FLAGS ?=
 
+# An exact version, not the `toolchain` line in go.mod: that line is only a floor, so a developer
+# with a newer Go already installed still builds and lints with the newer one. golangci-lint cannot
+# read the export data Go 1.27 emits, and it reports that as phantom "could not import fmt" errors
+# against our own packages rather than as a version complaint -- a failure that reads like a code
+# defect. Exported so vet, test and lint all agree with each other and with CI.
+#
+# `:=` rather than `?=`, so an exported GOTOOLCHAIN=auto in a shell cannot quietly reintroduce the
+# failure. A deliberate `make lint GOTOOLCHAIN=...` on the command line still overrides this.
+GOTOOLCHAIN := go1.26.0
+export GOTOOLCHAIN
+
 BIN      := bin/codeql-abom
 GO_FILES := $(shell find . -name '*.go' -not -path './ui/*')
 
-.PHONY: bench build check-corrupt corpus check-versions clean e2e fmt itest js lint logs package publish ql \
+.PHONY: bench build check-corrupt corpus check-versions clean e2e e2e-corpus e2e-corpus-run e2e-run \
+	fmt itest js lint logs package pins publish ql \
 	quality restart selfcheck serve start status stop style test ui ui-test verify vet
 
 .DEFAULT_GOAL := build
 
-verify: check-corrupt check-versions fmt vet lint test js style ql ui ui-test e2e
+verify: check-corrupt check-versions pins fmt vet lint test js style ql ui ui-test e2e
 
 ## bench: time the store read paths against a real corpus.
 ##
@@ -104,6 +116,10 @@ ABOM_E2E_DIR   ?= $(ABOM_TMP)/e2e
 ABOM_E2E_DB    ?= $(ABOM_E2E_DIR)/abom.db
 ABOM_E2E_PORT  ?= 8231
 ABOM_E2E_FLAGS ?=
+# Which spec files to run, as Playwright positional filters. Empty is every one of them, which is
+# what a developer wants. CI names a single file per job, because the suite runs on one worker
+# against one server and its slowest file would otherwise decide how long the check takes.
+ABOM_E2E_SPECS ?=
 # Which browser runs the suite. Empty takes the pinned Chromium, which is what CI should use
 # because it is identical everywhere. `chrome` borrows the system install, and is the way through
 # on a machine where that download will not complete — a partial one leaves a directory that looks
@@ -118,7 +134,25 @@ ABOM_E2E_CHANNEL ?=
 e2e-corpus: corpus
 	@$(MAKE) e2e ABOM_E2E_DB="$(abspath $(ABOM_CORPUS_DB))"
 
+## e2e-run, e2e-corpus-run: the suite on its own, against a binary, an interface and a database
+## that already exist. `make e2e` builds all three every time, which is right on a workstation and
+## wrong across a matrix — CI builds them once and hands the same three to every job, so a job
+## that rebuilt them would pay the slowest part of the run once per spec file.
+e2e-corpus-run:
+	@if [ ! -f "$(ABOM_CORPUS_DB)" ]; then \
+		echo "e2e-corpus-run: no database at $(ABOM_CORPUS_DB); 'make corpus' builds it."; \
+		echo "e2e-corpus-run: the server would otherwise make an empty one, and every"; \
+		echo "e2e-corpus-run: populated assertion would skip and be reported as a pass."; exit 1; \
+	fi
+	@$(MAKE) e2e-run ABOM_E2E_DB="$(abspath $(ABOM_CORPUS_DB))"
+
+## `e2e` builds, then runs. The run is a recursive invocation rather than a prerequisite because
+## prerequisites of one target are eligible to run concurrently: under `make -j e2e` the server
+## would otherwise start while the binary and the published interface were still being written.
 e2e: build publish
+	@$(MAKE) e2e-run
+
+e2e-run:
 	@if [ "$(abspath $(ABOM_E2E_DB))" = "$(abspath $(ABOM_DB))" ]; then \
 		echo "e2e: refusing to run against $(ABOM_DB), which is the working database."; \
 		echo "e2e: take a copy first, and note that cp does not read the WAL:"; \
@@ -136,7 +170,7 @@ e2e: build publish
 		ABOM_E2E_UI="$(ABOM_UI)/wwwroot" \
 		ABOM_E2E_PORT="$(ABOM_E2E_PORT)" \
 		ABOM_E2E_CHANNEL="$(ABOM_E2E_CHANNEL)" \
-		npx playwright test $(ABOM_E2E_FLAGS)
+		npx playwright test $(ABOM_E2E_FLAGS) $(ABOM_E2E_SPECS)
 
 fmt:
 	@out=$$(gofmt -l . 2>&1 | grep -v '^ui/' || true); \
@@ -167,12 +201,35 @@ package: build publish
 	@cp -R "$(ABOM_UI)/wwwroot" dist/ui
 	@echo "package: dist/codeql-abom + dist/ui"
 
+## pins: what `.github/workflows/actions.lock` accounts for. `--verify-local` is offline and
+## needs no token; the upstream half, which catches a tag that has moved since it was locked, is
+## `--verify` and runs on the self audit's weekly schedule.
+##
+## In `verify` because the platform already enforces it: a `uses:` the lock does not account for
+## is refused at startup under the repository's `require_lockfile` policy, and the refusal has no
+## check run, no annotation and no stated reason -- every workflow on the branch just reports
+## `startup_failure`. This is the only place that failure gets to name the ref.
+##
+## Never satisfy it by editing the lock. Only `gh actions-lock` may write that file, because a
+## hand-edited lock names a commit nobody resolved.
+pins:
+	@if ! gh actions-lock --help >/dev/null 2>&1; then \
+		echo "gh actions-lock is not installed: gh extension install github/gh-actions-lock"; exit 1; \
+	fi
+	@gh actions-lock --verify-local --no-fix --no-interactive
+
 ## publish: build the interface into $(ABOM_UI). Separate from `ui`, which only typechecks it.
 publish:
 	@rm -rf "$(ABOM_UI)"
 	@dotnet publish ui/Abom.WebAssembly.csproj -c Release -o "$(ABOM_UI)" --nologo -v quiet
 	@echo "publish: $(ABOM_UI)/wwwroot"
 
+## ql: query tests. A test directory holding a `.github/workflows/actions.lock` gets its database
+## built here first, because `codeql test run` extracts by the actions extractor's `file_types`
+## (`.yml` and `.yaml`) while the lockfile is included only by `tools/baseline-config.json`, which
+## `database create` applies and the test harness does not. Without this a lock-aware query tests
+## against a database with no lockfile in it and quietly passes on an empty result.
+## Rebuilt every run: `--reuse-dataset` would otherwise keep a stale fixture indefinitely.
 ql:
 	@codeql test run ql/actions/graph-extraction/test ql/actions/findings/test
 
