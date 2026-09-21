@@ -138,7 +138,7 @@ func (s *Store) RecordGraphGeneration(r GraphRebuild) (int64, error) {
 	if err := s.db.QueryRow(`SELECT MAX(row_id) FROM abom_node_live`).Scan(&nodeMark); err != nil {
 		return 0, fmt.Errorf("reading node watermark: %w", err)
 	}
-	if err := s.db.QueryRow(`SELECT MAX(row_id) FROM abom_edge_live`).Scan(&edgeMark); err != nil {
+	if err := s.db.QueryRow(`SELECT MAX(row_id) FROM abom_edge_regular`).Scan(&edgeMark); err != nil {
 		return 0, fmt.Errorf("reading edge watermark: %w", err)
 	}
 	var containMark sql.NullInt64
