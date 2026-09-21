@@ -10,3 +10,27 @@
 # Retains `Debug/SyntaxError` and `Diagnostics/SuccessfullyExtractedFiles`, which the upstream
 # suite includes and which report nothing about security. They stay because a self audit that
 # cannot distinguish "no findings" from "nothing was extracted" is worse than no self audit.
+
+# `unpinned-tag` reports a `uses:` naming a tag rather than a commit, trusting only the `actions`
+# and `github` orgs. It reads the ref and never `.github/workflows/actions.lock`, which resolves
+# every `uses:` here to a commit and is what a diff shows when one moves. `gh actions-lock`
+# rewrites an inline SHA back to a narrowed semver tag, so in this repository a tag *is* the
+# pinned form and the rule fires on every third-party action the repository will ever add --
+# measured 2026-09-20, on `golangci/golangci-lint-action@v9.3.0` and
+# `peter-evans/create-pull-request@v8.1.1`, both of which the lockfile resolves to a commit.
+#
+# TEMPORARY. `codeql/actions-queries` 0.6.36 makes the rule read the lockfile, at which point this
+# exclusion is wrong rather than merely unnecessary. 0.6.35 is the latest published as of
+# 2026-09-20; delete this on the upgrade that resolves 0.6.36 or later.
+#
+# Excluded here and not in `abom-findings.qls`: a repository ABOM analyzes has no lockfile of ours
+# to vouch for it, so the finding is still collected and attributed.
+- exclude:
+    id: actions/unpinned-tag
+
+# What replaces it, so the gate is not left with nothing that reads the lockfile. It asks the
+# question the excluded rule cannot: not whether a ref *looks* pinned, but whether the lockfile
+# accounts for it. Stricter than upstream ever was here -- no trusted-owner exemption, and a bare
+# commit is not taken on faith.
+- query: ActionsLockAware/UncoveredActionRef.ql
+  from: advanced-security/abom-actions-findings-src

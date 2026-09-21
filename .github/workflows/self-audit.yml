@@ -11,6 +11,10 @@ name: Self Audit
 #
 # One job per language rather than one job for all of them. They share nothing, they take minutes
 # each, and a single job would report "self audit failed" without saying which language.
+#
+# `action-pins` at the bottom audits no code at all. It is here because it shares these triggers
+# exactly -- including the weekly schedule, for the same reason: an upstream tag can move while
+# nothing in this repository changes.
 
 on:
   pull_request:
@@ -57,7 +61,10 @@ jobs:
           - name: Actions
             language: actions
             source-root: '.'
-            suite: ''
+            # Named for the same reason every row below names one: without it the run falls back
+            # to `runner.DefaultSuite`, which is the corpus attribution suite rather than the
+            # gate, and this job then checks something `make selfcheck` never runs.
+            suite: 'advanced-security/abom-actions-selfcheck-src:codeql-suites/abom-selfcheck.qls'
             dotnet: false
           - name: Go
             language: go
@@ -138,4 +145,57 @@ jobs:
             echo ""
             echo "ABOM's own code-quality suite run against this repository, using ABOM's own"
             echo "database-creation path. The threshold is zero findings."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The supply chain the jobs above run on, which no CodeQL suite here can answer for: the
+  # `actions/unpinned-tag` rule reads the ref, and `gh actions-lock` rewrites an inline SHA back
+  # to a tag, so a ref's shape says nothing about whether it is pinned. `.github/workflows/
+  # actions.lock` holds the commit, including for actions reached through a composite action, and
+  # this is what says the two still agree.
+  action-pins:
+    name: Self Audit - Action pins
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Action pins - Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      # Pinned: an unpinned tool is a poor one to verify pinning with. `gh` itself is preinstalled
+      # on the runner image, which the lockfile does not and cannot cover.
+      - name: Action pins - Install gh actions-lock
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh extension install github/gh-actions-lock --pin v0.1.6
+
+      # Offline and needs no token, so it cannot fail for a reason outside the commit under test.
+      #
+      # Expect one standing warning: `actions/cache` is referenced by bare SHA in
+      # `.github/actions/setup-codeql`, and the tool prefers a tag it can narrow. It is a style
+      # preference, not a finding -- a bare SHA is the strongest pin there is -- and fix mode
+      # will not clear it, because it only rewrites files under `.github/workflows`.
+      - name: Action pins - Verify every ref is in the lockfile
+        run: gh actions-lock --verify-local --no-fix --no-interactive
+
+      # The other half, and the one that needs the network: a tag that has moved since it was
+      # locked, which is what a hijacked release looks like. On the schedule only. Nothing in a
+      # contributor's branch can cause it and nothing in their branch can fix it, so it belongs
+      # nowhere near their pull request.
+      - name: Action pins - Re-verify every pin upstream
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh actions-lock --verify --no-fix --no-interactive
+
+      - name: Action pins - Summary
+        if: always()
+        env:
+          OUTCOME: ${{ job.status }}
+        run: |
+          {
+            echo "## Self Audit - Action pins"
+            echo ""
+            echo "Result: **$OUTCOME**"
+            echo ""
+            echo "Every \`uses:\` in the tree, including those reached through a composite"
+            echo "action, has an entry in \`.github/workflows/actions.lock\`."
           } >> "$GITHUB_STEP_SUMMARY"

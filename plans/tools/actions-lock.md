@@ -1,6 +1,7 @@
 # Use GitHub's tooling to keep workflow locks current
 
-**Status:** native onboarding has been run locally; repeatable checks and platform verification are pending.
+**Status:** the pinned CLI and its offline coverage check run in CI and in `make verify`; platform
+enforcement, the update path and the supported-workflow write-up are pending.
 
 ## Why this exists
 
@@ -32,25 +33,21 @@ host support and the actual execution of this repository's workflows still need 
    and lock entries together. Account for every selected commit that differs from the former inline
    pin, including version narrowing. Never hand-edit the generated lock or rerun fix mode over
    unreviewed user changes. Confirm workflow coverage, not just a count of deduplicated packages.
-2. **Pin and verify the toolchain.** Select an exact released CLI with verified distribution
-   provenance, and record the parser/schema/platform combinations it supports. Explicitly install
-   required tools in the relevant job; absence is a setup failure, not a skipped check. Coordinate
-   upgrades with Dependabot compatibility rather than automatically accepting newer schema output.
-3. **Check without rewriting.** Add offline coverage validation for workflow, action-metadata and
-   lock-only changes. Prefer a suitable existing always-run check before creating another workflow;
-   required-check path filters must not leave pull requests waiting for an unreported status.
-   Make authenticated network verification separately named and budgeted. Depends on 2.
-4. **Measure native execution semantics.** On an explicitly approved target with benign actions,
+2. **Record which platforms the pinned toolchain supports, and who moves it.** The version is
+   pinned in three places; what is not written down is the platform matrix that combination is
+   known good on, or how a schema bump reaches us. Coordinate upgrades with Dependabot
+   compatibility rather than automatically accepting newer schema output.
+3. **Measure native execution semantics.** On an explicitly approved target with benign actions,
    test onboarded and unonboarded workflows, missing entries, a moved tag with an older locked SHA,
    malformed locks, `$/` references, nested composites and reusable workflows. Record the run
    commit, lock blob, host/runner and observed selected commits. Establish caller/callee lock
    precedence with the resolution plan before ABOM claims to reproduce it. Depends on 1 and 2;
    local fixtures can begin without a live target, but cannot establish deployed enforcement.
-5. **Exercise the native update path.** Inspect a Dependabot update of an onboarded workflow and
+4. **Exercise the native update path.** Inspect a Dependabot update of an onboarded workflow and
    its lock together, including transitive changes. Document what updates automatically and what
    still requires explicit onboarding or operator review. Existing Dependabot configuration is the
    starting point, not a reason to add another updater. Depends on 2 and an approved test target.
-6. **Document the supported workflow.** Explain onboarding, review, no-fix checking, verification
+5. **Document the supported workflow.** Explain onboarding, review, no-fix checking, verification
    and upgrades, including native coverage gaps and the role of explicit SHA pins on unsupported
    platforms. Update the old SHA/comment-only explanation in the Dependabot configuration when
    adoption is implemented. Never automate acceptance of moved or unreachable pins. Depends on
@@ -58,16 +55,32 @@ host support and the actual execution of this repository's workflows still need 
 
 ## Read-only commands
 
-These are the proposed check invocations, to verify in isolated source trees before wiring CI:
+Two modes, with different evidence and different costs:
 
 ```sh
-gh actions-lock --verify-local --no-fix --no-interactive --json
-gh actions-lock --verify --no-fix --no-interactive --json
+gh actions-lock --verify-local --no-fix --no-interactive
+gh actions-lock --verify --no-fix --no-interactive
 ```
 
-In `v0.1.6`, `runVerifyLocal` can migrate local references unless `--no-fix` is set, even though
-the mode is offline. `--json` selects output only. Always specify no-fix; full verification uses
-the network, whereas offline coverage cannot prove identity or commit reachability.
+```mermaid
+flowchart LR
+    PR["pull request<br/>push"] -->|"offline, no token"| LOCAL["--verify-local<br/>--no-fix"]
+    CRON["weekly schedule"] -->|"offline, no token"| LOCAL
+    CRON -->|"network, authenticated"| NET["--verify<br/>--no-fix"]
+    LOCAL -->|"every uses: has a<br/>lockfile entry"| COVER["coverage"]
+    NET -->|"the pin is still<br/>reachable upstream"| REACH["reachability"]
+    LOCAL -. "cannot prove identity<br/>or reachability" .-> REACH
+    COVER -. "coverage is not<br/>enforcement" .-> RUNTIME["observed at runtime"]
+    REACH -. "no host enforcement<br/>evidence yet" .-> RUNTIME
+    FIX["fix mode"] -. "never run by ABOM;<br/>rewrites workflows" .-> LOCAL
+    style FIX fill:#3d1d1d
+    style RUNTIME fill:#3d2d1d
+```
+
+A pull request cannot fail for a reason outside its own commit, so upstream re-verification is
+scheduled rather than attached to review. In `v0.1.6`, `runVerifyLocal` can migrate local
+references unless `--no-fix` is set, even though the mode is offline; `--json` selects output only
+and does not prevent writes. Always specify no-fix.
 
 ## The constraints that must not be broken
 

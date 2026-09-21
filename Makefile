@@ -27,12 +27,12 @@ BIN      := bin/codeql-abom
 GO_FILES := $(shell find . -name '*.go' -not -path './ui/*')
 
 .PHONY: bench build check-corrupt corpus check-versions clean e2e e2e-corpus e2e-corpus-run e2e-run \
-	fmt itest js lint logs package publish ql \
+	fmt itest js lint logs package pins publish ql \
 	quality restart selfcheck serve start status stop style test ui ui-test verify vet
 
 .DEFAULT_GOAL := build
 
-verify: check-corrupt check-versions fmt vet lint test js style ql ui ui-test e2e
+verify: check-corrupt check-versions pins fmt vet lint test js style ql ui ui-test e2e
 
 ## bench: time the store read paths against a real corpus.
 ##
@@ -186,12 +186,31 @@ package: build publish
 	@cp -R "$(ABOM_UI)/wwwroot" dist/ui
 	@echo "package: dist/codeql-abom + dist/ui"
 
+## pins: every `uses:` in the tree has an entry in `.github/workflows/actions.lock`, which is
+## what actually holds the commit -- `gh actions-lock` rewrites an inline SHA back to a tag, so
+## reading the ref tells you nothing. `--verify-local` is offline and needs no token; the
+## upstream half, which catches a tag that has moved since it was locked, is `--verify` and runs
+## on the self audit's weekly schedule rather than against a pull request nobody's change broke.
+##
+## In `verify` for the reason `lint` is: a check that only runs in CI fails after the push.
+pins:
+	@if ! gh actions-lock --help >/dev/null 2>&1; then \
+		echo "gh actions-lock is not installed: gh extension install github/gh-actions-lock"; exit 1; \
+	fi
+	@gh actions-lock --verify-local --no-fix --no-interactive
+
 ## publish: build the interface into $(ABOM_UI). Separate from `ui`, which only typechecks it.
 publish:
 	@rm -rf "$(ABOM_UI)"
 	@dotnet publish ui/Abom.WebAssembly.csproj -c Release -o "$(ABOM_UI)" --nologo -v quiet
 	@echo "publish: $(ABOM_UI)/wwwroot"
 
+## ql: query tests. A test directory holding a `.github/workflows/actions.lock` gets its database
+## built here first, because `codeql test run` extracts by the actions extractor's `file_types`
+## (`.yml` and `.yaml`) while the lockfile is included only by `tools/baseline-config.json`, which
+## `database create` applies and the test harness does not. Without this a lock-aware query tests
+## against a database with no lockfile in it and quietly passes on an empty result.
+## Rebuilt every run: `--reuse-dataset` would otherwise keep a stale fixture indefinitely.
 ql:
 	@codeql test run ql/actions/graph-extraction/test ql/actions/findings/test
 

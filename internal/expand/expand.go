@@ -430,6 +430,15 @@ func (e *Expander) prepare(
 		}
 	}
 
+	// Read from the tree at the commit being analyzed, never from the repository's current state:
+	// a lock describes the revision it was committed with. Recorded, not acted on -- selection
+	// still follows the declared reference.
+	if tree.SHA != "" {
+		if err := e.recordLockCoverage(b.full(), tree); err != nil {
+			return work.Prepared{}, err
+		}
+	}
+
 	// Asked of every batch that reaches here, including one whose tree came from the cache: the
 	// bytes being on disk already says nothing about whether this pair has been analyzed.
 	outstanding, err := e.pendingWork(planned, b.full(), tree.SHA, digest)

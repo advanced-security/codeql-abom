@@ -10,3 +10,4 @@ dependencies:
   # The AST library ABOM's own queries are written against. Already resolved transitively through
   # actions-queries; named directly because a query here imports it.
   codeql/actions-all: 0.6.1
+  advanced-security/abom-actions-lib: ${workspace}

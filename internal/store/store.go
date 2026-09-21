@@ -95,6 +95,9 @@ func (s *Store) Migrate() error {
 	if _, err := s.db.Exec(commitContentDDL); err != nil {
 		return fmt.Errorf("creating the commit content table: %w", err)
 	}
+	if _, err := s.db.Exec(lockCoverageDDL); err != nil {
+		return fmt.Errorf("creating the lock coverage table: %w", err)
+	}
 	if _, err := s.db.Exec(ownedScopeDDL); err != nil {
 		return fmt.Errorf("creating the declared scope tables: %w", err)
 	}

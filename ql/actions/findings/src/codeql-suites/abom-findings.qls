@@ -18,3 +18,9 @@
 # The nine `experimental/` queries stay in. Precision is a property of the rule, and a consumer
 # filtering on rule id can always drop them — whereas a finding never collected cannot be
 # recovered.
+
+# The first ABOM-authored query to earn a place here. It answers what an upstream pinning rule
+# structurally cannot: whether the lockfile accounts for a reference at all. `actions/unpinned-tag`
+# exempts the `actions` and `github` owners and accepts any bare commit, so a reference either one
+# covers is never examined, lockfile or not.
+- query: ActionsLockAware/UncoveredActionRef.ql

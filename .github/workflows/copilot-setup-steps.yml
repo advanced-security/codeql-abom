@@ -94,6 +94,13 @@ jobs:
       - name: Copilot Setup - Install golangci-lint
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
 
+      # Same, for `make pins`. Pinned to the version the self audit installs, so the agent and CI
+      # verify the lockfile with the same tool.
+      - name: Copilot Setup - Install gh actions-lock
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh extension install github/gh-actions-lock --pin v0.1.6
+
       - name: Copilot Setup - Warm the Go build and module cache
         run: |
           go mod download
@@ -123,6 +130,7 @@ jobs:
           echo "dotnet:        $(dotnet --version)"
           echo "codeql:        $(codeql version --format=terse)"
           echo "golangci-lint: $(golangci-lint --version)"
+          echo "actions-lock:  $(gh extension list | awk '/actions-lock/ {print $4}')"
 
       # Proving the caches are warm, not just that the tools exist. Each of these is something
       # `make verify` would otherwise reach the network for on its first run, which is the one

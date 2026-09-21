@@ -1,0 +1,5 @@
+| .github/workflows/test.yml:29:9:31:6 | Uses Step | 'missing/action@v1.0.0' has no entry in the Actions lockfile resolving it to a commit. |
+| .github/workflows/test.yml:31:9:33:6 | Uses Step | 'actions/setup-go@v7.0.0' has no entry in the Actions lockfile resolving it to a commit. |
+| .github/workflows/test.yml:33:9:35:6 | Uses Step | 'unlisted/action@abcdef0123456789abcdef0123456789abcdef01' has no entry in the Actions lockfile resolving it to a commit. |
+| .github/workflows/test.yml:35:9:37:6 | Uses Step | 'stale/action@v2.0.0' has no entry in the Actions lockfile resolving it to a commit. |
+| .github/workflows/test.yml:37:9:37:35 | Uses Step | 'broken/action@v1.0.0' has no entry in the Actions lockfile resolving it to a commit. |

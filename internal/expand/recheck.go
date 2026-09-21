@@ -24,19 +24,42 @@ type RefProbe interface {
 // The ref is not optional. Probing the default branch for a row that asked about `v4` compares
 // two unrelated commits, so an unmoved tag reads as drifted, re-analyzes to the identical result
 // and is due again next pass — a treadmill indistinguishable from real drift.
+//
+// An annotated tag reaches the same treadmill by its own route: it has an object of its own, and
+// `ls-remote` reports that object, not the commit under it. `^{}` is asked for alongside the ref
+// so the answer is comparable with the commit a checkout produces.
 func (c *Checkout) Resolve(ctx context.Context, owner, repo, ref string) (string, error) {
 	if ref == "" {
 		ref = "HEAD"
 	}
-	out, err := c.run(ctx, "", "ls-remote", c.cloneURL(owner, repo), ref)
+	out, err := c.run(ctx, "", "ls-remote", c.cloneURL(owner, repo), ref, ref+"^{}")
 	if err != nil {
 		return "", fmt.Errorf("%w: resolving %s/%s@%s: %s", ErrUnavailable, owner, repo, ref, out)
 	}
-	fields := strings.Fields(out)
-	if len(fields) == 0 {
+	sha, ok := dereferenced(out)
+	if !ok {
 		return "", fmt.Errorf("%w: %s/%s has no %s", ErrUnavailable, owner, repo, ref)
 	}
-	return fields[0], nil
+	return sha, nil
+}
+
+// dereferenced picks the commit out of `ls-remote` output, preferring the `^{}` line an
+// annotated tag adds. Only a tag has one, so everything else still answers from its single line.
+func dereferenced(out string) (string, bool) {
+	var fallback string
+	for line := range strings.SplitSeq(out, "\n") {
+		sha, name, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		if !ok || sha == "" {
+			continue
+		}
+		if strings.HasSuffix(name, "^{}") {
+			return sha, true
+		}
+		if fallback == "" {
+			fallback = sha
+		}
+	}
+	return fallback, fallback != ""
 }
 
 // RecheckStats summarizes a recheck pass.
