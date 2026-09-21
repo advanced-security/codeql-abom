@@ -5,5 +5,5 @@ library: false
 suites: codeql-suites
 dependencies:
   codeql/actions-queries: 0.6.35
-  # For the one query below that replaces `actions/unpinned-tag` in this suite.
+  # For `ActionsLockMissingForWorkflow`, which guards this repository keeping a readable lockfile.
   advanced-security/abom-actions-findings-src: ${workspace}

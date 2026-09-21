@@ -105,3 +105,31 @@ func TestAnUnsupportedLockfileKeepsItsReasonAndTheSchemaThatCausedIt(t *testing.
 		t.Errorf("digest = %q, want %q", digest, "cccc")
 	}
 }
+
+// Coverage is per repository and commit, and the expander asks this before deciding a reference
+// needs no checkout. A database built before lock coverage existed answers "no" and is read
+// again; answering "yes" for a commit nothing recorded would leave it unread for good.
+func TestACommitWithNoRecordedCoverageReportsItAsMissing(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.RecordLockCoverage("owner/repo", "sha1",
+		[]LockCoverage{{Coverage: "not_onboarded"}}); err != nil {
+		t.Fatalf("RecordLockCoverage: %v", err)
+	}
+
+	for _, c := range []struct {
+		repository, commit string
+		want               bool
+	}{
+		{"owner/repo", "sha1", true},
+		{"owner/repo", "sha2", false},
+		{"owner/other", "sha1", false},
+	} {
+		got, err := s.HasLockCoverage(c.repository, c.commit)
+		if err != nil {
+			t.Fatalf("HasLockCoverage(%s, %s): %v", c.repository, c.commit, err)
+		}
+		if got != c.want {
+			t.Errorf("HasLockCoverage(%s, %s) = %v, want %v", c.repository, c.commit, got, c.want)
+		}
+	}
+}

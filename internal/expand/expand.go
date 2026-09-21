@@ -667,6 +667,17 @@ func (e *Expander) settleWithoutFetching(
 	if !outstanding.empty() {
 		return work.Prepared{}, false, nil
 	}
+	// Lock coverage is read from a checkout, so settling here is the one path that can skip it
+	// indefinitely: a database whose analyzed refs have no pending work never fetches again, and
+	// an upgrade or a tier requeue is exactly that case. Absence of rows means nobody looked,
+	// which is a different fact from "no lockfile", so the commit is read once to say which.
+	covered, err := e.Store.HasLockCoverage(b.full(), sha)
+	if err != nil {
+		return work.Prepared{}, false, err
+	}
+	if !covered {
+		return work.Prepared{}, false, nil
+	}
 	return work.Prepared{
 		Job:             work.Job{Repository: b.key()},
 		Commit:          sha,

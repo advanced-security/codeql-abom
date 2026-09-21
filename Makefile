@@ -43,7 +43,7 @@ GO_FILES := $(shell find . -name '*.go' -not -path './ui/*')
 
 .DEFAULT_GOAL := build
 
-verify: check-corrupt check-versions pins fmt vet lint test js style ql ui ui-test e2e
+verify: check-corrupt check-versions fmt vet lint test js style ql ui ui-test e2e
 
 ## bench: time the store read paths against a real corpus.
 ##
@@ -146,7 +146,11 @@ e2e-corpus-run:
 	fi
 	@$(MAKE) e2e-run ABOM_E2E_DB="$(abspath $(ABOM_CORPUS_DB))"
 
-e2e: build publish e2e-run
+## `e2e` builds, then runs. The run is a recursive invocation rather than a prerequisite because
+## prerequisites of one target are eligible to run concurrently: under `make -j e2e` the server
+## would otherwise start while the binary and the published interface were still being written.
+e2e: build publish
+	@$(MAKE) e2e-run
 
 e2e-run:
 	@if [ "$(abspath $(ABOM_E2E_DB))" = "$(abspath $(ABOM_DB))" ]; then \
@@ -197,13 +201,15 @@ package: build publish
 	@cp -R "$(ABOM_UI)/wwwroot" dist/ui
 	@echo "package: dist/codeql-abom + dist/ui"
 
-## pins: every `uses:` in the tree has an entry in `.github/workflows/actions.lock`, which is
-## what actually holds the commit -- `gh actions-lock` rewrites an inline SHA back to a tag, so
-## reading the ref tells you nothing. `--verify-local` is offline and needs no token; the
-## upstream half, which catches a tag that has moved since it was locked, is `--verify` and runs
-## on the self audit's weekly schedule rather than against a pull request nobody's change broke.
+## pins: what `.github/workflows/actions.lock` accounts for. `--verify-local` is offline and
+## needs no token; the upstream half, which catches a tag that has moved since it was locked, is
+## `--verify` and runs on the self audit's weekly schedule.
 ##
-## In `verify` for the reason `lint` is: a check that only runs in CI fails after the push.
+## Deliberately not in `verify`, and deliberately not a gate. What decides which commit runs here
+## is the inline full-length SHA on every `uses:`; the lockfile is committed as preparation for
+## the native pinning path, and no runner has been shown to consult it. It will also report the
+## workflow refs until `gh actions-lock` regenerates the lock against them -- which only that tool
+## may do, because a hand-edited lock names commits nobody resolved.
 pins:
 	@if ! gh actions-lock --help >/dev/null 2>&1; then \
 		echo "gh actions-lock is not installed: gh extension install github/gh-actions-lock"; exit 1; \

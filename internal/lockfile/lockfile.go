@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -58,7 +57,7 @@ type Lock struct {
 // A repository that has not adopted the feature is NotOnboarded, not an error, because most of
 // the corpus has not adopted it. An error is reserved for a tree that cannot be read at all.
 func Read(root string) (Lock, error) {
-	contents, err := os.ReadFile(filepath.Join(root, native.Path))
+	contents, err := readUnderRoot(root, native.Path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return Lock{Coverage: NotOnboarded}, nil
@@ -79,6 +78,36 @@ func Read(root string) (Lock, error) {
 	lock.Schema = file.Version
 	lock.Coverage = Covered
 	return lock, nil
+}
+
+// readUnderRoot reads one path inside the checkout, refusing anything that leaves it.
+//
+// The trees this reads are downloaded from repositories ABOM does not control, so a symlink in
+// one is an instruction from a stranger: joining the path and reading it would let a repository
+// nominate any file the process can open as its own lockfile. os.Root resolves every component
+// beneath the checkout, so an escape is an error rather than someone else's file.
+func readUnderRoot(root, name string) ([]byte, error) {
+	dir, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = dir.Close() }()
+	return dir.ReadFile(name)
+}
+
+// readDirUnderRoot enumerates one directory inside the checkout, on the same terms.
+func readDirUnderRoot(root, name string) ([]fs.DirEntry, error) {
+	dir, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = dir.Close() }()
+	handle, err := dir.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = handle.Close() }()
+	return handle.ReadDir(-1)
 }
 
 // Workflow reports coverage for one repository-relative workflow path.
@@ -126,7 +155,7 @@ func Survey(root string) (Lock, []WorkflowCoverage, error) {
 // Only the directory GitHub runs workflows from, and not recursively: a `.yml` deeper in the tree
 // is not a workflow, and the lockfile keys its entries on this same set of paths.
 func workflowPaths(root string) []string {
-	entries, err := os.ReadDir(filepath.Join(root, ".github", "workflows"))
+	entries, err := readDirUnderRoot(root, ".github/workflows")
 	if err != nil {
 		return nil
 	}

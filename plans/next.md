@@ -44,10 +44,12 @@ The ranking is itself a plan, and is subject to change.
    the interface too** — a reader has to be able to tell *somebody will see this alert* from
    *nobody will ever alert on this, and it still reaches you*.
 2. **[Use GitHub's tooling to keep workflow locks current](tools/actions-lock.md)** - the pinned
-  CLI and its offline coverage check now gate every push, so what is left is the evidence a local
-  check cannot supply: which platforms that toolchain combination is good on, whether a host
-  actually enforces the lock at runtime, and what a Dependabot update does to a workflow and its
-  lock together. Approved platform experiments cannot be replaced by a run-details link.
+  CLI and its offline coverage check now run on every push, reporting rather than gating, so what
+  is left is the evidence a local check cannot supply: which platforms that toolchain combination
+  is good on, whether a host actually enforces the lock at runtime, and what a Dependabot update
+  does to a workflow and its lock together. Until a host is shown to enforce the lock, the inline
+  full-length SHA on every `uses:` is what pins this repository, and the lock is preparation.
+  Approved platform experiments cannot be replaced by a run-details link.
   GitHub owns generation and verification, not a second ABOM pinning tool.
 3. **[Analyze the commit the workflow actually locks](db/actions-lockfile.md)** - the default
   resolution contract going forward, not an optional acceleration. Read the native lock at the

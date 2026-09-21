@@ -1,7 +1,7 @@
 # Use GitHub's tooling to keep workflow locks current
 
-**Status:** the pinned CLI and its offline coverage check run in CI and in `make verify`; platform
-enforcement, the update path and the supported-workflow write-up are pending.
+**Status:** the pinned CLI and its offline coverage check run in CI, reported and not enforced;
+platform enforcement, the update path and the supported-workflow write-up are pending.
 
 ## Why this exists
 
@@ -10,10 +10,16 @@ ABOM should use those rather than build a competing pinning tool. An action can 
 version reference while the workflow lock selects an immutable commit. A full-version tag is still
 mutable; the locked commit, not the spelling of the tag, supplies that execution identity.
 
-The generated [actions.lock](../../.github/workflows/actions.lock) records schema `v0.0.2`, and
-ABOM's workflows now use tags with their selected commits in that file. A run-details Lockfile link
-describes a particular run revision, not proof that every platform enforces the lock or that a local
-uncommitted lock affects earlier runs. This plan owns ABOM's workflow/toolchain adoption; consuming
+The generated [actions.lock](../../.github/workflows/actions.lock) records schema `v0.0.2` and is
+committed as preparation. Every `uses:` in `.github/workflows` still carries an inline full-length
+commit SHA, which is what decides what runs: nothing has yet shown that a runner consults the lock,
+and a migration to tags before that evidence exists would hand a retagged action the ability to
+change what these workflows run. A run-details Lockfile link describes a particular run revision,
+not proof that every platform enforces the lock or that a local uncommitted lock affects earlier
+runs. The committed lock keys its entries on the tags those inline SHAs were resolved from, so
+`--verify-local` reports the workflow refs; that measurement is why the check runs at all today,
+and only `gh actions-lock` may close it — the lock is generated, and a hand-edited one would name
+commits nobody resolved. This plan owns ABOM's workflow/toolchain adoption; consuming
 locks during analysis belongs to [actions-lockfile.md](../db/actions-lockfile.md).
 
 ## Compatibility baseline

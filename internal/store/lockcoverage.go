@@ -130,3 +130,23 @@ func (s *Store) LockCoverageCounts() (map[string]int, error) {
 	}
 	return counts, nil
 }
+
+// HasLockCoverage reports whether this repository's lockfile was read at this commit.
+//
+// Asked before a reference is settled without a checkout: a commit analyzed before this table
+// existed has no rows, and settling it again would leave the lockfile unread indefinitely. Every
+// reading writes at least the repository-level row, including "no lockfile here", so absence of
+// rows means the question was never asked rather than answered with nothing.
+func (s *Store) HasLockCoverage(repository, commit string) (bool, error) {
+	if repository == "" || commit == "" {
+		return false, nil
+	}
+	var found int
+	err := s.db.QueryRow(
+		`SELECT EXISTS(SELECT 1 FROM abom_lock_coverage WHERE repository = ? AND commit_sha = ?)`,
+		repository, commit).Scan(&found)
+	if err != nil {
+		return false, fmt.Errorf("reading lock coverage for %s at %s: %w", repository, commit, err)
+	}
+	return found == 1, nil
+}

@@ -180,3 +180,45 @@ func TestAnUnsupportedLockfileSelectsNothing(t *testing.T) {
 		t.Errorf("workflow coverage = %q, want %q", c, Unsupported)
 	}
 }
+
+// The trees read here are downloaded from repositories ABOM does not control, so a symlink in one
+// is an instruction from a stranger. A lock reached by following it describes a file outside the
+// checkout, and would be recorded as that repository's answer.
+func TestALockfileSymlinkedOutsideTheCheckoutIsNotRead(t *testing.T) {
+	outside := writeLock(t, coveredLock)
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".github", "workflows"), 0o755); err != nil {
+		t.Fatalf("creating the workflows directory: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(outside, native.Path), filepath.Join(root, native.Path)); err != nil {
+		t.Skipf("this filesystem does not support symlinks: %v", err)
+	}
+
+	got, err := Read(root)
+	if err == nil {
+		t.Fatalf("coverage = %q: the lockfile outside the checkout was read", got.Coverage)
+	}
+	if got.Coverage != "" {
+		t.Errorf("coverage = %q, want empty: nothing in this tree was read", got.Coverage)
+	}
+}
+
+// The same boundary, one level up. A workflow directory that leaves the checkout would have ABOM
+// report coverage for workflows this repository does not contain.
+func TestWorkflowsSymlinkedOutsideTheCheckoutAreNotEnumerated(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "elsewhere.yml"), []byte("on: push\n"), 0o600); err != nil {
+		t.Fatalf("writing a workflow outside the checkout: %v", err)
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".github"), 0o755); err != nil {
+		t.Fatalf("creating the .github directory: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, ".github", "workflows")); err != nil {
+		t.Skipf("this filesystem does not support symlinks: %v", err)
+	}
+
+	for _, row := range workflowPaths(root) {
+		t.Errorf("enumerated %q, which lives outside the checkout", row)
+	}
+}

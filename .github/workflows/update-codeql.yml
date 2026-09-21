@@ -1,5 +1,3 @@
-# This workflow is managed by gh actions-lock.
-
 name: Update CodeQL CLI
 
 on:
@@ -29,7 +27,7 @@ jobs:
 
     steps:
       - name: Detect - Checkout repository
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -110,7 +108,7 @@ jobs:
 
     steps:
       - name: Upgrade - Checkout repository
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Upgrade - Pin the new CLI version
         env:
@@ -121,12 +119,12 @@ jobs:
         uses: $/.github/actions/setup-codeql
 
       - name: Upgrade - Setup Go
-        uses: actions/setup-go@v7.0.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
       - name: Upgrade - Setup .NET
-        uses: actions/setup-dotnet@v6.0.0
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
 
@@ -145,18 +143,11 @@ jobs:
           ./scripts/bump-pack-versions.sh --upgrade-deps
           ./scripts/bump-pack-versions.sh --repin
 
-      - name: Upgrade - Install gh actions-lock
-        env:
-          GH_TOKEN: ${{ github.token }}
-        # `make pins` is part of `make verify` and reports the extension as missing rather than
-        # skipping it. Pinned, like the copy the self audit installs.
-        run: gh extension install github/gh-actions-lock --pin v0.1.6
-
       - name: Upgrade - Verify
         run: make verify
 
       - name: Upgrade - Open a pull request
-        uses: peter-evans/create-pull-request@v8.1.1
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           title: 'Upgrade CodeQL CLI to v${{ needs.detect.outputs.latest }}'
           body: |
