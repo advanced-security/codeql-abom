@@ -1,0 +1,40 @@
+name: Lock coverage fixture
+
+on: push
+
+jobs:
+  covered:
+    runs-on: ubuntu-latest
+    steps:
+      # Listed, ref matches, commit resolves.
+      - uses: third/party@v1.0.0
+      # Trusted owner AND covered: upstream exempts the owner, we still check the lockfile.
+      - uses: actions/checkout@v7.0.1
+      # Sub-action of a repository pin.
+      - uses: third/party/sub@v1.0.0
+      # Keyed by commit, narrowed to a tag. `ActionsLock.pins` rejects this; coverage accepts it.
+      - uses: narrowed/action@0123456789abcdef0123456789abcdef01234567
+
+  excluded:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/local
+      - uses: $/.github/actions/selfref
+      # Reaches the composite action, whose `third/party@v1.0.0` this workflow's lock section
+      # does list.
+      - uses: $/.github/actions/shared
+      - uses: docker://alpine:3.20
+
+  uncovered:
+    runs-on: ubuntu-latest
+    steps:
+      # Absent from the lockfile entirely.
+      - uses: missing/action@v1.0.0
+      # Trusted owner, absent from the lockfile. Upstream can never report this.
+      - uses: actions/setup-go@v7.0.0
+      # Bare SHA, absent from the lockfile. Upstream accepts any SHA.
+      - uses: unlisted/action@abcdef0123456789abcdef0123456789abcdef01
+      # Listed at v1.0.0 while the workflow moved to v2.0.0.
+      - uses: stale/action@v2.0.0
+      # Listed, but the dependency entry carries no usable commit.
+      - uses: broken/action@v1.0.0

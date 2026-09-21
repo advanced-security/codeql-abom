@@ -1,6 +1,7 @@
 # Analyze the commit the workflow actually locks
 
-**Status:** lock-aware resolution is the target baseline; ABOM does not yet consume native locks.
+**Status:** the lock is read at the analyzed commit and its coverage recorded per workflow;
+selection still follows the declared reference.
 
 ## Why this exists
 
@@ -41,6 +42,23 @@ ref is not automatically a semantic version, and a structurally valid lock does 
 claimed ref/commit relation against GitHub. Parsing, offline coverage, network identity/reachability
 verification and observed runtime enforcement are separate facts with separate provenance.
 
+```mermaid
+flowchart LR
+    TREE["tree at the<br/>analyzed commit"] -->|"/.github/ is already<br/>in the sparse filter"| READ["read actions.lock"]
+    READ -->|"no file"| ABSENT["not_onboarded"]
+    READ -->|"schema this consumer<br/>cannot read"| BAD["unsupported<br/>+ named reason"]
+    READ -->|"parsed"| PER["per workflow"]
+    PER -->|"listed, no entries"| EMPTY["empty<br/>a recorded set"]
+    PER -->|"listed with entries"| COV["covered"]
+    PER -->|"workflow absent"| ABSENT
+    COV -->|"digest, not the<br/>ref field"| SEL["selected commit"]
+    BAD -. "never falls back" .-> SEL
+    ABSENT -. "never falls back" .-> SEL
+    SEL -. "selection not yet wired<br/>into acquisition" .-> FRONTIER["frontier ref"]
+    style BAD fill:#3d1d1d
+    style FRONTIER fill:#3d2d1d
+```
+
 ## Pending
 
 1. **Prove the native contract before choosing nested pins.** Use pinned native fixtures and the
@@ -48,25 +66,34 @@ verification and observed runtime enforcement are separate facts with separate p
    nested composites, reusable workflows and `$/` references: caller, callee or a documented
    combination. Resolve conflicting contexts explicitly. Do not implement production precedence by
    guessing or unioning every lock encountered. This spike can start independently of deployment.
-2. **Read with the official parser.** Pin a tested release of
-   `github.com/github/actions-lockfile/go`, using its documented parsing, workflow lookup and
-   structured-error APIs. The inspected baseline is module `v0.0.4`, CLI `v0.1.6`, schema `v0.0.2`.
-   Record original bytes/digest and schema before normalization; set an explicit version policy and
-   refuse unsupported algorithms the checkout cannot honor. A newer parser development branch is
-   not permission to assume a deployed producer accepts its schema. Depends on the format portion
-   of 1, not every live-platform experiment.
-3. **Ingest per-revision coverage and graph evidence.** Read from the same root commit as the
-   workflow, never from current `main`. Distinguish every state in the table. Native workflow pin
-   lists are transitive and dependency entries can carry direct-child `uses` links, but they do not
-   provide CodeQL's job/step locations or conditions. Keep native graph evidence separate from
-   source declarations; no invented declaring line or finding for a lock-only dependency. Depends
-   on 2. Compare readers using [dependency-graph-crosscheck.md](../api/dependency-graph-crosscheck.md).
+   The parser already answers part of it: `Action.Uses` carries each dependency's direct nested
+   `uses:` as canonical pin keys, and `File.Workflows` is the flat transitive closure per workflow,
+   so the nested DAG is recorded rather than needing reconstruction. What that does not settle is
+   which lock wins when a callee carries its own.
+2. **Ingest the lock's graph evidence.** Coverage per workflow is recorded; the dependency DAG in
+   `Action.Uses` is not, nor are the numeric owner/repository IDs that detect a transferred
+   repository. Keep native graph evidence separate from source declarations; no invented declaring
+   line or finding for a lock-only dependency. Compare readers using
+   [dependency-graph-crosscheck.md](../api/dependency-graph-crosscheck.md).
+3. **Measure how much selection actually diverges.** Measured 2026-09-20: of 60 corpus
+   repositories, 59 carry no lockfile and one carries a deliberately unsupported fixture, so
+   **nothing in the corpus is covered** and the divergence question cannot be asked of it. This
+   repository is covered at schema `v0.0.2` — 35 selections, 0 missing, 4 references outside the
+   format — and every locked commit agrees with what its tag resolves to today, so lock-aware
+   selection would currently change nothing here either. Selection work therefore needs a
+   purpose-built fixture where a lock and a live tag genuinely disagree; until one exists, items 4
+   through 7 are unvalidatable rather than merely unstarted. Depends on 2 for the entry data.
 4. **Bind consumer contexts to reusable analysis work.** Represent different selected commits for
-   identical requested tags without overwriting either consumer. Choose a minimal context-to-work
-   relation rather than adding a global `ResolutionLockfile` source and calling it done. Preserve
-   declared ref, action subpath and governing context through frontier scheduling and recursive
-   traversal. Fetch/analysis identity remains repository/commit/input set, not consumer count.
-   Depends on the precedence decision in 1 and the evidence in 3.
+   identical requested tags without overwriting either consumer. The relation is decided: enqueue
+   the selected commit as the frontier `ref`. Nothing widens the `(node_key, ref)` key, the
+   declared ref stays on the edge where `ref_raw`/`ref_value`/`pin_comment` already hold it, and
+   two consumers that lock the same commit share one row — which is correct, because analysis
+   identity is repository/commit, not consumer count. Two consequences shrink item 5:
+   `commitWithoutFetching` already short-circuits on `isCommit`, and `DueForRecheck` already
+   excludes a ref equal to its resolved commit, so a locked selection stops being drift-probed
+   without new logic. Preserve declared ref, action subpath and governing context through frontier
+   scheduling and recursive traversal. Depends on the precedence decision in 1 and the evidence
+   in 2.
 5. **Honor the selected commit on every acquisition path.** Change selection through precheck,
    cache hit, cold fetch, no-cache and retry paths together. Reuse the built
    [checkout cache](checkout-cache.md); verify the fetched commit and retain raw-ref provenance.
@@ -90,7 +117,7 @@ verification and observed runtime enforcement are separate facts with separate p
    categories and tool failures cannot become success. Do not rename native diagnostics into
    fabricated CodeQL rule IDs or suppress query findings because a lock exists. Assess upstream
    CodeQL lock modeling with real query fixtures before changing any rule-level claim. Depends on
-   3 and the tool contract, not on writing a replacement verifier.
+   2 and the tool contract, not on writing a replacement verifier.
 9. **Let declared policy use the recorded coverage.** Any policy requirement for native locking
    must be explicit, enforceable and simulated. A missing or unsupported lock is not an automatic
    vulnerability verdict. The thin `abom-check` client reads server evidence and policy; it does

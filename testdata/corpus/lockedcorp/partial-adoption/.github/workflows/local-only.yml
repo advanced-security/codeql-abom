@@ -1,0 +1,14 @@
+# This workflow is managed by gh actions-lock.
+
+name: Local only
+on: [workflow_dispatch]
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/compile
+      # Third party, and outside the lockfile: `gh actions-lock` skips this whole workflow for
+      # the local action above it, so nothing here is covered however ordinary it looks.
+      - uses: actions/setup-node@v4
+      - run: ./scripts/package.sh

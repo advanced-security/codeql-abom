@@ -10,3 +10,29 @@
 # Retains `Debug/SyntaxError` and `Diagnostics/SuccessfullyExtractedFiles`, which the upstream
 # suite includes and which report nothing about security. They stay because a self audit that
 # cannot distinguish "no findings" from "nothing was extracted" is worse than no self audit.
+
+# `actions/unpinned-tag` is excluded and `ActionsLockAware/UncoveredActionRef.ql` takes the place
+# it held. The rule asks whether a ref is a full-length SHA. This repository's pin is
+# `.github/workflows/actions.lock`: the ref is the key, the lock records the commit the runner
+# executes, and a `uses:` the lock does not account for is refused before any job starts. Satisfying
+# the rule again would mean inline SHAs, which is the bare-SHA key `gh actions-lock` warns about and
+# `make pins` would report -- the two checks now pull opposite ways, and only one of them describes
+# what is enforced.
+- exclude:
+    id: actions/unpinned-tag
+
+# Coverage is also the stricter question, which is why this is a replacement and not a removal.
+# `unpinned-tag` exempts the `actions` and `github` owners outright and accepts any bare SHA, so it
+# examined 2 of this repository's 10 references. Coverage examines every one of them, and reports a
+# SHA no lock entry resolves -- the case a pinning rule reads as its best outcome.
+#
+# Upgrading is not the fix. `actions-queries` 0.6.36 makes `unpinned-tag` lock-aware and stops it
+# reporting `$/`, but the latest published version is 0.6.35, and even 0.6.36 keeps both exemptions.
+- query: ActionsLockAware/UncoveredActionRef.ql
+  from: advanced-security/abom-actions-findings-src
+
+# What the lockfile's absence would mean here. This repository keeps a lock, so this is silent --
+# and it fires if that ever stops being true, including if a toolchain change stops the lockfile
+# reaching the database, which would otherwise read as a clean gate.
+- query: ActionsLockAware/ActionsLockMissingForWorkflow.ql
+  from: advanced-security/abom-actions-findings-src

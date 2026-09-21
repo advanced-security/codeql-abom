@@ -1,0 +1,9 @@
+name: Unreached composite
+description: >-
+  No workflow reaches this action, so no `workflows` section can list what it references and
+  there is nothing for the lockfile to have left out.
+
+runs:
+  using: composite
+  steps:
+    - uses: lonely/action@v1.0.0

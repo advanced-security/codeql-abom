@@ -8,5 +8,6 @@ ignore:
 ## listing the patterns is what makes a stray or half-moved pack fail loudly instead of joining
 ## the workspace unnoticed.
 provide:
+  - 'ql/*/lib/codeql-pack.yml'
   - 'ql/*/*/src/codeql-pack.yml'
   - 'ql/*/*/test/codeql-pack.yml'

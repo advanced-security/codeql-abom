@@ -1,8 +1,11 @@
+# This workflow is managed by gh actions-lock.
+
 name: Build and Test - Go
 
-# Every action is pinned to a full-length commit SHA. A tag is a moving pointer its owner can
-# repoint at any time, which is the supply-chain exposure this repository exists to measure.
-# The trailing comment records the release, and Dependabot maintains both.
+# Every action is pinned by `.github/workflows/actions.lock`, not by the ref written here. The
+# runner resolves each `uses:` through that lockfile to the commit it records, so a tag its
+# owner repoints does not change what runs. Never hand-edit a ref: `gh actions-lock` owns both
+# files and rewrites an inline SHA back to the tag it keys on.
 
 on:
   pull_request:
@@ -35,10 +38,10 @@ jobs:
 
     steps:
       - name: Build and Test - Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v7.0.1
 
       - name: Build and Test - Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: true

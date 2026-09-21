@@ -430,6 +430,15 @@ func (e *Expander) prepare(
 		}
 	}
 
+	// Read from the tree at the commit being analyzed, never from the repository's current state:
+	// a lock describes the revision it was committed with. Recorded, not acted on -- selection
+	// still follows the declared reference.
+	if tree.SHA != "" {
+		if err := e.recordLockCoverage(b.full(), tree); err != nil {
+			return work.Prepared{}, err
+		}
+	}
+
 	// Asked of every batch that reaches here, including one whose tree came from the cache: the
 	// bytes being on disk already says nothing about whether this pair has been analyzed.
 	outstanding, err := e.pendingWork(planned, b.full(), tree.SHA, digest)
@@ -656,6 +665,17 @@ func (e *Expander) settleWithoutFetching(
 		return work.Prepared{}, false, err
 	}
 	if !outstanding.empty() {
+		return work.Prepared{}, false, nil
+	}
+	// Lock coverage is read from a checkout, so settling here is the one path that can skip it
+	// indefinitely: a database whose analyzed refs have no pending work never fetches again, and
+	// an upgrade or a tier requeue is exactly that case. Absence of rows means nobody looked,
+	// which is a different fact from "no lockfile", so the commit is read once to say which.
+	covered, err := e.Store.HasLockCoverage(b.full(), sha)
+	if err != nil {
+		return work.Prepared{}, false, err
+	}
+	if !covered {
 		return work.Prepared{}, false, nil
 	}
 	return work.Prepared{

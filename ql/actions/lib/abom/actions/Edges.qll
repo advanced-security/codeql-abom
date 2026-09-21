@@ -9,11 +9,7 @@
 import actions
 private import codeql.actions.ast.internal.Ast as AstInternal
 private import codeql.actions.ast.internal.Yaml as InternalYaml
-
-/** Gets the `id:` of `step`, or the empty string when the step declares no id. */
-private string stepIdOrEmpty(Step step) {
-  if exists(step.getId()) then result = step.getId() else result = ""
-}
+private import abom.actions.Steps
 
 /** Gets the text of a comment trailing `usesNode` on the same line, `#` and padding stripped. */
 private string trailingComment(ScalarValue usesNode) {
@@ -47,28 +43,11 @@ predicate abomEdge(
   ScalarValue usesNode, string edgeKind, string srcKind, string srcPath, string srcJobId,
   int srcStepIndex, string srcStepId, string usesRaw
 ) {
-  // A `uses:` step inside a workflow job.
-  exists(UsesStep step, LocalJob job |
-    step.getContainer() = job and
+  // A `uses:` step, either inside a workflow job or inside a composite action's `runs:` block.
+  exists(UsesStep step |
     usesNode = step.getCalleeNode() and
-    edgeKind = "step-uses-action" and
-    srcKind = "job" and
-    srcPath = step.getLocation().getFile().getRelativePath() and
-    srcJobId = job.getId() and
-    job.getStep(srcStepIndex) = step and
-    srcStepId = stepIdOrEmpty(step) and
-    usesRaw = usesNode.getValue()
-  )
-  or
-  // A `uses:` step inside a composite action's `runs:` block.
-  exists(UsesStep step, Runs runs |
-    step.getContainer() = runs and
-    usesNode = step.getCalleeNode() and
-    edgeKind = "composite-step-uses-action" and
-    srcKind = "composite_action" and
-    srcPath = step.getLocation().getFile().getRelativePath() and
-    srcJobId = "" and
-    runs.getStep(srcStepIndex) = step and
+    stepPosition(step, srcKind, srcPath, srcJobId, srcStepIndex) and
+    edgeKind = stepEdgeKind(srcKind) and
     srcStepId = stepIdOrEmpty(step) and
     usesRaw = usesNode.getValue()
   )
@@ -84,6 +63,13 @@ predicate abomEdge(
     srcStepId = "" and
     usesRaw = usesNode.getValue()
   )
+}
+
+/** Gets the edge kind reported for a `uses:` step in a container of kind `srcKind`. */
+private string stepEdgeKind(string srcKind) {
+  srcKind = "job" and result = "step-uses-action"
+  or
+  srcKind = "composite_action" and result = "composite-step-uses-action"
 }
 
 /**

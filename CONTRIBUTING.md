@@ -74,10 +74,11 @@ if err := os.RemoveAll(dbDir); err != nil {
 
 ## Workflows
 
-Every action is pinned to a full-length commit SHA with the release in a trailing comment. This
-repository measures unpinned actions for other people; pinning ours by tag would be
-indefensible. `make selfcheck` runs our own analysis over our own workflows and fails on any
-finding.
+Every action is referenced by the tag `.github/workflows/actions.lock` keys it on, and the lock
+records the commit the runner executes. The tag is not the pin; the lock is, and a run whose
+`uses:` the lock does not account for is refused at startup with no reason given. Never hand-edit
+a ref or the lock — `gh actions-lock` owns both, and `make pins` fails when they disagree.
+`make selfcheck` runs our own analysis over our own workflows and fails on any finding.
 
 ## Submitting
 

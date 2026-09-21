@@ -1,0 +1,6 @@
+name: advanced-security/abom-actions-lib
+version: 2.27.0
+description: 'Shared Actions libraries for ABOM queries'
+library: true
+dependencies:
+  codeql/actions-all: 0.6.1
