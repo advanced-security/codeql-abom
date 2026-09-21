@@ -1,3 +1,5 @@
+# This workflow is managed by gh actions-lock.
+
 name: Query Unit Tests
 
 on:
@@ -25,7 +27,7 @@ jobs:
 
     steps:
       - name: Query Unit Tests - Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v7.0.1
 
       - name: Query Unit Tests - Setup CodeQL
         uses: $/.github/actions/setup-codeql

@@ -43,7 +43,7 @@ GO_FILES := $(shell find . -name '*.go' -not -path './ui/*')
 
 .DEFAULT_GOAL := build
 
-verify: check-corrupt check-versions fmt vet lint test js style ql ui ui-test e2e
+verify: check-corrupt check-versions pins fmt vet lint test js style ql ui ui-test e2e
 
 ## bench: time the store read paths against a real corpus.
 ##
@@ -205,11 +205,13 @@ package: build publish
 ## needs no token; the upstream half, which catches a tag that has moved since it was locked, is
 ## `--verify` and runs on the self audit's weekly schedule.
 ##
-## Deliberately not in `verify`, and deliberately not a gate. What decides which commit runs here
-## is the inline full-length SHA on every `uses:`; the lockfile is committed as preparation for
-## the native pinning path, and no runner has been shown to consult it. It will also report the
-## workflow refs until `gh actions-lock` regenerates the lock against them -- which only that tool
-## may do, because a hand-edited lock names commits nobody resolved.
+## In `verify` because the platform already enforces it: a `uses:` the lock does not account for
+## is refused at startup under the repository's `require_lockfile` policy, and the refusal has no
+## check run, no annotation and no stated reason -- every workflow on the branch just reports
+## `startup_failure`. This is the only place that failure gets to name the ref.
+##
+## Never satisfy it by editing the lock. Only `gh actions-lock` may write that file, because a
+## hand-edited lock names a commit nobody resolved.
 pins:
 	@if ! gh actions-lock --help >/dev/null 2>&1; then \
 		echo "gh actions-lock is not installed: gh extension install github/gh-actions-lock"; exit 1; \

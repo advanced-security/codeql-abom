@@ -15,7 +15,7 @@ workflows:
         - 'actions/setup-node@v7.0.0'
         - 'actions/upload-artifact@v7.0.1'
     '.github/workflows/copilot-setup-steps.yml':
-        - 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
+        - 'actions/cache@v6.1.0'
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-dotnet@v6.0.0'
         - 'actions/setup-go@v7.0.0'
@@ -28,25 +28,20 @@ workflows:
         - 'actions/setup-go@v7.0.0'
         - 'golangci/golangci-lint-action@v9.3.0'
     '.github/workflows/query-unit-tests.yml':
-        - 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
+        - 'actions/cache@v6.1.0'
         - 'actions/checkout@v7.0.1'
     '.github/workflows/self-audit.yml':
-        - 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
+        - 'actions/cache@v6.1.0'
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-dotnet@v6.0.0'
         - 'actions/setup-go@v7.0.0'
     '.github/workflows/update-codeql.yml':
-        - 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
+        - 'actions/cache@v6.1.0'
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-dotnet@v6.0.0'
         - 'actions/setup-go@v7.0.0'
         - 'peter-evans/create-pull-request@v8.1.1'
 dependencies:
-    'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9':
-        ref: 'v6.1.0'
-        commit: 'sha1-55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
-        owner_id: 44036562
-        repo_id: 215566462
     'actions/cache@v6.1.0':
         ref: 'v6.1.0'
         commit: 'sha1-55cc8345863c7cc4c66a329aec7e433d2d1c52a9'

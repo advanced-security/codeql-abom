@@ -1,7 +1,7 @@
 # Use GitHub's tooling to keep workflow locks current
 
-**Status:** the pinned CLI and its offline coverage check run in CI, reported and not enforced;
-platform enforcement, the update path and the supported-workflow write-up are pending.
+**Status:** the pinned CLI and its offline coverage check gate CI and `make verify`, and platform
+enforcement is confirmed; the update path and the supported-workflow write-up are pending.
 
 ## Why this exists
 
@@ -11,15 +11,16 @@ version reference while the workflow lock selects an immutable commit. A full-ve
 mutable; the locked commit, not the spelling of the tag, supplies that execution identity.
 
 The generated [actions.lock](../../.github/workflows/actions.lock) records schema `v0.0.2` and is
-committed as preparation. Every `uses:` in `.github/workflows` still carries an inline full-length
-commit SHA, which is what decides what runs: nothing has yet shown that a runner consults the lock,
-and a migration to tags before that evidence exists would hand a retagged action the ability to
-change what these workflows run. A run-details Lockfile link describes a particular run revision,
-not proof that every platform enforces the lock or that a local uncommitted lock affects earlier
-runs. The committed lock keys its entries on the tags those inline SHAs were resolved from, so
-`--verify-local` reports the workflow refs; that measurement is why the check runs at all today,
-and only `gh actions-lock` may close it — the lock is generated, and a hand-edited one would name
-commits nobody resolved. This plan owns ABOM's workflow/toolchain adoption; consuming
+what decides what runs. Every `uses:` in `.github/workflows` carries the tag the lock keys on, and
+the runner resolves it through the lock to the recorded commit, so a tag its owner repoints does
+not change what executes. Enforcement is not inferred: a ref the lock does not account for is
+refused at startup — every workflow on the branch reported `startup_failure`, with no check run
+and no annotation — and a successful run logs
+`Download action repository 'actions/checkout@v7.0.1' (SHA:3d3c42e5…)`, the commit the lock names.
+The composite action under `.github/actions` is covered the same way: its dependencies are
+attributed to each of the four workflows that reach it. Only `gh actions-lock` may write either
+file; a hand-edited lock would name commits nobody resolved, and a hand-edited ref takes the whole
+repository's CI offline. This plan owns ABOM's workflow/toolchain adoption; consuming
 locks during analysis belongs to [actions-lockfile.md](../db/actions-lockfile.md).
 
 ## Compatibility baseline
@@ -35,25 +36,21 @@ host support and the actual execution of this repository's workflows still need 
 
 ## Pending
 
-1. **Review native onboarding as one change.** Compare workflow refs, local `./` to `$/` migrations
-   and lock entries together. Account for every selected commit that differs from the former inline
-   pin, including version narrowing. Never hand-edit the generated lock or rerun fix mode over
-   unreviewed user changes. Confirm workflow coverage, not just a count of deduplicated packages.
-2. **Record which platforms the pinned toolchain supports, and who moves it.** The version is
+1. **Record which platforms the pinned toolchain supports, and who moves it.** The version is
    pinned in three places; what is not written down is the platform matrix that combination is
    known good on, or how a schema bump reaches us. Coordinate upgrades with Dependabot
    compatibility rather than automatically accepting newer schema output.
-3. **Measure native execution semantics.** On an explicitly approved target with benign actions,
+2. **Measure native execution semantics.** On an explicitly approved target with benign actions,
    test onboarded and unonboarded workflows, missing entries, a moved tag with an older locked SHA,
    malformed locks, `$/` references, nested composites and reusable workflows. Record the run
    commit, lock blob, host/runner and observed selected commits. Establish caller/callee lock
-   precedence with the resolution plan before ABOM claims to reproduce it. Depends on 1 and 2;
+   precedence with the resolution plan before ABOM claims to reproduce it. Depends on 1;
    local fixtures can begin without a live target, but cannot establish deployed enforcement.
-4. **Exercise the native update path.** Inspect a Dependabot update of an onboarded workflow and
+3. **Exercise the native update path.** Inspect a Dependabot update of an onboarded workflow and
    its lock together, including transitive changes. Document what updates automatically and what
    still requires explicit onboarding or operator review. Existing Dependabot configuration is the
-   starting point, not a reason to add another updater. Depends on 2 and an approved test target.
-5. **Document the supported workflow.** Explain onboarding, review, no-fix checking, verification
+   starting point, not a reason to add another updater. Depends on 1 and an approved test target.
+4. **Document the supported workflow.** Explain onboarding, review, no-fix checking, verification
    and upgrades, including native coverage gaps and the role of explicit SHA pins on unsupported
    platforms. Update the old SHA/comment-only explanation in the Dependabot configuration when
    adoption is implemented. Never automate acceptance of moved or unreachable pins. Depends on

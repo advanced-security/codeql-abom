@@ -1,3 +1,5 @@
+# This workflow is managed by gh actions-lock.
+
 name: Copilot Setup Steps
 
 # Everything an agent needs before it can run `make verify`: Go, Node, .NET, the CodeQL CLI and
@@ -54,10 +56,10 @@ jobs:
 
     steps:
       - name: Copilot Setup - Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v7.0.1
 
       - name: Copilot Setup - Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -66,14 +68,14 @@ jobs:
       # as .codeql-version does for the CLI. The floor lives in the harness's own package.json,
       # and ui/tests/e2e/.npmrc is what makes npm enforce it instead of warning and carrying on.
       - name: Copilot Setup - Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@v7.0.0
         with:
           node-version-file: '.node-version'
           cache: 'npm'
           cache-dependency-path: 'ui/tests/e2e/package-lock.json'
 
       - name: Copilot Setup - Setup .NET
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        uses: actions/setup-dotnet@v6.0.0
         with:
           dotnet-version: '10.0.x'
 
