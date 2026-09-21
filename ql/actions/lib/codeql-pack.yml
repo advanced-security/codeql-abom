@@ -3,6 +3,4 @@ version: 2.27.0
 description: 'Shared Actions libraries for ABOM queries'
 library: true
 dependencies:
-  # `codeql/actions/Lock.qll` and the `ActionsLock` class arrived here in 0.6.1, along with the
-  # extractor change that puts `.github/workflows/actions.lock` into the database at all.
   codeql/actions-all: 0.6.1
