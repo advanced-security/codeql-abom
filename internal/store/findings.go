@@ -235,7 +235,13 @@ func (s *Store) AddFindings(findings []Finding) (int, error) {
 		ON CONFLICT(rule_id, repository_row_id, file_path, start_line, start_column, fingerprint)
 		DO UPDATE SET
 			provider     = COALESCE(excluded.provider, abom_finding.provider),
-			query_run_id = COALESCE(excluded.query_run_id, abom_finding.query_run_id),
+			query_run_id = CASE
+				WHEN (SELECT analysis_mode FROM abom_query_run
+				      WHERE row_id = excluded.query_run_id) = 'extended'
+				 AND COALESCE((SELECT analysis_mode FROM abom_query_run
+				               WHERE row_id = abom_finding.query_run_id), 'regular') = 'regular'
+				THEN abom_finding.query_run_id
+				ELSE COALESCE(excluded.query_run_id, abom_finding.query_run_id) END,
 			result_hash  = COALESCE(excluded.result_hash, abom_finding.result_hash)
 		RETURNING row_id`)
 	if err != nil {

@@ -75,7 +75,8 @@ func (s *Store) Summary() (Summary, error) {
 		  JOIN repository r ON r.row_id = f.repository_row_id
 		  WHERE ` + OwnedRepositoryFilter, &out.OwnedFindings, nil},
 		{`SELECT COUNT(DISTINCT rule_id) FROM abom_finding_regular`, &out.Rules, nil},
-		{`SELECT COUNT(DISTINCT finding_row_id) FROM abom_finding_node`, &out.LinkedFindings, nil},
+		{`SELECT COUNT(DISTINCT fn.finding_row_id) FROM abom_finding_node fn
+		  JOIN abom_finding_regular f ON f.row_id = fn.finding_row_id`, &out.LinkedFindings, nil},
 		{`SELECT COUNT(*) FROM abom_advisory WHERE withdrawn_at IS NULL`, &out.Advisories, nil},
 		{`SELECT COUNT(*) FROM abom_exposure`, &out.Exposures, nil},
 		{`SELECT COUNT(*) FROM abom_exposure WHERE hops = 1`, &out.DirectExposures, nil},

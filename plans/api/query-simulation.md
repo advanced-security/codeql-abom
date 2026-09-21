@@ -22,8 +22,8 @@ already knows which repositories have code scanning at all.
 one repository's own checkout. It stages nothing, so it never resolves a `uses:` across a repository
 boundary and never sees anything
 [`ql/closure-database.md`](../ql/closure-database.md) reveals. A prediction sourced from an extended
-database would confidently name alerts that will never appear. This is the reason
-[`db/analysis-mode.md`](../db/analysis-mode.md) exists, arriving at the place that needs it most.
+database would confidently name alerts that will never appear. Preserve the implemented
+[analysis-mode isolation](../../docs/architecture.md#analysis-modes).
 
 ## Pending
 

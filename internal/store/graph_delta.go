@@ -270,7 +270,7 @@ func (s *Store) GraphDelta(since int64, opts FullGraphOptions) (GraphDelta, erro
 	// merges into their picture anyway.
 	out.Nodes, out.Edges = applyNodePredicates(out.Nodes, out.Edges, opts)
 
-	out.Metrics, err = s.graphMetrics(display)
+	out.Metrics, err = s.graphMetrics(display, opts.Mode)
 	if err != nil {
 		return out, err
 	}
@@ -279,10 +279,11 @@ func (s *Store) GraphDelta(since int64, opts FullGraphOptions) (GraphDelta, erro
 
 // graphMetrics carries the counts that change for nodes the client already holds. Reach is
 // recomputed wholesale, so there is no cheaper way to know which of them moved.
-func (s *Store) graphMetrics(display string) ([]GraphMetric, error) {
+func (s *Store) graphMetrics(display, mode string) ([]GraphMetric, error) {
 	rows, err := s.db.Query(`WITH ` + display + `
 		SELECT n.node_key, COALESCE(b.dependent_repos, 0), ` + reachKnown + `,
 		       (SELECT COUNT(*) FROM abom_finding_node fn
+		         JOIN ` + findingSource(mode) + ` f ON f.row_id = fn.finding_row_id
 		         JOIN disp d ON d.row_id = fn.node_row_id
 		        WHERE d.shown = n.row_id),
 		       (SELECT COUNT(DISTINCT a.ghsa_id)
@@ -299,7 +300,7 @@ func (s *Store) graphMetrics(display string) ([]GraphMetric, error) {
 		         WHERE f.node_key = n.node_key AND f.status = 'done')
 		FROM abom_node_live n
 		LEFT JOIN abom_blast_radius b ON b.node_row_id = n.row_id
-		WHERE n.row_id IN (SELECT shown FROM disp)`)
+		WHERE n.row_id IN (SELECT shown FROM disp)` + nodeModeFilter(mode))
 	if err != nil {
 		return nil, fmt.Errorf("reading graph metrics: %w", err)
 	}

@@ -645,7 +645,7 @@ func graphNodesQuery(display string, since int64, opts FullGraphOptions) (string
 		LEFT JOIN adv ON adv.pkg = n.owner || '/' || n.repo
 		LEFT JOIN grouping u ON u.repo = r.repository_full_name
 		WHERE n.row_id IN (SELECT shown FROM disp WHERE row_id > ?)` +
-		scopeFilter(opts, "n.node_key"), append(args, opts.GroupProperty, since)
+		scopeFilter(opts, "n.node_key") + nodeModeFilter(opts.Mode), append(args, opts.GroupProperty, since)
 }
 
 // graphNodes reads the displayed nodes. A non-zero since restricts them to those a node added

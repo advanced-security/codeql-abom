@@ -71,12 +71,8 @@ type FindingMatch struct {
 
 // asked reports whether the selector names anything at all.
 func (f FindingSelector) asked() bool {
-	// Deliberately not the mode. It narrows a set rather than naming one, so a predicate that
-	// says only `mode=regular` is still a predicate that names nothing — and a gate matching
-	// every finding in the corpus because its one term was a shape would refuse every pull
-	// request.
 	return len(f.Rules) > 0 || len(f.Exclude) > 0 || f.Provider != "" || f.Severity != "" ||
-		len(f.Properties) > 0 || len(f.ExcludeProperties) > 0
+		len(f.Properties) > 0 || len(f.ExcludeProperties) > 0 || f.Mode != ""
 }
 
 // propertyClause tests one key against every value asked for it, against the repository named by

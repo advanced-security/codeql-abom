@@ -95,6 +95,8 @@ func TestTheSetPathAnswersEachShapeSeparately(t *testing.T) {
 		query string
 		want  string
 	}{
+		{"rules=actions%2Funpinned-tag&mode=regular", "actions/checkout"},
+		{"rules=actions%2Funpinned-tag&mode=extended", "actions/staged"},
 		{"mode=regular", "actions/checkout"},
 		{"mode=extended", "actions/staged"},
 	} {
@@ -102,7 +104,7 @@ func TestTheSetPathAnswersEachShapeSeparately(t *testing.T) {
 			Nodes []struct {
 				Key string `json:"key"`
 			} `json:"nodes"`
-		}](t, get(t, srv, "/api/match?rules=actions%2Funpinned-tag&"+c.query))
+		}](t, get(t, srv, "/api/match?"+c.query))
 		if len(got.Nodes) != 1 || got.Nodes[0].Key != c.want {
 			t.Errorf("%s matched %+v, want only %s", c.query, got.Nodes, c.want)
 		}
@@ -124,12 +126,26 @@ func TestTheGraphPathDrawsOneShapeAtATime(t *testing.T) {
 		{"mode=extended", "actions/staged"},
 	} {
 		got := decode[struct {
+			Nodes []struct {
+				Key  string `json:"key"`
+				Kind string `json:"kind"`
+			} `json:"nodes"`
 			Edges []struct {
 				Target string   `json:"target"`
 				Keys   []string `json:"keys"`
 			} `json:"edges"`
 			ClientApplied []string `json:"clientApplied"`
 		}](t, get(t, srv, "/api/graph/full?steps=true&"+c.query))
+
+		actions := []string{}
+		for _, node := range got.Nodes {
+			if node.Kind == "action" {
+				actions = append(actions, node.Key)
+			}
+		}
+		if len(actions) != 1 || actions[0] != c.want {
+			t.Errorf("%s drew action nodes %v, want only %s", c.query, actions, c.want)
+		}
 
 		// Only the declared relationships: containment is drawn from node rows, is observed by
 		// no run, and belongs to every shape.
@@ -163,6 +179,8 @@ func TestEveryListingThatDeclaresModeAnswersIt(t *testing.T) {
 	}{
 		{"/api/actions?rules=actions%2Funpinned-tag&mode=regular", "actions/checkout"},
 		{"/api/actions?rules=actions%2Funpinned-tag&mode=extended", "actions/staged"},
+		{"/api/actions?mode=regular", "actions/checkout"},
+		{"/api/actions?mode=extended", "actions/staged"},
 		{"/api/relationships?mode=regular", "actions/checkout"},
 		{"/api/relationships?mode=extended", "actions/staged"},
 	} {
@@ -206,6 +224,160 @@ func TestRoutesThatCannotEnforceModeRefuseIt(t *testing.T) {
 		if !contains(rec.Body.String(), "mode") {
 			t.Errorf("%s refused without naming the term: %s", path, rec.Body.String())
 		}
+	}
+}
+
+func TestTheNeighborhoodRefusesUnknownAnalysisShapes(t *testing.T) {
+	srv, database := unitServer(t)
+	bothShapes(t, database)
+	for _, mode := range []string{"closure", "mixed", ""} {
+		response := get(t, srv, "/api/graph?focus=actions/checkout&mode="+mode)
+		if response.Code != http.StatusBadRequest || !contains(response.Body.String(), "mode") {
+			t.Errorf("mode=%q returned %d: %s", mode, response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestAnUnfocusedGraphStillUsesTheRequestedAnalysisShape(t *testing.T) {
+	_, database := unitServer(t)
+	bothShapes(t, database)
+	for _, shape := range []struct{ mode, target string }{
+		{"regular", "actions/checkout"}, {"extended", "actions/staged"},
+	} {
+		graph, err := database.Subgraph(store.SubgraphOptions{Mode: shape.mode})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(graph.Edges) != 1 || graph.Edges[0].Target != shape.target {
+			t.Errorf("%s overview edges = %+v, want only %s", shape.mode, graph.Edges, shape.target)
+		}
+	}
+}
+
+func TestListingCountsFlagsAndReferencesUseTheirAnalysisShape(t *testing.T) {
+	srv, s := unitServer(t)
+	bothShapes(t, s)
+	if _, err := s.DB().Exec(`
+		INSERT OR IGNORE INTO abom_finding_node (finding_row_id, node_row_id)
+		SELECT f.row_id, n.row_id FROM abom_finding f, abom_node n
+		WHERE n.node_key = 'step:app:0'
+		   OR (f.fingerprint = 'fp-extended' AND n.node_key = 'actions/checkout')`); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, shape := range []struct{ mode, action string }{
+		{"regular", "checkout"}, {"extended", "staged"},
+	} {
+		t.Run(shape.mode, func(t *testing.T) {
+			page := decode[store.InventoryPage](t, get(t, srv,
+				"/api/actions?mode="+shape.mode+"&q="+shape.action))
+			if len(page.Items) != 1 || page.Total != 1 {
+				t.Fatalf("inventory = %+v, want one action", page)
+			}
+			if page.Items[0].Findings != 1 || len(page.Items[0].Refs) != 1 {
+				t.Errorf("inventory = %+v, want one finding and one reference in %s",
+					page.Items[0], shape.mode)
+			}
+			relationships := decode[store.RelationshipsPage](t, get(t, srv,
+				"/api/relationships?mode="+shape.mode+"&sort=findings"))
+			if len(relationships.Items) != 1 || relationships.Total != 1 {
+				t.Fatalf("relationships = %+v, want one relationship", relationships)
+			}
+			if relationships.Items[0].Findings != 1 || len(relationships.Items[0].Rules) != 1 {
+				t.Errorf("relationship = %+v, want one finding and its rule in %s",
+					relationships.Items[0], shape.mode)
+			}
+		})
+	}
+
+	if _, err := s.DB().Exec(`DELETE FROM abom_finding_node
+		WHERE finding_row_id IN (SELECT row_id FROM abom_finding WHERE fingerprint = 'fp-regular')
+		AND node_row_id IN (SELECT row_id FROM abom_node WHERE node_key = 'actions/checkout')`); err != nil {
+		t.Fatal(err)
+	}
+	page := decode[store.InventoryPage](t, get(t, srv,
+		"/api/actions?mode=regular&q=checkout&flags=findings"))
+	if page.Total != 0 || len(page.Items) != 0 {
+		t.Errorf("an extended-only finding satisfied the regular findings flag: %+v", page)
+	}
+}
+
+func TestSharedEdgesPreserveRegularEvidenceAndRefuseConflictingShapes(t *testing.T) {
+	for _, reference := range []string{"v4", "v5"} {
+		t.Run(reference, func(t *testing.T) {
+			srv, database := unitServer(t)
+			bothShapes(t, database)
+			var runID int64
+			if err := database.DB().QueryRow(`SELECT row_id FROM abom_query_run
+				WHERE analysis_mode = 'extended'`).Scan(&runID); err != nil {
+				t.Fatal(err)
+			}
+			writer := store.NewWriter(database, 0)
+			for _, node := range []store.Node{
+				{Key: "step:app:0", Kind: "step"},
+				{Key: "actions/checkout", Kind: "action", Owner: "actions", Repo: "checkout"},
+			} {
+				if err := writer.AddNode(node); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := writer.AddEdge(store.Edge{
+				Key: "e-regular", SrcKey: "step:app:0", DstKey: "actions/checkout",
+				Kind: "step-uses-action", RefValue: reference, QueryRunID: runID,
+				FilePath: ".github/workflows/ci.yml", StartLine: 10,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			err := writer.Flush()
+			if reference == "v4" && err != nil {
+				t.Fatal(err)
+			}
+			if reference != "v4" && (err == nil || !contains(err.Error(), "analysis mode")) {
+				t.Errorf("a conflicting shape must be refused by name, got %v", err)
+			}
+			regular := decode[store.RelationshipsPage](t, get(t, srv, "/api/relationships"))
+			if len(regular.Items) != 1 || regular.Total != 1 || regular.Items[0].Ref != "v4" {
+				t.Errorf("an extended observation changed regular evidence: %+v", regular)
+			}
+			if reference == "v4" {
+				extended := decode[store.RelationshipsPage](t, get(t, srv, "/api/relationships?mode=extended"))
+				if extended.Total != 2 {
+					t.Errorf("the extended shape lost the shared edge: %+v", extended)
+				}
+			}
+		})
+	}
+}
+
+func TestAnExtendedSightingKeepsAnUntracedRegularFinding(t *testing.T) {
+	srv, database := unitServer(t)
+	bothShapes(t, database)
+	var runID, repositoryID int64
+	if err := database.DB().QueryRow(`SELECT row_id FROM abom_query_run
+		WHERE analysis_mode = 'extended'`).Scan(&runID); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.DB().QueryRow(`SELECT row_id FROM repository
+		WHERE repository_full_name = 'octo-org/app'`).Scan(&repositoryID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.AddFindings([]store.Finding{{
+		Provider: "codeql", RuleID: "actions/unpinned-tag", RepositoryID: repositoryID,
+		FilePath: ".github/workflows/ci.yml", StartLine: 10, StartColumn: 9,
+		Fingerprint: "fp-regular", QueryRunID: runID,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	regular := decode[store.FindingMatch](t, get(t, srv, "/api/match?mode=regular"))
+	if regular.Findings != 1 || len(regular.Nodes) != 1 || regular.Nodes[0].Key != "actions/checkout" {
+		t.Errorf("an extended sighting removed existing regular evidence: %+v", regular)
+	}
+	var identities int
+	if err := database.DB().QueryRow(`SELECT COUNT(*) FROM abom_finding`).Scan(&identities); err != nil {
+		t.Fatal(err)
+	}
+	if identities != 2 {
+		t.Errorf("re-observation changed the number of defects to %d, want 2", identities)
 	}
 }
 

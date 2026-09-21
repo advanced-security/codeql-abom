@@ -380,7 +380,7 @@ else
 
         // AbomApi swallows transport failures and answers null, so a missing document arrives
         // here as an absent value rather than an exception.
-        _bom = await Api.GetBomAsync(properties: SelectedProperties);
+        _bom = await Api.GetBomAsync(properties: SelectedProperties, mode: Scope.Spec.Mode);
         if (_bom is not null)
         {
             return;
@@ -389,9 +389,11 @@ else
         // A group holding no repository is a different state from nothing being declared, and the
         // server distinguishes them. Saying "declare a scope" to somebody who has one sends them
         // to fix the wrong thing.
-        _error = Scope.Spec.Properties.Count == 0
-            ? "No accounts are declared yet, so there is no scope to describe."
-            : "None of your repositories carries the property this scope names.";
+        _error = Scope.Spec.Mode.Length > 0
+            ? "A bill of materials does not narrow by analysis mode; its totals use regular analysis."
+            : Scope.Spec.Properties.Count == 0
+                ? "No accounts are declared yet, so there is no scope to describe."
+                : "None of your repositories carries the property this scope names.";
         _detail = Api.LastError;
     }
 }

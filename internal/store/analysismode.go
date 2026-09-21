@@ -1,5 +1,10 @@
 package store
 
+import (
+	"database/sql"
+	"fmt"
+)
+
 // How a CodeQL database was built, which decides what a result from it means.
 //
 // Every database ABOM has built is one repository's own sparse checkout — the shape GitHub's
@@ -66,35 +71,53 @@ func analysisModeKeyPart(mode string) string {
 // documented backfill. Treating absence as a third mode would silently drop them from the totals
 // this change is required to leave byte-identical.
 const analysisModeViewDDL = `
+INSERT OR IGNORE INTO abom_edge_sighting (edge_row_id, query_run_id)
+SELECT row_id, query_run_id FROM abom_edge_live WHERE query_run_id IS NOT NULL;
+
+INSERT OR IGNORE INTO abom_finding_sighting (finding_row_id, query_run_id)
+SELECT row_id, query_run_id FROM abom_finding WHERE query_run_id IS NOT NULL;
+
 CREATE VIEW IF NOT EXISTS abom_edge_any_mode AS SELECT * FROM abom_edge_live;
 
-CREATE VIEW IF NOT EXISTS abom_edge_regular AS
+DROP VIEW IF EXISTS abom_edge_regular;
+CREATE VIEW abom_edge_regular AS
 SELECT e.* FROM abom_edge_live e
-WHERE COALESCE(
+WHERE EXISTS (SELECT 1 FROM abom_edge_sighting s
+              JOIN abom_query_run q ON q.row_id = s.query_run_id
+              WHERE s.edge_row_id = e.row_id AND q.analysis_mode = 'regular')
+   OR COALESCE(
         (SELECT q.analysis_mode FROM abom_query_run q WHERE q.row_id = e.query_run_id),
         'regular') = 'regular';
 
-CREATE VIEW IF NOT EXISTS abom_edge_extended AS
+DROP VIEW IF EXISTS abom_edge_extended;
+CREATE VIEW abom_edge_extended AS
 SELECT e.* FROM abom_edge_live e
-WHERE (SELECT q.analysis_mode FROM abom_query_run q WHERE q.row_id = e.query_run_id) = 'extended';
+WHERE EXISTS (SELECT 1 FROM abom_edge_sighting s
+              JOIN abom_query_run q ON q.row_id = s.query_run_id
+              WHERE s.edge_row_id = e.row_id AND q.analysis_mode = 'extended')
+   OR (SELECT q.analysis_mode FROM abom_query_run q WHERE q.row_id = e.query_run_id) = 'extended';
 
 CREATE VIEW IF NOT EXISTS abom_finding_any_mode AS SELECT * FROM abom_finding;
 
 -- Through the sighting relation rather than abom_finding.query_run_id, which holds whichever run
 -- most recently reproduced the finding. One defect reported by both shapes is one row, and which
 -- lane ran last must not decide which totals it joins.
-CREATE VIEW IF NOT EXISTS abom_finding_regular AS
+DROP VIEW IF EXISTS abom_finding_regular;
+CREATE VIEW abom_finding_regular AS
 SELECT f.* FROM abom_finding f
 WHERE EXISTS (SELECT 1 FROM abom_finding_sighting s
               JOIN abom_query_run q ON q.row_id = s.query_run_id
               WHERE s.finding_row_id = f.row_id AND q.analysis_mode = 'regular')
-   OR NOT EXISTS (SELECT 1 FROM abom_finding_sighting s WHERE s.finding_row_id = f.row_id);
+   OR COALESCE((SELECT q.analysis_mode FROM abom_query_run q WHERE q.row_id = f.query_run_id),
+               'regular') = 'regular';
 
-CREATE VIEW IF NOT EXISTS abom_finding_extended AS
+DROP VIEW IF EXISTS abom_finding_extended;
+CREATE VIEW abom_finding_extended AS
 SELECT f.* FROM abom_finding f
 WHERE EXISTS (SELECT 1 FROM abom_finding_sighting s
-              JOIN abom_query_run q ON q.row_id = s.query_run_id
-              WHERE s.finding_row_id = f.row_id AND q.analysis_mode = 'extended');`
+			  JOIN abom_query_run q ON q.row_id = s.query_run_id
+			  WHERE s.finding_row_id = f.row_id AND q.analysis_mode = 'extended')
+   OR (SELECT q.analysis_mode FROM abom_query_run q WHERE q.row_id = f.query_run_id) = 'extended';`
 
 // edgeSource and findingSource name the view a read should use for a stated mode.
 //
@@ -125,4 +148,70 @@ func findingSource(mode string) string {
 	default:
 		return "abom_finding_regular"
 	}
+}
+
+func modeNodeIDs(mode string) string {
+	return `WITH observed(row_id) AS (
+		SELECT src_node_row_id FROM ` + edgeSource(mode) + `
+		UNION SELECT dst_node_row_id FROM ` + edgeSource(mode) + `
+		UNION SELECT fn.node_row_id FROM abom_finding_node fn
+		JOIN ` + findingSource(mode) + ` f ON f.row_id = fn.finding_row_id
+	)
+	SELECT row_id FROM observed
+	UNION SELECT container_node_row_id FROM abom_node_live
+	WHERE row_id IN (SELECT row_id FROM observed) AND container_node_row_id IS NOT NULL`
+}
+
+func nodeFindingCount(mode, nodeID string) string {
+	return `(SELECT COUNT(*) FROM abom_finding_node fn
+		JOIN ` + findingSource(mode) + ` f ON f.row_id = fn.finding_row_id
+		WHERE fn.node_row_id = ` + nodeID + `)`
+}
+
+func nodeModeFilter(mode string) string {
+	switch mode {
+	case AnalysisModeAnyShape:
+		return ""
+	case AnalysisModeExtended:
+		return " AND n.row_id IN (" + modeNodeIDs(AnalysisModeExtended) + ")"
+	default:
+		return ` AND (NOT EXISTS (SELECT 1 FROM abom_query_run WHERE analysis_mode = 'extended')
+			OR n.row_id NOT IN (SELECT row_id FROM (` + modeNodeIDs(AnalysisModeExtended) + `)
+			EXCEPT SELECT row_id FROM (` + modeNodeIDs(AnalysisModeRegular) + `)))`
+	}
+}
+
+func guardEdgeAnalysisMode(tx *sql.Tx, edge Edge, targetID int64) error {
+	var conflict bool
+	err := tx.QueryRow(`WITH incoming(mode) AS (
+		SELECT COALESCE((SELECT analysis_mode FROM abom_query_run WHERE row_id = ?), 'regular')
+	)
+	SELECT EXISTS (SELECT 1 FROM abom_edge_live e, incoming
+		WHERE e.edge_key = ?
+		  AND (e.dst_node_row_id <> ? OR e.ref_raw IS NOT ? OR e.ref_value IS NOT ?
+		       OR e.pin_comment IS NOT ?)
+		  AND (COALESCE((SELECT analysis_mode FROM abom_query_run WHERE row_id = e.query_run_id),
+		                'regular') <> incoming.mode
+		       OR EXISTS (SELECT 1 FROM abom_edge_sighting seen
+		                  JOIN abom_query_run run ON run.row_id = seen.query_run_id
+		                  WHERE seen.edge_row_id = e.row_id AND run.analysis_mode <> incoming.mode)))`,
+		edge.QueryRunID, edge.Key, targetID, nullable(edge.RefRaw), nullable(edge.RefValue),
+		nullable(edge.PinComment)).Scan(&conflict)
+	if err != nil {
+		return fmt.Errorf("checking edge analysis mode: %w", err)
+	}
+	if conflict {
+		return fmt.Errorf("edge %q has conflicting observations across analysis modes", edge.Key)
+	}
+	return nil
+}
+
+func recordEdgeSighting(tx *sql.Tx, edge Edge) error {
+	_, err := tx.Exec(`INSERT OR IGNORE INTO abom_edge_sighting (edge_row_id, query_run_id)
+		SELECT row_id, ? FROM abom_edge_live WHERE edge_key = ? AND ? > 0`,
+		edge.QueryRunID, edge.Key, edge.QueryRunID)
+	if err != nil {
+		return fmt.Errorf("recording edge sighting: %w", err)
+	}
+	return nil
 }

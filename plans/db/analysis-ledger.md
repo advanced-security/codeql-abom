@@ -39,8 +39,8 @@ picking one is the decision. Everything else here follows from it.
 
 1. **A requeue can name any dimension of the identity.** `store.RequeueStale(cliVersion,
    packDigests)` takes exactly the two it can select on, so each new dimension is a new argument or
-   a new function, and the shape has to generalize before the next one lands — `analysis_mode` is
-   ranked in [`analysis-mode.md`](analysis-mode.md) and the two unwritten version columns in
+   a new function. Selection must include the recorded
+   [analysis mode](../../docs/architecture.md#analysis-modes) and the two unwritten version columns in
    [`query-catalog.md`](query-catalog.md). Note what the existing selection is already coarser than
    anyone reasons about: `requeueDone` correlates the frontier row to `abom_query_run` **by
    repository alone**, so one stale run requeues every reference of that repository rather than the

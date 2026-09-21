@@ -48,15 +48,39 @@ func TestTheFrontierQueryDoesNotWalkTheEdgeTablePerQueueRow(t *testing.T) {
 	// A correlated subquery reading the edge table is the per-row walk. The rollup reads the same
 	// table once to build an aggregate, which is a scan and is the fix, so correlation is what
 	// separates the two.
-	inCorrelated := false
+	if hasCorrelatedEdgeRead(plan) {
+		t.Errorf("the frontier query still walks the edge table per queue row:\n\t%s",
+			strings.Join(plan, "\n\t"))
+	}
+}
+
+func hasCorrelatedEdgeRead(plan []string) bool {
+	correlated := false
 	for _, step := range plan {
 		if strings.Contains(step, "CORRELATED") {
-			inCorrelated = true
+			correlated = true
 		}
-		if inCorrelated && strings.Contains(step, "abom_edge") {
-			t.Errorf("the frontier query still walks the edge table per queue row:\n\t%s",
-				strings.Join(plan, "\n\t"))
-			break
+		words := strings.Fields(step)
+		if correlated && len(words) > 1 && (words[0] == "SCAN" || words[0] == "SEARCH") &&
+			(words[1] == "abom_edge" || words[1] == "e") {
+			return true
+		}
+	}
+	return false
+}
+
+func TestTheCostGuardDistinguishesAnEdgeWalkFromASightingLookup(t *testing.T) {
+	for _, example := range []struct {
+		plan []string
+		bad  bool
+	}{
+		{[]string{"SCAN abom_edge", "CORRELATED SCALAR SUBQUERY", "SEARCH q USING INTEGER PRIMARY KEY"}, false},
+		{[]string{"CORRELATED SCALAR SUBQUERY", "SCAN abom_edge"}, true},
+		{[]string{"CORRELATED SCALAR SUBQUERY", "SEARCH e USING INDEX idx_edge_dst"}, true},
+		{[]string{"CORRELATED SCALAR SUBQUERY", "SEARCH s USING COVERING INDEX sqlite_autoindex_abom_edge_sighting_1 (edge_row_id=?)"}, false},
+	} {
+		if got := hasCorrelatedEdgeRead(example.plan); got != example.bad {
+			t.Errorf("plan %v: per-row edge walk = %v, want %v", example.plan, got, example.bad)
 		}
 	}
 }

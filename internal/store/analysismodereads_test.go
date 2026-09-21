@@ -6,7 +6,46 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	viewspec "github.com/advanced-security/codeql-abom/internal/view"
 )
+
+func TestPolicyCoverageNamesOnlyUnattributedFindingsInItsMode(t *testing.T) {
+	database := newTestStore(t)
+	repository, err := database.UpsertRepository("octo/app", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, mode := range AnalysisModes() {
+		run, err := database.RecordQueryRun(QueryRun{
+			QueryID: "actions/unpinned-tag", Repository: "octo/app", AnalysisMode: mode,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for line := 0; line <= index; line++ {
+			if _, err := database.AddFindings([]Finding{{
+				QueryRunID: run, RepositoryID: repository, RuleID: "actions/unpinned-tag",
+				FilePath: mode + ".yml", StartLine: line + 1,
+			}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for index, mode := range AnalysisModes() {
+		for _, rules := range [][]string{{"actions/unpinned-tag"}, nil} {
+			count, repositories, err := database.unattributedFor(
+				viewspec.Spec{Mode: mode, Rules: rules}, func(string) bool { return true })
+			if err != nil {
+				t.Fatal(err)
+			}
+			if count != index+1 || len(repositories) != 1 || repositories[0] != "octo/app" {
+				t.Errorf("%s rules=%v: %d findings in %v, want %d in octo/app",
+					mode, rules, count, repositories, index+1)
+			}
+		}
+	}
+}
 
 // twoShapesOverOneDefect records one defect seen by a regular run and by an extended run, in the
 // order given, and returns the finding's row id.
@@ -136,17 +175,6 @@ func TestADefectOnlyTheClosureSeesStaysOutOfTheRegularTotals(t *testing.T) {
 	}
 }
 
-// Every edge on record was written by a regular run, and an extended one re-observing the same
-// `uses:` line must not move it: the edge is keyed by source location, so one physical row is
-// what both shapes saw. The mode is therefore read through the run, never stamped on the edge.
-// Every edge on record was written by a regular run, and an extended run's edges must not join
-// the graph the existing aggregates read: blast radius, reach and the bill of materials would
-// grow by exposure reached through a `uses:` boundary without anything saying so.
-//
-// Attribution of an edge *both* shapes observe is deliberately not decided here. The edge key is
-// its source location, so one physical row is what both saw, and `query_run_id` names whichever
-// run wrote last — the closure-database work has to choose, and plans/db/analysis-mode.md records
-// that as its decision. No writer can produce the situation until it lands.
 func TestAnExtendedEdgeStaysOutOfTheRegularGraph(t *testing.T) {
 	s := newTestStore(t)
 	app, err := s.UpsertRepository("octo/app", "")
@@ -187,6 +215,7 @@ func TestAnExtendedEdgeStaysOutOfTheRegularGraph(t *testing.T) {
 	}
 	observe(AnalysisModeRegular, "e-own", ".github/workflows/ci.yml", 12)
 	observe(AnalysisModeExtended, "e-closure", "closure/vendor/toolkit/action.yml", 4)
+	observe(AnalysisModeExtended, "e-own", ".github/workflows/ci.yml", 12)
 
 	var live, regular, extended int
 	if err := s.db.QueryRow(`SELECT
@@ -202,8 +231,8 @@ func TestAnExtendedEdgeStaysOutOfTheRegularGraph(t *testing.T) {
 		t.Errorf("the regular graph holds %d edges, want only the one its own checkout saw",
 			regular)
 	}
-	if extended != 1 {
-		t.Errorf("the extended graph holds %d edges, want only the closure edge", extended)
+	if extended != 2 {
+		t.Errorf("the extended graph holds %d edges, want the closure and shared edges", extended)
 	}
 }
 
@@ -268,7 +297,6 @@ func TestEveryEdgeAndFindingReadNamesItsMode(t *testing.T) {
 	allowed := map[string]bool{
 		"internal/store/analysismode.go": true,
 		"internal/store/edgeboundary.go": true,
-		"internal/store/edgefacts.go":    true,
 		"internal/store/findings.go":     true,
 		"internal/store/prune.go":        true,
 	}
@@ -276,6 +304,7 @@ func TestEveryEdgeAndFindingReadNamesItsMode(t *testing.T) {
 	// bare name does not.
 	unnamed := regexp.MustCompile(
 		`(?:FROM|JOIN)\s+(abom_edge|abom_finding)(_live|_regular|_extended|_any_mode)?\b`)
+	unscopedCount := regexp.MustCompile(`(?i)COUNT\([^)]*\)\s+FROM\s+abom_finding_node(?:\s+fn)?(?:\s+WHERE\b|\s*[` + "`" + `)])`)
 
 	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -295,6 +324,9 @@ func TestEveryEdgeAndFindingReadNamesItsMode(t *testing.T) {
 		body, err := os.ReadFile(path)
 		if err != nil {
 			return err
+		}
+		for _, count := range unscopedCount.FindAllString(string(body), -1) {
+			t.Errorf("%s counts finding attributions without joining a declared mode: %s", rel, count)
 		}
 		for _, m := range unnamed.FindAllStringSubmatch(string(body), -1) {
 			switch m[2] {

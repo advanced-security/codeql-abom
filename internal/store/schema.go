@@ -192,6 +192,12 @@ CREATE TABLE IF NOT EXISTS abom_edge (
   owned_depth         INTEGER
 );
 
+CREATE TABLE IF NOT EXISTS abom_edge_sighting (
+  edge_row_id  INTEGER NOT NULL REFERENCES abom_edge(row_id) ON DELETE CASCADE,
+  query_run_id INTEGER NOT NULL REFERENCES abom_query_run(row_id),
+  PRIMARY KEY (edge_row_id, query_run_id)
+);
+
 -- What holds what, which the canvas draws and nothing declares.
 --
 -- A table of its own rather than rows in abom_edge: an edge's identity is the source location

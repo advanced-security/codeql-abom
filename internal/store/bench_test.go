@@ -84,3 +84,48 @@ func BenchmarkFullGraph(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkAnalysisModeMembership(benchmark *testing.B) {
+	database := benchStore(benchmark)
+	if err := database.Migrate(); err != nil {
+		benchmark.Fatal(err)
+	}
+	for _, entity := range []string{"edge", "finding"} {
+		view := "abom_" + entity + "_regular"
+		materialized := "benchmark_mode_" + entity
+		if _, err := database.db.Exec(`CREATE TEMP TABLE ` + materialized + ` AS
+			SELECT row_id, row_id IN (SELECT row_id FROM ` + view + `) AS regular
+			FROM abom_` + entity + `_any_mode;
+			CREATE INDEX ` + materialized + `_membership ON ` + materialized + `(regular)`); err != nil {
+			benchmark.Fatal(err)
+		}
+		var expected int
+		if err := database.db.QueryRow("SELECT COUNT(*) FROM " + view).Scan(&expected); err != nil {
+			benchmark.Fatal(err)
+		}
+		if expected == 0 {
+			benchmark.Fatalf("no regular %ss: this would measure an empty answer", entity)
+		}
+		for _, variant := range []struct{ name, query string }{
+			{"joined", "SELECT COUNT(*) FROM " + view},
+			{"materialized", "SELECT COUNT(*) FROM " + materialized + " WHERE regular = 1"},
+		} {
+			benchmark.Run(entity+"/"+variant.name, func(iteration *testing.B) {
+				var count int
+				if err := database.db.QueryRow(variant.query).Scan(&count); err != nil {
+					iteration.Fatal(err)
+				}
+				iteration.ReportAllocs()
+				iteration.ResetTimer()
+				for iteration.Loop() {
+					if err := database.db.QueryRow(variant.query).Scan(&count); err != nil {
+						iteration.Fatal(err)
+					}
+					if count != expected {
+						iteration.Fatalf("count = %d, want %d", count, expected)
+					}
+				}
+			})
+		}
+	}
+}

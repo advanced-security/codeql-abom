@@ -380,6 +380,11 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "focus is required")
 		return
 	}
+	spec, err := s.graphPredicate(r, "focus", "hops", "max", "direction", "granularity", "expand")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	g, err := s.Store.Subgraph(store.SubgraphOptions{
 		Focus:       focus,
@@ -388,7 +393,7 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 		Direction:   q.Get("direction"),
 		Granularity: q.Get("granularity"),
 		Expand:      q.Get("expand") == "true",
-		Mode:        q.Get("mode"),
+		Mode:        spec.Mode,
 	})
 	writeJSON(w, g, err)
 }

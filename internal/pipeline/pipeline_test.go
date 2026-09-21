@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -61,7 +62,14 @@ func TestEndToEndQueryToGraph(t *testing.T) {
 	}
 	defer f.Close()
 
-	n, err := ing.EdgesFromBQRS(f, ingest.Options{Repository: "octo-org/app"})
+	run := store.QueryRun{
+		QueryID: "abom/edges", Repository: "octo-org/app", AnalysisMode: store.AnalysisModeRegular,
+	}
+	regular, err := s.RecordQueryRun(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := ing.EdgesFromBQRS(f, ingest.Options{Repository: "octo-org/app", QueryRunID: regular})
 	if err != nil {
 		t.Fatalf("EdgesFromBQRS: %v", err)
 	}
@@ -76,8 +84,8 @@ func TestEndToEndQueryToGraph(t *testing.T) {
 	// three that arrived are `job-needs-job` — ordering, not use — which a bare count would have
 	// been bumped past without anyone noticing which kind moved.
 	want := map[string]int{
-		"step-uses-action":           9,
-		"job-uses-reusable-workflow": 2,
+		"step-uses-action":           10,
+		"job-uses-reusable-workflow": 3,
 		"composite-step-uses-action": 2,
 		"job-needs-job":              3,
 	}
@@ -119,6 +127,32 @@ func TestEndToEndQueryToGraph(t *testing.T) {
 	}
 	if withComment != 2 {
 		t.Errorf("edges carrying a pin comment = %d, want 2", withComment)
+	}
+
+	run.AnalysisMode = store.AnalysisModeExtended
+	extended, err := s.RecordQueryRun(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ing.EdgesFromBQRS(f, ingest.Options{
+		Repository: "octo-org/app", QueryRunID: extended,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []string{"abom_edge", "abom_edge_regular", "abom_edge_extended"} {
+		var count int
+		if err := s.DB().QueryRow("SELECT COUNT(*) FROM " + source).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != total {
+			t.Errorf("replayed CodeQL evidence: %s has %d edges, want %d", source, count, total)
+		}
 	}
 }
 

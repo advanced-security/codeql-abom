@@ -360,11 +360,12 @@ public sealed class AbomApi(HttpClient http)
     /// </summary>
     public async Task<Bom?> GetBomAsync(
         IEnumerable<string>? roots = null, IEnumerable<string>? properties = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default, string? mode = null)
     {
         var parts = new List<string>();
         parts.AddRange((roots ?? []).Select(r => "root=" + Uri.EscapeDataString(r)));
         parts.AddRange((properties ?? []).Select(p => "properties=" + Uri.EscapeDataString(p)));
+        if (!string.IsNullOrEmpty(mode)) parts.Add("mode=" + Uri.EscapeDataString(mode));
         var path = parts.Count == 0 ? "api/bom" : "api/bom?" + string.Join("&", parts);
         return await GetAsync<Bom>(path, ct);
     }
@@ -390,11 +391,12 @@ public sealed class AbomApi(HttpClient http)
     /// would hand somebody a document about the whole organization under the name of one part.
     /// </summary>
     public static string BomDownloadUrl(string format, IEnumerable<string>? roots = null,
-        IEnumerable<string>? properties = null)
+        IEnumerable<string>? properties = null, string? mode = null)
     {
         var parts = new List<string> { "format=" + Uri.EscapeDataString(format), "download=true" };
         parts.AddRange((roots ?? []).Select(r => "root=" + Uri.EscapeDataString(r)));
         parts.AddRange((properties ?? []).Select(p => "properties=" + Uri.EscapeDataString(p)));
+        if (!string.IsNullOrEmpty(mode)) parts.Add("mode=" + Uri.EscapeDataString(mode));
         return "api/bom?" + string.Join("&", parts);
     }
 

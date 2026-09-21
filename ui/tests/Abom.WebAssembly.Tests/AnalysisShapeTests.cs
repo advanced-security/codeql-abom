@@ -1,5 +1,6 @@
 using System.Linq;
 using Bunit;
+using MudBlazor;
 using Xunit;
 
 namespace Abom.WebAssembly.Tests;
@@ -109,6 +110,65 @@ public class AnalysisShapeTests : AbomTestContext
             Sent.First(r => r.Url.Contains("api/actions")).Url);
     }
 
+    [Fact]
+    public async Task ChoosingAnAnalysisShapeReloadsTheListingAndKeepsItsScope()
+    {
+        Answer("api/views", """[]""");
+        Answer("api/actions", """{"items":[],"total":0}""");
+        Answer("api/properties", Properties);
+        var navigation = Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!;
+        navigation.NavigateTo("/inventory?rules=actions%2Funpinned-tag");
+
+        var page = Render<Pages.Inventory>();
+        var control = page.FindComponent<Shared.ScopeControl>()
+                          .FindComponent<MudToggleGroup<string>>();
+        Assert.Equal("regular", control.Instance.Value);
+
+        await page.InvokeAsync(() => control.Instance.ValueChanged.InvokeAsync("extended"));
+
+        page.WaitForAssertion(() =>
+        {
+            var request = Sent.Last(r => r.Url.Contains("api/actions")).Url;
+            Assert.Contains("mode=extended", request);
+            Assert.Contains("rules=actions%2Funpinned-tag", request);
+            Assert.Contains("mode=extended", navigation.Uri);
+            Assert.Contains("Coverage and dependency reach use regular analysis.", page.Markup);
+        });
+    }
+
+    [Fact]
+    public void AnExtendedExportNeverSilentlyBecomesARegularDocument()
+    {
+        Answer("api/views", """[]""");
+        Answer("api/actions", """{"items":[],"total":0}""");
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+                .NavigateTo("/inventory?mode=extended");
+
+        var page = Render<Pages.Inventory>();
+
+        foreach (var format in new[] { "cyclonedx", "spdx" })
+        {
+            Assert.Contains("mode=extended",
+                page.Find($"[data-abom-action='bom-{format}']").GetAttribute("href"));
+        }
+    }
+
+    [Fact]
+    public void ABillOfMaterialsRefusesAnAnalysisShapeItCannotDescribe()
+    {
+        Fail("api/bom?mode=extended", System.Net.HttpStatusCode.BadRequest);
+        Answer("api/bom", Document);
+        Answer("api/properties", Properties);
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+                .NavigateTo("/bom?mode=extended");
+
+        var page = Render<Pages.BillOfMaterials>();
+
+        page.WaitForAssertion(() => Assert.Contains("does not narrow by", page.Markup));
+        Assert.Contains("mode", page.Markup);
+        Assert.Contains(Sent, request => request.Url.Contains("api/bom?mode=extended"));
+    }
+
     /// <summary>
     /// The graph applies the shape itself rather than handing it to the browser, so the term has
     /// to reach the request. The Explorer assembles that URL by hand from its own controls, and a
@@ -116,7 +176,7 @@ public class AnalysisShapeTests : AbomTestContext
     /// silently swaps it for a different one drawn under the same address.
     /// </summary>
     [Fact]
-    public void TheGraphIsRequestedForTheShapeTheAddressNames()
+    public async Task TheGraphIsRequestedForTheShapeTheAddressNames()
     {
         Answer("api/owned-scope", """[{"owner":"octo-org"}]""");
         var module = JSInterop.SetupModule("./js/graph.js");
@@ -133,11 +193,25 @@ public class AnalysisShapeTests : AbomTestContext
             module.SetupVoid(name, _ => true).SetVoidResult();
         }
         Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
-                .NavigateTo("/explorer?mode=extended&scope=owned");
+            .NavigateTo("/explore?mode=extended&scope=owned");
 
-        Render<Pages.Explorer>();
+        var page = Render<Pages.Explorer>();
 
+        page.WaitForAssertion(() => Assert.NotEmpty(JSInterop.Invocations["loadFull"]));
         Assert.All(JSInterop.Invocations["loadFull"],
             call => Assert.Contains("mode=extended", (string)call.Arguments[1]!));
+
+        var control = page.FindComponent<Shared.ScopeControl>()
+                  .FindComponent<MudToggleGroup<string>>();
+        Assert.Equal("extended", control.Instance.Value);
+        var requests = JSInterop.Invocations["loadFull"].Count;
+        await page.InvokeAsync(() => control.Instance.ValueChanged.InvokeAsync("regular"));
+
+        page.WaitForAssertion(() =>
+        {
+            Assert.True(JSInterop.Invocations["loadFull"].Count > requests);
+            Assert.DoesNotContain("mode=extended",
+            (string)JSInterop.Invocations["loadFull"].Last().Arguments[1]!);
+        });
     }
 }

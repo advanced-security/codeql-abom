@@ -267,7 +267,8 @@ func report(w io.Writer, s *store.Store, dbPath string) error {
 		{"nodes", `SELECT COUNT(*) FROM abom_node_live`},
 		{"edges", `SELECT COUNT(*) FROM abom_edge_regular`},
 		{"findings", `SELECT COUNT(*) FROM abom_finding_regular`},
-		{"findings on a node", `SELECT COUNT(DISTINCT finding_row_id) FROM abom_finding_node`},
+		{"findings on a node", `SELECT COUNT(DISTINCT fn.finding_row_id) FROM abom_finding_node fn
+			JOIN abom_finding_regular f ON f.row_id = fn.finding_row_id`},
 		{"advisories", `SELECT COUNT(*) FROM abom_advisory`},
 		// Reaching is the number that decides whether the unit draws anything, and it is the one
 		// that was silently zero while the data set grew.

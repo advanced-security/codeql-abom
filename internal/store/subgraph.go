@@ -401,7 +401,7 @@ func (v *subgraphWalk) node(id int64) (SubgraphNode, error) {
 	err := v.store.db.QueryRow(`
 		SELECT n.node_key, n.node_kind, r.repository_full_name, r.origin, n.path, n.is_external,
 		       COALESCE(b.dependent_repos, 0),
-		       (SELECT COUNT(*) FROM abom_finding_node fn WHERE fn.node_row_id = n.row_id)
+		       `+nodeFindingCount(v.opts.Mode, "n.row_id")+`
 		FROM abom_node_live n
 		LEFT JOIN repository r ON r.row_id = n.repository_row_id
 		LEFT JOIN abom_blast_radius b ON b.node_row_id = n.row_id

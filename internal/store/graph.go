@@ -185,7 +185,12 @@ func (w *Writer) flushEdges() error {
 				 end_line, end_column, repository_row_id, provenance)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(edge_key) DO UPDATE SET
-				query_run_id    = excluded.query_run_id,
+				query_run_id    = CASE
+					WHEN (SELECT analysis_mode FROM abom_query_run
+					      WHERE row_id = excluded.query_run_id) = 'extended'
+					 AND COALESCE((SELECT analysis_mode FROM abom_query_run
+					               WHERE row_id = abom_edge.query_run_id), 'regular') = 'regular'
+					THEN abom_edge.query_run_id ELSE excluded.query_run_id END,
 				ref_raw         = excluded.ref_raw,
 				ref_value       = excluded.ref_value,
 				pin_comment     = excluded.pin_comment,
@@ -222,15 +227,25 @@ func (w *Writer) flushEdges() error {
 			if !ok {
 				return fmt.Errorf("edge %q references unknown target node %q", e.Key, e.DstKey)
 			}
-			if _, err := stmt.Exec(e.Key, nullableID(e.QueryRunID), srcID, dstID, e.Kind,
-				nullable(e.RefRaw), nullable(e.RefValue), nullable(e.PinComment),
-				nullable(e.FilePath), e.StartLine, e.StartColumn, e.EndLine, e.EndColumn,
-				nullableID(e.RepositoryID), nullable(e.Provenance)); err != nil {
-				return fmt.Errorf("inserting edge %q: %w", e.Key, err)
+			if err := writeEdge(tx, stmt, e, srcID, dstID); err != nil {
+				return err
 			}
 		}
 		return nil
 	})
+}
+
+func writeEdge(tx *sql.Tx, statement *sql.Stmt, edge Edge, sourceID, targetID int64) error {
+	if err := guardEdgeAnalysisMode(tx, edge, targetID); err != nil {
+		return err
+	}
+	if _, err := statement.Exec(edge.Key, nullableID(edge.QueryRunID), sourceID, targetID, edge.Kind,
+		nullable(edge.RefRaw), nullable(edge.RefValue), nullable(edge.PinComment),
+		nullable(edge.FilePath), edge.StartLine, edge.StartColumn, edge.EndLine, edge.EndColumn,
+		nullableID(edge.RepositoryID), nullable(edge.Provenance)); err != nil {
+		return fmt.Errorf("inserting edge %q: %w", edge.Key, err)
+	}
+	return recordEdgeSighting(tx, edge)
 }
 
 func (w *Writer) inTx(fn func(*sql.Tx) error) error {

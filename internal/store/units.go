@@ -91,6 +91,7 @@ const workflowColumns = `
 	         WHERE j.container_node_row_id = n.row_id AND j.node_kind = 'job'
 	           AND o.name = 'privileged' AND o.value = 'true') AS privileged_jobs,
 	       (SELECT COUNT(*) FROM abom_finding_node fn
+	         JOIN abom_finding_regular f ON f.row_id = fn.finding_row_id
 	         WHERE fn.node_row_id = n.row_id) AS findings,
 	       (SELECT COUNT(*) FROM abom_edge_regular e
 	         WHERE e.dst_node_row_id = n.row_id) AS depended_on_by`
@@ -274,6 +275,7 @@ func (s *Store) JobsPage(q JobsQuery) (JobsPage, error) {
 		          FROM abom_node_live s JOIN abom_edge_regular e ON e.src_node_row_id = s.row_id
 		         WHERE ` + jobStepsPredicate + `) AS dependencies,
 		       (SELECT COUNT(*) FROM abom_finding_node fn
+		         JOIN abom_finding_regular f ON f.row_id = fn.finding_row_id
 		         WHERE fn.node_row_id = n.row_id) AS findings
 		FROM abom_node_live n
 		LEFT JOIN repository r ON r.row_id = n.repository_row_id
@@ -316,6 +318,7 @@ func unitFindingsFlag(flags []string) string {
 	for _, f := range flags {
 		if f == "findings" {
 			return ` AND EXISTS (SELECT 1 FROM abom_finding_node fn
+			                      JOIN abom_finding_regular f ON f.row_id = fn.finding_row_id
 			                      WHERE fn.node_row_id = n.row_id)`
 		}
 	}

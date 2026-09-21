@@ -179,10 +179,14 @@ a content hash makes every rebuild invalidate every row, the skip silently stops
 looks broken. The manifest hashes **inputs** — the repositories and commits that went in.
 
 **Every row this writes is `extended`, and `extended` is inert.**
-[`db/analysis-mode.md`](../db/analysis-mode.md) is a prerequisite rather than a companion: until
+[Analysis-mode isolation](../../docs/architecture.md#analysis-modes) is implemented: until
 [`db/extended-findings.md`](../db/extended-findings.md) decides otherwise, every aggregate reads
 `regular` and nothing this plan produces moves an existing number. **That is this plan's headline
 verification, not a caveat on it.**
+
+Per-run sightings preserve shared identities. Conflicting cross-mode edge targets or references
+are refused at write time; staging must detect those collisions before persistence, not relax
+the guard and replace regular evidence.
 
 **`abom_database_catalog` is not this and may not be reused for it.** That table answers whether
 code scanning is enabled on a repository — a fact about configuration, which moves independently of

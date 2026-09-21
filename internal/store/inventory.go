@@ -272,7 +272,7 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 	if len(q.Kinds) > 0 {
 		where = `WHERE n.node_kind IN (` + placeholders(len(q.Kinds)) + `)`
 	}
-	where += keep
+	where += keep + nodeModeFilter(q.Mode)
 	// Tracked apart from the select-list arguments, because the count runs the same WHERE without
 	// the select list and the two argument orders would otherwise have to be kept in step by hand.
 	var whereArgs []any
@@ -296,7 +296,7 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 	findings, findingArgs := inventoryFindingFilter(q)
 	where += findings
 	whereArgs = append(whereArgs, findingArgs...)
-	where += inventoryFlagFilter(q.Flags)
+	where += inventoryFlagFilter(q.Flags, q.Mode)
 	if style := inventoryRefFilter(q.RefStyle, q.Mode); style != "" {
 		where += style
 	}
@@ -330,8 +330,7 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 		       (SELECT COUNT(DISTINCT e.ref_value) FROM ` + edgeSource(q.Mode) + ` e
 		         WHERE e.dst_node_row_id = n.row_id
 		           AND e.ref_value IS NOT NULL AND e.ref_value <> '') AS distinct_refs,
-		       (SELECT COUNT(*) FROM abom_finding_node fn
-		         WHERE fn.node_row_id = n.row_id) AS findings,
+		       ` + nodeFindingCount(q.Mode, "n.row_id") + ` AS findings,
 		       (SELECT COUNT(DISTINCT a.ghsa_id)
 		          FROM abom_advisory a
 		          JOIN abom_advisory_package p ON p.advisory_row_id = a.row_id
@@ -364,7 +363,7 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 	}
 
 	for i := range out {
-		refs, err := s.referencesTo(out[i].NodeKey)
+		refs, err := s.referencesTo(out[i].NodeKey, q.Mode)
 		if err != nil {
 			return InventoryPage{}, err
 		}
@@ -478,12 +477,13 @@ func inventoryFindingFilter(q InventoryQuery) (string, []any) {
 //
 // `unanalyzed` asks about the dependency, not about its findings: a row nothing has queued is a
 // coverage gap whether or not a rule ever looked at it.
-func inventoryFlagFilter(flags []string) string {
+func inventoryFlagFilter(flags []string, mode string) string {
 	out := ""
 	for _, f := range flags {
 		switch f {
 		case "findings":
 			out += ` AND EXISTS (SELECT 1 FROM abom_finding_node fn
+			                     JOIN ` + findingSource(mode) + ` f ON f.row_id = fn.finding_row_id
 			                     WHERE fn.node_row_id = n.row_id)`
 		case "advisory":
 			out += ` AND EXISTS (SELECT 1 FROM abom_advisory a
@@ -758,7 +758,9 @@ func (s *Store) RepositoryDetailOf(fullName string) (RepositoryDetail, error) {
 		       (SELECT COUNT(*) FROM abom_edge_regular e
 		         JOIN abom_node_live src ON src.row_id = e.src_node_row_id
 		        WHERE src.container_node_row_id = n.row_id OR src.row_id = n.row_id),
-		       (SELECT COUNT(*) FROM abom_finding_node fn WHERE fn.node_row_id = n.row_id)
+		       (SELECT COUNT(*) FROM abom_finding_node fn
+		         JOIN abom_finding_regular f ON f.row_id = fn.finding_row_id
+		         WHERE fn.node_row_id = n.row_id)
 		FROM abom_node_live n
 		WHERE n.repository_row_id = ? AND n.node_kind IN ('workflow', 'composite_action')
 		ORDER BY n.path`, rowID)

@@ -77,16 +77,8 @@ var relationshipSorts = map[string]string{
 	"boundary":   "e.boundary",
 	"repository": "r.repository_full_name",
 	"ownedDepth": "e.owned_depth",
-	"findings":   findingsOnLine,
+	"findings":   "findings",
 }
-
-// findingsOnLine counts what was reported against the step or job that declares a relationship.
-//
-// The source endpoint rather than either end: a rule fires on the `uses:` line, and the line is
-// the source. Counting the target instead would report a dependency's own findings against every
-// use of it.
-const findingsOnLine = `(SELECT COUNT(*) FROM abom_finding_node fn
-	                          WHERE fn.node_row_id = e.src_node_row_id)`
 
 // rulesOnLine names them, sorted, so a row reads the same on every page.
 func rulesOnLine(mode string) string {
@@ -220,7 +212,8 @@ func (s *Store) relationshipsPageQuery(q RelationshipsQuery) (string, []any, err
 		SELECT e.edge_key, e.edge_kind, src.node_key, dst.node_key,
 		       COALESCE(e.ref_value, ''), COALESCE(e.ref_style, ''), COALESCE(e.boundary, ''),
 		       COALESCE(r.repository_full_name, ''), COALESCE(e.file_path, ''),
-		       COALESCE(e.start_line, 0), ` + findingsOnLine + `, ` + rulesOnLine(q.Mode) + `,
+		       COALESCE(e.start_line, 0), ` + nodeFindingCount(q.Mode, "e.src_node_row_id") +
+		` AS findings, ` + rulesOnLine(q.Mode) + `,
 		       e.advisory_route, e.finding_route, e.owned_depth` +
 		relationshipRows(q.Mode) + where + ordering
 	if q.Limit > 0 {
