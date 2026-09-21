@@ -14,6 +14,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	native "github.com/github/actions-lockfile/go/pkg/lockfile"
@@ -94,6 +95,54 @@ func (l Lock) Workflow(path string) Coverage {
 	default:
 		return Covered
 	}
+}
+
+// WorkflowCoverage is one workflow's state within a lockfile. An empty Path is the state of the
+// file itself.
+type WorkflowCoverage struct {
+	Path     string
+	Coverage Coverage
+}
+
+// Survey reads the lock under root and reports it alongside the coverage of every workflow the
+// tree holds.
+//
+// One place rather than one per caller: a workflow the lockfile omits has to be reported as
+// uncovered, and a caller that enumerated differently would disagree about what the corpus says.
+func Survey(root string) (Lock, []WorkflowCoverage, error) {
+	lock, err := Read(root)
+	if err != nil {
+		return Lock{}, nil, err
+	}
+	rows := []WorkflowCoverage{{Coverage: lock.Coverage}}
+	for _, path := range workflowPaths(root) {
+		rows = append(rows, WorkflowCoverage{Path: path, Coverage: lock.Workflow(path)})
+	}
+	return lock, rows, nil
+}
+
+// workflowPaths lists the repository-relative workflow files a tree holds.
+//
+// Only the directory GitHub runs workflows from, and not recursively: a `.yml` deeper in the tree
+// is not a workflow, and the lockfile keys its entries on this same set of paths.
+func workflowPaths(root string) []string {
+	entries, err := os.ReadDir(filepath.Join(root, ".github", "workflows"))
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() {
+			continue
+		}
+		if !strings.HasSuffix(name, ".yml") && !strings.HasSuffix(name, ".yaml") {
+			continue
+		}
+		paths = append(paths, ".github/workflows/"+name)
+	}
+	slices.Sort(paths)
+	return paths
 }
 
 // Selected reports the commit this lockfile selects for a `uses:` string in a workflow.

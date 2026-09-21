@@ -2,6 +2,8 @@ package store
 
 import (
 	"fmt"
+
+	"github.com/advanced-security/codeql-abom/internal/lockfile"
 )
 
 // lockCoverageDDL records what a repository's Actions lockfile said at one commit.
@@ -39,6 +41,28 @@ type LockCoverage struct {
 	Schema       string
 	Digest       string
 	Reason       string
+}
+
+// LockCoverageRows builds the rows for one repository from a survey of its tree.
+//
+// The file's schema, digest and reason ride on every row, so a reader that selects one workflow
+// still knows which lockfile answered for it.
+func LockCoverageRows(coverage, schema, digest, reason string, workflows []lockfile.WorkflowCoverage) []LockCoverage {
+	rows := make([]LockCoverage, 0, len(workflows))
+	for _, w := range workflows {
+		row := LockCoverage{
+			WorkflowPath: w.Path,
+			Coverage:     string(w.Coverage),
+			Schema:       schema,
+			Digest:       digest,
+		}
+		// Only the repository-level row carries the reason; a workflow did not fail to parse.
+		if w.Path == "" {
+			row.Coverage, row.Reason = coverage, reason
+		}
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 // RecordLockCoverage notes what the lockfile said for one repository at one commit.

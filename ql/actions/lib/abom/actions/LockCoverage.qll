@@ -11,6 +11,7 @@
 private import actions
 private import codeql.actions.Lock
 private import codeql.actions.ast.internal.Yaml
+private import codeql.files.FileSystem
 
 /**
  * Holds if `callee` is `pinnedNwo` or a sub-action of it, as a repository pin also covers
@@ -40,6 +41,34 @@ class LockableUses extends Uses {
       exists(callee.indexOf("/"))
     )
   }
+}
+
+/**
+ * A workflow file, identified by where it sits rather than by what the extractor built from it.
+ *
+ * Not `Workflow`: a file under `.github/workflows/` that declares no `jobs:` produces no
+ * `Workflow` entity at all, and a repository whose only workflow is malformed still has one.
+ * Directly in the directory and not below it, because GitHub does not run workflows from
+ * subdirectories even though the extractor still indexes them.
+ */
+class WorkflowFile extends File {
+  WorkflowFile() {
+    this.getParentContainer().getRelativePath() = ".github/workflows" and
+    this.getExtension() = ["yml", "yaml"]
+  }
+}
+
+/** Holds if this repository keeps a lockfile, whatever state it is in. */
+predicate hasLockfile() { exists(AbomActionsLock lock) }
+
+/**
+ * The workflow file a repository-level finding is reported against.
+ *
+ * A repository is not a thing a query can select, so the alert lands on one file and the lowest
+ * path is chosen to make that file the same on every run.
+ */
+WorkflowFile firstWorkflowFile() {
+  result = min(WorkflowFile f | | f order by f.getRelativePath())
 }
 
 /** A `.github/workflows/actions.lock` file, viewed as a coverage record. */

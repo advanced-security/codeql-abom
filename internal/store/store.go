@@ -82,6 +82,28 @@ func (s *Store) DB() *sql.DB { return s.db }
 
 // Migrate creates all tables and adds any columns introduced since the database was created.
 // It is safe to call on an existing database.
+// createTables are the CREATE TABLE statements that follow the main schema, in the order they run.
+//
+// Every one runs before the column pass, because that pass is one sweep of ALTER TABLE and a table
+// it names but that does not exist yet fails on every fresh database. Additive, so a corpus
+// upgraded in place gains them without a rebuild.
+var createTables = []struct {
+	what string
+	ddl  string
+}{
+	{"the commit content table", commitContentDDL},
+	{"the lock coverage table", lockCoverageDDL},
+	{"the declared scope tables", ownedScopeDDL},
+	{"the cycle spend table", cycleSpendDDL},
+	{"the saved view table", savedViewDDL},
+	{"the response cache table", httpCacheDDL},
+	{"the discovery state table", discoveryStateDDL},
+	{"the enumeration state table", enumerationStateDDL},
+	{"the repository property table", repositoryPropertyDDL},
+	{"the property schema table", propertySchemaDDL},
+	{"the policy tables", policyDDL},
+}
+
 func (s *Store) Migrate() error {
 	if err := s.dropStaleDerivedTables(); err != nil {
 		return err
@@ -89,41 +111,10 @@ func (s *Store) Migrate() error {
 	if _, err := s.db.Exec(schemaDDL); err != nil {
 		return fmt.Errorf("creating schema: %w", err)
 	}
-	// Every remaining CREATE TABLE runs before the column pass, because that pass is one sweep of
-	// ALTER TABLE and a table it names but that does not exist yet fails on every fresh database.
-	// Additive, so a corpus upgraded in place gains them without a rebuild.
-	if _, err := s.db.Exec(commitContentDDL); err != nil {
-		return fmt.Errorf("creating the commit content table: %w", err)
-	}
-	if _, err := s.db.Exec(lockCoverageDDL); err != nil {
-		return fmt.Errorf("creating the lock coverage table: %w", err)
-	}
-	if _, err := s.db.Exec(ownedScopeDDL); err != nil {
-		return fmt.Errorf("creating the declared scope tables: %w", err)
-	}
-	if _, err := s.db.Exec(cycleSpendDDL); err != nil {
-		return fmt.Errorf("creating the cycle spend table: %w", err)
-	}
-	if _, err := s.db.Exec(savedViewDDL); err != nil {
-		return fmt.Errorf("creating the saved view table: %w", err)
-	}
-	if _, err := s.db.Exec(httpCacheDDL); err != nil {
-		return fmt.Errorf("creating the response cache table: %w", err)
-	}
-	if _, err := s.db.Exec(discoveryStateDDL); err != nil {
-		return fmt.Errorf("creating the discovery state table: %w", err)
-	}
-	if _, err := s.db.Exec(enumerationStateDDL); err != nil {
-		return fmt.Errorf("creating the enumeration state table: %w", err)
-	}
-	if _, err := s.db.Exec(repositoryPropertyDDL); err != nil {
-		return fmt.Errorf("creating the repository property table: %w", err)
-	}
-	if _, err := s.db.Exec(propertySchemaDDL); err != nil {
-		return fmt.Errorf("creating the property schema table: %w", err)
-	}
-	if _, err := s.db.Exec(policyDDL); err != nil {
-		return fmt.Errorf("creating the policy tables: %w", err)
+	for _, t := range createTables {
+		if _, err := s.db.Exec(t.ddl); err != nil {
+			return fmt.Errorf("creating %s: %w", t.what, err)
+		}
 	}
 	for _, c := range addedColumns {
 		has, err := s.hasColumn(c.table, c.column)

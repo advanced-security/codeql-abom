@@ -34,3 +34,10 @@
 # commit is not taken on faith.
 - query: ActionsLockAware/UncoveredActionRef.ql
   from: advanced-security/abom-actions-findings-src
+
+# Guards the premise the rule above rests on. `UncoveredActionRef` is silent when no lockfile is
+# present, so on its own it cannot tell a covered repository from one that lost its lockfile. This
+# fires if that ever happens here -- including if a toolchain change stops the lockfile reaching the
+# database, which would otherwise read as a clean gate.
+- query: ActionsLockAware/ActionsLockMissingForWorkflow.ql
+  from: advanced-security/abom-actions-findings-src

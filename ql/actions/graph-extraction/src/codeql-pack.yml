@@ -8,3 +8,4 @@ library: false
 suites: codeql-suites
 dependencies:
   codeql/actions-all: 0.6.1
+  advanced-security/abom-actions-lib: ${workspace}

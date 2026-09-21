@@ -24,3 +24,9 @@
 # exempts the `actions` and `github` owners and accepts any bare commit, so a reference either one
 # covers is never examined, lockfile or not.
 - query: ActionsLockAware/UncoveredActionRef.ql
+
+# Its complement. `UncoveredActionRef` compares a workflow against a lockfile, so it is silent on a
+# repository that has no lockfile to compare against -- exactly the repositories least covered.
+# This one reports that absence once per repository, so onboarding is measured rather than inferred
+# from a rule staying quiet.
+- query: ActionsLockAware/ActionsLockMissingForWorkflow.ql

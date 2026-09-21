@@ -23,6 +23,17 @@ ABOM_WORK ?= $(ABOM_TMP)/work
 # on its own: `make start ABOM_SERVE_FLAGS=--expand` opts in.
 ABOM_SERVE_FLAGS ?=
 
+# An exact version, not the `toolchain` line in go.mod: that line is only a floor, so a developer
+# with a newer Go already installed still builds and lints with the newer one. golangci-lint cannot
+# read the export data Go 1.27 emits, and it reports that as phantom "could not import fmt" errors
+# against our own packages rather than as a version complaint -- a failure that reads like a code
+# defect. Exported so vet, test and lint all agree with each other and with CI.
+#
+# `:=` rather than `?=`, so an exported GOTOOLCHAIN=auto in a shell cannot quietly reintroduce the
+# failure. A deliberate `make lint GOTOOLCHAIN=...` on the command line still overrides this.
+GOTOOLCHAIN := go1.26.0
+export GOTOOLCHAIN
+
 BIN      := bin/codeql-abom
 GO_FILES := $(shell find . -name '*.go' -not -path './ui/*')
 

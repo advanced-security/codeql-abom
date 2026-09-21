@@ -2,6 +2,10 @@ module github.com/advanced-security/codeql-abom
 
 go 1.25
 
+// Read by actions/setup-go via go-version-file, so CI installs the same toolchain the Makefile
+// pins. The `go` line above stays at the language version we actually require.
+toolchain go1.26.0
+
 require (
 	github.com/CycloneDX/cyclonedx-go v0.12.0
 	github.com/github/actions-lockfile/go v0.0.4

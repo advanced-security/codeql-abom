@@ -23295,6 +23295,31 @@
          "index": 27,
          "uri": ".github/workflows/actor_trusted_checkout.yml",
          "uriBaseId": "%SRCROOT%"
+        }
+       }
+      }
+     ],
+     "message": {
+      "text": "This repository defines 101 workflow file(s) and no .github/workflows/actions.lock, so no commit is recorded for any action it runs."
+     },
+     "partialFingerprints": {
+      "primaryLocationLineHash": "3c193ad282f48b7a:1"
+     },
+     "rule": {
+      "id": "abom/actions/actions-lock-missing-for-workflow",
+      "index": 36
+     },
+     "ruleId": "abom/actions/actions-lock-missing-for-workflow",
+     "ruleIndex": 36
+    },
+    {
+     "locations": [
+      {
+       "physicalLocation": {
+        "artifactLocation": {
+         "index": 27,
+         "uri": ".github/workflows/actor_trusted_checkout.yml",
+         "uriBaseId": "%SRCROOT%"
         },
         "region": {
          "endColumn": 22,
@@ -23314,10 +23339,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -23346,10 +23371,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -23378,10 +23403,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -23410,10 +23435,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -23442,10 +23467,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -23474,10 +23499,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -23506,10 +23531,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -23538,10 +23563,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -23570,10 +23595,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -23602,10 +23627,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -23634,10 +23659,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -23666,10 +23691,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -23698,10 +23723,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -23730,10 +23755,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -23762,10 +23787,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -23794,10 +23819,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -23826,10 +23851,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -23858,10 +23883,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -23890,10 +23915,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -23922,10 +23947,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -23954,10 +23979,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -23986,10 +24011,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24018,10 +24043,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24050,10 +24075,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24082,10 +24107,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24114,10 +24139,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24146,10 +24171,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24178,10 +24203,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24210,10 +24235,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24242,10 +24267,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24274,10 +24299,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24306,10 +24331,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24338,10 +24363,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24370,10 +24395,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24402,10 +24427,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24434,10 +24459,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24466,10 +24491,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24498,10 +24523,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24530,10 +24555,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24562,10 +24587,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24594,10 +24619,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24626,10 +24651,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24658,10 +24683,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24690,10 +24715,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24722,10 +24747,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24754,10 +24779,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24786,10 +24811,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24818,10 +24843,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24850,10 +24875,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24882,10 +24907,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24914,10 +24939,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24946,10 +24971,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -24978,10 +25003,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25010,10 +25035,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25042,10 +25067,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25074,10 +25099,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25106,10 +25131,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25138,10 +25163,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25170,10 +25195,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25202,10 +25227,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25234,10 +25259,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25266,10 +25291,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25298,10 +25323,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25330,10 +25355,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25362,10 +25387,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25394,10 +25419,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25426,10 +25451,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25458,10 +25483,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25490,10 +25515,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25522,10 +25547,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25554,10 +25579,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25586,10 +25611,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25618,10 +25643,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25650,10 +25675,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25682,10 +25707,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25714,10 +25739,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25746,10 +25771,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25778,10 +25803,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25810,10 +25835,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25842,10 +25867,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25874,10 +25899,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25906,10 +25931,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25938,10 +25963,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -25970,10 +25995,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26002,10 +26027,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26034,10 +26059,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26066,10 +26091,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26098,10 +26123,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26130,10 +26155,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26162,10 +26187,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26194,10 +26219,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26226,10 +26251,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26258,10 +26283,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26290,10 +26315,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26322,10 +26347,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26354,10 +26379,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26386,10 +26411,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26418,10 +26443,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26450,10 +26475,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26482,10 +26507,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26514,10 +26539,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26546,10 +26571,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26578,10 +26603,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26610,10 +26635,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26642,10 +26667,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26674,10 +26699,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26706,10 +26731,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26738,10 +26763,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26770,10 +26795,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26802,10 +26827,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26834,10 +26859,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26866,10 +26891,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26898,10 +26923,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26930,10 +26955,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26962,10 +26987,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -26994,10 +27019,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27026,10 +27051,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27058,10 +27083,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27090,10 +27115,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27122,10 +27147,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27154,10 +27179,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27186,10 +27211,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27218,10 +27243,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27250,10 +27275,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27282,10 +27307,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27314,10 +27339,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27346,10 +27371,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27378,10 +27403,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27410,10 +27435,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27442,10 +27467,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27474,10 +27499,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27506,10 +27531,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27538,10 +27563,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27570,10 +27595,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27602,10 +27627,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27634,10 +27659,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27665,10 +27690,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27697,10 +27722,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27729,10 +27754,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27761,10 +27786,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27793,10 +27818,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27825,10 +27850,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27857,10 +27882,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27889,10 +27914,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27921,10 +27946,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27953,10 +27978,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -27985,10 +28010,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28017,10 +28042,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28049,10 +28074,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28081,10 +28106,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28113,10 +28138,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28145,10 +28170,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28177,10 +28202,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28209,10 +28234,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28241,10 +28266,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28273,10 +28298,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28305,10 +28330,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28337,10 +28362,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28369,10 +28394,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28401,10 +28426,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28433,10 +28458,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28465,10 +28490,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28497,10 +28522,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28529,10 +28554,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28561,10 +28586,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28593,10 +28618,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28625,10 +28650,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28656,10 +28681,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28687,10 +28712,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28718,10 +28743,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     },
     {
      "locations": [
@@ -28749,10 +28774,10 @@
      },
      "rule": {
       "id": "abom/experimental/coverage-marker",
-      "index": 35
+      "index": 37
      },
      "ruleId": "abom/experimental/coverage-marker",
-     "ruleIndex": 35
+     "ruleIndex": 37
     }
    ],
    "tool": {
@@ -29921,6 +29946,72 @@
       {
        "defaultConfiguration": {
         "enabled": true,
+        "level": "warning"
+       },
+       "fullDescription": {
+        "text": "A `uses:` reference that no `.github/workflows/actions.lock` entry resolves to a commit runs whatever its ref points at today, with nothing recording what that was."
+       },
+       "help": {
+        "markdown": "# Action reference not covered by the Actions lockfile\n\nA repository that keeps `.github/workflows/actions.lock` has committed to recording, for every\naction it runs, the exact commit that will run. A `uses:` reference the lockfile does not account\nfor is outside that record: it resolves to whatever its ref points at on the day the workflow runs,\nand nothing in the repository says what that was.\n\nThis query reports such references. It only runs where a lockfile already exists \u2014 a repository\nthat has not adopted `gh actions-lock` is a different question, and not this one.\n\n## Why this is not `actions/unpinned-tag`\n\n`actions/unpinned-tag` asks whether a reference is *pinned*. This query asks whether the lockfile\n*covers* it. The two diverge in three places, and the gap only ever falls this way:\n\n- **Trusted owners.** `actions/unpinned-tag` exempts the `actions` and `github` organizations\n  outright, so `actions/setup-go@v7.0.0` is never examined, lockfile or not.\n- **Bare commits.** A reference written as a full SHA satisfies that query whatever the lockfile\n  says, so an entry can be dropped from the lock without anything reporting it.\n- **Stale entries.** A lockfile entry left at `v1.0.0` after the workflow moved to `v2.0.0`\n  describes a commit nothing will run. The reference still looks pinned.\n\n## Recommendation\n\nRun `gh actions-lock` to add the missing entry, or `gh actions-lock --verify-local --no-fix` to\nreport every uncovered reference without modifying anything.\n\n## Example\n\nWith a lockfile present, the second step is reported and the first is not:\n\n```yaml\nsteps:\n  # Covered: the lockfile lists this reference and resolves it to a commit.\n  - uses: third/party@v1.0.0\n  # Reported: a trusted owner, and absent from the lockfile.\n  - uses: actions/setup-go@v7.0.0\n```\n\nLocal (`./`), same-repository (`$/`) and container (`docker://`) references are never reported.\nThe first two resolve from the checkout at the commit already running, and `gh actions-lock`\nrecords neither them nor images.\n\n## References\n\n- GitHub Docs: [Using an actions lockfile](https://gh.io/actions-lockfile)\n- Common Weakness Enumeration: [CWE-829](https://cwe.mitre.org/data/definitions/829.html)\n",
+        "text": "# Action reference not covered by the Actions lockfile\n\nA repository that keeps `.github/workflows/actions.lock` has committed to recording, for every\naction it runs, the exact commit that will run. A `uses:` reference the lockfile does not account\nfor is outside that record: it resolves to whatever its ref points at on the day the workflow runs,\nand nothing in the repository says what that was.\n\nThis query reports such references. It only runs where a lockfile already exists \u2014 a repository\nthat has not adopted `gh actions-lock` is a different question, and not this one.\n\n## Why this is not `actions/unpinned-tag`\n\n`actions/unpinned-tag` asks whether a reference is *pinned*. This query asks whether the lockfile\n*covers* it. The two diverge in three places, and the gap only ever falls this way:\n\n- **Trusted owners.** `actions/unpinned-tag` exempts the `actions` and `github` organizations\n  outright, so `actions/setup-go@v7.0.0` is never examined, lockfile or not.\n- **Bare commits.** A reference written as a full SHA satisfies that query whatever the lockfile\n  says, so an entry can be dropped from the lock without anything reporting it.\n- **Stale entries.** A lockfile entry left at `v1.0.0` after the workflow moved to `v2.0.0`\n  describes a commit nothing will run. The reference still looks pinned.\n\n## Recommendation\n\nRun `gh actions-lock` to add the missing entry, or `gh actions-lock --verify-local --no-fix` to\nreport every uncovered reference without modifying anything.\n\n## Example\n\nWith a lockfile present, the second step is reported and the first is not:\n\n```yaml\nsteps:\n  # Covered: the lockfile lists this reference and resolves it to a commit.\n  - uses: third/party@v1.0.0\n  # Reported: a trusted owner, and absent from the lockfile.\n  - uses: actions/setup-go@v7.0.0\n```\n\nLocal (`./`), same-repository (`$/`) and container (`docker://`) references are never reported.\nThe first two resolve from the checkout at the commit already running, and `gh actions-lock`\nrecords neither them nor images.\n\n## References\n\n- GitHub Docs: [Using an actions lockfile](https://gh.io/actions-lockfile)\n- Common Weakness Enumeration: [CWE-829](https://cwe.mitre.org/data/definitions/829.html)\n"
+       },
+       "id": "abom/actions/uncovered-action-ref",
+       "name": "abom/actions/uncovered-action-ref",
+       "properties": {
+        "description": "A `uses:` reference that no `.github/workflows/actions.lock` entry resolves to a\n              commit runs whatever its ref points at today, with nothing recording what that was.",
+        "id": "abom/actions/uncovered-action-ref",
+        "kind": "problem",
+        "name": "Action reference not covered by the Actions lockfile",
+        "precision": "high",
+        "problem.severity": "warning",
+        "security-severity": "5.0",
+        "tags": [
+         "security",
+         "actions",
+         "supply-chain",
+         "external/cwe/cwe-829"
+        ]
+       },
+       "shortDescription": {
+        "text": "Action reference not covered by the Actions lockfile"
+       }
+      },
+      {
+       "defaultConfiguration": {
+        "enabled": true,
+        "level": "warning"
+       },
+       "fullDescription": {
+        "text": "A repository that runs workflows and keeps no `.github/workflows/actions.lock` records nothing about which commit any of its `uses:` references resolves to."
+       },
+       "help": {
+        "markdown": "# Workflows without an Actions lockfile\n\n`.github/workflows/actions.lock` records, for every action a repository runs, the exact commit that\nwill run. A repository with workflows but no lockfile has no such record: each `uses:` reference\nresolves to whatever its ref points at on the day the workflow runs, and a tag can be moved to a\ndifferent commit at any time by whoever owns it.\n\nThis query reports that absence once per repository, naming how many workflow files are affected.\n\n## Why this is reported separately\n\n`abom/actions/uncovered-action-ref` compares a workflow against a lockfile, so it has nothing to\ncompare against \u2014 and therefore stays silent \u2014 on exactly the repositories with the least coverage.\nReading that silence as \"no problem found\" inverts the truth. The two queries are complements: one\nmeasures gaps *within* an adopted lockfile, this one measures *non-adoption*.\n\nTogether they hold the invariant that every repository with workflows produces at least one finding\nuntil it is both onboarded and fully covered.\n\n## Scope\n\nOnly files directly in `.github/workflows/` ending `.yml` or `.yaml` are counted. Composite actions\n(`.github/actions/*/action.yml`) are not workflows, and GitHub does not run workflows from\nsubdirectories of `.github/workflows/`, so neither is counted.\n\nA repository with no workflow files at all is not reported: there is nothing for a lockfile to\ncover, so its absence is not a gap.\n\n## Recommendation\n\nRun `gh actions-lock` to generate the lockfile and commit it, then `gh actions-lock --verify-local\n--no-fix` in CI to keep it honest.\n\n## Example\n\nA repository containing only this workflow, and no `.github/workflows/actions.lock`, is reported:\n\n```yaml\non: push\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      # Resolves to whatever `v4` points at when this runs. Nothing here records what that was.\n      - uses: actions/checkout@v4\n```\n\n## References\n\n- GitHub Docs: [Using an actions lockfile](https://gh.io/actions-lockfile)\n- Common Weakness Enumeration: [CWE-829](https://cwe.mitre.org/data/definitions/829.html)\n",
+        "text": "# Workflows without an Actions lockfile\n\n`.github/workflows/actions.lock` records, for every action a repository runs, the exact commit that\nwill run. A repository with workflows but no lockfile has no such record: each `uses:` reference\nresolves to whatever its ref points at on the day the workflow runs, and a tag can be moved to a\ndifferent commit at any time by whoever owns it.\n\nThis query reports that absence once per repository, naming how many workflow files are affected.\n\n## Why this is reported separately\n\n`abom/actions/uncovered-action-ref` compares a workflow against a lockfile, so it has nothing to\ncompare against \u2014 and therefore stays silent \u2014 on exactly the repositories with the least coverage.\nReading that silence as \"no problem found\" inverts the truth. The two queries are complements: one\nmeasures gaps *within* an adopted lockfile, this one measures *non-adoption*.\n\nTogether they hold the invariant that every repository with workflows produces at least one finding\nuntil it is both onboarded and fully covered.\n\n## Scope\n\nOnly files directly in `.github/workflows/` ending `.yml` or `.yaml` are counted. Composite actions\n(`.github/actions/*/action.yml`) are not workflows, and GitHub does not run workflows from\nsubdirectories of `.github/workflows/`, so neither is counted.\n\nA repository with no workflow files at all is not reported: there is nothing for a lockfile to\ncover, so its absence is not a gap.\n\n## Recommendation\n\nRun `gh actions-lock` to generate the lockfile and commit it, then `gh actions-lock --verify-local\n--no-fix` in CI to keep it honest.\n\n## Example\n\nA repository containing only this workflow, and no `.github/workflows/actions.lock`, is reported:\n\n```yaml\non: push\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      # Resolves to whatever `v4` points at when this runs. Nothing here records what that was.\n      - uses: actions/checkout@v4\n```\n\n## References\n\n- GitHub Docs: [Using an actions lockfile](https://gh.io/actions-lockfile)\n- Common Weakness Enumeration: [CWE-829](https://cwe.mitre.org/data/definitions/829.html)\n"
+       },
+       "id": "abom/actions/actions-lock-missing-for-workflow",
+       "name": "abom/actions/actions-lock-missing-for-workflow",
+       "properties": {
+        "description": "A repository that runs workflows and keeps no `.github/workflows/actions.lock`\n              records nothing about which commit any of its `uses:` references resolves to.",
+        "id": "abom/actions/actions-lock-missing-for-workflow",
+        "kind": "problem",
+        "name": "Workflows without an Actions lockfile",
+        "precision": "high",
+        "problem.severity": "warning",
+        "security-severity": "5.0",
+        "tags": [
+         "security",
+         "actions",
+         "supply-chain",
+         "external/cwe/cwe-829"
+        ]
+       },
+       "shortDescription": {
+        "text": "Workflows without an Actions lockfile"
+       }
+      },
+      {
+       "defaultConfiguration": {
+        "enabled": true,
         "level": "note"
        },
        "fullDescription": {
@@ -30086,7 +30177,7 @@
        }
       ],
       "name": "advanced-security/abom-actions-findings-src",
-      "semanticVersion": "2.27.0+eae5f88e05c89e511f69cf80c2878da4b370de1b"
+      "semanticVersion": "2.27.0+66bff22cf450b79264fab8a348d89fb9f7bcdd1e"
      },
      {
       "locations": [
