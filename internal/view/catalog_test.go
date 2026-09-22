@@ -121,3 +121,39 @@ func TestCatalogSurfacesAgreeWithWhatEachSideEnforces(t *testing.T) {
 		}
 	}
 }
+
+// The document term set is the endpoint's refusal list, and an exported map would be writable by
+// every package that imports it. A caller gets a copy it may sort, append to or discard, and the
+// declaration this file exists to be the only copy of stays the only copy.
+func TestTheDocumentTermsHandedOutAreACopyRatherThanTheDeclaration(t *testing.T) {
+	names := DocumentTermNames()
+	if len(names) == 0 {
+		t.Fatal("no document terms, so this measures nothing")
+	}
+
+	names[0] = "scoop"
+	if IsDocumentTerm("scoop") {
+		t.Error("editing the returned slice reached the declaration")
+	}
+	if got := DocumentTermNames(); got[0] == "scoop" {
+		t.Errorf("the next caller was handed the edit: %v", got)
+	}
+}
+
+// Every surface the catalog says applies a term has to agree with the predicate that enforces it,
+// and the document surface is the one whose membership is now read through a function.
+func TestTheDocumentSurfaceOffersExactlyTheTermsItApplies(t *testing.T) {
+	want := DocumentTermNames()
+
+	var got []string
+	for _, term := range Catalog() {
+		if slices.Contains(term.Surfaces, SurfaceDocument) {
+			got = append(got, term.Name)
+		}
+	}
+	slices.Sort(got)
+
+	if !slices.Equal(want, got) {
+		t.Errorf("the document surface offers %v but applies %v", got, want)
+	}
+}

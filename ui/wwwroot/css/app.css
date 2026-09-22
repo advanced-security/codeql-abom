@@ -989,3 +989,26 @@ code {
 .abom-picker-idle {
     opacity: 0.55;
 }
+
+/* The bar is the whole navigation now, so the surface being read has to be marked: with a drawer
+   the highlighted row said it, and nothing else does. These are the only two words competing for
+   attention up here, and the bar has width to spare — the density rules that shrink controls
+   elsewhere are for toolbars full of them. */
+.abom-brand:hover {
+    opacity: 0.85;
+}
+
+.abom-nav {
+    gap: 8px;
+}
+
+.abom-nav-link {
+    text-transform: none;
+    letter-spacing: normal;
+    font-size: var(--abom-text-lg);
+    padding: 6px 18px;
+}
+
+.abom-nav-here {
+    background-color: var(--mud-palette-action-default-hover);
+}

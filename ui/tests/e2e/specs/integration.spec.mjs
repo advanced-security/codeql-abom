@@ -1,4 +1,4 @@
-import { test, expect, ready, corpusSize, ROUTES } from '../harness.mjs';
+import { test, expect, ready, corpusSize, ROUTES, EXPLORE_DRAWN } from '../harness.mjs';
 // Cross-component integration: every route boots the Blazor runtime, loads its ES modules, calls
 // the API and renders. `make js` type-checks none of it and `make ui-test` runs none of it, so a
 // bad edit inside graph.js `create()` reaches a reader as a red bar and reaches CI as nothing.
@@ -18,7 +18,7 @@ test.describe('every route renders', () => {
 
 test.describe('the Explorer draws', () => {
     test('the graph canvas is created and sized to its container', async ({ page }) => {
-        await page.goto('/explore');
+        await page.goto(EXPLORE_DRAWN);
         await ready(page);
 
         // force-graph defaults to the window and draws outside its container unless width and
@@ -45,7 +45,7 @@ test.describe('the Explorer draws', () => {
         const summary = await corpusSize(request, baseURL);
         test.skip(!summary.nodes, 'nothing to settle without a corpus');
 
-        await page.goto('/explore');
+        await page.goto(EXPLORE_DRAWN);
         await ready(page);
 
         // Inside the suite's own budget, so a slow settle reports what did not happen rather than

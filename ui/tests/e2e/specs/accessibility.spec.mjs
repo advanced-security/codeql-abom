@@ -1,4 +1,4 @@
-import { test, expect, ready, corpusSize, ROUTES } from '../harness.mjs';
+import { test, expect, ready, corpusSize, ROUTES, EXPLORE_DRAWN } from '../harness.mjs';
 
 // A control whose only label is a hover tooltip is unnamed for anybody not using a mouse. That is
 // not a polish item on the Explorer, where the colour swatches, the kind checkboxes and the scope
@@ -25,6 +25,11 @@ const ANCHOR = {
     '/inventory': '.mud-table-body .mud-table-row',
     '/settings': '[data-abom-declared]',
 };
+
+// The Explorer's legend and presentation controls exist only once something is drawn, so this
+// measures the drawn page rather than the chooser — the chooser has three controls and the drawing
+// has twenty.
+const VISIT = { '/explore': EXPLORE_DRAWN };
 
 /**
  * Controls that are not ABOM's to name, listed rather than skipped so the exception cannot grow.
@@ -129,7 +134,7 @@ test.describe('every control says what it is', () => {
                 'an empty corpus renders empty states rather than the controls this measures',
             );
 
-            await page.goto(route);
+            await page.goto(VISIT[route] ?? route);
             await ready(page);
             await expect(page.locator(ANCHOR[route]).first()).toBeVisible({ timeout: 30_000 });
 

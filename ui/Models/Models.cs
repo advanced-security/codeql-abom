@@ -306,10 +306,6 @@ public sealed record FilterTerm
     public IReadOnlyList<string> Surfaces { get; init; } = [];
 }
 
-/// <summary>A question worth asking repeatedly, named. A tab is one of these, not a page.</summary>
-///
-/// A built-in ships with the product; a saved one is an operator's own. `Builtin` is what tells a
-/// reader which they are looking at, and the two sit side by side deliberately.
 /// <summary>
 /// One value a filter term can take, and how much of the corpus takes it.
 /// </summary>
@@ -339,6 +335,12 @@ public sealed record FilterValueSet
     public int Uncovered { get; init; }
 }
 
+/// <summary>A question worth asking repeatedly, named. A tab is one of these, not a page.</summary>
+///
+/// <remarks>
+/// A built-in ships with the product; a saved one is an operator's own. <c>Builtin</c> is what
+/// tells a reader which they are looking at, and the two sit side by side deliberately.
+/// </remarks>
 public sealed record NamedView
 {
     public string Name { get; init; } = string.Empty;
