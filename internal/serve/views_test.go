@@ -12,7 +12,7 @@ import (
 // basis for letting a policy name a view instead of carrying a predicate.
 func TestANamedViewAsksTheSameQuestionItsPredicateDoes(t *testing.T) {
 	s := &Server{}
-	for _, b := range viewspec.Builtins {
+	for _, b := range viewspec.Builtins() {
 		byName, err := s.graphPredicate(httptest.NewRequest("GET", "/api/graph/full?view="+b.Name, nil))
 		if err != nil {
 			t.Fatalf("resolving %q: %v", b.Name, err)

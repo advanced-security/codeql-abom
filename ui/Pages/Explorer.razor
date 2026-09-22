@@ -10,60 +10,10 @@
 <PageTitle>Explorer — ABOM</PageTitle>
 
 <MudPaper Elevation="0" Class="pa-2 mb-2 abom-filters" Outlined="true">
-    <div class="d-flex flex-wrap align-center gap-2">
-        <MudTextField T="string" Value="_search" ValueChanged="OnSearchChanged" Immediate="false"
-                      DebounceInterval="300" Label="Name contains"
-                      Placeholder="repo, workflow or action" Variant="Variant.Outlined"
-                      Margin="Margin.Dense" Clearable="true" ShrinkLabel="true"
-                      Class="abom-filter-wide" />
-
-        <MudSelect T="string" Label="Origin" MultiSelection="true" SelectedValues="_origins"
-                   SelectedValuesChanged="OnOriginsChanged" Dense="true" Margin="Margin.Dense"
-                   Variant="Variant.Outlined" Class="abom-filter" ShrinkLabel="true"
-                   MultiSelectionTextFunc="@(v => v.Count == 0 ? "any" : $"{v.Count} selected")">
-            <MudSelectItem T="string" Value="@("seed")">Starting point</MudSelectItem>
-            <MudSelectItem T="string" Value="@("upstream")">Upstream</MudSelectItem>
-            <MudSelectItem T="string" Value="@("external")">Dependency</MudSelectItem>
-        </MudSelect>
-
-        <MudSelect T="string" Label="CodeQL rule" MultiSelection="true" SelectedValues="_rules"
-                   SelectedValuesChanged="OnRulesChanged" Dense="true" Margin="Margin.Dense"
-                   Variant="Variant.Outlined" Class="abom-filter" ShrinkLabel="true"
-                   MultiSelectionTextFunc="@(v => v.Count == 0 ? "any" : $"{v.Count} selected")">
-            @foreach (var r in _ruleIds)
-            {
-                <MudSelectItem T="string" Value="@r">@r</MudSelectItem>
-            }
-        </MudSelect>
-
-        @* Lexical only. Whether a reference is safe is actions/unpinned-tag's call, not ours.
-           It selects nodes by how something references them, which is a different question from
-           the reference each was analyzed at: 215 of 2,639 nodes on the working corpus are
-           referenced both ways, so this may not narrow what Coverage claims about them. *@
-        <MudTooltip Text="How something references it, not whether that is safe, and not which reference was analyzed. A node referenced both by tag and by commit matches either.">
-            <MudSelect T="string" Label="Reference" Value="_refStyle" ValueChanged="OnRefStyleChanged"
-                       Dense="true" Margin="Margin.Dense" Variant="Variant.Outlined"
-                       ShrinkLabel="true" Class="abom-filter">
-                <MudSelectItem T="string" Value="@("any")">any</MudSelectItem>
-                <MudSelectItem T="string" Value="@("sha")">commit SHA</MudSelectItem>
-                <MudSelectItem T="string" Value="@("tag")">tag or branch</MudSelectItem>
-            </MudSelect>
-        </MudTooltip>
-
-        <MudTooltip Text="Show only nodes used by at least this many repositories. Leave blank for all.">
-            <MudNumericField T="int?" Value="_minReach" ValueChanged="OnMinReachChanged" Min="1"
-                             Label="Used by ≥" Placeholder="any" Variant="Variant.Outlined"
-                             Margin="Margin.Dense" Clearable="true" ShrinkLabel="true"
-                             Class="abom-filter-narrow" />
-        </MudTooltip>
-
-        <MudChipSet T="string" SelectedValues="_flags" SelectedValuesChanged="OnFlagsChanged"
-                    SelectionMode="SelectionMode.MultiSelection" CheckMark="true" Size="Size.Small">
-            <MudChip T="string" Value="@("findings")" Variant="Variant.Outlined">has findings</MudChip>
-            <MudChip T="string" Value="@("advisory")" Variant="Variant.Outlined">has advisory</MudChip>
-            <MudChip T="string" Value="@("unanalyzed")" Variant="Variant.Outlined">not analyzed</MudChip>
-        </MudChipSet>
-    </div>
+    @* Every term the graph applies, behind one button. A control per term spent the width of what
+       could be asked rather than what is, and reached seven of the nineteen the language declares;
+       the other twelve travelled in a saved scope with no control at all. *@
+    <FilterPicker Surface="graph" Changed="OnPickerChanged" />
 
     @if (Scope.LastError is { Length: > 0 } scopeRefusal)
     {
@@ -72,22 +22,29 @@
         </MudAlert>
     }
 
-    <ScopeControl Changed="OnScopeControlChanged" SupportsAnalysisMode="true" />
-
+    @* Controls for a picture, so they wait for one. Over an empty canvas a view selector and a
+       grouping do nothing when touched, which teaches a reader the controls are broken rather
+       than that nothing has been drawn. The filter picker above stays: it is how they get a
+       picture, not how they arrange one. *@
+    @if (HasScope)
+    {
     <div class="d-flex flex-wrap align-center gap-3 mt-2">
-        <MudToggleGroup T="string" Value="_view" ValueChanged="OnViewChanged"
-                        Size="Size.Small" Color="Color.Primary" CheckMark="false"
-                        SelectionMode="SelectionMode.SingleSelection" Class="abom-views">
+        @* Presentation, not a predicate: Inventory has no notion of "Neighborhood", so this stays
+           a single choice rather than becoming a filter chip. What it stops being is a 450px bank
+           stating one of five words. The meaning rides on each option, because that sentence is
+           the only thing telling a reader what position encodes. *@
+        <MudSelect T="string" Label="View" Value="_view" ValueChanged="OnViewChanged"
+                   Dense="true" Margin="Margin.Dense" Variant="Variant.Outlined"
+                   ShrinkLabel="true" Class="abom-filter abom-view-select">
             @foreach (var v in Views)
             {
-                @* The tooltip has to sit outside the item: a disabled MudToggleItem suppresses
-                   pointer events on its children, so the one tooltip a reader needs -- the one
-                   saying why it is disabled -- was the one that could never fire. *@
-                <MudToggleItem T="string" Value="@v.Key" Disabled="@(v.NeedsSelection && !HasSelection)">
-                    <span class="abom-view-label" title="@ViewTooltip(v)">@v.Label</span>
-                </MudToggleItem>
+                <MudSelectItem T="string" Value="@v.Key"
+                               Disabled="@(v.NeedsSelection && !HasSelection)">
+                    <span class="abom-view-label" data-abom-view="@v.Key"
+                          title="@v.Meaning">@ViewLabel(v, HasSelection)</span>
+                </MudSelectItem>
             }
-        </MudToggleGroup>
+        </MudSelect>
         <MudCheckBox T="bool" Value="_use3d" ValueChanged="On3dChanged" Color="Color.Primary"
                      Size="Size.Small" Dense="true" Label="3D" />
         @* The tooltip sits on a span inside the item, following the view toggle above: a native
@@ -111,18 +68,6 @@
             <MudCheckBox T="bool" Value="_dependencies" ValueChanged="OnDependenciesChanged"
                          Color="Color.Primary" Size="Size.Small" Dense="true" Label="What they use" />
         </MudTooltip>
-        @* A toggle group rather than a checkbox: the scope that is not the default is the one a
-           reader has to be able to see exists. *@
-        <MudToggleGroup T="string" Value="_scope" ValueChanged="OnScopeChanged"
-                        Size="Size.Small" Color="Color.Primary" CheckMark="false"
-                        SelectionMode="SelectionMode.SingleSelection" Class="abom-views">
-            @foreach (var s in Scopes)
-            {
-                <MudToggleItem T="string" Value="@s.Key">
-                    <span class="abom-view-label" title="@s.Help">@s.Label</span>
-                </MudToggleItem>
-            }
-        </MudToggleGroup>
         @if (_groupBy == "workflow" && !ShowSteps)
         {
             @* Actions are referenced by workflows rather than held in one, so with steps folded
@@ -142,6 +87,22 @@
                          Color="Color.Primary" Size="Size.Small" Dense="true"
                          Label="Animate" />
         </MudTooltip>
+        @* The simulation is the default and starts from a different place every load, so nothing
+           downstream -- a screenshot, a printed report, a second look tomorrow -- can rest on
+           where a node ended up. A computed layout is the same picture every time, and pays for
+           it by being a picture of the scope it was computed for. *@
+        <MudTooltip Text="Place the graph with Graphviz instead of the simulation, so the same scope draws the same picture every time. Recomputed when the scope changes.">
+            <span data-abom-layout-toggle>
+                <MudCheckBox T="bool" Value="_stableLayout" ValueChanged="OnStableLayoutChanged"
+                             Color="Color.Primary" Size="Size.Small" Dense="true"
+                             Label="Stable layout" />
+            </span>
+        </MudTooltip>
+        @* Nothing else on the page distinguishes a layout that will be identical tomorrow from one
+           that is reshuffled on every load, and a partial answer has to carry its own share. *@
+        <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-layout-state>
+            @LayoutStateText
+        </MudText>
 
         @if (!string.IsNullOrEmpty(_isolated))
         {
@@ -220,6 +181,7 @@
             </MudButton>
         </MudTooltip>
     </div>
+    }
 </MudPaper>
 
 @* Key and canvas side by side: there is far more room left-to-right than up-and-down, and the
@@ -256,6 +218,52 @@
                     }
                 </div>
             }
+            else if (!HasScope)
+            {
+                @* The third empty frame, and the one that is not a failure. A reader has to be
+                   able to tell "choose something" from "you chose too much" and from "there is
+                   nothing here", so it is its own frame rather than a variant of either. *@
+                <div class="abom-graph-busy abom-graph-busy-opaque" data-abom-no-scope>
+                    <MudText Typo="Typo.body1">Choose what to look at.</MudText>
+                    <MudText Typo="Typo.caption" Class="mt-2 mud-text-secondary abom-refusal-help">
+                        This graph draws one scope at a time, not everything recorded. Pick one
+                        below, or build your own with the filter above.
+                    </MudText>
+                    <div class="abom-start-views mt-3">
+                        @foreach (var view in _startViews)
+                        {
+                            <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                                       DropShadow="false"
+                                       OnClick="@(() => StartFrom(view))"
+                                       data-abom-start-view="@view.Name">@view.Label</MudButton>
+                        }
+                    </div>
+                </div>
+            }
+            else if (_counts.Withheld > 0)
+            {
+                @* A refusal rather than a warning over a drawn hairball, and it replaces the
+                   canvas because the previous picture underneath would read as this one. *@
+                <div class="abom-graph-busy abom-graph-busy-opaque" data-abom-draw-refused>
+                    <MudIcon Icon="@Icons.Material.Filled.FilterAlt" Color="Color.Warning"
+                             Size="Size.Large" />
+                    <MudText Typo="Typo.body1" Class="mt-2">
+                        @_counts.Withheld.ToString("N0") nodes is too many to draw.
+                    </MudText>
+                    @* Says what to do, not only what did not happen: the reader came to find
+                       something, and the route to it is narrowing rather than a bigger canvas. *@
+                    <MudText Typo="Typo.caption" Class="mt-2 mud-text-secondary abom-refusal-help">
+                        A graph this size is a hairball rather than a picture. Use the filters
+                        above — a rule, an advisory, a severity or a single node — to reach the
+                        handful of relationships you came to look at.
+                    </MudText>
+                    <MudButton Variant="Variant.Text" Color="Color.Default" Size="Size.Small"
+                               Class="mt-2" OnClick="OpenDrawWarning"
+                               data-abom-draw-anyway>
+                        Draw all @_counts.Withheld.ToString("N0") anyway
+                    </MudButton>
+                </div>
+            }
             else if (_busy)
             {
                 <div class="@(_animate ? "abom-graph-busy" : "abom-graph-busy abom-graph-busy-opaque")">
@@ -266,9 +274,10 @@
         </div>
     </MudPaper>
 
-    @if (_showLegend)
+    @if (_showLegend && HasScope)
     {
-        <MudPaper Elevation="0" Outlined="true" Class="pa-2 abom-explore-key abom-keypanel">
+        <MudPaper Elevation="0" Outlined="true" Class="pa-2 abom-explore-key abom-keypanel"
+                  data-abom-legend>
             @if (_view == "frontier")
             {
                 @* Hue means something else in this view, so the key has to say so where the
@@ -443,7 +452,13 @@
 
 <div class="d-flex flex-wrap align-center gap-3 mt-1">
     <MudText Typo="Typo.caption" Class="mud-text-secondary">
-        @if (_loading)
+        @if (!HasScope)
+        {
+            @* "0 of 0" is a measurement of nothing written as a measurement. Nothing was asked,
+               so there is no count to report. *@
+            <span data-abom-nothing-counted>Nothing is drawn yet.</span>
+        }
+        else if (_loading)
         {
             <span>@ScopeBusyMessage</span>
         }
@@ -515,12 +530,50 @@
     <FollowControl LastUpdated="_lastPoll" />
 </div>
 
+@* Rendered only while open: a MudDialog that is merely invisible still renders its focus trap,
+   whose sentinels are focusable and have no accessible name. *@
+@if (_drawWarning)
+{
+    <MudDialog @bind-Visible="_drawWarning" Options="@(new DialogOptions {
+                   CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true })">
+        <TitleContent>
+            <MudText Typo="Typo.h6">
+                <MudIcon Icon="@Icons.Material.Filled.Warning" Color="Color.Warning"
+                         Size="Size.Small" Class="mr-2" />
+                This graph is too large to read
+            </MudText>
+        </TitleContent>
+        <DialogContent>
+            <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true" Class="mb-3"
+                      data-abom-draw-warning>
+                Drawing @_counts.Withheld.ToString("N0") nodes produces an unreadable hairball,
+                not a picture. Boundaries interleave and are withheld, labels have nowhere to go,
+                and the view may become slow to the point of being unusable.
+            </MudAlert>
+            @* Says what the alternative is, because the reason to refuse is that something better
+               exists — not that the machine cannot cope. *@
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                A graph is worth reading at around a hundred nodes. Narrowing to a rule, an
+                advisory, a severity or a single node's neighborhood answers the question you
+                came with; this draws everything at once and answers none of them.
+            </MudText>
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="@(() => _drawWarning = false)" data-abom-draw-cancel>
+                Keep filtering
+            </MudButton>
+            <MudButton Color="Color.Warning" Variant="Variant.Filled" OnClick="ConfirmDrawAnyway"
+                       data-abom-draw-confirm>
+                Draw @_counts.Withheld.ToString("N0") anyway
+            </MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
 @code {
     // Presentation only. Everything that says *what* is on screen arrives through ScopeService,
     // which reads the address once with the same parser the API and the gate use — a second list
     // of parameter names here is how `ref` came to be written and `refStyle` read.
-    [SupplyParameterFromQuery(Name = "view")] public string? ViewParam { get; set; }
-    [SupplyParameterFromQuery(Name = "direction")] public string? DirectionParam { get; set; }
     [SupplyParameterFromQuery(Name = "from")] public string? FromParam { get; set; }
     [SupplyParameterFromQuery(Name = "status")] public string? StatusParam { get; set; }
 
@@ -529,7 +582,7 @@
     private sealed record ViewOption(string Key, string Label, string Meaning,
         bool NeedsSelection = false);
     internal sealed record Counts(int Nodes, int Edges, int Hidden, int Total, int EdgeTotal = 0,
-        int Context = 0, int FocusFound = 0);
+        int Context = 0, int FocusFound = 0, int Withheld = 0);
 
     internal sealed record MergeResult(
         bool Reset, long Generation, int Nodes, int Edges, IReadOnlyList<string> Rules)
@@ -558,8 +611,13 @@
 
     private static readonly ViewOption[] Views =
     [
+        // The one view with no semantic force behind it, so its positions are whatever the
+        // simulation settled on -- and the simulation has no fixed seed. It used to claim
+        // "position is structural", which is a meaning the picture only carries under a layout
+        // somebody computed, and only for the nodes that layout placed.
         new("neighborhood", "Neighborhood",
-            "Position is structural: clusters are groups that share dependencies."),
+            "What is connected to what. Nodes pulled together share dependencies; how far "
+            + "apart they sit is the simulation's, not a measurement."),
         new("priority", "Priority",
             "Distance from the center is remediation priority — closer is more urgent."),
         new("ownership", "Who can fix it",
@@ -573,6 +631,21 @@
     ];
 
     private static readonly Dictionary<string, string> Kinds = ThemeService.KindNames;
+
+    /// <summary>What each view claims position encodes, so a test can hold that none is empty.</summary>
+    public static IEnumerable<string> ViewMeanings => Views.Select(v => v.Meaning);
+
+    /// <summary>
+    /// What a view option reads as. A view needing a node says so here rather than in a tooltip:
+    /// MudBlazor sets `pointer-events: none` on a disabled item, so a title on one can never be
+    /// hovered, and the reason was written, present and invisible.
+    /// </summary>
+    private static string ViewLabel(ViewOption v, bool hasSelection) =>
+        v.NeedsSelection && !hasSelection ? $"{v.Label} — needs a selected node" : v.Label;
+
+    /// <summary>The labels the view control shows, so a test can read them without opening a select.</summary>
+    public static IReadOnlyDictionary<string, string> ViewLabels(bool hasSelection) =>
+        Views.ToDictionary(v => v.Key, v => ViewLabel(v, hasSelection));
 
     /// <summary>One legend row: a kind, and how deep it sits in what contains it.</summary>
     ///
@@ -901,7 +974,31 @@
 
     // The view arrives showing what the operator declared and what it pulls in — the one scope
     // they already have a word for.
-    private string _scope = "owned";
+    /// <summary>The closure the Explorer opens on.</summary>
+    ///
+    /// <para>The advisory routes rather than everything a declared account reaches. Paired with
+    /// the <c>findings</c> flag it draws 205 nodes on the crawled organization, where the owned
+    /// closure draws 508 and is refused by the ceiling — so this is the arrival that shows a
+    /// picture rather than a refusal, and every wider scope is a deliberate widening from it.</para>
+    public const string DefaultScope = "exposure";
+
+    /// <summary>
+    /// No arrival scope. The advisory routes with findings drew 205 nodes on the one crawled
+    /// organization, which is a measurement of that corpus rather than a property of the scope:
+    /// the same predicate on a large account produces a different number, so an automatic arrival
+    /// scope is a promise about size the corpus decides. A reader picks a view, builds one with
+    /// the picker, or arrives with terms already in the address.
+    /// </summary>
+    private string _scope = string.Empty;
+
+    /// <summary>Whether a scope has been chosen at all, which is not an error and not an empty corpus.</summary>
+    private bool HasScope => _scope.Length > 0 || Scope.ToQueryString().Length > 0;
+
+    /// <summary>
+    /// The server-applied terms the drawn graph answers. Kept so a filter change can ask whether
+    /// the payload on screen was built for the question now being asked.
+    /// </summary>
+    private string _requestedTerms = string.Empty;
 
     private sealed record ScopeChoice(string Key, string Label, string Help);
 
@@ -1085,11 +1182,6 @@
         }
     }
 
-    private string ViewTooltip(ViewOption v) =>
-        v.NeedsSelection && !HasSelection
-            ? "Select a node first."
-            : v.Meaning;
-
     private string KindColor(string kind) =>
         Theme.Palette.Kinds.TryGetValue(kind, out var c) ? c : Theme.Palette.Muted;
 
@@ -1100,10 +1192,21 @@
     {
         ReadScopeFromAddress();
 
-        // Checked against what is on offer, like the direction below it: an unknown name left the
-        // toggle group with nothing selected and then rode out into every link shared from here.
-        if (Views.Any(v => v.Key == ViewParam)) _view = ViewParam!;
-        if (Directions.Any(d => d.Key == DirectionParam)) _direction = DirectionParam!;
+        // The whole drawing through one reader, checked against what is on offer: an unknown name
+        // left the control with nothing selected and then rode out into every link shared from
+        // here. Absent keeps this page's own default, because almost every link in is partial and
+        // reading what it never mentioned as a choice would redraw the picture on arrival.
+        var drawn = Presentation.Parse(new Uri(Nav.Uri).Query);
+        if (Views.Any(v => v.Key == drawn.View)) _view = drawn.View;
+        if (Directions.Any(d => d.Key == drawn.Direction)) _direction = drawn.Direction;
+        if (GroupByOptions.Any(g => g.Key == drawn.GroupBy)) _groupBy = drawn.GroupBy;
+        // After ReadScopeFromAddress, which sets one hop for an arrival that names a node. An
+        // address that names a depth means it, and zero is this page's default rather than a
+        // choice, so it does not overwrite that.
+        if (drawn.Hops > 0) _hops = drawn.Hops;
+        if (drawn.Use3d) _use3d = true;
+        if (drawn.Collapsed) _collapsed = true;
+        if (drawn.StableLayout) _stableLayout = true;
 
         Theme.Changed += OnThemeChanged;
         Follow.Changed += OnFollowChanged;
@@ -1143,6 +1246,12 @@
         _isolated = Scope.Selection.Count > 0 ? Scope.Selection[0] : string.Empty;
         _selected = string.IsNullOrEmpty(_isolated) ? [] : [_isolated];
         if (!string.IsNullOrEmpty(_isolated)) _hops = 1;
+
+        // A hand-off from Discovery names a node and nothing else, and a node still has to be
+        // drawn inside something. Ownership is the one closure that is not a guess about size:
+        // it is what the operator declared. If it draws more than the ceiling renders, the
+        // refusal says so rather than this page picking a smaller scope on their behalf.
+        if (_scope.Length == 0 && _isolated.Length > 0) _scope = "owned";
     }
 
     protected override async Task OnInitializedAsync()
@@ -1159,9 +1268,31 @@
             // a transport failure here would put an error over the first-run stages, before the
             // reader has done anything that could have caused one.
         }
+
+        // Only needed when nothing was chosen, but read either way: the frame appears the moment a
+        // reader clears their last filter, and fetching then would show an empty chooser first.
+        _startViews = await Api.GetViewsAsync();
     }
 
     private IReadOnlyList<DeclaredAccount>? _declared;
+
+    /// <summary>
+    /// The named scopes on offer before anything is drawn. Read from the same catalog Inventory
+    /// shows rather than a list kept here: a view somebody saved on one surface is a question, and
+    /// a question the Explorer could not offer would have to be rebuilt by hand every time.
+    /// </summary>
+    private IReadOnlyList<NamedView> _startViews = [];
+
+    /// <summary>Draws a named scope, both halves of it: the question and, where one was saved, the picture.</summary>
+    private async Task StartFrom(NamedView view)
+    {
+        Scope.Set(ViewSpec.Parse(view.Predicate));
+        if (ScopeKeys.Contains(Scope.Spec.Scope)) _scope = Scope.Spec.Scope;
+        _flags = [.. Scope.Spec.Flags];
+        if (Scope.Spec.Kinds.Count > 0) _kinds = Scope.Spec.Kinds.ToHashSet();
+        await ApplyPresentation(Presentation.Parse(view.Presentation));
+        await LoadGraph(force: true);
+    }
 
     // Which of the three first-run stages the page is at, or none once there is a picture.
     //
@@ -1170,6 +1301,10 @@
     private string? Frame =>
         _declared is null || _loading || _counts.Nodes > 0 ? null
         : _declared.Count == 0 ? "declare"
+        // "Waiting" is a claim about what analysis has produced, and with no scope chosen this
+        // page has not asked for anything to produce. Saying it here would report an empty
+        // measurement as an empty corpus.
+        : !HasScope ? null
         : "waiting";
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -1185,7 +1320,20 @@
         await _module.InvokeVoidAsync("setGroupBy", "abom-graph", _groupBy);
         await _module.InvokeVoidAsync("setCollapsed", "abom-graph", _collapsed, FilterSpec());
         _ready = true;
-        await LoadGraph();
+        // Nothing is fetched for a scope nobody chose: a guessed one spends a whole graph load on
+        // a question nobody asked, and teaches a reader that whatever appeared is what they ought
+        // to be looking at. Loading is cleared here rather than in LoadGraph, because a page with
+        // nothing to load would otherwise claim to be loading it forever.
+        if (HasScope)
+        {
+            await LoadGraph();
+        }
+        else
+        {
+            _loading = false;
+            _busy = false;
+            StateHasChanged();
+        }
         ApplyFollow();
     }
 
@@ -1218,6 +1366,7 @@
         Busy(ScopeBusyMessage);
 
         var query = ServerTerms();
+        _requestedTerms = string.Join("&", query);
         var url = "/api/graph/full" + (query.Count > 0 ? "?" + string.Join("&", query) : "");
         var loaded = await _module.InvokeAsync<LoadResult>("loadFull", "abom-graph", url, force);
         _ruleIds = loaded.Rules;
@@ -1242,6 +1391,10 @@
         _loading = false;
         Busy("Laying out the graph…");
         await Refilter();
+        // A server term changed what was fetched, so the engine placed a different graph. A
+        // browser filter deliberately does not come through here: it thins what is drawn without
+        // moving anything, and a box left enclosing a stranger is refused rather than redrawn.
+        await ApplyStableLayout();
 
         if (caughtUp) await FollowGraph();
     }
@@ -1442,6 +1595,12 @@
 
         var presentation = new List<string> { $"view={_view}" };
         if (_direction != "both") presentation.Add($"direction={_direction}");
+        // Grouping, the third dimension, collapsing and the stable layout all change the picture
+        // and used to leave no trace, so a shared link showed the same nodes arranged some other
+        // way. Written through the same record a saved view stores, so the address and the saved
+        // view cannot disagree about what a drawing is.
+        var drawn = CurrentPresentation with { View = string.Empty, Direction = string.Empty };
+        if (drawn.ToQueryString() is { Length: > 0 } rest) presentation.Add(rest);
         // Where the reader came from, so the way back out survives touching a filter.
         if (!string.IsNullOrEmpty(FromParam)) presentation.Add($"from={Uri.EscapeDataString(FromParam)}");
         if (!string.IsNullOrEmpty(StatusParam)) presentation.Add($"status={Uri.EscapeDataString(StatusParam)}");
@@ -1475,8 +1634,13 @@
         Kinds = [.. _kinds],
         Origins = [.. _origins],
         Rules = [.. _rules],
-        EdgeClass = [.. _edgeClasses],
-        RefStyle = _refStyle,
+        // Selecting every value of a term is the same question as selecting none, and writing it
+        // out makes a filter of something that excludes nothing. Compared against this page's own
+        // list rather than a vocabulary restated here. Kinds is not treated this way: its arrival
+        // set leaves jobs and steps out, so it really is a narrowing.
+        EdgeClass = _edgeClasses.Count == EdgeKinds.Length ? [] : [.. _edgeClasses],
+        // "any" is the absence of a reference-style question, not a third style.
+        RefStyle = _refStyle == "any" ? string.Empty : _refStyle,
         MinReach = _minReach ?? 0,
         Flags = [.. _flags],
     };
@@ -1508,6 +1672,41 @@
         }
     }
 
+    /// <summary>
+    /// How this page is drawing the scope, so a saved view can record the picture and not only
+    /// the question. Read from the page's own state: anywhere else and a view could record a
+    /// drawing nobody was looking at.
+    /// </summary>
+    public Presentation CurrentPresentation => new()
+    {
+        View = _view,
+        GroupBy = _groupBy,
+        Hops = _hops,
+        Direction = _direction,
+        Use3d = _use3d,
+        Collapsed = _collapsed,
+        StableLayout = _stableLayout,
+    };
+
+    /// <summary>
+    /// Draws the scope the way a saved view was drawn. Nothing saved leaves the reader's own
+    /// choices alone rather than resetting them to defaults — which is what every view saved
+    /// before presentation existed carries, so treating absent as "all defaults" would change the
+    /// picture under everybody who applied one.
+    /// </summary>
+    public async Task ApplyPresentation(Presentation drawn)
+    {
+        if (!drawn.HasAny) return;
+        if (drawn.View.Length > 0 && drawn.View != _view) await OnViewChanged(drawn.View);
+        if (drawn.GroupBy.Length > 0 && drawn.GroupBy != _groupBy) await OnGroupByChanged(drawn.GroupBy);
+        if (drawn.Direction.Length > 0 && drawn.Direction != _direction) await OnDirectionChanged(drawn.Direction);
+        if (drawn.Use3d != _use3d) await On3dChanged(drawn.Use3d);
+        if (drawn.Collapsed != _collapsed) await OnCollapsedChanged(drawn.Collapsed);
+        if (drawn.StableLayout != _stableLayout) await OnStableLayoutChanged(drawn.StableLayout);
+        if (drawn.Hops != _hops) await OnHopsChanged(drawn.Hops);
+        SyncAddress();
+    }
+
     private async Task OnViewChanged(string value)
     {
         _view = value;
@@ -1531,10 +1730,125 @@
         await _module!.InvokeVoidAsync("setPriorities", "abom-graph", map);
     }
 
+    /// <summary>The picker changed a term, so the page reads its own state back out of the scope.</summary>
+    ///
+    /// <para>The page keeps a field per term because the browser filters with them, and
+    /// <c>CurrentSpec()</c> writes every one of them into the shared scope. That makes the round
+    /// trip complete: whatever the picker changed, everything else in the spec is still this
+    /// page's own answer, so mirroring the whole thing back cannot lose a term.</para>
+    ///
+    /// <para>Changing the scope term refetches, because it decides what the payload contains
+    /// rather than what is drawn from it. Everything else is a filter over what already arrived.</para>
+    private async Task OnPickerChanged()
+    {
+        var spec = Scope.Spec;
+        _search = spec.Search;
+        _minReach = spec.MinReach > 0 ? spec.MinReach : null;
+        _rules = [.. spec.Rules];
+        _origins = [.. spec.Origins];
+        _flags = [.. spec.Flags];
+        _kinds = spec.Kinds.ToHashSet();
+        _edgeClasses = spec.EdgeClass.ToHashSet();
+        if (RefStyles.Contains(spec.RefStyle)) _refStyle = spec.RefStyle;
+        if (ScopeKeys.Contains(spec.Scope)) _scope = spec.Scope;
+
+        // Whether this is a refetch or a refilter is decided by asking whether the graph on
+        // screen answers the question now being asked, read from ServerTerms() rather than from a
+        // list of terms repeated here. A term the server applies that such a list forgot would be
+        // filtered in the browser against a payload built without it — narrowing that reads as an
+        // answer and is not one. The comparison is against what was requested rather than against
+        // the scope a moment ago, because the picker writes the shared scope before saying so.
+        if (string.Join("&", ServerTerms()) != _requestedTerms)
+        {
+            await LoadGraph(force: true);
+            return;
+        }
+        await Refilter();
+    }
+
     private async Task OnAnimateChanged(bool value)
     {
         _animate = value;
         await _module!.InvokeVoidAsync("setAnimate", "abom-graph", value);
+    }
+
+    private bool _drawWarning;
+
+    private void OpenDrawWarning() => _drawWarning = true;
+
+    /// <summary>Accepts one oversized picture, for this view until the node set is replaced.</summary>
+    ///
+    /// <para>Deliberately not a preference: the reader accepted <em>this</em> graph after being
+    /// told what it costs, which is a different thing from standing consent to hairballs.</para>
+    private async Task ConfirmDrawAnyway()
+    {
+        _drawWarning = false;
+        if (_module is null) return;
+        Busy("Drawing every node\u2026");
+        try
+        {
+            _counts = await _module.InvokeAsync<Counts>(
+                "approveLargeGraph", "abom-graph", FilterSpec());
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>Where the positions come from: an engine that computed them, or the simulation.</summary>
+    ///
+    /// <para><c>Text</c> is the whole claim, including the reason an engine could not be run.
+    /// Reported by the module rather than assembled here, so the canvas and this line cannot come
+    /// to disagree about which layout a reader is looking at.</para>
+    public sealed record LayoutState(bool Stable, string Text, int Pinned, int Free);
+
+    private bool _stableLayout;
+    private LayoutState? _layout;
+
+    /// A force simulation seeds itself afresh, so saying nothing would leave the default -- the
+    /// case where position carries least -- as the one state the page never names.
+    private string LayoutStateText =>
+        _layout?.Text ?? "Force layout — positions change on every reload";
+
+    private async Task OnStableLayoutChanged(bool value)
+    {
+        _stableLayout = value;
+        if (!value)
+        {
+            _layout = null;
+            await _module!.InvokeVoidAsync("clearServerLayout", "abom-graph");
+            return;
+        }
+        await ApplyStableLayout();
+    }
+
+    /// <summary>Asks the server to place the scope that is on screen.</summary>
+    ///
+    /// <para>The engine is given the same terms the graph was fetched with, so the picture and the
+    /// layout are two renderings of one scope. A refusal is not a fault: Graphviz is optional, and
+    /// the summary carries the reason while the simulation keeps drawing.</para>
+    private async Task ApplyStableLayout()
+    {
+        if (_module is null || !_stableLayout) return;
+
+        var query = ServerTerms();
+        if (_groupBy != "none") query.Add("groupBy=" + _groupBy);
+        var url = "/api/graph/layout" + (query.Count > 0 ? "?" + string.Join("&", query) : "");
+
+        Busy("Placing the graph…");
+        try
+        {
+            _layout = await _module.InvokeAsync<LayoutState>("applyServerLayout", "abom-graph", url);
+        }
+        finally
+        {
+            // Cleared here rather than left to OnLayoutSettled: pinned nodes may leave the engine
+            // already stopped, and a settle callback that never fires holds the overlay for ever.
+            _busy = false;
+            StateHasChanged();
+        }
     }
 
     private async Task OnGroupByChanged(string value)
@@ -1547,6 +1861,10 @@
         // Crossing in or out of None changes whether a filter removes or greys, which is a
         // different node set and not something a repaint can reach.
         if (_collapsed || wasGrouped != (_groupBy != "none")) await Refilter();
+        // The engine's boxes were drawn for the level that just changed, so they are recomputed
+        // rather than re-keyed: a box matched to the wrong level is a boundary around members
+        // nobody grouped together.
+        await ApplyStableLayout();
     }
 
     private string ScopeBusyMessage => _scope switch
@@ -1585,17 +1903,7 @@
         await Refilter();
     }
 
-    private async Task OnSearchChanged(string value) { _search = value ?? string.Empty; await Refilter(); }
-    private async Task OnOriginsChanged(IEnumerable<string> v) { _origins = v?.ToArray() ?? []; await Refilter(); }
-    private async Task OnRulesChanged(IEnumerable<string> v) { _rules = v?.ToArray() ?? []; await Refilter(); }
-    private async Task OnRefStyleChanged(string v) { _refStyle = v; await Refilter(); }
-    private async Task OnMinReachChanged(int? v) { _minReach = v; await Refilter(); }
     private async Task OnHopsChanged(int v) { _hops = v; await Refilter(); }
-
-    // A property term is applied by the server, so the payload has to be fetched again rather than
-    // re-filtered. Forced, because the previous answer is cached under its own URL and a stale
-    // copy would read as the filter doing nothing.
-    private async Task OnScopeControlChanged() => await LoadGraph(force: true);
 
     private async Task OnDirectionChanged(string v) { _direction = v; await Refilter(); }
 

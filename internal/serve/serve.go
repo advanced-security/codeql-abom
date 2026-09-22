@@ -95,6 +95,13 @@ type Server struct {
 
 // Handler builds the routing tree.
 func (s *Server) Handler() http.Handler {
+	return gzipped(s.observe(s.routes()))
+}
+
+// routes is the tree itself, before the middleware that wraps it. Separate so a test can ask what
+// is served without going through a request: the catalog names endpoints in another package, and
+// nothing else would notice one of them being withdrawn.
+func (s *Server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	if s.metrics == nil {
 		s.metrics = newMetrics()
@@ -139,6 +146,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/policy-waivers", s.policyWaivers)
 	mux.HandleFunc("GET /api/match", s.match)
 	mux.HandleFunc("GET /api/views", s.views)
+	mux.HandleFunc("GET /api/filters", s.filters)
+	mux.HandleFunc("GET /api/filters/counts", s.filterCounts)
+	mux.HandleFunc("GET /api/filters/{term}/values", s.filterValues)
 	mux.HandleFunc("PUT /api/views/{name}", s.saveView)
 	mux.HandleFunc("DELETE /api/views/{name}", s.deleteView)
 	mux.HandleFunc("PUT /api/owned-scope", s.setOwnedScope)
@@ -186,7 +196,7 @@ func (s *Server) Handler() http.Handler {
 	// Anything under /api/ that no route claimed is absent, whatever the method. Without this a
 	// withdrawn route answers a PUT with 405, which says the resource is still there.
 	mux.HandleFunc("/api/", http.NotFound)
-	return gzipped(s.observe(mux))
+	return mux
 }
 
 // diagnostics registers the surfaces an operator has to ask for by name.

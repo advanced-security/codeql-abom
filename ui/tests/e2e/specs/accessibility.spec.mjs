@@ -1,4 +1,4 @@
-import { test, expect, ready, corpusSize, ROUTES } from '../harness.mjs';
+import { test, expect, ready, corpusSize, ROUTES, EXPLORE_DRAWN } from '../harness.mjs';
 
 // A control whose only label is a hover tooltip is unnamed for anybody not using a mouse. That is
 // not a polish item on the Explorer, where the colour swatches, the kind checkboxes and the scope
@@ -21,11 +21,15 @@ import { test, expect, ready, corpusSize, ROUTES } from '../harness.mjs';
  */
 const ANCHOR = {
     '/': '[data-abom-entry]',
-    '/bom': '.mud-table-body .mud-table-row',
     '/explore': '.abom-keypanel',
     '/inventory': '.mud-table-body .mud-table-row',
     '/settings': '[data-abom-declared]',
 };
+
+// The Explorer's legend and presentation controls exist only once something is drawn, so this
+// measures the drawn page rather than the chooser — the chooser has three controls and the drawing
+// has twenty.
+const VISIT = { '/explore': EXPLORE_DRAWN };
 
 /**
  * Controls that are not ABOM's to name, listed rather than skipped so the exception cannot grow.
@@ -130,18 +134,16 @@ test.describe('every control says what it is', () => {
                 'an empty corpus renders empty states rather than the controls this measures',
             );
 
-            await page.goto(route);
+            await page.goto(VISIT[route] ?? route);
             await ready(page);
             await expect(page.locator(ANCHOR[route]).first()).toBeVisible({ timeout: 30_000 });
 
-            // The property bar holds nothing until a key is chosen, so its controls are only
-            // reachable — and only measurable — one click in.
-            if (route === '/explore') {
-                const key = page.locator('[data-abom-property-key]').first();
-                if (await key.count()) {
-                    await key.click();
-                    await expect(page.locator('[data-abom-property-exclude]').first()).toBeVisible();
-                }
+            // The picker holds nothing until it is opened, so its controls are only reachable —
+            // and only measurable — one click in.
+            const add = page.locator('[data-abom-add-filter]').first();
+            if (await add.count()) {
+                await add.click();
+                await expect(page.locator('[data-abom-term-search]').first()).toBeVisible();
             }
 
             const unnamed = await page.evaluate(UNNAMED, NOT_OURS);
@@ -172,34 +174,37 @@ test.describe('every control says what it is', () => {
     });
 });
 
-test.describe('the scope bar is operable without a mouse', () => {
-    // Naming a control is half of it. The exclude buttons sit inside a `MudButtonGroup` and carry
-    // an icon and no text, so if they were ever made unreachable by Tab the names above would be
-    // announced to nobody.
-    test('every property control can be reached and used from the keyboard', async ({
+test.describe('the filter picker is operable without a mouse', () => {
+    // Naming a control is half of it. The picker's term and value entries are menu items carrying
+    // text and no label of their own, so if they were ever made unreachable by Tab the names
+    // above would be announced to nobody.
+    test('a filter can be reached and applied from the keyboard', async ({
         page,
         request,
         baseURL,
     }) => {
         const summary = await corpusSize(request, baseURL);
-        test.skip(!summary.seedRepos, 'no corpus, so no properties to narrow by');
+        test.skip(!summary.seedRepos, 'no corpus, so no terms to narrow by');
 
         await page.goto('/explore');
         await ready(page);
-        await expect(page.locator('.abom-keypanel')).toBeVisible({ timeout: 30_000 });
+        await expect(page.locator('[data-abom-add-filter]')).toBeVisible({ timeout: 30_000 });
 
-        const key = page.locator('[data-abom-property-key]').first();
-        test.skip((await key.count()) === 0, 'this corpus carries no custom repository property');
-        await key.click();
-
-        const exclude = page.locator('[data-abom-property-exclude]').first();
-        await expect(exclude).toBeVisible();
-        await exclude.focus();
-        await expect(exclude).toBeFocused();
+        await page.locator('[data-abom-add-filter]').focus();
+        await expect(page.locator('[data-abom-add-filter]')).toBeFocused();
         await page.keyboard.press('Enter');
 
-        // A term that was added is one the keyboard actually operated, rather than merely
-        // reached.
-        await expect(page.locator('[data-abom-property-drop]').first()).toBeVisible();
+        const term = page.locator('[data-abom-term]').first();
+        await expect(term).toBeVisible();
+        const name = await term.getAttribute('data-abom-term');
+        await term.focus();
+        await page.keyboard.press('Enter');
+
+        // A term whose value was reached is one the keyboard actually operated, rather than
+        // merely reached. Which value control appears depends on the term, so either counts.
+        await expect(
+            page.locator('[data-abom-value], [data-abom-key], [data-abom-value-entry]').first(),
+        ).toBeVisible();
+        expect(name, 'the picker offered a term to operate').toBeTruthy();
     });
 });

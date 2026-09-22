@@ -491,6 +491,7 @@ var droppedColumns = []struct{ table, column string }{
 }
 
 var addedColumns = []struct{ table, column, decl string }{
+	{"abom_saved_view", "presentation", "TEXT"},
 	{"abom_frontier", "analyzed_ref", "TEXT"},
 	{"abom_frontier", "resolved_sha", "TEXT"},
 	{"abom_frontier", "analyzed_at", "TEXT"},

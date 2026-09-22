@@ -1,5 +1,7 @@
 package view
 
+import "slices"
+
 // Builtin is a named question that ships with the product.
 //
 // Code constants rather than rows, deliberately: they are part of what ABOM claims a supply chain
@@ -11,15 +13,20 @@ type Builtin struct {
 	Predicate string `json:"predicate"`
 }
 
-// Builtins are the questions the interface answers repeatedly, named so an API caller and the
+// Builtins reports the questions the interface answers repeatedly, named so an API caller and the
 // pull request gate can ask them without reconstructing the predicate, and so the interface can
 // offer them as tabs rather than as pages that each invent their own scope.
 //
+// A copy, because `BuiltinNamed` resolves a saved policy's predicate from this list: an importer
+// that edited what it was handed would change what an existing policy means, for every later
+// caller, with nothing reporting it.
+func Builtins() []Builtin { return slices.Clone(builtins) }
+
 // Each predicate is written in the canonical form `Spec.String()` produces, and
 // `TestEveryBuiltinIsAlreadyCanonical` holds them to it: a built-in that had to be normalized on
 // read would compare unequal to the same question typed by hand — which is also what lets a
 // surface tell whether the scope it is showing *is* one of these.
-var Builtins = []Builtin{
+var builtins = []Builtin{
 	{
 		Name:  "owned-findings",
 		Title: "What you own, with findings",
@@ -45,6 +52,14 @@ var Builtins = []Builtin{
 		Predicate: "scope=exposure",
 	},
 	{
+		Name:  "exposure-findings",
+		Title: "Advisory routes, with findings",
+		// The picture the Explorer used to open on before arrival became a choice. The closure
+		// alone draws more than the ceiling renders unasked; findings is the half that makes it
+		// a picture rather than a refusal.
+		Predicate: "flags=findings&scope=exposure",
+	},
+	{
 		Name:  "coverage-gaps",
 		Title: "Unpinned and unanalyzed coverage gaps",
 		// A floating reference nothing has analyzed is the pair that matters: either alone is
@@ -55,7 +70,7 @@ var Builtins = []Builtin{
 
 // BuiltinNamed reports the built-in of that name, if there is one.
 func BuiltinNamed(name string) (Builtin, bool) {
-	for _, b := range Builtins {
+	for _, b := range builtins {
 		if b.Name == name {
 			return b, true
 		}

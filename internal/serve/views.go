@@ -20,9 +20,14 @@ type NamedView struct {
 	Name      string `json:"name"`
 	Title     string `json:"title,omitempty"`
 	Predicate string `json:"predicate"`
-	Builtin   bool   `json:"builtin"`
-	CreatedBy string `json:"createdBy,omitempty"`
-	CreatedAt string `json:"createdAt,omitempty"`
+	// Presentation is how the Explorer drew it, carried beside the predicate rather than inside
+	// it. Folding `view` or `groupBy` into the filter language would make the server responsible
+	// for browser rendering and pad every listing's refusal list with terms that are not filters.
+	// Built-ins carry none: a question worth asking is not a claim about how a screen should look.
+	Presentation string `json:"presentation,omitempty"`
+	Builtin      bool   `json:"builtin"`
+	CreatedBy    string `json:"createdBy,omitempty"`
+	CreatedAt    string `json:"createdAt,omitempty"`
 	// ListingRefuses names the terms Inventory cannot narrow by, so a tab that will refuse itself
 	// can say so before it is clicked rather than after. A view is saved wherever it was built and
 	// drawn wherever it is offered, and the Explorer answers terms a list cannot.
@@ -31,10 +36,10 @@ type NamedView struct {
 
 // named describes one catalog entry, working out where it can be drawn from the predicate rather
 // than from where it happened to be saved.
-func named(name, title, predicate string, builtin bool, by, at string) NamedView {
+func named(name, title, predicate, presentation string, builtin bool, by, at string) NamedView {
 	v := NamedView{
-		Name: name, Title: title, Predicate: predicate, Builtin: builtin,
-		CreatedBy: by, CreatedAt: at,
+		Name: name, Title: title, Predicate: predicate, Presentation: presentation,
+		Builtin: builtin, CreatedBy: by, CreatedAt: at,
 	}
 	if spec, err := viewspec.Parse(predicate); err == nil {
 		v.ListingRefuses = spec.UnenforceableAsInventory()
@@ -44,8 +49,8 @@ func named(name, title, predicate string, builtin bool, by, at string) NamedView
 
 func (s *Server) views(w http.ResponseWriter, r *http.Request) {
 	out := []NamedView{}
-	for _, b := range viewspec.Builtins {
-		out = append(out, named(b.Name, b.Title, b.Predicate, true, "", ""))
+	for _, b := range viewspec.Builtins() {
+		out = append(out, named(b.Name, b.Title, b.Predicate, "", true, "", ""))
 	}
 	saved, err := s.Store.SavedViews()
 	if err != nil {
@@ -53,7 +58,7 @@ func (s *Server) views(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, v := range saved {
-		out = append(out, named(v.Name, "", v.Predicate, false, v.CreatedBy, v.CreatedAt))
+		out = append(out, named(v.Name, "", v.Predicate, v.Presentation, false, v.CreatedBy, v.CreatedAt))
 	}
 	writeJSON(w, out, nil)
 }
@@ -63,14 +68,15 @@ func (s *Server) saveView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Predicate string `json:"predicate"`
+		Predicate    string `json:"predicate"`
+		Presentation string `json:"presentation"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "a view is an object with a predicate")
 		return
 	}
 	if err := s.Store.SaveView(store.SavedView{
-		Name: r.PathValue("name"), Predicate: body.Predicate,
+		Name: r.PathValue("name"), Predicate: body.Predicate, Presentation: body.Presentation,
 		CreatedBy: store.DeclaredByInterface,
 	}); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

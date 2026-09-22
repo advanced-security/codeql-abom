@@ -69,25 +69,32 @@ The ranking is itself a plan, and is subject to change.
    open while its default changes nothing, which is the invariant this entry exists to hold. Its
   first item is looking at the data, and *no change* is a legitimate outcome. Depends on
   [the closure database](ql/closure-database.md).
-4. **[A unit is a node kind, and its columns are its own](ui/inventory-units.md)** — The rule holds for what a row
-   says and not for what a reader can do with it. **Four actions sit above the unit strip, so all
-   five units offer all four**: three bill-of-materials exports that ignore which unit they were
-   pressed on, and *show these in the graph*, which hands the scope to a surface that draws nodes —
-   and an advisory is not a node, nor is a repository. The bill of materials is also still a page
-   that is neither a surface nor a unit, holding coverage and hop-depth claims no listing makes,
-   reachable only by an address the navigation does not offer.
+4. **[A unit is a node kind, and its columns are its own](ui/inventory-units.md)** — down to one
+   item, and it is a debt rather than a gap. Actions are split three ways now: the
+   bill-of-materials exports sit behind *this scope:* and are **absent when nothing narrows**,
+   because a label claiming a scope over the whole corpus is claiming a narrowing that does not
+   exist; *show in Explorer* belongs to the unit and is disabled on Advisories with the reason on
+   screen; and each row carries its own icon-only actions between Name and Type. The plan's own
+   claim was refuted on contact — a repository **is** a node, 290 of them, and so is a job; only an
+   advisory is not, and there are **seven** units rather than five. **The dedicated
+   bill-of-materials page is deleted**, for the second time, and three of the four claims it alone
+   stated — coverage, direct-versus-indirect depth, *not examined* against *none found* — are now
+   made nowhere. The fourth already reads on the Actions unit and is the model for re-homing them.
 5. **[A term is enforced or refused, and today one is neither](api/filter-enforcement.md)** — it
-   stopped being cosmetic. It still holds `abom_policy.scope_kind`, a second
-   narrowing mechanism no reader can see. It now also holds the language's inability to say that a
-   list is deliberately empty, so *every finding flag off* is a view nobody can share; and the
-   question of which side applies each term, now that a third side is declared for listings. The
-   divergence that was feared is not there — server and browser select **identical node sets** for
-   `minReach`, `origins` and `ref` on the crawled organization — so what is owed is writing the
-   split down, not repairing it. **A scalar term's value is now enforced**; `kinds`, `origins`,
-   `edges` and `flags` are lists whose members are still unchecked, and whether partial validity in
-   a list refuses or warns is this plan's decision. The implemented `mode` term is enforced or
-   refused on each side; `origin` from [the query catalog](db/query-catalog.md) must follow the
-   same contract.
+   stopped being cosmetic, and it grew two items that a control made visible. It still holds
+   `abom_policy.scope_kind`, a second narrowing mechanism no reader can see; the language's
+   inability to say that a list is deliberately empty, so *every finding flag off* is a view nobody
+   can share; and the question of which side applies each term. The divergence that was feared is
+   not there — server and browser select **identical node sets** for `minReach`, `origins` and `ref`
+   on the crawled organization — so what is owed is writing the split down, not repairing it.
+   **A scalar term's value is enforced**; `kinds`, `origins`, `edges` and `flags` are lists whose
+   members nothing declares, which is now two defects rather than one: the server accepts a member
+   outside the set, and a control has no list to offer because nothing says what the set is.
+   Reading the corpus solved `rules` and `kinds` for the control and cannot solve the refusal,
+   because what has been used is not what is allowed. And **a value list that does not say what it
+   leaves out overstates itself**: `provider` offers one value covering 884 of 11,806 findings. The
+   implemented `mode` term is enforced or refused on each side; `origin` from [the query
+   catalog](db/query-catalog.md) must follow the same contract.
 6. **[Hiding something is a decision somebody signs](db/exclusions-and-exceptions.md)** — every
    organization carries things it has decided not to look at and things it has decided not to act on
    yet. `abom_policy_waiver` already models both, with a required reason, an author, and an expiry
@@ -174,24 +181,26 @@ The ranking is itself a plan, and is subject to change.
     condemned nothing and proved nothing. There are now **1,724 sighting rows** from a crawl that ran
     the findings suites, so the tombstone and the `_live` view can finally be exercised against a
     finding that really does stop being reported.
-18. **[The same graph draws a different picture every time](ui/graph-layout.md)** — the force
-    simulation has no fixed seed, so no two runs agree and nothing downstream can rest on a
-    position: the screenshot layer and the browser suite's geometry claims are both looking at
-    something different every time, which is why a test named *switching force preserves angle*
-    exists at all. **The server half is built** — DOT export, cluster subgraphs, a Graphviz seam
-    that degrades by name, and `/api/graph/layout` — and nothing in the browser reads it yet, so
-    what a reader sees has not moved. **Not a performance fix, and must not be sold as one**:
-    removing every edge from the whole-corpus view still reaches 4.8 FPS, so the ceiling is the
-    renderer. Two claims the corpus refuted on contact, both recorded in the plan: cluster boxes
-    are **not** non-overlapping by construction — that is a property of `dot`'s ranking, and
-    `neato` crossed all 21 pairs — and the engine whose canvas is best shaped is the least legible
-    of the set, which an aspect-ratio test selected before a render disqualified it.
+18. **[The same graph draws a different picture every time](ui/graph-layout.md)** — down to one
+    item, and it is a decision a reader has to settle rather than work. The browser draws where the
+    engine placed it, **fitted to the nodes it is actually drawing**, and names which layout is on
+    screen; the view refuses above **300 nodes** without explicit approval and there is **no
+    arrival scope at all**. **The canvas measurement now exists and narrows the decision**: every
+    built-in places **4 ranks deep**, because an owner contains a repository contains a workflow
+    that uses an action and that is the whole depth — so height is a constant 216 and width grows
+    with the population, giving **102:1 at 99 nodes** and **2,776:1 at 1,723**. `rankdir=LR` only
+    rotates that; the question is whether a ranked layout suits a graph this shallow. **Two of six
+    built-ins cannot be placed at all** — `dot` abandons 3,702 nodes at its 10s deadline. **Still
+    not a performance fix**: removing every edge from the whole-corpus view reaches 4.8 FPS, so the
+    ceiling is the renderer.
 19. **[Remediation summarizes two things into their more reassuring halves](ui/remediation-honesty.md)**
-    — down to one half. The strip-versus-table gap is closed: the advisories unit carries an
-    `unreached` count and states it under the table, so **3 reaching you** and **8 reaching
-    nothing** are both on screen and sum to the 11 the strip counts. What is left is `Fix:
-    available`, one boolean over an advisory whose ranges include **no fix published**, with 5
-    repositories sitting in exactly that range — a reader is still told the comfortable half.
+    — down to one half, and that half turns out to be **latent rather than live**. The
+    strip-versus-table gap is closed: the advisories unit carries an `unreached` count and states
+    it under the table, so **3 reaching you** and **8 reaching nothing** are both on screen and sum
+    to the 11 the strip counts. What is left is `fixable`, one boolean over an advisory whose
+    ranges include **no fix published**, with 5 repositories sitting in exactly that range — and it
+    reaches **no column today**. That makes it cheaper to settle, not safer to ignore: the field is
+    on the model, and the next surface wanting a Fix column will find it and believe it.
 20. **[Reach counts a repository that pins a version without the dependency](db/reach-version-constraint.md)**
     — exposure and the submission closure now agree about which version a route belongs to; reach
     carries none of it, and reach is what orders the crawl. **132 of 225** dependencies are analyzed
@@ -381,10 +390,13 @@ refusal.
   pinned at the references its root really uses, where a whole-account database would collapse
   **132 of 225** dependencies to one reference and then disagree for a reason about layout rather
   than about reach.
-- **[A report somebody can hand to somebody else](ui/printable-report.md)** - blocked on [graph
-  layout](ui/graph-layout.md). A
-  drawing that is different every run cannot be printed, and the bill of materials is already half
-  of this: a document that states its own coverage, with no way to carry the picture.
+- **[A report somebody can hand to somebody else](ui/printable-report.md)** - still blocked on
+  [graph layout](ui/graph-layout.md), for a different reason than before. A drawing that was
+  different every run cannot be printed, and that half is fixed: a placed scope is byte-identical
+  across runs. What cannot be printed now is a **161:1** canvas, and a scope wide enough to be
+  worth reporting on may not be placeable at all. The bill of materials remains the other half: a
+  document with no way to carry the picture, and three of the claims it alone used to state are
+  currently made nowhere — see [ui/inventory-units.md](ui/inventory-units.md).
 
 ## Built, with refinements nobody has ranked
 

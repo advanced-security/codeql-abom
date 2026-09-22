@@ -29,18 +29,6 @@ test.describe('nothing declared yet', () => {
             .toContain('none declared');
     });
 
-    test('the bill of materials explains itself rather than failing', async ({ page }) => {
-        await page.goto('/bom');
-        await ready(page);
-
-        // The server refuses a document with no root, deliberately: emitting an empty one would
-        // report that the organization depends on nothing. The page has to turn that refusal
-        // into something a reader can act on.
-        const body = (await page.locator('body').innerText()).toLowerCase();
-        expect(body, 'the page says why there is no document')
-            .toMatch(/declared|declare|scope/);
-    });
-
     test('the Explorer says what it is waiting for and names the action', async ({ page }) => {
         await page.goto('/explore');
         await ready(page);

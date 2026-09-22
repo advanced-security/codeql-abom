@@ -34,7 +34,34 @@ public abstract class AbomTestContext : BunitContext
         Services.AddSingleton<AccountService>();
         Services.AddSingleton<ScopeService>();
         Services.AddSingleton<FollowService>();
+
+        _handler.Fallbacks.Add(("api/filters", DefaultFilters));
     }
+
+    /// <summary>The filter catalog every surface's picker reads, unless a test answers its own.</summary>
+    ///
+    /// Registered late rather than in the constructor: <see cref="Answer"/> is first-registered-
+    /// wins, so a test that cares about the catalog still overrides this by asking for it first.
+    /// Without a default, every page carrying a picker renders no terms and no chips, and a test
+    /// about something else fails for a reason that has nothing to do with it.
+    private const string DefaultFilters = """
+        [
+          {"name":"scope","label":"Scope","help":"Owned accounts, or advisory routes",
+           "arity":"scalar","values":["owned","exposure"],
+           "surfaces":["graph","inventory","workflows","jobs","repositories","relationships"]},
+          {"name":"q","label":"Name contains","help":"Repository, workflow or action",
+           "arity":"scalar",
+           "surfaces":["graph","inventory","workflows","jobs","repositories","relationships"]},
+          {"name":"rules","label":"CodeQL rule","help":"Keep what a rule reported","arity":"list",
+           "surfaces":["graph","inventory","relationships"]},
+          {"name":"mode","label":"Analysis shape","help":"How the database was built",
+           "arity":"scalar","values":["regular","extended"],
+           "surfaces":["graph","inventory","relationships"]},
+          {"name":"properties","label":"Repository property","help":"Keep a property value",
+           "arity":"property","valuesFrom":"api/properties",
+           "surfaces":["graph","inventory","workflows","jobs","repositories","advisories","relationships","document"]}
+        ]
+        """;
 
     /// <summary>Serves this JSON for any request whose path contains <paramref name="path"/>.</summary>
     ///
@@ -45,6 +72,23 @@ public abstract class AbomTestContext : BunitContext
     /// <c>api/node/</c> both match a users request, as do <c>api/owned-scope</c> and
     /// <c>api/owned-scope/preview</c> — so register the specific one first.</para>
     protected void Answer(string path, string json) => _handler.Answer(path, json);
+
+    /// <summary>
+    /// Puts a scope in the address, which the Explorer requires before it draws anything. A test
+    /// about what a drawn graph does is not a test about how a reader came to choose it, and
+    /// without this every one of them would be measuring the chooser instead.
+    /// </summary>
+    protected void ArriveWithAScope(string terms = "scope=owned&flags=findings") =>
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+            .NavigateTo("/explore?" + terms);
+
+    /// <summary>
+    /// Answers <paramref name="path"/> only where no test registered something for it. A fixture
+    /// a whole class shares belongs here rather than in its constructor: <see cref="Answer"/> is
+    /// first-registered-wins, so a shared answer set up in a constructor beats the narrower one a
+    /// test registers for itself, and the test reads as though its own stub were ignored.
+    /// </summary>
+    protected void Fallback(string path, string json) => _handler.Fallbacks.Add((path, json));
 
     /// <summary>
     /// Answers requests for <paramref name="path"/> with <paramref name="status"/>.
@@ -91,6 +135,9 @@ public abstract class AbomTestContext : BunitContext
 
         public void Fail(string path, HttpStatusCode status) => _failures.Add((path, status));
 
+        /// <summary>Answers used only when no test registered one, so a default cannot win.</summary>
+        public List<(string Path, string Json)> Fallbacks { get; } = [];
+
         public void Answer(string path, string json)
         {
             var at = _answers.FindIndex(a => a.Path == path);
@@ -129,9 +176,9 @@ public abstract class AbomTestContext : BunitContext
                     };
                 }
             }
-            foreach (var (path, json) in _answers)
+            foreach (var (path, json) in _answers.Concat(Fallbacks))
             {
-                if (url.Contains(path, StringComparison.Ordinal))
+                if (Matches(url, path))
                 {
                     return new HttpResponseMessage(HttpStatusCode.OK)
                     {
@@ -145,6 +192,19 @@ public abstract class AbomTestContext : BunitContext
             {
                 Content = new StringContent($"no stub for {url}"),
             };
+        }
+
+        /// <summary>
+        /// Whether a registered path answers this URL. A deeper path is not the same endpoint:
+        /// matching on substring alone had `api/filters` answering `api/filters/counts` with the
+        /// whole catalog, which then failed to decode and read as "the counts did not load".
+        /// </summary>
+        private static bool Matches(string url, string path)
+        {
+            var at = url.IndexOf(path, StringComparison.Ordinal);
+            if (at < 0) return false;
+            var after = at + path.Length;
+            return after >= url.Length || url[after] != '/';
         }
     }
 }

@@ -225,6 +225,11 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 /* With animation off the point is to not see the churn at all, so nothing shows through. */
 .abom-graph-busy-opaque {
     background: var(--mud-palette-surface);
+    /* An opaque frame replaces the canvas rather than covering it, and the ones that offer a way
+       forward carry buttons. Inheriting the spinner's pointer-events:none left the canvas taking
+       every click through them: the draw-ceiling's "draw anyway" and the scope chooser both
+       rendered, looked enabled, and could not be pressed. */
+    pointer-events: auto;
 }
 /* Monospace anywhere a value is evidence a reader compares character by character. */
 .abom-ref, .abom-path, .abom-rule {
@@ -249,6 +254,160 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
    between naming them and showing them is about 60px. */
 .abom-grid thead th {
     font-size: var(--abom-text-xs);
+}
+
+/* The filter menu is the one control that has to stay small while the language behind it grows.
+   Nineteen terms with a sentence each rendered a panel wider than the table and taller than the
+   window, which is the opposite of what a picker is for: the help is a tooltip, the list scrolls,
+   and the width is fixed so the page behind it stays readable. */
+.abom-picker-menu {
+    width: 300px;
+    max-width: 300px;
+    /* Bounded on the popover rather than the list inside it: MudMenu's ListClass does not reach
+       the element that scrolls, so a nineteen-term list ran off the bottom of the window. */
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.abom-picker-list {
+    padding-top: 0;
+}
+
+.abom-picker-list .mud-list-item {
+    padding-top: 3px;
+    padding-bottom: 3px;
+}
+
+/* Two lines, weighted apart. A reader scanning nineteen terms reads the labels and falls back to
+   the description only for the one they are unsure of, so the description has to be present and
+   quiet rather than absent or equal. */
+.abom-picker-term-label {
+    font-size: var(--abom-text-sm);
+    line-height: 1.25;
+}
+
+.abom-picker-term-help {
+    font-size: var(--abom-text-xs);
+    opacity: 0.55;
+    line-height: 1.25;
+}
+
+.abom-picker-head {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--mud-palette-surface);
+}
+
+.abom-picker-head-label {
+    font-size: var(--abom-text-sm);
+    font-weight: 600;
+}
+
+.abom-picker-search {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--mud-palette-surface);
+}
+
+/* A set term reads as one chip: the label says which question, the value says the answer. Without
+   the weight difference the two run together and `Scope owned` reads as a single odd phrase. */
+.abom-chip-label {
+    opacity: 0.7;
+    margin-right: 4px;
+}
+
+.abom-chip-value {
+    font-weight: 600;
+}
+
+/* A pill is a word and a way to drop it, and MudBlazor sizes both for a thumb: the remove button
+   arrives 36x28 inside a 26px chip, so it bulges past the pill and puts 10px of its own padding
+   between the value and the cross. The chip then adds a 4px margin on top of the row's own gap,
+   which reads as pills drifting apart rather than sitting in a row. */
+.abom-filter-picker .mud-chip {
+    margin: 0;
+    height: 24px;
+}
+
+.abom-filter-picker .mud-chip .mud-icon-button {
+    width: 18px;
+    height: 18px;
+    min-width: 18px;
+    min-height: 18px;
+    padding: 0;
+    margin-left: 4px;
+    margin-right: -2px;
+}
+
+.abom-filter-picker .mud-chip .mud-icon-button .mud-icon-root {
+    font-size: var(--abom-text-sm);
+}
+
+/* Selectable text carries its own weight; it does not need a box around it.
+   
+   MudBlazor pads a toggle item and a unit button out to a touch target, which on a dense
+   read-mostly interface spends more of the bar on space than on words: seven units, two analysis
+   modes and the Explorer's two banks between them took whole rows to say a handful of words. The
+   selected state is carried by color and weight rather than by size. */
+.abom-units .mud-button,
+.mud-toggle-group .mud-toggle-item {
+    min-width: 0;
+    min-height: 0;
+    padding: 2px 10px;
+    font-size: var(--abom-text-sm);
+    line-height: 1.6;
+    letter-spacing: 0;
+}
+
+.mud-toggle-group {
+    height: auto;
+    min-height: 0;
+}
+
+/* A label belongs beside what it labels, not above it on a row of its own. */
+.abom-scopebar .mud-chip,
+.abom-views .mud-chip {
+    height: 24px;
+    font-size: var(--abom-text-sm);
+}
+
+/* Row actions are icons packed between the first two columns, because a column of words there
+   costs more width than the columns it separates and width is the scarce thing at organization
+   scale. The column takes exactly the icons it holds and no more, and its header is empty on
+   purpose: a title over icon buttons names the column rather than any one of them.
+
+   The table's spare width is given to the last column deliberately. Left to the browser it landed
+   on the identity column, which ran 510px wide over names half that and floated the row actions
+   against the next column, three hundred pixels from the row they act on. */
+.abom-grid .abom-identity-col,
+.abom-grid .abom-row-actions,
+.abom-grid .abom-row-actions-head {
+    width: 1%;
+    white-space: nowrap;
+}
+
+.abom-grid thead th:last-child,
+.abom-grid tbody td:last-child {
+    width: 100%;
+}
+
+.abom-grid .abom-row-actions,
+.abom-grid .abom-row-actions-head {
+    padding-left: 0;
+    padding-right: 0;
+}
+
+.abom-row-actions-group .mud-icon-button {
+    padding: 2px;
+}
+
+.abom-row-actions-group .mud-icon-root {
+    font-size: var(--abom-text-lg);
 }
 
 /* An identity is two facts, and one line spends the width of both to show one of them. */
@@ -802,4 +961,54 @@ code {
     padding-left: 16px;
     font-size: var(--abom-text-sm);
     columns: 2;
+}
+
+/* The scope chooser on the empty Explorer. A row that wraps rather than a column: these are
+   alternatives of the same kind, and a vertical list of five reads as an ordered procedure. */
+.abom-start-views {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: center;
+    max-width: 520px;
+}
+
+/* A value and how much of the corpus it accounts for, on one line. Stacked, each row was two
+   lines tall and a list of twenty-one rules scrolled for no reason. */
+.abom-picker-value {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+}
+
+/* A filter measured as having one value or none narrows nothing. It sinks below the ones that do
+   and reads quieter there, but stays selectable: a corpus grows, and a filter that is useless this
+   morning is not one to hide. */
+.abom-picker-idle {
+    opacity: 0.55;
+}
+
+/* The bar is the whole navigation now, so the surface being read has to be marked: with a drawer
+   the highlighted row said it, and nothing else does. These are the only two words competing for
+   attention up here, and the bar has width to spare — the density rules that shrink controls
+   elsewhere are for toolbars full of them. */
+.abom-brand:hover {
+    opacity: 0.85;
+}
+
+.abom-nav {
+    gap: 8px;
+}
+
+.abom-nav-link {
+    text-transform: none;
+    letter-spacing: normal;
+    font-size: var(--abom-text-lg);
+    padding: 6px 18px;
+}
+
+.abom-nav-here {
+    background-color: var(--mud-palette-action-default-hover);
 }

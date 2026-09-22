@@ -1,0 +1,151 @@
+using Abom.WebAssembly.Models;
+using Abom.WebAssembly.Pages;
+using Abom.WebAssembly.Services;
+using Bunit;
+using Xunit;
+
+namespace Abom.WebAssembly.Tests;
+
+/// <summary>
+/// The Explorer is the only surface that draws, so it is the only one that can say how a view was
+/// drawn and the only one that can put it back. Inventory applies the predicate and ignores this
+/// half entirely — a list has no grouping, no depth and no third dimension.
+/// </summary>
+public sealed class ExplorerPresentationTests : AbomTestContext
+{
+    private void StubGraphModule()
+    {
+        var module = JSInterop.SetupModule("./js/graph.js");
+        module.Setup<bool>("create", _ => true).SetResult(true);
+        module.Setup<Explorer.LoadResult>("loadFull", _ => true)
+              .SetResult(new Explorer.LoadResult(0, 0, [], false, 0));
+        module.Setup<Explorer.Counts>("applyFilters", _ => true)
+              .SetResult(new Explorer.Counts(0, 0, 0, 0));
+        foreach (var name in new[]
+                 { "setPalette", "setAnimate", "setGroupBy", "setCollapsed", "setView" })
+        {
+            module.SetupVoid(name, _ => true).SetVoidResult();
+        }
+    }
+
+    /// <summary>
+    /// What the Explorer would save has to describe what is on screen. Reading it from anywhere
+    /// but the page's own state would let a saved view record a picture nobody was looking at.
+    /// </summary>
+    [Fact]
+    public void WhatTheExplorerWouldSaveDescribesWhatIsOnScreen()
+    {
+        Answer("api/owned-scope", "[{\"owner\":\"octo-org\"}]");
+        StubGraphModule();
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+            .NavigateTo("/explore?view=priority&groupBy=owner&hops=2&use3d=true");
+
+        var page = Render<Explorer>();
+
+        page.WaitForAssertion(() =>
+        {
+            var drawn = page.Instance.CurrentPresentation;
+            Assert.Equal("priority", drawn.View);
+            Assert.Equal("owner", drawn.GroupBy);
+            Assert.Equal(2, drawn.Hops);
+            Assert.True(drawn.Use3d);
+        });
+    }
+
+    /// <summary>
+    /// A drawing choice has to reach the address, or the link a reader shares shows the same
+    /// nodes arranged some other way. These four never did: grouping, the third dimension,
+    /// collapsing and the stable layout all changed the picture and left no trace.
+    /// </summary>
+    [Fact]
+    public void ADrawingChoiceReachesTheAddress()
+    {
+        Answer("api/owned-scope", "[{\"owner\":\"octo-org\"}]");
+        StubGraphModule();
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+            .NavigateTo("/explore?groupBy=owner&use3d=true&collapsed=true&stableLayout=true");
+
+        var page = Render<Explorer>();
+
+        page.WaitForAssertion(() =>
+        {
+            var at = Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.Uri;
+            Assert.Contains("groupBy=owner", at);
+            Assert.Contains("use3d=true", at);
+            Assert.Contains("collapsed=true", at);
+            Assert.Contains("stableLayout=true", at);
+        });
+    }
+
+    /// <summary>
+    /// A drawing choice is not a filter, and reaching the address must not make it one. The
+    /// scope's own serializer refuses a term it does not know, so a presentation key leaking into
+    /// it would be reported as an unknown filter on the next reload.
+    /// </summary>
+    [Fact]
+    public void ADrawingChoiceNeverBecomesAFilterTerm()
+    {
+        Answer("api/owned-scope", "[{\"owner\":\"octo-org\"}]");
+        StubGraphModule();
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+            .NavigateTo("/explore?groupBy=owner&use3d=true&scope=owned");
+
+        var page = Render<Explorer>();
+
+        page.WaitForAssertion(() =>
+        {
+            var scope = Services.GetService<ScopeService>()!;
+            Assert.Null(scope.LastError);
+            Assert.DoesNotContain("groupBy", scope.ToQueryString());
+            Assert.DoesNotContain("use3d", scope.ToQueryString());
+        });
+    }
+
+    /// A saved presentation put back on the page draws it the way it was saved.
+    [Fact]
+    public void ApplyingASavedPresentationRedrawsItThatWay()
+    {
+        Answer("api/owned-scope", "[{\"owner\":\"octo-org\"}]");
+        StubGraphModule();
+        ArriveWithAScope();
+
+        var page = Render<Explorer>();
+        page.WaitForAssertion(() => Assert.NotEmpty(JSInterop.Invocations["loadFull"]));
+
+        page.InvokeAsync(() => page.Instance.ApplyPresentation(
+            Presentation.Parse("view=priority&groupBy=owner&hops=3"))).Wait();
+
+        page.WaitForAssertion(() =>
+        {
+            var drawn = page.Instance.CurrentPresentation;
+            Assert.Equal("priority", drawn.View);
+            Assert.Equal("owner", drawn.GroupBy);
+            Assert.Equal(3, drawn.Hops);
+        });
+    }
+
+    /// <summary>
+    /// A view saved with no presentation leaves the reader's own choices alone. Treating absent
+    /// as "every default" would reset the picture of anybody applying a view saved before this
+    /// existed — which is every view saved so far.
+    /// </summary>
+    [Fact]
+    public void AViewWithNoSavedPresentationLeavesTheDrawingAlone()
+    {
+        Answer("api/owned-scope", "[{\"owner\":\"octo-org\"}]");
+        StubGraphModule();
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+            .NavigateTo("/explore?view=priority&groupBy=owner");
+
+        var page = Render<Explorer>();
+        page.WaitForAssertion(() => Assert.Equal("priority", page.Instance.CurrentPresentation.View));
+
+        page.InvokeAsync(() => page.Instance.ApplyPresentation(Presentation.Parse(""))).Wait();
+
+        page.WaitForAssertion(() =>
+        {
+            Assert.Equal("priority", page.Instance.CurrentPresentation.View);
+            Assert.Equal("owner", page.Instance.CurrentPresentation.GroupBy);
+        });
+    }
+}

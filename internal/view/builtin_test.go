@@ -5,7 +5,7 @@ import "testing"
 // A built-in has to be written in the form the parser produces, or the same question asked by
 // name and asked by hand would compare unequal — and the gate compares them.
 func TestEveryBuiltinIsAlreadyCanonical(t *testing.T) {
-	for _, b := range Builtins {
+	for _, b := range Builtins() {
 		spec, err := Parse(b.Predicate)
 		if err != nil {
 			t.Errorf("built-in %q does not parse: %v", b.Name, err)
@@ -21,7 +21,7 @@ func TestEveryBuiltinIsAlreadyCanonical(t *testing.T) {
 // iteration order.
 func TestBuiltinNamesAreDistinctAndPresent(t *testing.T) {
 	seen := map[string]bool{}
-	for _, b := range Builtins {
+	for _, b := range Builtins() {
 		if b.Name == "" || b.Title == "" {
 			t.Errorf("a built-in is missing its name or title: %+v", b)
 		}

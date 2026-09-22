@@ -44,6 +44,65 @@ func TestAViewNamingSomethingThatIsNotAPredicateIsRefused(t *testing.T) {
 	}
 }
 
+// A view names a question, and the Explorer draws an answer to it. Which view, grouping and depth
+// it was drawn with are not part of the question and must not become filter terms — but a view
+// that comes back drawn some other way is not the view that was saved.
+//
+// Stored as opaque text and never parsed here: it is browser rendering, and a store that
+// validated it would be deciding what the interface may draw.
+func TestASavedViewKeepsHowItWasDrawnWithoutTreatingItAsAPredicate(t *testing.T) {
+	s := newTestStore(t)
+
+	if err := s.SaveView(SavedView{
+		Name: "drawn", Predicate: "scope=owned",
+		Presentation: "view=priority&groupBy=owner&hops=2",
+	}); err != nil {
+		t.Fatalf("SaveView: %v", err)
+	}
+
+	got, _, err := s.SavedViewNamed("drawn")
+	if err != nil {
+		t.Fatalf("SavedViewNamed: %v", err)
+	}
+	if got.Presentation != "view=priority&groupBy=owner&hops=2" {
+		t.Errorf("Presentation = %q, want it back verbatim", got.Presentation)
+	}
+	if got.Predicate != "scope=owned" {
+		t.Errorf("Predicate = %q, want the presentation kept out of it", got.Predicate)
+	}
+}
+
+// Presentation is not a predicate, so terms that would be refused in one are none of the store's
+// business in the other. Parsing it would make the interface's rendering vocabulary a thing the
+// store has an opinion about, and every new knob a migration.
+func TestPresentationIsNotValidatedAsAPredicate(t *testing.T) {
+	s := newTestStore(t)
+
+	if err := s.SaveView(SavedView{
+		Name: "opaque", Predicate: "scope=owned", Presentation: "scoop=seed&whatever=1",
+	}); err != nil {
+		t.Fatalf("SaveView refused presentation it has no business reading: %v", err)
+	}
+}
+
+// A view saved before presentation existed has no presentation, which is not the same as one
+// drawn with every default. Absent has to stay absent so the Explorer can tell "draw it however
+// you would anyway" from "draw it exactly like this".
+func TestAViewSavedWithoutPresentationHasNoneRatherThanAnEmptyOne(t *testing.T) {
+	s := newTestStore(t)
+
+	if err := s.SaveView(SavedView{Name: "plain", Predicate: "scope=owned"}); err != nil {
+		t.Fatalf("SaveView: %v", err)
+	}
+	got, _, err := s.SavedViewNamed("plain")
+	if err != nil {
+		t.Fatalf("SavedViewNamed: %v", err)
+	}
+	if got.Presentation != "" {
+		t.Errorf("Presentation = %q, want the empty string that means nobody said", got.Presentation)
+	}
+}
+
 // How a view arrived is recorded by the code path that wrote it, never inferred from its payload,
 // and NULL stays NULL. The same rule as abom_owned_scope.declared_by.
 func TestASavedViewRecordsHowItArrivedAndNeverGuesses(t *testing.T) {

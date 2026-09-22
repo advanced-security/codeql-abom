@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
     fitPositions, fitClusters, applyPositions, releasePosition, releaseAll, layoutSummary,
-    DEFAULT_EXTENT,
+    clusterBoxes, refusalText, DEFAULT_EXTENT,
 } from './serverlayout.js';
 
 // A 200x100 layout with a node at each corner and one dead centre.
@@ -128,6 +128,51 @@ test('an engine that cannot box a group carries the reason through', () => {
     assert.match(summary.text, /no cluster boundary/);
 });
 
+// Measured on the crawled organization: the layout endpoint answers from server terms only, so it
+// placed 411 nodes while the browser's `findings` flag left 205 on screen. Fitting to the engine's
+// own canvas frames the view for nodes it is not drawing, and the drawn ones end up in a corner of
+// it.
+test('the fit is taken from the nodes that will actually be drawn', () => {
+    const drawn = new Set(['bottom-left']);
+    const placed = fitPositions(layout(), { drawn });
+
+    // One node drawn is its own centre, wherever the engine put it in the wider canvas.
+    assert.deepEqual(placed.get('bottom-left'), { x: 0, y: 0 });
+});
+
+// Relative position is the whole content of a computed layout, so narrowing the frame may move and
+// scale the picture but may never change the shape of it.
+test('narrowing the frame keeps the layout proportional', () => {
+    const drawn = new Set(['bottom-left', 'centre']);
+    const placed = fitPositions(layout(), { drawn });
+
+    const a = placed.get('bottom-left'), b = placed.get('centre');
+    // The engine put these on a 2:1 diagonal; the fitted pair has to keep that.
+    assert.ok(Math.abs((b.x - a.x) / (a.y - b.y) - 2) < 1e-9, 'the aspect of the pair moved');
+});
+
+// A boundary has to travel with its members or it is drawn around the wrong nodes, so both use the
+// same transform rather than each fitting itself.
+test('a cluster box follows the frame its members were fitted to', () => {
+    const drawn = new Set(['bottom-left', 'centre']);
+    const placed = fitPositions(layout(), { drawn });
+    const [box] = fitClusters(layout(), { drawn });
+
+    for (const key of drawn) {
+        const at = placed.get(key);
+        assert.ok(at.x >= box.x1 && at.x <= box.x2, `${key} is outside its box horizontally`);
+        assert.ok(at.y >= box.y1 && at.y <= box.y2, `${key} is outside its box vertically`);
+    }
+});
+
+// Nothing drawn is not an instruction to fit to nothing; it is the ordinary case of a layout
+// arriving before the filter has run, and it must fall back to the engine's own canvas.
+test('an empty or absent drawn set falls back to the whole layout', () => {
+    const whole = fitPositions(layout());
+    assert.deepEqual(fitPositions(layout(), { drawn: new Set() }), whole);
+    assert.deepEqual(fitPositions(layout(), { drawn: null }), whole);
+});
+
 // An empty or absent layout must not throw on the way to the canvas.
 test('an empty layout places nothing rather than failing', () => {
     assert.equal(fitPositions(null).size, 0);
@@ -138,4 +183,62 @@ test('an empty layout places nothing rather than failing', () => {
     const result = applyPositions(nodes, fitPositions(null));
     assert.equal(result.pinned, 0);
     assert.equal(nodes[0].fx, undefined, 'an empty layout releases what a previous one pinned');
+});
+
+// The engine names a cluster `cluster_<by>_<key>` and the canvas groups by `<key>`. A box whose
+// name nobody decoded belongs to no group, so it would be a boundary drawn around nothing.
+test('a cluster box is matched back to the group it encloses', () => {
+    const boxes = clusterBoxes(layout(), 'owner');
+    assert.deepEqual([...boxes.keys()], ['octo']);
+});
+
+// The separator is part of a fixed prefix, not a delimiter to split on: repository and workflow
+// keys carry underscores of their own, and splitting would hand the box to `octo/my`.
+test('a group key keeps the underscores in its own name', () => {
+    const named = layout({
+        clusters: [{ name: 'cluster_repository_octo/my_repo', x1: 0, y1: 0, x2: 200, y2: 100 }],
+    });
+    assert.deepEqual([...clusterBoxes(named, 'repository').keys()], ['octo/my_repo']);
+});
+
+// A box carrying some other grouping's prefix is not this grouping's answer. Drawing it anyway
+// puts a boundary labelled with one level around the members of another.
+test('a box from a different grouping is not adopted', () => {
+    assert.equal(clusterBoxes(layout(), 'repository').size, 0);
+    assert.equal(clusterBoxes(layout(), '').size, 0);
+    assert.equal(clusterBoxes(null, 'owner').size, 0);
+});
+
+// The box has to land in the same coordinates as the nodes, or the boundary is drawn somewhere
+// its members are not.
+test('a cluster box is fitted like the positions it encloses', () => {
+    const [fitted] = fitClusters(layout());
+    const box = clusterBoxes(layout(), 'owner').get('octo');
+    assert.equal(box.x1, fitted.x1);
+    assert.equal(box.y1, fitted.y1);
+    assert.equal(box.x2, fitted.x2);
+    assert.equal(box.y2, fitted.y2);
+});
+
+// Measured against the crawled organization: `scope=owned` is 3,703 nodes and `dot` gives up on
+// it after the server's ten seconds. That is the common case rather than an edge one, so the
+// sentence a reader gets has to be about their graph -- not the transport's JSON.
+test('a layout that ran out of time says so in words a reader can act on', () => {
+    const text = refusalText(
+        '{"error":"dot layout abandoned: context deadline exceeded"}', 400, 3703);
+
+    assert.match(text, /too large/i);
+    assert.match(text, /3,703/, 'the reader is not told what size defeated it');
+    assert.doesNotMatch(text, /[{}"]/, 'the raw transport body reached the caption');
+});
+
+// Any other refusal is still the server's sentence rather than a status code, but it must not
+// arrive wrapped in the envelope it travelled in.
+test('a refusal is unwrapped rather than pasted in', () => {
+    assert.equal(
+        refusalText('{"error":"\\"neato\\" is not an engine"}', 400, 10),
+        '"neato" is not an engine');
+    // Nothing usable in the body leaves the status as the only fact there is.
+    assert.match(refusalText('', 503, 10), /503/);
+    assert.match(refusalText('<html>gateway</html>', 502, 10), /502/);
 });

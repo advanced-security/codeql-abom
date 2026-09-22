@@ -1,0 +1,451 @@
+@* One control for every term the language declares.
+
+   A toolbar with a control per term costs the width of what *could* be asked rather than what is:
+   the Explorer exposed 7 of 19 and the other 12 travelled with no control at all. This costs one
+   button plus a chip for each term actually set.
+
+   The term list is read from the server. Keeping one here would be a second declaration, and the
+   one that fell behind would offer a filter the server refuses by name. *@
+
+@inject AbomApi Api
+@inject ScopeService Scope
+@implements IDisposable
+
+<div class="abom-filter-picker d-flex flex-wrap align-center gap-1" data-abom-filter-picker>
+    @foreach (var (term, value) in Applied)
+    {
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                 title="@($"{term.Label}: {value}")"
+                 data-abom-filter-chip="@term.Name">
+            <span class="abom-chip-label">@term.Label</span>
+            <span class="abom-chip-value">@Summarize(value)</span>
+            <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small"
+                           aria-label="@($"Remove the {term.Label} filter")"
+                           title="@($"Remove the {term.Label} filter")"
+                           OnClick="@(() => Clear(term.Name))"
+                           data-abom-chip-remove />
+        </MudChip>
+    }
+
+    <MudMenu Dense="true" ActivationEvent="@MouseEvent.LeftClick"
+             AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft"
+             PopoverClass="abom-picker-menu" ListClass="abom-picker-list">
+        <ActivatorContent>
+            <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Text"
+                       StartIcon="@Icons.Material.Filled.Add"
+                       data-abom-add-filter>
+                Filter
+            </MudButton>
+        </ActivatorContent>
+        <ChildContent>
+            @if (_term is null)
+            {
+                @* Typing narrows the list rather than scrolling it: nineteen terms is a wall, and
+                   the values behind one are worse at organization scale. *@
+                <div class="abom-picker-search pa-2" data-abom-term-search>
+                    <MudTextField T="string" Value="@_termQuery" ValueChanged="@(v => _termQuery = v)"
+                                  Placeholder="Filter by name" Immediate="true"
+                                  Margin="Margin.Dense" Variant="Variant.Outlined"
+                                  Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                                  aria-label="Find a filter by name" />
+                </div>
+                @foreach (var term in Offerable)
+                {
+                    @* Held open: choosing a term is the first of two steps, and a menu that
+                       dismissed here would take the reader back to the button they just pressed. *@
+                    <MudMenuItem OnClick="@(() => Choose(term))" AutoClose="false"
+                                 Class="@(NarrowsNothing(term) ? "abom-picker-idle" : null)"
+                                 data-abom-term="@term.Name">
+                        <div class="abom-picker-term">
+                            <div class="abom-picker-value">
+                                <span class="abom-picker-term-label">@term.Label</span>
+                                @* Nineteen terms is too many to open one at a time to find the
+                                   four worth using. A term nobody counted shows nothing rather
+                                   than a zero, which would be a claim instead of a blank. *@
+                                @if (_valueCounts.TryGetValue(term.Name, out var available))
+                                {
+                                    @* Position says what the number is to anybody looking; to a
+                                       reader who is not, a bare "21" says nothing at all. *@
+                                    <span class="abom-picker-term-help"
+                                          title="@($"{available} to choose from")"
+                                          aria-label="@($"{available} values to choose from")">@available</span>
+                                }
+                            </div>
+                            <div class="abom-picker-term-help">@term.Help</div>
+                        </div>
+                    </MudMenuItem>
+                }
+                @if (Offerable.Count == 0)
+                {
+                    <MudText Typo="Typo.caption" Class="pa-2 mud-text-secondary d-block">
+                        @(_terms.Count == 0
+                            ? "No filters are available."
+                            : "Every filter this view applies is already set.")
+                    </MudText>
+                }
+            }
+            else
+            {
+                @* The term is named again here, because the menu has replaced the list a reader
+                   chose from and nothing else on screen says which question they are answering. *@
+                <div class="abom-picker-head pa-2">
+                    <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" Size="Size.Small"
+                                   aria-label="Back to the filter list"
+                                   OnClick="@(() => _term = null)" data-abom-term-back />
+                    <span class="abom-picker-head-label">@_term.Label</span>
+                    <span class="abom-picker-term-help">@_term.Help</span>
+                </div>
+                @if (_term.Arity == "property")
+                {
+                    @* Two choices, not one: a bare `0` is a value of some key, and `0` happens to
+                       be the declared default of one of them. *@
+                    @if (_propertyKey is null)
+                    {
+                        @foreach (var key in _propertyKeys)
+                        {
+                            <MudMenuItem OnClick="@(() => ChooseKey(key))" AutoClose="false"
+                                         data-abom-key="@key">@key</MudMenuItem>
+                        }
+                        @if (_propertyKeys.Count == 0)
+                        {
+                            @* An empty list reads as a control that failed. An organization that
+                               administers no custom properties is a different fact, and this is
+                               the only place that can tell a reader which one they are looking at. *@
+                            <MudText Typo="Typo.caption" Class="pa-2 mud-text-secondary d-block"
+                                     data-abom-property-empty>
+                                This organization administers no custom properties.
+                            </MudText>
+                        }
+                    }
+                    else
+                    {
+                        @if (_breakdown is not null && _breakdown.WithoutValue > 0)
+                        {
+                            @* Narrowing by a key most of the organization does not carry narrows
+                               to a fraction of it. Every count downstream is then a count within
+                               that fraction, and a reader who was not told reads it as the whole. *@
+                            <MudText Typo="Typo.caption" Class="pa-2 mud-text-secondary d-block"
+                                     data-abom-property-coverage>
+                                @_breakdown.WithoutValue of @_breakdown.Repositories repositories
+                                carry no value for this key and are left out.
+                            </MudText>
+                        }
+                        @foreach (var value in _propertyValues)
+                        {
+                            <MudMenuItem OnClick="@(() => Apply(_term.Name, $"{_propertyKey}:{value.Value}"))"
+                                         data-abom-value="@value.Value">
+                                <div class="abom-picker-term">
+                                    <div class="abom-picker-term-label">@value.Value</div>
+                                    @* A required property with a default puts every repository in
+                                       one bucket without anybody choosing it, so a default is said
+                                       rather than left to look like a choice. *@
+                                    <div class="abom-picker-term-help">
+                                        @value.Repositories
+                                        @(value.Repositories == 1 ? "repository" : "repositories")@(value.IsDefault ? " · organization default" : "")
+                                    </div>
+                                </div>
+                            </MudMenuItem>
+                        }
+                        @if (_propertyValues.Count == 0)
+                        {
+                            <MudText Typo="Typo.caption" Class="pa-2 mud-text-secondary d-block"
+                                     data-abom-property-empty>
+                                No repository carries a value for this key.
+                            </MudText>
+                        }
+                    }
+                }
+                else
+                {
+                    @* One stage for every term that has values, and one for those that do not:
+                       the box searches the list where there is one and is the whole entry where
+                       there is not. It used to be the only way in, which made a rule filter a
+                       memory test against names like `actions/missing-workflow-permissions`. *@
+                    <div class="abom-picker-search pa-2" data-abom-value-search data-abom-value-entry>
+                        <MudTextField T="string" Value="@_valueQuery"
+                                      ValueChanged="@OnValueQueryChanged"
+                                      Placeholder="@ValuePlaceholder" Immediate="true"
+                                      Margin="Margin.Dense" Variant="Variant.Outlined"
+                                      OnKeyDown="@OnValueKey"
+                                      aria-label="@($"Value for {_term.Label}")" />
+                        @* Offered only for text the list does not already hold: a rule that exists
+                           and has reported nothing yet is absent from it, and the server accepts
+                           it either way. Sitting there disabled above every list, it is a control
+                           that does nothing between the box and what the reader came for. *@
+                        @if (CanApplyTyped)
+                        {
+                            <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Text"
+                                       OnClick="@(() => Apply(_term!.Name, _valueQuery.Trim()))"
+                                       data-abom-value-apply>Apply @_valueQuery.Trim()</MudButton>
+                        }
+                    </div>
+                    @if (_loadingValues)
+                    {
+                        <MudText Typo="Typo.caption" Class="pa-2 mud-text-secondary d-block">
+                            Reading what this filter can take…
+                        </MudText>
+                    }
+                    @if (_uncovered > 0)
+                    {
+                        @* A list built from rows that recorded a value describes only those rows.
+                           Most findings predate the provider column, so one value on offer covers
+                           a fourteenth of them — confidently, and silently without this. *@
+                        <MudText Typo="Typo.caption" Class="pa-2 mud-text-secondary d-block"
+                                 data-abom-value-coverage>
+                            @_uncovered.ToString("N0") record no @_term.Label.ToLowerInvariant()
+                            and are left out.
+                        </MudText>
+                    }
+                    @foreach (var value in OfferableValues)
+                    {
+                        <MudMenuItem OnClick="@(() => Apply(_term.Name, value.Value))"
+                                     data-abom-value="@value.Value">
+                            <div class="abom-picker-value">
+                                <span class="abom-picker-term-label">@value.Value</span>
+                                @* Two rules are usually nine tenths of the findings, and an
+                                   alphabetical list says every rule is equally likely. *@
+                                @if (value.Count > 0)
+                                {
+                                    <span class="abom-picker-term-help">@value.Count.ToString("N0")</span>
+                                }
+                            </div>
+                        </MudMenuItem>
+                    }
+                    @if (!_loadingValues && _values.Count > 0 && OfferableValues.Count == 0)
+                    {
+                        <MudText Typo="Typo.caption" Class="pa-2 mud-text-secondary d-block"
+                                 data-abom-value-none>
+                            Nothing on record matches that. Apply it anyway to filter by it.
+                        </MudText>
+                    }
+                }
+            }
+        </ChildContent>
+    </MudMenu>
+</div>
+
+@code {
+    /// <summary>Which side this picker is drawn on, so it offers only what that side applies.</summary>
+    [Parameter, EditorRequired]
+    public string Surface { get; set; } = string.Empty;
+
+    /// <summary>Raised after the scope changes, so the host can re-read and redraw.</summary>
+    [Parameter]
+    public EventCallback Changed { get; set; }
+
+    private IReadOnlyList<FilterTerm> _terms = [];
+    private FilterTerm? _term;
+    private string _termQuery = string.Empty;
+    private string _valueQuery = string.Empty;
+    private IReadOnlyList<string> _propertyKeys = [];
+    private IReadOnlyList<PropertyCount> _propertyValues = [];
+    private PropertyBreakdown? _breakdown;
+    private string? _propertyKey;
+
+    /// The values this term can take in this corpus, read when the term is chosen.
+    private IReadOnlyList<FilterValue> _values = [];
+    private int _uncovered;
+    private bool _loadingValues;
+
+    /// How many values each term has, for terms anybody could count. A term absent from this is
+    /// one nobody counted, which is not the same as one measured as having none.
+    private IReadOnlyDictionary<string, int> _valueCounts =
+        new Dictionary<string, int>(StringComparer.Ordinal);
+
+    protected override async Task OnInitializedAsync()
+    {
+        // The scope changes from outside this control: a page applies its own narrowing after the
+        // chips have already been drawn, and waiting to be re-rendered by a parent leaves a
+        // narrowed view under a picker claiming nothing is set. Subscribing makes what is drawn a
+        // reading of the scope rather than a memory of it.
+        Scope.Changed += Redraw;
+        _terms = await Api.GetFilterTermsAsync();
+        _valueCounts = await Api.GetFilterValueCountsAsync();
+    }
+
+    private void Redraw() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Scope.Changed -= Redraw;
+
+    /// Terms this surface applies, minus the ones already set, narrowed by what was typed.
+    private IReadOnlyList<FilterTerm> Offerable =>
+        [.. _terms
+            .Where(t => t.Surfaces.Contains(Surface))
+            .Where(t => !Current.ContainsKey(t.Name))
+            .Where(t => _termQuery.Length == 0
+                        || t.Label.Contains(_termQuery, StringComparison.OrdinalIgnoreCase)
+                        || t.Name.Contains(_termQuery, StringComparison.OrdinalIgnoreCase))
+            // A term measured as having one value or none narrows nothing, and sinks below the
+            // ones that do. It stays reachable: a corpus grows, and a filter that is useless this
+            // morning is not one to hide. Catalog order holds within each group.
+            .OrderBy(NarrowsNothing)];
+
+    /// <summary>
+    /// Whether this term is known to narrow nothing. A term nobody counted is not one of them:
+    /// absent is not zero, and ranking a working filter down for a number it never got would bury
+    /// free text under everything measured.
+    /// </summary>
+    private bool NarrowsNothing(FilterTerm term) =>
+        _valueCounts.TryGetValue(term.Name, out var available) && available <= 1;
+
+    /// What is set, paired with the term that describes it, in catalog order.
+    private IEnumerable<(FilterTerm Term, string Value)> Applied =>
+        _terms.Where(t => Current.ContainsKey(t.Name))
+              .Select(t => (t, string.Join(", ", Current[t.Name])));
+
+    /// <summary>The scope as term names, read through its own serializer.</summary>
+    ///
+    /// Going through the query string rather than reading fields keeps one mapping between a term
+    /// and where it lives. A second one here would drift from `ViewSpec`, and the picker would set
+    /// a term the spec writes under another name.
+    private Dictionary<string, List<string>> Current => Decompose(Scope.Spec.ToQueryString());
+
+    /// <summary>
+    /// What a chip says when the list is longer than a glance. Seven values spelled out is a wall
+    /// rather than a filter, and the number is the part that is legible at that size; the values
+    /// stay on the chip's title. Three is the most that reads as a list rather than as text.
+    /// </summary>
+    private static string Summarize(string value)
+    {
+        var count = value.Split(',', StringSplitOptions.RemoveEmptyEntries).Length;
+        return count > 3 ? $"{count} selected" : value;
+    }
+
+    private static Dictionary<string, List<string>> Decompose(string query)
+    {
+        var terms = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var pair in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var split = pair.IndexOf('=');
+            if (split <= 0) continue;
+            var name = Uri.UnescapeDataString(pair[..split]);
+            var value = Uri.UnescapeDataString(pair[(split + 1)..]);
+            // Selection rides in the same text and is not a filter term.
+            if (name is "selection" or "focus") continue;
+            if (!terms.TryGetValue(name, out var values)) terms[name] = values = [];
+            values.Add(value);
+        }
+        return terms;
+    }
+
+    private static string Recompose(Dictionary<string, List<string>> terms) =>
+        string.Join("&", terms
+            .OrderBy(t => t.Key, StringComparer.Ordinal)
+            .SelectMany(t => t.Value.Select(v =>
+                $"{Uri.EscapeDataString(t.Key)}={Uri.EscapeDataString(v)}")));
+
+    private async Task Choose(FilterTerm term)
+    {
+        _term = term;
+        _valueQuery = string.Empty;
+        _propertyKey = null;
+        _propertyValues = [];
+        _breakdown = null;
+        _values = [];
+        _uncovered = 0;
+        if (term.Arity == "property")
+        {
+            _propertyKeys = (await Api.GetPropertiesAsync())?.Keys ?? [];
+            StateHasChanged();
+            return;
+        }
+
+        // Declared values need no fetch; the rest are whatever the organization happens to
+        // contain, and are read once per visit to the term rather than per keystroke.
+        if (term.Values.Count > 0)
+        {
+            _values = [.. term.Values.Select(v => new FilterValue { Value = v })];
+            StateHasChanged();
+            return;
+        }
+        if (term.ValuesFrom.Length == 0)
+        {
+            StateHasChanged();
+            return;
+        }
+
+        _loadingValues = true;
+        StateHasChanged();
+        var set = await Api.GetFilterValuesAsync(term.ValuesFrom);
+        _values = set.Values;
+        _uncovered = set.Uncovered;
+        _loadingValues = false;
+        StateHasChanged();
+    }
+
+    private void OnValueQueryChanged(string value)
+    {
+        _valueQuery = value ?? string.Empty;
+        StateHasChanged();
+    }
+
+    /// What the list shows: everything on record, narrowed by what has been typed so far.
+    private IReadOnlyList<FilterValue> OfferableValues =>
+        _valueQuery.Trim().Length == 0
+            ? _values
+            : [.. _values.Where(v =>
+                v.Value.Contains(_valueQuery.Trim(), StringComparison.OrdinalIgnoreCase))];
+
+    private string ValuePlaceholder =>
+        _values.Count > 0 ? "Search or type a value" : $"{_term?.Label}\u2026";
+
+    /// Typed text is worth a control of its own only when choosing from the list cannot reach it.
+    private bool CanApplyTyped =>
+        _valueQuery.Trim().Length > 0
+        && !_values.Any(v => v.Value.Equals(_valueQuery.Trim(), StringComparison.OrdinalIgnoreCase))
+        && OfferableValues.Count == 0;
+
+    private async Task ChooseKey(string key)
+    {
+        _propertyKey = key;
+        var view = await Api.GetPropertiesAsync(key);
+        _breakdown = view?.Breakdown;
+        _propertyValues = _breakdown?.Values ?? [];
+        StateHasChanged();
+    }
+
+    private async Task Apply(string name, string value)
+    {
+        if (value.Length == 0) return;
+        var terms = Current;
+        // A list or a property may be asked for several times over; a scalar is one answer, and a
+        // second would leave a reader unable to tell which the server applied.
+        var repeatable = _term is not null && _term.Arity is "list" or "property";
+        if (repeatable && terms.TryGetValue(name, out var existing))
+        {
+            if (!existing.Contains(value)) existing.Add(value);
+        }
+        else
+        {
+            terms[name] = [value];
+        }
+        await Write(terms);
+    }
+
+    private async Task Clear(string name)
+    {
+        var terms = Current;
+        terms.Remove(name);
+        await Write(terms);
+    }
+
+    private async Task Write(Dictionary<string, List<string>> terms)
+    {
+        _term = null;
+        _termQuery = string.Empty;
+        _valueQuery = string.Empty;
+        _propertyKey = null;
+        _propertyValues = [];
+        _breakdown = null;
+        Scope.Set(ViewSpec.Parse(Recompose(terms)));
+        await Changed.InvokeAsync();
+    }
+
+    private async Task OnValueKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && _term is not null && _valueQuery.Trim().Length > 0)
+        {
+            await Apply(_term.Name, _valueQuery.Trim());
+        }
+    }
+}

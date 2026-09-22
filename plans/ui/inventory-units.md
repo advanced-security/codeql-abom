@@ -1,8 +1,9 @@
 # A unit is a node kind, and its columns are its own
 
-**Status:** five units, each asking its own endpoint for its own columns. The rule holds for what a
-row says and not yet for what a reader can do with it, and one page still sits outside the
-surface-and-unit taxonomy altogether.
+**Status:** seven units, each asking its own endpoint for its own columns, each offering only the
+actions that apply to it, and each row carrying its own. The dedicated bill-of-materials page is
+gone; three claims it was the only surface to make went with it, and re-homing them is what is
+left.
 
 ## Why this exists
 
@@ -14,45 +15,67 @@ of through the grid.
 ## The shape
 
 **One tab per node kind, or per family of kinds that share a column set.** Actions, Workflows, Jobs,
-Repositories, Advisories and **Relationships** are built. Relationships were the sixth shape and the
-last to arrive, because a unit only exists once its columns are its own and an edge had none: it
-now carries its identity, what it crosses, how its reference is written, and what was reported
-against the declaring line. See [`../../docs/architecture.md`](../../docs/architecture.md).
+Repositories, Advisories, **Relationships** and **Coverage** are built. Relationships was the shape
+that took longest to arrive, because a unit only exists once its columns are its own and an edge had
+none: it now carries its identity, what it crosses, how its reference is written, and what was
+reported against the declaring line. See [`../../docs/architecture.md`](../../docs/architecture.md).
+
+**An action belongs either to the scope or to the unit, and the two are separated on screen.** The
+bill-of-materials exports describe the scope and are the same document from every unit, so they sit
+behind the words *this scope:* rather than appearing to describe the rows beneath them — and with
+nothing narrowed there is no scope, so they are absent rather than labelling the whole corpus as
+one. *Show in Explorer* means *these rows*, so it belongs to the unit and is refused where the
+unit's rows are not drawn; the same action on a row carries that row instead.
+
+**A row's actions are icons, and an icon is nothing without its tooltip.** They sit between Name
+and Type, where a column of words would cost more width than the columns it separates — and width
+is the scarce thing at organization scale.
+
+```mermaid
+flowchart LR
+    SCOPE["one scope"] -->|"describes the scope"| EXPORT["CycloneDX · SPDX"]
+    SCOPE -->|"reprojected"| UNIT["seven units"]
+    UNIT -->|"rows are nodes"| GRAPH["show these in the graph"]
+    UNIT -. "an advisory is not a node" .-> ADV["refused, with the reason on screen"]
+    style ADV fill:#3d2d1d
+```
 
 ## Pending
 
-1. **A unit's actions are its own, like its columns.** Four actions sit in the scope bar *above* the
-   unit strip, so all five units offer all four of them: `bom`, `bom-cyclonedx`, `bom-spdx` and
-   `open-in-explorer`. Two of them do not survive the change of unit.
-
-   - *Show these in the graph* hands the scope to `/explore`, which draws nodes. An advisory is not
-     a node and a repository is not a node, so on two of the five units the button either answers a
-     different question than the one on screen or none at all.
-   - A bill of materials is a document about components. Asked from the Jobs or Advisories unit it
-     exports exactly what it exports from Actions, which is the definition of a control ignoring
-     the unit it was pressed on.
-
-   What is owed is a rule for which actions a unit offers, and a home for the ones that belong to
-   the scope rather than to any unit. Note what is *not* wrong: no per-row action is offered here at
-   all, and *re-analyze* lives in Settings, not on Inventory. Depends on nothing.
-2. **The bill of materials is a document, not a listing, and is the one page that is neither a
-   surface nor a unit.** It reads the shared scope and its export carries it, so it no longer
-   invents one; what it still has is a route of its own and no place in the navigation. It states
-   coverage, direct-versus-indirect depth and the advisory caveat that nothing on any surface says,
-   so it cannot simply be deleted. Either those statements move onto Inventory and the page goes,
-   or the page becomes an explicit fifth thing with a reason written down. Depends on nothing.
+1. **A bill of materials is an in-line action on a unit, and it carries four claims that currently
+   have no home.** The row-action seam exists — icon-only controls with tooltips, packed between
+   Name and Type, carrying the row rather than the page's scope — and *show in Explorer* is the
+   only action on it. A document rooted at one row is the next one. The dedicated page is deleted;
+   it was deleted once before and restored, because it was the only surface stating **coverage**
+   (components and references in use against analyzed, findings untraceable to a run, findings
+   carrying no result hash or pack digest), **direct versus indirect with hop depth**, and **"not
+   examined" as distinct from "none found"**. Those three are now made nowhere; the fourth — that
+   advisories are not evaluated against the references actually in use — already reads on the
+   Actions unit's own description and is the model for re-homing the rest. An export that reports
+   coverage it does not state is the reassuring-half problem in a different costume. The typed
+   client and the `Bom*` records went with the page and are in git history; `/api/bom` is unchanged.
 
 ## The constraints that must not be broken
 
 **A unit only exists once its columns are its own.** This plan exists because that rule was applied
-to one kind rather than to the rule itself. Adding a sixth unit whose columns belong to a fifth is
-the same mistake again.
+to one kind rather than to the rule itself. Adding an eighth unit whose columns belong to a seventh
+is the same mistake again.
 
 **An absent measurement is not zero, and a structurally-inapplicable one is not zero either.** A
 workflow's *Repos reached* is not a small number; it is not a number. A column that cannot apply to
 a row does not belong in that row's unit.
 
-**A term is applied or refused by name, never dropped.** Each new unit declares what it enforces in
+**A refused action is disabled and says why, never hidden.** A control that vanishes between units
+leaves a reader who used it a moment ago wondering what they did wrong. The reason goes on a span
+*outside* the disabled control: a disabled MudButton suppresses pointer events on its children, so a
+tooltip inside one never fires — and that is the tooltip a reader needs most.
+
+**Which units draw is measured, not assumed.** The graph holds `step`, `job`, `workflow`, `action`,
+`repo`, `composite_action`, `org`, `reusable_workflow` and `docker_image`. A repository **is** a
+node — 290 of them in the owned closure — and so is a job; this plan previously asserted neither
+was, and the corpus refuted it. Only an advisory is genuinely not a node.
+
+**A term is applied or refused by name, never dropped.** Each unit declares what it enforces in
 `internal/view`, and the route refuses the rest by name. A unit added to the interface and not to
 the declaration silently widens somebody's scope.
 
@@ -78,7 +101,7 @@ word **none** rather than as a nought, which reads as a corpus examined and foun
   each unit rather than by reading the markup.
 - No action that belongs to the scope rather than the unit moves into a unit, and none that belongs
   to a unit survives switching away from it.
-- The bill of materials reaches the reader by a route the navigation admits exists, or its
-  statements reach them somewhere that is in the navigation.
-- Driven in a real browser against a populated corpus, in both colour schemes — every defect this
+- The four claims the deleted page carried are stated somewhere a reader reaches, or the plan says
+  out loud that they are not.
+- Driven in a real browser against a populated corpus, in both color schemes — every defect this
   plan has closed was found by looking, and none of them by a green build.

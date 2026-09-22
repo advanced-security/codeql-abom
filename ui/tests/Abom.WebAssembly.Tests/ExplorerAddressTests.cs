@@ -156,6 +156,8 @@ public class ExplorerAddressTests : AbomTestContext
         var query = CurrentQuery();
         Assert.Contains("kinds=", query);
         Assert.Contains("flags=findings", query);
+        // A node still has to be drawn inside something, and ownership is the one closure that is
+        // not a guess about size — it is what the operator declared.
         Assert.Contains("scope=owned", query);
     }
 
@@ -192,8 +194,15 @@ public class ExplorerAddressTests : AbomTestContext
     {
         StubGraphModule();
 
+        var popover = Render<MudBlazor.MudPopoverProvider>();
         var page = Render<Explorer>();
-        page.Find(".abom-filter-wide input").Input("checkout");
+
+        // A term the Explorer does not already answer: scope carries a default, so it is
+        // correctly not offered a second time.
+        page.WaitForElement("[data-abom-add-filter]").Click();
+        popover.WaitForElement("[data-abom-term='q']").Click();
+        popover.WaitForElement("[data-abom-value-entry] input").Input("checkout");
+        popover.WaitForElement("[data-abom-value-apply]").Click();
 
         page.WaitForAssertion(() => Assert.Contains("q=checkout", CurrentQuery()));
     }

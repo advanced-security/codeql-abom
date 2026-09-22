@@ -22,6 +22,7 @@ public sealed class ExplorerNodePanelTests : AbomTestContext
     {
         Answer("api/graph/generation", "{\"generation\":0}");
         Answer("api/summary", "{}");
+        ArriveWithAScope();
     }
 
     private static GraphNodeBrief Brief(string key) => new()

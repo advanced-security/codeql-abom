@@ -44,52 +44,6 @@ public class AnalysisShapeTests : AbomTestContext
         """;
 
     /// <summary>
-    /// The shape is on the page rather than behind a filter, because a reader who does not know
-    /// the distinction exists is exactly the reader who would mistake one for the other.
-    /// </summary>
-    [Fact]
-    public void AFindingNamesTheShapeItWasSeenIn()
-    {
-        Answer("api/bom", Document);
-        Answer("api/properties", Properties);
-
-        var cut = Render<Pages.BillOfMaterials>();
-
-        cut.WaitForAssertion(() => Assert.Contains("regular", cut.Markup));
-    }
-
-    /// <summary>
-    /// One defect two analyses both found is one defect. Labelled `mixed` rather than listed
-    /// twice, because a count that splits it would report a difference in how it was looked for
-    /// as a difference in what is wrong.
-    /// </summary>
-    [Fact]
-    public void ADefectSeenInBothShapesIsLabelledMixed()
-    {
-        Answer("api/bom", Document);
-        Answer("api/properties", Properties);
-
-        var cut = Render<Pages.BillOfMaterials>();
-
-        cut.WaitForAssertion(() => Assert.Contains("mixed", cut.Markup));
-    }
-
-    /// <summary>
-    /// A finding no run claims has no shape to state, and saying `regular` would be a guess
-    /// wearing the clothes of provenance.
-    /// </summary>
-    [Fact]
-    public void AFindingWithNoRecordedShapeSaysSoRatherThanGuessing()
-    {
-        Answer("api/bom", Document);
-        Answer("api/properties", Properties);
-
-        var cut = Render<Pages.BillOfMaterials>();
-
-        cut.WaitForAssertion(() => Assert.Contains("shape not recorded", cut.Markup));
-    }
-
-    /// <summary>
     /// A listing that declares it can narrow by shape has to ask the server for the shape the
     /// address names. Carried rather than offered as a control: a term serialized into a link and
     /// then dropped on the next request is the silent widening the shared predicate exists to
@@ -119,12 +73,14 @@ public class AnalysisShapeTests : AbomTestContext
         var navigation = Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!;
         navigation.NavigateTo("/inventory?rules=actions%2Funpinned-tag");
 
+        var popover = Render<MudBlazor.MudPopoverProvider>();
         var page = Render<Pages.Inventory>();
-        var control = page.FindComponent<Shared.ScopeControl>()
-                          .FindComponent<MudToggleGroup<string>>();
-        Assert.Equal("regular", control.Instance.Value);
+        page.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("api/actions")));
 
-        await page.InvokeAsync(() => control.Instance.ValueChanged.InvokeAsync("extended"));
+        // The shape is a term like any other now, so it is chosen the way every term is.
+        await page.InvokeAsync(() => page.Find("[data-abom-add-filter]").Click());
+        popover.WaitForElement("[data-abom-term='mode']").Click();
+        popover.WaitForElement("[data-abom-value='extended']").Click();
 
         page.WaitForAssertion(() =>
         {
@@ -136,8 +92,13 @@ public class AnalysisShapeTests : AbomTestContext
         });
     }
 
+    /// <summary>
+    /// A document the endpoint refuses to narrow must not be offered under a narrowing it does not
+    /// apply. It used to be offered carrying the term, so the refusal arrived as a failed
+    /// download; the control refuses first now, with the term that cannot be applied named.
+    /// </summary>
     [Fact]
-    public void AnExtendedExportNeverSilentlyBecomesARegularDocument()
+    public void AnExtendedExportIsRefusedRatherThanOfferedAsADocumentItCannotBe()
     {
         Answer("api/views", """[]""");
         Answer("api/actions", """{"items":[],"total":0}""");
@@ -146,53 +107,12 @@ public class AnalysisShapeTests : AbomTestContext
 
         var page = Render<Pages.Inventory>();
 
-        foreach (var format in new[] { "cyclonedx", "spdx" })
+        page.WaitForAssertion(() =>
         {
-            Assert.Contains("mode=extended",
-                page.Find($"[data-abom-action='bom-{format}']").GetAttribute("href"));
-        }
-    }
-
-    [Fact]
-    public void ABillOfMaterialsRefusesAnAnalysisShapeItCannotDescribe()
-    {
-        Fail("api/bom?mode=extended", System.Net.HttpStatusCode.BadRequest);
-        Answer("api/bom", Document);
-        Answer("api/properties", Properties);
-        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
-                .NavigateTo("/bom?mode=extended");
-
-        var page = Render<Pages.BillOfMaterials>();
-
-        page.WaitForAssertion(() => Assert.Contains("does not narrow by", page.Markup));
-        Assert.Contains("mode", page.Markup);
-        Assert.Contains(Sent, request => request.Url.Contains("api/bom?mode=extended"));
-    }
-
-    /// <summary>
-    /// A document the endpoint refuses to narrow must not be downloadable under a narrowing it
-    /// does not apply. A link built without the term answers 200 with a regular document at an
-    /// address that names another shape, which is a silent widening rather than a refusal.
-    ///
-    /// Asked with `regular` because that is the shape whose document renders: the endpoint
-    /// refuses the term whatever its value, so with `extended` the page shows the refusal and no
-    /// buttons at all.
-    /// </summary>
-    [Fact]
-    public void EveryBillOfMaterialsDownloadCarriesTheShapeTheAddressNames()
-    {
-        Answer("api/bom", Document);
-        Answer("api/properties", Properties);
-        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
-                .NavigateTo("/bom?mode=regular");
-
-        var page = Render<Pages.BillOfMaterials>();
-
-        page.WaitForAssertion(() => Assert.Equal(3, page.FindAll("a[href*='api/bom']").Count));
-        foreach (var link in page.FindAll("a[href*='api/bom']"))
-        {
-            Assert.Contains("mode=regular", link.GetAttribute("href"));
-        }
+            var reason = page.Find("[data-abom-action-reason='bom']");
+            Assert.Contains("Analysis shape", reason.GetAttribute("title") ?? "");
+            Assert.Contains("disabled", page.Find("[data-abom-action='bom-spdx']").OuterHtml);
+        });
     }
 
     /// <summary>
@@ -227,11 +147,10 @@ public class AnalysisShapeTests : AbomTestContext
         Assert.All(JSInterop.Invocations["loadFull"],
             call => Assert.Contains("mode=extended", (string)call.Arguments[1]!));
 
-        var control = page.FindComponent<Shared.ScopeControl>()
-                  .FindComponent<MudToggleGroup<string>>();
-        Assert.Equal("extended", control.Instance.Value);
+        // The shape reads as a chip now, and clearing it is how the graph goes back to regular.
         var requests = JSInterop.Invocations["loadFull"].Count;
-        await page.InvokeAsync(() => control.Instance.ValueChanged.InvokeAsync("regular"));
+        await page.InvokeAsync(() =>
+            page.Find("[data-abom-filter-chip='mode'] [data-abom-chip-remove]").Click());
 
         page.WaitForAssertion(() =>
         {

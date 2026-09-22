@@ -98,8 +98,20 @@ export function hullOf(points) {
     return half(pts).concat(half([...pts].reverse()));
 }
 
-/** Twice the signed area, which is all the ordering and degeneracy checks need. */
-export function hullArea(hull) {
+/**
+ * A rectangle the layout engine reserved for a group, as a hull the rest of this module can use.
+ *
+ * Counter-clockwise to match `hullOf`, and already padded: the engine placed its members inside
+ * this box, so inflating it again would push the boundary into whatever the engine put next to it.
+ */
+export function boxHull(box) {
+    if (!box) return [];
+    const { x1, y1, x2, y2 } = box;
+    if (![x1, y1, x2, y2].every(Number.isFinite)) return [];
+    return [{ x: x1, y: y1 }, { x: x2, y: y1 }, { x: x2, y: y2 }, { x: x1, y: y2 }];
+}
+
+/** Twice the signed area, which is all the ordering and degeneracy checks need. */export function hullArea(hull) {
     if (!hull || hull.length < 3) return 0;
     let sum = 0;
     for (let i = 0; i < hull.length; i++) {

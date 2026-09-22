@@ -6,46 +6,151 @@ using Xunit;
 namespace Abom.WebAssembly.Tests;
 
 /// <summary>
-/// The Explorer opens on the scope the operator declared.
+/// The Explorer draws only a scope somebody chose.
 ///
 /// <para>It used to open on the whole corpus grouped by owner, which the interface audit measured
 /// as 614 owner-groups gathered from 12,489 nodes — a saturated starburst in which no single edge
 /// can be followed from one end to the other. Grouping by repository made it worse, at 3,356
 /// groups over the same nodes, so the fix is a smaller scope rather than a better fold.</para>
+///
+/// <para>Then it opened on the advisory routes with findings, which draws <b>205</b> nodes on the
+/// one crawled organization. That is a measurement of this corpus, not a property of the scope:
+/// a large account produces a different number from the same predicate, and an arrival scope is a
+/// promise about size that the corpus decides. So there is no arrival scope. Nothing is drawn
+/// until a reader picks a view, builds one with the filter picker, or arrives from another page
+/// with terms already in the address.</para>
 /// </summary>
 public sealed class ExplorerScopeTests : AbomTestContext
 {
-    /// The declared closure is the arrival scope. Opening on the whole corpus teaches a new
-    /// operator that ABOM works before ownership is claimed, which is the conflation this ends.
+    /// <summary>
+    /// Nothing is requested until there is something to request it for. Drawing a guessed scope
+    /// spends a full graph load on a question nobody asked, and teaches a reader that whatever
+    /// appeared is what ABOM thinks they should be looking at.
+    /// </summary>
     [Fact]
-    public void TheExplorerOpensOnWhatTheOperatorOwns()
+    public void NothingIsDrawnUntilAScopeIsChosen()
     {
         Answer("api/owned-scope", "[{\"owner\":\"octo-org\"}]");
         StubGraphModule();
 
-        Render<Explorer>();
+        var page = Render<Explorer>();
 
-        Assert.Contains("scope=owned", LoadedUrl());
+        page.WaitForAssertion(() => Assert.NotNull(page.Find("[data-abom-no-scope]")));
+        Assert.Empty(JSInterop.Invocations["loadFull"]);
     }
 
-    /// The scope has two halves. Owned is the right population and still an unreadable starburst;
-    /// operator testing found the readable configuration is owned **and has findings**, which is
-    /// **177 groups by repository** against **1,564** for the same closure unfiltered. The filter
-    /// does the work, not the fold.
-    ///
-    /// <para>It is not an arbitrary narrowing either: it is the question the page exists to answer.
-    /// Not "what do I depend on" but "what do I depend on that something is wrong with".</para>
+    /// <summary>
+    /// Arriving with terms in the address is the third route in, and the one every link from
+    /// Inventory and Discovery uses. It must draw at once and ask nothing.
+    /// </summary>
     [Fact]
-    public void TheArrivalScopeIsWhatYouOwnThatHasFindings()
+    public void ArrivingWithTermsInTheAddressDrawsAtOnce()
+    {
+        Answer("api/owned-scope", "[{\"owner\":\"octo-org\"}]");
+        StubGraphModule();
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+            .NavigateTo("/explore?scope=exposure&flags=findings");
+
+        var page = Render<Explorer>();
+
+        page.WaitForAssertion(() => Assert.Contains("scope=exposure", LoadedUrl()));
+        Assert.Empty(page.FindAll("[data-abom-no-scope]"));
+    }
+
+    /// <summary>
+    /// Route (a): a scope somebody already named. The Explorer had no saved views at all — only
+    /// Inventory offered them — so the one question this page exists for could be reached only by
+    /// rebuilding it by hand each time.
+    /// </summary>
+    [Fact]
+    public void TheEmptyExplorerOffersTheViewsSomebodyAlreadyNamed()
+    {
+        Answer("api/owned-scope", "[{\"owner\":\"octo-org\"}]");
+        Answer("api/views", """
+            [{"name":"exposure-findings","title":"Advisory routes, with findings",
+              "predicate":"flags=findings&scope=exposure","builtin":true}]
+            """);
+        StubGraphModule();
+
+        var page = Render<Explorer>();
+
+        page.WaitForAssertion(() =>
+            Assert.NotNull(page.Find("[data-abom-start-view='exposure-findings']")));
+    }
+
+    /// Choosing one of them draws it, or offering them is a list that does nothing.
+    [Fact]
+    public void ChoosingAnOfferedViewDrawsIt()
+    {
+        Answer("api/owned-scope", "[{\"owner\":\"octo-org\"}]");
+        Answer("api/views", """
+            [{"name":"exposure-findings","title":"Advisory routes, with findings",
+              "predicate":"flags=findings&scope=exposure","builtin":true}]
+            """);
+        StubGraphModule();
+
+        var page = Render<Explorer>();
+        page.WaitForElement("[data-abom-start-view='exposure-findings']").Click();
+
+        page.WaitForAssertion(() => Assert.Contains("scope=exposure", LoadedUrl()));
+    }
+
+    /// <summary>
+    /// Route (b): define one here. The picker is the same component Inventory uses, and it has to
+    /// be reachable before anything is drawn — a control that only appears once there is a graph
+    /// cannot be how a reader gets one.
+    /// </summary>
+    [Fact]
+    public void TheEmptyExplorerOffersThePickerToBuildOne()
     {
         Answer("api/owned-scope", "[{\"owner\":\"octo-org\"}]");
         StubGraphModule();
 
-        Render<Explorer>();
+        var page = Render<Explorer>();
 
-        Assert.Contains("scope=owned", LoadedUrl());
-        Assert.True(FilterFlag("hasFindings"),
-            "the closure alone is 4,805 nodes and unreadable; findings is the half that makes it a picture");
+        page.WaitForAssertion(() => Assert.NotNull(page.Find("[data-abom-add-filter]")));
+    }
+
+    /// <summary>
+    /// Having chosen nothing is not an error, and it is not the draw ceiling's refusal either. A
+    /// reader has to be able to tell <em>choose something</em> from <em>you chose too much</em>,
+    /// and both from <em>there is nothing here</em>.
+    /// </summary>
+    [Fact]
+    public void ChoosingNothingYetReadsAsAChoiceRatherThanAnEmptyCorpusOrARefusal()
+    {
+        Answer("api/owned-scope", "[{\"owner\":\"octo-org\"}]");
+        StubGraphModule();
+
+        var page = Render<Explorer>();
+
+        page.WaitForAssertion(() => Assert.NotNull(page.Find("[data-abom-no-scope]")));
+        Assert.Empty(page.FindAll("[data-abom-draw-refused]"));
+        Assert.Empty(page.FindAll("[data-abom-empty-corpus]"));
+    }
+
+    /// <summary>
+    /// The controls that arrange a picture are absent until there is one. A view selector, a
+    /// grouping, a collapse switch and a legend of node kinds over an empty canvas are controls
+    /// for something that does not exist: touching any of them changes nothing, which teaches a
+    /// reader that the controls do nothing rather than that nothing is drawn.
+    /// </summary>
+    [Fact]
+    public void TheControlsThatArrangeAPictureAreAbsentUntilThereIsOne()
+    {
+        Answer("api/owned-scope", "[{\"owner\":\"octo-org\"}]");
+        StubGraphModule();
+
+        var page = Render<Explorer>();
+        page.WaitForElement("[data-abom-no-scope]");
+
+        Assert.Empty(page.FindAll(".abom-view-select"));
+        Assert.Empty(page.FindAll("[data-abom-layout-state]"));
+        Assert.Empty(page.FindAll("[data-abom-legend]"));
+        // "Showing 0 nodes out of 0 total" is a measurement of nothing written as a measurement.
+        Assert.NotNull(page.Find("[data-abom-nothing-counted]"));
+        // The filter picker stays: it is how a reader gets a picture, not how they arrange one.
+        Assert.NotNull(page.Find("[data-abom-add-filter]"));
     }
 
     /// Uncollapsed, with the parent structure present. Grouping supplies the owner and repository
@@ -57,6 +162,8 @@ public sealed class ExplorerScopeTests : AbomTestContext
     {
         Answer("api/owned-scope", "[{\"owner\":\"octo-org\"}]");
         StubGraphModule();
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+            .NavigateTo("/explore?scope=exposure&flags=findings");
 
         Render<Explorer>();
 
@@ -97,6 +204,8 @@ public sealed class ExplorerScopeTests : AbomTestContext
     {
         Answer("api/owned-scope", "[{\"owner\":\"octo-org\"}]");
         StubGraphModule();
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+            .NavigateTo("/explore?scope=exposure&flags=findings");
 
         Render<Explorer>();
 
