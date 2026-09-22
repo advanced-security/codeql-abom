@@ -2,6 +2,7 @@ package view
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -155,5 +156,69 @@ func TestTheDocumentSurfaceOffersExactlyTheTermsItApplies(t *testing.T) {
 
 	if !slices.Equal(want, got) {
 		t.Errorf("the document surface offers %v but applies %v", got, want)
+	}
+}
+
+// The vocabulary is the declaration a wrong value is refused against, and handing out its backing
+// slice lets any caller edit it for every later caller. A control that sorted the values it was
+// offered, or a test that appended one, would change what the language accepts — for the rest of
+// the process, with nothing reporting it.
+func TestTheValuesHandedOutDoNotAliasTheVocabulary(t *testing.T) {
+	first := Vocabulary(paramScope)
+	if len(first) == 0 {
+		t.Fatal("scope declares no values, so this measures nothing")
+	}
+	first[0] = "scoop"
+
+	if got := Vocabulary(paramScope); got[0] == "scoop" {
+		t.Errorf("editing the returned slice reached the declaration: %v", got)
+	}
+	if err := checkVocabulary(paramScope, ScopeOwned); err != nil {
+		t.Errorf("a value the language allows was refused after an edit elsewhere: %v", err)
+	}
+}
+
+// The same rule through the catalog, which is the path a control actually takes.
+func TestACatalogTermsValuesDoNotAliasTheVocabulary(t *testing.T) {
+	values := func() []string {
+		for _, term := range Catalog() {
+			if term.Name == paramScope {
+				return term.Values
+			}
+		}
+		t.Fatal("no scope term in the catalog")
+		return nil
+	}
+
+	first := values()
+	if len(first) == 0 {
+		t.Fatal("the scope term offers no values, so this measures nothing")
+	}
+	first[0] = "scoop"
+
+	if got := values(); got[0] == "scoop" {
+		t.Errorf("editing a catalog term's values reached the declaration: %v", got)
+	}
+}
+
+// The built-ins are what a saved policy's predicate resolves through, so an importer editing what
+// it was handed would change what an existing policy means rather than only what a tab shows.
+func TestTheBuiltinsHandedOutDoNotAliasTheDeclaration(t *testing.T) {
+	first := Builtins()
+	if len(first) == 0 {
+		t.Fatal("no built-ins, so this measures nothing")
+	}
+	name := first[0].Name
+	first[0].Predicate = "scope=owned&flags=findings&q=edited"
+
+	again, ok := BuiltinNamed(name)
+	if !ok {
+		t.Fatalf("built-in %q disappeared", name)
+	}
+	if again.Predicate != Builtins()[0].Predicate {
+		t.Error("the two readers disagree, so one of them was handed the declaration")
+	}
+	if strings.Contains(again.Predicate, "q=edited") {
+		t.Errorf("editing the returned slice reached the declaration: %q", again.Predicate)
 	}
 }

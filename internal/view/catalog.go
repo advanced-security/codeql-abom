@@ -217,7 +217,7 @@ func Catalog() []Term {
 			Label:      words.label,
 			Help:       words.help,
 			Arity:      words.arity,
-			Values:     vocabulary[name],
+			Values:     Vocabulary(name),
 			ValuesFrom: words.valuesFrom,
 		}
 		for _, surface := range surfaceOrder {

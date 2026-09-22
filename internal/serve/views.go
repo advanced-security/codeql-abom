@@ -49,7 +49,7 @@ func named(name, title, predicate, presentation string, builtin bool, by, at str
 
 func (s *Server) views(w http.ResponseWriter, r *http.Request) {
 	out := []NamedView{}
-	for _, b := range viewspec.Builtins {
+	for _, b := range viewspec.Builtins() {
 		out = append(out, named(b.Name, b.Title, b.Predicate, "", true, "", ""))
 	}
 	saved, err := s.Store.SavedViews()
