@@ -1,4 +1,4 @@
-import { test, expect, ready, corpusSize } from '../harness.mjs';
+import { test, expect, ready, corpusSize, EXPLORE_DRAWN } from '../harness.mjs';
 
 // The layout claims the Explorer rests on have never been checked by anything that could see
 // them. The audit that tried ran in a backgrounded tab: `document.visibilityState` was `hidden`,
@@ -64,7 +64,7 @@ test.describe('the force-directed graph', () => {
         const summary = await corpusSize(request, baseURL);
         test.skip(!summary.nodes, 'nothing to lay out');
 
-        await page.goto('/explore');
+        await page.goto(EXPLORE_DRAWN);
         await ready(page);
         await expect(page.locator('.abom-graph-host')).toBeVisible({ timeout: 30_000 });
         await settled(page);
@@ -119,7 +119,7 @@ test.describe('the force-directed graph', () => {
         test.skip(!summary.nodes, 'nothing to lay out');
 
         const read = async () => {
-            await page.goto('/explore');
+            await page.goto(EXPLORE_DRAWN);
             await ready(page);
             await expect(page.locator('.abom-graph-host')).toBeVisible({ timeout: 30_000 });
             await settled(page);
@@ -154,12 +154,15 @@ test.describe('the force-directed graph', () => {
         const summary = await corpusSize(request, baseURL);
         test.skip(!summary.nodes, 'nothing to lay out');
 
-        await page.goto('/explore');
+        await page.goto(EXPLORE_DRAWN);
         await ready(page);
         await expect(page.locator('.abom-graph-host')).toBeVisible({ timeout: 30_000 });
         await settled(page);
         const before = await page.evaluate(POSITIONS);
 
+        // The views are a select rather than a bank of buttons, so the option only exists once
+        // the list is open.
+        await page.locator('.abom-view-select').first().click();
         await page.locator('.abom-view-label', { hasText: 'Priority' }).click();
         await settled(page);
         const after = await page.evaluate(POSITIONS);
@@ -210,7 +213,7 @@ test.describe('the force-directed graph', () => {
         const summary = await corpusSize(request, baseURL);
         test.skip(!summary.nodes, 'nothing to draw');
 
-        await page.goto('/explore');
+        await page.goto(EXPLORE_DRAWN);
         await ready(page);
         await expect(page.locator('.abom-graph-host')).toBeVisible({ timeout: 30_000 });
         await settled(page);

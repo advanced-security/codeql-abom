@@ -1,5 +1,7 @@
 package view
 
+import "slices"
+
 // What a filter control is built from.
 //
 // The browser asks for this rather than keeping its own list of terms, because two declarations
@@ -28,11 +30,27 @@ const (
 	SurfaceDocument = "document"
 )
 
-// DocumentTerms are the filter terms a bill of materials applies. Exported because the endpoint
-// refuses everything else by name and must refuse exactly this set, not a copy of it.
-var DocumentTerms = map[string]bool{
+// documentTerms are the filter terms a bill of materials applies. Unexported and read through the
+// two functions below: an exported map is writable by every package that imports it, and a
+// declaration this file exists to be the only copy of must not be one an importer can edit.
+var documentTerms = map[string]bool{
 	paramProperties:    true,
 	paramNotProperties: true,
+}
+
+// IsDocumentTerm reports whether a bill of materials narrows by this term. The endpoint refuses
+// everything else by name, and must refuse exactly this set rather than a copy of it.
+func IsDocumentTerm(name string) bool { return documentTerms[name] }
+
+// DocumentTermNames lists those terms, sorted so a caller building a parameter set from them gets
+// the same answer every time.
+func DocumentTermNames() []string {
+	names := make([]string, 0, len(documentTerms))
+	for name := range documentTerms {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
 }
 
 // How a term's value is written, which is what a control needs to know to collect one.
@@ -178,7 +196,7 @@ var surfaceTerms = map[string]func(string) bool{
 	SurfaceRepositories:  func(t string) bool { return repositoryTerms[t] },
 	SurfaceAdvisories:    func(t string) bool { return advisoryTerms[t] },
 	SurfaceRelationships: func(t string) bool { return relationshipTerms[t] },
-	SurfaceDocument:      func(t string) bool { return DocumentTerms[t] },
+	SurfaceDocument:      IsDocumentTerm,
 }
 
 // surfaceOrder keeps the catalog stable between calls, so a control does not reorder itself and a

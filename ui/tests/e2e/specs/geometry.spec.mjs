@@ -1,4 +1,4 @@
-import { test, expect, ready, ROUTES, corpusSize } from '../harness.mjs';
+import { test, expect, ready, ROUTES, corpusSize, EXPLORE_DRAWN } from '../harness.mjs';
 
 // Geometry is the layer nothing else owns. bUnit has no CSS engine, so a grid that overflows by
 // 288px and a label that wraps onto its own row are both green everywhere until somebody looks.
@@ -12,6 +12,27 @@ const WIDTHS = [
 ];
 
 test.describe('geometry', () => {
+    // The drawer took a fixed gutter off every page, and the grid and the graph — the two
+    // surfaces needing width most — are the two that paid for it. The whole point of moving
+    // navigation into the bar is this number, and it is the one thing bUnit cannot check: it has
+    // no CSS engine, so a layout still reserving 240px is green everywhere until somebody looks.
+    for (const route of ROUTES) {
+        test(`${route} spends its whole width on content`, async ({ page }) => {
+            await page.setViewportSize({ width: 1280, height: 900 });
+            await page.goto(route);
+            await ready(page);
+
+            const box = await page.evaluate(() => {
+                const content = document.querySelector('.mud-main-content');
+                const rect = content.getBoundingClientRect();
+                return { left: Math.round(rect.left), width: Math.round(rect.width) };
+            });
+
+            expect(box.left, `${route} leaves a ${box.left}px gutter to its left`).toBe(0);
+            expect(box.width, `${route} content width`).toBe(1280);
+        });
+    }
+
     for (const { name, width, height } of WIDTHS) {
         for (const route of ROUTES) {
             test(`${route} does not overflow horizontally at ${name} (${width}px)`, async ({ page }) => {
@@ -135,7 +156,7 @@ test.describe('geometry', () => {
         test.skip(!summary.nodes, 'no graph to size without a corpus');
 
         await page.setViewportSize({ width: 1440, height: 900 });
-        await page.goto('/explore');
+        await page.goto(EXPLORE_DRAWN);
         await ready(page);
         await expect(page.locator('.abom-graph-host')).toBeVisible();
 

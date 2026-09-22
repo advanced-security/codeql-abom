@@ -38,6 +38,30 @@ one database is two writers, which the store forbids.
 Use a database with real ingested data. An empty database hides every interesting failure —
 truncation, hub occlusion, label overflow, wrapping — because nothing is dense enough to break.
 
+**`make verify` does not prove the interface works.** It runs `make e2e` against a fresh empty
+database, where roughly half the suite skips itself for want of data. A change that breaks the
+populated surfaces passes it: seven specs went green through a change that stopped the Explorer
+drawing on arrival, because every one of them was skipped. CI runs both halves — *"browser suite,
+empty and populated"* — so the populated half is where that change was caught, after review.
+
+Run it before pushing, against the same recorded data set CI builds:
+
+```bash
+make corpus            # replays recorded CodeQL output; offline, and what CI uses
+make e2e-corpus-run    # the populated half, spec-for-spec what CI runs
+```
+
+Use a snapshot of the working database only to reproduce something that data set does not contain,
+and note that `cp` does not read the WAL:
+
+```bash
+sqlite3 .abom/db/abom.db ".backup .abom/tmp/e2e-corpus.db"
+make e2e ABOM_E2E_DB="$PWD/.abom/tmp/e2e-corpus.db"
+```
+
+The two corpora differ enough to matter — the recorded one holds 1,623 nodes where a crawled
+organization holds 57,844 — so a scope that draws in one can be empty or refused in the other.
+
 To review a *running* expansion rather than a static picture, start it from the Discovery page
 or with `make start ABOM_SERVE_FLAGS=--expand`, and read `make logs` alongside the screenshots:
 one line per cycle and per failure. Discovery never starts on its own.

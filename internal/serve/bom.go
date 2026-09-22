@@ -77,7 +77,7 @@ var documentParams = func() map[string]bool {
 	// disagree about what this document narrows by. The rest are not filters: they say which
 	// document and how to send it.
 	params := map[string]bool{"root": true, "format": true, "download": true}
-	for term := range viewspec.DocumentTerms {
+	for _, term := range viewspec.DocumentTermNames() {
 		params[term] = true
 	}
 	return params

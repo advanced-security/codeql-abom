@@ -10,23 +10,42 @@
 <MudSnackbarProvider />
 
 <MudLayout>
+    @* One bar, and it is the whole navigation. The drawer spent a fixed slice of every page on
+       four links that never changed, and the grid and the graph — the two surfaces needing width
+       most — are the two that paid for it. *@
     <MudAppBar Elevation="1">
-        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start"
-                       OnClick="@(() => _drawerOpen = !_drawerOpen)" aria-label="Toggle navigation" />
-        <MudText Typo="Typo.h6" Class="ml-2">ABOM</MudText>
-        <MudText Typo="Typo.caption" Class="ml-2 mud-text-secondary d-none d-sm-flex">
-            Actions Bill of Materials
-        </MudText>
+        @* The product name is the way back to the Dashboard, so no second link says it again. *@
+        <MudLink Href="/" Underline="Underline.None" Color="Color.Inherit"
+                 Class="d-flex align-center abom-brand" data-abom-brand>
+            <MudText Typo="Typo.h6">ABOM</MudText>
+            <MudText Typo="Typo.caption" Class="ml-2 mud-text-secondary d-none d-sm-flex">
+                Actions Bill of Materials
+            </MudText>
+        </MudLink>
+
+        @* Left to right is the journey: what matches, then what it touches. A list beside a hub
+           says which reading each gives of the same scope. *@
+        <nav class="abom-nav ml-8 d-flex align-center">
+            <MudButton Href="/inventory" Variant="Variant.Text" Color="Color.Inherit"
+                       DropShadow="false" StartIcon="@Icons.Material.Outlined.ListAlt"
+                       Class="@NavClass("/inventory")">Inventory</MudButton>
+            <MudButton Href="/explore" Variant="Variant.Text" Color="Color.Inherit"
+                       DropShadow="false" StartIcon="@Icons.Material.Outlined.Hub"
+                       Class="@NavClass("/explore")">Explorer</MudButton>
+        </nav>
+
         <MudSpacer />
         <MudTooltip Text="@ThemeTooltip">
             <MudIconButton Icon="@ThemeIcon" Color="Color.Inherit" OnClick="CycleTheme"
-                           aria-label="@ThemeTooltip" />
+                           aria-label="@ThemeTooltip" data-abom-theme />
+        </MudTooltip>
+        @* Configuration rather than a stop on the journey, so an icon at the far end rather than
+           a fourth word competing with the ones that are. *@
+        <MudTooltip Text="Settings">
+            <MudIconButton Icon="@Icons.Material.Outlined.Settings" Color="Color.Inherit"
+                           Href="/settings" aria-label="Settings" data-abom-settings />
         </MudTooltip>
     </MudAppBar>
-
-    <MudDrawer @bind-Open="_drawerOpen" ClipMode="DrawerClipMode.Always" Elevation="1">
-        <NavMenu />
-    </MudDrawer>
 
     <MudMainContent>
         @* Not on the Dashboard: that surface hands over a scope and states nothing else, because a
@@ -43,16 +62,25 @@
 
 @code {
     private MudThemeProvider _themeProvider = default!;
-    private bool _drawerOpen = true;
     private bool _systemPrefersDark;
     private Summary? _summary;
 
     [Inject] private NavigationManager Nav { get; set; } = default!;
 
-    private bool IsDashboard =>
-        Nav.ToBaseRelativePath(Nav.Uri).TrimStart('/').Split('?')[0].Length == 0;
+    private string Path =>
+        "/" + Nav.ToBaseRelativePath(Nav.Uri).TrimStart('/').Split('?')[0];
 
-    protected override void OnInitialized() => Theme.Changed += OnThemeChanged;
+    private bool IsDashboard => Path == "/";
+
+    /// <summary>Marks the surface being read, since the bar is now the only thing saying which.</summary>
+    private string NavClass(string href) =>
+        Path.StartsWith(href, StringComparison.Ordinal) ? "abom-nav-link abom-nav-here" : "abom-nav-link";
+
+    protected override void OnInitialized()
+    {
+        Theme.Changed += OnThemeChanged;
+        Nav.LocationChanged += OnLocationChanged;
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -90,11 +118,13 @@
         await Theme.SetAsync(next, _systemPrefersDark);
     }
 
+    // Sun, crescent, half-and-half. The dial that meant "auto" sat next to a real settings gear
+    // and read as a second one.
     private string ThemeIcon => Theme.Choice switch
     {
-        ThemeChoice.Light => Icons.Material.Filled.LightMode,
-        ThemeChoice.Dark => Icons.Material.Filled.DarkMode,
-        _ => Icons.Material.Filled.BrightnessAuto,
+        ThemeChoice.Light => Icons.Material.Outlined.LightMode,
+        ThemeChoice.Dark => Icons.Material.Outlined.DarkMode,
+        _ => Icons.Material.Outlined.Contrast,
     };
 
     private string ThemeTooltip => Theme.Choice switch
@@ -106,5 +136,12 @@
 
     private void OnThemeChanged() => InvokeAsync(StateHasChanged);
 
-    public void Dispose() => Theme.Changed -= OnThemeChanged;
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e) =>
+        InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Theme.Changed -= OnThemeChanged;
+        Nav.LocationChanged -= OnLocationChanged;
+    }
 }

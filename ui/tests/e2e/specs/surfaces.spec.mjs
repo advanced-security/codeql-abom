@@ -14,11 +14,44 @@ test.describe('four surfaces', () => {
         await ready(page);
 
         const hrefs = await page.evaluate(() =>
-            [...document.querySelectorAll('.mud-navmenu a')].map((a) =>
+            [...document.querySelectorAll('.mud-appbar a')].map((a) =>
                 new URL(a.href).pathname,
             ),
         );
         expect(hrefs, 'nav entries').toEqual(SURFACES);
+    });
+
+    // The bar is the whole navigation. bUnit owns the markup; what it cannot own is whether the
+    // links work in a browser and whether anything is still hidden behind a control.
+    test('every surface is one press away, with nothing behind a toggle', async ({ page }) => {
+        await page.goto('/');
+        await ready(page);
+
+        expect(await page.locator('.mud-drawer').count(), 'drawers').toBe(0);
+        expect(
+            await page.locator('[aria-label="Toggle navigation"]').count(),
+            'a control that reveals what is already on screen',
+        ).toBe(0);
+
+        for (const [selector, expected] of [
+            ['.abom-nav a[href="/inventory"]', '/inventory'],
+            ['.abom-nav a[href="/explore"]', '/explore'],
+            ['[data-abom-settings]', '/settings'],
+        ]) {
+            await page.goto('/');
+            await ready(page);
+            await page.locator(selector).first().click();
+            await expect(page).toHaveURL(new RegExp(`${expected}$`));
+        }
+    });
+
+    // The product name is the way back, which is what lets the bar carry no Dashboard entry.
+    test('the product name returns to the Dashboard', async ({ page }) => {
+        await page.goto('/inventory');
+        await ready(page);
+
+        await page.locator('[data-abom-brand]').click();
+        await expect(page).toHaveURL(/\/$/);
     });
 });
 
