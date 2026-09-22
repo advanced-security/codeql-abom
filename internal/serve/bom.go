@@ -72,10 +72,16 @@ func (s *Server) bom(w http.ResponseWriter, r *http.Request) {
 // notice a term it does not apply. Measured on a crawled organization: `units=3`, the term
 // `properties` replaced, was answered with all 25 roots — a saved link handing a reader the whole
 // organization under the name of one part of it.
-var documentParams = map[string]bool{
-	"root": true, "format": true, "download": true,
-	"properties": true, "notProperties": true,
-}
+var documentParams = func() map[string]bool {
+	// The filter terms come from the catalog so the endpoint and the control that offers it cannot
+	// disagree about what this document narrows by. The rest are not filters: they say which
+	// document and how to send it.
+	params := map[string]bool{"root": true, "format": true, "download": true}
+	for term := range viewspec.DocumentTerms {
+		params[term] = true
+	}
+	return params
+}()
 
 // documentScope refuses a parameter this endpoint does not apply, then reads the grouping terms.
 func documentScope(q url.Values) (include, exclude []viewspec.PropertyMatch, err error) {

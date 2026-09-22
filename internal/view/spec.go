@@ -314,6 +314,12 @@ var vocabulary = map[string][]string{
 	paramMode:     {ModeRegular, ModeExtended},
 }
 
+// Vocabulary reports the values a term allows, or nothing if the corpus decides them.
+//
+// Exported so a control can offer them rather than asking a reader to type one: the same
+// declaration that refuses a wrong value is the one that says what the right ones are.
+func Vocabulary(term string) []string { return vocabulary[term] }
+
 // checkVocabulary refuses a value the term does not have.
 //
 // Silently keeping one is the failure this exists to stop: `store.boundaryFilter` is right to

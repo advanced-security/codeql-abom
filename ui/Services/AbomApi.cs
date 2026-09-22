@@ -175,33 +175,64 @@ public sealed class AbomApi(HttpClient http)
             "api/relationships", predicate, top, offset, sort, desc, ct);
 
     /// <summary>
+    /// What a reader can narrow by, and what to call it.
+    /// </summary>
+    ///
+    /// Answered from the language rather than the corpus, so it holds before anything is crawled:
+    /// a filter list that waits on a crawl reads as an interface that is broken rather than empty.
+    public async Task<IReadOnlyList<FilterTerm>> GetFilterTermsAsync(CancellationToken ct = default) =>
+        await GetListAsync<FilterTerm>("api/filters", ct);
+
+    /// <summary>
+    /// How many values each term has, so a control can say so before a reader opens it. A term
+    /// missing from the answer is one nobody counted, which a caller must not read as none.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, int>> GetFilterValueCountsAsync(
+        CancellationToken ct = default) =>
+        await GetAsync<Dictionary<string, int>>("api/filters/counts", ct)
+        ?? new Dictionary<string, int>(StringComparer.Ordinal);
+
+    /// <summary>
     /// The named views on offer: the built-in catalog merged with whatever the operator saved.
     /// </summary>
     public async Task<IReadOnlyList<NamedView>> GetViewsAsync(CancellationToken ct = default) =>
         await GetListAsync<NamedView>("api/views", ct);
 
     /// <summary>
+    /// The values one term can take, read from the endpoint the catalog named rather than from a
+    /// URL built here: which terms have corpus-derived values is the catalog's to say.
+    /// </summary>
+    public async Task<FilterValueSet> GetFilterValuesAsync(
+        string endpoint, CancellationToken ct = default) =>
+        await GetAsync<FilterValueSet>(endpoint, ct) ?? new FilterValueSet();
+
+    /// <summary>
     /// Keeps the scope under a name, answering the catalog the save produced.
     /// </summary>
     ///
     /// The predicate is sent, never the name of the tab it came from: a view recording "whatever
-    /// `owned` means" would change meaning when the built-in did.
+    /// `owned` means" would change meaning when the built-in did. The presentation travels beside
+    /// it, and a surface with nothing to draw sends none rather than an empty one.
     public async Task<IReadOnlyList<NamedView>?> SaveViewAsync(
-        string name, string predicate, CancellationToken ct = default) =>
-        await WriteViewAsync(HttpMethod.Put, name, predicate, ct);
+        string name, string predicate, string? presentation = null,
+        CancellationToken ct = default) =>
+        await WriteViewAsync(HttpMethod.Put, name, predicate, presentation, ct);
 
     public async Task<IReadOnlyList<NamedView>?> ForgetViewAsync(
         string name, CancellationToken ct = default) =>
-        await WriteViewAsync(HttpMethod.Delete, name, null, ct);
+        await WriteViewAsync(HttpMethod.Delete, name, null, null, ct);
 
     private async Task<IReadOnlyList<NamedView>?> WriteViewAsync(
-        HttpMethod method, string name, string? predicate, CancellationToken ct)
+        HttpMethod method, string name, string? predicate, string? presentation,
+        CancellationToken ct)
     {
         var url = $"api/views/{Uri.EscapeDataString(name)}";
         using var request = new HttpRequestMessage(method, url);
         if (predicate is not null)
         {
-            request.Content = JsonContent.Create(new { predicate });
+            request.Content = string.IsNullOrEmpty(presentation)
+                ? JsonContent.Create(new { predicate })
+                : JsonContent.Create(new { predicate, presentation });
         }
         request.Headers.Add("X-Abom-Control", "1");
         try
@@ -352,22 +383,6 @@ public sealed class AbomApi(HttpClient http)
         using var response = await http.PostAsJsonAsync("api/owned-scope/preview", accounts, ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<ScopePreview>(Json, ct);
-    }
-
-    /// <summary>
-    /// Reads the bill of materials. No roots asks for the declared owned scope, which is the
-    /// usual case and the only one that needs no argument.
-    /// </summary>
-    public async Task<Bom?> GetBomAsync(
-        IEnumerable<string>? roots = null, IEnumerable<string>? properties = null,
-        CancellationToken ct = default, string? mode = null)
-    {
-        var parts = new List<string>();
-        parts.AddRange((roots ?? []).Select(r => "root=" + Uri.EscapeDataString(r)));
-        parts.AddRange((properties ?? []).Select(p => "properties=" + Uri.EscapeDataString(p)));
-        if (!string.IsNullOrEmpty(mode)) parts.Add("mode=" + Uri.EscapeDataString(mode));
-        var path = parts.Count == 0 ? "api/bom" : "api/bom?" + string.Join("&", parts);
-        return await GetAsync<Bom>(path, ct);
     }
 
     /// <summary>

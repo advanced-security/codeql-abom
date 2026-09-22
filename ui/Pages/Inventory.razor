@@ -45,7 +45,9 @@
 @* One scope bar. Five stacked control rows put the first data row at y=580 of a 900px viewport,
    so the named views became a menu and the unit switch became the tab strip below. *@
 <div class="abom-scopebar d-flex flex-wrap align-center gap-2 mb-2">
-    <SearchField Value="@_search" ValueChanged="OnSearch" Placeholder="Filter by name" />
+    @* Every term this unit applies, behind one button. A control per term costs the width of what
+       could be asked rather than what is, and the unit decides which are even offerable. *@
+    <FilterPicker Surface="@UnitSurface" Changed="OnPickerChanged" />
 
     @* A view is a predicate, so choosing one sets the scope rather than navigating anywhere.
        Chips rather than a menu, for the reason the exports are not in one either: MudMenu renders
@@ -85,33 +87,59 @@
 
     <MudSpacer />
 
-    @* An action belongs to the scope, not to a page of its own. *@
-    <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
-               StartIcon="@Icons.Material.Outlined.Description"
-               Href="@($"/bom?{Scope.ToQueryString()}")" data-abom-action="bom-preview">
-        Bill of materials
-    </MudButton>
-    <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
-               StartIcon="@Icons.Material.Outlined.Inventory2"
-               Href="@BomUrl("cyclonedx")" Target="_blank" data-abom-action="bom-cyclonedx">
-        CycloneDX
-    </MudButton>
-    <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
-               StartIcon="@Icons.Material.Outlined.Inventory2"
-               Href="@BomUrl("spdx")" Target="_blank" data-abom-action="bom-spdx">
-        SPDX
-    </MudButton>
-    <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
-               StartIcon="@Icons.Material.Outlined.Hub"
-               Href="@($"/explore?{Scope.ToQueryString()}")" data-abom-action="open-in-explorer">
-        Show these in the graph
-    </MudButton>
+    @* Two kinds of action, kept apart because they answer to different things. These describe the
+       scope and are the same document from every unit, so they say so rather than appearing to
+       describe the rows underneath them — and with nothing narrowed there is no scope to describe,
+       so the label would be claiming a narrowing that does not exist. *@
+    @if (HasScope)
+    {
+        <span class="abom-scope-actions d-flex align-center gap-1" data-abom-scope-actions>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">this scope:</MudText>
+            @* A document narrows by grouping and nothing else, so an export under a scope it
+               cannot apply is refused here rather than dropped. The endpoint refuses the same
+               terms by name; this is the half that stops a broken download being offered. *@
+            <span data-abom-action-reason="bom" title="@ExportRefusal">
+                <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
+                           StartIcon="@Icons.Material.Outlined.Inventory2"
+                           Disabled="@(ExportRefusal.Length > 0)"
+                           Href="@(ExportRefusal.Length > 0 ? null : BomUrl("cyclonedx"))"
+                           Target="_blank" data-abom-action="bom-cyclonedx">
+                    CycloneDX
+                </MudButton>
+                <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
+                           StartIcon="@Icons.Material.Outlined.Inventory2"
+                           Disabled="@(ExportRefusal.Length > 0)"
+                           Href="@(ExportRefusal.Length > 0 ? null : BomUrl("spdx"))"
+                           Target="_blank" data-abom-action="bom-spdx">
+                    SPDX
+                </MudButton>
+            </span>
+        </span>
+    }
+
+    @* And this one means *these rows*, so it belongs to the unit and is refused where the unit's
+       rows are not things the graph draws. The reason sits on a span outside the button: a
+       disabled MudButton suppresses pointer events on its children, so a tooltip inside one never
+       fires — and that is the tooltip a reader needs most. *@
+    <span data-abom-action-reason="open-in-explorer" title="@GraphActionReason">
+        <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
+                   StartIcon="@Icons.Material.Outlined.Hub"
+                   Disabled="@(!UnitDrawsInGraph(_unit))"
+                   Href="@(UnitDrawsInGraph(_unit) ? $"/explore?{Scope.ToQueryString()}" : null)"
+                   data-abom-action="open-in-explorer">
+            Show in Explorer
+        </MudButton>
+    </span>
 </div>
 
-@* The surface that owns the scope carries the control that builds it. Without this, a property
-   scope arriving in the address narrowed every count on screen and said nothing about doing so. *@
-<ScopeControl Changed="OnScopeControlChanged"
-              SupportsAnalysisMode="@(_unit is UnitDependencies or UnitRelationships)" />
+@* Extended narrows the findings and nothing else, so the numbers that stay regular say so. Left
+   unsaid, a reader takes every figure on the page for the shape they just chose. *@
+@if (Scope.Spec.Mode == "extended")
+{
+    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2" data-abom-mode-caveat>
+        Coverage and dependency reach use regular analysis.
+    </MudText>
+}
 
 @if (_writeError is { Length: > 0 } wrote)
 {
@@ -146,7 +174,8 @@
              Bordered="false" SortMode="SortMode.Single" Filterable="false" RowsPerPage="30"
              ShowColumnOptions="false" Class="abom-grid">
     <Columns>
-        <PropertyColumn Property="x => x.NodeKey" Title="Name">
+        <PropertyColumn Property="x => x.NodeKey" Title="Name"
+                        HeaderClass="abom-identity-col" CellClass="abom-identity-col">
             <CellTemplate>
                 @* A name goes to the thing itself. The graph is a pivot you choose, not
                    somewhere a list drops you. *@
@@ -154,6 +183,13 @@
                               Href="@($"/node/{Uri.EscapeDataString(context.Item.NodeKey)}")" />
             </CellTemplate>
         </PropertyColumn>
+
+        <TemplateColumn Title="" Sortable="false" HeaderClass="abom-row-actions-head"
+                        CellClass="abom-row-actions">
+            <CellTemplate>
+                <RowActions NodeKey="@context.Item.NodeKey" />
+            </CellTemplate>
+        </TemplateColumn>
 
         <PropertyColumn Property="x => x.Kind" Title="Type">
             <CellTemplate>
@@ -676,6 +712,75 @@ else
         (UnitCoverage, "Coverage"),
     ];
 
+    /// Which side of the server's term declaration this unit is, so the picker offers only what
+    /// the unit's endpoint applies rather than what it would refuse by name.
+    private string UnitSurface => _unit switch
+    {
+        UnitWorkflows => "workflows",
+        UnitJobs => "jobs",
+        UnitRepositories => "repositories",
+        UnitAdvisories => "advisories",
+        UnitRelationships => "relationships",
+        _ => "inventory",
+    };
+
+    private IReadOnlyList<FilterTerm> _filterTerms = [];
+
+    /// Why a bill of materials cannot be exported under the current scope, or empty when it can.
+    ///
+    /// Read from the catalog rather than from a list kept here: the endpoint refuses by name and a
+    /// second copy of that set would drift from it.
+    private string ExportRefusal
+    {
+        get
+        {
+            // Not read yet is not the same as nothing applies. Refusing on an empty catalog would
+            // disable the export for a moment on every load, for a reason that is not true.
+            if (_filterTerms.Count == 0) return string.Empty;
+
+            var applies = _filterTerms
+                .Where(t => t.Surfaces.Contains("document"))
+                .Select(t => t.Name)
+                .ToHashSet(StringComparer.Ordinal);
+            var refused = _filterTerms
+                .Where(t => !applies.Contains(t.Name) && SetTerms.Contains(t.Name))
+                .Select(t => t.Label)
+                .ToArray();
+            return refused.Length == 0
+                ? string.Empty
+                : $"A bill of materials does not narrow by {string.Join(", ", refused)}. "
+                  + "Remove those filters to export this scope.";
+        }
+    }
+
+    /// The term names the current scope actually sets, read through its own serializer.
+    private HashSet<string> SetTerms =>
+    [
+        .. Scope.Spec.ToQueryString()
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => p.IndexOf('=') is var at && at > 0 ? Uri.UnescapeDataString(p[..at]) : p)
+    ];
+
+    /// Whether anything narrows the corpus. With nothing filtered and nothing named there is no
+    /// scope, and an action labelled *this scope* would be naming a narrowing that does not exist.
+    private bool HasScope => Scope.ToQueryString().Length > 0;
+
+    /// <summary>Whether a unit's rows are things the graph draws.</summary>
+    ///
+    /// <para>Measured against the crawled organization: the graph holds <c>step</c>, <c>job</c>,
+    /// <c>workflow</c>, <c>action</c>, <c>repo</c>, <c>composite_action</c>, <c>org</c>,
+    /// <c>reusable_workflow</c> and <c>docker_image</c>. A repository is a node and so is a job;
+    /// an advisory is a GHSA identifier and is not. The graph can draw what <em>reaches</em> an
+    /// advisory, but that is a different question from drawing the row.</para>
+    public static bool UnitDrawsInGraph(string unit) => unit != UnitAdvisories;
+
+    /// Why the graph action is refused, or empty when it applies. A disabled control with no
+    /// reason is a dead end a reader has to guess at.
+    private string GraphActionReason => UnitDrawsInGraph(_unit)
+        ? string.Empty
+        : "An advisory is not a node, so these rows cannot be drawn. "
+          + "The Actions unit draws what an advisory reaches.";
+
     private MudDataGrid<ActionSummary>? _grid;
     private MudDataGrid<WorkflowRow>? _workflowGrid;
     private MudDataGrid<JobRow>? _jobGrid;
@@ -851,6 +956,9 @@ else
     protected override async Task OnInitializedAsync()
     {
         _views = await Api.GetViewsAsync();
+        // Read here as well as inside the picker: the export's refusal is a claim this page makes
+        // about the scope, and it needs the same declaration the picker offers terms from.
+        _filterTerms = await Api.GetFilterTermsAsync();
         // Every other unit is pulled by its grid's ServerData; this one has no server pager, so
         // arriving straight at its address has to fetch it.
         if (_unit == UnitCoverage)
@@ -956,7 +1064,7 @@ else
         await Reload();
     }
 
-    private async Task OnScopeControlChanged()
+    private async Task OnPickerChanged()
     {
         _search = Scope.Spec.Search;
         Sync();

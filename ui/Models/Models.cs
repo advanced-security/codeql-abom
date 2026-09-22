@@ -283,15 +283,74 @@ public sealed record FrontierItem
     };
 }
 
+/// <summary>One filter a reader can apply, and everything a control needs to offer it.</summary>
+///
+/// Read from the server rather than kept here, because two declarations drift: a term the browser
+/// knew about and the language had withdrawn would be offered and then refused by name.
+public sealed record FilterTerm
+{
+    public string Name { get; init; } = string.Empty;
+    public string Label { get; init; } = string.Empty;
+    public string Help { get; init; } = string.Empty;
+
+    /// <summary>How the value is written: scalar, list, property, number or flag.</summary>
+    public string Arity { get; init; } = string.Empty;
+
+    /// <summary>The closed list this term allows. Empty means its values are not the language's.</summary>
+    public IReadOnlyList<string> Values { get; init; } = [];
+
+    /// <summary>Where to read values that come from the corpus. Empty means the value is typed.</summary>
+    public string ValuesFrom { get; init; } = string.Empty;
+
+    /// <summary>The surfaces that apply this term. Elsewhere it would be refused by name.</summary>
+    public IReadOnlyList<string> Surfaces { get; init; } = [];
+}
+
 /// <summary>A question worth asking repeatedly, named. A tab is one of these, not a page.</summary>
 ///
 /// A built-in ships with the product; a saved one is an operator's own. `Builtin` is what tells a
 /// reader which they are looking at, and the two sit side by side deliberately.
+/// <summary>
+/// One value a filter term can take, and how much of the corpus takes it.
+/// </summary>
+///
+/// <remarks>
+/// The count is zero for a value the language declares rather than the corpus supplies. Zero there
+/// means nobody counted, not that nothing matches, which is why it is not rendered.
+/// </remarks>
+public sealed record FilterValue
+{
+    public string Value { get; init; } = string.Empty;
+    public int Count { get; init; }
+}
+
+/// <summary>
+/// What a term can take, and how many rows recorded no value at all.
+/// </summary>
+///
+/// <remarks>
+/// The two travel together because a value list is built from rows that recorded one: a column
+/// most rows left empty produces a short, confident list describing a fraction of the population.
+/// Zero uncovered is a measurement — the list is everything — rather than a missing number.
+/// </remarks>
+public sealed record FilterValueSet
+{
+    public IReadOnlyList<FilterValue> Values { get; init; } = [];
+    public int Uncovered { get; init; }
+}
+
 public sealed record NamedView
 {
     public string Name { get; init; } = string.Empty;
     public string Title { get; init; } = string.Empty;
     public string Predicate { get; init; } = string.Empty;
+
+    /// <summary>
+    /// How the Explorer drew it, empty when whoever saved it had nothing to draw. Empty means
+    /// "however you would anyway", never "with every default".
+    /// </summary>
+    public string Presentation { get; init; } = string.Empty;
+
     public bool Builtin { get; init; }
     public string CreatedBy { get; init; } = string.Empty;
 
@@ -933,132 +992,6 @@ public sealed record PropertyCount
     /// one, and a reader who is not told cannot tell an inherited value from a decision.
     /// </summary>
     public bool IsDefault { get; init; }
-}
-
-/// <summary>
-/// A bill of materials: what a set of roots is composed of, and what was examined to say so.
-///
-/// Coverage travels inside the document rather than beside it, because a reader holding only this
-/// has to be able to tell a short document from a thorough one.
-/// </summary>
-public sealed record Bom
-{
-    public IReadOnlyList<string> Roots { get; init; } = [];
-    public string GeneratedAt { get; init; } = string.Empty;
-    public IReadOnlyList<BomComponent> Components { get; init; } = [];
-    public IReadOnlyList<BomRelationship> Relationships { get; init; } = [];
-    public BomCoverage Coverage { get; init; } = new();
-}
-
-/// <summary>One thing the roots are composed of.</summary>
-public sealed record BomComponent
-{
-    public string Key { get; init; } = string.Empty;
-    public string Kind { get; init; } = string.Empty;
-    public string Repository { get; init; } = string.Empty;
-
-    /// <summary>Relative to this document's roots, which is why it is not a fact about the edge.</summary>
-    public bool Direct { get; init; }
-
-    public int Depth { get; init; }
-    public IReadOnlyList<BomReference> References { get; init; } = [];
-    public IReadOnlyList<BomFinding> Findings { get; init; } = [];
-    public IReadOnlyList<BomAdvisory> Advisories { get; init; } = [];
-
-    /// <summary>
-    /// At least one reference in use was examined. The pair below says how much: one boolean
-    /// cannot distinguish partial coverage from complete.
-    /// </summary>
-    public bool Analyzed { get; init; }
-
-    public int RefsInUse { get; init; }
-    public int RefsAnalyzed { get; init; }
-}
-
-/// <summary>A version of a component as some workflow actually wrote it.</summary>
-public sealed record BomReference
-{
-    public string Raw { get; init; } = string.Empty;
-    public string Value { get; init; } = string.Empty;
-    public string ResolvedSha { get; init; } = string.Empty;
-    public bool Analyzed { get; init; }
-}
-
-/// <summary>One result, carrying whatever provenance was recorded for it.</summary>
-public sealed record BomFinding
-{
-    public string RuleId { get; init; } = string.Empty;
-    public string Repository { get; init; } = string.Empty;
-    public string FilePath { get; init; } = string.Empty;
-    public int StartLine { get; init; }
-    public string Message { get; init; } = string.Empty;
-    public string Severity { get; init; } = string.Empty;
-    public double SecuritySeverity { get; init; }
-
-    /// <summary>Empty means the run was not recorded, which is a state and not a failure.</summary>
-    public string RunKey { get; init; } = string.Empty;
-
-    public string PackDigest { get; init; } = string.Empty;
-    public string ResultHash { get; init; } = string.Empty;
-    public string CliVersion { get; init; } = string.Empty;
-
-    /// <summary>
-    /// The analysis shapes this defect was seen in. More than one is one defect two analyses both
-    /// found, never two defects. Empty means no run claims it, which is unstated rather than
-    /// regular.
-    /// </summary>
-    public IReadOnlyList<string> AnalysisModes { get; init; } = [];
-
-    /// <summary>
-    /// How to say the shape on a screen. `mixed` for a defect both analyses found, because
-    /// naming both would read as two answers to one question.
-    /// </summary>
-    public string ShapeText => AnalysisModes.Count switch
-    {
-        0 => "shape not recorded",
-        1 => AnalysisModes[0],
-        _ => "mixed",
-    };
-}
-
-/// <summary>
-/// An advisory naming a component's repository, reported beside the observed references and
-/// never applied to them.
-/// </summary>
-public sealed record BomAdvisory
-{
-    public string GhsaId { get; init; } = string.Empty;
-    public string Severity { get; init; } = string.Empty;
-    public string Summary { get; init; } = string.Empty;
-    public string VulnerableRange { get; init; } = string.Empty;
-}
-
-/// <summary>A dependency between two components.</summary>
-public sealed record BomRelationship
-{
-    public string Source { get; init; } = string.Empty;
-    public string Target { get; init; } = string.Empty;
-    public string Kind { get; init; } = string.Empty;
-    public string Boundary { get; init; } = string.Empty;
-}
-
-/// <summary>What was examined to produce the document.</summary>
-public sealed record BomCoverage
-{
-    public int ComponentsInUse { get; init; }
-    public int ComponentsAnalyzed { get; init; }
-    public int ReferencesInUse { get; init; }
-    public int ReferencesAnalyzed { get; init; }
-    public int Findings { get; init; }
-
-    /// <summary>
-    /// Analyzed but not attributable to a recorded run. A real third state: 2,759 findings on
-    /// the reference corpus are in it.
-    /// </summary>
-    public int FindingsUntraced { get; init; }
-
-    public int FindingsWithoutHash { get; init; }
-    public int FindingsWithoutDigest { get; init; }
 }
 
 /// <summary>One reference and how widely it is used, verbatim and unjudged.</summary>

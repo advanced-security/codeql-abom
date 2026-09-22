@@ -95,17 +95,34 @@ test.describe('analysis modes', () => {
         { route: '/explore', endpoint: '/api/graph/full' },
     ]) {
         test(`${surface.route} selects a shape, reloads it and keeps the control visible`, async ({ page }, testInfo) => {
-            await page.goto(surface.route);
+            // The Explorer draws only a scope somebody chose, so one is named on the way in.
+            // Without it there is no graph to request a shape for.
+            await page.goto(
+                surface.route === '/explore'
+                    ? `${surface.route}?scope=owned&flags=findings`
+                    : surface.route,
+            );
             await ready(page);
-            const control = page.locator('[data-abom-analysis-mode]');
-            await expect(control).toBeVisible();
+
+            // Both surfaces set the shape through the shared filter picker, where it is a term
+            // like any other. What each has to show is the same thing: a way in before, and the
+            // choice still legible after a reload.
+            const entry = page.locator('[data-abom-add-filter]');
+            const applied = page.locator('[data-abom-filter-chip="mode"]');
+            await expect(entry).toBeVisible();
+
+            const chooseExtended = async () => {
+                await entry.click();
+                await page.locator('[data-abom-term="mode"]').click();
+                await page.locator('[data-abom-value="extended"]').click();
+            };
 
             const isExtended = (response) => {
                 const address = new URL(response.url());
                 return address.pathname === surface.endpoint && address.searchParams.get('mode') === 'extended';
             };
             const selected = page.waitForResponse(isExtended);
-            await control.locator('[data-abom-mode="extended"]').click();
+            await chooseExtended();
             const response = await selected;
             expect(response.status()).toBe(200);
             await expect(page).toHaveURL(/mode=extended/);
@@ -127,9 +144,9 @@ test.describe('analysis modes', () => {
             await expect(page).toHaveURL(/mode=extended/);
             await page.screenshot({ path: testInfo.outputPath('analysis-mode-desktop.png') });
             await page.setViewportSize({ width: 390, height: 844 });
-            await expect(control).toBeVisible();
-            await control.scrollIntoViewIfNeeded();
-            const geometry = await control.evaluate((element) => {
+            await expect(applied).toBeVisible();
+            await applied.scrollIntoViewIfNeeded();
+            const geometry = await applied.evaluate((element) => {
                 const bounds = element.getBoundingClientRect();
                 return { left: bounds.left, right: bounds.right, viewport: innerWidth };
             });
@@ -141,7 +158,10 @@ test.describe('analysis modes', () => {
                 const address = new URL(reply.url());
                 return address.pathname === surface.endpoint && address.searchParams.get('mode') !== 'extended';
             });
-            await control.locator('[data-abom-mode="regular"]').click();
+            // Back to regular: the shape is a term on both surfaces now, so going back means
+            // removing it. Absent is regular, which is the whole point of not writing a default
+            // nobody asked for.
+            await applied.locator('[data-abom-chip-remove]').click();
             expect((await regular).status()).toBe(200);
             await expect(page).not.toHaveURL(/mode=extended/);
         });

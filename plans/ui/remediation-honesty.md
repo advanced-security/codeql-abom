@@ -18,23 +18,26 @@ learn why it is absent. Silence reads as completeness, which is the one thing th
 to let a screen do. *Resolved:* the unit carries an `unreached` count beside its total and states
 it under the table, so the two populations are both on screen and the difference is named.
 
-**One boolean over an advisory with two answers.** The `Fix` column reads *available*, from a single
-`fixable` flag on the advisory. The expanded row shows the advisory carries two ranges — one *fixed
-in 3.28.3*, one **no fix published** — and the observed references include **5 repositories on
-`v2`**, which falls in the range that has no fix. The collapsed table tells them a fix exists. The
-expanded row tells them the truth, and nothing marks the row as worth expanding.
+**One boolean over an advisory with two answers.** `fixable` is a single flag on the advisory,
+computed as "some range has a patch". An advisory carries two ranges — one *fixed in 3.28.3*, one
+**no fix published** — and the observed references include **5 repositories on `v2`**, which falls
+in the range that has no fix. So the flag would read *available* for a population it does not cover.
+It reaches no screen today: the advisories grid renders Score, Severity, Advisory, Direct,
+Transitive and Summary, and no Fix column. The defect is therefore latent rather than live — which
+is the moment to settle it, before something surfaces the flag as it stands.
 
 ## Pending
 
-1. **Fix availability is reported per range, not per advisory.** `fixable` is computed as "some
-   range has a patch", which is the right input and the wrong summary. The alternatives: report the
-   worst case, so an advisory with any unfixed range reads as *partial*; report against the
-   references actually observed, which is the most useful and the closest this screen has come to
-   adjudicating a range; or drop the column from the collapsed row and make the ranges the only
-   place fix availability is stated. The second needs a decision about whether it crosses the line
-   the footnote draws.
+1. **Decide what `fixable` means before anything renders it.** It is computed as "some range has a
+   patch", which is the right input and the wrong summary, and it currently reaches no column. The
+   alternatives: report the worst case, so an advisory with any unfixed range reads as *partial*;
+   report against the references actually observed, which is the most useful and the closest this
+   screen has come to adjudicating a range; or delete the flag and make the ranges the only place
+   fix availability is stated. The second needs a decision about whether it crosses the line the
+   footnote draws. Doing nothing is the one option that is not safe: the field is on the model, and
+   the next surface that wants a Fix column will find it and believe it.
 2. **A row whose expansion changes the answer says so.** The fault above is invisible until somebody
-   expands a row, and nothing suggests expanding one. Depends on 1 only if the column stays.
+   expands a row, and nothing suggests expanding one. Depends on 1 only if a column is added.
 
 ## The constraints that must not be broken
 

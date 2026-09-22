@@ -17,9 +17,15 @@ attribute. What is left is the parts of the interface that still read a boolean.
 
 ## Pending
 
-1. **Two force buttons render disabled and say nothing about why.** `WHO CAN FIX IT` and
-   `DISTANCE` are dimmed while the other three are live, so the control reads as broken rather
-   than as unavailable.
+1. **Two views render disabled and say nothing about why, and the words that would say it are
+   already written.** *Who can fix it* and *Distance* need a selected node, and both carry
+   `title="Select a node first."` — which never appears, because MudBlazor sets
+   `pointer-events: none` on a disabled list item, so the element can never be hovered. The
+   explanation is there and unreachable, which is worse than absent: it reads as handled in review
+   and as broken on screen. A title on a disabled control is the wrong carrier; the text belongs
+   somewhere hovering is not required, or the option needs to be enabled and to explain itself
+   when pressed. **No bUnit test can catch this** — the attribute is present in the markup, and
+   only a browser computes the style that hides it.
 2. **Seed and upstream are not distinguished in the graph.** `origin` is a filter and a node
    property; color encodes kind. Whether the distinction has to be visible in the layout or
    whether the filter is enough needs deciding rather than leaving to chance, because conflating

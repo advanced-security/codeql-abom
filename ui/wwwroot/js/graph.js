@@ -21,9 +21,12 @@ import {
 import { applyForces } from './forces.js';
 import { collapseGroups } from './collapse.js';
 import {
-    regionMembers, hullOf, inflate, hullArea, groupSizes, containsPoint, regionPadding,
+    regionMembers, hullOf, inflate, hullArea, groupSizes, containsPoint, regionPadding, boxHull,
 } from './regions.js';
 import { particleCount, particleSpeed, startParticleCycle } from './particles.js';
+import {
+    fitPositions, clusterBoxes, applyPositions, releaseAll, layoutSummary, refusalText,
+} from './serverlayout.js';
 
 // Re-exported so the pure decisions can be imported by name from one place, including by tests.
 export {
@@ -629,7 +632,10 @@ export function applyFilters(elementId, spec) {
     // held still across a filter cost 3.4 frames per second on the full corpus: `nodeVisibility`
     // only stops a node being drawn, while d3-force went on integrating all 9,811 of them every
     // tick. Coordinates live on the nodes themselves, so returning to a wider filter is free.
-    if (needsRender(it)) {
+    const decision = drawDecision(visible.size, it.drawApproved);
+    if (!decision.draw) {
+        withholdRender(it);
+    } else if (needsRender(it)) {
         render(it);
     } else {
         paint(it);
@@ -639,16 +645,69 @@ export function applyFilters(elementId, spec) {
         const shown = it.graph.graphData();
         return {
             nodes: shown.nodes.length, edges: shown.links.length, hidden: 0, total,
-            edgeTotal: shown.links.length, context: 0,
+            edgeTotal: shown.links.length, context: 0, withheld: decision.withheld,
         };
     }
     // An edge needs both its ends, so a filter that keeps a sixth of the nodes keeps far less than
     // a sixth of the relationships. The view has to be able to say so.
     return { nodes: visible.size, edges, hidden: total - visible.size, total,
         edgeTotal: it.all.links.length, context: it.contextKeys.size,
+        // What the ceiling held back. Zero is drawn; anything else is a picture nobody has seen.
+        withheld: decision.withheld,
         // Zero subjects for a named focus is a key this graph does not hold, which is a different
         // answer from a neighborhood that happens to be empty.
         focusFound: f.selection ? subjects.length : 0 };
+}
+
+/**
+ * Empties the canvas rather than leaving the previous picture under a refusal.
+ *
+ * A stale graph beneath a panel saying the current one is too large reads as the current one, and
+ * the reader would be interpreting a filter they have already moved on from.
+ */
+function withholdRender(it) {
+    it.graph.graphData({ nodes: [], links: [] });
+    // Nothing on screen matches the filter, so approval has to take the full render path.
+    it.seeded = false;
+    it.renderedSig = null;
+    it.renderedFor = null;
+    it.regionSig = undefined;
+}
+
+/**
+ * Accepts a graph past the ceiling, for this view until it is replaced.
+ *
+ * Deliberately not remembered across visits: the acceptance is of one picture a reader chose to
+ * look at, not a standing preference for hairballs.
+ */
+export function approveLargeGraph(elementId, spec) {
+    const it = instances.get(elementId);
+    if (!it || it.drawApproved) return;
+    it.drawApproved = true;
+    return applyFilters(elementId, spec);
+}
+
+/**
+ * The largest node set this view will draw without being told to.
+ *
+ * A force-directed picture stops carrying information well before it stops rendering. Past a few
+ * hundred nodes the reader is looking at a hairball: boundaries interleave and are refused, labels
+ * have nowhere to go, and no layout engine offered here produces a shape worth reading — `dot`
+ * abandons 3,703 nodes outright. The useful question at that size is not "what does all of this
+ * look like" but "what reaches this advisory", and the way to it is the filters.
+ */
+export const DRAW_CEILING = 300;
+
+/**
+ * Whether a node set is drawn, and how much is being withheld if not.
+ *
+ * A refusal rather than a warning: a caution printed over a drawn hairball is a note nobody reads
+ * beside a picture they are already trying to interpret. The ceiling is inclusive, because a
+ * reader who narrowed to exactly it asked for something the number promised them.
+ */
+export function drawDecision(count, approved, ceiling = DRAW_CEILING) {
+    if (approved || count <= ceiling) return { draw: true, withheld: 0 };
+    return { draw: false, withheld: count };
 }
 
 /**
@@ -808,6 +867,10 @@ function render(it) {
     it.graph.graphData({ nodes, links: copies });
     it.seeded = true;
     it.dirty = false;
+    // A filter rebuilds the node set, so a node arriving without its pin would be handed back to
+    // the simulation under a layout the caption still calls stable. The frame is retaken with it,
+    // because the drawn set is what the canvas is sized for.
+    if (it.layout) applyLayoutFrame(it);
     // A merge into a graph the reader is already reading must not move the camera under them.
     it.pendingFit = !it.keepView;
     it.keepView = false;
@@ -1435,8 +1498,10 @@ function drawLabels(it) {
     }
 
     // Before any label, so nothing is drawn over the one line that says what is missing.
-    drawCaption(ctx, it.groupBy && it.groupBy !== 'none' && !it.collapsed
-        ? regionCaption(regions.groups, regions.refused, it.groupBy, it.regionNamesUnplaced) : '', p, taken);
+    drawCaption(ctx, viewCaption(
+        it.groupBy && it.groupBy !== 'none' && !it.collapsed
+            ? regionCaption(regions.groups, regions.refused, it.groupBy, it.regionNamesUnplaced) : '',
+        it.layout, it.pinned), p, taken);
     // Restored after it: a node label is centred on its node, and the note draws left-aligned.
     ctx.textAlign = 'center';
 
@@ -1558,8 +1623,13 @@ function overlaps(a, b) {
  * encloses its neighbors too.
  *
  * Separate from the painting so those claims can be checked without a renderer.
+ *
+ * `boxes` are the rectangles a layout engine reserved for each group. Where there is one it *is*
+ * the boundary, because re-deriving a hull would draw a shape the engine did not place. The
+ * refusal above still applies to it: `dot` separates the clusters of the graph it was handed, and
+ * a browser filter drawing a subset of that graph is a different picture.
  */
-export function regionShapes(projected, by, totals = new Map(), floor = REGION_FLOOR) {
+export function regionShapes(projected, by, totals = new Map(), floor = REGION_FLOOR, boxes = null) {
     if (!by || by === 'none') return { shapes: [], groups: 0, refused: 0 };
 
     const byX = [...projected].sort((a, b) => a.sx - b.sx);
@@ -1568,10 +1638,14 @@ export function regionShapes(projected, by, totals = new Map(), floor = REGION_F
     for (const [key, group] of regionMembers(projected, by)) {
         groups++;
         const padding = regionPadding(group, floor, REGION_CEILING);
-        const hull = inflate(hullOf(group), padding);
+        const box = boxes && boxes.get(key);
+        const hull = box ? boxHull(box) : inflate(hullOf(group), padding);
         if (hull.length < 3) continue;
         const members = new Set(group);
-        if (foreignNear(byX, members, padding).some(f => containsPoint(hull, { x: f.sx, y: f.sy }))) {
+        // An engine box is already clear of its own members, so the neighbour sweep only needs to
+        // reach as far as the box itself.
+        const reach = box ? 0 : padding;
+        if (foreignNear(byX, members, reach).some(f => containsPoint(hull, { x: f.sx, y: f.sy }))) {
             refused++;
             continue;
         }
@@ -1615,6 +1689,20 @@ export function regionCaption(groups, refused, by, unnamed = 0) {
 }
 
 /**
+ * The one line on the canvas, which is the grouping and what drew the picture.
+ *
+ * The simulation is the default and says nothing extra: a note on every ordinary view is clutter
+ * on the line reserved for what is missing. A layout somebody else computed is the claim that
+ * needs stating — nothing else on the canvas tells a reader whether what they are looking at will
+ * be the same tomorrow, and a partial answer has to carry its own share.
+ */
+export function viewCaption(grouped, layout, pins) {
+    if (!layout) return grouped || '';
+    const summary = layoutSummary(layout, pins || {});
+    return [grouped, summary.text].filter(Boolean).join(' \u00b7 ');
+}
+
+/**
  * The boundaries a view settles on, and which groups they stand for.
  *
  * The answer depends on itself: a refused boundary puts its container back on screen as a point,
@@ -1627,8 +1715,8 @@ export function regionCaption(groups, refused, by, unnamed = 0) {
  * returned a shape set inconsistent with the containers it then painted, and two nodes ended up
  * inside a boundary they do not belong to.
  */
-export function settledRegions(projected, by, totals = new Map(), floor = REGION_FLOOR) {
-    const all = regionShapes(projected, by, totals, floor);
+export function settledRegions(projected, by, totals = new Map(), floor = REGION_FLOOR, boxes = null) {
+    const all = regionShapes(projected, by, totals, floor, boxes);
     let shapes = all.shapes;
 
     for (;;) {
@@ -1727,7 +1815,7 @@ function drawRegions(ctx, it, projected, p) {
     }
 
     const totals = groupSizes(it.all ? it.all.nodes : [], it.groupBy);
-    const result = settledRegions(projected, it.groupBy, totals);
+    const result = settledRegions(projected, it.groupBy, totals, undefined, it.layoutBoxes);
     const focused = hoveredRegion(result.shapes, it.pointer);
 
     for (const s of result.shapes) {
@@ -2201,6 +2289,9 @@ export function setGroupBy(elementId, by) {
     // would hide containers belonging to a grouping nobody is looking at any more.
     it.regionSig = undefined;
     it.regionKeys = null;
+    // The engine's boxes were computed for the previous level. Re-keyed they would draw a boundary
+    // around members nobody grouped together, so they are dropped until the caller asks again.
+    it.layoutBoxes = null;
     applyForces(it);
     wake(it);
     it.graph.d3ReheatSimulation();
@@ -2218,6 +2309,96 @@ export function setCollapsed(elementId, collapsed, spec) {
     it.collapsed = !!collapsed;
     it.seeded = false;
     return applyFilters(elementId, spec);
+}
+
+/**
+ * Draws the graph where an engine placed it, rather than where the simulation settles.
+ *
+ * A failure is not thrown: the picture falls back to the simulation and the summary carries the
+ * reason, because a canvas that went blank when Graphviz was absent would make an optional tool
+ * look like a broken page. The server says the same thing for its own part, answering
+ * `producedBy: "none"` rather than a fault.
+ */
+export async function applyServerLayout(elementId, url) {
+    const it = instances.get(elementId);
+    if (!it) return null;
+
+    let data;
+    try {
+        const res = await fetch(url);
+        if (!res.ok) {
+            const body = await res.text().catch(() => '');
+            const drawn = it.graph ? it.graph.graphData().nodes.length : 0;
+            return summarise(it, null, refusalText(body, res.status, drawn));
+        }
+        data = await res.json();
+    } catch (err) {
+        return summarise(it, null, `layout request failed: ${err.message}`);
+    }
+    if (data.producedBy !== 'graphviz') return summarise(it, null, data.reason);
+
+    it.layout = data;
+    applyLayoutFrame(it);
+    it.regionSig = undefined;
+    settleView(it);
+    return { ...layoutSummary(data, it.pinned), ...it.pinned };
+}
+
+/**
+ * Fits the held layout to the nodes currently on screen, and pins them.
+ *
+ * The layout endpoint answers from server terms only, so it routinely places more than the browser
+ * draws. Framing the canvas on the engine's own extent would size the view for nodes that are not
+ * there, so the fit is taken from the drawn set and recomputed whenever that set changes.
+ */
+function applyLayoutFrame(it) {
+    if (!it.layout || !it.graph) return;
+    const nodes = it.graph.graphData().nodes;
+    const drawn = new Set(nodes.map(n => n.key));
+    it.placed = fitPositions(it.layout, { drawn });
+    // Boxes belong to the grouping that was asked for. Keyed by any other level they would put a
+    // boundary around members nobody grouped together, so an engine that drew none leaves this
+    // empty rather than stale.
+    it.layoutBoxes = it.layout.groupingDrawn === false
+        ? null
+        : clusterBoxes(it.layout, it.groupBy, { drawn });
+    it.pinned = applyPositions(nodes, it.placed);
+}
+
+/** Hands the view back to the simulation, which is the default and the only other answer. */
+export function clearServerLayout(elementId) {
+    const it = instances.get(elementId);
+    if (!it || !it.layout) return;
+    releaseLayout(it);
+    settleView(it);
+    it.graph.d3ReheatSimulation();
+}
+
+/** Drops every trace of a server layout, so nothing downstream reads half of one. */
+function releaseLayout(it) {
+    releaseAll(it.graph ? it.graph.graphData().nodes : []);
+    it.layout = null;
+    it.placed = null;
+    it.layoutBoxes = null;
+    it.pinned = null;
+    it.regionSig = undefined;
+}
+
+/** The summary for a picture the engine did not draw, with whatever it is still holding released. */
+function summarise(it, layout, reason) {
+    const held = !!it.layout;
+    releaseLayout(it);
+    if (held) settleView(it);
+    return { ...layoutSummary(layout || { producedBy: 'none', reason }, {}), pinned: 0, free: 0 };
+}
+
+/** Repaints and re-fits after the positions under the picture have been replaced. */
+function settleView(it) {
+    wake(it);
+    if (it.graph) {
+        it.graph.refresh();
+        fitCore(it);
+    }
 }
 
 

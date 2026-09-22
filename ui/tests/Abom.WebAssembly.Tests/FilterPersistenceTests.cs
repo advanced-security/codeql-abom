@@ -40,21 +40,17 @@ public sealed class FilterPersistenceTests : AbomTestContext
 
     private const string Page = """{"items":[],"total":0}""";
 
+    private const string Filters = """
+        [
+          {"name":"scope","label":"Scope","help":"Which closure.","arity":"scalar",
+           "values":["owned","exposure"],"surfaces":["inventory"]},
+          {"name":"q","label":"Name contains","help":"Free text.","arity":"scalar",
+           "surfaces":["inventory"]}
+        ]
+        """;
+
     private void Go(string url) =>
         Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.NavigateTo(url);
-
-    [Fact]
-    public void TheBillOfMaterialsOpensFilteredWhenTheAddressSaysSo()
-    {
-        Answer("api/bom", Document);
-        Answer("api/properties", NoProperties);
-        Go("/bom?q=setup-node");
-
-        var cut = Render<Pages.BillOfMaterials>();
-
-        cut.WaitForAssertion(() => Assert.Contains("actions/setup-node", cut.Markup));
-        Assert.DoesNotContain("actions/checkout", cut.Markup);
-    }
 
     [Fact]
     public void VersionPinningAsksTheServerForWhatTheAddressAskedFor()
@@ -103,34 +99,50 @@ public sealed class FilterPersistenceTests : AbomTestContext
     // evaluates an expression behind `@`. Every page using the shared search box did this, so the
     // grid filtered correctly and the control above it read `_search` — the one place a reader
     // looks to find out what they are filtered by.
+    /// <summary>
+    /// A term in the address is a term on screen. It used to be the search box's value; it is now a
+    /// chip, and the guarantee is the same one — a filter narrowing the page that a reader cannot
+    /// see is the silent narrowing every surface here promises not to do.
+    /// </summary>
     [Fact]
-    public void TheSearchBoxShowsTheTermItIsFilteringBy()
+    public void ATermInTheAddressIsVisibleOnScreen()
     {
         Answer("api/views", Views);
         Answer("api/actions", Page);
+        Answer("api/filters", Filters);
         Go("/inventory?q=codeql");
 
         var cut = Render<Pages.Inventory>();
 
-        cut.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("api/actions")));
-        Assert.Equal("codeql", cut.Find(".abom-search input").GetAttribute("value"));
+        cut.WaitForAssertion(() =>
+        {
+            var chip = cut.Find("[data-abom-filter-chip='q']");
+            Assert.Contains("codeql", chip.TextContent);
+        });
     }
 
-    // Writing the filter back is the other half: a scope nobody can copy out of the address bar
-    // cannot be shared, however faithfully it was read in.
+    /// <summary>
+    /// And the reverse: a term chosen on screen reaches the address, or the view cannot be shared,
+    /// bookmarked or returned to.
+    /// </summary>
     [Fact]
-    public void ChangingAFilterWritesItToTheAddress()
+    public void ChoosingATermWritesItToTheAddress()
     {
         Answer("api/views", Views);
         Answer("api/actions", Page);
+        Answer("api/filters", Filters);
         Go("/inventory");
 
+        var popover = Render<MudBlazor.MudPopoverProvider>();
         var cut = Render<Pages.Inventory>();
         cut.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("api/actions")));
-        cut.Find(".abom-search input").Input("codeql");
+
+        cut.Find("[data-abom-add-filter]").Click();
+        popover.Find("[data-abom-term='scope']").Click();
+        popover.Find("[data-abom-value='owned']").Click();
 
         cut.WaitForAssertion(() => Assert.Contains(
-            "q=codeql",
+            "scope=owned",
             Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.Uri));
     }
 }

@@ -286,8 +286,9 @@ public class InventoryUnitTests : AbomTestContext
 
         page.WaitForAssertion(() =>
         {
-            Assert.NotNull(page.Find("[data-abom-property-key='business_id']"));
-            Assert.NotNull(page.Find("[data-abom-property-drop='business_id:3']"));
+            var chip = page.Find("[data-abom-filter-chip='properties']");
+            Assert.Contains("business_id:3", chip.TextContent);
+            Assert.NotNull(chip.QuerySelector("[data-abom-chip-remove]"));
         });
     }
 

@@ -12,7 +12,7 @@ import {
     drawnAsRegion, nodeBrief, clampToCanvas, shortRef, isDarkBackground, settledRegions, buttonMap,
     containmentIntoRegion, hoveredRegion, fitDistance, coreBounds, gravityForce, spreadFor, seedAt,
     fitMargin, nearestTo, withDependencies, clickAction, scopeFilters, isClick, answersScope,
-    focusKeys,
+    focusKeys, viewCaption, drawDecision, DRAW_CEILING,
 } from './graph.js';
 import { withAlpha, coverageColor } from './appearance.js';import { hullOf, inflate, containsPoint, overlapArea, groupSizes } from './regions.js';
 
@@ -1695,6 +1695,104 @@ test('no boundary is drawn around a node that belongs to somebody else', () => {
         }
     }
     assert.equal(refused, 1, 'the group that could not be drawn honestly was not counted as refused');
+});
+
+// A computed layout already decided where a group sits, and its box is the shape it reserved for
+// one. Re-deriving a hull from the members would draw a boundary the engine did not place, so the
+// picture and the layout that produced it would disagree about where a group ends.
+test('a boundary comes from the engine box when the layout supplied one', () => {
+    const nodes = [placed('octo/a', 0, 0), placed('octo/b', 100, 100)];
+    const boxes = new Map([['octo', { x1: -200, y1: -200, x2: 300, y2: 300 }]]);
+
+    const { shapes } = regionShapes(nodes, 'owner', new Map(), undefined, boxes);
+
+    assert.equal(shapes.length, 1);
+    const xs = shapes[0].hull.map(p => p.x).sort((a, b) => a - b);
+    const ys = shapes[0].hull.map(p => p.y).sort((a, b) => a - b);
+    assert.deepEqual([xs[0], xs[3]], [-200, 300]);
+    assert.deepEqual([ys[0], ys[3]], [-200, 300]);
+});
+
+// The containment invariant belongs to the boundary, not to the way it was computed. An engine
+// box that swallows a stranger asserts a membership that does not exist just as loudly as a hull
+// does, and `dot` is only known to separate its clusters on the graph it was given -- a browser
+// filter drawing a subset of that graph is a different picture.
+test('an engine box that encloses a stranger is refused like any other boundary', () => {
+    const nodes = [placed('octo/a', 0, 0), placed('octo/b', 100, 100), placed('other/x', 50, 50)];
+    const boxes = new Map([['octo', { x1: -200, y1: -200, x2: 300, y2: 300 }]]);
+
+    const { shapes, groups, refused } = regionShapes(nodes, 'owner', new Map(), undefined, boxes);
+
+    assert.equal(groups, 2);
+    assert.equal(refused, 1, 'the engine box swallowing other/x was drawn anyway');
+    assert.equal(shapes.some(s => s.key === 'octo'), false);
+});
+
+// A group the engine placed no box for still has members on screen. Falling through to the hull
+// keeps the boundary rather than silently dropping it, which would read as a group that shares
+// nothing.
+test('a group the engine boxed nothing for keeps its hull', () => {
+    const nodes = [
+        placed('octo/a', 0, 0), placed('octo/b', 100, 0), placed('octo/c', 50, 100),
+    ];
+    const { shapes } = regionShapes(nodes, 'owner', new Map(), undefined, new Map());
+    assert.equal(shapes.length, 1);
+    assert.equal(shapes[0].key, 'octo');
+});
+
+// Nothing else on the canvas distinguishes a picture that will be identical tomorrow from one
+// that is reshuffled on every reload, and under a stable layout the boundaries are the engine's
+// rather than hulls over whatever the simulation settled on.
+test('the canvas names the engine when it did not draw the picture itself', () => {
+    const grouped = regionCaption(3, 0, 'owner');
+
+    assert.equal(viewCaption(grouped, { producedBy: 'graphviz', engine: 'dot' }, { pinned: 9 }),
+        'grouped by owner · dot layout');
+    assert.equal(viewCaption('', { producedBy: 'graphviz', engine: 'dot' }, { pinned: 9 }),
+        'dot layout');
+});
+
+// The default is the simulation, and captioning every ordinary view with a note about it is
+// clutter on the one line reserved for what is missing from the picture.
+test('the simulation is the default and says nothing extra', () => {
+    assert.equal(viewCaption('grouped by owner', null, null), 'grouped by owner');
+    assert.equal(viewCaption('', null, null), '');
+});
+
+// A partial layout is a partial claim. A reader told "dot layout" while a quarter of the nodes
+// were placed by the simulation is being told the whole picture is reproducible.
+test('a partly placed layout says how much of it the simulation drew', () => {
+    const caption = viewCaption('', { producedBy: 'graphviz', engine: 'dot' }, { pinned: 6, free: 2 });
+    assert.match(caption, /2 of 8 placed by the simulation/);
+});
+
+// An engine that could not be run is not a stable layout, and a caption that said nothing would
+// leave the reader believing the control they just turned on is in effect.
+test('a layout that could not be computed says so rather than going quiet', () => {
+    const caption = viewCaption('', { producedBy: 'none', reason: 'layout engine is not installed: dot' }, null);
+    assert.match(caption, /not installed/);
+});
+
+// A force-directed picture stops carrying information long before it stops rendering: past a few
+// hundred nodes it is a hairball, and drawing one anyway trades a reader's attention for nothing.
+// The ceiling is a refusal rather than a warning, because a warning over a drawn hairball is a
+// note nobody reads next to a picture they are already trying to interpret.
+test('a node set past the ceiling is withheld rather than drawn', () => {
+    assert.deepEqual(drawDecision(301, false, 300), { draw: false, withheld: 301 });
+    assert.deepEqual(drawDecision(3703, false, 300), { draw: false, withheld: 3703 });
+});
+
+// The boundary is inclusive: a reader who narrowed to exactly the limit asked for something the
+// view promised to draw, and refusing it would make the number a lie.
+test('the ceiling itself still draws', () => {
+    assert.deepEqual(drawDecision(300, false, 300), { draw: true, withheld: 0 });
+    assert.deepEqual(drawDecision(0, false, 300), { draw: true, withheld: 0 });
+});
+
+// Refusing something the reader has already looked at and accepted would make the control a loop
+// rather than a gate.
+test('an accepted graph draws at any size', () => {
+    assert.deepEqual(drawDecision(12725, true, 300), { draw: true, withheld: 0 });
 });
 
 // A refusal a reader cannot see is worse than the boundary it withheld: the grouping control says

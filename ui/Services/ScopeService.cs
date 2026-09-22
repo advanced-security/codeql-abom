@@ -32,7 +32,10 @@ public sealed class ScopeService
     /// </remarks>
     private static readonly HashSet<string> PresentationKeys =
         new(StringComparer.Ordinal)
-        { "view", "direction", "from", "status", "hops", "tab", "unit" };
+        {
+            "view", "direction", "from", "status", "hops", "tab", "unit",
+            "groupBy", "use3d", "collapsed", "stableLayout",
+        };
 
     public ViewSpec Spec { get; private set; } = new();
 

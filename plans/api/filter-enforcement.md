@@ -2,8 +2,10 @@
 
 **Status:** every term in the language is applied by the server, applied by the client, or refused
 by name, on both the set path and the graph. Every endpoint that can be bounded to a repository
-grouping is. What remains is a second narrowing mechanism inside policies, a term the language
-cannot spell, and a consumer that applies more than it asks for.
+grouping is. A control reads the values a term can take rather than asking for them to be typed.
+What remains is a second narrowing mechanism inside policies, a term the language cannot spell, a
+consumer that applies more than it asks for, four list terms whose members nothing declares, and a
+value list that does not say what it leaves out.
 
 ## Why this exists
 
@@ -34,6 +36,27 @@ The eleven endpoints that read their own parameters now refuse a term they do no
    node sets for `minReach` at 5 and 20, `origins=seed`, `ref=tag` and `ref=sha` — 0 rows either way.
    So this is a declaration to write down rather than a divergence to repair, and a test that
    re-measures it is what keeps it true. Depends on nothing.
+4. **A list term either declares its members or cannot offer them, and four terms are stuck between.**
+   `kinds`, `origins`, `flags` and `edges` are lists whose members nothing checks, which is the same
+   fact seen from two sides: the server accepts `kinds=banana` and narrows to nothing, and a control
+   has no list to show because no declaration says what the members are. `rules` and `severity` were
+   solved by reading the corpus, and `kinds` now is too — but a corpus-derived list is *what has been
+   used*, never *what is allowed*, so it cannot be the thing a refusal is checked against. The fork:
+   declare a vocabulary for all four in `internal/view` and refuse a member outside it, which makes a
+   saved view naming a retired kind start failing; or state that these four are deliberately open and
+   that a control offers the corpus as a convenience. Whether partial validity in a list refuses or
+   warns is the same decision, and `origin` from [the query catalog](db/query-catalog.md) inherits it.
+   Depends on nothing.
+5. **A corpus-derived value list says what it covers, or it overstates it.** `provider` offers one
+   value, `CodeQL`, counting **884 of 11,806 findings**: the rest predate the column and are
+   unattributed, and are correctly left out rather than relabelled. Both numbers are honest and the
+   screen shows only the first, so filtering by the only provider on offer silently answers for a
+   fourteenth of the corpus. This is the rule already stated below for property keys — *every
+   filtered answer reports the owned repositories that carry no value for the key it filtered on* —
+   applied to a term whose values come from findings rather than from repositories, and it wants
+   stating once for both rather than twice. The count of rows a term cannot speak for is the
+   measurement to surface; the store leaves it out of the list on purpose, so it has to travel
+   beside it. Depends on nothing.
 
 **Two endpoints refuse it for a reason and should keep refusing.** `/api/properties` enumerates the
 groupings, so bounding it by a grouping is circular; `/api/frontier` reports crawl queue state for

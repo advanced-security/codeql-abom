@@ -18,6 +18,7 @@ public sealed class ExplorerSelectionTests : AbomTestContext
     {
         Answer("api/graph/generation", "{\"generation\":0}");
         Answer("api/summary", "{}");
+        ArriveWithAScope();
     }
 
     /// <summary>

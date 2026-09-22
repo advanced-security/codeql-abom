@@ -19,6 +19,7 @@ public sealed class ExplorerHarnessTests : AbomTestContext
     {
         Answer("api/graph/generation", "{\"generation\":0}");
         Answer("api/summary", "{}");
+        ArriveWithAScope();
     }
 
     /// The claim under test: the page reaches the end of its first render with the module stubbed.

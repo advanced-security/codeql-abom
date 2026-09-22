@@ -45,6 +45,14 @@ var Builtins = []Builtin{
 		Predicate: "scope=exposure",
 	},
 	{
+		Name:  "exposure-findings",
+		Title: "Advisory routes, with findings",
+		// The picture the Explorer used to open on before arrival became a choice. The closure
+		// alone draws more than the ceiling renders unasked; findings is the half that makes it
+		// a picture rather than a refusal.
+		Predicate: "flags=findings&scope=exposure",
+	},
+	{
 		Name:  "coverage-gaps",
 		Title: "Unpinned and unanalyzed coverage gaps",
 		// A floating reference nothing has analyzed is the pair that matters: either alone is

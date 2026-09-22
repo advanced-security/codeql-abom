@@ -14,6 +14,7 @@ namespace Abom.WebAssembly.Tests;
 /// </summary>
 public sealed class ExplorerFrameTests : AbomTestContext
 {
+    public ExplorerFrameTests() => ArriveWithAScope();
     /// The one frame that needs no renderer at all: the declaration is the page's own to read.
     [Fact]
     public void NothingDeclaredPointsAtSettingsRatherThanDrawingAnEmptyCanvas()

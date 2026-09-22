@@ -4,9 +4,8 @@ import { test as base, expect } from '@playwright/test';
 // to the populated suite rather than to a list of things that must render from nothing.
 //
 // Every address the interface actually serves. Nothing retired is kept alive here: this project is
-// unpublished, so a question that moved is moved, not forwarded. `/bom` is the one page that is not
-// in the navigation — see plans/ui/inventory-units.md.
-export const ROUTES = ['/', '/bom', '/explore', '/inventory', '/settings'];
+// unpublished, so a question that moved is moved, not forwarded.
+export const ROUTES = ['/', '/explore', '/inventory', '/settings'];
 
 // The four surfaces, in nav order. Anything else a reader needs is a unit, a tab or an action on
 // one of them; a fifth entry here means a question grew its own page again.

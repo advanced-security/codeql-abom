@@ -60,11 +60,14 @@ Four surfaces, and everything else is a unit, a tab or an action on one of them:
 | **Settings** (`/settings`) | What the operator claims and how ABOM is configured |
 
 A fifth nav entry is a finding: a question grew its own page again, and a page has to invent its
-own scope. `/repositories`, `/pinning`, `/remediation`, `/bom` and `/discovery` still **answer** at
-their old addresses so no link breaks, and none of them is in the navigation.
+own scope. `/repositories`, `/pinning`, `/remediation` and `/discovery` still **answer** at their
+old addresses so no link breaks, and none of them is in the navigation. **`/bom` no longer
+answers** — the bill of materials is an export taken from the scope on screen, not an address, and
+that address renders *Nothing here* by design.
 
-Inventory's units are `dependencies`, `repositories` and `advisories`, chosen with `?unit=`.
-Relationships is missing on purpose until an edge carries its own identity.
+Inventory's units are `dependencies`, `workflows`, `jobs`, `repositories`, `advisories`,
+`relationships` and `coverage`, chosen with `?unit=`. Each asks its own endpoint for its own
+columns, so a column reading 0 for every row of a unit is a finding rather than a fact.
 
 ## 1. Establish ground truth from the API
 
@@ -97,6 +100,13 @@ each force view, one expanded remediation row, and one drill-down.
 Capture at a realistic viewport (1440×900). A maximised 4K window hides exactly the crowding
 problems worth finding.
 
+**`/explore` draws nothing until a scope is chosen, and that is correct.** It offers the named
+views, the filter control, and an empty canvas saying *Choose what to look at*. Reporting that as a
+broken page is the mistake this paragraph exists to stop. Arrive with terms in the address —
+`/explore?scope=owned&flags=findings` — or press one of the built-ins, then capture. Above **300
+nodes** the view refuses and names the count; that refusal is also correct, and is a different
+screen from the empty one.
+
 ### 4. Read the DOM for what the DOM is good at
 
 `read_page` for structure, roles, focus order and actionable elements. Use this — not a
@@ -106,6 +116,29 @@ elements are reachable, tables have headers, nothing conveys state through `titl
 An unpaginated grid defeats both readings: 2,548 rows made the Bill of Materials snapshot 2.7 MB
 and its screenshot unreadable. Extract the figures with `page.evaluate` to get unblocked — and
 record the missing pagination as a finding rather than working around it in silence.
+
+**Check that what is rendered can actually be reached.** A control present in the markup can be
+impossible to press, and no bUnit test can tell, because bUnit has no CSS. This has shipped three
+separate times, twice in controls that were the only way forward from a dead end:
+
+- `.abom-graph-busy` carried `pointer-events: none` — right for a translucent spinner you drag the
+  graph through, wrong for the opaque frames above it. The draw-ceiling's *draw all anyway* and the
+  Explorer's scope chooser both rendered, looked enabled, and swallowed every click into the canvas.
+- A disabled `MudSelectItem` gets `pointer-events: none` from MudBlazor, so the `title` explaining
+  *why* it is disabled can never be hovered. The explanation is written, in the markup, and
+  unreachable.
+
+So for anything that offers a way forward, ask the browser rather than the DOM:
+
+```js
+await page.evaluate(() => [...document.querySelectorAll('button, [title], .mud-list-item')]
+    .map((el) => ({ text: el.textContent.trim().slice(0, 40),
+                    pointerEvents: getComputedStyle(el).pointerEvents }))
+    .filter((el) => el.pointerEvents === 'none'));
+```
+
+An element that conveys something and returns `none` is a finding. Clicking it with Playwright is
+the other half: it reports *which* element intercepted the press, which names the culprit directly.
 
 ### 5. Look at the screenshots
 
@@ -176,7 +209,7 @@ apart as determinism. What remains below is what only a viewer can answer.
   hops, not a prettier layout.
 - **Hub occlusion.** In a high-fan-in view, is the focus node still findable, or buried under
   its neighbors?
-- **Semantic force legibility.** In the Risk view, name the highest-priority node from position
+- **Semantic force legibility.** In the Priority view, name the highest-priority node from position
   alone. If you cannot, the semantic force is not doing its job.
 - **One semantic force at a time.** If position appears to encode two things at once, that is a
   design regression: position must have exactly one meaning.

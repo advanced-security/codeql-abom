@@ -1,9 +1,12 @@
 # The same graph draws a different picture every time
 
-**Status:** The server computes a repeatable layout and the browser does not read it yet. DOT
-encoding, cluster subgraphs, the Graphviz seam, `/api/graph/export` and `/api/graph/layout` are
-built and degrade by name where Graphviz is absent. The Explorer still draws a force simulation
-with no fixed seed, so what a reader sees is still different every run.
+**Status:** the browser draws where the engine placed it, fitted to the nodes it is actually
+drawing, and says which layout is on screen. The size question is settled by decision rather than
+by engine: the view refuses above **300 nodes** without explicit approval, and there is no arrival
+scope at all — a reader picks a named view, builds one, or arrives with terms in the address. What
+is left is the canvas shape, and the measurement now exists: every view places **4 ranks deep**, so
+height is constant and width grows with the population. The question is no longer which proportion
+to ask for but whether a ranked layout suits a graph this shallow.
 
 ## Why this exists
 
@@ -32,26 +35,47 @@ general, and the engine with the best-shaped canvas is the least readable of the
 so the ceiling is node count in the renderer and layout does not move it. Nothing in this plan is a
 performance fix, and presenting it as one would be false.
 
+```mermaid
+flowchart LR
+    ARRIVE["no arrival scope:<br/>a reader chooses one"] --> DRAW["drawn"]
+    WIDER["a wider scope<br/>3,703 · 12,725"] --> REFUSE["refused above 300"]
+    REFUSE -->|"names the count<br/>and points at the filters"| NARROW["narrow"]
+    REFUSE -->|"explicit approval<br/>in a modal"| DRAW
+    DRAW -->|"fitted to what is drawn"| RIBBON["canvas shape"]
+    RIBBON -. "not re-measured since<br/>the ceiling and the frame fix" .-> SHAPE["a shape a reader can use"]
+    style REFUSE fill:#3d2d1d
+    style SHAPE fill:#3d1d1d
+```
+
 ## Pending
 
-1. **Consume positions in the browser.** `applyLayout` fixes each node and releases the fix on
-   drag, so the canvas, the hover, the selection and the delta merge are all untouched. Nodes with
-   no position keep the force. `regions.js` draws a server bounding box when it has one. The pure
-   half exists — `ui/wwwroot/js/serverlayout.js` fits positions to an extent, flips the axis
-   Graphviz reports bottom-left-first, pins what was placed and reports what was not — and nothing
-   in `graph.js` calls it yet. Depends on nothing further.
-2. **Stop claiming position means something before it does.** The Neighborhood view captions itself
-   "Position is structural: clusters are groups that share dependencies" in
-   [`Explorer.razor`](../../ui/Pages/Explorer.razor), and it is the one view whose position comes
-   from the force simulation with no semantic force behind it. Priority, Coverage and Distance earn
-   their radial claims; this one asserts a meaning the picture does not carry, and the picture
-   changes on every load. Either the caption says it is a settled simulation, or 1 lands and makes
-   the claim true — for the nodes Graphviz placed, and only those. Depends on 1.
-3. **A canvas that is pannable is not a canvas that is legible at 33 nodes.** `dot` returns a
-   9.2:1 ribbon on the corpus projection. Scaling to fit keeps every node on screen and makes them
-   small; the alternatives are `rankdir=LR`, `ratio=compress` with a `size`, or accepting the
-   ribbon and relying on zoom. Undecided, and it wants a reader looking at all three rather than
-   an argument. Depends on 1.
+1. **Decide the canvas shape, now that the measurement exists and rules out most of the options.**
+   Measured on the crawled organization, per built-in view, through `/api/graph/layout`:
+
+   | View | Placed | Canvas | Ratio |
+   | --- | --- | --- | --- |
+   | `advisory-routes`, `exposure-findings` | 99 | 22,050 × 216 | **102:1** |
+   | `coverage-gaps` | 1,461 | 578,939 × 216 | **2,680:1** |
+   | `unpinned` | 1,723 | 599,543 × 216 | **2,776:1** |
+   | `owned`, `owned-findings` | — | *refused* | 3,702 nodes, `dot` abandoned at the 10s deadline |
+
+   **Height is 216 at every size.** It is not a proportion to tune: `advisory-routes` places 99
+   nodes across **4 distinct rank positions and 91 distinct columns**, because the dependency graph
+   is genuinely shallow — an owner contains a repository contains a workflow that uses an action,
+   and that is the whole depth. Width then grows linearly with the population while height cannot.
+
+   That settles two of the three options without a render. `rankdir=LR` rotates 22,050 × 216 into
+   216 × 22,050 and leaves the ratio identical. Accepting the ribbon means panning 22,050 units to
+   read 99 nodes, which is not a picture. **`ratio=compress` with a `size` is the only one that
+   changes the shape**, and it works by folding the ranks into bands — which spends the one thing
+   `dot` was chosen for, rank as a readable axis. So the decision is not "which proportion" but
+   *whether a ranked layout suits a 4-deep graph at all*, and the alternative to weigh against it
+   is a treemap or a packed layout that never claimed depth meant anything.
+
+   **Two of six built-ins cannot be placed at all**, which the ceiling hides rather than solves:
+   3,702 nodes is above the 300 the view will draw unasked, so the refusal a reader sees is the
+   ceiling's rather than the engine's. Whether the deadline should rise, the engine change for
+   large graphs, or placement be refused by name at a stated size is part of this decision.
 
 ## What placing the real corpus measured
 
@@ -123,3 +147,8 @@ themselves otherwise, and the whole reason for this plan evaporates without it.
 - A node with no reach row exports as unknown and is not drawn at the smallest size.
 - With Graphviz removed from `PATH` the Explorer still draws, and says the force layout drew it.
 - Nothing in this plan moves node, edge, reach, exposure or bill-of-materials totals.
+- A boundary from an engine box is refused on the same terms as a hull: `dot` separates the
+  clusters of the graph it was *handed*, and a browser filter draws a subset of that graph, so a
+  box that has come to enclose a stranger states a membership that does not exist.
+- A refusal names the size that caused it. "Failed" over a picture that is still being drawn is
+  the same defect as a silent fallback.

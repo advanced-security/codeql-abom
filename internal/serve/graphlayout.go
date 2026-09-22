@@ -127,11 +127,22 @@ func (s *Server) graphLayout(w http.ResponseWriter, r *http.Request) {
 //
 // A node drawn at the origin because nothing placed it is indistinguishable from one the engine
 // genuinely put there, which is the same absent-measurement confusion the graph refuses elsewhere.
+//
+// Counted by name rather than by subtracting totals: the DOT export writes container nodes the
+// graph payload does not carry, so the two counts are of different sets and their difference hides
+// a real gap behind padding.
 func unplaced(g store.Graph, result layout.Result) int {
-	if n := len(g.Nodes) - len(result.Positions); n > 0 {
-		return n
+	at := make(map[string]struct{}, len(result.Positions))
+	for _, p := range result.Positions {
+		at[p.Key] = struct{}{}
 	}
-	return 0
+	missing := 0
+	for _, n := range g.Nodes {
+		if _, ok := at[n.Key]; !ok {
+			missing++
+		}
+	}
+	return missing
 }
 
 // placed keeps a nil slice out of the payload, so a caller reads an empty list rather than null.

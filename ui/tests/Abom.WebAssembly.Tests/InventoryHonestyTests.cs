@@ -89,11 +89,11 @@ public class InventoryHonestyTests : AbomTestContext
     }
 
     /// <summary>
-    /// The document is a rendering of the scope, reached from the scope. A link that dropped it
-    /// would open a bill of materials about the whole organization from a narrowed screen.
+    /// The document is a rendering of the scope, exported from the scope. A link that dropped it
+    /// would export a bill of materials about the whole organization from a narrowed screen.
     /// </summary>
     [Fact]
-    public void TheBillOfMaterialsIsReachedFromTheScopeItDescribes()
+    public void TheBillOfMaterialsCarriesTheScopeItDescribes()
     {
         Answer("api/actions", """{"items":[],"total":0}""");
         Go("/inventory?properties=business_id%3A3");
@@ -102,7 +102,7 @@ public class InventoryHonestyTests : AbomTestContext
 
         page.WaitForAssertion(() => Assert.Contains(
             "properties=business_id%3A3",
-            page.Find("[data-abom-action='bom-preview']").GetAttribute("href") ?? ""));
+            page.Find("[data-abom-action='bom-cyclonedx']").GetAttribute("href") ?? ""));
     }
 
     /// <summary>

@@ -268,11 +268,23 @@ the only thing that tells a reader which surface does answer it. A term means on
 `repositories` is the repository a finding sits in on both the listing and the set path, and "which
 dependencies does this repository use" is a different question with a different term.
 
+**The control that offers a filter reads the language.** The terms, what to call them, how each
+writes its value, which surfaces apply it and what values it can take are all served from the same
+declarations that enforce them, so a term added to the language reaches every control and one
+removed from it stops being offered. A browser keeping its own list is a second declaration, and
+the one that falls behind offers a filter the server refuses by name. Which values a term can take
+is answered from the language where it declares them and from the corpus where it does not — the
+first is what the term allows, the second is only what something happened to use, and a refusal is
+checked against the first.
+
 **A scope can be kept.** The catalog is the built-in questions merged with whatever the operator
 named and saved, offered through one endpoint so a caller asking "what can I ask" consults one
 place. A built-in is code and cannot be overwritten or deleted. A saved view carries the terms the
 listing cannot draw, so a tab that will refuse itself says so before it is clicked rather than
-after.
+after. It also carries how the Explorer drew it — view, grouping, depth, direction — stored as
+opaque text beside the predicate rather than inside it, because a drawing is not a filter and a
+server that parsed it would be deciding what the interface may show. Nothing saved there means
+"draw it however you would anyway", which is not the same as every default.
 
 **A container is a boundary, and `Group by` decides what a filter costs.** The Explorer draws each
 group as a shape around its members rather than a point beside them, and withholds any boundary that
@@ -281,18 +293,20 @@ ends, a filter that removes what it did not match removes the relationships too 
 removes, keeping its boundaries honest, and an ungrouped one greys instead, keeping every
 relationship on screen. The reader picks which, and each option says so.
 
-**The Explorer arrives at the closure of what you own.** Not the whole corpus: drawn over everything
-the crawl walked through it is a starburst nothing can be followed through. The arrival is that
-closure filtered to what carries a finding, and a page handing over a node arrives focused on it,
-resolved to whichever per-reference nodes the graph holds for that name. Naming a node suspends the
-arrival filters, because otherwise the neighborhood the reader asked for is deleted by the filter
-that got them there.
+**The Explorer draws a scope somebody chose.** Not the whole corpus: drawn over everything the
+crawl walked through it is a starburst nothing can be followed through. Nor one it picks on the
+reader's behalf — how large any predicate draws is decided by the corpus, so an automatic arrival
+scope is a promise about size that a larger account breaks. A reader picks a named view, builds one
+with the filter control, or arrives from another surface with terms already in the address, and a
+page handing over a node arrives focused on it, resolved to whichever per-reference nodes the graph
+holds for that name. Naming a node suspends the scope's filters, because otherwise the
+neighborhood the reader asked for is deleted by the filter that got them there. Above a few hundred
+nodes the view refuses and says how many, rather than drawing a hairball.
 
-**The bill of materials is a document, not a listing.** It is reached from the scope it describes,
-and states its own coverage, direct-versus-indirect depth, "not examined" as distinct from "none
-found", and that advisories are reported against a repository rather than evaluated against the
-references in use. Those are claims no listing makes, which is why it is a rendering of its own
-rather than a unit.
+**The bill of materials is a document, not a listing.** It is exported from the scope it describes,
+and refuses the terms it cannot apply by name rather than widening quietly to the whole
+organization. It reports advisories against a repository rather than evaluating them against the
+references in use — a distinction no listing draws, which is why it is a rendering of its own.
 
 **Purls are the join key.** `pkg:githubactions/{owner}/{name}[/{subpath}]@{version}`, matching what
 GitHub emits, is what lets a component in an ABOM export correspond to anything outside it.
