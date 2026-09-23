@@ -4,9 +4,9 @@ using Xunit;
 namespace Abom.WebAssembly.Tests;
 
 /// <summary>
-/// The crawl is the only thing in ABOM that runs with nobody watching it, and its state used to be
-/// readable only from several folds down inside Settings. What this holds is that the bar answers
-/// "is anything happening?" without a navigation, and that it never answers it wrongly.
+/// The crawl is the only thing in ABOM that runs with nobody watching it, so the bar has to answer
+/// "is anything happening?" without a navigation. What this holds is that it does, and that it
+/// never answers it wrongly.
 /// </summary>
 public class CrawlStatusTests : AbomTestContext
 {
@@ -51,8 +51,8 @@ public class CrawlStatusTests : AbomTestContext
         bar.Find("[data-abom-crawl-toggle]").GetAttribute("aria-label") ?? "";
 
     /// <summary>
-    /// The state is on the bar, so it is on every page. Reaching it used to mean opening Settings
-    /// and scrolling past the accounts editor, which made "is it running" a navigation.
+    /// The state is on the bar, so it is on every page. Anywhere else makes "is it running" a
+    /// navigation past the accounts editor.
     /// </summary>
     [Fact]
     public void TheCrawlStateIsReadableFromTheBar()

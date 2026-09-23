@@ -87,6 +87,30 @@ A tier binds to a suite in `abom_tier_suite`, editable while the server runs. An
 legitimate and means "do not analyze this tier", which is why `abom_tier_configured` exists to tell
 it apart from a tier nobody has configured.
 
+**An organization's own questions are its own queries.** The operator names a directory and ABOM
+scaffolds a CodeQL pack in it: their queries resolve by name, run over the retained databases and
+appear in the catalog with their origin read from the pack. Writing one is not scheduling work —
+the development suite is offered to a run, which is something a person presses, and never to a tier
+binding, which would put a saved file in front of the whole corpus. Deploying a version is what
+moves it into a suite a tier may bind.
+
+**A query version has a lifecycle, and one rung of it is earned.** A version is identified by a
+content hash over the query and every library it imports, so editing a library changes it. Stages
+run `dev`, `test`, `extended-test`, `review`, `deploy`; each advance records who made it, and `test`
+is refused unless `codeql test run` passes for that exact version. ABOM computes readiness and never
+advances anything itself.
+
+**A crawl is not a feedback loop.** Keeping an organization current and answering the question
+somebody arrived with are different shapes, so a scope also resolves to a set of databases and a run
+can be asked for over it. A run records what it asked before it spends anything, is stoppable, and
+ingests its results into the tables the crawl writes — a result that landed anywhere else would need
+every reader taught about a second source. Nothing a run produces leaves the machine.
+
+**A database is extracted once, not once per question.** Retained CodeQL databases are keyed on the
+tuple a run is keyed on, so the cache and the ledger cannot disagree about which database answered.
+Retention is opt-in until its occupancy over a full crawl is measured. Reuse skips the extraction
+and never the analysis: whether a query needs to run again stays a ledger decision.
+
 An account is read over **GraphQL where it answers, REST where it does not**, and both routes answer
 the same three questions — what is new, what changed, what is gone. GraphQL is preferred because one
 call returns a hundred repositories with their marks, their custom properties and their default
@@ -182,6 +206,16 @@ workflow is never an edge source; edges leave its steps and its jobs.
 | `abom_finding`, `abom_finding_node` | A result, and the nodes it attaches to |
 | `abom_finding_sighting` | Which run reported which finding, which is the only way staleness is observable |
 | `rule`, `alert`, `abom_alert_link` | Rule metadata and the link to GitHub's own alerts |
+
+### Queries and what was asked of them
+
+| Table | |
+| --- | --- |
+| `abom_suite_query` | What a round's resolution found in each suite: query id, version, kind and the pack that supplied it |
+| `abom_query_stage` | How far somebody has taken a query version, and who advanced it |
+| `abom_query_test` | What `codeql test run` made of a version, which is what the `test` stage reads |
+| `abom_analysis_run`, `abom_analysis_member`, `abom_analysis_query` | A run somebody asked for: which versions, which scope, and what became of every repository in it |
+| `abom_local_database` | A retained CodeQL database, keyed the way a run is: repository, commit, source filter and mode |
 
 ### Derived and external
 

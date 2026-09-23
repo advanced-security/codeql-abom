@@ -78,7 +78,6 @@ func newRunExecutor(
 		Store:    s,
 		Resolver: sup.Expander.Resolver,
 		Analyzer: sup.Expander.Analyzer,
-		CodeQL:   sup.Expander.CodeQL,
 		Ingester: sup.Expander.Ingester,
 		Suites:   runnableSuites(),
 		WorkDir:  filepath.Join(sup.Options.WorkDir, "runs"),

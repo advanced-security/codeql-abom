@@ -220,8 +220,8 @@ The ranking is itself a plan, and is subject to change.
     break the run when it is fixed.
 23. **[The crawl says what it is doing, wherever a reader is](ui/crawl-visibility.md)** — down to
     where its *configuration* lives. The state, the queue, a problem marker and the refresh
-    interval are on the bar of every page, and a restart no longer starts anything unless somebody
-    configured it to. What is left is that Settings holds four unrelated decisions in one scroll,
+    interval are on the bar of every page, and a restart starts nothing unless somebody configured
+    it to. What is left is that Settings holds four unrelated decisions in one scroll,
     and that the per-tier suite grid is crawl configuration by placement and **query configuration
     by subject** — a fork with three named options, the worst of which splits the binding from the
     requeue that acts on it. An [on-demand run](api/on-demand-analysis.md) is also invisible from
@@ -427,7 +427,7 @@ refusal.
 
 ## Built, with refinements nobody has ranked
 
-These **thirteen** plans describe workstreams that are **built and carrying real data**, and each
+These **fifteen** plans describe workstreams that are **built and carrying real data**, and each
 keeps a short list of refinements. They are not ranked because none of them is the next thing to
 build; they are the backlog a workstream leaves behind, and a reader asking "what next" should not
 have to read past them. They are listed because a plan in neither the ranking nor *Deferred* is
@@ -445,6 +445,8 @@ measurement makes it urgent.
 | [api/query-suites.md](api/query-suites.md) | suite staleness, and streaming result sets out of BQRS; query identity belongs to [db/query-catalog.md](db/query-catalog.md) |
 | [api/reachability.md](api/reachability.md) | all-routes reach, and `needs:` ordering nothing renders |
 | [db/analysis-ledger.md](db/analysis-ledger.md) | what a run records, and how a change to any of it reaches work already on record |
+| [db/checkout-cache.md](db/checkout-cache.md) | flipping retention on by default, and eviction that reads the queue |
+| [db/database-cache.md](db/database-cache.md) | the same two for retained CodeQL databases, and a run that must not evict its own working set |
 | [db/data-efficiency.md](db/data-efficiency.md) | the standing cost review; one endpoint is still linear in rows |
 | [db/declaration-provenance.md](db/declaration-provenance.md) | how a declaration arrived, and what contradicts it |
 | [db/freshness-budget.md](db/freshness-budget.md) | claim order, and depth 2 starting before depth 1 drains |

@@ -11,12 +11,9 @@ import (
 
 // openCustomQueries makes the operator's own pack resolvable, creating it if it is not there.
 //
-// Named but absent is the ordinary first run, so it is scaffolded rather than refused. Not named
-// at all is off: ABOM must not create a directory in somebody's working tree because a binary
-// started.
-//
-// Failures here are reported and not fatal. A crawl that refused to start because a pack nobody
-// has written a query into could not be scaffolded would be a feature taking the product down.
+// Named but absent is the ordinary first run. Not named at all is off: ABOM must not create a
+// directory in somebody's working tree because a binary started. A failure is reported and not
+// fatal, or a pack nobody has written a query into could take the crawl down.
 func openCustomQueries(dir, codeqlPath string, stdout, stderr io.Writer) {
 	if dir == "" {
 		return

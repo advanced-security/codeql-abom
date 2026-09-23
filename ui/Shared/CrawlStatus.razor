@@ -1,9 +1,8 @@
 @* The crawl's state, on every page.
 
-   It used to be readable only from inside Settings, several folds down, which made "is anything
-   happening?" a navigation. A crawl is the one thing in ABOM that runs without a reader watching
-   it, so its state belongs where a reader always is. The detail stays in Settings: this says
-   whether it is running, how the queue is made up, and how often the page refreshes. *@
+   It is the one thing in ABOM that runs with nobody watching it, so "is anything happening?" has
+   to be answerable without a navigation. The detail belongs in Settings: this says whether it is
+   running, how the queue is made up, and how often the page refreshes. *@
 @implements IDisposable
 @inject AbomApi Api
 @inject FollowService Follow

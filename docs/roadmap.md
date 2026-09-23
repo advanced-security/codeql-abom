@@ -9,16 +9,17 @@ it, see [the vision](vision.md). The ranked, startable work is in
 The measuring half works end to end. ABOM discovers repositories in a declared account, analyzes
 them with CodeQL, follows their Actions dependencies upstream one measured hop at a time, and
 serves the resulting transitive graph with findings, reach and coverage attached. It exports a bill
-of materials, submits a dependency snapshot to GitHub, and explains what it has not looked at.
+of materials, submits a dependency snapshot to GitHub, and explains what it has not looked at. One
+scope answers as a list or as a graph, an operator can write queries of their own and take a
+version through a lifecycle, and a run can be asked for over whatever a scope resolves to.
 
 ```mermaid
 flowchart LR
   MEAS["measure<br/>discover · analyze · expand"] --> HOLD["hold<br/>graph · findings · reach"]
+  HOLD --> ASK["ask<br/>one scope, two renderings<br/>your queries, on demand"]
   HOLD --> OUT["bill of materials ·<br/>dependency snapshot"]
   HOLD -. "not built" .-> ACT["act<br/>gate · alert · campaign"]
-  HOLD -. "not built" .-> ASK["ask<br/>one scope, two renderings"]
   style ACT fill:#3d2d1d
-  style ASK fill:#3d2d1d
 ```
 
 See [how it works](architecture.md) for the current shape.
@@ -122,19 +123,21 @@ does not eliminate them. Count distinct lock-selected commits, not only differen
 
 ## The questions are the organization's own
 
-The set of questions anybody can ask of the graph is fixed: whatever `codeql/actions-queries` ships,
-plus one marker ABOM writes. They are not the organization's own questions, and writing those needs
-QL, the `actions` library and a fixture — which the person who knows the organization's Actions
-patterns usually does not have.
+An organization's questions are its own — which runner labels are permitted, which internal action
+must never sit beneath a privileged job. Writing those needs QL, the `actions` library and a
+fixture, which the person who knows the Actions patterns usually does not have.
 
-So ABOM drives the authoring loop rather than asking anybody to learn it. An operator supplies an
-example that should match and one that should not; the
+So ABOM drives the authoring loop rather than asking anybody to learn it. The place to put a query
+exists: an operator's directory is a CodeQL pack, its queries are cataloged beside the upstream and
+ABOM-authored ones and told apart by the pack they came from rather than by a prefix, they run
+against whatever scope the operator has narrowed to, and their results land on the graph like any
+other. A version leaves `dev` only when its tests pass.
+
+What remains is the half that removes QL from the requirement: an operator supplies an example that
+should match and one that should not, and the
 [CodeQL development MCP server](https://github.com/advanced-security/codeql-development-mcp-server)
-scaffolds, extracts, compiles, tests and reviews against fixtures the CLI built. The result is
-cataloged beside the upstream and ABOM-authored queries, told apart by the pack it came from rather
-than by a prefix, run against whatever scope the operator has already narrowed to, and its results
-land on the graph like any other. `plans/ql/query-authoring.md`, `plans/db/query-catalog.md`,
-`plans/api/on-demand-analysis.md`
+scaffolds, extracts, compiles, tests and reviews against fixtures the CLI built.
+`plans/ql/query-authoring.md`, `plans/db/query-catalog.md`, `plans/api/on-demand-analysis.md`
 
 ## From a finding to a fix
 

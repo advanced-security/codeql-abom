@@ -92,6 +92,24 @@ A mode describes inputs, not whether GitHub enabled a query or will publish an a
 and dependency reach continue to describe regular analysis even when a view selects extended
 evidence. Neither a lock context nor a query's origin substitutes for this database shape.
 
+## Queries
+
+| Word | Means |
+| --- | --- |
+| **Query version** | A content hash over a query's text and every library it imports. Editing a library changes it |
+| **Origin** | Which pack supplied the query: upstream, ABOM's own, the operator's, or several at once |
+| **Lane** | A whole suite invoked in one call. Recorded as what ran, and not a query anybody writes |
+| **Stage** | How far a version has been taken: `dev`, `test`, `extended-test`, `review`, `deploy` |
+| **Run** | A request to analyze chosen query versions over the databases a scope resolves to |
+
+A query id names a rule; a query *version* names the code behind it, which is what a stage, a test
+result and a run all attach to. Origin comes from the pack, never from the id: a prefix is a naming
+convention anybody can adopt.
+
+Advancing a stage is an act somebody signs, never something ABOM awards. `test` is the rung that
+is earned — it requires that version's query tests to pass — and the rest record intent until the
+evidence behind them exists.
+
 ## Enablement
 
 **Coverage** is whether ABOM looked. **Enablement** is whether the product feature is switched on,

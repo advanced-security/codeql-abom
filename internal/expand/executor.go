@@ -26,7 +26,6 @@ type Executor struct {
 	Store    *store.Store
 	Resolver Resolver
 	Analyzer Analyzer
-	CodeQL   QueryRunner
 	// Ingester is what makes a run's results mean anything to the rest of ABOM. Without it the
 	// SARIF is a file on disk and the graph, the Inventory and the gate know nothing about it.
 	Ingester *ingest.Ingester
@@ -176,11 +175,10 @@ func (e *Executor) ingest(
 
 // memberRun is the ledger row for analyzing one member.
 //
-// Keyed on the query *ids* the request named rather than on the paths the crawl's own lane joins:
-// the catalog and `abom_analysis_query` both speak ids, and a row keyed on a path could not be
-// attributed to the version somebody asked to run. Identity comes from `identifyFindings`, which
-// is the crawl's, because `database analyze` is one invocation over many queries here too and two
-// implementations of that would drift.
+// Keyed on the query *ids* the request named rather than on the paths the crawl's lane joins: the
+// catalog and `abom_analysis_query` both speak ids, and a row keyed on a path could not be
+// attributed to the version somebody asked to run. Identity comes from the crawl's own
+// `identifyFindings`, because a second implementation of it would drift.
 func memberRun(
 	member store.AnalysisMember, want []store.AnalysisQuery, planned tierPlan,
 ) store.QueryRun {

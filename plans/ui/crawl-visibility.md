@@ -1,26 +1,26 @@
 # The crawl says what it is doing, wherever a reader is
 
 **Status:** The bar carries the crawl's state, its queue, a problem marker and the refresh interval
-on every page, and a restart no longer starts anything unless the operator configured it to. The
-detailed configuration is still one undifferentiated block inside Settings.
+on every page, and a restart starts nothing unless the operator configured it to. The detailed
+configuration is still one undifferentiated block inside Settings.
 
 ## Why this exists
 
 A crawl is the only thing in ABOM that runs with nobody watching it. It clones repositories, builds
-a CodeQL database per repository and saturates every core, and for a long time the only way to see
-whether any of that was happening was to open Settings and scroll past the accounts editor. "Is
-anything happening?" was a navigation, so the honest answer for most of a session was that nobody
-knew.
+a CodeQL database per repository and saturates every core, so "is anything happening?" has to be
+answerable from wherever a reader is. Anywhere else makes it a navigation, and the honest answer
+for most of a session is that nobody knows.
 
-Worse, a restart *resumed* it. The recorded fact was "discovery was running when this last
-stopped", and a server start treated that as permission — so restarting to pick up a rebuilt binary
-silently began spending rate limit and CPU on a decision nobody took at that moment. The fact is
-still recorded; acting on it is now its own preference, off unless asked for.
+A restart is not a request, either. That discovery was running when the server last stopped is a
+fact worth remembering and not permission to spend rate limit and CPU on a decision nobody is
+present to take, so acting on it is its own preference, off unless asked for.
 
-What remains is the configuration itself. Settings holds, in one block: which accounts are
-declared, whether the crawl runs, what each tier is analyzed with, per-tier requeues, a
-single-repository requeue, the removal of what is no longer owned, and the resume preference. Those
-are four unrelated decisions sharing a scroll position.
+What remains is the configuration itself. Settings runs *Accounts you own*, *Accounts you can
+declare*, *How discovery runs*, *Removing what you no longer own* and *Accounts holding
+repositories discovery started from* down one page, and the third of those alone carries the
+start control, the resume preference, the per-tier suite grid, three tier requeues, a stale
+requeue and a single-repository requeue. The headings exist; what does not is any way to reach one
+without reading past the others.
 
 ```mermaid
 flowchart LR
@@ -45,9 +45,9 @@ flowchart LR
    Queries and the requeue that acts on it in Settings.** The third is the one to argue against
    first — it puts the decision and its consequence on different pages. Depends on nothing but the
    decision.
-2. **Settings is four decisions, not one scroll.** Accounts, crawl configuration, what is no longer
-   owned, and identity are unrelated, and a reader looking for one reads past the others. Depends
-   on 1, because moving the suite grid changes what is left to group.
+2. **Settings is four decisions, not one scroll.** Ownership, crawl configuration, what is no
+   longer owned, and identity are unrelated, and a reader looking for one reads past the others.
+   Depends on 1, because moving the suite grid changes what is left to group.
 3. **The bar says a run is under way, not only a crawl.** An [on-demand
    run](../api/on-demand-analysis.md) also spends CodeQL on every core, competes for the same lock,
    and is invisible from anywhere except the Queries page that started it. A reader who sees the
