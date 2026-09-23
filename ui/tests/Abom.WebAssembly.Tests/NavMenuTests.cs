@@ -32,7 +32,7 @@ public class NavMenuTests : AbomTestContext
     [Fact]
     public void TheBarLinksToEverySurfaceAndNothingElse()
     {
-        Assert.Equal(["/", "/inventory", "/explore", "/settings"], Hrefs(Bar()));
+        Assert.Equal(["/", "/inventory", "/explore", "/queries", "/settings"], Hrefs(Bar()));
     }
 
     /// <summary>

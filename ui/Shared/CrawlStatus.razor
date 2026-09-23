@@ -1,0 +1,211 @@
+@* The crawl's state, on every page.
+
+   It is the one thing in ABOM that runs with nobody watching it, so "is anything happening?" has
+   to be answerable without a navigation. The detail belongs in Settings: this says whether it is
+   running, how the queue is made up, and how often the page refreshes. *@
+@implements IDisposable
+@using System.Net.Http
+@inject AbomApi Api
+@inject FollowService Follow
+@inject ThemeService Theme
+
+@if (_state.Available)
+{
+    @* The state attribute carries the word; the bar does not print it. The icon says which way the
+       control goes, its color says whether anything is running, and the words stay in the
+       accessible name so a reader who needs them can still get them. *@
+    <div class="abom-crawl d-flex align-center" data-abom-crawl
+         data-abom-crawl-state="@_state.Status.State">
+        <MudTooltip Text="@ToggleHint">
+            <span>
+                <MudIconButton Icon="@ToggleIcon" Color="@ToggleColor" Size="Size.Small"
+                               Disabled="@(_busy || IsPausing)" OnClick="Toggle"
+                               aria-label="@ToggleHint" data-abom-crawl-toggle />
+            </span>
+        </MudTooltip>
+
+        @if (Total > 0)
+        {
+            @* Composition rather than a percentage: the crawl finds new dependencies as it goes,
+               so a total that grows would make any "N% complete" run backwards. *@
+            <span class="abom-crawl-bar" data-abom-crawl-queue>
+                <QueueBar State="_state" />
+            </span>
+        }
+
+        @if (Problem is { Length: > 0 } problem)
+        {
+            @* A crawl that hit something and carried on looks identical to one that did not,
+               and the difference is the whole reason somebody would open Settings. *@
+            <MudTooltip Text="@problem">
+                <MudIcon Icon="@Icons.Material.Filled.ErrorOutline" Color="Color.Warning"
+                         Size="Size.Small" data-abom-crawl-problem />
+            </MudTooltip>
+        }
+
+        <MudTooltip Text="@RefreshHint">
+            <MudSelect T="int" Value="Follow.Seconds" ValueChanged="OnSecondsChanged"
+                       Dense="true" Margin="Margin.Dense" Variant="Variant.Text"
+                       Class="abom-crawl-refresh" aria-label="Refresh interval"
+                       data-abom-crawl-refresh>
+                @foreach (var seconds in FollowService.Choices)
+                {
+                    <MudSelectItem T="int" Value="@seconds">@FollowService.Describe(seconds)</MudSelectItem>
+                }
+            </MudSelect>
+        </MudTooltip>
+
+        @if (_error is { Length: > 0 } failed)
+        {
+            <MudTooltip Text="@failed">
+                <MudIcon Icon="@Icons.Material.Filled.CloudOff" Color="Color.Error"
+                         Size="Size.Small" data-abom-crawl-unreachable />
+            </MudTooltip>
+        }
+    </div>
+}
+
+@code {
+    private DiscoveryState _state = new();
+    private bool _busy;
+    private string? _error;
+    private Timer? _timer;
+    private TimeSpan _beat;
+
+    /// <summary>The beat a state on its way somewhere else is watched on.</summary>
+    private static readonly TimeSpan Settling = TimeSpan.FromSeconds(2);
+
+    private bool IsRunning => _state.Status.IsRunning;
+
+    private bool IsPausing => _state.Status.IsPausing;
+
+    private string ToggleIcon => IsRunning
+        ? Icons.Material.Filled.Pause
+        : Icons.Material.Filled.PlayArrow;
+
+    private Color ToggleColor => IsPausing ? Color.Warning
+        : IsRunning ? Color.Success
+        : Color.Inherit;
+
+    /// <summary>
+    /// What the crawl is doing and what pressing this would do, in one string.
+    ///
+    /// <para>Both, because the glyph alone is ambiguous: a pause icon means "press to pause" to one
+    /// reader and "it is paused" to another, and those are opposites. The bar shows the state in
+    /// the icon's color; this is where a reader who needs it in words gets it, and it is the
+    /// control's accessible name.</para>
+    /// </summary>
+    private string ToggleHint => $"{StateSentence} {ActionSentence}";
+
+    private string ActionSentence => IsPausing ? string.Empty
+        : IsRunning ? "Press to pause it."
+        : "Press to start it — it clones each repository, builds a CodeQL database and runs the bound suites.";
+
+    // "Not started" and "paused" are different facts: one is an installation nobody has crawled,
+    // the other is a decision somebody took, and only the second implies there is progress to
+    // return to. The loop's own state cannot tell them apart after a restart, because a
+    // supervisor is new in every process and reports `stopped` either way.
+    private string StateSentence => _state.Status.State switch
+    {
+        "working" => $"Crawling — analyzing {_state.Status.Concurrency} repositories at a time.",
+        "idle" => "Crawling, with nothing to analyze right now.",
+        "pausing" => _state.Running > 0
+            ? $"Pausing — finishing {_state.Running} already started."
+            : "Pausing — finishing what has already started.",
+        "paused" => ResumeSuffix("Paused, and what it found is kept."),
+        _ => ResumeSuffix(_state.EverStarted
+            ? "Paused, and what it found is kept."
+            : "Not started: nothing has been crawled on this installation yet."),
+    };
+
+    // Said on the state rather than as its own control: whether a restart resumes is a fact about
+    // this installation that a reader needs when they see it stopped, and the switch that changes
+    // it is a Settings-sized decision.
+    private string ResumeSuffix(string lead) => _state.ResumeOnStart
+        ? $"{lead} A restart will resume it."
+        : $"{lead} A restart will leave it stopped.";
+
+    private int Analyzed => _state.Count("done");
+
+    private int Outstanding =>
+        _state.Count("queued") + _state.Count("running") + _state.Count("retrying");
+
+    private int Total => Analyzed + Outstanding + _state.Count("unavailable");
+
+    // A problem the operator has to fix outranks one the crawl carried on past, because only the
+    // first is still costing coverage.
+    private string? Problem => _state.Status.Problem is { } p
+        ? $"{p.Reason} — {p.Remedy}"
+        : string.IsNullOrEmpty(_state.Status.LastError)
+            ? null
+            : $"Discovery hit a problem and carried on: {_state.Status.LastError}";
+
+    private string RefreshHint =>
+        "How often every open view re-reads the server. This applies to the whole interface.";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Follow.Changed += OnFollowChanged;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        _state = await Api.GetDiscoveryAsync();
+        // A read that failed returns an empty result rather than throwing, so the transport's own
+        // account is the only thing separating "no crawl here" from "could not ask".
+        _error = Api.LastError;
+        ApplyFollow();
+        StateHasChanged();
+    }
+
+    private async Task Toggle()
+    {
+        _busy = true;
+        try
+        {
+            _state = await Api.SetDiscoveryAsync(!IsRunning);
+            _error = null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException
+                                       or InvalidOperationException)
+        {
+            // A refused control request must say so: the button otherwise appears to work and the
+            // loop never starts. Anything else is a defect and propagates.
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+            ApplyFollow();
+        }
+    }
+
+    private async Task OnSecondsChanged(int seconds) => await Follow.SetSecondsAsync(seconds);
+
+    private void OnFollowChanged()
+    {
+        ApplyFollow();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void ApplyFollow()
+    {
+        // A loop on its way out of a state has disabled the control that would say it arrived, so
+        // it is watched on its own beat rather than the reader's.
+        var beat = IsPausing && Follow.Interval > Settling ? Settling : Follow.Interval;
+        if (_timer is not null && beat == _beat)
+        {
+            return;
+        }
+        _timer?.Dispose();
+        _beat = beat;
+        _timer = new Timer(_ => InvokeAsync(Load), null, beat, beat);
+    }
+
+    public void Dispose()
+    {
+        Follow.Changed -= OnFollowChanged;
+        _timer?.Dispose();
+    }
+}

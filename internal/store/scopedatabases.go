@@ -1,0 +1,205 @@
+package store
+
+import (
+	"fmt"
+	"sort"
+)
+
+// How a scope's database resolved. A reader deciding whether to press something expensive needs
+// "already here" and "would have to be extracted" apart, and neither confused with "cannot".
+const (
+	// DatabaseRetained is on disk now, so a query can run against it without building anything.
+	DatabaseRetained = "retained"
+	// DatabaseBuildable is a repository and commit ABOM has analyzed before whose database is not
+	// held. Running against it costs an extraction, not a question about whether it is possible.
+	DatabaseBuildable = "buildable"
+)
+
+// ScopedDatabase is one database a scope resolves to.
+type ScopedDatabase struct {
+	DatabaseIdentity
+	Status string `json:"status"`
+	// Path and Bytes are the retained database's, and empty for one that would have to be built.
+	// A size nobody has measured is absent rather than zero.
+	Path  string `json:"path"`
+	Bytes int64  `json:"bytes"`
+}
+
+// DatabaseGap is a repository the scope reached that resolves to no database, and why.
+type DatabaseGap struct {
+	Repository string `json:"repository"`
+	Reason     string `json:"reason"`
+}
+
+// DatabaseSet is the databases a scope names, and what it could not name.
+//
+// The gaps are part of the answer rather than an omission from it: a scope naming forty
+// repositories of which nine were never analyzed resolves to thirty-one databases and says so.
+// The number a reader needs before pressing anything expensive is the one that is missing.
+type DatabaseSet struct {
+	Databases []ScopedDatabase `json:"databases"`
+	Gaps      []DatabaseGap    `json:"gaps"`
+	// Mode is the shape that was asked for, echoed so an empty answer says which question it is
+	// empty about.
+	Mode string `json:"mode"`
+	// Unresolved explains an answer holding neither a database nor a gap. Without it, a scope
+	// asking for a shape nothing has ever been built in is indistinguishable from a scope that
+	// genuinely matched nothing -- and the two call for opposite responses.
+	Unresolved string `json:"unresolved"`
+}
+
+// gapped reports whether a repository was named as a gap.
+func (d DatabaseSet) gapped(repository string) bool {
+	for _, g := range d.Gaps {
+		if g.Repository == repository {
+			return true
+		}
+	}
+	return false
+}
+
+// DatabasesMatching answers which databases a selector's findings were, or would be, found in.
+//
+// The sibling of NodesMatching, over the same predicate deliberately: *what am I looking at* and
+// *what am I about to run this against* are one question asked in two directions, and a separate
+// syntax for the second would let them drift apart.
+//
+// It builds nothing and it promises nothing about what a build would cost. An empty selector
+// resolves to nothing for the reason NodesMatching does: a policy that failed to parse must run
+// against nothing rather than the whole organization.
+func (s *Store) DatabasesMatching(sel FindingSelector) (DatabaseSet, error) {
+	mode := sel.Mode
+	if mode == "" {
+		mode = AnalysisModeRegular
+	}
+	out := DatabaseSet{Databases: []ScopedDatabase{}, Gaps: []DatabaseGap{}, Mode: mode}
+	if !sel.asked() {
+		return out, nil
+	}
+
+	match, err := s.NodesMatching(sel)
+	if err != nil {
+		return out, err
+	}
+	named := map[string]bool{}
+	for _, n := range match.Nodes {
+		for _, repo := range n.Repositories {
+			named[repo] = true
+		}
+	}
+	repositories := make([]string, 0, len(named))
+	for repo := range named {
+		repositories = append(repositories, repo)
+	}
+	// Sorted so resolving twice over an unchanged corpus names the same databases in the same
+	// order: a reader comparing a resolution against the one they were shown is comparing lists.
+	sort.Strings(repositories)
+
+	if len(repositories) == 0 {
+		out.Unresolved, err = s.whyNothingMatched(mode)
+		return out, err
+	}
+
+	for _, repo := range repositories {
+		held, err := s.retainedFor(repo, mode)
+		if err != nil {
+			return out, err
+		}
+		if held != nil {
+			out.Databases = append(out.Databases, *held)
+			continue
+		}
+		commit, filter, err := s.lastAnalyzedAt(repo, mode)
+		if err != nil {
+			return out, err
+		}
+		if commit == "" {
+			out.Gaps = append(out.Gaps, DatabaseGap{
+				Repository: repo,
+				Reason: fmt.Sprintf(
+					"no %s analysis on record, so nothing names a commit to build from", mode),
+			})
+			continue
+		}
+		out.Databases = append(out.Databases, ScopedDatabase{
+			DatabaseIdentity: DatabaseIdentity{
+				Repository: repo, Commit: commit, SourceFilter: filter, Mode: mode,
+			},
+			Status: DatabaseBuildable,
+		})
+	}
+	return out, nil
+}
+
+// whyNothingMatched separates a shape nothing has been built in from a predicate that genuinely
+// matched nothing.
+//
+// The distinction is the whole point of refusing to fall back: a scope asking for `extended`
+// against a corpus of `regular` databases has not found zero problems, it has asked a question no
+// evidence can answer, and handing it the regular set would answer a different one silently.
+func (s *Store) whyNothingMatched(mode string) (string, error) {
+	var runs int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM abom_query_run WHERE analysis_mode = ?`, mode).Scan(&runs); err != nil {
+		return "", fmt.Errorf("counting %s runs: %w", mode, err)
+	}
+	if runs == 0 {
+		return fmt.Sprintf(
+			"nothing has been analyzed in %s mode, so no database can answer this scope", mode), nil
+	}
+	return fmt.Sprintf("no node in %s mode carries a finding this scope names", mode), nil
+}
+
+// retainedFor reports the held database for a repository in one shape, or nil.
+// Most recently used rather than most recent commit: the cache holds one row per identity, and
+// where a repository has several the one a run just touched is the one a run is working through.
+func (s *Store) retainedFor(repository, mode string) (*ScopedDatabase, error) {
+	rows, err := s.db.Query(`
+		SELECT `+retainedDatabaseColumns+` FROM abom_local_database
+		WHERE repository = ? AND analysis_mode = ?
+		ORDER BY used_seq DESC, row_id DESC LIMIT 1`, repository, mode)
+	if err != nil {
+		return nil, fmt.Errorf("reading the retained database for %s: %w", repository, err)
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	d, err := scanRetainedDatabase(rows)
+	if err != nil {
+		return nil, fmt.Errorf("scanning the retained database for %s: %w", repository, err)
+	}
+	return &ScopedDatabase{
+		DatabaseIdentity: d.DatabaseIdentity,
+		Status:           DatabaseRetained,
+		Path:             d.Path,
+		Bytes:            d.Bytes,
+	}, rows.Err()
+}
+
+// lastAnalyzedAt reports the commit and checkout filter a repository was most recently analyzed
+// at in one shape, which is what a database would be rebuilt from.
+//
+// Runs with no commit are skipped rather than returned empty: a row that cannot name a revision
+// cannot name a database either, and returning one would resolve a scope to something unbuildable
+// while reporting no gap.
+func (s *Store) lastAnalyzedAt(repository, mode string) (string, string, error) {
+	var commit, filter string
+	rows, err := s.db.Query(`
+		SELECT db_commit, COALESCE(source_filter, '')
+		FROM abom_query_run
+		WHERE repository = ? AND analysis_mode = ? AND COALESCE(db_commit, '') <> ''
+		ORDER BY ran_at DESC, row_id DESC LIMIT 1`, repository, mode)
+	if err != nil {
+		return "", "", fmt.Errorf("reading the analysis history for %s: %w", repository, err)
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		if err := rows.Scan(&commit, &filter); err != nil {
+			return "", "", fmt.Errorf("scanning the analysis history for %s: %w", repository, err)
+		}
+	}
+	return commit, filter, rows.Err()
+}

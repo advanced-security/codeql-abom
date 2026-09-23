@@ -1,0 +1,649 @@
+@page "/queries"
+@implements IDisposable
+@inject AbomApi Api
+@inject AccountService Accounts
+@inject FollowService Follow
+
+<PageTitle>Queries — ABOM</PageTitle>
+
+<PageHeader Title="Queries">
+    Every version of every query the ledger has run, and how far each has been taken.
+</PageHeader>
+
+@if (_refusal is not null)
+{
+    <MudAlert Severity="Severity.Warning" Class="mb-4" data-abom-queries-refusal>@_refusal</MudAlert>
+}
+
+@if (_catalog is null)
+{
+    <MudProgressLinear Indeterminate="true" data-abom-queries-loading />
+}
+else if (_catalog.Queries.Count == 0)
+{
+    @* An empty catalog is a stage, not an apology: nothing has run, and the page says what would
+       change that rather than rendering an empty table. *@
+    <MudPaper Class="pa-6" Outlined="true" data-abom-queries-empty>
+        <MudText Typo="Typo.h6">No query has run yet</MudText>
+        <MudText Typo="Typo.body2" Class="mt-2 mud-text-secondary">
+            A version appears here once a run is on record for it. Start discovery, or analyze a
+            selection, and the queries a suite resolves to will be catalogued as they run.
+        </MudText>
+        <MudButton Href="/settings" Variant="Variant.Outlined" Class="mt-4"
+                   StartIcon="@Icons.Material.Outlined.Settings">Discovery</MudButton>
+    </MudPaper>
+}
+else
+{
+    <div class="abom-queries-counts mb-3 d-flex align-center" data-abom-queries-counts>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">
+            @CountText.Of(Shown.Count, "query version", "query versions"), @Unstaged not yet staged.
+            @if (Hidden > 0)
+            {
+                @* A default that hides things says so: these are the crawl's own machinery, and a
+                   reader who is not told believes this is the whole catalog. *@
+                <span data-abom-queries-hidden>
+                    @Hidden more are the crawl's own machinery — graph-building queries and
+                    whole-suite invocations.
+                </span>
+            }
+        </MudText>
+        @if (Hidden > 0 || _showDiscovery)
+        {
+            @* The attribute goes on a wrapper: MudBlazor splats it onto a hidden input, which a
+               test can find and a reader cannot press. *@
+            <span class="ml-4" data-abom-queries-discovery-toggle>
+                <MudSwitch T="bool" Value="_showDiscovery" ValueChanged="ToggleDiscovery"
+                           Color="Color.Primary" Size="Size.Small"
+                           Label="Show the crawl's own queries" />
+            </span>
+        }
+    </div>
+
+    <MudDataGrid T="CatalogQuery" Items="Shown" Dense="true" Hover="true" Bordered="false"
+                 SortMode="SortMode.Single" Filterable="false" ShowColumnOptions="false"
+                 RowsPerPage="30" Class="abom-grid" data-abom-queries-table>
+        <Columns>
+            <PropertyColumn Property="x => x.QueryId" Title="Query"
+                            HeaderClass="abom-identity-col" CellClass="abom-identity-col">
+                <CellTemplate>
+                    <div class="abom-query-id" data-abom-query-id="@context.Item.QueryId">
+                        @context.Item.QueryId
+                    </div>
+                </CellTemplate>
+            </PropertyColumn>
+
+            @* Second, like every other grid in the interface: an action belongs beside the thing
+               it acts on, not at the end of a row a reader has to track across. *@
+            <TemplateColumn Title="" Sortable="false" HeaderClass="abom-row-actions-head"
+                            CellClass="abom-row-actions">
+                <CellTemplate>
+                    <div class="abom-query-actions">
+                        <MudTooltip Text="@RunTooltip(context.Item)">
+                            <span>
+                                <MudIconButton Icon="@Icons.Material.Outlined.PlayArrow"
+                                               Size="Size.Small" Color="Color.Primary"
+                                               Disabled="@(!CanRun(context.Item))"
+                                               OnClick="@(() => StartRun(context.Item))"
+                                               aria-label="Run this version"
+                                               data-abom-query-run />
+                            </span>
+                        </MudTooltip>
+                        <MudTooltip Text="@TestTooltip(context.Item)">
+                            <span>
+                                <MudIconButton Icon="@Icons.Material.Outlined.Science"
+                                               Size="Size.Small" Color="@TestColor(context.Item)"
+                                               Disabled="@(!CanTest(context.Item))"
+                                               OnClick="@(() => Test(context.Item))"
+                                               aria-label="Run this version's tests"
+                                               data-abom-query-test />
+                            </span>
+                        </MudTooltip>
+                        <MudMenu Icon="@Icons.Material.Outlined.MoreVert" Size="Size.Small"
+                                 Disabled="@(!CanAdvance)" aria-label="Advance this version"
+                                 data-abom-query-advance>
+                            @foreach (var stage in _catalog.Stages)
+                            {
+                                <MudMenuItem OnClick="@(() => Advance(context.Item, stage))">
+                                    @stage
+                                </MudMenuItem>
+                            }
+                        </MudMenu>
+                    </div>
+                </CellTemplate>
+            </TemplateColumn>
+
+            <PropertyColumn Property="x => x.QueryVersion" Title="Version">
+                <CellTemplate>
+                    @if (context.Item.QueryVersion.Length == 0)
+                    {
+                        @* Not a version of zero: these ran before versions were written, and
+                           saying so keeps them from reading as a version somebody chose. *@
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary"
+                                 data-abom-query-unversioned>not recorded</MudText>
+                    }
+                    else
+                    {
+                        <code data-abom-query-version="@context.Item.QueryVersion">@Short(context.Item.QueryVersion)</code>
+                    }
+                </CellTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.Pack" Title="Pack">
+                <CellTemplate>
+                    <MudTooltip Text="@context.Item.Pack">
+                        <span class="abom-ref-cell" data-abom-query-pack>
+                            @(context.Item.Pack.Length == 0 ? "not recorded" : context.Item.Pack)
+                        </span>
+                    </MudTooltip>
+                </CellTemplate>
+            </PropertyColumn>
+
+            @* Part of what identifies a query: the id says what it is, this says which release it
+               came in, and the version hash says whether it has been edited since. *@
+            <PropertyColumn Property="x => x.PackVersion" Title="Pack version" CellClass="abom-nowrap">
+                <CellTemplate>
+                    @if (context.Item.PackVersion.Length == 0)
+                    {
+                        <MudText Typo="Typo.caption" Class="abom-faint">—</MudText>
+                    }
+                    else
+                    {
+                        <code data-abom-query-pack-version>@context.Item.PackVersion</code>
+                    }
+                </CellTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.Suite" Title="Suite">
+                <CellTemplate>
+                    @if (context.Item.Suite.Length == 0)
+                    {
+                        <MudText Typo="Typo.caption" Class="abom-faint">—</MudText>
+                    }
+                    else
+                    {
+                        <MudTooltip Text="@context.Item.Suite">
+                            <span class="abom-ref-cell" data-abom-query-suite>@SuiteText(context.Item.Suite)</span>
+                        </MudTooltip>
+                    }
+                </CellTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.Origin" Title="Origin">
+                <CellTemplate>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                             data-abom-query-origin="@context.Item.Origin">@OriginText(context.Item.Origin)</MudChip>
+                </CellTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.Runs" Title="Runs" CellClass="abom-cell-right"
+                            HeaderClass="abom-cell-right">
+                <CellTemplate><span class="abom-num">@context.Item.Runs</span></CellTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.Repositories" Title="Repositories"
+                            CellClass="abom-cell-right" HeaderClass="abom-cell-right">
+                <CellTemplate><span class="abom-num">@context.Item.Repositories</span></CellTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.Analyses" Title="Analyses"
+                            CellClass="abom-cell-right" HeaderClass="abom-cell-right">
+                <CellTemplate>
+                    @if (context.Item.Analyses == 0)
+                    {
+                        <MudText Typo="Typo.caption" Class="abom-faint">—</MudText>
+                    }
+                    else
+                    {
+                        @* A run belongs to the version that was asked for, so it opens here rather
+                           than on a surface a reader has to carry the identity across to. *@
+                        <MudLink Underline="Underline.Hover" data-abom-query-analyses
+                                 @onclick="@(() => Inspect(context.Item))">
+                            <span class="abom-num">@context.Item.Analyses</span>
+                        </MudLink>
+                    }
+                </CellTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.LastRunAt" Title="Last run" CellClass="abom-nowrap">
+                <CellTemplate>
+                    <MudText Typo="Typo.caption">@TimeText.DayAndTime(context.Item.LastRunAt)</MudText>
+                </CellTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.Stage" Title="Stage">
+                <CellTemplate>
+                    @if (context.Item.Stage.Length == 0)
+                    {
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary"
+                                 data-abom-query-unstaged>not staged</MudText>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Primary"
+                                 data-abom-query-stage="@context.Item.Stage">@context.Item.Stage</MudChip>
+                        @if (context.Item.StagedBy.Length > 0)
+                        {
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary d-block"
+                                     data-abom-query-staged-by>@context.Item.StagedBy</MudText>
+                        }
+                    }
+                </CellTemplate>
+            </PropertyColumn>
+        </Columns>
+        <PagerContent><MudDataGridPager T="CatalogQuery" /></PagerContent>
+    </MudDataGrid>
+
+    @if (_open is not null)
+    {
+        <MudPaper Class="pa-4 mt-4" Outlined="true" data-abom-query-runs>
+            <div class="d-flex align-center mb-3">
+                <MudText Typo="Typo.h6">@_open.QueryId</MudText>
+                @if (_open.QueryVersion.Length > 0)
+                {
+                    <code class="ml-2">@Short(_open.QueryVersion)</code>
+                }
+                <MudSpacer />
+                <MudIconButton Icon="@Icons.Material.Outlined.Close" Size="Size.Small"
+                               OnClick="Close" aria-label="Close" data-abom-query-runs-close />
+            </div>
+
+            @if (_runs.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Class="mud-text-secondary" data-abom-query-runs-empty>
+                    Nothing has been asked for of this version yet.
+                </MudText>
+            }
+            else
+            {
+                <MudDataGrid T="AnalysisRun" Items="_runs" Dense="true" Hover="true"
+                             SortMode="SortMode.Single" Filterable="false" ShowColumnOptions="false"
+                             RowsPerPage="10" Class="abom-grid">
+                    <Columns>
+                        <PropertyColumn Property="x => x.RowId" Title="Run" CellClass="abom-nowrap">
+                            <CellTemplate>
+                                <span data-abom-run-id="@context.Item.RowId">#@context.Item.RowId</span>
+                            </CellTemplate>
+                        </PropertyColumn>
+
+                        <TemplateColumn Title="" Sortable="false" HeaderClass="abom-row-actions-head"
+                                        CellClass="abom-row-actions">
+                            <CellTemplate>
+                                <div class="abom-query-actions">
+                                    <MudTooltip Text="@StartTooltip(context.Item)">
+                                        <span>
+                                            <MudIconButton Icon="@Icons.Material.Outlined.PlayArrow"
+                                                           Size="Size.Small" Color="Color.Primary"
+                                                           Disabled="@(context.Item.State == "running")"
+                                                           OnClick="@(() => Execute(context.Item))"
+                                                           aria-label="Carry out this run"
+                                                           data-abom-run-start />
+                                        </span>
+                                    </MudTooltip>
+                                    @if (context.Item.State == "running")
+                                    {
+                                        @* Only while there is something to stop. A disabled stop
+                                           on a finished run is a control that can never act. *@
+                                        <MudTooltip Text="Stop this run — what it has already analyzed is kept">
+                                            <MudIconButton Icon="@Icons.Material.Outlined.Stop"
+                                                           Size="Size.Small" Color="Color.Warning"
+                                                           OnClick="@(() => Cancel(context.Item))"
+                                                           aria-label="Stop this run"
+                                                           data-abom-run-cancel />
+                                        </MudTooltip>
+                                    }
+                                    <MudIconButton Icon="@Icons.Material.Outlined.Visibility"
+                                                   Size="Size.Small"
+                                                   OnClick="@(() => Members(context.Item))"
+                                                   aria-label="Show what this run covered"
+                                                   data-abom-run-inspect />
+                                </div>
+                            </CellTemplate>
+                        </TemplateColumn>
+
+                        <PropertyColumn Property="x => x.State" Title="State">
+                            <CellTemplate>
+                                <MudChip T="string" Size="Size.Small" Color="@StateColor(context.Item.State)"
+                                         data-abom-run-state="@context.Item.State">@context.Item.State</MudChip>
+                            </CellTemplate>
+                        </PropertyColumn>
+
+                        @* One column per outcome rather than a percentage: a run is judged on what
+                           it could not reach as much as on what it did. *@
+                        @foreach (var status in Statuses)
+                        {
+                            <TemplateColumn Title="@Heading(status)" Sortable="false"
+                                            HeaderClass="abom-cell-right" CellClass="abom-cell-right">
+                                <CellTemplate>
+                                    @if (Count(context.Item, status) == 0)
+                                    {
+                                        <MudText Typo="Typo.caption" Class="abom-faint">—</MudText>
+                                    }
+                                    else
+                                    {
+                                        <span class="abom-num" data-abom-run-count="@status">@Count(context.Item, status)</span>
+                                    }
+                                </CellTemplate>
+                            </TemplateColumn>
+                        }
+
+                        <PropertyColumn Property="x => x.RequestedBy" Title="Asked by" />
+                        <PropertyColumn Property="x => x.Results" Title="Found"
+                                        HeaderClass="abom-cell-right" CellClass="abom-cell-right">
+                            <CellTemplate>
+                                <span class="abom-num" data-abom-run-results>@context.Item.Results</span>
+                            </CellTemplate>
+                        </PropertyColumn>
+                        <PropertyColumn Property="x => x.CreatedAt" Title="Started" CellClass="abom-nowrap">
+                            <CellTemplate>
+                                <MudText Typo="Typo.caption">@TimeText.DayAndTime(context.Item.CreatedAt)</MudText>
+                            </CellTemplate>
+                        </PropertyColumn>
+                    </Columns>
+                    <PagerContent><MudDataGridPager T="AnalysisRun" /></PagerContent>
+                </MudDataGrid>
+            }
+
+            @if (_members is not null)
+            {
+                <MudText Typo="Typo.body2" Class="mud-text-secondary mt-4 mb-2" data-abom-run-detail>
+                    Run #@_members.RowId reached
+                    @CountText.Of(_members.Members.Count, "repository", "repositories"),
+                    @Covered of which had a database to analyze, and found
+                    @CountText.Of(_members.Results, "result", "results") between them.
+                </MudText>
+                <MudDataGrid T="AnalysisMember" Items="_members.Members" Dense="true" Hover="true"
+                             SortMode="SortMode.Single" Filterable="false" ShowColumnOptions="false"
+                             RowsPerPage="10" Class="abom-grid">
+                    <Columns>
+                        <PropertyColumn Property="x => x.Repository" Title="Repository"
+                                        HeaderClass="abom-identity-col" CellClass="abom-identity-col" />
+                        <PropertyColumn Property="x => x.Status" Title="Status">
+                            <CellTemplate>
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                         data-abom-member-status="@context.Item.Status">@context.Item.Status</MudChip>
+                            </CellTemplate>
+                        </PropertyColumn>
+                        <PropertyColumn Property="x => x.Detail" Title="Why">
+                            <CellTemplate>
+                                <MudText Typo="Typo.caption" Class="abom-query-pack">@context.Item.Detail</MudText>
+                            </CellTemplate>
+                        </PropertyColumn>
+                        <PropertyColumn Property="x => x.Results" Title="Found"
+                                        HeaderClass="abom-cell-right" CellClass="abom-cell-right">
+                            <CellTemplate>
+                                @if (!context.Item.Counted)
+                                {
+                                    @* Not a zero: nothing has counted this one, and a zero here
+                                       would say the query looked and found nothing. *@
+                                    <MudText Typo="Typo.caption" Class="abom-faint"
+                                             data-abom-member-uncounted>—</MudText>
+                                }
+                                else
+                                {
+                                    <MudTooltip Text="@context.Item.ResultPath">
+                                        <span class="abom-num" data-abom-member-results>@context.Item.Results</span>
+                                    </MudTooltip>
+                                }
+                            </CellTemplate>
+                        </PropertyColumn>
+                    </Columns>
+                    <PagerContent><MudDataGridPager T="AnalysisMember" /></PagerContent>
+                </MudDataGrid>
+            }
+        </MudPaper>
+    }
+
+    @if (!CanAdvance)
+    {
+        <MudAlert Severity="Severity.Info" Class="mt-4" data-abom-queries-unsigned>
+            Advancing a stage and asking for a run both record who did it. Sign in with
+            <code>gh</code> and refresh your identity in Settings to enable them.
+        </MudAlert>
+    }
+}
+
+@code {
+    private QueryCatalog? _catalog;
+    private string? _refusal;
+    private bool _showDiscovery;
+
+    private CatalogQuery? _open;
+    private IReadOnlyList<AnalysisRun> _runs = [];
+    private AnalysisRun? _members;
+
+    /// <summary>
+    /// The outcomes worth a column of their own. Every member lands in one of these, so the
+    /// columns add up to the scope rather than to what worked.
+    /// </summary>
+    private static readonly string[] Statuses =
+        ["succeeded", "failed", "running", "pending", "no_database"];
+
+    private string Operator => Accounts.Identity.Login;
+
+    private bool CanAdvance => Operator.Length > 0;
+
+    /// <summary>
+    /// A discovery query builds the graph rather than reporting a finding, so running one on
+    /// demand answers nothing a reader is developing against.
+    /// </summary>
+    private bool CanRun(CatalogQuery q) =>
+        CanAdvance && !q.Discovery && !q.Lane && q.QueryVersion.Length > 0;
+
+    private string RunTooltip(CatalogQuery q) =>
+        !CanAdvance ? "Sign in to ask for a run"
+        : q.Lane ? "This is a whole suite the crawl invoked, not a query to run on its own"
+        : q.Discovery ? "This query builds the dependency graph; it reports no findings to review"
+        : q.QueryVersion.Length == 0 ? "This ran before versions were recorded, so there is no version to run"
+        : "Run this version over the databases its rule already reaches";
+
+    /// <summary>
+    /// What the grid lists. The crawl's own machinery is out by default and its size is stated, so
+    /// a reader is never shown a filtered catalog that looks like the whole one.
+    /// </summary>
+    private List<CatalogQuery> Shown => _catalog is null
+        ? []
+        : _catalog.Queries.Where(q => _showDiscovery || !(q.Discovery || q.Lane)).ToList();
+
+    private int Hidden => _catalog?.Queries.Count(q => q.Discovery || q.Lane) ?? 0;
+
+    private int Unstaged => Shown.Count(q => q.Stage.Length == 0);
+
+    protected override async Task OnInitializedAsync()
+    {
+        Follow.Changed += OnBeat;
+        await Accounts.EnsureLoadedAsync();
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        _catalog = await Api.GetQueryCatalogAsync();
+        if (_open is not null)
+        {
+            await LoadRuns();
+        }
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// The runs asked for of the open version. Filtered on the client because a run names the
+    /// versions it carried, so the identity a reader opened is the one that selects.
+    /// </summary>
+    private async Task LoadRuns()
+    {
+        var all = await Api.GetAnalysisRunsAsync();
+        _runs = all.Where(r => r.Queries.Any(q =>
+            q.QueryId == _open!.QueryId && q.QueryVersion == _open.QueryVersion)).ToList();
+        if (_members is not null)
+        {
+            _members = await Api.GetAnalysisRunAsync(_members.RowId);
+        }
+    }
+
+    private async Task Inspect(CatalogQuery query)
+    {
+        _open = query;
+        _members = null;
+        await LoadRuns();
+        StateHasChanged();
+    }
+
+    private void Close()
+    {
+        _open = null;
+        _runs = [];
+        _members = null;
+    }
+
+    private async Task Members(AnalysisRun run)
+    {
+        _members = await Api.GetAnalysisRunAsync(run.RowId);
+        StateHasChanged();
+    }
+
+    private async Task Execute(AnalysisRun run)
+    {
+        var (_, refusal) = await Api.ExecuteAnalysisRunAsync(run.RowId);
+        _refusal = refusal;
+        await LoadRuns();
+        StateHasChanged();
+    }
+
+    private async Task Cancel(AnalysisRun run)
+    {
+        var (_, refusal) = await Api.CancelAnalysisRunAsync(run.RowId);
+        _refusal = refusal;
+        await LoadRuns();
+        StateHasChanged();
+    }
+
+    private static int Count(AnalysisRun run, string status) =>
+        run.Tally.TryGetValue(status, out var n) ? n : 0;
+
+    private int Covered => _members?.Members.Count(m => m.DatabasePath.Length > 0) ?? 0;
+
+    private static string Heading(string status) => status switch
+    {
+        "no_database" => "No database",
+        _ => char.ToUpperInvariant(status[0]) + status[1..],
+    };
+
+    private static Color StateColor(string state) => state switch
+    {
+        "complete" => Color.Success,
+        "running" => Color.Info,
+        "canceled" => Color.Warning,
+        _ => Color.Default,
+    };
+
+    private static string StartTooltip(AnalysisRun run) =>
+        run.State == "running" ? "This run is already under way"
+        : run.State == "complete" ? "Run it again over the same scope"
+        : "Carry this run out";
+
+    private async void OnBeat() => await Load();
+
+    private void ToggleDiscovery(bool show)
+    {
+        _showDiscovery = show;
+        StateHasChanged();
+    }
+
+    private async Task Advance(CatalogQuery query, string stage)
+    {
+        if (!CanAdvance)
+        {
+            return;
+        }
+        var (catalog, refusal) = await Api.AdvanceQueryStageAsync(
+            query.QueryId, query.QueryVersion, stage, Operator);
+        _refusal = refusal;
+        if (catalog is not null)
+        {
+            _catalog = catalog;
+        }
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// A query the operator wrote is the one with tests to run. Nothing ships tests for an
+    /// upstream pack, so offering the control there is a button that can only fail.
+    /// </summary>
+    private bool CanTest(CatalogQuery q) =>
+        CanAdvance && q.Origin == "user" && q.QueryVersion.Length > 0;
+
+    private Color TestColor(CatalogQuery q) =>
+        !q.Tested ? Color.Default : q.Passing ? Color.Success : Color.Error;
+
+    private string TestTooltip(CatalogQuery q) =>
+        !CanAdvance ? "Sign in to run tests"
+        : q.Origin != "user" ? "Tests live beside the query, and this one came from a pack you did not write"
+        : !q.Tested ? "Run this version's tests — passing them is what lets it leave dev"
+        : q.Passing ? $"Tests pass: {q.TestDetail}"
+        : $"Tests fail: {q.TestDetail}";
+
+    private async Task Test(CatalogQuery query)
+    {
+        if (!CanTest(query))
+        {
+            return;
+        }
+        var (catalog, refusal) = await Api.TestQueryAsync(query.QueryId, query.QueryVersion);
+        _refusal = refusal;
+        if (catalog is not null)
+        {
+            _catalog = catalog;
+        }
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Asks for a run of this version. The scope is the rule's own reach, which is where a reader
+    /// developing it already has evidence; a refusal says so rather than recording an empty run.
+    /// </summary>
+    private async Task StartRun(CatalogQuery query)
+    {
+        if (!CanRun(query))
+        {
+            return;
+        }
+        var predicate = $"rules={Uri.EscapeDataString(query.QueryId)}";
+        var (run, refusal) = await Api.StartAnalysisRunAsync(
+            predicate, query.QueryId, query.QueryVersion, Operator);
+        _refusal = refusal;
+        if (run is not null)
+        {
+            await Inspect(query);
+            return;
+        }
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Enough of the hash to tell two versions apart. The full value stays on the element, so a
+    /// reader copying it gets the identity rather than the abbreviation.
+    /// </summary>
+    private static string Short(string version) =>
+        version.Length <= 12 ? version : version[..12];
+
+    private static string OriginText(string origin) => origin switch
+    {
+        "upstream" => "upstream",
+        "abom" => "ABOM",
+        "user" => "yours",
+        "mixed" => "several packs",
+        _ => "unknown",
+    };
+
+    /// <summary>The suite's own name; the full reference stays in the payload.</summary>
+    private static string SuiteText(string suite)
+    {
+        const string marker = "codeql-suites/";
+        var names = suite.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(n => n.Contains(marker) ? n[(n.IndexOf(marker) + marker.Length)..] : n);
+        return string.Join(" ", names);
+    }
+
+    public void Dispose() => Follow.Changed -= OnBeat;
+}

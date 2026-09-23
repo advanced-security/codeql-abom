@@ -32,9 +32,18 @@
             <MudButton Href="/explore" Variant="Variant.Text" Color="Color.Inherit"
                        DropShadow="false" StartIcon="@Icons.Material.Outlined.Hub"
                        Class="@NavClass("/explore")">Explorer</MudButton>
+            @* The third reading, and the one neither of the others can give: its unit is a query
+               version, where Inventory's is a node and the Explorer's is a relationship. *@
+            <MudButton Href="/queries" Variant="Variant.Text" Color="Color.Inherit"
+                       DropShadow="false" StartIcon="@Icons.Material.Outlined.Science"
+                       Class="@NavClass("/queries")">Queries</MudButton>
         </nav>
 
         <MudSpacer />
+        @* The crawl is the one thing here that runs with nobody watching, so its state is on
+           every page rather than several folds down inside Settings. Between the journey and the
+           preferences because it is neither: it is what the data is doing right now. *@
+        <CrawlStatus />
         <MudTooltip Text="@ThemeTooltip">
             <MudIconButton Icon="@ThemeIcon" Color="Color.Inherit" OnClick="CycleTheme"
                            aria-label="@ThemeTooltip" data-abom-theme />
@@ -49,8 +58,10 @@
 
     <MudMainContent>
         @* Not on the Dashboard: that surface hands over a scope and states nothing else, because a
-           second, shorter coverage answer beside the entry points was read as the whole one. *@
-        @if (!IsDashboard)
+           second, shorter coverage answer beside the entry points was read as the whole one.
+           Not on Queries either: the catalog's unit is a query version, and a banner counting
+           repositories and findings is an answer to a question that page is not asking. *@
+        @if (!IsDashboard && !IsQueries)
         {
             <CoverageStrip Summary="_summary" />
         }
@@ -71,6 +82,8 @@
         "/" + Nav.ToBaseRelativePath(Nav.Uri).TrimStart('/').Split('?')[0];
 
     private bool IsDashboard => Path == "/";
+
+    private bool IsQueries => Path.StartsWith("/queries", StringComparison.Ordinal);
 
     /// <summary>Marks the surface being read, since the bar is now the only thing saying which.</summary>
     private string NavClass(string href) =>

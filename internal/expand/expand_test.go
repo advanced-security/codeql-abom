@@ -42,7 +42,14 @@ type harness struct {
 	built    []string
 	queried  []string
 	fetchErr map[string]error
+	buildErr map[string]error
 	patterns []string
+	// The lane fixture's directory and the paths in it. Stable for the life of the harness: the
+	// findings lane is identified by the query paths it invokes, so a fresh directory per binding
+	// would read as a changed lane.
+	laneRoot     string
+	laneEdges    string
+	laneFindings string
 }
 
 // SparsePatterns reports the filter this fetch applies. A cached tree is only a hit for the
@@ -186,8 +193,17 @@ func (h *harness) Fetch(_ context.Context, dest, owner, repo, ref string) (Tree,
 func (h *harness) CreateDatabase(_ context.Context, srcDir, dbDir, _ string) error {
 	h.mu.Lock()
 	h.built = append(h.built, srcDir)
+	err := h.buildErr[srcDir]
 	h.mu.Unlock()
-	return os.MkdirAll(dbDir, 0o755)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
+		return err
+	}
+	// Real bytes, because a retained database is measured and a ceiling over an empty directory
+	// is a ceiling over nothing.
+	return os.WriteFile(filepath.Join(dbDir, "codeql-database.yml"), []byte("sourceLocationPrefix: .\n"), 0o644)
 }
 
 func (h *harness) RunQueries(
@@ -233,6 +249,7 @@ func newHarness(t *testing.T) *harness {
 		queue:    &frontier.Queue{Store: s, MaxDepth: 3},
 		probe:    &harnessProbe{},
 		fetchErr: map[string]error{},
+		buildErr: map[string]error{},
 	}
 	w := store.NewWriter(s, 0)
 	h.expander = &Expander{

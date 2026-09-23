@@ -45,7 +45,8 @@ The eleven endpoints that read their own parameters now refuse a term they do no
    declare a vocabulary for all four in `internal/view` and refuse a member outside it, which makes a
    saved view naming a retired kind start failing; or state that these four are deliberately open and
    that a control offers the corpus as a convenience. Whether partial validity in a list refuses or
-   warns is the same decision, and `origin` from [the query catalog](db/query-catalog.md) inherits it.
+   warns is the same decision, and a query's origin from [the query catalog](../db/query-catalog.md)
+   inherits it — under a name that is not `origins`, which already means a repository's.
    Depends on nothing.
 5. **A corpus-derived value list says what it covers, or it overstates it.** `provider` offers one
    value, `CodeQL`, counting **884 of 11,806 findings**: the rest predate the column and are

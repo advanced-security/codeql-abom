@@ -36,8 +36,8 @@ database would confidently name alerts that will never appear. Preserve the impl
    adds 20. The count that matters to the person who will be asked about it is the **delta**, not
    the total. Depends on 1.
 3. **State the coverage, and state it first.** A prediction over 31 of 40 repositories is a
-   prediction about 31 repositories. The nine are named. Coverage comes from
-   [`api/scope-to-databases.md`](scope-to-databases.md), which already reports its gap.
+   prediction about 31 repositories. The nine are named. Coverage comes from the database
+   resolution `store.DatabasesMatching` performs, which already reports its gap per repository.
    Depends on 1.
 4. **State the enablement condition.** A repository with no Actions analysis enabled raises no alert
    however loudly the query fires, and GitHub's repository language statistics **do not report

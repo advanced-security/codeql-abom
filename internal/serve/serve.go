@@ -83,6 +83,20 @@ type Server struct {
 	// being stale on it.
 	WorkDir string
 
+	// Executor carries out a recorded run. Nil records runs and refuses to start them, which is
+	// what a server built without a CodeQL runner can honestly offer.
+	Executor RunExecutor
+
+	// Tester runs the query tests under TestDir. Both are empty unless the operator named a query
+	// directory, and a server without one says so rather than reporting a query as untestable.
+	Tester  QueryTester
+	TestDir string
+
+	// running holds how to stop each run this process started. Only those: a run left `running`
+	// by a server that died is not one this server can stop.
+	runsMu  sync.Mutex
+	running map[int64]context.CancelFunc
+
 	// metrics is built by Handler, so a zero Server stays usable and every request is counted
 	// whether or not Log is set.
 	metrics *metrics
@@ -123,6 +137,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/discovery/status", s.discoveryStatus)
 	mux.HandleFunc("POST /api/discovery/start", s.discoveryStart)
 	mux.HandleFunc("POST /api/discovery/pause", s.discoveryPause)
+	mux.HandleFunc("POST /api/discovery/resume-on-start", s.discoveryResumeOnStart)
 	mux.HandleFunc("POST /api/discovery/requeue/{tier}", s.discoveryRequeue)
 	mux.HandleFunc("POST /api/discovery/requeue-stale", s.discoveryRequeueStale)
 	mux.HandleFunc("POST /api/discovery/requeue-repository", s.discoveryRequeueRepository)
@@ -145,6 +160,15 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/policies/{name}/waivers", s.grantWaiver)
 	mux.HandleFunc("GET /api/policy-waivers", s.policyWaivers)
 	mux.HandleFunc("GET /api/match", s.match)
+	mux.HandleFunc("GET /api/databases", s.databases)
+	mux.HandleFunc("GET /api/queries", s.queries)
+	mux.HandleFunc("POST /api/queries/stage", s.advanceQuery)
+	mux.HandleFunc("POST /api/queries/test", s.testQuery)
+	mux.HandleFunc("GET /api/runs", s.runs)
+	mux.HandleFunc("POST /api/runs", s.startRun)
+	mux.HandleFunc("GET /api/runs/{id}", s.run)
+	mux.HandleFunc("POST /api/runs/{id}/start", s.executeRun)
+	mux.HandleFunc("POST /api/runs/{id}/cancel", s.cancelRun)
 	mux.HandleFunc("GET /api/views", s.views)
 	mux.HandleFunc("GET /api/filters", s.filters)
 	mux.HandleFunc("GET /api/filters/counts", s.filterCounts)

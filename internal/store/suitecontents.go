@@ -16,8 +16,12 @@ type SuiteQuery struct {
 	// query changed: a pack version pinned to the CodeQL CLI does not move when one is edited.
 	PackDigest string
 	QueryID    string
-	Kind       string
-	ResolvedAt string
+	// QueryVersion is the content hash of this query and the libraries it imports. With the id
+	// and the pack version it is what identifies a query in the catalog: the id says what it is,
+	// the pack version says which release it came in, and this says whether it has been edited.
+	QueryVersion string
+	Kind         string
+	ResolvedAt   string
 }
 
 // RecordSuiteContents replaces what a suite is known to resolve to.
@@ -43,9 +47,10 @@ func (s *Store) RecordSuiteContents(suite string, queries []SuiteQuery) error {
 	for _, q := range queries {
 		if _, err := tx.Exec(`
 			INSERT INTO abom_suite_query
-				(suite, pack, pack_version, pack_digest, query_id, kind, resolved_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			suite, q.Pack, q.PackVersion, q.PackDigest, q.QueryID, q.Kind, now); err != nil {
+				(suite, pack, pack_version, pack_digest, query_id, query_version, kind, resolved_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			suite, q.Pack, q.PackVersion, q.PackDigest, q.QueryID, q.QueryVersion,
+			q.Kind, now); err != nil {
 			return fmt.Errorf("recording %s in %s: %w", q.QueryID, suite, err)
 		}
 	}

@@ -47,6 +47,15 @@ type Prepared struct {
 	// travels as a result rather than as ErrSkip because the job still has to be settled, and
 	// only Consume may write.
 	AlreadyRecorded bool
+	// DatabasePath is where the CodeQL database was retained, empty when none was kept. It
+	// travels rather than being recorded on the spot because only Consume may write, and it is
+	// set after the directory was promoted so a row never names an unfinished build.
+	DatabasePath string
+	// DatabaseBytes is what that database occupies, measured when it was promoted.
+	DatabaseBytes int64
+	// DatabaseReused means the database was already on disk and nothing extracted it again.
+	// Recorded apart from the size, which is only measured by the build that produced it.
+	DatabaseReused bool
 }
 
 // Event kinds reported through Pool.OnEvent.

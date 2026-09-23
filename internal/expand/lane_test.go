@@ -9,12 +9,25 @@ import (
 
 // bindLanes points the harness at one graph query and one findings query, each nameable so a test
 // can change one lane's identity without touching the other.
-func bindLanes(h *harness, edgesID, findingsPath string) {
+//
+// Real files in **separate packs**, because both lanes are now identified by content: one pack
+// holding both would have an edit to the findings query move the graph pack's digest too, and the
+// isolation these tests exist to prove would be untestable. The graph pack's contents never vary,
+// so its identity is the same on every call however many temporary directories are made.
+func bindLanes(t *testing.T, h *harness, edgesID, findingsName string) {
+	t.Helper()
+	if h.laneRoot == "" {
+		h.laneRoot = t.TempDir()
+	}
+	h.laneEdges = queryInPack(t, h.laneRoot, "advanced-security/abom-graph", "1.0.0",
+		"AbomEdges.ql", "from int i select i\n")
+	h.laneFindings = queryInPack(t, h.laneRoot, "codeql/actions-queries", "0.6.34",
+		findingsName, "from int i select i\n")
 	h.expander.Resolver = &fakeResolver{
-		queries: []string{"/q/AbomEdges.ql", findingsPath},
+		queries: []string{h.laneEdges, h.laneFindings},
 		meta: map[string]runner.Metadata{
-			"/q/AbomEdges.ql": {ID: edgesID, Tags: ingest.TagEdges},
-			findingsPath:      {ID: "actions/unpinned-tag", Kind: "problem"},
+			h.laneEdges:    {ID: edgesID, Tags: ingest.TagEdges},
+			h.laneFindings: {ID: "actions/unpinned-tag", Kind: "problem"},
 		},
 	}
 }
@@ -54,7 +67,7 @@ func TestAFindingsChangeDoesNotReRunTheGraphLane(t *testing.T) {
 	}
 
 	// Only the findings lane moves: a different query id is a different run key.
-	bindLanes(h, "abom/edges", "/q/Injection.ql")
+	bindLanes(t, h, "abom/edges", "Injection.ql")
 	requeued := h.requeueDirect()
 	runBound(t, h)
 
@@ -72,7 +85,7 @@ func TestAGraphChangeDoesNotReRunTheFindingsLane(t *testing.T) {
 	graphBefore, analyzeBefore := h.graphQueriesRun(), len(a.targets)
 
 	// Only the graph lane moves.
-	bindLanes(h, "abom/edges-v2", "/q/Unpinned.ql")
+	bindLanes(t, h, "abom/edges-v2", "Unpinned.ql")
 	h.requeueDirect()
 	runBound(t, h)
 
@@ -92,7 +105,7 @@ func TestAPassWithNoEdgesToIngestStillStoresItsFindings(t *testing.T) {
 	before := countFindings(t, h)
 	analyzeBefore := len(a.targets)
 
-	bindLanes(h, "abom/edges", "/q/Injection.ql")
+	bindLanes(t, h, "abom/edges", "Injection.ql")
 	h.requeueDirect()
 	stats := runBound(t, h)
 
@@ -128,7 +141,7 @@ func TestALaneWithWorkStillGetsItsDatabase(t *testing.T) {
 	h, _ := drainedLanes(t)
 
 	built := h.databasesBuilt()
-	bindLanes(h, "abom/edges", "/q/Injection.ql")
+	bindLanes(t, h, "abom/edges", "Injection.ql")
 	requeued := h.requeueDirect()
 	runBound(t, h)
 

@@ -132,35 +132,29 @@ The ranking is itself a plan, and is subject to change.
   extraction at identical commits using CodeQL, native lock evidence and the reference action's
   parser. A default-branch SBOM still cannot replace a pinned revision. Publication expansion
   waits for a concrete residual gap; this comparison does not promise one exists.
-11. **[A query has an origin, and a finding remembers it](db/query-catalog.md)** — three kinds of
-    query already run and nothing tells them apart: `abom_finding.provider` records the SARIF tool
-    driver, which is `CodeQL` for upstream, ABOM and operator-written queries alike. The only
-    available channel is the `abom/` prefix on a rule id — a **convention**, enforced by an
-    instruction file rather than by the data, offered as though it were provenance. It also picks up
-    the two columns that already exist and are **never written**, `query_version` and `pack_version`,
-    without which *what has not run since pack X at vY* needs every suite re-resolved.
-12. **[A scope names a set of databases, not only a set of nodes](api/scope-to-databases.md)** — one
-    predicate already means the same thing on three surfaces, and none of them can answer *which
-    databases would have to be analyzed to settle this*, which is what every re-analysis and every
-    simulation actually asks. `store.NodesMatching` returns nodes; getting to a run needs a
-    repository, a commit and a database, and nothing assembles those from a `Spec`. **Does not wait
-    on [the closure database](ql/closure-database.md)** - a regular per-repository database is a
-    database, and the extended shape joins the
-    same resolution later behind the `mode` term. Depends on [the query catalog](db/query-catalog.md).
-13. **[Run these queries, against this scope, now](api/on-demand-analysis.md)** — the only way to
-    run anything is to requeue a whole tier and wait for the crawl to reach it, which is the right
-    shape for keeping an organization current and the wrong shape for every question a person
-    arrives with. A crawl is not a feedback loop, and a feedback loop is what writing a query needs.
-    Execution goes through the lanes `internal/expand` already has, because a second execution path
-    would drift and the two would disagree about what a query means. Depends on
-    [scope to databases](api/scope-to-databases.md).
-14. **[A policy can only say what the filter language can say](api/policy-language.md)** — down to
+11. **[A query has an origin, and a finding remembers it](db/query-catalog.md)** — down to the half
+    that makes it usable. The catalog exists, is keyed by **query version** over the query text plus
+    its whole `.qll` import closure, derives origin from the pack a query resolved from, and is on
+    screen. None of that reaches a predicate: **the filter language has no term for a query's
+    origin, and `origins` already means a repository's**, so item 1 is a naming decision with three
+    named alternatives rather than typing. The second half is that a finding still says which rule
+    fired and not whose rule it was — the join exists, no listing makes it, and *our rules against
+    the maintained set* is the one comparison a security team asks for.
+12. **[Run these queries, against this scope, now](api/on-demand-analysis.md)** — down to two
+    decisions. A run is recorded, carried out, **stoppable**, and its results land in the same
+    tables the crawl writes and are attributed to the same nodes, so a finding it discovers reaches
+    the graph, the Inventory, a policy and the gate. What is left: the executor consults **no skip
+    decision**, which is a fork rather than an omission because a person tuning a query wants the
+    re-run and a person checking coverage does not; and the action still starts from a *query*
+    rather than from whatever a reader just narrowed to, which is the inversion for everyone
+    arriving from the Inventory.
+13. **[A policy can only say what the filter language can say](api/policy-language.md)** — down to
     the half that matters: the language cannot say *carries a live advisory* or *is reached from
     something you own*, which is most of what an Actions rule is for. Both terms are unblocked and
     depend on nothing; each needs adding to the enforceable declaration in `internal/view` or the
     set path refuses it. **Above the gate deliberately, because the gate enforces whatever this
     says** — and the vision now names these terms as what a rule is about.
-15. **[A gate that blocks, and can say whose rule it was](api/verdict-gate.md)** — ABOM can apply
+14. **[A gate that blocks, and can say whose rule it was](api/verdict-gate.md)** — ABOM can apply
     declared policy to an organization's recorded transitive dependency evidence.
     **The policy half is built** — drafted, simulated, adopted, waived and auditable — so what
     remains is the base-versus-head closure diff, the verdict endpoint and the check run, over
@@ -170,18 +164,18 @@ The ranking is itself a plan, and is subject to change.
     [lock-aware resolution](db/actions-lockfile.md)'s separate lock contexts. Depends on
     [the policy language](api/policy-language.md) for what a rule may say. Its verdict-only client
     remains deferred in [api/abom-check.md](api/abom-check.md).
-16. **[A commit-pinned action can still be named as a version](db/version-resolution.md)** - measured
+15. **[A commit-pinned action can still be named as a version](db/version-resolution.md)** - measured
     crawl mappings already feed versions into the existing submission path. Remaining lookup fills
     version-evidence gaps, including native lock refs whose release association is unverified;
     it never substitutes a live tag for [lock-aware resolution](db/actions-lockfile.md)'s selected
     commit. Direct-pin publication and upstream aliases remain deferred until [the native coverage
     crosscheck](api/dependency-graph-crosscheck.md) establishes a native gap.
-17. **[A finding that stops being reported is never removed](db/finding-lifecycle.md)** — unblocked.
+16. **[A finding that stops being reported is never removed](db/finding-lifecycle.md)** — unblocked.
     The sweep was written against a corpus where nothing had ever been sighted, so it correctly
     condemned nothing and proved nothing. There are now **1,724 sighting rows** from a crawl that ran
     the findings suites, so the tombstone and the `_live` view can finally be exercised against a
     finding that really does stop being reported.
-18. **[The same graph draws a different picture every time](ui/graph-layout.md)** — down to one
+17. **[The same graph draws a different picture every time](ui/graph-layout.md)** — down to one
     item, and it is a decision a reader has to settle rather than work. The browser draws where the
     engine placed it, **fitted to the nodes it is actually drawing**, and names which layout is on
     screen; the view refuses above **300 nodes** without explicit approval and there is **no
@@ -193,7 +187,7 @@ The ranking is itself a plan, and is subject to change.
     built-ins cannot be placed at all** — `dot` abandons 3,702 nodes at its 10s deadline. **Still
     not a performance fix**: removing every edge from the whole-corpus view reaches 4.8 FPS, so the
     ceiling is the renderer.
-19. **[Remediation summarizes two things into their more reassuring halves](ui/remediation-honesty.md)**
+18. **[Remediation summarizes two things into their more reassuring halves](ui/remediation-honesty.md)**
     — down to one half, and that half turns out to be **latent rather than live**. The
     strip-versus-table gap is closed: the advisories unit carries an `unreached` count and states
     it under the table, so **3 reaching you** and **8 reaching nothing** are both on screen and sum
@@ -201,39 +195,49 @@ The ranking is itself a plan, and is subject to change.
     ranges include **no fix published**, with 5 repositories sitting in exactly that range — and it
     reaches **no column today**. That makes it cheaper to settle, not safer to ignore: the field is
     on the model, and the next surface wanting a Fix column will find it and believe it.
-20. **[Reach counts a repository that pins a version without the dependency](db/reach-version-constraint.md)**
+19. **[Reach counts a repository that pins a version without the dependency](db/reach-version-constraint.md)**
     — exposure and the submission closure now agree about which version a route belongs to; reach
     carries none of it, and reach is what orders the crawl. **132 of 225** dependencies are analyzed
     at more than one reference. It sits below the interface entries because it is invisible to
     everyone and its first step is a decision that may legitimately conclude no change.
-21. **[A backup is a command, not a thing everybody is told to remember](db/backup-and-restore.md)**
+20. **[A backup is a command, not a thing everybody is told to remember](db/backup-and-restore.md)**
     — the correct incantation is written in the working-style instructions, printed by `make e2e`
     when it refuses the working database, and implemented nowhere. Getting it wrong raises no error:
     `cp` does not read the WAL, so the baseline is silently missing recent commits and a change that
     did nothing looks the same as a change that worked. The half that is a correctness fix rather
     than an ergonomic one is the epoch — a restore moves generation history backwards underneath
     every connected client, and nothing currently tells them to reload.
-22. **[Code quality, measured by our own tool](tools/code-quality.md)** — the gate already holds new
+21. **[Code quality, measured by our own tool](tools/code-quality.md)** — the gate already holds new
     findings at zero in all four languages. What is left is complexity: **50 production functions
     over 10**, and `runServe` is the one that keeps tripping the limit when anything is added to it.
     Measured from source, so unaffected by the corpus retirement. Cleanup rather than risk
     reduction, which is why it sits here.
-23. **[The coverage strip orphans a cell](ui/theme.md)** — with nothing declared the strip renders
+22. **[The coverage strip orphans a cell](ui/theme.md)** — with nothing declared the strip renders
     four items into a three-column grid, so the fourth sits alone on a second row of every surface
     that carries it: Inventory, the Explorer, Settings and the bill of materials. Only the 4 and 5
     item cases are affected; a populated corpus renders 6 and divides cleanly, which is why this is
     invisible in exactly the runs most likely to be looked at. Held by a `test.fail()` that will
     break the run when it is fixed.
-24. **[A query is written from an example, not from QL](ql/query-authoring.md)** — the set of
-    questions anybody can ask of the graph is fixed: whatever `codeql/actions-queries` ships plus
-    one marker ABOM writes. Those are good general questions and they are not *this organization's*
-    — which runner labels are permitted, which internal action must never sit beneath a privileged
-    job. CodeQL expresses all of them; what stops a security team writing them is QL, the `actions`
-    library and a fixture, and the person who knows the Actions patterns usually has none of the
-    three. The [CodeQL development MCP server](https://github.com/advanced-security/codeql-development-mcp-server)
-    already automates that loop and already enforces the rule this repository has been burned by
-    breaking: **the fixture comes from the CLI at every step**. **Does not need
-    [the closure database](ql/closure-database.md).** Depends on [the query catalog](db/query-catalog.md).
+23. **[The crawl says what it is doing, wherever a reader is](ui/crawl-visibility.md)** — down to
+    where its *configuration* lives. The state, the queue, a problem marker and the refresh
+    interval are on the bar of every page, and a restart starts nothing unless somebody configured
+    it to. What is left is that Settings holds four unrelated decisions in one scroll,
+    and that the per-tier suite grid is crawl configuration by placement and **query configuration
+    by subject** — a fork with three named options, the worst of which splits the binding from the
+    requeue that acts on it. An [on-demand run](api/on-demand-analysis.md) is also invisible from
+    anywhere but the page that started it, and it spends the same cores.
+24. **[A query is written from an example, not from QL](ql/query-authoring.md)** — down to the half
+    that means an operator does not have to write QL. The place to put one exists: naming a
+    directory scaffolds a CodeQL pack, its queries resolve by name, run over the retained databases
+    and land in the catalog with origin **`user`**, and **`dev` → `test` is earned** — the advance
+    reads `codeql test run`'s verdict for that exact version and refuses without a passing one, so
+    a query that was green and has since been edited has passed nothing. What is left is the
+    agentic loop: two snippets becoming a fixture tree, driven through the [CodeQL development MCP
+    server](https://github.com/advanced-security/codeql-development-mcp-server) rather than
+    reimplemented, and the authoring environment pinned — it resolves `codeql/actions-all` **0.6.1**
+    where ABOM's suite pins **0.6.35**, and a query tested against one and run against the other
+    can differ with nothing to say which answered. **Does not need
+    [the closure database](ql/closure-database.md).**
 25. **[A query's effect is known before anybody turns it on](api/query-simulation.md)** — a policy
     is simulated before it is adopted and a query is not, and the query is the more consequential
     of the two: publishing one changes what every developer in the organization sees, and its author
@@ -244,14 +248,17 @@ The ranking is itself a plan, and is subject to change.
     Depends on [on-demand analysis](api/on-demand-analysis.md) and [query
     authoring](ql/query-authoring.md).
 26. **[A query leaves ABOM as a published pack, never as an alert](ql/pack-promotion.md)** — the
-    upload route is **refused rather than deferred**: it needed re-anchoring, stable fingerprints, a
-    commit on every finding, a tool-and-category pair whose mishandling *deletes somebody's alerts*,
-    and a confirmation gate in front of all of it. A configuration file applied through the
-    `github-codeql-config-file` repository property is merged with what Default Setup generates, so
-    the organization adds a pack through its own consent mechanism and ABOM writes nothing. **No
-    alert exists that a person did not choose**, now satisfied by construction. Its first item —
-    publishing ABOM's own four packs to GHCR - depends on nothing; the rest depends on
-    [query simulation](api/query-simulation.md).
+    **ABOM-controlled deploy level is built**: advancing a version to `deploy` rewrites a local
+    suite from the ids at that stage, withdrawing one removes it, and the suite is offered in the
+    tier binding grid while the development suite beside it deliberately is not. What remains is
+    the level outside ABOM's authority. The upload route is **refused rather than deferred**: it
+    needed re-anchoring, stable fingerprints, a commit on every finding, a tool-and-category pair
+    whose mishandling *deletes somebody's alerts*, and a confirmation gate in front of all of it. A
+    configuration file applied through the `github-codeql-config-file` repository property is
+    merged with what Default Setup generates, so the organization adds a pack through its own
+    consent mechanism and ABOM writes nothing. **No alert exists that a person did not choose**,
+    now satisfied by construction. Its first item — publishing ABOM's own four packs to GHCR —
+    depends on nothing; the rest depends on [query simulation](api/query-simulation.md).
 27. **[An action remembers its upstream without becoming it](db/fork-provenance.md)** — forks and
     naming-convention mirrors need attributed upstream context without replacing the declared
     dependency or inventing a `uses:` edge. Same-host identity collection can start independently;
@@ -306,10 +313,13 @@ interface does, and the governed exclusions are owed to the policy engine regard
 
 **The ordering is a decision, not drift.** Native resolution and the closure investigation
 sit above long-standing interface work because selecting the right code and distinguishing its
-analysis shape must precede new derived results. The checkout cache is built and reused, not
-another implementation to insert into the ranking; its retention default remains a measured
-refinement. [The query catalog](db/query-catalog.md), [scope to
-databases](api/scope-to-databases.md) and [on-demand analysis](api/on-demand-analysis.md) sit above
+analysis shape must precede new derived results. Two caches are built and reused rather than
+implementations waiting to be inserted into the ranking: the [checkout
+cache](db/checkout-cache.md) holds a fetch, the [database cache](db/database-cache.md) holds an
+extraction, and both keep their retention default as a measured refinement. **[Scope to databases
+has retired](../docs/architecture.md#reading-the-data-out)** — one predicate now resolves to a node
+set and a database set through one enforcement path, so what was an entry is a fact. [The query
+catalog](db/query-catalog.md) and [on-demand analysis](api/on-demand-analysis.md) sit above
 the policy and gate work because a gate enforces rules,
 and the rules an organization wants are ones nobody can write yet. **[Query
 authoring](ql/query-authoring.md), [query simulation](api/query-simulation.md) and [pack
@@ -319,6 +329,15 @@ per-repository database is the useful default and is what Default Setup would ru
 extended shape widens what a query can see and is not a precondition for asking one. The enumeration
 and crosscheck work beneath is no less urgent than it was. Disagreeing with that is the point of
 writing it down.
+
+**A lifecycle exists, and none of its rungs is earned.** A query version can be moved through
+`dev`, `test`, `extended-test`, `review` and `deploy`, and every move records who made it — which
+is an audit trail of intentions, because nothing checks that the version passed what the stage is
+named after. The gates are owned where their evidence is produced: `test` by [query
+authoring](ql/query-authoring.md), `extended-test` by [on-demand
+analysis](api/on-demand-analysis.md), `review` by [query simulation](api/query-simulation.md),
+`deploy` by [pack promotion](ql/pack-promotion.md). Until one rung is earned, the stage column is
+the same shape of claim as a measurement nobody took.
 
 **Investigate before refining.** [The closure database](ql/closure-database.md), [extended
 findings](db/extended-findings.md) and [query simulation](api/query-simulation.md) each open with a
@@ -351,6 +370,14 @@ refusal.
 - **[A coverage gap names its cause](api/ghas-enablement.md)** — needs a released v2 of
   `gh-ghas-audit`. The contract is its `schema_version`, never a branch, and pinning a version that
   does not exist yet means building against something that still moves.
+- **[A retained database is an archive, not a directory](db/codeql-db-bundling.md)** — deferred by
+  decision, with the measurement already taken: `codeql database bundle` turns 19.4 MB of retained
+  database into a **264 KB** archive, and a restore answers `AbomEdges.ql` with the same 54 rows.
+  What is missing is the other half of the trade — a restore costs 1.24 s against a 387 ms query,
+  it cannot be skipped (every database command refuses an archive on 2.27.0), and extraction has
+  never been timed against it, so adopting the archive now would trade a disk problem for a
+  latency problem on an assumption. Its first item needs none of that: two thirds of every
+  retained database is build logs nothing reads.
 - **[An address the organization can reach, and an identity it granted](api/org-server.md)** —
   ingress and an App identity, neither of which this workstation has.
 - **[Read in response to events, not on a timer](api/event-driven-reading.md)** — the detection
@@ -400,7 +427,7 @@ refusal.
 
 ## Built, with refinements nobody has ranked
 
-These **thirteen** plans describe workstreams that are **built and carrying real data**, and each
+These **fifteen** plans describe workstreams that are **built and carrying real data**, and each
 keeps a short list of refinements. They are not ranked because none of them is the next thing to
 build; they are the backlog a workstream leaves behind, and a reader asking "what next" should not
 have to read past them. They are listed because a plan in neither the ranking nor *Deferred* is
@@ -418,6 +445,8 @@ measurement makes it urgent.
 | [api/query-suites.md](api/query-suites.md) | suite staleness, and streaming result sets out of BQRS; query identity belongs to [db/query-catalog.md](db/query-catalog.md) |
 | [api/reachability.md](api/reachability.md) | all-routes reach, and `needs:` ordering nothing renders |
 | [db/analysis-ledger.md](db/analysis-ledger.md) | what a run records, and how a change to any of it reaches work already on record |
+| [db/checkout-cache.md](db/checkout-cache.md) | flipping retention on by default, and eviction that reads the queue |
+| [db/database-cache.md](db/database-cache.md) | the same two for retained CodeQL databases, and a run that must not evict its own working set |
 | [db/data-efficiency.md](db/data-efficiency.md) | the standing cost review; one endpoint is still linear in rows |
 | [db/declaration-provenance.md](db/declaration-provenance.md) | how a declaration arrived, and what contradicts it |
 | [db/freshness-budget.md](db/freshness-budget.md) | claim order, and depth 2 starting before depth 1 drains |

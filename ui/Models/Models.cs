@@ -196,6 +196,19 @@ public sealed record DiscoveryState
 
     public GraphVersion Version { get; init; } = new();
 
+    /// <summary>
+    /// Whether a server start may act on a recorded intent to run. Off unless the operator asked
+    /// for it: having been running is not a request to start again.
+    /// </summary>
+    public bool ResumeOnStart { get; init; }
+
+    /// <summary>
+    /// Whether anybody has ever started discovery here. The loop's state cannot answer it — a
+    /// supervisor is new in every process — so without this a restarted server reports a fully
+    /// crawled installation as never started.
+    /// </summary>
+    public bool EverStarted { get; init; }
+
     /// <summary>Empty when advisories were never collected.</summary>
     public string AdvisoriesFetchedAt { get; init; } = string.Empty;
 
@@ -1111,4 +1124,160 @@ public sealed record NodeDetail
     public IReadOnlyList<AdvisoryReach> Advisories { get; init; } = [];
     public IReadOnlyList<NodeNeighbor> UsedBy { get; init; } = [];
     public IReadOnlyList<NodeNeighbor> Uses { get; init; } = [];
+}
+
+/// <summary>
+/// One version of one query, and what is known about it.
+///
+/// The unit is a version rather than a query: two versions answer differently, so reporting one
+/// readiness for both would attach evidence to something that did not produce it.
+/// </summary>
+public sealed record CatalogQuery
+{
+    public string QueryId { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Content hash of the query and the libraries it imports. Empty for runs recorded before
+    /// versions were written, which is why it is never used alone as a key in a message.
+    /// </summary>
+    public string QueryVersion { get; init; } = string.Empty;
+    public string Pack { get; init; } = string.Empty;
+    public string PackVersion { get; init; } = string.Empty;
+    public string CliVersion { get; init; } = string.Empty;
+
+    /// <summary>Read from the pack that supplied it, never from the rule id's prefix.</summary>
+    public string Origin { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Set when what ran was a whole suite rather than one query, which is how the findings lane
+    /// records itself. Kept apart from the query name so a reader can tell a rule from the set it
+    /// arrived in.
+    /// </summary>
+    public string Suite { get; init; } = string.Empty;
+
+    /// <summary>
+    /// The query's <c>@kind</c>, empty for a table query. <see cref="KindRecorded"/> keeps that
+    /// emptiness apart from a query nobody has resolved a suite for.
+    /// </summary>
+    public string Kind { get; init; } = string.Empty;
+    public bool KindRecorded { get; init; }
+
+    /// <summary>
+    /// Whether this builds the dependency graph rather than reporting a finding. Read from the
+    /// recorded kind, so a query nobody has described is never hidden for lack of a look.
+    /// </summary>
+    public bool Discovery { get; init; }
+
+    /// <summary>
+    /// Whether anything has run this version's tests, and what they said. Never-tested is its own
+    /// answer: a version nobody tested is not one whose tests failed, and only the second is a
+    /// defect to go and look at.
+    /// </summary>
+    public bool Tested { get; init; }
+    public bool Passing { get; init; }
+    public string TestDetail { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Whether this row is a whole-suite invocation rather than a query. The findings lane runs a
+    /// suite in one call, so the ledger records the suite as what ran — true, and not a query
+    /// anybody develops or versions.
+    /// </summary>
+    public bool Lane { get; init; }
+
+    /// <summary>Runs somebody asked for against this version, which is what ties a request to
+    /// the thing it was testing.</summary>
+    public int Analyses { get; init; }
+    public string LastAnalysis { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Empty when nobody has advanced this version. Absent is not <c>dev</c>: a default would
+    /// report a lifecycle decision nobody made.
+    /// </summary>
+    public string Stage { get; init; } = string.Empty;
+    public string StagedBy { get; init; } = string.Empty;
+    public string StagedAt { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Runs and repositories differ and are never printed as one figure: a query run against two
+    /// repositories is two runs and two repositories, and twice against one is two and one.
+    /// </summary>
+    public int Runs { get; init; }
+    public int Repositories { get; init; }
+    public string FirstRunAt { get; init; } = string.Empty;
+    public string LastRunAt { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// The catalog and the lifecycle it is staged against. The stages travel with it so the page
+/// cannot hold a second, drifting copy of what the lifecycle is.
+/// </summary>
+public sealed record QueryCatalog
+{
+    public IReadOnlyList<CatalogQuery> Queries { get; init; } = [];
+    public IReadOnlyList<string> Stages { get; init; } = [];
+}
+
+/// <summary>One query a run names, tied to the version that was being tested.</summary>
+public sealed record AnalysisQueryRef
+{
+    public string QueryId { get; init; } = string.Empty;
+    public string QueryVersion { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// One repository in a run and what became of it.
+///
+/// Every repository the scope named has one of these, including the ones nothing could analyze: a
+/// run holding only the reachable half reports a clean result for the rest.
+/// </summary>
+public sealed record AnalysisMember
+{
+    public string Repository { get; init; } = string.Empty;
+    public string Commit { get; init; } = string.Empty;
+    public string SourceFilter { get; init; } = string.Empty;
+    public string Mode { get; init; } = string.Empty;
+    public string Status { get; init; } = string.Empty;
+
+    /// <summary>What went wrong, or why nothing could run.</summary>
+    public string Detail { get; init; } = string.Empty;
+    public string DatabasePath { get; init; } = string.Empty;
+    public string ResultPath { get; init; } = string.Empty;
+
+    /// <summary>
+    /// How many findings this member reported, meaningful only where <see cref="Counted"/> is
+    /// true. A member nothing ran against has no count, and its zero would read as a repository
+    /// the query found nothing in.
+    /// </summary>
+    public int Results { get; init; }
+    public bool Counted { get; init; }
+    public string StartedAt { get; init; } = string.Empty;
+    public string FinishedAt { get; init; } = string.Empty;
+}
+
+/// <summary>A run somebody asked for, its members and how far it has got.</summary>
+public sealed record AnalysisRun
+{
+    public long RowId { get; init; }
+
+    /// <summary>The predicate the database set was resolved from, verbatim.</summary>
+    public string Predicate { get; init; } = string.Empty;
+    public string Mode { get; init; } = string.Empty;
+    public string RequestedBy { get; init; } = string.Empty;
+    public string State { get; init; } = string.Empty;
+    public string CreatedAt { get; init; } = string.Empty;
+    public string FinishedAt { get; init; } = string.Empty;
+    public IReadOnlyList<AnalysisQueryRef> Queries { get; init; } = [];
+    public IReadOnlyList<AnalysisMember> Members { get; init; } = [];
+
+    /// <summary>What the counted members found between them, totalled by the server.</summary>
+    public int Results { get; init; }
+
+    /// <summary>Every member counted by status, so nothing is left to be inferred from a total.</summary>
+    public IReadOnlyDictionary<string, int> Tally { get; init; } =
+        new Dictionary<string, int>(StringComparer.Ordinal);
+}
+
+public sealed record AnalysisRunList
+{
+    public IReadOnlyList<AnalysisRun> Runs { get; init; } = [];
 }

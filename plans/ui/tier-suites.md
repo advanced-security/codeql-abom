@@ -19,15 +19,22 @@ duration.
 
 1. **Cost guidance measured, not guessed.** "This tier, this suite, ~N repositories at ~M seconds
    each" needs the cycle timings that are already logged and that nothing surfaces. A count says
-   how much work there is, never how long a reader will be waiting for it.
-2. **Re-analyze a selection**, not only a whole tier. The mechanism belongs to
-   [`api/on-demand-analysis.md`](../api/on-demand-analysis.md), which resolves a scope to a database
-   set and runs a chosen plan over it; what is owed here is the control, and the rule that it states
-   the size of what it is about to re-run before it runs it.
-3. **Staleness per suite.** A row says *when* it was last analyzed, not *with what*. Once the
-   run's pack version is joined to the row, a tier can show which of its suites are behind instead
-   of offering an undifferentiated re-analysis of everything. Depends on the pack version being
-   recorded at all; see [`db/query-catalog.md`](../db/query-catalog.md).
+   how much work there is, never how long a reader will be waiting for it. **This plan owns the
+   number for every caller of it**, not only for a tier: the database resolution knows how many
+   databases exist and how many would have to be built, and
+   [`api/on-demand-analysis.md`](../api/on-demand-analysis.md) item 5 states it before spending it.
+   One measurement, three consumers.
+2. **Re-analyze a selection**, not only a whole tier. The mechanism exists —
+   [`api/on-demand-analysis.md`](../api/on-demand-analysis.md) resolves a scope to a database set
+   and runs a chosen plan over it — and a run can only be asked for from the Queries page, which
+   starts from a *query* and takes its rule's own reach as the scope. What is owed here is the
+   control on the thing a reader has already narrowed, and the rule that it states the size of what
+   it is about to re-run before it runs it.
+3. **Staleness per suite.** A row says *when* it was last analyzed, not *with what*. The pack
+   version is now recorded on every run, so joining it to the row is the remaining work: a tier can
+   then show which of its suites are behind instead of offering an undifferentiated re-analysis of
+   everything. A query version is recorded too and is the finer signal — a library edit moves it
+   without moving the pack version. See [`db/query-catalog.md`](../db/query-catalog.md).
 4. **Decide what a section whose read failed does.** A panel that could not reach
    `/api/discovery/suites` has no setting to summarize. It states the failure rather than folding
    over it; what it does not yet do is offer a way to try again.

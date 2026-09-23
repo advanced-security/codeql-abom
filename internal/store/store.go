@@ -96,6 +96,8 @@ var createTables = []struct {
 	{"the saved view table", savedViewDDL},
 	{"the response cache table", httpCacheDDL},
 	{"the discovery state table", discoveryStateDDL},
+	{"the discovery startup table", discoveryStartupDDL},
+	{"the query test table", queryTestDDL},
 	{"the enumeration state table", enumerationStateDDL},
 	{"the repository property table", repositoryPropertyDDL},
 	{"the property schema table", propertySchemaDDL},

@@ -9,7 +9,7 @@ import { test, expect, ready, corpusSize, SURFACES, UNITS } from '../harness.mjs
 // gets rows rather than a refusal, and whether what it says about them is true.
 
 test.describe('four surfaces', () => {
-    test('the navigation offers the four surfaces and nothing else', async ({ page }) => {
+    test('the navigation offers the surfaces and nothing else', async ({ page }) => {
         await page.goto('/');
         await ready(page);
 
@@ -36,6 +36,7 @@ test.describe('four surfaces', () => {
         for (const [selector, expected] of [
             ['.abom-nav a[href="/inventory"]', '/inventory'],
             ['.abom-nav a[href="/explore"]', '/explore'],
+            ['.abom-nav a[href="/queries"]', '/queries'],
             ['[data-abom-settings]', '/settings'],
         ]) {
             await page.goto('/');

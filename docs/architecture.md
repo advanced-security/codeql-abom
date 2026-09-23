@@ -25,8 +25,10 @@ together mean a run that dies halfway does not repeat the work it already finish
 **It is one loop, and it runs itself.** The supervisor reads the declared accounts on a period,
 queues what it found, analyzes, expands, and reads again; a first crawl and a maintenance crawl are
 the same code differing only in whether anything has been read before. `serve --expand` on an empty
-database is the whole bootstrap. Whether discovery should be running is stored, so a restart
-resumes a crawl that was running and leaves a paused one paused.
+database is the whole bootstrap. Whether discovery should be running is stored, and a restart does
+not act on it unless the operator asked it to: a crawl clones repositories and runs CodeQL on every
+core, and a process restarting is not somebody requesting that. The crawl's state is on the
+navigation bar of every page, because it is the one thing here that runs with nobody watching.
 
 **Reads are conditional, and paced by the budget rather than a guess.** Requests carry
 `If-None-Match` against stored validators, so an unchanged answer costs a round trip and no quota.
@@ -84,6 +86,30 @@ refused rather than guessed at.
 A tier binds to a suite in `abom_tier_suite`, editable while the server runs. An empty binding is
 legitimate and means "do not analyze this tier", which is why `abom_tier_configured` exists to tell
 it apart from a tier nobody has configured.
+
+**An organization's own questions are its own queries.** The operator names a directory and ABOM
+scaffolds a CodeQL pack in it: their queries resolve by name, run over the retained databases and
+appear in the catalog with their origin read from the pack. Writing one is not scheduling work —
+the development suite is offered to a run, which is something a person presses, and never to a tier
+binding, which would put a saved file in front of the whole corpus. Deploying a version is what
+moves it into a suite a tier may bind.
+
+**A query version has a lifecycle, and one rung of it is earned.** A version is identified by a
+content hash over the query and every library it imports, so editing a library changes it. Stages
+run `dev`, `test`, `extended-test`, `review`, `deploy`; each advance records who made it, and `test`
+is refused unless `codeql test run` passes for that exact version. ABOM computes readiness and never
+advances anything itself.
+
+**A crawl is not a feedback loop.** Keeping an organization current and answering the question
+somebody arrived with are different shapes, so a scope also resolves to a set of databases and a run
+can be asked for over it. A run records what it asked before it spends anything, is stoppable, and
+ingests its results into the tables the crawl writes — a result that landed anywhere else would need
+every reader taught about a second source. Nothing a run produces leaves the machine.
+
+**A database is extracted once, not once per question.** Retained CodeQL databases are keyed on the
+tuple a run is keyed on, so the cache and the ledger cannot disagree about which database answered.
+Retention is opt-in until its occupancy over a full crawl is measured. Reuse skips the extraction
+and never the analysis: whether a query needs to run again stays a ledger decision.
 
 An account is read over **GraphQL where it answers, REST where it does not**, and both routes answer
 the same three questions — what is new, what changed, what is gone. GraphQL is preferred because one
@@ -181,6 +207,16 @@ workflow is never an edge source; edges leave its steps and its jobs.
 | `abom_finding_sighting` | Which run reported which finding, which is the only way staleness is observable |
 | `rule`, `alert`, `abom_alert_link` | Rule metadata and the link to GitHub's own alerts |
 
+### Queries and what was asked of them
+
+| Table | |
+| --- | --- |
+| `abom_suite_query` | What a round's resolution found in each suite: query id, version, kind and the pack that supplied it |
+| `abom_query_stage` | How far somebody has taken a query version, and who advanced it |
+| `abom_query_test` | What `codeql test run` made of a version, which is what the `test` stage reads |
+| `abom_analysis_run`, `abom_analysis_member`, `abom_analysis_query` | A run somebody asked for: which versions, which scope, and what became of every repository in it |
+| `abom_local_database` | A retained CodeQL database, keyed the way a run is: repository, commit, source filter and mode |
+
 ### Derived and external
 
 | Table | |
@@ -191,6 +227,7 @@ workflow is never an edge source; edges leave its steps and its jobs.
 | `abom_saved_view` | Named predicates, read by the API and the CLI |
 | `abom_http_cache` | Validators GitHub gave for a URL, so an unchanged answer costs no quota |
 | `abom_discovery_state` | Whether the operator wants discovery running, so a restart does not decide |
+| `abom_discovery_startup` | Whether a restart may act on that. Its own row because "running" has no value meaning nobody has said |
 
 #### Two structural properties
 
@@ -259,6 +296,15 @@ origins, reach, reference style — serialized as text, and the Explorer, the AP
 parse the same string. Predicates that cut along the graph's structure are applied in SQL;
 predicates that cut across it are applied after the query, because a closure is edge-closed by
 construction and an arbitrary node filter is not.
+
+**One predicate resolves two ways: to nodes, and to databases.** *Which things match this* and
+*which databases would have to be analyzed to settle it* are the same scope asked of different
+objects, so they are one language and one enforcement path rather than two. The database resolution
+returns a repository, a commit and an analysis mode per entry, each marked retained, buildable or
+unavailable, and reports the repositories it could not resolve as a stated gap — a set that quietly
+omitted them would mean something narrower than it says exactly where that matters most. It builds
+nothing: seeing the size of a thing is separate from spending it. A mode with no databases behind it
+resolves to an empty set and the reason, never to the other mode's.
 
 **A term is applied or refused by name, never dropped.** Each consumer declares the terms it
 enforces, and every term in the language is enforced by at least one of them. A predicate carrying a
