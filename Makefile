@@ -120,6 +120,8 @@ ABOM_E2E_FLAGS ?=
 # what a developer wants. CI names a single file per job, because the suite runs on one worker
 # against one server and its slowest file would otherwise decide how long the check takes.
 ABOM_E2E_SPECS ?=
+# One page or one part of it, as an address or a tag: `/codeql?tab=runs`, `inventory:workflows`, `node`.
+ABOM_E2E_PAGE ?=
 # Which browser runs the suite. Empty takes the pinned Chromium, which is what CI should use
 # because it is identical everywhere. `chrome` borrows the system install, and is the way through
 # on a machine where that download will not complete — a partial one leaves a directory that looks
@@ -170,6 +172,7 @@ e2e-run:
 		ABOM_E2E_UI="$(ABOM_UI)/wwwroot" \
 		ABOM_E2E_PORT="$(ABOM_E2E_PORT)" \
 		ABOM_E2E_CHANNEL="$(ABOM_E2E_CHANNEL)" \
+		ABOM_E2E_PAGE="$(ABOM_E2E_PAGE)" \
 		npx playwright test $(ABOM_E2E_FLAGS) $(ABOM_E2E_SPECS)
 
 fmt:

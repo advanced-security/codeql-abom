@@ -1,5 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 import { detect } from './browser.mjs';
+import { grepFor } from './pages.mjs';
 
 // Paths come from the Makefile so `make e2e` and a bare `npx playwright test` agree. Defaults
 // exist only so the second one works at all; the Makefile always passes them explicitly.
@@ -14,8 +15,11 @@ const ui = process.env.ABOM_E2E_UI ?? '../../../.abom/ui/wwwroot';
 const browser = detect(process.env.ABOM_E2E_CHANNEL);
 console.log(`e2e: running in ${browser.channel} \u2014 ${browser.reason}`);
 
+const pages = (process.env.ABOM_E2E_PAGE ?? '').split(/\s+/).filter(Boolean);
+
 export default defineConfig({
     testDir: './specs',
+    ...(pages.length ? { grep: grepFor(pages) } : {}),
     // The suite drives one server against one SQLite file, and the store allows a single writer.
     // Parallel workers would be several readers of one connection pool, which is not the thing
     // being tested and produces failures that look like interface bugs.

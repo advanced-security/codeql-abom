@@ -1,4 +1,8 @@
 import { test as base, expect } from '@playwright/test';
+import { tagsOf } from './pages.mjs';
+
+/** Tags a test with every page and part it visits, so `ABOM_E2E_PAGE` can select it. */
+export const on = (...paths) => ({ tag: [...new Set(paths.flatMap(tagsOf))] });
 
 // Every route the interface serves. `/node/{*Key}` is omitted: it needs a node key, so it belongs
 // to the populated suite rather than to a list of things that must render from nothing.

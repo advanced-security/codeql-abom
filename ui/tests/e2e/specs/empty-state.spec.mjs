@@ -1,4 +1,4 @@
-import { test, expect, ready, corpusSize, ROUTES } from '../harness.mjs';
+import { test, expect, ready, corpusSize, on, ROUTES } from '../harness.mjs';
 
 // The states a populated database cannot show. Three entries in the capture matrix needed a
 // hand-made database to reach these; a server pointed at an empty file reaches them for free,
@@ -13,7 +13,7 @@ test.describe('nothing declared yet', () => {
         );
     });
 
-    test('an absent declaration reads as "none declared", never as zero', async ({ page }) => {
+    test('an absent declaration reads as "none declared", never as zero', on('/'), async ({ page }) => {
         await page.goto('/');
         await ready(page);
 
@@ -29,7 +29,7 @@ test.describe('nothing declared yet', () => {
             .toContain('none declared');
     });
 
-    test('the Explorer says what it is waiting for and names the action', async ({ page }) => {
+    test('the Explorer says what it is waiting for and names the action', on('/explore'), async ({ page }) => {
         await page.goto('/explore');
         await ready(page);
 
@@ -41,7 +41,7 @@ test.describe('nothing declared yet', () => {
             .toMatch(/settings|declare|discovery|get started/);
     });
 
-    test('Settings distinguishes "not started" from "paused"', async ({ page }) => {
+    test('Settings distinguishes "not started" from "paused"', on('/settings'), async ({ page }) => {
         await page.goto('/settings');
         await ready(page);
 
@@ -50,7 +50,7 @@ test.describe('nothing declared yet', () => {
         expect(body, 'a crawl that never ran is not described as paused').not.toMatch(/pausing/);
     });
 
-    test('no page claims coverage over a corpus that does not exist', async ({ page }) => {
+    test('no page claims coverage over a corpus that does not exist', on(...ROUTES), async ({ page }) => {
         for (const route of ROUTES) {
             await page.goto(route);
             await ready(page);
@@ -63,7 +63,7 @@ test.describe('nothing declared yet', () => {
 });
 
 test.describe('vocabulary', () => {
-    test('the retired ownership wording appears nowhere a reader can see it', async ({ page }) => {
+    test('the retired ownership wording appears nowhere a reader can see it', on(...ROUTES), async ({ page }) => {
         // checkVocabulary guards the source. This guards what actually rendered, including
         // strings the server supplied rather than the Razor.
         for (const route of ROUTES) {

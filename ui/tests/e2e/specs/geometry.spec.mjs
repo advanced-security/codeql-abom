@@ -1,4 +1,4 @@
-import { test, expect, ready, ROUTES, corpusSize, EXPLORE_DRAWN } from '../harness.mjs';
+import { test, expect, ready, on, ROUTES, corpusSize, EXPLORE_DRAWN } from '../harness.mjs';
 
 // Geometry is the layer nothing else owns. bUnit has no CSS engine, so a grid that overflows by
 // 288px and a label that wraps onto its own row are both green everywhere until somebody looks.
@@ -17,7 +17,7 @@ test.describe('geometry', () => {
     // navigation into the bar is this number, and it is the one thing bUnit cannot check: it has
     // no CSS engine, so a layout still reserving 240px is green everywhere until somebody looks.
     for (const route of ROUTES) {
-        test(`${route} spends its whole width on content`, async ({ page }) => {
+        test(`${route} spends its whole width on content`, on(route), async ({ page }) => {
             await page.setViewportSize({ width: 1280, height: 900 });
             await page.goto(route);
             await ready(page);
@@ -35,7 +35,7 @@ test.describe('geometry', () => {
 
     for (const { name, width, height } of WIDTHS) {
         for (const route of ROUTES) {
-            test(`${route} does not overflow horizontally at ${name} (${width}px)`, async ({ page }) => {
+            test(`${route} does not overflow horizontally at ${name} (${width}px)`, on(route), async ({ page }) => {
                 await page.setViewportSize({ width, height });
                 await page.goto(route);
                 await ready(page);
@@ -57,7 +57,7 @@ test.describe('geometry', () => {
         }
     }
 
-    test('the coverage strip fills whole rows rather than orphaning a cell', async ({
+    test('the coverage strip fills whole rows rather than orphaning a cell', on('/inventory'), async ({
         page,
         request,
         baseURL,
@@ -97,7 +97,7 @@ test.describe('geometry', () => {
         ).toBe(0);
     });
 
-    test('no text is clipped by its own container', async ({ page }) => {
+    test('no text is clipped by its own container', on('/'), async ({ page }) => {
         await page.goto('/');
         await ready(page);
 
@@ -114,7 +114,7 @@ test.describe('geometry', () => {
     // A long repository name is the ordinary case, not the edge case: the shared data set carries
     // `globex-industries/partner-integrations` alongside `octo-org/app`. A name that wraps turns a
     // dense row into a three-line block, and thirty of those is a different page.
-    test('a long repository name does not wrap its row into a block', async ({
+    test('a long repository name does not wrap its row into a block', on('/inventory?unit=repositories'), async ({
         page,
         request,
         baseURL,
@@ -142,7 +142,7 @@ test.describe('geometry', () => {
             .toEqual([]);
     });
 
-    test('the graph keeps the room the window has for it, scrolled or not', async ({
+    test('the graph keeps the room the window has for it, scrolled or not', on(EXPLORE_DRAWN), async ({
         page,
         request,
         baseURL,
@@ -192,7 +192,7 @@ test.describe('geometry', () => {
     ];
 
     for (const { name: unit, path } of GRIDS) {
-        test(`${unit} puts none of its columns past the right-hand edge at narrow (1280px)`, async ({
+        test(`${unit} puts none of its columns past the right-hand edge at narrow (1280px)`, on(path), async ({
             page,
             request,
             baseURL,
@@ -242,11 +242,12 @@ test.describe('geometry', () => {
     }
 
     // With the last row in view, the header is still on screen and uncovered, whatever scrolled.
-    for (const { name: tab, path } of [
+    const PINNED = [
         ...['catalog', 'runs', 'requests'].map((t) => ({ name: `CodeQL's ${t}`, path: `/codeql?tab=${t}` })),
         ...[...UNITS, 'coverage'].map((u) => ({ name: `Inventory's ${u}`, path: `/inventory?unit=${u}` })),
-    ]) {
-        test(`${tab} keeps its column names in view as its rows scroll`, async ({ page }) => {
+    ];
+    for (const { name: tab, path } of PINNED) {
+        test(`${tab} keeps its column names in view as its rows scroll`, on(path), async ({ page }) => {
             await page.setViewportSize({ width: 1280, height: 720 });
             await page.goto(path);
             await ready(page);
@@ -290,15 +291,64 @@ test.describe('geometry', () => {
         });
     }
 
+    // A box edge on a fractional device pixel rounds apart from its pinned header; rows show between.
+    test.describe('at a fractional pixel ratio', () => {
+        test.use({ deviceScaleFactor: 1.5 });
+
+        for (const { name: tab, path } of PINNED) {
+            test(`${tab} shows no sliver of its rows above its pinned header`, on(path), async ({ page }) => {
+                await page.setViewportSize({ width: 1280, height: 720 });
+                await page.goto(path);
+                await ready(page);
+
+                const grid = page.locator('.abom-grid .mud-table-container').first();
+                const rows = await grid.locator('tbody tr').first().waitFor({ timeout: 10_000 })
+                    .then(() => true, () => false);
+                test.skip(!rows, `${tab} has no rows on this corpus`);
+                const scrolls = await grid.evaluate((el) => el.scrollHeight > el.clientHeight + 40);
+                test.skip(!scrolls, `${tab} has too few rows on this corpus to scroll`);
+
+                // Loud rows, so a sliver of one cannot pass for the header's own color.
+                await page.addStyleTag({ content: '.abom-grid tbody td { background-color: rgb(255, 0, 255) !important; }' });
+
+                const slivers = [];
+                for (const offset of [0, 0.2, 0.4, 0.6, 0.8]) {
+                    const box = await grid.evaluate(async (el, px) => {
+                        el.closest('.abom-grid').style.marginTop = `${px}px`;
+                        el.scrollTop = 40;
+                        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+                        const r = el.getBoundingClientRect();
+                        return { x: r.left, y: r.top, width: el.clientWidth };
+                    }, offset);
+                    const png = await page.screenshot({ clip: { x: box.x, y: box.y - 3, width: box.width, height: 6 } });
+                    const loud = await page.evaluate(async (b64) => {
+                        const img = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob());
+                        const canvas = new OffscreenCanvas(img.width, img.height);
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0);
+                        const d = ctx.getImageData(0, 0, img.width, img.height).data;
+                        let n = 0;
+                        for (let k = 0; k < d.length; k += 4) if (d[k] > 180 && d[k + 1] < 90 && d[k + 2] > 180) n++;
+                        return n;
+                    }, png.toString('base64'));
+                    if (loud) slivers.push(`${loud} pixels of row at a ${offset}px offset`);
+                }
+                expect(slivers, `${tab} shows its rows above its pinned header`).toEqual([]);
+            });
+        }
+    });
+
     // Mid-page or nested in a grid's row, so brought to its own last row rather than the page's.
     const INSET = [
         {
             name: "CodeQL's suites",
+            at: '/codeql?tab=suites',
             boxes: '[data-abom-suites] .mud-table-container',
             address: async () => '/codeql?tab=suites',
         },
         {
             name: "the largest listed run's results",
+            at: '/codeql?tab=runs',
             boxes: '.abom-results .mud-table-container',
             address: async () => '/codeql?tab=runs',
             open: async (page, request, baseURL) => {
@@ -319,6 +369,7 @@ test.describe('geometry', () => {
         },
         {
             name: "the widest-reaching node's tables",
+            at: '/node',
             boxes: '.abom-grid .mud-table-container',
             address: async (request, baseURL) => {
                 const { items } = await (
@@ -329,8 +380,8 @@ test.describe('geometry', () => {
         },
     ];
 
-    for (const { name, boxes, address, open } of INSET) {
-        test(`${name} keep their column names in view as their rows scroll`, async ({ page, request, baseURL }) => {
+    for (const { name, at, boxes, address, open } of INSET) {
+        test(`${name} keep their column names in view as their rows scroll`, on(at), async ({ page, request, baseURL }) => {
             const path = await address(request, baseURL);
             test.skip(!path, `nothing on this corpus has ${name}`);
 

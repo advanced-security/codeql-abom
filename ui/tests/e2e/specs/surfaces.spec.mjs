@@ -1,4 +1,6 @@
-import { test, expect, ready, corpusSize, SURFACES, UNITS } from '../harness.mjs';
+import { test, expect, ready, corpusSize, on, SURFACES, UNITS } from '../harness.mjs';
+
+const EVERY_UNIT = UNITS.map((u) => `/inventory?unit=${u}`);
 
 // Four surfaces, one scope. The interface used to answer nine questions with nine pages, each
 // inventing its own scope, so an operator who narrowed on one could not carry that narrowing to
@@ -9,7 +11,7 @@ import { test, expect, ready, corpusSize, SURFACES, UNITS } from '../harness.mjs
 // gets rows rather than a refusal, and whether what it says about them is true.
 
 test.describe('four surfaces', () => {
-    test('the navigation offers the surfaces and nothing else', async ({ page }) => {
+    test('the navigation offers the surfaces and nothing else', on('/'), async ({ page }) => {
         await page.goto('/');
         await ready(page);
 
@@ -23,7 +25,7 @@ test.describe('four surfaces', () => {
 
     // The bar is the whole navigation. bUnit owns the markup; what it cannot own is whether the
     // links work in a browser and whether anything is still hidden behind a control.
-    test('every surface is one press away, with nothing behind a toggle', async ({ page }) => {
+    test('every surface is one press away, with nothing behind a toggle', on(...SURFACES), async ({ page }) => {
         await page.goto('/');
         await ready(page);
 
@@ -47,7 +49,7 @@ test.describe('four surfaces', () => {
     });
 
     // The product name is the way back, which is what lets the bar carry no Dashboard entry.
-    test('the product name returns to the Dashboard', async ({ page }) => {
+    test('the product name returns to the Dashboard', on('/inventory', '/'), async ({ page }) => {
         await page.goto('/inventory');
         await ready(page);
 
@@ -57,7 +59,7 @@ test.describe('four surfaces', () => {
 });
 
 test.describe('Inventory reprojects one scope', () => {
-    test('every unit renders rows rather than a refusal', async ({ page, request, baseURL }) => {
+    test('every unit renders rows rather than a refusal', on(...EVERY_UNIT), async ({ page, request, baseURL }) => {
         const summary = await corpusSize(request, baseURL);
         test.skip(!summary.seedRepos, 'no corpus, so an empty unit is honest rather than broken');
 
@@ -84,7 +86,7 @@ test.describe('Inventory reprojects one scope', () => {
     // Every built-in view is written in terms the listing has to apply. Four of them were `scope`,
     // `flags` and `ref`, and a tab strip built from the catalog rendered four refusals until the
     // listing learned them.
-    test('every named view the server offers is a tab that returns rows', async ({
+    test('every named view the server offers is a tab that returns rows', on('/inventory'), async ({
         page,
         request,
         baseURL,
@@ -114,7 +116,7 @@ test.describe('Inventory reprojects one scope', () => {
     // A page that fetches a cap and pages inside it reads as the whole answer. It held 500 of
     // 1,585, and a column sorted within that page named the worst row on the page rather than the
     // worst row there is.
-    test('the grid says how much of the match it is not showing', async ({
+    test('the grid says how much of the match it is not showing', on('/inventory'), async ({
         page,
         request,
         baseURL,
@@ -139,7 +141,7 @@ test.describe('Inventory reprojects one scope', () => {
 
     // Sorting has to reach the server: reordering the rows already fetched answers a narrower
     // question than the column header asks.
-    test('sorting a column asks the server rather than reordering the page', async ({
+    test('sorting a column asks the server rather than reordering the page', on('/inventory'), async ({
         page,
         request,
         baseURL,
@@ -178,7 +180,7 @@ test.describe('Inventory reprojects one scope', () => {
 
     // The scope is the address, so it survives a reload and a unit switch, or a unit is a page
     // wearing a different hat.
-    test('the scope survives a unit switch', async ({ page, request, baseURL }) => {
+    test('the scope survives a unit switch', on('/inventory?unit=repositories', '/inventory'), async ({ page, request, baseURL }) => {
         const summary = await corpusSize(request, baseURL);
         test.skip(!summary.seedRepos, 'no corpus to scope');
 
@@ -197,7 +199,7 @@ test.describe('the advisories unit is honest about what it excludes', () => {
     // The coverage strip counted 11 live advisories over a table holding 3, with a critical among
     // the absent and nothing on screen accounting for them. The exclusion is correct — they name
     // actions only upstream repositories' own CI uses — and it has to be said.
-    test('advisories reaching nothing you own are counted, not silently dropped', async ({
+    test('advisories reaching nothing you own are counted, not silently dropped', on('/inventory?unit=advisories'), async ({
         page,
         request,
         baseURL,
@@ -219,7 +221,7 @@ test.describe('the advisories unit is honest about what it excludes', () => {
 });
 
 test.describe('an action belongs to the scope', () => {
-    test('the bill of materials export carries the scope on screen', async ({ page }) => {
+    test('the bill of materials export carries the scope on screen', on('/inventory'), async ({ page }) => {
         await page.goto('/inventory?properties=business_id%3A3');
         await ready(page);
 
@@ -232,7 +234,7 @@ test.describe('an action belongs to the scope', () => {
         );
     });
 
-    test('the graph opens on the same scope the list was showing', async ({ page }) => {
+    test('the graph opens on the same scope the list was showing', on('/inventory', '/explore'), async ({ page }) => {
         await page.goto('/inventory?kinds=action');
         await ready(page);
 
@@ -249,7 +251,7 @@ test.describe('a unit carries its own columns', () => {
     // total refs and distinct refs as zero for 1,138 of 1,585 rows on the crawled organization,
     // 1,107 of them workflows — a workflow is a consumer, so nothing depends on it and the column
     // is inapplicable rather than small.
-    test('no unit renders a column that is zero for every row it lists', async ({
+    test('no unit renders a column that is zero for every row it lists', on('/inventory?unit=workflows', '/inventory?unit=jobs'), async ({
         page,
         request,
         baseURL,
@@ -278,7 +280,7 @@ test.describe('a unit carries its own columns', () => {
         }
     });
 
-    test('every unit is reachable and renders rows rather than a refusal', async ({
+    test('every unit is reachable and renders rows rather than a refusal', on(...EVERY_UNIT), async ({
         page,
         request,
         baseURL,
@@ -304,7 +306,7 @@ test.describe('a unit carries its own columns', () => {
 test.describe('the Dashboard hands over a scope', () => {
     // It used to report coverage in a strip beside its entry points, and that shorter second
     // answer was read as the whole one. Coverage is Discovery's question.
-    test('the Dashboard states no coverage of its own', async ({ page }) => {
+    test('the Dashboard states no coverage of its own', on('/'), async ({ page }) => {
         await page.goto('/');
         await ready(page);
 
@@ -314,7 +316,7 @@ test.describe('the Dashboard hands over a scope', () => {
         ).toHaveCount(0);
     });
 
-    test('every entry opens the Inventory already narrowed', async ({ page, request, baseURL }) => {
+    test('every entry opens the Inventory already narrowed', on('/', '/inventory?unit=advisories'), async ({ page, request, baseURL }) => {
         const summary = await corpusSize(request, baseURL);
         test.skip(!summary.seedRepos, 'no corpus to scope');
 
@@ -330,7 +332,7 @@ test.describe('the Dashboard hands over a scope', () => {
 
     // Coverage left the Dashboard, and Discovery is not in the navigation, so the way to it has to
     // be here rather than nowhere.
-    test('the way to coverage is still offered', async ({ page }) => {
+    test('the way to coverage is still offered', on('/'), async ({ page }) => {
         await page.goto('/');
         await ready(page);
 
@@ -344,7 +346,7 @@ test.describe('a scope an operator kept', () => {
     // The table has held named predicates and the API has served them since before any of the
     // interface existed; what reached it was a hand-edited URL. This drives the round trip against
     // a real server, because the write path needs a control header a stub cannot refuse over.
-    test('a scope is named, becomes a tab, and can be forgotten', async ({
+    test('a scope is named, becomes a tab, and can be forgotten', on('/inventory'), async ({
         page,
         request,
         baseURL,
@@ -384,7 +386,7 @@ test.describe('a scope an operator kept', () => {
 
     // A built-in is code. Offering a control the server refuses would be an affordance that
     // cannot work, and the refusal would arrive after the click rather than before it.
-    test('a built-in offers no way to forget it', async ({ page }) => {
+    test('a built-in offers no way to forget it', on('/inventory'), async ({ page }) => {
         await page.goto('/inventory');
         await ready(page);
 

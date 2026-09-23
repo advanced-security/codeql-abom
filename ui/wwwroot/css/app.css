@@ -402,6 +402,11 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     max-height: calc(100vh - 64px - 52px - var(--abom-under-grid, 20px));
 }
 
+/* A fractional box top rounds the clip and each pinned cell apart; this covers the rows between. */
+.abom-grid-windowed thead th {
+    box-shadow: 0 -3px 0 1px var(--mud-palette-surface);
+}
+
 /* One caption line under the grid, or two: measured at 40px and 60px, with a line to spare. */
 .abom-grid-captioned {
     --abom-under-grid: 64px;

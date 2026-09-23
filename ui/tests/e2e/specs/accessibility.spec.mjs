@@ -1,4 +1,4 @@
-import { test, expect, ready, corpusSize, ROUTES, EXPLORE_DRAWN } from '../harness.mjs';
+import { test, expect, ready, corpusSize, on, ROUTES, EXPLORE_DRAWN } from '../harness.mjs';
 
 // A control whose only label is a hover tooltip is unnamed for anybody not using a mouse. That is
 // not a polish item on the Explorer, where the colour swatches, the kind checkboxes and the scope
@@ -124,7 +124,7 @@ const UNNAMED = (notOurs) => {
 
 test.describe('every control says what it is', () => {
     for (const route of ROUTES) {
-        test(`${route} offers no control the browser would announce as nothing`, async ({
+        test(`${route} offers no control the browser would announce as nothing`, on(VISIT[route] ?? route), async ({
             page,
             request,
             baseURL,
@@ -161,7 +161,7 @@ test.describe('every control says what it is', () => {
 
     // The exception above is only safe while it stays one control on one component. Asserting that
     // it is still there keeps it from being quietly widened into a way of passing.
-    test('the one control ABOM cannot name is the data grid page size', async ({
+    test('the one control ABOM cannot name is the data grid page size', on('/inventory'), async ({
         page,
         request,
         baseURL,
@@ -184,7 +184,7 @@ test.describe('the filter picker is operable without a mouse', () => {
     // Naming a control is half of it. The picker's term and value entries are menu items carrying
     // text and no label of their own, so if they were ever made unreachable by Tab the names
     // above would be announced to nobody.
-    test('a filter can be reached and applied from the keyboard', async ({
+    test('a filter can be reached and applied from the keyboard', on('/explore'), async ({
         page,
         request,
         baseURL,

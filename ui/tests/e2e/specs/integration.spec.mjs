@@ -1,11 +1,11 @@
-import { test, expect, ready, corpusSize, ROUTES, EXPLORE_DRAWN } from '../harness.mjs';
+import { test, expect, ready, corpusSize, on, ROUTES, EXPLORE_DRAWN } from '../harness.mjs';
 // Cross-component integration: every route boots the Blazor runtime, loads its ES modules, calls
 // the API and renders. `make js` type-checks none of it and `make ui-test` runs none of it, so a
 // bad edit inside graph.js `create()` reaches a reader as a red bar and reaches CI as nothing.
 
 test.describe('every route renders', () => {
     for (const route of ROUTES) {
-        test(`${route} boots without an error bar, a console error or a failed request`, async ({ page }) => {
+        test(`${route} boots without an error bar, a console error or a failed request`, on(route), async ({ page }) => {
             const response = await page.goto(route);
             expect(response?.status(), `HTTP status for ${route}`).toBeLessThan(400);
             await ready(page);
@@ -17,7 +17,7 @@ test.describe('every route renders', () => {
 });
 
 test.describe('the Explorer draws', () => {
-    test('the graph canvas is created and sized to its container', async ({ page }) => {
+    test('the graph canvas is created and sized to its container', on(EXPLORE_DRAWN), async ({ page }) => {
         await page.goto(EXPLORE_DRAWN);
         await ready(page);
 
@@ -38,7 +38,7 @@ test.describe('the Explorer draws', () => {
         expect(fits.canvas, 'canvas was given a real width').toBeGreaterThan(0);
     });
 
-    test('a view that has come to rest still answers the pointer', async ({ page, request, baseURL }) => {
+    test('a view that has come to rest still answers the pointer', on(EXPLORE_DRAWN), async ({ page, request, baseURL }) => {
         // At rest `drawLabels` stops rescheduling and the renderer is paused, so nothing polls the
         // camera. The same drag once moved 97% of the pixels on a fresh view and 0% on a settled
         // one, and no unit test can see it: the wake path is only real inside a browser.
@@ -94,7 +94,7 @@ test.describe('analysis modes', () => {
         { route: '/inventory', endpoint: '/api/actions' },
         { route: '/explore', endpoint: '/api/graph/full' },
     ]) {
-        test(`${surface.route} selects a shape, reloads it and keeps the control visible`, async ({ page }, testInfo) => {
+        test(`${surface.route} selects a shape, reloads it and keeps the control visible`, on(surface.route), async ({ page }, testInfo) => {
             // The Explorer draws only a scope somebody chose, so one is named on the way in.
             // Without it there is no graph to request a shape for.
             await page.goto(
@@ -169,14 +169,14 @@ test.describe('analysis modes', () => {
 });
 
 test.describe('the API answers what the interface asks of it', () => {
-    test('a rejected view parameter is an error, not a silent empty graph', async ({ request, baseURL }) => {
+    test('a rejected view parameter is an error, not a silent empty graph', on('/explore'), async ({ request, baseURL }) => {
         // A predicate that parses and is then ignored returns 200 and an answer that looks real.
         // Six of them shipped that way. An unsupported one must be refused.
         const res = await request.get(`${baseURL}/api/graph/full?scope=owned&notAPredicate=1`);
         expect(res.status(), 'unknown predicate is refused').toBe(400);
     });
 
-    test('the summary the strip renders is the summary the API reports', async ({ page, request, baseURL }) => {
+    test('the summary the strip renders is the summary the API reports', on('/inventory'), async ({ page, request, baseURL }) => {
         const summary = await corpusSize(request, baseURL);
         // Not the Dashboard: that surface hands over a scope and states nothing else, because a
         // second, shorter coverage answer beside the entry points was read as the whole one.

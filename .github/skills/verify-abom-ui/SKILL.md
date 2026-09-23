@@ -51,6 +51,17 @@ make corpus            # replays recorded CodeQL output; offline, and what CI us
 make e2e-corpus-run    # the populated half, spec-for-spec what CI runs
 ```
 
+While changing one page, run only the tests that visit it. Each test is tagged with the pages and
+parts it visits, so a page selects all of its parts and a part selects itself:
+
+```bash
+make e2e-run ABOM_E2E_DB="$PWD/.abom/tmp/e2e-corpus.db" ABOM_E2E_PAGE=inventory:workflows
+make e2e-run ABOM_E2E_DB="$PWD/.abom/tmp/e2e-corpus.db" ABOM_E2E_PAGE='/codeql?tab=runs'
+```
+
+A new test declares what it visits with `on(...)` from `harness.mjs`; an untagged test is never
+selected by page, so it only runs in the whole suite.
+
 Use a snapshot of the working database only to reproduce something that data set does not contain,
 and note that `cp` does not read the WAL:
 
