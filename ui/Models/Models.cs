@@ -1205,6 +1205,30 @@ public sealed record CatalogQuery
     public int Repositories { get; init; }
     public string FirstRunAt { get; init; } = string.Empty;
     public string LastRunAt { get; init; } = string.Empty;
+
+    /// <summary>
+    /// The version on disk in the operator's pack now: the only one whose tests can be run, and
+    /// the one <see cref="Steps"/> describes.
+    /// </summary>
+    public bool Working { get; init; }
+
+    /// <summary>(b) through (g), served for the working copy only and empty on every other row.</summary>
+    public IReadOnlyList<AuthoringStep> Steps { get; init; } = [];
+}
+
+/// <summary>
+/// One mark on a query's way through dev and test. The state is served, never derived here: a
+/// client that decided its own marks would be a second definition of passing.
+/// </summary>
+public sealed record AuthoringStep
+{
+    public string Step { get; init; } = string.Empty;
+
+    /// <summary><c>pending</c>, <c>failed</c>, <c>warning</c> or <c>passing</c>.</summary>
+    public string State { get; init; } = string.Empty;
+
+    /// <summary>The evidence behind the state, in words.</summary>
+    public string Detail { get; init; } = string.Empty;
 }
 
 /// <summary>
@@ -1286,6 +1310,30 @@ public sealed record AnalysisRunList
     public IReadOnlyList<AnalysisRun> Runs { get; init; } = [];
 }
 
+/// <summary>One result a member of a run reported.</summary>
+public sealed record RunFinding
+{
+    public long FindingRowId { get; init; }
+    public string RuleId { get; init; } = string.Empty;
+    public string FilePath { get; init; } = string.Empty;
+    public int StartLine { get; init; }
+    public int StartColumn { get; init; }
+    public string Message { get; init; } = string.Empty;
+    public string Severity { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// What one member of a run reported. <see cref="Evaluated"/> keeps a repository nothing ran
+/// against apart from one that ran and found nothing: both list no findings.
+/// </summary>
+public sealed record MemberFindings
+{
+    public string Repository { get; init; } = string.Empty;
+    public bool Evaluated { get; init; }
+    public IReadOnlyList<RunFinding> Findings { get; init; } = [];
+    public bool Truncated { get; init; }
+}
+
 /// <summary>What a query should catch or stop catching, kept before any query exists.</summary>
 public sealed record QueryRequest
 {
@@ -1296,11 +1344,42 @@ public sealed record QueryRequest
 
     /// <summary>The query the request is about; empty for one that does not exist yet.</summary>
     public string QueryId { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Who chose <see cref="QueryId"/>: <c>operator</c> or <c>agent</c>. Empty beside a target is
+    /// a request kept before that was recorded, which is not the operator having chosen it.
+    /// </summary>
+    public string TargetSource { get; init; } = string.Empty;
     public string Kind { get; init; } = string.Empty;
     public string Status { get; init; } = string.Empty;
     public string RequestedBy { get; init; } = string.Empty;
     public string CreatedAt { get; init; } = string.Empty;
     public string UpdatedAt { get; init; } = string.Empty;
+
+    /// <summary>The run the request was asked from; zero when it was asked from nothing.</summary>
+    public long SourceRunId { get; init; }
+
+    /// <summary>What was picked from that run, as it was filed.</summary>
+    public IReadOnlyList<RequestEvidence> Evidence { get; init; } = [];
+
+    /// <summary>(a) the target, then (b) through (g) for the target's working copy.</summary>
+    public IReadOnlyList<AuthoringStep> Steps { get; init; } = [];
+}
+
+/// <summary>
+/// One result picked from a run: a finding that should not have fired, or a repository where the
+/// query ran and something should have.
+/// </summary>
+public sealed record RequestEvidence
+{
+    public long RunId { get; init; }
+    public string Repository { get; init; } = string.Empty;
+
+    /// <summary>Zero for a missed detection, which names a repository rather than a finding.</summary>
+    public long FindingRowId { get; init; }
+
+    /// <summary><c>false-alarm</c> or <c>missed</c>.</summary>
+    public string Kind { get; init; } = string.Empty;
 }
 
 /// <summary>The requests, and the words the server accepts for their kind and status.</summary>

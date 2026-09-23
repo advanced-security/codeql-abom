@@ -1,0 +1,8 @@
+[
+{
+  "test" : "/private/tmp/abom-testrun-capture/noextract/test/SelfHostedRunner/SelfHostedRunner.qlref",
+  "pass" : false,
+  "failureStage" : "EXTRACTION",
+  "failureDescription" : "A 'codeql test extract' operation failed with error code 2"
+}
+]

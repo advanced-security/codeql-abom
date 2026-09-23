@@ -23,7 +23,7 @@ duration.
    how much work there is, never how long a reader will be waiting for it. **This plan owns the
    number for every caller of it**, not only for a tier: the database resolution knows how many
    databases exist and how many would have to be built, and
-   [`api/on-demand-analysis.md`](../api/on-demand-analysis.md) item 5 states it before spending it.
+   [`api/on-demand-analysis.md`](../api/on-demand-analysis.md) item 2 states it before spending it.
    One measurement, three consumers.
 2. **Staleness per suite.** A row says *when* it was last analyzed, not *with what*. The pack
    version is now recorded on every run, so joining it to the row is the remaining work: a tier can

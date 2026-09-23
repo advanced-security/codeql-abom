@@ -29,6 +29,8 @@ type Executor struct {
 	// Ingester is what makes a run's results mean anything to the rest of ABOM. Without it the
 	// SARIF is a file on disk and the graph, the Inventory and the gate know nothing about it.
 	Ingester *ingest.Ingester
+	// Crawl builds a member's missing database through the crawl's own fetch, caches and lock.
+	Crawl *Expander
 	// Suites are where a query id is resolved to a path. A run names ids because that is what a
 	// catalog holds; only the CLI can say which file an id came from.
 	Suites []string
@@ -40,12 +42,12 @@ type Executor struct {
 	digests runner.DigestCache
 }
 
-// Run analyzes every member whose database is on disk, and says what became of each.
+// Run analyzes every member, building the database a member lacks, and says what became of each.
 //
 // A member that fails does not stop the others: stopping would discard the work already done and
-// leave a reader unable to tell a broken query from a broken repository. A member with nothing on
-// disk is reported rather than left pending, so a complete run never reads as a clean result for
-// a repository nothing ran against.
+// leave a reader unable to tell a broken query from a broken repository. One whose database cannot
+// be built says why, so a complete run never reads as a clean result for a repository nothing ran
+// against.
 func (e *Executor) Run(ctx context.Context, runID int64) error {
 	run, err := e.Store.AnalysisRun(runID)
 	if err != nil {
@@ -77,18 +79,10 @@ func (e *Executor) Run(ctx context.Context, runID int64) error {
 		if member.Status == store.AnalysisNoDatabase {
 			continue
 		}
-		if member.DatabasePath == "" {
-			detail := member.Detail
-			if detail == "" {
-				detail = "no database on disk when the run reached it"
+		if err := e.carryOut(ctx, runID, dir, member, run.Queries, planned); err != nil {
+			if ctx.Err() != nil {
+				_ = e.Store.SetAnalysisRunState(runID, store.RunCanceled)
 			}
-			if err := e.Store.SetAnalysisMemberStatus(
-				runID, member.DatabaseIdentity, store.AnalysisNoDatabase, detail); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := e.analyze(ctx, runID, dir, member, run.Queries, planned); err != nil {
 			return err
 		}
 	}
@@ -100,6 +94,135 @@ func (e *Executor) Run(ctx context.Context, runID int64) error {
 		return fmt.Errorf("attributing what run %d found: %w", runID, err)
 	}
 	return e.Store.SetAnalysisRunState(runID, store.RunComplete)
+}
+
+// carryOut analyzes one member, building its database first when none is on disk.
+func (e *Executor) carryOut(
+	ctx context.Context, runID int64, dir string, member store.AnalysisMember,
+	want []store.AnalysisQuery, planned tierPlan,
+) error {
+	if !onDisk(member.DatabasePath) {
+		if err := e.Store.SetAnalysisMemberStatus(
+			runID, member.DatabaseIdentity, store.AnalysisRunning, "building its database"); err != nil {
+			return err
+		}
+		built, err := e.Crawl.buildDatabase(ctx, member.DatabaseIdentity,
+			filepath.Join(dir, cacheName(member.Repository)), planned.cliVersion)
+		e.report(member.Repository, "build", err)
+		if err != nil {
+			return e.unbuilt(ctx, runID, member.DatabaseIdentity, err)
+		}
+		defer built.release()
+		if err := e.Store.SetAnalysisMemberDatabase(
+			runID, member.DatabaseIdentity, built.identity, built.kept); err != nil {
+			return err
+		}
+		member.DatabaseIdentity, member.DatabasePath = built.identity, built.path
+	}
+	if err := e.analyze(ctx, runID, dir, member, want, planned); err != nil {
+		if ctx.Err() != nil {
+			return e.interrupted(runID, member.DatabaseIdentity, err)
+		}
+		return err
+	}
+	return nil
+}
+
+// unbuilt records why a member's database could not be built, unless the run was stopped.
+func (e *Executor) unbuilt(
+	ctx context.Context, runID int64, id store.DatabaseIdentity, cause error,
+) error {
+	if ctx.Err() != nil {
+		return e.interrupted(runID, id, ctx.Err())
+	}
+	return e.Store.RecordAnalysisMemberResult(runID, id, store.MemberResult{
+		Status: store.AnalysisFailed, Detail: "building its database: " + cause.Error(),
+	})
+}
+
+// interrupted puts a member the run was stopped during back to pending, which can be started again.
+func (e *Executor) interrupted(runID int64, id store.DatabaseIdentity, cause error) error {
+	if err := e.Store.SetAnalysisMemberStatus(
+		runID, id, store.AnalysisPending, "stopped before it finished"); err != nil {
+		return err
+	}
+	return cause
+}
+
+// onDisk reports whether a recorded database is still there; eviction can take one at any time.
+func onDisk(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+// builtDatabase is a database built for one run member.
+type builtDatabase struct {
+	identity store.DatabaseIdentity
+	path     string
+	// kept is where a later run finds it, and empty when nothing retains it.
+	kept    string
+	release func()
+}
+
+// buildDatabase builds a regular database the way a round does: through the checkout cache, under
+// the runner's lock, and retained when a cache is configured. What is built can differ from what
+// was asked in its commit, when none is on record, and in its filter, which is the one fetched now.
+func (e *Expander) buildDatabase(
+	ctx context.Context, want store.DatabaseIdentity, dir, cliVersion string,
+) (builtDatabase, error) {
+	if want.Mode != store.AnalysisModeRegular {
+		return builtDatabase{}, fmt.Errorf("a run builds only regular databases, not %s ones", want.Mode)
+	}
+	owner, repo, ok := splitRepository(want.Repository)
+	if !ok {
+		return builtDatabase{}, fmt.Errorf("%q does not name a repository", want.Repository)
+	}
+	built := builtDatabase{release: func() { os.RemoveAll(dir) }}
+	fail := func(err error) (builtDatabase, error) {
+		built.release()
+		return builtDatabase{}, err
+	}
+
+	b := batch{owner: owner, repo: repo, ref: want.Commit}
+	tree, retained, err := e.materialize(
+		ctx, b, filepath.Join(dir, "src"), want.Commit, want.Commit != "")
+	if err != nil {
+		return fail(err)
+	}
+	built.identity = store.DatabaseIdentity{
+		Repository: want.Repository, Commit: tree.SHA, SourceFilter: e.sourceFilter(), Mode: want.Mode,
+	}
+	db, staged, reused, err := e.databaseFor(ctx, built.identity, filepath.Join(dir, "db"), tree)
+	discardTree(Options{}, tree, retained)
+	if err != nil {
+		return fail(err)
+	}
+	built.path = db
+	switch {
+	case e.Databases == nil:
+		return built, nil
+	case reused:
+		if _, err := e.Store.UseDatabase(built.identity); err != nil {
+			return fail(err)
+		}
+		built.kept = db
+		return built, nil
+	}
+	held, bytes, err := e.Databases.Retain(staged, built.identity)
+	if err != nil {
+		e.Databases.DiscardStaged(staged)
+		return fail(err)
+	}
+	if _, err := e.Store.RetainDatabase(store.RetainedDatabase{
+		DatabaseIdentity: built.identity, Path: held, Bytes: bytes, CLIVersion: cliVersion,
+	}); err != nil {
+		return fail(err)
+	}
+	built.path, built.kept = held, held
+	return built, nil
 }
 
 // analyze runs one member and records what became of it.
@@ -127,33 +250,39 @@ func (e *Executor) analyze(
 
 	// Ingested into the same tables the crawl writes, under a ledger row built the same way. A
 	// result that landed anywhere else would need every reader taught about a second source.
-	found, byQuery, ingestErr := e.ingest(out, member, want, planned)
+	found, byQuery, queryRunID, ingestErr := e.ingest(out, member, want, planned)
 	e.report(member.Repository, "ingest", ingestErr)
-	return e.Store.RecordAnalysisMemberResult(runID, member.DatabaseIdentity, store.MemberResult{
+	result := store.MemberResult{
 		Status:     store.AnalysisSucceeded,
 		Detail:     detailOf(ingestErr),
 		ResultPath: out,
 		Results:    found,
 		Counted:    ingestErr == nil,
 		ByQuery:    byQuery,
-	})
+	}
+	// Linked only once every finding is stored, so a listing is never of half an ingest.
+	if ingestErr == nil {
+		result.QueryRunID = queryRunID
+	}
+	return e.Store.RecordAnalysisMemberResult(runID, member.DatabaseIdentity, result)
 }
 
-// ingest records the evaluation and stores what it found, returning the count in the SARIF.
+// ingest records the evaluation and stores what it found, returning the count in the SARIF and
+// the ledger row it was stored under.
 //
 // The count is what the document holds, not what the write returned: findings are unique on their
 // location and fingerprint, so a rule that has fired here before stores nothing and a member that
 // reported two results would otherwise read as having found none.
 func (e *Executor) ingest(
 	path string, member store.AnalysisMember, want []store.AnalysisQuery, planned tierPlan,
-) (int, map[string]int, error) {
+) (int, map[string]int, int64, error) {
 	runID, err := e.Store.RecordQueryRun(memberRun(member, want, planned))
 	if err != nil {
-		return 0, nil, fmt.Errorf("recording the evaluation of %s: %w", member.Repository, err)
+		return 0, nil, 0, fmt.Errorf("recording the evaluation of %s: %w", member.Repository, err)
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, nil, fmt.Errorf("reading the results at %s: %w", path, err)
+		return 0, nil, 0, fmt.Errorf("reading the results at %s: %w", path, err)
 	}
 	defer f.Close()
 
@@ -170,17 +299,17 @@ func (e *Executor) ingest(
 			return nil
 		},
 	}); err != nil {
-		return 0, nil, fmt.Errorf("reading the results at %s: %w", path, err)
+		return 0, nil, 0, fmt.Errorf("reading the results at %s: %w", path, err)
 	}
 	if _, err := f.Seek(0, 0); err != nil {
-		return 0, nil, fmt.Errorf("re-reading the results at %s: %w", path, err)
+		return 0, nil, 0, fmt.Errorf("re-reading the results at %s: %w", path, err)
 	}
 	if _, err := e.Ingester.FindingsFromSARIF(f, ingest.Options{
 		Repository: member.Repository, QueryRunID: runID, CLIVersion: planned.cliVersion,
 	}); err != nil {
-		return 0, nil, fmt.Errorf("storing the results of %s: %w", member.Repository, err)
+		return 0, nil, 0, fmt.Errorf("storing the results of %s: %w", member.Repository, err)
 	}
-	return found, byQuery, nil
+	return found, byQuery, runID, nil
 }
 
 // memberRun is the ledger row for analyzing one member.

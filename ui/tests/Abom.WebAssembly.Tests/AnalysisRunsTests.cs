@@ -60,6 +60,17 @@ public class AnalysisRunsTests : AbomTestContext
         Assert.Contains("octo/app, octo/tool", cut.Find("[data-abom-run-scope]").TextContent);
     }
 
+    /// <summary>Each query a run names opens its own row in the catalog, version included.</summary>
+    [Fact]
+    public void AQueryARunNamesOpensItsCatalogRow()
+    {
+        var cut = Render(RunJson(1, "complete"));
+
+        var link = cut.Find("[data-abom-run-query-link]");
+        Assert.Equal("/codeql?tab=catalog&query=acme%2Frule", link.GetAttribute("href"));
+        Assert.Equal("acme/rule", link.TextContent.Trim());
+    }
+
     [Fact]
     public void OpeningARunShowsWhatItFoundUnderIt()
     {

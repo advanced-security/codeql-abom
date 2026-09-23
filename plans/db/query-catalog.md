@@ -1,8 +1,9 @@
 # A query has an origin, and a finding remembers which query produced it
 
-**Status:** The catalog exists and is keyed by query version. What it knows cannot be selected: the
-filter language has no term for a query's origin, and the word that would name one is already taken
-by a repository's.
+**Status:** The catalog exists, is keyed by query version, and lists the operator's workspace
+directly, so a query just written has a row before anything has run it. What it knows cannot be
+selected: the filter language has no term for a query's origin, and the word that would name one is
+already taken by a repository's.
 
 ## Why this exists
 
@@ -47,6 +48,7 @@ flowchart LR
     ORIGIN -. "no term in the language" .-> SPEC["view.Spec"]
     ORIGIN -. "rendered on no finding" .-> LIST["Inventory listing"]
     REPO["repository tier"] -->|"origins= is this one"| SPEC
+    WS["operator workspace<br/>src/**/*.ql"] -->|"authoring.Workspace,<br/>no CLI"| CAT
     style SPEC fill:#3d2d1d
     style LIST fill:#3d2d1d
 ```

@@ -23,6 +23,7 @@ builder.Services.AddSingleton<ScopeService>();
 builder.Services.AddSingleton<FollowService>();
 // Singleton because a run is chosen on the CodeQL page and aimed from the Inventory.
 builder.Services.AddSingleton<RunDraft>();
+builder.Services.AddSingleton<RequestDraft>();
 builder.Services.AddMudServices();
 
 await builder.Build().RunAsync();

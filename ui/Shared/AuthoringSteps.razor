@@ -1,0 +1,90 @@
+@using Abom.WebAssembly.Models
+
+@* One mark per step in the order served; every state comes from the API, never from here. *@
+<span class="abom-step-strip" data-abom-steps>
+    @foreach (var step in Steps)
+    {
+        <MudTooltip Text="@(IsAction(step) && TestRefusal.Length > 0 ? TestRefusal : Describe(step))">
+            @if (IsAction(step))
+            {
+                <span>
+                    <MudIconButton Icon="@IconOf(step.Step)" Size="Size.Small"
+                                   Color="@ColorOf(step.State)" Disabled="@(!CanTest)"
+                                   OnClick="@(() => OnTest.InvokeAsync())"
+                                   aria-label="@($"Test this version. {Describe(step)}")"
+                                   data-abom-query-test data-abom-step="@step.Step"
+                                   data-abom-step-state="@step.State" />
+                </span>
+            }
+            else
+            {
+                @* The name is on the wrapper: MudIcon hides its own svg from assistive technology. *@
+                <span class="abom-step" role="img" aria-label="@Describe(step)"
+                      data-abom-step="@step.Step" data-abom-step-state="@step.State">
+                    <MudIcon Icon="@IconOf(step.Step)" Size="Size.Small" Color="@ColorOf(step.State)" />
+                </span>
+            }
+        </MudTooltip>
+    }
+</span>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<AuthoringStep> Steps { get; set; } = [];
+
+    /// <summary>When given, the tests mark is the Test action, colored by what the tests last said.</summary>
+    [Parameter] public EventCallback OnTest { get; set; }
+
+    [Parameter] public bool CanTest { get; set; }
+
+    /// <summary>Why the Test action is unavailable, shown in place of the tests' evidence.</summary>
+    [Parameter] public string TestRefusal { get; set; } = string.Empty;
+
+    private bool IsAction(AuthoringStep step) => step.Step == "tests" && OnTest.HasDelegate;
+
+    private static string Describe(AuthoringStep step)
+    {
+        var text = $"{LabelOf(step.Step)}: {StateText(step.State)}";
+        return step.Detail.Length == 0 ? text : $"{text}. {step.Detail}";
+    }
+
+    private static string LabelOf(string step) => step switch
+    {
+        "target" => "Target",
+        "help" => "Query help",
+        "expected" => "Expected results",
+        "database" => "Test database",
+        "ast" => "AST",
+        "compiles" => "Compiles",
+        "tests" => "Tests",
+        _ => step,
+    };
+
+    /// <summary>Grey says nothing has been shown yet, which is not the same as failing.</summary>
+    private static string StateText(string state) => state switch
+    {
+        "passing" => "passing",
+        "failed" => "failed",
+        "warning" => "needs another look",
+        _ => "nothing to show yet",
+    };
+
+    private static string IconOf(string step) => step switch
+    {
+        "target" => Icons.Material.Outlined.GpsFixed,
+        "help" => Icons.Material.Outlined.Description,
+        "expected" => Icons.Material.Outlined.FactCheck,
+        "database" => Icons.Material.Outlined.Storage,
+        "ast" => Icons.Material.Outlined.AccountTree,
+        "compiles" => Icons.Material.Outlined.Code,
+        "tests" => Icons.Material.Outlined.Science,
+        _ => Icons.Material.Outlined.HelpOutline,
+    };
+
+    private static Color ColorOf(string state) => state switch
+    {
+        "passing" => Color.Success,
+        "failed" => Color.Error,
+        "warning" => Color.Warning,
+        _ => Color.Default,
+    };
+}

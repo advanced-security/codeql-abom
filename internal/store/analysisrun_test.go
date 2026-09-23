@@ -1,8 +1,123 @@
 package store
 
 import (
+	"strings"
 	"testing"
 )
+
+func memberNamed(t *testing.T, run AnalysisRun, repository string) AnalysisMember {
+	t.Helper()
+	for _, m := range run.Members {
+		if m.Repository == repository {
+			return m
+		}
+	}
+	t.Fatalf("run %d has no member %s", run.RowID, repository)
+	return AnalysisMember{}
+}
+
+// A repository ABOM tracks and nothing has analyzed names no commit to rebuild, so the run builds
+// its default branch rather than reporting no database. A shape the crawl never builds stays an
+// absence with its reason.
+func TestARepositoryNothingHasAnalyzedIsLeftForTheRunToBuild(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.UpsertRepository("octo/unanalyzed", ""); err != nil {
+		t.Fatalf("UpsertRepository: %v", err)
+	}
+	run, err := s.AnalysisRun(startedRun(t, s))
+	if err != nil {
+		t.Fatalf("AnalysisRun: %v", err)
+	}
+	member := memberNamed(t, run, "octo/unanalyzed")
+	if member.Status != AnalysisPending {
+		t.Errorf("a tracked repository nothing analyzed is %q, want %q", member.Status, AnalysisPending)
+	}
+	if !strings.Contains(member.Detail, "default branch") {
+		t.Errorf("the member says %q, want it to name what the run builds", member.Detail)
+	}
+
+	extended := runRequest(s)
+	extended.Mode = AnalysisModeExtended
+	id, err := s.CreateAnalysisRun(extended)
+	if err != nil {
+		t.Fatalf("CreateAnalysisRun: %v", err)
+	}
+	if run, err = s.AnalysisRun(id); err != nil {
+		t.Fatalf("AnalysisRun: %v", err)
+	}
+	if m := memberNamed(t, run, "octo/unanalyzed"); m.Status != AnalysisNoDatabase || m.Detail == "" {
+		t.Errorf("an extended member nothing builds is %q (%q), want %q with a reason",
+			m.Status, m.Detail, AnalysisNoDatabase)
+	}
+	if m := memberNamed(t, run, "octo/tool"); m.Status != AnalysisNoDatabase || m.Detail == "" {
+		t.Errorf("an extended database nothing holds is %q (%q), want %q with a reason",
+			m.Status, m.Detail, AnalysisNoDatabase)
+	}
+}
+
+// Ingesting a repository nothing tracks would enter it as a seed, so a run never fetches one, and
+// the member says why rather than reading as a database nobody built.
+func TestARunNeverFetchesARepositoryABOMDoesNotTrack(t *testing.T) {
+	s := newTestStore(t)
+	run, err := s.AnalysisRun(startedRun(t, s))
+	if err != nil {
+		t.Fatalf("AnalysisRun: %v", err)
+	}
+	member := memberNamed(t, run, "octo/unanalyzed")
+	if member.Status != AnalysisNoDatabase {
+		t.Errorf("an untracked repository is %q, want %q", member.Status, AnalysisNoDatabase)
+	}
+	if !strings.Contains(member.Detail, "tracks no repository") {
+		t.Errorf("the member says %q, want it to say ABOM does not track the repository", member.Detail)
+	}
+}
+
+// A member's results are stored under the database it was built at, so a member left at the
+// identity the resolution guessed would attribute them to a database that does not exist.
+func TestAMemberMovesToTheDatabaseItWasBuiltAt(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.UpsertRepository("octo/unanalyzed", ""); err != nil {
+		t.Fatalf("UpsertRepository: %v", err)
+	}
+	id := startedRun(t, s)
+	from := DatabaseIdentity{Repository: "octo/unanalyzed", Mode: AnalysisModeRegular}
+	to := DatabaseIdentity{
+		Repository: "octo/unanalyzed", Commit: "sha-built", SourceFilter: "f1", Mode: AnalysisModeRegular,
+	}
+	if err := s.SetAnalysisMemberDatabase(id, from, to, "/cache/octo/unanalyzed/db"); err != nil {
+		t.Fatalf("SetAnalysisMemberDatabase: %v", err)
+	}
+	if err := s.RecordAnalysisMemberResult(id, to, MemberResult{
+		Status: AnalysisSucceeded, Results: 1, Counted: true,
+		ByQuery: map[string]int{"actions/unpinned-tag": 1},
+	}); err != nil {
+		t.Fatalf("RecordAnalysisMemberResult: %v", err)
+	}
+
+	run, err := s.AnalysisRun(id)
+	if err != nil {
+		t.Fatalf("AnalysisRun: %v", err)
+	}
+	if len(run.Members) != 3 {
+		t.Errorf("moving a member left %d members, want 3", len(run.Members))
+	}
+	m := memberNamed(t, run, "octo/unanalyzed")
+	if m.DatabaseIdentity != to || m.DatabasePath != "/cache/octo/unanalyzed/db" {
+		t.Errorf("the member is at %+v in %q, want %+v where it was built", m.DatabaseIdentity,
+			m.DatabasePath, to)
+	}
+	if m.Status != AnalysisSucceeded || m.ByQuery["actions/unpinned-tag"] != 1 {
+		t.Errorf("the moved member reads %q with %v, want what was recorded against it", m.Status, m.ByQuery)
+	}
+
+	other := DatabaseIdentity{Repository: "octo/other", Mode: AnalysisModeRegular}
+	if err := s.SetAnalysisMemberDatabase(id, to, other, ""); err == nil {
+		t.Error("a member became another repository")
+	}
+	if err := s.SetAnalysisMemberDatabase(id, from, to, ""); err == nil {
+		t.Error("a member was moved from an identity it no longer holds")
+	}
+}
 
 func runRequest(s *Store) AnalysisRequest {
 	return AnalysisRequest{

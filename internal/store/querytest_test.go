@@ -1,6 +1,102 @@
 package store
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
+
+// shippedQueryTestDDL is the table as it shipped, before a result kept where it stopped or which
+// tests it ran.
+const shippedQueryTestDDL = `
+CREATE TABLE abom_query_test (
+  query_id      TEXT NOT NULL,
+  query_version TEXT NOT NULL,
+  passed        INTEGER NOT NULL,
+  total         INTEGER NOT NULL,
+  failed        INTEGER NOT NULL,
+  detail        TEXT NOT NULL DEFAULT '',
+  ran_at        TEXT NOT NULL,
+  PRIMARY KEY (query_id, query_version)
+);`
+
+// Where a test stopped and which tests it ran are what the authoring steps are read from, so both
+// survive being stored, including on a database that recorded tests before either was kept.
+func TestARecordedTestKeepsWhereItStoppedAndWhatItRan(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "abom.db"), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	if _, err := s.db.Exec(shippedQueryTestDDL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO abom_query_test VALUES
+		('acme/old', 'v1', 1, 1, 0, '1 of 1 passed', '2026-09-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Migrate(); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	if err := s.RecordQueryTest(QueryTest{
+		QueryID: "acme/rule", QueryVersion: "v1", Total: 1, Failed: 1,
+		Detail:       "0 of 1 passed; it does not compile",
+		FailureStage: "COMPILATION", TestDigest: "d1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := s.QueryTestFor("acme/rule", "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.FailureStage != "COMPILATION" || got.TestDigest != "d1" {
+		t.Errorf("read back stage %q and digest %q", got.FailureStage, got.TestDigest)
+	}
+	all, err := s.queryTests()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all["acme/rule\x00v1"] != got {
+		t.Errorf("the catalog reads %+v where the lookup reads %+v", all["acme/rule\x00v1"], got)
+	}
+
+	// Not recorded is not "stopped nowhere": the row reads, with neither filled in.
+	old, known, err := s.QueryTestFor("acme/old", "v1")
+	if err != nil || !known {
+		t.Fatalf("a result recorded before the columns existed: known=%v err=%v", known, err)
+	}
+	if old.FailureStage != "" || old.TestDigest != "" {
+		t.Errorf("an old result claims stage %q and digest %q", old.FailureStage, old.TestDigest)
+	}
+}
+
+// A query's steps read every version's tests: whether another version passed is part of what
+// this one's marks say. Another query's results are not.
+func TestTheTestsOfAQueryAreReadAcrossItsVersionsAndNoOtherQuery(t *testing.T) {
+	s := newTestStore(t)
+	for _, r := range []QueryTest{
+		{QueryID: "acme/a", QueryVersion: "v1", Passed: true, Total: 1},
+		{QueryID: "acme/a", QueryVersion: "v2", Total: 1, Failed: 1},
+		{QueryID: "acme/b", QueryVersion: "v1", Passed: true, Total: 1},
+	} {
+		if err := s.RecordQueryTest(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := s.QueryTestsOf("acme/a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].QueryID != "acme/a" || got[1].QueryID != "acme/a" ||
+		got[0].QueryVersion == got[1].QueryVersion {
+		t.Errorf("read %+v, want acme/a's two versions", got)
+	}
+	none, err := s.QueryTestsOf("acme/untested")
+	if err != nil || none == nil || len(none) != 0 {
+		t.Errorf("a query with no tests read %#v (err %v), want an empty list", none, err)
+	}
+}
 
 // The one rung that is earned. A ladder every step of which can be set by hand is an audit trail
 // of intentions, and the first reader to treat one as a guarantee is misled by something this

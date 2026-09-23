@@ -63,6 +63,8 @@ type MemberResult struct {
 	Results    int
 	Counted    bool
 	ByQuery    map[string]int
+	// QueryRunID is the ledger row the member's results were stored under, zero when none were.
+	QueryRunID int64
 }
 
 // AnalysisRun is a request, its members and how far it has got.
@@ -146,10 +148,14 @@ func (s *Store) CreateAnalysisRun(req AnalysisRequest) (int64, error) {
 		}
 	}
 	for _, d := range req.Databases {
-		status := AnalysisPending
-		detail := ""
-		if d.Status == DatabaseBuildable {
-			detail = "no database held; it would have to be built"
+		status, detail := AnalysisPending, ""
+		switch {
+		case d.Status != DatabaseBuildable:
+		case mode != AnalysisModeRegular:
+			status = AnalysisNoDatabase
+			detail = fmt.Sprintf("no %s database held, and a run builds only regular ones", mode)
+		default:
+			detail = "no database held; the run builds one"
 		}
 		if _, err := insertMember(tx, id, d.DatabaseIdentity, status, detail, d.Path); err != nil {
 			return 0, err
@@ -157,7 +163,11 @@ func (s *Store) CreateAnalysisRun(req AnalysisRequest) (int64, error) {
 	}
 	for _, g := range req.Gaps {
 		identity := DatabaseIdentity{Repository: g.Repository, Mode: mode}
-		if _, err := insertMember(tx, id, identity, AnalysisNoDatabase, g.Reason, ""); err != nil {
+		status, detail, err := gapMember(tx, g, mode)
+		if err != nil {
+			return 0, err
+		}
+		if _, err := insertMember(tx, id, identity, status, detail, ""); err != nil {
 			return 0, err
 		}
 	}
@@ -165,6 +175,24 @@ func (s *Store) CreateAnalysisRun(req AnalysisRequest) (int64, error) {
 		return 0, fmt.Errorf("committing the run: %w", err)
 	}
 	return id, nil
+}
+
+// gapMember decides whether the run builds a repository nothing has analyzed: only one ABOM
+// tracks, since ingesting any other would enter it as a seed, and only in the crawl's own shape.
+func gapMember(tx *sql.Tx, g DatabaseGap, mode string) (string, string, error) {
+	var tracked int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM repository WHERE repository_full_name = ?`,
+		g.Repository).Scan(&tracked); err != nil {
+		return "", "", fmt.Errorf("looking up %s: %w", g.Repository, err)
+	}
+	switch {
+	case tracked == 0:
+		return AnalysisNoDatabase, fmt.Sprintf(
+			"ABOM tracks no repository named %s, so a run does not fetch it", g.Repository), nil
+	case mode != AnalysisModeRegular:
+		return AnalysisNoDatabase, g.Reason, nil
+	}
+	return AnalysisPending, "no regular analysis on record; the run builds its default branch", nil
 }
 
 func insertMember(
@@ -200,6 +228,32 @@ func (s *Store) RecordAnalysisMemberResult(
 	return s.setMember(runID, id, r)
 }
 
+// SetAnalysisMemberDatabase records the database a member was built at, which is the identity its
+// results are then stored under. An empty path is a database nothing retains.
+func (s *Store) SetAnalysisMemberDatabase(runID int64, from, to DatabaseIdentity, path string) error {
+	if from.Repository != to.Repository || from.Mode != to.Mode {
+		return fmt.Errorf("moving %s in run %d: a member stays the repository and shape it was",
+			from.Repository, runID)
+	}
+	res, err := s.db.Exec(`
+		UPDATE abom_analysis_member SET db_commit = ?, source_filter = ?, database_path = ?
+		WHERE run_id = ? AND repository = ? AND db_commit = ?
+		  AND source_filter = ? AND analysis_mode = ?`,
+		to.Commit, to.SourceFilter, path,
+		runID, from.Repository, from.Commit, from.SourceFilter, from.Mode)
+	if err != nil {
+		return fmt.Errorf("moving %s in run %d: %w", from.Repository, runID, err)
+	}
+	moved, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("moving %s in run %d: %w", from.Repository, runID, err)
+	}
+	if moved != 1 {
+		return fmt.Errorf("run %d has no member %s at %q", runID, from.Repository, from.Commit)
+	}
+	return nil
+}
+
 func (s *Store) setMember(runID int64, id DatabaseIdentity, r MemberResult) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	started, finished := nullable(""), nullable("")
@@ -227,12 +281,13 @@ func (s *Store) setMember(runID int64, id DatabaseIdentity, r MemberResult) erro
 		SET status = ?, detail = ?,
 		    result_path = CASE WHEN ? <> '' THEN ? ELSE result_path END,
 		    result_count = COALESCE(?, result_count),
+		    query_run_id = COALESCE(?, query_run_id),
 		    started_at = COALESCE(?, started_at),
 		    finished_at = COALESCE(?, finished_at)
 		WHERE run_id = ? AND repository = ? AND db_commit = ?
 		  AND source_filter = ? AND analysis_mode = ?`,
-		r.Status, r.Detail, r.ResultPath, r.ResultPath, results, started, finished,
-		runID, id.Repository, id.Commit, id.SourceFilter, id.Mode); err != nil {
+		r.Status, r.Detail, r.ResultPath, r.ResultPath, results, nullableID(r.QueryRunID),
+		started, finished, runID, id.Repository, id.Commit, id.SourceFilter, id.Mode); err != nil {
 		return fmt.Errorf("moving %s to %s: %w", id.Repository, r.Status, err)
 	}
 	if r.Counted {

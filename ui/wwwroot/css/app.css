@@ -1187,3 +1187,13 @@ code {
 
 /* Row actions on the catalog: a run and a stage change sit together, and neither squashes. */
 .abom-query-actions { display: flex; align-items: center; gap: 2px; flex-wrap: nowrap; }
+
+/* The authoring marks are read left to right as one strip, so they never wrap onto a second line. */
+.abom-step-strip { display: inline-flex; align-items: center; flex-wrap: nowrap; flex-shrink: 0; }
+.abom-step-strip .abom-step { display: inline-flex; padding: 2px; }
+.abom-step-strip .mud-icon-button { padding: 2px; }
+/* Under a query id, the first mark lines up with the id's first letter. */
+.abom-identity-col .abom-step-strip { margin-left: -2px; }
+
+/* A query id is matched against the catalog as written, and MudBlazor uppercases button labels. */
+.abom-ask-change { text-transform: none; }

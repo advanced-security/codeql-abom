@@ -79,6 +79,7 @@ func newRunExecutor(
 		Resolver: sup.Expander.Resolver,
 		Analyzer: sup.Expander.Analyzer,
 		Ingester: sup.Expander.Ingester,
+		Crawl:    sup.Expander,
 		Suites:   runnableSuites(),
 		WorkDir:  filepath.Join(sup.Options.WorkDir, "runs"),
 		OnEvent: func(repository, stage string, err error) {

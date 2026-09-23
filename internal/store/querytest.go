@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS abom_query_test (
   failed        INTEGER NOT NULL,
   detail        TEXT NOT NULL DEFAULT '',
   ran_at        TEXT NOT NULL,
+  failure_stage TEXT,
+  test_digest   TEXT,
   PRIMARY KEY (query_id, query_version)
 );`
 
@@ -32,6 +34,12 @@ type QueryTest struct {
 	Failed       int    `json:"failed"`
 	Detail       string `json:"detail"`
 	RanAt        string `json:"ranAt"`
+	// FailureStage is where a failing test stopped, in the CLI's words. Empty for a pass, and for
+	// a result recorded before the stage was kept.
+	FailureStage string `json:"failureStage"`
+	// TestDigest identifies the tests that were run, so a result for tests that have since
+	// changed can be told from a current one. Empty when nothing identified them.
+	TestDigest string `json:"testDigest"`
 }
 
 // RecordQueryTest stores what the CLI said about a version, replacing any earlier answer.
@@ -43,13 +51,15 @@ func (s *Store) RecordQueryTest(t QueryTest) error {
 		return fmt.Errorf("recording a test: a result belongs to a query version, not a query")
 	}
 	_, err := s.db.Exec(`
-INSERT INTO abom_query_test (query_id, query_version, passed, total, failed, detail, ran_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO abom_query_test (query_id, query_version, passed, total, failed, detail, ran_at,
+                             failure_stage, test_digest)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(query_id, query_version) DO UPDATE SET
   passed = excluded.passed, total = excluded.total, failed = excluded.failed,
-  detail = excluded.detail, ran_at = excluded.ran_at`,
+  detail = excluded.detail, ran_at = excluded.ran_at,
+  failure_stage = excluded.failure_stage, test_digest = excluded.test_digest`,
 		t.QueryID, t.QueryVersion, t.Passed, t.Total, t.Failed, t.Detail,
-		time.Now().UTC().Format(time.RFC3339))
+		time.Now().UTC().Format(time.RFC3339), nullable(t.FailureStage), nullable(t.TestDigest))
 	if err != nil {
 		return fmt.Errorf("recording the tests of %s: %w", t.QueryID, err)
 	}
@@ -64,9 +74,11 @@ func (s *Store) QueryTestFor(queryID, version string) (QueryTest, bool, error) {
 	var t QueryTest
 	var passed int
 	err := s.db.QueryRow(`
-		SELECT query_id, query_version, passed, total, failed, detail, ran_at
+		SELECT query_id, query_version, passed, total, failed, detail, ran_at,
+		       COALESCE(failure_stage, ''), COALESCE(test_digest, '')
 		FROM abom_query_test WHERE query_id = ? AND query_version = ?`, queryID, version).
-		Scan(&t.QueryID, &t.QueryVersion, &passed, &t.Total, &t.Failed, &t.Detail, &t.RanAt)
+		Scan(&t.QueryID, &t.QueryVersion, &passed, &t.Total, &t.Failed, &t.Detail, &t.RanAt,
+			&t.FailureStage, &t.TestDigest)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return QueryTest{}, false, nil
@@ -77,11 +89,37 @@ func (s *Store) QueryTestFor(queryID, version string) (QueryTest, bool, error) {
 	return t, true, nil
 }
 
+// QueryTestsOf reads what is on record for every version of one query.
+func (s *Store) QueryTestsOf(queryID string) ([]QueryTest, error) {
+	rows, err := s.db.Query(`
+		SELECT query_id, query_version, passed, total, failed, detail, ran_at,
+		       COALESCE(failure_stage, ''), COALESCE(test_digest, '')
+		FROM abom_query_test WHERE query_id = ? ORDER BY ran_at, query_version`, queryID)
+	if err != nil {
+		return nil, fmt.Errorf("reading the tests of %s: %w", queryID, err)
+	}
+	defer rows.Close()
+
+	out := []QueryTest{}
+	for rows.Next() {
+		var t QueryTest
+		var passed int
+		if err := rows.Scan(&t.QueryID, &t.QueryVersion, &passed,
+			&t.Total, &t.Failed, &t.Detail, &t.RanAt, &t.FailureStage, &t.TestDigest); err != nil {
+			return nil, fmt.Errorf("scanning a test of %s: %w", queryID, err)
+		}
+		t.Passed = passed != 0
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // queryTests reads every recorded outcome, keyed the way the catalog joins.
 func (s *Store) queryTests() (map[string]QueryTest, error) {
 	out := map[string]QueryTest{}
 	rows, err := s.db.Query(`
-		SELECT query_id, query_version, passed, total, failed, detail, ran_at
+		SELECT query_id, query_version, passed, total, failed, detail, ran_at,
+		       COALESCE(failure_stage, ''), COALESCE(test_digest, '')
 		FROM abom_query_test`)
 	if err != nil {
 		return nil, fmt.Errorf("reading recorded tests: %w", err)
@@ -92,7 +130,7 @@ func (s *Store) queryTests() (map[string]QueryTest, error) {
 		var t QueryTest
 		var passed int
 		if err := rows.Scan(&t.QueryID, &t.QueryVersion, &passed,
-			&t.Total, &t.Failed, &t.Detail, &t.RanAt); err != nil {
+			&t.Total, &t.Failed, &t.Detail, &t.RanAt, &t.FailureStage, &t.TestDigest); err != nil {
 			return nil, fmt.Errorf("scanning a recorded test: %w", err)
 		}
 		t.Passed = passed != 0

@@ -66,11 +66,12 @@ flowchart LR
    — and evicting it guarantees an extraction next round, which is the cost this plan exists to
    remove. The same defect the checkout cache carries, one layer up and an order of magnitude more
    expensive per mistake. Depends on nothing.
-3. **An on-demand run that evicts its own working set is a defect nobody would see.** A run over a
-   thousand repositories touches a thousand databases; if that exceeds the ceiling it evicts the
-   ones it analyzed first, and a second run over the same scope rebuilds all of them. Nothing
-   currently notices. Either the run pins what it resolved for its duration, or the resolution
-   states that the scope exceeds what can be held. Depends on 2.
+3. **An on-demand run that evicts its own working set is a defect nobody would see**, and it is
+   reachable now that a run builds and retains what it lacks. A run never trims — only a crawl round
+   does, as it starts — so a run over more than the ceiling holds overshoots it until the next round,
+   which then evicts what the run built first, and a second run over the same scope rebuilds all of
+   them. Nothing currently notices. Either the run pins what it resolved for its duration, or the
+   resolution states that the scope exceeds what can be held. Depends on 2.
 
 ## What this does not cover
 

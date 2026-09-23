@@ -87,10 +87,11 @@ type Server struct {
 	// what a server built without a CodeQL runner can honestly offer.
 	Executor RunExecutor
 
-	// Tester runs the query tests under TestDir. Both are empty unless the operator named a query
-	// directory, and a server without one says so rather than reporting a query as untestable.
-	Tester  QueryTester
-	TestDir string
+	// Tester runs the tests of a query in QueryDir, the operator's pack. Both are empty unless the
+	// operator named one, and a server without one says so rather than reporting a query as
+	// untestable.
+	Tester   QueryTester
+	QueryDir string
 
 	// running holds how to stop each run this process started. Only those: a run left `running`
 	// by a server that died is not one this server can stop.
@@ -170,6 +171,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/runs", s.runs)
 	mux.HandleFunc("POST /api/runs", s.startRun)
 	mux.HandleFunc("GET /api/runs/{id}", s.run)
+	mux.HandleFunc("GET /api/runs/{id}/results", reading(s.runResults, "repository", "query"))
 	mux.HandleFunc("POST /api/runs/{id}/start", s.executeRun)
 	mux.HandleFunc("POST /api/runs/{id}/cancel", s.cancelRun)
 	mux.HandleFunc("GET /api/views", s.views)

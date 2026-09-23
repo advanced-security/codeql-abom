@@ -94,17 +94,29 @@ the development suite is offered to a run, which is something a person presses, 
 binding, which would put a saved file in front of the whole corpus. Deploying a version is what
 moves it into a suite a tier may bind.
 
-**A query version has a lifecycle, and one rung of it is earned.** A version is identified by a
+**A query version has a lifecycle, and two rungs of it are earned.** A version is identified by a
 content hash over the query and every library it imports, so editing a library changes it. Stages
-run `dev`, `test`, `extended-test`, `review`, `deploy`; each advance records who made it, and `test`
-is refused unless `codeql test run` passes for that exact version. ABOM computes readiness and never
-advances anything itself.
+run `dev`, `test`, `extended-test`, `review`, `deploy`; each advance records who made it. `test` is
+refused unless that version's own tests — the `.qlref` files naming it, never the whole directory —
+pass, and `extended-test` unless every step the version carries does — all but the target, which
+belongs to a request. Each step is derived from evidence on
+disk or in `abom_query_test`, served by the API and never computed in the browser. ABOM computes
+readiness and never advances anything itself.
+
+**A request's target is selected, never typed**, and says who chose it: *selected by you* or
+*decided by the agent*. A request asked from a run carries the picked results as evidence — a
+finding that should not have fired, or a repository where nothing fired that should have — each
+checked against the run and the query when it is filed.
 
 **A crawl is not a feedback loop.** Keeping an organization current and answering the question
 somebody arrived with are different shapes, so a scope also resolves to a set of databases and a run
 can be asked for over it. A run records what it asked before it spends anything, is stoppable, and
 ingests its results into the tables the crawl writes — a result that landed anywhere else would need
-every reader taught about a second source. Nothing a run produces leaves the machine.
+every reader taught about a second source. A member with no database gets one built the way the
+crawl builds one, at the commit on record or, where nothing names one, at the default branch, and is
+recorded at the database it was analyzed against. Only what the crawl would build is built: a
+regular database, for a repository ABOM tracks, since ingesting any other would enter it as a seed.
+Nothing a run produces leaves the machine.
 
 **A database is extracted once, not once per question.** Retained CodeQL databases are keyed on the
 tuple a run is keyed on, so the cache and the ledger cannot disagree about which database answered.
@@ -213,9 +225,10 @@ workflow is never an edge source; edges leave its steps and its jobs.
 | --- | --- |
 | `abom_suite_query` | What a round's resolution found in each suite: query id, version, kind and the pack that supplied it |
 | `abom_query_stage` | How far somebody has taken a query version, and who advanced it |
-| `abom_query_test` | What `codeql test run` made of a version, which is what the `test` stage reads |
-| `abom_query_request` | What somebody asked a query to catch or stop catching, with a `COMPLIANT` and a `NON_COMPLIANT` example |
-| `abom_analysis_run`, `abom_analysis_member`, `abom_analysis_query` | A run somebody asked for: which versions, which scope, and what became of every repository in it |
+| `abom_query_test` | What that version's own tests made of it, the stage they reached and a digest of the test files, which is what the `test` stage reads |
+| `abom_query_request` | What somebody asked a query to catch or stop catching, with a `COMPLIANT` and a `NON_COMPLIANT` example, the target and who chose it |
+| `abom_query_request_evidence` | The run results a request was asked from: a false alarm names a finding, a missed detection a repository |
+| `abom_analysis_run`, `abom_analysis_member`, `abom_analysis_query` | A run somebody asked for: which versions, which scope, and what became of every repository in it. A member names the evaluation that reported its findings, so they can be listed one at a time |
 | `abom_analysis_result` | What each query in a run found in each repository. A member counted before this existed has a total and no split |
 | `abom_local_database` | A retained CodeQL database, keyed the way a run is: repository, commit, source filter and mode |
 

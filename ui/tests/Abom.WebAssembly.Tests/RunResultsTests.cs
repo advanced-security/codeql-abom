@@ -1,4 +1,6 @@
+using Abom.WebAssembly.Services;
 using Bunit;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Abom.WebAssembly.Tests;
@@ -121,5 +123,89 @@ public class RunResultsTests : AbomTestContext
         Assert.Equal(["octo/app"], Repositories(cut));
         Assert.NotNull(cut.Find("[data-abom-member-uncounted]"));
         Assert.Equal("51", cut.Find("[data-abom-member-total]").TextContent.Trim());
+    }
+
+    private const string AppFindings = """
+        {"repository":"octo/app","evaluated":true,"truncated":false,"findings":[
+          {"findingRowId":41,"ruleId":"acme/rule","filePath":".github/workflows/ci.yml","startLine":6,
+           "startColumn":5,"message":"This job runs on a self-hosted runner.","severity":"warning"},
+          {"findingRowId":42,"ruleId":"acme/rule","filePath":".github/workflows/deploy.yml","startLine":9,
+           "startColumn":5,"message":"This job runs on a self-hosted runner.","severity":"warning"}]}
+        """;
+
+    private IRenderedComponent<Shared.RunResults> Picking(string? queryId)
+    {
+        Answer("api/runs/3/results", AppFindings);
+        var cut = Render(queryId);
+        cut.Find("[data-abom-results-pick]").Click();
+        return cut;
+    }
+
+    /// <summary>
+    /// A result that should not have fired is named, not described: picking it attaches that
+    /// finding to a request about the query that reported it, and nothing is filed until the
+    /// operator saves the request.
+    /// </summary>
+    [Fact]
+    public void PickingAResultAsksForAChangeToTheQueryThatReportedIt()
+    {
+        var cut = Picking("acme/rule");
+        cut.Find("[data-abom-member-findings='octo/app']").Click();
+        cut.WaitForAssertion(() => cut.Find("[data-abom-pick-finding='41'] input").Change(true));
+
+        cut.Find("[data-abom-results-ask]").Click();
+
+        var draft = Services.GetRequiredService<RequestDraft>().Request!;
+        Assert.Equal("acme/rule", draft.QueryId);
+        Assert.Equal(3, draft.SourceRunId);
+        Assert.Equal("false-alarm", draft.Kind);
+        var picked = Assert.Single(draft.Evidence);
+        Assert.Equal((3L, "octo/app", 41L, "false-alarm"),
+            (picked.RunId, picked.Repository, picked.FindingRowId, picked.Kind));
+        Assert.EndsWith("/codeql?tab=requests",
+            Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.Uri);
+        Assert.DoesNotContain(Sent, r => r.Method == "POST");
+    }
+
+    /// <summary>
+    /// A miss is a repository the query looked at and found nothing in. One nothing ran against
+    /// is not a miss, because nothing there was looked at.
+    /// </summary>
+    [Fact]
+    public void OnlyARepositoryTheQueryLookedAtCanBePickedAsAMiss()
+    {
+        var cut = Picking("acme/rule");
+
+        Assert.NotNull(cut.Find("[data-abom-pick-missed='octo/quiet']"));
+        Assert.Empty(cut.FindAll("[data-abom-pick-missed='octo/none']"));
+        Assert.Empty(cut.FindAll("[data-abom-pick-missed='octo/app']"));
+
+        cut.Find("[data-abom-pick-missed='octo/quiet'] input").Change(true);
+        cut.Find("[data-abom-results-ask]").Click();
+
+        var draft = Services.GetRequiredService<RequestDraft>().Request!;
+        Assert.Equal("missed", draft.Kind);
+        Assert.Equal(("octo/quiet", 0L), (draft.Evidence[0].Repository, draft.Evidence[0].FindingRowId));
+    }
+
+    [Fact]
+    public void NothingPickedAsksForNothing()
+    {
+        var cut = Picking("acme/rule");
+
+        Assert.True(cut.Find("[data-abom-results-ask]").HasAttribute("disabled"));
+    }
+
+    /// <summary>A request is about one query, so a run of several asks which one first.</summary>
+    [Fact]
+    public void ARunOfSeveralQueriesAsksWhichOneTheRequestIsAbout()
+    {
+        var cut = Picking(null);
+
+        Assert.Empty(cut.FindAll("[data-abom-pick-missed]"));
+        cut.Find("[data-abom-pick-query='acme/other']").Click();
+
+        Assert.NotNull(cut.Find("[data-abom-pick-missed='octo/quiet']"));
+        Assert.Contains("acme/other", cut.Find("[data-abom-results-ask]").TextContent);
     }
 }

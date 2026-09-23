@@ -222,3 +222,48 @@ func TestADottedImportResolvesThroughDirectories(t *testing.T) {
 		t.Error("a library reached by a dotted import moved and the version did not")
 	}
 }
+
+// Versions read together are the versions read one at a time; reading them together only saves
+// the listing of where libraries live.
+func TestVersionsReadTogetherAreTheVersionsReadAlone(t *testing.T) {
+	dir := versionPack(t, map[string]string{
+		"A.ql":    "import Lib\nfrom int i select i\n",
+		"B.ql":    "from int i select i\n",
+		"Lib.qll": "class A extends int {}\n",
+	})
+	paths := []string{filepath.Join(dir, "A.ql"), filepath.Join(dir, "B.ql")}
+
+	got, err := QueryVersions(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{versionOf(t, dir, "A.ql"), versionOf(t, dir, "B.ql")}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("read together %v, read alone %v", got, want)
+	}
+}
+
+// Finding the libraries walks the whole CodeQL workspace, which for a pack inside this repository
+// is the repository. Doing that once per query made listing ten queries cost ten walks.
+func TestTheLibrariesAreListedOncePerPackNotOncePerQuery(t *testing.T) {
+	dir := versionPack(t, map[string]string{
+		"A.ql": "from int i select i\n", "B.ql": "from int i select i\n",
+		"C.ql": "from int i select i\n",
+	})
+	listed := 0
+	before := listRoots
+	listRoots = func(packDir string) []string {
+		listed++
+		return before(packDir)
+	}
+	t.Cleanup(func() { listRoots = before })
+
+	if _, err := QueryVersions([]string{
+		filepath.Join(dir, "A.ql"), filepath.Join(dir, "B.ql"), filepath.Join(dir, "C.ql"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if listed != 1 {
+		t.Errorf("listed the libraries %d times for three queries in one pack, want once", listed)
+	}
+}

@@ -2,6 +2,7 @@
 @using Abom.WebAssembly.Services
 @inject AbomApi Api
 @inject AccountService Accounts
+@inject RequestDraft Asked
 
 @* Both examples are required: they are what a query's test is written from. *@
 <div data-abom-requests>
@@ -26,8 +27,16 @@
     {
         <MudPaper Outlined="true" Class="pa-4 mb-4" data-abom-request-form>
             <MudText Typo="Typo.subtitle2" Class="mb-2">
-                @(_draft.RowId == 0 ? "New request" : $"Request #{_draft.RowId}")
+                @(_draft.RowId != 0 ? $"Request #{_draft.RowId}"
+                  : _draft.SourceRunId != 0 ? $"New request, asked from run #{_draft.SourceRunId}"
+                  : "New request")
             </MudText>
+            @if (_draft.RowId == 0 && _draft.Evidence.Count > 0)
+            {
+                <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3" data-abom-request-evidence>
+                    @EvidenceText(_draft), filed with the request when it is saved.
+                </MudAlert>
+            }
             <div data-abom-request-description>
                 <MudTextField T="string" @bind-Value="_description" Immediate="true" Lines="3"
                               Variant="Variant.Outlined" Margin="Margin.Dense"
@@ -46,10 +55,17 @@
                 </div>
             </div>
             <div class="d-flex flex-wrap align-start gap-3 mt-3">
-                <div class="abom-request-field" data-abom-request-query>
-                    <MudTextField T="string" @bind-Value="_queryId" Immediate="true"
-                                  Variant="Variant.Outlined" Margin="Margin.Dense"
-                                  Label="Query it is about" HelperText="Empty for a query that does not exist yet" />
+                <div class="abom-request-field abom-request-query" data-abom-request-query>
+                    @* A selection, never text: the server refuses a query nothing holds. *@
+                    <MudSelect T="string" @bind-Value="_queryId" Variant="Variant.Outlined"
+                               Margin="Margin.Dense" Label="Query it is about"
+                               HelperText="@(_queryId.Length == 0 ? "Let the agent decide" : "Selected by you")">
+                        <MudSelectItem T="string" Value="@(string.Empty)">Let the agent decide</MudSelectItem>
+                        @foreach (var (id, origin) in Choices(_catalog))
+                        {
+                            <MudSelectItem T="string" Value="@id">@id · @origin</MudSelectItem>
+                        }
+                    </MudSelect>
                 </div>
                 <div class="abom-request-field" data-abom-request-kind>
                     <MudSelect T="string" @bind-Value="_kind" Variant="Variant.Outlined" Margin="Margin.Dense"
@@ -136,6 +152,11 @@
                         <span class="abom-request-summary">@FirstLine(context.Item.Description)</span>
                     </CellTemplate>
                 </PropertyColumn>
+                <TemplateColumn Title="Progress" CellClass="abom-nowrap">
+                    <CellTemplate>
+                        <AuthoringSteps Steps="@context.Item.Steps" />
+                    </CellTemplate>
+                </TemplateColumn>
                 <PropertyColumn Property="x => x.Kind" Title="Kind" CellClass="abom-nowrap">
                     <CellTemplate><MudText Typo="Typo.caption">@KindText(context.Item.Kind)</MudText></CellTemplate>
                 </PropertyColumn>
@@ -147,7 +168,8 @@
                         }
                         else
                         {
-                            <span class="abom-path">@context.Item.QueryId</span>
+                            <MudLink Href="@CatalogHref(context.Item.QueryId)" Typo="Typo.body2"
+                                     Class="abom-path" data-abom-request-query-link>@context.Item.QueryId</MudLink>
                         }
                     </CellTemplate>
                 </PropertyColumn>
@@ -187,6 +209,7 @@
 
 @code {
     private QueryRequestList? _list;
+    private QueryCatalog? _catalog;
     private QueryRequest? _draft;
     private string _description = "";
     private string _compliant = "";
@@ -206,7 +229,13 @@
     protected override async Task OnInitializedAsync()
     {
         await Accounts.EnsureLoadedAsync();
+        var catalog = Api.GetQueryCatalogAsync();
         _list = await Api.GetQueryRequestsAsync();
+        _catalog = await catalog;
+        if (Asked.Request is { } asked)
+        {
+            Open(asked);
+        }
     }
 
     private void New() => Open(new QueryRequest());
@@ -229,6 +258,7 @@
     {
         _draft = null;
         _refusal = null;
+        Asked.Clear();
     }
 
     private async Task Save()
@@ -255,6 +285,7 @@
             {
                 _list = list;
                 _draft = null;
+                Asked.Clear();
             }
         }
         finally
@@ -267,6 +298,33 @@
     {
         var line = text.Split('\n', 2)[0].Trim();
         return line.Length > 120 ? line[..117] + "…" : line;
+    }
+
+    /// <summary>
+    /// Every query a request may be about, once each: the catalog's, less what builds the graph and
+    /// what ran as a whole suite, which no request can change.
+    /// </summary>
+    public static IReadOnlyList<(string Id, string Origin)> Choices(QueryCatalog? catalog) =>
+        catalog is null
+            ? []
+            : catalog.Queries
+                .Where(q => !q.Discovery && !q.Lane && q.QueryId.Length > 0)
+                .GroupBy(q => q.QueryId, StringComparer.Ordinal)
+                .Select(g => (g.Key, QueryCatalogView.OriginText(g.First().Origin)))
+                .OrderBy(c => c.Key, StringComparer.Ordinal)
+                .ToList();
+
+    private static string CatalogHref(string queryId) =>
+        $"/codeql?tab=catalog&query={Uri.EscapeDataString(queryId)}";
+
+    private static string EvidenceText(QueryRequest request)
+    {
+        var alarms = request.Evidence.Count(e => e.Kind == "false-alarm");
+        var misses = request.Evidence.Count(e => e.Kind == "missed");
+        var parts = new List<string>();
+        if (alarms > 0) parts.Add(CountText.Of(alarms, "result", "results"));
+        if (misses > 0) parts.Add(CountText.Of(misses, "repository where nothing fired", "repositories where nothing fired"));
+        return $"{string.Join(" and ", parts)} picked from run #{request.SourceRunId}";
     }
 
     private static string KindText(string kind) => kind switch

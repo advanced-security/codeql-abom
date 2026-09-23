@@ -24,7 +24,7 @@
 @switch (_tab)
 {
     case TabCatalog:
-        <QueryCatalogView />
+        <QueryCatalogView FocusQuery="@(QueryParam ?? string.Empty)" />
         break;
     case TabRuns:
         <AnalysisRuns FocusRun="@(RunParam ?? 0)" />
@@ -56,6 +56,9 @@
 
     /// <summary>A run to open on arrival, such as the one the Inventory just started.</summary>
     [SupplyParameterFromQuery(Name = "run")] public long? RunParam { get; set; }
+
+    /// <summary>A query to open on arrival, such as the one a request is about.</summary>
+    [SupplyParameterFromQuery(Name = "query")] public string? QueryParam { get; set; }
 
     private string _tab = TabRequests;
 

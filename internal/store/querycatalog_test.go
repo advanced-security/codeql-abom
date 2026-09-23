@@ -338,3 +338,82 @@ func TestRunsWithNoVersionAreStillCatalogued(t *testing.T) {
 		t.Error("a run recorded before query versions existed is missing from the catalog")
 	}
 }
+
+func workingCatalog(t *testing.T, s *Store, working ...WorkingQuery) map[string]CatalogQuery {
+	t.Helper()
+	rows, err := s.QueryCatalog(working...)
+	if err != nil {
+		t.Fatalf("QueryCatalog: %v", err)
+	}
+	by := map[string]CatalogQuery{}
+	for _, r := range rows {
+		key := r.QueryID + "@" + r.QueryVersion
+		if _, twice := by[key]; twice {
+			t.Errorf("%s is listed twice", key)
+		}
+		by[key] = r
+	}
+	return by
+}
+
+// A query is written, tested and staged before anything runs it, so the catalog has to hold it
+// from the moment it is on disk. Keyed on the ledger alone, it appeared only after its first run.
+func TestAQueryOnDiskIsCatalogedBeforeItHasRun(t *testing.T) {
+	s := newTestStore(t)
+
+	got, ok := workingCatalog(t, s, WorkingQuery{
+		QueryID: "acme/a", QueryVersion: "v1", Pack: "abom/custom-queries", Kind: "problem",
+	})["acme/a@v1"]
+	if !ok {
+		t.Fatal("a query on disk is missing from the catalog until it has run")
+	}
+	if !got.Working || got.Origin != QueryOriginUser || got.Kind != "problem" || !got.KindRecorded ||
+		got.Discovery || got.Runs != 0 || got.LastRunAt != "" {
+		t.Errorf("listed as %+v", got)
+	}
+}
+
+// Only the version on disk can be tested or edited, and every step describes it; an older version
+// the ledger remembers is history.
+func TestOnlyTheVersionOnDiskIsTheWorkingOne(t *testing.T) {
+	s := newTestStore(t)
+	for _, version := range []string{"v1", "v2"} {
+		if _, err := s.RecordQueryRun(QueryRun{
+			AnalysisMode: AnalysisModeRegular, QueryID: "acme/a", QueryVersion: version,
+			Pack: "abom/custom-queries", Repository: "octo/app", DBCommit: "sha-" + version,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	by := workingCatalog(t, s, WorkingQuery{
+		QueryID: "acme/a", QueryVersion: "v2", Pack: "abom/custom-queries", Kind: "problem",
+	})
+	if !by["acme/a@v2"].Working || by["acme/a@v2"].Runs != 1 {
+		t.Errorf("the version on disk reads %+v, want the working one with its own run", by["acme/a@v2"])
+	}
+	if by["acme/a@v1"].Working {
+		t.Error("a version no longer on disk is marked as the working one")
+	}
+}
+
+// A version that has never run can still have been tested and staged, and both are what its
+// readiness is read from.
+func TestAVersionThatHasNeverRunCarriesItsTestsAndStage(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.RecordQueryTest(QueryTest{
+		QueryID: "acme/a", QueryVersion: "v1", Passed: true, Total: 1, Detail: "1 of 1 passed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AdvanceQueryStage("acme/a", "v1", StageTest, "operator"); err != nil {
+		t.Fatal(err)
+	}
+
+	got := workingCatalog(t, s, WorkingQuery{
+		QueryID: "acme/a", QueryVersion: "v1", Pack: "abom/custom-queries", Kind: "problem",
+	})["acme/a@v1"]
+	if !got.Tested || !got.Passing || got.Stage != StageTest || got.StagedBy != "operator" {
+		t.Errorf("a never-run version reads %+v, want its passing test and its stage", got)
+	}
+}

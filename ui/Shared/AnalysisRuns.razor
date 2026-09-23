@@ -98,7 +98,11 @@
                     <CellTemplate>
                         @foreach (var q in context.Item.Queries)
                         {
-                            <div class="abom-path" title="@q.QueryVersion">@q.QueryId</div>
+                            <div>
+                                <MudLink Href="@($"/codeql?tab=catalog&query={Uri.EscapeDataString(q.QueryId)}")"
+                                         Typo="Typo.body2" Class="abom-path" title="@q.QueryVersion"
+                                         data-abom-run-query-link>@q.QueryId</MudLink>
+                            </div>
                         }
                     </CellTemplate>
                 </TemplateColumn>

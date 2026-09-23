@@ -1,0 +1,10 @@
+[
+{
+  "test" : "/private/tmp/abom-testrun-capture/pass/test/SelfHostedRunner/SelfHostedRunner.qlref",
+  "pass" : true,
+  "messages" : [ ],
+  "compilationMs" : 624,
+  "evaluationMs" : 605,
+  "expected" : "/private/tmp/abom-testrun-capture/pass/test/SelfHostedRunner/SelfHostedRunner.expected"
+}
+]

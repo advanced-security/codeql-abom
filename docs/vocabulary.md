@@ -100,7 +100,10 @@ evidence. Neither a lock context nor a query's origin substitutes for this datab
 | **Origin** | Which pack supplied the query: upstream, ABOM's own, custom (the operator's), or several at once |
 | **Lane** | What ran that is not one query: a whole suite invoked in one call, or several queries in one evaluation |
 | **Stage** | How far a version has been taken: `dev`, `test`, `extended-test`, `review`, `deploy` |
+| **Step** | One of seven marks inside `dev` and `test`: target, help, expected results, test database, AST, compiles, tests. Pending, failed, warning or passing |
 | **Request** | What a query should catch or stop catching, with a `COMPLIANT` and a `NON_COMPLIANT` example. Open, in progress, done or declined |
+| **Selected by you** / **decided by the agent** | Who chose a request's target. Empty means the agent decides |
+| **False alarm** / **missed detection** | Evidence on a request: a finding that should not have fired, or a repository where nothing fired that should have |
 | **Run** | A request to analyze chosen query versions over chosen repositories' databases |
 | **Interrupted** | A run the server stopped under: neither finished nor canceled |
 
@@ -109,9 +112,10 @@ result and a run all attach to. Origin comes from the pack, never from the id: a
 convention anybody can adopt. *Custom* is authorship; *yours* is ownership, and the two never
 share a word.
 
-Advancing a stage is an act somebody signs, never something ABOM awards. `test` is the rung that
-is earned — it requires that version's query tests to pass — and the rest record intent until the
-evidence behind them exists.
+Advancing a stage is an act somebody signs, never something ABOM awards. `test` and
+`extended-test` are the rungs that are earned — the first requires that version's own tests to
+pass, the second every step but the target, which belongs to a request — and the rest record intent until the evidence behind them exists.
+A warning is evidence gone stale, never a guess.
 
 ## Enablement
 

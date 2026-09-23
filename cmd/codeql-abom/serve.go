@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -25,6 +24,9 @@ import (
 
 // shutdownGrace bounds how long serve waits for in-flight requests once asked to stop.
 const shutdownGrace = 5 * time.Second
+
+// The tester is found by a type assertion, which a drifted signature would fail silently.
+var _ serve.QueryTester = (*runner.Runner)(nil)
 
 // wireEnumeration lets the loop re-read the declared accounts on a period.
 //
@@ -300,9 +302,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	// The runner the crawl already holds, so `codeql test run` contends for the machine-wide lock
 	// rather than racing an analysis for one compilation cache.
 	if tester, ok := loop.Expander.Resolver.(serve.QueryTester); ok {
-		if dir := runner.CustomPackRoot(); dir != "" {
-			srv.Tester, srv.TestDir = tester, filepath.Join(dir, "test")
-		}
+		srv.Tester, srv.QueryDir = tester, runner.CustomPackRoot()
 	}
 	// Without this the interface can record a declaration and never act on it: declaring names
 	// accounts, and only enumeration turns them into the repositories a report is about.

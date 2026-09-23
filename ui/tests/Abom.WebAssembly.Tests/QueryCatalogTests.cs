@@ -33,13 +33,13 @@ public class QueryCatalogTests : AbomTestContext
         {"authenticated":false,"login":"","host":"","accounts":[],"canSeeAllOrganizations":false}
         """;
 
-    private IRenderedComponent<CodeQL> Render(string catalog, string identity = SignedIn)
+    private IRenderedComponent<CodeQL> Render(string catalog, string identity = SignedIn,
+        string address = "/codeql?tab=catalog")
     {
         Answer("api/queries", catalog);
         Answer("api/accounts", identity);
         Fallback("api/runs", """{"runs":[]}""");
-        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
-            .NavigateTo("/codeql?tab=catalog");
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.NavigateTo(address);
         var page = base.Render<CodeQL>();
         page.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("api/queries")));
         return page;
@@ -250,32 +250,94 @@ public class QueryCatalogTests : AbomTestContext
           {"queryId":"acme/self-hosted-runner","queryVersion":"9b5327ab01d7","pack":"abom/custom-queries",
            "packVersion":"2.27.0","cliVersion":"2.27.0","origin":"user","suite":"","kind":"problem",
            "kindRecorded":true,"discovery":false,"lane":false,"stage":"","stagedBy":"","stagedAt":"",
-           "tested":false,"passing":false,"testDetail":"",
+           "tested":false,"passing":false,"testDetail":"","working":true,
+           "steps":[
+             {"step":"help","state":"pending","detail":"no src/SelfHostedRunner.md beside the query"},
+             {"step":"expected","state":"passing","detail":"test/SelfHostedRunner/SelfHostedRunner.expected: 1 line"},
+             {"step":"database","state":"pending","detail":"test/SelfHostedRunner has not been extracted"},
+             {"step":"ast","state":"pending","detail":"no PrintAST run is recorded over the test database"},
+             {"step":"compiles","state":"pending","detail":"not compiled for this version"},
+             {"step":"tests","state":"pending","detail":"never run for this version"}],
            "runs":57,"repositories":57,"analyses":0,"firstRunAt":"","lastRunAt":"2026-09-22T17:40:00Z"},
           {"queryId":"actions/unpinned-tag","queryVersion":"u1","pack":"codeql/actions-queries",
            "packVersion":"0.6.35","cliVersion":"2.27.0","origin":"upstream","suite":"","kind":"problem",
            "kindRecorded":true,"discovery":false,"lane":false,"stage":"","stagedBy":"","stagedAt":"",
+           "steps":[],
            "runs":204,"repositories":204,"analyses":0,"firstRunAt":"","lastRunAt":"2026-09-22T10:15:00Z"}
         ],"stages":["dev","test"]}
         """;
 
     /// <summary>
-    /// Tests live beside the query, so only a query the operator wrote has any to run. Offering
-    /// the control on an upstream rule is a button that can only fail.
+    /// Tests live beside the query, so only the working copy of a query the operator wrote has any
+    /// to run. An upstream rule carries no Test action at all: its tests belong to the pack that
+    /// ships it, and a button that can only fail is a claim about tests ABOM does not hold.
     /// </summary>
     [Fact]
-    public void OnlyAQueryTheOperatorWroteOffersToRunItsTests()
+    public void OnlyTheWorkingCopyOfTheOperatorsQueryOffersToRunItsTests()
     {
         var page = Render(OperatorWritten);
 
-        var rows = page.FindAll("[data-abom-query-id]").Select(e => e.TextContent.Trim()).ToList();
-        var buttons = page.FindAll("[data-abom-query-test]");
+        var flask = Assert.Single(page.FindAll("[data-abom-query-test]"));
+        Assert.False(flask.HasAttribute("disabled"), "the operator's own query");
+        var row = flask.Closest("tr")!;
+        Assert.Contains("acme/self-hosted-runner", row.TextContent);
+    }
 
-        Assert.Equal(rows.Count, buttons.Count);
-        var mine = rows.IndexOf("acme/self-hosted-runner");
-        var upstream = rows.IndexOf("actions/unpinned-tag");
-        Assert.False(buttons[mine].HasAttribute("disabled"), "the operator's own query");
-        Assert.True(buttons[upstream].HasAttribute("disabled"), "an upstream query");
+    /// <summary>
+    /// The marks describe the version on disk, so they appear on that row and nowhere else, in the
+    /// order served, with the flask standing for the tests step.
+    /// </summary>
+    [Fact]
+    public void TheWorkingCopyCarriesItsMarksAndTheFlaskIsTheTestsMark()
+    {
+        var page = Render(OperatorWritten);
+
+        var strip = Assert.Single(page.FindAll("[data-abom-steps]"));
+        Assert.Contains("acme/self-hosted-runner", strip.Closest("tr")!.TextContent);
+        var order = strip.QuerySelectorAll("[data-abom-step]").Select(e => e.GetAttribute("data-abom-step"));
+        Assert.Equal(["help", "expected", "database", "ast", "compiles", "tests"], order);
+        Assert.Equal("tests", page.Find("[data-abom-query-test]").GetAttribute("data-abom-step"));
+    }
+
+    /// <summary>
+    /// A version no longer on disk cannot be tested, because the tests would run against what is
+    /// there now and vouch for this one. What its tests last said is still shown.
+    /// </summary>
+    [Fact]
+    public void AVersionNoLongerOnDiskShowsWhatItsTestsSaidAndCannotBeTested()
+    {
+        var page = Render("""
+            {"queries":[
+              {"queryId":"acme/self-hosted-runner","queryVersion":"03d18fc6adb0","pack":"abom/custom-queries",
+               "origin":"user","kind":"problem","kindRecorded":true,"stage":"","working":false,"steps":[],
+               "tested":true,"passing":true,"testDetail":"1 of 1 passed",
+               "runs":1,"repositories":1,"lastRunAt":"2026-09-22T17:40:00Z"}
+            ],"stages":["dev","test"]}
+            """);
+
+        Assert.Empty(page.FindAll("[data-abom-steps]"));
+        var flask = page.Find("[data-abom-query-superseded-test]");
+        Assert.True(flask.HasAttribute("disabled"));
+        Assert.Contains("mud-success-text", flask.OuterHtml);
+    }
+
+    /// <summary>
+    /// A query is written and tested before anything runs it. Its row says it has not run, rather
+    /// than an empty date a reader would take for a missing value.
+    /// </summary>
+    [Fact]
+    public void AQueryThatHasNotRunSaysSo()
+    {
+        var page = Render("""
+            {"queries":[
+              {"queryId":"acme/new","queryVersion":"aa11bb22cc33","pack":"abom/custom-queries",
+               "origin":"user","kind":"problem","kindRecorded":true,"stage":"","working":true,
+               "steps":[{"step":"tests","state":"pending","detail":"never run for this version"}],
+               "runs":0,"repositories":0,"lastRunAt":""}
+            ],"stages":["dev","test"]}
+            """);
+
+        Assert.Contains("not run yet", page.Find("[data-abom-query-never-run]").TextContent);
     }
 
     /// <summary>
@@ -322,6 +384,24 @@ public class QueryCatalogTests : AbomTestContext
         {
             var runs = page.Find("[data-abom-query-runs]");
             Assert.NotNull(runs.Closest("[data-abom-queries-table]"));
+        });
+    }
+
+    /// <summary>
+    /// A request, a run or a link names a query, and following it opens that query's row rather
+    /// than leaving a reader to find it in the list.
+    /// </summary>
+    [Fact]
+    public void AnAddressNamingAQueryOpensItsRow()
+    {
+        var page = Render(OperatorWritten,
+            address: "/codeql?tab=catalog&query=acme%2Fself-hosted-runner");
+
+        page.WaitForAssertion(() =>
+        {
+            var runs = Assert.Single(page.FindAll("[data-abom-query-runs]"));
+            Assert.Contains("acme/self-hosted-runner",
+                runs.Closest("tr")!.PreviousElementSibling!.TextContent);
         });
     }
 

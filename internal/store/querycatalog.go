@@ -91,6 +91,15 @@ type CatalogQuery struct {
 	Tested     bool   `json:"tested"`
 	Passing    bool   `json:"passing"`
 	TestDetail string `json:"testDetail"`
+	// Working marks the version on disk in the operator's pack now: the only one whose tests can
+	// be run, and the one the authoring steps describe.
+	Working bool `json:"working"`
+}
+
+// WorkingQuery is a query as it is on disk in the operator's pack, which the store does not read
+// for itself.
+type WorkingQuery struct {
+	QueryID, QueryVersion, Pack, Kind string
 }
 
 // QueryCatalog reports every query a suite has resolved to, identified by what identifies a
@@ -106,7 +115,7 @@ type CatalogQuery struct {
 // Run counts are then attributed back: a ledger row naming the query is that query's, and a row
 // naming a suite belongs to every query the suite resolved to. Joined in Go rather than in SQL
 // because the alternative is a correlated subquery over every run for every query.
-func (s *Store) QueryCatalog() ([]CatalogQuery, error) {
+func (s *Store) QueryCatalog(working ...WorkingQuery) ([]CatalogQuery, error) {
 	spine, err := s.catalogSpine()
 	if err != nil {
 		return nil, err
@@ -127,6 +136,16 @@ func (s *Store) QueryCatalog() ([]CatalogQuery, error) {
 	if err != nil {
 		return nil, err
 	}
+	// What was decided about a version and what its tests said, whichever way it was listed.
+	attach := func(q *CatalogQuery, key string) {
+		if st, ok := stages[key]; ok {
+			q.Stage, q.StagedBy, q.StagedAt = st.stage, st.by, st.at
+		}
+		q.Analyses = analyses[key]
+		if t, ok := tests[key]; ok {
+			q.Tested, q.Passing, q.TestDetail = true, t.Passed, t.Detail
+		}
+	}
 
 	out := make([]CatalogQuery, 0, len(spine))
 	covered := map[string]bool{}
@@ -138,15 +157,7 @@ func (s *Store) QueryCatalog() ([]CatalogQuery, error) {
 		q.Runs, q.Repositories = stats.runs, len(stats.repositories)
 		q.FirstRunAt, q.LastRunAt = stats.first, stats.last
 		key := q.QueryID + "\x00" + q.QueryVersion
-		if st, ok := stages[key]; ok {
-			q.Stage, q.StagedBy, q.StagedAt = st.stage, st.by, st.at
-		}
-		if n, ok := analyses[key]; ok {
-			q.Analyses = n
-		}
-		if t, ok := tests[key]; ok {
-			q.Tested, q.Passing, q.TestDetail = true, t.Passed, t.Detail
-		}
+		attach(&q.CatalogQuery, key)
 		q.Origin = originOfPack(q.Pack)
 		q.KindRecorded = true
 		q.Discovery = q.Kind == ""
@@ -159,6 +170,11 @@ func (s *Store) QueryCatalog() ([]CatalogQuery, error) {
 	kinds := map[string]string{}
 	for _, q := range spine {
 		kinds[q.QueryID] = q.Kind
+	}
+	for _, w := range working {
+		if _, recorded := kinds[w.QueryID]; !recorded && w.Kind != "" {
+			kinds[w.QueryID] = w.Kind
+		}
 	}
 
 	// A ledger row no suite resolution accounts for is still something that ran. Dropping it
@@ -188,15 +204,10 @@ func (s *Store) QueryCatalog() ([]CatalogQuery, error) {
 			q.Kind, q.KindRecorded = kind, true
 			q.Discovery = kind == ""
 		}
-		if st, ok := stages[key]; ok {
-			q.Stage, q.StagedBy, q.StagedAt = st.stage, st.by, st.at
-		}
-		q.Analyses = analyses[key]
-		if t, ok := tests[key]; ok {
-			q.Tested, q.Passing, q.TestDetail = true, t.Passed, t.Detail
-		}
+		attach(&q, key)
 		out = append(out, q)
 	}
+	out = withWorkingCopy(out, working, attach)
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].QueryID != out[j].QueryID {
 			return out[i].QueryID < out[j].QueryID
@@ -204,6 +215,37 @@ func (s *Store) QueryCatalog() ([]CatalogQuery, error) {
 		return out[i].QueryVersion < out[j].QueryVersion
 	})
 	return out, nil
+}
+
+// withWorkingCopy marks the versions on disk now, and lists the ones nothing has run yet.
+//
+// A query is written, tested and staged before anything runs it, so a catalog built only from
+// what ran would show it for the first time after its first run.
+func withWorkingCopy(
+	out []CatalogQuery, working []WorkingQuery, attach func(*CatalogQuery, string),
+) []CatalogQuery {
+	listed := make(map[string]int, len(out))
+	for i, q := range out {
+		listed[q.QueryID+"\x00"+q.QueryVersion] = i
+	}
+	for _, w := range working {
+		key := w.QueryID + "\x00" + w.QueryVersion
+		i, ok := listed[key]
+		if !ok {
+			q := CatalogQuery{QueryID: w.QueryID, QueryVersion: w.QueryVersion, Pack: w.Pack,
+				Origin: originOfPack(w.Pack)}
+			attach(&q, key)
+			out = append(out, q)
+			i = len(out) - 1
+			listed[key] = i
+		}
+		out[i].Working = true
+		// The file is this version, so what it declares is what the version is.
+		if w.Kind != "" {
+			out[i].Kind, out[i].KindRecorded, out[i].Discovery = w.Kind, true, false
+		}
+	}
+	return out
 }
 
 // splitSuite separates a suite reference from a query id.

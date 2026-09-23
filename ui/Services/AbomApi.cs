@@ -349,6 +349,13 @@ public sealed class AbomApi(HttpClient http)
     public async Task<AnalysisRun?> GetAnalysisRunAsync(long id, CancellationToken ct = default) =>
         await GetAsync<AnalysisRun>($"api/runs/{id}", ct);
 
+    /// <summary>What one member of a run reported for one query, so results can be picked by name.</summary>
+    public async Task<MemberFindings?> GetRunFindingsAsync(
+        long id, string repository, string queryId, CancellationToken ct = default) =>
+        await GetAsync<MemberFindings>(
+            $"api/runs/{id}/results?repository={Uri.EscapeDataString(repository)}" +
+            $"&query={Uri.EscapeDataString(queryId)}", ct);
+
     /// <summary>Carries out a recorded run, answering as soon as it has started.</summary>
     public async Task<(AnalysisRun? Run, string? Refusal)> ExecuteAnalysisRunAsync(
         long id, CancellationToken ct = default)

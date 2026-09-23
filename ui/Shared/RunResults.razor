@@ -2,6 +2,8 @@
 @using Abom.WebAssembly.Services
 @implements IDisposable
 @inject AbomApi Api
+@inject NavigationManager Nav
+@inject RequestDraft Draft
 
 @* Repositories with results by default: a page of zeros hides the rows a query's author wants. *@
 @if (_run is null)
@@ -47,7 +49,22 @@ else
                            Color="Color.Primary" Label="Show every repository" />
             </span>
         }
+        @if (_run.Members.Any(m => m.Counted))
+        {
+            <MudSpacer />
+            <MudButton Size="Size.Small" DropShadow="false"
+                       Variant="@(_picking ? Variant.Filled : Variant.Outlined)"
+                       StartIcon="@Icons.Material.Outlined.RateReview"
+                       OnClick="@(() => _picking = !_picking)" data-abom-results-pick>
+                Ask for a change
+            </MudButton>
+        }
     </div>
+
+    @if (_picking)
+    {
+        @PickerContent
+    }
 
     @if (Listed.Count == 0)
     {
@@ -222,6 +239,175 @@ else
         "no_database" => string.IsNullOrEmpty(m.Detail) ? "no database" : m.Detail,
         "failed" => $"failed — {m.Detail}",
         _ => m.Status,
+    };
+
+    private bool _picking;
+    private string? _chosenQuery;
+    private readonly Dictionary<string, MemberFindings?> _findings = new(StringComparer.Ordinal);
+    private readonly List<(string Repository, long FindingRowId)> _falseAlarms = [];
+    private readonly List<string> _missed = [];
+
+    /// <summary>A request is about one query: the one this was opened from, or the one chosen.</summary>
+    private string? PickQuery => QueryId ?? _chosenQuery ?? (_run?.Queries.Select(q => q.QueryId)
+        .Distinct().ToList() is [var only] ? only : null);
+
+    private void ChooseQuery(string query)
+    {
+        _chosenQuery = query;
+        _findings.Clear();
+        _falseAlarms.Clear();
+        _missed.Clear();
+    }
+
+    private async Task ShowFindings(string repository)
+    {
+        if (PickQuery is { } query)
+        {
+            _findings[repository] = await Api.GetRunFindingsAsync(RunId, repository, query);
+        }
+    }
+
+    private void PickFinding(string repository, long id, bool picked)
+    {
+        _falseAlarms.Remove((repository, id));
+        if (picked)
+        {
+            _falseAlarms.Add((repository, id));
+        }
+    }
+
+    private void PickMissed(string repository, bool picked)
+    {
+        _missed.Remove(repository);
+        if (picked)
+        {
+            _missed.Add(repository);
+        }
+    }
+
+    private string PickedText => _falseAlarms.Count + _missed.Count == 0
+        ? "Pick the results that should not have fired, or the repositories where one should have."
+        : string.Join(" and ", new[]
+            {
+                _falseAlarms.Count > 0 ? CountText.Of(_falseAlarms.Count, "result", "results") : null,
+                _missed.Count > 0
+                    ? CountText.Of(_missed.Count, "repository where nothing fired", "repositories where nothing fired")
+                    : null,
+            }.OfType<string>()) + " picked.";
+
+    /// <summary>Prefills a request; filing it stays the operator's act on the Requests tab.</summary>
+    private void Ask()
+    {
+        if (PickQuery is not { } query || _falseAlarms.Count + _missed.Count == 0)
+        {
+            return;
+        }
+        var evidence = _falseAlarms
+            .Select(p => new RequestEvidence
+            {
+                RunId = RunId, Repository = p.Repository, FindingRowId = p.FindingRowId, Kind = "false-alarm",
+            })
+            .Concat(_missed.Select(r => new RequestEvidence { RunId = RunId, Repository = r, Kind = "missed" }))
+            .ToList();
+        var kind = _falseAlarms.Count > 0 && _missed.Count > 0 ? "both"
+            : _falseAlarms.Count > 0 ? "false-alarm" : "missed";
+        Draft.Set(new QueryRequest { QueryId = query, Kind = kind, SourceRunId = RunId, Evidence = evidence });
+        Nav.NavigateTo("/codeql?tab=requests");
+    }
+
+    private RenderFragment PickerContent => __builder =>
+    {
+        <MudPaper Outlined="true" Class="pa-3 mb-2" data-abom-results-picker>
+            @if (QueryId is null && (_run?.Queries.Select(q => q.QueryId).Distinct().Count() ?? 0) > 1)
+            {
+                <div class="d-flex flex-wrap align-center gap-1 mb-2">
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">A request is about one query:</MudText>
+                    @foreach (var q in _run!.Queries.Select(q => q.QueryId).Distinct())
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                 Color="@(PickQuery == q ? Color.Primary : Color.Default)"
+                                 OnClick="@(() => ChooseQuery(q))" data-abom-pick-query="@q">@q</MudChip>
+                    }
+                </div>
+            }
+            @if (PickQuery is { } query)
+            {
+                <MudSimpleTable Dense="true" Class="abom-grid abom-table abom-grid-nested" data-abom-results-pickable>
+                    <thead>
+                        <tr><th>Repository</th><th class="abom-cell-right">Results</th><th>Pick</th></tr>
+                    </thead>
+                    <tbody>
+                        @* Only where the query looked: a repository nothing ran against shows nothing to pick. *@
+                        @foreach (var member in _run!.Members.Where(m => m.Counted && m.ByQuery.ContainsKey(query)))
+                        {
+                            var found = member.ByQuery[query];
+                            <tr>
+                                <td class="abom-path abom-nowrap">@member.Repository</td>
+                                <td class="abom-cell-right"><span class="abom-num">@found</span></td>
+                                <td>
+                                    @if (found > 0)
+                                    {
+                                        @FindingsFor(member.Repository)
+                                    }
+                                    else
+                                    {
+                                        <span data-abom-pick-missed="@member.Repository">
+                                            <MudCheckBox T="bool" Size="Size.Small" Dense="true"
+                                                         Value="@_missed.Contains(member.Repository)"
+                                                         ValueChanged="@((bool v) => PickMissed(member.Repository, v))"
+                                                         Label="Should have found something here" />
+                                        </span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+                <div class="d-flex align-center gap-2 mt-2">
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">@PickedText</MudText>
+                    <MudSpacer />
+                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" DropShadow="false"
+                               Disabled="@(_falseAlarms.Count + _missed.Count == 0)" OnClick="Ask"
+                               Class="abom-ask-change" data-abom-results-ask>Ask for a change to @query</MudButton>
+                </div>
+            }
+        </MudPaper>
+    };
+
+    private RenderFragment FindingsFor(string repository) => __builder =>
+    {
+        if (!_findings.TryGetValue(repository, out var listed))
+        {
+            <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
+                       OnClick="@(() => ShowFindings(repository))"
+                       data-abom-member-findings="@repository">Pick results that should not have fired</MudButton>
+        }
+        else if (listed is null)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                The server did not say what this repository reported: @Api.LastError
+            </MudText>
+        }
+        else
+        {
+            foreach (var f in listed.Findings)
+            {
+                <div>
+                    <span data-abom-pick-finding="@f.FindingRowId">
+                        <MudCheckBox T="bool" Size="Size.Small" Dense="true"
+                                     Value="@_falseAlarms.Contains((repository, f.FindingRowId))"
+                                     ValueChanged="@((bool v) => PickFinding(repository, f.FindingRowId, v))"
+                                     Label="@($"{f.FilePath}:{f.StartLine} — {f.Message}")" />
+                    </span>
+                </div>
+            }
+            if (listed.Truncated)
+            {
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                    Only the first @listed.Findings.Count are listed.
+                </MudText>
+            }
+        }
     };
 
     public void Dispose() => _timer?.Dispose();

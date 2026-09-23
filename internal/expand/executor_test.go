@@ -3,19 +3,34 @@ package expand
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
-// executorFixture is a run over three repositories: two with a database on disk and one with
-// none, which is the shape every real run has.
+// absentCommit is the commit on record for the member with no database, spelled as git spells one.
+const absentCommit = "0123456789abcdef0123456789abcdef01234567"
+
+// executorFixture is a run over three repositories: two with a database on disk, and one with none
+// whose repository cannot be read, so nothing can be built or analyzed for it.
 func executorFixture(t *testing.T) (*store.Store, *Executor, int64, *fakeAnalyzer) {
 	t.Helper()
+	h, e, id, analyzer := executorHarness(t)
+	return h.store, e, id, analyzer
+}
+
+// executorHarness is executorFixture with the fakes behind the crawl, for tests that change what
+// a fetch or a build does.
+func executorHarness(t *testing.T) (*harness, *Executor, int64, *fakeAnalyzer) {
+	t.Helper()
 	h := newHarness(t)
+	h.fetchErr["octo/absent"] = fmt.Errorf("%w: octo/absent has no workflows or action manifest",
+		ErrUnavailable)
 	root := t.TempDir()
 	query := queryInPack(t, root, "codeql/actions-queries", "0.6.35", "Unpinned.ql", "select 1")
 
@@ -28,6 +43,7 @@ func executorFixture(t *testing.T) (*store.Store, *Executor, int64, *fakeAnalyze
 		},
 		Analyzer: analyzer,
 		Ingester: h.expander.Ingester,
+		Crawl:    h.expander,
 		Suites:   []string{"abom-findings.qls"},
 		WorkDir:  filepath.Join(root, "runs"),
 	}
@@ -53,7 +69,7 @@ func executorFixture(t *testing.T) (*store.Store, *Executor, int64, *fakeAnalyze
 			held("octo-app", "sha-one"),
 			held("octo-tool", "sha-two"),
 			{DatabaseIdentity: store.DatabaseIdentity{
-				Repository: "octo/absent", Commit: "sha-three",
+				Repository: "octo/absent", Commit: absentCommit,
 				SourceFilter: "f0", Mode: store.AnalysisModeRegular,
 			}, Status: store.DatabaseBuildable},
 		},
@@ -61,7 +77,23 @@ func executorFixture(t *testing.T) (*store.Store, *Executor, int64, *fakeAnalyze
 	if err != nil {
 		t.Fatalf("CreateAnalysisRun: %v", err)
 	}
-	return h.store, e, id, analyzer
+	return h, e, id, analyzer
+}
+
+// runOver records a run of the fixture's query over the given databases and gaps.
+func runOver(
+	t *testing.T, s *store.Store, mode string, dbs []store.ScopedDatabase, gaps []store.DatabaseGap,
+) int64 {
+	t.Helper()
+	id, err := s.CreateAnalysisRun(store.AnalysisRequest{
+		RequestedBy: "operator", Predicate: "repositories=octo%2Fx", Mode: mode,
+		Queries:   []store.AnalysisQuery{{QueryID: "actions/unpinned-tag"}},
+		Databases: dbs, Gaps: gaps,
+	})
+	if err != nil {
+		t.Fatalf("CreateAnalysisRun: %v", err)
+	}
+	return id
 }
 
 func membersByRepository(t *testing.T, s *store.Store, id int64) map[string]store.AnalysisMember {
@@ -97,9 +129,9 @@ func TestARunAnalyzesEveryMemberWhoseDatabaseIsHeld(t *testing.T) {
 	}
 }
 
-// A member with nothing on disk was not attempted, and saying so is what stops a completed run
-// reading as a clean result for a repository nothing ran against.
-func TestAMemberWithNoDatabaseIsReportedRatherThanLeftPending(t *testing.T) {
+// A member whose database cannot be built says why and stays uncounted: a completed run must never
+// read as a clean result for a repository nothing ran against.
+func TestAMemberWhoseDatabaseCannotBeBuiltSaysWhy(t *testing.T) {
 	s, e, id, _ := executorFixture(t)
 
 	if err := e.Run(context.Background(), id); err != nil {
@@ -107,12 +139,239 @@ func TestAMemberWithNoDatabaseIsReportedRatherThanLeftPending(t *testing.T) {
 	}
 
 	absent := membersByRepository(t, s, id)["octo/absent"]
-	if absent.Status != store.AnalysisNoDatabase {
-		t.Errorf("a member with no database is %q, want %q",
-			absent.Status, store.AnalysisNoDatabase)
+	if absent.Status != store.AnalysisFailed {
+		t.Errorf("a member that cannot be built is %q, want %q", absent.Status, store.AnalysisFailed)
 	}
-	if absent.Detail == "" {
-		t.Error("a member nothing could analyze does not say why")
+	if !strings.Contains(absent.Detail, "no workflows or action manifest") {
+		t.Errorf("the member says %q, want the reason its repository could not be built", absent.Detail)
+	}
+	if absent.Counted {
+		t.Error("a member nothing ran against reports a count")
+	}
+}
+
+// A run covers the scope it names: a member with no database gets one built the way the crawl
+// builds one, and its results name the database they came from.
+func TestAMemberWithNoDatabaseIsBuiltAndThenAnalyzed(t *testing.T) {
+	h, e, id, analyzer := executorHarness(t)
+	delete(h.fetchErr, "octo/absent")
+
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	absent := membersByRepository(t, h.store, id)["octo/absent"]
+	if absent.Status != store.AnalysisSucceeded || !absent.Counted || absent.Results != 2 {
+		t.Errorf("the built member is %q counted=%v results=%d, want the 2 its SARIF reported",
+			absent.Status, absent.Counted, absent.Results)
+	}
+	if absent.Commit != absentCommit {
+		t.Errorf("the member was built at %q, want the commit on record %q", absent.Commit, absentCommit)
+	}
+	if absent.SourceFilter != h.expander.sourceFilter() {
+		t.Errorf("the member names filter %q, want %q, the one its tree was fetched under",
+			absent.SourceFilter, h.expander.sourceFilter())
+	}
+	if built := h.databasesBuilt(); built != 1 {
+		t.Errorf("the crawl's builder ran %d times, want once for the member with no database", built)
+	}
+	if len(analyzer.targets) != 3 {
+		t.Errorf("analyze ran %d times, want once per member", len(analyzer.targets))
+	}
+
+	var commit, filter string
+	if err := h.store.DB().QueryRow(`
+		SELECT db_commit, source_filter FROM abom_query_run WHERE repository = 'octo/absent'`).
+		Scan(&commit, &filter); err != nil {
+		t.Fatalf("no evaluation of the built member is on record: %v", err)
+	}
+	if commit != absent.Commit || filter != absent.SourceFilter {
+		t.Errorf("the evaluation names %s under %s, want the database the member was built at",
+			commit, filter)
+	}
+}
+
+// Retained for the next run, which is the tuning loop the cache exists for: a second run over the
+// same scope analyzes again and neither fetches nor extracts.
+func TestABuiltDatabaseIsKeptForTheNextRun(t *testing.T) {
+	h, e, id, _ := executorHarness(t)
+	delete(h.fetchErr, "octo/absent")
+	h.retainCheckouts()
+	h.retainDatabases()
+
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	absent := membersByRepository(t, h.store, id)["octo/absent"]
+	held, ok, err := h.store.RetainedDatabaseAt(absent.DatabaseIdentity)
+	if err != nil || !ok {
+		t.Fatalf("the database the run built is not retained: %v", err)
+	}
+	if absent.DatabasePath != held.Path {
+		t.Errorf("the member names %q, want the retained database at %q", absent.DatabasePath, held.Path)
+	}
+
+	built, fetched := h.databasesBuilt(), h.fetchCount()
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run again: %v", err)
+	}
+	if h.databasesBuilt() != built || h.fetchCount() != fetched {
+		t.Errorf("running again built %d and fetched %d, want neither",
+			h.databasesBuilt()-built, h.fetchCount()-fetched)
+	}
+	if again := membersByRepository(t, h.store, id)["octo/absent"]; again.Status != store.AnalysisSucceeded {
+		t.Errorf("the member run again is %q, want %q", again.Status, store.AnalysisSucceeded)
+	}
+}
+
+// Without a cache nothing holds the database once it has been analyzed, so the member names no path
+// a later run would find empty, and that run builds it again.
+func TestWithoutACacheABuiltDatabaseIsRemovedAndBuiltAgain(t *testing.T) {
+	h, e, id, _ := executorHarness(t)
+	delete(h.fetchErr, "octo/absent")
+
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if path := membersByRepository(t, h.store, id)["octo/absent"].DatabasePath; path != "" {
+		t.Errorf("the member names %q, a database nothing retains", path)
+	}
+	left := filepath.Join(e.WorkDir, fmt.Sprintf("run-%d", id), cacheName("octo/absent"))
+	if _, err := os.Stat(left); !os.IsNotExist(err) {
+		t.Errorf("the member's checkout and database are still at %s: %v", left, err)
+	}
+
+	built := h.databasesBuilt()
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run again: %v", err)
+	}
+	if h.databasesBuilt() != built+1 {
+		t.Errorf("running again built %d databases, want the one nothing kept", h.databasesBuilt()-built)
+	}
+}
+
+// A repository nothing has analyzed names no commit, so the build fetches its default branch and
+// the member is recorded at the commit that fetch turned out to be.
+func TestARepositoryNothingHasAnalyzedIsBuiltAtItsDefaultBranch(t *testing.T) {
+	h, e, _, _ := executorHarness(t)
+	if _, err := h.store.UpsertRepository("octo/fresh", ""); err != nil {
+		t.Fatalf("UpsertRepository: %v", err)
+	}
+	id := runOver(t, h.store, store.AnalysisModeRegular, nil,
+		[]store.DatabaseGap{{Repository: "octo/fresh", Reason: "no regular analysis on record"}})
+
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	fresh := membersByRepository(t, h.store, id)["octo/fresh"]
+	if fresh.Status != store.AnalysisSucceeded {
+		t.Errorf("the member is %q (%s), want %q", fresh.Status, fresh.Detail, store.AnalysisSucceeded)
+	}
+	if fresh.Commit != "sha-fresh" {
+		t.Errorf("the member is recorded at %q, want the commit its default branch fetched", fresh.Commit)
+	}
+}
+
+// A name nothing tracks is never fetched: ingesting it would enter a stranger's repository into
+// the corpus as a seed.
+func TestARunNeverFetchesARepositoryABOMDoesNotTrack(t *testing.T) {
+	h, e, _, _ := executorHarness(t)
+	id := runOver(t, h.store, store.AnalysisModeRegular, nil,
+		[]store.DatabaseGap{{Repository: "stranger/repo", Reason: "no regular analysis on record"}})
+
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if n := h.fetchCount(); n != 0 {
+		t.Errorf("the run fetched %d times for a repository ABOM does not track", n)
+	}
+	if m := membersByRepository(t, h.store, id)["stranger/repo"]; m.Status != store.AnalysisNoDatabase {
+		t.Errorf("the untracked member is %q, want %q", m.Status, store.AnalysisNoDatabase)
+	}
+	var rows int
+	if err := h.store.DB().QueryRow(`
+		SELECT COUNT(*) FROM repository WHERE repository_full_name = 'stranger/repo'`).
+		Scan(&rows); err != nil || rows != 0 {
+		t.Errorf("the run entered the untracked repository into the corpus (%d rows, %v)", rows, err)
+	}
+}
+
+// Only the crawl's regular shape is built. An extended database built as a regular one would carry
+// an identity describing a different artifact.
+func TestAnExtendedMemberIsNeverBuiltAsARegularDatabase(t *testing.T) {
+	h, e, _, _ := executorHarness(t)
+	id := runOver(t, h.store, store.AnalysisModeExtended, []store.ScopedDatabase{{
+		DatabaseIdentity: store.DatabaseIdentity{
+			Repository: "octo/closure", Commit: absentCommit, SourceFilter: "f0",
+			Mode: store.AnalysisModeExtended,
+		},
+		Status: store.DatabaseBuildable,
+	}}, nil)
+
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if n := h.fetchCount(); n != 0 {
+		t.Errorf("the run fetched %d times for an extended database", n)
+	}
+	if m := membersByRepository(t, h.store, id)["octo/closure"]; m.Status != store.AnalysisNoDatabase || m.Detail == "" {
+		t.Errorf("the extended member is %q (%q), want %q with a reason",
+			m.Status, m.Detail, store.AnalysisNoDatabase)
+	}
+}
+
+// A database recorded where nothing is any more is not a database: the member is built again
+// rather than analyzed against a path that is gone.
+func TestAMemberWhoseDatabaseIsGoneIsBuiltAgain(t *testing.T) {
+	h, e, _, _ := executorHarness(t)
+	id := runOver(t, h.store, store.AnalysisModeRegular, []store.ScopedDatabase{{
+		DatabaseIdentity: store.DatabaseIdentity{
+			Repository: "octo/evicted", Commit: absentCommit, SourceFilter: h.expander.sourceFilter(),
+			Mode: store.AnalysisModeRegular,
+		},
+		Status: store.DatabaseRetained, Path: filepath.Join(t.TempDir(), "evicted", "db"),
+	}}, nil)
+
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if m := membersByRepository(t, h.store, id)["octo/evicted"]; m.Status != store.AnalysisSucceeded {
+		t.Errorf("the member is %q (%s), want %q", m.Status, m.Detail, store.AnalysisSucceeded)
+	}
+	if built := h.databasesBuilt(); built != 1 {
+		t.Errorf("the builder ran %d times, want once for the database that was gone", built)
+	}
+}
+
+// cancelingBuilder stops the run while a database is being built, as pressing Stop does.
+type cancelingBuilder struct{ cancel context.CancelFunc }
+
+func (c cancelingBuilder) CreateDatabase(ctx context.Context, _, _, _ string) error {
+	c.cancel()
+	return ctx.Err()
+}
+
+// A stop during a build is a stop: the run reads canceled rather than running forever, and the
+// member it was building goes back to the state that can be started again.
+func TestARunStoppedMidBuildIsCanceledAndItsMemberCanStartAgain(t *testing.T) {
+	h, e, id, _ := executorHarness(t)
+	delete(h.fetchErr, "octo/absent")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.expander.Builder = cancelingBuilder{cancel}
+
+	if err := e.Run(ctx, id); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a run stopped mid-build returned %v, want a cancellation", err)
+	}
+	run, err := h.store.AnalysisRun(id)
+	if err != nil {
+		t.Fatalf("AnalysisRun: %v", err)
+	}
+	if run.State != store.RunCanceled {
+		t.Errorf("the run is %q, want %q", run.State, store.RunCanceled)
+	}
+	if m := membersByRepository(t, h.store, id)["octo/absent"]; m.Status != store.AnalysisPending {
+		t.Errorf("the member being built is %q, want %q", m.Status, store.AnalysisPending)
 	}
 }
 
@@ -377,5 +636,66 @@ func TestACanceledRunStopsRatherThanFinishingTheCorpus(t *testing.T) {
 	run, _ := s.AnalysisRun(id)
 	if run.State != store.RunCanceled {
 		t.Errorf("a canceled run is %q, want %q", run.State, store.RunCanceled)
+	}
+}
+
+// Pushing back on a result needs the result by name, so a member lists what its own evaluation
+// reported, by query; one nothing ran against says so rather than listing nothing.
+func TestAMemberListsTheFindingsItsEvaluationReported(t *testing.T) {
+	s, e, id, _ := executorFixture(t)
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	for _, repo := range []string{"octo-app", "octo-tool"} {
+		all, err := s.RunFindings(id, repo, "", 100)
+		if err != nil {
+			t.Fatalf("RunFindings(%s): %v", repo, err)
+		}
+		if !all.Evaluated || len(all.Findings) != 2 || all.Truncated {
+			t.Errorf("%s lists %+v, want the 2 results its SARIF reported", repo, all)
+		}
+		// Checked against the table rather than trusted: a listing joined on the wrong key reads
+		// just as plausibly with another member's results in it.
+		for _, f := range all.Findings {
+			var owner string
+			if err := s.DB().QueryRow(`
+				SELECT r.repository_full_name FROM abom_finding f
+				JOIN repository r ON r.row_id = f.repository_row_id WHERE f.row_id = ?`,
+				f.FindingRowID).Scan(&owner); err != nil {
+				t.Fatal(err)
+			}
+			if owner != repo {
+				t.Errorf("%s lists finding %d, which %s reported", repo, f.FindingRowID, owner)
+			}
+		}
+	}
+
+	one, err := s.RunFindings(id, "octo-app", "actions/unpinned-tag", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(one.Findings) != 1 || one.Findings[0].RuleID != "actions/unpinned-tag" {
+		t.Errorf("narrowed to one query, octo-app lists %+v", one.Findings)
+	}
+
+	absent, err := s.RunFindings(id, "octo/absent", "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if absent.Evaluated || absent.Findings == nil || len(absent.Findings) != 0 {
+		t.Errorf("a member nothing ran against lists %+v, want not evaluated and none", absent)
+	}
+
+	capped, err := s.RunFindings(id, "octo-app", "", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(capped.Findings) != 1 || !capped.Truncated {
+		t.Errorf("a listing capped at one reads %+v, want one and truncated", capped)
+	}
+
+	if _, err := s.RunFindings(id, "octo/elsewhere", "", 100); !errors.Is(err, store.ErrNoRunMember) {
+		t.Errorf("a repository the run does not cover answered %v", err)
 	}
 }

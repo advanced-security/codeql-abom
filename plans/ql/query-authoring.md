@@ -1,10 +1,11 @@
 # A query is written from an example, not from QL
 
-**Status:** An operator with a directory gets a CodeQL pack, their queries resolved by name, run
-over the retained databases and cataloged with origin `user`, and `dev` → `test` is refused until
-`codeql test run` passes for that exact version. What they need a query to do is kept as a request
-— a description, a `COMPLIANT` example and a `NON_COMPLIANT` one — on the CodeQL page. What is
-missing is the part that turns a request into a query, so they do not have to write QL.
+**Status:** An operator with a directory gets a CodeQL pack whose queries are cataloged from the
+moment they are on disk, tested one query at a time over the tests that name them, and marked
+through seven steps read from evidence. `dev` → `test` is refused until that version's own tests
+pass, and `test` → `extended-test` until every step does; a request names its target by selection.
+What is missing is the one step ABOM cannot produce yet — the AST — and everything between a
+request and a query: nothing turns a request's examples into a test, and no agent writes the query.
 
 ## Why this exists
 
@@ -32,59 +33,81 @@ corpus that exists, and making the result a first-class thing ABOM can run and c
 database is the useful default and is what Default Setup would run anyway; the extended shape widens
 what a query *can* see later, and nothing here is shaped around waiting for it.
 
-### The ladder a query climbs, and what currently guards each rung
+### The ladder a query climbs, and the steps inside its first two rungs
 
 `store.Stages()` is `dev`, `test`, `extended-test`, `review`, `deploy`, and `AdvanceQueryStage`
-records who moved a version and when. **The first rung is earned**: advancing to `test` reads
-`abom_query_test` for that exact version and refuses without a passing result, so a query that was
-green and has since been edited has not passed anything. The rest are still set by hand.
+records who moved a version and when. **The first two rungs are earned**: advancing to `test` reads
+`abom_query_test` for that exact version and refuses without a passing result, and advancing to
+`extended-test` refuses unless every step below is passing for the version on disk. The rest are set
+by hand.
+
+Within `dev` and `test` a query goes through seven steps, in this order, and each is a mark a reader
+can check:
+
+| Step | Shows | Evidence |
+| --- | --- | --- |
+| (a) Target | which query a request improves, or that it needs a new one | the operator's selection of an existing id, or the agent's recorded decision |
+| (b) Help | `src/<Name>.md` beside the query | the file, non-empty |
+| (c) Expected | `test/<Name>/<Name>.expected` | the file; empty is a warning, because a `NON_COMPLIANT` example must yield a line |
+| (d) Test database | the test code extracts | the test directory's `<dir>.testproj` finalized and newer than every test source; a failed extraction leaves one behind unfinished |
+| (e) AST | `PrintAST` read the test database | a recorded run over the current test database |
+| (f) Compiles | the query is valid QL | the compilation stage of a test run for this version |
+| (g) Tests | the query does what its examples say | `codeql test run` for this version and these tests |
+
+Each is pending, failed, warning or passing. A warning is evidence that has gone stale — tests that
+passed before the `.expected` changed, a test database older than its sources — never a guess.
+**`extended-test` is refused unless (b) through (g) are all passing for that exact version**, which
+makes the second rung earned the way the first is. (a) belongs to a request rather than to a
+version, and is shown only there. **Until (e) can be produced, it is pending on every query, so
+`extended-test` is refused everywhere** — the gate doing its job, not a defect to route around.
 
 ```mermaid
 flowchart LR
-    DEV["dev"] -->|"codeql test run passes"| TEST["test"]
-    TEST -->|"runs over a real scope"| EXT["extended-test"]
-    EXT -->|"simulation: what it would raise"| REV["review"]
-    REV -->|"published as a pack"| DEP["deploy"]
-    TEST -. "nothing enforced" .-> EXT
-    EXT -. "nothing enforced" .-> REV
-    REV -. "nothing enforced" .-> DEP
-    style EXT fill:#3d2d1d
+    REQ["request<br/>two examples"] -->|"(a) a target selected<br/>from the catalog"| DEV["dev"]
+    DEV -->|"(g) its own tests pass,<br/>for this version"| TEST["test"]
+    TEST -->|"(b)–(g) all passing"| EXT["extended-test"]
+    AST["(e) PrintAST over<br/>the test database"] -. "nothing produces it,<br/>so this gate stays shut" .-> EXT
+    REQ -. "nothing turns the examples<br/>into a test and a query" .-> DEV
+    EXT -. "nothing enforced" .-> REV["review"]
+    REV -. "nothing enforced" .-> DEP["deploy"]
+    style AST fill:#3d2d1d
     style REV fill:#3d2d1d
     style DEP fill:#3d2d1d
 ```
 
-The remaining gates are owned where their evidence is produced: `extended-test` by
-[`api/on-demand-analysis.md`](../api/on-demand-analysis.md), `review` by
-[`api/query-simulation.md`](../api/query-simulation.md), and `deploy` by
-[`ql/pack-promotion.md`](pack-promotion.md).
+What happens inside `extended-test` — runs over a real scope — is
+[`api/on-demand-analysis.md`](../api/on-demand-analysis.md); the `review` gate is
+[`api/query-simulation.md`](../api/query-simulation.md), and `deploy` is
+[`ql/pack-promotion.md`](pack-promotion.md). What an agent contributes to the first two rungs is
+[`api/authoring-harness.md`](../api/authoring-harness.md), and how a reader sees them is
+[`ui/authoring-progress.md`](../ui/authoring-progress.md).
 
 ## Pending
 
-1. **A request's examples become a test before any query exists.** `abom_query_request` holds the
+1. **ABOM produces the AST step itself.** An explicit action runs `PrintAST` for `actions` over the
+   query's kept test database, under the same machine-wide lock as every other CodeQL invocation,
+   and records (e) in an append-only step ledger — the one step whose evidence is an event rather
+   than a file, so the only one that needs a table. The harness records the same step when it calls
+   the tool. Taken from `advanced-security/ql-mcp-actions-tools-src` **2.27.1**, the release carrying
+   the `actions.lock` and `PrintAST` changes ABOM needs. `authoring.Progress` already reports (e)
+   as pending with its reason; this replaces that one line. Depends on that release.
+2. **A request's examples become a test before any query exists.** `abom_query_request` holds the
    example that should match and, critically, the one that should not. Those become the fixture
    tree, and the test fails first — for the reason expected — before any query exists to satisfy
-   it. **A query written before its negative case is a query nobody can tell is too broad.** The
-   pack is scaffolded, the test runner is wired and the examples are on record, so what is owed is
-   the step that turns a request into a fixture tree and a `.qlref`, and links the request to the
-   query it produced. Depends on nothing.
-2. **The authoring loop, driven rather than reimplemented.** Scaffold, extract, read the AST,
-   compile, run, review, accept — through the MCP server's tools, so the loop that improves upstream
-   improves here. What ABOM adds is the corpus and the catalog entry, not a second implementation of
-   test-driven query development. **This is the half that means an operator does not have to write
-   QL**, and it is the only part of this plan that is agentic. Depends on 1.
-3. **Unify on one `codeql/actions-all`, by importing through `ql-mcp`'s packs.** The authoring
-   session resolves 0.6.1 and ABOM's findings suite pins 0.6.35, so a query unit-tested in one and
-   executed in the other can legitimately differ with nothing downstream saying which answered.
-   **The direction is decided, not open**: the authoring environment takes its `actions` library
-   from `ql-mcp`'s packs rather than depending on upstream directly, which makes one pin govern
-   both. It is not done yet because ABOM needs the newer pack — `actions.lock` workflow pinning is
-   too recent to be in 0.6.1 — so the skew is the accepted state until `ql-mcp` catches up, and
-   what is owed meanwhile is **recording which version authored a version**, so the difference is
-   visible rather than assumed away. Depends on 2.
+   it. **A query written before its negative case is a query nobody can tell is too broad.** This
+   is the first thing the agent does, driven by
+   [`api/authoring-harness.md`](../api/authoring-harness.md), and a request asked from a run already
+   carries the findings and repositories picked from it. Depends on the harness.
+3. **One `codeql/actions-all`, through ql-mcp's packs.** The authoring session resolves 0.6.1 and
+   ABOM's findings suite pins 0.6.35, so a query unit-tested in one and executed in the other can
+   legitimately differ with nothing downstream saying which answered. **The direction is decided**:
+   the authoring environment takes its `actions` library from ql-mcp's packs, which makes one pin
+   govern both. ql-mcp 2.27.1 carries the `actions.lock` changes that kept ABOM on the newer
+   library, so adopting it ends the skew. Depends on that release.
 4. **It runs against real data before anybody believes it.** A query green against its own two-file
    fixture is a query that compiles. What it does across the organization is
    [`api/query-simulation.md`](../api/query-simulation.md), and it is the step between *this works*
-   and *this is worth turning on*. Depends on 2.
+   and *this is worth turning on*. Depends on 1, because until then nothing reaches `extended-test`.
 
 ## The constraints that must not be broken
 
@@ -111,6 +134,13 @@ tests passed, not that somebody chose the word. A ladder whose rungs can each be
 audit trail of intentions, and the first reader to treat one as a guarantee is misled by something
 this project built.
 
+**A step is passing only on evidence for this version and these tests.** A pass recorded before the
+query or its tests changed is a warning, not a pass; a mark that outlived its evidence is the same
+failure as a stage set by hand.
+
+**A target is a selection, never text.** A request naming a query nothing holds reads as a request
+about that query, and nothing downstream can tell the difference.
+
 **A directory holding no tests is not a pass.** Nothing was shown to work, and reporting it as green
 is the same failure as an unmeasured value printed as zero. `codeql test run` over an empty tree
 exits cleanly, so the verdict is read from the count and not from the exit status.
@@ -134,8 +164,9 @@ taken on a second job it cannot do as well as an editor.
 
 - A query authored end to end from two snippets: it fails first, compiles, passes its test, appears
   in the catalog with origin `user`, and runs against a chosen scope, with no Go change at any step.
-- Advancing that query to `test` is refused while its test fails, and permitted once it passes —
-  checked by breaking the test rather than by reading the code.
+- Once (e) is produced, `extended-test` is permitted for a version whose steps all pass, and refused
+  again, naming the step, when one step's evidence is removed — checked by removing it rather than
+  by reading the code.
 - The negative snippet is genuinely refused — a mutation that broadens the query breaks the test.
 - The pack in the operator's directory installs, resolves and runs from a clean checkout with ABOM
   not involved, because that is what promotion later depends on.

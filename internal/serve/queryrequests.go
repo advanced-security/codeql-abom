@@ -3,11 +3,20 @@ package serve
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
+	"github.com/advanced-security/codeql-abom/internal/authoring"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
+
+// requestRow is a request with the steps toward it: (a) the target, then the target's working
+// copy, or every step waiting when nothing on disk implements it.
+type requestRow struct {
+	store.QueryRequest
+	Steps []authoring.Step `json:"steps"`
+}
 
 // queryRequests lists what people have asked queries to do, with the words a form may offer.
 func (s *Server) queryRequests(w http.ResponseWriter, r *http.Request) {
@@ -16,8 +25,32 @@ func (s *Server) queryRequests(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	working, steps, err := s.workingCopy()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	byID := map[string][]authoring.Step{}
+	for _, q := range working {
+		byID[q.QueryID] = steps[q.QueryID+"\x00"+q.QueryVersion]
+	}
+	rows := make([]requestRow, 0, len(requests))
+	for _, req := range requests {
+		row := requestRow{QueryRequest: req, Steps: []authoring.Step{authoring.TargetStep(req)}}
+		progress, onDisk := byID[req.QueryID]
+		switch {
+		case req.QueryID == "":
+			row.Steps = append(row.Steps, authoring.Unstarted("no query chosen yet")...)
+		case onDisk:
+			row.Steps = append(row.Steps, progress...)
+		default:
+			row.Steps = append(row.Steps, authoring.Unstarted(
+				"nothing in the query directory implements "+req.QueryID+" yet")...)
+		}
+		rows = append(rows, row)
+	}
 	writeJSON(w, map[string]any{
-		"requests": requests,
+		"requests": rows,
 		"kinds":    store.QueryRequestKinds(),
 		"statuses": store.QueryRequestStatuses(),
 	}, nil)
@@ -51,6 +84,23 @@ func (s *Server) editQueryRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) keepQueryRequest(w http.ResponseWriter, r *http.Request, body store.QueryRequest) {
+	// Saved here, a request is the operator's act, so they chose its target whatever the body
+	// says; the agent records its own decisions.
+	body.TargetSource = ""
+	if body.QueryID != "" {
+		known, err := s.knownQuery(body.QueryID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if !known {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf(
+				"%s is not a query ABOM holds; choose one from the catalog, or leave it to the agent",
+				body.QueryID))
+			return
+		}
+		body.TargetSource = store.TargetOperator
+	}
 	if _, err := s.Store.SaveQueryRequest(body); err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, store.ErrNoQueryRequest) {
@@ -60,4 +110,23 @@ func (s *Server) keepQueryRequest(w http.ResponseWriter, r *http.Request, body s
 		return
 	}
 	s.queryRequests(w, r)
+}
+
+// knownQuery reports whether a request may name id: a query the catalog or the operator's pack
+// holds, other than one that builds the graph or a whole-suite lane.
+func (s *Server) knownQuery(id string) (bool, error) {
+	working, _, err := s.workingCopy()
+	if err != nil {
+		return false, err
+	}
+	catalog, err := s.Store.QueryCatalog(working...)
+	if err != nil {
+		return false, err
+	}
+	for _, q := range catalog {
+		if q.QueryID == id && !q.Lane && !q.Discovery {
+			return true, nil
+		}
+	}
+	return false, nil
 }

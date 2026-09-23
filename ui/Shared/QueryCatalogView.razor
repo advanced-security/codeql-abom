@@ -64,7 +64,7 @@ else
                  FixedHeader="true" RowsPerPage="30" Class="abom-grid abom-grid-windowed"
                  data-abom-queries-table>
         <Columns>
-            <HierarchyColumn T="CatalogQuery">
+            <HierarchyColumn T="CatalogQuery" InitiallyExpandedFunc="@Focused">
                 <CellTemplate>
                     <MudIconButton Size="Size.Small"
                                    Icon="@(context.Open ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)"
@@ -81,6 +81,13 @@ else
                     <div class="abom-query-id" data-abom-query-id="@context.Item.QueryId">
                         @context.Item.QueryId
                     </div>
+                    @* Under the id rather than in the action column, which would widen every row for one. *@
+                    @if (context.Item.Working && context.Item.Steps.Count > 0)
+                    {
+                        <AuthoringSteps Steps="@context.Item.Steps" CanTest="@CanTest(context.Item)"
+                                        TestRefusal="@TestRefusal(context.Item)"
+                                        OnTest="@(() => Test(context.Item))" />
+                    }
                 </CellTemplate>
             </PropertyColumn>
 
@@ -89,6 +96,19 @@ else
                             CellClass="abom-row-actions">
                 <CellTemplate>
                     <div class="abom-query-actions">
+                        @if (context.Item.Origin == "user" && !(context.Item.Working && context.Item.Steps.Count > 0))
+                        {
+                            @* What an older version's tests said is history, and cannot be re-run. *@
+                            <MudTooltip Text="@SupersededTooltip(context.Item)">
+                                <span>
+                                    <MudIconButton Icon="@Icons.Material.Outlined.Science"
+                                                   Size="Size.Small" Color="@TestColor(context.Item)"
+                                                   Disabled="true"
+                                                   aria-label="@SupersededTooltip(context.Item)"
+                                                   data-abom-query-superseded-test />
+                                </span>
+                            </MudTooltip>
+                        }
                         <MudTooltip Text="@RunTooltip(context.Item)">
                             <span>
                                 <MudIconButton Icon="@Icons.Material.Outlined.PlayArrow"
@@ -97,16 +117,6 @@ else
                                                OnClick="@(() => ChooseRepositories(context.Item))"
                                                aria-label="Run on chosen repositories"
                                                data-abom-query-run />
-                            </span>
-                        </MudTooltip>
-                        <MudTooltip Text="@TestTooltip(context.Item)">
-                            <span>
-                                <MudIconButton Icon="@Icons.Material.Outlined.Science"
-                                               Size="Size.Small" Color="@TestColor(context.Item)"
-                                               Disabled="@(!CanTest(context.Item))"
-                                               OnClick="@(() => Test(context.Item))"
-                                               aria-label="Test this version"
-                                               data-abom-query-test />
                             </span>
                         </MudTooltip>
                     </div>
@@ -159,7 +169,15 @@ else
 
             <PropertyColumn Property="x => x.LastRunAt" Title="Last run" CellClass="abom-nowrap">
                 <CellTemplate>
-                    <MudText Typo="Typo.caption">@TimeText.DayAndTime(context.Item.LastRunAt)</MudText>
+                    @if (context.Item.Runs == 0 && context.Item.LastRunAt.Length == 0)
+                    {
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary"
+                                 data-abom-query-never-run>not run yet</MudText>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.caption">@TimeText.DayAndTime(context.Item.LastRunAt)</MudText>
+                    }
                 </CellTemplate>
             </PropertyColumn>
 
@@ -211,6 +229,9 @@ else
 }
 
 @code {
+    /// <summary>A query to open on arrival, such as the one a request or a run named.</summary>
+    [Parameter] public string FocusQuery { get; set; } = string.Empty;
+
     private QueryCatalog? _catalog;
     private string? _refusal;
     private bool _showDiscovery;
@@ -255,6 +276,11 @@ else
     private int Hidden => _catalog?.Queries.Count(q => q.Discovery || q.Lane) ?? 0;
 
     private int Unstaged => Shown.Count(q => q.Stage.Length == 0);
+
+    /// <summary>The named query's version on disk, or every version of it when none is.</summary>
+    private bool Focused(CatalogQuery q) =>
+        FocusQuery.Length > 0 && q.QueryId == FocusQuery &&
+        (q.Working || _catalog?.Queries.Any(o => o.QueryId == FocusQuery && o.Working) != true);
 
     /// <summary>A discovery query builds the graph, so running one on demand answers nothing.</summary>
     private bool CanRun(CatalogQuery q) =>
@@ -307,19 +333,22 @@ else
         }
     }
 
-    /// <summary>Only the operator's own queries have tests; upstream packs ship none.</summary>
+    /// <summary>Only the working copy of the operator's own query has tests ABOM can run.</summary>
     private bool CanTest(CatalogQuery q) =>
-        CanAdvance && q.Origin == "user" && q.QueryVersion.Length > 0;
+        CanAdvance && q.Origin == "user" && q.Working && q.QueryVersion.Length > 0;
 
     private static Color TestColor(CatalogQuery q) =>
         !q.Tested ? Color.Default : q.Passing ? Color.Success : Color.Error;
 
-    private string TestTooltip(CatalogQuery q) =>
-        !CanAdvance ? "Sign in to run tests"
-        : q.Origin != "user" ? "Tests live beside the query, and this one came from a pack you did not write"
-        : !q.Tested ? "Run this version's tests — passing them is what lets it leave dev"
-        : q.Passing ? $"Tests pass: {q.TestDetail}"
-        : $"Tests fail: {q.TestDetail}";
+    /// <summary>Empty when the Test action is available, so the tests' own evidence is shown.</summary>
+    private string TestRefusal(CatalogQuery q) =>
+        !CanAdvance ? "Sign in to run tests" : string.Empty;
+
+    private static string SupersededTooltip(CatalogQuery q) =>
+        "Only the version on disk can be tested. " + (
+            !q.Tested ? "Nothing ran this one's tests."
+            : q.Passing ? $"This one's tests passed: {q.TestDetail}"
+            : $"This one's tests failed: {q.TestDetail}");
 
     private async Task Test(CatalogQuery query)
     {
@@ -340,7 +369,7 @@ else
         version.Length <= 12 ? version : version[..12];
 
     /// <summary>"Yours" is the word for what the operator owns; a query they wrote is custom.</summary>
-    private static string OriginText(string origin) => origin switch
+    public static string OriginText(string origin) => origin switch
     {
         "upstream" => "upstream",
         "abom" => "ABOM",

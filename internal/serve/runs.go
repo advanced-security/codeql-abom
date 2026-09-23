@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -95,6 +96,38 @@ func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"runs": list}, nil)
 }
 
+// runResults lists what one member of a run reported, optionally for one query, so a reader can
+// pick the results to push back on.
+func (s *Server) runResults(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "a run is named by a number")
+		return
+	}
+	repository := r.URL.Query().Get("repository")
+	if repository == "" {
+		writeError(w, http.StatusBadRequest, "results are read one repository at a time; name one")
+		return
+	}
+	if _, err := s.Store.AnalysisRun(id); err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	found, err := s.Store.RunFindings(id, repository, r.URL.Query().Get("query"), runResultsLimit)
+	switch {
+	case errors.Is(err, store.ErrNoRunMember):
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, found, nil)
+}
+
+// runResultsLimit bounds one member's listing; past it the answer says it was cut short.
+const runResultsLimit = 500
+
 // run reads one request with every member, which is where a reader sees what it could not cover.
 func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -151,7 +184,7 @@ func (s *Server) executeRun(w http.ResponseWriter, r *http.Request) {
 
 // cancelRun stops a run that is under way.
 //
-// The executor observes cancellation between members and records `canceled`, so what has already
+// The executor returns the member in flight to pending and records `canceled`, so what has already
 // been analyzed is kept and the rest is left as it was. A run nobody can stop is minutes of
 // CodeQL a reader has to wait out or kill the server to escape.
 func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {

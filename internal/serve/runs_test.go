@@ -312,3 +312,35 @@ func TestStartingARunThatDoesNotExistIsNotFound(t *testing.T) {
 		t.Errorf("starting an unknown run answered %d, want 404", got)
 	}
 }
+
+// Results are read one member at a time, so a reader can pick the ones to push back on. A member
+// nothing ran against says so, and a term the listing does not apply is refused by name rather
+// than answered with everything.
+func TestARunsResultsAreReadOneMemberAtATime(t *testing.T) {
+	s, st := newServer(t)
+	seedOneFinding(t, st)
+	run, code := start(t, s, "rules=actions%2F*", oneQuery)
+	if code != 200 {
+		t.Fatalf("recording a run answered %d", code)
+	}
+	base := "/api/runs/" + strconv.FormatInt(run.RowID, 10) + "/results"
+
+	got := decode[store.MemberFindings](t, get(t, s, base+"?repository=octo-org/app"))
+	if got.Evaluated || got.Findings == nil || len(got.Findings) != 0 {
+		t.Errorf("a member nothing ran against reads %+v", got)
+	}
+	for _, c := range []struct {
+		target string
+		want   int
+	}{
+		{base, http.StatusBadRequest},
+		{base + "?repository=octo-org/elsewhere", http.StatusNotFound},
+		{"/api/runs/999/results?repository=octo-org/app", http.StatusNotFound},
+		{base + "?repository=octo-org/app&severity=error", http.StatusBadRequest},
+		{base + "?repository=octo-org/app&query=actions%2Funpinned-tag", http.StatusOK},
+	} {
+		if code := get(t, s, c.target).Code; code != c.want {
+			t.Errorf("%s answered %d, want %d", c.target, code, c.want)
+		}
+	}
+}

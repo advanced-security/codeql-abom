@@ -481,6 +481,10 @@ CREATE TABLE IF NOT EXISTS abom_analysis_member (
   -- How many findings this member reported. NULL where nothing has counted it: a member that
   -- found nothing and one that never ran both show no findings, and only the first is a zero.
   result_count  INTEGER,
+  -- The ledger row this member's results were stored under, which is how its findings are found
+  -- again. NULL where nothing was stored, so a member nothing ran against lists no findings
+  -- without reading as one that ran and found none.
+  query_run_id  INTEGER REFERENCES abom_query_run(row_id),
   started_at    TEXT,
   finished_at   TEXT,
   PRIMARY KEY (run_id, repository, db_commit, source_filter, analysis_mode)
@@ -710,6 +714,17 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_edge", "advisory_route", "INTEGER"},
 	{"abom_edge", "finding_route", "INTEGER"},
 	{"abom_edge", "owned_depth", "INTEGER"},
+	// Nullable: a result recorded before these were kept says nothing about where it stopped or
+	// which tests it ran, and must not read as having stopped nowhere.
+	{"abom_query_test", "failure_stage", "TEXT"},
+	{"abom_query_test", "test_digest", "TEXT"},
+	// Nullable: a request kept before targets were attributed says nobody is recorded as choosing
+	// it, which must not read as the operator having chosen it.
+	{"abom_query_request", "target_source", "TEXT"},
+	{"abom_query_request", "source_run_id", "INTEGER"},
+	// A member recorded before this has no way back to its findings, which reads as not evaluated
+	// rather than as having found none.
+	{"abom_analysis_member", "query_run_id", "INTEGER"},
 }
 
 // indexDDL is applied only after bulk loading. Maintaining these indexes during a multi-million
