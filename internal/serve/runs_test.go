@@ -1,0 +1,314 @@
+package serve
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/advanced-security/codeql-abom/internal/store"
+)
+
+func start(t *testing.T, s *Server, query, body string) (store.AnalysisRun, int) {
+	t.Helper()
+	w := httptest.NewRecorder()
+	s.startRun(w, httptest.NewRequest("POST", "/api/runs?"+query, bytes.NewBufferString(body)))
+	var run store.AnalysisRun
+	if w.Code == 200 {
+		if err := json.Unmarshal(w.Body.Bytes(), &run); err != nil {
+			t.Fatalf("decoding the run: %v", err)
+		}
+	}
+	return run, w.Code
+}
+
+const oneQuery = `{"queries":[{"queryId":"actions/unpinned-tag","queryVersion":"u1"}],"by":"operator"}`
+
+// One language, asked in a third direction. A run expressed in a syntax of its own would be a
+// second policy engine deciding what an expensive thing covers.
+func TestStartingARunRefusesExactlyWhatTheMatchEndpointRefuses(t *testing.T) {
+	s, _ := newServer(t)
+
+	for _, query := range []string{"kinds=workflow", "origins=seed", "minReach=5", "ref=tag"} {
+		matched := httptest.NewRecorder()
+		s.match(matched, httptest.NewRequest("GET", "/api/match?rules=abom%2Fone&"+query, nil))
+		_, code := start(t, s, "rules=abom%2Fone&"+query, oneQuery)
+		if code != matched.Code {
+			t.Errorf("%s answered %d starting a run and %d matching nodes", query, code, matched.Code)
+		}
+	}
+}
+
+// A run naming no query would analyze nothing while looking like work.
+func TestARunNamingNoQueryIsRefused(t *testing.T) {
+	s, _ := newServer(t)
+	if _, code := start(t, s, "rules=actions%2F*", `{"queries":[],"by":"operator"}`); code != http.StatusBadRequest {
+		t.Errorf("a run naming no query answered %d, want 400", code)
+	}
+}
+
+// Asking for an expensive thing is an act somebody signs.
+func TestARunWithNobodyNamedIsRefused(t *testing.T) {
+	s, _ := newServer(t)
+	body := `{"queries":[{"queryId":"actions/unpinned-tag"}],"by":""}`
+	if _, code := start(t, s, "rules=actions%2F*", body); code != http.StatusBadRequest {
+		t.Errorf("an unsigned run answered %d, want 400", code)
+	}
+}
+
+// A scope nothing can answer is refused with the reason the resolution already worked out, rather
+// than recorded as a run over nothing that will report a clean result.
+func TestARunOverAScopeNothingCanAnswerIsRefusedWithTheReason(t *testing.T) {
+	s, _ := newServer(t)
+	w := httptest.NewRecorder()
+	s.startRun(w, httptest.NewRequest("POST",
+		"/api/runs?rules=actions%2F*&mode=extended", bytes.NewBufferString(oneQuery)))
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("a run over an unanswerable scope answered %d, want 400", w.Code)
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte("extended")) {
+		t.Errorf("the refusal is %q, which does not say which shape cannot answer", w.Body.String())
+	}
+}
+
+// A run that is not there is the reader naming one that does not exist. 5xx would say ABOM is
+// broken and leave the page unable to name what would fix it.
+func TestAnUnknownRunIsNotFoundRatherThanAFault(t *testing.T) {
+	s, _ := newServer(t)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/runs/999", nil)
+	req.SetPathValue("id", "999")
+	s.run(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("an unknown run answered %d, want 404", w.Code)
+	}
+}
+
+// The list is what a reader chooses from, so it answers before anything has been asked for.
+func TestTheRunListAnswersBeforeAnythingHasBeenAskedFor(t *testing.T) {
+	s, _ := newServer(t)
+	w := httptest.NewRecorder()
+	s.runs(w, httptest.NewRequest("GET", "/api/runs", nil))
+	if w.Code != 200 {
+		t.Fatalf("the run list answered %d", w.Code)
+	}
+	var got struct {
+		Runs []store.AnalysisRun `json:"runs"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding the run list: %v", err)
+	}
+	if got.Runs == nil {
+		t.Error("runs marshaled as null rather than an empty list, which the client throws on")
+	}
+}
+
+// fakeExecutor records that it was asked to carry a run out.
+type fakeExecutor struct {
+	mu    sync.Mutex
+	asked []int64
+}
+
+func (f *fakeExecutor) Run(_ context.Context, runID int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.asked = append(f.asked, runID)
+	return nil
+}
+
+func (f *fakeExecutor) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.asked)
+}
+
+func startExecution(t *testing.T, s *Server, id string) int {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/runs/"+id+"/start", nil)
+	req.SetPathValue("id", id)
+	s.executeRun(w, req)
+	return w.Code
+}
+
+// A run over a thousand repositories is minutes of CodeQL. Without a way to stop it a reader
+// waits it out or kills the server, and killing the server leaves the run recorded as running.
+func TestARunUnderWayCanBeStopped(t *testing.T) {
+	s, st := newServer(t)
+	seedOneFinding(t, st)
+	executor := &blockingExecutor{started: make(chan struct{}), release: make(chan struct{})}
+	s.Executor = executor
+
+	run, code := start(t, s, "rules=actions%2F*", oneQuery)
+	if code != 200 {
+		t.Fatalf("recording a run answered %d", code)
+	}
+	id := strconv.FormatInt(run.RowID, 10)
+	if got := startExecution(t, s, id); got != 200 {
+		t.Fatalf("starting the run answered %d", got)
+	}
+	<-executor.started
+
+	if got := cancelExecution(t, s, id, true); got != 200 {
+		t.Fatalf("canceling answered %d, want 200", got)
+	}
+
+	close(executor.release)
+	if err := <-executor.saw; err == nil {
+		t.Error("the executor was not told to stop")
+	}
+}
+
+// Only runs this process started. One left `running` by a server that died is not one this
+// server can stop, and reporting a cancellation that never happened is worse than refusing.
+func TestARunThisServerIsNotCarryingOutCannotBeStopped(t *testing.T) {
+	s, st := newServer(t)
+	seedOneFinding(t, st)
+	s.Executor = &fakeExecutor{}
+
+	run, code := start(t, s, "rules=actions%2F*", oneQuery)
+	if code != 200 {
+		t.Fatalf("recording a run answered %d", code)
+	}
+
+	got := cancelExecution(t, s, strconv.FormatInt(run.RowID, 10), true)
+	if got != http.StatusConflict {
+		t.Errorf("canceling a run nothing is carrying out answered %d, want 409", got)
+	}
+}
+
+// Stopping a run undoes work somebody paid for, so it is guarded like the control that starts one.
+func TestStoppingARunIsGuarded(t *testing.T) {
+	s, st := newServer(t)
+	seedOneFinding(t, st)
+	s.Executor = &fakeExecutor{}
+
+	run, code := start(t, s, "rules=actions%2F*", oneQuery)
+	if code != 200 {
+		t.Fatalf("recording a run answered %d", code)
+	}
+
+	got := cancelExecution(t, s, strconv.FormatInt(run.RowID, 10), false)
+	if got != http.StatusForbidden {
+		t.Errorf("an unguarded cancel answered %d, want 403", got)
+	}
+}
+
+func cancelExecution(t *testing.T, s *Server, id string, guarded bool) int {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/runs/"+id+"/cancel", nil)
+	if guarded {
+		req.Header.Set("X-Abom-Control", "1")
+	}
+	// Control endpoints answer only over loopback, and httptest addresses the request to
+	// example.com.
+	req.Host = "127.0.0.1"
+	req.SetPathValue("id", id)
+	s.cancelRun(w, req)
+	return w.Code
+}
+
+// blockingExecutor stays in Run until released, so a test can cancel something that is genuinely
+// in flight rather than racing a call that has already returned.
+type blockingExecutor struct {
+	started chan struct{}
+	release chan struct{}
+	saw     chan error
+	once    sync.Once
+}
+
+func (b *blockingExecutor) Run(ctx context.Context, _ int64) error {
+	b.once.Do(func() { b.saw = make(chan error, 1) })
+	close(b.started)
+	<-b.release
+	err := ctx.Err()
+	b.saw <- err
+	return err
+}
+
+// seedOneFinding gives the fixture a repository carrying a rule, so a scope resolves to something
+// and a run can be recorded at all.
+func seedOneFinding(t *testing.T, st *store.Store) {
+	t.Helper()
+	repoID, err := st.UpsertRepository("octo-org/app", "")
+	if err != nil {
+		t.Fatalf("UpsertRepository: %v", err)
+	}
+	w := store.NewWriter(st, 0)
+	if err := w.AddNode(store.Node{
+		Key: "octo-org/app/.github/workflows/ci.yml", Kind: "workflow",
+		RepositoryID: repoID, Path: ".github/workflows/ci.yml",
+	}); err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	if _, err := st.AddFindings([]store.Finding{
+		{RuleID: "actions/unpinned-tag", RepositoryID: repoID,
+			FilePath: ".github/workflows/ci.yml", StartLine: 3},
+	}); err != nil {
+		t.Fatalf("AddFindings: %v", err)
+	}
+	if _, err := st.LinkFindingsToNodes(); err != nil {
+		t.Fatalf("LinkFindingsToNodes: %v", err)
+	}
+}
+
+// A server built without a runner can honestly record a run and not carry it out. Saying so is a
+// precondition the reader has not met, which is a 4xx: reported as a fault it would say ABOM is
+// broken and leave the page unable to name what would fix it.
+func TestAServerWithNoRunnerSaysSoRatherThanFailing(t *testing.T) {
+	s, st := newServer(t)
+	seedOneFinding(t, st)
+	run, code := start(t, s, "rules=actions%2F*", oneQuery)
+	if code != 200 {
+		t.Fatalf("recording a run answered %d", code)
+	}
+
+	if got := startExecution(t, s, strconv.FormatInt(run.RowID, 10)); got != http.StatusBadRequest {
+		t.Errorf("starting a run with no runner answered %d, want 400", got)
+	}
+}
+
+// Starting hands the work off and answers, because a run over a corpus outlives any request a
+// browser is willing to hold open.
+func TestStartingARunHandsItToTheExecutorAndAnswers(t *testing.T) {
+	s, st := newServer(t)
+	seedOneFinding(t, st)
+	executor := &fakeExecutor{}
+	s.Executor = executor
+
+	run, code := start(t, s, "rules=actions%2F*", oneQuery)
+	if code != 200 {
+		t.Fatalf("recording a run answered %d", code)
+	}
+	if got := startExecution(t, s, strconv.FormatInt(run.RowID, 10)); got != 200 {
+		t.Fatalf("starting the run answered %d", got)
+	}
+
+	// The handler detaches the work, so the assertion waits for it rather than racing it.
+	for range 100 {
+		if executor.count() > 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Error("the run was never handed to the executor")
+}
+
+// Starting one that does not exist is the reader naming a run that is not there.
+func TestStartingARunThatDoesNotExistIsNotFound(t *testing.T) {
+	s, _ := newServer(t)
+	s.Executor = &fakeExecutor{}
+	if got := startExecution(t, s, "999"); got != http.StatusNotFound {
+		t.Errorf("starting an unknown run answered %d, want 404", got)
+	}
+}

@@ -264,6 +264,42 @@ CREATE TABLE IF NOT EXISTS abom_database_catalog (
   checked_at   TEXT NOT NULL
 );
 
+-- The CodeQL databases ABOM built and kept, so a query can be run across a corpus that already
+-- exists rather than rebuilding one repository at a time.
+--
+-- This is not abom_database_catalog and may not be merged with it. That table answers whether
+-- somebody enabled code scanning on a repository -- a fact about how it is configured, held for
+-- repositories ABOM has never built anything for. This one answers what is on this disk.
+--
+-- Identity is the repository, the commit, the checkout filter and the analysis mode: the same
+-- tuple abom_query_run hashes into its run key, because a second definition of "which database"
+-- is how two engines start disagreeing about what has already been analyzed. The filter is part
+-- of it for the reason the checkout cache keys on it too -- a commit alone does not name a tree,
+-- and a database built from narrower paths cannot answer a wider question.
+--
+-- The row indexes a directory rather than being one. The disk half promotes a finished build
+-- atomically and this records the result, so an interrupted run leaves an unreferenced directory
+-- to reclaim rather than a row pointing at nothing.
+CREATE TABLE IF NOT EXISTS abom_local_database (
+  row_id        INTEGER PRIMARY KEY,
+  repository    TEXT NOT NULL,
+  db_commit     TEXT NOT NULL DEFAULT '',
+  source_filter TEXT NOT NULL DEFAULT '',
+  analysis_mode TEXT NOT NULL DEFAULT 'regular',
+  path          TEXT NOT NULL,
+  -- Always measured before the row is written, so zero means an empty database rather than one
+  -- nobody sized. Eviction has to be able to trust it.
+  bytes         INTEGER NOT NULL,
+  cli_version   TEXT,
+  built_at      TEXT NOT NULL,
+  last_used_at  TEXT NOT NULL,
+  -- What eviction actually orders by. last_used_at is for a reader: RFC3339 is second-resolution,
+  -- so two databases used in one second tie, and the nanosecond form trims trailing zeros, which
+  -- makes its string order differ from its time order. A counter has neither problem.
+  used_seq      INTEGER NOT NULL,
+  UNIQUE (repository, db_commit, source_filter, analysis_mode)
+);
+
 -- Aggregate reach per referenceable node.
 CREATE TABLE IF NOT EXISTS abom_blast_radius (
   node_row_id         INTEGER PRIMARY KEY REFERENCES abom_node(row_id),
@@ -391,6 +427,87 @@ CREATE TABLE IF NOT EXISTS abom_exposure (
   UNIQUE(repository_row_id, node_row_id, ghsa_id)
 );
 
+-- A run somebody asked for: an explicit list of queries against the databases a scope resolved to.
+--
+-- Apart from abom_query_run, which is the ledger of what has been evaluated. This is the request
+-- and its progress, and it outlives the evaluation: a member that failed is a fact about this run,
+-- not about the query.
+CREATE TABLE IF NOT EXISTS abom_analysis_run (
+  row_id        INTEGER PRIMARY KEY,
+  -- The predicate the database set was resolved from, verbatim. What a run was asked for and what
+  -- it resolved to are different facts, and keeping only the second leaves a run unable to say
+  -- which question it was answering.
+  predicate     TEXT NOT NULL DEFAULT '',
+  analysis_mode TEXT NOT NULL DEFAULT 'regular',
+  requested_by  TEXT NOT NULL,
+  state         TEXT NOT NULL,
+  created_at    TEXT NOT NULL,
+  finished_at   TEXT
+);
+
+-- The explicit queries a run names. A list rather than a suite: the point of the run is to be more
+-- specific than a suite can be, and a suite resolved at request time would record what it happened
+-- to hold then rather than what was chosen.
+CREATE TABLE IF NOT EXISTS abom_analysis_query (
+  run_id        INTEGER NOT NULL REFERENCES abom_analysis_run(row_id),
+  query_id      TEXT NOT NULL,
+  query_version TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (run_id, query_id, query_version)
+);
+
+-- One row per repository the scope named, whatever became of it.
+--
+-- Every member is kept, including the ones nothing can analyze: a run holding only what it could
+-- reach means something narrower than it was asked for, and the narrowing is invisible precisely
+-- where a reader most needs telling. A repository with no database is a member whose status says
+-- so, never an absent row.
+CREATE TABLE IF NOT EXISTS abom_analysis_member (
+  run_id        INTEGER NOT NULL REFERENCES abom_analysis_run(row_id),
+  repository    TEXT NOT NULL,
+  db_commit     TEXT NOT NULL DEFAULT '',
+  source_filter TEXT NOT NULL DEFAULT '',
+  analysis_mode TEXT NOT NULL DEFAULT 'regular',
+  status        TEXT NOT NULL,
+  -- What went wrong, or why nothing could run. A member that is only "failed" says a repository
+  -- produced nothing and nothing about whether that is worth acting on.
+  detail        TEXT NOT NULL DEFAULT '',
+  -- Where the database was when the run started, so a member can be re-run without resolving the
+  -- scope again. Empty for a member nothing can analyze.
+  database_path TEXT NOT NULL DEFAULT '',
+  -- Where this member's raw results were written. Kept rather than parsed and thrown away: the
+  -- evidence a tuning decision rests on is the output itself, and re-running to see it again
+  -- costs what the run cost.
+  result_path   TEXT NOT NULL DEFAULT '',
+  -- How many findings this member reported. NULL where nothing has counted it: a member that
+  -- found nothing and one that never ran both show no findings, and only the first is a zero.
+  result_count  INTEGER,
+  started_at    TEXT,
+  finished_at   TEXT,
+  PRIMARY KEY (run_id, repository, db_commit, source_filter, analysis_mode)
+);
+
+-- Which lifecycle stage somebody put a query version in.
+--
+-- Only the act is stored. Everything else the catalog reports -- which versions exist, how many
+-- runs and repositories each has behind it -- is derived from abom_query_run, because the ledger
+-- already records what ran with what identity and a second table maintained beside it would be a
+-- second writer of one fact.
+--
+-- advanced_by and advanced_at are not decoration. ABOM computes readiness and a person advances
+-- the stage, so a row that could not say who moved it would be indistinguishable from a stage the
+-- tool awarded itself. A version nobody has staged has no row, which is deliberately different
+-- from one staged at dev.
+CREATE TABLE IF NOT EXISTS abom_query_stage (
+  query_id      TEXT NOT NULL,
+  -- Empty for runs recorded before query versions were written. In a primary key, so it cannot
+  -- be NULL: NULL never equals NULL and the upsert would never converge.
+  query_version TEXT NOT NULL DEFAULT '',
+  stage         TEXT NOT NULL,
+  advanced_by   TEXT NOT NULL,
+  advanced_at   TEXT NOT NULL,
+  PRIMARY KEY (query_id, query_version)
+);
+
 -- What each dependency tier runs, as configuration rather than a command-line flag.
 --
 -- A tier binds to a *set* of suites, so no combined per-tier suite artifact ever has to be
@@ -422,6 +539,9 @@ CREATE TABLE IF NOT EXISTS abom_suite_query (
   pack_version TEXT,
   pack_digest  TEXT,
   query_id     TEXT NOT NULL,
+  -- Content hash of the .ql and the libraries it imports. Finer than the pack digest beside it:
+  -- that moves when any file in the pack moves, and this moves when this query's meaning does.
+  query_version TEXT NOT NULL DEFAULT '',
   kind         TEXT,
   resolved_at  TEXT NOT NULL,
   PRIMARY KEY (suite, query_id)
@@ -492,6 +612,13 @@ var droppedColumns = []struct{ table, column string }{
 
 var addedColumns = []struct{ table, column, decl string }{
 	{"abom_saved_view", "presentation", "TEXT"},
+	// A run recorded before results were retained keeps an empty path, which reads as "nothing was
+	// written" rather than as a file nobody can find.
+	{"abom_analysis_member", "result_path", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_analysis_member", "result_count", "INTEGER"},
+	// A suite resolved before query versions were computed keeps an empty one, which reads as
+	// "nobody hashed this" rather than as a version somebody chose.
+	{"abom_suite_query", "query_version", "TEXT NOT NULL DEFAULT ''"},
 	{"abom_frontier", "analyzed_ref", "TEXT"},
 	{"abom_frontier", "resolved_sha", "TEXT"},
 	{"abom_frontier", "analyzed_at", "TEXT"},
@@ -598,6 +725,7 @@ CREATE INDEX IF NOT EXISTS idx_ledger_status   ON abom_ingest_ledger(status);
 ` + queryRunIndexDDL + `
 ` + observationIndexDDL + `
 CREATE INDEX IF NOT EXISTS idx_catalog_has_db   ON abom_database_catalog(has_database);
+CREATE INDEX IF NOT EXISTS idx_local_db_used    ON abom_local_database(used_seq);
 `
 
 // queryRunIndexDDL is created on open rather than after bulk loading, unlike every other index.

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/enumerate"
 	"github.com/advanced-security/codeql-abom/internal/expand"
 	"github.com/advanced-security/codeql-abom/internal/frontier"
+	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/serve"
 	"github.com/advanced-security/codeql-abom/internal/store"
 	"github.com/advanced-security/codeql-abom/internal/supervisor"
@@ -57,8 +59,9 @@ func wireEnumeration(
 
 // shouldResume reports whether discovery starts with the server.
 //
-// A crawl the operator started survives a restart, and one they paused stays paused: a restart may
-// not overturn either decision. `--expand` forces it either way.
+// A crawl the operator started is remembered, and a restart does not act on that memory unless
+// they asked it to. Starting a crawl spends rate limit, disk and every core on the machine, and a
+// process restart is not somebody requesting that. `--expand` forces it either way.
 func shouldResume(s *store.Store, autostart bool, stdout, stderr io.Writer) bool {
 	if autostart {
 		return true
@@ -68,11 +71,25 @@ func shouldResume(s *store.Store, autostart bool, stdout, stderr io.Writer) bool
 		fmt.Fprintf(stderr, "serve: cannot read whether discovery should be running: %v\n", err)
 		return false
 	}
-	if known && running {
-		fmt.Fprintln(stdout, "serve: resuming discovery, which was running when this last stopped")
-		return true
+	if !known || !running {
+		return false
 	}
-	return false
+
+	resume, err := s.DiscoveryResumeOnStart()
+	if err != nil {
+		fmt.Fprintf(stderr, "serve: cannot read whether discovery may resume: %v\n", err)
+		return false
+	}
+	if !resume {
+		// Said rather than silent: the crawl was running, it is not now, and an operator who is
+		// not told reads the stopped state as something that went wrong.
+		fmt.Fprintln(stdout,
+			"serve: discovery was running when this last stopped and is left paused; "+
+				"start it from the header, or turn on resume-on-start in Settings")
+		return false
+	}
+	fmt.Fprintln(stdout, "serve: resuming discovery, which was running and is set to resume")
+	return true
 }
 
 // seedDeclaration applies an untracked local declaration, and only when the database holds none.
@@ -172,6 +189,12 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		"retain fetched checkouts here and reuse each commit across references (default: off)")
 	fs.Int64Var(&d.cacheMaxMB, "cache-max-mb", defaultCacheMaxMB,
 		"ceiling for retained checkouts, least recently used evicted first (0: unbounded)")
+	fs.StringVar(&d.databaseCacheDir, "database-cache-dir", "",
+		"retain built CodeQL databases here and analyze them again without extracting (default: off)")
+	fs.Int64Var(&d.databaseCacheMaxMB, "database-cache-max-mb", defaultDatabaseCacheMaxMB,
+		"ceiling for retained databases, least recently used evicted first (0: unbounded)")
+	fs.StringVar(&d.customQLDir, "custom-ql-dir", "",
+		"directory holding your own CodeQL pack, scaffolded if empty (default: off)")
 	fs.IntVar(&d.aggregateAfter, "aggregate-after-edges", supervisor.DefaultAfterEdges,
 		"dependencies that must arrive before reach is recomputed")
 	fs.DurationVar(&d.aggregateMaxAge, "aggregate-max-age", supervisor.DefaultMaxAge,
@@ -201,6 +224,10 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	if err := seedDeclaration(s, *declareFile, stderr); err != nil {
 		return err
 	}
+
+	// Before the supervisor, because the search path has to be set before anything shells out to
+	// the CLI: a resolver that started without it would report the operator's pack as misspelled.
+	openCustomQueries(d.customQLDir, d.codeqlPath, stdout, stderr)
 
 	loop, err := newSupervisor(s, d, stderr)
 	if err != nil {
@@ -258,6 +285,14 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		// Taken from the loop rather than the flag: the flag may be empty, in which case the
 		// supervisor made a scratch directory and that is where the checkouts actually are.
 		WorkDir: loop.Options.WorkDir,
+	}
+	srv.Executor = newRunExecutor(s, loop, stderr)
+	// The runner the crawl already holds, so `codeql test run` contends for the machine-wide lock
+	// rather than racing an analysis for one compilation cache.
+	if tester, ok := loop.Expander.Resolver.(serve.QueryTester); ok {
+		if dir := runner.CustomPackRoot(); dir != "" {
+			srv.Tester, srv.TestDir = tester, filepath.Join(dir, "test")
+		}
 	}
 	// Without this the interface can record a declaration and never act on it: declaring names
 	// accounts, and only enumeration turns them into the repositories a report is about.

@@ -1012,3 +1012,80 @@ code {
 .abom-nav-here {
     background-color: var(--mud-palette-action-default-hover);
 }
+
+/* The crawl indicator, between the journey and the preferences. It shares the bar with the only
+   two words that compete for attention, so it carries none of its own: the icon's color says
+   whether anything is running and the composition bar says how the queue is made up, with every
+   word of it in the accessible name. The trailing margin is deliberate — without it the interval
+   select reads as the first of the preference icons rather than the last of these. */
+.abom-crawl {
+    gap: 12px;
+    margin-right: 28px;
+}
+
+/* Wider and taller than the same bar inside a panel: it is the only thing here carrying the
+   crawl's state, and at the panel's 0.5rem it reads as a divider rather than a measurement.
+   QueueBar wraps itself in a MudTooltip, so `.mud-tooltip-root` sits between this and the bar —
+   as a block flex item with percentage-width children it measures zero and takes the bar with
+   it. Both levels are given the width explicitly rather than left to resolve against content. */
+.abom-crawl-bar {
+    display: flex;
+    align-items: center;
+    width: 170px;
+}
+
+.abom-crawl-bar .mud-tooltip-root {
+    display: flex;
+    flex: 1 0 100%;
+    min-width: 0;
+}
+
+.abom-crawl-bar .abom-queue-bar {
+    height: 0.65rem;
+    min-width: 0;
+    max-width: none;
+    flex: 1 0 100%;
+}
+
+.abom-crawl-refresh {
+    width: 78px;
+}
+
+/* The bar is dark in both themes, so the select inherits a body color that disappears into it. */
+.abom-crawl-refresh .mud-input-slot,
+.abom-crawl-refresh .mud-select-input {
+    color: inherit;
+    font-size: var(--abom-text-sm);
+}
+
+/* The query catalog.
+   Right-aligned counts, and a stage cell that keeps its chip beside its control: flexbox wraps
+   before it shrinks, so the control is what gives way rather than the state a reader is reading. */
+.abom-cell-right { text-align: right; }
+.abom-stage-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: nowrap;
+}
+.abom-stage-cell .abom-stage-select { max-width: 140px; flex-shrink: 1; }
+.abom-stage-cell > :first-child { flex-shrink: 0; }
+
+/* A pack name breaks at every hyphen, so left in a column of its own it set the height of every
+   row in the table. Under the id it wraps at most once and the row is one line of data again. */
+.abom-query-id { font-weight: 500; }
+.abom-query-pack { display: block; line-height: 1.25; }
+
+/* A pack or suite reference is long and hyphenated, and a grid cell narrow enough to hold one
+   breaks it character by character. Truncated instead: the whole value stays on the element, so a
+   reader who needs it can still read it. */
+.abom-grid .abom-ref-cell {
+    display: block;
+    max-width: 26ch;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Row actions on the catalog: a run and a stage change sit together, and neither squashes. */
+.abom-query-actions { display: flex; align-items: center; gap: 2px; flex-wrap: nowrap; }

@@ -134,6 +134,20 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
         </MudAlert>
     }
 
+    @* A restart is not somebody asking for a crawl. Off by default, and stated either way: an
+       operator who finds it stopped after a restart needs to know that was the arrangement
+       rather than a failure. *@
+    <div class="mt-2" data-abom-resume-on-start>
+        <MudSwitch T="bool" Value="_state.ResumeOnStart" ValueChanged="ToggleResumeOnStart"
+                   Color="Color.Primary" Size="Size.Small" Disabled="@_busy"
+                   Label="Resume the crawl when the server starts" />
+        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
+            @(_state.ResumeOnStart
+                ? "A restart resumes the crawl if it was running when the server stopped."
+                : "A restart leaves the crawl stopped, whatever it was doing before. Starting one clones repositories and runs CodeQL on every core.")
+        </MudText>
+    </div>
+
     @* The other act. Enumeration lists what is under a declared account and costs seconds;
        analysis builds a database per repository and costs minutes. Nothing records enumeration as
        an event, so its result is read from the owned tier, which is what it writes at depth 0. *@
@@ -671,6 +685,23 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
         {
             // A refused or failed control request must say so: the button otherwise appears to
             // work and the loop never starts.
+            _pollError = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ToggleResumeOnStart(bool resume)
+    {
+        _busy = true;
+        try
+        {
+            _state = await Api.SetResumeOnStartAsync(resume);
+        }
+        catch (Exception ex)
+        {
             _pollError = ex.Message;
         }
         finally

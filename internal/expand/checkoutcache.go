@@ -428,7 +428,7 @@ func readRecord(entry string) (cacheRecord, error) {
 	return record, nil
 }
 
-// treeBytes sums what a tree occupies.
+// treeBytes sums what a tree occupies. Shared by both caches, so it names neither.
 func treeBytes(dir string) (int64, error) {
 	var total int64
 	err := filepath.WalkDir(dir, func(_ string, entry os.DirEntry, err error) error {
@@ -447,7 +447,7 @@ func treeBytes(dir string) (int64, error) {
 		return nil
 	})
 	if err != nil {
-		return 0, fmt.Errorf("checkout cache: measuring %s: %w", dir, err)
+		return 0, fmt.Errorf("measuring %s: %w", dir, err)
 	}
 	return total, nil
 }

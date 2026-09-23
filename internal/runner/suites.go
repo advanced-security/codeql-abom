@@ -15,18 +15,8 @@ import (
 // is dropping a `.qls` into a pack, and it has to be offered without a release.
 const PackRoot = "ql"
 
-// localPackArgs lets the CLI resolve this repository's packs by name.
-//
-// A `<pack>:<suite>` reference is looked up in the package cache, which a pack that has never
-// been published is not in. Without this the CLI reports it as misspelled rather than as local.
-// Omitted when the directory is absent, so a build running against installed packs alone is not
-// handed a search path that does not exist.
-func localPackArgs() []string {
-	if _, err := os.Stat(PackRoot); err != nil {
-		return nil
-	}
-	return []string{"--additional-packs", PackRoot}
-}
+// manifestNames are the two spellings a CodeQL pack manifest takes.
+var manifestNames = map[string]bool{"codeql-pack.yml": true, "qlpack.yml": true}
 
 // AvailableSuites lists every suite the packs under root provide, as `<pack>:<path>` references,
 // sorted.
@@ -42,7 +32,10 @@ func AvailableSuites(root string) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || d.Name() != "codeql-pack.yml" {
+		// Both spellings, as `PackOf` reads: this repository writes codeql-pack.yml, and a pack
+		// an operator could publish writes qlpack.yml. Reading only one makes a deployed query
+		// resolvable by the CLI and invisible to the control that would bind it.
+		if d.IsDir() || !manifestNames[d.Name()] {
 			return nil
 		}
 		suites, err := suitesOfPack(path)
@@ -75,6 +68,13 @@ var ciOnlyPacks = map[string]bool{
 	"advanced-security/abom-actions-selfcheck-src": true,
 }
 
+// devOnlySuites hold queries an operator is still working on. A tier bound to one would run the
+// whole custom pack across the corpus the moment a file was saved, which makes writing a query an
+// expensive accident. The deployed suite beside it is what a tier may bind.
+var devOnlySuites = map[string]bool{
+	"codeql-suites/abom-custom.qls": true,
+}
+
 // suitesOfPack reads one manifest and lists the suites it declares.
 func suitesOfPack(manifest string) ([]string, error) {
 	name, _, suiteDir, err := packIdentity(manifest)
@@ -102,7 +102,11 @@ func suitesOfPack(manifest string) ([]string, error) {
 		}
 		// Forward slashes always: a suite reference stops being a filesystem path once it names
 		// a pack, and the same string has to work on every platform.
-		out = append(out, name+":"+suiteDir+"/"+e.Name())
+		ref := suiteDir + "/" + e.Name()
+		if devOnlySuites[ref] {
+			continue
+		}
+		out = append(out, name+":"+ref)
 	}
 	return out, nil
 }

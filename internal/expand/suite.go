@@ -4,9 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/advanced-security/codeql-abom/internal/ingest"
@@ -44,6 +47,10 @@ type tierPlan struct {
 	// findingsPacks are the packs the findings lane draws rules from. One invocation covers all
 	// of them, so no single pack identifies that run and the set has to stand in for it.
 	findingsPacks []store.SuiteQuery
+	// findingsVersions are the content versions of the queries in that lane, for the same reason:
+	// the pack digests move when a pack is upgraded, and these move when a query or a library it
+	// imports is edited in place.
+	findingsVersions []string
 }
 
 func (p tierPlan) empty() bool { return len(p.bqrs) == 0 && len(p.findings) == 0 }
@@ -57,6 +64,7 @@ func (p *tierPlan) absorb(from tierPlan) {
 	p.bqrs = append(p.bqrs, from.bqrs...)
 	p.findings = append(p.findings, from.findings...)
 	p.contents = append(p.contents, from.contents...)
+	p.findingsVersions = append(p.findingsVersions, from.findingsVersions...)
 	for _, pk := range from.findingsPacks {
 		p.notePack(pk.Pack, pk.PackVersion, pk.PackDigest)
 	}
@@ -86,6 +94,7 @@ func (p tierPlan) identify(queryID string, run store.QueryRun) store.QueryRun {
 	for _, q := range p.bqrs {
 		if q.id == queryID {
 			run.Pack, run.PackVersion, run.PackDigest = q.pack, q.packVersion, q.packDigest
+			run.QueryVersion = q.version
 			return run
 		}
 	}
@@ -106,6 +115,7 @@ func (p tierPlan) identify(queryID string, run store.QueryRun) store.QueryRun {
 // re-analyze against rules that had in fact changed.
 func (p tierPlan) identifyFindings(run store.QueryRun) store.QueryRun {
 	run.CLIVersion = p.cliVersion
+	run.QueryVersion = combinedVersion(p.findingsVersions)
 	switch len(p.findingsPacks) {
 	case 0:
 		return run
@@ -124,6 +134,39 @@ func (p tierPlan) identifyFindings(run store.QueryRun) store.QueryRun {
 	run.Pack = strings.Join(names, " ")
 	run.PackDigest = hex.EncodeToString(h.Sum(nil))
 	return run
+}
+
+// combinedVersion is one version for a lane that runs many queries as a single invocation.
+//
+// Sorted and de-duplicated, so two suites contributing the same query in a different order still
+// hash the same. Empty stays empty: a lane whose versions were never computed must not be given
+// the hash of an empty list, which would be indistinguishable from a real one.
+//
+// A lane of one query *is* that query, so its version passes through unhashed. Hashing it would
+// mint an identity nothing else holds — the catalog records each query's own version, and a
+// single-query run recorded under a hash of it can be joined to nothing.
+func combinedVersion(versions []string) string {
+	seen := map[string]bool{}
+	uniq := make([]string, 0, len(versions))
+	for _, v := range versions {
+		if v == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		uniq = append(uniq, v)
+	}
+	switch len(uniq) {
+	case 0:
+		return ""
+	case 1:
+		return uniq[0]
+	}
+	sort.Strings(uniq)
+	h := sha256.New()
+	for _, v := range uniq {
+		fmt.Fprintf(h, "%d:%s\x00", len(v), v)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // queryRun is the ledger row for one query against one database.
@@ -164,6 +207,10 @@ type plannedQuery struct {
 	pack        string
 	packVersion string
 	packDigest  string
+	// version is the query's own content identity, covering the libraries it imports. Finer than
+	// the pack digest beside it: editing one library must re-run the queries that import it and
+	// leave the rest of the pack alone.
+	version string
 }
 
 // tierOf decides which pass a batch earns.
@@ -278,17 +325,31 @@ func (e *Expander) plan(ctx context.Context, opts Options) (tierPlan, error) {
 		if err != nil {
 			return tierPlan{}, fmt.Errorf("suite %s: %w", opts.Suite, err)
 		}
+		// Once per round, not once per database: a query cannot change while the round that
+		// resolved it is running, and a crawl asks the same handful of queries of thousands of
+		// repositories.
+		//
+		// A path that is not there leaves the version empty rather than failing the round. The
+		// version is provenance, not a precondition for evaluating anything, and the run key
+		// still carries the pack digest and the CLI version; an empty one reads as "nobody
+		// computed this", which is what NULL already means in that column. A path that exists
+		// and cannot be read is a different matter and is refused.
+		version, err := runner.QueryVersion(path)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return tierPlan{}, fmt.Errorf("suite %s: %w", opts.Suite, err)
+		}
 		planned.contents = append(planned.contents, store.SuiteQuery{
 			Pack: pack, PackVersion: packVersion, PackDigest: digest,
-			QueryID: md.ID, Kind: md.Kind,
+			QueryID: md.ID, QueryVersion: version, Kind: md.Kind,
 		})
 		if shape == ingest.ShapeFindings {
 			planned.findings = append(planned.findings, path)
+			planned.findingsVersions = append(planned.findingsVersions, version)
 			planned.notePack(pack, packVersion, digest)
 			continue
 		}
 		planned.bqrs = append(planned.bqrs, plannedQuery{
-			path: path, id: md.ID, shape: shape,
+			path: path, id: md.ID, shape: shape, version: version,
 			pack: pack, packVersion: packVersion, packDigest: digest,
 		})
 	}

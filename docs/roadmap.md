@@ -134,7 +134,7 @@ scaffolds, extracts, compiles, tests and reviews against fixtures the CLI built.
 cataloged beside the upstream and ABOM-authored queries, told apart by the pack it came from rather
 than by a prefix, run against whatever scope the operator has already narrowed to, and its results
 land on the graph like any other. `plans/ql/query-authoring.md`, `plans/db/query-catalog.md`,
-`plans/api/scope-to-databases.md`, `plans/api/on-demand-analysis.md`
+`plans/api/on-demand-analysis.md`
 
 ## From a finding to a fix
 

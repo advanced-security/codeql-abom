@@ -25,8 +25,10 @@ together mean a run that dies halfway does not repeat the work it already finish
 **It is one loop, and it runs itself.** The supervisor reads the declared accounts on a period,
 queues what it found, analyzes, expands, and reads again; a first crawl and a maintenance crawl are
 the same code differing only in whether anything has been read before. `serve --expand` on an empty
-database is the whole bootstrap. Whether discovery should be running is stored, so a restart
-resumes a crawl that was running and leaves a paused one paused.
+database is the whole bootstrap. Whether discovery should be running is stored, and a restart does
+not act on it unless the operator asked it to: a crawl clones repositories and runs CodeQL on every
+core, and a process restarting is not somebody requesting that. The crawl's state is on the
+navigation bar of every page, because it is the one thing here that runs with nobody watching.
 
 **Reads are conditional, and paced by the budget rather than a guess.** Requests carry
 `If-None-Match` against stored validators, so an unchanged answer costs a round trip and no quota.
@@ -191,6 +193,7 @@ workflow is never an edge source; edges leave its steps and its jobs.
 | `abom_saved_view` | Named predicates, read by the API and the CLI |
 | `abom_http_cache` | Validators GitHub gave for a URL, so an unchanged answer costs no quota |
 | `abom_discovery_state` | Whether the operator wants discovery running, so a restart does not decide |
+| `abom_discovery_startup` | Whether a restart may act on that. Its own row because "running" has no value meaning nobody has said |
 
 #### Two structural properties
 
@@ -259,6 +262,15 @@ origins, reach, reference style — serialized as text, and the Explorer, the AP
 parse the same string. Predicates that cut along the graph's structure are applied in SQL;
 predicates that cut across it are applied after the query, because a closure is edge-closed by
 construction and an arbitrary node filter is not.
+
+**One predicate resolves two ways: to nodes, and to databases.** *Which things match this* and
+*which databases would have to be analyzed to settle it* are the same scope asked of different
+objects, so they are one language and one enforcement path rather than two. The database resolution
+returns a repository, a commit and an analysis mode per entry, each marked retained, buildable or
+unavailable, and reports the repositories it could not resolve as a stated gap — a set that quietly
+omitted them would mean something narrower than it says exactly where that matters most. It builds
+nothing: seeing the size of a thing is separate from spending it. A mode with no databases behind it
+resolves to an empty set and the reason, never to the other mode's.
 
 **A term is applied or refused by name, never dropped.** Each consumer declares the terms it
 enforces, and every term in the language is enforced by at least one of them. A predicate carrying a

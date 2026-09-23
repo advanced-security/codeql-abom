@@ -1,83 +1,103 @@
 # A query has an origin, and a finding remembers which query produced it
 
-**Status:** Three kinds of query already run and nothing tells them apart. `abom_finding.provider`
-records the SARIF tool driver, which is `CodeQL` for all of them.
+**Status:** The catalog exists and is keyed by query version. What it knows cannot be selected: the
+filter language has no term for a query's origin, and the word that would name one is already taken
+by a repository's.
 
 ## Why this exists
 
-ABOM already runs upstream queries from `codeql/actions-queries` and one query of its own,
-`AbomExperimentalMarker.ql`. A third kind is coming: queries the operator writes, which
-[`ql/query-authoring.md`](../ql/query-authoring.md) is about. A reader has to be able to tell them
-apart, and today they cannot.
+Three kinds of query run here — upstream from `codeql/actions-queries`, ABOM's own, and whatever an
+operator writes — and `abom_finding.provider` records the SARIF tool driver, which is `CodeQL` for
+all three. The only channel that ever distinguished them was the `abom/` prefix on a rule id: a
+**convention**, enforced by a naming instruction rather than by the data, offered as though it were
+provenance.
 
-The only available channel is the `abom/` prefix on a rule id — a **convention**, enforced by a
-naming instruction rather than by the data. A query is not obliged to follow it, a published pack
-somebody else wrote may use it, and nothing in the store records that the convention was ever
-consulted. That is a fact about a string, offered as though it were provenance.
+`internal/store.CatalogQuery` now answers that from the pack a query was resolved from, and
+`internal/runner.QueryVersion` gives each version an identity that survives being edited. Neither
+reaches a predicate. So a reader can *see* that a rule came from GitHub's maintained set, from this
+project or from a colleague last Tuesday — on one page, for queries, and nowhere else. They cannot
+ask for it, a saved view cannot carry it, and a policy cannot refuse by it.
 
-This matters more than tidiness in three places.
+That matters in the two places the original gap mattered.
 
-**A reader deciding whether to trust a result** needs to know whether a rule came from GitHub's
-maintained set, from this project, or from a colleague last Tuesday. Those carry different weight
-and the interface currently shows them identically.
+**A policy names rule ids.** A rule id that silently changes origin — because a pack was swapped, or
+an upstream query was renamed into the same id — changes what a gate refuses with nothing to say so.
+The catalog can now detect that; nothing consults it.
 
-**A policy** names rule ids. A rule id that silently changes origin — because a pack was swapped,
-or an upstream query was renamed into the same id — changes what a gate refuses with nothing to
-say so.
+**A finding is where the question is actually asked.** *Show me what our own queries found* and
+*show me only what GitHub's maintained set found* are the two readings a security team wants, and
+both are questions about findings rather than about queries. The origin is recorded, reachable
+through `abom_finding.query_run_id` → `abom_query_run`, and rendered on no finding anywhere.
 
-**[`api/query-simulation.md`](../api/query-simulation.md)** has to answer *what would this query do
-across the organization*, which is only askable if a query is a thing the store knows about rather
-than a row that appears when it happens to fire.
+### The collision that makes item 1 a decision rather than typing
 
-There is a second gap underneath. `abom_query_run.query_version` and `pack_version` are columns that
-**are never written**, though the pack is in hand where a run is recorded. Until they are filled,
-"what has not run since pack X at vY" can only be answered by re-resolving every suite, and a
-catalog entry cannot say what version of itself last ran.
+`origins` is already a term in the language, and it means **repository** origin — `seed` and what
+the crawl reached — applied by `FullGraphOptions.Origins` over the tier a node's repository sits in.
+A query's origin is a different vocabulary over a different object: `upstream`, `abom`, `user`,
+`mixed`. Adding a second meaning to one word is how `repositories` nearly became two questions, and
+the rule that stopped it — *a term means one thing everywhere* — applies here first.
+
+```mermaid
+flowchart LR
+    PACK["pack a query<br/>resolved from"] -->|"originOfPack"| ORIGIN["upstream / abom<br/>user / mixed"]
+    ORIGIN --> CAT["catalog row"]
+    CAT -->|"/api/queries"| PAGE["Queries page"]
+    RUN["abom_query_run<br/>query_version, pack_version"] --> CAT
+    FIND["abom_finding"] -->|"query_run_id"| RUN
+    ORIGIN -. "no term in the language" .-> SPEC["view.Spec"]
+    ORIGIN -. "rendered on no finding" .-> LIST["Inventory listing"]
+    REPO["repository tier"] -->|"origins= is this one"| SPEC
+    style SPEC fill:#3d2d1d
+    style LIST fill:#3d2d1d
+```
 
 ## Pending
 
-1. **Write the versions that already have columns.** `query_version` and `pack_version` on
-   `abom_query_run`, from the resolved plan that already carries them —
-   `internal/expand/suite.go` builds `store.SuiteQuery` with the pack and digest per query.
-   Depends on nothing, and is the smallest useful thing here.
-2. **A catalog of queries, not a set of suites.** A suite is a *program over packs* whose contents
-   are only knowable by asking `codeql resolve queries`, which is why it cannot be the unit. The
-   catalog row is a query: id, pack, pack version, kind, the shape `ingest.ShapeOf` assigns it, and
-   where its source lives. Populated from the same resolution that already runs before every round,
-   so it describes what would run rather than what somebody typed. Depends on 1.
-3. **Origin as a recorded fact.** `upstream`, `abom`, `user` — decided from the pack the query was
-   resolved from, which is knowable at resolution time and is not a string convention. Recorded on
-   the catalog row and carried onto the run, so a finding's origin survives the pack being upgraded
-   or the query being renamed. Depends on 2.
-4. **A `origin=` term in the filter language**, alongside the implemented
-  [`mode=` term](../../docs/architecture.md#analysis-modes), and enforced on the same three sides. Depends
-   on 3.
-5. **The interface differentiates, visibly.** Upstream, ABOM and operator-written queries are
-   distinguishable wherever a finding or a rule id is shown, and the catalog is somewhere a reader
-   can look at the whole set rather than inferring it from what fired. Depends on 4.
+1. **A term for a query's origin, under a name that is not `origins`.** The alternatives are
+   `queryOrigin` (explicit, ugly, unambiguous), `author` (reads well, overstates — `mixed` has no
+   author), and renaming the existing term to `repoOrigins` and taking `origins` for queries
+   (correct, and breaks every saved view and every address that carries one). Enforced or refused on
+   every side, like the implemented [`mode=` term](../../docs/architecture.md#analysis-modes), and
+   declared where [`api/filter-enforcement.md`](../api/filter-enforcement.md) says a term is
+   declared — a term only the server knows is a term no control offers. Depends on nothing but the
+   decision.
+2. **Origin where a finding is shown, not only where a query is.** The join exists and no listing
+   makes it. A finding row says which rule fired and not whose rule it was, so the one comparison a
+   reader wants — our rules against the maintained set — cannot be made anywhere. Depends on 1 for
+   the narrowing, and not for the column.
 
 ## What this takes over from other plans
 
-The pack plan retired into this one and [`ql/pack-promotion.md`](../ql/pack-promotion.md): the
-unwritten version columns are item 1 here, because the catalog is what needs them, and publishing to
-GHCR is that plan's first item. [`api/query-suites.md`](../api/query-suites.md) holds *which suite an
-analysis was run under*; a catalog keyed by query rather than by suite answers a superset of it, and
-the two must not both grow a notion of query identity.
+[`api/query-suites.md`](../api/query-suites.md) holds *which suite an analysis was run under*; a
+catalog keyed by query answers a superset of it, and the two must not both grow a notion of query
+identity. [`ui/tier-suites.md`](../ui/tier-suites.md) item 3 wants staleness per suite and reads the
+pack version off the run to get it.
 
 ## The constraints that must not be broken
 
 **Origin comes from the pack, never from the rule id.** A prefix is a naming convention with no
 enforcement behind it. Deriving origin from a string would make a catalog that agrees with the
 instruction file rather than with the code, and the first pack that breaks the convention would be
-mislabelled with nothing to detect it.
+mislabeled with nothing to detect it.
 
-**A query is routed by its own metadata, never by its filename.** Carried unchanged from
-[`api/query-suites.md`](../api/query-suites.md), and it applies to the catalog too: a renamed query
-must not change its origin, its shape or how its results are read.
+**A lane that ran several packs at once has origin `mixed`, and `mixed` is not a failure.** The
+findings lane invokes a whole suite in one call and legitimately draws from `codeql/actions-queries`
+and ABOM's own pack together. Deciding its origin from the first pack in the list called an ABOM
+suite upstream, which is the shape of error this whole plan exists to stop.
 
-**A catalog entry is not permission to run.** What runs is still the tier binding, and later the
-operator's selection. A catalog that silently became the run set would make installing a pack a way
-of scheduling work.
+**A query's version covers what it imports, or it is not an identity.** `QueryVersion` hashes the
+query text together with every transitively imported `.qll`, keyed by workspace-relative path, so
+editing a library changes the version of every query that imports it. A hash over the `.ql` alone
+would report an unchanged version for a query whose behavior had changed, which is worse than no
+version at all.
+
+**A whole-suite invocation is not a query.** The ledger records `abom-findings.qls` as the thing
+that ran, truthfully, and it is not something anybody writes, versions or stages. It is marked as a
+lane and kept out of the listing; treating it as a query puts a file name where a rule belongs.
+
+**A catalog entry is not permission to run.** What runs is the tier binding, and the operator's
+selection. A catalog that silently became the run set would make installing a pack a way of
+scheduling work.
 
 **A query that nobody wrote Go code for still contributes.** The acceptance test for the whole
 mechanism is that a throwaway query added to a suite lands its results, attributed, with no Go
@@ -88,15 +108,12 @@ shape `ingest.ShapeOf` cannot assign is a row that says so, not a row with a def
 
 ## Verification
 
-- A round records a pack version for every query it ran, and "what has not run since pack X at vY"
-  is answerable without re-resolving a suite.
-- `codeql pack ls` finds every pack at the version in `.codeql-version`, and `codeql resolve queries`
-  per suite returns the same counts across any move or rename: **a rename must not change what
-  runs**, and must not change an origin either.
-- The catalog and `codeql resolve queries` agree on the set, checked by comparing them rather than
-  by trusting the catalog.
+- `queryOrigin=upstream` and `queryOrigin=abom` return different finding sets on a crawled
+  organization, and their union is every finding whose run recorded an origin.
+- The term is refused by name on any surface that cannot apply it, and offered by the filter control
+  without the browser holding its own copy of the value list.
 - A query moved between packs changes origin in the catalog and changes nothing about its existing
   findings, which were produced by the pack that produced them.
-- `origin=upstream` and `origin=abom` return different sets on the crawled organization, and their
-  union is every finding with an origin recorded.
 - Mutation: renaming a query to remove an `abom/` prefix changes no origin anywhere.
+- A finding listing shows origin for every finding whose run recorded one, and says *not recorded*
+  rather than guessing for the runs that predate the columns being written.

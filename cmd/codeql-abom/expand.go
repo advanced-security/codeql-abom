@@ -68,6 +68,47 @@ func checkoutCache(dir string, maxMB int64) (*expand.CheckoutCache, error) {
 	return cache, nil
 }
 
+// defaultDatabaseCacheMaxMB bounds retained CodeQL databases at 25 GiB.
+//
+// Retaining them is the point rather than a cost to be minimized: a corpus that already exists is
+// what makes running one more query across the organization cheap. The ceiling is here so the
+// appetite is bounded by a number somebody chose, not by the disk filling up.
+//
+// Measured 2026-09-22 on the crawled organization, over the first 14 actions databases: a mean of
+// **18.7 MB** each, across a range of only 17.9 to 20.2 MB. The tightness is the finding — an
+// actions database holds a handful of YAML files, so almost all of that is CodeQL's fixed
+// per-database overhead and `actions/github-script` costs the same as `juice-shop`. Cost is
+// therefore per database and flat, not proportional to a repository.
+//
+// So this ceiling holds about **1,370 databases** against a corpus of 1,124 repositories, and a
+// database is per commit rather than per repository — `actions/setup-java` already occupies two.
+// That is roughly one corpus with little headroom, and it will begin evicting once references
+// move. Raise it before concluding that re-extraction is inherent.
+const defaultDatabaseCacheMaxMB = 25600
+
+// databaseCache prepares the directory retained databases live in, or nil for no retention.
+//
+// Owner-only for the same reason the checkout cache is: a database is built from fetched source,
+// including private source, so leaving it traversable would make a performance option a
+// disclosure. It takes no lock of its own — a process sharing this directory is already sharing
+// the store that indexes it, which is where the single-writer rule is enforced.
+func databaseCache(dir string, maxMB int64) (*expand.DatabaseCache, error) {
+	if dir == "" {
+		return nil, nil
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("resolving %s: %w", dir, err)
+	}
+	if err := os.MkdirAll(abs, 0o700); err != nil {
+		return nil, fmt.Errorf("creating %s: %w", abs, err)
+	}
+	if err := os.Chmod(abs, 0o700); err != nil {
+		return nil, fmt.Errorf("restricting %s: %w", abs, err)
+	}
+	return &expand.DatabaseCache{Dir: abs, MaxBytes: maxMB << 20}, nil
+}
+
 // roundDidWork reports whether a round moved the queue, which is how expand-all recognizes a
 // drained frontier.
 //
@@ -96,6 +137,10 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		"retain fetched checkouts here and reuse each commit across references (default: off)")
 	cacheMaxMB := fs.Int64("cache-max-mb", defaultCacheMaxMB,
 		"ceiling for retained checkouts, least recently used evicted first (0: unbounded)")
+	databaseCacheDir := fs.String("database-cache-dir", "",
+		"retain built CodeQL databases here and analyze them again without extracting (default: off)")
+	databaseCacheMaxMB := fs.Int64("database-cache-max-mb", defaultDatabaseCacheMaxMB,
+		"ceiling for retained databases, least recently used evicted first (0: unbounded)")
 	keepArtifacts := fs.Bool("keep-artifacts", false, "keep downloaded databases and results")
 	requeueStale := fs.Bool("requeue-stale", false,
 		"first requeue analyzed dependencies whose packs or CodeQL have since changed")
@@ -162,6 +207,10 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return fmt.Errorf("expand-all: %w", err)
 	}
 	defer cache.Release()
+	databases, err := databaseCache(*databaseCacheDir, *databaseCacheMaxMB)
+	if err != nil {
+		return fmt.Errorf("expand-all: %w", err)
+	}
 	e := &expand.Expander{
 		Queue:    queue,
 		Store:    s,
@@ -173,11 +222,12 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		CodeQL:   r,
 		Analyzer: r,
 		// Without this, `expand --query=` cannot fall through to what the tiers are bound to.
-		Resolver: r,
-		Decode:   expand.Decoder(r.Decode),
-		Pace:     pace,
-		Cache:    cache,
-		OnEvent:  logFailures(stdout),
+		Resolver:  r,
+		Decode:    expand.Decoder(r.Decode),
+		Pace:      pace,
+		Cache:     cache,
+		Databases: databases,
+		OnEvent:   logFailures(stdout),
 	}
 
 	if err := requeueSelection(ctx, e, *requeueStale, *requeueRepo, stdout); err != nil {

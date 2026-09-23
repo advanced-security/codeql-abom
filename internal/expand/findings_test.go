@@ -2,13 +2,13 @@ package expand
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
-	"github.com/advanced-security/codeql-abom/internal/ingest"
 	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
@@ -23,14 +23,19 @@ type fakeAnalyzer struct {
 	mu      sync.Mutex
 	targets [][]string
 	err     error
+	// failOn refuses for one database only, so a test can prove the rest of a run carries on.
+	failOn string
 }
 
 func (a *fakeAnalyzer) AnalyzeQueries(
-	_ context.Context, _ string, targets []string, sarifPath string,
+	_ context.Context, dbPath string, targets []string, sarifPath string,
 ) error {
 	a.mu.Lock()
 	a.targets = append(a.targets, append([]string(nil), targets...))
 	err := a.err
+	if a.failOn != "" && strings.Contains(dbPath, a.failOn) {
+		err = fmt.Errorf("exit status 32: no source code seen during build")
+	}
 	a.mu.Unlock()
 	if err != nil {
 		return err
@@ -50,13 +55,11 @@ func (a *fakeAnalyzer) AnalyzeQueries(
 func findingsHarness(t *testing.T) (*harness, *fakeAnalyzer) {
 	t.Helper()
 	h := newHarness(t)
-	h.expander.Resolver = &fakeResolver{
-		queries: []string{"/q/AbomEdges.ql", "/q/Unpinned.ql"},
-		meta: map[string]runner.Metadata{
-			"/q/AbomEdges.ql": {ID: "abom/edges", Tags: ingest.TagEdges},
-			"/q/Unpinned.ql":  {ID: "actions/unpinned-tag", Kind: "problem"},
-		},
-	}
+	// Through bindLanes, so the queries this harness starts with are identified the same way the
+	// ones a test rebinds to are. Seeding synthetic paths here and real files there made a
+	// rebinding look like a change to both lanes, because the graph query gained a version it
+	// had not had before.
+	bindLanes(t, h, "abom/edges", "Unpinned.ql")
 	a := &fakeAnalyzer{}
 	h.expander.Analyzer = a
 	for _, tier := range []string{store.TierOwned, store.TierDirect, store.TierTransitive} {
@@ -101,7 +104,7 @@ func TestABoundFindingsSuiteProducesFindingsRatherThanSilence(t *testing.T) {
 	if len(a.targets) != 1 {
 		t.Fatalf("analyze ran %d times, want once per database", len(a.targets))
 	}
-	if len(a.targets[0]) != 1 || a.targets[0][0] != "/q/Unpinned.ql" {
+	if len(a.targets[0]) != 1 || a.targets[0][0] != h.laneFindings {
 		t.Errorf("analyze ran %v, want only the queries this lane can execute", a.targets[0])
 	}
 }
@@ -197,7 +200,7 @@ func TestEachFindingIsAttributedToItsOwnRuleFromTheSarif(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading the findings run: %v", err)
 	}
-	if invoked != "/q/Unpinned.ql" {
+	if invoked != h.laneFindings {
 		t.Errorf("findings run recorded as %q, want what was actually invoked", invoked)
 	}
 }

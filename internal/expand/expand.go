@@ -114,6 +114,9 @@ type Expander struct {
 	// Cache retains fetched trees by the commit they came from, across references and rounds.
 	// Nil fetches every reference separately and deletes the tree after each unit, as before.
 	Cache *CheckoutCache
+	// Databases retains the CodeQL databases this crawl builds, so a query can later be run
+	// across a corpus that already exists. Nil deletes each database after its unit, as before.
+	Databases *DatabaseCache
 	// Resolver expands Options.Suite. Only needed when a suite is used.
 	Resolver Resolver
 	// Analyzer runs the findings lane. Only needed when a suite holds findings-shaped queries.
@@ -164,6 +167,19 @@ func (b batch) revision(p work.Prepared, filter string) revision {
 
 func (b batch) full() string { return b.owner + "/" + b.repo }
 
+// database names the CodeQL database a round's results came from.
+//
+// The same four fields the run key hashes, deliberately: one definition of "which database", or
+// the cache and the ledger drift into disagreeing about what has already been analyzed.
+func (at revision) database() store.DatabaseIdentity {
+	return store.DatabaseIdentity{
+		Repository:   at.repository,
+		Commit:       at.commit,
+		SourceFilter: at.filter,
+		Mode:         store.AnalysisModeRegular,
+	}
+}
+
 // key distinguishes work; full() names the repository. A batch is claimed, directoried and
 // consumed by key, while the ledger and the graph are keyed by the repository.
 func (b batch) key() string {
@@ -184,6 +200,9 @@ func (e *Expander) Run(ctx context.Context, opts Options) (Stats, error) {
 	if _, err := e.Cache.Trim(); err != nil {
 		// The crawl is what matters; a cache that cannot be tidied costs disk, not results.
 		e.report("checkout-cache", "trimming the checkout cache", err)
+	}
+	if _, err := e.trimDatabases(); err != nil {
+		e.report("database-cache", "trimming the database cache", err)
 	}
 	reusedBefore := e.Cache.Hits()
 	fetchedBefore := e.fetches.Load()
@@ -697,7 +716,14 @@ func (e *Expander) analyzeTree(
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return work.Prepared{}, fmt.Errorf("creating %s: %w", dir, err)
 	}
-	if err := e.Builder.CreateDatabase(ctx, tree.Dir, dbDir, "actions"); err != nil {
+	id := store.DatabaseIdentity{
+		Repository:   b.full(),
+		Commit:       tree.SHA,
+		SourceFilter: e.sourceFilter(),
+		Mode:         store.AnalysisModeRegular,
+	}
+	dbDir, staged, reused, err := e.databaseFor(ctx, id, dbDir, tree)
+	if err != nil {
 		return work.Prepared{}, err
 	}
 
@@ -718,18 +744,70 @@ func (e *Expander) analyzeTree(
 	// The checkout and database are the bulk of the disk cost and are finished with here, so
 	// they go before the serialized phase rather than after it.
 	discardTree(opts, tree, retained)
-	if !opts.KeepArtifacts {
-		os.RemoveAll(dbDir)
+	held, bytes, err := e.keepDatabase(staged, dbDir, id, opts, reused)
+	if err != nil {
+		return work.Prepared{}, err
 	}
 	return work.Prepared{
-		Job:           work.Job{Repository: b.key()},
-		ResultPath:    jsonPath,
-		ResultQueryID: edgesID,
-		SarifPath:     sarifPath,
-		Extra:         extra,
-		Commit:        tree.SHA,
-		AnalyzedRef:   tree.Ref,
+		Job:            work.Job{Repository: b.key()},
+		ResultPath:     jsonPath,
+		ResultQueryID:  edgesID,
+		SarifPath:      sarifPath,
+		Extra:          extra,
+		Commit:         tree.SHA,
+		AnalyzedRef:    tree.Ref,
+		DatabasePath:   held,
+		DatabaseBytes:  bytes,
+		DatabaseReused: reused,
 	}, nil
+}
+
+// databaseFor produces the database to analyze, reusing a retained one when the cache already
+// holds this exact identity.
+//
+// Reuse skips extraction, never analysis: whether a query still has to run is the ledger's call,
+// and a database being on disk says nothing about it.
+func (e *Expander) databaseFor(
+	ctx context.Context, id store.DatabaseIdentity, roundDB string, tree Tree,
+) (string, string, bool, error) {
+	if held, ok := e.Databases.Reuse(id); ok {
+		return held, "", true, nil
+	}
+	// Built inside the cache when there is one, so promoting it is a rename rather than a copy
+	// across filesystems.
+	staged, dbDir := "", roundDB
+	if e.Databases != nil {
+		var err error
+		staged, dbDir, err = e.Databases.Stage()
+		if err != nil {
+			return "", "", false, err
+		}
+	}
+	if err := e.Builder.CreateDatabase(ctx, tree.Dir, dbDir, "actions"); err != nil {
+		// A build that refused leaves a staged directory the ceiling cannot see, because the
+		// ceiling is computed from the rows naming promoted databases.
+		e.Databases.DiscardStaged(staged)
+		return "", "", false, err
+	}
+	return dbDir, staged, false, nil
+}
+
+// keepDatabase promotes a freshly built database, or removes it when nothing retains databases.
+// It reports where the database was kept, which is empty when it was not kept at all.
+func (e *Expander) keepDatabase(
+	staged, dbDir string, id store.DatabaseIdentity, opts Options, reused bool,
+) (string, int64, error) {
+	if reused {
+		return dbDir, 0, nil
+	}
+	if e.Databases == nil {
+		// codeql refuses to write into an existing directory, which re-analysis would otherwise hit.
+		if !opts.KeepArtifacts {
+			os.RemoveAll(dbDir)
+		}
+		return "", 0, nil
+	}
+	return e.Databases.Retain(staged, id)
 }
 
 func (e *Expander) consume(
@@ -752,6 +830,9 @@ func (e *Expander) consume(
 	// than whatever --query-id happened to say. There may be none: a round that had only the
 	// findings lane left to prove built a database and never ran an edges query.
 	at := b.revision(p, e.sourceFilter())
+	if err := e.recordDatabase(p, at, planned); err != nil {
+		return 0, err
+	}
 	rows, err := e.ingestEdges(p, opts, planned, at)
 	if err != nil {
 		return 0, err
@@ -774,6 +855,61 @@ func (e *Expander) consume(
 	e.Writer.ResetLocal()
 
 	return rows, e.settle(b, p, opts, stats)
+}
+
+// trimDatabases evicts retained databases, least recently used first, until the cache is inside
+// its ceiling. It reports how many it dropped.
+//
+// The index goes first and the directory second. An interrupted trim then leaves a directory
+// nothing refers to, which is reclaimable; the other order leaves a row naming a database that
+// is gone, which is a hit nothing can serve.
+func (e *Expander) trimDatabases() (int, error) {
+	if e.Databases == nil {
+		return 0, nil
+	}
+	// Abandoned builds first: they occupy disk the ceiling below cannot account for, so trimming
+	// to a ceiling without reclaiming them frees less than it believes it has.
+	reclaimed, err := e.Databases.ReclaimStaging()
+	if err != nil {
+		return reclaimed, err
+	}
+	if e.Databases.MaxBytes <= 0 {
+		return reclaimed, nil
+	}
+	dropped, err := e.Store.EvictDatabasesOver(e.Databases.MaxBytes)
+	if err != nil {
+		return reclaimed, err
+	}
+	for _, d := range dropped {
+		if err := e.Databases.Discard(d.Path); err != nil {
+			return reclaimed + len(dropped), err
+		}
+	}
+	return reclaimed + len(dropped), nil
+}
+
+// recordDatabase indexes the database a round's results came from, when one was retained.
+//
+// The directory is promoted first and indexed here, so an interrupted round leaves a directory
+// nothing refers to rather than a row naming a build that never finished. Reuse only moves the
+// row's recency: the size belongs to the build that measured it, and re-measuring a database on
+// every hit would walk the whole corpus for nothing.
+func (e *Expander) recordDatabase(p work.Prepared, at revision, planned tierPlan) error {
+	if p.DatabasePath == "" {
+		return nil
+	}
+	id := at.database()
+	if p.DatabaseReused {
+		_, err := e.Store.UseDatabase(id)
+		return err
+	}
+	_, err := e.Store.RetainDatabase(store.RetainedDatabase{
+		DatabaseIdentity: id,
+		Path:             p.DatabasePath,
+		Bytes:            p.DatabaseBytes,
+		CLIVersion:       planned.cliVersion,
+	})
+	return err
 }
 
 // ingestEdges records the dependency edges one round produced, and how many rows they were.

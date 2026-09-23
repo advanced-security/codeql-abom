@@ -1,14 +1,25 @@
 # A query leaves ABOM as a published pack, never as an alert
 
-**Status:** Nothing here exists. Four packs are pinned and versioned under `ql/`, and none is
-published anywhere.
+**Status:** The ABOM-controlled deploy level is built — advancing a version to `deploy` rewrites a
+local suite that tier bindings can run. Nothing is published anywhere, which is the level this
+plan is about.
 
 ## Why this exists
 
-ABOM holds findings that terminate on its own screen. The obvious way out was to write code scanning
-alerts directly, and that route is **refused**: an alert appears in somebody else's repository, in
-the Security tab their developers read and in the numbers their leadership is measured on. A tool
-that can create those is a tool that will eventually create them by accident.
+There are two deploy levels and they answer to different authorities.
+
+**Inside ABOM**, deploying means a query joins a suite the crawl can be bound to. That exists:
+`abom/custom-queries:codeql-suites/abom-deployed.qls` is rewritten from the query ids at the
+`deploy` stage on every advance, so withdrawing one removes it, and it is offered in the tier
+binding grid beside the shipped suites. The development suite beside it is deliberately **not**
+offered — it selects the whole pack, so binding it would make saving a file a crawl of the corpus.
+Nothing leaves the machine at this level.
+
+**Outside ABOM** is what remains, and it is somebody else's estate. ABOM holds findings that
+terminate on its own screen. The obvious way out was to write code scanning alerts directly, and
+that route is **refused**: an alert appears in somebody else's repository, in the Security tab
+their developers read and in the numbers their leadership is measured on. A tool that can create
+those is a tool that will eventually create them by accident.
 
 There is a better route, and it is one GitHub already supports. A CodeQL configuration file applied
 through the `github-codeql-config-file` repository property is **merged** with the configuration
@@ -24,8 +35,18 @@ because somebody published a pack, which is a deliberate, reviewable, revertible
 never touches an alert at all.
 
 This is also why the operator's queries live in a real pack on disk from the beginning
-([`ql/query-authoring.md`](query-authoring.md) item 1) rather than as rows in `abom.db`: a pack is
-the unit that can be tested, versioned and published without ABOM in the loop.
+([`ql/query-authoring.md`](query-authoring.md)) rather than as rows in `abom.db`: a pack is the
+unit that can be tested, versioned and published without ABOM in the loop.
+
+## The constraint the built half already holds
+
+**A deployed suite is a projection of the deploy stage, never a log of it.** It is rewritten whole
+on every advance, so a query somebody took back stops running. A file that only ever grew would
+keep a withdrawn query in the crawl with nothing on screen saying so.
+
+**Nothing deployed runs nothing, not everything.** An empty set writes a suite that excludes every
+id rather than one with no selection — a suite that selects nothing runs the whole pack, which is
+the opposite of what an empty deploy set means, across the whole corpus.
 
 ## Pending
 

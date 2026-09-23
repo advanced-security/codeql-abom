@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/advanced-security/codeql-abom/internal/customql"
 	"github.com/advanced-security/codeql-abom/internal/expand"
 	"github.com/advanced-security/codeql-abom/internal/frontier"
 	"github.com/advanced-security/codeql-abom/internal/graph"
@@ -41,6 +42,9 @@ type discoveryOptions struct {
 	rateLimitPerHour   int
 	cacheDir           string
 	cacheMaxMB         int64
+	databaseCacheDir   string
+	databaseCacheMaxMB int64
+	customQLDir        string
 	aggregateAfter     int
 	aggregateMaxAge    time.Duration
 	aggregateMinPeriod time.Duration
@@ -60,6 +64,44 @@ func (o discoveryOptions) codeqlThreads() int {
 		return 0
 	}
 	return max(1, runtime.NumCPU()/o.concurrency)
+}
+
+// newRunExecutor carries out recorded runs.
+//
+// Built from the same *runner.Runner the supervisor holds, deliberately: that is what shares the
+// CodeQL lock. Two runners would each hold their own, and a run would contend with the crawl for
+// one local compilation cache while both believed they had it.
+func newRunExecutor(
+	s *store.Store, sup *supervisor.Supervisor, logTo io.Writer,
+) *expand.Executor {
+	return &expand.Executor{
+		Store:    s,
+		Resolver: sup.Expander.Resolver,
+		Analyzer: sup.Expander.Analyzer,
+		CodeQL:   sup.Expander.CodeQL,
+		Ingester: sup.Expander.Ingester,
+		Suites:   runnableSuites(),
+		WorkDir:  filepath.Join(sup.Options.WorkDir, "runs"),
+		OnEvent: func(repository, stage string, err error) {
+			if err != nil {
+				fmt.Fprintf(logTo, "run: %s %s: %v\n", repository, stage, err)
+			}
+		},
+	}
+}
+
+// runnableSuites is where a run resolves a query id to a path.
+//
+// The operator's own suite joins the shipped ones only when a directory is configured, because a
+// suite naming a pack that is not on the search path is a resolution failure on every run rather
+// than on the one that wanted it. This decides what a run *can name*, never what the crawl runs:
+// binding a suite to a tier stays a separate, deliberate act.
+func runnableSuites() []string {
+	suites := append([]string{}, store.DefaultTierSuites[store.TierDirect]...)
+	if runner.CustomPackRoot() != "" {
+		suites = append(suites, customql.Suite)
+	}
+	return suites
 }
 
 // newSupervisor wires the expansion loop serve hosts.
@@ -102,6 +144,10 @@ func newSupervisor(s *store.Store, opts discoveryOptions, logTo io.Writer) (*sup
 	if err != nil {
 		return nil, fmt.Errorf("preparing the checkout cache: %w", err)
 	}
+	databases, err := databaseCache(opts.databaseCacheDir, opts.databaseCacheMaxMB)
+	if err != nil {
+		return nil, fmt.Errorf("preparing the database cache: %w", err)
+	}
 
 	// Seeded from what is already held so a restart does not re-fetch a set collected minutes ago.
 	fetchedAt, _, err := s.AdvisoriesFetchedAt()
@@ -113,19 +159,20 @@ func newSupervisor(s *store.Store, opts discoveryOptions, logTo io.Writer) (*sup
 		Store: s,
 		Queue: queue,
 		Expander: &expand.Expander{
-			Queue:    queue,
-			Store:    s,
-			Ingester: ingest.New(s, w),
-			Writer:   w,
-			Fetcher:  checkout,
-			Probe:    checkout,
-			Builder:  r,
-			CodeQL:   r,
-			Resolver: r,
-			Analyzer: r,
-			Decode:   expand.Decoder(r.Decode),
-			Pace:     pace,
-			Cache:    cache,
+			Queue:     queue,
+			Store:     s,
+			Ingester:  ingest.New(s, w),
+			Writer:    w,
+			Fetcher:   checkout,
+			Probe:     checkout,
+			Builder:   r,
+			CodeQL:    r,
+			Resolver:  r,
+			Analyzer:  r,
+			Decode:    expand.Decoder(r.Decode),
+			Pace:      pace,
+			Cache:     cache,
+			Databases: databases,
 			// Without this a repository that fails every time is invisible: the count moves
 			// and nothing says which one, or why.
 			OnEvent: logDiscoveryFailures(logTo),

@@ -16,8 +16,9 @@ Refusing a skip is the half that is finished, and it only moves work that is **q
 frontier row is never re-examined, so a change reaches it only if something puts it back.
 `store.RequeueStale` is that something, and it selects on `cli_version` and `pack_digest` — two of
 what `QueryRun.key()` hashes. Nothing can select on `source_filter`, which arrived with
-[`checkout-cache.md`](checkout-cache.md); nothing can select on `query_version` or `pack_version`,
-which [`query-catalog.md`](query-catalog.md) owns and nothing writes.
+[`checkout-cache.md`](checkout-cache.md); nothing can select on `query_version` or `pack_version`
+either, and those are now **written on every run**, so the dimension exists in the data and only
+the selection is missing.
 
 So widening `sparsePatterns` half-measures the corpus. Everything queued is fetched and analyzed
 under the new filter, because the reuse decision now reads the filter; everything already `done`
@@ -40,8 +41,10 @@ picking one is the decision. Everything else here follows from it.
 1. **A requeue can name any dimension of the identity.** `store.RequeueStale(cliVersion,
    packDigests)` takes exactly the two it can select on, so each new dimension is a new argument or
    a new function. Selection must include the recorded
-   [analysis mode](../../docs/architecture.md#analysis-modes) and the two unwritten version columns in
-   [`query-catalog.md`](query-catalog.md). Note what the existing selection is already coarser than
+   [analysis mode](../../docs/architecture.md#analysis-modes) and the `query_version` and
+   `pack_version` columns every run now writes — a library edit changes a query version without
+   changing its pack digest, so that is a dimension nothing can currently invalidate on. Note what
+   the existing selection is already coarser than
    anyone reasons about: `requeueDone` correlates the frontier row to `abom_query_run` **by
    repository alone**, so one stale run requeues every reference of that repository rather than the
    analysis that is actually out of date. Depends on nothing.

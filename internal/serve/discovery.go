@@ -56,6 +56,14 @@ type DiscoveryState struct {
 	// tier being re-analyzed must not read as a tier holding nothing.
 	Tiers   map[string]store.TierCount `json:"tiers"`
 	Version store.GraphVersion         `json:"version"`
+	// ResumeOnStart is whether a server start may act on a recorded intent to run. Off unless the
+	// operator asked for it, so a restart never begins a crawl on its own.
+	ResumeOnStart bool `json:"resumeOnStart"`
+	// EverStarted is whether anybody has ever started discovery here. The loop's own state cannot
+	// answer it: a supervisor is new in every process, so a restarted server reports `stopped` for
+	// an installation that has crawled the whole organization, and "never started" and "stopped
+	// for now" are opposite things to tell a reader.
+	EverStarted bool `json:"everStarted"`
 	// AdvisoriesFetchedAt is empty when advisories were never collected. Nothing here fetches
 	// them, so their age belongs on screen next to everything derived from them.
 	AdvisoriesFetchedAt string `json:"advisoriesFetchedAt"`
@@ -99,7 +107,41 @@ func (s *Server) discoveryState() (DiscoveryState, error) {
 		return DiscoveryState{}, err
 	}
 	out.Version = version
+
+	resume, err := s.Store.DiscoveryResumeOnStart()
+	if err != nil {
+		return DiscoveryState{}, err
+	}
+	out.ResumeOnStart = resume
+
+	_, known, err := s.Store.DiscoveryIntent()
+	if err != nil {
+		return DiscoveryState{}, err
+	}
+	out.EverStarted = known
 	return out, nil
+}
+
+// discoveryResumeOnStart records whether a restart may resume a crawl that was running.
+//
+// Guarded like the other controls: it decides whether a future start spends rate limit, disk and
+// every core on the machine without anybody present to have asked.
+func (s *Server) discoveryResumeOnStart(w http.ResponseWriter, r *http.Request) {
+	if !s.allowControl(w, r) {
+		return
+	}
+	var body struct {
+		Resume bool `json:"resume"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "a resume-on-start request says whether to resume")
+		return
+	}
+	if err := s.Store.SetDiscoveryResumeOnStart(body.Resume); err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	s.discoveryStatus(w, r)
 }
 
 func (s *Server) discoveryStart(w http.ResponseWriter, r *http.Request) {
@@ -200,7 +242,7 @@ func (s *Server) tierSuites(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, nil, err)
 		return
 	}
-	available, err := runner.AvailableSuites(runner.PackRoot)
+	available, err := runner.BindableSuites()
 	if err != nil {
 		writeJSON(w, nil, err)
 		return

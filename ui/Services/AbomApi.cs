@@ -62,6 +62,84 @@ public sealed class AbomApi(HttpClient http)
                ?? new DiscoveryState();
     }
 
+    /// <summary>
+    /// Records whether a server start may resume a crawl that was running. Guarded like the
+    /// start control, because it decides what a future start spends with nobody present.
+    /// </summary>
+    public async Task<DiscoveryState> SetResumeOnStartAsync(
+        bool resume, CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post, "api/discovery/resume-on-start")
+        {
+            Content = JsonContent.Create(new { resume }),
+        };
+        request.Headers.Add("X-Abom-Control", "1");
+        using var response = await http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<DiscoveryState>(Json, ct)
+               ?? new DiscoveryState();
+    }
+
+    /// <summary>
+    /// Runs a version's tests and records the verdict. ABOM never forms the opinion itself:
+    /// `codeql test run` compares the query's output to the checked-in `.expected`.
+    /// </summary>
+    public async Task<(QueryCatalog? Catalog, string? Refusal)> TestQueryAsync(
+        string queryId, string version, CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/queries/test")
+        {
+            Content = JsonContent.Create(new { queryId, queryVersion = version }),
+        };
+        request.Headers.Add("X-Abom-Control", "1");
+        try
+        {
+            using var response = await http.SendAsync(request, ct);
+            if (response.IsSuccessStatusCode)
+            {
+                LastError = null;
+                return (await response.Content.ReadFromJsonAsync<QueryCatalog>(Json, ct), null);
+            }
+            var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
+            return (null, refusal?.Error
+                ?? $"the server refused this test run ({(int)response.StatusCode})");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
+        {
+            LastError = $"api/queries/test: {ex.Message}";
+            return (null, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Stops a run that is under way. What has already been analyzed is kept: the executor
+    /// observes cancellation between members rather than discarding the work behind it.
+    /// </summary>
+    public async Task<(AnalysisRun? Run, string? Refusal)> CancelAnalysisRunAsync(
+        long id, CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"api/runs/{id}/cancel");
+        request.Headers.Add("X-Abom-Control", "1");
+        try
+        {
+            using var response = await http.SendAsync(request, ct);
+            if (response.IsSuccessStatusCode)
+            {
+                LastError = null;
+                return (await response.Content.ReadFromJsonAsync<AnalysisRun>(Json, ct), null);
+            }
+            var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
+            return (null, refusal?.Error
+                ?? $"the server refused to stop this run ({(int)response.StatusCode})");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
+        {
+            LastError = $"api/runs/{id}/cancel: {ex.Message}";
+            return (null, ex.Message);
+        }
+    }
+
     /// <summary>What each dependency tier runs, and every suite it could be bound to.</summary>
     public async Task<SuiteBinding?> GetTierSuitesAsync(CancellationToken ct = default) =>
         await GetAsync<SuiteBinding>("api/discovery/suites", ct);
@@ -197,6 +275,105 @@ public sealed class AbomApi(HttpClient http)
     /// </summary>
     public async Task<IReadOnlyList<NamedView>> GetViewsAsync(CancellationToken ct = default) =>
         await GetListAsync<NamedView>("api/views", ct);
+
+    /// <summary>Every query version the ledger has a run for, and the lifecycle it is staged against.</summary>
+    public async Task<QueryCatalog> GetQueryCatalogAsync(CancellationToken ct = default) =>
+        await GetAsync<QueryCatalog>("api/queries", ct) ?? new QueryCatalog();
+
+    /// <summary>
+    /// Asks for a run of one query version over the databases a predicate resolves to.
+    ///
+    /// The predicate travels in the query string so the server reads it with the same code the
+    /// graph and the gate read it with; a second way to express a scope is a second policy engine.
+    /// </summary>
+    public async Task<(AnalysisRun? Run, string? Refusal)> StartAnalysisRunAsync(
+        string predicate, string queryId, string version, string by,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            using var response = await http.PostAsJsonAsync("api/runs?" + predicate,
+                new
+                {
+                    queries = new[] { new { queryId, queryVersion = version } },
+                    by,
+                }, ct);
+            if (response.IsSuccessStatusCode)
+            {
+                LastError = null;
+                return (await response.Content.ReadFromJsonAsync<AnalysisRun>(Json, ct), null);
+            }
+            var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
+            return (null, refusal?.Error
+                ?? $"the server refused this run ({(int)response.StatusCode})");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
+        {
+            LastError = $"api/runs: {ex.Message}";
+            return (null, null);
+        }
+    }
+
+    /// <summary>What has been asked for, newest first.</summary>
+    public async Task<IReadOnlyList<AnalysisRun>> GetAnalysisRunsAsync(
+        CancellationToken ct = default) =>
+        (await GetAsync<AnalysisRunList>("api/runs", ct))?.Runs ?? [];
+
+    /// <summary>One run with every member, which is where a reader sees what it could not cover.</summary>
+    public async Task<AnalysisRun?> GetAnalysisRunAsync(long id, CancellationToken ct = default) =>
+        await GetAsync<AnalysisRun>($"api/runs/{id}", ct);
+
+    /// <summary>Carries out a recorded run, answering as soon as it has started.</summary>
+    public async Task<(AnalysisRun? Run, string? Refusal)> ExecuteAnalysisRunAsync(
+        long id, CancellationToken ct = default)
+    {
+        try
+        {
+            using var response = await http.PostAsync($"api/runs/{id}/start", content: null, ct);
+            if (response.IsSuccessStatusCode)
+            {
+                LastError = null;
+                return (await response.Content.ReadFromJsonAsync<AnalysisRun>(Json, ct), null);
+            }
+            var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
+            return (null, refusal?.Error
+                ?? $"the server refused to start this run ({(int)response.StatusCode})");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
+        {
+            LastError = $"api/runs/{id}/start: {ex.Message}";
+            return (null, null);
+        }
+    }
+
+    /// <summary>
+    /// Records that somebody moved a version to a stage, answering the catalog the move produced.
+    ///
+    /// The refusal text is returned rather than thrown: a stage the server will not accept is the
+    /// reader having asked for something, not ABOM being broken.
+    /// </summary>
+    public async Task<(QueryCatalog? Catalog, string? Refusal)> AdvanceQueryStageAsync(
+        string queryId, string version, string stage, string by, CancellationToken ct = default)
+    {
+        try
+        {
+            using var response = await http.PostAsJsonAsync("api/queries/stage",
+                new { queryId, queryVersion = version, stage, by }, ct);
+            if (response.IsSuccessStatusCode)
+            {
+                LastError = null;
+                return (await response.Content.ReadFromJsonAsync<QueryCatalog>(Json, ct), null);
+            }
+            var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
+            return (null, refusal?.Error
+                ?? $"the server refused this advance ({(int)response.StatusCode})");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
+        {
+            LastError = $"api/queries/stage: {ex.Message}";
+            return (null, null);
+        }
+    }
 
     /// <summary>
     /// The values one term can take, read from the endpoint the catalog named rather than from a
