@@ -164,6 +164,20 @@ func TestASucceededMemberRecordsHowMuchItFound(t *testing.T) {
 	}
 }
 
+// The SARIF holds one result from the asked-for rule and one from another: total 2, that query 1.
+func TestASucceededMemberSaysWhatEachQueryFound(t *testing.T) {
+	s, e, id, _ := executorFixture(t)
+
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	got := membersByRepository(t, s, id)["octo-app"].ByQuery
+	if got["actions/unpinned-tag"] != 1 || got["actions/unnecessary-use-of-advanced-config"] != 1 {
+		t.Errorf("the member credits %v, want one result to each rule in the fixture", got)
+	}
+}
+
 // A result nothing ingested is a result only the run can see: the graph, the Inventory, a policy
 // and the gate all read the findings table, so a run that writes SARIF and stops reports numbers
 // no other surface can account for.

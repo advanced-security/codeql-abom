@@ -18,25 +18,22 @@
         <MudLink Href="/" Underline="Underline.None" Color="Color.Inherit"
                  Class="d-flex align-center abom-brand" data-abom-brand>
             <MudText Typo="Typo.h6">ABOM</MudText>
-            <MudText Typo="Typo.caption" Class="ml-2 mud-text-secondary d-none d-sm-flex">
+            <MudText Typo="Typo.caption" Class="ml-2 mud-text-secondary d-none d-lg-flex">
                 Actions Bill of Materials
             </MudText>
         </MudLink>
 
-        @* Left to right is the journey: what matches, then what it touches. A list beside a hub
-           says which reading each gives of the same scope. *@
+        @* CodeQL first: a finding exists only once a query has run. *@
         <nav class="abom-nav ml-8 d-flex align-center">
+            <MudButton Href="/codeql" Variant="Variant.Text" Color="Color.Inherit"
+                       DropShadow="false" StartIcon="@Icons.Material.Outlined.ManageSearch"
+                       Class="@NavClass("/codeql")">CodeQL</MudButton>
             <MudButton Href="/inventory" Variant="Variant.Text" Color="Color.Inherit"
                        DropShadow="false" StartIcon="@Icons.Material.Outlined.ListAlt"
                        Class="@NavClass("/inventory")">Inventory</MudButton>
             <MudButton Href="/explore" Variant="Variant.Text" Color="Color.Inherit"
                        DropShadow="false" StartIcon="@Icons.Material.Outlined.Hub"
                        Class="@NavClass("/explore")">Explorer</MudButton>
-            @* The third reading, and the one neither of the others can give: its unit is a query
-               version, where Inventory's is a node and the Explorer's is a relationship. *@
-            <MudButton Href="/queries" Variant="Variant.Text" Color="Color.Inherit"
-                       DropShadow="false" StartIcon="@Icons.Material.Outlined.Science"
-                       Class="@NavClass("/queries")">Queries</MudButton>
         </nav>
 
         <MudSpacer />
@@ -59,9 +56,9 @@
     <MudMainContent>
         @* Not on the Dashboard: that surface hands over a scope and states nothing else, because a
            second, shorter coverage answer beside the entry points was read as the whole one.
-           Not on Queries either: the catalog's unit is a query version, and a banner counting
-           repositories and findings is an answer to a question that page is not asking. *@
-        @if (!IsDashboard && !IsQueries)
+           Not on CodeQL either: its unit is a query, and a banner counting repositories and
+           findings is an answer to a question that page is not asking. *@
+        @if (!IsDashboard && !IsCodeQL)
         {
             <CoverageStrip Summary="_summary" />
         }
@@ -83,7 +80,7 @@
 
     private bool IsDashboard => Path == "/";
 
-    private bool IsQueries => Path.StartsWith("/queries", StringComparison.Ordinal);
+    private bool IsCodeQL => Path.StartsWith("/codeql", StringComparison.Ordinal);
 
     /// <summary>Marks the surface being read, since the bar is now the only thing saying which.</summary>
     private string NavClass(string href) =>

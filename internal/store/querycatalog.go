@@ -179,7 +179,8 @@ func (s *Store) QueryCatalog() ([]CatalogQuery, error) {
 		// A lane row names what it invoked, which is a suite. Kept apart from the query column so
 		// a reader is not shown a pack-and-suite string where a rule belongs.
 		q.Suite, q.QueryID = splitSuite(q.QueryID)
-		q.Lane = q.Suite != ""
+		// A query id holds no whitespace; one that does names several queries run as one evaluation.
+		q.Lane = q.Suite != "" || strings.ContainsAny(q.QueryID, " \t")
 		// A query's kind does not vary with its version: if it did, it would be a different query.
 		// So a version too old to have been resolved still inherits what the id was recorded as,
 		// which is what keeps one query from being half hidden and half listed.
@@ -340,7 +341,10 @@ func (s *Store) ledgerStats() (
 			}
 			continue
 		}
-		noteRun(byQuery, id, repository, ranAt)
+		// An on-demand run of several queries names each of them, and each of them ran.
+		for _, query := range strings.Fields(id) {
+			noteRun(byQuery, query, repository, ranAt)
+		}
 	}
 	return byQuery, bySuite, byVersion, rows.Err()
 }

@@ -57,6 +57,21 @@ func wireEnumeration(
 	}
 }
 
+// reclaimAbandonedWork settles queue rows and runs a stopped server left claimed, before serving.
+func reclaimAbandonedWork(s *store.Store, queue *frontier.Queue, stdout, stderr io.Writer) {
+	if n, err := queue.ReclaimOrphaned(); err != nil {
+		fmt.Fprintf(stderr, "serve: reclaiming abandoned work: %v\n", err)
+	} else if n > 0 {
+		fmt.Fprintf(stdout, "%s serve: %d dependencies were left claimed by an interrupted run\n",
+			time.Now().UTC().Format(time.RFC3339), n)
+	}
+	if n, err := s.InterruptAbandonedRuns(); err != nil {
+		fmt.Fprintf(stderr, "serve: marking abandoned analysis runs: %v\n", err)
+	} else if n > 0 {
+		fmt.Fprintf(stdout, "serve: %d analysis runs were interrupted when the server last stopped\n", n)
+	}
+}
+
 // shouldResume reports whether discovery starts with the server.
 //
 // A crawl the operator started is remembered, and a restart does not act on that memory unless
@@ -272,12 +287,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	// Before anything is served, not on the first cycle: until discovery is started the queue
 	// would otherwise report a previous run's claims as work in flight, on a page that says
 	// discovery has never started.
-	if n, err := loop.Queue.ReclaimOrphaned(); err != nil {
-		fmt.Fprintf(stderr, "serve: reclaiming abandoned work: %v\n", err)
-	} else if n > 0 {
-		fmt.Fprintf(stdout, "%s serve: %d dependencies were left claimed by an interrupted run\n",
-			time.Now().UTC().Format(time.RFC3339), n)
-	}
+	reclaimAbandonedWork(s, loop.Queue, stdout, stderr)
 
 	srv := &serve.Server{
 		Store: s, Discovery: loop, AllowRemoteControl: *allowRemote, Log: stderr,

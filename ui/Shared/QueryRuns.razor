@@ -1,0 +1,51 @@
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@inject AbomApi Api
+
+@* This exact version only: another version's numbers are another query's. *@
+<div data-abom-query-runs>
+    @if (_runs is null)
+    {
+        <MudText Typo="Typo.caption" Class="mud-text-secondary">Reading its runs&hellip;</MudText>
+    }
+    else if (_runs.Count == 0)
+    {
+        <MudText Typo="Typo.body2" Class="mud-text-secondary" data-abom-query-runs-empty>
+            No run has carried this version yet. Run it on repositories chosen in the Inventory.
+        </MudText>
+    }
+    else
+    {
+        @foreach (var run in _runs)
+        {
+            <div class="abom-query-run">
+                <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
+                    Run #@run.RowId · @run.State · asked by @run.RequestedBy ·
+                    @TimeText.DayAndTime(run.CreatedAt)
+                </MudText>
+                <RunResults RunId="@run.RowId" QueryId="@Query.QueryId" />
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public CatalogQuery Query { get; set; } = new();
+
+    private List<AnalysisRun>? _runs;
+    private string? _loadedFor;
+
+    // Re-read only when the row is a different version: the catalog re-renders on every beat.
+    protected override async Task OnParametersSetAsync()
+    {
+        var key = Query.QueryId + "\0" + Query.QueryVersion;
+        if (key == _loadedFor)
+        {
+            return;
+        }
+        _loadedFor = key;
+        var all = await Api.GetAnalysisRunsAsync();
+        _runs = all.Where(r => r.Queries.Any(q =>
+            q.QueryId == Query.QueryId && q.QueryVersion == Query.QueryVersion)).ToList();
+    }
+}

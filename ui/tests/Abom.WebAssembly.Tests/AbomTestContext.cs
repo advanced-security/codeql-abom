@@ -34,6 +34,7 @@ public abstract class AbomTestContext : BunitContext
         Services.AddSingleton<AccountService>();
         Services.AddSingleton<ScopeService>();
         Services.AddSingleton<FollowService>();
+        Services.AddSingleton<RunDraft>();
 
         _handler.Fallbacks.Add(("api/filters", DefaultFilters));
     }

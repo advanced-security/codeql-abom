@@ -1,0 +1,372 @@
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@implements IDisposable
+@inject AbomApi Api
+@inject AccountService Accounts
+@inject FollowService Follow
+@inject NavigationManager Nav
+@inject RunDraft Draft
+
+@if (_refusal is not null)
+{
+    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" ShowCloseIcon="true"
+              CloseIconClicked="@(() => _refusal = null)" data-abom-queries-refusal>@_refusal</MudAlert>
+}
+
+@if (_catalog is null)
+{
+    <MudProgressLinear Indeterminate="true" data-abom-queries-loading />
+}
+else if (_catalog.Queries.Count == 0)
+{
+    @* Says what would fill the catalog rather than rendering an empty table. *@
+    <MudPaper Class="pa-6" Outlined="true" data-abom-queries-empty>
+        <MudText Typo="Typo.h6">No query has run yet</MudText>
+        <MudText Typo="Typo.body2" Class="mt-2 mud-text-secondary">
+            A version appears here once a run is on record for it. Start discovery, or run a
+            query on repositories chosen in the Inventory, and each version is catalogued as it runs.
+        </MudText>
+        <MudButton Href="/settings" Variant="Variant.Outlined" Class="mt-4"
+                   StartIcon="@Icons.Material.Outlined.Settings">Discovery</MudButton>
+    </MudPaper>
+}
+else
+{
+    <div class="abom-queries-counts mb-3 d-flex align-center" data-abom-queries-counts>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">
+            @CountText.Of(Shown.Count, "query version", "query versions"), @Unstaged not yet staged.
+            @if (Hidden > 0 && !_showDiscovery)
+            {
+                @* Says what the default hides, or this reads as the whole catalog. *@
+                <span data-abom-queries-hidden>
+                    @Hidden more are not single queries: graph-building queries, and whole suites or
+                    sets of queries run in one evaluation.
+                </span>
+            }
+            else if (Hidden > 0)
+            {
+                <span>@Hidden of them are not single queries.</span>
+            }
+        </MudText>
+        @if (Hidden > 0)
+        {
+            @* On a wrapper: MudBlazor splats the attribute onto a hidden input. *@
+            <span class="ml-4" data-abom-queries-discovery-toggle>
+                <MudSwitch T="bool" Value="_showDiscovery" ValueChanged="@((bool v) => { _showDiscovery = v; })"
+                           Color="Color.Primary" Size="Size.Small"
+                           Label="Show everything that ran" />
+            </span>
+        }
+    </div>
+
+    <MudDataGrid T="CatalogQuery" Items="Shown" Dense="true" Hover="true" Bordered="false"
+                 SortMode="SortMode.Single" Filterable="false" ShowColumnOptions="false"
+                 FixedHeader="true" RowsPerPage="30" Class="abom-grid abom-grid-windowed"
+                 data-abom-queries-table>
+        <Columns>
+            <HierarchyColumn T="CatalogQuery">
+                <CellTemplate>
+                    <MudIconButton Size="Size.Small"
+                                   Icon="@(context.Open ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)"
+                                   aria-label="@($"Show where {context.Item.QueryId} ran")"
+                                   aria-expanded="@(context.Open ? "true" : "false")"
+                                   OnClick="@(() => context.Actions.ToggleHierarchyVisibilityForItemAsync())"
+                                   data-abom-query-detail />
+                </CellTemplate>
+            </HierarchyColumn>
+
+            <PropertyColumn Property="x => x.QueryId" Title="Query"
+                            HeaderClass="abom-identity-col" CellClass="abom-identity-col">
+                <CellTemplate>
+                    <div class="abom-query-id" data-abom-query-id="@context.Item.QueryId">
+                        @context.Item.QueryId
+                    </div>
+                </CellTemplate>
+            </PropertyColumn>
+
+            @* Beside the thing it acts on, like every other grid in the interface. *@
+            <TemplateColumn Title="" Sortable="false" HeaderClass="abom-row-actions-head"
+                            CellClass="abom-row-actions">
+                <CellTemplate>
+                    <div class="abom-query-actions">
+                        <MudTooltip Text="@RunTooltip(context.Item)">
+                            <span>
+                                <MudIconButton Icon="@Icons.Material.Outlined.PlayArrow"
+                                               Size="Size.Small" Color="Color.Primary"
+                                               Disabled="@(!CanRun(context.Item))"
+                                               OnClick="@(() => ChooseRepositories(context.Item))"
+                                               aria-label="Run on chosen repositories"
+                                               data-abom-query-run />
+                            </span>
+                        </MudTooltip>
+                        <MudTooltip Text="@TestTooltip(context.Item)">
+                            <span>
+                                <MudIconButton Icon="@Icons.Material.Outlined.Science"
+                                               Size="Size.Small" Color="@TestColor(context.Item)"
+                                               Disabled="@(!CanTest(context.Item))"
+                                               OnClick="@(() => Test(context.Item))"
+                                               aria-label="Test this version"
+                                               data-abom-query-test />
+                            </span>
+                        </MudTooltip>
+                    </div>
+                </CellTemplate>
+            </TemplateColumn>
+
+            <PropertyColumn Property="x => x.QueryVersion" Title="Version">
+                <CellTemplate>
+                    @if (context.Item.QueryVersion.Length == 0)
+                    {
+                        @* These ran before versions were recorded; not a version anyone chose. *@
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary"
+                                 data-abom-query-unversioned>not recorded</MudText>
+                    }
+                    else
+                    {
+                        <code data-abom-query-version="@context.Item.QueryVersion">@Short(context.Item.QueryVersion)</code>
+                    }
+                </CellTemplate>
+            </PropertyColumn>
+
+            @* Own name only: ABOM packs share a scope and prefix, so truncated they read alike. *@
+            <PropertyColumn Property="x => x.Pack" Title="Pack" CellClass="abom-nowrap">
+                <CellTemplate>
+                    <span class="abom-path" title="@context.Item.Pack" data-abom-query-pack="@context.Item.Pack">@PackText(context.Item.Pack)</span>@if (context.Item.PackVersion.Length > 0) { <code class="abom-faint" data-abom-query-pack-version>@("@" + context.Item.PackVersion)</code> }
+                </CellTemplate>
+            </PropertyColumn>
+
+            @* Which suite the crawl ran it in. A query that only ever ran on demand has none. *@
+            <PropertyColumn Property="x => x.Suite" Title="Crawl suite" CellClass="abom-nowrap">
+                <CellTemplate>
+                    @if (context.Item.Suite.Length == 0)
+                    {
+                        <MudText Typo="Typo.caption" Class="abom-faint">—</MudText>
+                    }
+                    else
+                    {
+                        <span class="abom-path" title="@context.Item.Suite"
+                              data-abom-query-suite>@SuiteText(context.Item.Suite)</span>
+                    }
+                </CellTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.Origin" Title="Origin">
+                <CellTemplate>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                             data-abom-query-origin="@context.Item.Origin">@OriginText(context.Item.Origin)</MudChip>
+                </CellTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.LastRunAt" Title="Last run" CellClass="abom-nowrap">
+                <CellTemplate>
+                    <MudText Typo="Typo.caption">@TimeText.DayAndTime(context.Item.LastRunAt)</MudText>
+                </CellTemplate>
+            </PropertyColumn>
+
+            @* The stage is its own control; a menu at the row's start had no evident purpose. *@
+            <PropertyColumn Property="x => x.Stage" Title="Stage">
+                <CellTemplate>
+                    @if (context.Item.Stage.Length == 0)
+                    {
+                        <span class="abom-stage" title="Nobody has put this version in a stage"
+                              data-abom-query-unstaged>
+                            <MudMenu Label="not staged" EndIcon="@Icons.Material.Filled.ArrowDropDown"
+                                     Size="Size.Small" Variant="Variant.Text" Dense="true"
+                                     Disabled="@(!CanAdvance)" Class="abom-stage-menu"
+                                     data-abom-query-advance>
+                                @StageItems(context.Item)
+                            </MudMenu>
+                        </span>
+                    }
+                    else
+                    {
+                        <span class="abom-stage" title="@StagedTitle(context.Item)"
+                              data-abom-query-stage="@context.Item.Stage">
+                            <MudMenu Label="@context.Item.Stage" EndIcon="@Icons.Material.Filled.ArrowDropDown"
+                                     Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                                     Dense="true" Disabled="@(!CanAdvance)" Class="abom-stage-menu"
+                                     data-abom-query-advance>
+                                @StageItems(context.Item)
+                            </MudMenu>
+                        </span>
+                    }
+                </CellTemplate>
+            </PropertyColumn>
+        </Columns>
+        <ChildRowContent>
+            <div class="abom-row-detail">
+                <QueryRuns Query="@context.Item" />
+            </div>
+        </ChildRowContent>
+        <PagerContent><MudDataGridPager T="CatalogQuery" /></PagerContent>
+    </MudDataGrid>
+
+    @if (!CanAdvance)
+    {
+        <MudAlert Severity="Severity.Info" Class="mt-4" data-abom-queries-unsigned>
+            Advancing a stage and asking for a run both record who did it. Sign in with
+            <code>gh</code> and refresh your identity in Settings to enable them.
+        </MudAlert>
+    }
+}
+
+@code {
+    private QueryCatalog? _catalog;
+    private string? _refusal;
+    private bool _showDiscovery;
+    private Timer? _timer;
+
+    private string Operator => Accounts.Identity.Login;
+
+    private bool CanAdvance => Operator.Length > 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Follow.Changed += Arm;
+        await Accounts.EnsureLoadedAsync();
+        await Load();
+        Arm();
+    }
+
+    private async Task Load() => _catalog = await Api.GetQueryCatalogAsync();
+
+    private void Arm()
+    {
+        _timer?.Dispose();
+        _timer = new Timer(async _ =>
+        {
+            try
+            {
+                await Load();
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                return;
+            }
+            await InvokeAsync(StateHasChanged);
+        }, null, Follow.Interval, Follow.Interval);
+    }
+
+    /// <summary>The crawl's own queries are out by default, and the count says so.</summary>
+    private List<CatalogQuery> Shown => _catalog is null
+        ? []
+        : _catalog.Queries.Where(q => _showDiscovery || !(q.Discovery || q.Lane)).ToList();
+
+    private int Hidden => _catalog?.Queries.Count(q => q.Discovery || q.Lane) ?? 0;
+
+    private int Unstaged => Shown.Count(q => q.Stage.Length == 0);
+
+    /// <summary>A discovery query builds the graph, so running one on demand answers nothing.</summary>
+    private bool CanRun(CatalogQuery q) =>
+        CanAdvance && !q.Discovery && !q.Lane && q.QueryVersion.Length > 0;
+
+    private string RunTooltip(CatalogQuery q) =>
+        !CanAdvance ? "Sign in to ask for a run"
+        : q.Lane ? "This is a whole suite the crawl invoked, not a query to run on its own"
+        : q.Discovery ? "This query builds the dependency graph; it reports no findings to review"
+        : q.QueryVersion.Length == 0 ? "This ran before versions were recorded, so there is no version to run"
+        : "Choose repositories in the Inventory to run this version on";
+
+    /// <summary>Repositories are chosen on the Inventory: a new query's own reach is empty.</summary>
+    private void ChooseRepositories(CatalogQuery query)
+    {
+        if (!CanRun(query))
+        {
+            return;
+        }
+        Draft.Set([new AnalysisQueryRef { QueryId = query.QueryId, QueryVersion = query.QueryVersion }]);
+        Nav.NavigateTo("/inventory?unit=repositories");
+    }
+
+    private RenderFragment StageItems(CatalogQuery query) => __builder =>
+    {
+        foreach (var stage in _catalog!.Stages)
+        {
+            <MudMenuItem Disabled="@(stage == query.Stage)" OnClick="@(() => Advance(query, stage))">
+                @stage
+            </MudMenuItem>
+        }
+    };
+
+    private static string StagedTitle(CatalogQuery q) => q.StagedBy.Length == 0
+        ? $"In {q.Stage}"
+        : $"Put in {q.Stage} by {q.StagedBy}, {TimeText.DayAndTime(q.StagedAt)}";
+
+    private async Task Advance(CatalogQuery query, string stage)
+    {
+        if (!CanAdvance)
+        {
+            return;
+        }
+        var (catalog, refusal) = await Api.AdvanceQueryStageAsync(
+            query.QueryId, query.QueryVersion, stage, Operator);
+        _refusal = refusal;
+        if (catalog is not null)
+        {
+            _catalog = catalog;
+        }
+    }
+
+    /// <summary>Only the operator's own queries have tests; upstream packs ship none.</summary>
+    private bool CanTest(CatalogQuery q) =>
+        CanAdvance && q.Origin == "user" && q.QueryVersion.Length > 0;
+
+    private static Color TestColor(CatalogQuery q) =>
+        !q.Tested ? Color.Default : q.Passing ? Color.Success : Color.Error;
+
+    private string TestTooltip(CatalogQuery q) =>
+        !CanAdvance ? "Sign in to run tests"
+        : q.Origin != "user" ? "Tests live beside the query, and this one came from a pack you did not write"
+        : !q.Tested ? "Run this version's tests — passing them is what lets it leave dev"
+        : q.Passing ? $"Tests pass: {q.TestDetail}"
+        : $"Tests fail: {q.TestDetail}";
+
+    private async Task Test(CatalogQuery query)
+    {
+        if (!CanTest(query))
+        {
+            return;
+        }
+        var (catalog, refusal) = await Api.TestQueryAsync(query.QueryId, query.QueryVersion);
+        _refusal = refusal;
+        if (catalog is not null)
+        {
+            _catalog = catalog;
+        }
+    }
+
+    /// <summary>Short enough to read; the full hash stays on the element for copying.</summary>
+    private static string Short(string version) =>
+        version.Length <= 12 ? version : version[..12];
+
+    /// <summary>"Yours" is the word for what the operator owns; a query they wrote is custom.</summary>
+    private static string OriginText(string origin) => origin switch
+    {
+        "upstream" => "upstream",
+        "abom" => "ABOM",
+        "user" => "custom",
+        "mixed" => "several packs",
+        _ => "unknown",
+    };
+
+    private static string PackText(string pack)
+    {
+        if (pack.Length == 0)
+        {
+            return "not recorded";
+        }
+        var names = pack.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(n => n.Contains('/') ? n[(n.LastIndexOf('/') + 1)..] : n);
+        return string.Join(" + ", names);
+    }
+
+    /// <summary>The suite's own name, as the Suites tab spells it; the full reference is the title.</summary>
+    private static string SuiteText(string suite) => string.Join(" ",
+        suite.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(SuiteBindingText.Label));
+
+    public void Dispose()
+    {
+        Follow.Changed -= Arm;
+        _timer?.Dispose();
+    }
+}

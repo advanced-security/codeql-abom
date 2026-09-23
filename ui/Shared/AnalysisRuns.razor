@@ -1,0 +1,266 @@
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@implements IDisposable
+@inject AbomApi Api
+@inject FollowService Follow
+
+@* A run's results open under its own row, never on a panel matched back to it. *@
+<div data-abom-runs>
+    @if (_refusal is { Length: > 0 } refused)
+    {
+        <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" ShowCloseIcon="true"
+                  CloseIconClicked="@(() => _refusal = null)" data-abom-runs-refusal>@refused</MudAlert>
+    }
+
+    @if (_runs is null)
+    {
+        <MudProgressLinear Indeterminate="true" />
+    }
+    else if (_runs.Count == 0)
+    {
+        <MudPaper Class="pa-6" Outlined="true" data-abom-runs-empty>
+            <MudText Typo="Typo.h6">No run has been asked for yet</MudText>
+            <MudText Typo="Typo.body2" Class="mt-2 mud-text-secondary">
+                A run is a set of query versions over repositories somebody chose. Choose them in
+                the <MudLink Href="/inventory?unit=repositories">Inventory</MudLink>, or press Run
+                on a query in the catalog.
+            </MudText>
+        </MudPaper>
+    }
+    else
+    {
+        <MudDataGrid T="AnalysisRun" Items="_runs" Dense="true" Hover="true" Bordered="false"
+                     SortMode="SortMode.None" Filterable="false" ShowColumnOptions="false"
+                     FixedHeader="true" RowsPerPage="20" Class="abom-grid abom-grid-windowed"
+                     data-abom-runs-table>
+            <Columns>
+                <HierarchyColumn T="AnalysisRun" InitiallyExpandedFunc="@(r => r.RowId == FocusRun)">
+                    <CellTemplate>
+                        <MudIconButton Size="Size.Small"
+                                       Icon="@(context.Open ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)"
+                                       aria-label="@($"Show what run #{context.Item.RowId} found")"
+                                       aria-expanded="@(context.Open ? "true" : "false")"
+                                       OnClick="@(() => context.Actions.ToggleHierarchyVisibilityForItemAsync())"
+                                       data-abom-run-detail />
+                    </CellTemplate>
+                </HierarchyColumn>
+
+                <PropertyColumn Property="x => x.RowId" Title="Run" CellClass="abom-nowrap">
+                    <CellTemplate>
+                        <span data-abom-run-id="@context.Item.RowId">#@context.Item.RowId</span>
+                    </CellTemplate>
+                </PropertyColumn>
+
+                <TemplateColumn Title="" HeaderClass="abom-row-actions-head" CellClass="abom-row-actions">
+                    <CellTemplate>
+                        <div class="abom-query-actions">
+                            @switch (context.Item.State)
+                            {
+                                case "running":
+                                    <MudTooltip Text="Stop this run. What it has already analyzed is kept.">
+                                        <MudIconButton Icon="@Icons.Material.Outlined.Stop" Size="Size.Small"
+                                                       Color="Color.Warning" OnClick="@(() => Cancel(context.Item))"
+                                                       aria-label="@($"Stop run #{context.Item.RowId}")"
+                                                       data-abom-run-cancel />
+                                    </MudTooltip>
+                                    break;
+                                case "pending":
+                                    <MudTooltip Text="Start this run over the repositories it names.">
+                                        <MudIconButton Icon="@Icons.Material.Outlined.PlayArrow" Size="Size.Small"
+                                                       Color="Color.Primary" OnClick="@(() => Execute(context.Item))"
+                                                       aria-label="@($"Start run #{context.Item.RowId}")"
+                                                       data-abom-run-start />
+                                    </MudTooltip>
+                                    break;
+                                default:
+                                    @* Not a start: it re-analyzes every repository and replaces its counts. *@
+                                    <MudTooltip Text="@AgainText(context.Item)">
+                                        <MudIconButton Icon="@Icons.Material.Outlined.Replay" Size="Size.Small"
+                                                       OnClick="@(() => Execute(context.Item))"
+                                                       aria-label="@($"Run #{context.Item.RowId} again")"
+                                                       data-abom-run-again />
+                                    </MudTooltip>
+                                    break;
+                            }
+                        </div>
+                    </CellTemplate>
+                </TemplateColumn>
+
+                <PropertyColumn Property="x => x.State" Title="State">
+                    <CellTemplate>
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                 Color="@StateColor(context.Item.State)"
+                                 data-abom-run-state="@context.Item.State">@context.Item.State</MudChip>
+                    </CellTemplate>
+                </PropertyColumn>
+
+                <TemplateColumn Title="Queries" CellClass="abom-run-text">
+                    <CellTemplate>
+                        @foreach (var q in context.Item.Queries)
+                        {
+                            <div class="abom-path" title="@q.QueryVersion">@q.QueryId</div>
+                        }
+                    </CellTemplate>
+                </TemplateColumn>
+
+                <TemplateColumn Title="Scope" CellClass="abom-run-text">
+                    <CellTemplate>
+                        <MudText Typo="Typo.caption" title="@context.Item.Predicate"
+                                 data-abom-run-scope>@ScopeText(context.Item.Predicate)</MudText>
+                    </CellTemplate>
+                </TemplateColumn>
+
+                <TemplateColumn Title="Progress" CellClass="abom-nowrap">
+                    <CellTemplate>
+                        <MudText Typo="Typo.caption" data-abom-run-tally>@TallyText(context.Item)</MudText>
+                    </CellTemplate>
+                </TemplateColumn>
+
+                <PropertyColumn Property="x => x.Results" Title="Results"
+                                HeaderClass="abom-cell-right" CellClass="abom-cell-right">
+                    <CellTemplate>
+                        <span class="abom-num" data-abom-run-results>@context.Item.Results</span>
+                    </CellTemplate>
+                </PropertyColumn>
+
+                <PropertyColumn Property="x => x.RequestedBy" Title="Asked by" CellClass="abom-nowrap" />
+
+                <PropertyColumn Property="x => x.CreatedAt" Title="Asked" CellClass="abom-nowrap">
+                    <CellTemplate>
+                        <MudText Typo="Typo.caption">@TimeText.DayAndTime(context.Item.CreatedAt)</MudText>
+                    </CellTemplate>
+                </PropertyColumn>
+            </Columns>
+            <ChildRowContent>
+                <div class="abom-row-detail">
+                    <RunResults RunId="@context.Item.RowId" />
+                </div>
+            </ChildRowContent>
+            <PagerContent><MudDataGridPager T="AnalysisRun" /></PagerContent>
+        </MudDataGrid>
+    }
+</div>
+
+@code {
+    /// <summary>A run to open on arrival, such as the one just asked for.</summary>
+    [Parameter] public long FocusRun { get; set; }
+
+    private IReadOnlyList<AnalysisRun>? _runs;
+    private string? _refusal;
+    private Timer? _timer;
+    private TimeSpan _beat;
+
+    private static readonly TimeSpan WhileRunning = TimeSpan.FromSeconds(5);
+
+    protected override async Task OnInitializedAsync()
+    {
+        Follow.Changed += Arm;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        _runs = await Api.GetAnalysisRunsAsync();
+        Arm();
+    }
+
+    // A run in flight is watched closely; otherwise the reader's own beat.
+    private void Arm()
+    {
+        var beat = _runs?.Any(r => r.State == "running") == true && Follow.Interval > WhileRunning
+            ? WhileRunning
+            : Follow.Interval;
+        if (_timer is not null && beat == _beat)
+        {
+            return;
+        }
+        _timer?.Dispose();
+        _beat = beat;
+        _timer = new Timer(async _ =>
+        {
+            try
+            {
+                await Load();
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                return;
+            }
+            await InvokeAsync(StateHasChanged);
+        }, null, beat, beat);
+    }
+
+    private async Task Execute(AnalysisRun run)
+    {
+        var (_, refusal) = await Api.ExecuteAnalysisRunAsync(run.RowId);
+        _refusal = refusal;
+        await Load();
+    }
+
+    private async Task Cancel(AnalysisRun run)
+    {
+        var (_, refusal) = await Api.CancelAnalysisRunAsync(run.RowId);
+        _refusal = refusal;
+        await Load();
+    }
+
+    private static string AgainText(AnalysisRun run) => run.State switch
+    {
+        "interrupted" => "The server stopped while this ran. Run it again over the same repositories.",
+        "canceled" => "Run it again over the same repositories.",
+        _ => "Run it again over the same repositories. What it finds replaces what this run recorded.",
+    };
+
+    private static Color StateColor(string state) => state switch
+    {
+        "complete" => Color.Success,
+        "running" => Color.Info,
+        "canceled" or "interrupted" => Color.Warning,
+        _ => Color.Default,
+    };
+
+    /// <summary>The predicate in words: a selection reads as the repositories it named.</summary>
+    private static string ScopeText(string predicate)
+    {
+        var parts = new List<string>();
+        foreach (var term in predicate.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var (key, value) = term.IndexOf('=') is var at and >= 0
+                ? (term[..at], term[(at + 1)..])
+                : (term, string.Empty);
+            var values = value.Split(',').Select(Uri.UnescapeDataString).ToList();
+            if (key == "repositories")
+            {
+                parts.Add(values.Count <= 3
+                    ? string.Join(", ", values)
+                    : $"{string.Join(", ", values.Take(3))} and {values.Count - 3} more");
+                continue;
+            }
+            parts.Add($"{key}: {string.Join(", ", values)}");
+        }
+        return string.Join("; ", parts);
+    }
+
+    private static string TallyText(AnalysisRun run)
+    {
+        int Of(string status) => run.Tally.TryGetValue(status, out var n) ? n : 0;
+        var parts = new List<string>();
+        if (Of("succeeded") > 0) parts.Add($"{Of("succeeded"):N0} analyzed");
+        if (Of("running") > 0) parts.Add($"{Of("running"):N0} running");
+        if (Of("pending") > 0) parts.Add($"{Of("pending"):N0} waiting");
+        if (Of("failed") > 0) parts.Add($"{Of("failed"):N0} failed");
+        if (Of("no_database") > 0) parts.Add($"{Of("no_database"):N0} with no database");
+        foreach (var (status, n) in run.Tally.Where(t =>
+                     t.Key is not ("succeeded" or "running" or "pending" or "failed" or "no_database")))
+        {
+            parts.Add($"{n:N0} {status}");
+        }
+        return string.Join(" · ", parts);
+    }
+
+    public void Dispose()
+    {
+        Follow.Changed -= Arm;
+        _timer?.Dispose();
+    }
+}

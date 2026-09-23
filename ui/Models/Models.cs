@@ -1250,6 +1250,10 @@ public sealed record AnalysisMember
     /// </summary>
     public int Results { get; init; }
     public bool Counted { get; init; }
+
+    /// <summary>What each query found here; empty where nothing counted this member.</summary>
+    public IReadOnlyDictionary<string, int> ByQuery { get; init; } =
+        new Dictionary<string, int>(StringComparer.Ordinal);
     public string StartedAt { get; init; } = string.Empty;
     public string FinishedAt { get; init; } = string.Empty;
 }
@@ -1280,4 +1284,29 @@ public sealed record AnalysisRun
 public sealed record AnalysisRunList
 {
     public IReadOnlyList<AnalysisRun> Runs { get; init; } = [];
+}
+
+/// <summary>What a query should catch or stop catching, kept before any query exists.</summary>
+public sealed record QueryRequest
+{
+    public long RowId { get; init; }
+    public string Description { get; init; } = string.Empty;
+    public string Compliant { get; init; } = string.Empty;
+    public string NonCompliant { get; init; } = string.Empty;
+
+    /// <summary>The query the request is about; empty for one that does not exist yet.</summary>
+    public string QueryId { get; init; } = string.Empty;
+    public string Kind { get; init; } = string.Empty;
+    public string Status { get; init; } = string.Empty;
+    public string RequestedBy { get; init; } = string.Empty;
+    public string CreatedAt { get; init; } = string.Empty;
+    public string UpdatedAt { get; init; } = string.Empty;
+}
+
+/// <summary>The requests, and the words the server accepts for their kind and status.</summary>
+public sealed record QueryRequestList
+{
+    public IReadOnlyList<QueryRequest> Requests { get; init; } = [];
+    public IReadOnlyList<string> Kinds { get; init; } = [];
+    public IReadOnlyList<string> Statuses { get; init; } = [];
 }

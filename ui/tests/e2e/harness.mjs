@@ -5,16 +5,13 @@ import { test as base, expect } from '@playwright/test';
 //
 // Every address the interface actually serves. Nothing retired is kept alive here: this project is
 // unpublished, so a question that moved is moved, not forwarded.
-export const ROUTES = ['/', '/explore', '/inventory', '/queries', '/settings'];
+export const ROUTES = ['/', '/codeql', '/explore', '/inventory', '/settings'];
 
 // The surfaces, in nav order. Anything else a reader needs is a unit, a tab or an action on one
 // of them, and a new entry here means a question grew its own page.
 //
-// Queries is the one that earned it. Inventory reprojects a scope over *nodes* and the Explorer
-// draws *relationships*; the catalog's unit is a **query version**, which is neither. What a run
-// did is not a sixth surface: a run belongs to the version that was asked for, so it opens on the
-// row that asked.
-export const SURFACES = ['/', '/inventory', '/explore', '/queries', '/settings'];
+// CodeQL earned it: its unit is a query, not a node or a relationship, and findings start there.
+export const SURFACES = ['/', '/codeql', '/inventory', '/explore', '/settings'];
 
 // The Explorer draws only a scope somebody chose, so a test that needs a drawing names one. A bare
 // `/explore` correctly renders the chooser and no canvas, which is why every spec that went there

@@ -6,6 +6,7 @@ namespace Abom.WebAssembly.Tests;
 /// <summary>
 /// Choosing what a tier is analyzed with spends minutes of cloning and CodeQL for every
 /// dependency in it, so the control has to say how much before it is pressed rather than after.
+/// It lives with the queries it binds, on the CodeQL page's Suites part.
 /// </summary>
 public class TierSuiteControlTests : AbomTestContext
 {
@@ -30,23 +31,20 @@ public class TierSuiteControlTests : AbomTestContext
     {
         Serve(TwoSuites);
 
-        var cut = Render<Shared.DiscoveryControls>();
+        var cut = Render<Shared.TierSuites>();
 
-        cut.WaitForAssertion(() => Assert.Contains("What each tier is analyzed with", cut.Markup));
+        cut.WaitForAssertion(() => Assert.Contains("abom-tier-head", cut.Markup));
         Assert.Contains("522", cut.Markup);
         Assert.Contains("691", cut.Markup);
     }
 
-    // A suite is offered by its own name, never by the tier it happens to default to. The offer
-    // list is the control, so this looks inside the fold.
+    // A suite is offered by its own name, never by the tier it happens to default to.
     [Fact]
     public void SuitesAreListedByTheirOwnName()
     {
         Serve(TwoSuites);
 
-        var cut = Render<Shared.DiscoveryControls>();
-        cut.WaitForAssertion(() => cut.Find(".abom-fold-toggle"));
-        cut.Find(".abom-fold-toggle").Click();
+        var cut = Render<Shared.TierSuites>();
 
         cut.WaitForAssertion(() => Assert.Contains("abom-dependency-graph", cut.Markup));
         Assert.Contains("abom-findings", cut.Markup);
@@ -59,7 +57,7 @@ public class TierSuiteControlTests : AbomTestContext
     {
         Serve(TwoSuites);
 
-        var cut = Render<Shared.DiscoveryControls>();
+        var cut = Render<Shared.TierSuites>();
 
         cut.WaitForAssertion(() =>
             Assert.Contains("Nothing is bound to transitive", cut.Markup));
@@ -72,7 +70,7 @@ public class TierSuiteControlTests : AbomTestContext
     {
         Serve("""{"available":[],"tiers":{"direct":[],"transitive":[]},"counts":{}}""");
 
-        var cut = Render<Shared.DiscoveryControls>();
+        var cut = Render<Shared.TierSuites>();
 
         cut.WaitForAssertion(() =>
             Assert.Contains("No suites were found on disk", cut.Markup));
@@ -87,9 +85,9 @@ public class TierSuiteControlTests : AbomTestContext
         Serve(TwoSuites);
         var release = Withhold("api/discovery/suites");
 
-        var cut = Render<Shared.DiscoveryControls>();
+        var cut = Render<Shared.TierSuites>();
 
-        cut.WaitForAssertion(() => Assert.Contains("What each tier is analyzed with", cut.Markup));
+        cut.WaitForAssertion(() => Assert.Contains("Reading the binding", cut.Markup));
         Assert.DoesNotContain("Nothing is bound to", cut.Markup);
         Assert.DoesNotContain("No suites were found on disk", cut.Markup);
 
@@ -105,46 +103,29 @@ public class TierSuiteControlTests : AbomTestContext
         Answer("api/discovery/status", DiscoveryStateBuilder.Drained().WithTiers(522, 691).ToJson());
         Answer("api/frontier", "[]");
 
-        var cut = Render<Shared.DiscoveryControls>();
+        var cut = Render<Shared.TierSuites>();
 
         cut.WaitForAssertion(() =>
             Assert.Contains("Could not read what each tier is bound to", cut.Markup));
         Assert.DoesNotContain("mud-progress-linear", cut.Markup);
     }
 
-    // Folding is what keeps the queue above the fold, but a fold that hides the binding turns
-    // "direct runs findings" into something a reader has to go looking for.
+    // Stated in words above the grid, so nobody reconstructs the binding from checkboxes.
     [Fact]
-    public void TheBindingIsStatedEvenWhileTheControlIsFolded()
+    public void TheBindingIsStatedAboveTheGrid()
     {
         Serve(TwoSuites);
 
-        var cut = Render<Shared.DiscoveryControls>();
+        var cut = Render<Shared.TierSuites>();
 
-        cut.WaitForAssertion(() => Assert.Contains("What each tier is analyzed with", cut.Markup));
-        Assert.Contains("direct: abom-dependency-graph", cut.Markup);
-        Assert.Contains("transitive: nothing", cut.Markup);
-        // The grid itself is genuinely absent rather than hidden, so ui-test can tell.
-        Assert.DoesNotContain("abom-tier-head", cut.Markup);
+        cut.WaitForAssertion(() => Assert.Contains("direct: abom-dependency-graph",
+            cut.Find("[data-abom-binding-summary]").TextContent));
+        Assert.Contains("transitive: nothing", cut.Find("[data-abom-binding-summary]").TextContent);
     }
 
-    // A section with no summary to show must not fold shut over the reason it has none.
+    // What the crawl is doing is why the discovery controls exist; they stay in Settings.
     [Fact]
-    public void AFailedReadIsNotFoldedAwayOverTheFailure()
-    {
-        Answer("api/discovery/status", DiscoveryStateBuilder.Drained().WithTiers(522, 691).ToJson());
-        Answer("api/frontier", "[]");
-
-        var cut = Render<Shared.DiscoveryControls>();
-
-        cut.WaitForAssertion(() =>
-            Assert.Contains("Could not read what each tier is bound to", cut.Markup));
-        Assert.DoesNotContain("abom-fold-toggle", cut.Markup);
-    }
-
-    // What the crawl is doing is why these controls exist; only configuration folds.
-    [Fact]
-    public void TheRunControlsAreNeverFoldedAway()
+    public void TheRunControlsStayWithDiscovery()
     {
         Serve(TwoSuites);
 
@@ -157,6 +138,20 @@ public class TierSuiteControlTests : AbomTestContext
         Assert.Contains("direct", requeue[0].TextContent);
         Assert.Contains("transitive", requeue[1].TextContent);
         Assert.Contains("Re-analyze", cut.Markup);
+    }
+
+    // Settings still states the binding and links to where it is changed.
+    [Fact]
+    public void DiscoveryStatesTheBindingAndLinksToWhereItIsChanged()
+    {
+        Serve(TwoSuites);
+
+        var cut = Render<Shared.DiscoveryControls>();
+
+        cut.WaitForAssertion(() => Assert.Contains("direct: abom-dependency-graph",
+            cut.Find("[data-abom-binding-summary]").TextContent));
+        Assert.Equal("/codeql?tab=suites", cut.Find("[data-abom-binding-change]").GetAttribute("href"));
+        Assert.DoesNotContain("abom-tier-head", cut.Markup);
     }
 
     private const string WithContents = """
@@ -177,12 +172,9 @@ public class TierSuiteControlTests : AbomTestContext
     {
         Serve(WithContents);
 
-        var cut = Render<Shared.DiscoveryControls>();
-        cut.WaitForAssertion(() => cut.Find(".abom-fold-toggle"));
-        cut.Find(".abom-fold-toggle").Click();
+        var cut = Render<Shared.TierSuites>();
 
-        cut.WaitForAssertion(() => Assert.Contains("abom-findings", cut.Markup));
-        Assert.Contains("0.6.34", cut.Markup);
+        cut.WaitForAssertion(() => Assert.Contains("0.6.34", cut.Markup));
         Assert.Contains("2 queries", cut.Markup);
         // The query ids belong behind their own disclosure, not in the row.
         Assert.DoesNotContain("actions/unpinned-tag", cut.Markup);
@@ -195,9 +187,7 @@ public class TierSuiteControlTests : AbomTestContext
     {
         Serve(WithContents);
 
-        var cut = Render<Shared.DiscoveryControls>();
-        cut.WaitForAssertion(() => cut.Find(".abom-fold-toggle"));
-        cut.Find(".abom-fold-toggle").Click();
+        var cut = Render<Shared.TierSuites>();
         cut.WaitForAssertion(() => cut.Find(".abom-suite-toggle"));
         cut.Find(".abom-suite-toggle").Click();
 
@@ -212,9 +202,7 @@ public class TierSuiteControlTests : AbomTestContext
     {
         Serve(TwoSuites);
 
-        var cut = Render<Shared.DiscoveryControls>();
-        cut.WaitForAssertion(() => cut.Find(".abom-fold-toggle"));
-        cut.Find(".abom-fold-toggle").Click();
+        var cut = Render<Shared.TierSuites>();
 
         cut.WaitForAssertion(() => Assert.Contains("not yet resolved", cut.Markup));
         Assert.DoesNotContain("0 queries", cut.Markup);

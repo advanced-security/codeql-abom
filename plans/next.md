@@ -140,14 +140,13 @@ The ranking is itself a plan, and is subject to change.
     named alternatives rather than typing. The second half is that a finding still says which rule
     fired and not whose rule it was — the join exists, no listing makes it, and *our rules against
     the maintained set* is the one comparison a security team asks for.
-12. **[Run these queries, against this scope, now](api/on-demand-analysis.md)** — down to two
-    decisions. A run is recorded, carried out, **stoppable**, and its results land in the same
-    tables the crawl writes and are attributed to the same nodes, so a finding it discovers reaches
-    the graph, the Inventory, a policy and the gate. What is left: the executor consults **no skip
-    decision**, which is a fork rather than an omission because a person tuning a query wants the
-    re-run and a person checking coverage does not; and the action still starts from a *query*
-    rather than from whatever a reader just narrowed to, which is the inversion for everyone
-    arriving from the Inventory.
+12. **[Run these queries, against this scope, now](api/on-demand-analysis.md)** — down to one
+    decision and its cost. A run is asked for over repositories chosen in the Inventory, carried
+    out, **stoppable**, counted **per repository and per query**, and its results land in the same
+    tables the crawl writes and are attributed to the same nodes. What is left: the executor
+    consults **no skip decision**, which is a fork rather than an omission because a person tuning
+    a query wants the re-run and a person checking coverage does not; nothing states a run's cost
+    before it is pressed; and a selection is chosen page by page.
 13. **[A policy can only say what the filter language can say](api/policy-language.md)** — down to
     the half that matters: the language cannot say *carries a live advisory* or *is reached from
     something you own*, which is most of what an Actions rule is for. Both terms are unblocked and
@@ -219,20 +218,21 @@ The ranking is itself a plan, and is subject to change.
     invisible in exactly the runs most likely to be looked at. Held by a `test.fail()` that will
     break the run when it is fixed.
 23. **[The crawl says what it is doing, wherever a reader is](ui/crawl-visibility.md)** — down to
-    where its *configuration* lives. The state, the queue, a problem marker and the refresh
-    interval are on the bar of every page, and a restart starts nothing unless somebody configured
-    it to. What is left is that Settings holds four unrelated decisions in one scroll,
-    and that the per-tier suite grid is crawl configuration by placement and **query configuration
-    by subject** — a fork with three named options, the worst of which splits the binding from the
-    requeue that acts on it. An [on-demand run](api/on-demand-analysis.md) is also invisible from
-    anywhere but the page that started it, and it spends the same cores.
+    how Settings is grouped. The state, the queue, a problem marker and the refresh interval are on
+    the bar of every page, a restart starts nothing unless somebody configured it to, and the suite
+    binding is chosen on the CodeQL page and stated in Settings. What is left is that Settings
+    holds four unrelated decisions in one scroll, and that an [on-demand
+    run](api/on-demand-analysis.md) is visible only on the CodeQL page's Runs tab while it spends
+    the same cores.
 24. **[A query is written from an example, not from QL](ql/query-authoring.md)** — down to the half
     that means an operator does not have to write QL. The place to put one exists: naming a
     directory scaffolds a CodeQL pack, its queries resolve by name, run over the retained databases
-    and land in the catalog with origin **`user`**, and **`dev` → `test` is earned** — the advance
-    reads `codeql test run`'s verdict for that exact version and refuses without a passing one, so
-    a query that was green and has since been edited has passed nothing. What is left is the
-    agentic loop: two snippets becoming a fixture tree, driven through the [CodeQL development MCP
+    and land in the catalog with origin **`user`** (shown as *custom*), and **`dev` → `test` is
+    earned** — the advance reads `codeql test run`'s verdict for that exact version and refuses
+    without a passing one, so a query that was green and has since been edited has passed nothing.
+    A request — what to catch or stop catching, with a `COMPLIANT` and a `NON_COMPLIANT` example —
+    is kept on the CodeQL page before any query exists. What is left is the agentic loop: a
+    request's two examples becoming a fixture tree, driven through the [CodeQL development MCP
     server](https://github.com/advanced-security/codeql-development-mcp-server) rather than
     reimplemented, and the authoring environment pinned — it resolves `codeql/actions-all` **0.6.1**
     where ABOM's suite pins **0.6.35**, and a query tested against one and run against the other

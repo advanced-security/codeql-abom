@@ -171,7 +171,8 @@ else
                         <b>@_reach.Count(r => r.Conditions.Count > 0)</b> of them only past an
                         <code>if:</code>.
                     </MudText>
-                    <MudSimpleTable Dense="true" Hover="true" Striped="false" Class="abom-grid abom-table">
+                    <MudSimpleTable Dense="true" Hover="true" Striped="false" FixedHeader="true"
+                                    Class="abom-grid abom-table abom-grid-windowed">
                         <thead>
                             <tr><th>Repository</th><th>How it arrives</th></tr>
                         </thead>
@@ -239,7 +240,8 @@ else
                 }
                 else
                 {
-                    <MudSimpleTable Dense="true" Hover="true" Striped="false" Class="abom-grid abom-table">
+                    <MudSimpleTable Dense="true" Hover="true" Striped="false" FixedHeader="true"
+                                    Class="abom-grid abom-table abom-grid-windowed">
                         <thead>
                             <tr><th>Reference</th><th>Uses</th><th>Repositories</th></tr>
                         </thead>
@@ -337,7 +339,8 @@ else
                     The count is how many <code>uses:</code> lines in that workflow point here,
                     not how many workflows or repositories it has.
                 </MudText>
-                <MudSimpleTable Dense="true" Hover="true" Striped="false" Class="abom-grid abom-table">
+                <MudSimpleTable Dense="true" Hover="true" Striped="false" FixedHeader="true"
+                                Class="abom-grid abom-table abom-grid-windowed">
                     <thead>
                         <tr><th>Workflow</th><th>References</th><th><code>uses:</code> lines</th></tr>
                     </thead>
@@ -370,7 +373,8 @@ else
                     <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2">
                         What this pulls in, and how many times it does so.
                     </MudText>
-                    <MudSimpleTable Dense="true" Hover="true" Striped="false" Class="abom-grid abom-table">
+                    <MudSimpleTable Dense="true" Hover="true" Striped="false" FixedHeader="true"
+                                    Class="abom-grid abom-table abom-grid-windowed">
                         <thead>
                             <tr><th>Dependency</th><th>References</th><th><code>uses:</code> lines</th></tr>
                         </thead>

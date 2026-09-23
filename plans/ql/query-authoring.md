@@ -2,8 +2,9 @@
 
 **Status:** An operator with a directory gets a CodeQL pack, their queries resolved by name, run
 over the retained databases and cataloged with origin `user`, and `dev` → `test` is refused until
-`codeql test run` passes for that exact version. What is missing is the part that means they do not
-have to write QL.
+`codeql test run` passes for that exact version. What they need a query to do is kept as a request
+— a description, a `COMPLIANT` example and a `NON_COMPLIANT` one — on the CodeQL page. What is
+missing is the part that turns a request into a query, so they do not have to write QL.
 
 ## Why this exists
 
@@ -59,12 +60,13 @@ The remaining gates are owned where their evidence is produced: `extended-test` 
 
 ## Pending
 
-1. **An example becomes a test before it becomes a query.** The operator supplies a snippet that
-   should match and, critically, one that should not. Those become the fixture tree, and the test
-   fails first — for the reason expected — before any query exists to satisfy it. **A query written
-   before its negative case is a query nobody can tell is too broad.** Today the pack is scaffolded
-   and the test runner is wired, so what is owed is the step that turns two snippets into a fixture
-   tree and a `.qlref`. Depends on nothing.
+1. **A request's examples become a test before any query exists.** `abom_query_request` holds the
+   example that should match and, critically, the one that should not. Those become the fixture
+   tree, and the test fails first — for the reason expected — before any query exists to satisfy
+   it. **A query written before its negative case is a query nobody can tell is too broad.** The
+   pack is scaffolded, the test runner is wired and the examples are on record, so what is owed is
+   the step that turns a request into a fixture tree and a `.qlref`, and links the request to the
+   query it produced. Depends on nothing.
 2. **The authoring loop, driven rather than reimplemented.** Scaffold, extract, read the AST,
    compile, run, review, accept — through the MCP server's tools, so the loop that improves upstream
    improves here. What ABOM adds is the corpus and the catalog entry, not a second implementation of

@@ -34,9 +34,9 @@ test.describe('four surfaces', () => {
         ).toBe(0);
 
         for (const [selector, expected] of [
+            ['.abom-nav a[href="/codeql"]', '/codeql'],
             ['.abom-nav a[href="/inventory"]', '/inventory'],
             ['.abom-nav a[href="/explore"]', '/explore'],
-            ['.abom-nav a[href="/queries"]', '/queries'],
             ['[data-abom-settings]', '/settings'],
         ]) {
             await page.goto('/');

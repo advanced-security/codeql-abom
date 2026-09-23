@@ -1,7 +1,8 @@
 # Per-tier suite controls
 
 **Status:** tiers are `owned`, `direct` and `transitive` by precedence; each binds a set of suites
-chosen in a grid in Settings, and each can be re-analyzed on its own.
+chosen in a grid on the CodeQL page's Suites tab, and each can be re-analyzed on its own from
+Settings.
 
 ## Why this exists
 
@@ -24,20 +25,18 @@ duration.
    databases exist and how many would have to be built, and
    [`api/on-demand-analysis.md`](../api/on-demand-analysis.md) item 5 states it before spending it.
    One measurement, three consumers.
-2. **Re-analyze a selection**, not only a whole tier. The mechanism exists —
-   [`api/on-demand-analysis.md`](../api/on-demand-analysis.md) resolves a scope to a database set
-   and runs a chosen plan over it — and a run can only be asked for from the Queries page, which
-   starts from a *query* and takes its rule's own reach as the scope. What is owed here is the
-   control on the thing a reader has already narrowed, and the rule that it states the size of what
-   it is about to re-run before it runs it.
-3. **Staleness per suite.** A row says *when* it was last analyzed, not *with what*. The pack
+2. **Staleness per suite.** A row says *when* it was last analyzed, not *with what*. The pack
    version is now recorded on every run, so joining it to the row is the remaining work: a tier can
    then show which of its suites are behind instead of offering an undifferentiated re-analysis of
    everything. A query version is recorded too and is the finer signal — a library edit moves it
    without moving the pack version. See [`db/query-catalog.md`](../db/query-catalog.md).
-4. **Decide what a section whose read failed does.** A panel that could not reach
+3. **Decide what a section whose read failed does.** A panel that could not reach
    `/api/discovery/suites` has no setting to summarize. It states the failure rather than folding
    over it; what it does not yet do is offer a way to try again.
+4. **Binding and requeue are on two pages.** The grid is on the CodeQL page and the tier requeue it
+   calls for is in Settings, so a reader who binds a suite has to go elsewhere to apply it to what
+   is already analyzed. The alternatives are: a requeue beside each tier column; or a link from the
+   grid's caption to the requeue. Depends on nothing but the decision.
 
 ## The constraint that must not be broken
 

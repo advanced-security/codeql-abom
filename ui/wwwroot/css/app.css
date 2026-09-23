@@ -396,6 +396,31 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     width: 100%;
 }
 
+/* Capped below the bar (64), pager (52) and captions; the second selector outranks MudBlazor's 100%. */
+.abom-grid-windowed .mud-table-container,
+.mud-simple-table.abom-grid-windowed .mud-table-container {
+    max-height: calc(100vh - 64px - 52px - var(--abom-under-grid, 20px));
+}
+
+/* One caption line under the grid, or two: measured at 40px and 60px, with a line to spare. */
+.abom-grid-captioned {
+    --abom-under-grid: 64px;
+}
+.abom-grid-captioned-twice {
+    --abom-under-grid: 84px;
+}
+
+/* Inside a windowed grid, so it also clears that grid's pinned header and the lines above it. */
+.abom-grid-nested {
+    --abom-under-grid: 160px;
+}
+
+/* A wrapped column name doubles the height of every pinned header row. */
+.abom-grid .mud-table-root .mud-table-head .mud-table-cell,
+.abom-grid .mud-table-root .mud-table-head .mud-table-cell .column-header {
+    white-space: nowrap;
+}
+
 .abom-grid .abom-row-actions,
 .abom-grid .abom-row-actions-head {
     padding-left: 0;
@@ -602,9 +627,21 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     font-size: var(--abom-text-xs);
 }
 
-/* Full width would put the tier checkboxes a screen away from the suite they belong to. */
+/* Sized to its content: full width put a tier's checkboxes a screen away from their suite. */
 .abom-config-grid {
-    max-width: 52rem;
+    width: fit-content;
+    max-width: 100%;
+}
+
+/* The grid-wide last-column rule stacked tier headers nine lines deep beside an empty column. */
+.abom-config-grid .abom-path,
+.abom-config-grid .abom-tier-why,
+.abom-config-grid .abom-tier-count {
+    white-space: nowrap;
+}
+.abom-grid.abom-config-grid thead th:last-child,
+.abom-grid.abom-config-grid tbody td:last-child {
+    width: auto;
 }
 
 /* MudBlazor uppercases button labels, which made "Re-analyze direct (423)" wrap to two lines and
@@ -998,6 +1035,12 @@ code {
     opacity: 0.85;
 }
 
+/* The name holds its line: wrapped, it pushed the settings control off the end of a laptop's bar. */
+.abom-brand {
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
 .abom-nav {
     gap: 8px;
 }
@@ -1062,6 +1105,9 @@ code {
    Right-aligned counts, and a stage cell that keeps its chip beside its control: flexbox wraps
    before it shrinks, so the control is what gives way rather than the state a reader is reading. */
 .abom-cell-right { text-align: right; }
+
+/* A grid header is a flex row of label and sort slot, so text-align moves nothing; reversed instead. */
+.abom-grid .mud-table-root th.abom-cell-right .column-header { flex-direction: row-reverse; }
 .abom-stage-cell {
     display: flex;
     align-items: center;
@@ -1070,6 +1116,53 @@ code {
 }
 .abom-stage-cell .abom-stage-select { max-width: 140px; flex-shrink: 1; }
 .abom-stage-cell > :first-child { flex-shrink: 0; }
+
+/* Spelled as the store spells a stage: MudBlazor uppercases button labels. */
+.abom-stage-menu .mud-button-root { text-transform: none; white-space: nowrap; }
+
+/* Contained: the detail cell spans every column and would otherwise size them all. */
+.abom-row-detail {
+    padding: 8px 12px 12px 40px;
+    border-left: 2px solid var(--mud-palette-lines-default);
+    contain: inline-size;
+}
+.abom-query-run + .abom-query-run { margin-top: 12px; }
+
+/* Sized to its few columns; MudSimpleTable's own rules are two classes and two elements deep. */
+.mud-simple-table.abom-results table { width: auto; }
+.mud-simple-table.abom-results table * tr > td.abom-cell-right,
+.mud-simple-table.abom-results table * tr > th.abom-cell-right { text-align: right; }
+.mud-simple-table.abom-results table * tr th { white-space: nowrap; }
+
+/* A request's two examples side by side, because the point is the difference between them. */
+.abom-request-examples {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+    gap: 12px;
+}
+.abom-code-input textarea,
+.abom-code {
+    font-family: var(--abom-mono);
+    font-size: var(--abom-text-sm);
+}
+.abom-code {
+    margin: 4px 0 0;
+    padding: 8px 10px;
+    white-space: pre-wrap;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: 4px;
+}
+.abom-request-field { min-width: 16rem; }
+.abom-request-description { white-space: pre-wrap; }
+.abom-request-summary { display: block; min-width: 24rem; }
+
+/* break-word, not anywhere: anywhere shrank both columns to a few letters a line. */
+.abom-grid .mud-table-root .mud-table-cell.abom-run-text {
+    min-width: 14rem;
+    max-width: 18rem;
+    overflow-wrap: break-word;
+}
+.abom-run-add { min-width: 16rem; }
 
 /* A pack name breaks at every hyphen, so left in a column of its own it set the height of every
    row in the table. Under the id it wraps at most once and the row is one line of data again. */

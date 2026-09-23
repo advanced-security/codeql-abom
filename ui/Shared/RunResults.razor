@@ -1,0 +1,228 @@
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@implements IDisposable
+@inject AbomApi Api
+
+@* Repositories with results by default: a page of zeros hides the rows a query's author wants. *@
+@if (_run is null)
+{
+    <MudText Typo="Typo.caption" Class="mud-text-secondary">Reading run #@RunId&hellip;</MudText>
+}
+else
+{
+    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-1" data-abom-run-summary>
+        Run #@_run.RowId covered @CountText.Of(_run.Members.Count, "repository", "repositories"):
+        @Analyzed analyzed, @(_run.Members.Count - Analyzed) not.
+        @if (Split > 0)
+        {
+            <span>
+                @(QueryId is null ? "Its queries" : "This query") found
+                @CountText.Of(Found, "result", "results") in
+                @CountText.Of(WithResults.Count(m => !Unsplit(m)), "repository", "repositories").
+            </span>
+        }
+        @if (Unsplit(_run.Members) is { Count: > 0 } unsplit)
+        {
+            @* A total recorded before results were counted per query: known, and not whose. *@
+            <span data-abom-results-unsplit>
+                @CountText.Of(unsplit.Count, "repository was", "repositories were") counted before results
+                were split by query: @CountText.Of(unsplit.Sum(m => m.Results), "result", "results")
+                between them, and which query found each is not recorded.
+            </span>
+        }
+    </MudText>
+
+    <div class="d-flex align-center gap-3 mb-1">
+        @if (Hidden > 0 && !_all)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-results-hidden>
+                @CountText.Of(Hidden, "repository with no result is", "repositories with no result are") not listed.
+            </MudText>
+        }
+        @if (_run.Members.Count > WithResults.Count)
+        {
+            @* The attribute goes on a wrapper: MudBlazor splats it onto a hidden input. *@
+            <span data-abom-results-all>
+                <MudSwitch T="bool" Value="_all" ValueChanged="@((bool v) => { _all = v; })" Size="Size.Small"
+                           Color="Color.Primary" Label="Show every repository" />
+            </span>
+        }
+    </div>
+
+    @if (Listed.Count == 0)
+    {
+        <MudText Typo="Typo.body2" data-abom-results-none>
+            @(Analyzed == 0
+                ? "Nothing in this run has been analyzed yet, so there are no results to show."
+                : QueryId is null
+                    ? "No repository had a result from this run's queries."
+                    : "No repository had a result from this query.")
+        </MudText>
+    }
+    else
+    {
+        <MudSimpleTable Dense="true" Hover="true" FixedHeader="true"
+                        Class="abom-grid abom-table abom-results abom-grid-windowed abom-grid-nested">
+            <thead>
+                <tr>
+                    <th>Repository</th>
+                    @foreach (var query in Columns)
+                    {
+                        <th class="abom-cell-right" data-abom-result-query="@query">
+                            @(Columns.Count == 1 ? "Results" : query)
+                        </th>
+                    }
+                    @if (ShowsTotals)
+                    {
+                        <th class="abom-cell-right">All queries</th>
+                    }
+                    @if (_all)
+                    {
+                        <th>Status</th>
+                    }
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var member in Listed)
+                {
+                    <tr>
+                        <td class="abom-path abom-nowrap" data-abom-result-repository>@member.Repository</td>
+                        @foreach (var query in Columns)
+                        {
+                            <td class="abom-cell-right">
+                                @if (member.ByQuery.TryGetValue(query, out var n))
+                                {
+                                    <span class="abom-num" data-abom-member-results>@n</span>
+                                }
+                                else
+                                {
+                                    @* Not zero: nothing counted this query here. *@
+                                    <MudText Typo="Typo.caption" Class="abom-faint"
+                                             data-abom-member-uncounted>—</MudText>
+                                }
+                            </td>
+                        }
+                        @if (ShowsTotals)
+                        {
+                            <td class="abom-cell-right">
+                                @if (member.Counted)
+                                {
+                                    <span class="abom-num" data-abom-member-total>@member.Results</span>
+                                }
+                                else
+                                {
+                                    <MudText Typo="Typo.caption" Class="abom-faint">—</MudText>
+                                }
+                            </td>
+                        }
+                        @if (_all)
+                        {
+                            <td>
+                                <MudText Typo="Typo.caption">@StatusText(member)</MudText>
+                            </td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+    }
+}
+
+@code {
+    [Parameter, EditorRequired] public long RunId { get; set; }
+
+    /// <summary>One query's column only, when the run is opened from that query's row.</summary>
+    [Parameter] public string? QueryId { get; set; }
+
+    private AnalysisRun? _run;
+    private long _loaded;
+    private bool _all;
+    private Timer? _timer;
+
+    private static readonly TimeSpan WhileRunning = TimeSpan.FromSeconds(5);
+
+    // A different run, not a parent re-rendering: a run in flight re-reads on its own beat.
+    protected override async Task OnParametersSetAsync()
+    {
+        if (RunId == _loaded)
+        {
+            return;
+        }
+        _loaded = RunId;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        _run = await Api.GetAnalysisRunAsync(RunId);
+        // Polled while pending too: the executor starts a run a beat after it is asked for.
+        if (_run?.State is "pending" or "running")
+        {
+            _timer ??= new Timer(async _ =>
+            {
+                try
+                {
+                    await Load();
+                }
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+                {
+                    return;
+                }
+                await InvokeAsync(StateHasChanged);
+            }, null, WhileRunning, WhileRunning);
+        }
+        else
+        {
+            _timer?.Dispose();
+            _timer = null;
+        }
+    }
+
+    /// <summary>Whether this is re-reading its run, which it does until the run finishes.</summary>
+    public bool Watching => _timer is not null;
+
+    /// <summary>The asked-for queries first, then any other rule the output carried.</summary>
+    private IReadOnlyList<string> Columns => QueryId is { } one
+        ? [one]
+        : [.. (_run?.Queries.Select(q => q.QueryId) ?? []).Distinct()
+              .Concat((_run?.Members ?? []).SelectMany(m => m.ByQuery.Keys).Distinct()
+                  .Where(k => _run!.Queries.All(q => q.QueryId != k)).Order(StringComparer.Ordinal))];
+
+    private int Count(AnalysisMember m) =>
+        QueryId is { } one
+            ? m.ByQuery.TryGetValue(one, out var n) ? n : 0
+            : m.ByQuery.Values.Sum();
+
+    // Counted, and counted before results were split by query: the total is known, the share is not.
+    private static bool Unsplit(AnalysisMember m) => m.Counted && m.ByQuery.Count == 0;
+
+    private static List<AnalysisMember> Unsplit(IEnumerable<AnalysisMember> members) =>
+        members.Where(m => Unsplit(m) && m.Results > 0).ToList();
+
+    private bool ShowsTotals => Unsplit(_run?.Members ?? []).Count > 0;
+
+    private int Analyzed => _run?.Members.Count(m => m.Counted) ?? 0;
+
+    private int Split => _run?.Members.Count(m => m.Counted && m.ByQuery.Count > 0) ?? 0;
+
+    private List<AnalysisMember> WithResults =>
+        _run?.Members.Where(m => Count(m) > 0 || Unsplit(m) && m.Results > 0).ToList() ?? [];
+
+    private int Found => WithResults.Sum(Count);
+
+    private int Hidden => (_run?.Members.Count ?? 0) - WithResults.Count;
+
+    private List<AnalysisMember> Listed =>
+        _all
+            ? [.. _run?.Members ?? []]
+            : [.. WithResults.OrderByDescending(Count).ThenByDescending(m => m.Results)];
+
+    private static string StatusText(AnalysisMember m) => m.Status switch
+    {
+        "no_database" => string.IsNullOrEmpty(m.Detail) ? "no database" : m.Detail,
+        "failed" => $"failed — {m.Detail}",
+        _ => m.Status,
+    };
+
+    public void Dispose() => _timer?.Dispose();
+}

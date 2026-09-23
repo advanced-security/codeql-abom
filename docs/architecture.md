@@ -214,7 +214,9 @@ workflow is never an edge source; edges leave its steps and its jobs.
 | `abom_suite_query` | What a round's resolution found in each suite: query id, version, kind and the pack that supplied it |
 | `abom_query_stage` | How far somebody has taken a query version, and who advanced it |
 | `abom_query_test` | What `codeql test run` made of a version, which is what the `test` stage reads |
+| `abom_query_request` | What somebody asked a query to catch or stop catching, with a `COMPLIANT` and a `NON_COMPLIANT` example |
 | `abom_analysis_run`, `abom_analysis_member`, `abom_analysis_query` | A run somebody asked for: which versions, which scope, and what became of every repository in it |
+| `abom_analysis_result` | What each query in a run found in each repository. A member counted before this existed has a total and no split |
 | `abom_local_database` | A retained CodeQL database, keyed the way a run is: repository, commit, source filter and mode |
 
 ### Derived and external
@@ -258,21 +260,33 @@ assert an order between jobs that actually run in parallel.
 | --- | --- |
 | HTTP API | The whole capability set. Reads are open; anything that writes is guarded at the endpoint |
 | Dashboard | Where to start: each entry opens the Inventory already narrowed to it |
-| Inventory | Which things match, in tabs that are named views, reprojected by a unit switch |
+| CodeQL | The queries findings come from: requests, the catalog of versions and stages, runs and their results per repository and query, and which suites each tier runs |
+| Inventory | Which things match, in tabs that are named views, reprojected by a unit switch. Repositories chosen here are what a run is asked over |
 | Explorer | A force-directed graph over a scoped closure |
-| Settings | What the operator claims, and what discovery runs: analysis is started here and each tier is bound to its suites here |
+| Settings | What the operator claims, and what discovery does: analysis is started and requeued here |
 | `report` | Terminal summary |
 | `bom` | CycloneDX 1.6 and SPDX 2.3, with purls |
 | `submit` | A dependency snapshot sent to GitHub's submission API |
 
-**Four surfaces, one scope.** A security team asks one question in two shapes — *which things match
-this*, and *what do they touch* — so a table and a graph are two renderings of one scope object,
-which owns the predicate and the selection and round-trips both through the address. An action then
-belongs to the scope rather than to a page: export a bill of materials for these, open these in the
-graph. A fifth navigation entry is a finding, not a feature — a page per question has to invent its
-own scope, and an operator who narrowed somewhere else cannot carry that narrowing to it. A question
-that becomes a unit takes its address with it: the page and its route are deleted rather than left
-forwarding, because a redirect is a second name for one thing and this is not a published tool.
+**Four surfaces over one scope, and one over the queries.** A security team asks one question in
+two shapes — *which things match this*, and *what do they touch* — so a table and a graph are two
+renderings of one scope object, which owns the predicate and the selection and round-trips both
+through the address. An action then belongs to the scope rather than to a page: export a bill of
+materials for these, open these in the graph, run queries on these. CodeQL is the one surface
+whose unit is not a node: a finding exists only once a query has run, so it comes first, and its
+requests, catalog, runs and suites are tabs of it rather than pages. Another navigation entry is a
+finding, not a feature — a page per question has to invent its own scope, and an operator who
+narrowed somewhere else cannot carry that narrowing to it. A question that becomes a unit takes its
+address with it: the page and its route are deleted rather than left forwarding, because a redirect
+is a second name for one thing and this is not a published tool.
+
+**A run is asked over repositories somebody chose.** The selection travels as `repositories=`,
+which resolves each name to its retained database, one it could be rebuilt from, or a named gap —
+whether or not anything was ever found there, because a new query has found nothing anywhere yet.
+Combined with a findings term it narrows that term instead. Each member records what every query
+in the run found in it, so a query's own count is never its run's total. A run the server stopped
+under is `interrupted` on the next start: not canceled, since nobody asked, and not `running`,
+since nothing is.
 
 **A unit is a shape, not a scope.** Inventory reprojects one scope as actions, workflows, jobs,
 repositories, advisories, relationships or coverage, each asking its own endpoint for its own

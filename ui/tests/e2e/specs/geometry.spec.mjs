@@ -186,8 +186,12 @@ test.describe('geometry', () => {
     // no way to know it is there. Measured before this was fixed, Jobs laid out 1,817px of table
     // and put Findings — the column it sorts by — off screen at every width anyone uses.
     const UNITS = ['dependencies', 'workflows', 'jobs', 'repositories', 'advisories', 'relationships'];
+    const GRIDS = [
+        ...UNITS.map((unit) => ({ name: unit, path: `/inventory?unit=${unit}` })),
+        ...['catalog', 'runs', 'requests'].map((tab) => ({ name: `CodeQL ${tab}`, path: `/codeql?tab=${tab}` })),
+    ];
 
-    for (const unit of UNITS) {
+    for (const { name: unit, path } of GRIDS) {
         test(`${unit} puts none of its columns past the right-hand edge at narrow (1280px)`, async ({
             page,
             request,
@@ -197,13 +201,15 @@ test.describe('geometry', () => {
             test.skip(!summary.seedRepos, 'no corpus, so no rows to size the columns');
 
             await page.setViewportSize({ width: 1280, height: 900 });
-            await page.goto(`/inventory?unit=${unit}`);
+            await page.goto(path);
             await ready(page);
 
             // Wait for a real row. An empty grid renders one cell spanning the table, which fits
             // every width there is — this assertion passed against exactly that while Jobs was
             // 149px over, because /api/jobs takes over two seconds on this corpus.
-            await expect(page.locator('.abom-grid tbody tr td').nth(3)).toBeVisible();
+            const row = page.locator('.abom-grid tbody tr td').nth(3);
+            const rows = await row.waitFor({ timeout: 15_000 }).then(() => true, () => false);
+            test.skip(!rows, `no rows in ${unit} on this corpus`);
 
             const measured = await page.evaluate(() => {
                 const scroller = document.querySelector('.abom-grid .mud-table-container');
@@ -224,6 +230,149 @@ test.describe('geometry', () => {
                 measured.hidden,
                 `${unit} hides these columns, ${measured.over}px past the edge`,
             ).toEqual([]);
+
+            // Squeezing is not fitting; held on CodeQL only, as Inventory workflows rows reach 91px.
+            if (!path.startsWith('/codeql')) return;
+            const tallest = await page.evaluate(() => Math.max(
+                ...[...document.querySelectorAll('.abom-grid .mud-table-container tbody tr')]
+                    .filter((tr) => !tr.querySelector('.abom-row-detail'))
+                    .map((tr) => tr.getBoundingClientRect().height)));
+            expect(Math.round(tallest), `${unit}'s tallest row`).toBeLessThanOrEqual(90);
+        });
+    }
+
+    // With the last row in view, the header is still on screen and uncovered, whatever scrolled.
+    for (const { name: tab, path } of [
+        ...['catalog', 'runs', 'requests'].map((t) => ({ name: `CodeQL's ${t}`, path: `/codeql?tab=${t}` })),
+        ...[...UNITS, 'coverage'].map((u) => ({ name: `Inventory's ${u}`, path: `/inventory?unit=${u}` })),
+    ]) {
+        test(`${tab} keeps its column names in view as its rows scroll`, async ({ page }) => {
+            await page.setViewportSize({ width: 1280, height: 720 });
+            await page.goto(path);
+            await ready(page);
+
+            const grid = page.locator('.abom-grid .mud-table-container').first();
+            const present = await grid.waitFor({ timeout: 10_000 }).then(() => true, () => false);
+            test.skip(!present, `${tab} has no rows on this corpus to scroll`);
+            await expect(grid.locator('tbody tr').first()).toBeVisible();
+
+            const fits = await grid.evaluate((el) => {
+                const table = el.querySelector('table');
+                return el.getBoundingClientRect().top + table.getBoundingClientRect().height <= innerHeight;
+            });
+            test.skip(fits, `every row of ${tab} fits in the window on this corpus, so nothing scrolls`);
+
+            const measured = await grid.evaluate(async (el) => {
+                // Both boxes scrolled to their far end; on screen means below the fixed bar.
+                window.scrollTo(0, document.documentElement.scrollHeight);
+                const rows = el.querySelectorAll('tbody tr');
+                rows[rows.length - 1].scrollIntoView({ block: 'end' });
+                window.scrollTo(0, document.documentElement.scrollHeight);
+                await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+                const th = [...el.querySelectorAll('thead th')].find((h) => h.textContent.trim());
+                const box = th.getBoundingClientRect();
+                const bar = document.querySelector('.mud-appbar').getBoundingClientRect().bottom;
+                const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+                return {
+                    name: th.textContent.trim(),
+                    top: Math.round(box.top),
+                    bar: Math.round(bar),
+                    bottom: Math.round(box.bottom),
+                    innerHeight,
+                    covered: hit && !th.contains(hit) ? `${hit.tagName}.${hit.className}`.slice(0, 80) : '',
+                };
+            });
+
+            expect(measured.top, `"${measured.name}" is under the bar`).toBeGreaterThanOrEqual(measured.bar);
+            expect(measured.bottom, `"${measured.name}" is below the window`)
+                .toBeLessThanOrEqual(measured.innerHeight);
+            expect(measured.covered, `"${measured.name}" is drawn over by`).toBe('');
+        });
+    }
+
+    // Mid-page or nested in a grid's row, so brought to its own last row rather than the page's.
+    const INSET = [
+        {
+            name: "CodeQL's suites",
+            boxes: '[data-abom-suites] .mud-table-container',
+            address: async () => '/codeql?tab=suites',
+        },
+        {
+            name: "the largest listed run's results",
+            boxes: '.abom-results .mud-table-container',
+            address: async () => '/codeql?tab=runs',
+            open: async (page, request, baseURL) => {
+                const ids = page.locator('[data-abom-run-id]');
+                if (!(await ids.first().waitFor({ timeout: 15_000 }).then(() => true, () => false))) return;
+                const listed = new Set(await ids.evaluateAll((els) => els.map((e) => Number(e.dataset.abomRunId))));
+                const { runs } = await (await request.get(`${baseURL}/api/runs`)).json();
+                const size = (r) => Object.values(r.tally).reduce((a, b) => a + b, 0);
+                const largest = runs.filter((r) => listed.has(r.rowId)).sort((a, b) => size(b) - size(a))[0];
+                await page.locator('tr', { has: page.locator(`[data-abom-run-id="${largest.rowId}"]`) })
+                    .locator('[data-abom-run-detail]').first().click();
+                await page.locator('[data-abom-run-summary]').waitFor({ timeout: 15_000 });
+                const all = page.locator('[data-abom-results-all]');
+                if (!(await all.count())) return;
+                await all.getByText('Show every repository').click();
+                await expect(page.locator('.abom-results thead th', { hasText: 'Status' })).toBeVisible();
+            },
+        },
+        {
+            name: "the widest-reaching node's tables",
+            boxes: '.abom-grid .mud-table-container',
+            address: async (request, baseURL) => {
+                const { items } = await (
+                    await request.get(`${baseURL}/api/actions?top=1&offset=0&sort=dependentRepos&desc=true`)
+                ).json();
+                return items[0] && `/node/${encodeURIComponent(items[0].nodeKey)}`;
+            },
+        },
+    ];
+
+    for (const { name, boxes, address, open } of INSET) {
+        test(`${name} keep their column names in view as their rows scroll`, async ({ page, request, baseURL }) => {
+            const path = await address(request, baseURL);
+            test.skip(!path, `nothing on this corpus has ${name}`);
+
+            await page.setViewportSize({ width: 1280, height: 720 });
+            await page.goto(path);
+            await ready(page);
+            if (open) await open(page, request, baseURL);
+
+            const rows = page.locator(`${boxes} tbody tr`).first();
+            const present = await rows.waitFor({ timeout: 15_000 }).then(() => true, () => false);
+            test.skip(!present, `${name} has no rows on this corpus`);
+
+            const measured = await page.evaluate(async (selector) => {
+                const bar = document.querySelector('.mud-appbar').getBoundingClientRect().bottom;
+                const out = [];
+                for (const el of document.querySelectorAll(selector)) {
+                    el.scrollIntoView({ block: 'end' });
+                    el.scrollTop = el.scrollHeight;
+                    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+                    const th = [...el.querySelectorAll('thead th')].find((h) => h.textContent.trim());
+                    if (!th) continue;
+                    const box = th.getBoundingClientRect();
+                    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+                    out.push({
+                        name: th.textContent.trim().replace(/\s+/g, ' ').slice(0, 40),
+                        taller: el.scrollHeight > el.clientHeight + 1 || el.getBoundingClientRect().height > innerHeight - bar,
+                        top: Math.round(box.top),
+                        bar: Math.round(bar),
+                        bottom: Math.round(box.bottom),
+                        innerHeight,
+                        covered: hit && !th.contains(hit) ? `${hit.tagName}.${hit.className}`.slice(0, 80) : '',
+                    });
+                }
+                return out;
+            }, boxes);
+            test.skip(!measured.some((m) => m.taller), `every table in ${name} fits in the window on this corpus`);
+
+            for (const m of measured) {
+                expect(m.top, `"${m.name}" is under the bar`).toBeGreaterThanOrEqual(m.bar);
+                expect(m.bottom, `"${m.name}" is below the window`).toBeLessThanOrEqual(m.innerHeight);
+                expect(m.covered, `"${m.name}" is drawn over by`).toBe('');
+            }
         });
     }
 });

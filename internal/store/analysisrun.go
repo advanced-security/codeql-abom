@@ -28,6 +28,8 @@ const (
 	RunRunning  = "running"
 	RunComplete = "complete"
 	RunCanceled = "canceled"
+	// RunInterrupted is a run the server stopped under, which nobody canceled and nothing finished.
+	RunInterrupted = "interrupted"
 )
 
 // AnalysisQuery is one query a run names.
@@ -45,10 +47,12 @@ type AnalysisMember struct {
 	ResultPath   string `json:"resultPath"`
 	// Results is meaningful only where Counted is true. A member nothing ran against has no
 	// count, and reporting its zero would read as a repository a query found nothing in.
-	Results    int    `json:"results"`
-	Counted    bool   `json:"counted"`
-	StartedAt  string `json:"startedAt"`
-	FinishedAt string `json:"finishedAt"`
+	Results int  `json:"results"`
+	Counted bool `json:"counted"`
+	// ByQuery is what each query found here, empty for a member that was not counted.
+	ByQuery    map[string]int `json:"byQuery"`
+	StartedAt  string         `json:"startedAt"`
+	FinishedAt string         `json:"finishedAt"`
 }
 
 // MemberResult is what became of one member once it stopped.
@@ -58,6 +62,7 @@ type MemberResult struct {
 	ResultPath string
 	Results    int
 	Counted    bool
+	ByQuery    map[string]int
 }
 
 // AnalysisRun is a request, its members and how far it has got.
@@ -210,7 +215,14 @@ func (s *Store) setMember(runID int64, id DatabaseIdentity, r MemberResult) erro
 	if r.Counted {
 		results = r.Results
 	}
-	_, err := s.db.Exec(`
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`
 		UPDATE abom_analysis_member
 		SET status = ?, detail = ?,
 		    result_path = CASE WHEN ? <> '' THEN ? ELSE result_path END,
@@ -220,9 +232,37 @@ func (s *Store) setMember(runID int64, id DatabaseIdentity, r MemberResult) erro
 		WHERE run_id = ? AND repository = ? AND db_commit = ?
 		  AND source_filter = ? AND analysis_mode = ?`,
 		r.Status, r.Detail, r.ResultPath, r.ResultPath, results, started, finished,
-		runID, id.Repository, id.Commit, id.SourceFilter, id.Mode)
-	if err != nil {
+		runID, id.Repository, id.Commit, id.SourceFilter, id.Mode); err != nil {
 		return fmt.Errorf("moving %s to %s: %w", id.Repository, r.Status, err)
+	}
+	if r.Counted {
+		if err := replaceMemberResults(tx, runID, id, r.ByQuery); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing %s: %w", id.Repository, err)
+	}
+	return nil
+}
+
+// replaceMemberResults replaces rather than adds, or a re-run would double every count.
+func replaceMemberResults(tx *sql.Tx, runID int64, id DatabaseIdentity, byQuery map[string]int) error {
+	if _, err := tx.Exec(`
+		DELETE FROM abom_analysis_result
+		WHERE run_id = ? AND repository = ? AND db_commit = ?
+		  AND source_filter = ? AND analysis_mode = ?`,
+		runID, id.Repository, id.Commit, id.SourceFilter, id.Mode); err != nil {
+		return fmt.Errorf("clearing what %s found: %w", id.Repository, err)
+	}
+	for query, n := range byQuery {
+		if _, err := tx.Exec(`
+			INSERT INTO abom_analysis_result
+				(run_id, repository, db_commit, source_filter, analysis_mode, query_id, result_count)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			runID, id.Repository, id.Commit, id.SourceFilter, id.Mode, query, n); err != nil {
+			return fmt.Errorf("recording what %s found in %s: %w", query, id.Repository, err)
+		}
 	}
 	return nil
 }
@@ -366,7 +406,7 @@ func (s *Store) runMembersOf(id int64) ([]AnalysisMember, error) {
 	defer rows.Close()
 
 	for rows.Next() {
-		var m AnalysisMember
+		m := AnalysisMember{ByQuery: map[string]int{}}
 		var results sql.NullInt64
 		if err := rows.Scan(&m.Repository, &m.Commit, &m.SourceFilter, &m.Mode,
 			&m.Status, &m.Detail, &m.DatabasePath, &m.ResultPath, &results,
@@ -376,7 +416,38 @@ func (s *Store) runMembersOf(id int64) ([]AnalysisMember, error) {
 		m.Results, m.Counted = int(results.Int64), results.Valid
 		out = append(out, m)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, s.attachMemberResults(id, out)
+}
+
+func (s *Store) attachMemberResults(id int64, members []AnalysisMember) error {
+	index := make(map[DatabaseIdentity]int, len(members))
+	for i, m := range members {
+		index[m.DatabaseIdentity] = i
+	}
+	rows, err := s.db.Query(`
+		SELECT repository, db_commit, source_filter, analysis_mode, query_id, result_count
+		FROM abom_analysis_result WHERE run_id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("reading what run %d found per query: %w", id, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var key DatabaseIdentity
+		var query string
+		var n int
+		if err := rows.Scan(&key.Repository, &key.Commit, &key.SourceFilter, &key.Mode,
+			&query, &n); err != nil {
+			return fmt.Errorf("scanning a per-query count: %w", err)
+		}
+		if i, ok := index[key]; ok {
+			members[i].ByQuery[query] = n
+		}
+	}
+	return rows.Err()
 }
 
 func (s *Store) runTallyOf(id int64) (map[string]int, error) {

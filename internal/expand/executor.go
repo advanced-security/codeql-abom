@@ -127,7 +127,7 @@ func (e *Executor) analyze(
 
 	// Ingested into the same tables the crawl writes, under a ledger row built the same way. A
 	// result that landed anywhere else would need every reader taught about a second source.
-	found, ingestErr := e.ingest(out, member, want, planned)
+	found, byQuery, ingestErr := e.ingest(out, member, want, planned)
 	e.report(member.Repository, "ingest", ingestErr)
 	return e.Store.RecordAnalysisMemberResult(runID, member.DatabaseIdentity, store.MemberResult{
 		Status:     store.AnalysisSucceeded,
@@ -135,6 +135,7 @@ func (e *Executor) analyze(
 		ResultPath: out,
 		Results:    found,
 		Counted:    ingestErr == nil,
+		ByQuery:    byQuery,
 	})
 }
 
@@ -145,32 +146,41 @@ func (e *Executor) analyze(
 // reported two results would otherwise read as having found none.
 func (e *Executor) ingest(
 	path string, member store.AnalysisMember, want []store.AnalysisQuery, planned tierPlan,
-) (int, error) {
+) (int, map[string]int, error) {
 	runID, err := e.Store.RecordQueryRun(memberRun(member, want, planned))
 	if err != nil {
-		return 0, fmt.Errorf("recording the evaluation of %s: %w", member.Repository, err)
+		return 0, nil, fmt.Errorf("recording the evaluation of %s: %w", member.Repository, err)
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, fmt.Errorf("reading the results at %s: %w", path, err)
+		return 0, nil, fmt.Errorf("reading the results at %s: %w", path, err)
 	}
 	defer f.Close()
 
 	found := 0
+	// Every query asked for starts at zero, so one that looked and found nothing says so.
+	byQuery := make(map[string]int, len(want))
+	for _, q := range want {
+		byQuery[q.QueryID] = 0
+	}
 	if err := sarifin.Stream(f, sarifin.Handler{
-		OnResult: func(sarifin.Result) error { found++; return nil },
+		OnResult: func(r sarifin.Result) error {
+			found++
+			byQuery[r.RuleID]++
+			return nil
+		},
 	}); err != nil {
-		return 0, fmt.Errorf("reading the results at %s: %w", path, err)
+		return 0, nil, fmt.Errorf("reading the results at %s: %w", path, err)
 	}
 	if _, err := f.Seek(0, 0); err != nil {
-		return 0, fmt.Errorf("re-reading the results at %s: %w", path, err)
+		return 0, nil, fmt.Errorf("re-reading the results at %s: %w", path, err)
 	}
 	if _, err := e.Ingester.FindingsFromSARIF(f, ingest.Options{
 		Repository: member.Repository, QueryRunID: runID, CLIVersion: planned.cliVersion,
 	}); err != nil {
-		return 0, fmt.Errorf("storing the results of %s: %w", member.Repository, err)
+		return 0, nil, fmt.Errorf("storing the results of %s: %w", member.Repository, err)
 	}
-	return found, nil
+	return found, byQuery, nil
 }
 
 // memberRun is the ledger row for analyzing one member.

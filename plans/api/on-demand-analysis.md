@@ -1,8 +1,9 @@
 # Run these queries, against this scope, now
 
-**Status:** A run can be asked for, carried out, stopped, and its results land in the same tables
-the crawl writes, attributed to the same nodes. What it cannot do is decline work already on
-record, or be asked for from the thing a reader has just narrowed to.
+**Status:** A run is asked for over repositories chosen in the Inventory, carried out, stopped, and
+counted per repository and per query; its results land in the same tables the crawl writes,
+attributed to the same nodes. What it cannot do is decline work already on record, or say what it
+will cost before it starts.
 
 ## Why this exists
 
@@ -25,38 +26,41 @@ time, while the crawl's `expand.pendingWork` refuses what is already recorded at
 pack digest, CLI version and sparse filter. Both are defensible for different questions, which is
 why this is a fork rather than an omission.
 
-**It starts from the wrong end.** A run can only be asked for from the Queries page, so it begins
-with *a query* and takes that rule's own reach as its scope — the exact inversion for somebody who
-has just narrowed the Inventory to a set of repositories and wants to ask something of them.
+**It starts from the selection.** A catalog row's Run carries its version to the Inventory, where
+repositories are chosen and the run is the verb over them; *Run queries* there starts the same flow
+without a version chosen. The selection travels as `repositories=`, which resolves by name, so a
+repository nothing has fired in is as runnable as one with findings.
 
 ```mermaid
 flowchart LR
-    REQ["POST /api/runs<br/>predicate + query version"] --> REC["abom_analysis_run<br/>+ member per repository"]
+    CAT["CodeQL catalog row"] -->|"version"| INV["Inventory selection"]
+    INV -->|"POST /api/runs?repositories="| REC["abom_analysis_run<br/>+ member per repository"]
     REC -->|"/api/runs/{id}/start"| EXEC["Executor.Run"]
     EXEC -->|"runner.AnalyzeQueries"| SARIF["SARIF per member"]
+    SARIF -->|"count by ruleId"| RES["abom_analysis_result"]
     SARIF -->|"ingest.FindingsFromSARIF"| FIND["abom_finding"]
     FIND -->|"LinkFindingsToNodes"| NODE["abom_finding_node<br/>graph, units, policy"]
     STOP["/api/runs/{id}/cancel"] -->|"between members"| EXEC
     EXEC -. "no skip decision consulted" .-> PEND["expand.pendingWork"]
-    INV["a narrowed Inventory"] -. "cannot ask for a run" .-> REQ
     style PEND fill:#3d2d1d
-    style INV fill:#3d2d1d
 ```
 
 ## Pending
 
 1. **Decide what a re-run of an unchanged database means, and make the answer visible.**
-   `Executor.Run` consults nothing. **The alternatives are: always run and say the result
-   supersedes; honor the skip and report each skipped member with its reason; or make it an
-   explicit choice on the request.** Whichever is chosen, a member that did not run says so rather
-   than reading as a clean result. Depends on nothing.
-2. **The action belongs to the selection.** *Run these queries against these* joins the exports and
-   *show these in the Explorer* above the Inventory unit strip, because it is the same verb over
-   whatever a reader has just narrowed to. Depends on nothing.
-3. **State the size and the cost before spending it.** A run says how many repositories it resolved
-   to and how many have a database; it does not say how long that will take. The cycle timings are
-   logged and surfaced nowhere. Shared with [`ui/tier-suites.md`](../ui/tier-suites.md) item 1,
-   which owns the number; this is one of its consumers. Depends on 2.
+   `Executor.Run` consults nothing, and "run again" re-analyzes every member. **The alternatives
+   are: always run and say the result supersedes; honor the skip and report each skipped member
+   with its reason; or make it an explicit choice on the request.** Whichever is chosen, a member
+   that did not run says so rather than reading as a clean result. Depends on nothing.
+2. **State the size and the cost before spending it.** A run says how many repositories it resolved
+   to and how many have a database once it exists; nothing says so before Run is pressed, and
+   nothing says how long it will take. The cycle timings are logged and surfaced nowhere. Shared
+   with [`ui/tier-suites.md`](../ui/tier-suites.md) item 1, which owns the number; this is one of
+   its consumers. Depends on nothing.
+3. **A selection larger than a page.** The Inventory's choose boxes act on the rows in view, so a
+   selection across pages is chosen page by page and a whole filtered scope cannot be chosen in one
+   act. The alternatives are: a "choose all N" that sends the scope's predicate rather than names;
+   or a cap stated beside the control. Depends on nothing but the decision.
 
 ## What it means that the scope resolution retired into this
 
@@ -87,7 +91,18 @@ invisible to the graph, to every unit and to the gate.
 **A stop keeps what was already analyzed.** Cancellation is observed between members, so a run
 that is stopped is a run with results, not a run undone. Only runs this process started can be
 stopped: one left `running` by a server that died is not this server's to cancel, and reporting a
-cancellation that never happened is worse than refusing.
+cancellation that never happened is worse than refusing. The next start marks such a run
+`interrupted` and returns its member in flight to pending, which is the state that can be started
+again.
+
+**A query's count is its own, never its run's.** A member's total is every query in the run;
+`abom_analysis_result` holds what each found there, and every query asked for is written even at
+zero, so a query that looked and found nothing is a zero rather than an absence. A member counted
+before the split existed has a total and no share, and is shown that way rather than as zero.
+
+**A set of queries evaluated together is not a query.** The ledger names them under one id, joined
+by spaces, with a version hashed over the set; the catalog lists that row as a lane and credits
+each query it names.
 
 **A member that has not run has no result count, and a member that found nothing has a zero.**
 `result_count` is nullable for exactly this reason. Collapsing them reports a clean result for work

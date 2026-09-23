@@ -218,6 +218,30 @@ func TestAWholeSuiteInvocationIsMarkedAsALaneRatherThanAQuery(t *testing.T) {
 	t.Fatal("the suite invocation is missing from the catalog")
 }
 
+// A multi-query ledger id is one evaluation, not a query; listed, it read as rule "acme/a acme/b".
+func TestAnEvaluationOfSeveralQueriesIsALaneRatherThanAQuery(t *testing.T) {
+	s := catalogStore(t)
+	if _, err := s.RecordQueryRun(QueryRun{
+		AnalysisMode: AnalysisModeRegular,
+		QueryID:      "acme/a acme/b",
+		QueryVersion: "set1",
+		Pack:         "abom/custom-queries",
+		Repository:   "octo/app", DBCommit: "sha-one",
+	}); err != nil {
+		t.Fatalf("RecordQueryRun: %v", err)
+	}
+
+	for _, entry := range mustCatalog(t, s) {
+		if entry.QueryVersion == "set1" {
+			if !entry.Lane {
+				t.Errorf("an evaluation of several queries is listed as the query %q", entry.QueryID)
+			}
+			return
+		}
+	}
+	t.Fatal("the evaluation is missing from the catalog, so what ran is understated")
+}
+
 // A query's kind does not change with its version. An older version that predates suite-contents
 // recording must inherit it, or one query is half hidden and half listed.
 func TestAnOlderVersionInheritsTheKindRecordedForItsQueryId(t *testing.T) {

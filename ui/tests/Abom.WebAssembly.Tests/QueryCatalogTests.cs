@@ -1,5 +1,7 @@
 using Abom.WebAssembly.Pages;
+using Abom.WebAssembly.Services;
 using Bunit;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Abom.WebAssembly.Tests;
@@ -31,11 +33,16 @@ public class QueryCatalogTests : AbomTestContext
         {"authenticated":false,"login":"","host":"","accounts":[],"canSeeAllOrganizations":false}
         """;
 
-    private IRenderedComponent<Queries> Render(string catalog, string identity = SignedIn)
+    private IRenderedComponent<CodeQL> Render(string catalog, string identity = SignedIn)
     {
         Answer("api/queries", catalog);
         Answer("api/accounts", identity);
-        return base.Render<Queries>();
+        Fallback("api/runs", """{"runs":[]}""");
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+            .NavigateTo("/codeql?tab=catalog");
+        var page = base.Render<CodeQL>();
+        page.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("api/queries")));
+        return page;
     }
 
     /// <summary>
@@ -60,8 +67,9 @@ public class QueryCatalogTests : AbomTestContext
     {
         var page = Render(TwoVersions);
 
-        Assert.Equal("review", page.Find("[data-abom-query-stage]").TextContent.Trim());
-        Assert.Contains("operator", page.Find("[data-abom-query-staged-by]").TextContent);
+        var stage = page.Find("[data-abom-query-stage]");
+        Assert.Contains("review", stage.TextContent);
+        Assert.Contains("operator", stage.GetAttribute("title") ?? "");
     }
 
     /// <summary>
@@ -211,6 +219,19 @@ public class QueryCatalogTests : AbomTestContext
         Assert.Contains("1 more", page.Find("[data-abom-queries-hidden]").TextContent);
     }
 
+    /// <summary>Once shown, the crawl's queries are in the count, not added to it again.</summary>
+    [Fact]
+    public void ShowingTheCrawlsQueriesDoesNotCountThemTwice()
+    {
+        var page = Render(WithDiscovery);
+        page.Find("[data-abom-queries-discovery-toggle] input").Change(true);
+
+        var counts = page.Find("[data-abom-queries-counts]").TextContent;
+        Assert.Contains("2 query versions", counts);
+        Assert.DoesNotContain("more", counts);
+        Assert.Contains("1 of them", counts);
+    }
+
     private const string WithLane = """
         {"queries":[
           {"queryId":"abom-findings.qls","queryVersion":"","pack":"codeql/actions-queries",
@@ -288,25 +309,24 @@ public class QueryCatalogTests : AbomTestContext
         Assert.DoesNotContain("abom-findings.qls", ids);
     }
 
-    /// <summary>
-    /// A run belongs to the version that was asked for. Sending a reader to a separate surface
-    /// makes them carry the identity across and find it again among everyone else's runs.
-    /// </summary>
+    /// <summary>What a version's runs found opens under that version's own row.</summary>
     [Fact]
-    public void WhatARunDidOpensOnTheVersionThatAskedForIt()
+    public void WhereAVersionRanOpensUnderItsOwnRow()
     {
-        Answer("api/runs", """{"runs":[]}""");
         var page = Render(WithLane);
 
-        var analyses = page.Find("[data-abom-query-analyses]");
-        Assert.Null(analyses.GetAttribute("href"));
+        Assert.Empty(page.FindAll("[data-abom-query-runs]"));
+        page.Find("[data-abom-query-detail]").Click();
 
-        analyses.Click();
-        Assert.NotNull(page.Find("[data-abom-query-runs]"));
+        page.WaitForAssertion(() =>
+        {
+            var runs = page.Find("[data-abom-query-runs]");
+            Assert.NotNull(runs.Closest("[data-abom-queries-table]"));
+        });
     }
 
     private const string OneRun = """
-        {"runs":[{"rowId":1,"predicate":"rules=actions%2Funpinned-tag","mode":"regular",
+        {"runs":[{"rowId":1,"predicate":"repositories=octo%2Fapp,octo%2Fnone","mode":"regular",
           "requestedBy":"operator","state":"complete","createdAt":"2026-09-22T16:00:00Z",
           "finishedAt":"2026-09-22T16:04:00Z","results":4,
           "queries":[{"queryId":"actions/unpinned-tag","queryVersion":"u1"}],
@@ -314,16 +334,17 @@ public class QueryCatalogTests : AbomTestContext
         """;
 
     private const string RunDetail = """
-        {"rowId":1,"predicate":"rules=actions%2Funpinned-tag","mode":"regular",
+        {"rowId":1,"predicate":"repositories=octo%2Fapp,octo%2Fnone","mode":"regular",
          "requestedBy":"operator","state":"complete","createdAt":"2026-09-22T16:00:00Z",
          "finishedAt":"2026-09-22T16:04:00Z","results":0,
          "queries":[{"queryId":"actions/unpinned-tag","queryVersion":"u1"}],
          "tally":{"succeeded":1,"no_database":1},
          "members":[
            {"repository":"octo/app","status":"succeeded","detail":"","databasePath":"/cache/app",
-            "resultPath":"/work/run-1/octo_app.sarif","results":0,"counted":true},
+            "resultPath":"/work/run-1/octo_app.sarif","results":0,"counted":true,
+            "byQuery":{"actions/unpinned-tag":0}},
            {"repository":"octo/none","status":"no_database","detail":"no analysis on record",
-            "databasePath":"","resultPath":"","results":0,"counted":false}]}
+            "databasePath":"","resultPath":"","results":0,"counted":false,"byQuery":{}}]}
         """;
 
     /// <summary>
@@ -333,30 +354,71 @@ public class QueryCatalogTests : AbomTestContext
     [Fact]
     public void ARepositoryNothingRanAgainstShowsNoCountRatherThanZero()
     {
-        Answer("api/runs", OneRun);
         Answer("api/runs/1", RunDetail);
+        Answer("api/runs", OneRun);
         var page = Render(WithLane);
 
-        page.Find("[data-abom-query-analyses]").Click();
-        page.Find("[data-abom-run-inspect]").Click();
+        page.Find("[data-abom-query-detail]").Click();
+        page.WaitForAssertion(() => page.Find("[data-abom-results-all] input"));
+        page.Find("[data-abom-results-all] input").Change(true);
 
-        Assert.Equal("0", page.Find("[data-abom-member-results]").TextContent.Trim());
-        Assert.NotNull(page.Find("[data-abom-member-uncounted]"));
+        page.WaitForAssertion(() =>
+        {
+            Assert.Equal("0", page.Find("[data-abom-member-results]").TextContent.Trim());
+            Assert.NotNull(page.Find("[data-abom-member-uncounted]"));
+        });
     }
 
-    /// <summary>
-    /// What a run found is the number two versions are compared by, so the list of runs carries it
-    /// rather than making a reader open each one.
-    /// </summary>
+    /// <summary>The suite's run figures, copied onto all 36 of its queries, described none.</summary>
     [Fact]
-    public void AListedRunSaysHowMuchItFound()
+    public void NoColumnRepeatsTheSuitesFiguresAsAQuerys()
     {
-        Answer("api/runs", OneRun);
-        var page = Render(WithLane);
+        var page = Render(TwoVersions);
 
-        page.Find("[data-abom-query-analyses]").Click();
+        var headers = page.FindAll("[data-abom-queries-table] thead th")
+            .Select(h => h.TextContent.Trim()).ToList();
+        Assert.DoesNotContain("Runs", headers);
+        Assert.DoesNotContain("Repositories", headers);
+        Assert.DoesNotContain("Analyses", headers);
+    }
 
-        Assert.Equal("4", page.Find("[data-abom-run-results]").TextContent.Trim());
+    /// <summary>"Yours" means owned; a query the operator wrote is custom.</summary>
+    [Fact]
+    public void AQueryTheOperatorWroteIsCustomRatherThanYours()
+    {
+        var page = Render(OperatorWritten);
+
+        var origins = page.FindAll("[data-abom-query-origin='user']");
+        Assert.Equal("custom", Assert.Single(origins).TextContent.Trim());
+        Assert.DoesNotContain(">yours<", page.Markup);
+    }
+
+    /// <summary>A new rule reaches nothing, so its own reach could never be a run's scope.</summary>
+    [Fact]
+    public void RunningAVersionChoosesItsRepositoriesInTheInventory()
+    {
+        var page = Render(OperatorWritten);
+        var rows = page.FindAll("[data-abom-query-id]").Select(e => e.TextContent.Trim()).ToList();
+
+        page.FindAll("[data-abom-query-run]")[rows.IndexOf("acme/self-hosted-runner")].Click();
+
+        var at = Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.Uri;
+        Assert.EndsWith("/inventory?unit=repositories", at);
+        var draft = Services.GetRequiredService<RunDraft>();
+        Assert.Equal("acme/self-hosted-runner", Assert.Single(draft.Queries).QueryId);
+        Assert.Equal("9b5327ab01d7", draft.Queries[0].QueryVersion);
+    }
+
+    /// <summary>Two names both beginning "Run this version" sound like one control twice.</summary>
+    [Fact]
+    public void RunningAndTestingHaveNamesThatCannotBeConfused()
+    {
+        var page = Render(OperatorWritten);
+
+        var run = page.Find("[data-abom-query-run]").GetAttribute("aria-label") ?? "";
+        var test = page.Find("[data-abom-query-test]").GetAttribute("aria-label") ?? "";
+        Assert.False(test.StartsWith(run, StringComparison.OrdinalIgnoreCase), $"{run} / {test}");
+        Assert.False(run.StartsWith(test, StringComparison.OrdinalIgnoreCase), $"{run} / {test}");
     }
 
     /// <summary>
@@ -398,7 +460,23 @@ public class QueryCatalogTests : AbomTestContext
     {
         var page = Render(TwoVersions);
 
-        var packs = page.FindAll("[data-abom-query-pack]").Select(e => e.TextContent.Trim()).ToList();
-        Assert.Contains(packs, p => p.Contains("codeql/actions-queries"));
+        var packs = page.FindAll("[data-abom-query-pack]").ToList();
+        Assert.Contains(packs, p => p.GetAttribute("data-abom-query-pack") == "codeql/actions-queries");
+        // Every ABOM pack shares a scope and prefix, so only its own name tells two apart.
+        Assert.Contains(packs, p => p.TextContent.Trim() == "abom-actions-graph-extraction-src");
+    }
+
+    /// <summary>The release rides on the pack as a pinned reference; its own column cost a column.</summary>
+    [Fact]
+    public void ThePackCarriesTheReleaseItCameIn()
+    {
+        var page = Render(TwoVersions);
+
+        var cell = page.FindAll("[data-abom-query-pack]")
+            .First(p => p.GetAttribute("data-abom-query-pack") == "codeql/actions-queries")
+            .ParentElement!;
+        Assert.Equal("actions-queries@0.6.35", cell.TextContent.Replace(" ", "").Trim());
+        var headers = page.FindAll("[data-abom-queries-table] thead th").Select(h => h.TextContent.Trim());
+        Assert.DoesNotContain("Pack version", headers);
     }
 }

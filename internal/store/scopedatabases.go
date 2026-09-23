@@ -1,6 +1,8 @@
 package store
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 )
@@ -73,6 +75,13 @@ func (s *Store) DatabasesMatching(sel FindingSelector) (DatabaseSet, error) {
 		mode = AnalysisModeRegular
 	}
 	out := DatabaseSet{Databases: []ScopedDatabase{}, Gaps: []DatabaseGap{}, Mode: mode}
+	if sel.namesOnlyRepositories() {
+		repositories, err := s.canonicalRepositories(sel.Repositories)
+		if err != nil {
+			return out, err
+		}
+		return s.databasesFor(out, repositories, mode)
+	}
 	if !sel.asked() {
 		return out, nil
 	}
@@ -99,7 +108,39 @@ func (s *Store) DatabasesMatching(sel FindingSelector) (DatabaseSet, error) {
 		out.Unresolved, err = s.whyNothingMatched(mode)
 		return out, err
 	}
+	return s.databasesFor(out, repositories, mode)
+}
 
+// namesOnlyRepositories reports a bare repository list; findings would never reach a clean one.
+func (f FindingSelector) namesOnlyRepositories() bool {
+	return len(f.Repositories) > 0 && len(f.Rules) == 0 && len(f.Exclude) == 0 &&
+		f.Provider == "" && f.Severity == "" && len(f.Properties) == 0 &&
+		len(f.ExcludeProperties) == 0
+}
+
+// canonicalRepositories spells each name the way the corpus does, sorted and once each.
+func (s *Store) canonicalRepositories(names []string) ([]string, error) {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, name := range names {
+		canonical := name
+		err := s.db.QueryRow(`
+			SELECT repository_full_name FROM repository
+			WHERE LOWER(repository_full_name) = LOWER(?) LIMIT 1`, name).Scan(&canonical)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("looking up %s: %w", name, err)
+		}
+		if !seen[canonical] {
+			seen[canonical] = true
+			out = append(out, canonical)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// databasesFor resolves each repository to a held database, a buildable one, or a gap saying why.
+func (s *Store) databasesFor(out DatabaseSet, repositories []string, mode string) (DatabaseSet, error) {
 	for _, repo := range repositories {
 		held, err := s.retainedFor(repo, mode)
 		if err != nil {

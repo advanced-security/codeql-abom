@@ -41,15 +41,9 @@ public class OwnedTierSplitTests : AbomTestContext
         $"\"{name}\":{{\"total\":{total},\"analyzed\":{analyzed}," +
         $"\"repositories\":{repos},\"repositoriesAnalyzed\":{reposAnalyzed}}}";
 
-    // The per-tier counts live in the "What each tier is analyzed with" fold, which is closed on
-    // arrival, so a test about them has to open it exactly as a reader would.
-    private static IRenderedComponent<Shared.DiscoveryControls> Opened(AbomTestContext ctx)
-    {
-        var cut = ctx.Render<Shared.DiscoveryControls>();
-        cut.WaitForAssertion(() => Assert.NotNull(cut.Find(".abom-fold-toggle")));
-        cut.Find(".abom-fold-toggle").Click();
-        return cut;
-    }
+    // The per-tier counts head the suite grid on the CodeQL page's Suites part.
+    private static IRenderedComponent<Shared.TierSuites> Opened(AbomTestContext ctx) =>
+        ctx.Render<Shared.TierSuites>();
 
     // The two halves answer different questions — "have my repositories been read" and "has my
     // supply chain been read" — and one number cannot say that none of the second has.

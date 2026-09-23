@@ -49,7 +49,8 @@ else
                 </MudText>
             </MudAlert>
         }
-        <MudSimpleTable Dense="true" Hover="true" Striped="false" Class="abom-grid abom-table mb-2">
+        <MudSimpleTable Dense="true" Hover="true" Striped="false" FixedHeader="true"
+                        Class="abom-grid abom-table abom-grid-windowed mb-2">
             <thead>
                 <tr>
                     <th>Account</th><th>Kind</th><th>Role</th><th>On</th><th>Scope</th>
@@ -385,7 +386,7 @@ else
                         </MudText>
                         <MudDataGrid T="OwnedAccount" Items="Memberships" Dense="true" Hover="true"
                                      Bordered="false" Filterable="false" SortMode="SortMode.Multiple"
-                                     RowsPerPage="10" Class="abom-grid">
+                                     RowsPerPage="10" FixedHeader="true" Class="abom-grid abom-grid-windowed">
                         <Columns>
                             <PropertyColumn Property="x => x.Owner" Title="Account" />
                             <TemplateColumn Title="Kind" SortBy="x => x.Kind">
@@ -434,7 +435,8 @@ else
 
 <MudText Typo="Typo.subtitle2" Class="mt-8 mb-1">How discovery runs</MudText>
 <MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
-    Analysis starts here, and what each tier is analyzed with is decided here. How far it has got
+    Analysis starts here; what each tier is analyzed with is chosen on the
+    <MudLink Href="/codeql?tab=suites">CodeQL page</MudLink>. How far it has got
     is read where the results are: the
     <MudLink Href="/inventory?unit=coverage">Coverage unit</MudLink> lists what is analyzed, queued
     and unavailable one dependency at a time, and the
@@ -503,8 +505,8 @@ else
                  Placeholder="Filter accounts" Class="mb-3" />
 
     <MudDataGrid T="OwnerCandidate" Items="Filtered" Dense="true" Hover="true" Bordered="false"
-                 SortMode="SortMode.Multiple" Filterable="false" Class="abom-grid"
-                 RowsPerPage="25">
+                 SortMode="SortMode.Multiple" Filterable="false" FixedHeader="true"
+                 Class="abom-grid abom-grid-windowed" RowsPerPage="25">
         <Columns>
             <TemplateColumn Title="Yours" Sortable="false">
                 <CellTemplate>

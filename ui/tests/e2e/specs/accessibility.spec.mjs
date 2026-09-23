@@ -23,14 +23,14 @@ const ANCHOR = {
     '/': '[data-abom-entry]',
     '/explore': '.abom-keypanel',
     '/inventory': '.mud-table-body .mud-table-row',
-    '/queries': '[data-abom-queries-table] [data-abom-query-id]',
+    '/codeql': '[data-abom-queries-table] [data-abom-query-id]',
     '/settings': '[data-abom-declared]',
 };
 
 // The Explorer's legend and presentation controls exist only once something is drawn, so this
 // measures the drawn page rather than the chooser — the chooser has three controls and the drawing
-// has twenty.
-const VISIT = { '/explore': EXPLORE_DRAWN };
+// has twenty. CodeQL opens on its requests; the catalog is the part with a control on every row.
+const VISIT = { '/explore': EXPLORE_DRAWN, '/codeql': '/codeql?tab=catalog' };
 
 /**
  * Controls that are not ABOM's to name, listed rather than skipped so the exception cannot grow.

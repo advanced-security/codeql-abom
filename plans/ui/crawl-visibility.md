@@ -1,8 +1,9 @@
 # The crawl says what it is doing, wherever a reader is
 
 **Status:** The bar carries the crawl's state, its queue, a problem marker and the refresh interval
-on every page, and a restart starts nothing unless the operator configured it to. The detailed
-configuration is still one undifferentiated block inside Settings.
+on every page, and a restart starts nothing unless the operator configured it to. The suite
+binding is chosen on the CodeQL page's Suites tab and stated in Settings; the rest of the crawl's
+configuration is one undifferentiated block inside Settings.
 
 ## Why this exists
 
@@ -18,7 +19,7 @@ present to take, so acting on it is its own preference, off unless asked for.
 What remains is the configuration itself. Settings runs *Accounts you own*, *Accounts you can
 declare*, *How discovery runs*, *Removing what you no longer own* and *Accounts holding
 repositories discovery started from* down one page, and the third of those alone carries the
-start control, the resume preference, the per-tier suite grid, three tier requeues, a stale
+start control, the resume preference, the stated suite binding, three tier requeues, a stale
 requeue and a single-repository requeue. The headings exist; what does not is any way to reach one
 without reading past the others.
 
@@ -27,31 +28,23 @@ flowchart LR
     BAR["navigation bar"] -->|"start / pause"| LOOP["crawl"]
     BAR -->|"state, queue, problem"| READER["a reader on any page"]
     BAR -->|"refresh interval"| ALL["every open view"]
-    SET["Settings"] -->|"resume on start"| START["what a restart does"]
-    SET -->|"tier bindings, requeues"| LOOP
+    SET["Settings"] -->|"resume on start, requeues"| LOOP
+    CODEQL["CodeQL: Suites"] -->|"tier bindings"| LOOP
     SET -. "four decisions, one block" .-> SPLIT["no grouping a reader can navigate"]
-    QUERIES["Queries page"] -. "suite binding could live here" .-> SET
+    RUN["on-demand run"] -. "not on the bar" .-> BAR
     style SPLIT fill:#3d2d1d
-    style QUERIES fill:#3d2d1d
+    style RUN fill:#3d2d1d
 ```
 
 ## Pending
 
-1. **Decide where a suite binding belongs.** The per-tier suite grid says which queries run against
-   owned, direct and transitive dependencies. It sits in Settings because that is where the crawl
-   is configured; it is *about queries*, and the [Queries page](../db/query-catalog.md) now holds
-   every query version the ledger has run. **The alternatives are: leave it in Settings as crawl
-   configuration; move it to Queries as query configuration; or split it, with the binding on
-   Queries and the requeue that acts on it in Settings.** The third is the one to argue against
-   first — it puts the decision and its consequence on different pages. Depends on nothing but the
-   decision.
-2. **Settings is four decisions, not one scroll.** Ownership, crawl configuration, what is no
+1. **Settings is four decisions, not one scroll.** Ownership, crawl configuration, what is no
    longer owned, and identity are unrelated, and a reader looking for one reads past the others.
-   Depends on 1, because moving the suite grid changes what is left to group.
-3. **The bar says a run is under way, not only a crawl.** An [on-demand
+   Depends on nothing.
+2. **The bar says a run is under way, not only a crawl.** An [on-demand
    run](../api/on-demand-analysis.md) also spends CodeQL on every core, competes for the same lock,
-   and is invisible from anywhere except the Queries page that started it. A reader who sees the
-   crawl paused and the machine busy has no way to find out why. Depends on nothing.
+   and is visible only on the CodeQL page's Runs tab. A reader who sees the crawl paused and the
+   machine busy has no way to find out why. Depends on nothing.
 
 ## The constraints that must not be broken
 
@@ -72,6 +65,10 @@ exist.
 **The bar states, and Settings decides.** Anything on the bar has to be readable at a glance and
 undoable in one press. A control that needs a sentence of explanation before it is safe to press
 belongs where there is room for the sentence.
+
+**A binding is chosen where its queries are, and stated where the crawl is started.** The suite
+grid lives beside the catalog of what the suites hold; Settings keeps the binding in words and a
+link to it, so a reader starting a crawl is never left assuming the default.
 
 **The bar carries no words of its own.** It shares a row with the only two words competing for
 attention — the product name and the navigation — so the state is the icon's color and the queue is

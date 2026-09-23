@@ -41,7 +41,7 @@ the rule that stopped it — *a term means one thing everywhere* — applies her
 flowchart LR
     PACK["pack a query<br/>resolved from"] -->|"originOfPack"| ORIGIN["upstream / abom<br/>user / mixed"]
     ORIGIN --> CAT["catalog row"]
-    CAT -->|"/api/queries"| PAGE["Queries page"]
+    CAT -->|"/api/queries"| PAGE["CodeQL: Query catalog"]
     RUN["abom_query_run<br/>query_version, pack_version"] --> CAT
     FIND["abom_finding"] -->|"query_run_id"| RUN
     ORIGIN -. "no term in the language" .-> SPEC["view.Spec"]

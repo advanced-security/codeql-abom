@@ -486,6 +486,19 @@ CREATE TABLE IF NOT EXISTS abom_analysis_member (
   PRIMARY KEY (run_id, repository, db_commit, source_filter, analysis_mode)
 );
 
+-- What each query found in one member. A row only for a member that was counted, so a query with
+-- no row there was never asked rather than asked and silent.
+CREATE TABLE IF NOT EXISTS abom_analysis_result (
+  run_id        INTEGER NOT NULL REFERENCES abom_analysis_run(row_id),
+  repository    TEXT NOT NULL,
+  db_commit     TEXT NOT NULL DEFAULT '',
+  source_filter TEXT NOT NULL DEFAULT '',
+  analysis_mode TEXT NOT NULL DEFAULT 'regular',
+  query_id      TEXT NOT NULL,
+  result_count  INTEGER NOT NULL,
+  PRIMARY KEY (run_id, repository, db_commit, source_filter, analysis_mode, query_id)
+);
+
 -- Which lifecycle stage somebody put a query version in.
 --
 -- Only the act is stored. Everything else the catalog reports -- which versions exist, how many

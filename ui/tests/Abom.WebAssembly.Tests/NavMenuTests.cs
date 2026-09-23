@@ -32,18 +32,17 @@ public class NavMenuTests : AbomTestContext
     [Fact]
     public void TheBarLinksToEverySurfaceAndNothingElse()
     {
-        Assert.Equal(["/", "/inventory", "/explore", "/queries", "/settings"], Hrefs(Bar()));
+        Assert.Equal(["/", "/codeql", "/inventory", "/explore", "/settings"], Hrefs(Bar()));
     }
 
-    /// <summary>
-    /// Left to right is the journey: what you own, then what matches, then what it touches. The
-    /// order is the only thing on screen suggesting where to start.
-    /// </summary>
+    /// <summary>Left to right: the queries findings come from, what matches, what it touches.</summary>
     [Fact]
     public void TheOrderIsTheJourneyRatherThanTheAlphabet()
     {
         var hrefs = Hrefs(Bar());
 
+        Assert.True(Array.IndexOf(hrefs, "/codeql") < Array.IndexOf(hrefs, "/inventory"),
+            "a finding exists only once a CodeQL query has run");
         Assert.True(Array.IndexOf(hrefs, "/inventory") < Array.IndexOf(hrefs, "/explore"),
             "Inventory names what matches; the Explorer answers what those things touch");
         Assert.Equal("/settings", hrefs[^1]);

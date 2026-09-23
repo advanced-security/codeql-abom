@@ -281,23 +281,19 @@ public sealed class AbomApi(HttpClient http)
         await GetAsync<QueryCatalog>("api/queries", ct) ?? new QueryCatalog();
 
     /// <summary>
-    /// Asks for a run of one query version over the databases a predicate resolves to.
+    /// Asks for a run of query versions over the databases a predicate resolves to.
     ///
     /// The predicate travels in the query string so the server reads it with the same code the
     /// graph and the gate read it with; a second way to express a scope is a second policy engine.
     /// </summary>
     public async Task<(AnalysisRun? Run, string? Refusal)> StartAnalysisRunAsync(
-        string predicate, string queryId, string version, string by,
+        string predicate, IReadOnlyList<AnalysisQueryRef> queries, string by,
         CancellationToken ct = default)
     {
         try
         {
             using var response = await http.PostAsJsonAsync("api/runs?" + predicate,
-                new
-                {
-                    queries = new[] { new { queryId, queryVersion = version } },
-                    by,
-                }, ct);
+                new { queries, by }, ct);
             if (response.IsSuccessStatusCode)
             {
                 LastError = null;
@@ -318,6 +314,36 @@ public sealed class AbomApi(HttpClient http)
     public async Task<IReadOnlyList<AnalysisRun>> GetAnalysisRunsAsync(
         CancellationToken ct = default) =>
         (await GetAsync<AnalysisRunList>("api/runs", ct))?.Runs ?? [];
+
+    /// <summary>Every query request, newest first, with the vocabularies a form offers.</summary>
+    public async Task<QueryRequestList> GetQueryRequestsAsync(CancellationToken ct = default) =>
+        await GetAsync<QueryRequestList>("api/query-requests", ct) ?? new QueryRequestList();
+
+    /// <summary>A refusal is the reader leaving something out, so it is returned, not thrown.</summary>
+    public async Task<(QueryRequestList? List, string? Refusal)> SaveQueryRequestAsync(
+        QueryRequest request, CancellationToken ct = default)
+    {
+        var path = request.RowId == 0 ? "api/query-requests" : $"api/query-requests/{request.RowId}";
+        try
+        {
+            using var response = request.RowId == 0
+                ? await http.PostAsJsonAsync(path, request, ct)
+                : await http.PutAsJsonAsync(path, request, ct);
+            if (response.IsSuccessStatusCode)
+            {
+                LastError = null;
+                return (await response.Content.ReadFromJsonAsync<QueryRequestList>(Json, ct), null);
+            }
+            var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
+            return (null, refusal?.Error
+                ?? $"the server refused this request ({(int)response.StatusCode})");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
+        {
+            LastError = $"{path}: {ex.Message}";
+            return (null, null);
+        }
+    }
 
     /// <summary>One run with every member, which is where a reader sees what it could not cover.</summary>
     public async Task<AnalysisRun?> GetAnalysisRunAsync(long id, CancellationToken ct = default) =>
