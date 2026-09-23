@@ -23,6 +23,7 @@ const ANCHOR = {
     '/': '[data-abom-entry]',
     '/explore': '.abom-keypanel',
     '/inventory': '.mud-table-body .mud-table-row',
+    '/queries': '[data-abom-queries-table] [data-abom-query-id]',
     '/settings': '[data-abom-declared]',
 };
 
@@ -136,7 +137,12 @@ test.describe('every control says what it is', () => {
 
             await page.goto(VISIT[route] ?? route);
             await ready(page);
-            await expect(page.locator(ANCHOR[route]).first()).toBeVisible({ timeout: 30_000 });
+            // Named rather than looked up blind: a route added to ROUTES with no anchor here
+            // resolves to `locator('undefined')`, which fails as "element not found" and reads as
+            // a broken page rather than a missing line in this file.
+            const anchor = ANCHOR[route];
+            expect(anchor, `${route} has no anchor in ANCHOR`).toBeDefined();
+            await expect(page.locator(anchor).first()).toBeVisible({ timeout: 30_000 });
 
             // The picker holds nothing until it is opened, so its controls are only reachable —
             // and only measurable — one click in.

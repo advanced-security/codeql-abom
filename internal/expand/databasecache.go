@@ -188,7 +188,8 @@ func (c *DatabaseCache) entry(id store.DatabaseIdentity) (string, bool) {
 	}
 	// Commit, filter and shape in one segment, for the reason the checkout cache joins the first
 	// two: a single slot per commit would have each build delete a database that answers a
-	// different question. Both are fixed-width hex, so the joined name still reads back.
+	// different question. The filter is an id rather than the patterns — `filterID` hashes the
+	// pattern set — so all three parts are path-safe and the joined name reads back.
 	buildSegment, ok := cacheSegment(id.Commit + "-" + id.SourceFilter + "-" + id.Mode)
 	if !ok {
 		return "", false

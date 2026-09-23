@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -81,22 +80,15 @@ func hashClosure(
 		return nil
 	}
 
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("opening %s: %w", path, err)
-	}
-	body := sha256.New()
-	if _, err := io.Copy(body, f); err != nil {
-		f.Close()
-		return fmt.Errorf("reading %s: %w", path, err)
-	}
-	f.Close()
-	hashed[rel] = hex.EncodeToString(body.Sum(nil))
-
+	// Read once and used twice: the closure walks every library a query imports, and a second
+	// pass over each would double the I/O for a value computed on every round.
 	source, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", path, err)
 	}
+	digest := sha256.Sum256(source)
+	hashed[rel] = hex.EncodeToString(digest[:])
+
 	for _, module := range importsIn(string(source)) {
 		next, ok := resolveModule(module, filepath.Dir(path), roots)
 		if !ok {

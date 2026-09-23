@@ -4,6 +4,7 @@
    to be answerable without a navigation. The detail belongs in Settings: this says whether it is
    running, how the queue is made up, and how often the page refreshes. *@
 @implements IDisposable
+@using System.Net.Http
 @inject AbomApi Api
 @inject FollowService Follow
 @inject ThemeService Theme
@@ -166,10 +167,11 @@
             _state = await Api.SetDiscoveryAsync(!IsRunning);
             _error = null;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException
+                                       or InvalidOperationException)
         {
             // A refused control request must say so: the button otherwise appears to work and the
-            // loop never starts.
+            // loop never starts. Anything else is a defect and propagates.
             _error = ex.Message;
         }
         finally

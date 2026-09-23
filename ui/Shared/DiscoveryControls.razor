@@ -1,6 +1,7 @@
 @using Abom.WebAssembly.Models
 @using Abom.WebAssembly.Services
 @using Microsoft.AspNetCore.Components.Web
+@using System.Net.Http
 @implements IDisposable
 @inject AbomApi Api
 @inject FollowService Follow
@@ -700,7 +701,8 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
         {
             _state = await Api.SetResumeOnStartAsync(resume);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException
+                                       or InvalidOperationException)
         {
             _pollError = ex.Message;
         }

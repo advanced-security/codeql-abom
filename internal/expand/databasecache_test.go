@@ -3,6 +3,7 @@ package expand
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,6 +145,48 @@ func TestARepositoryNameThatWouldEscapeTheCacheIsRefused(t *testing.T) {
 		if _, _, err := cache.Retain(staged, regularAt(repo, "abc123", "f0")); err == nil {
 			t.Errorf("a database for repository %q was retained; it names no safe path", repo)
 		}
+	}
+}
+
+// The source filter is an *id*, not the pattern set it stands for. `filterID` hashes the
+// patterns, so `.github/**` never reaches a path segment — and if a caller ever passed the
+// patterns themselves, the entry is refused rather than writing somewhere unintended.
+func TestASourceFilterThatIsAPatternRatherThanAnIdIsRefused(t *testing.T) {
+	cache := &DatabaseCache{Dir: t.TempDir()}
+
+	held, err := filepath.Abs(cache.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, filter := range []string{".github/**", "../escape", "a/b"} {
+		staged, dbDir, err := cache.Stage()
+		if err != nil {
+			t.Fatalf("Stage: %v", err)
+		}
+		if err := os.MkdirAll(dbDir, 0o755); err != nil {
+			t.Fatalf("building into %s: %v", dbDir, err)
+		}
+		path, _, err := cache.Retain(staged, regularAt("octo/app", "abc123", filter))
+		if err == nil {
+			t.Errorf("a filter of %q was retained at %q; it names no safe segment", filter, path)
+		}
+	}
+
+	// And the id a real round produces is accepted, or this test would pass by refusing
+	// everything.
+	staged, dbDir, err := cache.Stage()
+	if err != nil {
+		t.Fatalf("Stage: %v", err)
+	}
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
+		t.Fatalf("building into %s: %v", dbDir, err)
+	}
+	path, _, err := cache.Retain(staged, regularAt("octo/app", "abc123", filterID(sparsePatterns)))
+	if err != nil {
+		t.Fatalf("the filter id a round produces was refused: %v", err)
+	}
+	if !strings.HasPrefix(path, held) {
+		t.Errorf("retained at %q, which is outside %q", path, held)
 	}
 }
 
