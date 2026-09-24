@@ -351,6 +351,47 @@ func TestAnAgentThatFailsEndsTheSessionFailedWithWhy(t *testing.T) {
 	}
 }
 
+// A session cannot install packs, and its first test would not compile in a pack whose
+// dependencies were never installed, so ABOM installs them before the agent has control, under the
+// lock the session holds.
+func TestThePackIsInstalledBeforeTheAgentStarts(t *testing.T) {
+	var order []string
+	b := newBench(t, stand(func(context.Context, Setup) (string, error) {
+		order = append(order, "agent")
+		return "done", nil
+	}))
+	b.sessions.Prepare = func(ctx context.Context) error {
+		probe, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+		defer cancel()
+		if unlock, err := b.sessions.Lock.Acquire(probe); err == nil {
+			unlock()
+			t.Error("the pack was installed without the session holding the lock")
+		}
+		order = append(order, "install")
+		return nil
+	}
+	b.finish(t, b.request(t, ""), "operator")
+	if got := strings.Join(order, ", "); got != "install, agent" {
+		t.Errorf("the session did %s, want the pack installed and then the agent started", got)
+	}
+}
+
+// A pack that cannot be installed compiles nothing the agent writes, so the session ends failed
+// with the reason and the agent never starts.
+func TestASessionWhosePackCannotBeInstalledFailsWithWhy(t *testing.T) {
+	b := newBench(t, stand(func(context.Context, Setup) (string, error) {
+		t.Error("the agent started in a pack that could not be installed")
+		return "done", nil
+	}))
+	b.sessions.Prepare = func(context.Context) error {
+		return errors.New("codeql pack install: exit status 1: Failed to download codeql/actions-all@0.6.2")
+	}
+	got := b.finish(t, b.request(t, ""), "operator")
+	if got.State != store.SessionFailed || !strings.Contains(got.Detail, "Failed to download codeql/actions-all@0.6.2") {
+		t.Errorf("session %+v, want it failed with the install's reason", got)
+	}
+}
+
 func tool(t *testing.T, s Setup, name string) copilot.Tool {
 	t.Helper()
 	for _, tl := range s.Tools {

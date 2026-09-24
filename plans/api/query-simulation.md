@@ -30,8 +30,8 @@ database would confidently name alerts that will never appear. Preserve the impl
 1. **Run the candidate query across a resolved scope and count what it would report**, per
    repository and per rule. The mechanism is [`api/on-demand-analysis.md`](on-demand-analysis.md);
    what this adds is that the results are held as a **prediction** rather than merged as findings,
-   because a query nobody has adopted has not found anything yet. Depends on the on-demand run and
-   on [`ql/query-authoring.md`](../ql/query-authoring.md).
+   because a query nobody has adopted has not found anything yet. Depends on the on-demand run,
+   which already runs an operator's query from the pack ABOM scaffolded and installed.
 2. **Subtract what is already alerted.** A rule that fires 400 times where 380 alerts already exist
    adds 20. The count that matters to the person who will be asked about it is the **delta**, not
    the total. Depends on 1.

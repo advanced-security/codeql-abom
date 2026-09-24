@@ -109,7 +109,7 @@ evidence. Neither a lock context nor a query's origin substitutes for this datab
 | **False alarm** / **missed detection** | Evidence on a request: a finding that should not have fired, or a repository where nothing fired that should have |
 | **Session** | An agent writing the query a request asks for, started by a person. Running, finished, stopped, failed or interrupted |
 | **What it did** | A session's timeline: every tool call, allowed or refused, and why |
-| **Refused** | A tool call that ABOM's bounds did not let run |
+| **Refused** | A tool call that ABOM's bounds did not let run, or a run that could not start. Either says why |
 | **Tree** | What `PrintAST` printed over a test database, in a session or by ABOM when somebody asked. It is the evidence for the AST step while the fixtures are unchanged |
 | **Accepted** / **rejected** | An operator's decision about what a query reported. Accepting makes it the expected result; a rejection's reason is handed to the next session |
 | **Draft** | A request an agent drafted from a run's picked results. Nobody has filed it until a person saves it |

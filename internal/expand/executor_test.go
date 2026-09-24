@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/advanced-security/codeql-abom/internal/customql"
 	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
@@ -474,6 +475,39 @@ func TestAnEditedQueryIsAnalyzedAgain(t *testing.T) {
 	}
 }
 
+// A run key names its pack's digest, so a pack that changed between two runs is analyzed again even
+// where the query did not. A digest remembered from the first run would answer the second with what
+// the pack found as it was.
+func TestAPackChangedBetweenRunsIsAnalyzedAgain(t *testing.T) {
+	s, e, id, analyzer := executorFixture(t)
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	pack := filepath.Dir(e.Resolver.(*fakeResolver).queries[0])
+	if err := os.WriteFile(filepath.Join(pack, "Extra.qll"), []byte("predicate extra() { any() }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run again: %v", err)
+	}
+	if len(analyzer.targets) != 4 {
+		t.Errorf("analyze ran %d times across both passes, want 4: the pack changed", len(analyzer.targets))
+	}
+	want, err := runner.PackDigest(pack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recorded int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM abom_query_run WHERE pack_digest = ?`, want).
+		Scan(&recorded); err != nil {
+		t.Fatal(err)
+	}
+	if recorded == 0 {
+		t.Error("nothing is recorded against the pack as it is now")
+	}
+}
+
 // A member with no database whose answer is already stored is not fetched and built only to be
 // skipped, and it is recorded at the database that answered it.
 func TestAMemberAnsweredElsewhereIsNotBuilt(t *testing.T) {
@@ -783,8 +817,146 @@ func TestAQueryTheSuitesDoNotOfferIsRefusedBeforeAnythingRuns(t *testing.T) {
 		t.Errorf("analyze ran %d times for a refused run, want none", len(analyzer.targets))
 	}
 	run, _ := s.AnalysisRun(id)
-	if run.State == store.RunComplete {
-		t.Error("a refused run reports complete")
+	if run.State != store.RunRefused || !strings.Contains(run.Refusal, "nobody/writes-this") {
+		t.Errorf("a refused run reads %q %q, want %q naming the query nothing offers",
+			run.State, run.Refusal, store.RunRefused)
+	}
+}
+
+// operatorsQuery points the fixture's run at a query in the pack ABOM scaffolds, and answers the
+// pack's directory.
+func operatorsQuery(t *testing.T, s *store.Store, e *Executor) string {
+	t.Helper()
+	query := queryInPack(t, t.TempDir(), customql.Pack, "0.0.1", "CheckoutTagPin.ql", "select 1")
+	resolver := e.Resolver.(*fakeResolver)
+	resolver.queries = []string{query}
+	resolver.meta = map[string]runner.Metadata{query: {ID: "acme/checkout-tag-pin", Kind: "problem"}}
+	if _, err := s.DB().Exec(
+		`UPDATE abom_analysis_query SET query_id = ?`, "acme/checkout-tag-pin"); err != nil {
+		t.Fatalf("renaming the query: %v", err)
+	}
+	return filepath.Dir(query)
+}
+
+// The CLI compiles nothing in a pack whose dependencies were never installed, so a run of the
+// operator's query installs them first. Before anything is digested: the lock is part of what a
+// pack's digest covers, and a run recorded against the pack as it was before would describe files
+// that never ran.
+func TestARunOfAnOperatorsQueryInstallsItsPackBeforeRecordingIt(t *testing.T) {
+	s, e, id, analyzer := executorFixture(t)
+	pack := operatorsQuery(t, s, e)
+	installs := 0
+	e.Install = func(context.Context) error {
+		installs++
+		return os.WriteFile(filepath.Join(pack, "codeql-pack.lock.yml"), []byte("lockVersion: 1.0.0\n"), 0o644)
+	}
+
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if installs != 1 {
+		t.Errorf("installed the pack %d times, want once before the run", installs)
+	}
+	if len(analyzer.targets) == 0 {
+		t.Fatal("nothing was analyzed")
+	}
+	want, err := runner.PackDigest(pack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.DB().Query(`SELECT DISTINCT COALESCE(pack_digest, '') FROM abom_query_run WHERE pack = ?`,
+		customql.Pack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var recorded []string
+	for rows.Next() {
+		var digest string
+		if err := rows.Scan(&digest); err != nil {
+			t.Fatal(err)
+		}
+		recorded = append(recorded, digest)
+	}
+	if len(recorded) != 1 || recorded[0] != want {
+		t.Errorf("the run records the pack as %v, want it as it ran, lock included: %s", recorded, want)
+	}
+}
+
+// Only the operator's queries need the operator's pack: installing it for a run of shipped ones
+// would put a download in front of queries that do not depend on it, and fail them with it.
+func TestARunOfShippedQueriesInstallsNothing(t *testing.T) {
+	_, e, id, _ := executorFixture(t)
+	e.Install = func(context.Context) error {
+		t.Error("the operator's pack was installed for a run of shipped queries")
+		return nil
+	}
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+}
+
+// A pack whose dependencies cannot be installed compiles none of its queries, so the run is refused
+// with the CLI's reason before any member is analyzed against it.
+func TestARunWhosePackCannotBeInstalledIsRefusedWithWhy(t *testing.T) {
+	s, e, id, analyzer := executorFixture(t)
+	operatorsQuery(t, s, e)
+	e.Install = func(context.Context) error {
+		return errors.New("codeql pack install: exit status 1: Failed to download codeql/actions-all@0.6.2")
+	}
+
+	err := e.Run(context.Background(), id)
+	if err == nil || !strings.Contains(err.Error(), "Failed to download codeql/actions-all@0.6.2") {
+		t.Fatalf("a run whose pack could not be installed returned %v, want the install's reason", err)
+	}
+	if len(analyzer.targets) != 0 {
+		t.Errorf("analyze ran %d times against a pack that could not compile", len(analyzer.targets))
+	}
+	run, _ := s.AnalysisRun(id)
+	if run.State != store.RunRefused || !strings.Contains(run.Refusal, "Failed to download codeql/actions-all@0.6.2") {
+		t.Errorf("the run reads %q %q, want %q with the install's reason", run.State, run.Refusal, store.RunRefused)
+	}
+}
+
+// Stopping a run while it prepares is a stop: nothing refused it, somebody stopped it.
+func TestARunStoppedWhileItPreparesIsCanceledRatherThanRefused(t *testing.T) {
+	s, e, id, _ := executorFixture(t)
+	operatorsQuery(t, s, e)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e.Install = func(ctx context.Context) error {
+		cancel()
+		return ctx.Err()
+	}
+
+	if err := e.Run(ctx, id); err == nil {
+		t.Fatal("a run stopped while it prepared was carried out")
+	}
+	run, _ := s.AnalysisRun(id)
+	if run.State != store.RunCanceled || run.Refusal != "" {
+		t.Errorf("the stopped run reads %q %q, want %q with no refusal", run.State, run.Refusal, store.RunCanceled)
+	}
+}
+
+// Everything a run needs is ready before it is marked running, so one whose directory cannot be made
+// is refused, not left running with nothing under way.
+func TestARunWhoseDirectoryCannotBeMadeIsRefused(t *testing.T) {
+	s, e, id, analyzer := executorFixture(t)
+	blocker := filepath.Join(t.TempDir(), "a-file")
+	if err := os.WriteFile(blocker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.WorkDir = blocker
+
+	if err := e.Run(context.Background(), id); err == nil {
+		t.Fatal("a run with nowhere to write was carried out")
+	}
+	if len(analyzer.targets) != 0 {
+		t.Errorf("analyze ran %d times with nowhere to write", len(analyzer.targets))
+	}
+	run, _ := s.AnalysisRun(id)
+	if run.State != store.RunRefused || !strings.Contains(run.Refusal, blocker) {
+		t.Errorf("the run reads %q %q, want %q naming where it could not write", run.State, run.Refusal, store.RunRefused)
 	}
 }
 

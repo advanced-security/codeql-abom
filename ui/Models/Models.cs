@@ -1315,6 +1315,9 @@ public sealed record AnalysisRun
     /// </summary>
     public string CliVersion { get; init; } = string.Empty;
 
+    /// <summary>Why the run could not start the last time it was asked to; empty otherwise.</summary>
+    public string Refusal { get; init; } = string.Empty;
+
     /// <summary>Every member counted by status, so nothing is left to be inferred from a total.</summary>
     public IReadOnlyDictionary<string, int> Tally { get; init; } =
         new Dictionary<string, int>(StringComparer.Ordinal);

@@ -63,6 +63,7 @@ func newAuthoring(s *store.Store, o authoringOptions, sup *supervisor.Supervisor
 		Limit:     o.limit,
 		Version:   tests.Version,
 		RunTests:  tests.RunTestsHeld,
+		Prepare:   tests.InstallPackHeld,
 	}
 	switch info, err := os.Stat(o.copilotCLI); {
 	case o.copilotCLI == "":

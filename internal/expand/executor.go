@@ -38,8 +38,10 @@ type Executor struct {
 	// round would remove.
 	WorkDir string
 	OnEvent func(repository, stage string, err error)
-
-	digests runner.DigestCache
+	// Install installs what the operator's pack depends on wherever it has no lock. The CLI compiles
+	// nothing in a pack whose dependencies were never installed, and ABOM scaffolded that pack. Nil
+	// installs nothing.
+	Install func(context.Context) error
 }
 
 // Run analyzes every member, building the database a member lacks, and says what became of each.
@@ -57,8 +59,14 @@ func (e *Executor) Run(ctx context.Context, runID int64) error {
 	// Resolved before anything runs. A run that analyzed the queries it could find and quietly
 	// dropped the rest would report a result for a request that was not carried out.
 	planned, err := e.resolve(ctx, run.Queries)
+	dir := filepath.Join(e.WorkDir, fmt.Sprintf("run-%d", runID))
+	if err == nil {
+		if err = os.MkdirAll(dir, 0o700); err != nil {
+			err = fmt.Errorf("preparing %s: %w", dir, err)
+		}
+	}
 	if err != nil {
-		return err
+		return e.refuse(ctx, runID, err)
 	}
 
 	if err := e.Store.SetAnalysisRunCodeQL(runID, planned.cliVersion); err != nil {
@@ -66,10 +74,6 @@ func (e *Executor) Run(ctx context.Context, runID int64) error {
 	}
 	if err := e.Store.SetAnalysisRunState(runID, store.RunRunning); err != nil {
 		return err
-	}
-	dir := filepath.Join(e.WorkDir, fmt.Sprintf("run-%d", runID))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("preparing %s: %w", dir, err)
 	}
 
 	for _, member := range run.Members {
@@ -97,6 +101,19 @@ func (e *Executor) Run(ctx context.Context, runID int64) error {
 		return fmt.Errorf("attributing what run %d found: %w", runID, err)
 	}
 	return e.Store.SetAnalysisRunState(runID, store.RunComplete)
+}
+
+// refuse records on the run why it could not start: left pending, it read as a run about to start,
+// and the reason reached only the server's log. A stop while it prepared is a cancellation.
+func (e *Executor) refuse(ctx context.Context, runID int64, cause error) error {
+	if ctx.Err() != nil {
+		_ = e.Store.SetAnalysisRunState(runID, store.RunCanceled)
+		return cause
+	}
+	if err := e.Store.RefuseAnalysisRun(runID, cause.Error()); err != nil {
+		return errors.Join(cause, err)
+	}
+	return cause
 }
 
 // carryOut analyzes one member, building its database first when none is on disk, unless its
@@ -423,15 +440,26 @@ func (e *Executor) resolve(ctx context.Context, want []store.AnalysisQuery) (tie
 	}
 	planned.cliVersion = cli
 
-	for _, q := range want {
+	paths := make([]string, len(want))
+	for i, q := range want {
 		path, ok := byID[q.QueryID]
 		if !ok {
 			return tierPlan{}, fmt.Errorf(
 				"no suite this run can see offers %q; it is in %d queries across %v",
 				q.QueryID, len(byID), e.Suites)
 		}
+		paths[i] = path
+	}
+	installed := false
+	// This run's own: a pack edited since an earlier run is digested again, as its run key needs.
+	var digests runner.DigestCache
+	for i, q := range want {
+		path := paths[i]
 		pack, packVersion, packDir := runner.PackOf(path)
-		digest, err := e.digests.Of(packDir)
+		if err := installBeforeDigest(ctx, e.Install, pack, &installed); err != nil {
+			return tierPlan{}, err
+		}
+		digest, err := digests.Of(packDir)
 		if err != nil {
 			return tierPlan{}, fmt.Errorf("identifying %s: %w", q.QueryID, err)
 		}

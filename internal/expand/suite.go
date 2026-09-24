@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/advanced-security/codeql-abom/internal/customql"
 	"github.com/advanced-security/codeql-abom/internal/ingest"
 	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/store"
@@ -85,6 +86,21 @@ func (p *tierPlan) notePack(pack, version, digest string) {
 	p.findingsPacks = append(p.findingsPacks, store.SuiteQuery{
 		Pack: pack, PackVersion: version, PackDigest: digest,
 	})
+}
+
+// installBeforeDigest installs the operator's pack the first time a plan meets one of its queries.
+//
+// Before the pack is digested: the lock is part of what a digest covers, and one taken before the
+// install would describe a pack that never ran.
+func installBeforeDigest(ctx context.Context, install func(context.Context) error, pack string, done *bool) error {
+	if pack != customql.Pack || install == nil || *done {
+		return nil
+	}
+	if err := install(ctx); err != nil {
+		return fmt.Errorf("installing what %s depends on: %w", pack, err)
+	}
+	*done = true
+	return nil
 }
 
 // identify fills in what makes a run reproducible: the pack that supplied the query, that pack's
@@ -234,6 +250,9 @@ func tierOf(b batch, owned map[string]bool) string {
 // A suite two tiers share is resolved once: resolving shells out to the CodeQL CLI, and a crawl
 // claims batches from both tiers every round.
 func (e *Expander) plansByTier(ctx context.Context, opts Options) (map[string]tierPlan, error) {
+	// Every round and every identity reads the packs again: one edited while the server runs would
+	// otherwise keep the digest it had when the server first met it.
+	e.digests.Reset()
 	// Every tier `tierOf` can return. Omitting one hands its batches a zero-value plan, which
 	// `pendingWork` reads as nothing outstanding — so the repository is settled as *already
 	// recorded* without being analyzed. Owned was missing here until 2026-09-07.
@@ -309,6 +328,7 @@ func (e *Expander) plan(ctx context.Context, opts Options) (tierPlan, error) {
 	if err != nil {
 		return tierPlan{}, err
 	}
+	installed := false
 	for _, path := range paths {
 		md, err := e.Resolver.ResolveMetadata(ctx, path)
 		if err != nil {
@@ -321,6 +341,9 @@ func (e *Expander) plan(ctx context.Context, opts Options) (tierPlan, error) {
 			return tierPlan{}, fmt.Errorf("suite %s: %w", opts.Suite, err)
 		}
 		pack, packVersion, packDir := runner.PackOf(path)
+		if err := installBeforeDigest(ctx, e.Install, pack, &installed); err != nil {
+			return tierPlan{}, fmt.Errorf("suite %s: %w", opts.Suite, err)
+		}
 		digest, err := e.digests.Of(packDir)
 		if err != nil {
 			return tierPlan{}, fmt.Errorf("suite %s: %w", opts.Suite, err)

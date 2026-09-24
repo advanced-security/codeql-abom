@@ -100,7 +100,8 @@ scaffolds a CodeQL pack in it: their queries resolve by name, run over the retai
 appear in the catalog with their origin read from the pack. Writing one is not scheduling work —
 the development suite is offered to a run, which is something a person presses, and never to a tier
 binding, which would put a saved file in front of the whole corpus. Deploying a version is what
-moves it into a suite a tier may bind.
+moves it into a suite a tier may bind. The directory is a pack the operator's own tooling opens:
+ABOM drives the loop and holds the catalog, and never becomes the editor.
 
 **A query version has a lifecycle, and two rungs of it are earned.** A version is identified by a
 content hash over the query and every library it imports, so editing a library changes it. Stages
@@ -110,6 +111,19 @@ pass, and `extended-test` unless every step the version carries does — all but
 belongs to a request. Each step is derived from evidence on
 disk or in `abom_query_test`, served by the API and never computed in the browser. ABOM computes
 readiness and never advances anything itself.
+
+| Step | Evidence |
+| --- | --- |
+| Target | the operator's selection of an existing id, or the agent's recorded decision |
+| Help | `src/<Name>.md` beside the query, non-empty |
+| Expected | `test/<Name>/<Name>.expected`; empty is a warning, since a non-compliant example must yield a line |
+| Test database | `<dir>.testproj` finalized and newer than every test source; a failed extraction leaves one unfinished |
+| AST | the newest tree `PrintAST` printed from fixtures with the digest on disk |
+| Compiles | the compilation stage of a test run of this version; a warning when the pack's lock resolved another `actions-all` |
+| Tests | `codeql test run` of this version over these tests, and an earlier version's failure on a mark over the same fixtures |
+
+A warning is evidence gone stale, never a guess. A directory holding no tests is not a pass: the CLI
+exits cleanly over one, so the verdict is read from the count and never from the exit status.
 
 The marks are drawn on a request and on the working copy of the operator's own query, and nowhere
 else: an upstream query's tests belong to the pack that ships it. A request and the catalog row of
@@ -139,6 +153,34 @@ flowchart LR
 **One `codeql/actions-all` answers for authoring and execution.** ABOM's packs, the operator's
 scaffolded packs and ql-mcp's tools pack pin the same version, `make check-versions` fails when
 they disagree, and the compiles step warns when the operator's lock resolved another.
+
+**ABOM installs the pack it scaffolded.** The CLI compiles no query and no test in a pack whose
+dependencies were never installed, even when the package cache holds every one. So before anything
+compiles in the operator's pack, ABOM runs `codeql pack install` in it and then in its test pack,
+wherever either has no `codeql-pack.lock.yml`:
+
+- before a Test, and before an approval's test run;
+- before a run or a crawl round digests one of the pack's queries, because the lock is part of what
+  a pack digest covers;
+- when a session starts, before the agent has control, since a session cannot install packs.
+
+It holds the CodeQL lock while it installs. It never replaces a lock file or runs `pack upgrade`:
+a lock file is the operator's to move. Where both exist it does nothing and does not wait for
+CodeQL, so a Test never queues behind a crawl to learn that nothing was needed. A failed install
+is the answer, with the CLI's reason: a Test answers with it, a round stops with it as discovery's
+last error, a run is refused with it before any member is analyzed, and a
+session ends failed with it before its agent starts.
+
+```mermaid
+flowchart LR
+    ACT["Test, approval,<br/>run, round, session"] --> Q{"a lock in the pack<br/>and its test pack?"}
+    Q -->|"both"| GO["compile"]
+    Q -->|"either missing"| INS["codeql pack install<br/>under the CodeQL lock"]
+    INS -->|"installed"| GO
+    INS -->|"failed"| WHY["the CLI's reason<br/>is the answer"]
+    Q -. "never" .-> UP["pack upgrade"]
+    style UP fill:#3d2d1d
+```
 
 **A request's target is selected, never typed**, and says who chose it: *selected by you* or
 *decided by the agent*. A request asked from a run carries the picked results as evidence — a
@@ -200,7 +242,11 @@ recorded at the database it was analyzed against. Only what the crawl would buil
 regular database, for a repository ABOM tracks, since ingesting any other would enter it as a seed.
 A member whose evaluation is already stored under the same run key is skipped and carries that
 answer, naming the run that produced it; editing a query changes its version, so tuning is never
-skipped. Nothing a run produces leaves the machine.
+skipped, and a pack is digested afresh for every run, every round and every requeue, so one edited
+while the server runs is keyed as it is now. A run that cannot start — a query no suite offers, a
+pack that cannot be installed, nowhere to write — is refused, says why on the run, and is tried
+again when somebody runs it again; one stopped while it prepares is canceled. Nothing a run
+produces leaves the machine.
 
 **A database is extracted once, not once per question.** Retained CodeQL databases are keyed on the
 tuple a run is keyed on, so the cache and the ledger cannot disagree about which database answered.
@@ -317,7 +363,7 @@ workflow is never an edge source; edges leave its steps and its jobs.
 | `abom_authoring_ast` | What `PrintAST` printed over a query's test database, by a session or by ABOM at somebody's asking, with a digest of the fixtures it was printed from and the CodeQL that printed it. Append-only |
 | `abom_authoring_review` | An operator's approval or rejection of what a query reported, with the report as they read it. Append-only |
 | `abom_request_draft` | A request a drafting session proposed, which nobody has filed. Append-only |
-| `abom_analysis_run`, `abom_analysis_member`, `abom_analysis_query` | A run somebody asked for: which versions, which scope, the CodeQL it ran under, and what became of every repository in it. A member names the evaluation that reported its findings, so they can be listed one at a time |
+| `abom_analysis_run`, `abom_analysis_member`, `abom_analysis_query` | A run somebody asked for: which versions, which scope, the CodeQL it ran under, why it could not start when it could not, and what became of every repository in it. A member names the evaluation that reported its findings, so they can be listed one at a time |
 | `abom_analysis_result` | What each query in a run found in each repository. A member counted before this existed has a total and no split |
 | `abom_local_database` | A retained CodeQL database, keyed the way a run is: repository, commit, source filter and mode |
 

@@ -33,6 +33,41 @@ public class RunResultsTests : AbomTestContext
         return cut;
     }
 
+    private const string Refused = """
+        {"rowId":4,"predicate":"repositories=octo%2Fapp","mode":"regular",
+         "requestedBy":"operator","state":"refused","createdAt":"2026-09-22T16:00:00Z",
+         "finishedAt":"2026-09-22T16:00:05Z","results":0,
+         "refusal":"installing what abom/custom-queries depends on: Failed to download codeql/actions-all@0.6.2",
+         "queries":[{"queryId":"acme/rule","queryVersion":"v1"}],
+         "tally":{"pending":1},
+         "members":[{"repository":"octo/app","status":"pending","counted":false,"results":0,"byQuery":{}}]}
+        """;
+
+    /// <summary>
+    /// A run that could not start says why where its results would be, and is not watched as though
+    /// it were about to: nothing changes until somebody runs it again.
+    /// </summary>
+    [Fact]
+    public void ARefusedRunSaysWhyNothingRanAndIsNotWatched()
+    {
+        Answer("api/runs/4", Refused);
+        var cut = Render<Shared.RunResults>(p => p.Add(c => c.RunId, 4L));
+        cut.WaitForAssertion(() => cut.Find("[data-abom-run-summary]"));
+
+        Assert.Contains("Failed to download codeql/actions-all@0.6.2",
+            cut.Find("[data-abom-results-refused]").TextContent);
+        Assert.Contains("did not start", cut.Find("[data-abom-results-none]").TextContent);
+        Assert.False(cut.Instance.Watching);
+    }
+
+    [Fact]
+    public void ARunThatStartedCarriesNoRefusal()
+    {
+        var cut = Render(null);
+
+        Assert.Empty(cut.FindAll("[data-abom-results-refused]"));
+    }
+
     private static List<string> Repositories(IRenderedComponent<Shared.RunResults> cut) =>
         cut.FindAll("[data-abom-result-repository]").Select(e => e.TextContent.Trim()).ToList();
 

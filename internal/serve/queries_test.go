@@ -98,6 +98,11 @@ type fakeTester struct {
 	during   func()
 	// unreadable is what reading CodeQL's version fails with, as it does where none is installed.
 	unreadable error
+	// calls is what the tester was asked to do, in order: "install" or "run".
+	calls []string
+	// installErr is what installing the pack fails with, as it does where the registry is out of
+	// reach.
+	installErr error
 }
 
 // fakeCLI is the CodeQL the fakes say they run.
@@ -126,7 +131,13 @@ func (f *fakeTester) AcceptTests(_ context.Context, tests []string) error {
 	return nil
 }
 
+func (f *fakeTester) InstallPack(context.Context) error {
+	f.calls = append(f.calls, "install")
+	return f.installErr
+}
+
 func (f *fakeTester) RunTests(_ context.Context, tests []string) (runner.TestResult, error) {
+	f.calls = append(f.calls, "run")
 	f.ran = append(f.ran, tests)
 	if f.during != nil {
 		f.during()
@@ -322,6 +333,45 @@ func TestAQueryIsGradedOnlyByItsOwnTests(t *testing.T) {
 	b, _, err := st.QueryTestFor("acme/b", versionOf(t, root, "B"), fakeCLI)
 	if err != nil || b.Passed {
 		t.Errorf("acme/b reads passed=%v (err %v) with its own test failing", b.Passed, err)
+	}
+}
+
+// ABOM scaffolded the pack, so pressing Test installs what it depends on before the CLI is asked
+// to compile anything in it: the CLI refuses a test in a pack whose dependencies were never
+// installed, and the only other way out was a command typed by hand in two directories.
+func TestTestingAQueryInstallsItsPackBeforeRunningIt(t *testing.T) {
+	s, _ := newServer(t)
+	root := queryWorkspace(t, []string{"A"})
+	tester := &fakeTester{}
+	s.Tester, s.QueryDir = tester, root
+
+	if w := runQueryTest(t, s, "acme/a", versionOf(t, root, "A")); w.Code != http.StatusOK {
+		t.Fatalf("answered %d: %s", w.Code, w.Body.String())
+	}
+	if got := strings.Join(tester.calls, ", "); got != "install, run" {
+		t.Errorf("the tester was asked to %s, want the pack installed and then the tests run", got)
+	}
+}
+
+// A pack whose dependencies cannot be installed compiles nothing, so the install's reason is the
+// answer to the Test and no result is recorded for tests that never ran.
+func TestAPackThatCannotBeInstalledAnswersATestWithWhy(t *testing.T) {
+	s, st := newServer(t)
+	root := queryWorkspace(t, []string{"A"})
+	tester := &fakeTester{installErr: errors.New(
+		"codeql pack install: exit status 1: Failed to download codeql/actions-all@0.6.2")}
+	s.Tester, s.QueryDir = tester, root
+
+	version := versionOf(t, root, "A")
+	w := runQueryTest(t, s, "acme/a", version)
+	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "Failed to download codeql/actions-all@0.6.2") {
+		t.Errorf("answered %d: %s, want 502 with the install's reason", w.Code, w.Body.String())
+	}
+	if len(tester.ran) != 0 {
+		t.Errorf("tests ran in a pack whose dependencies were not installed: %v", tester.ran)
+	}
+	if _, known, _ := st.QueryTestFor("acme/a", version, fakeCLI); known {
+		t.Error("a result was recorded for tests that never ran")
 	}
 }
 

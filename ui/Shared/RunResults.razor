@@ -12,6 +12,16 @@
 }
 else
 {
+    @if (_run.Refusal.Length > 0)
+    {
+        <MudAlert Severity="Severity.Error" Dense="true" Class="mb-2" data-abom-results-refused>
+            Run #@_run.RowId did not start: <span class="abom-refusal-text">@_run.Refusal</span>
+            @if (Analyzed > 0)
+            {
+                <span>What is listed is from an earlier start.</span>
+            }
+        </MudAlert>
+    }
     <MudText Typo="Typo.body2" Class="mud-text-secondary mb-1" data-abom-run-summary>
         Run #@_run.RowId covered @CountText.Of(_run.Members.Count, "repository", "repositories"):
         @Analyzed analyzed, @(_run.Members.Count - Analyzed) not.
@@ -70,7 +80,9 @@ else
     {
         <MudText Typo="Typo.body2" data-abom-results-none>
             @(Analyzed == 0
-                ? "Nothing in this run has been analyzed yet, so there are no results to show."
+                ? _run.State == "refused"
+                    ? "Nothing in this run has been analyzed, because it did not start. Run it again once what refused it is fixed."
+                    : "Nothing in this run has been analyzed yet, so there are no results to show."
                 : QueryId is null
                     ? "No repository had a result from this run's queries."
                     : "No repository had a result from this query.")

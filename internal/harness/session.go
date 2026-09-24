@@ -46,6 +46,10 @@ type Sessions struct {
 	Version func(context.Context) (string, error)
 	// RunTests runs a query's own tests for a session, which already holds Lock.
 	RunTests authoring.Tests
+	// Prepare installs what the pack depends on wherever it has no lock, before the agent has
+	// control: ABOM's act and never the session's, which cannot install packs. Called holding Lock;
+	// nil installs nothing.
+	Prepare func(context.Context) error
 
 	mu   sync.Mutex
 	live map[int64]*live
@@ -158,7 +162,10 @@ func (s *Sessions) start(request int64, by string) (store.AuthoringSession, <-ch
 	go func() {
 		defer close(done)
 		defer unlock()
-		final, err := s.run(ctx, setup)
+		final, err := "", s.prepare(ctx)
+		if err == nil {
+			final, err = s.run(ctx, setup)
+		}
 		state, detail := s.outcome(ctx, l, limit, final, err)
 		cancel()
 		s.mu.Lock()
@@ -170,6 +177,18 @@ func (s *Sessions) start(request int64, by string) (store.AuthoringSession, <-ch
 
 	session, err := s.session(request, id)
 	return session, done, err
+}
+
+// prepare installs the pack a session works in. A pack that cannot be installed compiles nothing
+// the agent writes, so the session ends there, saying why.
+func (s *Sessions) prepare(ctx context.Context) error {
+	if s.Prepare == nil {
+		return nil
+	}
+	if err := s.Prepare(ctx); err != nil {
+		return fmt.Errorf("installing what the query pack depends on, before the agent started: %w", err)
+	}
+	return nil
 }
 
 // run keeps a panicking agent from taking the server with it.

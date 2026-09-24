@@ -1233,6 +1233,18 @@ code {
 }
 .abom-run-add { min-width: 16rem; }
 
+/* A refusal can be the CLI's whole answer, so the row shows how it begins; the title holds all of it.
+   No wider than the CodeQL line above it, or the column grows and pushes the grid off its edge. */
+.abom-run-refused {
+    display: block;
+    max-width: 11rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* The CLI's answer keeps its own line breaks. */
+.abom-refusal-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+
 /* A pack name breaks at every hyphen, so left in a column of its own it set the height of every
    row in the table. Under the id it wraps at most once and the row is one line of data again. */
 .abom-query-id { font-weight: 500; }

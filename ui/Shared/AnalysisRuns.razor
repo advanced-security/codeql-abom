@@ -93,6 +93,11 @@
                                  data-abom-run-state="@context.Item.State">@context.Item.State</MudChip>
                         <MudText Typo="Typo.caption" Class="d-block mud-text-secondary abom-nowrap"
                                  data-abom-run-codeql>@CodeQLText(context.Item)</MudText>
+                        @if (context.Item.Refusal.Length > 0)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Error" Class="abom-run-refused"
+                                     title="@context.Item.Refusal" data-abom-run-refused>@context.Item.Refusal</MudText>
+                        }
                     </CellTemplate>
                 </PropertyColumn>
 
@@ -212,18 +217,19 @@
 
     // Work already answered is skipped when a run goes again, which is what makes a stop resumable.
     /// <summary>
-    /// A pending run has not chosen its CodeQL yet; any other without one was recorded before the
-    /// version was kept, which is not a run under no CodeQL.
+    /// A run that has not started has not chosen its CodeQL yet; any other without one was recorded
+    /// before the version was kept, which is not a run under no CodeQL.
     /// </summary>
     private static string CodeQLText(AnalysisRun run) =>
         run.CliVersion.Length > 0 ? $"CodeQL {run.CliVersion}"
-        : run.State == "pending" ? "CodeQL chosen when it runs"
+        : run.State is "pending" or "refused" ? "CodeQL chosen when it runs"
         : "CodeQL not recorded";
 
     private static string AgainText(AnalysisRun run) => run.State switch
     {
         "interrupted" => "The server stopped while this ran. Run it again: what it already analyzed is skipped.",
         "canceled" => "Run it again: what it already analyzed is skipped.",
+        "refused" => "It did not start. Run it again once what refused it is fixed.",
         _ => "Run it again over the same repositories. What was analyzed with these versions is skipped; " +
              "the rest replaces what this run recorded.",
     };
@@ -233,6 +239,7 @@
         "complete" => Color.Success,
         "running" => Color.Info,
         "canceled" or "interrupted" => Color.Warning,
+        "refused" => Color.Error,
         _ => Color.Default,
     };
 

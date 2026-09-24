@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -361,14 +360,10 @@ func recordQueries(path string) error {
 	if _, err := customql.Scaffold(dir, r.out.CLIVersion); err != nil {
 		return err
 	}
-	// A scaffolded pack names its dependencies and locks none, and nothing compiles until they are.
-	for _, args := range [][]string{
-		{"pack", "install", dir},
-		{"pack", "install", filepath.Join(dir, "test"), "--additional-packs=" + dir},
-	} {
-		if out, err := exec.CommandContext(ctx, "codeql", args...).CombinedOutput(); err != nil {
-			return fmt.Errorf("codeql %s: %w: %s", strings.Join(args[:2], " "), err, out)
-		}
+	// As the server does before it tests anything: a scaffolded pack locks none of its
+	// dependencies, and nothing compiles until they are.
+	if err := r.cli.InstallPack(ctx); err != nil {
+		return err
 	}
 	if err := walk(ctx, dir, r); err != nil {
 		return err

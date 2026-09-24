@@ -124,6 +124,10 @@ type Expander struct {
 	// Pace caps the rate of outbound requests across workers; nil means unlimited.
 	Pace    *work.Limiter
 	OnEvent func(work.Event)
+	// Install installs what the operator's pack depends on wherever it has no lock, for a round
+	// over a suite drawn from it: a tier can be bound to that suite before anybody has pressed
+	// Test. Nil installs nothing.
+	Install func(context.Context) error
 
 	// digests remembers each pack's content hash for the life of a round. A pack cannot change
 	// while the round that resolved it is running.

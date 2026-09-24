@@ -143,7 +143,7 @@ written, one `actions-all` answers for authoring and execution, and every mark n
 was recorded under. What remains is the simulation that says what a query would do before anybody
 turns it on. Running several CodeQL releases side by side, so an upgrade can be compared before it
 is taken, is later.
-`plans/ql/query-authoring.md`, `plans/db/query-catalog.md`, `plans/api/on-demand-analysis.md`
+`plans/db/query-catalog.md`, `plans/api/on-demand-analysis.md`
 
 ## From a finding to a fix
 

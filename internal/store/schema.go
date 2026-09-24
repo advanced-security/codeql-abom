@@ -445,7 +445,10 @@ CREATE TABLE IF NOT EXISTS abom_analysis_run (
   finished_at   TEXT,
   -- The CodeQL that carried the run out, set when it starts: the same queries over the same scope
   -- can answer differently under the next release. NULL until then.
-  cli_version   TEXT
+  cli_version   TEXT,
+  -- Why the run could not start the last time it was asked to, in the executor's words. NULL for
+  -- a run that started, or that nobody has asked to start.
+  refusal       TEXT
 );
 
 -- The explicit queries a run names. A list rather than a suite: the point of the run is to be more
@@ -746,6 +749,7 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_authoring_ast", "printed_by", "TEXT NOT NULL DEFAULT ''"},
 	{"abom_authoring_ast", "cli_version", "TEXT"},
 	{"abom_analysis_run", "cli_version", "TEXT"},
+	{"abom_analysis_run", "refusal", "TEXT"},
 }
 
 // indexDDL is applied only after bulk loading. Maintaining these indexes during a multi-million

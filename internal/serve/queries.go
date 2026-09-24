@@ -23,6 +23,9 @@ type QueryTester interface {
 	RunTests(ctx context.Context, tests []string) (runner.TestResult, error)
 	AcceptTests(ctx context.Context, tests []string) error
 	Version(ctx context.Context) (string, error)
+	// InstallPack installs what the operator's pack depends on wherever it has no lock, and does
+	// nothing where it has one.
+	InstallPack(ctx context.Context) error
 }
 
 // codeQL is the CodeQL this server runs, under which alone a query's marks are current. The
@@ -100,6 +103,12 @@ func (s *Server) ownTests(ctx context.Context, q authoring.Query) (runner.TestRe
 	cli, err := s.codeQL(ctx)
 	if err != nil {
 		return runner.TestResult{}, http.StatusBadGateway, err
+	}
+	// The CLI compiles no test in a pack whose dependencies were never installed, so a pack that
+	// cannot be installed has no result to record and the reason is the answer.
+	if err := s.Tester.InstallPack(ctx); err != nil {
+		return runner.TestResult{}, http.StatusBadGateway,
+			fmt.Errorf("installing what the query pack depends on: %w", err)
 	}
 	result, err := authoring.RecordTests(ctx, s.Store, s.Tester.RunTests, s.QueryDir, q, cli)
 	switch {

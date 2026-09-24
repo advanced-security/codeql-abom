@@ -82,6 +82,7 @@ func newRunExecutor(
 		Crawl:    sup.Expander,
 		Suites:   runnableSuites(),
 		WorkDir:  filepath.Join(sup.Options.WorkDir, "runs"),
+		Install:  sup.Expander.Install,
 		OnEvent: func(repository, stage string, err error) {
 			if err != nil {
 				fmt.Fprintf(logTo, "run: %s %s: %v\n", repository, stage, err)
@@ -173,6 +174,7 @@ func newSupervisor(s *store.Store, opts discoveryOptions, logTo io.Writer) (*sup
 			Pace:      pace,
 			Cache:     cache,
 			Databases: databases,
+			Install:   r.InstallPack,
 			// Without this a repository that fails every time is invisible: the count moves
 			// and nothing says which one, or why.
 			OnEvent: logDiscoveryFailures(logTo),

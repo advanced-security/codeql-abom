@@ -53,6 +53,28 @@ public class AnalysisRunsTests : AbomTestContext
         Assert.NotEmpty(cut.FindAll("[data-abom-run-again]"));
     }
 
+    /// <summary>
+    /// A run that could not start says why where it is listed. Left pending, it read as a run about
+    /// to start while the reason reached only the server's log.
+    /// </summary>
+    [Fact]
+    public void ARefusedRunSaysWhyAndCanBeTriedAgain()
+    {
+        const string why = "no suite this run can see offers acme/gone";
+        var cut = Render(
+            RunJson(7, "refused", results: 0).Replace("\"finishedAt\":\"\"",
+                $"\"finishedAt\":\"2026-09-22T16:00:05Z\",\"refusal\":\"{why}\""),
+            RunJson(6, "complete"));
+
+        Assert.Equal("refused", cut.Find("[data-abom-run-state=refused]").TextContent.Trim());
+        var refused = Assert.Single(cut.FindAll("[data-abom-run-refused]"));
+        Assert.Contains("acme/gone", refused.TextContent);
+        Assert.Equal(why, refused.GetAttribute("title"));
+        Assert.Equal(2, cut.FindAll("[data-abom-run-again]").Count);
+        var named = cut.FindAll("[data-abom-run-codeql]").Select(e => e.TextContent.Trim()).ToList();
+        Assert.Equal(["CodeQL chosen when it runs", "CodeQL not recorded"], named);
+    }
+
     [Fact]
     public void ARunsScopeIsReadAsTheRepositoriesItNamed()
     {

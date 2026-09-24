@@ -35,8 +35,8 @@ because somebody published a pack, which is a deliberate, reviewable, revertible
 never touches an alert at all.
 
 This is also why the operator's queries live in a real pack on disk from the beginning
-([`ql/query-authoring.md`](query-authoring.md)) rather than as rows in `abom.db`: a pack is the
-unit that can be tested, versioned and published without ABOM in the loop.
+([`docs/architecture.md`](../../docs/architecture.md#what-produces-the-data)) rather than as rows in
+`abom.db`: a pack is the unit that can be tested, versioned and published without ABOM in the loop.
 
 ## The constraint the built half already holds
 

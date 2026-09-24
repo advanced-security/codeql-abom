@@ -32,6 +32,9 @@ const (
 	RunCanceled = "canceled"
 	// RunInterrupted is a run the server stopped under, which nobody canceled and nothing finished.
 	RunInterrupted = "interrupted"
+	// RunRefused is a run that could not start, such as one naming a query no suite offers, and it
+	// says why.
+	RunRefused = "refused"
 )
 
 // AnalysisQuery is one query a run names.
@@ -79,9 +82,11 @@ type AnalysisRun struct {
 	CreatedAt   string `json:"createdAt"`
 	FinishedAt  string `json:"finishedAt"`
 	// CLIVersion is the CodeQL that carried the run out, empty until it starts.
-	CLIVersion string           `json:"cliVersion"`
-	Queries    []AnalysisQuery  `json:"queries"`
-	Members    []AnalysisMember `json:"members"`
+	CLIVersion string `json:"cliVersion"`
+	// Refusal is why the run could not start the last time it was asked to, and empty otherwise.
+	Refusal string           `json:"refusal"`
+	Queries []AnalysisQuery  `json:"queries"`
+	Members []AnalysisMember `json:"members"`
 	// Results totals what the members that were counted reported. Members nothing ran against
 	// contribute nothing to it rather than a zero.
 	Results int `json:"results"`
@@ -385,7 +390,19 @@ func (s *Store) SetAnalysisRunCodeQL(runID int64, cli string) error {
 	return nil
 }
 
-// SetAnalysisRunState moves the run as a whole, stamping when it finished.
+// RefuseAnalysisRun records that a run could not start, why, and when.
+func (s *Store) RefuseAnalysisRun(runID int64, reason string) error {
+	_, err := s.db.Exec(`
+		UPDATE abom_analysis_run SET state = ?, refusal = ?, finished_at = ? WHERE row_id = ?`,
+		RunRefused, reason, time.Now().UTC().Format(time.RFC3339), runID)
+	if err != nil {
+		return fmt.Errorf("refusing run %d: %w", runID, err)
+	}
+	return nil
+}
+
+// SetAnalysisRunState moves the run as a whole, stamping when it finished. A refusal describes the
+// state it was recorded with, so moving on clears it.
 func (s *Store) SetAnalysisRunState(runID int64, state string) error {
 	finished := nullable("")
 	if state == RunComplete || state == RunCanceled {
@@ -393,7 +410,7 @@ func (s *Store) SetAnalysisRunState(runID int64, state string) error {
 	}
 	_, err := s.db.Exec(`
 		UPDATE abom_analysis_run
-		SET state = ?, finished_at = COALESCE(?, finished_at)
+		SET state = ?, finished_at = COALESCE(?, finished_at), refusal = NULL
 		WHERE row_id = ?`, state, finished, runID)
 	if err != nil {
 		return fmt.Errorf("moving run %d to %s: %w", runID, state, err)
@@ -409,10 +426,10 @@ func (s *Store) AnalysisRun(id int64) (AnalysisRun, error) {
 	var finished sql.NullString
 	err := s.db.QueryRow(`
 		SELECT row_id, predicate, analysis_mode, requested_by, state, created_at, finished_at,
-		       COALESCE(cli_version, '')
+		       COALESCE(cli_version, ''), COALESCE(refusal, '')
 		FROM abom_analysis_run WHERE row_id = ?`, id).
 		Scan(&run.RowID, &run.Predicate, &run.Mode, &run.RequestedBy, &run.State,
-			&run.CreatedAt, &finished, &run.CLIVersion)
+			&run.CreatedAt, &finished, &run.CLIVersion, &run.Refusal)
 	if errors.Is(err, sql.ErrNoRows) {
 		return run, fmt.Errorf("no run %d", id)
 	}
@@ -442,7 +459,7 @@ func (s *Store) AnalysisRuns() ([]AnalysisRun, error) {
 	out := []AnalysisRun{}
 	rows, err := s.db.Query(`
 		SELECT row_id, predicate, analysis_mode, requested_by, state, created_at, finished_at,
-		       COALESCE(cli_version, '')
+		       COALESCE(cli_version, ''), COALESCE(refusal, '')
 		FROM abom_analysis_run ORDER BY row_id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("listing runs: %w", err)
@@ -455,7 +472,7 @@ func (s *Store) AnalysisRuns() ([]AnalysisRun, error) {
 		}
 		var finished sql.NullString
 		if err := rows.Scan(&run.RowID, &run.Predicate, &run.Mode, &run.RequestedBy,
-			&run.State, &run.CreatedAt, &finished, &run.CLIVersion); err != nil {
+			&run.State, &run.CreatedAt, &finished, &run.CLIVersion, &run.Refusal); err != nil {
 			return nil, fmt.Errorf("scanning a run: %w", err)
 		}
 		run.FinishedAt = finished.String

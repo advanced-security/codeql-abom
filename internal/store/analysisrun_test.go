@@ -199,6 +199,40 @@ func startedRun(t *testing.T, s *Store) int64 {
 	return id
 }
 
+// A run that could not start says why on the run. Left pending, it read as a run about to start,
+// and the reason reached only the server's log.
+func TestARefusedRunSaysWhyUntilItStartsAgain(t *testing.T) {
+	s := newTestStore(t)
+	id := startedRun(t, s)
+	why := "no suite this run can see offers acme/gone"
+
+	if err := s.RefuseAnalysisRun(id, why); err != nil {
+		t.Fatalf("RefuseAnalysisRun: %v", err)
+	}
+	run, err := s.AnalysisRun(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.State != RunRefused || run.Refusal != why || run.FinishedAt == "" {
+		t.Errorf("the refused run reads %q %q finished %q, want %q, the reason, and when",
+			run.State, run.Refusal, run.FinishedAt, RunRefused)
+	}
+	listed, err := s.AnalysisRuns()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].Refusal != why {
+		t.Errorf("the list reads %+v, want the run carrying its reason", listed)
+	}
+
+	if err := s.SetAnalysisRunState(id, RunRunning); err != nil {
+		t.Fatal(err)
+	}
+	if run, _ := s.AnalysisRun(id); run.Refusal != "" {
+		t.Errorf("a run under way still reads refused: %q", run.Refusal)
+	}
+}
+
 // A run that kept only the databases it could analyze would quietly mean something narrower than
 // it was asked for, and the narrowing would be invisible exactly where it matters most.
 func TestARunKeepsEveryRepositoryTheScopeNamedIncludingTheOnesItCannotAnalyze(t *testing.T) {
