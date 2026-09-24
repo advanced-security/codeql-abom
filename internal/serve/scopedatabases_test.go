@@ -2,6 +2,7 @@ package serve
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -21,28 +22,31 @@ func resolveDatabases(t *testing.T, s *Server, query string) (store.DatabaseSet,
 	return got, w.Code
 }
 
-// One language, or it is not the same scope. A separate syntax for choosing databases would make
-// "what am I looking at" and "what am I about to run this against" two questions that look alike.
-func TestTheDatabaseEndpointRefusesExactlyWhatTheMatchEndpointRefuses(t *testing.T) {
+// The preview is the run's own resolution, so a term a run refuses is refused here too. Refusing
+// less would show a reader a set the run then declines to cover.
+func TestTheDatabaseEndpointRefusesWhatARunRefuses(t *testing.T) {
 	s, _ := newServer(t)
 
-	for _, query := range []string{"kinds=workflow", "origins=seed", "minReach=5", "ref=tag"} {
-		matched := httptest.NewRecorder()
-		s.match(matched, httptest.NewRequest("GET", "/api/match?rules=abom%2Fone&"+query, nil))
+	for _, query := range []string{
+		"kinds=workflow", "origins=seed", "minReach=5", "ref=tag", "flags=findings",
+	} {
+		started, _ := startRefusal(t, s, "rules=abom%2Fone&"+query)
 		_, code := resolveDatabases(t, s, "rules=abom%2Fone&"+query)
-		if code != matched.Code {
-			t.Errorf("%s answered %d resolving databases and %d matching nodes; one predicate "+
-				"refused two ways is two policy engines", query, code, matched.Code)
+		if code != http.StatusBadRequest || code != started {
+			t.Errorf("%s answered %d previewing and %d starting a run, want both refused",
+				query, code, started)
 		}
 	}
 }
 
-// The finding predicates are what it does apply, and it has to apply the same ones.
-func TestTheDatabaseEndpointAcceptsTheFindingPredicates(t *testing.T) {
+// Every term that chooses repositories is applied: the unit's scope, names, findings and shape.
+func TestTheDatabaseEndpointAcceptsEveryTermThatChoosesRepositories(t *testing.T) {
 	s, _ := newServer(t)
 
 	for _, query := range []string{
 		"rules=abom%2Fone", "notRules=abom%2Ftwo", "provider=CodeQL", "severity=error",
+		"scope=owned", "q=app", "properties=business_id%3A3", "repositories=octo-org%2Fapp",
+		"mode=regular",
 	} {
 		if _, code := resolveDatabases(t, s, query); code != 200 {
 			t.Errorf("%s was refused with %d, want 200", query, code)

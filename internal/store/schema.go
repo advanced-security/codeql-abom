@@ -722,6 +722,7 @@ var addedColumns = []struct{ table, column, decl string }{
 	// it, which must not read as the operator having chosen it.
 	{"abom_query_request", "target_source", "TEXT"},
 	{"abom_query_request", "source_run_id", "INTEGER"},
+	{"abom_query_request", "target_detail", "TEXT"},
 	// A member recorded before this has no way back to its findings, which reads as not evaluated
 	// rather than as having found none.
 	{"abom_analysis_member", "query_run_id", "INTEGER"},

@@ -1310,6 +1310,36 @@ public sealed record AnalysisRunList
     public IReadOnlyList<AnalysisRun> Runs { get; init; } = [];
 }
 
+/// <summary>One database a run's scope resolved to: held on disk, or analyzed before and not held.</summary>
+public sealed record ScopedDatabase
+{
+    public string Repository { get; init; } = string.Empty;
+    public string Commit { get; init; } = string.Empty;
+    public string Mode { get; init; } = string.Empty;
+
+    /// <summary><c>retained</c> or <c>buildable</c>.</summary>
+    public string Status { get; init; } = string.Empty;
+}
+
+/// <summary>A repository a run's scope reached that resolved to no database, and why.</summary>
+public sealed record DatabaseGap
+{
+    public string Repository { get; init; } = string.Empty;
+    public string Reason { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// What a run over a predicate would cover, resolved by the server the way the run itself resolves
+/// it. <see cref="Unresolved"/> says why an answer holding nothing holds nothing.
+/// </summary>
+public sealed record DatabaseSet
+{
+    public IReadOnlyList<ScopedDatabase> Databases { get; init; } = [];
+    public IReadOnlyList<DatabaseGap> Gaps { get; init; } = [];
+    public string Mode { get; init; } = string.Empty;
+    public string Unresolved { get; init; } = string.Empty;
+}
+
 /// <summary>One result a member of a run reported.</summary>
 public sealed record RunFinding
 {
@@ -1388,4 +1418,90 @@ public sealed record QueryRequestList
     public IReadOnlyList<QueryRequest> Requests { get; init; } = [];
     public IReadOnlyList<string> Kinds { get; init; } = [];
     public IReadOnlyList<string> Statuses { get; init; } = [];
+}
+
+/// <summary>One agent session on a request, and how much of what it tried was refused.</summary>
+public sealed record AuthoringSession
+{
+    public long RowId { get; init; }
+    public long RequestId { get; init; }
+
+    /// <summary><c>running</c>, <c>finished</c>, <c>stopped</c>, <c>failed</c> or <c>interrupted</c>.</summary>
+    public string State { get; init; } = string.Empty;
+    public string StartedBy { get; init; } = string.Empty;
+    public string Model { get; init; } = string.Empty;
+    public string StartedAt { get; init; } = string.Empty;
+    public string EndedAt { get; init; } = string.Empty;
+
+    /// <summary>How it ended, in words: the agent's last message, or why it stopped.</summary>
+    public string Detail { get; init; } = string.Empty;
+    public int Events { get; init; }
+    public int Refused { get; init; }
+}
+
+/// <summary>A ql-mcp call the gate approved and has not seen answered: CodeQL at work for the agent.</summary>
+public sealed record AuthoringFlight
+{
+    public string Tool { get; init; } = string.Empty;
+    public string Subject { get; init; } = string.Empty;
+    public string Step { get; init; } = string.Empty;
+    public string Since { get; init; } = string.Empty;
+}
+
+public sealed record AuthoringSessionList
+{
+    public IReadOnlyList<AuthoringSession> Sessions { get; init; } = [];
+    public IReadOnlyList<AuthoringFlight> InFlight { get; init; } = [];
+}
+
+/// <summary>One hook invocation in a session, as the gate decided or saw it.</summary>
+public sealed record AuthoringEvent
+{
+    public long RowId { get; init; }
+    public long SessionId { get; init; }
+    public string At { get; init; } = string.Empty;
+    public string Hook { get; init; } = string.Empty;
+    public string Tool { get; init; } = string.Empty;
+    public string Subject { get; init; } = string.Empty;
+
+    /// <summary><c>allowed</c>, <c>refused</c>, <c>review</c>, <c>succeeded</c>, <c>failed</c> or <c>noted</c>.</summary>
+    public string Decision { get; init; } = string.Empty;
+    public string Step { get; init; } = string.Empty;
+    public string Reason { get; init; } = string.Empty;
+    public string Detail { get; init; } = string.Empty;
+
+    /// <summary>How long the call ran; null where nothing measured it, which is not zero.</summary>
+    public long? TookMs { get; init; }
+}
+
+/// <summary>A page of a timeline, and the cursor to read on from.</summary>
+public sealed record AuthoringEventPage
+{
+    public IReadOnlyList<AuthoringEvent> Events { get; init; } = [];
+    public long Next { get; init; }
+}
+
+/// <summary>
+/// What a tool query such as PrintAST printed over a request's test database. The body arrives
+/// only when one tree is asked for.
+/// </summary>
+public sealed record AuthoringAst
+{
+    public long RowId { get; init; }
+    public long SessionId { get; init; }
+    public long RequestId { get; init; }
+    public string QueryId { get; init; } = string.Empty;
+    public string PrintedAt { get; init; } = string.Empty;
+    public string Query { get; init; } = string.Empty;
+    public string Database { get; init; } = string.Empty;
+    public string SourceFiles { get; init; } = string.Empty;
+    public string TestDigest { get; init; } = string.Empty;
+    public int Size { get; init; }
+    public bool Truncated { get; init; }
+    public string Body { get; init; } = string.Empty;
+}
+
+public sealed record AuthoringAstList
+{
+    public IReadOnlyList<AuthoringAst> Asts { get; init; } = [];
 }

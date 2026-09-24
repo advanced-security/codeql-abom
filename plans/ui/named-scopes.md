@@ -32,14 +32,16 @@ flowchart LR
    serializer are how the Explorer came to write `ref` and read `refStyle`. What a page can apply
    comes from the server: `/api/views` carries only the node listing's refusal (`listingRefuses`),
    which the Inventory's chips read whatever unit is on screen, so each Inventory unit, the graph
-   and a run need their own from the same place. Depends on nothing.
+   and a run need their own from the same place. A run's is declared —
+   `view.Spec.UnenforceableAsRun` — and served on no listing yet. Depends on nothing.
 2. **The Explorer keeps a scope, and loads one while another is drawn.** Its named scopes are
    buttons on the empty frame, gone once anything is drawn. Keeping sends the picture beside the
    predicate: `abom_saved_view` holds a presentation that nothing in the interface writes, because
    the Inventory's *Keep* sends none. Depends on 1.
 
-The CodeQL page's half is [on-demand analysis](../api/on-demand-analysis.md) item 4, whose run
-draft takes this control; which terms a run applies is that item's fork.
+The CodeQL page's half is [on-demand analysis](../api/on-demand-analysis.md) item 2, whose run
+draft takes this control; the server already resolves a named scope's run to what the Repositories
+unit lists for it.
 
 ## The constraints that must not be broken
 

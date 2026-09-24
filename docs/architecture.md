@@ -108,6 +108,20 @@ readiness and never advances anything itself.
 finding that should not have fired, or a repository where nothing fired that should have — each
 checked against the run and the query when it is filed.
 
+**An agent can write the query a request asks for, inside bounds ABOM sets.** A person starts a
+session from the request. ABOM drives the Copilot CLI through the Copilot SDK, with ql-mcp as the
+only tool server. Every tool call passes through ABOM's own callbacks before and after it runs.
+
+- Writes are confined to the target's source, help and test fixtures.
+- There is no shell.
+- Nothing the CLI would load from the machine is loaded.
+- A call that cannot be recorded is refused.
+
+The session holds the machine-wide CodeQL lock for its lifetime, and is refused while discovery
+crawls. Its timeline and every tree `PrintAST` printed are kept, append-only, and shown on the
+request. What the agent says it did is never a mark. Every step is re-derived from the files and
+from ABOM's own records, and no session writes `.expected`.
+
 **A crawl is not a feedback loop.** Keeping an organization current and answering the question
 somebody arrived with are different shapes, so a scope also resolves to a set of databases and a run
 can be asked for over it. A run records what it asked before it spends anything, is stoppable, and
@@ -116,7 +130,9 @@ every reader taught about a second source. A member with no database gets one bu
 crawl builds one, at the commit on record or, where nothing names one, at the default branch, and is
 recorded at the database it was analyzed against. Only what the crawl would build is built: a
 regular database, for a repository ABOM tracks, since ingesting any other would enter it as a seed.
-Nothing a run produces leaves the machine.
+A member whose evaluation is already stored under the same run key is skipped and carries that
+answer, naming the run that produced it; editing a query changes its version, so tuning is never
+skipped. Nothing a run produces leaves the machine.
 
 **A database is extracted once, not once per question.** Retained CodeQL databases are keyed on the
 tuple a run is keyed on, so the cache and the ledger cannot disagree about which database answered.
@@ -228,6 +244,9 @@ workflow is never an edge source; edges leave its steps and its jobs.
 | `abom_query_test` | What that version's own tests made of it, the stage they reached and a digest of the test files, which is what the `test` stage reads |
 | `abom_query_request` | What somebody asked a query to catch or stop catching, with a `COMPLIANT` and a `NON_COMPLIANT` example, the target and who chose it |
 | `abom_query_request_evidence` | The run results a request was asked from: a false alarm names a finding, a missed detection a repository |
+| `abom_authoring_session` | An agent session somebody started on a request, and whether it finished, was stopped, failed or was interrupted by a restart |
+| `abom_authoring_event` | Every tool call a session made or was refused, recorded before it ran, with the decision and the reason. Append-only |
+| `abom_authoring_ast` | What `PrintAST` printed over a query's test database during a session, with a digest of the fixtures it was printed from. Append-only |
 | `abom_analysis_run`, `abom_analysis_member`, `abom_analysis_query` | A run somebody asked for: which versions, which scope, and what became of every repository in it. A member names the evaluation that reported its findings, so they can be listed one at a time |
 | `abom_analysis_result` | What each query in a run found in each repository. A member counted before this existed has a total and no split |
 | `abom_local_database` | A retained CodeQL database, keyed the way a run is: repository, commit, source filter and mode |
@@ -296,10 +315,14 @@ is a second name for one thing and this is not a published tool.
 **A run is asked over repositories somebody chose.** The selection travels as `repositories=`,
 which resolves each name to its retained database, one it could be rebuilt from, or a named gap —
 whether or not anything was ever found there, because a new query has found nothing anywhere yet.
-Combined with a findings term it narrows that term instead. Each member records what every query
-in the run found in it, so a query's own count is never its run's total. A run the server stopped
-under is `interrupted` on the next start: not canceled, since nobody asked, and not `running`,
-since nothing is.
+Combined with a findings term it narrows that term instead. A scope — a named one, or every row
+the Repositories unit lists, chosen at once — covers exactly what that unit lists for it, so a
+run's population is a tab a reader can open and count; names and findings narrow a scope and
+never widen it, and a term that chooses no repository is refused by name. The size is stated
+before Run from the run's own resolution, and a run records the question a name resolved to
+rather than the name. Each member records what every query in the run found in it, so a query's
+own count is never its run's total. A run the server stopped under is `interrupted` on the next
+start: not canceled, since nobody asked, and not `running`, since nothing is.
 
 **A unit is a shape, not a scope.** Inventory reprojects one scope as actions, workflows, jobs,
 repositories, advisories, relationships or coverage, each asking its own endpoint for its own
@@ -326,7 +349,8 @@ construction and an arbitrary node filter is not.
 
 **One predicate resolves two ways: to nodes, and to databases.** *Which things match this* and
 *which databases would have to be analyzed to settle it* are the same scope asked of different
-objects, so they are one language and one enforcement path rather than two. The database resolution
+objects, so they are one language rather than two. The database resolution is a run's, and applies
+the set path's terms and the Repositories unit's, since a run covers repositories. It
 returns a repository, a commit and an analysis mode per entry, each marked retained, buildable or
 unavailable, and reports the repositories it could not resolve as a stated gap — a set that quietly
 omitted them would mean something narrower than it says exactly where that matters most. It builds

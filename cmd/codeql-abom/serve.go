@@ -72,6 +72,11 @@ func reclaimAbandonedWork(s *store.Store, queue *frontier.Queue, stdout, stderr 
 	} else if n > 0 {
 		fmt.Fprintf(stdout, "serve: %d analysis runs were interrupted when the server last stopped\n", n)
 	}
+	if n, err := s.InterruptAuthoringSessions(); err != nil {
+		fmt.Fprintf(stderr, "serve: marking abandoned authoring sessions: %v\n", err)
+	} else if n > 0 {
+		fmt.Fprintf(stdout, "serve: %d authoring sessions were interrupted when the server last stopped\n", n)
+	}
 }
 
 // shouldResume reports whether discovery starts with the server.
@@ -218,6 +223,8 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		"longest reach may go unmeasured, however little arrives")
 	fs.DurationVar(&d.aggregateMinPeriod, "aggregate-min-interval", supervisor.DefaultMinInterval,
 		"shortest gap between two reach rebuilds")
+	var authoring authoringOptions
+	authoring.register(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -304,6 +311,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	if tester, ok := loop.Expander.Resolver.(serve.QueryTester); ok {
 		srv.Tester, srv.QueryDir = tester, runner.CustomPackRoot()
 	}
+	srv.Authoring = newAuthoring(s, authoring, loop, stderr)
 	// Without this the interface can record a declaration and never act on it: declaring names
 	// accounts, and only enumeration turns them into the repositories a report is about.
 	reader, err := readClient(ctx, *apiURL, s, *route)

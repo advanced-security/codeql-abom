@@ -613,24 +613,10 @@ func (s *Store) RepositoriesPage(q RepositoriesQuery) (RepositoriesPage, error) 
 			q.Sort, sortNames(repositorySorts))
 	}
 
-	// Upstream repositories are not the organization's to remediate, and listing them alongside
-	// would imply otherwise.
-	where := `WHERE r.origin = ?`
-	args := []any{OriginSeed}
-	if q.Search != "" {
-		where += ` AND r.repository_full_name LIKE ? ESCAPE '\'`
-		args = append(args, "%"+escapeLike(q.Search)+"%")
-	}
-	bound, bindings, err := s.restrict(q.Grouping, "r.repository_full_name")
+	where, args, err := s.repositoriesWhere(q)
 	if err != nil {
 		return RepositoriesPage{}, err
 	}
-	where += bound
-	args = append(args, bindings...)
-
-	scoped, scopeArgs := repositoryScopeFilter(q)
-	where += scoped
-	args = append(args, scopeArgs...)
 
 	var total int
 	if err := s.DB().QueryRow(
@@ -676,6 +662,41 @@ func (s *Store) RepositoriesPage(q RepositoriesQuery) (RepositoriesPage, error) 
 		return RepositoriesPage{}, err
 	}
 	return RepositoriesPage{Items: items, Total: total}, nil
+}
+
+// repositoriesWhere is the unit's population as a WHERE clause over `repository r`, shared by the
+// page and by a run so the two cannot come to list different repositories.
+func (s *Store) repositoriesWhere(q RepositoriesQuery) (string, []any, error) {
+	// Upstream repositories are not the organization's to remediate, and listing them alongside
+	// would imply otherwise.
+	where := `WHERE r.origin = ?`
+	args := []any{OriginSeed}
+	if q.Search != "" {
+		where += ` AND r.repository_full_name LIKE ? ESCAPE '\'`
+		args = append(args, "%"+escapeLike(q.Search)+"%")
+	}
+	bound, bindings, err := s.restrict(q.Grouping, "r.repository_full_name")
+	if err != nil {
+		return "", nil, err
+	}
+	where += bound
+	args = append(args, bindings...)
+
+	scoped, scopeArgs := repositoryScopeFilter(q)
+	return where + scoped, append(args, scopeArgs...), nil
+}
+
+// listedRepositories names every repository the unit lists for q, unpaged and in name order.
+func (s *Store) listedRepositories(q RepositoriesQuery) ([]string, error) {
+	where, args, err := s.repositoriesWhere(q)
+	if err != nil {
+		return nil, err
+	}
+	return queryAll(s, "listing repositories", func(row *sql.Rows) (string, error) {
+		var name string
+		return name, row.Scan(&name)
+	}, `SELECT r.repository_full_name FROM repository r `+where+
+		` ORDER BY r.repository_full_name`, args...)
 }
 
 // sortNames lists a sort whitelist, so a refusal can say what is on offer.

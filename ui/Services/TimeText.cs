@@ -26,4 +26,11 @@ public static class TimeText
             : local.ToString("d MMM");
         return $"{day} at {local.ToString(format)}";
     }
+
+    /// <summary>A local clock time alone, for rows under a heading that already names the day.</summary>
+    public static string Clock(string timestamp) =>
+        DateTime.TryParse(timestamp, null,
+            System.Globalization.DateTimeStyles.AdjustToUniversal, out var at)
+            ? (at.Kind == DateTimeKind.Utc ? at.ToLocalTime() : at).ToString("HH:mm:ss")
+            : "--:--:--";
 }

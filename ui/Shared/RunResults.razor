@@ -238,6 +238,7 @@ else
     {
         "no_database" => string.IsNullOrEmpty(m.Detail) ? "no database" : m.Detail,
         "failed" => $"failed — {m.Detail}",
+        "skipped" => string.IsNullOrEmpty(m.Detail) ? "skipped" : $"skipped — {m.Detail}",
         _ => m.Status,
     };
 

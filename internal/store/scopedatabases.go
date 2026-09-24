@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // How a scope's database resolved. A reader deciding whether to press something expensive needs
@@ -70,11 +71,8 @@ func (d DatabaseSet) gapped(repository string) bool {
 // resolves to nothing for the reason NodesMatching does: a policy that failed to parse must run
 // against nothing rather than the whole organization.
 func (s *Store) DatabasesMatching(sel FindingSelector) (DatabaseSet, error) {
-	mode := sel.Mode
-	if mode == "" {
-		mode = AnalysisModeRegular
-	}
-	out := DatabaseSet{Databases: []ScopedDatabase{}, Gaps: []DatabaseGap{}, Mode: mode}
+	out := noDatabases(sel.Mode)
+	mode := out.Mode
 	if sel.namesOnlyRepositories() {
 		repositories, err := s.canonicalRepositories(sel.Repositories)
 		if err != nil {
@@ -109,6 +107,59 @@ func (s *Store) DatabasesMatching(sel FindingSelector) (DatabaseSet, error) {
 		return out, err
 	}
 	return s.databasesFor(out, repositories, mode)
+}
+
+// DatabasesListed resolves a run over what the repositories unit lists for q to the databases it
+// covers, narrowed by the selector's names and findings.
+//
+// The selector narrows and never widens: a listing holding nothing resolves to nothing, because
+// handing the set path no repositories would narrow by none.
+func (s *Store) DatabasesListed(q RepositoriesQuery, sel FindingSelector) (DatabaseSet, error) {
+	out := noDatabases(sel.Mode)
+	listed, err := s.listedRepositories(q)
+	if err != nil {
+		return out, err
+	}
+	if len(listed) == 0 {
+		out.Unresolved = "the repositories unit lists no repository for this scope"
+		return out, nil
+	}
+	if len(sel.Repositories) > 0 {
+		if listed = namedAmong(listed, sel.Repositories); len(listed) == 0 {
+			out.Unresolved = "no repository named is among those this scope lists"
+			return out, nil
+		}
+	}
+	// The listing applied the grouping; applying it again through findings would turn a list of
+	// repositories into a question about what was found in them.
+	sel.Repositories, sel.Properties, sel.ExcludeProperties = listed, nil, nil
+	if sel.namesOnlyRepositories() {
+		return s.databasesFor(out, listed, out.Mode)
+	}
+	return s.DatabasesMatching(sel)
+}
+
+// noDatabases is an answer holding nothing yet, in the shape asked for.
+func noDatabases(mode string) DatabaseSet {
+	if mode == "" {
+		mode = AnalysisModeRegular
+	}
+	return DatabaseSet{Databases: []ScopedDatabase{}, Gaps: []DatabaseGap{}, Mode: mode}
+}
+
+// namedAmong keeps the listed repositories a name asks for, in any case it was typed.
+func namedAmong(listed, names []string) []string {
+	asked := map[string]bool{}
+	for _, name := range names {
+		asked[strings.ToLower(name)] = true
+	}
+	out := []string{}
+	for _, repo := range listed {
+		if asked[strings.ToLower(repo)] {
+			out = append(out, repo)
+		}
+	}
+	return out
 }
 
 // namesOnlyRepositories reports a bare repository list; findings would never reach a clean one.

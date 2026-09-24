@@ -165,6 +165,10 @@ func (s *Server) workingCopy() ([]store.WorkingQuery, map[string][]authoring.Ste
 	if err != nil {
 		return nil, nil, err
 	}
+	printed, err := s.Store.NewestASTs()
+	if err != nil {
+		return nil, nil, err
+	}
 	out := make([]store.WorkingQuery, 0, len(queries))
 	for _, q := range queries {
 		pack, _, _ := runner.PackOf(q.Path)
@@ -175,7 +179,7 @@ func (s *Server) workingCopy() ([]store.WorkingQuery, map[string][]authoring.Ste
 		if err != nil {
 			return nil, nil, err
 		}
-		progress, err := authoring.Progress(s.QueryDir, q, tests)
+		progress, err := authoring.Progress(s.QueryDir, q, tests, printed[q.ID])
 		if err != nil {
 			return nil, nil, err
 		}
@@ -247,7 +251,11 @@ func (s *Server) extendedTestRefusal(id, version string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	steps, err := authoring.Progress(s.QueryDir, q, tests)
+	printed, err := s.Store.NewestASTs()
+	if err != nil {
+		return "", err
+	}
+	steps, err := authoring.Progress(s.QueryDir, q, tests, printed[id])
 	if err != nil {
 		return "", err
 	}

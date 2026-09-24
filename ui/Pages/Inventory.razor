@@ -172,14 +172,37 @@
                     }
                 </MudSelect>
             </div>
+            @* Where the rows are repositories, "all" is the scope itself rather than every page of
+               names. The reason sits on the span: a disabled checkbox fires no tooltip. *@
+            @if (_unit == UnitRepositories)
+            {
+                <span data-abom-run-all title="@ChooseAllReason">
+                    <MudCheckBox T="bool" Dense="true" Size="Size.Small" Color="Color.Primary"
+                                 Value="@_all" ValueChanged="@((bool on) => ChooseAll(on))"
+                                 Disabled="@(ChooseAllReason.Length > 0)"
+                                 Label="@($"Choose all {CountText.Number(_total)}")" />
+                </span>
+            }
             <MudText Typo="Typo.body2" data-abom-run-chosen>
-                on @CountText.Of(_chosen.Count, "chosen repository", "chosen repositories")
+                on @(_all
+                    ? CountText.Of(_total, "repository in this scope", "repositories in this scope")
+                    : CountText.Of(_chosen.Count, "chosen repository", "chosen repositories"))
             </MudText>
             <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" DropShadow="false"
                        Disabled="@(!CanStartRun)" OnClick="StartRun" data-abom-run-go>Run</MudButton>
             <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
                        OnClick="StopChoosing" data-abom-run-discard>Cancel</MudButton>
         </div>
+        @if (_size is { } size)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1" data-abom-run-size>
+                @SizeText(size)
+            </MudText>
+        }
+        else if (_sizeRefusal is { Length: > 0 } sizeRefused)
+        {
+            <MudText Typo="Typo.caption" Class="d-block mt-1" data-abom-run-size>@sizeRefused</MudText>
+        }
         @if (_runRefusal is { Length: > 0 } refusedRun)
         {
             <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true" Class="mt-2">@refusedRun</MudAlert>
@@ -1014,6 +1037,12 @@ else
     private string? _runRefusal;
     private bool _starting;
 
+    // Every repository the scope lists rather than the ones ticked, and what the server resolved
+    // the draft to before anything is spent.
+    private bool _all;
+    private DatabaseSet? _size;
+    private string? _sizeRefusal;
+
     private static bool UnitRunsQueries(string unit) => unit is UnitRepositories or UnitDependencies;
 
     private string RunActionReason => UnitRunsQueries(_unit)
@@ -1021,7 +1050,63 @@ else
         : "Only repositories, and the actions that live in them, have a database to run a query against";
 
     private bool CanStartRun =>
-        !_starting && _picked.Count > 0 && _chosen.Count > 0 && Accounts.Identity.Login.Length > 0;
+        !_starting && _picked.Count > 0 && (_all || _chosen.Count > 0) &&
+        Accounts.Identity.Login.Length > 0;
+
+    private bool HasPredicate => Scope.Spec.ToQueryString().Length > 0;
+
+    // Why "all" cannot be sent, or empty when it can. An empty selector names nothing rather than
+    // everything, so with nothing narrowed there is no scope to send.
+    private string ChooseAllReason =>
+        !HasPredicate ? "Narrow the scope first: with nothing narrowed there is no scope to send."
+        : _refusal is { Length: > 0 } ? "This scope does not list repositories here, so there is nothing to choose."
+        : _total == 0 ? "This scope lists no repository."
+        : string.Empty;
+
+    // "All" is sent as the scope, so the server resolves it as the Repositories unit lists it.
+    private string RunPredicate => _all
+        ? Scope.Spec.ToQueryString()
+        : "repositories=" + string.Join(",",
+            _chosen.Order(StringComparer.Ordinal).Select(Uri.EscapeDataString));
+
+    // Counts of what the server resolved, never a claim about what the run will make of them.
+    private static string SizeText(DatabaseSet set)
+    {
+        var total = set.Databases.Count + set.Gaps.Count;
+        if (total == 0)
+        {
+            return set.Unresolved.Length > 0 ? set.Unresolved : "This names no repository.";
+        }
+        var held = set.Databases.Count(d => d.Status == "retained");
+        return $"{CountText.Of(total, "repository", "repositories")}: " +
+               $"{CountText.Number(held)} with a database held, {CountText.Number(total - held)} without one";
+    }
+
+    // Asked of the resolution the run itself uses, so the size shown is the size spent.
+    private async Task StateSize()
+    {
+        _size = null;
+        _sizeRefusal = null;
+        if (!_all && _chosen.Count == 0)
+        {
+            return;
+        }
+        var asked = RunPredicate;
+        var (set, refusal) = await Api.GetDatabasesAsync(asked);
+        // A later choice has already asked again, and this answer is about a draft that is gone.
+        if (asked != RunPredicate)
+        {
+            return;
+        }
+        _size = set;
+        _sizeRefusal = refusal;
+    }
+
+    private async Task ChooseAll(bool on)
+    {
+        _all = on;
+        await StateSize();
+    }
 
     // A docker image lives in no repository, so it has no database to choose.
     private static string? RepositoryOf(ActionSummary a) =>
@@ -1031,13 +1116,13 @@ else
     {
         <span data-abom-run-choose="@repository">
             <MudCheckBox T="bool" Dense="true" Size="Size.Small" Color="Color.Primary"
-                         Value="@_chosen.Contains(repository)"
+                         Value="@(_all || _chosen.Contains(repository))" Disabled="@_all"
                          ValueChanged="@((bool on) => Choose(repository, on))"
                          aria-label="@($"Choose {repository}")" />
         </span>
     };
 
-    private void Choose(string repository, bool on)
+    private async Task Choose(string repository, bool on)
     {
         if (on)
         {
@@ -1047,6 +1132,7 @@ else
         {
             _chosen.Remove(repository);
         }
+        await StateSize();
     }
 
     private async Task StartChoosing()
@@ -1059,6 +1145,9 @@ else
     {
         _choosing = false;
         _chosen.Clear();
+        _all = false;
+        _size = null;
+        _sizeRefusal = null;
         _picked = [];
         _runRefusal = null;
         Draft.Clear();
@@ -1089,7 +1178,10 @@ else
 
     private static string Short(string version) => version.Length <= 12 ? version : version[..12];
 
-    /// <summary>Sent by name, so a repository with no findings is still runnable.</summary>
+    /// <summary>
+    /// Sent by name, or as the scope when all of it is chosen; either way a repository with no
+    /// findings is as runnable as any.
+    /// </summary>
     private async Task StartRun()
     {
         if (!CanStartRun)
@@ -1099,9 +1191,7 @@ else
         _starting = true;
         try
         {
-            var predicate = "repositories=" + string.Join(",",
-                _chosen.Order(StringComparer.Ordinal).Select(Uri.EscapeDataString));
-            var (run, refusal) = await Api.StartAnalysisRunAsync(predicate, _picked, Accounts.Identity.Login);
+            var (run, refusal) = await Api.StartAnalysisRunAsync(RunPredicate, _picked, Accounts.Identity.Login);
             if (run is null)
             {
                 _runRefusal = refusal ?? Api.LastError;
@@ -1165,6 +1255,12 @@ else
         if (_unit == unit) return;
         _unit = unit;
         _sort = null;
+        // N actions are not N repositories, so "all" belongs to the Repositories unit alone.
+        if (_all && _unit != UnitRepositories)
+        {
+            _all = false;
+            await StateSize();
+        }
         Sync();
         await Reload();
     }
@@ -1366,6 +1462,12 @@ else
         _total = page?.Total ?? 0;
         _shown = page?.Items.Count ?? 0;
         _elsewhere = [];
+        if (_all)
+        {
+            // "All" follows the scope, and a scope that stops listing anything has nothing to send.
+            _all = ChooseAllReason.Length == 0;
+            await StateSize();
+        }
         StateHasChanged();
         return new GridData<RepositorySummary> { Items = page?.Items ?? [], TotalItems = _total };
     }

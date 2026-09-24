@@ -1,10 +1,15 @@
 # Progress through dev and test is seven marks, and every mark is evidence
 
-**Status:** Requests and custom catalog rows carry the marks, served by the API; a request's target
-is picked from the catalog and opens its row; a run's query ids open theirs; and a run's results can
-be picked into a prefilled request. What is left is the other direction — a catalog row does not
-name the requests that asked for it, and a request has no detail of its own — and the browser suite
-has never drawn a mark.
+**Status:** Requests and custom catalog rows carry the marks, served by the API.
+
+- A request's target is picked from the catalog and opens its row.
+- A run's query ids open theirs.
+- A run's results can be picked into a prefilled request.
+- A request's detail row starts and stops an agent session, and shows what each session did and
+  the trees it printed.
+
+What is left is mostly the other direction. A catalog row does not name the requests that asked for
+it, and a request has no address of its own. The browser suite has never drawn a mark or a session.
 
 ## Why this exists
 
@@ -62,12 +67,23 @@ have, and *Ask for a change to this query* opens a request with the query select
 false alarm or missed detection — the run recorded and the picked results attached as evidence. It
 is filed when they save it.
 
+**A request's sessions.** The request's detail row holds these:
+
+- *Work it with an agent* and *Stop the session*.
+- A line for each tool call in flight.
+- A row for each session, with its state and *N calls, N refused*.
+- *What it did*, which opens the timeline. Each call shows its time, decision, tool and subject.
+- The trees CodeQL printed, each opened with *Show the tree*.
+
+The row polls every three seconds while a session runs, and stops polling once none does. A
+session's closing message is its detail. It is shown as the agent's words, never as a mark.
+
 ## Pending
 
-1. **A request's own detail, and its address.** `/codeql?tab=requests&request=<n>` opens it; it
-   lists each step with its evidence, the target's rationale when the agent decided it, and links
-   the run it was asked from. Depends on nothing for the steps, and on
-   [`api/authoring-harness.md`](../api/authoring-harness.md) for the rationale.
+1. **A request's own address.** `/codeql?tab=requests&request=<n>` opens the request's row. The
+   detail lists each step with its evidence and links the run the request was asked from. The
+   agent's rationale is already on (a)'s tooltip, as *decided by the agent: …*. Depends on
+   nothing.
 2. **A catalog row names the requests that asked for it**, each linking to 1. Depends on 1.
 3. **Why `extended-test` is refused, before it is pressed.** The server names the first step that
    is not passing; the stage control should say so rather than only reporting the refusal.
@@ -75,10 +91,16 @@ is filed when they save it.
 4. **A run recorded before members kept their evaluation says so.** Such a member reads as not
    evaluated and has nothing to pick, and nothing backfills it; re-running the run links it. The
    pick mode should state that rather than showing an empty list. Depends on nothing.
-5. **The browser suite draws the marks.** Its server starts without `--custom-ql-dir`, so no
-   page-scoped run has a custom row, and the width and row-height limits below were measured by
-   hand, once. Serve a scaffolded query directory holding a query at each state. Depends on
-   nothing.
+5. **The browser suite draws the marks and a session.** Its server starts without
+   `--custom-ql-dir`, so no page-scoped run has a custom row. The width and row-height limits below
+   were measured by hand, once.
+
+   What would fix both:
+
+   - Serve a scaffolded query directory holding a query at each state.
+   - Seed a finished session, with its events and a tree. A seeded session needs no agent.
+
+   Depends on nothing.
 
 ## The constraints that must not be broken
 

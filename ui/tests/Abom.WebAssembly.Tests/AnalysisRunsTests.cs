@@ -6,8 +6,9 @@ namespace Abom.WebAssembly.Tests;
 /// <summary>Each run offers the control its state allows; running again is not starting.</summary>
 public class AnalysisRunsTests : AbomTestContext
 {
-    private static string RunJson(long id, string state, int results = 4) => $$$"""
-        {"rowId":{{{id}}},"predicate":"repositories=octo%2Fapp,octo%2Ftool","mode":"regular",
+    private static string RunJson(long id, string state, int results = 4,
+        string predicate = "repositories=octo%2Fapp,octo%2Ftool") => $$$"""
+        {"rowId":{{{id}}},"predicate":"{{{predicate}}}","mode":"regular",
          "requestedBy":"operator","state":"{{{state}}}","createdAt":"2026-09-22T16:00:00Z",
          "finishedAt":"","results":{{{results}}},
          "queries":[{"queryId":"acme/rule","queryVersion":"v1aabbccddee"}],
@@ -58,6 +59,20 @@ public class AnalysisRunsTests : AbomTestContext
         var cut = Render(RunJson(1, "complete"));
 
         Assert.Contains("octo/app, octo/tool", cut.Find("[data-abom-run-scope]").TextContent);
+    }
+
+    /// <summary>
+    /// A run records its question in canonical form, where a list's commas are escaped. It still
+    /// reads as the repositories it named, and a long list says how many it left unsaid.
+    /// </summary>
+    [Fact]
+    public void ARecordedQuestionReadsAsTheRepositoriesItNamed()
+    {
+        var cut = Render(RunJson(1, "complete",
+            predicate: "repositories=octo%2Fapp%2Cocto%2Fcli%2Cocto%2Ftool%2Cocto%2Fweb"));
+
+        Assert.Contains("octo/app, octo/cli, octo/tool and 1 more",
+            cut.Find("[data-abom-run-scope]").TextContent);
     }
 
     /// <summary>Each query a run names opens its own row in the catalog, version included.</summary>

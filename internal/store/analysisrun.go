@@ -20,6 +20,8 @@ const (
 	AnalysisTimedOut   = "timeout"
 	AnalysisNoDatabase = "no_database"
 	AnalysisEvicted    = "evicted"
+	// AnalysisSkipped carries the answer of an evaluation already stored under the same run key.
+	AnalysisSkipped = "skipped"
 )
 
 // What became of a run as a whole.
@@ -92,8 +94,8 @@ type AnalysisRequest struct {
 	Predicate   string
 	Mode        string
 	Queries     []AnalysisQuery
-	// Databases and Gaps are what the predicate resolved to, taken straight from DatabasesMatching
-	// so the run is over exactly the set a reader was shown before pressing anything.
+	// Databases and Gaps are what the predicate resolved to, taken straight from the resolution
+	// /api/databases previews, so the run is over exactly the set a reader was shown.
 	Databases []ScopedDatabase
 	Gaps      []DatabaseGap
 }
@@ -252,6 +254,52 @@ func (s *Store) SetAnalysisMemberDatabase(runID int64, from, to DatabaseIdentity
 		return fmt.Errorf("run %d has no member %s at %q", runID, from.Repository, from.Commit)
 	}
 	return nil
+}
+
+// AnsweredBy reports the run member whose stored evaluation answers this run key, and what it
+// found. Only a counted member linked to the key's ledger row answers: a row alone is what a
+// failed ingest leaves behind.
+func (s *Store) AnsweredBy(q QueryRun) (int64, MemberResult, bool, error) {
+	if err := q.identified(); err != nil {
+		return 0, MemberResult{}, false, err
+	}
+	var runID, results int64
+	var at DatabaseIdentity
+	r := MemberResult{ByQuery: map[string]int{}, Counted: true}
+	err := s.db.QueryRow(`
+		SELECT m.run_id, m.query_run_id, m.result_path, m.result_count,
+		       m.repository, m.db_commit, m.source_filter, m.analysis_mode
+		FROM abom_query_run q
+		JOIN abom_analysis_member m ON m.query_run_id = q.row_id
+		WHERE q.run_key = ? AND m.status IN (?, ?) AND m.result_count IS NOT NULL
+		ORDER BY m.run_id DESC LIMIT 1`, q.key(), AnalysisSucceeded, AnalysisSkipped).
+		Scan(&runID, &r.QueryRunID, &r.ResultPath, &results,
+			&at.Repository, &at.Commit, &at.SourceFilter, &at.Mode)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, MemberResult{}, false, nil
+	}
+	if err != nil {
+		return 0, MemberResult{}, false, fmt.Errorf("looking for what answers %s: %w", q.QueryID, err)
+	}
+	r.Results = int(results)
+
+	rows, err := s.db.Query(`
+		SELECT query_id, result_count FROM abom_analysis_result
+		WHERE run_id = ? AND repository = ? AND db_commit = ? AND source_filter = ?
+		  AND analysis_mode = ?`, runID, at.Repository, at.Commit, at.SourceFilter, at.Mode)
+	if err != nil {
+		return 0, MemberResult{}, false, fmt.Errorf("reading what run %d found: %w", runID, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var query string
+		var n int
+		if err := rows.Scan(&query, &n); err != nil {
+			return 0, MemberResult{}, false, fmt.Errorf("scanning what run %d found: %w", runID, err)
+		}
+		r.ByQuery[query] = n
+	}
+	return runID, r, true, rows.Err()
 }
 
 func (s *Store) setMember(runID int64, id DatabaseIdentity, r MemberResult) error {

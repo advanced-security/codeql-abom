@@ -1,11 +1,14 @@
 # Run these queries, against this scope, now
 
-**Status:** A run is asked for over repositories chosen in the Inventory, carried out, stopped, and
-counted per repository and per query. A member with no database on disk gets one built through the
-crawl's own fetch, caches and lock; its results land in the same tables the crawl writes, attributed
-to the same nodes, and each member's results are listed one at a time, to be picked as a request's
-evidence. What it cannot do is decline work already on record, say what it will cost before it
-starts, or start from the CodeQL page over a scope somebody named.
+**Status:** A run is asked over repositories chosen in the Inventory — one by one, or all that a
+scope lists on the Repositories unit, sent as the scope itself — states how many it covers and how
+many already have a database before it is pressed, and is carried out, stopped, and counted per
+repository and per query. A member with no database on disk gets one built through the crawl's own
+fetch, caches and lock, and a member whose evaluation is already stored is skipped with that
+answer; results land in the same tables the crawl writes, attributed to the same nodes, and each
+member's results are listed one at a time, to be picked as a request's evidence. What it cannot do
+is start from the CodeQL page over a scope somebody named, or gather, while it runs, the
+repositories it still has to do.
 
 ## Why this exists
 
@@ -23,85 +26,70 @@ reach the graph, the Inventory, a policy and the gate exactly as a crawl's do.
 
 What is left is that a run is cheaper to start than to steer.
 
-**It cannot decline work.** `Executor.Run` analyzes every member, building what it lacks, every
-time, while the crawl's `expand.pendingWork` refuses what is already recorded at the same commit,
-pack digest, CLI version and sparse filter. Both are defensible for different questions, which is
-why this is a fork rather than an omission.
-
 **It starts from the selection.** A catalog row's Run carries its version to the Inventory, where
 repositories are chosen and the run is the verb over them; *Run queries* there starts the same flow
 without a version chosen. The selection travels as `repositories=`, which resolves by name, so a
-repository nothing has fired in is as runnable as one with findings.
+repository nothing has fired in is as runnable as one with findings. *Choose all* on the
+Repositories unit sends the scope instead, which resolves to exactly the rows that unit lists, so
+a selection is never chosen page by page.
 
 ```mermaid
 flowchart LR
     CAT["CodeQL catalog row"] -->|"version"| INV["Inventory selection"]
-    INV -->|"POST /api/runs?repositories="| REC["abom_analysis_run<br/>+ member per repository"]
+    INV -->|"GET /api/databases?…<br/>size before Run"| PRE["the run's own resolution"]
+    INV -->|"POST /api/runs?repositories=<br/>or the scope itself"| REC["abom_analysis_run<br/>+ member per repository"]
+    PRE ---|"the same set"| REC
     REC -->|"/api/runs/{id}/start"| EXEC["Executor.Run"]
     EXEC -->|"runner.AnalyzeQueries"| SARIF["SARIF per member"]
     SARIF -->|"count by ruleId"| RES["abom_analysis_result"]
     SARIF -->|"ingest.FindingsFromSARIF"| FIND["abom_finding"]
     FIND -->|"LinkFindingsToNodes"| NODE["abom_finding_node<br/>graph, units, policy"]
     STOP["/api/runs/{id}/cancel"] -->|"member in flight<br/>back to pending"| EXEC
-    EXEC -. "no skip decision consulted" .-> PEND["expand.pendingWork"]
+    EXEC -->|"answered already:<br/>skipped, with that answer"| LEDGER["abom_query_run<br/>+ the member that stored it"]
     EXEC -->|"no database on disk"| BUILD["Expander.buildDatabase<br/>checkout cache, runner lock"]
     BUILD -->|"database, retained<br/>when configured"| EXEC
     REC -. "untracked name or<br/>extended shape" .-> NOBUILD["never built:<br/>no database, with the reason"]
     FIND -->|"sighted under the<br/>member's ledger row"| PICK["/api/runs/{id}/results<br/>picked as request evidence"]
-    CAT -. "no scope offered here" .-> NAMED["named scope<br/>?view="]
-    NAMED -. "set path refuses<br/>scope, flags, ref" .-> REC
-    style PEND fill:#3d2d1d
+    CAT -. "no scope offered here" .-> DROP["a named scope chosen<br/>on the CodeQL page"]
+    NAMED["named scope<br/>?view="] -->|"resolves as the<br/>Repositories unit lists it"| REC
+    DROP -. "would send" .-> NAMED
     style NOBUILD fill:#3d2d1d
-    style NAMED fill:#3d2d1d
+    style DROP fill:#3d2d1d
 ```
 
 ## Pending
 
-1. **Decide what a re-run of an unchanged database means, and make the answer visible.**
-   `Executor.Run` consults nothing, and "run again" re-analyzes every member. **The alternatives
-   are: always run and say the result supersedes; honor the skip and report each skipped member
-   with its reason; or make it an explicit choice on the request.** Whichever is chosen, a member
-   that did not run says so rather than reading as a clean result. A member that could not be built
-   is attempted again on every pass: on the crawled organization, the two owned repositories with
-   nothing to build are fetched again each time. Depends on nothing.
-2. **State the size and the cost before spending it.** A run says how many repositories it resolved
-   to and how many have a database once it exists; nothing says so before Run is pressed, and
-   nothing says how long it will take. The cycle timings are logged and surfaced nowhere. Shared
-   with [`ui/tier-suites.md`](../ui/tier-suites.md) item 1, which owns the number; this is one of
-   its consumers. Depends on nothing.
-3. **A selection larger than a page.** The Inventory's choose boxes act on the rows in view, so a
-   selection across pages is chosen page by page and a whole filtered scope cannot be chosen in one
-   act. The alternatives are: a "choose all N" that sends the scope's predicate rather than names;
-   or a cap stated beside the control. Depends on nothing but the decision.
-4. **Run chosen queries over a named scope, from the CodeQL page.** Pick one or more query versions
+1. **Say what is left while a run is under way.** The Runs tab counts members by state — *28
+   waiting, 1 running* — and lists each one with its state only behind *Show every repository*,
+   mixed in with the finished ones. **Decided: the number and the list still to do come first, and
+   a time remaining is optional.** One, where shown, is taken from the run's own pace — how long
+   its finished members took — so a run starts without one, and the figure is revised as each
+   member finishes. It is never forecast before Run from tier or cycle timings: those describe
+   other queries over other repositories, and a time varies by machine, repository and query in
+   ways no forecast from elsewhere captures. Not where the work is. Depends on nothing.
+2. **Run chosen queries over a named scope, from the CodeQL page.** Pick one or more query versions
    on the catalog tab and a scope from a drop-down of the named ones — the six built-ins and every
-   scope anyone kept — and run, without visiting the Inventory. Today the catalog
-   hands one version to the Inventory, and the draft that holds several is the Inventory's; it
-   belongs on both rather than copied. The server already resolves `?view=<name>` for
-   `POST /api/runs` and `/api/databases`. **Resolution is what blocks it:** the set path refuses
-   `scope`, `flags` and `ref`, which every built-in carries, so on the crawled organization all six
-   are refused while the Repositories unit lists *What you own* as 30 repositories — 21 with a
-   retained database, 7 holding no actions content, 2 that have failed eight times. A name is a
-   population on the Inventory and nothing in a run. The fork:
-   - **As the Repositories unit lists it** — the run's set is a tab a reader can open and count, and
-     the finding terms that unit refuses (`rules`, `severity`, …) stop scoping a run, though the set
-     path takes them today.
-   - **Teach the set path `scope`** — one resolution for a run, `/api/match` and every policy, which
-     widens the gate's language and so is [filter enforcement](filter-enforcement.md)'s decision.
-
-   Either answers item 3's *choose all N*, which sends a predicate instead of names for the same
-   reason. The drop-down is the shared control [named scopes](../ui/named-scopes.md) puts on every
-   page that builds a scope, so a run's scope can be kept here and opened anywhere; one the run path
-   refuses is disabled with its terms named, and a chosen one shows its resolution — held, to build,
-   gaps — before Run. Depends on the fork and on that control.
+   scope anyone kept — and run, without visiting the Inventory. Today the catalog hands one version
+   to the Inventory, and the draft that holds several is the Inventory's; it belongs on both rather
+   than copied. The server resolves it already: `POST /api/runs?view=owned` covers the 30
+   repositories the Repositories unit lists for *What you own*, and `view=advisory-routes` its 15;
+   the other four built-ins carry `flags` or `ref` and are refused with those terms named. What is
+   left is the page: the drop-down is the shared control [named scopes](../ui/named-scopes.md) puts
+   on every page that builds a scope, so a run's scope can be kept here and opened anywhere; one a
+   run refuses is disabled with its terms named, and a chosen one shows its size before Run. The
+   run records the canonical predicate a name resolved to and not yet the name beside it, as how it
+   was chosen, which a run chosen from a drop-down is the first to need. Depends on that control.
 
 ## What it means that the scope resolution retired into this
 
 `store.DatabasesMatching` resolves a predicate to `(repository, commit, mode)` triples marked
 retained, buildable or unavailable, states its gap per repository, echoes the mode and explains an
-empty set rather than falling back. `/api/databases` serves it through the same enforcement path as
-`/api/match`. That work is done and the plan describing it is gone; what survives of it are the
-constraints below and the fact recorded in
+empty set rather than falling back. A scope asking the Repositories unit's question goes through
+`store.DatabasesListed` first, which takes exactly the rows that unit lists and hands them on as
+names. `/api/databases` serves the run's own resolution and refuses what a run refuses
+(`view.Spec.UnenforceableAsRun`), which is no longer what `/api/match` refuses: a run applies the
+set path's terms and the Repositories unit's. That work is done and the plan describing it is gone;
+what survives of it are the constraints below and the fact recorded in
 [`docs/architecture.md`](../../docs/architecture.md#reading-the-data-out).
 
 ## The constraints that must not be broken
@@ -137,6 +125,14 @@ before the split existed has a total and no share, and is shown that way rather 
 by spaces, with a version hashed over the set; the catalog lists that row as a lane and credits
 each query it names.
 
+**A skip carries the answer it declines to repeat.** A member already answered under the same run
+key — commit, filter, mode, CLI, pack digest and the query's version over its whole import closure —
+is recorded `skipped`, linked to that evaluation, with its counts and document, and names the run
+that produced them. Only a member that stored its answer in full answers: a ledger row alone is
+what a failed ingest leaves. An edit changes the version, so tuning is never skipped; a change to
+how ABOM reads results is in no key, which is the gap `next.md` records for the crawl as well. A
+member that could not be built stored nothing, so it is attempted again on every pass.
+
 **A member that has not run has no result count, and a member that found nothing has a zero.**
 `result_count` is nullable for exactly this reason. Collapsing them reports a clean result for work
 that never happened.
@@ -149,10 +145,23 @@ report a member that found nineteen results as having found none.
 separate, which is what lets a reader see the size of a thing before it happens and what lets a
 simulation resolve a scope without spending a minute of cloning.
 
-**A run records the question, never only its name.** `startRun` keeps the query string verbatim, so
-a run scoped by `view=mine` would record the name, and keeping another scope as *mine* replaces it,
-as a release can replace a built-in. The run records the canonical predicate the name resolved to,
-with the name beside it as how it was chosen.
+**A run records the question, never only its name.** It records the canonical predicate a name
+resolved to, so keeping another scope under the name — as a release can replace a built-in —
+cannot change what an old run says it asked. The name beside it, as how the run was chosen, is
+item 2's to record.
+
+**A run's scope is a tab a reader can open and count.** A term the Repositories unit applies
+resolves to exactly the rows that unit lists: the same WHERE clause, the same owned closure, seeds
+only. Names and findings terms narrow it and never widen it, so a listing holding nothing is
+refused rather than handed on: an empty list narrows the set path by nothing, and a rule beside an
+empty owned scope would otherwise reach every repository it ever fired in. A term that chooses no
+repository — `flags`, `ref`, `kinds` and the rest — is refused by name. Without one of the unit's
+terms, names and findings keep the set path's meaning, which is how a rule's own reach is still
+runnable.
+
+**The preview is the run.** `/api/databases` answers with the resolution `POST /api/runs` records,
+and refuses what it refuses. A size shown before Run from anywhere else is a size the run need not
+spend.
 
 **A database that does not exist is a stated absence, not an exclusion.** Returning only what is on
 disk makes a scope silently mean something narrower than it says, and the narrowing is invisible
@@ -206,6 +215,7 @@ store boundary and a run cannot be created without it.
 - Cancelling a run mid-flight leaves every member in a state a reader can interpret, and leaves the
   frontier exactly as it was.
 - Killing the process mid-run leaves a run record a reader can interpret.
-- Cost stated before a run is compared to the cost it took, once, so the estimate is calibrated.
-- A run over a named scope covers the repositories its resolution showed before Run, and still
-  states that predicate after another scope is kept under the same name.
+- A time remaining, where one is shown, comes from the run's own finished members, is absent before
+  the first one finishes, and is compared once against when the run actually ended.
+- A run over a named scope chosen on the CodeQL page covers the repositories its size showed
+  before Run, and names the scope it was chosen by.

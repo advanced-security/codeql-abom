@@ -59,6 +59,10 @@ func packSearchPath() []string {
 	return out
 }
 
+// PackSearchPath is where this process's CLI invocations resolve packs, for a tool that runs the
+// CLI itself and has to resolve them the same way.
+func PackSearchPath() []string { return packSearchPath() }
+
 // BindableSuites lists every suite a tier may be bound to, across this repository's packs and the
 // operator's.
 //

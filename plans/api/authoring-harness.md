@@ -1,7 +1,13 @@
 # The authoring loop runs inside ABOM, and every step it takes is checked
 
-**Status:** Nothing exists. ABOM scaffolds the operator's pack, runs its tests and keeps requests,
-but no agent session is started anywhere, and nothing an agent would do is confined or recorded.
+**Status:** A person starts a session from a request's row. ABOM drives the Copilot CLI through the
+Go SDK, with ql-mcp as the only tool server. It confines and records every call before the call
+runs, keeps what `PrintAST` printed, and re-derives every step from disk. What is left:
+
+- the operator's review of `.expected`
+- what a session spends
+- a run's results becoming a drafted request
+- where ql-mcp is installed from
 
 ## Why this exists
 
@@ -29,56 +35,127 @@ function that takes a tool call and returns a decision.
 
 ```mermaid
 flowchart LR
-    REQ["request row"] -. "a person presses Author" .-> SES["SDK session<br/>in the ABOM server"]
-    SES -. "JSON-RPC" .-> CLI["Copilot CLI<br/>server mode"]
-    CLI -. "stdio MCP" .-> QLMCP["ql-mcp 2.27.1"]
-    QLMCP -->|"codeql"| WS["operator workspace<br/>src/ and test/"]
-    SES -. "before and after<br/>every tool call" .-> HOOKS["Go callbacks:<br/>confine, record"]
-    HOOKS -. "timeline" .-> LEDGER["step ledger"]
+    REQ["request row"] -->|"a person presses<br/>Work it with an agent"| SES["SDK session<br/>in the ABOM server"]
+    SES -->|"JSON-RPC"| CLI["Copilot CLI<br/>ModeEmpty"]
+    CLI -->|"stdio MCP"| QLMCP["ql-mcp 2.27.1"]
+    QLMCP -->|"codeql"| WS["operator workspace<br/>one query's files"]
+    SES -->|"before and after<br/>every tool call"| GATE["Go callbacks:<br/>confine, record"]
+    GATE --> TL["abom_authoring_event<br/>the timeline"]
+    GATE --> AST["abom_authoring_ast<br/>printed trees"]
     WS -->|"ABOM re-derives<br/>every state"| STEPS["step marks"]
-    style SES fill:#3d2d1d
-    style CLI fill:#3d2d1d
-    style QLMCP fill:#3d2d1d
-    style HOOKS fill:#3d2d1d
-    style LEDGER fill:#3d2d1d
+    AST -->|"(e)"| STEPS
+    WS -. "test_accept asks,<br/>and nobody answers yet" .-> REV["operator review<br/>of .expected"]
+    style REV fill:#3d2d1d
 ```
 
 ## The shape
 
-**One client per server, one session per request.** The SDK starts the CLI as a child process over
-stdio. Each session is created with its own `BaseDirectory`, which sets `COPILOT_HOME` for it, under
-ABOM's work directory, so nothing is written into the operator's own `~/.copilot` and a session's
-state can be scrubbed without touching anybody else's. Its `WorkingDirectory` is the custom query
-workspace.
+**One client and one CLI per session.** In SDK v1.0.14, `BaseDirectory` is a client option and not
+a session option. It sets the CLI's `COPILOT_HOME`, so each session starts its own CLI child process
+over stdio.
 
-**ql-mcp is registered per session and pinned.** `MCPServers` names one stdio server,
-`npx -y codeql-development-mcp-server@2.27.1`, with its `Tools` limited to the loop: scaffold,
-pack install, test extract, query run for `PrintAST`, compile, test run, test accept, metadata and
-diagnostics. At runtime a tool is named `<server-key>-<tool>`; allow lists name it
-`mcp:<server-key>-<tool>`. ql-mcp needs Node `^24.15` or later.
+The client runs in `ModeEmpty` and names itself `codeql-abom`. In that mode the CLI loads none of
+these:
 
-**ABOM contributes what only ABOM knows**, as SDK tools rather than prompt text:
+- custom instructions
+- skills
+- hook files
+- plugins
+- the session store
+- memory
+- host git
 
-- the request — description, `COMPLIANT` and `NON_COMPLIANT` examples, kind;
-- the catalog's `actions` queries — ids, help, paths — so the target decision (a) compares against
-  what exists instead of inventing a near-duplicate;
-- a tool that records the target decision, `improve <id>` or `create <proposed id>`, with its
-  rationale, as structured output.
+The CLI loads its own `github-mcp-server` into every session unless told not to. That would give the
+agent write access to GitHub, so a session disables it. A request has at most one session running.
 
-**The prompt is the TDD order**, built on ql-mcp's `test_driven_development` prompt with
-`language=actions`: target, examples into a fixture tree, `.expected`, extract, `PrintAST`, query,
-compile, test. The system message is customized by section, never replaced, so the SDK's own safety
-sections stay in place.
+**Two directories, both removed when the session ends.**
+
+- `<work-dir>/authoring/session-<n>/copilot` is the CLI's home. The agent can neither read nor
+  write it.
+- `…/ql-mcp` is ql-mcp's scratch, holding its temporary files and query logs. The agent can read it
+  and not write it.
+
+The workspace is the operator's pack. ABOM's own packs and the CodeQL package cache are readable.
+
+**ql-mcp is the only MCP server.** It is launched from `--ql-mcp`, by default
+`npx -y codeql-development-mcp-server@2.27.1`, with this environment:
+
+| Variable | Set to |
+| --- | --- |
+| `CODEQL_MCP_WORKSPACE` | the pack |
+| `CODEQL_ADDITIONAL_PACKS` | ABOM's pack search path; a test pack does not resolve without it |
+| `CODEQL_PATH` | ABOM's CodeQL |
+| its temporary and log directories | the scratch |
+
+Its startup can take minutes, so its timeout is 20 minutes. ql-mcp needs Node `^24.15` or later. At
+runtime a tool is named `<server-key>-<tool>`, and a hook strips the prefix.
+
+**The tools are an allowlist.** No shell exists in the session.
+
+- Built in: `view`, `glob`, `grep`, `create`, `edit`.
+- From ql-mcp, the loop:
+  - `codeql_test_extract`
+  - `codeql_query_run`
+  - `codeql_query_compile`
+  - `codeql_test_run`
+  - `codeql_test_accept`
+  - `codeql_resolve_metadata`
+  - `codeql_lsp_diagnostics`
+- From ABOM:
+  - `abom_catalog`, the queries the pack holds.
+  - `abom_target`, which records *improve `<id>`* or *create `<id>` as `<Name>`*, with its
+    rationale, on the request as `target_source = agent` and `target_detail`.
+
+**ABOM lays out the target, not the agent.** The agent cannot make a directory. ql-mcp's
+`create_codeql_query` lays an `actions` test out wrongly (see the ql-mcp table below). So ABOM does
+it:
+
+- An operator's target that has no test gets one scaffolded when the session starts.
+- A created target gets a stub query, holding its `@id` and `none()`, and a test directory when the
+  agent decides.
+
+**The rules are appended, and the request is fenced.** The bounds, the TDD order and the tools'
+argument shapes go into the system message in `append` mode, so the SDK's own safety sections stay.
+The request goes into the prompt, fenced, as data. It is never treated as instructions.
+
+**The lock and the limits.**
+
+- The session holds `runner.Lock` for its lifetime, because ql-mcp's CodeQL calls take none of
+  ABOM's locks.
+- A session is refused unless discovery is paused or stopped.
+- `--authoring-limit` is the wall-clock limit, 45 minutes by default.
+- `--authoring-credits` is an AI Credits limit.
+- A stop control is on the row.
+- A server that restarts marks a running session *interrupted*.
+
+**What a session leaves behind.** Every event is in `abom_authoring_event`:
+
+- `GET /api/authoring-sessions/{id}/events?after=` pages the events.
+- `GET /api/query-requests/{id}/sessions` lists sessions with the tool calls in flight.
+- The request's detail row shows both.
+
+What `PrintAST` or `PrintCFG` printed is kept in `abom_authoring_ast` with the digest of the
+fixtures:
+
+- It is read from the path ql-mcp names, and only inside the scratch.
+- It is capped at 1 MiB.
+- The agent is told which file holds the tree.
+
+(e) passes from the newest kept tree whose digest matches the fixtures on disk.
 
 ### The callbacks
 
 | Callback | Decides or records |
 | --- | --- |
-| `OnPreToolUse` | allows a write only under the target's `src/<Name>.ql`, `src/<Name>.md` and `test/<Name>/`; denies `abom.db`, anything under ABOM's own `ql/`, and the session's `BaseDirectory`; answers `ask` for `codeql_test_accept` |
-| `OnPermissionRequest` | denies shell by default — the loop needs ql-mcp's tools, not a terminal |
-| `OnPostToolUse` / `OnPostToolUseFailure` | records each tool call against its step, with its outcome, as a timeline entry |
-| `OnSessionStart` / `OnSessionEnd` | binds the session to the request; on end, scrubs the session directory |
-| `OnErrorOccurred` | aborts; nothing retries silently |
+| `OnPreToolUse` | the tool against the allowlist, and each argument against its shape. It allows a write only to the target's `src/<Name>.ql`, `.md` or `.qhelp`, or to a YAML fixture under its test directory. Never to a `.qlref`, `.expected`, `.actual`, library or manifest, or to the test database. It answers `ask` for `codeql_test_accept` |
+| `OnPermissionRequest` | the typed request the CLI raises when a hook defers. It checks the path again after following links, and denies shell, URL and anything unknown. An `ask` is refused with the reason: the operator reviews |
+| `OnPostToolUse` / `OnPostToolUseFailure` | records the outcome and how long the call took. It keeps a printed tree and tells the agent where it is |
+| `OnSessionStart` / `OnSessionEnd` | recorded. The session's directories are removed when it ends |
+| `OnErrorOccurred` | recorded, and the session aborts. Nothing retries silently |
+| session events | ql-mcp's connection status, and each agent message that is not empty |
+
+No callback returns an error. The SDK answers a callback's error to the CLI as a JSON-RPC error and
+says nothing about what the CLI then does, so each callback recovers and denies itself.
 
 | Tool call | Step it belongs to |
 | --- | --- |
@@ -89,42 +166,85 @@ sections stay in place.
 | `codeql_query_compile` | (f) compiles |
 | `codeql_test_run` | (g) tests |
 
-The timeline says what the agent did. **It never sets a mark.** Every step's state is re-derived by
-ABOM from the files on disk and from its own CLI invocations, exactly as for a query somebody wrote
-by hand.
+The timeline says what the agent did. **It never sets a mark.** ABOM re-derives every step's state
+from the files on disk and from its own records, exactly as for a query somebody wrote by hand.
+
+### What ql-mcp 2.27.1 does that the harness works around
+
+| ql-mcp 2.27.1 | What the harness does |
+| --- | --- |
+| The `codeql_*` tools advertise an empty `inputSchema`, so the agent is shown no argument names | The rules name each tool's arguments, and a refusal says what the argument should be |
+| `codeql_query_run` for `PrintAST` without `sourceFiles` fails with `extensional undefined` | The rules say to name the fixture |
+| `sourceFiles` is one string, separated by commas; a list fails | It is refused before it runs, with an example |
+| `codeql_test_extract` passes `language` to `codeql test extract`, which rejects it | The argument is refused, with the explanation |
+| A graphtext result is a directory named `results.txt`, holding `actions/tools/print-ast.txt` | ABOM walks the directory and tells the agent the file |
+| `create_codeql_query` lays an `actions` query out as `src/<Name>/<Name>.ql`, beside a fixture that begins with `//`, which is not YAML | The tool is refused, and ABOM lays out the target |
+
+Each workaround goes when ql-mcp fixes what it works around.
 
 ## Pending
 
-1. **The session runner.** Client lifecycle, one session per request, `BaseDirectory` and
-   `WorkingDirectory`, ql-mcp registration, ABOM's tools and the prompt. Started and cancelled from
-   the request row through control-guarded endpoints; cancellation is `Session.Abort`. The target
-   decision is recorded on the request as `target_source = agent` — the value already exists and
-   nothing writes it — with its rationale in a new nullable `target_detail` column, so *decided by
-   the agent* carries its reason. Depends on [`ql/query-authoring.md`](../ql/query-authoring.md)
-   item 1 for (e); every other step it moves is already derived.
-2. **Confinement, failing closed.** The `OnPreToolUse` and `OnPermissionRequest` decisions above,
-   tested as plain functions over recorded tool calls. **Verify before relying on it**: a callback
-   that returns an error must deny the call. If the SDK treats an error as allow, the callback
-   recovers and denies itself. Depends on 1.
-3. **The `.expected` review.** `codeql_test_accept` writes whatever the query produced. The session
-   stops at `ask`, the request row shows the output against the examples, and the operator approves
-   or rejects; only approval resumes it. Depends on 1.
-4. **The lock and the budget.** ql-mcp's CodeQL invocations take none of ABOM's machine-wide lock, so
-   a session holds `runner.Lock` for its lifetime and is refused while discovery crawls. Each
-   session has an AI Credits limit, a wall-clock limit and a stop control on its row. Depends on 1.
-5. **Where the CLI comes from.** The Go SDK does not bundle the Copilot CLI. The alternatives are:
-   require `copilot` on `PATH` (or `COPILOT_CLI_PATH`) and refuse to start with the reason when it
-   is absent; or embed a pinned CLI with `go tool bundler`, which downloads the release asset and
-   checks it against the release's `SHA256SUMS.txt`, at the cost of a larger binary. On a
-   workstation running VS Code, `copilot` on `PATH` is Copilot Chat's own bundled CLI, so the first
-   means whichever version the editor last installed. Depends on nothing but the decision.
-6. **A run's results become a request.** The operator already picks findings that should not have
+1. **The `.expected` review.**
+
+   **Decided: ABOM accepts; the agent does not.** A session whose `.actual` holds what the examples
+   ask for ends at `codeql_test_accept`. That call is refused with *the operator reviews*.
+
+   The rejected alternative was holding the session open until approval resumed it:
+
+   - That would hold the machine-wide lock, and so the crawl, for as long as the review takes.
+   - The agent has nothing left to do at that point.
+
+   So:
+
+   1. The request's row shows `.actual` beside the `COMPLIANT` and `NON_COMPLIANT` examples.
+   2. Approving runs `codeql test accept` through ABOM's runner, under the lock, and records who
+      approved.
+   3. ABOM then runs the version's own tests, so (f) and (g) come from ABOM's invocation and never
+      from the agent's.
+
+   Rejecting keeps the reason, and the next session's prompt carries it. Depends on nothing.
+
+2. **What a session spent.** The credit limit is enforced, but nothing measures spending. The CLI
+   reports each model call as an `assistant.usage` event, and nothing keeps those events.
+
+   The session row should carry the credits and tokens spent:
+
+   - Record them as the events arrive, so a stopped session still says what it cost.
+   - Show the value as absent when the CLI reported nothing. Never show zero.
+
+   Depends on nothing.
+
+3. **A run's results become a request.** The operator already picks findings that should not have
    fired, or repositories where nothing fired that should have, and files a prefilled request with
-   them as evidence. What the agent adds: it reads the chosen results — each member's SARIF is
-   retained beside the run — ranks them with ql-mcp's `sarif_rank_false_positives` and
-   `sarif_rank_true_positives`, and drafts the description and the examples cut from the chosen
-   code. The operator approves, edits or cancels the draft; nothing is filed without them. Depends
-   on 1–4.
+   them as evidence.
+
+   What the agent adds:
+
+   - It reads the chosen results. Each member's SARIF is retained beside the run.
+   - It ranks them with ql-mcp's `sarif_rank_false_positives` and `sarif_rank_true_positives`.
+   - It drafts the description, and the examples cut from the chosen code.
+
+   The operator approves, edits or cancels the draft. Nothing is filed without them. Depends on
+   nothing.
+
+4. **Where ql-mcp comes from.** `npx` ignores `min-release-age-exclude`, because npm 11.19.1's
+   `libnpmexec` does not read it. Two failures follow:
+
+   - On a machine with a release-age window, a pinned release younger than the window is refused.
+   - A registry proxy that has not mirrored the release answers `ETARGET`.
+
+   On this workstation both were true. What ran was the public tarball, installed with
+   `npm install` into a directory and named by `--ql-mcp`. A session whose MCP server never starts
+   now records that status on the timeline, so it no longer looks like a server with no tools.
+
+   The fork:
+
+   - **(a)** ABOM installs the pinned tarball into its work directory on first use, checked against
+     its published integrity.
+   - **(b)** The operator installs it, and `--ql-mcp` stays the only setting.
+   - **(c)** It ships beside a pinned CLI embedded with `go tool bundler`.
+
+   Depends on nothing.
 
 ## The constraints that must not be broken
 
@@ -148,6 +268,21 @@ person who does not read QL can still read whether the `NON_COMPLIANT` line appe
 
 **A failure denies.** Confinement that allows when its own check breaks is not confinement.
 
+**A call is recorded before it runs, or it does not run.** A timeline with holes is an audit trail of
+only the calls that happened to be recorded.
+
+**Nothing the machine configures reaches a session.** The operator's own `~/.copilot` must not
+decide what an agent in ABOM can do. That covers its instructions, skills, hooks, MCP servers and
+memory. Each is a path by which something other than ABOM widens the bounds.
+
+**A path that a tool's output names is followed only inside the scratch.** The agent steers what
+ql-mcp prints, so a path in that output is resolved through links. It is refused outside the
+session's own directory.
+
+**The CLI is named, never found.** The CLI is a configured path, never whatever `copilot` is first
+on `PATH`. On a workstation running VS Code, the first one on `PATH` is Copilot Chat's shim. On this
+workstation the shim answered *Cannot find GitHub Copilot CLI* and then waited for input.
+
 **Credentials never reach a log or the ledger.** The token comes from the operator's `gh` login or a
 configured token; the session directory is scrubbed when the session ends.
 
@@ -159,6 +294,7 @@ than resolved silently at run time.
 
 - A request carrying two examples ends with every step passing by ABOM's own checks, with no Go
   change for that request, and its timeline names every tool call that got it there.
+- A tree the agent printed is kept. (e) turns to a warning when a fixture changes after it.
 - A write outside the target's files is denied and recorded, and the file is unchanged.
 - A callback made to fail denies the tool call it was deciding.
 - Starting a session while discovery crawls is refused, and a session in flight holds the lock that

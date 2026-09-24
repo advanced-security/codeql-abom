@@ -1,11 +1,20 @@
 # A query is written from an example, not from QL
 
 **Status:** An operator with a directory gets a CodeQL pack whose queries are cataloged from the
-moment they are on disk, tested one query at a time over the tests that name them, and marked
-through seven steps read from evidence. `dev` → `test` is refused until that version's own tests
-pass, and `test` → `extended-test` until every step does; a request names its target by selection.
-What is missing is the one step ABOM cannot produce yet — the AST — and everything between a
-request and a query: nothing turns a request's examples into a test, and no agent writes the query.
+moment they are on disk. Each query is tested over the tests that name it, and marked through seven
+steps read from evidence.
+
+- `dev` → `test` is refused until that version's own tests pass.
+- `test` → `extended-test` is refused until every step passes.
+- A request names its target by selection, or an agent session decides the target and writes the
+  fixtures and the query from the request's examples.
+- (e) is read from the tree that such a session kept.
+
+What is missing:
+
+- an AST for a query written by hand
+- evidence that a test failed before its query existed
+- one `actions-all` pin
 
 ## Why this exists
 
@@ -50,7 +59,7 @@ can check:
 | (b) Help | `src/<Name>.md` beside the query | the file, non-empty |
 | (c) Expected | `test/<Name>/<Name>.expected` | the file; empty is a warning, because a `NON_COMPLIANT` example must yield a line |
 | (d) Test database | the test code extracts | the test directory's `<dir>.testproj` finalized and newer than every test source; a failed extraction leaves one behind unfinished |
-| (e) AST | `PrintAST` read the test database | a recorded run over the current test database |
+| (e) AST | `PrintAST` read the test database | the newest tree it printed during a session, from fixtures with the digest on disk |
 | (f) Compiles | the query is valid QL | the compilation stage of a test run for this version |
 | (g) Tests | the query does what its examples say | `codeql test run` for this version and these tests |
 
@@ -58,19 +67,20 @@ Each is pending, failed, warning or passing. A warning is evidence that has gone
 passed before the `.expected` changed, a test database older than its sources — never a guess.
 **`extended-test` is refused unless (b) through (g) are all passing for that exact version**, which
 makes the second rung earned the way the first is. (a) belongs to a request rather than to a
-version, and is shown only there. **Until (e) can be produced, it is pending on every query, so
-`extended-test` is refused everywhere** — the gate doing its job, not a defect to route around.
+version, and is shown only there. **(e) is pending on every query no session has printed.** So
+`extended-test` stays refused for a query written by hand until item 1 lands. That is the gate
+doing its job, not a defect to route around.
 
 ```mermaid
 flowchart LR
-    REQ["request<br/>two examples"] -->|"(a) a target selected<br/>from the catalog"| DEV["dev"]
+    REQ["request<br/>two examples"] -->|"(a) a target selected,<br/>or decided in a session"| DEV["dev"]
     DEV -->|"(g) its own tests pass,<br/>for this version"| TEST["test"]
     TEST -->|"(b)–(g) all passing"| EXT["extended-test"]
-    AST["(e) PrintAST over<br/>the test database"] -. "nothing produces it,<br/>so this gate stays shut" .-> EXT
-    REQ -. "nothing turns the examples<br/>into a test and a query" .-> DEV
+    SES["authoring session"] -->|"(e) the tree PrintAST<br/>printed, kept"| EXT
+    HAND["a query written<br/>by hand"] -. "nothing prints its tree,<br/>so this gate stays shut" .-> EXT
     EXT -. "nothing enforced" .-> REV["review"]
     REV -. "nothing enforced" .-> DEP["deploy"]
-    style AST fill:#3d2d1d
+    style HAND fill:#3d2d1d
     style REV fill:#3d2d1d
     style DEP fill:#3d2d1d
 ```
@@ -84,30 +94,57 @@ What happens inside `extended-test` — runs over a real scope — is
 
 ## Pending
 
-1. **ABOM produces the AST step itself.** An explicit action runs `PrintAST` for `actions` over the
-   query's kept test database, under the same machine-wide lock as every other CodeQL invocation,
-   and records (e) in an append-only step ledger — the one step whose evidence is an event rather
-   than a file, so the only one that needs a table. The harness records the same step when it calls
-   the tool. Taken from `advanced-security/ql-mcp-actions-tools-src` **2.27.1**, the release carrying
-   the `actions.lock` and `PrintAST` changes ABOM needs. `authoring.Progress` already reports (e)
-   as pending with its reason; this replaces that one line. Depends on that release.
+1. **A query written by hand gets its AST without an agent.** (e) is read from the trees that
+   sessions keep in `abom_authoring_ast`. So a query nobody drove a session over stays pending at
+   (e).
+
+   The fix is an explicit action, and it would:
+
+   - run `PrintAST` for `actions` over the query's kept test database, through ABOM's runner and
+     under the machine-wide lock;
+   - name the fixtures in `sourceFiles`, which ql-mcp 2.27.1 cannot do without;
+   - keep the tree in the same table.
+
+   **The table keys a tree by its session today**, because `session_id` is `NOT NULL`. A tree that
+   ABOM printed itself needs a row with no session, and the joins that reach a request through the
+   session would become outer joins. This is cheapest to decide before the table ships. Depends on
+   nothing.
 2. **A request's examples become a test before any query exists.** `abom_query_request` holds the
    example that should match and, critically, the one that should not. Those become the fixture
-   tree, and the test fails first — for the reason expected — before any query exists to satisfy
-   it. **A query written before its negative case is a query nobody can tell is too broad.** This
-   is the first thing the agent does, driven by
-   [`api/authoring-harness.md`](../api/authoring-harness.md), and a request asked from a run already
-   carries the findings and repositories picked from it. Depends on the harness.
-3. **One `codeql/actions-all`, through ql-mcp's packs.** The authoring session resolves 0.6.1 and
-   ABOM's findings suite pins 0.6.35, so a query unit-tested in one and executed in the other can
-   legitimately differ with nothing downstream saying which answered. **The direction is decided**:
-   the authoring environment takes its `actions` library from ql-mcp's packs, which makes one pin
-   govern both. ql-mcp 2.27.1 carries the `actions.lock` changes that kept ABOM on the newer
-   library, so adopting it ends the skew. Depends on that release.
+   tree, and the test fails first, for the reason expected, before any query exists to satisfy
+   it. **A query written before its negative case is a query nobody can tell is too broad.**
+
+   What a session does now:
+
+   - The session's rules put the fixtures first.
+   - ABOM's stub query reports nothing, so a first test run fails.
+
+   What is missing is evidence that the order was kept. In the sessions driven so far, the agent
+   wrote the query before its first test run, and nothing records a failing run before the query
+   changed. A request asked from a run already carries the findings and repositories picked from
+   it. Depends on nothing.
+3. **One `codeql/actions-all`, through ql-mcp's packs.** Two pins disagree:
+
+   - The operator's pack locks 0.6.2, in its `codeql-pack.lock.yml`.
+   - ABOM's findings suite pins 0.6.35.
+
+   So a query unit-tested under one and executed under the other can legitimately differ, and
+   nothing downstream says which one answered. **The direction is decided**: the authoring
+   environment takes its `actions` library from ql-mcp's packs, so one pin governs both. Sessions
+   now run ql-mcp 2.27.1, which carries the `actions.lock` changes, so this can be started. Depends
+   on nothing.
 4. **It runs against real data before anybody believes it.** A query green against its own two-file
    fixture is a query that compiles. What it does across the organization is
    [`api/query-simulation.md`](../api/query-simulation.md), and it is the step between *this works*
-   and *this is worth turning on*. Depends on 1, because until then nothing reaches `extended-test`.
+   and *this is worth turning on*.
+
+   Its dependencies:
+
+   - For a query a session wrote, it depends on the `.expected` review in
+     [`api/authoring-harness.md`](../api/authoring-harness.md).
+   - For a query written by hand, it depends on 1.
+
+   Until those land, neither kind of query reaches `extended-test`.
 
 ## The constraints that must not be broken
 
@@ -164,9 +201,9 @@ taken on a second job it cannot do as well as an editor.
 
 - A query authored end to end from two snippets: it fails first, compiles, passes its test, appears
   in the catalog with origin `user`, and runs against a chosen scope, with no Go change at any step.
-- Once (e) is produced, `extended-test` is permitted for a version whose steps all pass, and refused
-  again, naming the step, when one step's evidence is removed — checked by removing it rather than
-  by reading the code.
+- `extended-test` is permitted for a version whose steps all pass. It is refused again, naming the
+  step, when one step's evidence is removed. Check this by removing the evidence, not by reading
+  the code.
 - The negative snippet is genuinely refused — a mutation that broadens the query breaks the test.
 - The pack in the operator's directory installs, resolves and runs from a clean checkout with ABOM
   not involved, because that is what promotion later depends on.

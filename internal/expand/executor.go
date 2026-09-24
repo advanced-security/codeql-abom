@@ -96,12 +96,17 @@ func (e *Executor) Run(ctx context.Context, runID int64) error {
 	return e.Store.SetAnalysisRunState(runID, store.RunComplete)
 }
 
-// carryOut analyzes one member, building its database first when none is on disk.
+// carryOut analyzes one member, building its database first when none is on disk, unless its
+// evaluation is already stored.
 func (e *Executor) carryOut(
 	ctx context.Context, runID int64, dir string, member store.AnalysisMember,
 	want []store.AnalysisQuery, planned tierPlan,
 ) error {
-	if !onDisk(member.DatabasePath) {
+	held := onDisk(member.DatabasePath)
+	if skipped, err := e.skipAnswered(runID, member, held, want, planned); err != nil || skipped {
+		return err
+	}
+	if !held {
 		if err := e.Store.SetAnalysisMemberStatus(
 			runID, member.DatabaseIdentity, store.AnalysisRunning, "building its database"); err != nil {
 			return err
@@ -126,6 +131,38 @@ func (e *Executor) carryOut(
 		return err
 	}
 	return nil
+}
+
+// skipAnswered records a member whose evaluation is already stored as skipped, carrying that
+// answer. The run key covers the query's version over its whole import closure, so an edit to the
+// query or anything it imports is never skipped.
+func (e *Executor) skipAnswered(
+	runID int64, member store.AnalysisMember, held bool,
+	want []store.AnalysisQuery, planned tierPlan,
+) (bool, error) {
+	at := member.DatabaseIdentity
+	if !held {
+		// A repository with no commit on record names no evaluation until it is fetched.
+		if at.Commit == "" {
+			return false, nil
+		}
+		at.SourceFilter = e.Crawl.sourceFilter()
+	}
+	from, answer, found, err := e.Store.AnsweredBy(memberRun(store.AnalysisMember{
+		DatabaseIdentity: at,
+	}, want, planned))
+	if err != nil || !found {
+		return false, err
+	}
+	if at != member.DatabaseIdentity {
+		if err := e.Store.SetAnalysisMemberDatabase(runID, member.DatabaseIdentity, at, ""); err != nil {
+			return false, err
+		}
+	}
+	answer.Status = store.AnalysisSkipped
+	answer.Detail = fmt.Sprintf(
+		"already analyzed at this commit with these query versions, pack and CLI, in run %d", from)
+	return true, e.Store.RecordAnalysisMemberResult(runID, at, answer)
 }
 
 // unbuilt records why a member's database could not be built, unless the run was stopped.

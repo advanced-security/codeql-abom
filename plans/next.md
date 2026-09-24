@@ -37,66 +37,82 @@ The ranking is itself a plan, and is subject to change.
 
 ## Ranked next
 
-**QL-as-a-Service leads.** The first seven entries are one loop: a request, a query written and
-tested from its examples, runs over a real scope, a simulation, a published pack.
+**QL-as-a-Service leads, and the agentic dev-test loop leads it.** The first six entries are one
+loop: a request, a query an agent writes and tests from its examples while ABOM confines and checks
+every step, a simulation over a real scope, a published pack. Running chosen queries over a real
+scope is built; what it lacks is convenience, so it sits below the loop beside the control it waits
+on.
 
-1. **[Run these queries, against this scope, now](api/on-demand-analysis.md)** — first because what
-   is left decides how a query gets tuned: a re-run consults **no skip decision**, a fork between
-   tuning a query, which wants the re-run, and checking coverage, which does not; nothing states a
-   run's cost before it is pressed; a selection is chosen page by page; and **a named scope cannot
-   be run from the CodeQL page** — the run path refuses all six built-ins the Inventory lists. A run
-   builds the databases it lacks, which makes [the database cache](db/database-cache.md)'s item about
-   a run evicting its own working set reachable.
-2. **[The authoring loop runs inside ABOM, and every step it takes is checked](api/authoring-harness.md)**
-   — the half that means an operator does not have to write QL, and startable now. The Copilot
-   SDK's Go package drives the Copilot CLI with
-   [ql-mcp](https://github.com/advanced-security/codeql-development-mcp-server) as its tool server,
-   and its hooks are Go callbacks in ABOM's own process: writes confined to one query, shell denied,
-   `.expected` accepted only after a person reads it, the CodeQL lock held for the session, and every
-   state re-derived by ABOM rather than taken from the agent's word. Only the AST step waits on the
-   ql-mcp release; where the CLI comes from is an open decision.
-3. **[A query is written from an example, not from QL](ql/query-authoring.md)** — a custom query is
+1. **[The authoring loop runs inside ABOM, and every step it takes is checked](api/authoring-harness.md)**
+   — first, because it is the half that means an operator does not have to write QL. A session runs
+   from a request's row. The Copilot SDK's Go package drives the Copilot CLI with ql-mcp 2.27.1 as
+   its only tool server. Every call is confined and recorded before it runs, the tree `PrintAST`
+   printed is kept, and ABOM re-derives every step. Left:
+   - the operator's review of `.expected`, decided as ABOM accepting and not the agent
+   - what a session spends
+   - a run's results drafted into a request
+   - where ql-mcp is installed from, since `npx` ignores npm's release-age exclusion
+2. **[A query is written from an example, not from QL](ql/query-authoring.md)** — a custom query is
    cataloged from disk, tested over **its own tests only** and marked through seven steps derived
    from evidence; **`dev` → `test` and `test` → `extended-test` are both earned**, and a request's
-   target is *selected*. Ranked below the harness because its next item waits on ql-mcp **2.27.1**:
-   ABOM producing the AST step, and one `actions-all` pin ending the 0.6.1/0.6.35 skew. **Until
-   then `extended-test` is refused for every query**, which is the gate working. After it, a
-   request's examples become a test — the harness's first act.
-4. **[Progress through dev and test is seven marks, and every mark is evidence](ui/authoring-progress.md)**
-   — the marks are served on requests and custom catalog rows, the lists link forward, and a run's
-   picked results become a prefilled request. Left: a request's own detail and `request=` address,
-   a catalog row naming its requests, the `extended-test` refusal stated before it is pressed, a
-   pre-existing run saying it must be re-run before its results can be picked — and **the browser
-   suite serves no query directory, so it has never drawn a mark**.
-5. **[A query has an origin, and a finding remembers it](db/query-catalog.md)** — the catalog is
+   target is *selected*. (e) is read from the trees that sessions keep. Left:
+   - an AST for a query written by hand; the tree table's session key is cheapest to decide before
+     it ships
+   - evidence that a test failed before its query existed
+   - one `actions-all` pin, ending the 0.6.2/0.6.35 skew
+
+   **`extended-test` is still refused for every query.** A session's query waits on the
+   `.expected` review, and a hand-written one on its AST.
+3. **[Progress through dev and test is seven marks, and every mark is evidence](ui/authoring-progress.md)**
+   — the marks are served on requests and custom catalog rows, and the lists link forward. A run's
+   picked results become a prefilled request. A request's detail row runs agent sessions and shows
+   their timelines and trees. Left:
+   - a request's `request=` address
+   - a catalog row naming its requests
+   - the `extended-test` refusal, stated before it is pressed
+   - a run from before members kept their evaluation, saying it must be re-run before its results
+     can be picked
+   - **the browser suite, which serves no query directory and seeds no session, so it has never
+     drawn a mark or a session**
+4. **[A query has an origin, and a finding remembers it](db/query-catalog.md)** — the catalog is
    keyed by **query version** over the query and its whole `.qll` import closure, takes origin from
    the pack, and lists a query from the moment it is on disk. None of that reaches a predicate:
    **the filter language has no term for a query's origin, and `origins` already means a
    repository's**, so item 1 is a naming decision with three named alternatives. And a finding says
    which rule fired, not whose rule it was, so *our rules against the maintained set* cannot be
    compared anywhere.
-6. **[A query's effect is known before anybody turns it on](api/query-simulation.md)** — what earns
+5. **[A query's effect is known before anybody turns it on](api/query-simulation.md)** — what earns
    `review`. A policy is simulated before it is adopted and a query is not, and the query is the
    more consequential: publishing one changes what every developer sees, and its author is not who
    gets asked about the alerts it raised. **The prediction is sourced from `regular` mode only**,
    because Default Setup stages nothing and will never see what [the closure
-   database](ql/closure-database.md) reveals. Depends on [on-demand
-   analysis](api/on-demand-analysis.md) and [query authoring](ql/query-authoring.md).
-7. **[A query leaves ABOM as a published pack, never as an alert](ql/pack-promotion.md)** — what
+   database](ql/closure-database.md) reveals. Depends on the run [on-demand
+   analysis](api/on-demand-analysis.md) already carries out, and on [query
+   authoring](ql/query-authoring.md).
+6. **[A query leaves ABOM as a published pack, never as an alert](ql/pack-promotion.md)** — what
    earns `deploy` beyond ABOM. The ABOM-controlled level is built: `deploy` rewrites a local suite a
    tier can bind. The upload route is **refused rather than deferred**; a configuration file applied
    through the `github-codeql-config-file` property lets the organization add a pack through its own
    consent, so **no alert exists that a person did not choose**. Its first item — publishing ABOM's
    own four packs to GHCR — depends on nothing; the rest depends on [query
    simulation](api/query-simulation.md).
-8. **[A scope kept on one page opens on every page that builds one](ui/named-scopes.md)** —
+7. **[A scope kept on one page opens on every page that builds one](ui/named-scopes.md)** —
    decided: the Inventory, the Explorer and the CodeQL page each load a named scope and keep a new
    one, so a scope is portable rather than owned by the page that made it. Today only the Inventory
    does both; the Explorer offers named scopes only before anything is drawn and keeps none. One
    control lifted out of the Inventory's, with what each page can apply answered by the server.
-   Directly below the loop and above lock-aware resolution because [on-demand
-   analysis](api/on-demand-analysis.md)'s run over a named scope takes this control, and nothing
-   here waits on resolution.
+   Directly below the loop and above [on-demand analysis](api/on-demand-analysis.md), whose run over
+   a named scope takes this control; nothing here waits on lock-aware resolution.
+8. **[Run these queries, against this scope, now](api/on-demand-analysis.md)** — built, and below
+   the loop because what is left is convenience. A run over a scope covers exactly what the
+   Repositories unit lists for it — on the crawled organization *What you own* is 30 repositories
+   and *Advisory routes* 15, where all six built-ins used to be refused — *choose all* sends that
+   scope from the Inventory, and the draft states the size before Run. Left: choosing a named scope
+   on the CodeQL page, which takes [named scopes](ui/named-scopes.md)' control, and gathering what a
+   run still has to do while it runs — **the number and the list first**, and a time remaining
+   only from the run's own pace, never forecast before Run. A run builds the databases it lacks and
+   skips what is already answered, which makes [the database cache](db/database-cache.md)'s item
+   about a run evicting its own working set reachable.
 9. **[Analyze the commit the workflow actually locks](db/actions-lockfile.md)** - the default
   resolution contract going forward, not an optional acceleration. Read the native lock at the
   analyzed revision, keep consumer/workflow context, and select its immutable commit on cache
@@ -463,7 +479,7 @@ measurement makes it urgent.
 | [db/pruning.md](db/pruning.md) | tombstones, compaction and what a delta reports |
 | [db/ref-provenance.md](db/ref-provenance.md) | requested refs, governing locks and analyzed commits through the ledger |
 | [db/supply-chain.md](db/supply-chain.md) | classification over the seed-reachable closure |
-| [ui/tier-suites.md](ui/tier-suites.md) | per-tier suite binding, its precedence, and the control [api/on-demand-analysis.md](api/on-demand-analysis.md) needs |
+| [ui/tier-suites.md](ui/tier-suites.md) | per-tier suite binding, its precedence, and cost guidance for a tier's re-analysis |
 
 ## Gaps with a decision to make
 
@@ -473,8 +489,9 @@ measurement makes it urgent.
   `store.RequeueStale` selects on `cli_version` and `pack_digest` alone. So widening
   `sparsePatterns` re-measures whatever happens to be on the queue and silently leaves everything
   already `done` measured the old way. A Go-side change to how results are *read* is worse: it is
-  not a dimension at all, invalidates nothing, and re-analysis of an unchanged commit is skipped —
-  the seed lane solves that with a build-stamped extractor version and the expand lane has no
+  not a dimension at all, invalidates nothing, and re-analysis of an unchanged commit is skipped,
+  by an on-demand run as much as by the crawl — the seed lane solves that with a build-stamped
+  extractor version and the expand lane has no
   equivalent. **Two decisions, not one: how a Go interpretation change gets a version (a flag, a
   build-stamped constant, or a hash of the interpreting code), and what shape a requeue takes so
   that the next dimension does not need a third one.** The recorded `mode` and the version columns

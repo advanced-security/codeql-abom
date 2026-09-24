@@ -1,0 +1,288 @@
+@using System.Globalization
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@inject AbomApi Api
+@inject AccountService Accounts
+@inject FollowService Follow
+@implements IDisposable
+
+@* The agent's work on one request: its sessions, the CodeQL it has under way, every call the gate
+   decided, and the trees PrintAST printed, which outlive the session that printed them. *@
+<div class="abom-request-sessions" data-abom-request-sessions>
+    <div class="d-flex align-center gap-2">
+        <MudText Typo="Typo.subtitle2">Agent sessions</MudText>
+        <MudSpacer />
+        @if (Live is not null)
+        {
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                       StartIcon="@Icons.Material.Outlined.StopCircle" Disabled="@_busy" OnClick="Stop"
+                       data-abom-session-stop>Stop the session</MudButton>
+        }
+        else
+        {
+            @* The reason is on a span outside the button: a disabled button swallows the pointer. *@
+            <span title="@(CanStart ? "An agent works this request through ql-mcp, inside your pack" : "Sign in with gh to record who started it")">
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                           StartIcon="@Icons.Material.Outlined.SmartToy" Disabled="@(!CanStart || _busy)"
+                           OnClick="Start" data-abom-session-start>Work it with an agent</MudButton>
+            </span>
+        }
+    </div>
+    @if (_refusal is { Length: > 0 } refused)
+    {
+        <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2" data-abom-session-refusal>@refused</MudAlert>
+    }
+
+    @if (_sessions is null)
+    {
+        <MudProgressLinear Indeterminate="true" Class="mt-2" />
+    }
+    else if (_sessions.Sessions.Count == 0)
+    {
+        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1" data-abom-sessions-empty>
+            No agent has worked this request. A session writes only the query this request is about,
+            in your pack, and stops before its output is accepted as the expected result.
+        </MudText>
+    }
+    else
+    {
+        @if (_sessions.InFlight.Count > 0)
+        {
+            <div class="abom-inflight mt-1" data-abom-session-inflight>
+                @foreach (var flight in _sessions.InFlight)
+                {
+                    <MudText Typo="Typo.caption" Class="d-block">
+                        CodeQL is running <span class="abom-path">@flight.Tool</span> on
+                        <span class="abom-path">@flight.Subject</span> for the agent, since
+                        @TimeText.DayAndTime(flight.Since, "HH:mm:ss").
+                    </MudText>
+                }
+            </div>
+        }
+        @foreach (var session in _sessions.Sessions)
+        {
+            <div class="abom-session" data-abom-session="@session.RowId">
+                <div class="d-flex align-center flex-wrap gap-2">
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                             Color="@StateColor(session.State)">@session.State</MudChip>
+                    <MudText Typo="Typo.caption">
+                        Session #@session.RowId, started by @session.StartedBy
+                        @TimeText.DayAndTime(session.StartedAt) with @session.Model:
+                        @CountText.Of(session.Events, "call", "calls"), @session.Refused refused
+                    </MudText>
+                    <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button"
+                               OnClick="@(() => Toggle(session))" data-abom-session-timeline>
+                        @(_open == session.RowId ? "Hide what it did" : "What it did")
+                    </MudButton>
+                </div>
+                @if (session.Detail.Length > 0)
+                {
+                    <pre class="abom-session-detail">@session.Detail</pre>
+                }
+                @if (_open == session.RowId)
+                {
+                    <div class="abom-timeline" data-abom-timeline>
+                        @foreach (var e in _events)
+                        {
+                            <div class="abom-event" data-abom-event="@e.RowId" data-abom-decision="@e.Decision">
+                                <span class="abom-event-time">@TimeText.Clock(e.At)</span>
+                                <span class="abom-event-decision">@e.Decision</span>
+                                <span class="abom-path">@e.Tool</span>
+                                <span class="abom-event-subject">@e.Subject</span>
+                                @if (e.TookMs is long ms)
+                                {
+                                    <span class="abom-event-took">@DurationText(ms)</span>
+                                }
+                                @if (e.Reason.Length > 0)
+                                {
+                                    <div class="abom-event-reason">@e.Reason</div>
+                                }
+                                @if (ShowsDetail(e))
+                                {
+                                    <div class="abom-event-detail">@e.Detail</div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    }
+
+    @if (_asts.Count > 0)
+    {
+        <div class="mt-2" data-abom-asts>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                Trees CodeQL printed over the test database, as the agent read them
+            </MudText>
+            @foreach (var ast in _asts)
+            {
+                <div class="abom-ast" data-abom-ast="@ast.RowId">
+                    <div class="d-flex align-center flex-wrap gap-2">
+                        <MudText Typo="Typo.caption">
+                            @ast.Query over <span class="abom-path">@ast.Database</span>
+                            @(ast.SourceFiles.Length > 0 ? $"for {ast.SourceFiles}" : ""),
+                            @TimeText.DayAndTime(ast.PrintedAt), @SizeText(ast.Size)@(ast.Truncated ? ", cut short" : "")
+                        </MudText>
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button"
+                                   OnClick="@(() => Show(ast))" data-abom-ast-show>
+                            @(_shown?.RowId == ast.RowId ? "Hide the tree" : "Show the tree")
+                        </MudButton>
+                    </div>
+                    @if (_shown?.RowId == ast.RowId)
+                    {
+                        <pre class="abom-code abom-ast-body" data-abom-ast-body>@_shown.Body</pre>
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public QueryRequest Request { get; set; } = new();
+
+    private AuthoringSessionList? _sessions;
+    private IReadOnlyList<AuthoringAst> _asts = [];
+    private long _open;
+    private List<AuthoringEvent> _events = [];
+    private long _after;
+    private AuthoringAst? _shown;
+    private string? _refusal;
+    private bool _busy;
+    private Timer? _timer;
+    private TimeSpan _beat;
+
+    private static readonly TimeSpan WhileRunning = TimeSpan.FromSeconds(3);
+
+    private AuthoringSession? Live => _sessions?.Sessions.FirstOrDefault(s => s.State == "running");
+
+    private bool CanStart => Accounts.Identity.Login.Length > 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Follow.Changed += Arm;
+        await Accounts.EnsureLoadedAsync();
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        _sessions = await Api.GetAuthoringSessionsAsync(Request.RowId) ?? new AuthoringSessionList();
+        _asts = await Api.GetAuthoringAstsAsync(Request.RowId);
+        if (_open != 0)
+        {
+            await ReadOn();
+        }
+        Arm();
+    }
+
+    // Only what came after the last event held: a live timeline is read on, never read again.
+    private async Task ReadOn()
+    {
+        if (await Api.GetAuthoringEventsAsync(_open, _after) is { } page)
+        {
+            _events.AddRange(page.Events);
+            _after = page.Next;
+        }
+    }
+
+    private async Task Toggle(AuthoringSession session)
+    {
+        var opening = _open != session.RowId;
+        _open = opening ? session.RowId : 0;
+        _events = [];
+        _after = 0;
+        if (opening)
+        {
+            await ReadOn();
+        }
+    }
+
+    private async Task Start()
+    {
+        _busy = true;
+        try
+        {
+            var (_, refusal) = await Api.StartAuthoringSessionAsync(Request.RowId, Accounts.Identity.Login);
+            _refusal = refusal;
+            await Load();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task Stop()
+    {
+        _busy = true;
+        try
+        {
+            var (_, refusal) = await Api.StopAuthoringSessionAsync(Request.RowId);
+            _refusal = refusal;
+            await Load();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task Show(AuthoringAst ast)
+    {
+        _shown = _shown?.RowId == ast.RowId ? null : await Api.GetAuthoringAstAsync(ast.RowId);
+    }
+
+    // A live session is watched closely; otherwise the reader's own beat.
+    private void Arm()
+    {
+        var beat = Live is not null && Follow.Interval > WhileRunning ? WhileRunning : Follow.Interval;
+        if (_timer is not null && beat == _beat)
+        {
+            return;
+        }
+        _timer?.Dispose();
+        _beat = beat;
+        _timer = new Timer(async _ =>
+        {
+            try
+            {
+                await Load();
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                return;
+            }
+            await InvokeAsync(StateHasChanged);
+        }, null, beat, beat);
+    }
+
+    // The agent's words, what was kept and how a session ended are the detail; a call's arguments are not.
+    private static bool ShowsDetail(AuthoringEvent e) =>
+        e.Detail.Length > 0 && e.Hook is "message" or "artifact" or "mcp-server" or "session-end" or "error";
+
+    private static string DurationText(long ms) =>
+        ms < 1000 ? $"{ms} ms"
+        : ms < 60_000 ? (ms / 1000.0).ToString("0.0", CultureInfo.CurrentCulture) + " s"
+        : $"{ms / 60_000} min {ms % 60_000 / 1000} s";
+
+    private static string SizeText(int bytes) =>
+        bytes < 1024 ? CountText.Of(bytes, "byte", "bytes")
+        : (bytes / 1024.0).ToString("0.#", CultureInfo.CurrentCulture) + " KB";
+
+    private static Color StateColor(string state) => state switch
+    {
+        "running" => Color.Info,
+        "finished" => Color.Success,
+        "stopped" or "interrupted" => Color.Warning,
+        "failed" => Color.Error,
+        _ => Color.Default,
+    };
+
+    public void Dispose()
+    {
+        Follow.Changed -= Arm;
+        _timer?.Dispose();
+    }
+}

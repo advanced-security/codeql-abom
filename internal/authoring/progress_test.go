@@ -16,7 +16,7 @@ func progressOf(t *testing.T, root, id string, tests ...store.QueryTest) map[str
 	if err != nil || !found {
 		t.Fatalf("Find(%s): found=%v err=%v", id, found, err)
 	}
-	steps, err := Progress(root, q, tests)
+	steps, err := Progress(root, q, tests, store.AuthoringAST{})
 	if err != nil {
 		t.Fatalf("Progress: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestTheStepsAreReportedInTheirOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	steps, err := Progress(root, q, nil)
+	steps, err := Progress(root, q, nil, store.AuthoringAST{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,17 +220,36 @@ func TestOnlyAnotherVersionPassingIsAWarning(t *testing.T) {
 	}
 }
 
-// Nothing in ABOM runs PrintAST yet, so the step says so rather than borrowing another's state.
-func TestTheASTStepIsPendingUntilARunIsRecorded(t *testing.T) {
+// The AST step is read from the newest tree kept for the query, and passes only for a tree printed
+// from the fixtures on disk now: one printed before they changed describes files that are gone.
+func TestTheASTStepReadsTheNewestTreeKeptForTheCurrentFixtures(t *testing.T) {
 	root := workspace(t, map[string]string{"A": "acme/a"})
 	q, digest := mustVersion(t, root, "acme/a")
-	testDatabase(t, root, "test/A", true, time.Now())
-
-	got := progressOf(t, root, "acme/a", store.QueryTest{
-		QueryID: "acme/a", QueryVersion: q.Version, Passed: true, Total: 1, TestDigest: digest,
-	})["ast"]
-	if got.State != Pending {
-		t.Errorf("the AST step reads %s (%s) with no PrintAST run recorded", got.State, got.Detail)
+	for _, c := range []struct {
+		name    string
+		printed store.AuthoringAST
+		want    State
+		says    string
+	}{
+		{"nothing kept", store.AuthoringAST{}, Pending, "no PrintAST tree"},
+		{"kept from these fixtures", store.AuthoringAST{RowID: 3, TestDigest: digest, Size: 120,
+			PrintedAt: "2026-09-23T12:00:00Z"}, Passing, "2026-09-23T12:00:00Z"},
+		{"kept from changed fixtures", store.AuthoringAST{RowID: 2, TestDigest: "other", Size: 120,
+			PrintedAt: "2026-09-22T12:00:00Z"}, Warning, "changed"},
+		{"kept with no test to say which fixtures", store.AuthoringAST{RowID: 5, Size: 120,
+			PrintedAt: "2026-09-22T12:00:00Z"}, Warning, "changed"},
+		{"printed nothing", store.AuthoringAST{RowID: 4, TestDigest: digest,
+			PrintedAt: "2026-09-23T12:00:00Z"}, Warning, "nothing"},
+	} {
+		steps, err := Progress(root, q, nil, c.printed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range steps {
+			if s.Step == "ast" && (s.State != c.want || !strings.Contains(s.Detail, c.says)) {
+				t.Errorf("%s: %+v, want %s saying %q", c.name, s, c.want, c.says)
+			}
+		}
 	}
 }
 
@@ -248,6 +267,9 @@ func TestTheTargetStepSaysWhoChoseTheTarget(t *testing.T) {
 			TargetSource: store.TargetOperator}, Passing, "selected by you"},
 		{"chosen by the agent", store.QueryRequest{QueryID: "acme/a",
 			TargetSource: store.TargetAgent}, Passing, "decided by the agent"},
+		{"chosen by the agent, saying why", store.QueryRequest{QueryID: "acme/a",
+			TargetSource: store.TargetAgent, TargetDetail: "nothing in the pack covers pins"},
+			Passing, "decided by the agent: nothing in the pack covers pins"},
 		{"kept before choosers were recorded", store.QueryRequest{QueryID: "acme/a"}, Warning,
 			"nobody is recorded"},
 	} {
@@ -265,7 +287,7 @@ func TestAQueryNotInTheWorkspaceHasEveryStepWaiting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	real, err := Progress(root, q, nil)
+	real, err := Progress(root, q, nil, store.AuthoringAST{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1161,6 +1161,48 @@ code {
 .abom-request-description { white-space: pre-wrap; }
 .abom-request-summary { display: block; min-width: 24rem; }
 
+/* A session's record reads as a log: time, decision, tool and what it touched on one line. */
+.abom-request-sessions {
+    margin-top: 12px;
+    padding-top: 8px;
+    border-top: 1px solid var(--mud-palette-lines-default);
+}
+.abom-plain-button { text-transform: none; }
+.abom-session { margin-top: 6px; }
+.abom-session-detail {
+    margin: 2px 0 0;
+    font-size: var(--abom-text-sm);
+    white-space: pre-wrap;
+    color: var(--mud-palette-text-secondary);
+}
+.abom-timeline {
+    max-height: 24rem;
+    overflow-y: auto;
+    margin-top: 4px;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: 4px;
+}
+.abom-event {
+    padding: 3px 8px;
+    font-size: var(--abom-text-xs);
+    border-bottom: 1px solid var(--mud-palette-lines-default);
+}
+.abom-event > span + span { margin-left: 8px; }
+.abom-event-time { color: var(--mud-palette-text-secondary); font-family: var(--abom-mono); }
+.abom-event-decision { font-weight: 500; }
+.abom-event[data-abom-decision="refused"] .abom-event-decision { color: var(--mud-palette-warning); }
+.abom-event[data-abom-decision="failed"] .abom-event-decision { color: var(--mud-palette-error); }
+.abom-event-subject { font-family: var(--abom-mono); overflow-wrap: anywhere; }
+.abom-event-took { color: var(--mud-palette-text-secondary); }
+.abom-event-reason,
+.abom-event-detail { white-space: pre-wrap; margin-top: 2px; }
+.abom-event-reason { color: var(--mud-palette-warning); }
+.abom-ast-body {
+    max-height: 32rem;
+    overflow: auto;
+    white-space: pre;
+}
+
 /* break-word, not anywhere: anywhere shrank both columns to a few letters a line. */
 .abom-grid .mud-table-root .mud-table-cell.abom-run-text {
     min-width: 14rem;

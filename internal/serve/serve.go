@@ -93,6 +93,10 @@ type Server struct {
 	Tester   QueryTester
 	QueryDir string
 
+	// Authoring runs agent sessions on requests, in QueryDir. Nil answers that this server has no
+	// pack to author in.
+	Authoring Authoring
+
 	// running holds how to stop each run this process started. Only those: a run left `running`
 	// by a server that died is not one this server can stop.
 	runsMu  sync.Mutex
@@ -168,6 +172,12 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/query-requests", s.queryRequests)
 	mux.HandleFunc("POST /api/query-requests", s.saveQueryRequest)
 	mux.HandleFunc("PUT /api/query-requests/{id}", s.editQueryRequest)
+	mux.HandleFunc("GET /api/query-requests/{id}/sessions", s.requestSessions)
+	mux.HandleFunc("POST /api/query-requests/{id}/sessions", s.startSession)
+	mux.HandleFunc("POST /api/query-requests/{id}/sessions/stop", s.stopSession)
+	mux.HandleFunc("GET /api/authoring-sessions/{id}/events", reading(s.sessionEvents, "after", "limit"))
+	mux.HandleFunc("GET /api/query-requests/{id}/asts", s.requestASTs)
+	mux.HandleFunc("GET /api/authoring-asts/{id}", s.authoringAST)
 	mux.HandleFunc("GET /api/runs", s.runs)
 	mux.HandleFunc("POST /api/runs", s.startRun)
 	mux.HandleFunc("GET /api/runs/{id}", s.run)
@@ -1092,24 +1102,15 @@ func (s *Server) repositories(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, unlistable(refused))
 		return
 	}
-	query := store.RepositoriesQuery{
-		Search:   spec.Search,
-		Scope:    spec.Scope,
-		Sort:     r.URL.Query().Get("sort"),
-		Desc:     r.URL.Query().Get("desc") == "true",
-		Offset:   intParam(r, "offset", 0),
-		Limit:    intParam(r, "top", 50),
-		Grouping: scopeFromSpec(spec),
+	query, err := s.repositoriesQuery(spec)
+	if err != nil {
+		writeJSON(w, store.RepositoriesPage{}, err)
+		return
 	}
-	// The same closure the node listing reads, so "what you own" means one population across units.
-	if query.Scope == store.ScopeOwned {
-		keep, _, err := (&graph.Builder{Store: s.Store}).KeepList()
-		if err != nil {
-			writeJSON(w, store.RepositoriesPage{}, err)
-			return
-		}
-		query.Closure = keep
-	}
+	query.Sort = r.URL.Query().Get("sort")
+	query.Desc = r.URL.Query().Get("desc") == "true"
+	query.Offset = intParam(r, "offset", 0)
+	query.Limit = intParam(r, "top", 50)
 	page, err := s.Store.RepositoriesPage(query)
 	writeJSON(w, page, err)
 }

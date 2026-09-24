@@ -6,9 +6,12 @@
 package customql
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 )
 
 // Pack is the name the operator's pack carries.
@@ -62,6 +65,83 @@ func Scaffold(dir, cliVersion string) (bool, error) {
 	}
 	return true, nil
 }
+
+// queryName is a plain file stem: it becomes src/<name>.ql and test/<name>/, and nothing else.
+var queryName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
+
+// ScaffoldTest lays out the test of src/<name>.ql, where its fixtures go and a .qlref naming it,
+// and returns the test directory. It never overwrites: a .qlref already there says what the test is of.
+func ScaffoldTest(dir, name string) (string, error) {
+	if !queryName.MatchString(name) {
+		return "", fmt.Errorf("custom queries: %q is not a query file name", name)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "qlpack.yml")); err != nil {
+		return "", fmt.Errorf("custom queries: %s holds no pack: %w", dir, err)
+	}
+	tests := filepath.Join(dir, "test", name)
+	if err := os.MkdirAll(filepath.Join(tests, ".github", "workflows"), 0o755); err != nil {
+		return "", fmt.Errorf("custom queries: preparing the test of %s: %w", name, err)
+	}
+	f, err := os.OpenFile(filepath.Join(tests, name+".qlref"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if errors.Is(err, fs.ErrExist) {
+		return tests, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("custom queries: naming the query of %s: %w", name, err)
+	}
+	if _, err := fmt.Fprintf(f, "src/%s.ql\n", name); err != nil {
+		f.Close()
+		return "", fmt.Errorf("custom queries: naming the query of %s: %w", name, err)
+	}
+	return tests, f.Close()
+}
+
+// ValidQueryName reports whether name is a plain file stem a query can be laid out under.
+func ValidQueryName(name string) bool { return queryName.MatchString(name) }
+
+// queryID is an @id as a query declares it: lower-case segments, owner first.
+var queryID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*(/[a-z0-9][a-z0-9-]*)+$`)
+
+// ValidQueryID reports whether id can be declared by a query ABOM lays out.
+func ValidQueryID(id string) bool { return queryID.MatchString(id) }
+
+// ScaffoldQuery lays out a new query declaring id, which reports nothing until somebody writes
+// it, and its test. It refuses a query file that is already there rather than overwrite it.
+func ScaffoldQuery(dir, name, id string, request int64) (string, string, error) {
+	if !ValidQueryID(id) {
+		return "", "", fmt.Errorf("custom queries: %q is not a query id such as acme/checkout-tag-pin", id)
+	}
+	tests, err := ScaffoldTest(dir, name)
+	if err != nil {
+		return "", "", err
+	}
+	query := filepath.Join(dir, "src", name+".ql")
+	f, err := os.OpenFile(query, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return "", "", fmt.Errorf("custom queries: laying out src/%s.ql: %w", name, err)
+	}
+	if _, err := fmt.Fprintf(f, stubQuery, name, request, id); err != nil {
+		f.Close()
+		return "", "", fmt.Errorf("custom queries: laying out src/%s.ql: %w", name, err)
+	}
+	return query, tests, f.Close()
+}
+
+// stubQuery compiles and reports nothing, which is a failing test until the query is written.
+const stubQuery = `/**
+ * @name %s
+ * @description Asked for in ABOM request %d; say here what this query reports and why it matters.
+ * @kind problem
+ * @problem.severity warning
+ * @id %s
+ */
+
+import actions
+
+from Step step
+where none()
+select step, "Not written yet."
+`
 
 // manifestFor pins the pack to the CodeQL the rest of ABOM runs.
 //

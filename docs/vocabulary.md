@@ -104,7 +104,12 @@ evidence. Neither a lock context nor a query's origin substitutes for this datab
 | **Request** | What a query should catch or stop catching, with a `COMPLIANT` and a `NON_COMPLIANT` example. Open, in progress, done or declined |
 | **Selected by you** / **decided by the agent** | Who chose a request's target. Empty means the agent decides |
 | **False alarm** / **missed detection** | Evidence on a request: a finding that should not have fired, or a repository where nothing fired that should have |
-| **Run** | A request to analyze chosen query versions over chosen repositories' databases |
+| **Session** | An agent writing the query a request asks for, started by a person. Running, finished, stopped, failed or interrupted |
+| **What it did** | A session's timeline: every tool call, allowed or refused, and why |
+| **Refused** | A tool call that ABOM's bounds did not let run |
+| **Tree** | What `PrintAST` printed over a test database. It is the evidence for the AST step while the fixtures are unchanged |
+| **Run** | A request to analyze chosen query versions over chosen repositories' databases, or over every repository a scope lists |
+| **Skipped** | A run's repository already answered by an earlier run with the same versions, commit and CLI, and carrying that answer |
 | **Interrupted** | A run the server stopped under: neither finished nor canceled |
 
 A query id names a rule; a query *version* names the code behind it, which is what a stage, a test

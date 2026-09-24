@@ -88,6 +88,21 @@ func (s Spec) UnenforceableAsRepositories() []string {
 	return s.carried(func(t string) bool { return repositoryTerms[t] })
 }
 
+// UnenforceableAsRun names the terms a run cannot apply.
+//
+// A run covers repositories: the ones the repositories unit lists, the ones named outright, and
+// where the set path's findings sit, in the shape `mode` names. Everything else describes a node
+// or a relationship, and a run has neither to narrow.
+func (s Spec) UnenforceableAsRun() []string {
+	return s.carried(func(t string) bool { return repositoryTerms[t] || setTerms[t] })
+}
+
+// AsksRepositoriesUnit reports whether the predicate carries a term the repositories unit applies,
+// which makes a run's population exactly what that unit lists for it.
+func (s Spec) AsksRepositoriesUnit() bool {
+	return len(s.carried(func(t string) bool { return !repositoryTerms[t] })) > 0
+}
+
 // advisoryTerms are the terms the advisories unit applies.
 //
 // A row is an advisory rather than a node, so the node half of the language says nothing about it.

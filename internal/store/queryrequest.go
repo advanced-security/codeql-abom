@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS abom_query_request (
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL,
   target_source TEXT,
-  source_run_id INTEGER REFERENCES abom_analysis_run(row_id)
+  source_run_id INTEGER REFERENCES abom_analysis_run(row_id),
+  target_detail TEXT
 );
 
 -- What was picked from the run a request was asked from.
@@ -78,6 +79,8 @@ type QueryRequest struct {
 	// TargetSource says who chose QueryID. Empty with a target is a request kept before that was
 	// recorded, which is not the same as the operator having chosen it.
 	TargetSource string `json:"targetSource"`
+	// TargetDetail is why the agent chose QueryID; empty for any target a person chose.
+	TargetDetail string `json:"targetDetail"`
 	Kind         string `json:"kind"`
 	Status       string `json:"status"`
 	RequestedBy  string `json:"requestedBy"`
@@ -237,9 +240,10 @@ func (s *Store) SaveQueryRequest(r QueryRequest) (int64, error) {
 		return s.fileQueryRequest(r, now)
 	}
 
+	// An edit is the operator's act, so reasoning the agent gave no longer describes the target.
 	res, err := s.db.Exec(`
 UPDATE abom_query_request SET description = ?, compliant = ?, non_compliant = ?, query_id = ?,
-  kind = ?, status = ?, updated_at = ?, target_source = ?
+  kind = ?, status = ?, updated_at = ?, target_source = ?, target_detail = NULL
 WHERE row_id = ?`,
 		r.Description, r.Compliant, r.NonCompliant, r.QueryID, r.Kind, r.Status, now,
 		nullable(r.TargetSource), r.RowID)
@@ -290,7 +294,7 @@ func (s *Store) QueryRequests() ([]QueryRequest, error) {
 	rows, err := s.db.Query(`
 		SELECT row_id, description, compliant, non_compliant, query_id, kind, status,
 		       requested_by, created_at, updated_at, COALESCE(target_source, ''),
-		       COALESCE(source_run_id, 0)
+		       COALESCE(source_run_id, 0), COALESCE(target_detail, '')
 		FROM abom_query_request ORDER BY row_id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("reading query requests: %w", err)
@@ -301,7 +305,7 @@ func (s *Store) QueryRequests() ([]QueryRequest, error) {
 		var r QueryRequest
 		if err := rows.Scan(&r.RowID, &r.Description, &r.Compliant, &r.NonCompliant, &r.QueryID,
 			&r.Kind, &r.Status, &r.RequestedBy, &r.CreatedAt, &r.UpdatedAt,
-			&r.TargetSource, &r.SourceRunID); err != nil {
+			&r.TargetSource, &r.SourceRunID, &r.TargetDetail); err != nil {
 			return nil, fmt.Errorf("scanning a query request: %w", err)
 		}
 		r.Evidence = append([]RequestEvidence{}, evidence[r.RowID]...)

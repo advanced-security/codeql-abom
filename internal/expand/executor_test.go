@@ -191,8 +191,8 @@ func TestAMemberWithNoDatabaseIsBuiltAndThenAnalyzed(t *testing.T) {
 	}
 }
 
-// Retained for the next run, which is the tuning loop the cache exists for: a second run over the
-// same scope analyzes again and neither fetches nor extracts.
+// Retained for the next run, which is the tuning loop the cache exists for: after an edit, a run
+// over the same scope analyzes again and neither fetches nor extracts.
 func TestABuiltDatabaseIsKeptForTheNextRun(t *testing.T) {
 	h, e, id, _ := executorHarness(t)
 	delete(h.fetchErr, "octo/absent")
@@ -211,6 +211,7 @@ func TestABuiltDatabaseIsKeptForTheNextRun(t *testing.T) {
 		t.Errorf("the member names %q, want the retained database at %q", absent.DatabasePath, held.Path)
 	}
 
+	editQuery(t, e)
 	built, fetched := h.databasesBuilt(), h.fetchCount()
 	if err := e.Run(context.Background(), id); err != nil {
 		t.Fatalf("Run again: %v", err)
@@ -224,8 +225,17 @@ func TestABuiltDatabaseIsKeptForTheNextRun(t *testing.T) {
 	}
 }
 
+// editQuery changes the fixture's query, and so its version, which is what makes a run need its
+// databases again rather than take the answer already stored.
+func editQuery(t *testing.T, e *Executor) {
+	t.Helper()
+	if err := os.WriteFile(e.Resolver.(*fakeResolver).queries[0], []byte("select 2"), 0o644); err != nil {
+		t.Fatalf("editing the query: %v", err)
+	}
+}
+
 // Without a cache nothing holds the database once it has been analyzed, so the member names no path
-// a later run would find empty, and that run builds it again.
+// a later run would find empty, and a run that needs it again builds it again.
 func TestWithoutACacheABuiltDatabaseIsRemovedAndBuiltAgain(t *testing.T) {
 	h, e, id, _ := executorHarness(t)
 	delete(h.fetchErr, "octo/absent")
@@ -241,6 +251,7 @@ func TestWithoutACacheABuiltDatabaseIsRemovedAndBuiltAgain(t *testing.T) {
 		t.Errorf("the member's checkout and database are still at %s: %v", left, err)
 	}
 
+	editQuery(t, e)
 	built := h.databasesBuilt()
 	if err := e.Run(context.Background(), id); err != nil {
 		t.Fatalf("Run again: %v", err)
@@ -340,6 +351,121 @@ func TestAMemberWhoseDatabaseIsGoneIsBuiltAgain(t *testing.T) {
 	}
 	if built := h.databasesBuilt(); built != 1 {
 		t.Errorf("the builder ran %d times, want once for the database that was gone", built)
+	}
+}
+
+// Running a run again declines what its first pass answered: the same commit, query version, pack
+// and CLI cannot produce a different result, so the member keeps that answer and says where from.
+func TestRunningAgainSkipsWhatIsAlreadyAnalyzed(t *testing.T) {
+	s, e, id, analyzer := executorFixture(t)
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	first := membersByRepository(t, s, id)["octo-app"]
+
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run again: %v", err)
+	}
+	if len(analyzer.targets) != 2 {
+		t.Errorf("analyze ran %d times across both passes, want the first pass's 2", len(analyzer.targets))
+	}
+	by := membersByRepository(t, s, id)
+	again := by["octo-app"]
+	if again.Status != store.AnalysisSkipped || !strings.Contains(again.Detail, fmt.Sprintf("run %d", id)) {
+		t.Errorf("the member is %q (%q), want %q naming the run that answered it",
+			again.Status, again.Detail, store.AnalysisSkipped)
+	}
+	if !again.Counted || again.Results != first.Results ||
+		again.ByQuery["actions/unpinned-tag"] != first.ByQuery["actions/unpinned-tag"] {
+		t.Errorf("the skipped member reads counted=%v %d %v, want the answer it carries: %d %v",
+			again.Counted, again.Results, again.ByQuery, first.Results, first.ByQuery)
+	}
+	listed, err := s.RunFindings(id, "octo-app", "", 100)
+	if err != nil || !listed.Evaluated || len(listed.Findings) != 2 {
+		t.Errorf("the skipped member lists %+v (%v), want the 2 findings its answer reported", listed, err)
+	}
+	if by["octo/absent"].Status != store.AnalysisFailed {
+		t.Errorf("the member that could not be built is %q, want it attempted and failed again",
+			by["octo/absent"].Status)
+	}
+}
+
+// A second run over the same databases takes the first run's answer rather than repeating it.
+func TestANewRunSkipsWhatAnotherRunAlreadyAnalyzed(t *testing.T) {
+	h, e, id, analyzer := executorHarness(t)
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	held := membersByRepository(t, h.store, id)["octo-app"]
+	second := runOver(t, h.store, store.AnalysisModeRegular, []store.ScopedDatabase{{
+		DatabaseIdentity: held.DatabaseIdentity, Status: store.DatabaseRetained, Path: held.DatabasePath,
+	}}, nil)
+
+	if err := e.Run(context.Background(), second); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(analyzer.targets) != 2 {
+		t.Errorf("analyze ran %d times, want only the first run's 2", len(analyzer.targets))
+	}
+	m := membersByRepository(t, h.store, second)["octo-app"]
+	if m.Status != store.AnalysisSkipped || !strings.Contains(m.Detail, fmt.Sprintf("run %d", id)) {
+		t.Errorf("the member is %q (%q), want %q naming run %d", m.Status, m.Detail,
+			store.AnalysisSkipped, id)
+	}
+}
+
+// Editing the query changes its version, so the run after an edit analyzes again: a skip can never
+// hide a change somebody is tuning.
+func TestAnEditedQueryIsAnalyzedAgain(t *testing.T) {
+	s, e, id, analyzer := executorFixture(t)
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	editQuery(t, e)
+
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run again: %v", err)
+	}
+	if len(analyzer.targets) != 4 {
+		t.Errorf("analyze ran %d times across both passes, want 4: the edit changed the version",
+			len(analyzer.targets))
+	}
+	if m := membersByRepository(t, s, id)["octo-app"]; m.Status != store.AnalysisSucceeded {
+		t.Errorf("the member is %q after an edit, want %q", m.Status, store.AnalysisSucceeded)
+	}
+}
+
+// A member with no database whose answer is already stored is not fetched and built only to be
+// skipped, and it is recorded at the database that answered it.
+func TestAMemberAnsweredElsewhereIsNotBuilt(t *testing.T) {
+	h, e, id, _ := executorHarness(t)
+	delete(h.fetchErr, "octo/absent")
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	fetched, built := h.fetchCount(), h.databasesBuilt()
+	second := runOver(t, h.store, store.AnalysisModeRegular, []store.ScopedDatabase{{
+		DatabaseIdentity: store.DatabaseIdentity{
+			Repository: "octo/absent", Commit: absentCommit, SourceFilter: "f0",
+			Mode: store.AnalysisModeRegular,
+		},
+		Status: store.DatabaseBuildable,
+	}}, nil)
+
+	if err := e.Run(context.Background(), second); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if h.fetchCount() != fetched || h.databasesBuilt() != built {
+		t.Errorf("the second run fetched %d and built %d for an answer already stored",
+			h.fetchCount()-fetched, h.databasesBuilt()-built)
+	}
+	m := membersByRepository(t, h.store, second)["octo/absent"]
+	if m.Status != store.AnalysisSkipped {
+		t.Errorf("the member is %q (%q), want %q", m.Status, m.Detail, store.AnalysisSkipped)
+	}
+	if m.SourceFilter != h.expander.sourceFilter() {
+		t.Errorf("the member names filter %q, want %q, the database that answered it",
+			m.SourceFilter, h.expander.sourceFilter())
 	}
 }
 

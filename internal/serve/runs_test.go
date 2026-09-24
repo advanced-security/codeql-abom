@@ -29,17 +29,21 @@ func start(t *testing.T, s *Server, query, body string) (store.AnalysisRun, int)
 
 const oneQuery = `{"queries":[{"queryId":"actions/unpinned-tag","queryVersion":"u1"}],"by":"operator"}`
 
-// One language, asked in a third direction. A run expressed in a syntax of its own would be a
-// second policy engine deciding what an expensive thing covers.
-func TestStartingARunRefusesExactlyWhatTheMatchEndpointRefuses(t *testing.T) {
+// A term that chooses no repository is refused by name rather than dropped: a run that quietly
+// ignored one would cover more than the reader asked for.
+func TestStartingARunRefusesATermThatChoosesNoRepository(t *testing.T) {
 	s, _ := newServer(t)
 
-	for _, query := range []string{"kinds=workflow", "origins=seed", "minReach=5", "ref=tag"} {
-		matched := httptest.NewRecorder()
-		s.match(matched, httptest.NewRequest("GET", "/api/match?rules=abom%2Fone&"+query, nil))
-		_, code := start(t, s, "rules=abom%2Fone&"+query, oneQuery)
-		if code != matched.Code {
-			t.Errorf("%s answered %d starting a run and %d matching nodes", query, code, matched.Code)
+	for term, query := range map[string]string{
+		"kinds": "kinds=workflow", "origins": "origins=seed", "minReach": "minReach=5",
+		"ref": "ref=tag", "flags": "flags=findings",
+	} {
+		code, body := startRefusal(t, s, "rules=abom%2Fone&"+query)
+		if code != http.StatusBadRequest {
+			t.Errorf("%s answered %d starting a run, want 400", query, code)
+		}
+		if !bytes.Contains([]byte(body), []byte(term)) {
+			t.Errorf("%s was refused without naming %q: %s", query, term, body)
 		}
 	}
 }

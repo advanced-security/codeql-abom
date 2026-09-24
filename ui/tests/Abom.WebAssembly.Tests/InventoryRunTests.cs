@@ -106,4 +106,89 @@ public class InventoryRunTests : AbomTestContext
 
         page.WaitForAssertion(() => Assert.NotEmpty(page.FindAll("[data-abom-run-choose]")));
     }
+
+    private IRenderedComponent<Pages.Inventory> ArriveAt(string address)
+    {
+        Services.GetRequiredService<RunDraft>().Set([
+            new AnalysisQueryRef { QueryId = "acme/self-hosted-runner", QueryVersion = "9b5327ab01d7" },
+        ]);
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.NavigateTo(address);
+        var page = Render<Pages.Inventory>();
+        page.WaitForAssertion(() => Assert.NotEmpty(page.FindAll("[data-abom-run-draft]")));
+        return page;
+    }
+
+    /// <summary>
+    /// A selection larger than a page is the scope itself: sent as its predicate, so the server
+    /// resolves it the way the Repositories unit lists it, rather than as names chosen page by page.
+    /// </summary>
+    [Fact]
+    public void ChoosingAllInTheScopeSendsTheScopeRatherThanItsNames()
+    {
+        var page = ArriveAt("/inventory?unit=repositories&scope=owned");
+        page.WaitForAssertion(() => page.Find("[data-abom-run-all] input"));
+
+        page.Find("[data-abom-run-all] input").Change(true);
+        page.WaitForAssertion(() =>
+            Assert.Contains("2 repositories in this scope", page.Find("[data-abom-run-chosen]").TextContent));
+        page.Find("[data-abom-run-go]").Click();
+
+        page.WaitForAssertion(() =>
+        {
+            var created = Assert.Single(Sent, r => r.Method == "POST" && r.Url.Contains("api/runs?"));
+            Assert.EndsWith("api/runs?scope=owned", created.Url);
+        });
+    }
+
+    /// <summary>An empty scope names no repository, so there is nothing for "all" to send.</summary>
+    [Fact]
+    public void ChoosingAllIsRefusedUntilSomethingNarrowsTheScope()
+    {
+        var page = ArriveAt("/inventory?unit=repositories");
+        page.WaitForAssertion(() => page.Find("[data-abom-run-all] input"));
+
+        Assert.True(page.Find("[data-abom-run-all] input").HasAttribute("disabled"));
+        Assert.Contains("Narrow", page.Find("[data-abom-run-all]").GetAttribute("title"));
+    }
+
+    /// <summary>N actions are not N repositories, so "all" is offered only where the rows are.</summary>
+    [Fact]
+    public void ChoosingAllIsOfferedOnlyWhereTheRowsAreRepositories()
+    {
+        Answer("api/actions", """{"items":[],"total":0,"elsewhere":[]}""");
+        var page = ArriveAt("/inventory?unit=dependencies&scope=owned");
+
+        Assert.Empty(page.FindAll("[data-abom-run-all]"));
+    }
+
+    /// <summary>
+    /// The size is stated before anything is spent: how many repositories the server resolved the
+    /// draft to and how many already have a database, from the resolution the run itself uses.
+    /// </summary>
+    [Fact]
+    public void TheDraftStatesWhatTheRunWouldCoverBeforeItIsPressed()
+    {
+        Answer("api/databases", """
+            {"databases":[
+              {"repository":"octo-org/billing","commit":"a1","sourceFilter":"f","mode":"regular",
+               "status":"retained","path":"/db/billing","bytes":10},
+              {"repository":"octo-org/clean","commit":"b2","sourceFilter":"f","mode":"regular",
+               "status":"buildable","path":"","bytes":0}],
+             "gaps":[{"repository":"octo-org/new","reason":"no regular analysis on record"}],
+             "mode":"regular","unresolved":""}
+            """);
+        var page = ArriveAt("/inventory?unit=repositories&scope=owned");
+        page.WaitForAssertion(() => page.Find("[data-abom-run-all] input"));
+
+        page.Find("[data-abom-run-all] input").Change(true);
+
+        page.WaitForAssertion(() =>
+        {
+            var size = page.Find("[data-abom-run-size]").TextContent;
+            Assert.Contains("3 repositories", size);
+            Assert.Contains("1 with a database held", size);
+            Assert.Contains("2 without one", size);
+        });
+        Assert.Contains(Sent, r => r.Method == "GET" && r.Url.EndsWith("api/databases?scope=owned"));
+    }
 }

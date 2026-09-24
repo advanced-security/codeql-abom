@@ -72,6 +72,55 @@ func TestARunNeverFetchesARepositoryABOMDoesNotTrack(t *testing.T) {
 	}
 }
 
+// A re-run declines only work whose answer is stored in full: a member that finished, was counted
+// and is linked to the evaluation under this exact key. A ledger row alone is not that, because an
+// ingest that failed leaves one behind.
+func TestAnEvaluationARunStoredAnswersTheSameKey(t *testing.T) {
+	s := newTestStore(t)
+	id := startedRun(t, s)
+	at := DatabaseIdentity{
+		Repository: "octo/app", Commit: "sha-one", SourceFilter: "f0", Mode: AnalysisModeRegular,
+	}
+	q := QueryRun{
+		QueryID: "actions/unpinned-tag", QueryVersion: "u1", CLIVersion: "2.27.1",
+		Repository: "octo/app", DBCommit: "sha-one", SourceFilter: "f0",
+		AnalysisMode: AnalysisModeRegular,
+	}
+
+	ledger, err := s.RecordQueryRun(q)
+	if err != nil {
+		t.Fatalf("RecordQueryRun: %v", err)
+	}
+	if _, _, found, err := s.AnsweredBy(q); err != nil || found {
+		t.Fatalf("a ledger row no member finished storing answered (found=%v, %v)", found, err)
+	}
+
+	if err := s.RecordAnalysisMemberResult(id, at, MemberResult{
+		Status: AnalysisSucceeded, ResultPath: "/work/run-1/octo_app.sarif", Results: 2, Counted: true,
+		ByQuery: map[string]int{"actions/unpinned-tag": 2}, QueryRunID: ledger,
+	}); err != nil {
+		t.Fatalf("RecordAnalysisMemberResult: %v", err)
+	}
+	from, got, found, err := s.AnsweredBy(q)
+	if err != nil || !found {
+		t.Fatalf("the stored evaluation did not answer its own key (found=%v, %v)", found, err)
+	}
+	if from != id || got.QueryRunID != ledger || got.ResultPath != "/work/run-1/octo_app.sarif" {
+		t.Errorf("answered by run %d, row %d, %q; want run %d, row %d and its document",
+			from, got.QueryRunID, got.ResultPath, id, ledger)
+	}
+	if !got.Counted || got.Results != 2 || got.ByQuery["actions/unpinned-tag"] != 2 {
+		t.Errorf("the answer carries counted=%v results=%d %v, want what the member counted",
+			got.Counted, got.Results, got.ByQuery)
+	}
+
+	elsewhere := q
+	elsewhere.DBCommit = "sha-other"
+	if _, _, found, _ := s.AnsweredBy(elsewhere); found {
+		t.Error("an evaluation at another commit answered")
+	}
+}
+
 // A member's results are stored under the database it was built at, so a member left at the
 // identity the resolution guessed would attribute them to a database that does not exist.
 func TestAMemberMovesToTheDatabaseItWasBuiltAt(t *testing.T) {

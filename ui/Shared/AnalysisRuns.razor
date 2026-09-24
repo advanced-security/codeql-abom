@@ -208,11 +208,13 @@
         await Load();
     }
 
+    // Work already answered is skipped when a run goes again, which is what makes a stop resumable.
     private static string AgainText(AnalysisRun run) => run.State switch
     {
-        "interrupted" => "The server stopped while this ran. Run it again over the same repositories.",
-        "canceled" => "Run it again over the same repositories.",
-        _ => "Run it again over the same repositories. What it finds replaces what this run recorded.",
+        "interrupted" => "The server stopped while this ran. Run it again: what it already analyzed is skipped.",
+        "canceled" => "Run it again: what it already analyzed is skipped.",
+        _ => "Run it again over the same repositories. What was analyzed with these versions is skipped; " +
+             "the rest replaces what this run recorded.",
     };
 
     private static Color StateColor(string state) => state switch
@@ -232,7 +234,9 @@
             var (key, value) = term.IndexOf('=') is var at and >= 0
                 ? (term[..at], term[(at + 1)..])
                 : (term, string.Empty);
-            var values = value.Split(',').Select(Uri.UnescapeDataString).ToList();
+            // The canonical text escapes a list's commas; a property value may hold one of its own.
+            var text = Uri.UnescapeDataString(value.Replace('+', ' '));
+            var values = key is "properties" or "notProperties" ? [text] : text.Split(',').ToList();
             if (key == "repositories")
             {
                 parts.Add(values.Count <= 3

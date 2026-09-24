@@ -23,21 +23,16 @@ type RunExecutor interface {
 // startRun records a request to run an explicit list of queries over the databases a scope
 // resolves to.
 //
-// The predicate arrives in the query string rather than the body so it goes through
-// `graphPredicate` and `UnenforceableAsSet` exactly as /api/databases and /api/match do. A second
-// way to express a scope is a second policy engine, and the one nobody simulated is the one that
-// decides what an expensive run covers.
+// The predicate arrives in the query string rather than the body so it is parsed by
+// `graphPredicate`, exactly as every other surface parses one, and resolved by `runSet`, exactly
+// as /api/databases previews it. A reader is shown the set a run will cover before pressing it.
 //
 // It records and does not execute. Keeping those apart is what lets a reader see the size of a
 // thing before it happens.
 func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
-	spec, err := s.graphPredicate(r)
+	spec, err := s.runPredicate(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if refused := spec.UnenforceableAsSet(); len(refused) > 0 {
-		writeError(w, http.StatusBadRequest, unenforceable(refused))
 		return
 	}
 
@@ -50,7 +45,7 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	set, err := s.Store.DatabasesMatching(store.SelectorFor(spec))
+	set, err := s.runSet(spec)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -68,11 +63,12 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 
 	id, err := s.Store.CreateAnalysisRun(store.AnalysisRequest{
 		RequestedBy: body.By,
-		Predicate:   r.URL.RawQuery,
-		Mode:        set.Mode,
-		Queries:     body.Queries,
-		Databases:   set.Databases,
-		Gaps:        set.Gaps,
+		// The question a name resolved to, never the name, which another scope can later take.
+		Predicate: spec.String(),
+		Mode:      set.Mode,
+		Queries:   body.Queries,
+		Databases: set.Databases,
+		Gaps:      set.Gaps,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

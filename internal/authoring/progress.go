@@ -36,9 +36,9 @@ type Step struct {
 	Detail string `json:"detail"`
 }
 
-// Progress derives the steps a query version on disk has taken, from the files in root and the
-// test results on record for its id.
-func Progress(root string, q Query, tests []store.QueryTest) ([]Step, error) {
+// Progress derives the steps a query version on disk has taken, from the files in root, the test
+// results on record for its id, and the newest PrintAST tree kept for it (a zero row id when none).
+func Progress(root string, q Query, tests []store.QueryTest, printed store.AuthoringAST) ([]Step, error) {
 	digest, err := DigestTests(root, q.Tests)
 	if err != nil {
 		return nil, err
@@ -71,11 +71,28 @@ func Progress(root string, q Query, tests []store.QueryTest) ([]Step, error) {
 		return nil, err
 	}
 	return []Step{
-		help, expected, database,
-		{Step: "ast", State: Pending, Detail: "no PrintAST run is recorded over the test database"},
+		help, expected, database, astStep(printed, digest),
 		compilesStep(current, compiledElsewhere),
 		testsStep(q, current, passedElsewhere, digest),
 	}, nil
+}
+
+// astStep is (e): a tree PrintAST printed from the fixtures on disk now.
+func astStep(printed store.AuthoringAST, digest string) Step {
+	step := Step{Step: "ast", State: Passing}
+	switch {
+	case printed.RowID == 0:
+		step.State, step.Detail = Pending, "no PrintAST tree is kept for this query's test database"
+	case printed.Size == 0:
+		step.State, step.Detail = Warning, "PrintAST printed nothing at "+printed.PrintedAt+
+			", so the fixtures read as no Actions code"
+	case printed.TestDigest == "" || printed.TestDigest != digest:
+		step.State, step.Detail = Warning, "printed at "+printed.PrintedAt+
+			" from fixtures that have changed since"
+	default:
+		step.Detail = fmt.Sprintf("printed at %s from these fixtures, %d bytes", printed.PrintedAt, printed.Size)
+	}
+	return step
 }
 
 // TargetStep is (a): which query a request is about, and who chose it.
@@ -88,6 +105,9 @@ func TargetStep(r store.QueryRequest) Step {
 		step.Detail = r.QueryID + ", selected by you"
 	case r.TargetSource == store.TargetAgent:
 		step.Detail = r.QueryID + ", decided by the agent"
+		if r.TargetDetail != "" {
+			step.Detail += ": " + r.TargetDetail
+		}
 	default:
 		step.State = Warning
 		step.Detail = "nobody is recorded as choosing " + r.QueryID + "; choose it again to confirm"

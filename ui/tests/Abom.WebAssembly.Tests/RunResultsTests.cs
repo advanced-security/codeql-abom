@@ -66,6 +66,20 @@ public class RunResultsTests : AbomTestContext
         Assert.Contains("no regular analysis on record", cut.Markup);
     }
 
+    /// <summary>A skipped repository carries another run's answer, and says whose.</summary>
+    [Fact]
+    public void ASkippedRepositorySaysWhichRunAnsweredIt()
+    {
+        Answer("api/runs/3", Run.Replace(
+            "\"repository\":\"octo/quiet\",\"status\":\"succeeded\"",
+            "\"repository\":\"octo/quiet\",\"status\":\"skipped\",\"detail\":\"already analyzed with these versions, in run 2\""));
+        var cut = Render<Shared.RunResults>(p => p.Add(c => c.RunId, 3L).Add(c => c.QueryId, "acme/rule"));
+        cut.WaitForAssertion(() => cut.Find("[data-abom-run-summary]"));
+        cut.Find("[data-abom-results-all] input").Change(true);
+
+        Assert.Contains("skipped — already analyzed with these versions, in run 2", cut.Markup);
+    }
+
     /// <summary>Opened from the run rather than from a query, every query it carried is a column.</summary>
     [Fact]
     public void ARunOpenedOnItsOwnHasAColumnPerQuery()

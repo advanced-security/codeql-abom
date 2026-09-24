@@ -99,6 +99,8 @@ var createTables = []struct {
 	{"the discovery startup table", discoveryStartupDDL},
 	{"the query test table", queryTestDDL},
 	{"the query request table", queryRequestDDL},
+	{"the authoring session tables", authoringSessionDDL},
+	{"the printed tree table", authoringASTDDL},
 	{"the enumeration state table", enumerationStateDDL},
 	{"the repository property table", repositoryPropertyDDL},
 	{"the property schema table", propertySchemaDDL},
