@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // testRunFixture is what CodeQL 2.27.1 printed for `codeql test run <dir> --format=json
@@ -63,6 +64,18 @@ func TestAnExtractionFailureKeepsWhatTheCLISaid(t *testing.T) {
 	}
 	if !strings.Contains(got.Detail, "'codeql test extract' operation failed") {
 		t.Errorf("detail %q drops the CLI's description", got.Detail)
+	}
+}
+
+// A pack whose dependencies were never installed fails to compile with no message at all, only a
+// description; "it does not compile" alone sent a reader looking for a mistake in the query.
+func TestACompileFailureWithNoMessageKeepsWhatTheCLISaid(t *testing.T) {
+	got, err := parseTestOutput(testRunFixture(t, "unresolved"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.FailureStage != "COMPILATION" || !strings.Contains(got.Detail, "Could not resolve library path") {
+		t.Errorf("stopped at %q saying %q, want the CLI's description", got.FailureStage, got.Detail)
 	}
 }
 
@@ -162,5 +175,99 @@ func TestATestRunWithNothingToRunIsRefused(t *testing.T) {
 	}
 	if _, err := os.Stat(argsFile); err == nil {
 		t.Error("the CLI was invoked with nothing to run")
+	}
+}
+
+// capturedAt is where the expectations fixtures were captured; the stub CLI prints them with the
+// output file moved to where the test put it.
+const capturedAt = "/private/tmp/abom-failfirst/test/Stub"
+
+// An authoring session holds the machine-wide lock for its whole life, so a test run on its behalf
+// must not queue behind the session that asked for it; any other caller takes the lock.
+func TestATestRunForTheHolderOfTheLockDoesNotWaitForIt(t *testing.T) {
+	fixture, err := filepath.Abs(filepath.Join("testdata", "testrun-pass.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub, _ := stubCodeQL(t, "cat "+fixture+"\n")
+	r := &Runner{CodeQLPath: stub, Lock: &Lock{}}
+	release, err := r.Lock.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+
+	if _, err := r.RunTestsHeld(context.Background(), []string{"/w/test/A/A.qlref"}); err != nil {
+		t.Fatalf("RunTestsHeld under the held lock: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if _, err := r.RunTests(ctx, []string{"/w/test/A/A.qlref"}); err == nil {
+		t.Error("RunTests ran while another caller held the lock")
+	}
+}
+
+// runCaptured runs a stub CLI that prints one captured run, with its .actual beside a test.
+func runCaptured(t *testing.T, name string) TestResult {
+	t.Helper()
+	dir := t.TempDir()
+	actual, err := os.ReadFile(filepath.Join("testdata", "testrun-"+name+".actual"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Stub.actual"), actual, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := filepath.Abs(filepath.Join("testdata", "testrun-"+name+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub, _ := stubCodeQL(t, "sed 's#"+capturedAt+"#"+dir+"#g' "+fixture+"\n")
+	got, err := (&Runner{CodeQLPath: stub}).RunTests(context.Background(),
+		[]string{filepath.Join(dir, "Stub.qlref")})
+	if err != nil {
+		t.Fatalf("RunTests: %v", err)
+	}
+	return got
+}
+
+// A test marked with the lines its query must report fails before the query exists because those
+// results are missing, and that reason is the evidence the test was written first. A failure for
+// want of an .expected alone says nothing about the fixtures.
+func TestAFailingTestCountsTheExpectationsItsOutputMissed(t *testing.T) {
+	for name, want := range map[string][2]int64{"missing": {1, 0}, "unexpected": {0, 1}} {
+		got := runCaptured(t, name)
+		if got.Missing == nil || got.Unexpected == nil {
+			t.Fatalf("%s: the expectations were not counted: %+v", name, got)
+		}
+		if *got.Missing != want[0] || *got.Unexpected != want[1] {
+			t.Errorf("%s: counted %d missing and %d unexpected, want %d and %d", name,
+				*got.Missing, *got.Unexpected, want[0], want[1])
+		}
+		if !strings.Contains(got.Detail, map[string]string{
+			"missing": "1 expected result missing", "unexpected": "1 unexpected result"}[name]) {
+			t.Errorf("%s: detail %q does not say which expectations failed", name, got.Detail)
+		}
+	}
+}
+
+// A run that stopped before comparing results measured nothing about the expectations, and zero
+// would read as a comparison that found every one met.
+func TestARunThatNeverComparedResultsCountsNoExpectations(t *testing.T) {
+	for _, fixture := range []string{"compilation", "extraction", "pass"} {
+		path, err := filepath.Abs(filepath.Join("testdata", "testrun-"+fixture+".json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		stub, _ := stubCodeQL(t, "cat "+path+"\n")
+		got, err := (&Runner{CodeQLPath: stub}).RunTests(context.Background(),
+			[]string{"/w/test/A/A.qlref"})
+		if err != nil {
+			t.Fatalf("%s: %v", fixture, err)
+		}
+		if got.Missing != nil || got.Unexpected != nil {
+			t.Errorf("%s: counted missing=%v unexpected=%v, want no count", fixture, got.Missing,
+				got.Unexpected)
+		}
 	}
 }

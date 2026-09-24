@@ -249,6 +249,32 @@ func pickedRequest(runID int64, evidence ...RequestEvidence) QueryRequest {
 	return r
 }
 
+// A member counted before members kept their evaluation has results and nothing to pick them
+// from, and nothing backfills the link. Saying so is the difference between "run it again" and
+// an empty list that reads as "found nothing".
+func TestAMemberCountedBeforeItsEvaluationWasKeptSaysSo(t *testing.T) {
+	s := newTestStore(t)
+	runID, _ := pickedRun(t, s)
+	if _, err := s.db.Exec(`UPDATE abom_analysis_member SET query_run_id = NULL
+		WHERE run_id = ? AND repository = 'octo/app'`, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	old, err := s.RunFindings(runID, "octo/app", "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.Evaluated || !old.Unlinked || len(old.Findings) != 0 {
+		t.Errorf("a member counted before its evaluation was kept reads %+v", old)
+	}
+	for _, repo := range []string{"octo/quiet", "octo/absent"} {
+		got, err := s.RunFindings(runID, repo, "", 10)
+		if err != nil || got.Unlinked {
+			t.Errorf("%s reads %+v (%v), which it was not", repo, got, err)
+		}
+	}
+}
+
 // A request filed from a run keeps what was picked from it, which is what the agent later turns
 // into test cases: the finding that should not have fired, the repository where one should have.
 func TestARequestFiledFromARunKeepsWhatWasPicked(t *testing.T) {

@@ -450,11 +450,12 @@ func (s *Store) analysisCounts() (map[string]int, error) {
 	return out, rows.Err()
 }
 
-// AdvanceQueryStage records that somebody moved a version to a stage.
+// AdvanceQueryStage records that somebody moved a version to a stage, cli naming the CodeQL that
+// runs now, whose result alone can earn the test rung.
 //
 // Who and when are part of the row because readiness is computed and advancement is not: a stage
 // that appeared on its own could not be told apart from one a person signed.
-func (s *Store) AdvanceQueryStage(queryID, version, stage, by string) error {
+func (s *Store) AdvanceQueryStage(queryID, version, stage, by, cli string) error {
 	switch {
 	case queryID == "":
 		return fmt.Errorf("advancing a query stage: no query named")
@@ -467,14 +468,14 @@ func (s *Store) AdvanceQueryStage(queryID, version, stage, by string) error {
 	// hand is an audit trail of intentions, and the first reader to treat one as a guarantee is
 	// misled by something this project built.
 	if stage == StageTest {
-		test, known, err := s.QueryTestFor(queryID, version)
+		test, known, err := s.QueryTestFor(queryID, version, cli)
 		switch {
 		case err != nil:
 			return err
 		case !known:
 			return fmt.Errorf(
-				"advancing %s to %s: nothing has run its tests, so nothing has been shown to work",
-				queryID, stage)
+				"advancing %s to %s: CodeQL %s has not run its tests, so nothing has been shown to work",
+				queryID, stage, cli)
 		case !test.Passed:
 			return fmt.Errorf("advancing %s to %s: its tests do not pass (%s)",
 				queryID, stage, test.Detail)

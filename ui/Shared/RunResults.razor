@@ -260,6 +260,9 @@ else
         _missed.Clear();
     }
 
+    /// <summary>The picker lists no repository counted before the split, found something or not.</summary>
+    private int UnsplitCount => _run?.Members.Count(m => Unsplit(m)) ?? 0;
+
     private async Task ShowFindings(string repository)
     {
         if (PickQuery is { } query)
@@ -364,6 +367,16 @@ else
                         }
                     </tbody>
                 </MudSimpleTable>
+                @if (UnsplitCount is > 0 and var unsplit)
+                {
+                    <MudText Typo="Typo.caption" Class="d-block mud-text-secondary mt-1" data-abom-results-unpickable>
+                        @(unsplit == Analyzed ? $"All {CountText.Of(unsplit, "repository", "repositories")}"
+                          : $"{unsplit} of the {CountText.Of(Analyzed, "repository", "repositories")}")
+                        this run analyzed @(unsplit == 1 ? "was" : "were") counted before ABOM kept what each query
+                        found in each one, so none of them can be picked, for what was found or what was missed;
+                        run it again to pick from them.
+                    </MudText>
+                }
                 <div class="d-flex align-center gap-2 mt-2">
                     <MudText Typo="Typo.caption" Class="mud-text-secondary">@PickedText</MudText>
                     <MudSpacer />
@@ -387,6 +400,13 @@ else
         {
             <MudText Typo="Typo.caption" Class="mud-text-secondary">
                 The server did not say what this repository reported: @Api.LastError
+            </MudText>
+        }
+        else if (listed.Unlinked)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-member-unlinked>
+                This run was recorded before ABOM kept each repository's own evaluation, so what it
+                counted here cannot be listed; run it again to pick from its results.
             </MudText>
         }
         else

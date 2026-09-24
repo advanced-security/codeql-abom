@@ -8,6 +8,8 @@ const port = process.env.ABOM_E2E_PORT ?? '8231';
 const bin = process.env.ABOM_E2E_BIN ?? '../../../bin/codeql-abom';
 const db = process.env.ABOM_E2E_DB ?? '../../../.abom/e2e/abom.db';
 const ui = process.env.ABOM_E2E_UI ?? '../../../.abom/ui/wwwroot';
+// The operator's query pack, which `make e2e-corpus` names; without one no custom row is drawn.
+const ql = process.env.ABOM_E2E_QL ?? '';
 
 // Resolved once, and loudly: a machine with no usable browser has to say so, not fail every test
 // with a launch error. Throws when there is nothing to run in, which is the only honest outcome
@@ -66,7 +68,8 @@ export default defineConfig({
     ],
 
     webServer: {
-        command: `${bin} serve --db ${db} --addr 127.0.0.1:${port} --ui-dir ${ui}`,
+        command: `${bin} serve --db ${db} --addr 127.0.0.1:${port} --ui-dir ${ui}` +
+            (ql ? ` --custom-ql-dir ${ql}` : ''),
         url: `http://127.0.0.1:${port}/api/summary`,
         // Never reuse: a server already on this port is somebody else's, pointed at a database
         // this suite did not prepare, and its answers would be reported as ours.

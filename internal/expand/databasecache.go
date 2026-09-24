@@ -55,8 +55,12 @@ func (c *DatabaseCache) Stage() (string, string, error) {
 	return entry, databaseDir(entry), nil
 }
 
-// Reuse reports the database held at an identity, if one has been promoted there.
-func (c *DatabaseCache) Reuse(id store.DatabaseIdentity) (string, bool) {
+// Reuse reports the database held at an identity, if one has been promoted there and the CodeQL
+// named cli built it.
+//
+// Extraction changes between releases, and a result names the CodeQL that produced it: a database
+// another CodeQL built would put that release's extraction under this one's name.
+func (c *DatabaseCache) Reuse(id store.DatabaseIdentity, cli string) (string, bool) {
 	if c == nil || c.Dir == "" {
 		return "", false
 	}
@@ -68,7 +72,25 @@ func (c *DatabaseCache) Reuse(id store.DatabaseIdentity) (string, bool) {
 	if info, err := os.Stat(db); err != nil || !info.IsDir() {
 		return "", false
 	}
+	if BuiltBy(db) != cli {
+		return "", false
+	}
 	return db, true
+}
+
+// BuiltBy is the CodeQL a database records building it, which the CLI writes into its metadata, and
+// empty where it records none.
+func BuiltBy(db string) string {
+	body, err := os.ReadFile(filepath.Join(db, "codeql-database.yml"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		if version, ok := strings.CutPrefix(strings.TrimSpace(line), "cliVersion:"); ok {
+			return strings.TrimSpace(version)
+		}
+	}
+	return ""
 }
 
 // Retain promotes a staged build to the identity it was built for, returning the database in

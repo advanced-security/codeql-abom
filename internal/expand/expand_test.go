@@ -36,6 +36,8 @@ type harness struct {
 	queue    *frontier.Queue
 	expander *Expander
 	probe    *harnessProbe
+	// cli is the CodeQL the fake builder says built each database, empty for none.
+	cli string
 
 	mu       sync.Mutex
 	fetched  []string
@@ -202,8 +204,12 @@ func (h *harness) CreateDatabase(_ context.Context, srcDir, dbDir, _ string) err
 		return err
 	}
 	// Real bytes, because a retained database is measured and a ceiling over an empty directory
-	// is a ceiling over nothing.
-	return os.WriteFile(filepath.Join(dbDir, "codeql-database.yml"), []byte("sourceLocationPrefix: .\n"), 0o644)
+	// is a ceiling over nothing. The CLI names itself in what it builds, and so does this.
+	body := "sourceLocationPrefix: .\n"
+	if h.cli != "" {
+		body += "creationMetadata:\n  cliVersion: " + h.cli + "\n"
+	}
+	return os.WriteFile(filepath.Join(dbDir, "codeql-database.yml"), []byte(body), 0o644)
 }
 
 func (h *harness) RunQueries(

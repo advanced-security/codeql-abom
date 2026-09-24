@@ -20,10 +20,12 @@ import (
 // Server is the key ql-mcp is registered under; the CLI names its tools "<Server>-<tool>".
 const Server = "ql-mcp"
 
-// ABOM's own tools: what the catalog holds, and the decision of which query a request is about.
+// ABOM's own tools: what the catalog holds, the decision of which query a request is about, and a
+// test run ABOM records.
 const (
 	ToolCatalog = "abom_catalog"
 	ToolTarget  = "abom_target"
+	ToolTest    = "abom_test"
 )
 
 // Steps a call works toward, named as authoring.Progress names them.
@@ -59,6 +61,8 @@ type Bounds struct {
 	denied    []string
 	query     string
 	tests     string
+	// firstChange says why the target query must stay as it is, or is empty when it may change.
+	firstChange func() string
 }
 
 // NewBounds resolves the pack and the library roots through every link, since a check against
@@ -134,6 +138,13 @@ func (b Bounds) Bind(query, tests string) (Bounds, error) {
 
 // Query and Tests are the bound target's files, empty until one is bound.
 func (b Bounds) Query() string { return b.query }
+
+// Guard holds every write to the target query on why, which says what stands in the way or is
+// empty when nothing does.
+func (b Bounds) Guard(why func() string) Bounds {
+	b.firstChange = why
+	return b
+}
 
 func (b Bounds) Tests() string { return b.tests }
 
@@ -262,6 +273,11 @@ func (b Bounds) writable(path string) (string, error) {
 	case b.isDenied(p):
 		return "", fmt.Errorf("%s is ABOM's own, which no session writes", path)
 	case p == b.query:
+		if b.firstChange != nil {
+			if why := b.firstChange(); why != "" {
+				return "", errors.New(why)
+			}
+		}
 		return "", nil
 	case p == filepath.Join(dir, stem+".md") || p == filepath.Join(dir, stem+".qhelp"):
 		return StepHelp, nil
@@ -310,10 +326,12 @@ func (b Bounds) Call(tool string, args any) Verdict {
 			return refuse("%v", err)
 		}
 		return Verdict{Allowed: true, Step: step}
-	case ToolCatalog:
+	case ToolCatalog, ToolResults, ToolSource, ToolDraft:
 		return Verdict{Allowed: true}
 	case ToolTarget:
 		return Verdict{Allowed: true, Step: StepTarget}
+	case ToolTest:
+		return Verdict{Allowed: true, Step: StepTests}
 	}
 	if name, ok := strings.CutPrefix(tool, Server+"-"); ok {
 		return b.qlmcp(name, fields)
@@ -630,7 +648,7 @@ func (b Bounds) Request(req rpc.PermissionRequest) Verdict {
 		}
 		return refuse("only accepting expected output is held for an operator, not %s", r.ToolName)
 	case *rpc.PermissionRequestCustomTool:
-		if r.ToolName == ToolCatalog || r.ToolName == ToolTarget {
+		if slices.Contains([]string{ToolCatalog, ToolTarget, ToolTest, ToolResults, ToolSource, ToolDraft}, r.ToolName) {
 			return b.Call(r.ToolName, r.Args)
 		}
 		return refuse("%s is not one of ABOM's tools", r.ToolName)

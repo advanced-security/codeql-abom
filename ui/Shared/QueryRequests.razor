@@ -36,6 +36,7 @@
                 <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3" data-abom-request-evidence>
                     @EvidenceText(_draft), filed with the request when it is saved.
                 </MudAlert>
+                <RequestAgentDraft Asked="@_draft" QueryId="@_queryId" OnUse="UseDraft" />
             }
             <div data-abom-request-description>
                 <MudTextField T="string" @bind-Value="_description" Immediate="true" Lines="3"
@@ -127,7 +128,7 @@
                      FixedHeader="true" RowsPerPage="20" Class="abom-grid abom-grid-windowed"
                      data-abom-requests-table>
             <Columns>
-                <HierarchyColumn T="QueryRequest">
+                <HierarchyColumn T="QueryRequest" InitiallyExpandedFunc="@(r => r.RowId == FocusRequest)">
                     <CellTemplate>
                         <MudIconButton Size="Size.Small"
                                        Icon="@(context.Open ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)"
@@ -188,8 +189,34 @@
                 </PropertyColumn>
             </Columns>
             <ChildRowContent>
-                <div class="abom-row-detail">
+                <div class="abom-row-detail" data-abom-request-open="@context.Item.RowId">
                     <MudText Typo="Typo.body2" Class="abom-request-description mb-2">@context.Item.Description</MudText>
+                    @if (context.Item.SourceRunId != 0)
+                    {
+                        <MudText Typo="Typo.caption" Class="d-block mb-2">
+                            Asked from
+                            <MudLink Href="@($"/codeql?tab=runs&run={context.Item.SourceRunId}")" Typo="Typo.caption"
+                                     data-abom-request-source-run>run #@context.Item.SourceRunId</MudLink>
+                        </MudText>
+                    }
+                    @if (context.Item.Steps.Count > 0)
+                    {
+                        <ul class="abom-request-steps mb-2" data-abom-request-steps>
+                            @foreach (var step in context.Item.Steps)
+                            {
+                                <li data-abom-request-step="@step.Step">
+                                    <MudIcon Icon="@AuthoringSteps.IconOf(step.Step)" Size="Size.Small"
+                                             Color="@AuthoringSteps.ColorOf(step.State)" />
+                                    <span class="abom-request-step-name">@AuthoringSteps.LabelOf(step.Step)</span>
+                                    <span class="mud-text-secondary">@AuthoringSteps.StateText(step.State)</span>
+                                    @if (step.Detail.Length > 0)
+                                    {
+                                        <span>— @step.Detail</span>
+                                    }
+                                </li>
+                            }
+                        </ul>
+                    }
                     <div class="abom-request-examples">
                         <div>
                             <MudText Typo="Typo.caption" Class="mud-text-secondary">COMPLIANT</MudText>
@@ -209,6 +236,9 @@
 </div>
 
 @code {
+    /// <summary>A request to open on arrival, such as one a catalog row names.</summary>
+    [Parameter] public long FocusRequest { get; set; }
+
     private QueryRequestList? _list;
     private QueryCatalog? _catalog;
     private QueryRequest? _draft;
@@ -260,6 +290,13 @@
         _draft = null;
         _refusal = null;
         Asked.Clear();
+    }
+
+    private void UseDraft(AgentDraft draft)
+    {
+        _description = draft.Description;
+        _compliant = draft.Compliant;
+        _nonCompliant = draft.NonCompliant;
     }
 
     private async Task Save()

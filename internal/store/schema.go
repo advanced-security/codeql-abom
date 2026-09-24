@@ -442,7 +442,10 @@ CREATE TABLE IF NOT EXISTS abom_analysis_run (
   requested_by  TEXT NOT NULL,
   state         TEXT NOT NULL,
   created_at    TEXT NOT NULL,
-  finished_at   TEXT
+  finished_at   TEXT,
+  -- The CodeQL that carried the run out, set when it starts: the same queries over the same scope
+  -- can answer differently under the next release. NULL until then.
+  cli_version   TEXT
 );
 
 -- The explicit queries a run names. A list rather than a suite: the point of the run is to be more
@@ -718,6 +721,10 @@ var addedColumns = []struct{ table, column, decl string }{
 	// which tests it ran, and must not read as having stopped nowhere.
 	{"abom_query_test", "failure_stage", "TEXT"},
 	{"abom_query_test", "test_digest", "TEXT"},
+	// cli_version is not here: it joins the key, which only migrateQueryTestKey's rebuild can do.
+	{"abom_query_test", "fixtures_digest", "TEXT"},
+	{"abom_query_test", "missing", "INTEGER"},
+	{"abom_query_test", "unexpected", "INTEGER"},
 	// Nullable: a request kept before targets were attributed says nobody is recorded as choosing
 	// it, which must not read as the operator having chosen it.
 	{"abom_query_request", "target_source", "TEXT"},
@@ -726,6 +733,19 @@ var addedColumns = []struct{ table, column, decl string }{
 	// A member recorded before this has no way back to its findings, which reads as not evaluated
 	// rather than as having found none.
 	{"abom_analysis_member", "query_run_id", "INTEGER"},
+	// A session kept before drafts existed belongs to a request, so it has no run and no query.
+	{"abom_authoring_session", "run_id", "INTEGER"},
+	{"abom_authoring_session", "query_id", "TEXT NOT NULL DEFAULT ''"},
+	// Nullable: a session kept before spend was recorded says nothing about what it cost, which
+	// must not read as having cost nothing.
+	{"abom_authoring_session", "model_calls", "INTEGER"},
+	{"abom_authoring_session", "input_tokens", "INTEGER"},
+	{"abom_authoring_session", "output_tokens", "INTEGER"},
+	{"abom_authoring_session", "nano_aiu", "INTEGER"},
+	// A tree kept before ABOM printed its own came from a session, so nobody else asked for it.
+	{"abom_authoring_ast", "printed_by", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_authoring_ast", "cli_version", "TEXT"},
+	{"abom_analysis_run", "cli_version", "TEXT"},
 }
 
 // indexDDL is applied only after bulk loading. Maintaining these indexes during a multi-million

@@ -34,8 +34,34 @@ func TestATestIsLaidOutWhereTheFixturesGoAndNamesItsQuery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(string(body)) != "src/CheckoutTagPin.ql" {
-		t.Errorf("the .qlref names %q", body)
+	want := "query: src/CheckoutTagPin.ql\npostprocess: " + Postprocess
+	if strings.TrimSpace(string(body)) != want {
+		t.Errorf("the .qlref reads %q, want %q", body, want)
+	}
+}
+
+// A pack scaffolded before tests read markers gains the postprocess query with its next test,
+// and one the operator changed is theirs.
+func TestLayingOutATestSuppliesThePostprocessQueryAndKeepsAnEditedOne(t *testing.T) {
+	dir := aPack(t)
+	postprocess := filepath.Join(dir, "test", filepath.FromSlash(Postprocess))
+	if err := os.Remove(postprocess); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ScaffoldTest(dir, "CheckoutTagPin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(postprocess); err != nil {
+		t.Fatalf("the next test did not supply the postprocess query: %v", err)
+	}
+	if err := os.WriteFile(postprocess, []byte("// the operator's own\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ScaffoldTest(dir, "Another"); err != nil {
+		t.Fatal(err)
+	}
+	if body, _ := os.ReadFile(postprocess); string(body) != "// the operator's own\n" {
+		t.Errorf("the operator's postprocess query was rewritten to %q", body)
 	}
 }
 

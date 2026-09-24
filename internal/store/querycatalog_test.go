@@ -286,7 +286,7 @@ func TestAVersionNobodyHasStagedReportsNoStage(t *testing.T) {
 // reason that has nothing to do with the audit trail.
 func TestAdvancingAVersionRecordsWhoDidItAndWhen(t *testing.T) {
 	s := catalogStore(t)
-	if err := s.AdvanceQueryStage("abom/edges", "v1", StageReview, "operator"); err != nil {
+	if err := s.AdvanceQueryStage("abom/edges", "v1", StageReview, "operator", testCLI); err != nil {
 		t.Fatalf("AdvanceQueryStage: %v", err)
 	}
 	entry := catalogBy(t, s)["abom/edges@v1"]
@@ -303,7 +303,7 @@ func TestAdvancingAVersionRecordsWhoDidItAndWhen(t *testing.T) {
 func TestAdvancingTwiceMovesTheSameEntry(t *testing.T) {
 	s := catalogStore(t)
 	for _, stage := range []string{StageExtendedTest, StageReview} {
-		if err := s.AdvanceQueryStage("abom/edges", "v1", stage, "operator"); err != nil {
+		if err := s.AdvanceQueryStage("abom/edges", "v1", stage, "operator", testCLI); err != nil {
 			t.Fatalf("AdvanceQueryStage(%s): %v", stage, err)
 		}
 	}
@@ -319,7 +319,7 @@ func TestAdvancingTwiceMovesTheSameEntry(t *testing.T) {
 // downstream knows how to read, and the refusal is where that is cheapest to notice.
 func TestAStageOutsideTheLifecycleIsRefused(t *testing.T) {
 	s := catalogStore(t)
-	if err := s.AdvanceQueryStage("abom/edges", "v1", "shipped", "operator"); err == nil {
+	if err := s.AdvanceQueryStage("abom/edges", "v1", "shipped", "operator", testCLI); err == nil {
 		t.Error("a stage outside the lifecycle was accepted")
 	}
 }
@@ -402,11 +402,12 @@ func TestOnlyTheVersionOnDiskIsTheWorkingOne(t *testing.T) {
 func TestAVersionThatHasNeverRunCarriesItsTestsAndStage(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.RecordQueryTest(QueryTest{
-		QueryID: "acme/a", QueryVersion: "v1", Passed: true, Total: 1, Detail: "1 of 1 passed",
+		QueryID: "acme/a", QueryVersion: "v1", CLIVersion: testCLI, Passed: true, Total: 1,
+		Detail: "1 of 1 passed",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AdvanceQueryStage("acme/a", "v1", StageTest, "operator"); err != nil {
+	if err := s.AdvanceQueryStage("acme/a", "v1", StageTest, "operator", testCLI); err != nil {
 		t.Fatal(err)
 	}
 

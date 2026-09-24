@@ -75,7 +75,7 @@ func TestEveryRecordedDatabaseIsTheOneOnDisk(t *testing.T) {
 		t.Fatalf("RetainedDatabases: %v", err)
 	}
 	for _, d := range held {
-		served, ok := cache.Reuse(d.DatabaseIdentity)
+		served, ok := cache.Reuse(d.DatabaseIdentity, "")
 		if !ok {
 			t.Errorf("%s is recorded but the cache will not serve it back", d.Repository)
 			continue
@@ -232,7 +232,7 @@ func TestTheCeilingEvictsDatabasesAndTakesTheirDirectoriesWithThem(t *testing.T)
 		t.Fatal("eviction emptied the cache rather than bringing it inside the ceiling")
 	}
 	for _, d := range survivors {
-		if _, ok := cache.Reuse(d.DatabaseIdentity); !ok {
+		if _, ok := cache.Reuse(d.DatabaseIdentity, ""); !ok {
 			t.Errorf("%s survived eviction on record but not on disk", d.Repository)
 		}
 	}

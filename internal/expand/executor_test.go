@@ -29,6 +29,7 @@ func executorFixture(t *testing.T) (*store.Store, *Executor, int64, *fakeAnalyze
 func executorHarness(t *testing.T) (*harness, *Executor, int64, *fakeAnalyzer) {
 	t.Helper()
 	h := newHarness(t)
+	h.cli = "2.26.4"
 	h.fetchErr["octo/absent"] = fmt.Errorf("%w: octo/absent has no workflows or action manifest",
 		ErrUnavailable)
 	root := t.TempDir()
@@ -52,6 +53,11 @@ func executorHarness(t *testing.T) (*harness, *Executor, int64, *fakeAnalyzer) {
 		dir := filepath.Join(root, "db", repo)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("preparing %s: %v", dir, err)
+		}
+		// The CLI records which CodeQL built a database, and a run evaluates only its own.
+		if err := os.WriteFile(filepath.Join(dir, "codeql-database.yml"),
+			[]byte("creationMetadata:\n  cliVersion: 2.26.4\n"), 0o644); err != nil {
+			t.Fatal(err)
 		}
 		return store.ScopedDatabase{
 			DatabaseIdentity: store.DatabaseIdentity{
@@ -126,6 +132,39 @@ func TestARunAnalyzesEveryMemberWhoseDatabaseIsHeld(t *testing.T) {
 	}
 	if len(analyzer.targets) != 2 {
 		t.Errorf("analyze ran %d times, want once per held database", len(analyzer.targets))
+	}
+}
+
+// A result names the CodeQL that ran it, extraction included. A held database another CodeQL
+// built would put that CodeQL's extraction under this one's name, so the run builds it again.
+func TestARunRebuildsAHeldDatabaseAnotherCodeQLBuilt(t *testing.T) {
+	h, e, _, analyzer := executorHarness(t)
+	stale := filepath.Join(t.TempDir(), "held-by-2.26.3")
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stale, "codeql-database.yml"),
+		[]byte("creationMetadata:\n  cliVersion: 2.26.3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	analyzer.failOn = stale
+	id := runOver(t, h.store, store.AnalysisModeRegular, []store.ScopedDatabase{{
+		DatabaseIdentity: store.DatabaseIdentity{Repository: "octo/app", Commit: absentCommit,
+			SourceFilter: "f0", Mode: store.AnalysisModeRegular},
+		Status: store.DatabaseRetained, Path: stale,
+	}}, nil)
+
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := membersByRepository(t, h.store, id)["octo/app"]; got.Status != store.AnalysisSucceeded {
+		t.Errorf("octo/app is %q (%s), want it rebuilt under 2.26.4 and analyzed", got.Status, got.Detail)
+	}
+	if h.databasesBuilt() != 1 {
+		t.Errorf("built %d databases, want the one CodeQL 2.26.3 had built", h.databasesBuilt())
+	}
+	if run, err := h.store.AnalysisRun(id); err != nil || run.CLIVersion != "2.26.4" {
+		t.Errorf("the run names CodeQL %q (%v), want the 2.26.4 that carried it out", run.CLIVersion, err)
 	}
 }
 

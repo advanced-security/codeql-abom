@@ -50,10 +50,15 @@ the opposite of what an empty deploy set means, across the whole corpus.
 
 ## Pending
 
-1. **Publish ABOM's own packs first.** Four packs under `ql/` are pinned, version-checked by
-   `make check-versions` inside `verify`, and consumed by nothing outside this repository. Publishing
-   them to the GitHub Container registry under `advanced-security` is the smaller half of this plan
-   and the one that proves the route. Depends on nothing.
+1. **Publish ABOM's own packs first.** The query packs under `ql/` — the actions library, graph
+   extraction, findings and selfcheck, and four quality packs — are versioned at the CLI's
+   version, checked by `make check-versions` inside `verify`, and consumed by nothing outside this
+   repository. Publishing them to the GitHub Container registry under `advanced-security` is the
+   smaller half of this plan and the one that proves the route. **The library goes first**: graph
+   extraction and findings depend on it as `${workspace}`, which publishing turns into its exact
+   version, so neither resolves from the registry until the library is there. Whether the quality
+   packs, which analyze ABOM's own code, are worth publishing is part of the item. Depends on
+   nothing.
 2. **Publish an operator's pack.** Package and publish from the operator's own directory, to a
    registry the organization's repositories can read. **Packs must be accessible to the repositories
    that run code scanning**, which for a private organization means registry access is part of the

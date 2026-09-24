@@ -49,4 +49,27 @@ public class CodeQLTabsTests : AbomTestContext
 
         Assert.Equal("catalog", page.Find("[aria-selected='true']").GetAttribute("data-abom-tab"));
     }
+
+    /// <summary>A request has an address, and following it opens that request's row.</summary>
+    [Fact]
+    public void AnAddressNamingARequestOpensItsRow()
+    {
+        Answer("api/query-requests", """
+            {"requests":[
+              {"rowId":3,"description":"first","compliant":"c","nonCompliant":"n","kind":"missed",
+               "status":"open","requestedBy":"operator","steps":[],"evidence":[]},
+              {"rowId":8,"description":"second","compliant":"c","nonCompliant":"n","kind":"missed",
+               "status":"open","requestedBy":"operator","steps":[],"evidence":[]}],
+             "kinds":["","missed"],"statuses":["open"]}
+            """);
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.NavigateTo("/codeql?tab=requests&request=8");
+
+        var page = Render<CodeQL>();
+
+        page.WaitForAssertion(() =>
+        {
+            var open = Assert.Single(page.FindAll("[data-abom-request-open]"));
+            Assert.Equal("8", open.GetAttribute("data-abom-request-open"));
+        });
+    }
 }

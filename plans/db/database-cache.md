@@ -2,8 +2,9 @@
 
 **Status:** Built and off by default. Naming `--database-cache-dir` retains each built CodeQL
 database at `${CacheDir}/${owner}/${repo}/${sha}-${filter}-${mode}/db`, indexed by
-`abom_local_database` and bounded by a 25 GiB ceiling. Eviction is least-recently-used and consults
-nothing about what is still wanted.
+`abom_local_database` and bounded by a 25 GiB ceiling. A database is reused only by the CodeQL that
+built it, and one another CodeQL built is rebuilt in its place. Eviction is least-recently-used and
+consults nothing about what is still wanted.
 
 ## Why this exists
 
@@ -45,7 +46,7 @@ flowchart LR
     STAGE -->|"analysis succeeded"| RETAIN["Retain<br/>promote + index"]
     STAGE -. "analysis failed" .-> DISCARD["DiscardStaged"]
     RETAIN --> IDX["abom_local_database<br/>repo, commit, filter, mode"]
-    ASK["a question about<br/>this commit"] -->|"Reuse"| IDX
+    ASK["a question about<br/>this commit"] -->|"Reuse, when this<br/>CodeQL built it"| IDX
     IDX -->|"used_seq"| EVICT["EvictDatabasesOver"]
     CRASH["process died<br/>mid-build"] -. "24h sweep" .-> RECLAIM["ReclaimStaging"]
     FRONTIER["what the queue<br/>still wants"] -. "never consulted" .-> EVICT
@@ -110,6 +111,14 @@ repository name somebody else chose.
 analysis mode — the tuple `abom_query_run` hashes. A cache that keyed on anything less would serve
 a database built under a narrower sparse filter to a question that needs the wider one, which reads
 downstream as a repository missing files.
+
+**A database answers only for the CodeQL that built it, and the building CodeQL is not in the
+key.** Extraction changes between releases, so `Reuse` reads the database's own
+`creationMetadata.cliVersion` and refuses another's, and the rebuild replaces it at the same path.
+Keying on the CLI instead would keep every release's copy of one commit side by side, and the
+ceiling would be spent on databases nothing will ask for again. After an upgrade every held database
+is rebuilt as its identity is next asked for: all 863 on the verification store were built by
+2.27.0 when the CLI moved to 2.27.1.
 
 ## Verification
 

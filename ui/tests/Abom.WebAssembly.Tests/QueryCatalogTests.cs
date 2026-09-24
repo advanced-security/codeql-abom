@@ -405,6 +405,42 @@ public class QueryCatalogTests : AbomTestContext
         });
     }
 
+    /// <summary>A catalog row names the requests about its query, and each opens its own row.</summary>
+    [Fact]
+    public void ARowNamesTheRequestsAboutItsQuery()
+    {
+        var page = Render(OperatorWritten.Replace("\"working\":true,", "\"working\":true,\"requests\":[3,8],"),
+            address: "/codeql?tab=catalog&query=acme%2Fself-hosted-runner");
+
+        page.WaitForAssertion(() => Assert.Equal(2, page.FindAll("[data-abom-query-request]").Count));
+        Assert.Equal(["/codeql?tab=requests&request=3", "/codeql?tab=requests&request=8"],
+            page.FindAll("[data-abom-query-request]").Select(a => a.GetAttribute("href")));
+    }
+
+    /// <summary>
+    /// A refusal somebody reads only after pressing is one they could have been told first, so
+    /// extended-test is offered disabled beside what it would be refused with.
+    /// </summary>
+    [Fact]
+    public void ExtendedTestSaysWhyItWouldBeRefusedBeforeItIsPressed()
+    {
+        var popover = base.Render<MudBlazor.MudPopoverProvider>();
+        var page = Render(OperatorWritten
+            .Replace("\"working\":true,", "\"working\":true,\"extendedTestRefusal\":\"its tests mark is pending: never run for this version\",")
+            .Replace("\"stages\":[\"dev\",\"test\"]", "\"stages\":[\"dev\",\"test\",\"extended-test\"]"));
+
+        page.FindAll("[data-abom-query-advance]")
+            .Single(m => m.Closest("tr")!.TextContent.Contains("acme/self-hosted-runner"))
+            .QuerySelector("button")!.Click();
+
+        popover.WaitForAssertion(() => popover.Find("[data-abom-stage-item='extended-test']"));
+        Assert.Contains("never run for this version",
+            popover.Find("[data-abom-stage-refused]").TextContent);
+        Assert.Equal("extended-test",
+            popover.Find("[data-abom-stage-refused]").Closest("[data-abom-stage-item]")!.GetAttribute("data-abom-stage-item"));
+        Assert.Single(popover.FindAll("[data-abom-stage-refused]"));
+    }
+
     private const string OneRun = """
         {"runs":[{"rowId":1,"predicate":"repositories=octo%2Fapp,octo%2Fnone","mode":"regular",
           "requestedBy":"operator","state":"complete","createdAt":"2026-09-22T16:00:00Z",

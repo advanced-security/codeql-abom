@@ -28,6 +28,8 @@ type Setup struct {
 	Gate   *Gate
 	// Tools are ABOM's own: the catalog, and the target decision.
 	Tools []copilot.Tool
+	// Sealed offers the agent ABOM's tools and nothing else: no files, no shell and no ql-mcp.
+	Sealed bool
 }
 
 // Agent runs one session to its end and returns what the agent said last.
@@ -118,9 +120,12 @@ func (c *Copilot) Run(ctx context.Context, s Setup) (string, error) {
 // config is the session: the gate on every call, the loop's tools and nothing else, and none of
 // what the CLI would otherwise read from the machine or keep between sessions.
 func (c *Copilot) config(s Setup) *copilot.SessionConfig {
-	tools := copilot.NewToolSet().AddBuiltIn(builtins...)
-	for _, name := range loopNames() {
-		tools.AddMCP(Server + "-" + name)
+	tools := copilot.NewToolSet()
+	if !s.Sealed {
+		tools.AddBuiltIn(builtins...)
+		for _, name := range loopNames() {
+			tools.AddMCP(Server + "-" + name)
+		}
 	}
 	for _, t := range s.Tools {
 		tools.AddCustom(t.Name)
@@ -175,6 +180,9 @@ func (c *Copilot) config(s Setup) *copilot.SessionConfig {
 	if c.Credits > 0 {
 		credits := c.Credits
 		cfg.SessionLimits = &rpc.SessionLimitsConfig{MaxAiCredits: &credits}
+	}
+	if s.Sealed {
+		cfg.MCPServers = nil
 	}
 	return cfg
 }

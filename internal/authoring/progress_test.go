@@ -3,20 +3,40 @@ package authoring
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/advanced-security/codeql-abom/internal/customql"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
+// testCLI is the CodeQL these tests say runs now, unless a test names another.
+const testCLI = "2.27.1"
+
+// progressOf is the steps a query has taken under testCLI, with every result that names no
+// CodeQL recorded under it.
 func progressOf(t *testing.T, root, id string, tests ...store.QueryTest) map[string]Step {
+	t.Helper()
+	tests = slices.Clone(tests)
+	for i := range tests {
+		if tests[i].CLIVersion == "" {
+			tests[i].CLIVersion = testCLI
+		}
+	}
+	return progressUnder(t, root, id, testCLI, store.AuthoringAST{}, tests...)
+}
+
+// progressUnder is the steps a query has taken as the CodeQL named cli would read them.
+func progressUnder(t *testing.T, root, id, cli string, printed store.AuthoringAST,
+	tests ...store.QueryTest) map[string]Step {
 	t.Helper()
 	q, found, err := Find(root, id)
 	if err != nil || !found {
 		t.Fatalf("Find(%s): found=%v err=%v", id, found, err)
 	}
-	steps, err := Progress(root, q, tests, store.AuthoringAST{})
+	steps, err := Progress(root, q, Evidence{CLI: cli, Tests: tests, Printed: printed})
 	if err != nil {
 		t.Fatalf("Progress: %v", err)
 	}
@@ -25,6 +45,23 @@ func progressOf(t *testing.T, root, id string, tests ...store.QueryTest) map[str
 		by[s.Step] = s
 	}
 	return by
+}
+
+// failedFirstOver is an earlier version's run over these fixtures that missed a marked result.
+func failedFirstOver(t *testing.T, root, id string) store.QueryTest {
+	t.Helper()
+	q, _, err := Find(root, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtures, err := DigestFixtures(root, q.Tests)
+	if err != nil {
+		t.Fatal(err)
+	}
+	one, none := int64(1), int64(0)
+	return store.QueryTest{QueryID: id, QueryVersion: "the-stub", Total: 1, Failed: 1,
+		FailureStage: "RESULT", FixturesDigest: fixtures, Missing: &one, Unexpected: &none,
+		RanAt: "2026-09-24T09:00:00Z", Detail: "0 of 1 passed; 1 expected result missing, nothing unexpected"}
 }
 
 func mustVersion(t *testing.T, root, id string) (Query, string) {
@@ -68,7 +105,7 @@ func TestTheStepsAreReportedInTheirOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	steps, err := Progress(root, q, nil, store.AuthoringAST{})
+	steps, err := Progress(root, q, Evidence{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,15 +227,153 @@ func TestAPassForTestsThatHaveSinceChangedIsAWarning(t *testing.T) {
 		QueryID: "acme/a", QueryVersion: q.Version, Passed: true, Total: 1, TestDigest: digest,
 		Detail: "1 of 1 passed",
 	}
-	got := progressOf(t, root, "acme/a", pass)
+	first := failedFirstOver(t, root, "acme/a")
+	got := progressOf(t, root, "acme/a", first, pass)
 	if got["tests"].State != Passing || got["compiles"].State != Passing {
 		t.Fatalf("a current pass reads tests=%s compiles=%s", got["tests"].State,
 			got["compiles"].State)
 	}
 
 	write(t, root, "test/A/A.expected", "| a job |\n| another job |\n")
-	if got := progressOf(t, root, "acme/a", pass)["tests"]; got.State != Warning {
+	if got := progressOf(t, root, "acme/a", first, pass)["tests"]; got.State != Warning {
 		t.Errorf("a pass for tests since rewritten reads %s (%s)", got.State, got.Detail)
+	}
+}
+
+// A pass shows a query agrees with its tests. Only a failure of an earlier version over the same
+// fixtures, on a result they mark, shows the tests could have caught a query that disagreed.
+func TestAPassIsEvidenceOnlyOnceTheSameFixturesWereSeenFailingForAMarkedResult(t *testing.T) {
+	root := workspace(t, map[string]string{"A": "acme/a"})
+	q, digest := mustVersion(t, root, "acme/a")
+	pass := store.QueryTest{QueryID: "acme/a", QueryVersion: q.Version, Passed: true, Total: 1,
+		TestDigest: digest, Detail: "1 of 1 passed", RanAt: "2026-09-24T10:00:00Z"}
+	first := failedFirstOver(t, root, "acme/a")
+	zero := int64(0)
+
+	for _, c := range []struct {
+		name   string
+		before []store.QueryTest
+		want   State
+		says   string
+	}{
+		{"never seen failing", nil, Warning, "never seen failing"},
+		{"failed to compile first", []store.QueryTest{{QueryID: "acme/a", QueryVersion: "broken",
+			Total: 1, Failed: 1, FailureStage: "COMPILATION", FixturesDigest: first.FixturesDigest}},
+			Warning, "never seen failing"},
+		{"failed first for want of an .expected, marking nothing", []store.QueryTest{{
+			QueryID: "acme/a", QueryVersion: "the-stub", Total: 1, Failed: 1, FailureStage: "RESULT",
+			FixturesDigest: first.FixturesDigest, Missing: &zero, Unexpected: &zero}},
+			Warning, "never seen failing"},
+		{"failed first over fixtures since changed", []store.QueryTest{func() store.QueryTest {
+			f := first
+			f.FixturesDigest = "older-fixtures"
+			return f
+		}()}, Warning, "changed since"},
+		{"failed first on a marked result", []store.QueryTest{first}, Passing, "the-stub failed first"},
+	} {
+		got := progressOf(t, root, "acme/a", append(c.before, pass)...)["tests"]
+		if got.State != c.want || !strings.Contains(got.Detail, c.says) {
+			t.Errorf("%s: %+v, want %s saying %q", c.name, got, c.want, c.says)
+		}
+	}
+}
+
+// A result under one CodeQL says nothing about the next: extraction and evaluation both change
+// between releases, so every mark read from one reads as stale under another.
+func TestEvidenceFromAnotherCodeQLReadsAsStale(t *testing.T) {
+	root := workspace(t, map[string]string{"A": "acme/a"})
+	q, digest := mustVersion(t, root, "acme/a")
+	fixtures, err := DigestFixtures(root, q.Tests)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	touch(t, root, "test/A/.github/workflows/ci.yml", now.Add(-time.Hour))
+	write(t, root, "test/A/A.testproj/codeql-database.yml",
+		"---\ncreationMetadata:\n  cliVersion: 2.27.0\n"+finishedLine+"\n")
+	first := failedFirstOver(t, root, "acme/a")
+	first.CLIVersion = "2.27.0"
+	pass := store.QueryTest{QueryID: "acme/a", QueryVersion: q.Version, CLIVersion: "2.27.0",
+		Passed: true, Total: 1, TestDigest: digest, Detail: "1 of 1 passed"}
+	printed := store.AuthoringAST{RowID: 1, TestDigest: fixtures, Size: 10, CLIVersion: "2.27.0",
+		PrintedAt: "2026-09-24T10:00:00Z"}
+
+	under := func(cli string) map[string]Step {
+		return progressUnder(t, root, "acme/a", cli, printed, first, pass)
+	}
+	for _, step := range []string{"database", "ast", "compiles", "tests"} {
+		if got := under("2.27.0")[step]; got.State != Passing {
+			t.Errorf("%s under the CodeQL that ran it reads %+v", step, got)
+		}
+		if got := under("2.27.1")[step]; got.State != Warning || !strings.Contains(got.Detail, "2.27.0") {
+			t.Errorf("%s under a newer CodeQL reads %+v, want a warning naming 2.27.0", step, got)
+		}
+	}
+}
+
+// A server that cannot read which CodeQL it runs cannot say anything on record is current, and a
+// result kept before ABOM recorded the CodeQL is not thereby the current one.
+func TestAnUnreadableCodeQLLeavesNothingOnRecordCurrent(t *testing.T) {
+	root := workspace(t, map[string]string{"A": "acme/a"})
+	q, digest := mustVersion(t, root, "acme/a")
+	fixtures, err := DigestFixtures(root, q.Tests)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, recorded := range []string{"", "2.27.1"} {
+		first := failedFirstOver(t, root, "acme/a")
+		first.CLIVersion = recorded
+		pass := store.QueryTest{QueryID: "acme/a", QueryVersion: q.Version, CLIVersion: recorded,
+			Passed: true, Total: 1, TestDigest: digest, Detail: "1 of 1 passed"}
+		printed := store.AuthoringAST{RowID: 1, TestDigest: fixtures, Size: 10, CLIVersion: recorded,
+			PrintedAt: "2026-09-24T10:00:00Z"}
+
+		got := progressUnder(t, root, "acme/a", "", printed, first, pass)
+		for _, step := range []string{"ast", "compiles", "tests"} {
+			if got[step].State == Passing || !strings.Contains(got[step].Detail, "could not read which CodeQL") {
+				t.Errorf("recorded under %q, %s reads %+v with no CodeQL readable", recorded, step, got[step])
+			}
+		}
+	}
+}
+
+// A query compiled against one actions library and run by ABOM against another can answer
+// differently, and nothing downstream would say which one did. A lock resolving another version
+// than the one ABOM's queries run reads as stale, however the tests went.
+func TestCompilingAgainstAnotherActionsLibraryIsAWarning(t *testing.T) {
+	root := workspace(t, map[string]string{"A": "acme/a"})
+	q, digest := mustVersion(t, root, "acme/a")
+	pass := store.QueryTest{QueryID: "acme/a", QueryVersion: q.Version, Passed: true, Total: 1,
+		TestDigest: digest, Detail: "1 of 1 passed"}
+	lock := func(pack, version string) {
+		write(t, root, pack+"codeql-pack.lock.yml", "---\nlockVersion: 1.0.0\ndependencies:\n"+
+			"  codeql/actions-all:\n    version: "+version+"\n  codeql/util:\n    version: 2.0.45\n")
+	}
+	if got := progressOf(t, root, "acme/a", pass)["compiles"]; got.State != Passing {
+		t.Errorf("with no lock written yet, compiles reads %+v", got)
+	}
+	lock("", customql.ActionsAll)
+	lock("test/", customql.ActionsAll)
+	if got := progressOf(t, root, "acme/a", pass)["compiles"]; got.State != Passing {
+		t.Errorf("locked to ABOM's library, compiles reads %+v", got)
+	}
+	lock("test/", "0.6.1")
+	got := progressOf(t, root, "acme/a", pass)["compiles"]
+	if got.State != Warning || !strings.Contains(got.Detail, "0.6.1") ||
+		!strings.Contains(got.Detail, customql.ActionsAll) || !strings.Contains(got.Detail, "test/") {
+		t.Errorf("with the test pack locked to 0.6.1, compiles reads %+v", got)
+	}
+}
+
+// Accepting a report that records failed expectations makes the test pass without the query
+// reporting what the fixtures mark, because the CLI compares the output as text.
+func TestAnExpectedThatAcceptsFailedExpectationsFails(t *testing.T) {
+	root := workspace(t, map[string]string{"A": "acme/a"})
+	write(t, root, "test/A/A.expected", "#select\ntestFailures\n"+
+		"| .github/workflows/ci.yml:6:35:6:43 | # $ Alert | Missing result: Alert |\n")
+	if got := progressOf(t, root, "acme/a")["expected"]; got.State != Failed ||
+		!strings.Contains(got.Detail, "1 failed expectation") {
+		t.Errorf("an .expected accepting a missing result reads %+v", got)
 	}
 }
 
@@ -224,7 +399,11 @@ func TestOnlyAnotherVersionPassingIsAWarning(t *testing.T) {
 // from the fixtures on disk now: one printed before they changed describes files that are gone.
 func TestTheASTStepReadsTheNewestTreeKeptForTheCurrentFixtures(t *testing.T) {
 	root := workspace(t, map[string]string{"A": "acme/a"})
-	q, digest := mustVersion(t, root, "acme/a")
+	q, _ := mustVersion(t, root, "acme/a")
+	digest, err := DigestFixtures(root, q.Tests)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, c := range []struct {
 		name    string
 		printed store.AuthoringAST
@@ -241,7 +420,11 @@ func TestTheASTStepReadsTheNewestTreeKeptForTheCurrentFixtures(t *testing.T) {
 		{"printed nothing", store.AuthoringAST{RowID: 4, TestDigest: digest,
 			PrintedAt: "2026-09-23T12:00:00Z"}, Warning, "nothing"},
 	} {
-		steps, err := Progress(root, q, nil, c.printed)
+		printed := c.printed
+		if printed.RowID != 0 {
+			printed.CLIVersion = testCLI
+		}
+		steps, err := Progress(root, q, Evidence{CLI: testCLI, Printed: printed})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -250,6 +433,42 @@ func TestTheASTStepReadsTheNewestTreeKeptForTheCurrentFixtures(t *testing.T) {
 				t.Errorf("%s: %+v, want %s saying %q", c.name, s, c.want, c.says)
 			}
 		}
+	}
+}
+
+// A session prints its tree before its report is accepted, and accepting rewrites the .expected
+// and nothing the tree was printed from; changing a fixture is what makes the tree old.
+func TestAcceptingAReportLeavesTheTreeCurrentAndChangingAFixtureDoesNot(t *testing.T) {
+	root := workspace(t, map[string]string{"A": "acme/a"})
+	q, _ := mustVersion(t, root, "acme/a")
+	fixtures, err := DigestFixtures(root, q.Tests)
+	if err != nil {
+		t.Fatal(err)
+	}
+	printed := store.AuthoringAST{RowID: 3, TestDigest: fixtures, Size: 120, PrintedAt: "2026-09-23T12:00:00Z",
+		CLIVersion: testCLI}
+	ast := func() Step {
+		t.Helper()
+		steps, err := Progress(root, q, Evidence{CLI: testCLI, Printed: printed})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range steps {
+			if s.Step == "ast" {
+				return s
+			}
+		}
+		t.Fatal("no ast step")
+		return Step{}
+	}
+
+	write(t, root, "test/A/A.expected", "| a job | as accepted |\n")
+	if s := ast(); s.State != Passing {
+		t.Errorf("after the report was accepted the tree reads %+v, want it current", s)
+	}
+	write(t, root, "test/A/.github/workflows/ci.yml", "on: pull_request\n")
+	if s := ast(); s.State != Warning {
+		t.Errorf("after a fixture changed the tree reads %+v, want it old", s)
 	}
 }
 
@@ -287,7 +506,7 @@ func TestAQueryNotInTheWorkspaceHasEveryStepWaiting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	real, err := Progress(root, q, nil, store.AuthoringAST{})
+	real, err := Progress(root, q, Evidence{})
 	if err != nil {
 		t.Fatal(err)
 	}

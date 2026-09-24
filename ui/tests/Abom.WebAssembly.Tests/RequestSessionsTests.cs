@@ -154,6 +154,28 @@ public class RequestSessionsTests : AbomTestContext
     }
 
     /// <summary>
+    /// A call that failed is read for why it failed: a row saying only "failed" left a reader, like
+    /// the agent, guessing at a refusal whose reason was on record.
+    /// </summary>
+    [Fact]
+    public void AFailedCallSaysWhyItFailed()
+    {
+        Answer("api/authoring-sessions/1/events", """
+            {"events":[{"rowId":18,"sessionId":1,"at":"2026-09-24T04:05:55Z","hook":"post-tool-use-failure",
+              "tool":"abom_target","subject":"","decision":"failed","step":"target","reason":"",
+              "detail":"this session is already about src/CheckoutTagPin.ql; work on it","tookMs":null}],
+             "next":18}
+            """);
+        var cut = Render(Finished);
+        cut.WaitForAssertion(() => cut.Find("[data-abom-session='1']"));
+
+        cut.Find("[data-abom-session-timeline]").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("already about src/CheckoutTagPin.ql",
+            cut.Find("[data-abom-event='18']").TextContent));
+    }
+
+    /// <summary>
     /// The tree the agent read the fixtures as is shipped only when a reader asks for it: a listing
     /// carrying every tree would send megabytes to draw a row.
     /// </summary>
@@ -171,5 +193,134 @@ public class RequestSessionsTests : AbomTestContext
         cut.Find("[data-abom-ast-show]").Click();
 
         cut.WaitForAssertion(() => Assert.Contains("UsesStep", cut.Find("[data-abom-ast-body]").TextContent));
+    }
+
+    private const string Spent = """
+        {"sessions":[{"rowId":1,"requestId":7,"state":"stopped","startedBy":"operator",
+          "model":"claude-opus-5","startedAt":"2026-09-24T02:20:25Z","endedAt":"2026-09-24T02:22:31Z",
+          "detail":"stopped by an operator","events":30,"refused":0,
+          "modelCalls":14,"inputTokens":120345,"outputTokens":8012,"nanoAiu":1250000000}],
+         "inFlight":[]}
+        """;
+
+    /// <summary>
+    /// A session stopped part way still cost something, and a cost the CLI never reported is not a
+    /// session that cost nothing.
+    /// </summary>
+    [Fact]
+    public void ASessionSaysWhatItSpentAndNeverReadsAnUnreportedCostAsZero()
+    {
+        var cut = Render(Spent);
+        cut.WaitForAssertion(() => cut.Find("[data-abom-session-spend]"));
+        var spend = cut.Find("[data-abom-session-spend]").TextContent;
+        Assert.Contains("1.25 AI units", spend);
+        Assert.Contains("14 model calls", spend);
+
+        var unreported = Render(Finished);
+        unreported.WaitForAssertion(() => unreported.Find("[data-abom-session-spend]"));
+        var text = unreported.Find("[data-abom-session-spend]").TextContent;
+        Assert.Contains("not reported", text);
+        Assert.DoesNotContain("0 AI units", text);
+    }
+
+    private const string Report = """
+        {"queryId":"acme/checkout-tag-pin","queryVersion":"v1","digest":"d1","reviewable":true,"reason":"",
+         "tests":[{"test":"test/CheckoutTagPin/CheckoutTagPin.qlref",
+           "actual":"| checkout.yml:9:7 | actions/checkout is pinned to v4 |\n","expected":null,"stale":""}],
+         "reviews":[]}
+        """;
+
+    private IRenderedComponent<Shared.RequestSessions> RenderReview(string review)
+    {
+        Answer("api/query-requests/7/review", review);
+        var cut = Render(Finished);
+        cut.WaitForAssertion(() => cut.Find("[data-abom-review]"));
+        return cut;
+    }
+
+    /// <summary>
+    /// Somebody who does not read QL can still read whether the NON_COMPLIANT case was reported and
+    /// the COMPLIANT one was not, so the report sits beside both before anything is accepted.
+    /// </summary>
+    [Fact]
+    public void AReportIsReadBesideTheExamplesAndAcceptedAsWhatWasRead()
+    {
+        var cut = RenderReview(Report);
+
+        Assert.Contains("pinned to v4", cut.Find("[data-abom-review-actual]").TextContent);
+        Assert.Contains("n", cut.Find("[data-abom-review-noncompliant]").TextContent);
+        Assert.Contains("c", cut.Find("[data-abom-review-compliant]").TextContent);
+        cut.WaitForAssertion(() => Assert.False(cut.Find("[data-abom-review-accept]").HasAttribute("disabled")));
+
+        cut.Find("[data-abom-review-accept]").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains(Sent, r => r.Method == "POST"
+            && r.Url.EndsWith("api/query-requests/7/review", StringComparison.Ordinal)
+            && r.Body.Contains("\"verdict\":\"approved\"", StringComparison.Ordinal)
+            && r.Body.Contains("\"digest\":\"d1\"", StringComparison.Ordinal)
+            && r.Body.Contains("\"by\":\"operator\"", StringComparison.Ordinal)));
+    }
+
+    /// <summary>The next session is told why its predecessor's report was turned down.</summary>
+    [Fact]
+    public void ARejectionIsSentOnlyWithItsReason()
+    {
+        var cut = RenderReview(Report);
+        cut.WaitForAssertion(() => Assert.True(cut.Find("[data-abom-review-reject]").HasAttribute("disabled")));
+
+        cut.Find("[data-abom-review-reason] input").Input("the compliant pin is reported too");
+        cut.WaitForAssertion(() => Assert.False(cut.Find("[data-abom-review-reject]").HasAttribute("disabled")));
+        cut.Find("[data-abom-review-reject]").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains(Sent, r => r.Method == "POST"
+            && r.Url.EndsWith("api/query-requests/7/review", StringComparison.Ordinal)
+            && r.Body.Contains("\"verdict\":\"rejected\"", StringComparison.Ordinal)
+            && r.Body.Contains("the compliant pin is reported too", StringComparison.Ordinal)));
+    }
+
+    /// <summary>
+    /// A report listing failed expectations passes once accepted, because the CLI compares text, so
+    /// it can be read and rejected but not accepted, and the row says why.
+    /// </summary>
+    [Fact]
+    public void AReportWhoseExpectationsFailedCanBeRejectedButNotAccepted()
+    {
+        var cut = RenderReview("""
+            {"queryId":"acme/checkout-tag-pin","queryVersion":"v1","digest":"d1","reviewable":true,"reason":"",
+             "cannotAccept":"test/CheckoutTagPin/CheckoutTagPin.qlref misses 1 marked result, and accepting it would make the test pass without the query doing what its fixtures mark; reject it, saying what should change",
+             "tests":[{"test":"test/CheckoutTagPin/CheckoutTagPin.qlref",
+               "actual":"#select\ntestFailures\n| ci.yml:6:35:6:43 | # $ Alert | Missing result: Alert |\n",
+               "expected":null,"stale":""}],
+             "reviews":[]}
+            """);
+
+        Assert.Contains("misses 1 marked result", cut.Find("[data-abom-review-unacceptable]").TextContent);
+        cut.WaitForAssertion(() => Assert.True(cut.Find("[data-abom-review-accept]").HasAttribute("disabled")));
+        cut.Find("[data-abom-review-reason] input").Input("line 6 is not reported");
+        cut.WaitForAssertion(() => Assert.False(cut.Find("[data-abom-review-reject]").HasAttribute("disabled")));
+    }
+
+    /// <summary>
+    /// A report older than the query describes a version that is gone, so it is shown with why and
+    /// cannot be accepted; what was decided before stays on the row with who decided it.
+    /// </summary>
+    [Fact]
+    public void AStaleReportCannotBeAcceptedAndPastDecisionsSayWhoMadeThem()
+    {
+        var cut = RenderReview("""
+            {"queryId":"acme/checkout-tag-pin","queryVersion":"v2","digest":"d2","reviewable":false,
+             "reason":"test/CheckoutTagPin/CheckoutTagPin.qlref: the query changed after this was reported; run its tests again",
+             "tests":[{"test":"test/CheckoutTagPin/CheckoutTagPin.qlref","actual":"| old |\n","expected":null,
+               "stale":"the query changed after this was reported; run its tests again"}],
+             "reviews":[{"rowId":4,"requestId":7,"queryId":"acme/checkout-tag-pin","queryVersion":"v1",
+               "testDigest":"t1","actual":"| old |\n","verdict":"rejected","reason":"a short SHA is not a pin",
+               "reviewedBy":"operator","reviewedAt":"2026-09-24T02:30:00Z"}]}
+            """);
+
+        Assert.Contains("query changed", cut.Find("[data-abom-review-stale]").TextContent);
+        Assert.Empty(cut.FindAll("[data-abom-review-accept]"));
+        var past = cut.Find("[data-abom-review-record='4']").TextContent;
+        Assert.Contains("Rejected by operator", past);
+        Assert.Contains("a short SHA is not a pin", past);
     }
 }

@@ -1,20 +1,26 @@
 # A query is written from an example, not from QL
 
 **Status:** An operator with a directory gets a CodeQL pack whose queries are cataloged from the
-moment they are on disk. Each query is tested over the tests that name it, and marked through seven
-steps read from evidence.
+moment they are on disk. Each query is tested over the tests that name it, under the CodeQL the
+server runs, and marked through seven steps read from evidence.
 
-- `dev` → `test` is refused until that version's own tests pass.
-- `test` → `extended-test` is refused until every step passes.
+- `dev` → `test` is refused until that version's own tests pass under this CodeQL.
+- `test` → `extended-test` is refused until every step passes, and the catalog says why before
+  anybody presses it.
+- A test fails first. A fixture marks each line to report with `# $ Alert`, the stub ABOM
+  scaffolds reports nothing, and the tests step passes only once an earlier version failed on
+  those marks over the same fixtures. A session's first edit to its query waits for that run.
 - A request names its target by selection, or an agent session decides the target and writes the
   fixtures and the query from the request's examples.
-- (e) is read from the tree that such a session kept.
+- (e) is read from the newest tree `PrintAST` printed from the query's current fixtures, by a
+  session or by ABOM when somebody pressed the AST mark.
+- An operator's approval makes what a session's query reported its expected result, and ABOM then
+  runs the tests itself. A report that lists failed expectations cannot be accepted.
+- ABOM's packs, the operator's and ql-mcp's tools pack pin one `codeql/actions-all`.
 
-What is missing:
-
-- an AST for a query written by hand
-- evidence that a test failed before its query existed
-- one `actions-all` pin
+What is missing is a scaffolded pack that runs its tests and its queries without somebody
+installing its dependencies first. What a query does across the organization before anybody
+believes it is [`api/query-simulation.md`](../api/query-simulation.md).
 
 ## Why this exists
 
@@ -59,17 +65,18 @@ can check:
 | (b) Help | `src/<Name>.md` beside the query | the file, non-empty |
 | (c) Expected | `test/<Name>/<Name>.expected` | the file; empty is a warning, because a `NON_COMPLIANT` example must yield a line |
 | (d) Test database | the test code extracts | the test directory's `<dir>.testproj` finalized and newer than every test source; a failed extraction leaves one behind unfinished |
-| (e) AST | `PrintAST` read the test database | the newest tree it printed during a session, from fixtures with the digest on disk |
-| (f) Compiles | the query is valid QL | the compilation stage of a test run for this version |
-| (g) Tests | the query does what its examples say | `codeql test run` for this version and these tests |
+| (e) AST | `PrintAST` read the test database | the newest tree it printed, in a session or by ABOM, from fixtures with the digest on disk |
+| (f) Compiles | the query is valid QL | the compilation stage of a test run for this version; a warning when the operator's lock resolved another `actions-all` |
+| (g) Tests | the query does what its examples say | `codeql test run` for this version and these tests, and an earlier version's failure on a marked result over the same fixtures |
 
 Each is pending, failed, warning or passing. A warning is evidence that has gone stale — tests that
-passed before the `.expected` changed, a test database older than its sources — never a guess.
+passed before the `.expected` changed, a test database older than its sources, a result recorded
+under another CodeQL — never a guess.
 **`extended-test` is refused unless (b) through (g) are all passing for that exact version**, which
 makes the second rung earned the way the first is. (a) belongs to a request rather than to a
-version, and is shown only there. **(e) is pending on every query no session has printed.** So
-`extended-test` stays refused for a query written by hand until item 1 lands. That is the gate
-doing its job, not a defect to route around.
+version, and is shown only there. **(e) is read from the newest tree kept for the query**, whether a
+session printed it or ABOM did when somebody pressed the AST mark, so a query written by hand can
+earn every step too.
 
 ```mermaid
 flowchart LR
@@ -77,10 +84,9 @@ flowchart LR
     DEV -->|"(g) its own tests pass,<br/>for this version"| TEST["test"]
     TEST -->|"(b)–(g) all passing"| EXT["extended-test"]
     SES["authoring session"] -->|"(e) the tree PrintAST<br/>printed, kept"| EXT
-    HAND["a query written<br/>by hand"] -. "nothing prints its tree,<br/>so this gate stays shut" .-> EXT
+    HAND["a query written<br/>by hand"] -->|"(e) ABOM prints<br/>the tree itself"| EXT
     EXT -. "nothing enforced" .-> REV["review"]
     REV -. "nothing enforced" .-> DEP["deploy"]
-    style HAND fill:#3d2d1d
     style REV fill:#3d2d1d
     style DEP fill:#3d2d1d
 ```
@@ -88,63 +94,38 @@ flowchart LR
 What happens inside `extended-test` — runs over a real scope — is
 [`api/on-demand-analysis.md`](../api/on-demand-analysis.md); the `review` gate is
 [`api/query-simulation.md`](../api/query-simulation.md), and `deploy` is
-[`ql/pack-promotion.md`](pack-promotion.md). What an agent contributes to the first two rungs is
-[`api/authoring-harness.md`](../api/authoring-harness.md), and how a reader sees them is
-[`ui/authoring-progress.md`](../ui/authoring-progress.md).
+[`ql/pack-promotion.md`](pack-promotion.md). What an agent contributes to the first two rungs, what
+it may not do, and how a reader sees the rungs are in
+[`docs/architecture.md`](../../docs/architecture.md).
 
 ## Pending
 
-1. **A query written by hand gets its AST without an agent.** (e) is read from the trees that
-   sessions keep in `abom_authoring_ast`. So a query nobody drove a session over stays pending at
-   (e).
+1. **A scaffolded pack runs its tests and its queries without somebody installing its dependencies
+   first.** ABOM writes both manifests with `codeql/actions-all` pinned and locks neither, and the
+   CLI will not resolve an unlocked dependency even when the package cache holds it: *Referenced
+   pack 'codeql/actions-all' was not found locally, and no lock file is present*. `codeql test run`
+   and `codeql query compile` both stop there, so the first Test on a new pack fails at compilation
+   and a run of its queries cannot compile either. The live pack under `.abom/ql/custom` works only
+   because somebody ran `codeql pack install` in both directories by hand. The step now says why —
+   *it does not compile: Could not resolve library path* — where it used to say only *it does not
+   compile*, which sent a reader looking for a mistake in the query.
 
-   The fix is an explicit action, and it would:
+   **Decided: ABOM installs what it scaffolded.** Before a Test or a run touches a pack with no
+   `codeql-pack.lock.yml`, ABOM runs `codeql pack install` in the pack, then in its test pack with
+   the pack on `--additional-packs`. It does this under the CodeQL lock and refuses while discovery
+   crawls, as a test run does, and a failed install is the answer, with the CLI's reason.
 
-   - run `PrintAST` for `actions` over the query's kept test database, through ABOM's runner and
-     under the machine-wide lock;
-   - name the fixtures in `sourceFiles`, which ql-mcp 2.27.1 cannot do without;
-   - keep the tree in the same table.
+   - It installs once, where no lock exists, and never runs `pack upgrade`, because a lock is the
+     operator's to move.
+   - It is ABOM's action and never a session's: the rule that a session cannot install packs
+     stands.
+   - The lock it writes resolves the `actions-all` ABOM pins, so the compiles step stays current.
 
-   **The table keys a tree by its session today**, because `session_id` is `NOT NULL`. A tree that
-   ABOM printed itself needs a row with no session, and the joins that reach a request through the
-   session would become outer joins. This is cheapest to decide before the table ships. Depends on
-   nothing.
-2. **A request's examples become a test before any query exists.** `abom_query_request` holds the
-   example that should match and, critically, the one that should not. Those become the fixture
-   tree, and the test fails first, for the reason expected, before any query exists to satisfy
-   it. **A query written before its negative case is a query nobody can tell is too broad.**
-
-   What a session does now:
-
-   - The session's rules put the fixtures first.
-   - ABOM's stub query reports nothing, so a first test run fails.
-
-   What is missing is evidence that the order was kept. In the sessions driven so far, the agent
-   wrote the query before its first test run, and nothing records a failing run before the query
-   changed. A request asked from a run already carries the findings and repositories picked from
-   it. Depends on nothing.
-3. **One `codeql/actions-all`, through ql-mcp's packs.** Two pins disagree:
-
-   - The operator's pack locks 0.6.2, in its `codeql-pack.lock.yml`.
-   - ABOM's findings suite pins 0.6.35.
-
-   So a query unit-tested under one and executed under the other can legitimately differ, and
-   nothing downstream says which one answered. **The direction is decided**: the authoring
-   environment takes its `actions` library from ql-mcp's packs, so one pin governs both. Sessions
-   now run ql-mcp 2.27.1, which carries the `actions.lock` changes, so this can be started. Depends
-   on nothing.
-4. **It runs against real data before anybody believes it.** A query green against its own two-file
-   fixture is a query that compiles. What it does across the organization is
-   [`api/query-simulation.md`](../api/query-simulation.md), and it is the step between *this works*
-   and *this is worth turning on*.
-
-   Its dependencies:
-
-   - For a query a session wrote, it depends on the `.expected` review in
-     [`api/authoring-harness.md`](../api/authoring-harness.md).
-   - For a query written by hand, it depends on 1.
-
-   Until those land, neither kind of query reaches `extended-test`.
+   The alternatives were rejected on this plan's own ground. Refusing Test and naming two commands
+   asks for exactly the CodeQL packaging knowledge this workstream exists to make unnecessary.
+   Leaving it to the operator does the same with less said. The recording behind the corpus pack
+   already installs both before its first run. Decided by the agent while the operator was
+   unavailable, so it is theirs to overturn. Depends on nothing.
 
 ## The constraints that must not be broken
 
@@ -156,7 +137,28 @@ as it applies to one we wrote.
 
 **A test fails first, for the expected reason.** A test written after the query it tests passes
 because the query behaves as it behaves, not because it behaves correctly. This is the repository's
-existing rule and it does not relax because a machine wrote the query.
+existing rule and it does not relax because a machine wrote the query. **The reason is read, not
+assumed**: only a failure on a marked result counts — a line the fixture marks that the query did
+not report, or one it reported unmarked. A stub with no `.expected` fails whatever its fixtures
+say, and one that failed to compile shows nothing about them. The failure must be over the fixtures
+the passing version runs on, because a failure over other fixtures tested other examples.
+
+**A report listing failed expectations is never accepted.** `codeql test run` compares output as
+text, so an `.expected` holding `testFailures` rows passes, and accepting one bakes a missed result
+in as the expected one. The review refuses it and the expected step fails such a file; a rejection
+is still allowed, since that is the answer the report deserves.
+
+**A mark answers for the CodeQL it was recorded under, and no other.** Extraction and evaluation
+both change between releases, so a pass under one release is a warning under the next until
+somebody runs the tests again. Running them again is the operator's act, never an upgrade's side
+effect, and a server that cannot read its CodeQL's version says nothing on record is current rather
+than treating a result that names no CodeQL as its own.
+
+**One `codeql/actions-all` pin.** A query unit-tested under one library and run under another can
+answer differently, and nothing downstream would say which answered. `make check-versions` fails
+when ABOM's packs, `customql.ActionsAll` and the ql-mcp pins disagree. A new pack under `ql/` must
+be in the bump and check globs, library first: the library's exact pin held every dependent back
+while both scripts skipped it.
 
 **An `.expected` file is reviewed, never accepted blind.** `codeql test accept` writes whatever the
 query produced. Accepting without reading bakes in the bug. The loop presents the actual output for
@@ -174,6 +176,9 @@ this project built.
 **A step is passing only on evidence for this version and these tests.** A pass recorded before the
 query or its tests changed is a warning, not a pass; a mark that outlived its evidence is the same
 failure as a stage set by hand.
+
+**A tree says who printed it.** A session's tree and ABOM's count the same for (e). A reader can
+still tell them apart, because an agent steered one and nothing steered the other.
 
 **A target is a selection, never text.** A request naming a query nothing holds reads as a request
 about that query, and nothing downstream can tell the difference.
@@ -199,8 +204,14 @@ taken on a second job it cannot do as well as an editor.
 
 ## Verification
 
-- A query authored end to end from two snippets: it fails first, compiles, passes its test, appears
-  in the catalog with origin `user`, and runs against a chosen scope, with no Go change at any step.
+- A query authored end to end from two snippets: its stub's run misses the marked line, it then
+  compiles and passes, the tests step says which version failed first, it appears in the catalog
+  with origin `user`, and it runs against a chosen scope, with no Go change at any step.
+- After a CodeQL upgrade, every mark that depends on the CLI reads as stale, and a Test run turns
+  them current again; nothing re-runs on its own.
+- A pack scaffolded into an empty directory passes its first Test and runs its query over a real
+  scope with no command typed by hand, and a pack that already has a lock is left exactly as it
+  was, lock included.
 - `extended-test` is permitted for a version whose steps all pass. It is refused again, naming the
   step, when one step's evidence is removed. Check this by removing the evidence, not by reading
   the code.

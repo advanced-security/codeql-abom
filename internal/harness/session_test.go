@@ -26,7 +26,12 @@ type bench struct {
 	sessions *Sessions
 	store    *store.Store
 	place    place
+	// next is what the bench's test runner answers, one run at a time.
+	next *[]runner.TestResult
 }
+
+// benchCLI is the CodeQL the bench says it runs.
+const benchCLI = "2.27.1"
 
 func newBench(t *testing.T, agent Agent) bench {
 	t.Helper()
@@ -42,6 +47,7 @@ func newBench(t *testing.T, agent Agent) bench {
 	if err := st.Migrate(); err != nil {
 		t.Fatal(err)
 	}
+	next := &[]runner.TestResult{}
 	return bench{
 		sessions: &Sessions{
 			Store:     st,
@@ -53,10 +59,26 @@ func newBench(t *testing.T, agent Agent) bench {
 			Lock:      &runner.Lock{},
 			Limit:     time.Minute,
 			Wait:      20 * time.Millisecond,
+			Version:   func(context.Context) (string, error) { return benchCLI, nil },
+			RunTests: func(context.Context, []string) (runner.TestResult, error) {
+				if len(*next) == 0 {
+					return runner.TestResult{}, errors.New("the bench has no run scripted")
+				}
+				r := (*next)[0]
+				*next = (*next)[1:]
+				return r, nil
+			},
 		},
 		store: st,
 		place: p,
+		next:  next,
 	}
+}
+
+// failing is a run that stopped at comparing results, with the expectations it counted.
+func failing(missing, unexpected int64) runner.TestResult {
+	return runner.TestResult{Total: 1, Failed: 1, FailureStage: "RESULT", Missing: &missing,
+		Unexpected: &unexpected, Detail: "0 of 1 passed"}
 }
 
 func (b bench) request(t *testing.T, target string) int64 {
@@ -345,6 +367,22 @@ func call(t *testing.T, tl copilot.Tool, args map[string]any) (copilot.ToolResul
 	return tl.Handler(copilot.ToolInvocation{ToolName: tl.Name, Arguments: args})
 }
 
+// refusal is why a tool refused, as the agent reads it. The SDK shows the model a handler's error
+// only as "Tool execution failed", so a refusal returned that way reaches the agent as nothing: a
+// live agent retried one three times without learning why.
+func refusal(t *testing.T, tl copilot.Tool, args map[string]any) string {
+	t.Helper()
+	res, err := call(t, tl, args)
+	if err != nil {
+		t.Errorf("a refusal was returned as an error, which the agent never reads: %v", err)
+		return err.Error()
+	}
+	if res.ResultType != "failure" {
+		return ""
+	}
+	return res.TextResultForLLM
+}
+
 // Nobody chose a target, so the agent does, once: the choice is recorded with its reason, laid out,
 // and from then on the only query the session may write.
 func TestTheAgentDecidesATargetOnceAndItBindsTheSession(t *testing.T) {
@@ -359,11 +397,8 @@ func TestTheAgentDecidesATargetOnceAndItBindsTheSession(t *testing.T) {
 		}
 		answer = res.TextResultForLLM
 		bounds = s.Gate.Bounds()
-		_, err = call(t, target, map[string]any{"decision": "create", "queryId": "acme/other",
+		second = refusal(t, target, map[string]any{"decision": "create", "queryId": "acme/other",
 			"name": "Other", "rationale": "second thoughts"})
-		if err != nil {
-			second = err.Error()
-		}
 		return "done", nil
 	}))
 	request := b.request(t, "")
@@ -405,8 +440,8 @@ func TestATargetTheAgentProposesMustBeNewAndPlainlyNamed(t *testing.T) {
 			{"decision": "create", "queryId": "acme/new", "name": "Fine", "rationale": ""},
 			{"decision": "rewrite", "queryId": "acme/new", "name": "Fine", "rationale": "r"},
 		} {
-			if _, err := call(t, target, args); err != nil {
-				refusals = append(refusals, err.Error())
+			if why := refusal(t, target, args); why != "" {
+				refusals = append(refusals, why)
 			} else {
 				t.Errorf("decided %v", args)
 			}
@@ -452,13 +487,87 @@ func TestTheRulesStateTheBoundsAndTheReviewGate(t *testing.T) {
 		return "done", nil
 	}))
 	b.finish(t, b.request(t, ""), "operator")
-	for _, want := range []string{"no shell", "codeql_test_accept", "sourceFiles", ToolTarget, ToolCatalog} {
+	for _, want := range []string{"no shell", "codeql_test_accept", "sourceFiles", ToolTarget, ToolCatalog,
+		ToolTest, "# $ Alert"} {
 		if !strings.Contains(seen.Rules, want) {
 			t.Errorf("the rules do not say %q:\n%s", want, seen.Rules)
 		}
 	}
 	if strings.Contains(seen.Rules, "actions/checkout@v4") {
 		t.Error("the request's text is in the rules")
+	}
+}
+
+// Sessions so far wrote the query before any test failed, and nothing recorded the order. So the
+// query stays as it is until ABOM itself has seen its tests fail on a result the fixtures mark, and
+// a failure for any other reason does not count.
+func TestTheQuerysFirstChangeWaitsForItsTestsToFailOnAMarkedResult(t *testing.T) {
+	var before, afterWrongReason, afterMarked, afterChange string
+	var answers []string
+	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
+		query := s.Gate.Bounds().Query()
+		edit := func() string {
+			v := s.Gate.Bounds().Call("edit", map[string]any{"path": query, "old_str": "x", "new_str": "y"})
+			if v.Allowed {
+				return ""
+			}
+			return v.Reason
+		}
+		test := tool(t, s, ToolTest)
+		before = edit()
+		for range 2 {
+			res, err := call(t, test, map[string]any{})
+			if err != nil {
+				t.Error(err)
+			}
+			answers = append(answers, res.TextResultForLLM)
+			if len(answers) == 1 {
+				afterWrongReason = edit()
+			}
+		}
+		afterMarked = edit()
+		if err := os.WriteFile(query, []byte("/**\n * @kind problem\n * @id acme/self-hosted-runner\n */\n"+
+			"import actions\n\nfrom Job j select j, \"changed\"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		afterChange = edit()
+		return "done", nil
+	}))
+	b.query(t, "SelfHostedRunner", "acme/self-hosted-runner", true)
+	*b.next = []runner.TestResult{failing(0, 0), failing(1, 0)}
+	b.finish(t, b.request(t, "acme/self-hosted-runner"), "operator")
+
+	if !strings.Contains(before, ToolTest) {
+		t.Errorf("the first change before any run was refused with %q, want it to name %s", before, ToolTest)
+	}
+	if afterWrongReason == "" {
+		t.Error("a failure on no marked result released the query")
+	}
+	if afterMarked != "" || afterChange != "" {
+		t.Errorf("after a failure on a marked result the change was refused: %q, then %q", afterMarked,
+			afterChange)
+	}
+	if len(answers) != 2 || !strings.Contains(answers[0], "not a failure on a marked result") ||
+		!strings.Contains(answers[1], "recorded this failure") {
+		t.Errorf("abom_test answered %q", answers)
+	}
+	tests, err := b.store.QueryTestsOf("acme/self-hosted-runner")
+	if err != nil || len(tests) != 1 || tests[0].CLIVersion != benchCLI || tests[0].FixturesDigest == "" ||
+		tests[0].Missing == nil || *tests[0].Missing != 1 {
+		t.Errorf("recorded %+v %v, want the last run under %s with its fixtures", tests, err, benchCLI)
+	}
+}
+
+// Nothing is tested before the session knows which query it is about.
+func TestNothingIsTestedBeforeATargetIsDecided(t *testing.T) {
+	var why string
+	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
+		why = refusal(t, tool(t, s, ToolTest), map[string]any{})
+		return "done", nil
+	}))
+	b.finish(t, b.request(t, ""), "operator")
+	if !strings.Contains(why, ToolTarget) {
+		t.Errorf("testing with no target answered %q, want it to name %s", why, ToolTarget)
 	}
 }
 
@@ -521,7 +630,44 @@ func TestAPrintedTreeOutlivesTheSessionOnTheRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.Body != tree || got.QueryID != "acme/self-hosted-runner" || got.TestDigest == "" ||
-		got.Database != "test/SelfHostedRunner/SelfHostedRunner.testproj" {
+		got.Database != "test/SelfHostedRunner/SelfHostedRunner.testproj" || got.CLIVersion != benchCLI {
 		t.Errorf("kept %+v", got)
+	}
+}
+
+// A rejection is the operator's answer to an earlier session, so the next one starts from it; an
+// approval since then leaves nothing to answer.
+func TestTheNextSessionIsToldWhatAnOperatorRejectedAndWhy(t *testing.T) {
+	var prompts []string
+	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
+		prompts = append(prompts, s.Prompt)
+		return "done", nil
+	}))
+	b.query(t, "Pin", "acme/pin", true)
+	request := b.request(t, "acme/pin")
+	review := store.AuthoringReview{RequestID: request, QueryID: "acme/pin", QueryVersion: "v1",
+		Actual: "| ci.yml:3:9 | pinned to 692973e |\n", Verdict: store.ReviewRejected,
+		Reason: "a short SHA is not a pin, so it must be reported", ReviewedBy: "operator"}
+	if _, err := b.store.RecordAuthoringReview(review); err != nil {
+		t.Fatal(err)
+	}
+	b.finish(t, request, "operator")
+	review.Verdict, review.Reason = store.ReviewApproved, ""
+	if _, err := b.store.RecordAuthoringReview(review); err != nil {
+		t.Fatal(err)
+	}
+	b.finish(t, request, "operator")
+
+	if len(prompts) != 2 {
+		t.Fatalf("%d sessions ran, want 2", len(prompts))
+	}
+	for _, want := range []string{"rejected", "a short SHA is not a pin, so it must be reported",
+		"| ci.yml:3:9 | pinned to 692973e |"} {
+		if !strings.Contains(prompts[0], want) {
+			t.Errorf("the session after a rejection is not told %q:\n%s", want, prompts[0])
+		}
+	}
+	if strings.Contains(prompts[1], "rejected") {
+		t.Errorf("the session after an approval is told of the rejection before it:\n%s", prompts[1])
 	}
 }

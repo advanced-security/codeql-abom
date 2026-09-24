@@ -64,6 +64,24 @@ func TestASessionIsOfferedOnlyTheLoopsTools(t *testing.T) {
 	}
 }
 
+// A drafting session reads what ABOM hands it and nothing else, so it is offered no file tool, no
+// shell and no MCP server, and keeps the GitHub server off like any other.
+func TestASealedSessionIsOfferedABOMsToolsAlone(t *testing.T) {
+	setup := aSetup(t)
+	setup.Sealed = true
+	setup.Tools = []copilot.Tool{{Name: ToolResults, SkipPermission: true}, {Name: ToolDraft, SkipPermission: true}}
+	cfg := aCopilot().config(setup)
+
+	got := slices.Clone(cfg.AvailableTools)
+	slices.Sort(got)
+	if want := []string{"custom:" + ToolDraft, "custom:" + ToolResults}; !slices.Equal(got, want) {
+		t.Errorf("offered %v, want %v", got, want)
+	}
+	if len(cfg.MCPServers) != 0 || !slices.Contains(cfg.DisabledMCPServers, "github-mcp-server") {
+		t.Errorf("servers %v, disabled %v", cfg.MCPServers, cfg.DisabledMCPServers)
+	}
+}
+
 // ql-mcp runs the CLI itself and knows nothing of ABOM's search path, so a test that passes under
 // ABOM failed under it until the recorded agent wrote a workspace manifest to make it resolve.
 func TestQLMCPResolvesPacksAndWritesScratchWhereABOMSays(t *testing.T) {

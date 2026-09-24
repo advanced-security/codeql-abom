@@ -100,14 +100,20 @@ evidence. Neither a lock context nor a query's origin substitutes for this datab
 | **Origin** | Which pack supplied the query: upstream, ABOM's own, custom (the operator's), or several at once |
 | **Lane** | What ran that is not one query: a whole suite invoked in one call, or several queries in one evaluation |
 | **Stage** | How far a version has been taken: `dev`, `test`, `extended-test`, `review`, `deploy` |
-| **Step** | One of seven marks inside `dev` and `test`: target, help, expected results, test database, AST, compiles, tests. Pending, failed, warning or passing |
+| **Step** | One of seven marks inside `dev` and `test`: target, help, expected results, test database, AST, compiles, tests. Pending, failed, warning or passing. Pending is grey and is never a failure: nothing has been shown yet |
+| **Mark** (in a fixture) | `# $ Alert` on a line the query must report. A marked line it does not report is a **missing** result, and an unmarked line it reports an **unexpected** one |
+| **Failed first** | A version's tests failed on a marked result, over the fixtures a later version passes on. Without it the tests step is a warning |
+| **CodeQL *x*** | The CodeQL a test, a tree or a run was recorded under. A mark recorded under another reads as stale, and *not recorded* is not a version |
 | **Request** | What a query should catch or stop catching, with a `COMPLIANT` and a `NON_COMPLIANT` example. Open, in progress, done or declined |
 | **Selected by you** / **decided by the agent** | Who chose a request's target. Empty means the agent decides |
 | **False alarm** / **missed detection** | Evidence on a request: a finding that should not have fired, or a repository where nothing fired that should have |
 | **Session** | An agent writing the query a request asks for, started by a person. Running, finished, stopped, failed or interrupted |
 | **What it did** | A session's timeline: every tool call, allowed or refused, and why |
 | **Refused** | A tool call that ABOM's bounds did not let run |
-| **Tree** | What `PrintAST` printed over a test database. It is the evidence for the AST step while the fixtures are unchanged |
+| **Tree** | What `PrintAST` printed over a test database, in a session or by ABOM when somebody asked. It is the evidence for the AST step while the fixtures are unchanged |
+| **Accepted** / **rejected** | An operator's decision about what a query reported. Accepting makes it the expected result; a rejection's reason is handed to the next session |
+| **Draft** | A request an agent drafted from a run's picked results. Nobody has filed it until a person saves it |
+| **AI units** | What a session spent, as the Copilot CLI reported it. Absent where it reported nothing |
 | **Run** | A request to analyze chosen query versions over chosen repositories' databases, or over every repository a scope lists |
 | **Skipped** | A run's repository already answered by an earlier run with the same versions, commit and CLI, and carrying that answer |
 | **Interrupted** | A run the server stopped under: neither finished nor canceled |

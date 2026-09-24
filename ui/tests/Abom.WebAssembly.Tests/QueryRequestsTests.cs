@@ -104,6 +104,25 @@ public class QueryRequestsTests : AbomTestContext
         Assert.Empty(strip.QuerySelectorAll("button"));
     }
 
+    /// <summary>
+    /// A request has an address of its own: named on arrival it opens, and its detail reads each
+    /// step with its evidence, and the run it was asked from, without hovering over a mark.
+    /// </summary>
+    [Fact]
+    public void ARequestNamedOnArrivalOpensWithEachStepsEvidenceAndItsRun()
+    {
+        Answer("api/query-requests", Targeted.Replace("\"sourceRunId\":0", "\"sourceRunId\":4"));
+        Answer("api/accounts", SignedIn);
+        Answer("api/queries", Catalog);
+
+        var cut = Render<Shared.QueryRequests>(p => p.Add(c => c.FocusRequest, 8L));
+
+        cut.WaitForAssertion(() => cut.Find("[data-abom-request-steps]"));
+        Assert.Equal(7, cut.FindAll("[data-abom-request-step]").Count);
+        Assert.Contains("no src/A.md beside the query", cut.Find("[data-abom-request-step=help]").TextContent);
+        Assert.Equal("/codeql?tab=runs&run=4", cut.Find("[data-abom-request-source-run]").GetAttribute("href"));
+    }
+
     [Fact]
     public void ARequestsQueryOpensItsRowInTheCatalog()
     {

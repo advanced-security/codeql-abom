@@ -1,0 +1,47 @@
+@using System.Globalization
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@inject AbomApi Api
+
+@* A tree is shipped only when a reader asks for it: a listing carrying every tree would send
+   megabytes to draw a row. *@
+@foreach (var ast in Trees)
+{
+    <div class="abom-ast" data-abom-ast="@ast.RowId">
+        <div class="d-flex align-center flex-wrap gap-2">
+            <MudText Typo="Typo.caption">
+                @ast.Query over <span class="abom-path">@ast.Database</span>
+                @(ast.SourceFiles.Length > 0 ? $"for {ast.SourceFiles}" : ""),
+                @TimeText.DayAndTime(ast.PrintedAt), @SizeText(ast.Size)@(ast.Truncated ? ", cut short" : ""),
+                @Who(ast), @(ast.CliVersion.Length > 0 ? $"CodeQL {ast.CliVersion}" : "CodeQL not recorded")
+            </MudText>
+            <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button"
+                       OnClick="@(() => Show(ast))" data-abom-ast-show>
+                @(_shown?.RowId == ast.RowId ? "Hide the tree" : "Show the tree")
+            </MudButton>
+        </div>
+        @if (_shown?.RowId == ast.RowId)
+        {
+            <pre class="abom-code abom-ast-body" data-abom-ast-body>@_shown.Body</pre>
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<AuthoringAst> Trees { get; set; } = [];
+
+    private AuthoringAst? _shown;
+
+    private async Task Show(AuthoringAst ast)
+    {
+        _shown = _shown?.RowId == ast.RowId ? null : await Api.GetAuthoringAstAsync(ast.RowId);
+    }
+
+    // An agent steered one and nothing steered the other, so a reader is told which.
+    private static string Who(AuthoringAst ast) =>
+        ast.SessionId != 0 ? $"printed in session #{ast.SessionId}" : $"printed by ABOM for {ast.PrintedBy}";
+
+    private static string SizeText(int bytes) =>
+        bytes < 1024 ? CountText.Of(bytes, "byte", "bytes")
+        : (bytes / 1024.0).ToString("0.#", CultureInfo.CurrentCulture) + " KB";
+}

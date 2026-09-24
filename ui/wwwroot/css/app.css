@@ -1161,6 +1161,20 @@ code {
 .abom-request-description { white-space: pre-wrap; }
 .abom-request-summary { display: block; min-width: 24rem; }
 
+/* Each step read out with its evidence: the strip's tooltips, without hovering. */
+.abom-request-steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-size: var(--abom-text-sm);
+}
+.abom-request-steps li { display: flex; align-items: baseline; gap: 6px; }
+.abom-request-steps .mud-icon-root { align-self: center; flex-shrink: 0; }
+.abom-request-step-name { font-weight: 500; white-space: nowrap; }
+
+/* A refused stage keeps its name and says why beneath it, in the menu's width. */
+.abom-stage-refused { max-width: 22rem; white-space: normal; }
+
 /* A session's record reads as a log: time, decision, tool and what it touched on one line. */
 .abom-request-sessions {
     margin-top: 12px;
@@ -1202,6 +1216,14 @@ code {
     overflow: auto;
     white-space: pre;
 }
+.abom-review-sides {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+/* min-width 0 so a long line scrolls inside its pre instead of widening the row. */
+.abom-review-side { flex: 1 1 20rem; min-width: 0; }
+.abom-review-side pre { max-height: 16rem; overflow: auto; white-space: pre; }
 
 /* break-word, not anywhere: anywhere shrank both columns to a few letters a line. */
 .abom-grid .mud-table-root .mud-table-cell.abom-run-text {

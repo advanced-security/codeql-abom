@@ -23,7 +23,22 @@ type fakeAuthoring struct {
 	started []int64
 	stopped []int64
 	flights []harness.Flight
+	drafted [][]harness.Picked
 }
+
+func (f *fakeAuthoring) Draft(run int64, queryID string, picked []harness.Picked, by string) (store.AuthoringSession, error) {
+	f.drafted = append(f.drafted, picked)
+	if _, err := f.store.StartDraftSession(run, queryID, by, "claude-opus-5"); err != nil {
+		return store.AuthoringSession{}, err
+	}
+	drafts, err := f.store.DraftSessions(run)
+	if err != nil {
+		return store.AuthoringSession{}, err
+	}
+	return drafts[0].AuthoringSession, nil
+}
+
+func (f *fakeAuthoring) StopDraft(int64) bool { return len(f.drafted) > 0 }
 
 func (f *fakeAuthoring) Start(request int64, by string) (store.AuthoringSession, error) {
 	if f.refuse != nil {
@@ -267,7 +282,8 @@ func TestThePrintedTreesOfARequestAreListedAndReadOneAtATime(t *testing.T) {
 	}
 	tree := "#10000 UsesStep\n"
 	ast, err := st.RecordAuthoringAST(store.AuthoringAST{SessionID: session, QueryID: "acme/a",
-		PrintedAt: "2026-09-23T12:00:00Z", Query: "PrintAST", Database: "test/A/A.testproj", Body: tree})
+		PrintedAt: "2026-09-23T12:00:00Z", Query: "PrintAST", Database: "test/A/A.testproj", Body: tree,
+		CLIVersion: "2.27.1"})
 	if err != nil {
 		t.Fatal(err)
 	}

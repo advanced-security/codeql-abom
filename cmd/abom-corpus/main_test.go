@@ -17,7 +17,7 @@ import (
 func builtCorpus(t *testing.T) *store.Store {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "abom.db")
-	if err := build(path, filepath.Join("..", "..", "testdata", "corpus", "fixtures"), nil); err != nil {
+	if err := build(path, filepath.Join("..", "..", "testdata", "corpus", "fixtures"), "", nil); err != nil {
 		t.Fatalf("build: %v", err)
 	}
 	s, err := store.Open(path, store.Options{})
@@ -125,7 +125,7 @@ func TestBuildingTwiceProducesTheSameCorpus(t *testing.T) {
 	fixtures := filepath.Join("..", "..", "testdata", "corpus", "fixtures")
 
 	read := func() [2]int {
-		if err := build(path, fixtures, nil); err != nil {
+		if err := build(path, fixtures, "", nil); err != nil {
 			t.Fatalf("build: %v", err)
 		}
 		s, err := store.Open(path, store.Options{})
@@ -149,7 +149,7 @@ func TestBuildingTwiceProducesTheSameCorpus(t *testing.T) {
 func TestAPathCannotForgeALineOfOutput(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "abom.db")
-	if err := build(path, filepath.Join("..", "..", "testdata", "corpus", "fixtures"), nil); err != nil {
+	if err := build(path, filepath.Join("..", "..", "testdata", "corpus", "fixtures"), "", nil); err != nil {
 		t.Fatalf("build: %v", err)
 	}
 	s, err := store.Open(path, store.Options{})

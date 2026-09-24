@@ -97,6 +97,20 @@ public class AnalysisRunsTests : AbomTestContext
         cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-run-summary]")));
     }
 
+    /// <summary>
+    /// A result is CodeQL's as much as the query's, so a run names the CodeQL it ran under, and one
+    /// recorded before that was kept says so rather than showing nothing.
+    /// </summary>
+    [Fact]
+    public void ARunNamesTheCodeQLItRanUnder()
+    {
+        var cut = Render(RunJson(2, "complete").Replace("\"mode\":\"regular\"", "\"mode\":\"regular\",\"cliVersion\":\"2.27.1\""),
+            RunJson(1, "complete"));
+
+        var named = cut.FindAll("[data-abom-run-codeql]").Select(e => e.TextContent.Trim()).ToList();
+        Assert.Equal(["CodeQL 2.27.1", "CodeQL not recorded"], named);
+    }
+
     [Fact]
     public void NoRunsSaysWhereOneIsStarted()
     {

@@ -91,6 +91,8 @@
                         <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
                                  Color="@StateColor(context.Item.State)"
                                  data-abom-run-state="@context.Item.State">@context.Item.State</MudChip>
+                        <MudText Typo="Typo.caption" Class="d-block mud-text-secondary abom-nowrap"
+                                 data-abom-run-codeql>@CodeQLText(context.Item)</MudText>
                     </CellTemplate>
                 </PropertyColumn>
 
@@ -209,6 +211,15 @@
     }
 
     // Work already answered is skipped when a run goes again, which is what makes a stop resumable.
+    /// <summary>
+    /// A pending run has not chosen its CodeQL yet; any other without one was recorded before the
+    /// version was kept, which is not a run under no CodeQL.
+    /// </summary>
+    private static string CodeQLText(AnalysisRun run) =>
+        run.CliVersion.Length > 0 ? $"CodeQL {run.CliVersion}"
+        : run.State == "pending" ? "CodeQL chosen when it runs"
+        : "CodeQL not recorded";
+
     private static string AgainText(AnalysisRun run) => run.State switch
     {
         "interrupted" => "The server stopped while this ran. Run it again: what it already analyzed is skipped.",

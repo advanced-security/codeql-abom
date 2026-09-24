@@ -313,6 +313,43 @@ func TestTheAgentsWordsAndItsServersReachTheTimeline(t *testing.T) {
 	}
 }
 
+// A session's cost arrives one model call at a time, and each is kept as it arrives, with what the
+// CLI did not report left unreported. A cost that cannot be kept is said on the timeline.
+func TestWhatEachModelCallCostIsKeptAsItArrives(t *testing.T) {
+	g, j, _ := newGate(t)
+	var kept []Spend
+	g.KeepSpend(func(s Spend) error {
+		kept = append(kept, s)
+		return nil
+	})
+	in, out := int64(1200), int64(80)
+	g.Observe(copilot.SessionEvent{Data: &copilot.AssistantUsageData{Model: "claude-opus-5",
+		InputTokens: &in, OutputTokens: &out,
+		CopilotUsage: &copilot.AssistantUsageCopilotUsage{TotalNanoAiu: 2.5e8}}})
+	g.Observe(copilot.SessionEvent{Data: &copilot.AssistantUsageData{Model: "claude-opus-5", InputTokens: &in}})
+
+	if len(kept) != 2 {
+		t.Fatalf("kept %d, want one per model call: %+v", len(kept), kept)
+	}
+	if k := kept[0]; k.InputTokens == nil || *k.InputTokens != 1200 || k.OutputTokens == nil ||
+		*k.OutputTokens != 80 || k.NanoAIU == nil || *k.NanoAIU != 250_000_000 {
+		t.Errorf("first call kept %+v", k)
+	}
+	if k := kept[1]; k.InputTokens == nil || k.OutputTokens != nil || k.NanoAIU != nil {
+		t.Errorf("a call that reported only its input kept %+v", k)
+	}
+	if events := j.all(); len(events) != 0 {
+		t.Errorf("a kept cost reached the timeline: %+v", events)
+	}
+
+	g.KeepSpend(func(Spend) error { return errors.New("the store is closed") })
+	g.Observe(copilot.SessionEvent{Data: &copilot.AssistantUsageData{Model: "claude-opus-5", InputTokens: &in}})
+	if events := j.all(); len(events) != 1 || events[0].Hook != HookSpend ||
+		!strings.Contains(events[0].Detail, "the store is closed") {
+		t.Errorf("a cost that could not be kept left %+v, want it said on the timeline", events)
+	}
+}
+
 // printout lays out what ql-mcp writes for a tool query run, and answers the way it answered live.
 func printout(t *testing.T, scratch, body string) string {
 	t.Helper()

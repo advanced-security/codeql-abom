@@ -3,6 +3,7 @@ package harness
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -28,6 +29,8 @@ const (
 	HookMessage = "message"
 	// HookArtifact is ABOM keeping something a call produced, such as a printed tree.
 	HookArtifact = "artifact"
+	// HookSpend is a model call's cost that could not be kept.
+	HookSpend = "spend"
 )
 
 // What an event records: a decision before a call, or its outcome after.
@@ -90,6 +93,9 @@ type Gate struct {
 	// scratch is where ql-mcp prints, and keepPrinted keeps what it printed there.
 	scratch     string
 	keepPrinted func(Printed) (int64, error)
+
+	// keepSpend keeps what each model call cost.
+	keepSpend func(Spend) error
 
 	// call and request decide, as fields so a test can break them.
 	call    func(Bounds, string, any) Verdict
@@ -285,6 +291,40 @@ func (g *Gate) Observe(e copilot.SessionEvent) {
 			_ = g.keep(Event{Hook: HookMessage, Tool: "agent", Decision: DecisionNoted,
 				Detail: clip(d.Content)}, Verdict{})
 		}
+	case *copilot.AssistantUsageData:
+		g.spent(d)
+	}
+}
+
+// Spend is what one model call cost, each figure nil where the CLI did not report it.
+type Spend struct {
+	InputTokens  *int64
+	OutputTokens *int64
+	NanoAIU      *int64
+}
+
+// KeepSpend keeps each model call's cost as it arrives.
+func (g *Gate) KeepSpend(keep func(Spend) error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.keepSpend = keep
+}
+
+func (g *Gate) spent(d *copilot.AssistantUsageData) {
+	g.mu.Lock()
+	keep := g.keepSpend
+	g.mu.Unlock()
+	if keep == nil {
+		return
+	}
+	s := Spend{InputTokens: d.InputTokens, OutputTokens: d.OutputTokens}
+	if d.CopilotUsage != nil {
+		nano := int64(math.Round(d.CopilotUsage.TotalNanoAiu))
+		s.NanoAIU = &nano
+	}
+	if err := keep(s); err != nil {
+		_ = g.keep(Event{Hook: HookSpend, Tool: d.Model, Decision: DecisionNoted,
+			Detail: clip("what this model call cost could not be kept: " + err.Error())}, Verdict{})
 	}
 }
 

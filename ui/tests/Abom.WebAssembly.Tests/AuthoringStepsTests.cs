@@ -120,4 +120,24 @@ public class AuthoringStepsTests : AbomTestContext
         Assert.Empty(strip.FindAll("button"));
         Assert.Equal("img", strip.Find("[data-abom-step=tests]").GetAttribute("role"));
     }
+
+    /// <summary>
+    /// A query nobody drove a session over earns its AST step when ABOM prints the tree, so where
+    /// the strip can act the AST mark is that action, the way the tests mark is Test.
+    /// </summary>
+    [Fact]
+    public void TheASTMarkPrintsTheTreeWhereTheStripCanAct()
+    {
+        var printed = 0;
+        var strip = Render<AuthoringSteps>(p => p
+            .Add(s => s.Steps, Seven[1..])
+            .Add(s => s.OnPrint, () => printed++)
+            .Add(s => s.CanPrint, true));
+
+        var print = strip.Find("button[data-abom-query-print]");
+        Assert.Equal("ast", print.GetAttribute("data-abom-step"));
+        Assert.Contains("Print the tree", print.GetAttribute("aria-label") ?? "");
+        print.Click();
+        Assert.Equal(1, printed);
+    }
 }

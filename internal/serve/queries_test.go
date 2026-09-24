@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -91,9 +92,38 @@ func TestAMalformedAdvanceIsAnErrorRatherThanANoOp(t *testing.T) {
 // fakeTester answers like `codeql test run`: the run fails if any test it was handed fails, at the
 // earliest stage any of them stopped.
 type fakeTester struct {
-	failing map[string]string // test file name -> the stage it stops at
-	ran     [][]string
-	during  func()
+	failing  map[string]string // test file name -> the stage it stops at
+	ran      [][]string
+	accepted [][]string
+	during   func()
+	// unreadable is what reading CodeQL's version fails with, as it does where none is installed.
+	unreadable error
+}
+
+// fakeCLI is the CodeQL the fakes say they run.
+const fakeCLI = "2.27.1"
+
+func (f *fakeTester) Version(context.Context) (string, error) {
+	if f.unreadable != nil {
+		return "", f.unreadable
+	}
+	return fakeCLI, nil
+}
+
+// AcceptTests does what `codeql test accept` does: each test's .actual becomes its .expected.
+func (f *fakeTester) AcceptTests(_ context.Context, tests []string) error {
+	f.accepted = append(f.accepted, tests)
+	for _, test := range tests {
+		base := strings.TrimSuffix(test, ".qlref")
+		body, err := os.ReadFile(base + ".actual")
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(base+".expected", body, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (f *fakeTester) RunTests(_ context.Context, tests []string) (runner.TestResult, error) {
@@ -186,6 +216,43 @@ func TestTheCatalogListsTheWorkingCopyBeforeAnythingHasRun(t *testing.T) {
 	}
 }
 
+// Reading the catalog needs no CodeQL, so one that cannot be run leaves it served. What was
+// recorded under a CodeQL is then not known to be current, and its steps say why.
+func TestTheCatalogIsServedWhenCodeQLsVersionCannotBeRead(t *testing.T) {
+	s, st := newServer(t)
+	root := queryWorkspace(t, []string{"A"})
+	s.Tester, s.QueryDir = &fakeTester{unreadable: errors.New("codeql version: executable file not found")}, root
+	if err := st.RecordQueryTest(store.QueryTest{QueryID: "acme/a", QueryVersion: versionOf(t, root, "A"),
+		CLIVersion: fakeCLI, Total: 1, Passed: true, Detail: "1 of 1 passed", RanAt: "2026-09-24T09:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	s.queries(w, httptest.NewRequest("GET", "/api/queries", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("the catalog answered %d without a readable CodeQL: %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Queries []catalogRow `json:"queries"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range got.Queries {
+		if !q.Working {
+			continue
+		}
+		for _, step := range q.Steps {
+			if step.Step == "tests" && (step.State == authoring.Passing ||
+				!strings.Contains(step.Detail, "could not read which CodeQL")) {
+				t.Errorf("tests reads %s: %q, want it not known to be current, saying why", step.State, step.Detail)
+			}
+		}
+		return
+	}
+	t.Fatal("the working copy is not in the catalog")
+}
+
 // A mark is served, never computed in the browser, and appears only where its step applies: on
 // the working copy of a query the operator owns.
 func TestOnlyTheWorkingCopyCarriesItsSteps(t *testing.T) {
@@ -248,11 +315,11 @@ func TestAQueryIsGradedOnlyByItsOwnTests(t *testing.T) {
 	if !reflect.DeepEqual(tester.ran, want) {
 		t.Errorf("ran %v, want each query's own test and nothing else: %v", tester.ran, want)
 	}
-	a, _, err := st.QueryTestFor("acme/a", versionOf(t, root, "A"))
+	a, _, err := st.QueryTestFor("acme/a", versionOf(t, root, "A"), fakeCLI)
 	if err != nil || !a.Passed {
 		t.Errorf("acme/a reads passed=%v (err %v) beside a failing neighbor", a.Passed, err)
 	}
-	b, _, err := st.QueryTestFor("acme/b", versionOf(t, root, "B"))
+	b, _, err := st.QueryTestFor("acme/b", versionOf(t, root, "B"), fakeCLI)
 	if err != nil || b.Passed {
 		t.Errorf("acme/b reads passed=%v (err %v) with its own test failing", b.Passed, err)
 	}
@@ -273,7 +340,7 @@ func TestATestResultKeepsWhereItStoppedAndWhichTestsRan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, _, err := st.QueryTestFor("acme/a", version)
+	got, _, err := st.QueryTestFor("acme/a", version, fakeCLI)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +364,7 @@ func TestTestingAVersionThatIsNoLongerOnDiskIsRefused(t *testing.T) {
 	if len(tester.ran) != 0 {
 		t.Errorf("the tests ran for a version that is not on disk: %v", tester.ran)
 	}
-	if _, known, _ := st.QueryTestFor("acme/a", "an-older-version"); known {
+	if _, known, _ := st.QueryTestFor("acme/a", "an-older-version", fakeCLI); known {
 		t.Error("a result was recorded against a version nobody tested")
 	}
 }
@@ -319,7 +386,7 @@ func TestAQueryEditedWhileItsTestsRanIsNotRecorded(t *testing.T) {
 		if w := runQueryTest(t, s, "acme/a", version); w.Code != http.StatusConflict {
 			t.Errorf("editing %s mid-run answered %d, want 409: %s", rel, w.Code, w.Body.String())
 		}
-		if _, known, _ := st.QueryTestFor("acme/a", version); known {
+		if _, known, _ := st.QueryTestFor("acme/a", version, fakeCLI); known {
 			t.Errorf("editing %s mid-run still filed a result under the version listed", rel)
 		}
 	}
@@ -355,7 +422,7 @@ func TestAQueryNothingTestsIsRecordedAsShowingNothing(t *testing.T) {
 	if len(tester.ran) != 0 {
 		t.Errorf("the CLI was handed %v for a query nothing tests", tester.ran)
 	}
-	got, known, err := st.QueryTestFor("acme/a", version)
+	got, known, err := st.QueryTestFor("acme/a", version, fakeCLI)
 	if err != nil || !known {
 		t.Fatalf("nothing recorded: known=%v err=%v", known, err)
 	}
@@ -382,7 +449,7 @@ func advanceTo(t *testing.T, s *Server, id, version, stage string) *httptest.Res
 func TestExtendedTestIsRefusedUntilEveryStepPasses(t *testing.T) {
 	s, st := newServer(t)
 	root := queryWorkspace(t, []string{"A"})
-	s.QueryDir = root
+	s.QueryDir, s.Tester = root, &fakeTester{}
 	version := versionOf(t, root, "A")
 
 	w := advanceTo(t, s, "acme/a", version, store.StageExtendedTest)
@@ -412,13 +479,65 @@ func TestExtendedTestIsRefusedUntilEveryStepPasses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.RecordQueryTest(store.QueryTest{QueryID: "acme/a", QueryVersion: version,
-		Passed: true, Total: 1, Detail: "1 of 1 passed", TestDigest: digest}); err != nil {
+	fixtures, err := authoring.DigestFixtures(root, []string{filepath.Join(root, "test", "A", "A.qlref")})
+	if err != nil {
 		t.Fatal(err)
+	}
+	one, none := int64(1), int64(0)
+	for _, run := range []store.QueryTest{
+		{QueryID: "acme/a", QueryVersion: "the-stub", CLIVersion: fakeCLI, Total: 1, Failed: 1,
+			FailureStage: "RESULT", FixturesDigest: fixtures, Missing: &one, Unexpected: &none},
+		{QueryID: "acme/a", QueryVersion: version, CLIVersion: fakeCLI, Passed: true, Total: 1,
+			Detail: "1 of 1 passed", TestDigest: digest, FixturesDigest: fixtures},
+	} {
+		if err := st.RecordQueryTest(run); err != nil {
+			t.Fatal(err)
+		}
 	}
 	w = advanceTo(t, s, "acme/a", version, store.StageExtendedTest)
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "AST") {
 		t.Errorf("with only the AST step waiting, answered %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// A catalog row names the requests about its query, and says why its version may not enter
+// extended-test before anybody presses it: the same refusal the advance answers with.
+func TestACatalogRowNamesItsRequestsAndWhyExtendedTestIsRefused(t *testing.T) {
+	s, st := newServer(t)
+	root := queryWorkspace(t, []string{"A"})
+	s.QueryDir, s.Tester = root, &fakeTester{}
+	request, err := st.SaveQueryRequest(store.QueryRequest{Description: "d", Compliant: "c",
+		NonCompliant: "n", RequestedBy: "operator", QueryID: "acme/a", TargetSource: store.TargetOperator})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	s.queries(w, httptest.NewRequest("GET", "/api/queries", nil))
+	var got struct {
+		Queries []struct {
+			store.CatalogQuery
+			Requests            []int64 `json:"requests"`
+			ExtendedTestRefusal string  `json:"extendedTestRefusal"`
+		} `json:"queries"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Queries) != 1 || got.Queries[0].QueryID != "acme/a" {
+		t.Fatalf("catalog %s", w.Body.String())
+	}
+	row := got.Queries[0]
+	if len(row.Requests) != 1 || row.Requests[0] != request {
+		t.Errorf("the row names requests %v, want [%d]", row.Requests, request)
+	}
+	if !strings.Contains(row.ExtendedTestRefusal, "Query help is pending") {
+		t.Errorf("the row says extended-test is refused because %q", row.ExtendedTestRefusal)
+	}
+	pressed := advanceTo(t, s, "acme/a", row.QueryVersion, store.StageExtendedTest)
+	if !strings.Contains(pressed.Body.String(), row.ExtendedTestRefusal) {
+		t.Errorf("pressing it answered %s, which is not what the row said beforehand: %q",
+			pressed.Body.String(), row.ExtendedTestRefusal)
 	}
 }
 

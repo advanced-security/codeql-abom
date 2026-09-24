@@ -20,6 +20,8 @@ type Authoring interface {
 	Start(request int64, by string) (store.AuthoringSession, error)
 	Stop(request int64) bool
 	InFlight(request int64) []harness.Flight
+	Draft(run int64, queryID string, picked []harness.Picked, by string) (store.AuthoringSession, error)
+	StopDraft(run int64) bool
 }
 
 // startSession begins an agent session on a request, answering once it is under way.

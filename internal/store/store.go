@@ -101,6 +101,8 @@ var createTables = []struct {
 	{"the query request table", queryRequestDDL},
 	{"the authoring session tables", authoringSessionDDL},
 	{"the printed tree table", authoringASTDDL},
+	{"the review table", authoringReviewDDL},
+	{"the request draft table", requestDraftDDL},
 	{"the enumeration state table", enumerationStateDDL},
 	{"the repository property table", repositoryPropertyDDL},
 	{"the property schema table", propertySchemaDDL},
@@ -155,6 +157,12 @@ func (s *Store) Migrate() error {
 	if err := s.migrateObservationFactKey(); err != nil {
 		return err
 	}
+	if err := s.migrateAuthoringOwners(); err != nil {
+		return err
+	}
+	if err := s.migrateQueryTestKey(); err != nil {
+		return err
+	}
 	// The one index a read-only server cannot wait for CreateIndexes to build.
 	if _, err := s.db.Exec(queryRunIndexDDL); err != nil {
 		return fmt.Errorf("indexing run identity: %w", err)
@@ -164,6 +172,10 @@ func (s *Store) Migrate() error {
 	// added there never reaches a database that already exists.
 	if _, err := s.db.Exec(observationIndexDDL); err != nil {
 		return fmt.Errorf("indexing observations by name: %w", err)
+	}
+	// After the column pass, which gives a session table from before drafts the column it is on.
+	if _, err := s.db.Exec(draftSessionIndexDDL); err != nil {
+		return fmt.Errorf("indexing drafting sessions: %w", err)
 	}
 	// And the rest of them, for the same reason, once there is no bulk load to slow down.
 	// `CreateIndexes` is called by the seed build alone, so every other database — one being

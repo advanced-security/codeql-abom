@@ -406,6 +406,43 @@ public sealed class AbomApi(HttpClient http)
     public async Task<AuthoringAst?> GetAuthoringAstAsync(long id, CancellationToken ct = default) =>
         await GetAsync<AuthoringAst>($"api/authoring-asts/{id}", ct);
 
+    /// <summary>The trees printed for a query, by a session or by ABOM, without their bodies.</summary>
+    public async Task<IReadOnlyList<AuthoringAst>> GetQueryAstsAsync(string queryId, CancellationToken ct = default) =>
+        (await GetAsync<AuthoringAstList>($"api/queries/asts?query={Uri.EscapeDataString(queryId)}", ct))?.Asts ?? [];
+
+    /// <summary>
+    /// Has ABOM print a query's tree over its test database, keeping who asked; a refusal names
+    /// what stands in the way, such as a database older than its fixtures.
+    /// </summary>
+    public Task<(QueryCatalog? Catalog, string? Refusal)> PrintQueryAstAsync(
+        string queryId, string queryVersion, string by, CancellationToken ct = default) =>
+        ControlAsync<QueryCatalog>("api/queries/ast", new { queryId, queryVersion, by }, ct);
+
+    /// <summary>What a request's target last reported, for reading against the request's examples.</summary>
+    public async Task<ReviewState?> GetReviewAsync(long request, CancellationToken ct = default) =>
+        await GetAsync<ReviewState>($"api/query-requests/{request}/review", ct);
+
+    /// <summary>
+    /// Approves or rejects the report that was read. An approval makes it the expected result and
+    /// ABOM then runs the tests; a refusal says what stood in the way.
+    /// </summary>
+    public Task<(ReviewState? State, string? Refusal)> ReviewAsync(
+        long request, string verdict, string reason, string by, string digest, CancellationToken ct = default) =>
+        ControlAsync<ReviewState>($"api/query-requests/{request}/review", new { verdict, reason, by, digest }, ct);
+
+    /// <summary>The sessions drafting a request from a run's picked results, each with its newest draft.</summary>
+    public async Task<DraftSessionList?> GetDraftsAsync(long run, CancellationToken ct = default) =>
+        await GetAsync<DraftSessionList>($"api/runs/{run}/drafts", ct);
+
+    /// <summary>Starts an agent drafting a request from what was picked; nothing is filed by it.</summary>
+    public Task<(AuthoringSession? Session, string? Refusal)> StartDraftAsync(
+        long run, string queryId, IReadOnlyList<RequestEvidence> evidence, string by, CancellationToken ct = default) =>
+        ControlAsync<AuthoringSession>($"api/runs/{run}/drafts", new { queryId, by, evidence }, ct);
+
+    /// <summary>Stops the session drafting from a run.</summary>
+    public Task<(DraftSessionList? List, string? Refusal)> StopDraftAsync(long run, CancellationToken ct = default) =>
+        ControlAsync<DraftSessionList>($"api/runs/{run}/drafts/stop", null, ct);
+
     /// <summary>A guarded POST whose refusal is the reader's to read.</summary>
     private async Task<(T? Answer, string? Refusal)> ControlAsync<T>(string path, object? body, CancellationToken ct)
     {

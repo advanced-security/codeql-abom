@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/advanced-security/codeql-abom/internal/customql"
+	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
@@ -36,19 +38,38 @@ type Step struct {
 	Detail string `json:"detail"`
 }
 
-// Progress derives the steps a query version on disk has taken, from the files in root, the test
-// results on record for its id, and the newest PrintAST tree kept for it (a zero row id when none).
-func Progress(root string, q Query, tests []store.QueryTest, printed store.AuthoringAST) ([]Step, error) {
+// Evidence is what ABOM holds about a query besides its files: the test results on record for its
+// id, the newest tree kept for it, and the CodeQL that runs now, under which alone a mark is
+// current. Extraction and evaluation both change between releases.
+type Evidence struct {
+	CLI     string
+	Tests   []store.QueryTest
+	Printed store.AuthoringAST
+}
+
+// Progress derives the steps a query version on disk has taken, from the files in root and the
+// evidence on record for it.
+func Progress(root string, q Query, ev Evidence) ([]Step, error) {
 	digest, err := DigestTests(root, q.Tests)
 	if err != nil {
 		return nil, err
 	}
-	var current, compiledElsewhere, passedElsewhere *store.QueryTest
-	for i := range tests {
-		t := &tests[i]
+	fixtures, err := DigestFixtures(root, q.Tests)
+	if err != nil {
+		return nil, err
+	}
+	var current, otherCLI, compiledElsewhere, passedElsewhere *store.QueryTest
+	for i := range ev.Tests {
+		t := &ev.Tests[i]
 		switch {
-		case t.QueryVersion == q.Version:
+		// An unreadable CodeQL is not one of no version: a result kept before ABOM recorded the
+		// CodeQL names none, and would otherwise read as current.
+		case t.QueryVersion == q.Version && ev.CLI != "" && t.CLIVersion == ev.CLI:
 			current = t
+		case t.QueryVersion == q.Version:
+			if otherCLI == nil || t.RanAt > otherCLI.RanAt {
+				otherCLI = t
+			}
 		case t.Passed && (passedElsewhere == nil || t.RanAt > passedElsewhere.RanAt):
 			passedElsewhere = t
 		}
@@ -66,19 +87,142 @@ func Progress(root string, q Query, tests []store.QueryTest, printed store.Autho
 	if err != nil {
 		return nil, err
 	}
-	database, err := databaseStep(root, q, current, digest)
+	database, err := databaseStep(root, q, current, digest, ev.CLI)
 	if err != nil {
 		return nil, err
 	}
+	first, staleFirst := seenFailing(q, ev.Tests, fixtures)
+	tests := testsStep(q, current, otherCLI, passedElsewhere, digest, ev.CLI)
+	if tests.State == Passing {
+		tests = failedFirstStep(q, tests, first, staleFirst)
+	}
+	compiles := compilesStep(current, otherCLI, compiledElsewhere, ev.CLI)
+	if compiles.State == Passing {
+		if compiles, err = libraryStep(root, compiles); err != nil {
+			return nil, err
+		}
+	}
 	return []Step{
-		help, expected, database, astStep(printed, digest),
-		compilesStep(current, compiledElsewhere),
-		testsStep(q, current, passedElsewhere, digest),
+		help, expected, database, astStep(ev.Printed, fixtures, ev.CLI), compiles, tests,
 	}, nil
 }
 
-// astStep is (e): a tree PrintAST printed from the fixtures on disk now.
-func astStep(printed store.AuthoringAST, digest string) Step {
+// libraryStep is (f) for a version that compiled: a warning where either of the operator's packs
+// locked another codeql/actions-all than the one ABOM's queries and ql-mcp's run, since a query
+// compiled against one and run against the other can answer differently.
+func libraryStep(root string, compiled Step) (Step, error) {
+	for _, pack := range []string{"", "test/"} {
+		locked, err := lockedActionsAll(filepath.Join(root, filepath.FromSlash(pack), "codeql-pack.lock.yml"))
+		if err != nil {
+			return Step{}, err
+		}
+		if locked != "" && locked != customql.ActionsAll {
+			compiled.State = Warning
+			compiled.Detail = fmt.Sprintf("%s, against codeql/actions-all %s, which %scodeql-pack.lock.yml "+
+				"locked; ABOM's queries run %s, so pin it in the manifest and run codeql pack upgrade",
+				compiled.Detail, locked, pack, customql.ActionsAll)
+			return compiled, nil
+		}
+	}
+	return compiled, nil
+}
+
+// lockedActionsAll is the codeql/actions-all a pack's lock file resolved, empty where none has
+// been written yet.
+func lockedActionsAll(lock string) (string, error) {
+	body, err := os.ReadFile(lock)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return "", nil
+	case err != nil:
+		return "", err
+	}
+	lines := strings.Split(string(body), "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) != "codeql/actions-all:" || i+1 == len(lines) {
+			continue
+		}
+		if version, ok := strings.CutPrefix(strings.TrimSpace(lines[i+1]), "version:"); ok {
+			return strings.TrimSpace(version), nil
+		}
+	}
+	return "", nil
+}
+
+// FailedOnMarks reports whether a recorded run failed on a result its fixtures mark: at comparing
+// results, with an inline expectation unmet. That is a test failing for the reason expected; a
+// failure to compile, or for want of an .expected, marks nothing.
+func FailedOnMarks(t store.QueryTest) bool {
+	return t.FailureStage == "RESULT" && t.Missing != nil && t.Unexpected != nil &&
+		*t.Missing+*t.Unexpected > 0
+}
+
+// seenFailing is the newest run of another version that failed on a result its fixtures mark: over
+// these fixtures, and over fixtures that have since changed.
+//
+// A pass shows a query agrees with its tests, and only a failure like this shows the tests could
+// have caught one that did not.
+func seenFailing(q Query, tests []store.QueryTest, fixtures string) (current, stale *store.QueryTest) {
+	for i := range tests {
+		t := &tests[i]
+		if t.QueryVersion == q.Version || !FailedOnMarks(*t) {
+			continue
+		}
+		switch {
+		case fixtures != "" && t.FixturesDigest == fixtures:
+			if current == nil || t.RanAt > current.RanAt {
+				current = t
+			}
+		case stale == nil || t.RanAt > stale.RanAt:
+			stale = t
+		}
+	}
+	return current, stale
+}
+
+// failedFirstStep is (g) for a version whose tests pass: passing only once the same fixtures were
+// seen failing an earlier version on a result they mark.
+func failedFirstStep(q Query, passed Step, first, stale *store.QueryTest) Step {
+	switch {
+	case first != nil:
+		passed.Detail += fmt.Sprintf("; version %s failed first at %s: %s", short(first.QueryVersion),
+			first.RanAt, runner.ExpectationsDetail(*first.Missing, *first.Unexpected))
+		return passed
+	case stale != nil:
+		passed.State = Warning
+		passed.Detail += fmt.Sprintf(", but the fixtures changed since version %s was seen failing them, "+
+			"so nothing shows these tests can fail", short(stale.QueryVersion))
+		return passed
+	}
+	passed.State = Warning
+	passed.Detail += ", but these fixtures were never seen failing on a result they mark, so nothing " +
+		"shows the tests could catch a query that misses one"
+	if !markedInline(q.Tests) {
+		passed.Detail += "; mark each line the query must report with # $ Alert, and name " +
+			customql.Postprocess + " as the .qlref's postprocess"
+	}
+	return passed
+}
+
+// markedInline reports whether any test names a postprocess query, which is what reads a fixture's
+// # $ Alert markers; without one a test can fail only for want of its .expected.
+func markedInline(tests []string) bool {
+	for _, test := range tests {
+		body, err := os.ReadFile(test)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(body), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "postprocess:") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// astStep is (e): a tree PrintAST printed from the fixtures on disk now, by the CodeQL running now.
+func astStep(printed store.AuthoringAST, digest, cli string) Step {
 	step := Step{Step: "ast", State: Passing}
 	switch {
 	case printed.RowID == 0:
@@ -89,6 +233,12 @@ func astStep(printed store.AuthoringAST, digest string) Step {
 	case printed.TestDigest == "" || printed.TestDigest != digest:
 		step.State, step.Detail = Warning, "printed at "+printed.PrintedAt+
 			" from fixtures that have changed since"
+	case printed.CLIVersion == "" && cli != "":
+		step.State, step.Detail = Warning, "printed at "+printed.PrintedAt+
+			" before ABOM recorded which CodeQL printed it; print it again"
+	case printed.CLIVersion != cli || cli == "":
+		step.State, step.Detail = Warning, fmt.Sprintf("printed by %s at %s; %s",
+			codeql(printed.CLIVersion), printed.PrintedAt, againUnder("print it", cli))
 	default:
 		step.Detail = fmt.Sprintf("printed at %s from these fixtures, %d bytes", printed.PrintedAt, printed.Size)
 	}
@@ -210,6 +360,13 @@ func expectedStep(root string, q Query) (Step, error) {
 		case err != nil:
 			return Step{}, err
 		}
+		if missing, unexpected := runner.ExpectationFailures(body); missing+unexpected > 0 {
+			n := missing + unexpected
+			steps = append(steps, Step{Step: "expected", State: Failed, Detail: fmt.Sprintf(
+				"%s accepts %d failed %s, so the test passes without the query reporting what its "+
+					"fixtures mark", rel, n, plural(int(n), "expectation", "expectations"))})
+			continue
+		}
 		lines := 0
 		for _, line := range strings.Split(string(body), "\n") {
 			if strings.TrimSpace(line) != "" {
@@ -236,7 +393,7 @@ func plural(n int, one, many string) string {
 
 // databaseStep reads the database the CLI builds beside each test, which a failed extraction
 // leaves behind unfinished.
-func databaseStep(root string, q Query, current *store.QueryTest, digest string) (Step, error) {
+func databaseStep(root string, q Query, current *store.QueryTest, digest, cli string) (Step, error) {
 	if len(q.Tests) == 0 {
 		return Step{Step: "database", State: Pending, Detail: "no test names " + q.Rel}, nil
 	}
@@ -248,7 +405,7 @@ func databaseStep(root string, q Query, current *store.QueryTest, digest string)
 			continue
 		}
 		seen[dir] = true
-		step, err := testDatabaseStep(root, dir, current, digest)
+		step, err := testDatabaseStep(root, dir, current, digest, cli)
 		if err != nil {
 			return Step{}, err
 		}
@@ -257,7 +414,7 @@ func databaseStep(root string, q Query, current *store.QueryTest, digest string)
 	return worst(steps), nil
 }
 
-func testDatabaseStep(root, dir string, current *store.QueryTest, digest string) (Step, error) {
+func testDatabaseStep(root, dir string, current *store.QueryTest, digest, cli string) (Step, error) {
 	db := filepath.Join(dir, filepath.Base(dir)+".testproj")
 	info, err := os.Stat(filepath.Join(db, "codeql-database.yml"))
 	switch {
@@ -270,7 +427,7 @@ func testDatabaseStep(root, dir string, current *store.QueryTest, digest string)
 	case err != nil:
 		return Step{}, err
 	}
-	finished, err := extractionFinished(filepath.Join(db, "codeql-database.yml"))
+	finished, built, err := databaseMetadata(filepath.Join(db, "codeql-database.yml"))
 	if err != nil {
 		return Step{}, err
 	}
@@ -286,24 +443,40 @@ func testDatabaseStep(root, dir string, current *store.QueryTest, digest string)
 		return Step{Step: "database", State: Warning,
 			Detail: relTo(root, db) + " is older than the test code"}, nil
 	}
+	// A database that names no CodeQL cannot be said to be another's.
+	if built != "" && built != cli {
+		return Step{Step: "database", State: Warning, Detail: fmt.Sprintf(
+			"%s was extracted by CodeQL %s; %s", relTo(root, db), built, againUnder("run the tests", cli))}, nil
+	}
 	return Step{Step: "database", State: Passing, Detail: relTo(root, db) + ", extracted " +
 		info.ModTime().UTC().Format(time.RFC3339)}, nil
 }
 
-// extractionFinished reads whether the CLI finalized a database, which it records in its metadata.
-func extractionFinished(yml string) (bool, error) {
+// databaseMetadata reads whether the CLI finalized a database and which CodeQL built it, both of
+// which it records in the database's metadata.
+func databaseMetadata(yml string) (finished bool, cli string, err error) {
 	f, err := os.Open(yml)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	defer f.Close()
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
-		if strings.TrimSpace(scanner.Text()) == finishedLine {
-			return true, nil
+		line := strings.TrimSpace(scanner.Text())
+		if line == finishedLine {
+			finished = true
+		}
+		if version, ok := strings.CutPrefix(line, "cliVersion:"); ok {
+			cli = strings.TrimSpace(version)
 		}
 	}
-	return false, scanner.Err()
+	return finished, cli, scanner.Err()
+}
+
+// extractionFinished reads whether the CLI finalized a database.
+func extractionFinished(yml string) (bool, error) {
+	finished, _, err := databaseMetadata(yml)
+	return finished, err
 }
 
 // newestSource is when the test code last changed. The .expected and the .qlref are read after
@@ -335,7 +508,7 @@ func newestSource(dir string) (time.Time, error) {
 	return newest, err
 }
 
-func compilesStep(current, elsewhere *store.QueryTest) Step {
+func compilesStep(current, otherCLI, elsewhere *store.QueryTest, cli string) Step {
 	step := Step{Step: "compiles", State: Pending, Detail: "not compiled for this version"}
 	switch {
 	case current != nil && current.FailureStage == "COMPILATION":
@@ -344,6 +517,10 @@ func compilesStep(current, elsewhere *store.QueryTest) Step {
 		step.State, step.Detail = Passing, "compiled when its tests ran at "+current.RanAt
 	case current != nil && current.FailureStage == "EXTRACTION":
 		step.Detail = "the test code did not extract, so compiling was not reported"
+	case otherCLI != nil && compiled(*otherCLI):
+		step.State = Warning
+		step.Detail = fmt.Sprintf("compiled under %s when its tests ran at %s; %s",
+			codeql(otherCLI.CLIVersion), otherCLI.RanAt, againUnder("run them", cli))
 	case elsewhere != nil:
 		step.State = Warning
 		step.Detail = fmt.Sprintf("version %s compiled at %s; this version has not been compiled",
@@ -352,7 +529,24 @@ func compilesStep(current, elsewhere *store.QueryTest) Step {
 	return step
 }
 
-func testsStep(q Query, current, elsewhere *store.QueryTest, digest string) Step {
+// codeql names the CodeQL a result was recorded under, which is unknown for one kept before it was.
+func codeql(version string) string {
+	if version == "" {
+		return "a CodeQL ABOM did not record"
+	}
+	return "CodeQL " + version
+}
+
+// againUnder asks for something to be done again under the CodeQL this server runs, or says it
+// cannot, since a server that could not read its CodeQL cannot name one to do it under.
+func againUnder(what, cli string) string {
+	if cli == "" {
+		return "this server could not read which CodeQL it runs, so this is not known to be current"
+	}
+	return what + " again under " + cli
+}
+
+func testsStep(q Query, current, otherCLI, elsewhere *store.QueryTest, digest, cli string) Step {
 	step := Step{Step: "tests", State: Pending, Detail: "never run for this version"}
 	switch {
 	case len(q.Tests) == 0:
@@ -368,6 +562,11 @@ func testsStep(q Query, current, elsewhere *store.QueryTest, digest string) Step
 		step.State, step.Detail = Passing, current.Detail+" at "+current.RanAt
 	case current != nil && current.Total > 0:
 		step.State, step.Detail = Failed, current.Detail
+	case otherCLI != nil && otherCLI.Total > 0:
+		outcome := map[bool]string{true: "passed", false: "failed"}[otherCLI.Passed]
+		step.State = Warning
+		step.Detail = fmt.Sprintf("%s under %s at %s; %s", outcome,
+			codeql(otherCLI.CLIVersion), otherCLI.RanAt, againUnder("run them", cli))
 	case elsewhere != nil:
 		step.State = Warning
 		step.Detail = fmt.Sprintf("version %s passed at %s; this version has not been tested",

@@ -86,7 +86,9 @@ else
                     {
                         <AuthoringSteps Steps="@context.Item.Steps" CanTest="@CanTest(context.Item)"
                                         TestRefusal="@TestRefusal(context.Item)"
-                                        OnTest="@(() => Test(context.Item))" />
+                                        OnTest="@(() => Test(context.Item))"
+                                        CanPrint="@CanTest(context.Item)"
+                                        OnPrint="@(() => Print(context.Item))" />
                     }
                 </CellTemplate>
             </PropertyColumn>
@@ -213,7 +215,23 @@ else
         </Columns>
         <ChildRowContent>
             <div class="abom-row-detail">
+                @if (context.Item.Requests.Count > 0)
+                {
+                    <MudText Typo="Typo.caption" Class="d-block mb-2" data-abom-query-requests>
+                        Asked for in
+                        @foreach (var (id, at) in context.Item.Requests.Select((id, at) => (id, at)))
+                        {
+                            @(at == 0 ? "" : ", ")
+                            <MudLink Href="@($"/codeql?tab=requests&request={id}")" Typo="Typo.caption"
+                                     data-abom-query-request="@id">request #@id</MudLink>
+                        }
+                    </MudText>
+                }
                 <QueryRuns Query="@context.Item" />
+                @if (context.Item.Working && context.Item.Steps.Count > 0)
+                {
+                    <QueryTrees Query="@context.Item" />
+                }
             </div>
         </ChildRowContent>
         <PagerContent><MudDataGridPager T="CatalogQuery" /></PagerContent>
@@ -308,11 +326,21 @@ else
     {
         foreach (var stage in _catalog!.Stages)
         {
-            <MudMenuItem Disabled="@(stage == query.Stage)" OnClick="@(() => Advance(query, stage))">
+            var refused = stage == ExtendedTest && stage != query.Stage ? query.ExtendedTestRefusal : string.Empty;
+            <MudMenuItem Disabled="@(stage == query.Stage || refused.Length > 0)" OnClick="@(() => Advance(query, stage))"
+                         data-abom-stage-item="@stage">
                 @stage
+                @if (refused.Length > 0)
+                {
+                    <MudText Typo="Typo.caption" Class="d-block mud-text-secondary abom-stage-refused"
+                             data-abom-stage-refused>Not yet: @refused</MudText>
+                }
             </MudMenuItem>
         }
     };
+
+    /// <summary>The stage the server refuses until the working copy's steps have all passed.</summary>
+    private const string ExtendedTest = "extended-test";
 
     private static string StagedTitle(CatalogQuery q) => q.StagedBy.Length == 0
         ? $"In {q.Stage}"
@@ -357,6 +385,21 @@ else
             return;
         }
         var (catalog, refusal) = await Api.TestQueryAsync(query.QueryId, query.QueryVersion);
+        _refusal = refusal;
+        if (catalog is not null)
+        {
+            _catalog = catalog;
+        }
+    }
+
+    // ABOM prints the tree itself, so a query nobody drove a session over can earn its AST step.
+    private async Task Print(CatalogQuery query)
+    {
+        if (!CanTest(query))
+        {
+            return;
+        }
+        var (catalog, refusal) = await Api.PrintQueryAstAsync(query.QueryId, query.QueryVersion, Operator);
         _refusal = refusal;
         if (catalog is not null)
         {

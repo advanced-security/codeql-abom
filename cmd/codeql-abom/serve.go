@@ -28,6 +28,8 @@ const shutdownGrace = 5 * time.Second
 // The tester is found by a type assertion, which a drifted signature would fail silently.
 var _ serve.QueryTester = (*runner.Runner)(nil)
 
+var _ serve.ASTPrinter = (*runner.Runner)(nil)
+
 // wireEnumeration lets the loop re-read the declared accounts on a period.
 //
 // A period of zero leaves the loop unable to enumerate, which is what every build before this did.
@@ -310,6 +312,9 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	// rather than racing an analysis for one compilation cache.
 	if tester, ok := loop.Expander.Resolver.(serve.QueryTester); ok {
 		srv.Tester, srv.QueryDir = tester, runner.CustomPackRoot()
+	}
+	if printer, ok := loop.Expander.Resolver.(serve.ASTPrinter); ok && srv.QueryDir != "" {
+		srv.Printer = printer
 	}
 	srv.Authoring = newAuthoring(s, authoring, loop, stderr)
 	// Without this the interface can record a declaration and never act on it: declaring names

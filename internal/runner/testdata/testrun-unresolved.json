@@ -1,0 +1,8 @@
+[
+{
+  "test" : "/private/tmp/abom-sc2/test/Stub/Stub.qlref",
+  "pass" : false,
+  "failureStage" : "COMPILATION",
+  "failureDescription" : "Could not resolve library path for /private/tmp/abom-sc2/test"
+}
+]

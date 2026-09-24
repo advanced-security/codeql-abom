@@ -71,15 +71,17 @@ type MemberResult struct {
 
 // AnalysisRun is a request, its members and how far it has got.
 type AnalysisRun struct {
-	RowID       int64            `json:"rowId"`
-	Predicate   string           `json:"predicate"`
-	Mode        string           `json:"mode"`
-	RequestedBy string           `json:"requestedBy"`
-	State       string           `json:"state"`
-	CreatedAt   string           `json:"createdAt"`
-	FinishedAt  string           `json:"finishedAt"`
-	Queries     []AnalysisQuery  `json:"queries"`
-	Members     []AnalysisMember `json:"members"`
+	RowID       int64  `json:"rowId"`
+	Predicate   string `json:"predicate"`
+	Mode        string `json:"mode"`
+	RequestedBy string `json:"requestedBy"`
+	State       string `json:"state"`
+	CreatedAt   string `json:"createdAt"`
+	FinishedAt  string `json:"finishedAt"`
+	// CLIVersion is the CodeQL that carried the run out, empty until it starts.
+	CLIVersion string           `json:"cliVersion"`
+	Queries    []AnalysisQuery  `json:"queries"`
+	Members    []AnalysisMember `json:"members"`
 	// Results totals what the members that were counted reported. Members nothing ran against
 	// contribute nothing to it rather than a zero.
 	Results int `json:"results"`
@@ -370,6 +372,19 @@ func replaceMemberResults(tx *sql.Tx, runID int64, id DatabaseIdentity, byQuery 
 	return nil
 }
 
+// SetAnalysisRunCodeQL records the CodeQL carrying a run out, which every member it evaluates
+// answers under.
+func (s *Store) SetAnalysisRunCodeQL(runID int64, cli string) error {
+	if cli == "" {
+		return fmt.Errorf("run %d: a run names the CodeQL that carries it out", runID)
+	}
+	if _, err := s.db.Exec(`UPDATE abom_analysis_run SET cli_version = ? WHERE row_id = ?`,
+		cli, runID); err != nil {
+		return fmt.Errorf("recording the CodeQL of run %d: %w", runID, err)
+	}
+	return nil
+}
+
 // SetAnalysisRunState moves the run as a whole, stamping when it finished.
 func (s *Store) SetAnalysisRunState(runID int64, state string) error {
 	finished := nullable("")
@@ -393,10 +408,11 @@ func (s *Store) AnalysisRun(id int64) (AnalysisRun, error) {
 	}
 	var finished sql.NullString
 	err := s.db.QueryRow(`
-		SELECT row_id, predicate, analysis_mode, requested_by, state, created_at, finished_at
+		SELECT row_id, predicate, analysis_mode, requested_by, state, created_at, finished_at,
+		       COALESCE(cli_version, '')
 		FROM abom_analysis_run WHERE row_id = ?`, id).
 		Scan(&run.RowID, &run.Predicate, &run.Mode, &run.RequestedBy, &run.State,
-			&run.CreatedAt, &finished)
+			&run.CreatedAt, &finished, &run.CLIVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return run, fmt.Errorf("no run %d", id)
 	}
@@ -425,7 +441,8 @@ func (s *Store) AnalysisRun(id int64) (AnalysisRun, error) {
 func (s *Store) AnalysisRuns() ([]AnalysisRun, error) {
 	out := []AnalysisRun{}
 	rows, err := s.db.Query(`
-		SELECT row_id, predicate, analysis_mode, requested_by, state, created_at, finished_at
+		SELECT row_id, predicate, analysis_mode, requested_by, state, created_at, finished_at,
+		       COALESCE(cli_version, '')
 		FROM abom_analysis_run ORDER BY row_id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("listing runs: %w", err)
@@ -438,7 +455,7 @@ func (s *Store) AnalysisRuns() ([]AnalysisRun, error) {
 		}
 		var finished sql.NullString
 		if err := rows.Scan(&run.RowID, &run.Predicate, &run.Mode, &run.RequestedBy,
-			&run.State, &run.CreatedAt, &finished); err != nil {
+			&run.State, &run.CreatedAt, &finished, &run.CLIVersion); err != nil {
 			return nil, fmt.Errorf("scanning a run: %w", err)
 		}
 		run.FinishedAt = finished.String

@@ -42,9 +42,15 @@ type Sessions struct {
 	Limit time.Duration
 	// Wait is how long a start waits for CodeQL to be free before refusing.
 	Wait time.Duration
+	// Version is the CodeQL ql-mcp and ABOM run, which every tree and test result names.
+	Version func(context.Context) (string, error)
+	// RunTests runs a query's own tests for a session, which already holds Lock.
+	RunTests authoring.Tests
 
 	mu   sync.Mutex
 	live map[int64]*live
+	// drafting is the sessions drafting from a run, by run.
+	drafting map[int64]*live
 }
 
 // DefaultLimit bounds a session nobody configured a limit for.
@@ -108,9 +114,20 @@ func (s *Sessions) start(request int64, by string) (store.AuthoringSession, <-ch
 		_ = s.Store.EndAuthoringSession(id, store.SessionFailed, "bounding the session: "+err.Error())
 		return store.AuthoringSession{}, nil, err
 	}
+	bounds = bounds.Guard(s.firstChange(request))
 
 	gate := NewGate(bounds, s.recorder(id))
 	if err := gate.KeepPrinted(scratch, s.keeper(id, request)); err != nil {
+		unlock()
+		_ = s.Store.EndAuthoringSession(id, store.SessionFailed, err.Error())
+		return store.AuthoringSession{}, nil, err
+	}
+	gate.KeepSpend(func(sp Spend) error {
+		return s.Store.AddAuthoringSpend(id, store.AuthoringSpend{InputTokens: sp.InputTokens,
+			OutputTokens: sp.OutputTokens, NanoAIU: sp.NanoAIU})
+	})
+	reviews, err := s.Store.AuthoringReviews(request)
+	if err != nil {
 		unlock()
 		_ = s.Store.EndAuthoringSession(id, store.SessionFailed, err.Error())
 		return store.AuthoringSession{}, nil, err
@@ -132,10 +149,10 @@ func (s *Sessions) start(request int64, by string) (store.AuthoringSession, <-ch
 		Home:      home,
 		Scratch:   scratch,
 		Workspace: bounds.Workspace(),
-		Prompt:    prompt(req),
+		Prompt:    prompt(req, reviews),
 		Rules:     rules(bounds, s.Libraries, req.QueryID),
 		Gate:      gate,
-		Tools:     s.tools(request, gate),
+		Tools:     s.tools(ctx, request, gate),
 	}
 	done := make(chan struct{})
 	go func() {
@@ -242,8 +259,8 @@ func (s *Sessions) recorder(session int64) func(Event) error {
 	}
 }
 
-// keeper keeps a printout against the request's query as it stands, and the fixtures it was
-// printed from, so a tree printed before they changed reads as old.
+// keeper keeps a printout against the request's query as it stands, the fixtures it was printed
+// from and the CodeQL that printed it, so a tree printed before either changed reads as old.
 func (s *Sessions) keeper(session, request int64) func(Printed) (int64, error) {
 	return func(p Printed) (int64, error) {
 		req, err := s.requestNamed(request)
@@ -253,14 +270,82 @@ func (s *Sessions) keeper(session, request int64) func(Printed) (int64, error) {
 		var digest string
 		if req.QueryID != "" {
 			if q, found, err := authoring.Find(s.Workspace, req.QueryID); err == nil && found {
-				digest, _ = authoring.DigestTests(s.Workspace, q.Tests)
+				digest, _ = authoring.DigestFixtures(s.Workspace, q.Tests)
 			}
+		}
+		cli, err := s.codeQL(context.Background())
+		if err != nil {
+			return 0, err
 		}
 		return s.Store.RecordAuthoringAST(store.AuthoringAST{
 			SessionID: session, QueryID: req.QueryID, PrintedAt: p.At.UTC().Format(time.RFC3339Nano),
 			Query: p.Query, Database: p.Database, SourceFiles: p.SourceFiles, TestDigest: digest,
-			Body: p.Body, Truncated: p.Truncated,
+			Body: p.Body, Truncated: p.Truncated, CLIVersion: cli,
 		})
+	}
+}
+
+// codeQL is the CodeQL the session's CLI calls run under.
+func (s *Sessions) codeQL(ctx context.Context) (string, error) {
+	if s.Version == nil {
+		return "", errors.New("this server cannot say which CodeQL it runs, so nothing it printed or " +
+			"tested can be kept")
+	}
+	return s.Version(ctx)
+}
+
+// firstChange keeps the target query as it is until ABOM has recorded its tests failing on a result
+// the fixtures mark, over the fixtures as they are. Sessions so far wrote the query before any test
+// failed, and nothing recorded the order a test and its query were written in.
+//
+// Once the query has changed there is nothing left to hold: the first change could only get past
+// this with the failure on record.
+func (s *Sessions) firstChange(request int64) func() string {
+	var mu sync.Mutex
+	var start string
+	released := false
+	return func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		if released {
+			return ""
+		}
+		req, err := s.requestNamed(request)
+		if err != nil {
+			return err.Error()
+		}
+		q, found, err := authoring.Find(s.Workspace, req.QueryID)
+		switch {
+		case err != nil:
+			return err.Error()
+		case !found:
+			return req.QueryID + " is not in the pack, so ABOM cannot tell whether its tests failed first"
+		}
+		if start == "" {
+			start = q.Version
+		}
+		if q.Version != start {
+			released = true
+			return ""
+		}
+		fixtures, err := authoring.DigestFixtures(s.Workspace, q.Tests)
+		if err != nil {
+			return err.Error()
+		}
+		tests, err := s.Store.QueryTestsOf(q.ID)
+		if err != nil {
+			return err.Error()
+		}
+		for _, t := range tests {
+			if fixtures != "" && t.QueryVersion == q.Version && t.FixturesDigest == fixtures &&
+				authoring.FailedOnMarks(t) {
+				released = true
+				return ""
+			}
+		}
+		return fmt.Sprintf("the query stays as it is until its tests have failed on a result its fixtures "+
+			"mark: mark each line the query must report with # $ Alert, then call %s, which runs them "+
+			"against the query as it stands and records the failure", ToolTest)
 	}
 }
 
@@ -378,18 +463,77 @@ type targetChoice struct {
 	Rationale string `json:"rationale" jsonschema:"why this query and not another in the catalog, in a sentence or two"`
 }
 
-func (s *Sessions) tools(request int64, gate *Gate) []copilot.Tool {
+func (s *Sessions) tools(ctx context.Context, request int64, gate *Gate) []copilot.Tool {
 	catalog := copilot.DefineTool(ToolCatalog,
 		"Lists the queries ABOM knows: those in your pack, which a session can improve, and those "+
 			"it has run from other packs, which it cannot change.",
-		func(_ struct{}, _ copilot.ToolInvocation) (string, error) { return s.catalog() })
+		answering(func(struct{}) (string, error) { return s.catalog() }))
 	target := copilot.DefineTool(ToolTarget,
 		"Decides the query this request is about, once: improve one in your pack, or create a new "+
 			"one. ABOM records the decision and lays out the query's files, and the session may then "+
 			"write that query and nothing else.",
-		func(c targetChoice, _ copilot.ToolInvocation) (string, error) { return s.decide(request, gate, c) })
-	catalog.SkipPermission, target.SkipPermission = true, true
-	return []copilot.Tool{catalog, target}
+		answering(func(c targetChoice) (string, error) { return s.decide(request, gate, c) }))
+	test := copilot.DefineTool(ToolTest,
+		"Runs the target query's own tests through ABOM, which records what they said. Call it once "+
+			"the fixtures mark each line the query must report with # $ Alert, before changing the "+
+			"query: its first change waits until these tests have failed because those results are "+
+			"missing. It also extracts the test database.",
+		answering(func(struct{}) (string, error) { return s.testTarget(ctx, request, gate) }))
+	catalog.SkipPermission, target.SkipPermission, test.SkipPermission = true, true, true
+	return []copilot.Tool{catalog, target, test}
+}
+
+// testTarget runs the bound query's own tests through ABOM's runner and records them, saying
+// whether the failure is one on a marked result.
+func (s *Sessions) testTarget(ctx context.Context, request int64, gate *Gate) (string, error) {
+	if !gate.Bounds().bound() {
+		return "", fmt.Errorf("decide the query this request is about with %s before testing it", ToolTarget)
+	}
+	if s.RunTests == nil {
+		return "", errors.New("ABOM cannot run tests for this session; use codeql_test_run")
+	}
+	req, err := s.requestNamed(request)
+	if err != nil {
+		return "", err
+	}
+	q, found, err := authoring.Find(s.Workspace, req.QueryID)
+	switch {
+	case err != nil:
+		return "", err
+	case !found:
+		return "", fmt.Errorf("%s is not in the pack", req.QueryID)
+	}
+	cli, err := s.codeQL(ctx)
+	if err != nil {
+		return "", err
+	}
+	result, err := authoring.RecordTests(ctx, s.Store, s.RunTests, s.Workspace, q, cli)
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case result.Passed:
+		return result.Detail + ". They pass, and ABOM recorded it.", nil
+	case authoring.FailedOnMarks(store.QueryTest{FailureStage: result.FailureStage,
+		Missing: result.Missing, Unexpected: result.Unexpected}):
+		return result.Detail + ". ABOM recorded this failure: the fixtures mark results this version " +
+			"does not meet, and the .actual beside the test lists them under testFailures.", nil
+	}
+	return result.Detail + ". This is not a failure on a marked result, so it does not show the tests " +
+		"can catch a query that misses one: mark each line the query must report with # $ Alert.", nil
+}
+
+// answering hands a tool's refusal to the agent as the tool's answer: the SDK shows the model a
+// handler's error only as "Tool execution failed", and a live agent retried one blind three times.
+func answering[T any](handle func(T) (string, error)) func(T, copilot.ToolInvocation) (copilot.ToolResult, error) {
+	return func(args T, _ copilot.ToolInvocation) (copilot.ToolResult, error) {
+		text, err := handle(args)
+		answer := copilot.ToolResult{TextResultForLLM: text, ResultType: "success"}
+		if err != nil {
+			answer = copilot.ToolResult{TextResultForLLM: err.Error(), ResultType: "failure", Error: err.Error()}
+		}
+		return answer, nil
+	}
 }
 
 func (s *Sessions) catalog() (string, error) {
@@ -477,9 +621,9 @@ func (s *Sessions) decide(request int64, gate *Gate, c targetChoice) (string, er
 	}
 	b := gate.Bounds()
 	return fmt.Sprintf("This session is now about %s, in %s, which is on disk: change it with edit, "+
-		"since create refuses a file that exists. Write fixtures under %s, run its test with tests "+
-		"[%q], and extract into %s.", c.QueryID, b.query, filepath.Join(b.tests, ".github", "workflows"),
-		b.tests, b.database()), nil
+		"since create refuses a file that exists. Write fixtures under %s, marking each line to report "+
+		"with # $ Alert, then call %s before changing the query.", c.QueryID, b.query,
+		filepath.Join(b.tests, ".github", "workflows"), ToolTest), nil
 }
 
 // taken says why a new query cannot have this id or file name, or is empty when it can.
@@ -531,8 +675,8 @@ func rules(b Bounds, libraries []string, target string) string {
 		"inside ABOM, in the query pack at %s. ABOM decides and records every tool call before it "+
 		"runs. A refused call says why, and the same call again is refused again.\n\n", b.Workspace())
 	fmt.Fprintf(&out, "You have no shell. Read the pack and the CodeQL library sources under %s with "+
-		"view, glob and grep; write with create and edit; use ql-mcp's %s; and ABOM's %s and %s.\n\n",
-		strings.Join(libraries, ", "), strings.Join(loopNames(), ", "), ToolCatalog, ToolTarget)
+		"view, glob and grep; write with create and edit; use ql-mcp's %s; and ABOM's %s, %s and %s.\n\n",
+		strings.Join(libraries, ", "), strings.Join(loopNames(), ", "), ToolCatalog, ToolTarget, ToolTest)
 	if b.bound() {
 		fmt.Fprintf(&out, "This session is about %s, the query in %s, tested in %s.\n\n", target, b.query,
 			b.tests)
@@ -547,14 +691,18 @@ func rules(b Bounds, libraries []string, target string) string {
 		"The .qlref, the .expected and .actual files, the test database and every manifest " +
 		"belong to ABOM and the CLI.\n\n")
 	out.WriteString("Work test-first, in this order:\n" +
-		"1. Write fixtures from the request's examples, marking each case with a # NON_COMPLIANT or " +
-		"# COMPLIANT comment. The non-compliant example must be reported and the compliant one must not.\n" +
-		"2. Extract the test database with codeql_test_extract and tests set to the test directory.\n" +
+		"1. Write fixtures from the request's examples. Mark each line the query must report with a " +
+		"trailing # $ Alert comment, and leave the compliant example unmarked. A result meets a mark " +
+		"on the line its location ends on, so report the value on that line, such as a uses step's " +
+		"getCalleeNode(), not the step or job around it, whose location runs on to the next item.\n" +
+		"2. Call " + ToolTest + ". ABOM runs the tests against the query as it stands and records " +
+		"the result, which must fail because the marked results are missing. The query cannot change " +
+		"until ABOM has recorded that failure.\n" +
 		"3. Run codeql_query_run with queryName PrintAST, queryLanguage actions, database set to the " +
 		"test database and sourceFiles naming your fixture files, and read which classes model them.\n" +
 		"4. Write the query, and compile it with codeql_query_compile.\n" +
-		"5. Run codeql_test_run with tests set to the test directory and read the .actual file; repeat " +
-		"4 and 5 until it reports the non-compliant cases and none of the compliant ones.\n" +
+		"5. Call " + ToolTest + " again and read the .actual beside the test; repeat 4 and 5 until it " +
+		"has no testFailures: every marked line reported, and nothing else.\n" +
 		"6. Write the help.\n" +
 		"7. Ask for the output to be accepted with codeql_test_accept. An operator reads it against " +
 		"the request before it becomes the expected result, and this session does not accept it. " +
@@ -562,9 +710,9 @@ func rules(b Bounds, libraries []string, target string) string {
 	return out.String()
 }
 
-// prompt is the request as the operator wrote it, fenced so none of it reads as an instruction
-// of ABOM's.
-func prompt(r store.QueryRequest) string {
+// prompt is the request as the operator wrote it, and their newest rejection of what an earlier
+// session produced, fenced so none of it reads as an instruction of ABOM's.
+func prompt(r store.QueryRequest, reviews []store.AuthoringReview) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "Request %d, as the operator wrote it.\n\nWhat to detect:\n%s\n\n", r.RowID,
 		fence(r.Description, "text"))
@@ -581,6 +729,12 @@ func prompt(r store.QueryRequest) string {
 	if r.SourceRunID != 0 {
 		fmt.Fprintf(&out, "It was asked from run %d, with %d result(s) picked as evidence.\n", r.SourceRunID,
 			len(r.Evidence))
+	}
+	if len(reviews) > 0 && reviews[0].Verdict == store.ReviewRejected {
+		fmt.Fprintf(&out, "\nAn operator read what %s reported after an earlier session and rejected it, "+
+			"saying:\n%s\n\nWhat it reported then:\n%s\n\nChange the query or its fixtures so that the next "+
+			"report answers that.\n", reviews[0].QueryID, fence(reviews[0].Reason, "text"),
+			fence(reviews[0].Actual, "text"))
 	}
 	return out.String()
 }

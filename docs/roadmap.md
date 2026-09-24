@@ -133,14 +133,17 @@ ABOM-authored ones and told apart by the pack they came from rather than by a pr
 against whatever scope the operator has narrowed to, and their results land on the graph like any
 other. A version leaves `dev` only when its tests pass.
 
-The half that removes QL from the requirement has started. An operator supplies an example that
-should match and one that should not. An agent session, driven through the
+The half that removes QL from the requirement is built. An operator supplies an example that should
+match and one that should not, or picks results from a run and lets an agent draft them. An agent
+session, driven through the
 [CodeQL development MCP server](https://github.com/advanced-security/codeql-development-mcp-server)
-and confined by ABOM, then writes the fixtures and the query. What remains is the operator's review
-of the expected results, and the simulation that says what a query would do before anybody turns it
-on.
-`plans/api/authoring-harness.md`, `plans/ql/query-authoring.md`, `plans/db/query-catalog.md`,
-`plans/api/on-demand-analysis.md`
+and confined by ABOM, writes the fixtures and the query. The operator accepts what it reported, and
+ABOM then tests it itself. A test fails first on the lines its fixture marks before the query is
+written, one `actions-all` answers for authoring and execution, and every mark names the CodeQL it
+was recorded under. What remains is the simulation that says what a query would do before anybody
+turns it on. Running several CodeQL releases side by side, so an upgrade can be compared before it
+is taken, is later.
+`plans/ql/query-authoring.md`, `plans/db/query-catalog.md`, `plans/api/on-demand-analysis.md`
 
 ## From a finding to a fix
 

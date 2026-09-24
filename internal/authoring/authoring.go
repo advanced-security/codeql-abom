@@ -190,6 +190,22 @@ func metadata(file string) (id, kind string, err error) {
 // A run's own leavings are not part of what a test says, so `.actual` output and `.testproj`
 // databases are left out. Empty when there are no tests, which is not a digest of nothing.
 func DigestTests(root string, tests []string) (string, error) {
+	return digestFiles(root, tests, func(p string) bool { return filepath.Ext(p) != ".actual" })
+}
+
+// DigestFixtures identifies the code a test database is built from: the tests' files less those
+// the CLI reads after extraction, so accepting a report leaves it as it was.
+func DigestFixtures(root string, tests []string) (string, error) {
+	return digestFiles(root, tests, func(p string) bool {
+		switch filepath.Ext(p) {
+		case ".actual", ".expected", ".qlref", ".ql":
+			return false
+		}
+		return true
+	})
+}
+
+func digestFiles(root string, tests []string, keep func(string) bool) (string, error) {
 	if len(tests) == 0 {
 		return "", nil
 	}
@@ -202,7 +218,7 @@ func DigestTests(root string, tests []string) (string, error) {
 				return err
 			case d.IsDir() && strings.HasSuffix(d.Name(), ".testproj"):
 				return filepath.SkipDir
-			case d.IsDir() || filepath.Ext(p) == ".actual":
+			case d.IsDir() || !keep(p):
 				return nil
 			}
 			body, err := os.ReadFile(p)

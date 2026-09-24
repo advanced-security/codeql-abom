@@ -61,6 +61,9 @@ func (e *Executor) Run(ctx context.Context, runID int64) error {
 		return err
 	}
 
+	if err := e.Store.SetAnalysisRunCodeQL(runID, planned.cliVersion); err != nil {
+		return err
+	}
 	if err := e.Store.SetAnalysisRunState(runID, store.RunRunning); err != nil {
 		return err
 	}
@@ -103,12 +106,20 @@ func (e *Executor) carryOut(
 	want []store.AnalysisQuery, planned tierPlan,
 ) error {
 	held := onDisk(member.DatabasePath)
+	building := "building its database"
+	// A result names the CodeQL that ran it, extraction included.
+	if by := BuiltBy(member.DatabasePath); held && by != planned.cliVersion {
+		held, building = false, fmt.Sprintf("rebuilding its database, which CodeQL %s built", by)
+		if by == "" {
+			building = "rebuilding its database, which records no CodeQL that built it"
+		}
+	}
 	if skipped, err := e.skipAnswered(runID, member, held, want, planned); err != nil || skipped {
 		return err
 	}
 	if !held {
 		if err := e.Store.SetAnalysisMemberStatus(
-			runID, member.DatabaseIdentity, store.AnalysisRunning, "building its database"); err != nil {
+			runID, member.DatabaseIdentity, store.AnalysisRunning, building); err != nil {
 			return err
 		}
 		built, err := e.Crawl.buildDatabase(ctx, member.DatabaseIdentity,
@@ -232,7 +243,7 @@ func (e *Expander) buildDatabase(
 	built.identity = store.DatabaseIdentity{
 		Repository: want.Repository, Commit: tree.SHA, SourceFilter: e.sourceFilter(), Mode: want.Mode,
 	}
-	db, staged, reused, err := e.databaseFor(ctx, built.identity, filepath.Join(dir, "db"), tree)
+	db, staged, reused, err := e.databaseFor(ctx, built.identity, filepath.Join(dir, "db"), tree, cliVersion)
 	discardTree(Options{}, tree, retained)
 	if err != nil {
 		return fail(err)

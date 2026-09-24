@@ -49,8 +49,9 @@ func newAuthoring(s *store.Store, o authoringOptions, sup *supervisor.Supervisor
 		return nil
 	}
 	lock, codeql := runner.SharedLock(), ""
+	tests := &runner.Runner{Lock: lock}
 	if r, ok := sup.Expander.Resolver.(*runner.Runner); ok {
-		lock, codeql = r.Lock, r.CodeQLPath
+		lock, codeql, tests = r.Lock, r.CodeQLPath, r
 	}
 	sessions := &harness.Sessions{
 		Store:     s,
@@ -60,6 +61,8 @@ func newAuthoring(s *store.Store, o authoringOptions, sup *supervisor.Supervisor
 		Model:     o.model,
 		Lock:      lock,
 		Limit:     o.limit,
+		Version:   tests.Version,
+		RunTests:  tests.RunTestsHeld,
 	}
 	switch info, err := os.Stat(o.copilotCLI); {
 	case o.copilotCLI == "":

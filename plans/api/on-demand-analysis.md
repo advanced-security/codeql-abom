@@ -3,12 +3,13 @@
 **Status:** A run is asked over repositories chosen in the Inventory — one by one, or all that a
 scope lists on the Repositories unit, sent as the scope itself — states how many it covers and how
 many already have a database before it is pressed, and is carried out, stopped, and counted per
-repository and per query. A member with no database on disk gets one built through the crawl's own
-fetch, caches and lock, and a member whose evaluation is already stored is skipped with that
-answer; results land in the same tables the crawl writes, attributed to the same nodes, and each
-member's results are listed one at a time, to be picked as a request's evidence. What it cannot do
-is start from the CodeQL page over a scope somebody named, or gather, while it runs, the
-repositories it still has to do.
+repository and per query. A member with no database on disk, or one another CodeQL built, gets one
+built through the crawl's own fetch, caches and lock, and a member whose evaluation is already
+stored is skipped with that answer; the run records the CodeQL it ran under. Results land in the
+same tables the crawl writes, attributed to the same nodes, and each member's results are listed
+one at a time, to be picked as a request's evidence. What it cannot do is start from the CodeQL
+page over a scope somebody named, gather while it runs the repositories it still has to do, or say
+before Run which held databases another CodeQL built.
 
 ## Why this exists
 
@@ -46,15 +47,17 @@ flowchart LR
     FIND -->|"LinkFindingsToNodes"| NODE["abom_finding_node<br/>graph, units, policy"]
     STOP["/api/runs/{id}/cancel"] -->|"member in flight<br/>back to pending"| EXEC
     EXEC -->|"answered already:<br/>skipped, with that answer"| LEDGER["abom_query_run<br/>+ the member that stored it"]
-    EXEC -->|"no database on disk"| BUILD["Expander.buildDatabase<br/>checkout cache, runner lock"]
+    EXEC -->|"no database on disk,<br/>or another CodeQL's"| BUILD["Expander.buildDatabase<br/>checkout cache, runner lock"]
     BUILD -->|"database, retained<br/>when configured"| EXEC
     REC -. "untracked name or<br/>extended shape" .-> NOBUILD["never built:<br/>no database, with the reason"]
     FIND -->|"sighted under the<br/>member's ledger row"| PICK["/api/runs/{id}/results<br/>picked as request evidence"]
     CAT -. "no scope offered here" .-> DROP["a named scope chosen<br/>on the CodeQL page"]
     NAMED["named scope<br/>?view="] -->|"resolves as the<br/>Repositories unit lists it"| REC
     DROP -. "would send" .-> NAMED
+    PRE -. "counts another CodeQL's<br/>database as held" .-> STALE["held before Run,<br/>rebuilt during it"]
     style NOBUILD fill:#3d2d1d
     style DROP fill:#3d2d1d
+    style STALE fill:#3d2d1d
 ```
 
 ## Pending
@@ -79,6 +82,17 @@ flowchart LR
    run refuses is disabled with its terms named, and a chosen one shows its size before Run. The
    run records the canonical predicate a name resolved to and not yet the name beside it, as how it
    was chosen, which a run chosen from a drop-down is the first to need. Depends on that control.
+3. **A database another CodeQL built is counted as held before Run, and rebuilt during it.** The
+   executor reuses a held database only when its `creationMetadata.cliVersion` is the CodeQL
+   running now, and rebuilds any other. `store.retainedFor`, which both the preview and
+   `CreateAnalysisRun` resolve through, ignores `abom_local_database.cli_version`. So *already have
+   a database* counts a database the run will build again. On the verification store after the
+   2.27.1 upgrade, that is **all 863 held databases, every one recorded as built by 2.27.0**.
+
+   Fix: the resolution takes the CodeQL running now, and marks another's database buildable with
+   the reason, *held, but CodeQL 2.27.0 built it*. A row with no CodeQL recorded is not known to be
+   this CodeQL's, so it is buildable too. The executor keeps reading the database's own metadata,
+   because the row can be wrong about the file. Depends on nothing.
 
 ## What it means that the scope resolution retired into this
 
@@ -182,6 +196,11 @@ artifact. Both stay *no database*, with the reason.
 built at its default branch and takes the commit that fetch turned out to be; one whose analysis
 predates recorded filters takes the filter fetched now. Its ledger row says the same, or it would
 describe a database that does not exist.
+
+**A held database answers only for the CodeQL that built it.** Extraction changes between
+releases, so a database 2.27.0 built, evaluated by 2.27.1, would be recorded as 2.27.1's answer
+about code 2.27.1 never read. The run rebuilds it, and records the CodeQL it ran under; re-running
+after an upgrade is a person pressing Run, never the upgrade itself.
 
 **Resumability is not weakened.** The crawl's queue and ledger stay per `(dependency, reference)`.
 An on-demand run does not claim frontier rows and does not mark anything analyzed that the crawl

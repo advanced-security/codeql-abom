@@ -93,6 +93,10 @@ type Server struct {
 	Tester   QueryTester
 	QueryDir string
 
+	// Printer prints a query's tree over its test database, as a session's PrintAST does. Nil when
+	// there is no pack to print from.
+	Printer ASTPrinter
+
 	// Authoring runs agent sessions on requests, in QueryDir. Nil answers that this server has no
 	// pack to author in.
 	Authoring Authoring
@@ -169,6 +173,8 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/queries", s.queries)
 	mux.HandleFunc("POST /api/queries/stage", s.advanceQuery)
 	mux.HandleFunc("POST /api/queries/test", s.testQuery)
+	mux.HandleFunc("POST /api/queries/ast", s.printQueryAST)
+	mux.HandleFunc("GET /api/queries/asts", reading(s.queryASTs, "query"))
 	mux.HandleFunc("GET /api/query-requests", s.queryRequests)
 	mux.HandleFunc("POST /api/query-requests", s.saveQueryRequest)
 	mux.HandleFunc("PUT /api/query-requests/{id}", s.editQueryRequest)
@@ -177,6 +183,11 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/query-requests/{id}/sessions/stop", s.stopSession)
 	mux.HandleFunc("GET /api/authoring-sessions/{id}/events", reading(s.sessionEvents, "after", "limit"))
 	mux.HandleFunc("GET /api/query-requests/{id}/asts", s.requestASTs)
+	mux.HandleFunc("GET /api/query-requests/{id}/review", s.requestReview)
+	mux.HandleFunc("POST /api/query-requests/{id}/review", s.reviewReport)
+	mux.HandleFunc("GET /api/runs/{id}/drafts", s.runDrafts)
+	mux.HandleFunc("POST /api/runs/{id}/drafts", s.startDraft)
+	mux.HandleFunc("POST /api/runs/{id}/drafts/stop", s.stopDraft)
 	mux.HandleFunc("GET /api/authoring-asts/{id}", s.authoringAST)
 	mux.HandleFunc("GET /api/runs", s.runs)
 	mux.HandleFunc("POST /api/runs", s.startRun)

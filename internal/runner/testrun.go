@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -24,6 +25,10 @@ type TestResult struct {
 	// FailureStage is the earliest stage a failing test stopped at, in the CLI's words:
 	// EXTRACTION, COMPILATION or RESULT. Empty when nothing failed.
 	FailureStage string
+	// Missing and Unexpected count the inline expectations the failing tests' output did not
+	// meet: a marked line it did not report, and a line it reported that nothing marked. Nil when
+	// no test got as far as comparing results, or its output could not be read.
+	Missing, Unexpected *int64
 }
 
 // testOutcome is the subset of the CLI's per-test JSON that decides the verdict.
@@ -33,6 +38,7 @@ type testOutcome struct {
 	FailureStage       string        `json:"failureStage"`
 	FailureDescription string        `json:"failureDescription"`
 	Messages           []testMessage `json:"messages"`
+	Actual             string        `json:"actual"`
 }
 
 type testMessage struct {
@@ -75,6 +81,10 @@ func (t testOutcome) reason() string {
 			return fmt.Sprintf("it does not compile: %s:%d:%d: %s",
 				filepath.Base(m.Position.FileName), m.Position.Line, m.Position.Column, m.Message)
 		}
+		// A pack whose dependencies were never installed reports no message, only this.
+		if t.FailureDescription != "" {
+			return "it does not compile: " + t.FailureDescription
+		}
 		return "it does not compile"
 	case "RESULT":
 		return "the results differ from the .expected"
@@ -88,6 +98,16 @@ func (t testOutcome) reason() string {
 // compiles the query, runs it against a database the CLI builds from the fixture tree, and
 // compares the output to the checked-in `.expected`. ABOM never forms that opinion itself.
 func (r *Runner) RunTests(ctx context.Context, dirs []string) (TestResult, error) {
+	return r.runTests(ctx, dirs, true)
+}
+
+// RunTestsHeld is RunTests for a caller already holding the lock: an authoring session holds it
+// for its whole life, and would otherwise wait on itself.
+func (r *Runner) RunTestsHeld(ctx context.Context, dirs []string) (TestResult, error) {
+	return r.runTests(ctx, dirs, false)
+}
+
+func (r *Runner) runTests(ctx context.Context, dirs []string, lock bool) (TestResult, error) {
 	if len(dirs) == 0 {
 		return TestResult{}, fmt.Errorf("runner: test run needs a directory")
 	}
@@ -107,11 +127,13 @@ func (r *Runner) RunTests(ctx context.Context, dirs []string) (TestResult, error
 		args = append(args, fmt.Sprintf("--ram=%d", r.RAMMB))
 	}
 
-	release, err := r.Lock.Acquire(ctx)
-	if err != nil {
-		return TestResult{}, err
+	if lock {
+		release, err := r.Lock.Acquire(ctx)
+		if err != nil {
+			return TestResult{}, err
+		}
+		defer release()
 	}
-	defer release()
 
 	cmd := exec.CommandContext(ctx, r.codeql(), args...)
 	var stdout, stderr bytes.Buffer
@@ -121,7 +143,7 @@ func (r *Runner) RunTests(ctx context.Context, dirs []string) (TestResult, error
 	// The exit status is not the verdict: a failing test is a non-zero exit and so is a broken
 	// invocation, and only the first is an answer about the query. The JSON decides, and a
 	// non-zero exit with no parsable output is the error case.
-	result, parseErr := parseTestOutput(stdout.Bytes())
+	outcomes, parseErr := decodeOutcomes(stdout.Bytes())
 	if parseErr != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
@@ -133,20 +155,30 @@ func (r *Runner) RunTests(ctx context.Context, dirs []string) (TestResult, error
 		}
 		return TestResult{}, fmt.Errorf("codeql test run %s: %w", named, parseErr)
 	}
+	result := verdict(outcomes, os.ReadFile)
 	if result.Total == 0 {
 		result.Detail = "no tests found, so nothing was shown to work"
 	}
 	return result, nil
 }
 
-// parseTestOutput reads the CLI's per-test JSON.
+// parseTestOutput reads the CLI's per-test JSON, without the output files it names.
+func parseTestOutput(out []byte) (TestResult, error) {
+	outcomes, err := decodeOutcomes(out)
+	if err != nil {
+		return TestResult{}, err
+	}
+	return verdict(outcomes, nil), nil
+}
+
+// decodeOutcomes reads the CLI's per-test JSON.
 //
 // A stream of objects rather than one array on some versions, so it is decoded as a stream and
 // both shapes work.
-func parseTestOutput(out []byte) (TestResult, error) {
+func decodeOutcomes(out []byte) ([]testOutcome, error) {
 	trimmed := bytes.TrimSpace(out)
 	if len(trimmed) == 0 {
-		return TestResult{}, fmt.Errorf("the CLI printed no test results")
+		return nil, fmt.Errorf("the CLI printed no test results")
 	}
 
 	var outcomes []testOutcome
@@ -154,29 +186,36 @@ func parseTestOutput(out []byte) (TestResult, error) {
 	for dec.More() {
 		var raw json.RawMessage
 		if err := dec.Decode(&raw); err != nil {
-			return TestResult{}, fmt.Errorf("the CLI printed no test results: %w", err)
+			return nil, fmt.Errorf("the CLI printed no test results: %w", err)
 		}
 		if raw[0] == '[' {
 			var batch []testOutcome
 			if err := json.Unmarshal(raw, &batch); err != nil {
-				return TestResult{}, fmt.Errorf("reading the CLI's test results: %w", err)
+				return nil, fmt.Errorf("reading the CLI's test results: %w", err)
 			}
 			outcomes = append(outcomes, batch...)
 			continue
 		}
 		var one testOutcome
 		if err := json.Unmarshal(raw, &one); err != nil {
-			return TestResult{}, fmt.Errorf("reading the CLI's test results: %w", err)
+			return nil, fmt.Errorf("reading the CLI's test results: %w", err)
 		}
 		outcomes = append(outcomes, one)
 	}
-	// Valid JSON naming no test is a real answer: an empty directory. A parse failure is not.
-	if len(outcomes) == 0 {
-		return TestResult{}, nil
-	}
+	return outcomes, nil
+}
 
+// verdict is what the tests came to, and, when read is given, what the inline expectations of
+// each test that got as far as comparing results said.
+func verdict(outcomes []testOutcome, read func(string) ([]byte, error)) TestResult {
+	// Valid JSON naming no test is a real answer: an empty directory, which is not a pass.
+	if len(outcomes) == 0 {
+		return TestResult{}
+	}
 	var result TestResult
 	var first *testOutcome
+	var missing, unexpected int64
+	compared, readable := false, read != nil
 	for i, t := range outcomes {
 		result.Total++
 		if t.Pass {
@@ -186,14 +225,78 @@ func parseTestOutput(out []byte) (TestResult, error) {
 		if first == nil || stageRank(t.FailureStage) < stageRank(first.FailureStage) {
 			first = &outcomes[i]
 		}
+		if t.FailureStage != "RESULT" || !readable {
+			continue
+		}
+		compared = true
+		body, err := read(t.Actual)
+		if t.Actual == "" || err != nil {
+			readable = false
+			continue
+		}
+		m, u := ExpectationFailures(body)
+		missing, unexpected = missing+m, unexpected+u
+	}
+	if compared && readable {
+		result.Missing, result.Unexpected = &missing, &unexpected
 	}
 	result.Passed = result.Failed == 0
 	result.Detail = fmt.Sprintf("%d of %d passed", result.Total-result.Failed, result.Total)
-	if first != nil {
-		result.FailureStage = first.FailureStage
-		if reason := first.reason(); reason != "" {
-			result.Detail += "; " + reason
+	if first == nil {
+		return result
+	}
+	result.FailureStage = first.FailureStage
+	reason := first.reason()
+	if first.FailureStage == "RESULT" && result.Missing != nil && missing+unexpected > 0 {
+		reason = ExpectationsDetail(missing, unexpected)
+	}
+	if reason != "" {
+		result.Detail += "; " + reason
+	}
+	return result
+}
+
+// testFailures is the result set an inline-expectations test adds to its output, one row per
+// expectation the query's results did not meet.
+const testFailures = "testFailures"
+
+// ExpectationFailures counts the rows of an output's testFailures set: a marked line nothing was
+// reported on is missing, and anything else there is a result or a marker that should not be.
+func ExpectationFailures(output []byte) (missing, unexpected int64) {
+	in := false
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "|") {
+			in = line == testFailures
+			continue
+		}
+		if !in {
+			continue
+		}
+		cells := strings.Split(strings.Trim(line, "|"), "|")
+		if strings.HasPrefix(strings.TrimSpace(cells[len(cells)-1]), "Missing result:") {
+			missing++
+		} else {
+			unexpected++
 		}
 	}
-	return result, nil
+	return missing, unexpected
+}
+
+// ExpectationsDetail says which expectations an output did not meet.
+func ExpectationsDetail(missing, unexpected int64) string {
+	count := func(n int64, one, many string) string {
+		if n == 1 {
+			return "1 " + one
+		}
+		return fmt.Sprintf("%d %s", n, many)
+	}
+	switch {
+	case unexpected == 0:
+		return count(missing, "expected result missing", "expected results missing") + ", nothing unexpected"
+	case missing == 0:
+		return "nothing missing, " + count(unexpected, "unexpected result", "unexpected results")
+	}
+	return count(missing, "expected result missing", "expected results missing") + " and " +
+		count(unexpected, "unexpected result", "unexpected results")
 }

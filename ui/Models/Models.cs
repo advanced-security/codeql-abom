@@ -1214,6 +1214,15 @@ public sealed record CatalogQuery
 
     /// <summary>(b) through (g), served for the working copy only and empty on every other row.</summary>
     public IReadOnlyList<AuthoringStep> Steps { get; init; } = [];
+
+    /// <summary>The requests about this query id, oldest first.</summary>
+    public IReadOnlyList<long> Requests { get; init; } = [];
+
+    /// <summary>
+    /// What advancing this version to extended-test would be refused with, served so it is said
+    /// before anybody presses it. Empty where it would not be refused.
+    /// </summary>
+    public string ExtendedTestRefusal { get; init; } = string.Empty;
 }
 
 /// <summary>
@@ -1300,6 +1309,12 @@ public sealed record AnalysisRun
     /// <summary>What the counted members found between them, totalled by the server.</summary>
     public int Results { get; init; }
 
+    /// <summary>
+    /// The CodeQL the run evaluated under, empty for a run recorded before that was kept, or one
+    /// that has not resolved yet. A result is CodeQL's as much as the query's.
+    /// </summary>
+    public string CliVersion { get; init; } = string.Empty;
+
     /// <summary>Every member counted by status, so nothing is left to be inferred from a total.</summary>
     public IReadOnlyDictionary<string, int> Tally { get; init; } =
         new Dictionary<string, int>(StringComparer.Ordinal);
@@ -1360,6 +1375,12 @@ public sealed record MemberFindings
 {
     public string Repository { get; init; } = string.Empty;
     public bool Evaluated { get; init; }
+
+    /// <summary>
+    /// Counted by a run recorded before ABOM kept each repository's own evaluation, so its results
+    /// exist but cannot be listed; running it again lists them.
+    /// </summary>
+    public bool Unlinked { get; init; }
     public IReadOnlyList<RunFinding> Findings { get; init; } = [];
     public bool Truncated { get; init; }
 }
@@ -1437,6 +1458,12 @@ public sealed record AuthoringSession
     public string Detail { get; init; } = string.Empty;
     public int Events { get; init; }
     public int Refused { get; init; }
+
+    /// <summary>What it spent, each null until the CLI reported it, which is not zero.</summary>
+    public long? ModelCalls { get; init; }
+    public long? InputTokens { get; init; }
+    public long? OutputTokens { get; init; }
+    public long? NanoAiu { get; init; }
 }
 
 /// <summary>A ql-mcp call the gate approved and has not seen answered: CodeQL at work for the agent.</summary>
@@ -1488,14 +1515,20 @@ public sealed record AuthoringEventPage
 public sealed record AuthoringAst
 {
     public long RowId { get; init; }
+
+    /// <summary>Zero for a tree ABOM printed, which names who asked in <see cref="PrintedBy"/>.</summary>
     public long SessionId { get; init; }
     public long RequestId { get; init; }
+    public string PrintedBy { get; init; } = string.Empty;
     public string QueryId { get; init; } = string.Empty;
     public string PrintedAt { get; init; } = string.Empty;
     public string Query { get; init; } = string.Empty;
     public string Database { get; init; } = string.Empty;
     public string SourceFiles { get; init; } = string.Empty;
     public string TestDigest { get; init; } = string.Empty;
+
+    /// <summary>The CodeQL that printed it, empty for a tree kept before that was recorded.</summary>
+    public string CliVersion { get; init; } = string.Empty;
     public int Size { get; init; }
     public bool Truncated { get; init; }
     public string Body { get; init; } = string.Empty;
@@ -1504,4 +1537,86 @@ public sealed record AuthoringAst
 public sealed record AuthoringAstList
 {
     public IReadOnlyList<AuthoringAst> Asts { get; init; } = [];
+}
+
+/// <summary>What one of the target's tests last reported, beside what it is expected to report.</summary>
+public sealed record ReviewTest
+{
+    public string Test { get; init; } = string.Empty;
+
+    /// <summary>Null where the test has reported nothing to compare.</summary>
+    public string? Actual { get; init; }
+    public string? Expected { get; init; }
+
+    /// <summary>Why the report describes a query or fixtures that have since changed.</summary>
+    public string Stale { get; init; } = string.Empty;
+}
+
+/// <summary>An operator's decision about a report, with the report they read.</summary>
+public sealed record AuthoringReview
+{
+    public long RowId { get; init; }
+    public string QueryId { get; init; } = string.Empty;
+    public string QueryVersion { get; init; } = string.Empty;
+    public string Actual { get; init; } = string.Empty;
+
+    /// <summary><c>approved</c> or <c>rejected</c>.</summary>
+    public string Verdict { get; init; } = string.Empty;
+    public string Reason { get; init; } = string.Empty;
+    public string ReviewedBy { get; init; } = string.Empty;
+    public string ReviewedAt { get; init; } = string.Empty;
+}
+
+/// <summary>What a request's target reported, and what has been decided about its reports.</summary>
+public sealed record ReviewState
+{
+    public string QueryId { get; init; } = string.Empty;
+    public string QueryVersion { get; init; } = string.Empty;
+    public IReadOnlyList<ReviewTest> Tests { get; init; } = [];
+
+    /// <summary>Names the report as read; an approval sends it back.</summary>
+    public string Digest { get; init; } = string.Empty;
+    public bool Reviewable { get; init; }
+    public string Reason { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Why this report can be rejected but not accepted: it lists failed expectations, which an
+    /// accepted report would make pass. Empty where accepting it is allowed.
+    /// </summary>
+    public string CannotAccept { get; init; } = string.Empty;
+    public IReadOnlyList<AuthoringReview> Reviews { get; init; } = [];
+
+    /// <summary>What ABOM's own test run said, on the answer to an approval.</summary>
+    public string Tested { get; init; } = string.Empty;
+}
+
+/// <summary>A request an agent drafted from a run's picked results, which nobody has filed.</summary>
+public sealed record AgentDraft
+{
+    public long RowId { get; init; }
+    public long SessionId { get; init; }
+    public string DraftedAt { get; init; } = string.Empty;
+    public string Description { get; init; } = string.Empty;
+    public string Compliant { get; init; } = string.Empty;
+    public string NonCompliant { get; init; } = string.Empty;
+    public string Rationale { get; init; } = string.Empty;
+}
+
+/// <summary>A session drafting from a run, and the newest draft it proposed, null until it does.</summary>
+public sealed record DraftSession
+{
+    public long RowId { get; init; }
+    public long RunId { get; init; }
+    public string QueryId { get; init; } = string.Empty;
+    public string State { get; init; } = string.Empty;
+    public string StartedBy { get; init; } = string.Empty;
+    public string StartedAt { get; init; } = string.Empty;
+    public string Detail { get; init; } = string.Empty;
+    public int Events { get; init; }
+    public AgentDraft? Draft { get; init; }
+}
+
+public sealed record DraftSessionList
+{
+    public IReadOnlyList<DraftSession> Drafts { get; init; } = [];
 }

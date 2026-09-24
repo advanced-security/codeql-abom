@@ -459,3 +459,28 @@ func TestAListedRunNamesTheVersionItWasAskedFor(t *testing.T) {
 		}
 	}
 }
+
+// A run is carried out by one CodeQL, and the same queries over the same scope answer differently
+// under the next, so the run says which. One nothing has carried out names none.
+func TestARunNamesTheCodeQLThatCarriedItOut(t *testing.T) {
+	s := newTestStore(t)
+	id := startedRun(t, s)
+	if run, err := s.AnalysisRun(id); err != nil || run.CLIVersion != "" {
+		t.Fatalf("a run nothing has carried out names %q (%v)", run.CLIVersion, err)
+	}
+
+	if err := s.SetAnalysisRunCodeQL(id, "2.27.1"); err != nil {
+		t.Fatal(err)
+	}
+	run, err := s.AnalysisRun(id)
+	if err != nil || run.CLIVersion != "2.27.1" {
+		t.Errorf("the run names %q (%v), want 2.27.1", run.CLIVersion, err)
+	}
+	runs, err := s.AnalysisRuns()
+	if err != nil || len(runs) != 1 || runs[0].CLIVersion != "2.27.1" {
+		t.Errorf("the list names %+v (%v)", runs, err)
+	}
+	if err := s.SetAnalysisRunCodeQL(id, ""); err == nil {
+		t.Error("a run was recorded as carried out by no CodeQL")
+	}
+}

@@ -68,7 +68,8 @@
                     <MudText Typo="Typo.caption">
                         Session #@session.RowId, started by @session.StartedBy
                         @TimeText.DayAndTime(session.StartedAt) with @session.Model:
-                        @CountText.Of(session.Events, "call", "calls"), @session.Refused refused
+                        @CountText.Of(session.Events, "call", "calls"), @session.Refused refused;
+                        <span data-abom-session-spend>@SpendText(session)</span>
                     </MudText>
                     <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button"
                                OnClick="@(() => Toggle(session))" data-abom-session-timeline>
@@ -115,25 +116,82 @@
             <MudText Typo="Typo.caption" Class="mud-text-secondary">
                 Trees CodeQL printed over the test database, as the agent read them
             </MudText>
-            @foreach (var ast in _asts)
+            <PrintedTrees Trees="@_asts" />
+        </div>
+    }
+
+    @* ABOM accepts a report only as a person read it, and then runs the tests itself. *@
+    @if (_review is { } review && (review.Reviews.Count > 0 || review.Tests.Any(t => t.Actual is not null)))
+    {
+        <div class="abom-review mt-2" data-abom-review>
+            <MudText Typo="Typo.subtitle2">What the query reported</MudText>
+            @if (review.Tests.Any(t => t.Actual is not null))
             {
-                <div class="abom-ast" data-abom-ast="@ast.RowId">
-                    <div class="d-flex align-center flex-wrap gap-2">
-                        <MudText Typo="Typo.caption">
-                            @ast.Query over <span class="abom-path">@ast.Database</span>
-                            @(ast.SourceFiles.Length > 0 ? $"for {ast.SourceFiles}" : ""),
-                            @TimeText.DayAndTime(ast.PrintedAt), @SizeText(ast.Size)@(ast.Truncated ? ", cut short" : "")
-                        </MudText>
-                        <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button"
-                                   OnClick="@(() => Show(ast))" data-abom-ast-show>
-                            @(_shown?.RowId == ast.RowId ? "Hide the tree" : "Show the tree")
-                        </MudButton>
+                <div class="abom-review-sides">
+                    <div class="abom-review-side">
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">Should be reported (NON_COMPLIANT)</MudText>
+                        <pre class="abom-code" data-abom-review-noncompliant>@Request.NonCompliant</pre>
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">Should not be reported (COMPLIANT)</MudText>
+                        <pre class="abom-code" data-abom-review-compliant>@Request.Compliant</pre>
                     </div>
-                    @if (_shown?.RowId == ast.RowId)
-                    {
-                        <pre class="abom-code abom-ast-body" data-abom-ast-body>@_shown.Body</pre>
-                    }
+                    <div class="abom-review-side">
+                        @foreach (var test in review.Tests.Where(t => t.Actual is not null))
+                        {
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                What @review.QueryId reported, in <span class="abom-path">@test.Test</span>
+                            </MudText>
+                            <pre class="abom-code" data-abom-review-actual>@test.Actual</pre>
+                            @if (test.Expected is { } expected)
+                            {
+                                <MudText Typo="Typo.caption" Class="mud-text-secondary">Expected until now</MudText>
+                                <pre class="abom-code" data-abom-review-expected>@expected</pre>
+                            }
+                        }
+                    </div>
                 </div>
+                @if (!review.Reviewable)
+                {
+                    <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-1" data-abom-review-stale>@review.Reason</MudAlert>
+                }
+                else
+                {
+                    @if (review.CannotAccept.Length > 0)
+                    {
+                        <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-1"
+                                  data-abom-review-unacceptable>@review.CannotAccept</MudAlert>
+                    }
+                    <div data-abom-review-reason>
+                        <MudTextField T="string" @bind-Value="_reason" Label="Why, if you reject it" Immediate="true"
+                                      Variant="Variant.Outlined" Margin="Margin.Dense" Class="mt-1" />
+                    </div>
+                    <div class="d-flex flex-wrap gap-2 mt-1">
+                        <span title="@AcceptTitle(review)">
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                                       StartIcon="@Icons.Material.Outlined.FactCheck"
+                                       Disabled="@(!CanStart || _busy || review.CannotAccept.Length > 0)"
+                                       OnClick="@(() => Decide(review, "approved"))" data-abom-review-accept>Accept as the expected result</MudButton>
+                        </span>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                                   StartIcon="@Icons.Material.Outlined.Undo"
+                                   Disabled="@(!CanStart || _busy || string.IsNullOrWhiteSpace(_reason))"
+                                   OnClick="@(() => Decide(review, "rejected"))" data-abom-review-reject>Reject it</MudButton>
+                    </div>
+                }
+            }
+            @if (_reviewRefusal is { Length: > 0 } refusedReview)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-1" data-abom-review-refusal>@refusedReview</MudAlert>
+            }
+            @if (_tested is { Length: > 0 } tested)
+            {
+                <MudText Typo="Typo.caption" Class="d-block mt-1" data-abom-review-tested>@tested</MudText>
+            }
+            @foreach (var past in review.Reviews)
+            {
+                <MudText Typo="Typo.caption" Class="d-block mud-text-secondary" data-abom-review-record="@past.RowId">
+                    @(past.Verdict == "approved" ? "Accepted" : "Rejected") by @past.ReviewedBy
+                    @TimeText.DayAndTime(past.ReviewedAt)@(past.Reason.Length > 0 ? $": {past.Reason}" : "")
+                </MudText>
             }
         </div>
     }
@@ -147,17 +205,25 @@
     private long _open;
     private List<AuthoringEvent> _events = [];
     private long _after;
-    private AuthoringAst? _shown;
     private string? _refusal;
     private bool _busy;
     private Timer? _timer;
     private TimeSpan _beat;
+    private ReviewState? _review;
+    private string _reason = string.Empty;
+    private string? _reviewRefusal;
+    private string? _tested;
 
     private static readonly TimeSpan WhileRunning = TimeSpan.FromSeconds(3);
 
     private AuthoringSession? Live => _sessions?.Sessions.FirstOrDefault(s => s.State == "running");
 
     private bool CanStart => Accounts.Identity.Login.Length > 0;
+
+    private string AcceptTitle(ReviewState review) =>
+        review.CannotAccept.Length > 0 ? "A report with failed expectations can be rejected, not accepted"
+        : CanStart ? "ABOM makes this report the expected result, then runs the tests itself"
+        : "Sign in with gh to record who decided";
 
     protected override async Task OnInitializedAsync()
     {
@@ -170,6 +236,7 @@
     {
         _sessions = await Api.GetAuthoringSessionsAsync(Request.RowId) ?? new AuthoringSessionList();
         _asts = await Api.GetAuthoringAstsAsync(Request.RowId);
+        _review = await Api.GetReviewAsync(Request.RowId);
         if (_open != 0)
         {
             await ReadOn();
@@ -229,9 +296,54 @@
         }
     }
 
-    private async Task Show(AuthoringAst ast)
+    // The digest sent back is the report as read, so a report that changed since is refused.
+    private async Task Decide(ReviewState review, string verdict)
     {
-        _shown = _shown?.RowId == ast.RowId ? null : await Api.GetAuthoringAstAsync(ast.RowId);
+        _busy = true;
+        try
+        {
+            var reason = verdict == "rejected" ? _reason.Trim() : string.Empty;
+            var (state, refusal) = await Api.ReviewAsync(Request.RowId, verdict, reason,
+                Accounts.Identity.Login, review.Digest);
+            _reviewRefusal = refusal;
+            _tested = state?.Tested;
+            if (state is not null)
+            {
+                _review = state;
+                _reason = string.Empty;
+            }
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    // Absent until the CLI reports it: a cost nobody reported is not a session that cost nothing.
+    private static string SpendText(AuthoringSession s)
+    {
+        if (s.NanoAiu is null && s.InputTokens is null && s.OutputTokens is null)
+        {
+            return "what it spent was not reported";
+        }
+        var parts = new List<string>();
+        if (s.NanoAiu is long nano)
+        {
+            parts.Add((nano / 1e9).ToString("0.##", CultureInfo.CurrentCulture) + " AI units");
+        }
+        if (s.ModelCalls is long calls)
+        {
+            parts.Add(CountText.Of((int)calls, "model call", "model calls"));
+        }
+        if (s.InputTokens is long input)
+        {
+            parts.Add(input.ToString("N0", CultureInfo.CurrentCulture) + " tokens in");
+        }
+        if (s.OutputTokens is long output)
+        {
+            parts.Add(output.ToString("N0", CultureInfo.CurrentCulture) + " out");
+        }
+        return "spent " + string.Join(", ", parts);
     }
 
     // A live session is watched closely; otherwise the reader's own beat.
@@ -258,18 +370,16 @@
         }, null, beat, beat);
     }
 
-    // The agent's words, what was kept and how a session ended are the detail; a call's arguments are not.
+    // The agent's words, what was kept, how a session ended and why a call failed are the detail; a
+    // call's arguments are not.
     private static bool ShowsDetail(AuthoringEvent e) =>
-        e.Detail.Length > 0 && e.Hook is "message" or "artifact" or "mcp-server" or "session-end" or "error";
+        e.Detail.Length > 0 && (e.Decision == "failed"
+            || e.Hook is "message" or "artifact" or "mcp-server" or "session-end" or "error" or "spend");
 
     private static string DurationText(long ms) =>
         ms < 1000 ? $"{ms} ms"
         : ms < 60_000 ? (ms / 1000.0).ToString("0.0", CultureInfo.CurrentCulture) + " s"
         : $"{ms / 60_000} min {ms % 60_000 / 1000} s";
-
-    private static string SizeText(int bytes) =>
-        bytes < 1024 ? CountText.Of(bytes, "byte", "bytes")
-        : (bytes / 1024.0).ToString("0.#", CultureInfo.CurrentCulture) + " KB";
 
     private static Color StateColor(string state) => state switch
     {

@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -13,13 +14,25 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
-// QueryTester runs the query tests in a directory.
+// QueryTester runs the query tests in a directory, and says which CodeQL runs them.
 //
 // An interface so the server does not depend on the CodeQL plumbing. Nil means this server was
 // started without a custom query directory, which is a thing the reader is told rather than a
 // fault.
 type QueryTester interface {
 	RunTests(ctx context.Context, tests []string) (runner.TestResult, error)
+	AcceptTests(ctx context.Context, tests []string) error
+	Version(ctx context.Context) (string, error)
+}
+
+// codeQL is the CodeQL this server runs, under which alone a query's marks are current. The
+// runner asks the CLI once and remembers, so reading it on every listing costs nothing after the
+// first.
+func (s *Server) codeQL(ctx context.Context) (string, error) {
+	if s.Tester == nil {
+		return "", nil
+	}
+	return s.Tester.Version(ctx)
 }
 
 // queries answers the catalog: every query version the ledger has run, the version on disk in the
@@ -74,55 +87,30 @@ func (s *Server) testQuery(w http.ResponseWriter, r *http.Request) {
 			body.QueryID))
 		return
 	}
-	digest, err := authoring.DigestTests(s.QueryDir, q.Tests)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	// Not handed to the CLI, which would read no test as every test it could find.
-	result := runner.TestResult{
-		Detail: fmt.Sprintf("no test names %s, so nothing was shown to work", q.Rel),
-	}
-	if len(q.Tests) > 0 {
-		if result, err = s.Tester.RunTests(r.Context(), q.Tests); err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
-			return
-		}
-	}
-	if changed, err := s.changedSince(q, digest); err != nil || changed {
-		msg := fmt.Sprintf("%s or its tests changed while the tests ran, so the result describes "+
-			"neither version and was not recorded; run them again", body.QueryID)
-		if err != nil {
-			msg = err.Error()
-		}
-		writeError(w, http.StatusConflict, msg)
-		return
-	}
-
-	if err := s.Store.RecordQueryTest(store.QueryTest{
-		QueryID: body.QueryID, QueryVersion: body.Version,
-		Passed: result.Passed, Total: result.Total, Failed: result.Failed, Detail: result.Detail,
-		FailureStage: result.FailureStage, TestDigest: digest,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	if _, code, err := s.ownTests(r.Context(), q); err != nil {
+		writeError(w, code, err.Error())
 		return
 	}
 	s.writeCatalog(w)
 }
 
-// changedSince reports whether a query or its tests are no longer what they were before a run.
-func (s *Server) changedSince(before authoring.Query, digest string) (bool, error) {
-	now, found, err := authoring.Find(s.QueryDir, before.ID)
-	if err != nil || !found {
-		return true, err
-	}
-	nowDigest, err := authoring.DigestTests(s.QueryDir, now.Tests)
+// ownTests runs a query version's own tests and records what the CLI said, answering with the
+// status a failure maps to.
+func (s *Server) ownTests(ctx context.Context, q authoring.Query) (runner.TestResult, int, error) {
+	cli, err := s.codeQL(ctx)
 	if err != nil {
-		return true, err
+		return runner.TestResult{}, http.StatusBadGateway, err
 	}
-	return now.Version != before.Version || nowDigest != digest ||
-		!slices.Equal(now.Tests, before.Tests), nil
+	result, err := authoring.RecordTests(ctx, s.Store, s.Tester.RunTests, s.QueryDir, q, cli)
+	switch {
+	case errors.Is(err, authoring.ErrTestsDidNotRun):
+		return runner.TestResult{}, http.StatusBadGateway, err
+	case errors.Is(err, authoring.ErrChangedDuringTests):
+		return runner.TestResult{}, http.StatusConflict, err
+	case err != nil:
+		return runner.TestResult{}, http.StatusInternalServerError, err
+	}
+	return result, http.StatusOK, nil
 }
 
 // catalogRow is a catalog entry with the steps its working copy has taken. Every other row carries
@@ -130,6 +118,11 @@ func (s *Server) changedSince(before authoring.Query, digest string) (bool, erro
 type catalogRow struct {
 	store.CatalogQuery
 	Steps []authoring.Step `json:"steps"`
+	// Requests are the query requests about this query id, oldest first.
+	Requests []int64 `json:"requests"`
+	// ExtendedTestRefusal is what advancing the version to extended-test would be refused with,
+	// said before anybody presses it, and empty where it would not be.
+	ExtendedTestRefusal string `json:"extendedTestRefusal,omitempty"`
 }
 
 func (s *Server) writeCatalog(w http.ResponseWriter) {
@@ -143,11 +136,38 @@ func (s *Server) writeCatalog(w http.ResponseWriter) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	requests, err := s.Store.QueryRequests()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	asked := map[string][]int64{}
+	for _, r := range requests {
+		if r.QueryID != "" {
+			asked[r.QueryID] = append(asked[r.QueryID], r.RowID)
+		}
+	}
+	for _, ids := range asked {
+		slices.Sort(ids)
+	}
+	onDisk := map[string]bool{}
+	for _, q := range working {
+		onDisk[q.QueryID] = true
+	}
 	rows := make([]catalogRow, 0, len(catalog))
 	for _, q := range catalog {
-		row := catalogRow{CatalogQuery: q, Steps: []authoring.Step{}}
-		if q.Working {
+		row := catalogRow{CatalogQuery: q, Steps: []authoring.Step{}, Requests: []int64{}}
+		row.Requests = append(row.Requests, asked[q.QueryID]...)
+		switch {
+		case s.QueryDir == "":
+			row.ExtendedTestRefusal = refusedNoQueryDir
+		case q.Working:
 			row.Steps = append(row.Steps, steps[q.QueryID+"\x00"+q.QueryVersion]...)
+			row.ExtendedTestRefusal = authoring.ExtendedTestRefusal(row.Steps)
+		case onDisk[q.QueryID]:
+			row.ExtendedTestRefusal = refusedNotCurrent
+		default:
+			row.ExtendedTestRefusal = refusedNotOnDisk
 		}
 		rows = append(rows, row)
 	}
@@ -169,6 +189,12 @@ func (s *Server) workingCopy() ([]store.WorkingQuery, map[string][]authoring.Ste
 	if err != nil {
 		return nil, nil, err
 	}
+	// Reading the catalog needs no CodeQL, so one that cannot be run leaves it served, and the
+	// steps then say nothing on record is known to be current.
+	cli, err := s.codeQL(context.Background())
+	if err != nil {
+		cli = ""
+	}
 	out := make([]store.WorkingQuery, 0, len(queries))
 	for _, q := range queries {
 		pack, _, _ := runner.PackOf(q.Path)
@@ -179,7 +205,8 @@ func (s *Server) workingCopy() ([]store.WorkingQuery, map[string][]authoring.Ste
 		if err != nil {
 			return nil, nil, err
 		}
-		progress, err := authoring.Progress(s.QueryDir, q, tests, printed[q.ID])
+		progress, err := authoring.Progress(s.QueryDir, q,
+			authoring.Evidence{CLI: cli, Tests: tests, Printed: printed[q.ID]})
 		if err != nil {
 			return nil, nil, err
 		}
@@ -207,7 +234,7 @@ func (s *Server) advanceQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Stage == store.StageExtendedTest {
-		refusal, err := s.extendedTestRefusal(body.QueryID, body.Version)
+		refusal, err := s.extendedTestRefusal(r.Context(), body.QueryID, body.Version)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -218,7 +245,12 @@ func (s *Server) advanceQuery(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.Store.AdvanceQueryStage(body.QueryID, body.Version, body.Stage, body.By); err != nil {
+	cli, err := s.codeQL(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if err := s.Store.AdvanceQueryStage(body.QueryID, body.Version, body.Stage, body.By, cli); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -231,21 +263,29 @@ func (s *Server) advanceQuery(w http.ResponseWriter, r *http.Request) {
 	s.writeCatalog(w)
 }
 
+// Why a version may not enter extended-test, before its own steps are read. The catalog states
+// these on each row and an advance refuses with them, so both say the same thing.
+const (
+	refusedNoQueryDir = "this server has no query directory, so none of its steps can be shown"
+	refusedNotOnDisk  = "it is not in the query directory, so none of its steps can be shown"
+	refusedNotCurrent = "only the version on disk has steps to show, and this is not it"
+)
+
 // extendedTestRefusal says why a version may not enter extended-test, or is empty when it may.
 //
 // Here rather than in the store, because the steps are read from files the store cannot see.
-func (s *Server) extendedTestRefusal(id, version string) (string, error) {
+func (s *Server) extendedTestRefusal(ctx context.Context, id, version string) (string, error) {
 	if s.QueryDir == "" {
-		return "this server has no query directory, so none of its steps can be shown", nil
+		return refusedNoQueryDir, nil
 	}
 	q, found, err := authoring.Find(s.QueryDir, id)
 	switch {
 	case err != nil:
 		return "", err
 	case !found:
-		return "it is not in the query directory, so none of its steps can be shown", nil
+		return refusedNotOnDisk, nil
 	case q.Version != version:
-		return "only the version on disk has steps to show, and this is not it", nil
+		return refusedNotCurrent, nil
 	}
 	tests, err := s.Store.QueryTestsOf(id)
 	if err != nil {
@@ -255,7 +295,12 @@ func (s *Server) extendedTestRefusal(id, version string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	steps, err := authoring.Progress(s.QueryDir, q, tests, printed[id])
+	cli, err := s.codeQL(ctx)
+	if err != nil {
+		return "", err
+	}
+	steps, err := authoring.Progress(s.QueryDir, q,
+		authoring.Evidence{CLI: cli, Tests: tests, Printed: printed[id]})
 	if err != nil {
 		return "", err
 	}

@@ -722,7 +722,7 @@ func (e *Expander) analyzeTree(
 		SourceFilter: e.sourceFilter(),
 		Mode:         store.AnalysisModeRegular,
 	}
-	dbDir, staged, reused, err := e.databaseFor(ctx, id, dbDir, tree)
+	dbDir, staged, reused, err := e.databaseFor(ctx, id, dbDir, tree, planned.cliVersion)
 	if err != nil {
 		return work.Prepared{}, err
 	}
@@ -768,9 +768,9 @@ func (e *Expander) analyzeTree(
 // Reuse skips extraction, never analysis: whether a query still has to run is the ledger's call,
 // and a database being on disk says nothing about it.
 func (e *Expander) databaseFor(
-	ctx context.Context, id store.DatabaseIdentity, roundDB string, tree Tree,
+	ctx context.Context, id store.DatabaseIdentity, roundDB string, tree Tree, cli string,
 ) (string, string, bool, error) {
-	if held, ok := e.Databases.Reuse(id); ok {
+	if held, ok := e.Databases.Reuse(id, cli); ok {
 		return held, "", true, nil
 	}
 	// Built inside the cache when there is one, so promoting it is a rename rather than a copy

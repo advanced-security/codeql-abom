@@ -9,18 +9,33 @@ import (
 	"time"
 )
 
-// authoringSessionDDL keeps every agent session on a request, and every hook invocation in one.
-const authoringSessionDDL = `
-CREATE TABLE IF NOT EXISTS abom_authoring_session (
+// authoringSessionTable is the session table's columns. A request's session writes its query; a
+// run's drafts a request, which a person files or not.
+const authoringSessionTable = `(
   row_id     INTEGER PRIMARY KEY,
-  request_id INTEGER NOT NULL REFERENCES abom_query_request(row_id),
+  request_id INTEGER REFERENCES abom_query_request(row_id),
+  run_id     INTEGER REFERENCES abom_analysis_run(row_id),
+  query_id   TEXT NOT NULL DEFAULT '',
   state      TEXT NOT NULL,
   started_by TEXT NOT NULL,
   model      TEXT NOT NULL,
   started_at TEXT NOT NULL,
   ended_at   TEXT,
-  detail     TEXT NOT NULL DEFAULT ''
-);
+  detail     TEXT NOT NULL DEFAULT '',
+  -- NULL until the CLI reports a figure, which is not a session that cost nothing.
+  model_calls   INTEGER,
+  input_tokens  INTEGER,
+  output_tokens INTEGER,
+  nano_aiu      INTEGER
+)`
+
+// sessionCopyColumns are the columns a rebuild carries forward.
+const sessionCopyColumns = `row_id, request_id, run_id, query_id, state, started_by, model, started_at,
+  ended_at, detail, model_calls, input_tokens, output_tokens, nano_aiu`
+
+// authoringSessionDDL keeps every agent session on a request, and every hook invocation in one.
+const authoringSessionDDL = `
+CREATE TABLE IF NOT EXISTS abom_authoring_session ` + authoringSessionTable + `;
 
 -- Two agents writing one query's files would each read the other's work as its own.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_authoring_session_running
@@ -77,6 +92,18 @@ type AuthoringSession struct {
 	Detail    string `json:"detail"`
 	Events    int    `json:"events"`
 	Refused   int    `json:"refused"`
+	// What the session spent, each nil until the CLI reported it.
+	ModelCalls   *int64 `json:"modelCalls"`
+	InputTokens  *int64 `json:"inputTokens"`
+	OutputTokens *int64 `json:"outputTokens"`
+	NanoAIU      *int64 `json:"nanoAiu"`
+}
+
+// AuthoringSpend is what one model call in a session cost, as far as the CLI reported it.
+type AuthoringSpend struct {
+	InputTokens  *int64
+	OutputTokens *int64
+	NanoAIU      *int64
 }
 
 // AuthoringEvent is one hook invocation in a session.
@@ -172,7 +199,8 @@ func (s *Store) AuthoringSessions(request int64) ([]AuthoringSession, error) {
 	rows, err := s.db.Query(`
 		SELECT s.row_id, s.request_id, s.state, s.started_by, s.model, s.started_at,
 		       COALESCE(s.ended_at, ''), s.detail, COUNT(e.row_id),
-		       COALESCE(SUM(e.decision = 'refused'), 0)
+		       COALESCE(SUM(e.decision = 'refused'), 0),
+		       s.model_calls, s.input_tokens, s.output_tokens, s.nano_aiu
 		FROM abom_authoring_session s
 		LEFT JOIN abom_authoring_event e ON e.session_id = s.row_id
 		WHERE s.request_id = ?
@@ -186,13 +214,43 @@ func (s *Store) AuthoringSessions(request int64) ([]AuthoringSession, error) {
 	out := []AuthoringSession{}
 	for rows.Next() {
 		var a AuthoringSession
+		var calls, input, output, nano sql.NullInt64
 		if err := rows.Scan(&a.RowID, &a.RequestID, &a.State, &a.StartedBy, &a.Model, &a.StartedAt,
-			&a.EndedAt, &a.Detail, &a.Events, &a.Refused); err != nil {
+			&a.EndedAt, &a.Detail, &a.Events, &a.Refused, &calls, &input, &output, &nano); err != nil {
 			return nil, fmt.Errorf("scanning a session: %w", err)
 		}
+		a.ModelCalls, a.InputTokens = reported(calls), reported(input)
+		a.OutputTokens, a.NanoAIU = reported(output), reported(nano)
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+func reported(n sql.NullInt64) *int64 {
+	if !n.Valid {
+		return nil
+	}
+	return &n.Int64
+}
+
+// AddAuthoringSpend adds one model call's cost to its session as it arrives, so a session stopped
+// part way still says what it cost. A figure the call did not report leaves the total as it was.
+func (s *Store) AddAuthoringSpend(session int64, spent AuthoringSpend) error {
+	res, err := s.db.Exec(`
+		UPDATE abom_authoring_session SET
+		  model_calls = COALESCE(model_calls, 0) + 1,
+		  input_tokens = CASE WHEN ?1 IS NULL THEN input_tokens ELSE COALESCE(input_tokens, 0) + ?1 END,
+		  output_tokens = CASE WHEN ?2 IS NULL THEN output_tokens ELSE COALESCE(output_tokens, 0) + ?2 END,
+		  nano_aiu = CASE WHEN ?3 IS NULL THEN nano_aiu ELSE COALESCE(nano_aiu, 0) + ?3 END
+		WHERE row_id = ?4`,
+		spent.InputTokens, spent.OutputTokens, spent.NanoAIU, session)
+	if err != nil {
+		return fmt.Errorf("adding what session %d spent: %w", session, err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return fmt.Errorf("adding what session %d spent: there is no such session", session)
+	}
+	return nil
 }
 
 // RecordAuthoringEvent appends one hook invocation to its session's timeline.

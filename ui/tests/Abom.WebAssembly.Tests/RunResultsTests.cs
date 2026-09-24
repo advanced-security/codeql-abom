@@ -202,6 +202,53 @@ public class RunResultsTests : AbomTestContext
         Assert.Equal(("octo/quiet", 0L), (draft.Evidence[0].Repository, draft.Evidence[0].FindingRowId));
     }
 
+    /// <summary>
+    /// A run recorded before ABOM kept each repository's own evaluation counted results it cannot
+    /// list, so the repository says to run it again rather than offering nothing to pick.
+    /// </summary>
+    [Fact]
+    public void ARepositoryCountedBeforeItsEvaluationWasKeptSaysToRunItAgain()
+    {
+        Answer("api/runs/3/results", """
+            {"repository":"octo/app","evaluated":true,"unlinked":true,"truncated":false,"findings":[]}
+            """);
+        var cut = Render("acme/rule");
+        cut.Find("[data-abom-results-pick]").Click();
+
+        cut.Find("[data-abom-member-findings='octo/app']").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("run it again",
+            cut.Find("[data-abom-member-unlinked]").TextContent));
+        Assert.Empty(cut.FindAll("[data-abom-pick-finding]"));
+    }
+
+    /// <summary>
+    /// A repository counted before results were split by query is not in the picker at all, so the
+    /// picker says how many were left out and what would let them be picked.
+    /// </summary>
+    [Fact]
+    public void RepositoriesCountedBeforeTheSplitAreSaidToNeedARerunWhenPicking()
+    {
+        Answer("api/runs/3", """
+            {"rowId":3,"predicate":"repositories=octo%2Fapp,octo%2Fold","mode":"regular","requestedBy":"operator",
+             "state":"complete","createdAt":"2026-09-22T16:00:00Z","finishedAt":"","results":53,
+             "queries":[{"queryId":"acme/rule","queryVersion":"v1"}],"tally":{"succeeded":2},
+             "members":[
+               {"repository":"octo/app","status":"succeeded","counted":true,"results":2,"byQuery":{"acme/rule":2}},
+               {"repository":"octo/old","status":"succeeded","counted":true,"results":51,"byQuery":{}}]}
+            """);
+        var cut = Render<Shared.RunResults>(p => p.Add(c => c.RunId, 3L).Add(c => c.QueryId, "acme/rule"));
+        cut.WaitForAssertion(() => cut.Find("[data-abom-run-summary]"));
+
+        cut.Find("[data-abom-results-pick]").Click();
+
+        var left = string.Join(" ", cut.Find("[data-abom-results-unpickable]").TextContent
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        Assert.Contains("1 of the 2 repositories this run analyzed was counted before", left);
+        Assert.Contains("run it again", left);
+        Assert.Empty(cut.FindAll("[data-abom-member-findings='octo/old']"));
+    }
+
     [Fact]
     public void NothingPickedAsksForNothing()
     {

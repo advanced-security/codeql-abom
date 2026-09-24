@@ -40,6 +40,49 @@ func TestASessionIsStartedOnlyOnARequestThatExists(t *testing.T) {
 	}
 }
 
+// What a session spends arrives one model call at a time, so a stopped session still says what it
+// cost; a figure the CLI never reported stays absent rather than reading as zero.
+func TestASessionAddsUpWhatItSpentAsTheCLIReportsIt(t *testing.T) {
+	s := newTestStore(t)
+	request, session := aSessionOn(t, s)
+	spent := func() AuthoringSession {
+		t.Helper()
+		got, err := s.AuthoringSessions(request)
+		if err != nil || len(got) != 1 {
+			t.Fatalf("sessions %v %v", got, err)
+		}
+		return got[0]
+	}
+	if a := spent(); a.ModelCalls != nil || a.InputTokens != nil || a.OutputTokens != nil || a.NanoAIU != nil {
+		t.Fatalf("a session the CLI reported nothing for says it spent %+v", a)
+	}
+
+	in, out, nano := int64(1200), int64(80), int64(250_000_000)
+	if err := s.AddAuthoringSpend(session, AuthoringSpend{InputTokens: &in, NanoAIU: &nano}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddAuthoringSpend(session, AuthoringSpend{InputTokens: &in, OutputTokens: &out}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EndAuthoringSession(session, SessionStopped, "stopped by an operator"); err != nil {
+		t.Fatal(err)
+	}
+	a := spent()
+	switch {
+	case a.ModelCalls == nil || *a.ModelCalls != 2:
+		t.Errorf("model calls %v, want 2", a.ModelCalls)
+	case a.InputTokens == nil || *a.InputTokens != 2400:
+		t.Errorf("input tokens %v, want 2400", a.InputTokens)
+	case a.OutputTokens == nil || *a.OutputTokens != 80:
+		t.Errorf("output tokens %v, want 80", a.OutputTokens)
+	case a.NanoAIU == nil || *a.NanoAIU != 250_000_000:
+		t.Errorf("nano-AIU %v, want 250000000", a.NanoAIU)
+	}
+	if err := s.AddAuthoringSpend(session+100, AuthoringSpend{InputTokens: &in}); err == nil {
+		t.Error("spend was added to a session that does not exist")
+	}
+}
+
 // Two agents writing one query's files would each see the other's work as its own.
 func TestOneSessionAtATimeWorksARequest(t *testing.T) {
 	s := newTestStore(t)
@@ -190,7 +233,7 @@ func TestTheAuthoringTimelineIsNeverRewritten(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rewrites := regexp.MustCompile(`(UPDATE|DELETE FROM|REPLACE INTO|INSERT OR REPLACE INTO)\s+abom_authoring_(event|ast)\b`)
+	rewrites := regexp.MustCompile(`(UPDATE|DELETE FROM|REPLACE INTO|INSERT OR REPLACE INTO)\s+(abom_authoring_(event|ast|review)|abom_request_draft)\b`)
 	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err

@@ -1,0 +1,24 @@
+[
+{
+  "test" : "/private/tmp/abom-failfirst/test/Stub/Stub.qlref",
+  "pass" : false,
+  "failureStage" : "RESULT",
+  "failureDescription" : "Cannot find Stub.expected file.",
+  "messages" : [ ],
+  "compilationMs" : 12465,
+  "evaluationMs" : 481,
+  "expected" : "/private/tmp/abom-failfirst/test/Stub/Stub.expected",
+  "actual" : "/private/tmp/abom-failfirst/test/Stub/Stub.actual",
+  "diff" : [
+    "--- expected",
+    "+++ actual",
+    "@@ -1,1 +1,5 @@",
+    "-",
+    "+#select",
+    "+| .github/workflows/ci.yml:6:15:6:33 | actions/checkout@v4 | Uses an action. |",
+    "+| .github/workflows/ci.yml:7:15:7:71 | actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b | Uses an action. |",
+    "+testFailures",
+    "+| .github/workflows/ci.yml:7:15:7:71 | Uses an action. | Unexpected result: Alert |"
+  ]
+}
+]
