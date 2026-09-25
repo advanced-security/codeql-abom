@@ -40,6 +40,12 @@ public sealed record ViewSpec
     public string Severity { get; init; } = "";
 
     /// <summary>
+    /// Where the query behind a finding's rule came from, as the evaluation that reported it
+    /// recorded. A finding none recorded a source for matches no source.
+    /// </summary>
+    public IReadOnlyList<string> Sources { get; init; } = [];
+
+    /// <summary>
     /// Narrows to what a caller is asking about — a pull request's repository, for the gate.
     /// Compared case-insensitively wherever it is applied.
     /// </summary>
@@ -97,6 +103,7 @@ public sealed record ViewSpec
     private const string ParamRepos = "repositories";
     private const string ParamProvider = "provider";
     private const string ParamSeverity = "severity";
+    private const string ParamSources = "source";
     private const string ParamEdgeClass = "edges";
     private const string ParamEdgeKinds = "edgeKinds";
     private const string ParamRefStyle = "ref";
@@ -121,6 +128,7 @@ public sealed record ViewSpec
         [ParamBoundary] = ["same-repository", "same-owner", "cross-owner"],
         [ParamRefStyle] = ["any", "sha", "tag"],
         [ParamMode] = ["regular", "extended"],
+        [ParamSources] = ["upstream", "abom", "custom", "mixed"],
     };
 
     // The near-misses are real: the canvas draws `crossOwner` where the store spells it
@@ -160,7 +168,7 @@ public sealed record ViewSpec
                  {
                      (ParamKinds, Kinds), (ParamOrigins, Origins), (ParamRules, Rules),
                      (ParamNotRules, NotRules),
-                     (ParamRepos, Repositories),
+                     (ParamRepos, Repositories), (ParamSources, Sources),
                      (ParamEdgeClass, EdgeClass), (ParamEdgeKinds, EdgeKinds),
                      (ParamFlags, Flags),
                  })
@@ -198,7 +206,7 @@ public sealed record ViewSpec
         string scope = "", search = "", refStyle = "", boundary = "", provider = "", severity = "",
             mode = "";
         IReadOnlyList<string> kinds = [], origins = [], rules = [], edges = [], edgeKinds = [],
-            flags = [], notRules = [], repositories = [];
+            flags = [], notRules = [], repositories = [], sources = [];
         List<PropertyMatch> properties = [], notProperties = [];
         var minReach = 0;
         var steps = false;
@@ -228,6 +236,10 @@ public sealed record ViewSpec
                 case ParamRepos: repositories = Normalize(raw.Split(',')); break;
                 case ParamProvider: provider = raw; break;
                 case ParamSeverity: severity = raw; break;
+                case ParamSources:
+                    sources = Normalize(raw.Split(','));
+                    foreach (var source in sources) Vetted(key, source);
+                    break;
                 case ParamEdgeClass: edges = Normalize(raw.Split(',')); break;
                 case ParamEdgeKinds: edgeKinds = Normalize(raw.Split(',')); break;
                 case ParamFlags: flags = Normalize(raw.Split(',')); break;
@@ -256,7 +268,7 @@ public sealed record ViewSpec
         return new ViewSpec
         {
             Scope = scope, Search = search, RefStyle = refStyle, Boundary = boundary,
-            Provider = provider, Severity = severity, Mode = mode,
+            Provider = provider, Severity = severity, Mode = mode, Sources = sources,
             Kinds = kinds, Origins = origins, Rules = rules, NotRules = notRules,
             Repositories = repositories,
             Properties = properties, NotProperties = notProperties,

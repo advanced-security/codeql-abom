@@ -184,7 +184,11 @@ type InventoryQuery struct {
 	NotRules     []string
 	Provider     string
 	Severity     string
+	Sources      []string
 	Repositories []string
+	// unsourced narrows to findings no evaluation recorded a source for, which is how a page
+	// narrowed by source counts the rows it could not answer for.
+	unsourced bool
 	// Mode narrows to how the databases behind this page were built. Empty is `regular`, which is
 	// every database on record, so a listing that does not ask counts what it always counted.
 	Mode string
@@ -210,6 +214,9 @@ type InventoryPage struct {
 	// crawled organization every one of the 277 `actions/unpinned-tag` findings sits on a `step`
 	// or `job` node, so the most important rule there is answers 0 among the dependency kinds.
 	Elsewhere []KindCount `json:"elsewhere,omitempty"`
+	// Unsourced counts the rows that carry a finding every other term matched with no recorded
+	// source. Counted only when a source is asked, which is the only time they are left out.
+	Unsourced int `json:"unsourced"`
 }
 
 // KindCount is how many nodes of one kind a predicate matched.
@@ -374,7 +381,17 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 	if err != nil {
 		return InventoryPage{}, err
 	}
-	return InventoryPage{Items: out, Total: total, Elsewhere: elsewhere}, nil
+	page := InventoryPage{Items: out, Total: total, Elsewhere: elsewhere}
+	if len(q.Sources) > 0 {
+		unknown := q
+		unknown.Sources, unknown.unsourced, unknown.Limit, unknown.Offset = nil, true, 1, 0
+		counted, err := s.ActionsInventoryPage(unknown)
+		if err != nil {
+			return InventoryPage{}, err
+		}
+		page.Unsourced = counted.Total
+	}
+	return page, nil
 }
 
 // inventoryElsewhere names the kinds outside this view that the findings terms also matched.
@@ -444,6 +461,13 @@ func inventoryFindingFilter(q InventoryQuery) (string, []any) {
 	}
 	if q.Severity != "" {
 		where, whereArgs = append(where, "f.severity = ?"), append(whereArgs, q.Severity)
+	}
+	if len(q.Sources) > 0 {
+		clause, a := sourceClause("f", q.Sources)
+		where, whereArgs = append(where, clause), append(whereArgs, a...)
+	}
+	if q.unsourced {
+		where = append(where, "NOT "+recordedSource("f"))
 	}
 	if len(q.Repositories) > 0 {
 		lowered := make([]string, 0, len(q.Repositories))
@@ -719,10 +743,13 @@ func (s *Store) RepositoriesOverview(search string, limit int, sc RepositoryScop
 	return page.Items, err
 }
 
-// RuleCount is how often one rule fired within a scope.
+// RuleCount is how often one rule fired within a scope, and where the queries that reported it
+// came from. Unsourced counts the findings no evaluation recorded a source for.
 type RuleCount struct {
-	RuleID string `json:"ruleId"`
-	Count  int    `json:"count"`
+	RuleID    string   `json:"ruleId"`
+	Count     int      `json:"count"`
+	Sources   []string `json:"sources"`
+	Unsourced int      `json:"unsourced"`
 }
 
 // RepositoryWorkflow is one workflow as a repository's detail page lists it. The workflows *unit*
@@ -746,7 +773,7 @@ type RepositoryDetail struct {
 
 // RepositoryDetailOf returns one repository's posture.
 func (s *Store) RepositoryDetailOf(fullName string) (RepositoryDetail, error) {
-	out := RepositoryDetail{FullName: fullName}
+	out := RepositoryDetail{FullName: fullName, FindingsByRule: []RuleCount{}}
 
 	var rowID int64
 	if err := s.db.QueryRow(
@@ -756,17 +783,21 @@ func (s *Store) RepositoryDetailOf(fullName string) (RepositoryDetail, error) {
 	}
 
 	rules, err := s.db.Query(`
-		SELECT rule_id, COUNT(*) FROM abom_finding_regular
-		WHERE repository_row_id = ? GROUP BY rule_id ORDER BY 2 DESC`, rowID)
+		SELECT rule_id, COUNT(*), GROUP_CONCAT(sources), COUNT(*) - COUNT(sources)
+		FROM (SELECT f.rule_id, `+findingSources+` AS sources
+		      FROM abom_finding_regular f WHERE f.repository_row_id = ?)
+		GROUP BY rule_id ORDER BY 2 DESC, rule_id`, rowID)
 	if err != nil {
 		return out, fmt.Errorf("reading findings for %q: %w", fullName, err)
 	}
 	for rules.Next() {
 		var rc RuleCount
-		if err := rules.Scan(&rc.RuleID, &rc.Count); err != nil {
+		var sources sql.NullString
+		if err := rules.Scan(&rc.RuleID, &rc.Count, &sources, &rc.Unsourced); err != nil {
 			rules.Close()
 			return out, err
 		}
+		rc.Sources = distinctSources(sources)
 		out.FindingsByRule = append(out.FindingsByRule, rc)
 	}
 	rules.Close()

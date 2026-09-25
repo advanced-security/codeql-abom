@@ -369,8 +369,13 @@ public sealed record NamedView
     public bool Builtin { get; init; }
     public string CreatedBy { get; init; } = string.Empty;
 
-    /// <summary>Terms Inventory cannot narrow by, so a tab that will refuse itself can say so.</summary>
-    public IReadOnlyList<string> ListingRefuses { get; init; } = [];
+    /// <summary>
+    /// For every page a scope opens on, the terms that page cannot apply — empty where it applies
+    /// all of them. A page missing from it is one the server said nothing about, never one that
+    /// applies everything.
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> Refuses { get; init; } =
+        new Dictionary<string, IReadOnlyList<string>>();
 
     /// <summary>What to show on the tab. A saved view has only the name its author gave it.</summary>
     public string Label => Title.Length > 0 ? Title : Name;
@@ -437,6 +442,12 @@ public sealed record InventoryPage
     /// Without it a findings question answers 0 and the zero reads as "nothing is wrong": every
     /// `actions/unpinned-tag` finding sits on a step or job node, which are not dependency kinds.
     public IReadOnlyList<KindCount> Elsewhere { get; init; } = [];
+
+    /// <summary>
+    /// Rows carrying findings the question matches with no recorded source, counted only when a
+    /// source is asked: those are the rows the source term could not answer for.
+    /// </summary>
+    public int Unsourced { get; init; }
 }
 
 /// <summary>How many nodes of one kind a predicate matched.</summary>
@@ -542,6 +553,12 @@ public sealed record RuleCount
 {
     public string RuleId { get; init; } = string.Empty;
     public int Count { get; init; }
+
+    /// <summary>Where the queries that reported these findings came from, as their evaluations recorded.</summary>
+    public IReadOnlyList<string> Sources { get; init; } = [];
+
+    /// <summary>Findings no evaluation recorded a source for, which are not known to be from any.</summary>
+    public int Unsourced { get; init; }
 }
 
 public sealed record OwnerCandidate
@@ -1146,7 +1163,7 @@ public sealed record CatalogQuery
     public string CliVersion { get; init; } = string.Empty;
 
     /// <summary>Read from the pack that supplied it, never from the rule id's prefix.</summary>
-    public string Origin { get; init; } = string.Empty;
+    public string Source { get; init; } = string.Empty;
 
     /// <summary>
     /// Set when what ran was a whole suite rather than one query, which is how the findings lane
@@ -1301,6 +1318,9 @@ public sealed record AnalysisRun
     public string Mode { get; init; } = string.Empty;
     public string RequestedBy { get; init; } = string.Empty;
     public string State { get; init; } = string.Empty;
+
+    /// <summary>What its queries would report, held apart and never stored as findings.</summary>
+    public bool Prediction { get; init; }
     public string CreatedAt { get; init; } = string.Empty;
     public string FinishedAt { get; init; } = string.Empty;
     public IReadOnlyList<AnalysisQueryRef> Queries { get; init; } = [];
@@ -1368,6 +1388,58 @@ public sealed record RunFinding
     public int StartColumn { get; init; }
     public string Message { get; init; } = string.Empty;
     public string Severity { get; init; } = string.Empty;
+
+    /// <summary>What the member's evaluation recorded about the rule's query; empty when nothing.</summary>
+    public string Source { get; init; } = string.Empty;
+    public string RuleVersion { get; init; } = string.Empty;
+}
+
+/// <summary>One finding and every evaluation on record as reporting it, oldest first.</summary>
+public sealed record FindingTrace
+{
+    public long RowId { get; init; }
+    public string RuleId { get; init; } = string.Empty;
+    public string Repository { get; init; } = string.Empty;
+    public string FilePath { get; init; } = string.Empty;
+    public int StartLine { get; init; }
+    public string Message { get; init; } = string.Empty;
+    public string Severity { get; init; } = string.Empty;
+    public string Provider { get; init; } = string.Empty;
+    public IReadOnlyList<FindingEvaluation> Evaluations { get; init; } = [];
+}
+
+/// <summary>
+/// One evaluation that reported a finding. The rule's version, pack and source are empty where the
+/// evaluation did not record them, which is not known rather than none.
+/// </summary>
+public sealed record FindingEvaluation
+{
+    public long QueryRunId { get; init; }
+
+    /// <summary>What ran: the query itself, or the suite or queries a lane ran as one.</summary>
+    public string Invoked { get; init; } = string.Empty;
+    public IReadOnlyList<string> Packs { get; init; } = [];
+    public string RuleVersion { get; init; } = string.Empty;
+    public string Pack { get; init; } = string.Empty;
+    public string PackVersion { get; init; } = string.Empty;
+    public string PackDigest { get; init; } = string.Empty;
+    public string Source { get; init; } = string.Empty;
+    public string CliVersion { get; init; } = string.Empty;
+    public string Mode { get; init; } = string.Empty;
+    public string Commit { get; init; } = string.Empty;
+    public string RanAt { get; init; } = string.Empty;
+
+    /// <summary><c>crawl</c>, <c>run</c> or <c>corpus</c>; empty when it was not recorded.</summary>
+    public string RecordedBy { get; init; } = string.Empty;
+    public IReadOnlyList<FindingRun> Runs { get; init; } = [];
+}
+
+/// <summary>A member of an on-demand run that the evaluation answered.</summary>
+public sealed record FindingRun
+{
+    public long RunId { get; init; }
+    public string Repository { get; init; } = string.Empty;
+    public string Status { get; init; } = string.Empty;
 }
 
 /// <summary>
@@ -1378,6 +1450,9 @@ public sealed record MemberFindings
 {
     public string Repository { get; init; } = string.Empty;
     public bool Evaluated { get; init; }
+
+    /// <summary>What a prediction would report here: no finding stands behind any of it.</summary>
+    public bool Predicted { get; init; }
 
     /// <summary>
     /// Counted by a run recorded before ABOM kept each repository's own evaluation, so its results

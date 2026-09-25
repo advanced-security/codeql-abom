@@ -14,6 +14,8 @@ type Match struct {
 	Total int `json:"total"`
 	// Findings counts each finding once however many nodes carry it.
 	Findings int `json:"findings"`
+	// Unsourced counts what a source term could not answer for: findings with no recorded source.
+	Unsourced int `json:"unsourced"`
 }
 
 // match answers a set rather than a graph.
@@ -42,6 +44,7 @@ func (s *Server) match(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, Match{
 		Nodes: matched.Nodes, Total: len(matched.Nodes), Findings: matched.Findings,
+		Unsourced: matched.Unsourced,
 	}, nil)
 }
 

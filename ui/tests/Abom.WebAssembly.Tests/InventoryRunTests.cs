@@ -19,9 +19,9 @@ public class InventoryRunTests : AbomTestContext
     private const string Catalog = """
         {"queries":[
           {"queryId":"acme/self-hosted-runner","queryVersion":"9b5327ab01d7","pack":"abom/custom-queries",
-           "origin":"user","discovery":false,"lane":false,"stage":""},
+           "source":"custom","discovery":false,"lane":false,"stage":""},
           {"queryId":"abom/edges","queryVersion":"f4b6","pack":"advanced-security/abom-actions-graph-extraction-src",
-           "origin":"abom","discovery":true,"lane":false,"stage":""}],
+           "source":"abom","discovery":true,"lane":false,"stage":""}],
          "stages":["dev"]}
         """;
 
@@ -82,6 +82,46 @@ public class InventoryRunTests : AbomTestContext
         var at = Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.Uri;
         Assert.EndsWith("/codeql?tab=runs&run=12", at);
         Assert.Empty(Services.GetRequiredService<RunDraft>().Queries);
+    }
+
+    /// <summary>
+    /// Predicting is the same draft sent as a prediction, so what its queries would report is held
+    /// apart rather than stored as findings. A plain run must not be sent as one.
+    /// </summary>
+    [Fact]
+    public void PredictingSendsTheDraftAsAPredictionAndStartsIt()
+    {
+        var page = Arrive();
+        Assert.True(page.Find("[data-abom-run-predict]").HasAttribute("disabled"));
+        Assert.False(string.IsNullOrWhiteSpace(page.Find("[data-abom-run-predict-reason]").GetAttribute("title")));
+
+        page.Find("[data-abom-run-choose='octo-org/clean'] input").Change(true);
+        page.Find("[data-abom-run-predict]").Click();
+
+        page.WaitForAssertion(() =>
+        {
+            var created = Assert.Single(Sent, r => r.Method == "POST" && r.Url.Contains("api/runs?"));
+            Assert.Contains("\"prediction\":true", created.Body);
+            Assert.Contains("repositories=octo-org%2Fclean", created.Url);
+            Assert.Contains(Sent, r => r.Method == "POST" && r.Url.EndsWith("api/runs/12/start"));
+        });
+        Assert.EndsWith("/codeql?tab=runs&run=12",
+            Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.Uri);
+    }
+
+    [Fact]
+    public void RunningIsNotSentAsAPrediction()
+    {
+        var page = Arrive();
+
+        page.Find("[data-abom-run-choose='octo-org/clean'] input").Change(true);
+        page.Find("[data-abom-run-go]").Click();
+
+        page.WaitForAssertion(() =>
+        {
+            var created = Assert.Single(Sent, r => r.Method == "POST" && r.Url.Contains("api/runs?"));
+            Assert.Contains("\"prediction\":false", created.Body);
+        });
     }
 
     /// <summary>The crawl's own queries build the graph; there is nothing in them to run on demand.</summary>

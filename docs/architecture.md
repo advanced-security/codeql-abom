@@ -97,7 +97,7 @@ it apart from a tier nobody has configured.
 
 **An organization's own questions are its own queries.** The operator names a directory and ABOM
 scaffolds a CodeQL pack in it: their queries resolve by name, run over the retained databases and
-appear in the catalog with their origin read from the pack. Writing one is not scheduling work —
+appear in the catalog with their source read from the pack. Writing one is not scheduling work —
 the development suite is offered to a run, which is something a person presses, and never to a tier
 binding, which would put a saved file in front of the whole corpus. Deploying a version is what
 moves it into a suite a tier may bind. The directory is a pack the operator's own tooling opens:
@@ -284,7 +284,8 @@ Everything is one SQLite file. `internal/store` is the only package that writes 
 
 | Table | |
 | --- | --- |
-| `abom_query_run`, `abom_query_run_ref` | One row per analysis: the resolved commit, checkout filter, analysis mode, pack digest and CLI version that produced it |
+| `abom_query_run`, `abom_query_run_ref` | One row per evaluation: the resolved commit, checkout filter, analysis mode, pack digest and CLI version that produced it, and what recorded it — the crawl, a run, or a replayed recording |
+| `abom_query_run_rule` | The rules one evaluation ran, each with its own query version, pack and source. A lane runs a whole suite in one invocation, so this, not the evaluation, says where a finding's rule came from |
 | `abom_ingest_ledger` | What has already been read, so it is not read twice |
 | `abom_ref_resolution` | Which commit a tag or branch pointed at, when it was measured |
 | `abom_commit_content`, `abom_protected_branch` | Content equivalence, and which branches GitHub protects |
@@ -349,6 +350,27 @@ workflow is never an edge source; edges leave its steps and its jobs.
 | `abom_finding_sighting` | Which run reported which finding, which is the only way staleness is observable |
 | `rule`, `alert`, `abom_alert_link` | Rule metadata and the link to GitHub's own alerts |
 
+**A finding is traced to every evaluation that reported it.** Its sightings name them. Each says
+what it invoked, in which shape, over which commit, under which CodeQL and what recorded it, and
+`abom_query_run_rule` gives the version, pack and **source** of the rule's own query in that
+evaluation: `upstream`, `abom`, `custom`, or `mixed` where two packs supplied one rule id at once.
+One defect reported through two copies of a rule answers to both. An evaluation recorded before its
+rules were kept is named only where that is exact — one pack supplied everything it ran, so every
+rule it reported is that pack's, and the version is known only when it ran that one query. A lane
+that drew on several packs stays *not recorded* until something evaluates it again. `source=`
+narrows the set path, the dependencies listing and a run; a finding with no recorded source matches
+no source, and an answer narrowed by one counts the matches it could not answer for.
+
+```mermaid
+flowchart LR
+    F["abom_finding"] -->|"abom_finding_sighting"| E["abom_query_run<br/>invoked, shape, commit,<br/>CodeQL, recorded by"]
+    E --> R["abom_query_run_rule<br/>the rule's version,<br/>pack and source"]
+    E -->|"query_run_id"| M["abom_analysis_member<br/>run N"]
+    R --> S["source= on the set path,<br/>the listing and a run"]
+    L["a lane of several packs,<br/>recorded before rules were kept"] -. "never attributed" .-> R
+    style L fill:#3d2d1d
+```
+
 ### Queries and what was asked of them
 
 | Table | |
@@ -364,6 +386,7 @@ workflow is never an edge source; edges leave its steps and its jobs.
 | `abom_authoring_review` | An operator's approval or rejection of what a query reported, with the report as they read it. Append-only |
 | `abom_request_draft` | A request a drafting session proposed, which nobody has filed. Append-only |
 | `abom_analysis_run`, `abom_analysis_member`, `abom_analysis_query` | A run somebody asked for: which versions, which scope, the CodeQL it ran under, why it could not start when it could not, and what became of every repository in it. A member names the evaluation that reported its findings, so they can be listed one at a time |
+| `abom_predicted_result` | What a prediction's queries would report in each repository, one row per result, apart from `abom_finding` |
 | `abom_analysis_result` | What each query in a run found in each repository. A member counted before this existed has a total and no split |
 | `abom_local_database` | A retained CodeQL database, keyed the way a run is: repository, commit, source filter and mode |
 
@@ -440,6 +463,27 @@ rather than the name. Each member records what every query in the run found in i
 own count is never its run's total. A run the server stopped under is `interrupted` on the next
 start: not canceled, since nobody asked, and not `running`, since nothing is.
 
+**A prediction is a run whose results are not findings.** It is asked for from the same draft and
+resolved the same way, and each repository is built and analyzed as a run's is. What its queries
+would report there — a count per rule and every result — is held apart from the findings every
+other surface reads, because a query nobody adopted has found nothing yet. It is made from regular
+databases only: Default Setup stages nothing, so it would never report what an extended database
+reveals. It stores no evaluation, so no run is skipped on its answer, and it never borrows a run's
+answer, which lists findings rather than predictions. It says first how many of the scope's
+repositories it covers, and names the rest.
+
+```mermaid
+flowchart LR
+    DRAFT["one draft:<br/>versions and repositories"] -->|"Run"| RUN["a run"]
+    DRAFT -->|"Predict"| PRED["a prediction"]
+    RUN -->|"ingested"| FIND["findings, which<br/>every surface reads"]
+    PRED -->|"a count per rule<br/>and every result"| HELD["abom_predicted_result"]
+    PRED -. "never" .-> NOTFIND["a finding, or an<br/>evaluation a run skips on"]
+    PRED -. "refused" .-> EXT["an extended database"]
+    style NOTFIND fill:#3d1d1d
+    style EXT fill:#3d1d1d
+```
+
 **A unit is a shape, not a scope.** Inventory reprojects one scope as actions, workflows, jobs,
 repositories, advisories, relationships or coverage, each asking its own endpoint for its own
 columns. A unit only exists once its columns are its own: listing repositories as nodes drew six
@@ -490,14 +534,29 @@ is answered from the language where it declares them and from the corpus where i
 first is what the term allows, the second is only what something happened to use, and a refusal is
 checked against the first.
 
-**A scope can be kept.** The catalog is the built-in questions merged with whatever the operator
-named and saved, offered through one endpoint so a caller asking "what can I ask" consults one
-place. A built-in is code and cannot be overwritten or deleted. A saved view carries the terms the
-listing cannot draw, so a tab that will refuse itself says so before it is clicked rather than
-after. It also carries how the Explorer drew it — view, grouping, depth, direction — stored as
-opaque text beside the predicate rather than inside it, because a drawing is not a filter and a
+**A scope can be kept, and it is its predicate, never the page it was kept on.** The catalog is the
+built-in questions merged with whatever the operator named and saved, offered through one endpoint
+so a caller asking "what can I ask" consults one place. A built-in is code and cannot be overwritten
+or deleted. The Inventory and the Explorer host one control over it — every named scope, *Keep* for
+the one on screen, *Forget* for one the operator kept — and opening one replaces the scope on screen
+whole rather than merging into it. For every surface the language names, the catalog answers which
+of a scope's terms that surface cannot apply, so a scope a page would refuse is disabled there with
+the terms named, before it is chosen rather than after. A scope kept on the Explorer also carries how
+it was drawn — view, grouping, depth, direction, the layout switches and the node in focus — stored
+as opaque text beside the predicate rather than inside it, because a drawing is not a filter and a
 server that parsed it would be deciding what the interface may show. Nothing saved there means
 "draw it however you would anyway", which is not the same as every default.
+
+```mermaid
+flowchart LR
+    VIEWS["abom_saved_view<br/>and the built-ins"] -->|"GET /api/views:<br/>predicate, picture,<br/>refusal per surface"| CTRL["one control:<br/>open, Keep, Forget"]
+    CTRL -->|"hosted by"| INV["each Inventory unit"]
+    CTRL -->|"hosted by"| EXP["the Explorer"]
+    INV -->|"Keep: the predicate"| VIEWS
+    EXP -->|"Keep: the predicate<br/>and the picture"| VIEWS
+    CTRL -. "not hosted yet" .-> CQL["the CodeQL page's<br/>run draft"]
+    style CQL fill:#3d2d1d
+```
 
 **A container is a boundary, and `Group by` decides what a filter costs.** The Explorer draws each
 group as a shape around its members rather than a point beside them, and withholds any boundary that

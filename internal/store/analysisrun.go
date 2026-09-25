@@ -79,8 +79,11 @@ type AnalysisRun struct {
 	Mode        string `json:"mode"`
 	RequestedBy string `json:"requestedBy"`
 	State       string `json:"state"`
-	CreatedAt   string `json:"createdAt"`
-	FinishedAt  string `json:"finishedAt"`
+	// Prediction is a run whose results are held as what its queries would report, never stored as
+	// findings.
+	Prediction bool   `json:"prediction"`
+	CreatedAt  string `json:"createdAt"`
+	FinishedAt string `json:"finishedAt"`
 	// CLIVersion is the CodeQL that carried the run out, empty until it starts.
 	CLIVersion string `json:"cliVersion"`
 	// Refusal is why the run could not start the last time it was asked to, and empty otherwise.
@@ -100,6 +103,7 @@ type AnalysisRequest struct {
 	RequestedBy string
 	Predicate   string
 	Mode        string
+	Prediction  bool
 	Queries     []AnalysisQuery
 	// Databases and Gaps are what the predicate resolved to, taken straight from the resolution
 	// /api/databases previews, so the run is over exactly the set a reader was shown.
@@ -126,6 +130,10 @@ func (s *Store) CreateAnalysisRun(req AnalysisRequest) (int64, error) {
 		return 0, fmt.Errorf("starting a run: the scope named no repository")
 	case !ValidAnalysisMode(mode):
 		return 0, fmt.Errorf("starting a run: %q is not an analysis mode", mode)
+	case req.Prediction && mode != AnalysisModeRegular:
+		return 0, fmt.Errorf("predicting from %s databases: a prediction is made from regular ones "+
+			"only, because Default Setup builds one repository's own checkout and stages nothing, so "+
+			"it would never report what %s analysis reveals", mode, mode)
 	}
 
 	tx, err := s.db.Begin()
@@ -137,9 +145,9 @@ func (s *Store) CreateAnalysisRun(req AnalysisRequest) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := tx.Exec(`
 		INSERT INTO abom_analysis_run
-			(predicate, analysis_mode, requested_by, state, created_at)
-		VALUES (?, ?, ?, ?, ?)`,
-		req.Predicate, mode, req.RequestedBy, RunPending, now)
+			(predicate, analysis_mode, requested_by, state, created_at, prediction)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		req.Predicate, mode, req.RequestedBy, RunPending, now, req.Prediction)
 	if err != nil {
 		return 0, fmt.Errorf("recording the run: %w", err)
 	}
@@ -310,6 +318,33 @@ func (s *Store) AnsweredBy(q QueryRun) (int64, MemberResult, bool, error) {
 }
 
 func (s *Store) setMember(runID int64, id DatabaseIdentity, r MemberResult) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if r.QueryRunID != 0 {
+		predicted, err := runIsPrediction(tx, runID)
+		if err != nil {
+			return err
+		}
+		// Linked, the prediction's answer would let a later run skip storing what it found.
+		if predicted {
+			return fmt.Errorf("run %d is a prediction, which stores no evaluation of %s",
+				runID, id.Repository)
+		}
+	}
+	if err := updateMember(tx, runID, id, r); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing %s: %w", id.Repository, err)
+	}
+	return nil
+}
+
+func updateMember(tx *sql.Tx, runID int64, id DatabaseIdentity, r MemberResult) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	started, finished := nullable(""), nullable("")
 	if r.Status == AnalysisRunning {
@@ -324,12 +359,6 @@ func (s *Store) setMember(runID int64, id DatabaseIdentity, r MemberResult) erro
 	if r.Counted {
 		results = r.Results
 	}
-
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("beginning transaction: %w", err)
-	}
-	defer tx.Rollback()
 
 	if _, err := tx.Exec(`
 		UPDATE abom_analysis_member
@@ -346,14 +375,21 @@ func (s *Store) setMember(runID int64, id DatabaseIdentity, r MemberResult) erro
 		return fmt.Errorf("moving %s to %s: %w", id.Repository, r.Status, err)
 	}
 	if r.Counted {
-		if err := replaceMemberResults(tx, runID, id, r.ByQuery); err != nil {
-			return err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing %s: %w", id.Repository, err)
+		return replaceMemberResults(tx, runID, id, r.ByQuery)
 	}
 	return nil
+}
+
+func runIsPrediction(tx *sql.Tx, runID int64) (bool, error) {
+	var predicted bool
+	err := tx.QueryRow(`SELECT prediction FROM abom_analysis_run WHERE row_id = ?`, runID).Scan(&predicted)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, fmt.Errorf("no run %d", runID)
+	}
+	if err != nil {
+		return false, fmt.Errorf("reading run %d: %w", runID, err)
+	}
+	return predicted, nil
 }
 
 // replaceMemberResults replaces rather than adds, or a re-run would double every count.
@@ -426,10 +462,10 @@ func (s *Store) AnalysisRun(id int64) (AnalysisRun, error) {
 	var finished sql.NullString
 	err := s.db.QueryRow(`
 		SELECT row_id, predicate, analysis_mode, requested_by, state, created_at, finished_at,
-		       COALESCE(cli_version, ''), COALESCE(refusal, '')
+		       COALESCE(cli_version, ''), COALESCE(refusal, ''), prediction
 		FROM abom_analysis_run WHERE row_id = ?`, id).
 		Scan(&run.RowID, &run.Predicate, &run.Mode, &run.RequestedBy, &run.State,
-			&run.CreatedAt, &finished, &run.CLIVersion, &run.Refusal)
+			&run.CreatedAt, &finished, &run.CLIVersion, &run.Refusal, &run.Prediction)
 	if errors.Is(err, sql.ErrNoRows) {
 		return run, fmt.Errorf("no run %d", id)
 	}
@@ -459,7 +495,7 @@ func (s *Store) AnalysisRuns() ([]AnalysisRun, error) {
 	out := []AnalysisRun{}
 	rows, err := s.db.Query(`
 		SELECT row_id, predicate, analysis_mode, requested_by, state, created_at, finished_at,
-		       COALESCE(cli_version, ''), COALESCE(refusal, '')
+		       COALESCE(cli_version, ''), COALESCE(refusal, ''), prediction
 		FROM abom_analysis_run ORDER BY row_id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("listing runs: %w", err)
@@ -472,7 +508,8 @@ func (s *Store) AnalysisRuns() ([]AnalysisRun, error) {
 		}
 		var finished sql.NullString
 		if err := rows.Scan(&run.RowID, &run.Predicate, &run.Mode, &run.RequestedBy,
-			&run.State, &run.CreatedAt, &finished, &run.CLIVersion, &run.Refusal); err != nil {
+			&run.State, &run.CreatedAt, &finished, &run.CLIVersion, &run.Refusal,
+			&run.Prediction); err != nil {
 			return nil, fmt.Errorf("scanning a run: %w", err)
 		}
 		run.FinishedAt = finished.String

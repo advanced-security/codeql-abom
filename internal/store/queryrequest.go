@@ -192,6 +192,14 @@ func evidenceShown(tx *sql.Tx, r QueryRequest) error {
 		return fmt.Errorf("run %d did not run %s, so a request about it was not asked from there",
 			r.SourceRunID, r.QueryID)
 	}
+	predicted, err := runIsPrediction(tx, r.SourceRunID)
+	if err != nil {
+		return err
+	}
+	if predicted && len(r.Evidence) > 0 {
+		return fmt.Errorf("run %d is a prediction, and what it would report stores no finding "+
+			"or evaluation for evidence to name", r.SourceRunID)
+	}
 	for _, e := range r.Evidence {
 		var evaluated int
 		if err := tx.QueryRow(`

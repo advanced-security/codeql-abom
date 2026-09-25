@@ -86,7 +86,7 @@ func (e *Executor) Run(ctx context.Context, runID int64) error {
 		if member.Status == store.AnalysisNoDatabase {
 			continue
 		}
-		if err := e.carryOut(ctx, runID, dir, member, run.Queries, planned); err != nil {
+		if err := e.carryOut(ctx, runID, dir, member, run.Queries, planned, run.Prediction); err != nil {
 			if ctx.Err() != nil {
 				_ = e.Store.SetAnalysisRunState(runID, store.RunCanceled)
 			}
@@ -97,8 +97,10 @@ func (e *Executor) Run(ctx context.Context, runID int64) error {
 	// Attribution is what makes a finding visible to anything built on the graph, and the crawl
 	// does it once at the end of a cycle for the same reason: the join is over the whole table,
 	// so doing it per member would repeat the same work for every repository in the run.
-	if _, err := e.Store.LinkFindingsToNodes(); err != nil {
-		return fmt.Errorf("attributing what run %d found: %w", runID, err)
+	if !run.Prediction {
+		if _, err := e.Store.LinkFindingsToNodes(); err != nil {
+			return fmt.Errorf("attributing what run %d found: %w", runID, err)
+		}
 	}
 	return e.Store.SetAnalysisRunState(runID, store.RunComplete)
 }
@@ -120,7 +122,7 @@ func (e *Executor) refuse(ctx context.Context, runID int64, cause error) error {
 // evaluation is already stored.
 func (e *Executor) carryOut(
 	ctx context.Context, runID int64, dir string, member store.AnalysisMember,
-	want []store.AnalysisQuery, planned tierPlan,
+	want []store.AnalysisQuery, planned tierPlan, predict bool,
 ) error {
 	held := onDisk(member.DatabasePath)
 	building := "building its database"
@@ -131,8 +133,11 @@ func (e *Executor) carryOut(
 			building = "rebuilding its database, which records no CodeQL that built it"
 		}
 	}
-	if skipped, err := e.skipAnswered(runID, member, held, want, planned); err != nil || skipped {
-		return err
+	// A stored answer lists findings, and a prediction holds its own list of what would be reported.
+	if !predict {
+		if skipped, err := e.skipAnswered(runID, member, held, want, planned); err != nil || skipped {
+			return err
+		}
 	}
 	if !held {
 		if err := e.Store.SetAnalysisMemberStatus(
@@ -152,7 +157,7 @@ func (e *Executor) carryOut(
 		}
 		member.DatabaseIdentity, member.DatabasePath = built.identity, built.path
 	}
-	if err := e.analyze(ctx, runID, dir, member, want, planned); err != nil {
+	if err := e.analyze(ctx, runID, dir, member, want, planned, predict); err != nil {
 		if ctx.Err() != nil {
 			return e.interrupted(runID, member.DatabaseIdentity, err)
 		}
@@ -293,7 +298,7 @@ func (e *Expander) buildDatabase(
 // analyze runs one member and records what became of it.
 func (e *Executor) analyze(
 	ctx context.Context, runID int64, dir string, member store.AnalysisMember,
-	want []store.AnalysisQuery, planned tierPlan,
+	want []store.AnalysisQuery, planned tierPlan, predict bool,
 ) error {
 	if err := e.Store.SetAnalysisMemberStatus(
 		runID, member.DatabaseIdentity, store.AnalysisRunning, ""); err != nil {
@@ -311,6 +316,9 @@ func (e *Executor) analyze(
 		}
 		return e.Store.RecordAnalysisMemberResult(runID, member.DatabaseIdentity,
 			store.MemberResult{Status: store.AnalysisFailed, Detail: err.Error()})
+	}
+	if predict {
+		return e.predict(runID, out, member, want, planned)
 	}
 
 	// Ingested into the same tables the crawl writes, under a ledger row built the same way. A
@@ -377,6 +385,39 @@ func (e *Executor) ingest(
 	return found, byQuery, runID, nil
 }
 
+// predict holds what a member's document reports as the prediction's, storing no finding and no
+// evaluation: a query nobody adopted has found nothing yet.
+func (e *Executor) predict(
+	runID int64, path string, member store.AnalysisMember, want []store.AnalysisQuery, planned tierPlan,
+) error {
+	predicted, err := readPredicted(path, member, planned)
+	e.report(member.Repository, "predict", err)
+	result := store.MemberResult{Status: store.AnalysisSucceeded, Detail: detailOf(err), ResultPath: path}
+	if err == nil {
+		result.Counted, result.Results = true, len(predicted)
+		// Every query asked for starts at zero, so one that would report nothing says so.
+		result.ByQuery = make(map[string]int, len(want))
+		for _, q := range want {
+			result.ByQuery[q.QueryID] = 0
+		}
+		for _, p := range predicted {
+			result.ByQuery[p.RuleID]++
+		}
+	}
+	return e.Store.RecordPredictedMemberResult(runID, member.DatabaseIdentity, result, predicted)
+}
+
+func readPredicted(path string, member store.AnalysisMember, planned tierPlan) ([]store.PredictedResult, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading the results at %s: %w", path, err)
+	}
+	defer f.Close()
+	return ingest.PredictionsFromSARIF(f, ingest.Options{
+		Repository: member.Repository, CLIVersion: planned.cliVersion,
+	})
+}
+
 // memberRun is the ledger row for analyzing one member.
 //
 // Keyed on the query *ids* the request named rather than on the paths the crawl's lane joins: the
@@ -396,6 +437,7 @@ func memberRun(
 		DBCommit:     member.Commit,
 		SourceFilter: member.SourceFilter,
 		AnalysisMode: member.Mode,
+		RecordedBy:   store.RecordedByRun,
 	})
 }
 
@@ -471,6 +513,9 @@ func (e *Executor) resolve(ctx context.Context, want []store.AnalysisQuery) (tie
 		}
 		planned.findings = append(planned.findings, path)
 		planned.findingsVersions = append(planned.findingsVersions, version)
+		planned.findingsRules = append(planned.findingsRules, store.QueryRunRule{
+			RuleID: q.QueryID, QueryVersion: version, Pack: pack, PackVersion: packVersion, PackDigest: digest,
+		})
 		planned.notePack(pack, packVersion, digest)
 	}
 	return planned, nil

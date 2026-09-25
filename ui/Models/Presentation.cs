@@ -3,8 +3,8 @@ using System.Globalization;
 namespace Abom.WebAssembly.Models;
 
 /// <summary>
-/// How the Explorer drew a scope: which view, grouping, depth and direction, and the three
-/// switches that change the picture rather than the question.
+/// How the Explorer drew a scope: which view, grouping, depth and direction, the node in focus, and
+/// the three switches that change the picture rather than the question.
 /// </summary>
 ///
 /// <remarks>
@@ -27,6 +27,12 @@ public sealed record Presentation
     public bool Collapsed { get; init; }
     public bool StableLayout { get; init; }
 
+    /// <summary>
+    /// The node drawn in focus, when one is. A key rather than a filter term: naming a node
+    /// narrows the drawing to its neighborhood, and no other page draws neighborhoods.
+    /// </summary>
+    public string Selection { get; init; } = string.Empty;
+
     /// <summary>Whether anybody chose anything, as opposed to every value happening to be the default.</summary>
     public bool HasAny => ToQueryString().Length > 0;
 
@@ -40,6 +46,7 @@ public sealed record Presentation
         if (Use3d) parts.Add("use3d=true");
         if (Collapsed) parts.Add("collapsed=true");
         if (StableLayout) parts.Add("stableLayout=true");
+        Add(parts, "selection", Selection);
         return string.Join("&", parts);
     }
 
@@ -70,6 +77,7 @@ public sealed record Presentation
             Use3d = Flag(found, "use3d"),
             Collapsed = Flag(found, "collapsed"),
             StableLayout = Flag(found, "stableLayout"),
+            Selection = Text(found, "selection"),
         };
     }
 

@@ -3,7 +3,7 @@
 **Status:** seven units, each asking its own endpoint for its own columns, each offering only the
 actions that apply to it, and each row carrying its own. The dedicated bill-of-materials page is
 gone; three claims it was the only surface to make went with it, and re-homing them is what is
-left.
+left, beside two layout defects and a unit whose scope bar shows a narrowing it does not apply.
 
 ## Why this exists
 
@@ -64,6 +64,14 @@ flowchart LR
    workflow_dispatch` a trigger per line, while *Findings*, the last column, takes the spare width —
    420px for a three-digit count. `geometry.spec.mjs` holds rows to 90px on CodeQL's grids only;
    the guard extends to Inventory once no unit exceeds it, not before.
+4. **Coverage applies no term, and the scope bar above it still shows each one as applied.**
+   `/api/frontier` takes a state and a cap and nothing else, and the language says so: the
+   Coverage unit's surface applies no term, so a named scope carrying one is disabled there with
+   the terms named, and the filter control offers none. What nothing marks is the chips already in
+   the scope: arriving from Actions under `scope=exposure&flags=findings`, Coverage lists the queue
+   unnarrowed beneath two chips that read as its narrowing. The fork: the chips say they do not
+   narrow this unit, in the words a disabled named scope uses, or the frontier applies the terms it
+   can. Depends on nothing.
 
 ## The constraints that must not be broken
 

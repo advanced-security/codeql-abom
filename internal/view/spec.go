@@ -32,6 +32,9 @@ type Spec struct {
 	// Provider is the SARIF tool driver name, verbatim. It never matches a finding nobody
 	// attributed.
 	Provider string
+	// Sources narrows to findings whose rule came from these kinds of pack, as the evaluation that
+	// reported the finding recorded it. A finding whose evaluation recorded no source matches none.
+	Sources  []string
 	Severity string
 	// Repositories narrows to what a caller is asking about — a pull request's repository, for the
 	// gate. Compared case-insensitively wherever it is applied.
@@ -97,6 +100,7 @@ const (
 	paramProperties    = "properties"
 	paramNotProperties = "notProperties"
 	paramProvider      = "provider"
+	paramSource        = "source"
 	paramSeverity      = "severity"
 	paramMode          = "mode"
 	paramEdgeClass     = "edges"
@@ -141,6 +145,7 @@ func (s Spec) String() string {
 		{paramEdgeClass, s.EdgeClass},
 		{paramEdgeKinds, s.EdgeKinds},
 		{paramFlags, s.Flags},
+		{paramSource, s.Sources},
 	} {
 		if v := normalize(f.values); len(v) > 0 {
 			q.Set(f.key, strings.Join(v, ","))
@@ -199,6 +204,7 @@ func Parse(text string) (Spec, error) {
 		paramEdgeClass: &s.EdgeClass,
 		paramEdgeKinds: &s.EdgeKinds,
 		paramFlags:     &s.Flags,
+		paramSource:    &s.Sources,
 	}
 	matches := map[string]*[]PropertyMatch{
 		paramProperties:    &s.Properties,
@@ -226,7 +232,13 @@ func Parse(text string) (Spec, error) {
 			}
 			*scalars[key] = raw
 		case lists[key] != nil:
-			*lists[key] = normalize(strings.Split(raw, ","))
+			members := normalize(strings.Split(raw, ","))
+			for _, member := range members {
+				if err := checkVocabulary(key, member); err != nil {
+					return Spec{}, err
+				}
+			}
+			*lists[key] = members
 		case key == paramMinReach:
 			n, err := strconv.Atoi(raw)
 			if err != nil || n < 0 {
@@ -284,6 +296,14 @@ const (
 	ModeRegular  = "regular"
 	ModeExtended = "extended"
 
+	// Where the rule behind a result came from, read from the pack that supplied it: GitHub's
+	// maintained packs, ABOM's own, the operator's, or several packs one invocation drew the same
+	// rule id from. Never read from the rule id, whose prefix is a convention anybody can adopt.
+	SourceUpstream = "upstream"
+	SourceAbom     = "abom"
+	SourceCustom   = "custom"
+	SourceMixed    = "mixed"
+
 	// What a relationship is. Four because the extraction produces four, and a reader filtering
 	// by one is asking a question the aggregates already act on: `job-needs-job` is ordering
 	// rather than use, and every dependency traversal excludes it.
@@ -312,6 +332,9 @@ var vocabulary = map[string][]string{
 	paramBoundary: {BoundarySameRepository, BoundarySameOwner, BoundaryCrossOwner},
 	paramRefStyle: {RefStyleAny, RefStyleSHA, RefStyleTag},
 	paramMode:     {ModeRegular, ModeExtended},
+	// The one list here, and refused member by member: a source is a fact ABOM records, so one it
+	// cannot produce is a question with no answer rather than one the corpus has not reached.
+	paramSource: {SourceUpstream, SourceAbom, SourceCustom, SourceMixed},
 }
 
 // Vocabulary reports the values a term allows, or nothing if the corpus decides them.
@@ -352,7 +375,7 @@ var termNames = map[string]bool{
 	paramRules: true, paramNotRules: true, paramRepos: true, paramProperties: true,
 	paramNotProperties: true, paramProvider: true, paramSeverity: true, paramEdgeClass: true,
 	paramRefStyle: true, paramBoundary: true, paramMinReach: true, paramFlags: true,
-	paramSteps: true, paramEdgeKinds: true, paramMode: true,
+	paramSteps: true, paramEdgeKinds: true, paramMode: true, paramSource: true,
 }
 
 // setTerms are the terms the set path applies — `/api/match`, and a policy, which are one
@@ -366,6 +389,7 @@ var setTerms = map[string]bool{
 	paramRules:         true,
 	paramNotRules:      true,
 	paramProvider:      true,
+	paramSource:        true,
 	paramSeverity:      true,
 	paramRepos:         true,
 	paramProperties:    true,

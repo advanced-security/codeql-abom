@@ -35,12 +35,12 @@ public class QueryRequestsTests : AbomTestContext
 
     private const string Catalog = """
         {"queries":[
-          {"queryId":"acme/a","queryVersion":"v2","origin":"user","working":true,"steps":[]},
-          {"queryId":"acme/a","queryVersion":"v1","origin":"user","working":false,"steps":[]},
-          {"queryId":"actions/unpinned-tag","queryVersion":"u1","origin":"upstream","steps":[]},
-          {"queryId":"abom/edges","queryVersion":"e1","origin":"abom","discovery":true,"steps":[]},
+          {"queryId":"acme/a","queryVersion":"v2","source":"custom","working":true,"steps":[]},
+          {"queryId":"acme/a","queryVersion":"v1","source":"custom","working":false,"steps":[]},
+          {"queryId":"actions/unpinned-tag","queryVersion":"u1","source":"upstream","steps":[]},
+          {"queryId":"abom/edges","queryVersion":"e1","source":"abom","discovery":true,"steps":[]},
           {"queryId":"actions/unpinned-tag actions/untrusted-checkout","queryVersion":"",
-           "origin":"upstream","lane":true,"steps":[]}
+           "source":"upstream","lane":true,"steps":[]}
         ],"stages":["dev","test"]}
         """;
 

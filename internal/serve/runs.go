@@ -39,6 +39,8 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Queries []store.AnalysisQuery `json:"queries"`
 		By      string                `json:"by"`
+		// Prediction holds what the queries would report rather than storing it as findings.
+		Prediction bool `json:"prediction"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "the request body is not the expected JSON")
@@ -64,11 +66,12 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 	id, err := s.Store.CreateAnalysisRun(store.AnalysisRequest{
 		RequestedBy: body.By,
 		// The question a name resolved to, never the name, which another scope can later take.
-		Predicate: spec.String(),
-		Mode:      set.Mode,
-		Queries:   body.Queries,
-		Databases: set.Databases,
-		Gaps:      set.Gaps,
+		Predicate:  spec.String(),
+		Mode:       set.Mode,
+		Prediction: body.Prediction,
+		Queries:    body.Queries,
+		Databases:  set.Databases,
+		Gaps:       set.Gaps,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -123,6 +126,25 @@ func (s *Server) runResults(w http.ResponseWriter, r *http.Request) {
 
 // runResultsLimit bounds one member's listing; past it the answer says it was cut short.
 const runResultsLimit = 500
+
+// findingTrace sends one finding with every evaluation that reported it.
+func (s *Server) findingTrace(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeError(w, http.StatusBadRequest, "a finding is named by a number")
+		return
+	}
+	trace, err := s.Store.FindingTrace(id)
+	switch {
+	case errors.Is(err, store.ErrNoFinding):
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, trace, nil)
+}
 
 // run reads one request with every member, which is where a reader sees what it could not cover.
 func (s *Server) run(w http.ResponseWriter, r *http.Request) {

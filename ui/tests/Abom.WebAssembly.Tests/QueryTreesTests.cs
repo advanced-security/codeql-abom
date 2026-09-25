@@ -11,7 +11,7 @@ public class QueryTreesTests : AbomTestContext
 {
     private static readonly Models.CatalogQuery Query = new()
     {
-        QueryId = "acme/self-hosted-runner", QueryVersion = "v1", Origin = "user", Working = true,
+        QueryId = "acme/self-hosted-runner", QueryVersion = "v1", Source = "custom", Working = true,
     };
 
     private const string Trees = """

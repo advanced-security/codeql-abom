@@ -85,8 +85,8 @@ repository's closure a dependency usually appears at one reference, and where it
 collision is inside a single owned repository, nameable and reportable, rather than a corpus-wide
 approximation. This is why the closure is not rooted at any seed and is not configurable: an owned
 repository is also the unit a person can act on, and the unit
-[`api/query-simulation.md`](../api/query-simulation.md) needs when it predicts what a published
-pack would report.
+[`api/query-simulation.md`](../api/query-simulation.md) needs when it compares a run's results with
+the alerts a published pack would raise.
 
 The collision test must count **selected commits**, not only distinct requested refs. Native
 lock-aware selection in [actions-lockfile.md](../db/actions-lockfile.md) is a prerequisite: a

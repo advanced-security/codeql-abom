@@ -396,4 +396,50 @@ test.describe('a scope an operator kept', () => {
             'the product\u2019s own questions are not the operator\u2019s to remove',
         ).toHaveCount(0);
     });
+
+    // A scope is its predicate, never the page it was kept on, and the Explorer is the one page
+    // whose picture is kept beside it. Compared with the stored row, because a page that opened a
+    // scope with a term added or dropped would still look like it had opened it.
+    test('a scope kept on the Explorer opens on the Inventory and draws back its picture', on('/explore', '/inventory'), async ({
+        page,
+        request,
+        baseURL,
+    }) => {
+        const name = `e2e-drawn-${Date.now()}`;
+        const chip = `[data-abom-views] [data-abom-view='${name}']`;
+        const picture = new Set(['unit', 'tab', 'view', 'direction', 'from', 'status', 'hops', 'groupBy',
+            'use3d', 'collapsed', 'stableLayout', 'selection', 'focus']);
+        const predicateOf = (url) => new URL(url).search.replace(/^\?/, '').split('&')
+            .filter((pair) => pair && !picture.has(pair.split('=')[0]))
+            .sort()
+            .join('&');
+
+        await page.goto('/explore?scope=exposure&view=priority&hops=2');
+        await ready(page);
+        await page.locator('[data-abom-named-scopes] [data-abom-scope-name]').fill(name);
+        await page.locator('[data-abom-named-scopes] [data-abom-save-scope]').click();
+        await expect(page.locator(chip), 'the kept scope is offered here').toBeVisible({ timeout: 15_000 });
+
+        const kept = (await (await request.get(`${baseURL}/api/views`)).json())
+            .find((v) => v.name === name);
+        expect(kept, 'the server kept it').toBeTruthy();
+        expect(kept.presentation, 'the picture was kept beside it').toContain('view=priority');
+        expect(kept.presentation).toContain('hops=2');
+
+        await page.goto('/inventory');
+        await ready(page);
+        await page.locator(chip).click();
+        await expect.poll(() => predicateOf(page.url()), 'the Inventory holds the stored question')
+            .toBe(kept.predicate);
+
+        await page.goto('/explore');
+        await ready(page);
+        await page.locator(chip).click();
+        await expect.poll(() => predicateOf(page.url()), 'the Explorer holds it too').toBe(kept.predicate);
+        await expect.poll(() => new URL(page.url()).searchParams.get('view')).toBe('priority');
+        expect(new URL(page.url()).searchParams.get('hops'), 'drawn the way it was kept').toBe('2');
+
+        await page.locator(`[data-abom-forget-view='${name}']`).click();
+        await expect(page.locator(chip)).toHaveCount(0, { timeout: 15_000 });
+    });
 });

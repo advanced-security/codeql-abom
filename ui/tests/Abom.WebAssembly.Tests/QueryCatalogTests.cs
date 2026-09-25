@@ -15,11 +15,11 @@ public class QueryCatalogTests : AbomTestContext
     private const string TwoVersions = """
         {"queries":[
           {"queryId":"abom/edges","queryVersion":"f4b6202355aa0011","pack":"advanced-security/abom-actions-graph-extraction-src",
-           "packVersion":"2.27.0","cliVersion":"2.27.0","origin":"abom","stage":"",
+           "packVersion":"2.27.0","cliVersion":"2.27.0","source":"abom","stage":"",
            "stagedBy":"","stagedAt":"","runs":9,"repositories":7,
            "firstRunAt":"2026-09-22T16:00:00Z","lastRunAt":"2026-09-22T16:20:00Z"},
           {"queryId":"actions/unpinned-tag","queryVersion":"u1aa22bb33cc4","pack":"codeql/actions-queries",
-           "packVersion":"0.6.35","cliVersion":"2.27.0","origin":"upstream","stage":"review",
+           "packVersion":"0.6.35","cliVersion":"2.27.0","source":"upstream","stage":"review",
            "stagedBy":"operator","stagedAt":"2026-09-22T15:00:00Z","runs":204,"repositories":204,
            "firstRunAt":"2026-09-20T10:00:00Z","lastRunAt":"2026-09-22T16:20:00Z"}
         ],"stages":["dev","test","extended-test","review","deploy"]}
@@ -99,18 +99,22 @@ public class QueryCatalogTests : AbomTestContext
     }
 
     /// <summary>
-    /// Origin is read from the pack. `abom/` in a rule id is a naming convention anybody can
-    /// adopt and is never evidence of where a query came from.
+    /// A query's source is read from the pack. `abom/` in a rule id is a naming convention anybody
+    /// can adopt and is never evidence of where a query came from. The column says "Source", the
+    /// word the filter language and the API use for it.
     /// </summary>
     [Fact]
-    public void OriginIsRenderedFromThePackRatherThanTheRuleIdPrefix()
+    public void SourceIsRenderedFromThePackRatherThanTheRuleIdPrefix()
     {
         var page = Render(TwoVersions);
 
-        var origins = page.FindAll("[data-abom-query-origin]")
-            .Select(e => e.GetAttribute("data-abom-query-origin")).ToList();
-        Assert.Contains("abom", origins);
-        Assert.Contains("upstream", origins);
+        var sources = page.FindAll("[data-abom-query-source]")
+            .Select(e => e.GetAttribute("data-abom-query-source")).ToList();
+        Assert.Contains("abom", sources);
+        Assert.Contains("upstream", sources);
+        var headers = page.FindAll("th").Select(h => h.TextContent.Trim()).ToList();
+        Assert.Contains("Source", headers);
+        Assert.DoesNotContain("Origin", headers);
     }
 
     /// <summary>
@@ -123,7 +127,7 @@ public class QueryCatalogTests : AbomTestContext
         var page = Render("""
             {"queries":[
               {"queryId":"abom/legacy","queryVersion":"","pack":"","packVersion":"","cliVersion":"",
-               "origin":"","stage":"","stagedBy":"","stagedAt":"","runs":2269,"repositories":1118,
+               "source":"","stage":"","stagedBy":"","stagedAt":"","runs":2269,"repositories":1118,
                "firstRunAt":"2026-09-01T10:00:00Z","lastRunAt":"2026-09-20T10:00:00Z"}
             ],"stages":["dev","test"]}
             """);
@@ -183,11 +187,11 @@ public class QueryCatalogTests : AbomTestContext
     private const string WithDiscovery = """
         {"queries":[
           {"queryId":"abom/edges","queryVersion":"v1","pack":"advanced-security/abom-actions-graph-extraction-src",
-           "packVersion":"2.27.0","cliVersion":"2.27.0","origin":"abom","suite":"","kind":"",
+           "packVersion":"2.27.0","cliVersion":"2.27.0","source":"abom","suite":"","kind":"",
            "kindRecorded":true,"discovery":true,"stage":"","stagedBy":"","stagedAt":"",
            "runs":2269,"repositories":1118,"analyses":0,"firstRunAt":"","lastRunAt":"2026-09-22T10:15:00Z"},
           {"queryId":"actions/unpinned-tag","queryVersion":"u1","pack":"codeql/actions-queries",
-           "packVersion":"0.6.35","cliVersion":"2.27.0","origin":"upstream","suite":"","kind":"problem",
+           "packVersion":"0.6.35","cliVersion":"2.27.0","source":"upstream","suite":"","kind":"problem",
            "kindRecorded":true,"discovery":false,"stage":"","stagedBy":"","stagedAt":"",
            "runs":204,"repositories":204,"analyses":0,"firstRunAt":"","lastRunAt":"2026-09-22T10:15:00Z"}
         ],"stages":["dev","test"]}
@@ -235,11 +239,11 @@ public class QueryCatalogTests : AbomTestContext
     private const string WithLane = """
         {"queries":[
           {"queryId":"abom-findings.qls","queryVersion":"","pack":"codeql/actions-queries",
-           "packVersion":"0.6.34","cliVersion":"2.27.0","origin":"upstream","suite":"abom-findings.qls",
+           "packVersion":"0.6.34","cliVersion":"2.27.0","source":"upstream","suite":"abom-findings.qls",
            "kind":"","kindRecorded":false,"discovery":false,"lane":true,"stage":"","stagedBy":"","stagedAt":"",
            "runs":718,"repositories":363,"analyses":0,"firstRunAt":"","lastRunAt":"2026-09-22T10:15:00Z"},
           {"queryId":"actions/unpinned-tag","queryVersion":"u1","pack":"codeql/actions-queries",
-           "packVersion":"0.6.35","cliVersion":"2.27.0","origin":"upstream","suite":"","kind":"problem",
+           "packVersion":"0.6.35","cliVersion":"2.27.0","source":"upstream","suite":"","kind":"problem",
            "kindRecorded":true,"discovery":false,"lane":false,"stage":"","stagedBy":"","stagedAt":"",
            "runs":204,"repositories":204,"analyses":2,"firstRunAt":"","lastRunAt":"2026-09-22T10:15:00Z"}
         ],"stages":["dev","test"]}
@@ -248,7 +252,7 @@ public class QueryCatalogTests : AbomTestContext
     private const string OperatorWritten = """
         {"queries":[
           {"queryId":"acme/self-hosted-runner","queryVersion":"9b5327ab01d7","pack":"abom/custom-queries",
-           "packVersion":"2.27.0","cliVersion":"2.27.0","origin":"user","suite":"","kind":"problem",
+           "packVersion":"2.27.0","cliVersion":"2.27.0","source":"custom","suite":"","kind":"problem",
            "kindRecorded":true,"discovery":false,"lane":false,"stage":"","stagedBy":"","stagedAt":"",
            "tested":false,"passing":false,"testDetail":"","working":true,
            "steps":[
@@ -260,7 +264,7 @@ public class QueryCatalogTests : AbomTestContext
              {"step":"tests","state":"pending","detail":"never run for this version"}],
            "runs":57,"repositories":57,"analyses":0,"firstRunAt":"","lastRunAt":"2026-09-22T17:40:00Z"},
           {"queryId":"actions/unpinned-tag","queryVersion":"u1","pack":"codeql/actions-queries",
-           "packVersion":"0.6.35","cliVersion":"2.27.0","origin":"upstream","suite":"","kind":"problem",
+           "packVersion":"0.6.35","cliVersion":"2.27.0","source":"upstream","suite":"","kind":"problem",
            "kindRecorded":true,"discovery":false,"lane":false,"stage":"","stagedBy":"","stagedAt":"",
            "steps":[],
            "runs":204,"repositories":204,"analyses":0,"firstRunAt":"","lastRunAt":"2026-09-22T10:15:00Z"}
@@ -309,7 +313,7 @@ public class QueryCatalogTests : AbomTestContext
         var page = Render("""
             {"queries":[
               {"queryId":"acme/self-hosted-runner","queryVersion":"03d18fc6adb0","pack":"abom/custom-queries",
-               "origin":"user","kind":"problem","kindRecorded":true,"stage":"","working":false,"steps":[],
+               "source":"custom","kind":"problem","kindRecorded":true,"stage":"","working":false,"steps":[],
                "tested":true,"passing":true,"testDetail":"1 of 1 passed",
                "runs":1,"repositories":1,"lastRunAt":"2026-09-22T17:40:00Z"}
             ],"stages":["dev","test"]}
@@ -331,7 +335,7 @@ public class QueryCatalogTests : AbomTestContext
         var page = Render("""
             {"queries":[
               {"queryId":"acme/new","queryVersion":"aa11bb22cc33","pack":"abom/custom-queries",
-               "origin":"user","kind":"problem","kindRecorded":true,"stage":"","working":true,
+               "source":"custom","kind":"problem","kindRecorded":true,"stage":"","working":true,
                "steps":[{"step":"tests","state":"pending","detail":"never run for this version"}],
                "runs":0,"repositories":0,"lastRunAt":""}
             ],"stages":["dev","test"]}
@@ -504,8 +508,8 @@ public class QueryCatalogTests : AbomTestContext
     {
         var page = Render(OperatorWritten);
 
-        var origins = page.FindAll("[data-abom-query-origin='user']");
-        Assert.Equal("custom", Assert.Single(origins).TextContent.Trim());
+        var sources = page.FindAll("[data-abom-query-source='custom']");
+        Assert.Equal("custom", Assert.Single(sources).TextContent.Trim());
         Assert.DoesNotContain(">yours<", page.Markup);
     }
 

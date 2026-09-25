@@ -46,6 +46,7 @@ func SelectorFor(spec viewspec.Spec) FindingSelector {
 		Exclude:           spec.NotRules,
 		Provider:          spec.Provider,
 		Severity:          spec.Severity,
+		Sources:           spec.Sources,
 		Repositories:      spec.Repositories,
 		Properties:        spec.Properties,
 		ExcludeProperties: spec.NotProperties,

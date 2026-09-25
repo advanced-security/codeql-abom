@@ -20,6 +20,7 @@ var inventoryTerms = map[string]bool{
 	paramRules:         true,
 	paramNotRules:      true,
 	paramProvider:      true,
+	paramSource:        true,
 	paramSeverity:      true,
 	paramRepos:         true,
 	paramProperties:    true,
@@ -94,8 +95,10 @@ func (s Spec) UnenforceableAsRepositories() []string {
 // where the set path's findings sit, in the shape `mode` names. Everything else describes a node
 // or a relationship, and a run has neither to narrow.
 func (s Spec) UnenforceableAsRun() []string {
-	return s.carried(func(t string) bool { return repositoryTerms[t] || setTerms[t] })
+	return s.carried(appliedByRun)
 }
+
+func appliedByRun(t string) bool { return repositoryTerms[t] || setTerms[t] }
 
 // AsksRepositoriesUnit reports whether the predicate carries a term the repositories unit applies,
 // which makes a run's population exactly what that unit lists for it.

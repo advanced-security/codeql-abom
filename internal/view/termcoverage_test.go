@@ -53,17 +53,7 @@ func TestIsTermKnowsEveryTermTheLanguageWrites(t *testing.T) {
 // the serializer the way a hand-written list would.
 func everyTerm(t *testing.T) []string {
 	t.Helper()
-	spec := Spec{
-		Scope: "owned", Search: "x", Kinds: []string{"action"}, Origins: []string{"external"},
-		Rules: []string{"r"}, NotRules: []string{"r"}, Repositories: []string{"o/r"},
-		Properties:    []PropertyMatch{{Name: "k", Value: "v"}},
-		NotProperties: []PropertyMatch{{Name: "k", Value: "v"}},
-		Provider:      "p", Severity: "high", EdgeClass: []string{"e"},
-		EdgeKinds: []string{EdgeKindJobNeedsJob},
-		RefStyle:  "tag", Boundary: "cross-owner", MinReach: 1,
-		Flags: []string{"findings"}, Steps: true, Mode: ModeRegular,
-	}
-	held, err := url.ParseQuery(spec.String())
+	held, err := url.ParseQuery(specCarryingEveryTerm().String())
 	if err != nil {
 		t.Fatalf("parsing the canonical text: %v", err)
 	}
@@ -71,8 +61,22 @@ func everyTerm(t *testing.T) []string {
 	for key := range held {
 		out = append(out, key)
 	}
-	if len(out) != 19 {
-		t.Fatalf("the spec wrote %d terms, want all 19; a field was added and not set here", len(out))
+	if len(out) != 20 {
+		t.Fatalf("the spec wrote %d terms, want all 20; a field was added and not set here", len(out))
 	}
 	return out
+}
+
+func specCarryingEveryTerm() Spec {
+	return Spec{
+		Scope: "owned", Search: "x", Kinds: []string{"action"}, Origins: []string{"external"},
+		Rules: []string{"r"}, NotRules: []string{"r"}, Repositories: []string{"o/r"},
+		Properties:    []PropertyMatch{{Name: "k", Value: "v"}},
+		NotProperties: []PropertyMatch{{Name: "k", Value: "v"}},
+		Provider:      "p", Severity: "high", EdgeClass: []string{"e"},
+		Sources:   []string{SourceAbom},
+		EdgeKinds: []string{EdgeKindJobNeedsJob},
+		RefStyle:  "tag", Boundary: "cross-owner", MinReach: 1,
+		Flags: []string{"findings"}, Steps: true, Mode: ModeRegular,
+	}
 }

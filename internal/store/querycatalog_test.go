@@ -80,22 +80,22 @@ func TestACatalogEntryCountsTheRepositoriesItHasRunAgainst(t *testing.T) {
 	}
 }
 
-// A query's provenance comes from the pack that supplied it. The `abom/` rule-id prefix is a
-// naming convention anybody can adopt and is never evidence of where a query came from.
-func TestOriginIsReadFromThePackRatherThanTheRuleId(t *testing.T) {
+// A query's source is the pack that supplied it. The `abom/` rule-id prefix is a naming convention
+// anybody can adopt and is never evidence of where a query came from.
+func TestSourceIsReadFromThePackRatherThanTheRuleId(t *testing.T) {
 	by := catalogBy(t, catalogStore(t))
-	if got := by["abom/edges@v1"].Origin; got != QueryOriginAbom {
+	if got := by["abom/edges@v1"].Source; got != QuerySourceAbom {
 		t.Errorf("abom/edges came from an ABOM pack and is recorded as %q", got)
 	}
-	if got := by["actions/unpinned-tag@u1"].Origin; got != QueryOriginUpstream {
+	if got := by["actions/unpinned-tag@u1"].Source; got != QuerySourceUpstream {
 		t.Errorf("actions/unpinned-tag came from a codeql/ pack and is recorded as %q", got)
 	}
 }
 
-// A lane that ran rules from several packs has no single origin. Measured on the crawled
+// A lane that ran rules from several packs has no single source. Measured on the crawled
 // organization: the findings lane records two packs, and reading the first called an ABOM suite
 // upstream -- a provenance claim decided by which pack sorted first.
-func TestALaneSpanningPacksIsMixedRatherThanTheFirstPacksOrigin(t *testing.T) {
+func TestALaneSpanningPacksIsMixedRatherThanTheFirstPacksSource(t *testing.T) {
 	s := catalogStore(t)
 	if _, err := s.RecordQueryRun(QueryRun{
 		AnalysisMode: AnalysisModeRegular,
@@ -106,8 +106,8 @@ func TestALaneSpanningPacksIsMixedRatherThanTheFirstPacksOrigin(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("RecordQueryRun: %v", err)
 	}
-	if got := catalogBy(t, s)["abom-findings.qls@f1"].Origin; got != QueryOriginMixed {
-		t.Errorf("a lane drawing from two packs reports origin %q, want %q", got, QueryOriginMixed)
+	if got := catalogBy(t, s)["abom-findings.qls@f1"].Source; got != QuerySourceMixed {
+		t.Errorf("a lane drawing from two packs reports source %q, want %q", got, QuerySourceMixed)
 	}
 }
 
@@ -367,7 +367,7 @@ func TestAQueryOnDiskIsCatalogedBeforeItHasRun(t *testing.T) {
 	if !ok {
 		t.Fatal("a query on disk is missing from the catalog until it has run")
 	}
-	if !got.Working || got.Origin != QueryOriginUser || got.Kind != "problem" || !got.KindRecorded ||
+	if !got.Working || got.Source != QuerySourceCustom || got.Kind != "problem" || !got.KindRecorded ||
 		got.Discovery || got.Runs != 0 || got.LastRunAt != "" {
 		t.Errorf("listed as %+v", got)
 	}

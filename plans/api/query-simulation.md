@@ -1,6 +1,28 @@
 # A query's effect across the organization is known before anybody turns it on
 
-**Status:** Nothing here exists. A policy can be simulated before it is adopted; a query cannot.
+**Status:** Nothing compares a run's results with what GitHub already alerts. What exists instead is
+*Predict*, a run of its own kind whose results are held in `abom_predicted_result`, and it is a
+dead approach: [on-demand analysis](on-demand-analysis.md) deletes it into a run with findings off,
+which is all this plan ever needed. What is left is the comparison itself, the enablement
+condition, the merge with Default Setup, the staleness of each commit, what earns `review`, and the
+check once published. What is left waits on the on-demand analysis work.
+
+**Decided: this plan is a comparison, not a kind of run.** It sets some run's results, over regular
+databases, against the code scanning alerts GitHub holds now, for one or more repositories. A run
+with findings off is what it usually reads, because a query nobody adopted should not have written
+findings yet, and nothing here keeps a second run kind, a second results table or a second button
+alive.
+
+**Decided: nothing here starts until the on-demand analysis work has landed** — what is left of
+[on-demand analysis](on-demand-analysis.md) itself, and what a scope means wherever it is reused:
+[filter enforcement](filter-enforcement.md), [the policy language](policy-language.md) and [org
+enumeration](org-enumeration.md). A comparison reads a run over a scope. What is left of the run —
+its findings setting, a scope named on the CodeQL page, what is still to do while it runs, a size
+before Run that is honest about databases another CodeQL built — and what is left of the scope —
+every term enforced or refused on every surface, the terms a rule is actually about, and an
+organization read without one request per repository — is what every comparison is asked for and
+read through. Each item below that says it depends on nothing depends on nothing *within this
+plan*.
 
 ## Why this exists
 
@@ -8,93 +30,122 @@ ABOM already refuses to let a rule bite before somebody has seen what it would d
 drafted, **simulated against stored state**, and adopted only if what it would have blocked is
 acceptable. `abom_policy_simulation` records the counts that decision was made on.
 
-A query has no equivalent, and it is the more consequential of the two. Adopting a policy changes
+A query had no equivalent, and it is the more consequential of the two. Adopting a policy changes
 what ABOM refuses. Publishing a query pack that an organization's Default Setup picks up changes
 what **every developer in the organization sees in their Security tab** — and the person who wrote
 the query is usually not the person who will be asked about the four hundred alerts it raised.
 
 So the question a query author needs answered before publishing is precise: *given this query, which
-repositories would raise how many alerts, and which of those are already there?* ABOM is in an
-unusual position to answer it, because it already holds analyzed databases for the organization and
-already knows which repositories have code scanning at all.
+repositories would raise how many alerts, and which of those are already there?* The first half is
+a run: its results, held while nobody has adopted the query, say where it fires and how often. The
+second half is the comparison with what is already alerted, and it is what this plan adds.
 
-**The answer has to come from `regular` mode, and only from `regular` mode.** Default Setup builds
-one repository's own checkout. It stages nothing, so it never resolves a `uses:` across a repository
+**The comparison reads `regular` mode, and only `regular` mode.** Default Setup builds one
+repository's own checkout. It stages nothing, so it never resolves a `uses:` across a repository
 boundary and never sees anything
-[`ql/closure-database.md`](../ql/closure-database.md) reveals. A prediction sourced from an extended
-database would confidently name alerts that will never appear. Preserve the implemented
+[`ql/closure-database.md`](../ql/closure-database.md) reveals. A comparison made from an extended
+run would confidently name alerts that will never appear. The run itself may be over any shape —
+refining a query against a closure database is legitimate — so the refusal belongs to the
+comparison, not to the run. Preserve the implemented
 [analysis-mode isolation](../../docs/architecture.md#analysis-modes).
+
+```mermaid
+flowchart LR
+    DRAFT["a run's draft"] -->|"Predict, deleted when<br/>findings off replaces it"| HELD["what a run held:<br/>a count per rule, every result"]
+    HELD -. "not compared yet" .-> CMP["new, and<br/>already alerted"]
+    ALERTS["code scanning alerts,<br/>read now"] -. "not read yet" .-> CMP
+    EXT["a run over<br/>extended databases"] -. "refused" .-> CMP
+    CMP -. "never" .-> WRITE["an alert, a finding,<br/>or a write to GitHub"]
+    style CMP fill:#3d2d1d
+    style ALERTS fill:#3d2d1d
+    style EXT fill:#3d1d1d
+    style WRITE fill:#3d1d1d
+```
 
 ## Pending
 
-1. **Run the candidate query across a resolved scope and count what it would report**, per
-   repository and per rule. The mechanism is [`api/on-demand-analysis.md`](on-demand-analysis.md);
-   what this adds is that the results are held as a **prediction** rather than merged as findings,
-   because a query nobody has adopted has not found anything yet. Depends on the on-demand run,
-   which already runs an operator's query from the pack ABOM scaffolded and installed.
-2. **Subtract what is already alerted.** A rule that fires 400 times where 380 alerts already exist
+1. **Subtract what is already alerted.** A rule that fires 400 times where 380 alerts already exist
    adds 20. The count that matters to the person who will be asked about it is the **delta**, not
-   the total. Depends on 1.
-3. **State the coverage, and state it first.** A prediction over 31 of 40 repositories is a
-   prediction about 31 repositories. The nine are named. Coverage comes from the database
-   resolution `store.DatabasesMatching` performs, which already reports its gap per repository.
-   Depends on 1.
-4. **State the enablement condition.** A repository with no Actions analysis enabled raises no alert
+   the total. **Decided: "already alerted" is GitHub's code scanning alerts, read now**, for the
+   repositories somebody chose — what a developer actually sees, which ABOM does not read today,
+   and which need the security-events permission per repository. The results compared are some
+   run's over regular databases, findings on or off. A result carries a `result_hash`; what an
+   alert is matched on is part of this item, since an alert is read from GitHub's API rather than
+   from a document ABOM produced, and its most recent instance sits at a commit of its own. ABOM's
+   own findings for the same rule would have been cheap and would have said less: on the
+   verification store a held run of `actions/missing-workflow-permissions` over three owned
+   repositories held 7 results, and all 7 were already findings the crawl stored, by hash and by
+   location, so its delta would be 0 whatever GitHub shows. Depends on nothing.
+2. **State the enablement condition.** A repository with no Actions analysis enabled raises no alert
    however loudly the query fires, and GitHub's repository language statistics **do not report
    `actions`** — which is the one gap `gh-ghas-audit` is structurally blind to and
-   [`api/ghas-enablement.md`](ghas-enablement.md) exists to close. Until that lands, the prediction
+   [`api/ghas-enablement.md`](ghas-enablement.md) exists to close. Until that lands, the comparison
    carries the condition rather than the answer: *this many alerts, in the repositories where
-   Actions analysis is running*. Depends on 3.
-5. **State the merge.** A configuration file applied through the `github-codeql-config-file`
+   Actions analysis is running*. Depends on nothing here.
+3. **State the merge.** A configuration file applied through the `github-codeql-config-file`
    property is **merged** with the configuration Default Setup generates, so the alerts that appear
-   are the union of the default suite and the added pack. A prediction that ignores the merge
-   predicts the wrong set — it has to be a delta over what the repository already runs, not a
-   standalone count. Depends on 4.
-6. **Keep the prediction, so it can be checked afterwards.** Written down before publication, and
-   compared with what actually appeared once the pack is live. A prediction nobody revisits is a
-   number that was never tested. Depends on 5 and on
-   [`ql/pack-promotion.md`](../ql/pack-promotion.md).
+   are the union of the default suite and the added pack. A comparison that ignores the merge
+   counts the wrong set — it has to be a delta over what the repository already runs, not a
+   standalone count. Depends on 1 and 2.
+4. **Keep the comparison, so it can be checked afterwards.** Written down before publication, and
+   compared with what actually appeared once the pack is live. A comparison nobody revisits is a
+   number that was never tested. Depends on 3 and on
+   [`ql/pack-promotion.md`](../ql/pack-promotion.md), which is deferred until much later, so this
+   item waits with it.
+5. **Say what earns `review`.** [`next.md`](../next.md) names this plan as what earns the stage,
+   and nothing yet asks for a comparison before it is set. The fork: a comparison of a run of that
+   exact version under the CodeQL the server runs, over any scope somebody chose, which proves the
+   query was looked at before it bites; or over the declared scope, which proves it was looked at
+   where it will bite. Either way it is a refusal naming what is missing, as `extended-test`'s is.
+   Depends on nothing.
+6. **Name the staleness.** Each member records the commit it was analyzed at, and nothing on
+   screen says how that commit relates to the default branch Default Setup scans — which the
+   inference boundary below calls the failure mode. The comparison states it per repository, and a
+   repository whose default branch nobody has read since is said to be unknown rather than current.
+   Depends on nothing.
 
 ## The inference boundary, stated rather than implied
 
 **Exact for the commit analyzed. An inference beyond it.** ABOM analyzes a pinned commit; Default
-Setup scans a default branch and a pull request head. Where those agree, the prediction is a
+Setup scans a default branch and a pull request head. Where those agree, the comparison is a
 measurement; where they do not, it is an extrapolation, and the size of the gap is how stale the
 analysis is.
 
 This is the same refusal [`api/dependency-graph-crosscheck.md`](dependency-graph-crosscheck.md)
 already makes for a different reason — *an SBOM describes a default branch and we analyze a pinned
-commit* — and it is not softened here because the prediction is more useful if it is believed. **A
-prediction that does not name its own staleness is the failure mode.**
+commit* — and it is not softened here because the comparison is more useful if it is believed. **A
+comparison that does not name its own staleness is the failure mode.**
 
 ## The constraints that must not be broken
 
-**A simulation creates nothing.** No alert, no finding, no submission, no write to any repository.
-The output is a count and a list, held against the candidate query, and it disappears if the query
-is discarded.
+**A comparison creates nothing.** No alert, no finding, no submission, no write to any repository.
+It reads alerts and a run's results, and what it holds is a count and a list against that run.
 
-**A prediction is sourced from `regular` mode.** Enforced, not documented: a simulation over
-extended rows is refused rather than labelled.
+**A comparison reads a regular run only.** Refused where the comparison is asked for, naming the
+run's shape, and never where the run is: a run with findings off over a closure database is how a
+query is refined against one.
 
-**A predicted alert is not a finding.** It is what *would* be reported by a query nobody has
-adopted. Merging predictions into `abom_finding` would make the counts on every surface include
-things nobody chose to look for.
+**A held result is not a finding until somebody converts it.** It is what *would* be reported by
+a query nobody has adopted. Merging a run's held results into `abom_finding` without anybody
+choosing it would make the counts on every surface include things nobody chose to look for;
+[on-demand analysis](on-demand-analysis.md) owns the conversion that is chosen.
 
-**Say what was not predicted.** Repositories with no database, with no Actions analysis, or with an
-analysis too old to trust are named individually. A confident number over an unnamed subset is worse
-than no number, because it will be quoted.
+**Say what was not compared.** Repositories with no database, with no Actions analysis, whose
+alerts could not be read, or with an analysis too old to trust are named individually. A confident
+number over an unnamed subset is worse than no number, because it will be quoted.
 
-**A security verdict still comes only from a rule id**, and a simulation adds no verdict of its own.
-It says what a rule would say, not whether the rule is right.
+**A security verdict still comes only from a rule id**, and a comparison adds no verdict of its
+own. It says what a rule would say, not whether the rule is right.
 
 ## Verification
 
-- A query with a known result set on the crawled organization predicts that set exactly, compared
-  against a real run of the same query through the ordinary lane.
-- The prediction and the actual alerts are compared once for real, on `codeql-abom-test1`, with the
-  prediction written down **before** the pack is published. A disagreement is the finding, and it is
+- A run's results and the actual alerts are compared once for real, on `codeql-abom-test1`, with the
+  comparison written down **before** the pack is published. A disagreement is the finding, and it is
   recorded rather than reconciled.
-- Coverage plus predicted repositories equals the repositories the scope named, always.
-- A simulation asked for `mode=extended` is refused, with its reason.
-- The delta is checked against an alert set that already exists: re-predicting an adopted query
-  returns zero new alerts.
+- The delta is checked against an alert set that already exists: comparing a run of an adopted
+  query returns zero new alerts.
+- A version advanced to `review` without the comparison that earns it is refused, naming what is
+  missing.
+- A comparison of a repository whose default branch has moved past the commit it was analyzed at
+  says so beside that repository's count.
+- A comparison asked of a run over extended databases is refused, naming the shape.

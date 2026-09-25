@@ -48,6 +48,12 @@
                 <PropertyColumn Property="x => x.RowId" Title="Run" CellClass="abom-nowrap">
                     <CellTemplate>
                         <span data-abom-run-id="@context.Item.RowId">#@context.Item.RowId</span>
+                        @if (context.Item.Prediction)
+                        {
+                            <MudText Typo="Typo.caption" Class="d-block mud-text-secondary"
+                                     title="What its queries would report, stored as no finding"
+                                     data-abom-run-prediction>prediction</MudText>
+                        }
                     </CellTemplate>
                 </PropertyColumn>
 
@@ -65,10 +71,10 @@
                                     </MudTooltip>
                                     break;
                                 case "pending":
-                                    <MudTooltip Text="Start this run over the repositories it names.">
+                                    <MudTooltip Text="@StartText(context.Item)">
                                         <MudIconButton Icon="@Icons.Material.Outlined.PlayArrow" Size="Size.Small"
                                                        Color="Color.Primary" OnClick="@(() => Execute(context.Item))"
-                                                       aria-label="@($"Start run #{context.Item.RowId}")"
+                                                       aria-label="@($"Start {Noun(context.Item)} #{context.Item.RowId}")"
                                                        data-abom-run-start />
                                     </MudTooltip>
                                     break;
@@ -77,7 +83,7 @@
                                     <MudTooltip Text="@AgainText(context.Item)">
                                         <MudIconButton Icon="@Icons.Material.Outlined.Replay" Size="Size.Small"
                                                        OnClick="@(() => Execute(context.Item))"
-                                                       aria-label="@($"Run #{context.Item.RowId} again")"
+                                                       aria-label="@($"{Verb(context.Item)} #{context.Item.RowId} again")"
                                                        data-abom-run-again />
                                     </MudTooltip>
                                     break;
@@ -225,14 +231,28 @@
         : run.State is "pending" or "refused" ? "CodeQL chosen when it runs"
         : "CodeQL not recorded";
 
-    private static string AgainText(AnalysisRun run) => run.State switch
-    {
-        "interrupted" => "The server stopped while this ran. Run it again: what it already analyzed is skipped.",
-        "canceled" => "Run it again: what it already analyzed is skipped.",
-        "refused" => "It did not start. Run it again once what refused it is fixed.",
-        _ => "Run it again over the same repositories. What was analyzed with these versions is skipped; " +
-             "the rest replaces what this run recorded.",
-    };
+    private static string AgainText(AnalysisRun run) => run.Prediction
+        ? run.State == "refused"
+            ? "It did not start. Predict again once what refused it is fixed."
+            // Nothing is skipped: a stored answer lists findings, and a prediction holds its own list.
+            : "Predict again over the same repositories. Every one is evaluated again, and what it would " +
+              "report replaces what this prediction held."
+        : run.State switch
+        {
+            "interrupted" => "The server stopped while this ran. Run it again: what it already analyzed is skipped.",
+            "canceled" => "Run it again: what it already analyzed is skipped.",
+            "refused" => "It did not start. Run it again once what refused it is fixed.",
+            _ => "Run it again over the same repositories. What was analyzed with these versions is skipped; " +
+                 "the rest replaces what this run recorded.",
+        };
+
+    private static string StartText(AnalysisRun run) => run.Prediction
+        ? "Start this prediction over the repositories it names. Nothing it finds is stored as a finding."
+        : "Start this run over the repositories it names.";
+
+    private static string Noun(AnalysisRun run) => run.Prediction ? "prediction" : "run";
+
+    private static string Verb(AnalysisRun run) => run.Prediction ? "Predict" : "Run";
 
     private static Color StateColor(string state) => state switch
     {

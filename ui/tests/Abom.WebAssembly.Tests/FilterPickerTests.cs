@@ -198,6 +198,21 @@ public sealed class FilterPickerTests : AbomTestContext
         Assert.DoesNotContain("boundary", offered);
     }
 
+    /// <summary>
+    /// A surface that applies no filter at all says so. "Every filter this view applies is already
+    /// set" reads as a narrowing in force on the Coverage unit, whose queue nothing narrows.
+    /// </summary>
+    [Fact]
+    public void ASurfaceThatAppliesNoFilterSaysSo()
+    {
+        var (popover, page) = Picker("coverage");
+
+        page.WaitForAssertion(() => page.Find("[data-abom-add-filter]").Click());
+
+        popover.WaitForAssertion(() => Assert.Contains("This view applies no filters.", popover.Markup));
+        Assert.DoesNotContain("already set", popover.Markup);
+    }
+
     /// The whole point of the control: nothing selected costs no width beyond the one button that
     /// adds something.
     [Fact]

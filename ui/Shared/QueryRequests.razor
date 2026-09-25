@@ -62,9 +62,9 @@
                                Margin="Margin.Dense" Label="Query it is about"
                                HelperText="@(_queryId.Length == 0 ? "Let the agent decide" : "Selected by you")">
                         <MudSelectItem T="string" Value="@(string.Empty)">Let the agent decide</MudSelectItem>
-                        @foreach (var (id, origin) in Choices(_catalog))
+                        @foreach (var (id, source) in Choices(_catalog))
                         {
-                            <MudSelectItem T="string" Value="@id">@id · @origin</MudSelectItem>
+                            <MudSelectItem T="string" Value="@id">@id · @source</MudSelectItem>
                         }
                     </MudSelect>
                 </div>
@@ -342,13 +342,13 @@
     /// Every query a request may be about, once each: the catalog's, less what builds the graph and
     /// what ran as a whole suite, which no request can change.
     /// </summary>
-    public static IReadOnlyList<(string Id, string Origin)> Choices(QueryCatalog? catalog) =>
+    public static IReadOnlyList<(string Id, string Source)> Choices(QueryCatalog? catalog) =>
         catalog is null
             ? []
             : catalog.Queries
                 .Where(q => !q.Discovery && !q.Lane && q.QueryId.Length > 0)
                 .GroupBy(q => q.QueryId, StringComparer.Ordinal)
-                .Select(g => (g.Key, QueryCatalogView.OriginText(g.First().Origin)))
+                .Select(g => (g.Key, QueryCatalogView.SourceText(g.First().Source)))
                 .OrderBy(c => c.Key, StringComparer.Ordinal)
                 .ToList();
 

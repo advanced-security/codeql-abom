@@ -200,6 +200,10 @@ func (s *Store) Migrate() error {
 	if _, err := s.db.Exec(analysisModeViewDDL); err != nil {
 		return fmt.Errorf("creating the analysis mode views: %w", err)
 	}
+	// After the views, which back-fill the sightings this reads.
+	if err := s.backfillRunRules(); err != nil {
+		return err
+	}
 	// Before seeding, so a binding that only needs renaming still counts as configured and the
 	// defaults are not written over it.
 	if err := s.migrateSuiteNames(); err != nil {

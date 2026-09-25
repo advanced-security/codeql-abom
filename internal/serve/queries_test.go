@@ -222,8 +222,26 @@ func TestTheCatalogListsTheWorkingCopyBeforeAnythingHasRun(t *testing.T) {
 		}
 	}
 	if len(got) != 1 || got[0].QueryVersion != versionOf(t, root, "A") || !got[0].Working ||
-		got[0].Origin != store.QueryOriginUser {
+		got[0].Source != store.QuerySourceCustom {
 		t.Errorf("the catalog lists acme/a as %+v, want its working copy once", got)
+	}
+
+	// The wire name is the interface's contract, so it is pinned apart from the struct that fills it.
+	w := httptest.NewRecorder()
+	s.queries(w, httptest.NewRequest("GET", "/api/queries", nil))
+	var raw struct {
+		Queries []map[string]any `json:"queries"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decoding the catalog: %v", err)
+	}
+	for _, q := range raw.Queries {
+		if q["queryId"] != "acme/a" {
+			continue
+		}
+		if _, stale := q["origin"]; stale || q["source"] != store.QuerySourceCustom {
+			t.Errorf("the catalog sends acme/a as %v, want its source under \"source\"", q)
+		}
 	}
 }
 

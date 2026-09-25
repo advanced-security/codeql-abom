@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	viewspec "github.com/advanced-security/codeql-abom/internal/view"
 )
 
 // The lifecycle a query version moves through. ABOM computes the evidence; a person advances the
@@ -17,19 +19,20 @@ const (
 	StageDeploy       = "deploy"
 )
 
-// Where a query came from, read from the pack that supplied it.
+// Where a query came from, read from the pack that supplied it. The filter language's `source`
+// term takes the same values.
 //
 // Named apart from the repository origins in graph.go on purpose: that one records how a row
 // entered the corpus, this one records who wrote a query. Sharing a vocabulary would invite
 // joining two things that answer different questions.
 const (
-	QueryOriginUpstream = "upstream"
-	QueryOriginAbom     = "abom"
-	QueryOriginUser     = "user"
-	// QueryOriginMixed is a lane that ran rules from several packs at once, which the findings
+	QuerySourceUpstream = viewspec.SourceUpstream
+	QuerySourceAbom     = viewspec.SourceAbom
+	QuerySourceCustom   = viewspec.SourceCustom
+	// QuerySourceMixed is a lane that ran rules from several packs at once, which the findings
 	// lane does: `database analyze` takes them in one invocation, so the run names all of them
 	// and no one of them is where the results came from.
-	QueryOriginMixed = "mixed"
+	QuerySourceMixed = viewspec.SourceMixed
 )
 
 // Stages is the lifecycle in order, which is also the order a reader should be offered it.
@@ -54,7 +57,7 @@ type CatalogQuery struct {
 	Pack         string `json:"pack"`
 	PackVersion  string `json:"packVersion"`
 	CLIVersion   string `json:"cliVersion"`
-	Origin       string `json:"origin"`
+	Source       string `json:"source"`
 	// Suite is set when what ran was a whole suite rather than one query, which is how the
 	// findings lane records itself: `database analyze` takes the suite in one invocation.
 	Suite string `json:"suite"`
@@ -158,7 +161,7 @@ func (s *Store) QueryCatalog(working ...WorkingQuery) ([]CatalogQuery, error) {
 		q.FirstRunAt, q.LastRunAt = stats.first, stats.last
 		key := q.QueryID + "\x00" + q.QueryVersion
 		attach(&q.CatalogQuery, key)
-		q.Origin = originOfPack(q.Pack)
+		q.Source = sourceOfPack(q.Pack)
 		q.KindRecorded = true
 		q.Discovery = q.Kind == ""
 		covered[key] = true
@@ -191,7 +194,7 @@ func (s *Store) QueryCatalog(working ...WorkingQuery) ([]CatalogQuery, error) {
 			Runs: stats.runs, Repositories: len(stats.repositories),
 			FirstRunAt: stats.first, LastRunAt: stats.last,
 		}
-		q.Origin = originOfPack(q.Pack)
+		q.Source = sourceOfPack(q.Pack)
 		// A lane row names what it invoked, which is a suite. Kept apart from the query column so
 		// a reader is not shown a pack-and-suite string where a rule belongs.
 		q.Suite, q.QueryID = splitSuite(q.QueryID)
@@ -233,7 +236,7 @@ func withWorkingCopy(
 		i, ok := listed[key]
 		if !ok {
 			q := CatalogQuery{QueryID: w.QueryID, QueryVersion: w.QueryVersion, Pack: w.Pack,
-				Origin: originOfPack(w.Pack)}
+				Source: sourceOfPack(w.Pack)}
 			attach(&q, key)
 			out = append(out, q)
 			i = len(out) - 1
@@ -520,13 +523,13 @@ func (s *Store) DeployedQueryIDs() ([]string, error) {
 	return out, rows.Err()
 }
 
-// originOfPack reads provenance from the pack that supplied a query.
+// sourceOfPack reads where a query came from out of the pack that supplied it.
 //
 // Never from the rule id: `abom/` is a naming convention anybody can adopt, and a query's prefix
 // says what its author called it rather than where it came from. An unrecognized pack is the
 // operator's own, which is the reading that does not claim more than is known -- ABOM's packs and
 // the upstream ones are the two this build can name with certainty.
-func originOfPack(pack string) string {
+func sourceOfPack(pack string) string {
 	switch {
 	case pack == "":
 		return ""
@@ -535,12 +538,12 @@ func originOfPack(pack string) string {
 		// findings lane records `codeql/actions-queries advanced-security/abom-actions-findings-src`,
 		// and reading the first one called it upstream -- a suite ABOM wrote, attributed to
 		// somebody else, because whichever pack sorted first decided.
-		return QueryOriginMixed
+		return QuerySourceMixed
 	case strings.HasPrefix(pack, "codeql/"):
-		return QueryOriginUpstream
+		return QuerySourceUpstream
 	case strings.HasPrefix(pack, "advanced-security/abom-"):
-		return QueryOriginAbom
+		return QuerySourceAbom
 	default:
-		return QueryOriginUser
+		return QuerySourceCustom
 	}
 }

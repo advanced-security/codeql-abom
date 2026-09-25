@@ -80,7 +80,9 @@
                     <MudText Typo="Typo.caption" Class="pa-2 mud-text-secondary d-block">
                         @(_terms.Count == 0
                             ? "No filters are available."
-                            : "Every filter this view applies is already set.")
+                            : !_terms.Any(t => t.Surfaces.Contains(Surface))
+                                ? "This view applies no filters."
+                                : "Every filter this view applies is already set.")
                     </MudText>
                 }
             }

@@ -348,3 +348,108 @@ func TestARunsResultsAreReadOneMemberAtATime(t *testing.T) {
 		}
 	}
 }
+
+// seedSourcedFinding records one finding the crawl's lane reported through an upstream rule it
+// kept a record of, and returns the finding's row.
+func seedSourcedFinding(t *testing.T, st *store.Store) int64 {
+	t.Helper()
+	repoID, err := st.UpsertRepository("octo-org/app", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := store.NewWriter(st, 0)
+	if err := w.AddNode(store.Node{Key: "octo-org/app/.github/workflows/ci.yml", Kind: "workflow",
+		RepositoryID: repoID, Path: ".github/workflows/ci.yml"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	lane, err := st.RecordQueryRun(store.QueryRun{QueryID: "abom-findings.qls", Pack: "codeql/actions-queries",
+		Repository: "octo-org/app", DBCommit: "c1", AnalysisMode: store.AnalysisModeRegular,
+		RecordedBy: store.RecordedByCrawl, Rules: []store.QueryRunRule{
+			{RuleID: "actions/unpinned-tag", QueryVersion: "u1", Pack: "codeql/actions-queries"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddFindings([]store.Finding{{RuleID: "actions/unpinned-tag", RepositoryID: repoID,
+		QueryRunID: lane, FilePath: ".github/workflows/ci.yml", StartLine: 3}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.LinkFindingsToNodes(); err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	if err := st.DB().QueryRow(`SELECT row_id FROM abom_finding`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// A finding is traced over the API to what reported it, and one the store does not hold is not
+// found rather than answered empty.
+func TestAFindingIsTracedToWhatReportedIt(t *testing.T) {
+	s, st := newServer(t)
+	id := seedSourcedFinding(t, st)
+
+	got := decode[store.FindingTrace](t, get(t, s, "/api/findings/"+strconv.FormatInt(id, 10)))
+	if len(got.Evaluations) != 1 || got.Evaluations[0].Source != store.QuerySourceUpstream ||
+		got.Evaluations[0].RuleVersion != "u1" || got.Evaluations[0].RecordedBy != store.RecordedByCrawl {
+		t.Errorf("the finding traces to %+v", got.Evaluations)
+	}
+	for target, want := range map[string]int{
+		"/api/findings/999": http.StatusNotFound,
+		"/api/findings/one": http.StatusBadRequest,
+		"/api/findings/0":   http.StatusBadRequest,
+	} {
+		if code := get(t, s, target).Code; code != want {
+			t.Errorf("%s answered %d, want %d", target, code, want)
+		}
+	}
+}
+
+// The source term reaches the set path with the store's meaning, and a source ABOM does not know
+// is refused rather than matching nothing, which would read as "none of those".
+func TestTheSetPathNarrowsBySourceOverTheAPI(t *testing.T) {
+	s, st := newServer(t)
+	seedSourcedFinding(t, st)
+	repoID, err := st.UpsertRepository("octo-org/app", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddFindings([]store.Finding{{RuleID: "actions/untrusted-checkout", RepositoryID: repoID,
+		FilePath: ".github/workflows/ci.yml", StartLine: 5}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.LinkFindingsToNodes(); err != nil {
+		t.Fatal(err)
+	}
+	for query, want := range map[string][2]int{"source=upstream": {1, 1}, "source=custom": {0, 1}} {
+		if got := decode[Match](t, get(t, s, "/api/match?"+query)); got.Findings != want[0] || got.Unsourced != want[1] {
+			t.Errorf("%s matched %d findings with %d unsourced, want %v", query, got.Findings, got.Unsourced, want)
+		}
+	}
+	if code := get(t, s, "/api/match?source=user").Code; code != http.StatusBadRequest {
+		t.Errorf("an unknown source answered %d, want a refusal", code)
+	}
+}
+
+// The listing narrows by source with the set path's meaning, which it can do only once its route
+// declares the term: an undeclared one is refused before the handler reads it.
+func TestTheActionsListingNarrowsBySource(t *testing.T) {
+	s, st := newServer(t)
+	seedGraph(t, st)
+	id := seedSourcedFinding(t, st)
+	if _, err := st.DB().Exec(`INSERT INTO abom_finding_node (finding_row_id, node_row_id)
+		SELECT ?, row_id FROM abom_node WHERE node_key = 'actions/checkout'`, id); err != nil {
+		t.Fatal(err)
+	}
+	for query, want := range map[string]int{"source=upstream": 1, "source=custom": 0} {
+		if got := decode[store.InventoryPage](t, get(t, s, "/api/actions?"+query)); got.Total != want {
+			t.Errorf("/api/actions?%s listed %d rows, want %d", query, got.Total, want)
+		}
+	}
+	if code := get(t, s, "/api/actions?source=user").Code; code != http.StatusBadRequest {
+		t.Errorf("an unknown source answered %d, want a refusal", code)
+	}
+}

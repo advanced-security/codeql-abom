@@ -85,6 +85,9 @@ CREATE TABLE IF NOT EXISTS abom_query_run (
   -- owned repository plus its staged closure. The same rule id means opposite things in the two,
   -- so every aggregate over edges or findings names the mode it is reading.
   analysis_mode TEXT NOT NULL DEFAULT 'regular',
+  -- What produced the evaluation: 'crawl', an on-demand 'run', or the 'corpus' replay. NULL is
+  -- not recorded, which every row written before the column existed is.
+  recorded_by  TEXT,
   ran_at       TEXT NOT NULL
 );
 
@@ -104,6 +107,21 @@ CREATE TABLE IF NOT EXISTS abom_query_run_ref (
   -- apart from one analyzed at the default branch.
   analyzed_ref TEXT NOT NULL,
   PRIMARY KEY (query_run_id, ref, analyzed_ref)
+);
+
+-- The rules one evaluation ran, and the query behind each. A lane runs a whole suite in one
+-- invocation, so the evaluation's own version and packs cannot say which ones a finding's rule was.
+-- NULLs are not recorded: a rule two packs supplied at once has no single version, and a pack
+-- ABOM could not name has no source.
+CREATE TABLE IF NOT EXISTS abom_query_run_rule (
+  query_run_id  INTEGER NOT NULL REFERENCES abom_query_run(row_id),
+  rule_id       TEXT NOT NULL,
+  query_version TEXT,
+  pack          TEXT,
+  pack_version  TEXT,
+  pack_digest   TEXT,
+  source        TEXT,
+  PRIMARY KEY (query_run_id, rule_id)
 );
 
 -- Which branches a repository protects. A relation because a repository has many, and whether a
@@ -448,7 +466,10 @@ CREATE TABLE IF NOT EXISTS abom_analysis_run (
   cli_version   TEXT,
   -- Why the run could not start the last time it was asked to, in the executor's words. NULL for
   -- a run that started, or that nobody has asked to start.
-  refusal       TEXT
+  refusal       TEXT,
+  -- 1 for a prediction: its results are held in abom_predicted_result and never stored as
+  -- findings, because a query nobody adopted has found nothing yet.
+  prediction    INTEGER NOT NULL DEFAULT 0
 );
 
 -- The explicit queries a run names. A list rather than a suite: the point of the run is to be more
@@ -507,6 +528,28 @@ CREATE TABLE IF NOT EXISTS abom_analysis_result (
   query_id      TEXT NOT NULL,
   result_count  INTEGER NOT NULL,
   PRIMARY KEY (run_id, repository, db_commit, source_filter, analysis_mode, query_id)
+);
+
+-- What a prediction's queries would report in one member, one row per result. Apart from
+-- abom_finding on purpose: merged, every count on every surface would include results nobody
+-- chose to look for. Replaced whole when the member is predicted again.
+CREATE TABLE IF NOT EXISTS abom_predicted_result (
+  row_id        INTEGER PRIMARY KEY,
+  run_id        INTEGER NOT NULL REFERENCES abom_analysis_run(row_id),
+  repository    TEXT NOT NULL,
+  db_commit     TEXT NOT NULL DEFAULT '',
+  source_filter TEXT NOT NULL DEFAULT '',
+  analysis_mode TEXT NOT NULL DEFAULT 'regular',
+  rule_id       TEXT NOT NULL,
+  file_path     TEXT NOT NULL DEFAULT '',
+  start_line    INTEGER NOT NULL DEFAULT 0,
+  start_column  INTEGER NOT NULL DEFAULT 0,
+  end_line      INTEGER NOT NULL DEFAULT 0,
+  end_column    INTEGER NOT NULL DEFAULT 0,
+  message       TEXT NOT NULL DEFAULT '',
+  severity      TEXT NOT NULL DEFAULT '',
+  fingerprint   TEXT NOT NULL DEFAULT '',
+  result_hash   TEXT NOT NULL DEFAULT ''
 );
 
 -- Which lifecycle stage somebody put a query version in.
@@ -674,6 +717,8 @@ var addedColumns = []struct{ table, column, decl string }{
 	// about it. It stays a fact only while no second database shape can precede this column, which
 	// is what TestNoWriterRecordsAnExtendedRunYet protects.
 	{"abom_query_run", "analysis_mode", "TEXT NOT NULL DEFAULT 'regular'"},
+	// Nullable, and earlier rows stay NULL: which process wrote them was never recorded.
+	{"abom_query_run", "recorded_by", "TEXT"},
 	{"abom_suite_query", "pack_digest", "TEXT"},
 	// Nullable, and rows written before it stay NULL. Defaulting them to a source would invent the
 	// provenance the column exists to establish — a corpus once declared accounts the operator had
@@ -750,6 +795,7 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_authoring_ast", "cli_version", "TEXT"},
 	{"abom_analysis_run", "cli_version", "TEXT"},
 	{"abom_analysis_run", "refusal", "TEXT"},
+	{"abom_analysis_run", "prediction", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 // indexDDL is applied only after bulk loading. Maintaining these indexes during a multi-million
@@ -779,6 +825,7 @@ CREATE INDEX IF NOT EXISTS idx_ledger_status   ON abom_ingest_ledger(status);
 ` + observationIndexDDL + `
 CREATE INDEX IF NOT EXISTS idx_catalog_has_db   ON abom_database_catalog(has_database);
 CREATE INDEX IF NOT EXISTS idx_local_db_used    ON abom_local_database(used_seq);
+CREATE INDEX IF NOT EXISTS idx_predicted_member ON abom_predicted_result(run_id, repository, rule_id);
 `
 
 // queryRunIndexDDL is created on open rather than after bulk loading, unlike every other index.

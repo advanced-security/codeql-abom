@@ -304,4 +304,82 @@ public class RunResultsTests : AbomTestContext
         Assert.NotNull(cut.Find("[data-abom-pick-missed='octo/quiet']"));
         Assert.Contains("acme/other", cut.Find("[data-abom-results-ask]").TextContent);
     }
+
+    private const string SourcedFindings = """
+        {"repository":"octo/app","evaluated":true,"truncated":false,"findings":[
+          {"findingRowId":41,"ruleId":"acme/rule","filePath":".github/workflows/ci.yml","startLine":6,
+           "startColumn":5,"message":"This job runs on a self-hosted runner.","severity":"warning",
+           "source":"custom","ruleVersion":"9b5327ab01d7e2f4"},
+          {"findingRowId":42,"ruleId":"acme/rule","filePath":".github/workflows/deploy.yml","startLine":9,
+           "startColumn":5,"message":"This job runs on a self-hosted runner.","severity":"warning",
+           "source":"","ruleVersion":""}]}
+        """;
+
+    private const string Trace41 = """
+        {"rowId":41,"ruleId":"acme/rule","repository":"octo/app","filePath":".github/workflows/ci.yml",
+         "startLine":6,"message":"This job runs on a self-hosted runner.","severity":"warning","provider":"CodeQL",
+         "evaluations":[
+          {"queryRunId":8544,"invoked":"acme/rule","packs":["abom/custom-queries"],
+           "ruleVersion":"9b5327ab01d7e2f4","pack":"abom/custom-queries","packVersion":"0.0.1",
+           "packDigest":"af6711d4","source":"custom","cliVersion":"2.27.1","mode":"regular",
+           "commit":"0123456789abcdef0123456789abcdef01234567","ranAt":"2026-09-24T10:00:00Z","recordedBy":"run",
+           "runs":[{"runId":3,"repository":"octo/app","status":"succeeded"}]},
+          {"queryRunId":12,"invoked":"abom-findings.qls",
+           "packs":["codeql/actions-queries","advanced-security/abom-actions-findings-src"],
+           "ruleVersion":"","pack":"","packVersion":"","packDigest":"","source":"","cliVersion":"2.27.0",
+           "mode":"regular","commit":"0123456789abcdef0123456789abcdef01234567","ranAt":"2026-09-20T10:00:00Z",
+           "recordedBy":"","runs":[]}]}
+        """;
+
+    private IRenderedComponent<Shared.RunResults> Listing()
+    {
+        Answer("api/runs/3/results", SourcedFindings);
+        Answer("api/findings/41", Trace41);
+        var cut = Render("acme/rule");
+        cut.Find("[data-abom-results-pick]").Click();
+        cut.Find("[data-abom-member-findings='octo/app']").Click();
+        cut.WaitForAssertion(() => cut.Find("[data-abom-finding-provenance='41']"));
+        return cut;
+    }
+
+    /// <summary>
+    /// Each result names the version and source of the query that reported it. One whose
+    /// evaluation kept no record of them says so, rather than borrowing the run's.
+    /// </summary>
+    [Fact]
+    public void EachResultSaysWhichVersionOfWhoseQueryReportedIt()
+    {
+        var cut = Listing();
+
+        Assert.Equal("custom · version 9b5327ab01d7",
+            cut.Find("[data-abom-finding-provenance='41']").TextContent.Trim());
+        Assert.Equal("source and version not recorded",
+            cut.Find("[data-abom-finding-provenance='42']").TextContent.Trim());
+    }
+
+    /// <summary>
+    /// A result is traced to every evaluation that reported it: who ran it — the crawl, or a run by
+    /// number — in which shape, and the version and pack of the rule's own query. What an older
+    /// evaluation did not record is said to be not recorded.
+    /// </summary>
+    [Fact]
+    public void AResultIsTracedToEveryEvaluationThatReportedIt()
+    {
+        var cut = Listing();
+        cut.Find("[data-abom-finding-trace-toggle='41']").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("[data-abom-trace-evaluation]").Count));
+        var evaluations = cut.FindAll("[data-abom-trace-evaluation]").Select(e => e.TextContent).ToList();
+        Assert.Contains("run 3", evaluations[0]);
+        Assert.Contains("regular", evaluations[0]);
+        Assert.Contains("CodeQL 2.27.1", evaluations[0]);
+        Assert.Contains("custom · abom/custom-queries 0.0.1 · version 9b5327ab01d7", evaluations[0]);
+        Assert.Equal("/codeql?tab=runs&run=3", cut.Find("[data-abom-trace-run='3']").GetAttribute("href"));
+        Assert.Contains("who ran it was not recorded", evaluations[1]);
+        Assert.Contains("source and version not recorded", evaluations[1]);
+        Assert.Contains("codeql/actions-queries", evaluations[1]);
+
+        cut.Find("[data-abom-finding-trace-toggle='41']").Click();
+        Assert.Empty(cut.FindAll("[data-abom-trace-evaluation]"));
+    }
 }

@@ -288,12 +288,12 @@ public sealed class AbomApi(HttpClient http)
     /// </summary>
     public async Task<(AnalysisRun? Run, string? Refusal)> StartAnalysisRunAsync(
         string predicate, IReadOnlyList<AnalysisQueryRef> queries, string by,
-        CancellationToken ct = default)
+        bool prediction = false, CancellationToken ct = default)
     {
         try
         {
             using var response = await http.PostAsJsonAsync("api/runs?" + predicate,
-                new { queries, by }, ct);
+                new { queries, by, prediction }, ct);
             if (response.IsSuccessStatusCode)
             {
                 LastError = null;
@@ -476,6 +476,9 @@ public sealed class AbomApi(HttpClient http)
         await GetAsync<MemberFindings>(
             $"api/runs/{id}/results?repository={Uri.EscapeDataString(repository)}" +
             $"&query={Uri.EscapeDataString(queryId)}", ct);
+
+    public async Task<FindingTrace?> GetFindingTraceAsync(long id, CancellationToken ct = default) =>
+        await GetAsync<FindingTrace>($"api/findings/{id}", ct);
 
     /// <summary>Carries out a recorded run, answering as soon as it has started.</summary>
     public async Task<(AnalysisRun? Run, string? Refusal)> ExecuteAnalysisRunAsync(

@@ -193,6 +193,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/runs", s.startRun)
 	mux.HandleFunc("GET /api/runs/{id}", s.run)
 	mux.HandleFunc("GET /api/runs/{id}/results", reading(s.runResults, "repository", "query"))
+	mux.HandleFunc("GET /api/findings/{id}", s.findingTrace)
 	mux.HandleFunc("POST /api/runs/{id}/start", s.executeRun)
 	mux.HandleFunc("POST /api/runs/{id}/cancel", s.cancelRun)
 	mux.HandleFunc("GET /api/views", s.views)
@@ -214,7 +215,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/actions", reading(s.actions,
 		"q", "top", "offset", "sort", "desc", "view",
 		"kinds", "origins", "minReach", "scope", "flags", "ref",
-		"rules", "notRules", "provider", "severity", "repositories", "mode",
+		"rules", "notRules", "provider", "severity", "source", "repositories", "mode",
 		"properties", "notProperties"))
 	mux.HandleFunc("GET /api/workflows", reading(s.workflows,
 		"q", "top", "offset", "sort", "desc", "view",
@@ -1019,6 +1020,7 @@ func (s *Server) actions(w http.ResponseWriter, r *http.Request) {
 		NotRules: spec.NotRules,
 		Provider: spec.Provider,
 		Severity: spec.Severity,
+		Sources:  spec.Sources,
 		Mode:     spec.Mode,
 
 		Repositories: spec.Repositories,

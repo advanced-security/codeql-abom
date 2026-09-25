@@ -4,8 +4,9 @@
 by name, on both the set path and the graph. Every endpoint that can be bounded to a repository
 grouping is. A control reads the values a term can take rather than asking for them to be typed.
 What remains is a second narrowing mechanism inside policies, a term the language cannot spell, a
-consumer that applies more than it asks for, four list terms whose members nothing declares, and a
-value list that does not say what it leaves out.
+consumer that applies more than it asks for, four list terms whose members nothing declares, a
+value list that does not say what it leaves out, and a page that draws without seven terms it
+carries.
 
 ## Why this exists
 
@@ -15,6 +16,15 @@ pull request.
 
 The eleven endpoints that read their own parameters now refuse a term they do not apply. Eight apply
 `properties`; the three that do not are below, and one of them has no stated reason.
+
+```mermaid
+flowchart LR
+    TERM["a term a consumer<br/>is sent"] -->|"applied by the endpoint"| SERVER["narrowed by the server"]
+    TERM -->|"handed over with the payload"| CLIENT["narrowed by the browser"]
+    TERM -->|"400, naming the term"| REFUSED["refused"]
+    EXP["the Explorer's scope"] -. "seven terms it carries<br/>and neither sends nor filters by" .-> DROPPED["drawn without them"]
+    style DROPPED fill:#3d1d1d
+```
 
 ## Pending
 
@@ -30,12 +40,13 @@ The eleven endpoints that read their own parameters now refuse a term they do no
    rule that silence means the consumer's default is stated and every consumer follows it. Both
    halves are `internal/view` before they are anything else. Depends on nothing.
 3. **Name the side that applies each term, per consumer.** `graphTerms` says the graph applies
-   `origins`, `minReach`, `ref`, `flags` and `boundary`, and it does — when it is sent them. The
-   Explorer sends none of them, filtering the one payload itself so an interaction costs no round
-   trip. **The two agree**: on the crawled organization the server and the browser select identical
-   node sets for `minReach` at 5 and 20, `origins=seed`, `ref=tag` and `ref=sha` — 0 rows either way.
-   So this is a declaration to write down rather than a divergence to repair, and a test that
-   re-measures it is what keeps it true. Depends on nothing.
+   `origins`, `minReach`, `ref` and `flags`, and it does — when it is sent them. The Explorer sends
+   none of them, filtering the one payload itself so an interaction costs no round trip. **The two
+   agree**: on the crawled organization the server and the browser select identical node sets for
+   `minReach` at 5 and 20, `origins=seed`, `ref=tag` and `ref=sha` — 0 rows either way. So this is a
+   declaration to write down rather than a divergence to repair, and a test that re-measures it is
+   what keeps it true. `boundary` is not among them: the Explorer neither sends nor filters it,
+   which is item 6. Depends on nothing.
 4. **A list term either declares its members or cannot offer them, and four terms are stuck between.**
    `kinds`, `origins`, `flags` and `edges` are lists whose members nothing checks, which is the same
    fact seen from two sides: the server accepts `kinds=banana` and narrows to nothing, and a control
@@ -45,8 +56,9 @@ The eleven endpoints that read their own parameters now refuse a term they do no
    declare a vocabulary for all four in `internal/view` and refuse a member outside it, which makes a
    saved view naming a retired kind start failing; or state that these four are deliberately open and
    that a control offers the corpus as a convenience. Whether partial validity in a list refuses or
-   warns is the same decision, and a query's origin from [the query catalog](../db/query-catalog.md)
-   inherits it — under a name that is not `origins`, which already means a repository's.
+   warns is the same decision. `source`, where a finding's query came from, took one answer: its
+   members are declared and one outside them refuses the whole term — a precedent, not the decision
+   for these four.
    Depends on nothing.
 5. **A corpus-derived value list says what it covers, or it overstates it.** `provider` offers one
    value, `CodeQL`, counting **884 of 11,806 findings**: the rest predate the column and are
@@ -57,7 +69,34 @@ The eleven endpoints that read their own parameters now refuse a term they do no
    applied to a term whose values come from findings rather than from repositories, and it wants
    stating once for both rather than twice. The count of rows a term cannot speak for is the
    measurement to surface; the store leaves it out of the list on purpose, so it has to travel
-   beside it. Depends on nothing.
+   beside it. `source` already does: an answer narrowed by it counts the matches no source was
+   recorded for, on the set path and the dependencies listing. Depends on nothing.
+6. **The Explorer draws without seven terms it carries, and puts back two a reader removed.** It
+   sends the server `scope`, `mode`, `steps` and the property terms, and filters the payload by
+   `search`, `kinds`, `origins`, `rules`, `edges`, `ref`, `minReach` and `flags`. `boundary` and
+   `edgeKinds`, which `/api/graph/full` applies when sent them, are never sent; `notRules`,
+   `provider` and `severity`, which the graph hands to the browser, are never filtered by. All five
+   travel in the address, the filter control offers them, and `/api/views` answers that the graph
+   applies them — so a named scope carrying one opens enabled and draws unnarrowed. `repositories`
+   and `source` the graph refuses, so a named scope carrying either is disabled here; arrived at in
+   the address, neither is sent and nothing on screen says so, although the comment on
+   `ExplorerAddressTests.ASourceTheGraphCannotDrawStillTravels` says a refusal does. Measured on the
+   crawled organization: `scope=owned&boundary=cross-owner` is 3,984 nodes and 9,318 relationships
+   from `/api/graph/full`, and `edgeKinds=job-needs-job` 3,052 and 2,892, while the Explorer draws
+   both from the 4,542 and 13,255 that `scope=owned` alone returns, identically to it; with
+   `source=custom` or `repositories=has-ghas/codeql` it asks `/api/graph/full?scope=owned` and draws
+   the same. The fork per applied term: apply it — the server already applies the two graph terms,
+   so sending them is the change, and the three finding terms need whatever the browser would
+   filter on to be in the payload — or take it out of what the graph declares, so the catalog
+   disables a scope carrying it here and the control stops offering it. The two refused terms need
+   only the refusal the catalog already makes, said on the page.
+
+   Separately, removing the `ref` or `scope` chip from the Explorer's filter does nothing: the chip
+   and the address come back unchanged, because `OnPickerChanged` takes each only when it names a
+   value the page recognizes. For `ref` nothing argues for that. For `scope`, `Explorer.ScopeKeys`
+   records that an empty scope would ask the API for everything, so the choice is a close button
+   that is not offered, with the reason on screen, or one that clears to the empty frame. Opening a
+   named scope already replaces both. Depends on nothing.
 
 **Two endpoints refuse it for a reason and should keep refusing.** `/api/properties` enumerates the
 groupings, so bounding it by a grouping is circular; `/api/frontier` reports crawl queue state for

@@ -51,41 +51,9 @@
        could be asked rather than what is, and the unit decides which are even offerable. *@
     <FilterPicker Surface="@UnitSurface" Changed="OnPickerChanged" />
 
-    @* A view is a predicate, so choosing one sets the scope rather than navigating anywhere.
-       Chips rather than a menu, for the reason the exports are not in one either: MudMenu renders
-       its items only once opened, so what is on offer is neither discoverable nor checkable. One
-       this unit cannot draw is disabled with the reason, since the refusal it would otherwise
-       raise arrives one click too late to help. *@
-    <div class="abom-views d-flex flex-wrap align-center gap-1" data-abom-views="1">
-        @foreach (var view in _views)
-        {
-            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
-                     Color="@(IsSelected(view) ? Color.Primary : Color.Default)"
-                     Class="@(IsSelected(view) ? "abom-view-selected" : null)"
-                     Disabled="@(view.ListingRefuses.Count > 0)"
-                     title="@Undrawable(view)"
-                     OnClick="@(() => ChooseView(view))"
-                     data-abom-view="@view.Name">@view.Label</MudChip>
-            @* A built-in is code: the server refuses to delete it, so offering the control would
-               be an affordance that cannot work. *@
-            @if (!view.Builtin)
-            {
-                <MudIconButton Size="Size.Small" Icon="@Icons.Material.Outlined.Close"
-                               aria-label="@($"Forget {view.Label}")"
-                               OnClick="@(() => ForgetView(view))"
-                               data-abom-forget-view="@view.Name" />
-            }
-        }
-    </div>
-
-    <MudTextField T="string" @bind-Value="_scopeName" Placeholder="Name this scope"
-                  Immediate="true" Margin="Margin.Dense"
-                  Variant="Variant.Outlined" Class="abom-scope-name"
-                  data-abom-scope-name="1" />
-    <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
-               StartIcon="@Icons.Material.Outlined.BookmarkAdd" OnClick="SaveScope"
-               Disabled="@(_scopeName.Trim().Length == 0 || Scope.ToQueryString().Length == 0)"
-               data-abom-save-scope="1">Keep</MudButton>
+    @* A view is a predicate, so choosing one sets the scope rather than navigating anywhere, and
+       the unit on screen decides which are offered: each unit's endpoint refuses its own terms. *@
+    <NamedScopes Surface="@UnitSurface" Chosen="ChooseView" />
 
     <MudSpacer />
 
@@ -189,7 +157,14 @@
                     : CountText.Of(_chosen.Count, "chosen repository", "chosen repositories"))
             </MudText>
             <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" DropShadow="false"
-                       Disabled="@(!CanStartRun)" OnClick="StartRun" data-abom-run-go>Run</MudButton>
+                       Disabled="@(!CanStartRun)" OnClick="@(() => StartRun(prediction: false))" data-abom-run-go>Run</MudButton>
+            @* The reason sits on the span: a disabled button fires no tooltip. *@
+            <span data-abom-run-predict-reason
+                  title="Count what these queries would report in each chosen repository, per rule, and store none of it as a finding">
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary" DropShadow="false"
+                           Disabled="@(!CanStartRun)" OnClick="@(() => StartRun(prediction: true))"
+                           data-abom-run-predict>Predict</MudButton>
+            </span>
             <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
                        OnClick="StopChoosing" data-abom-run-discard>Cancel</MudButton>
         </div>
@@ -217,13 +192,6 @@
     <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2" data-abom-mode-caveat>
         Coverage and dependency reach use regular analysis.
     </MudText>
-}
-
-@if (_writeError is { Length: > 0 } wrote)
-{
-    <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true" Class="mb-3">
-        This scope could not be saved: @wrote
-    </MudAlert>
 }
 
 @if (_refusal is { Length: > 0 } refused)
@@ -781,6 +749,13 @@ else
             ? TypeLabel(_elsewhere[0].Kind).ToLowerInvariant() : "them")</MudLink>
     </MudText>
 }
+@if (_unsourced > 0)
+{
+    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1" data-abom-unsourced>
+        @_unsourced more @(_unsourced == 1 ? "dependency carries" : "dependencies carry") findings this
+        question matches whose source was not recorded, so no source can be named for them.
+    </MudText>
+}
 
 @code {
     private const string UnitDependencies = "dependencies";
@@ -811,6 +786,7 @@ else
         UnitRepositories => "repositories",
         UnitAdvisories => "advisories",
         UnitRelationships => "relationships",
+        UnitCoverage => "coverage",
         _ => "inventory",
     };
 
@@ -877,24 +853,15 @@ else
     private MudDataGrid<RepositorySummary>? _repoGrid;
     private MudDataGrid<RemediationItem>? _advisoryGrid;
     private MudDataGrid<RelationshipSummary>? _relationshipGrid;
-    private IReadOnlyList<NamedView> _views = [];
     private string _unit = UnitDependencies;
     private string _search = string.Empty;
-    private string _scopeName = string.Empty;
-    private string? _writeError;
     private string? _sort;
     private string? _refusal;
     private int _total;
     private int _shown;
     private int _unreached;
     private IReadOnlyList<KindCount> _elsewhere = [];
-
-    // A tab is the one the scope already is, compared as canonical text. That comparison is the
-    // whole reason a built-in's predicate is stored canonical rather than however it was typed.
-    private bool IsSelected(NamedView view) => Scope.Spec.ToQueryString() == view.Predicate;
-
-    // What the scope bar marks as in force.
-    private NamedView? ActiveView => _views.FirstOrDefault(IsSelected);
+    private int _unsourced;
 
     private static readonly Dictionary<string, string> SortLabels = new()
     {
@@ -960,14 +927,6 @@ else
 
     private static string ColumnLabel(string sort) =>
         SortLabels.TryGetValue(sort, out var l) ? l : sort;
-
-    // Named before the click rather than refused after it. The refusal that arrives on selecting a
-    // tab is correct and one click too late to be useful.
-    private static string Undrawable(NamedView view) =>
-        view.ListingRefuses.Count == 0
-            ? ""
-            : $"This list cannot narrow by {string.Join(", ", view.ListingRefuses)}. "
-              + "Open it in the Explorer.";
 
     private string ElsewhereText() => string.Join(" and ", _elsewhere.Select(
         e => $"{e.Count:N0} {TypeLabel(e.Kind).ToLowerInvariant()}{(e.Count == 1 ? "" : "s")}"));
@@ -1180,9 +1139,9 @@ else
 
     /// <summary>
     /// Sent by name, or as the scope when all of it is chosen; either way a repository with no
-    /// findings is as runnable as any.
+    /// findings is as runnable as any. A prediction is the same draft, held apart from findings.
     /// </summary>
-    private async Task StartRun()
+    private async Task StartRun(bool prediction)
     {
         if (!CanStartRun)
         {
@@ -1191,7 +1150,8 @@ else
         _starting = true;
         try
         {
-            var (run, refusal) = await Api.StartAnalysisRunAsync(RunPredicate, _picked, Accounts.Identity.Login);
+            var (run, refusal) = await Api.StartAnalysisRunAsync(
+                RunPredicate, _picked, Accounts.Identity.Login, prediction);
             if (run is null)
             {
                 _runRefusal = refusal ?? Api.LastError;
@@ -1200,7 +1160,7 @@ else
             var (_, notStarted) = await Api.ExecuteAnalysisRunAsync(run.RowId);
             if (notStarted is not null)
             {
-                _runRefusal = $"Run #{run.RowId} is recorded and has not started: {notStarted}";
+                _runRefusal = $"{(prediction ? "Prediction" : "Run")} #{run.RowId} is recorded and has not started: {notStarted}";
                 return;
             }
             StopChoosing();
@@ -1233,7 +1193,6 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        _views = await Api.GetViewsAsync();
         if (_choosing)
         {
             await LoadRunnable();
@@ -1359,28 +1318,6 @@ else
         await Reload();
     }
 
-    /// <summary>Keeps the scope on screen under a name, so it can be returned to as a tab.</summary>
-    private async Task SaveScope()
-    {
-        var saved = await Api.SaveViewAsync(_scopeName.Trim(), Scope.ToQueryString());
-        _writeError = saved is null ? Api.LastError : null;
-        if (saved is not null)
-        {
-            _views = saved;
-            _scopeName = string.Empty;
-        }
-    }
-
-    private async Task ForgetView(NamedView view)
-    {
-        var left = await Api.ForgetViewAsync(view.Name);
-        _writeError = left is null ? Api.LastError : null;
-        if (left is not null)
-        {
-            _views = left;
-        }
-    }
-
     /// <summary>
     /// Asks the server for one page, ordered across the whole match.
     ///
@@ -1402,6 +1339,7 @@ else
         _total = page?.Total ?? 0;
         _shown = page?.Items.Count ?? 0;
         _elsewhere = page?.Elsewhere ?? [];
+        _unsourced = page?.Unsourced ?? 0;
         // The line stating what was left out sits outside the grid, and the grid re-renders only
         // itself, so without this it keeps reporting the page before last.
         StateHasChanged();
@@ -1423,6 +1361,7 @@ else
         _total = page?.Total ?? 0;
         _shown = page?.Items.Count ?? 0;
         _elsewhere = [];
+        _unsourced = 0;
         StateHasChanged();
         return new GridData<WorkflowRow> { Items = page?.Items ?? [], TotalItems = _total };
     }
@@ -1442,6 +1381,7 @@ else
         _total = page?.Total ?? 0;
         _shown = page?.Items.Count ?? 0;
         _elsewhere = [];
+        _unsourced = 0;
         StateHasChanged();
         return new GridData<JobRow> { Items = page?.Items ?? [], TotalItems = _total };
     }
@@ -1462,6 +1402,7 @@ else
         _total = page?.Total ?? 0;
         _shown = page?.Items.Count ?? 0;
         _elsewhere = [];
+        _unsourced = 0;
         if (_all)
         {
             // "All" follows the scope, and a scope that stops listing anything has nothing to send.
@@ -1490,6 +1431,7 @@ else
         _shown = page?.Items.Count ?? 0;
         _unreached = page?.Unreached ?? 0;
         _elsewhere = [];
+        _unsourced = 0;
         StateHasChanged();
         return new GridData<RemediationItem> { Items = page?.Items ?? [], TotalItems = _total };
     }
@@ -1506,6 +1448,7 @@ else
         _shown = page?.Items.Count ?? 0;
         _unreached = 0;
         _elsewhere = [];
+        _unsourced = 0;
         StateHasChanged();
         return new GridData<RelationshipSummary> { Items = page?.Items ?? [], TotalItems = _total };
     }

@@ -26,6 +26,9 @@ type FindingSelector struct {
 	// attributed: relabeling those would invent the provenance the column exists to hold.
 	Provider string
 	Severity string
+	// Sources narrows to findings whose rule's query came from one of these, as an evaluation that
+	// reported the finding recorded it. A finding none recorded a source for matches none.
+	Sources []string
 	// Repositories narrows to what a gate is asking about. Compared case-insensitively: seven
 	// accounts in the reference corpus spell themselves both ways, and a case-sensitive compare
 	// once misclassified 211 edges.
@@ -67,12 +70,15 @@ type FindingMatch struct {
 	Nodes []MatchedNode `json:"nodes"`
 	// Findings counts each finding once however many nodes carry it.
 	Findings int `json:"findings"`
+	// Unsourced counts the findings every other term matched whose source no evaluation recorded.
+	// Counted only when a source is asked, which is the only time they are left out.
+	Unsourced int `json:"unsourced"`
 }
 
 // asked reports whether the selector names anything at all.
 func (f FindingSelector) asked() bool {
 	return len(f.Rules) > 0 || len(f.Exclude) > 0 || f.Provider != "" || f.Severity != "" ||
-		len(f.Properties) > 0 || len(f.ExcludeProperties) > 0 || f.Mode != ""
+		len(f.Sources) > 0 || len(f.Properties) > 0 || len(f.ExcludeProperties) > 0 || f.Mode != ""
 }
 
 // propertyClause tests one key against every value asked for it, against the repository named by
@@ -170,14 +176,25 @@ func (s *Store) NodesMatching(sel FindingSelector) (FindingMatch, error) {
 	}
 
 	exclusion := ""
+	var exclusionArgs []any
 	if len(sel.Exclude) > 0 {
 		clause, a := ruleClause("x.rule_id", sel.Exclude)
 		exclusion = `
 		  AND NOT EXISTS (SELECT 1 FROM ` + findingSource(sel.Mode) + ` x
 		                    JOIN abom_finding_node xn ON xn.finding_row_id = x.row_id
 		                   WHERE xn.node_row_id = n.row_id AND ` + clause + `)`
+		exclusionArgs = a
+	}
+	// The rest of the question, kept apart so the findings no source was recorded for are counted
+	// against exactly what the source term narrowed.
+	unsourced := append(append([]string{}, where...), "NOT "+recordedSource("f"))
+	unsourcedArgs := append(append([]any{}, args...), exclusionArgs...)
+	if len(sel.Sources) > 0 {
+		clause, a := sourceClause("f", sel.Sources)
+		where = append(where, clause)
 		args = append(args, a...)
 	}
+	args = append(args, exclusionArgs...)
 
 	rows, err := s.db.Query(`
 		SELECT n.node_key, n.node_kind,
@@ -210,17 +227,30 @@ func (s *Store) NodesMatching(sel FindingSelector) (FindingMatch, error) {
 	}
 
 	// Counted again rather than summed, because one finding can sit on two nodes.
+	if out.Findings, err = s.countMatched(sel.Mode, where, exclusion, args); err != nil {
+		return out, err
+	}
+	if len(sel.Sources) > 0 {
+		if out.Unsourced, err = s.countMatched(sel.Mode, unsourced, exclusion, unsourcedArgs); err != nil {
+			return out, err
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) countMatched(mode string, where []string, exclusion string, args []any) (int, error) {
+	var n int
 	if err := s.db.QueryRow(`
 		SELECT COUNT(DISTINCT f.row_id)
-		FROM `+findingSource(sel.Mode)+` f
+		FROM `+findingSource(mode)+` f
 		JOIN abom_finding_node fn ON fn.finding_row_id = f.row_id
 		JOIN abom_node_live n ON n.row_id = fn.node_row_id
 		LEFT JOIN repository fr ON fr.row_id = f.repository_row_id
 		WHERE `+strings.Join(where, " AND ")+exclusion,
-		args...).Scan(&out.Findings); err != nil {
-		return out, fmt.Errorf("counting matched findings: %w", err)
+		args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("counting matched findings: %w", err)
 	}
-	return out, nil
+	return n, nil
 }
 
 // splitSorted turns a GROUP_CONCAT into a stable list. It promises no order, and a caller

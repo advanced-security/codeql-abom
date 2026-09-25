@@ -119,6 +119,19 @@ func TestTheDataSetCarriesBothAbomsOwnFindingsAndUpstreamOnes(t *testing.T) {
 	}
 }
 
+// A replay says it is one. Its evaluations carry no CodeQL version on purpose, and without this
+// they could not be told from one that failed to record it.
+func TestTheCorpusSaysItRecordedEveryEvaluationItReplays(t *testing.T) {
+	s := builtCorpus(t)
+	if count(t, s, `SELECT COUNT(*) FROM abom_query_run`) == 0 {
+		t.Fatal("the corpus records no evaluation")
+	}
+	if n := count(t, s, `SELECT COUNT(*) FROM abom_query_run WHERE COALESCE(recorded_by, '') <> ?`,
+		store.RecordedByCorpus); n != 0 {
+		t.Errorf("%d of the corpus's evaluations do not say the corpus recorded them", n)
+	}
+}
+
 // A rebuild replaces rather than accumulates, or a second run and a fresh checkout disagree.
 func TestBuildingTwiceProducesTheSameCorpus(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "abom.db")

@@ -1,10 +1,10 @@
 # Query suites as configuration
 
 **Status:** tiers bind to suites as stored configuration, editable while the server runs, and both
-the BQRS and findings lanes run from the same resolved plan. **Query identity, version and origin
-have moved to [`db/query-catalog.md`](../db/query-catalog.md)** — a suite is a program over packs,
-so it is the wrong unit to hang either on, and the two must not both grow a notion of what a query
-is.
+the BQRS and findings lanes run from the same resolved plan. **Query identity, version and source
+belong to the catalog**, which [`docs/architecture.md`](../../docs/architecture.md#what-produces-the-data)
+describes — a suite is a program over packs, so it is the wrong unit to hang either on, and the two
+must not both grow a notion of what a query is.
 
 ## Why this exists
 

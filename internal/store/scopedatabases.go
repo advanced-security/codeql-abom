@@ -165,7 +165,7 @@ func namedAmong(listed, names []string) []string {
 // namesOnlyRepositories reports a bare repository list; findings would never reach a clean one.
 func (f FindingSelector) namesOnlyRepositories() bool {
 	return len(f.Repositories) > 0 && len(f.Rules) == 0 && len(f.Exclude) == 0 &&
-		f.Provider == "" && f.Severity == "" && len(f.Properties) == 0 &&
+		f.Provider == "" && f.Severity == "" && len(f.Sources) == 0 && len(f.Properties) == 0 &&
 		len(f.ExcludeProperties) == 0
 }
 

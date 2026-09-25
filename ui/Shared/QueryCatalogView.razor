@@ -98,7 +98,7 @@ else
                             CellClass="abom-row-actions">
                 <CellTemplate>
                     <div class="abom-query-actions">
-                        @if (context.Item.Origin == "user" && !(context.Item.Working && context.Item.Steps.Count > 0))
+                        @if (context.Item.Source == "custom" && !(context.Item.Working && context.Item.Steps.Count > 0))
                         {
                             @* What an older version's tests said is history, and cannot be re-run. *@
                             <MudTooltip Text="@SupersededTooltip(context.Item)">
@@ -162,10 +162,10 @@ else
                 </CellTemplate>
             </PropertyColumn>
 
-            <PropertyColumn Property="x => x.Origin" Title="Origin">
+            <PropertyColumn Property="x => x.Source" Title="Source">
                 <CellTemplate>
                     <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
-                             data-abom-query-origin="@context.Item.Origin">@OriginText(context.Item.Origin)</MudChip>
+                             data-abom-query-source="@context.Item.Source">@SourceText(context.Item.Source)</MudChip>
                 </CellTemplate>
             </PropertyColumn>
 
@@ -363,7 +363,7 @@ else
 
     /// <summary>Only the working copy of the operator's own query has tests ABOM can run.</summary>
     private bool CanTest(CatalogQuery q) =>
-        CanAdvance && q.Origin == "user" && q.Working && q.QueryVersion.Length > 0;
+        CanAdvance && q.Source == "custom" && q.Working && q.QueryVersion.Length > 0;
 
     private static Color TestColor(CatalogQuery q) =>
         !q.Tested ? Color.Default : q.Passing ? Color.Success : Color.Error;
@@ -412,11 +412,11 @@ else
         version.Length <= 12 ? version : version[..12];
 
     /// <summary>"Yours" is the word for what the operator owns; a query they wrote is custom.</summary>
-    public static string OriginText(string origin) => origin switch
+    public static string SourceText(string source) => source switch
     {
         "upstream" => "upstream",
         "abom" => "ABOM",
-        "user" => "custom",
+        "custom" => "custom",
         "mixed" => "several packs",
         _ => "unknown",
     };

@@ -17,9 +17,12 @@ public class InventoryViewMenuTests : AbomTestContext
 {
     private const string Views = """
         [{"name":"owned-findings","title":"What you own, with findings",
-          "predicate":"flags=findings&scope=owned","builtin":true},
-         {"name":"unpinned","title":"Floating references","predicate":"ref=tag","builtin":true},
-         {"name":"my-scope","predicate":"kinds=action","builtin":false,"createdBy":"octo"}]
+          "predicate":"flags=findings&scope=owned","builtin":true,
+          "refuses":{"inventory":[],"repositories":["flags"],"coverage":["flags","scope"]}},
+         {"name":"unpinned","title":"Floating references","predicate":"ref=tag","builtin":true,
+          "refuses":{"inventory":[],"repositories":["ref"],"coverage":["ref"],"graph":[]}},
+         {"name":"my-scope","predicate":"kinds=action","builtin":false,"createdBy":"octo",
+          "refuses":{"inventory":[],"repositories":["kinds"],"coverage":["kinds"]}}]
         """;
 
     private const string Page = """
@@ -110,5 +113,34 @@ public class InventoryViewMenuTests : AbomTestContext
 
         page.WaitForAssertion(() => Assert.DoesNotContain(
             "abom-view-selected", page.Find("[data-abom-view='unpinned']").ClassName ?? ""));
+    }
+
+    /// <summary>
+    /// Each unit offers the scopes its own endpoint applies. The chips read the node listing's
+    /// refusal whatever unit was on screen, so on the crawled organization 17 of the 36 built-in
+    /// chips across the six listing units were offered and then refused on click.
+    /// </summary>
+    [Theory]
+    [InlineData("/inventory", false)]
+    [InlineData("/inventory?unit=repositories", true)]
+    // The queue the Coverage unit lists is narrowed by nothing in the language.
+    [InlineData("/inventory?unit=coverage", true)]
+    public void AUnitOffersOnlyTheScopesItApplies(string address, bool disabled)
+    {
+        Answer("api/filters", """
+            [{"name":"ref","label":"Reference style","help":"Commit SHA or tag",
+              "arity":"scalar","surfaces":["graph","inventory"]}]
+            """);
+        Answer("api/repositories", """{"items":[],"total":0}""");
+        Answer("api/frontier", "[]");
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.NavigateTo(address);
+
+        var page = RenderInventory();
+
+        page.WaitForAssertion(() => Assert.Equal(disabled,
+            page.Find("[data-abom-view='unpinned']").ClassList.Contains("mud-disabled")));
+        var reason = page.Find("[data-abom-view-reason='unpinned']").GetAttribute("title") ?? "";
+        if (disabled) Assert.Contains("Reference style: tag", reason);
+        else Assert.Equal("", reason);
     }
 }

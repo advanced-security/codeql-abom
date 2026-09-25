@@ -68,14 +68,14 @@ public sealed class ExplorerScopeTests : AbomTestContext
         Answer("api/owned-scope", "[{\"owner\":\"octo-org\"}]");
         Answer("api/views", """
             [{"name":"exposure-findings","title":"Advisory routes, with findings",
-              "predicate":"flags=findings&scope=exposure","builtin":true}]
+              "predicate":"flags=findings&scope=exposure","builtin":true,"refuses":{"graph":[]}}]
             """);
         StubGraphModule();
 
         var page = Render<Explorer>();
 
         page.WaitForAssertion(() =>
-            Assert.NotNull(page.Find("[data-abom-start-view='exposure-findings']")));
+            Assert.NotNull(page.Find("[data-abom-views] [data-abom-view='exposure-findings']")));
     }
 
     /// Choosing one of them draws it, or offering them is a list that does nothing.
@@ -85,12 +85,12 @@ public sealed class ExplorerScopeTests : AbomTestContext
         Answer("api/owned-scope", "[{\"owner\":\"octo-org\"}]");
         Answer("api/views", """
             [{"name":"exposure-findings","title":"Advisory routes, with findings",
-              "predicate":"flags=findings&scope=exposure","builtin":true}]
+              "predicate":"flags=findings&scope=exposure","builtin":true,"refuses":{"graph":[]}}]
             """);
         StubGraphModule();
 
         var page = Render<Explorer>();
-        page.WaitForElement("[data-abom-start-view='exposure-findings']").Click();
+        page.WaitForElement("[data-abom-views] [data-abom-view='exposure-findings']").Click();
 
         page.WaitForAssertion(() => Assert.Contains("scope=exposure", LoadedUrl()));
     }

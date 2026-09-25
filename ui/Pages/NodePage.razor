@@ -325,9 +325,22 @@ else
                 {
                     @foreach (var r in _detail.Rules)
                     {
-                        <div class="d-flex justify-space-between">
+                        <div class="d-flex justify-space-between align-center gap-2" data-abom-rule="@r.RuleId">
                             <span class="abom-rule">@r.RuleId</span>
-                            <span class="abom-num">@r.Count</span>
+                            <span class="d-flex align-center gap-1 abom-nowrap">
+                                @foreach (var source in r.Sources)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                             data-abom-rule-source="@source">@QueryCatalogView.SourceText(source)</MudChip>
+                                }
+                                @if (r.Unsourced > 0)
+                                {
+                                    <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-rule-unsourced>
+                                        @(r.Unsourced == r.Count ? "source not recorded" : $"source not recorded for {r.Unsourced}")
+                                    </MudText>
+                                }
+                                <span class="abom-num">@r.Count</span>
+                            </span>
                         </div>
                     }
                 }

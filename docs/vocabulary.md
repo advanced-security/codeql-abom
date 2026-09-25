@@ -90,14 +90,16 @@ only one of them is work somebody can do. Partial coverage is its own state, not
 
 A mode describes inputs, not whether GitHub enabled a query or will publish an alert. Coverage
 and dependency reach continue to describe regular analysis even when a view selects extended
-evidence. Neither a lock context nor a query's origin substitutes for this database shape.
+evidence. Neither a lock context nor a query's source substitutes for this database shape.
 
 ## Queries
 
 | Word | Means |
 | --- | --- |
 | **Query version** | A content hash over a query's text and every library it imports. Editing a library changes it |
-| **Origin** | Which pack supplied the query: upstream, ABOM's own, custom (the operator's), or several at once |
+| **Source** | Which pack supplied the query: upstream, ABOM's own, custom (the operator's), or several at once. A finding's source is its rule's, as the evaluation that reported it recorded |
+| **Source not recorded** | No evaluation that reported a finding recorded where its rule's query came from. It matches no source, and is counted beside an answer narrowed by one |
+| **What reported it** | A finding's evaluations: what ran, in which shape, under which CodeQL, the rule's own version, and who ran it — the crawl, run *N*, or a replayed recording |
 | **Lane** | What ran that is not one query: a whole suite invoked in one call, or several queries in one evaluation |
 | **Stage** | How far a version has been taken: `dev`, `test`, `extended-test`, `review`, `deploy` |
 | **Step** | One of seven marks inside `dev` and `test`: target, help, expected results, test database, AST, compiles, tests. Pending, failed, warning or passing. Pending is grey and is never a failure: nothing has been shown yet |
@@ -115,11 +117,12 @@ evidence. Neither a lock context nor a query's origin substitutes for this datab
 | **Draft** | A request an agent drafted from a run's picked results. Nobody has filed it until a person saves it |
 | **AI units** | What a session spent, as the Copilot CLI reported it. Absent where it reported nothing |
 | **Run** | A request to analyze chosen query versions over chosen repositories' databases, or over every repository a scope lists |
+| **Prediction** | A run whose results are what its queries *would report*, held apart and stored as no finding. Made from regular databases only, it states first how many of the scope's repositories it covers |
 | **Skipped** | A run's repository already answered by an earlier run with the same versions, commit and CLI, and carrying that answer |
 | **Interrupted** | A run the server stopped under: neither finished nor canceled |
 
 A query id names a rule; a query *version* names the code behind it, which is what a stage, a test
-result and a run all attach to. Origin comes from the pack, never from the id: a prefix is a naming
+result and a run all attach to. Source comes from the pack, never from the id: a prefix is a naming
 convention anybody can adopt. *Custom* is authorship; *yours* is ownership, and the two never
 share a word.
 
@@ -140,6 +143,18 @@ rendered as though ABOM measured it.
 
 **Not to be used as synonyms for each other**, because "unanalyzed" is work ABOM can do and
 "not enabled" is work the repository's owner has to do first.
+
+## Named scopes
+
+| Word | Means |
+| --- | --- |
+| **Named scope** | A predicate with a name: one of ABOM's built-in questions, or one an operator kept. It opens on any page that applies its terms |
+| **Keep** | Name the scope on screen and save it. On the Explorer, how it is drawn is kept beside it |
+| **Forget** | Delete a scope an operator kept. A built-in cannot be forgotten |
+| ***Page* cannot narrow by** | Why a named scope is disabled on this page: the terms it cannot apply, and the pages that can |
+
+A named scope is the question, never the page it was kept on: one kept on the Explorer asks the
+same thing on the Inventory.
 
 ## Scope inside an organization
 

@@ -29,6 +29,7 @@ public sealed class PresentationTests
             Use3d = true,
             Collapsed = true,
             StableLayout = true,
+            Selection = "actions/checkout@v4",
         };
 
         Assert.Equal(drawn, Presentation.Parse(drawn.ToQueryString()));

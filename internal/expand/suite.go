@@ -52,6 +52,9 @@ type tierPlan struct {
 	// the pack digests move when a pack is upgraded, and these move when a query or a library it
 	// imports is edited in place.
 	findingsVersions []string
+	// findingsRules are the rules that lane runs and the query behind each, which is what traces a
+	// finding to its own query's version and source when one invocation ran many.
+	findingsRules []store.QueryRunRule
 }
 
 func (p tierPlan) empty() bool { return len(p.bqrs) == 0 && len(p.findings) == 0 }
@@ -66,6 +69,7 @@ func (p *tierPlan) absorb(from tierPlan) {
 	p.findings = append(p.findings, from.findings...)
 	p.contents = append(p.contents, from.contents...)
 	p.findingsVersions = append(p.findingsVersions, from.findingsVersions...)
+	p.findingsRules = append(p.findingsRules, from.findingsRules...)
 	for _, pk := range from.findingsPacks {
 		p.notePack(pk.Pack, pk.PackVersion, pk.PackDigest)
 	}
@@ -132,6 +136,7 @@ func (p tierPlan) identify(queryID string, run store.QueryRun) store.QueryRun {
 func (p tierPlan) identifyFindings(run store.QueryRun) store.QueryRun {
 	run.CLIVersion = p.cliVersion
 	run.QueryVersion = combinedVersion(p.findingsVersions)
+	run.Rules = p.findingsRules
 	switch len(p.findingsPacks) {
 	case 0:
 		return run
@@ -198,6 +203,7 @@ func (p tierPlan) queryRun(queryID string, at revision) store.QueryRun {
 		// Stated rather than left to a default, so a second shape cannot arrive unannounced.
 		AnalysisMode: store.AnalysisModeRegular,
 		Ref:          at.ref, AnalyzedRef: at.analyzed,
+		RecordedBy: store.RecordedByCrawl,
 	})
 }
 
@@ -209,6 +215,7 @@ func (p tierPlan) findingsRun(at revision) store.QueryRun {
 		SourceFilter: at.filter,
 		AnalysisMode: store.AnalysisModeRegular,
 		Ref:          at.ref, AnalyzedRef: at.analyzed,
+		RecordedBy: store.RecordedByCrawl,
 	})
 }
 
@@ -368,6 +375,9 @@ func (e *Expander) plan(ctx context.Context, opts Options) (tierPlan, error) {
 		if shape == ingest.ShapeFindings {
 			planned.findings = append(planned.findings, path)
 			planned.findingsVersions = append(planned.findingsVersions, version)
+			planned.findingsRules = append(planned.findingsRules, store.QueryRunRule{
+				RuleID: md.ID, QueryVersion: version, Pack: pack, PackVersion: packVersion, PackDigest: digest,
+			})
 			planned.notePack(pack, packVersion, digest)
 			continue
 		}

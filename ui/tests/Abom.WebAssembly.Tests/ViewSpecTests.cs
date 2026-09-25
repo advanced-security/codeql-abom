@@ -213,6 +213,7 @@ public class ViewSpecTests
     [InlineData("origins=seed%2Cupstream&rules=abom%2Funpinned")]
     [InlineData("notRules=abom%2Fnoisy&rules=actions%2F%2A")]
     [InlineData("provider=CodeQL&severity=error")]
+    [InlineData("rules=actions%2F%2A&source=abom%2Cupstream")]
     [InlineData("repositories=octo-org%2Fapp%2Cocto-org%2Ftool")]
     [InlineData("mode=extended")]
     [InlineData("mode=regular&rules=actions%2F%2A")]
@@ -233,4 +234,23 @@ public class ViewSpecTests
     [Fact]
     public void AnEmptyValueIsRefusedRatherThanTreatedAsAbsent() =>
         Assert.Throws<FormatException>(() => ViewSpec.Parse("kinds="));
+
+    /// <summary>
+    /// Where a finding's query came from is a closed list, the one the store records. A source it
+    /// cannot produce would match nothing and read as "none of those", so it is refused, and one
+    /// bad member refuses the term rather than being dropped from it.
+    /// </summary>
+    [Theory]
+    [InlineData("source=user")]
+    [InlineData("source=upstream%2Cgithub")]
+    public void ASourceABOMDoesNotKnowIsRefused(string text) =>
+        Assert.Throws<FormatException>(() => ViewSpec.Parse(text));
+
+    [Fact]
+    public void EverySourceTheStoreRecordsIsReadBack()
+    {
+        var spec = ViewSpec.Parse("source=upstream%2Cmixed%2Ccustom%2Cabom");
+        Assert.Equal(["abom", "custom", "mixed", "upstream"], spec.Sources);
+        Assert.Equal("source=abom%2Ccustom%2Cmixed%2Cupstream", spec.ToQueryString());
+    }
 }

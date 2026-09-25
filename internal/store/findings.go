@@ -42,6 +42,13 @@ type QueryRun struct {
 	// commit are one evaluation, recorded as two rows in abom_query_run_ref.
 	Ref         string
 	AnalyzedRef string
+	// RecordedBy is what produced the evaluation, one of RecordedBy*. Like the refs it is not
+	// identity, and it is kept from whichever recording came first.
+	RecordedBy string
+	// Rules are the rules the evaluation ran and where each one's query came from. One invocation
+	// runs a whole suite, so the evaluation alone cannot say which version or pack a finding's
+	// rule was.
+	Rules []QueryRunRule
 }
 
 func (q QueryRun) key() string {
@@ -84,18 +91,24 @@ func (s *Store) RecordQueryRun(q QueryRun) (int64, error) {
 	if err := q.identified(); err != nil {
 		return 0, err
 	}
+	if q.RecordedBy != "" && !validRecorder(q.RecordedBy) {
+		return 0, fmt.Errorf("store: QueryRun for %s names recorder %q, which is none of %v",
+			q.QueryID, q.RecordedBy, recorders)
+	}
 	key := q.key()
 
 	if _, err := s.db.Exec(`
 		INSERT INTO abom_query_run
 			(run_key, query_id, query_version, pack, pack_version, pack_digest,
-			 cli_version, repository, db_commit, source_filter, analysis_mode, ran_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(run_key) DO UPDATE SET ran_at = excluded.ran_at`,
+			 cli_version, repository, db_commit, source_filter, analysis_mode, recorded_by, ran_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(run_key) DO UPDATE SET
+			ran_at      = excluded.ran_at,
+			recorded_by = COALESCE(abom_query_run.recorded_by, excluded.recorded_by)`,
 		key, q.QueryID, nullable(q.QueryVersion), nullable(q.Pack), nullable(q.PackVersion),
 		nullable(q.PackDigest), nullable(q.CLIVersion),
 		q.Repository, nullable(q.DBCommit), nullable(q.SourceFilter),
-		q.AnalysisMode, now()); err != nil {
+		q.AnalysisMode, nullable(q.RecordedBy), now()); err != nil {
 		return 0, fmt.Errorf("recording query run for %s: %w", q.QueryID, err)
 	}
 
@@ -103,6 +116,9 @@ func (s *Store) RecordQueryRun(q QueryRun) (int64, error) {
 	if err := s.db.QueryRow(
 		`SELECT row_id FROM abom_query_run WHERE run_key = ?`, key).Scan(&id); err != nil {
 		return 0, fmt.Errorf("resolving query run for %s: %w", q.QueryID, err)
+	}
+	if err := s.recordRunRules(id, q.Rules); err != nil {
+		return 0, fmt.Errorf("recording the rules %s ran: %w", q.QueryID, err)
 	}
 
 	// Only when a ref is actually known. An unrecorded ref must stay distinguishable from the

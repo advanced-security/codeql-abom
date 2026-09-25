@@ -23,15 +23,41 @@ else
         </MudAlert>
     }
     <MudText Typo="Typo.body2" Class="mud-text-secondary mb-1" data-abom-run-summary>
-        Run #@_run.RowId covered @CountText.Of(_run.Members.Count, "repository", "repositories"):
-        @Analyzed analyzed, @(_run.Members.Count - Analyzed) not.
-        @if (Split > 0)
+        @if (_run.Prediction)
+        {
+            @* Coverage first: a prediction over 2 of 4 repositories is a prediction about 2. *@
+            <span data-abom-prediction-coverage>
+                Prediction #@_run.RowId covers @Analyzed of @CountText.Of(_run.Members.Count, "repository", "repositories")@(Waiting > 0 ? $", with {Waiting} still to do" : "").
+                @if (NotCovered.Count > 0)
+                {
+                    <span>Not covered: @NamesText(NotCovered) — show every repository to see why.</span>
+                }
+            </span>
+            @if (Split > 0)
+            {
+                @* Spelled out: Razor drops the whitespace between an element and a code block. *@
+                <span>
+                    @(" ")@(QueryId is null ? "Its queries" : "This query") would report
+                    @CountText.Of(Found, "result", "results") in
+                    @CountText.Of(WithResults.Count(m => !Unsplit(m)), "repository", "repositories"),
+                    stored as no finding.
+                </span>
+            }
+        }
+        else
         {
             <span>
-                @(QueryId is null ? "Its queries" : "This query") found
-                @CountText.Of(Found, "result", "results") in
-                @CountText.Of(WithResults.Count(m => !Unsplit(m)), "repository", "repositories").
+                Run #@_run.RowId covered @CountText.Of(_run.Members.Count, "repository", "repositories"):
+                @Analyzed analyzed, @(_run.Members.Count - Analyzed) not.
             </span>
+            @if (Split > 0)
+            {
+                <span>
+                    @(" ")@(QueryId is null ? "Its queries" : "This query") found
+                    @CountText.Of(Found, "result", "results") in
+                    @CountText.Of(WithResults.Count(m => !Unsplit(m)), "repository", "repositories").
+                </span>
+            }
         }
         @if (Unsplit(_run.Members) is { Count: > 0 } unsplit)
         {
@@ -62,12 +88,16 @@ else
         @if (_run.Members.Any(m => m.Counted))
         {
             <MudSpacer />
-            <MudButton Size="Size.Small" DropShadow="false"
-                       Variant="@(_picking ? Variant.Filled : Variant.Outlined)"
-                       StartIcon="@Icons.Material.Outlined.RateReview"
-                       OnClick="@(() => _picking = !_picking)" data-abom-results-pick>
-                Ask for a change
-            </MudButton>
+            @* The reason sits on the span: a disabled button fires no tooltip. *@
+            <span data-abom-results-pick-reason title="@(_run.Prediction ? PredictionPickReason : null)">
+                <MudButton Size="Size.Small" DropShadow="false"
+                           Variant="@(_picking ? Variant.Filled : Variant.Outlined)"
+                           StartIcon="@Icons.Material.Outlined.RateReview"
+                           Disabled="@_run.Prediction"
+                           OnClick="@(() => _picking = !_picking)" data-abom-results-pick>
+                    Ask for a change
+                </MudButton>
+            </span>
         }
     </div>
 
@@ -108,6 +138,10 @@ else
                     @if (_all)
                     {
                         <th>Status</th>
+                    }
+                    @if (_run.Prediction)
+                    {
+                        <th></th>
                     }
                 </tr>
             </thead>
@@ -150,7 +184,28 @@ else
                                 <MudText Typo="Typo.caption">@StatusText(member)</MudText>
                             </td>
                         }
+                        @if (_run.Prediction)
+                        {
+                            <td>
+                                @if (Count(member) > 0)
+                                {
+                                    <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
+                                               Class="abom-plain-button" OnClick="@(() => TogglePredicted(member.Repository))"
+                                               data-abom-predicted-toggle="@member.Repository">
+                                        @(_predicted.ContainsKey(member.Repository) ? "Hide what it would report" : "What it would report")
+                                    </MudButton>
+                                }
+                            </td>
+                        }
                     </tr>
+                    @if (_run.Prediction && _predicted.TryGetValue(member.Repository, out var listed))
+                    {
+                        <tr>
+                            <td colspan="@ColumnCount">
+                                @PredictedFor(member.Repository, listed)
+                            </td>
+                        </tr>
+                    }
                 }
             </tbody>
         </MudSimpleTable>
@@ -232,6 +287,69 @@ else
 
     private int Analyzed => _run?.Members.Count(m => m.Counted) ?? 0;
 
+    // Still to do is not the same as could not be covered, so the two are counted apart.
+    private int Waiting => _run?.Members.Count(m => !m.Counted && m.Status is "pending" or "running") ?? 0;
+
+    private List<AnalysisMember> NotCovered =>
+        _run?.Members.Where(m => !m.Counted && m.Status is not ("pending" or "running")).ToList() ?? [];
+
+    private static string NamesText(IReadOnlyList<AnalysisMember> members) =>
+        members.Count <= NamesShown
+            ? string.Join(", ", members.Select(m => m.Repository))
+            : $"{string.Join(", ", members.Take(NamesShown).Select(m => m.Repository))} " +
+              $"and {members.Count - NamesShown} more";
+
+    private const int NamesShown = 10;
+
+    private const string PredictionPickReason =
+        "A prediction stores no finding, so there is nothing here to pick as evidence. " +
+        "Run the queries to pick from what they found.";
+
+    private readonly Dictionary<string, MemberFindings?> _predicted = new(StringComparer.Ordinal);
+
+    private async Task TogglePredicted(string repository)
+    {
+        if (!_predicted.Remove(repository))
+        {
+            _predicted[repository] = await Api.GetRunFindingsAsync(RunId, repository, QueryId ?? string.Empty);
+        }
+    }
+
+    private int ColumnCount => 1 + Columns.Count + (ShowsTotals ? 1 : 0) + (_all ? 1 : 0) + 1;
+
+    private RenderFragment PredictedFor(string repository, MemberFindings? listed) => __builder =>
+    {
+        if (listed is null)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                The server did not say what this repository would report: @Api.LastError
+            </MudText>
+        }
+        else
+        {
+            <ul class="abom-trace" data-abom-predicted="@repository">
+                @foreach (var f in listed.Findings)
+                {
+                    <li>
+                        <MudText Typo="Typo.caption" Class="d-block">
+                            <span class="abom-path">@f.FilePath:@f.StartLine</span> — @f.Message
+                            @if (Columns.Count > 1)
+                            {
+                                <span class="mud-text-secondary"> · @f.RuleId</span>
+                            }
+                        </MudText>
+                    </li>
+                }
+            </ul>
+            @if (listed.Truncated)
+            {
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                    Only the first @listed.Findings.Count are listed.
+                </MudText>
+            }
+        }
+    };
+
     private int Split => _run?.Members.Count(m => m.Counted && m.ByQuery.Count > 0) ?? 0;
 
     private List<AnalysisMember> WithResults =>
@@ -257,6 +375,7 @@ else
     private bool _picking;
     private string? _chosenQuery;
     private readonly Dictionary<string, MemberFindings?> _findings = new(StringComparer.Ordinal);
+    private readonly Dictionary<long, FindingTrace?> _traces = [];
     private readonly List<(string Repository, long FindingRowId)> _falseAlarms = [];
     private readonly List<string> _missed = [];
 
@@ -432,6 +551,19 @@ else
                                      ValueChanged="@((bool v) => PickFinding(repository, f.FindingRowId, v))"
                                      Label="@($"{f.FilePath}:{f.StartLine} — {f.Message}")" />
                     </span>
+                    <div class="d-flex align-center gap-1 ml-8">
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary"
+                                 data-abom-finding-provenance="@f.FindingRowId">@ProvenanceText(f)</MudText>
+                        <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
+                                   Class="abom-plain-button" OnClick="@(() => ToggleTrace(f.FindingRowId))"
+                                   data-abom-finding-trace-toggle="@f.FindingRowId">
+                            @(_traces.ContainsKey(f.FindingRowId) ? "Hide what reported it" : "What reported it")
+                        </MudButton>
+                    </div>
+                    @if (_traces.TryGetValue(f.FindingRowId, out var trace))
+                    {
+                        @TraceOf(trace)
+                    }
                 </div>
             }
             if (listed.Truncated)
@@ -444,4 +576,82 @@ else
     };
 
     public void Dispose() => _timer?.Dispose();
+
+    private async Task ToggleTrace(long id)
+    {
+        if (!_traces.Remove(id))
+        {
+            _traces[id] = await Api.GetFindingTraceAsync(id);
+        }
+    }
+
+    private static string Short(string hash) => hash.Length <= 12 ? hash : hash[..12];
+
+    private static string VersionText(string version) =>
+        version.Length == 0 ? "version not recorded" : $"version {Short(version)}";
+
+    /// <summary>What the member's evaluation recorded about the rule's query, never the run's.</summary>
+    private static string ProvenanceText(RunFinding f) => f.Source.Length == 0
+        ? "source and version not recorded"
+        : $"{QueryCatalogView.SourceText(f.Source)} · {VersionText(f.RuleVersion)}";
+
+    private static string RecorderText(FindingEvaluation e) => e.RecordedBy switch
+    {
+        "crawl" => "the crawl",
+        "run" when e.Runs.Count > 0 =>
+            (e.Runs.Count == 1 ? "run " : "runs ") + string.Join(", ", e.Runs.Select(r => r.RunId).Distinct()),
+        "run" => "a run",
+        // style-check: off — the store's value for a replayed recording, matched and never shown.
+        "corpus" => "a replayed recording",
+        // style-check: on
+        _ => "who ran it was not recorded",
+    };
+
+    private static string RuleText(FindingEvaluation e)
+    {
+        if (e.Source.Length == 0)
+        {
+            return e.Packs.Count == 0
+                ? "source and version not recorded"
+                : $"source and version not recorded; it ran {string.Join(", ", e.Packs)}";
+        }
+        var pack = e.PackVersion.Length == 0 ? e.Pack : $"{e.Pack} {e.PackVersion}";
+        return $"{QueryCatalogView.SourceText(e.Source)} · {pack} · {VersionText(e.RuleVersion)}";
+    }
+
+    private RenderFragment TraceOf(FindingTrace? trace) => __builder =>
+    {
+        if (trace is null)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary d-block ml-8">
+                The server did not say what reported this: @Api.LastError
+            </MudText>
+        }
+        else if (trace.Evaluations.Count == 0)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary d-block ml-8" data-abom-trace-none>
+                No evaluation is on record as reporting this finding.
+            </MudText>
+        }
+        else
+        {
+            <ul class="abom-trace ml-8">
+                @foreach (var e in trace.Evaluations)
+                {
+                    <li data-abom-trace-evaluation="@e.QueryRunId">
+                        <MudText Typo="Typo.caption" Class="d-block">
+                            @RecorderText(e) · @e.Invoked · @e.Mode database at @Short(e.Commit)
+                            · CodeQL @(e.CliVersion.Length == 0 ? "not recorded" : e.CliVersion) · @TimeText.DayAndTime(e.RanAt)
+                        </MudText>
+                        <MudText Typo="Typo.caption" Class="d-block mud-text-secondary">@RuleText(e)</MudText>
+                        @foreach (var r in e.Runs)
+                        {
+                            <MudLink Href="@($"/codeql?tab=runs&run={r.RunId}")" Typo="Typo.caption" Class="mr-2"
+                                     data-abom-trace-run="@r.RunId">run @r.RunId: @r.Status</MudLink>
+                        }
+                    </li>
+                }
+            </ul>
+        }
+    };
 }

@@ -28,13 +28,14 @@ type NamedView struct {
 	Builtin      bool   `json:"builtin"`
 	CreatedBy    string `json:"createdBy,omitempty"`
 	CreatedAt    string `json:"createdAt,omitempty"`
-	// ListingRefuses names the terms Inventory cannot narrow by, so a tab that will refuse itself
-	// can say so before it is clicked rather than after. A view is saved wherever it was built and
-	// drawn wherever it is offered, and the Explorer answers terms a list cannot.
-	ListingRefuses []string `json:"listingRefuses,omitempty"`
+	// Refuses names, for every surface a scope can be opened on, the terms that surface cannot
+	// apply, so a page disables a scope it would refuse before it is chosen rather than after. A
+	// scope is kept wherever it was built and offered on every page that builds one. Absent only
+	// when the predicate no longer parses, which no page can open at all.
+	Refuses map[string][]string `json:"refuses,omitempty"`
 }
 
-// named describes one catalog entry, working out where it can be drawn from the predicate rather
+// named describes one catalog entry, working out where it can be opened from the predicate rather
 // than from where it happened to be saved.
 func named(name, title, predicate, presentation string, builtin bool, by, at string) NamedView {
 	v := NamedView{
@@ -42,7 +43,7 @@ func named(name, title, predicate, presentation string, builtin bool, by, at str
 		Builtin: builtin, CreatedBy: by, CreatedAt: at,
 	}
 	if spec, err := viewspec.Parse(predicate); err == nil {
-		v.ListingRefuses = spec.UnenforceableAsInventory()
+		v.Refuses = spec.Refusals()
 	}
 	return v
 }

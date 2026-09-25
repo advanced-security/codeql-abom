@@ -194,6 +194,10 @@ func TestTheCanonicalTextIsExactlyThis(t *testing.T) {
 			"provider=CodeQL&severity=error",
 		},
 		{
+			Spec{Sources: []string{SourceUpstream, SourceAbom}, Rules: []string{"actions/*"}},
+			"rules=actions%2F%2A&source=abom%2Cupstream",
+		},
+		{
 			Spec{Repositories: []string{"octo-org/tool", "octo-org/app"}},
 			"repositories=octo-org%2Fapp%2Cocto-org%2Ftool",
 		},

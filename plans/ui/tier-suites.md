@@ -27,7 +27,7 @@ duration.
    version is now recorded on every run, so joining it to the row is the remaining work: a tier can
    then show which of its suites are behind instead of offering an undifferentiated re-analysis of
    everything. A query version is recorded too and is the finer signal — a library edit moves it
-   without moving the pack version. See [`db/query-catalog.md`](../db/query-catalog.md).
+   without moving the pack version — and each evaluation records it for every rule it ran.
 3. **Decide what a section whose read failed does.** A panel that could not reach
    `/api/discovery/suites` has no setting to summarize. It states the failure rather than folding
    over it; what it does not yet do is offer a way to try again.

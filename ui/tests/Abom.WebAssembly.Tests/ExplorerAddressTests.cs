@@ -139,14 +139,33 @@ public class ExplorerAddressTests : AbomTestContext
     }
 
     /// <summary>
+    /// The graph refuses a source rather than drawing it, and the page has no control for one.
+    /// Carried, the refusal says why nothing is drawn; dropped, the reader is shown every finding's
+    /// graph under a link that asked for one source's.
+    /// </summary>
+    [Fact]
+    public void ASourceTheGraphCannotDrawStillTravels()
+    {
+        StubGraphModule();
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+                .NavigateTo("/explore?source=custom");
+
+        var page = Render<Explorer>();
+        page.Instance.SyncAddress();
+
+        Assert.Contains("source=custom", CurrentQuery());
+    }
+
+    /// <summary>
     /// Almost every link into this page is partial — Discovery sends a node and a direction and
     /// nothing else — so a term the address does not name keeps the arrival default. Reading an
-    /// unnamed list as an empty one would hand the reader a blank canvas.
+    /// unnamed list as an empty one would hand the reader a blank canvas. The arrival kinds reach
+    /// the browser rather than the address, where they would narrow every other page by them.
     /// </summary>
     [Fact]
     public void APartialHandOffKeepsTheArrivalDefaults()
     {
-        StubGraphModule();
+        var module = StubGraphModule();
         Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
                 .NavigateTo("/explore?selection=actions%2Fcheckout&direction=in&from=discovery");
 
@@ -154,11 +173,30 @@ public class ExplorerAddressTests : AbomTestContext
         page.Instance.SyncAddress();
 
         var query = CurrentQuery();
-        Assert.Contains("kinds=", query);
+        var filter = module.Invocations["applyFilters"].Last().Arguments[1]!;
+        var kinds = (string[])filter.GetType().GetProperty("kinds")!.GetValue(filter)!;
+        Assert.Equal(7, kinds.Length);
         Assert.Contains("flags=findings", query);
         // A node still has to be drawn inside something, and ownership is the one closure that is
         // not a guess about size — it is what the operator declared.
         Assert.Contains("scope=owned", query);
+    }
+
+    /// <summary>
+    /// A relationship kind is a term this page has no control for, and it travels like the rest.
+    /// Dropped, a shared link naming one widened to every relationship.
+    /// </summary>
+    [Fact]
+    public void ARelationshipKindTravelsThroughTheExplorer()
+    {
+        StubGraphModule();
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+                .NavigateTo("/explore?edgeKinds=job-needs-job&scope=owned");
+
+        var page = Render<Explorer>();
+        page.Instance.SyncAddress();
+
+        Assert.Contains("edgeKinds=job-needs-job", CurrentQuery());
     }
 
     /// <summary>

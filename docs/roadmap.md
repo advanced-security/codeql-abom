@@ -131,7 +131,8 @@ So ABOM drives the authoring loop rather than asking anybody to learn it. The pl
 exists: an operator's directory is a CodeQL pack, its queries are cataloged beside the upstream and
 ABOM-authored ones and told apart by the pack they came from rather than by a prefix, they run
 against whatever scope the operator has narrowed to, and their results land on the graph like any
-other. A version leaves `dev` only when its tests pass.
+other, each traced to the version and source of the rule that reported it. A version leaves `dev`
+only when its tests pass.
 
 The half that removes QL from the requirement is built. An operator supplies an example that should
 match and one that should not, or picks results from a run and lets an agent draft them. An agent
@@ -140,10 +141,14 @@ session, driven through the
 and confined by ABOM, writes the fixtures and the query. The operator accepts what it reported, and
 ABOM then tests it itself. A test fails first on the lines its fixture marks before the query is
 written, one `actions-all` answers for authoring and execution, and every mark names the CodeQL it
-was recorded under. What remains is the simulation that says what a query would do before anybody
-turns it on. Running several CodeQL releases side by side, so an upgrade can be compared before it
+was recorded under. A run's results are findings in full or not at all, fixed before it starts, and
+a separate prediction holds them apart. What remains is one run whose findings setting follows
+what its queries are — on for what a pack published or a suite promoted, off for a version still
+being refined — with a toggle to turn findings on for that run, a chosen part of what it held
+turned into findings in review, and its results compared with the code scanning alerts developers
+already see. Running several CodeQL releases side by side, so an upgrade can be compared before it
 is taken, is later.
-`plans/db/query-catalog.md`, `plans/api/on-demand-analysis.md`
+`plans/api/on-demand-analysis.md`, `plans/api/query-simulation.md`
 
 ## From a finding to a fix
 

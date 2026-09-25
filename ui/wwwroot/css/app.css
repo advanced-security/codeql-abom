@@ -376,6 +376,21 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     font-size: var(--abom-text-sm);
 }
 
+/* The named-scope control takes no box of its own, so its chips, name and Keep lay out in the
+   host's scope bar like its other controls. */
+.abom-named-scopes { display: contents; }
+
+/* A name wants a name's width, not whatever is left of the row. */
+.abom-named-scopes .abom-scope-name { flex: 0 1 12rem; }
+
+/* On the Explorer the chips share the filter's row, so the strip costs the canvas one row
+   rather than three. */
+.abom-explore-scope .abom-views { flex: 1 1 20rem; }
+
+/* A named scope's chip and its Forget share one span, which carries the reason and lays out as the
+   chip does rather than as a line of text around it. */
+.abom-views .abom-view { display: inline-flex; align-items: center; white-space: nowrap; }
+
 /* Row actions are icons packed between the first two columns, because a column of words there
    costs more width than the columns it separates and width is the scarce thing at organization
    scale. The column takes exactly the icons it holds and no more, and its header is empty on
@@ -1005,16 +1020,6 @@ code {
     columns: 2;
 }
 
-/* The scope chooser on the empty Explorer. A row that wraps rather than a column: these are
-   alternatives of the same kind, and a vertical list of five reads as an ordered procedure. */
-.abom-start-views {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    justify-content: center;
-    max-width: 520px;
-}
-
 /* A value and how much of the corpus it accounts for, on one line. Stacked, each row was two
    lines tall and a list of twenty-one rules scrolled for no reason. */
 .abom-picker-value {
@@ -1182,6 +1187,9 @@ code {
     border-top: 1px solid var(--mud-palette-lines-default);
 }
 .abom-plain-button { text-transform: none; }
+/* One entry per evaluation that reported a result, under the result it traces. */
+.abom-trace { list-style: none; padding-left: 0; margin: 2px 0 6px; }
+.abom-trace li + li { margin-top: 4px; }
 .abom-session { margin-top: 6px; }
 .abom-session-detail {
     margin: 2px 0 0;
