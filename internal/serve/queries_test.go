@@ -103,6 +103,16 @@ type fakeTester struct {
 	// installErr is what installing the pack fails with, as it does where the registry is out of
 	// reach.
 	installErr error
+	// declares is what the CLI resolves as any query's metadata, as JSON. Empty declares nothing.
+	declares string
+}
+
+func (f *fakeTester) ResolveMetadata(context.Context, string) (runner.Metadata, error) {
+	var md runner.Metadata
+	if f.declares == "" {
+		return md, nil
+	}
+	return md, json.Unmarshal([]byte(f.declares), &md)
 }
 
 // fakeCLI is the CodeQL the fakes say they run.
@@ -369,6 +379,30 @@ func TestTestingAQueryInstallsItsPackBeforeRunningIt(t *testing.T) {
 	if got := strings.Join(tester.calls, ", "); got != "install, run" {
 		t.Errorf("the tester was asked to %s, want the pack installed and then the tests run", got)
 	}
+}
+
+// The working copy is on the catalog before anything runs it, so testing it is where what it
+// declares is first read: its severity is known before a run, as every other version's is.
+func TestTestingAWorkingVersionRecordsWhatItDeclares(t *testing.T) {
+	s, _ := newServer(t)
+	root := queryWorkspace(t, []string{"A"})
+	s.Tester, s.QueryDir = &fakeTester{declares: `{"id":"acme/a","kind":"problem",` +
+		`"problem.severity":"warning","security-severity":"8.1","precision":"high"}`}, root
+
+	if w := runQueryTest(t, s, "acme/a", versionOf(t, root, "A")); w.Code != http.StatusOK {
+		t.Fatalf("answered %d: %s", w.Code, w.Body.String())
+	}
+	for _, q := range readCatalog(t, s).Queries {
+		if q.QueryID != "acme/a" {
+			continue
+		}
+		if len(q.Metadata) != 5 || q.Metadata["precision"] != "high" || q.Band != "high" {
+			t.Errorf("the working copy carries %v, band %q, want all five pairs and high",
+				q.Metadata, q.Band)
+		}
+		return
+	}
+	t.Fatal("the working copy is not in the catalog")
 }
 
 // A pack whose dependencies cannot be installed compiles nothing, so the install's reason is the

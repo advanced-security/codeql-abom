@@ -158,9 +158,10 @@ public class ExplorerAddressTests : AbomTestContext
 
     /// <summary>
     /// Almost every link into this page is partial — Discovery sends a node and a direction and
-    /// nothing else — so a term the address does not name keeps the arrival default. Reading an
-    /// unnamed list as an empty one would hand the reader a blank canvas. The arrival kinds reach
-    /// the browser rather than the address, where they would narrow every other page by them.
+    /// nothing else — so a list the address does not name asks nothing. For kinds that is every
+    /// kind the payload holds rather than none, which would hand the reader a blank canvas; for
+    /// flags it is no flag, as it is on every other consumer. The arrival kinds reach the browser
+    /// rather than the address, where they would narrow every other page by them.
     /// </summary>
     [Fact]
     public void APartialHandOffKeepsTheArrivalDefaults()
@@ -176,7 +177,7 @@ public class ExplorerAddressTests : AbomTestContext
         var filter = module.Invocations["applyFilters"].Last().Arguments[1]!;
         var kinds = (string[])filter.GetType().GetProperty("kinds")!.GetValue(filter)!;
         Assert.Equal(7, kinds.Length);
-        Assert.Contains("flags=findings", query);
+        Assert.DoesNotContain("flags=", query);
         // A node still has to be drawn inside something, and ownership is the one closure that is
         // not a guess about size — it is what the operator declared.
         Assert.Contains("scope=owned", query);

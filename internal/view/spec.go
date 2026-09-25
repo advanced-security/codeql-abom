@@ -36,6 +36,17 @@ type Spec struct {
 	// reported the finding recorded it. A finding whose evaluation recorded no source matches none.
 	Sources  []string
 	Severity string
+	// SecuritySeverities narrows to findings whose rule's score falls in one of these bands. Apart
+	// from Severity, which is the level a result reported: `error` spans critical and medium alike.
+	SecuritySeverities []string
+	// AdvisorySeverities asks about live advisories rather than findings, at the severities GitHub
+	// published them. Every member is any live advisory.
+	AdvisorySeverities []string
+	// Reached asks about what an owned repository reaches rather than where a finding was found:
+	// directly, by naming it, or transitively, through something else it uses.
+	Reached []string
+	// Policies names other policies, and a policy carrying it refuses what any of them refuses.
+	Policies []string
 	// Repositories narrows to what a caller is asking about — a pull request's repository, for the
 	// gate. Compared case-insensitively wherever it is applied.
 	Repositories []string
@@ -71,9 +82,15 @@ type Spec struct {
 	Steps bool
 }
 
-// FlagUnanalyzed keeps only what has not been analyzed at every reference in use. Named here so
-// the browser, the API and the gate cannot spell it three ways.
-const FlagUnanalyzed = "unanalyzed"
+// The flags, named here so the browser, the API and the gate cannot spell them three ways.
+const (
+	// FlagFindings keeps what carries a finding.
+	FlagFindings = "findings"
+	// FlagAdvisory keeps what a published advisory names.
+	FlagAdvisory = "advisory"
+	// FlagUnanalyzed keeps only what has not been analyzed at every reference in use.
+	FlagUnanalyzed = "unanalyzed"
+)
 
 // propertySeparator divides a key from a value. Only the first one divides, so a value may contain
 // it; GitHub property names cannot.
@@ -90,26 +107,30 @@ func (p PropertyMatch) String() string { return p.Name + propertySeparator + p.V
 // The parameter names are the text. Changing one changes every stored view and every shared link,
 // so they are listed once here rather than spelled at each use.
 const (
-	paramScope         = "scope"
-	paramSearch        = "q"
-	paramKinds         = "kinds"
-	paramOrigins       = "origins"
-	paramRules         = "rules"
-	paramNotRules      = "notRules"
-	paramRepos         = "repositories"
-	paramProperties    = "properties"
-	paramNotProperties = "notProperties"
-	paramProvider      = "provider"
-	paramSource        = "source"
-	paramSeverity      = "severity"
-	paramMode          = "mode"
-	paramEdgeClass     = "edges"
-	paramEdgeKinds     = "edgeKinds"
-	paramRefStyle      = "ref"
-	paramBoundary      = "boundary"
-	paramMinReach      = "minReach"
-	paramFlags         = "flags"
-	paramSteps         = "steps"
+	paramScope            = "scope"
+	paramSearch           = "q"
+	paramKinds            = "kinds"
+	paramOrigins          = "origins"
+	paramRules            = "rules"
+	paramNotRules         = "notRules"
+	paramRepos            = "repositories"
+	paramProperties       = "properties"
+	paramNotProperties    = "notProperties"
+	paramProvider         = "provider"
+	paramSource           = "source"
+	paramSeverity         = "severity"
+	paramSecuritySeverity = "securitySeverity"
+	paramAdvisorySeverity = "advisorySeverity"
+	paramReached          = "reached"
+	paramPolicies         = "policies"
+	paramMode             = "mode"
+	paramEdgeClass        = "edges"
+	paramEdgeKinds        = "edgeKinds"
+	paramRefStyle         = "ref"
+	paramBoundary         = "boundary"
+	paramMinReach         = "minReach"
+	paramFlags            = "flags"
+	paramSteps            = "steps"
 )
 
 // String writes the canonical text: keys in a fixed order, list values sorted and deduplicated,
@@ -146,6 +167,10 @@ func (s Spec) String() string {
 		{paramEdgeKinds, s.EdgeKinds},
 		{paramFlags, s.Flags},
 		{paramSource, s.Sources},
+		{paramSecuritySeverity, s.SecuritySeverities},
+		{paramAdvisorySeverity, s.AdvisorySeverities},
+		{paramReached, s.Reached},
+		{paramPolicies, s.Policies},
 	} {
 		if v := normalize(f.values); len(v) > 0 {
 			q.Set(f.key, strings.Join(v, ","))
@@ -196,15 +221,19 @@ func Parse(text string) (Spec, error) {
 		paramMode:     &s.Mode,
 	}
 	lists := map[string]*[]string{
-		paramKinds:     &s.Kinds,
-		paramOrigins:   &s.Origins,
-		paramRules:     &s.Rules,
-		paramNotRules:  &s.NotRules,
-		paramRepos:     &s.Repositories,
-		paramEdgeClass: &s.EdgeClass,
-		paramEdgeKinds: &s.EdgeKinds,
-		paramFlags:     &s.Flags,
-		paramSource:    &s.Sources,
+		paramKinds:            &s.Kinds,
+		paramOrigins:          &s.Origins,
+		paramRules:            &s.Rules,
+		paramNotRules:         &s.NotRules,
+		paramRepos:            &s.Repositories,
+		paramEdgeClass:        &s.EdgeClass,
+		paramEdgeKinds:        &s.EdgeKinds,
+		paramFlags:            &s.Flags,
+		paramSource:           &s.Sources,
+		paramSecuritySeverity: &s.SecuritySeverities,
+		paramAdvisorySeverity: &s.AdvisorySeverities,
+		paramReached:          &s.Reached,
+		paramPolicies:         &s.Policies,
 	}
 	matches := map[string]*[]PropertyMatch{
 		paramProperties:    &s.Properties,
@@ -268,7 +297,7 @@ func (s Spec) Equal(other Spec) bool { return s.String() == other.String() }
 // somebody to go looking for a surface that does not exist.
 func IsTerm(name string) bool { return termNames[name] }
 
-// The scalar terms whose values are fixed in code rather than read from the corpus.
+// The terms whose values are fixed in code rather than read from the corpus.
 //
 // Listed here because this package is below every consumer of the language: the store's own
 // constants are checked against these rather than the other way round. A rule, a saved view and a
@@ -316,10 +345,7 @@ const (
 // EdgeKinds is the vocabulary of `edgeKinds`, in the order a reader should be offered it: what a
 // workflow does, then what it orders, then the two indirections.
 //
-// A list rather than a scalar, so "uses of any kind" is one question. Its values are deliberately
-// *not* refused by checkVocabulary: that check is scalar-only, and whether a list term refuses an
-// unknown value is an open policy question this term must not decide by accident. The store
-// narrows to nothing instead of widening to everything, which is the safe half of the decision.
+// A list rather than a scalar, so "uses of any kind" is one question.
 func EdgeKinds() []string {
 	return []string{
 		EdgeKindStepUsesAction, EdgeKindJobNeedsJob,
@@ -332,9 +358,33 @@ var vocabulary = map[string][]string{
 	paramBoundary: {BoundarySameRepository, BoundarySameOwner, BoundaryCrossOwner},
 	paramRefStyle: {RefStyleAny, RefStyleSHA, RefStyleTag},
 	paramMode:     {ModeRegular, ModeExtended},
-	// The one list here, and refused member by member: a source is a fact ABOM records, so one it
-	// cannot produce is a question with no answer rather than one the corpus has not reached.
+	// The lists are refused member by member, and one member outside refuses the whole term: a
+	// member is a fact ABOM records or a structure its extraction produces, so one it cannot
+	// produce is a question with no answer rather than one the corpus has not reached — and
+	// keeping the members that were recognized answers a narrower question than was written.
+	//
+	// What has been *used* is never the check. `kinds` was read from the corpus, which is right
+	// for offering and wrong for refusing: an account's node is drawn by the graph and stored
+	// nowhere, so the corpus list lacked the one kind every grouping starts from.
 	paramSource: {SourceUpstream, SourceAbom, SourceCustom, SourceMixed},
+	// In the order a reader meets them: the containers, what a workflow uses, then what only a
+	// focus draws.
+	paramKinds: {
+		"org", "repo", "workflow", "reusable_workflow", "composite_action", "action",
+		"docker_image", "job", "step",
+	},
+	// How a node entered the corpus. `external` is a node belonging to no repository, which is
+	// what the graph and the browser both call one.
+	paramOrigins:          {"seed", "upstream", "external"},
+	paramFlags:            {FlagFindings, FlagAdvisory, FlagUnanalyzed},
+	paramSecuritySeverity: Bands(),
+	paramAdvisorySeverity: AdvisorySeverities(),
+	paramReached:          {ReachedDirect, ReachedTransitive},
+	// The browser's spelling of what a relationship crosses, which is not `boundary`'s: that term
+	// is the store's and says `cross-owner`. Two words for one fact is a debt; refusing the wrong
+	// one by name is what stops it from filtering nothing.
+	paramEdgeClass: {"sameRepo", "sameOwner", "crossOwner"},
+	paramEdgeKinds: EdgeKinds(),
 }
 
 // Vocabulary reports the values a term allows, or nothing if the corpus decides them.
@@ -376,6 +426,7 @@ var termNames = map[string]bool{
 	paramNotProperties: true, paramProvider: true, paramSeverity: true, paramEdgeClass: true,
 	paramRefStyle: true, paramBoundary: true, paramMinReach: true, paramFlags: true,
 	paramSteps: true, paramEdgeKinds: true, paramMode: true, paramSource: true,
+	paramSecuritySeverity: true, paramAdvisorySeverity: true, paramReached: true, paramPolicies: true,
 }
 
 // setTerms are the terms the set path applies — `/api/match`, and a policy, which are one
@@ -386,15 +437,18 @@ var termNames = map[string]bool{
 // refused nothing and dropped ten. A predicate accepted and partly dropped enforces something wider
 // than the reader saw, and the widest version of it is the one that blocks a pull request.
 var setTerms = map[string]bool{
-	paramRules:         true,
-	paramNotRules:      true,
-	paramProvider:      true,
-	paramSource:        true,
-	paramSeverity:      true,
-	paramRepos:         true,
-	paramProperties:    true,
-	paramNotProperties: true,
-	paramMode:          true,
+	paramRules:            true,
+	paramNotRules:         true,
+	paramProvider:         true,
+	paramSource:           true,
+	paramSeverity:         true,
+	paramSecuritySeverity: true,
+	paramAdvisorySeverity: true,
+	paramReached:          true,
+	paramRepos:            true,
+	paramProperties:       true,
+	paramNotProperties:    true,
+	paramMode:             true,
 }
 
 // UnenforceableAsSet names the terms a predicate carries that the set path cannot apply, sorted so
@@ -428,19 +482,43 @@ var graphTerms = map[string]bool{
 // match's edges, because the graph is bipartite by kind, so the Explorer takes one payload and
 // filters it without asking again. A caller that is not the Explorer has to be told which terms it
 // was handed, which is what `ClientApplied` is for.
+//
+// `provider`, `severity` and `securitySeverity` are applied per finding, never per node: the payload
+// carries each node's distinct (rule, provider, severity, score) combinations, so
+// `rules=A&severity=error` keeps a node only when one finding is both, exactly as the set path
+// reads it.
 var clientTerms = map[string]bool{
-	paramKinds:     true,
-	paramSearch:    true,
-	paramRules:     true,
-	paramNotRules:  true,
-	paramProvider:  true,
-	paramSeverity:  true,
-	paramEdgeClass: true,
+	paramKinds:            true,
+	paramSearch:           true,
+	paramRules:            true,
+	paramNotRules:         true,
+	paramProvider:         true,
+	paramSeverity:         true,
+	paramSecuritySeverity: true,
+	paramEdgeClass:        true,
 }
 
-// ClientApplied names the terms a predicate carries that the graph leaves to whoever draws it.
+// clientMembers are the members of a term the graph applies that it hands to the browser anyway.
+//
+// `unanalyzed` is a fact about a node and the server narrows by it. `findings` and `advisory` are
+// the finding terms' problem again — a workflow carries findings and the actions it uses mostly do
+// not — so the browser keeps what a relationship needs and greys it, which a server that dropped
+// nodes could not.
+var clientMembers = map[string][]string{
+	paramFlags: {FlagFindings, FlagAdvisory},
+}
+
+// ClientApplied names the terms a predicate carries that the graph leaves to whoever draws it,
+// whole or in part.
 func (s Spec) ClientApplied() []string {
-	return s.carried(func(t string) bool { return !clientTerms[t] })
+	out := s.carried(func(t string) bool { return !clientTerms[t] })
+	for term, handed := range clientMembers {
+		if slices.ContainsFunc(s.members(term), func(m string) bool { return slices.Contains(handed, m) }) {
+			out = append(out, term)
+		}
+	}
+	sort.Strings(out)
+	return slices.Compact(out)
 }
 
 // UnenforceableAsGraph names the terms the graph neither applies nor hands to the client.
@@ -461,6 +539,30 @@ func (s Spec) carried(keep func(string) bool) []string {
 	for key := range held {
 		if !keep(key) {
 			out = append(out, key)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// members are the values one list term carries, read from the canonical text for the same reason
+// `carried` is.
+func (s Spec) members(term string) []string {
+	held, err := url.ParseQuery(s.String())
+	if err != nil || held.Get(term) == "" {
+		return nil
+	}
+	return strings.Split(held.Get(term), ",")
+}
+
+// unanswered names, as `term=member`, what a surface refuses of a list term it answers in part.
+func (s Spec) unanswered(surface string) []string {
+	out := []string{}
+	for term, answered := range partialMembers[surface] {
+		for _, m := range s.members(term) {
+			if !slices.Contains(answered, m) {
+				out = append(out, term+"="+m)
+			}
 		}
 	}
 	sort.Strings(out)

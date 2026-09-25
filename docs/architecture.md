@@ -68,7 +68,11 @@ on fewer of those dimensions than the identity holds.
 **A result names the CodeQL that produced it, extraction included, and nothing recorded under one
 CodeQL answers for another.** Test results are kept per CLI, a printed tree and a run name theirs,
 and a held database is reused only by the CodeQL that built it, read from its
-`creationMetadata.cliVersion`; another's is rebuilt. After an upgrade, every authoring mark reads
+`creationMetadata.cliVersion`; another's is rebuilt. A run's size before Run is resolved against
+the CodeQL running now for the same reason: a held database another CodeQL built, or one whose row
+records none, counts as one the run builds, and says which CodeQL built it. The executor still
+reads the database's own metadata, because a row can be wrong about the file. After an upgrade,
+every authoring mark reads
 as stale until somebody runs it again: re-running is a person's act and never automatic. One CodeQL
 runs at a time, and nobody chooses which. A server that cannot read its CodeQL's version still
 serves the catalog, and says nothing on record is known to be current.
@@ -248,6 +252,22 @@ pack that cannot be installed, nowhere to write — is refused, says why on the 
 again when somebody runs it again; one stopped while it prepares is canceled. Nothing a run
 produces leaves the machine.
 
+**A run is a reader with a different plan, not a second writer.** It claims no frontier row and
+marks nothing analyzed that the crawl would reach, finished or stopped, so the crawl resumes where
+it would have. It is built from the runner the crawl holds and builds through the crawl's own
+expander, so the two contend for one machine-wide lock, one checkout cache, one database cache and
+one rate limit rather than racing. A run and a crawl round over the same repository and commit, in
+either order or at once, store what either would have stored alone: a finding both report is one
+finding, whoever stored it first. A stop keeps what was already analyzed, and the member in flight
+goes back to pending; only a run this process started can be stopped, since reporting a
+cancellation that never happened is worse than refusing. A run nobody asked for is a defect: no
+schedule, sweep or retry starts one, and one cannot be recorded without who asked. A run never
+analyzes a query's test database, which is its own fixture. Counts come from the SARIF document,
+never from rows written — a rule that has fired here before stores nothing new — and a member that
+has not run has no count rather than a zero. A lane of one query is that query and carries its own
+version, not a hash of a one-element set. Attribution to nodes runs once, when a run completes,
+because the join is over the whole table.
+
 **A database is extracted once, not once per question.** Retained CodeQL databases are keyed on the
 tuple a run is keyed on, so the cache and the ledger cannot disagree about which database answered.
 Retention is opt-in until its occupancy over a full crawl is measured. Reuse skips the extraction
@@ -348,7 +368,7 @@ workflow is never an edge source; edges leave its steps and its jobs.
 | --- | --- |
 | `abom_finding`, `abom_finding_node` | A result, and the nodes it attaches to |
 | `abom_finding_sighting` | Which run reported which finding, which is the only way staleness is observable |
-| `rule`, `alert`, `abom_alert_link` | Rule metadata and the link to GitHub's own alerts |
+| `abom_query_metadata` | Every pair `codeql resolve metadata` returns for a query version |
 
 **A finding is traced to every evaluation that reported it.** Its sightings name them. Each says
 what it invoked, in which shape, over which commit, under which CodeQL and what recorded it, and
@@ -360,6 +380,45 @@ rule it reported is that pack's, and the version is known only when it ran that 
 that drew on several packs stays *not recorded* until something evaluates it again. `source=`
 narrows the set path, the dependencies listing and a run; a finding with no recorded source matches
 no source, and an answer narrowed by one counts the matches it could not answer for.
+
+**A finding's severity is the rule's own, in two parts.** `severity` is the level the result
+reported — `error`, `warning`, `recommendation` — and `security_severity` the rule's
+`@security-severity` score, NULL where the rule declares none. The server bands a score the way
+code scanning does — critical from 9.0, high from 7.0, medium from 4.0, low above zero — and a
+finding with no score is **unknown**, never low. One banding, in Go and in the SQL generated from
+the same floors, is sent with each finding, so neither the browser nor the interface thresholds a
+score; a zero stored before absence was written as NULL bands as unknown too.
+
+**Every count of findings says at what severity.** Each Inventory unit, the node page's rules, a
+run's results, the bill of materials and the home page count their findings per band, most severe
+first, and the bands sum to the total with the unknown named. `securitySeverity=critical,high` asks
+for findings in those bands beside `severity`, which asks for the level, and both are read per
+finding on the set path, the listing, the graph and a policy. `sort=severity` orders the listing by
+whether a row carries a finding, then whether anything reaches it, then its worst band, then its
+reach: severity outranks depth, and a finding nothing reaches sorts after every one something does,
+because that absence is the most important fact about it. The advisories unit follows the same
+order — published severity, then reach, an unrated advisory after every rated one — and a row's
+rank is its place in the whole match rather than a number combining the two. A graph delta
+carries each changed node's findings with their bands, so an Explorer filtered by severity keeps
+up with a crawl.
+
+**A query version's declared metadata is recorded whole.** Every pair `codeql resolve metadata`
+returns — name, kind, precision, level, score, tags and anything else the query declares — is kept
+per version when a round resolves its suite, when a run resolves what it asked for, and when a
+working copy's tests run. The catalog shows a version's declared band before it has reported
+anything; a table or graph query declares none and shows none, and a version nothing has resolved
+says *not read yet* rather than *declares nothing*.
+
+```mermaid
+flowchart LR
+    META["codeql resolve metadata<br/>every pair"] -->|"a round, a run,<br/>a working copy's tests"| QM["abom_query_metadata"]
+    QM --> CAT["the catalog's<br/>declared band"]
+    SARIF["a SARIF result<br/>level, @security-severity"] --> F["abom_finding<br/>NULL when undeclared"]
+    F --> BAND["one banding<br/>critical, high, medium,<br/>low, unknown"]
+    BAND --> COUNTS["every findings count"]
+    BAND --> TERM["securitySeverity= on the set path,<br/>listing, graph and a policy"]
+    BAND --> SORT["sort=severity:<br/>reached, then band, then reach"]
+```
 
 ```mermaid
 flowchart LR
@@ -379,14 +438,15 @@ flowchart LR
 | `abom_query_stage` | How far somebody has taken a query version, and who advanced it |
 | `abom_query_test` | What that version's own tests made of it under one CodeQL, the stage they reached, how many marked results were missed or unexpected, and digests of the test files and of the fixtures alone, which is what the `test` stage reads |
 | `abom_query_request` | What somebody asked a query to catch or stop catching, with a `COMPLIANT` and a `NON_COMPLIANT` example, the target and who chose it |
-| `abom_query_request_evidence` | The run results a request was asked from: a false alarm names a finding, a missed detection a repository |
+| `abom_query_request_evidence` | The run results a request was asked from: a false alarm names a finding or a result a held run kept, a missed detection a repository |
 | `abom_authoring_session` | An agent session somebody started on a request, or on a run's picked results to draft one. Whether it finished, was stopped, failed or was interrupted by a restart, and what it spent as the CLI reported it |
 | `abom_authoring_event` | Every tool call a session made or was refused, recorded before it ran, with the decision and the reason. Append-only |
 | `abom_authoring_ast` | What `PrintAST` printed over a query's test database, by a session or by ABOM at somebody's asking, with a digest of the fixtures it was printed from and the CodeQL that printed it. Append-only |
 | `abom_authoring_review` | An operator's approval or rejection of what a query reported, with the report as they read it. Append-only |
 | `abom_request_draft` | A request a drafting session proposed, which nobody has filed. Append-only |
-| `abom_analysis_run`, `abom_analysis_member`, `abom_analysis_query` | A run somebody asked for: which versions, which scope, the CodeQL it ran under, why it could not start when it could not, and what became of every repository in it. A member names the evaluation that reported its findings, so they can be listed one at a time |
-| `abom_predicted_result` | What a prediction's queries would report in each repository, one row per result, apart from `abom_finding` |
+| `abom_analysis_run`, `abom_analysis_member`, `abom_analysis_query` | A run somebody asked for: which versions, which scope and the named scope it was chosen by, the CodeQL it ran under, when each start began, why it could not start when it could not, and what became of every repository in it. A member names the evaluation that reported its findings, so they can be listed one at a time |
+| `abom_held_result` | What a run with findings off kept in each repository, one row per result, carrying every column a finding does and apart from `abom_finding` |
+| `abom_held_conversion` | Who converted a held result to a finding, when, and from which run, keyed by the finding |
 | `abom_analysis_result` | What each query in a run found in each repository. A member counted before this existed has a total and no split |
 | `abom_local_database` | A retained CodeQL database, keyed the way a run is: repository, commit, source filter and mode |
 
@@ -463,25 +523,59 @@ rather than the name. Each member records what every query in the run found in i
 own count is never its run's total. A run the server stopped under is `interrupted` on the next
 start: not canceled, since nobody asked, and not `running`, since nothing is.
 
-**A prediction is a run whose results are not findings.** It is asked for from the same draft and
-resolved the same way, and each repository is built and analyzed as a run's is. What its queries
-would report there — a count per rule and every result — is held apart from the findings every
-other surface reads, because a query nobody adopted has found nothing yet. It is made from regular
-databases only: Default Setup stages nothing, so it would never report what an extended database
-reveals. It stores no evaluation, so no run is skipped on its answer, and it never borrows a run's
-answer, which lists findings rather than predictions. It says first how many of the scope's
-repositories it covers, and names the rest.
+**One draft, on two pages.** The versions a run is drafted with are one draft, held in memory, that
+the catalog adds to and the Inventory reads: on the Inventory it runs over repositories chosen
+there, and on the CodeQL page over a named scope chosen in the draft, through the same named-scope
+control the other pages host, with the scopes a run refuses disabled and their terms named. A run
+chosen that way is asked for by the scope's name, so the server resolves it and records the name
+beside the question it resolved to — how it was chosen, never what it covers. *Keep* there names
+the scope the draft holds, which is none until one is chosen, whatever another page left in force.
+The findings a run reports are exactly the ones stored at the commits it analyzed; the Inventory
+counts a repository at every reference it is used at, so it can list more.
+
+**What a run has left is its own.** While a run is pending or running, the members it has not
+reached in this start come first — the one running, then what waits — counted by the server, since
+a run started again keeps each member's state until it is reached. A time remaining is the average
+time this start's finished members took, from when each was first moved to running to when it
+stopped, times what is left: absent until one finishes, revised as each does, and never forecast
+before Run from other queries over other repositories. A member skipped without running keeps an
+earlier start's beginning, so it sets no pace.
 
 ```mermaid
 flowchart LR
-    DRAFT["one draft:<br/>versions and repositories"] -->|"Run"| RUN["a run"]
-    DRAFT -->|"Predict"| PRED["a prediction"]
-    RUN -->|"ingested"| FIND["findings, which<br/>every surface reads"]
-    PRED -->|"a count per rule<br/>and every result"| HELD["abom_predicted_result"]
-    PRED -. "never" .-> NOTFIND["a finding, or an<br/>evaluation a run skips on"]
-    PRED -. "refused" .-> EXT["an extended database"]
-    style NOTFIND fill:#3d1d1d
-    style EXT fill:#3d1d1d
+    CAT["CodeQL catalog row"] -->|"adds its version"| DRAFT["one run draft"]
+    INV["Inventory: repositories<br/>chosen, or a scope's all"] -->|"repositories= or the scope"| DRAFT
+    NAMED["a named scope chosen<br/>in the draft on the CodeQL page"] -->|"view=name"| DRAFT
+    DRAFT -->|"GET /api/databases:<br/>size, against this CodeQL"| PRE["the run's own resolution"]
+    DRAFT -->|"POST /api/runs"| RUN["abom_analysis_run:<br/>the question, the name beside it"]
+    PRE ---|"the same set"| RUN
+    RUN -->|"while under way"| LEFT["still to do, first;<br/>a time from this start's pace"]
+    LEFT -. "never" .-> FORECAST["a forecast before Run"]
+    style FORECAST fill:#3d1d1d
+```
+
+**A run's findings are on or off, for the whole run.** On, what its queries report is ingested
+into the tables the crawl writes, as the crawl's is. Off, each repository is built and analyzed the
+same way, and what it reported — a count per rule and every result — is held apart under an
+evaluation marked as held, which no run, crawl or content match skips on and the staleness sweep
+never reads as the newest word. The draft suggests the setting from what its queries are: on only
+when every one is a version an upstream pack published, the version somebody put at `deploy`, or
+one a tier's suite resolved to, and off for anything still being refined; one switch overrides it
+for that run, and a caller that says nothing gets the suggestion. A held run says first how many of
+the scope's repositories it covers. Somebody named then converts all of it, one repository, or
+the results they chose: each becomes the finding adopting the query would have stored, sighted
+under the evaluation that reported it and attributed to nodes, with who converted it and from
+which run; a result converted twice is counted once. A false alarm for a request is picked from
+what a held run kept as it is from findings.
+
+```mermaid
+flowchart LR
+    DRAFT["one draft:<br/>versions and repositories"] -->|"findings on"| FIND["findings, which<br/>every surface reads"]
+    DRAFT -->|"findings off"| HELD["abom_held_result,<br/>under a held evaluation"]
+    HELD -->|"converted by somebody named:<br/>the run, a repository, chosen results"| FIND
+    HELD -->|"picked"| EVIDENCE["a request's evidence"]
+    HELD -. "never" .-> SKIP["an answer a run,<br/>the crawl or the sweep reads"]
+    style SKIP fill:#3d1d1d
 ```
 
 **A unit is a shape, not a scope.** Inventory reprojects one scope as actions, workflows, jobs,
@@ -523,7 +617,43 @@ term this surface cannot apply still travels, because widening somebody else's q
 is worse than admitting the surface does not narrow by it — and the refusal names the term, which is
 the only thing that tells a reader which surface does answer it. A term means one thing everywhere:
 `repositories` is the repository a finding sits in on both the listing and the set path, and "which
-dependencies does this repository use" is a different question with a different term.
+dependencies does this repository use" is a different question with a different term. A surface
+that answers some values of a term refuses the others by name: the workflow and job units narrow by
+`flags=findings` and refuse `advisory` and `unanalyzed`, which they used to drop. The focus walk
+`/api/graph` refuses the property terms on purpose — it is one node's neighborhood under a budget,
+no interface calls it, and "what this node reaches within my unit" is `/api/graph/full` with
+`properties` and a focus drawn over it.
+
+**The graph applies a term on one side or the other, and says which.** The server applies what
+decides which nodes and edges exist — `scope`, `mode`, `steps`, the property terms, `boundary`,
+`edgeKinds`, and `origins`, `minReach`, `ref` and `flags=unanalyzed` when sent them. The finding
+terms, `kinds`, `q`, `edges` and `flags=findings`/`advisory` it hands to whoever draws it, because
+applied per node they sever most of their own match's edges, and `clientApplied` on the payload
+names them for a caller that is not the Explorer. The Explorer sends the first set except the four
+it also filters itself over one payload — an interaction costs no round trip — and
+`specs/graphterms.spec.mjs` measures, per term, that the server and the browser select the same
+nodes. The finding terms are applied per finding: each node carries its distinct (rule, provider, level,
+band) combinations whole, so `rules=A&severity=error` keeps a node only where one finding is
+both, exactly as the set path reads it. A term the graph applies on neither side — `repositories`,
+`source` — is refused on the page, which then draws nothing rather than the wider picture.
+
+```mermaid
+flowchart LR
+    SCOPE["a scope the Explorer<br/>is drawing"] -->|"scope, mode, steps, properties,<br/>boundary, edgeKinds"| SERVER["/api/graph/full"]
+    SERVER -->|"payload, each node carrying<br/>(rule, provider, level, band)"| BROWSER["the browser filter"]
+    SCOPE -->|"origins, minReach, ref, flags,<br/>kinds, q, edges, rules, notRules,<br/>provider, severity, securitySeverity"| BROWSER
+    SCOPE -->|"repositories, source"| REFUSED["refused on the page"]
+    SCOPE -. "drawn without a term it carries" .-> WIDER["a wider picture"]
+    style WIDER fill:#3d1d1d
+```
+
+**Silence means the question was not asked, on every consumer.** An absent term never reads as a
+consumer's own default, so `?scope=owned` and the "What you own" scope draw the same picture. For an
+allow-list that means every value rather than none, and the language has no spelling for a
+deliberately emptied list: switching every kind off does not survive a reload, and the Explorer
+says so. A list term whose members are fixed in code — `kinds`, `origins`, `flags`, `edges`,
+`edgeKinds`, `source` — refuses one it does not have and refuses the whole term, because keeping the
+recognized members answers a narrower question than was written.
 
 **The control that offers a filter reads the language.** The terms, what to call them, how each
 writes its value, which surfaces apply it and what values it can take are all served from the same
@@ -532,13 +662,17 @@ removed from it stops being offered. A browser keeping its own list is a second 
 the one that falls behind offers a filter the server refuses by name. Which values a term can take
 is answered from the language where it declares them and from the corpus where it does not — the
 first is what the term allows, the second is only what something happened to use, and a refusal is
-checked against the first.
+checked against the first. A corpus-derived list also says how much it cannot speak for, and so
+does an answer narrowed by it: a provider or a source that nothing recorded is counted beside the
+match (`unprovided`, `unsourced`) rather than relabeled, because the only provider on offer covers
+an eighth of the findings on record.
 
 **A scope can be kept, and it is its predicate, never the page it was kept on.** The catalog is the
 built-in questions merged with whatever the operator named and saved, offered through one endpoint
 so a caller asking "what can I ask" consults one place. A built-in is code and cannot be overwritten
-or deleted. The Inventory and the Explorer host one control over it — every named scope, *Keep* for
-the one on screen, *Forget* for one the operator kept — and opening one replaces the scope on screen
+or deleted. The Inventory, the Explorer and the CodeQL page's run draft host one control over it —
+every named scope, *Keep* for the one on screen, *Forget* for one the operator kept — and opening
+one replaces the scope on screen
 whole rather than merging into it. For every surface the language names, the catalog answers which
 of a scope's terms that surface cannot apply, so a scope a page would refuse is disabled there with
 the terms named, before it is chosen rather than after. A scope kept on the Explorer also carries how
@@ -552,10 +686,12 @@ flowchart LR
     VIEWS["abom_saved_view<br/>and the built-ins"] -->|"GET /api/views:<br/>predicate, picture,<br/>refusal per surface"| CTRL["one control:<br/>open, Keep, Forget"]
     CTRL -->|"hosted by"| INV["each Inventory unit"]
     CTRL -->|"hosted by"| EXP["the Explorer"]
+    CTRL -->|"hosted by"| CQL["the CodeQL page's<br/>run draft"]
     INV -->|"Keep: the predicate"| VIEWS
     EXP -->|"Keep: the predicate<br/>and the picture"| VIEWS
-    CTRL -. "not hosted yet" .-> CQL["the CodeQL page's<br/>run draft"]
-    style CQL fill:#3d2d1d
+    CQL -->|"Keep: the scope<br/>the draft holds"| VIEWS
+    CTRL -. "a scope its page refuses" .-> OPEN["opened there"]
+    style OPEN fill:#3d1d1d
 ```
 
 **A container is a boundary, and `Group by` decides what a filter costs.** The Explorer draws each
@@ -583,13 +719,50 @@ references in use — a distinction no listing draws, which is why it is a rende
 **Purls are the join key.** `pkg:githubactions/{owner}/{name}[/{subpath}]@{version}`, matching what
 GitHub emits, is what lets a component in an ABOM export correspond to anything outside it.
 
-**A rule can be tried before it bites.** A policy is a predicate, a scope — organization, business
-unit or one repository — and a state. It arrives as a draft and is adopted only against a
+**A rule can be tried before it bites.** A policy is a predicate and a state, and what it is bound
+to — a business unit, one repository — is a term of that predicate, `properties` or `repositories`,
+evaluated by the path every other answer takes over the repositories the operator owns. It arrives
+as a draft and is adopted only against a
 simulation: an evaluation over stored state that reports what the rule matches, what it would
 refuse, what a waiver excuses and what it could not see. Simulation and the gate share one
-evaluation, so they cannot disagree. Exclusions and exceptions are enumerated per repository and
+evaluation, so they cannot disagree. A scope once stored beside the predicate is written into it
+when the server starts, keeping its adoption, and one that cannot be — a unit scope with no
+`--group-property`, or a predicate contradicting its scope — is refused by name until it is. Exclusions and exceptions are enumerated per repository and
 never written as patterns, an exception carries an expiry that is read at evaluation time, and
 `/api/policy-waivers` lists every one of them on demand.
+
+**A policy is about findings or about advisories, and says how either is reached.**
+`advisorySeverity=critical,high,medium,low,unrated` asks about live advisories at the severity GitHub
+published — `moderate` reads as medium, and none published is unrated — through the exposure the
+Advisories unit reads, so a policy and that unit agree about who an advisory reaches. It reports
+what GitHub published and never whether a reference falls inside the range. `reached=direct,
+transitive` charges a match to the repositories that reach it, directly or through an intermediary,
+instead of to where a finding was found; for a finding that is the node it sits on or the composite
+action holding it, and `repositories` and the property terms then narrow the reaching repository.
+Without it nothing moves: a finding is charged to where it was found, as every policy on record
+already was. One predicate carrying a finding term and an advisory term is refused by name, because
+read as one node it matches almost nothing and read as either it enforces a question nobody wrote.
+The OR is a policy of its own: `policies=A,B` names other policies and nothing else, refuses what any
+of them refuses, counts their evidence once each, and applies each member's waivers and its own. A
+superset naming a policy that does not exist, or one that names it back, is refused where it is
+written and again where it is read, and editing a policy returns every superset naming it to draft.
+An outcome says what it counted — findings, advisories or policies — and one about advisories counts
+those at the severities asked that nothing reaches, beside what it would refuse. The match endpoint,
+the Advisories unit and a policy apply the two terms; the graph, the listings and a run refuse them.
+
+```mermaid
+flowchart LR
+    F["finding terms<br/>rules, severity, securitySeverity…"] --> FS["findings, charged to<br/>where they were found"]
+    A["advisorySeverity"] --> AS["live advisories, charged to<br/>who reaches them"]
+    R["reached=direct,transitive"] -. "charges either to<br/>who reaches it" .-> FS
+    R -.-> AS
+    F -. "both in one predicate" .-> X["refused by name"]
+    A -.-> X
+    FS --> P["a policy"]
+    AS --> P
+    P -->|"policies=A,B"| S["a superset:<br/>refuses what any refuses"]
+    style X fill:#3d1d1d
+```
 
 ## How it is tested
 

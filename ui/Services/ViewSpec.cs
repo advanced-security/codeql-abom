@@ -40,6 +40,26 @@ public sealed record ViewSpec
     public string Severity { get; init; } = "";
 
     /// <summary>
+    /// Bands of the rule's own security score, as code scanning bands it. Apart from
+    /// <see cref="Severity"/>, the level a result reported, which spans critical and medium alike.
+    /// </summary>
+    public IReadOnlyList<string> SecuritySeverities { get; init; } = [];
+
+    /// <summary>
+    /// Asks about live advisories rather than findings, at the severities GitHub published them.
+    /// </summary>
+    public IReadOnlyList<string> AdvisorySeverities { get; init; } = [];
+
+    /// <summary>
+    /// Asks about what a repository reaches, directly or through another dependency, rather than
+    /// where a finding was found.
+    /// </summary>
+    public IReadOnlyList<string> Reached { get; init; } = [];
+
+    /// <summary>Other policies, by name; a policy carrying them refuses what any of them refuses.</summary>
+    public IReadOnlyList<string> Policies { get; init; } = [];
+
+    /// <summary>
     /// Where the query behind a finding's rule came from, as the evaluation that reported it
     /// recorded. A finding none recorded a source for matches no source.
     /// </summary>
@@ -103,6 +123,10 @@ public sealed record ViewSpec
     private const string ParamRepos = "repositories";
     private const string ParamProvider = "provider";
     private const string ParamSeverity = "severity";
+    private const string ParamSecuritySeverity = "securitySeverity";
+    private const string ParamAdvisorySeverity = "advisorySeverity";
+    private const string ParamReached = "reached";
+    private const string ParamPolicies = "policies";
     private const string ParamSources = "source";
     private const string ParamEdgeClass = "edges";
     private const string ParamEdgeKinds = "edgeKinds";
@@ -129,7 +153,32 @@ public sealed record ViewSpec
         [ParamRefStyle] = ["any", "sha", "tag"],
         [ParamMode] = ["regular", "extended"],
         [ParamSources] = ["upstream", "abom", "custom", "mixed"],
+        [ParamKinds] =
+        [
+            "org", "repo", "workflow", "reusable_workflow", "composite_action", "action",
+            "docker_image", "job", "step",
+        ],
+        [ParamOrigins] = ["seed", "upstream", "external"],
+        [ParamFlags] = ["findings", "advisory", "unanalyzed"],
+        [ParamSecuritySeverity] = ["critical", "high", "medium", "low", "unknown"],
+        [ParamAdvisorySeverity] = ["critical", "high", "medium", "low", "unrated"],
+        [ParamReached] = ["direct", "transitive"],
+        [ParamEdgeClass] = ["sameRepo", "sameOwner", "crossOwner"],
+        [ParamEdgeKinds] =
+        [
+            "step-uses-action", "job-needs-job", "job-uses-reusable-workflow",
+            "composite-step-uses-action",
+        ],
     };
+
+    // One member outside refuses the whole term, as Go does: keeping the members that were
+    // recognized answers a narrower question than was written.
+    private static IReadOnlyList<string> VettedList(string term, string raw)
+    {
+        var members = Normalize(raw.Split(','));
+        foreach (var member in members) Vetted(term, member);
+        return members;
+    }
 
     // The near-misses are real: the canvas draws `crossOwner` where the store spells it
     // `cross-owner`, so the refusal lists what would have worked.
@@ -170,7 +219,9 @@ public sealed record ViewSpec
                      (ParamNotRules, NotRules),
                      (ParamRepos, Repositories), (ParamSources, Sources),
                      (ParamEdgeClass, EdgeClass), (ParamEdgeKinds, EdgeKinds),
-                     (ParamFlags, Flags),
+                     (ParamFlags, Flags), (ParamSecuritySeverity, SecuritySeverities),
+                     (ParamAdvisorySeverity, AdvisorySeverities), (ParamReached, Reached),
+                     (ParamPolicies, Policies),
                  })
         {
             var normalized = Normalize(values);
@@ -206,7 +257,8 @@ public sealed record ViewSpec
         string scope = "", search = "", refStyle = "", boundary = "", provider = "", severity = "",
             mode = "";
         IReadOnlyList<string> kinds = [], origins = [], rules = [], edges = [], edgeKinds = [],
-            flags = [], notRules = [], repositories = [], sources = [];
+            flags = [], notRules = [], repositories = [], sources = [], bands = [],
+            advisorySeverities = [], reached = [], policies = [];
         List<PropertyMatch> properties = [], notProperties = [];
         var minReach = 0;
         var steps = false;
@@ -229,20 +281,21 @@ public sealed record ViewSpec
                 case ParamRefStyle: refStyle = Vetted(key, raw); break;
                 case ParamBoundary: boundary = Vetted(key, raw); break;
                 case ParamMode: mode = Vetted(key, raw); break;
-                case ParamKinds: kinds = Normalize(raw.Split(',')); break;
-                case ParamOrigins: origins = Normalize(raw.Split(',')); break;
+                case ParamKinds: kinds = VettedList(key, raw); break;
+                case ParamOrigins: origins = VettedList(key, raw); break;
                 case ParamRules: rules = Normalize(raw.Split(',')); break;
                 case ParamNotRules: notRules = Normalize(raw.Split(',')); break;
                 case ParamRepos: repositories = Normalize(raw.Split(',')); break;
                 case ParamProvider: provider = raw; break;
                 case ParamSeverity: severity = raw; break;
-                case ParamSources:
-                    sources = Normalize(raw.Split(','));
-                    foreach (var source in sources) Vetted(key, source);
-                    break;
-                case ParamEdgeClass: edges = Normalize(raw.Split(',')); break;
-                case ParamEdgeKinds: edgeKinds = Normalize(raw.Split(',')); break;
-                case ParamFlags: flags = Normalize(raw.Split(',')); break;
+                case ParamSecuritySeverity: bands = VettedList(key, raw); break;
+                case ParamAdvisorySeverity: advisorySeverities = VettedList(key, raw); break;
+                case ParamReached: reached = VettedList(key, raw); break;
+                case ParamPolicies: policies = Normalize(raw.Split(',')); break;
+                case ParamSources: sources = VettedList(key, raw); break;
+                case ParamEdgeClass: edges = VettedList(key, raw); break;
+                case ParamEdgeKinds: edgeKinds = VettedList(key, raw); break;
+                case ParamFlags: flags = VettedList(key, raw); break;
                 case ParamProperties: properties.Add(ParseMatch(key, raw)); break;
                 case ParamNotProperties: notProperties.Add(ParseMatch(key, raw)); break;
                 case ParamMinReach:
@@ -269,6 +322,8 @@ public sealed record ViewSpec
         {
             Scope = scope, Search = search, RefStyle = refStyle, Boundary = boundary,
             Provider = provider, Severity = severity, Mode = mode, Sources = sources,
+            SecuritySeverities = bands,
+            AdvisorySeverities = advisorySeverities, Reached = reached, Policies = policies,
             Kinds = kinds, Origins = origins, Rules = rules, NotRules = notRules,
             Repositories = repositories,
             Properties = properties, NotProperties = notProperties,

@@ -15,7 +15,7 @@ import (
 func TestEveryTermIsAppliedBySomeConsumer(t *testing.T) {
 	applied := map[string]bool{}
 	for _, side := range []map[string]bool{
-		setTerms, graphTerms, clientTerms, inventoryTerms, repositoryTerms, advisoryTerms,
+		setTerms, graphTerms, clientTerms, inventoryTerms, repositoryTerms, advisoryTerms, policyTerms,
 	} {
 		for term := range side {
 			applied[term] = true
@@ -61,8 +61,8 @@ func everyTerm(t *testing.T) []string {
 	for key := range held {
 		out = append(out, key)
 	}
-	if len(out) != 20 {
-		t.Fatalf("the spec wrote %d terms, want all 20; a field was added and not set here", len(out))
+	if len(out) != 24 {
+		t.Fatalf("the spec wrote %d terms, want all 24; a field was added and not set here", len(out))
 	}
 	return out
 }
@@ -74,9 +74,13 @@ func specCarryingEveryTerm() Spec {
 		Properties:    []PropertyMatch{{Name: "k", Value: "v"}},
 		NotProperties: []PropertyMatch{{Name: "k", Value: "v"}},
 		Provider:      "p", Severity: "high", EdgeClass: []string{"e"},
-		Sources:   []string{SourceAbom},
-		EdgeKinds: []string{EdgeKindJobNeedsJob},
-		RefStyle:  "tag", Boundary: "cross-owner", MinReach: 1,
+		SecuritySeverities: []string{BandCritical},
+		AdvisorySeverities: []string{BandHigh},
+		Reached:            []string{ReachedDirect},
+		Policies:           []string{"p"},
+		Sources:            []string{SourceAbom},
+		EdgeKinds:          []string{EdgeKindJobNeedsJob},
+		RefStyle:           "tag", Boundary: "cross-owner", MinReach: 1,
 		Flags: []string{"findings"}, Steps: true, Mode: ModeRegular,
 	}
 }

@@ -72,6 +72,9 @@ func (e *Executor) Run(ctx context.Context, runID int64) error {
 	if err := e.Store.SetAnalysisRunCodeQL(runID, planned.cliVersion); err != nil {
 		return err
 	}
+	if err := e.Store.RecordQueryMetadata(planned.metadata); err != nil {
+		return err
+	}
 	if err := e.Store.SetAnalysisRunState(runID, store.RunRunning); err != nil {
 		return err
 	}
@@ -86,7 +89,7 @@ func (e *Executor) Run(ctx context.Context, runID int64) error {
 		if member.Status == store.AnalysisNoDatabase {
 			continue
 		}
-		if err := e.carryOut(ctx, runID, dir, member, run.Queries, planned, run.Prediction); err != nil {
+		if err := e.carryOut(ctx, runID, dir, member, run.Queries, planned, run.Held); err != nil {
 			if ctx.Err() != nil {
 				_ = e.Store.SetAnalysisRunState(runID, store.RunCanceled)
 			}
@@ -97,7 +100,7 @@ func (e *Executor) Run(ctx context.Context, runID int64) error {
 	// Attribution is what makes a finding visible to anything built on the graph, and the crawl
 	// does it once at the end of a cycle for the same reason: the join is over the whole table,
 	// so doing it per member would repeat the same work for every repository in the run.
-	if !run.Prediction {
+	if !run.Held {
 		if _, err := e.Store.LinkFindingsToNodes(); err != nil {
 			return fmt.Errorf("attributing what run %d found: %w", runID, err)
 		}
@@ -122,7 +125,7 @@ func (e *Executor) refuse(ctx context.Context, runID int64, cause error) error {
 // evaluation is already stored.
 func (e *Executor) carryOut(
 	ctx context.Context, runID int64, dir string, member store.AnalysisMember,
-	want []store.AnalysisQuery, planned tierPlan, predict bool,
+	want []store.AnalysisQuery, planned tierPlan, hold bool,
 ) error {
 	held := onDisk(member.DatabasePath)
 	building := "building its database"
@@ -133,8 +136,8 @@ func (e *Executor) carryOut(
 			building = "rebuilding its database, which records no CodeQL that built it"
 		}
 	}
-	// A stored answer lists findings, and a prediction holds its own list of what would be reported.
-	if !predict {
+	// A stored answer lists findings, and a held run keeps its own list of what was reported.
+	if !hold {
 		if skipped, err := e.skipAnswered(runID, member, held, want, planned); err != nil || skipped {
 			return err
 		}
@@ -157,7 +160,7 @@ func (e *Executor) carryOut(
 		}
 		member.DatabaseIdentity, member.DatabasePath = built.identity, built.path
 	}
-	if err := e.analyze(ctx, runID, dir, member, want, planned, predict); err != nil {
+	if err := e.analyze(ctx, runID, dir, member, want, planned, hold); err != nil {
 		if ctx.Err() != nil {
 			return e.interrupted(runID, member.DatabaseIdentity, err)
 		}
@@ -298,7 +301,7 @@ func (e *Expander) buildDatabase(
 // analyze runs one member and records what became of it.
 func (e *Executor) analyze(
 	ctx context.Context, runID int64, dir string, member store.AnalysisMember,
-	want []store.AnalysisQuery, planned tierPlan, predict bool,
+	want []store.AnalysisQuery, planned tierPlan, hold bool,
 ) error {
 	if err := e.Store.SetAnalysisMemberStatus(
 		runID, member.DatabaseIdentity, store.AnalysisRunning, ""); err != nil {
@@ -317,8 +320,8 @@ func (e *Executor) analyze(
 		return e.Store.RecordAnalysisMemberResult(runID, member.DatabaseIdentity,
 			store.MemberResult{Status: store.AnalysisFailed, Detail: err.Error()})
 	}
-	if predict {
-		return e.predict(runID, out, member, want, planned)
+	if hold {
+		return e.hold(runID, out, member, want, planned)
 	}
 
 	// Ingested into the same tables the crawl writes, under a ledger row built the same way. A
@@ -385,35 +388,41 @@ func (e *Executor) ingest(
 	return found, byQuery, runID, nil
 }
 
-// predict holds what a member's document reports as the prediction's, storing no finding and no
-// evaluation: a query nobody adopted has found nothing yet.
-func (e *Executor) predict(
+// hold keeps what a member's document reports as the run's held results, under an evaluation
+// marked as held: it answers no skip, and only what somebody converts is ever sighted under it.
+func (e *Executor) hold(
 	runID int64, path string, member store.AnalysisMember, want []store.AnalysisQuery, planned tierPlan,
 ) error {
-	predicted, err := readPredicted(path, member, planned)
-	e.report(member.Repository, "predict", err)
+	evaluation := memberRun(member, want, planned)
+	evaluation.Held = true
+	queryRunID, err := e.Store.RecordQueryRun(evaluation)
+	var held []store.Finding
+	if err == nil {
+		held, err = readHeld(path, member, planned)
+	}
+	e.report(member.Repository, "hold", err)
 	result := store.MemberResult{Status: store.AnalysisSucceeded, Detail: detailOf(err), ResultPath: path}
 	if err == nil {
-		result.Counted, result.Results = true, len(predicted)
-		// Every query asked for starts at zero, so one that would report nothing says so.
+		result.Counted, result.Results, result.QueryRunID = true, len(held), queryRunID
+		// Every query asked for starts at zero, so one that reported nothing says so.
 		result.ByQuery = make(map[string]int, len(want))
 		for _, q := range want {
 			result.ByQuery[q.QueryID] = 0
 		}
-		for _, p := range predicted {
-			result.ByQuery[p.RuleID]++
+		for _, f := range held {
+			result.ByQuery[f.RuleID]++
 		}
 	}
-	return e.Store.RecordPredictedMemberResult(runID, member.DatabaseIdentity, result, predicted)
+	return e.Store.RecordHeldMemberResult(runID, member.DatabaseIdentity, result, held)
 }
 
-func readPredicted(path string, member store.AnalysisMember, planned tierPlan) ([]store.PredictedResult, error) {
+func readHeld(path string, member store.AnalysisMember, planned tierPlan) ([]store.Finding, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading the results at %s: %w", path, err)
 	}
 	defer f.Close()
-	return ingest.PredictionsFromSARIF(f, ingest.Options{
+	return ingest.HeldFromSARIF(f, ingest.Options{
 		Repository: member.Repository, CLIVersion: planned.cliVersion,
 	})
 }
@@ -456,6 +465,7 @@ func detailOf(err error) string {
 // never ran.
 func (e *Executor) resolve(ctx context.Context, want []store.AnalysisQuery) (tierPlan, error) {
 	byID := map[string]string{}
+	declared := map[string]map[string]string{}
 	for _, suite := range e.Suites {
 		resolved, err := e.Resolver.ResolveQueries(ctx, suite)
 		if err != nil {
@@ -468,6 +478,7 @@ func (e *Executor) resolve(ctx context.Context, want []store.AnalysisQuery) (tie
 			}
 			if _, seen := byID[md.ID]; !seen {
 				byID[md.ID] = path
+				declared[md.ID] = md.Pairs
 			}
 		}
 	}
@@ -517,6 +528,9 @@ func (e *Executor) resolve(ctx context.Context, want []store.AnalysisQuery) (tie
 			RuleID: q.QueryID, QueryVersion: version, Pack: pack, PackVersion: packVersion, PackDigest: digest,
 		})
 		planned.notePack(pack, packVersion, digest)
+		planned.metadata = append(planned.metadata, store.QueryMetadata{
+			QueryID: q.QueryID, QueryVersion: version, Pairs: declared[q.QueryID],
+		})
 	}
 	return planned, nil
 }

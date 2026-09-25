@@ -85,6 +85,23 @@ public class InventoryHonestyTests : AbomTestContext
     }
 
     /// <summary>
+    /// A provider answers only for findings that recorded one, which on the crawled organization
+    /// is 1,641 of 12,317. Narrowed by the only provider on offer, the listing says how many rows it
+    /// could not speak for rather than presenting an eighth of the corpus as the whole.
+    /// </summary>
+    [Fact]
+    public void AProviderSaysHowManyRowsItCouldNotAnswerFor()
+    {
+        Answer("api/actions", """{"items":[],"total":0,"unprovided":7}""");
+        Go("/inventory?provider=CodeQL");
+
+        var page = Render<Pages.Inventory>();
+
+        page.WaitForAssertion(() => Assert.StartsWith("7 more dependencies carry",
+            page.Find("[data-abom-unprovided]").TextContent.Trim()));
+    }
+
+    /// <summary>
     /// A view that will refuse itself says so before it is chosen. The refusal that arrives after
     /// is correct and one click too late.
     /// </summary>

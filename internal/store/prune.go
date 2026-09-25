@@ -348,11 +348,9 @@ func (s *Store) Compact() (PruneReport, error) {
 	defer tx.Rollback()
 
 	// The closure that refused a naive delete when the junk `/` repository was removed by hand:
-	// findings and alerts link nodes, and edges name them as endpoints rather than by repository.
+	// findings link nodes, and edges name them as endpoints rather than by repository.
 	for _, stmt := range []string{
 		`DELETE FROM abom_finding_node WHERE node_row_id IN
-		   (SELECT row_id FROM abom_node WHERE removed_at IS NOT NULL)`,
-		`DELETE FROM abom_alert_link WHERE node_row_id IN
 		   (SELECT row_id FROM abom_node WHERE removed_at IS NOT NULL)`,
 		`DELETE FROM abom_surface WHERE node_row_id IN
 		   (SELECT row_id FROM abom_node WHERE removed_at IS NOT NULL)`,

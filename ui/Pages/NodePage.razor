@@ -74,6 +74,11 @@ else
             <MudPaper Elevation="0" Outlined="true" Class="pa-3">
                 <MudText Typo="Typo.h6" Class="abom-num">@_detail.Rules.Sum(r => r.Count)</MudText>
                 <MudText Typo="Typo.caption">findings</MudText>
+                @if (_detail.Rules.Count > 0)
+                {
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block"
+                             data-abom-node-severity>@SeverityText.Summary(NodeSeverity())</MudText>
+                }
             </MudPaper>
         </MudItem>
         <MudItem xs="6" sm="3">
@@ -339,6 +344,7 @@ else
                                         @(r.Unsourced == r.Count ? "source not recorded" : $"source not recorded for {r.Unsourced}")
                                     </MudText>
                                 }
+                                <span data-abom-rule-band><SeverityChip Severity="@r.Severity.Worst" /></span>
                                 <span class="abom-num">@r.Count</span>
                             </span>
                         </div>
@@ -466,6 +472,15 @@ else
     private string KindLabel =>
         ThemeService.KindNames.TryGetValue(_detail?.Kind ?? string.Empty, out var n)
             ? n : (_detail?.Kind ?? string.Empty);
+
+    private SeverityCounts NodeSeverity() => new()
+    {
+        Critical = _detail!.Rules.Sum(r => r.Severity.Critical),
+        High = _detail.Rules.Sum(r => r.Severity.High),
+        Medium = _detail.Rules.Sum(r => r.Severity.Medium),
+        Low = _detail.Rules.Sum(r => r.Severity.Low),
+        Unknown = _detail.Rules.Sum(r => r.Severity.Unknown),
+    };
 
     // A dependency is analyzed at a reference, so "yes" is only true of a reference. Where several
     // are in use the honest answer is the ratio; "yes" from one of twenty-seven is the claim this

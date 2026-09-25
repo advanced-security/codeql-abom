@@ -348,6 +348,11 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     font-size: var(--abom-text-sm);
 }
 
+/* Its own line under the chips, so the sentence about a filter does not read as another chip. */
+.abom-filter-picker .abom-picker-unvalued {
+    flex-basis: 100%;
+}
+
 /* Selectable text carries its own weight; it does not need a box around it.
    
    MudBlazor pads a toggle item and a unit button out to a touch target, which on a dense
@@ -1138,6 +1143,17 @@ code {
 }
 .abom-query-run + .abom-query-run { margin-top: 12px; }
 
+/* What a version declares, pair by pair, laid out as the node panel lays out its facts. */
+.abom-query-metadata {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.05rem 0.75rem;
+    margin: 0 0 12px;
+    font-size: var(--abom-text-xs);
+}
+.abom-query-metadata dt { opacity: 0.65; white-space: nowrap; }
+.abom-query-metadata dd { margin: 0; word-break: break-word; }
+
 /* Sized to its few columns; MudSimpleTable's own rules are two classes and two elements deep. */
 .mud-simple-table.abom-results table { width: auto; }
 .mud-simple-table.abom-results table * tr > td.abom-cell-right,
@@ -1190,6 +1206,18 @@ code {
 /* One entry per evaluation that reported a result, under the result it traces. */
 .abom-trace { list-style: none; padding-left: 0; margin: 2px 0 6px; }
 .abom-trace li + li { margin-top: 4px; }
+/* What a run has left: every name, wrapped, and scrolled rather than pushing its results away. */
+.abom-left {
+    list-style: none;
+    padding-left: 0;
+    margin: 2px 0 6px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 16px;
+    max-height: 8rem;
+    overflow-y: auto;
+    font-size: var(--abom-text-sm);
+}
 .abom-session { margin-top: 6px; }
 .abom-session-detail {
     margin: 2px 0 0;

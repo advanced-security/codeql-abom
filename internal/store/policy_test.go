@@ -11,7 +11,6 @@ func draft(t *testing.T, s *Store, name string) Policy {
 	p := Policy{
 		Name:      name,
 		Predicate: "flags=findings&scope=owned",
-		ScopeKind: PolicyScopeOrganization,
 		CreatedBy: "cli",
 	}
 	if err := s.SavePolicy(p); err != nil {

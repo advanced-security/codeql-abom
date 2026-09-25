@@ -19,8 +19,8 @@
     }
     else if (_unit == UnitAdvisories)
     {
-        @("Published advisories that reach something you own, ranked by severity against how many " +
-          "repositories reach them. The rank is a scheduling aid, not a judgement: both inputs " +
+        @("Published advisories that reach something you own, ranked by severity, then by how " +
+          "many repositories reach them. The rank is a scheduling aid, not a judgement: both inputs " +
           "stay on screen so you can disagree with it.")
     }
     else if (_unit == UnitWorkflows)
@@ -114,39 +114,15 @@
 
 @if (_choosing && UnitRunsQueries(_unit))
 {
-    <MudPaper Outlined="true" Class="pa-3 mb-3" data-abom-run-draft>
-        <div class="d-flex flex-wrap align-center gap-2">
-            <MudText Typo="Typo.body2">Run</MudText>
-            @foreach (var q in _picked)
-            {
-                @* A named button: MudChip's close icon cannot be named and reads as "Close". *@
-                <span class="d-inline-flex align-center" data-abom-run-picked="@q.QueryId">
-                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">
-                        @q.QueryId <code class="ml-1">@Short(q.QueryVersion)</code>
-                    </MudChip>
-                    <MudIconButton Icon="@Icons.Material.Outlined.Close" Size="Size.Small"
-                                   OnClick="@(() => Unpick(q))"
-                                   aria-label="@($"Remove {q.QueryId} from the run")" />
-                </span>
-            }
-            <div class="abom-run-add">
-                <MudSelect T="string" Value="@string.Empty" ValueChanged="Pick" Dense="true"
-                           Variant="Variant.Outlined" Margin="Margin.Dense"
-                           Placeholder="@(_picked.Count == 0 ? "Choose a query" : "Add a query")"
-                           aria-label="Add a query version to the run">
-                    @foreach (var q in _runnable.Where(r => !_picked.Any(p => SameVersion(p, r))))
-                    {
-                        <MudSelectItem T="string" Value="@VersionKey(q)">@q.QueryId @Short(q.QueryVersion)</MudSelectItem>
-                    }
-                </MudSelect>
-            </div>
+    <RunDraftPanel Predicate="@RunPredicate" Closed="StopChoosing">
+        <Scope>
             @* Where the rows are repositories, "all" is the scope itself rather than every page of
                names. The reason sits on the span: a disabled checkbox fires no tooltip. *@
             @if (_unit == UnitRepositories)
             {
                 <span data-abom-run-all title="@ChooseAllReason">
                     <MudCheckBox T="bool" Dense="true" Size="Size.Small" Color="Color.Primary"
-                                 Value="@_all" ValueChanged="@((bool on) => ChooseAll(on))"
+                                 Value="@_all" ValueChanged="@((bool on) => _all = on)"
                                  Disabled="@(ChooseAllReason.Length > 0)"
                                  Label="@($"Choose all {CountText.Number(_total)}")" />
                 </span>
@@ -156,33 +132,8 @@
                     ? CountText.Of(_total, "repository in this scope", "repositories in this scope")
                     : CountText.Of(_chosen.Count, "chosen repository", "chosen repositories"))
             </MudText>
-            <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" DropShadow="false"
-                       Disabled="@(!CanStartRun)" OnClick="@(() => StartRun(prediction: false))" data-abom-run-go>Run</MudButton>
-            @* The reason sits on the span: a disabled button fires no tooltip. *@
-            <span data-abom-run-predict-reason
-                  title="Count what these queries would report in each chosen repository, per rule, and store none of it as a finding">
-                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary" DropShadow="false"
-                           Disabled="@(!CanStartRun)" OnClick="@(() => StartRun(prediction: true))"
-                           data-abom-run-predict>Predict</MudButton>
-            </span>
-            <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
-                       OnClick="StopChoosing" data-abom-run-discard>Cancel</MudButton>
-        </div>
-        @if (_size is { } size)
-        {
-            <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1" data-abom-run-size>
-                @SizeText(size)
-            </MudText>
-        }
-        else if (_sizeRefusal is { Length: > 0 } sizeRefused)
-        {
-            <MudText Typo="Typo.caption" Class="d-block mt-1" data-abom-run-size>@sizeRefused</MudText>
-        }
-        @if (_runRefusal is { Length: > 0 } refusedRun)
-        {
-            <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true" Class="mt-2">@refusedRun</MudAlert>
-        }
-    </MudPaper>
+        </Scope>
+    </RunDraftPanel>
 }
 
 @* Extended narrows the findings and nothing else, so the numbers that stay regular say so. Left
@@ -277,7 +228,26 @@
             </CellTemplate>
         </PropertyColumn>
 
-        <PropertyColumn Property="x => x.Findings" Title="Findings" />
+        @* Severity first and reach after it, as the server orders it: a critical finding nothing
+           reaches sorts after every one something does. *@
+        <PropertyColumn Property="x => x.WorstSeverity" Title="Severity">
+            <CellTemplate>
+                @if (context.Item.WorstSeverity.Length > 0)
+                {
+                    <span data-abom-worst-severity><SeverityChip Severity="@context.Item.WorstSeverity" /></span>
+                }
+                else
+                {
+                    <span class="abom-faint">none</span>
+                }
+            </CellTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Findings" Title="Findings">
+            <CellTemplate>
+                <FindingsCount Count="@context.Item.Findings" Severity="@context.Item.Severity" />
+            </CellTemplate>
+        </PropertyColumn>
 
         <PropertyColumn Property="x => x.Advisories" Title="Advisories">
             <CellTemplate>
@@ -368,7 +338,11 @@
                     }
                 </CellTemplate>
             </PropertyColumn>
-            <PropertyColumn Property="x => x.Findings" Title="Findings" />
+            <PropertyColumn Property="x => x.Findings" Title="Findings">
+                <CellTemplate>
+                    <FindingsCount Count="@context.Item.Findings" Severity="@context.Item.Severity" />
+                </CellTemplate>
+            </PropertyColumn>
         </Columns>
         <PagerContent>
             <MudDataGridPager T="WorkflowRow" />
@@ -452,7 +426,11 @@
             </PropertyColumn>
             <PropertyColumn Property="x => x.Steps" Title="Steps" />
             <PropertyColumn Property="x => x.Dependencies" Title="Dependencies" />
-            <PropertyColumn Property="x => x.Findings" Title="Findings" />
+            <PropertyColumn Property="x => x.Findings" Title="Findings">
+                <CellTemplate>
+                    <FindingsCount Count="@context.Item.Findings" Severity="@context.Item.Severity" />
+                </CellTemplate>
+            </PropertyColumn>
         </Columns>
         <PagerContent>
             <MudDataGridPager T="JobRow" />
@@ -478,7 +456,11 @@
             </PropertyColumn>
             <PropertyColumn Property="x => x.Workflows" Title="Workflows" />
             <PropertyColumn Property="x => x.Dependencies" Title="Dependencies" />
-            <PropertyColumn Property="x => x.Findings" Title="Findings" />
+            <PropertyColumn Property="x => x.Findings" Title="Findings">
+                <CellTemplate>
+                    <FindingsCount Count="@context.Item.Findings" Severity="@context.Item.Severity" />
+                </CellTemplate>
+            </PropertyColumn>
             @* Direct is the half this repository can fix itself; the rest wait on an
                intermediary, and collapsing the two would say every route is theirs to close. *@
             <PropertyColumn Property="x => x.DirectExposures" Title="Direct advisory routes" />
@@ -496,10 +478,10 @@
                  Hover="true" Bordered="false" SortMode="SortMode.None" Filterable="false"
                  RowsPerPage="30" ShowColumnOptions="false" FixedHeader="true" Class="abom-grid abom-grid-windowed abom-grid-captioned">
         <Columns>
-            <PropertyColumn Property="x => x.Priority" Title="Score">
+            <PropertyColumn Property="x => x.Rank" Title="Rank">
                 <CellTemplate>
-                    <MudTooltip Text="Published severity multiplied by how many repositories reach it. CVSS and EPSS are context and are deliberately not part of this.">
-                        <span class="abom-num">@context.Item.Priority</span>
+                    <MudTooltip Text="Published severity first, then how many repositories reach it. CVSS and EPSS are context and are deliberately not part of this.">
+                        <span class="abom-num" data-abom-advisory-rank>@context.Item.Rank</span>
                     </MudTooltip>
                 </CellTemplate>
             </PropertyColumn>
@@ -593,7 +575,7 @@
             </PropertyColumn>
             <PropertyColumn Property="x => x.Findings" Title="Findings">
                 <CellTemplate>
-                    <span class="abom-num">@context.Item.Findings</span>
+                    <FindingsCount Count="@context.Item.Findings" Severity="@context.Item.Severity" />
                     @if (context.Item.Rules.Count > 0)
                     {
                         <MudTooltip Text="@string.Join(", ", context.Item.Rules)">
@@ -756,6 +738,13 @@ else
         question matches whose source was not recorded, so no source can be named for them.
     </MudText>
 }
+@if (_unprovided > 0)
+{
+    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1" data-abom-unprovided>
+        @_unprovided more @(_unprovided == 1 ? "dependency carries" : "dependencies carry") findings
+        this question matches that recorded no provider, so none can be named for them.
+    </MudText>
+}
 
 @code {
     private const string UnitDependencies = "dependencies";
@@ -862,6 +851,7 @@ else
     private int _unreached;
     private IReadOnlyList<KindCount> _elsewhere = [];
     private int _unsourced;
+    private int _unprovided;
 
     private static readonly Dictionary<string, string> SortLabels = new()
     {
@@ -874,6 +864,7 @@ else
         ["findings"] = "findings",
         ["advisories"] = "advisories",
         ["analyzed"] = "analyzed",
+        ["severity"] = "severity",
     };
 
     // The grid names a sort by its property; the endpoint names it by its own term. A name absent
@@ -889,6 +880,7 @@ else
         ["Findings"] = "findings",
         ["Advisories"] = "advisories",
         ["Analyzed"] = "analyzed",
+        ["WorstSeverity"] = "severity",
     };
 
     private static readonly Dictionary<string, string> RepositorySortTerms = new()
@@ -953,7 +945,7 @@ else
     private static string DefaultOrder(string unit) => unit switch
     {
         UnitRepositories => "findings",
-        UnitAdvisories => "severity and reach",
+        UnitAdvisories => "severity, then reach",
         UnitWorkflows => "findings",
         UnitJobs => "whether the job is privileged",
         UnitRelationships => "what declares it",
@@ -979,38 +971,24 @@ else
         // Blazor keeps the component when only the query changes, so without this the address says
         // one thing and the grid goes on answering the last one. Browser Back is the same gap.
         Nav.LocationChanged += OnLocationChanged;
-        if (Draft.Queries.Count > 0)
-        {
-            _choosing = true;
-            _picked = [.. Draft.Queries];
-        }
+        // A draft carried from the CodeQL page, or left here, opens where repositories are chosen.
+        _choosing = Draft.Queries.Count > 0;
     }
 
     public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
 
-    // A run chosen here, or carried from the CodeQL page: the versions and the repositories.
+    // The repositories a run drafted here is over; the versions are the shared draft's.
     private bool _choosing;
-    private List<AnalysisQueryRef> _picked = [];
-    private IReadOnlyList<CatalogQuery> _runnable = [];
     private readonly HashSet<string> _chosen = new(StringComparer.OrdinalIgnoreCase);
-    private string? _runRefusal;
-    private bool _starting;
 
-    // Every repository the scope lists rather than the ones ticked, and what the server resolved
-    // the draft to before anything is spent.
+    // Every repository the scope lists rather than the ones ticked.
     private bool _all;
-    private DatabaseSet? _size;
-    private string? _sizeRefusal;
 
     private static bool UnitRunsQueries(string unit) => unit is UnitRepositories or UnitDependencies;
 
     private string RunActionReason => UnitRunsQueries(_unit)
         ? "Choose repositories here and run query versions over their databases"
         : "Only repositories, and the actions that live in them, have a database to run a query against";
-
-    private bool CanStartRun =>
-        !_starting && _picked.Count > 0 && (_all || _chosen.Count > 0) &&
-        Accounts.Identity.Login.Length > 0;
 
     private bool HasPredicate => Scope.Spec.ToQueryString().Length > 0;
 
@@ -1023,49 +1001,12 @@ else
         : string.Empty;
 
     // "All" is sent as the scope, so the server resolves it as the Repositories unit lists it.
-    private string RunPredicate => _all
-        ? Scope.Spec.ToQueryString()
+    // Sent by name otherwise, so a repository with no findings is as runnable as any.
+    private string RunPredicate =>
+        _all ? Scope.Spec.ToQueryString()
+        : _chosen.Count == 0 ? string.Empty
         : "repositories=" + string.Join(",",
             _chosen.Order(StringComparer.Ordinal).Select(Uri.EscapeDataString));
-
-    // Counts of what the server resolved, never a claim about what the run will make of them.
-    private static string SizeText(DatabaseSet set)
-    {
-        var total = set.Databases.Count + set.Gaps.Count;
-        if (total == 0)
-        {
-            return set.Unresolved.Length > 0 ? set.Unresolved : "This names no repository.";
-        }
-        var held = set.Databases.Count(d => d.Status == "retained");
-        return $"{CountText.Of(total, "repository", "repositories")}: " +
-               $"{CountText.Number(held)} with a database held, {CountText.Number(total - held)} without one";
-    }
-
-    // Asked of the resolution the run itself uses, so the size shown is the size spent.
-    private async Task StateSize()
-    {
-        _size = null;
-        _sizeRefusal = null;
-        if (!_all && _chosen.Count == 0)
-        {
-            return;
-        }
-        var asked = RunPredicate;
-        var (set, refusal) = await Api.GetDatabasesAsync(asked);
-        // A later choice has already asked again, and this answer is about a draft that is gone.
-        if (asked != RunPredicate)
-        {
-            return;
-        }
-        _size = set;
-        _sizeRefusal = refusal;
-    }
-
-    private async Task ChooseAll(bool on)
-    {
-        _all = on;
-        await StateSize();
-    }
 
     // A docker image lives in no repository, so it has no database to choose.
     private static string? RepositoryOf(ActionSummary a) =>
@@ -1081,7 +1022,7 @@ else
         </span>
     };
 
-    private async Task Choose(string repository, bool on)
+    private void Choose(string repository, bool on)
     {
         if (on)
         {
@@ -1091,85 +1032,16 @@ else
         {
             _chosen.Remove(repository);
         }
-        await StateSize();
     }
 
-    private async Task StartChoosing()
-    {
-        _choosing = true;
-        await LoadRunnable();
-    }
+    private void StartChoosing() => _choosing = true;
 
+    // The draft has already put its versions away; what is left is this page's choice of rows.
     private void StopChoosing()
     {
         _choosing = false;
         _chosen.Clear();
         _all = false;
-        _size = null;
-        _sizeRefusal = null;
-        _picked = [];
-        _runRefusal = null;
-        Draft.Clear();
-    }
-
-    // The crawl's own queries build the graph and report nothing, so they are not on offer.
-    private async Task LoadRunnable()
-    {
-        await Accounts.EnsureLoadedAsync();
-        var catalog = await Api.GetQueryCatalogAsync();
-        _runnable = [.. catalog.Queries.Where(q => !q.Discovery && !q.Lane && q.QueryVersion.Length > 0)];
-    }
-
-    private static string VersionKey(CatalogQuery q) => q.QueryId + "\n" + q.QueryVersion;
-
-    private static bool SameVersion(AnalysisQueryRef a, CatalogQuery b) =>
-        a.QueryId == b.QueryId && a.QueryVersion == b.QueryVersion;
-
-    private void Pick(string key)
-    {
-        if (_runnable.FirstOrDefault(r => VersionKey(r) == key) is { } q)
-        {
-            _picked = [.. _picked, new AnalysisQueryRef { QueryId = q.QueryId, QueryVersion = q.QueryVersion }];
-        }
-    }
-
-    private void Unpick(AnalysisQueryRef q) => _picked = [.. _picked.Where(p => p != q)];
-
-    private static string Short(string version) => version.Length <= 12 ? version : version[..12];
-
-    /// <summary>
-    /// Sent by name, or as the scope when all of it is chosen; either way a repository with no
-    /// findings is as runnable as any. A prediction is the same draft, held apart from findings.
-    /// </summary>
-    private async Task StartRun(bool prediction)
-    {
-        if (!CanStartRun)
-        {
-            return;
-        }
-        _starting = true;
-        try
-        {
-            var (run, refusal) = await Api.StartAnalysisRunAsync(
-                RunPredicate, _picked, Accounts.Identity.Login, prediction);
-            if (run is null)
-            {
-                _runRefusal = refusal ?? Api.LastError;
-                return;
-            }
-            var (_, notStarted) = await Api.ExecuteAnalysisRunAsync(run.RowId);
-            if (notStarted is not null)
-            {
-                _runRefusal = $"{(prediction ? "Prediction" : "Run")} #{run.RowId} is recorded and has not started: {notStarted}";
-                return;
-            }
-            StopChoosing();
-            Nav.NavigateTo($"/codeql?tab=runs&run={run.RowId}");
-        }
-        finally
-        {
-            _starting = false;
-        }
     }
 
     private void ReadAddress()
@@ -1193,10 +1065,6 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        if (_choosing)
-        {
-            await LoadRunnable();
-        }
         // Read here as well as inside the picker: the export's refusal is a claim this page makes
         // about the scope, and it needs the same declaration the picker offers terms from.
         _filterTerms = await Api.GetFilterTermsAsync();
@@ -1215,10 +1083,9 @@ else
         _unit = unit;
         _sort = null;
         // N actions are not N repositories, so "all" belongs to the Repositories unit alone.
-        if (_all && _unit != UnitRepositories)
+        if (_unit != UnitRepositories)
         {
             _all = false;
-            await StateSize();
         }
         Sync();
         await Reload();
@@ -1340,6 +1207,7 @@ else
         _shown = page?.Items.Count ?? 0;
         _elsewhere = page?.Elsewhere ?? [];
         _unsourced = page?.Unsourced ?? 0;
+        _unprovided = page?.Unprovided ?? 0;
         // The line stating what was left out sits outside the grid, and the grid re-renders only
         // itself, so without this it keeps reporting the page before last.
         StateHasChanged();
@@ -1362,6 +1230,7 @@ else
         _shown = page?.Items.Count ?? 0;
         _elsewhere = [];
         _unsourced = 0;
+        _unprovided = 0;
         StateHasChanged();
         return new GridData<WorkflowRow> { Items = page?.Items ?? [], TotalItems = _total };
     }
@@ -1382,6 +1251,7 @@ else
         _shown = page?.Items.Count ?? 0;
         _elsewhere = [];
         _unsourced = 0;
+        _unprovided = 0;
         StateHasChanged();
         return new GridData<JobRow> { Items = page?.Items ?? [], TotalItems = _total };
     }
@@ -1403,11 +1273,11 @@ else
         _shown = page?.Items.Count ?? 0;
         _elsewhere = [];
         _unsourced = 0;
+        _unprovided = 0;
         if (_all)
         {
             // "All" follows the scope, and a scope that stops listing anything has nothing to send.
             _all = ChooseAllReason.Length == 0;
-            await StateSize();
         }
         StateHasChanged();
         return new GridData<RepositorySummary> { Items = page?.Items ?? [], TotalItems = _total };
@@ -1417,9 +1287,9 @@ else
     /// One page of the advisories unit, worst first across the whole match.
     /// </summary>
     ///
-    /// Ordered by the server and not sortable here: priority is severity times reach, and a column
-    /// header offering to re-rank it would invite a reader to ask a question the score cannot
-    /// answer.
+    /// Ordered by the server and not sortable here: the rank is a place in the whole match, and a
+    /// column header offering to re-rank one page would invite a reader to ask a question the rank
+    /// cannot answer.
     private async Task<GridData<RemediationItem>> LoadAdvisories(GridState<RemediationItem> state)
     {
         _sort = null;
@@ -1432,6 +1302,7 @@ else
         _unreached = page?.Unreached ?? 0;
         _elsewhere = [];
         _unsourced = 0;
+        _unprovided = 0;
         StateHasChanged();
         return new GridData<RemediationItem> { Items = page?.Items ?? [], TotalItems = _total };
     }
@@ -1449,6 +1320,7 @@ else
         _unreached = 0;
         _elsewhere = [];
         _unsourced = 0;
+        _unprovided = 0;
         StateHasChanged();
         return new GridData<RelationshipSummary> { Items = page?.Items ?? [], TotalItems = _total };
     }

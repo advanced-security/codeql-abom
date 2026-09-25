@@ -193,7 +193,7 @@ func nodeAtRef(n GraphNode, ref string, states map[[2]string]refState) GraphNode
 	// reports none rather than borrowing its sibling's. The rule list stays an empty
 	// slice: the interface reads it as a set, and null is not one.
 	if !v.Analyzed {
-		v.Findings, v.Rules = 0, []string{}
+		v.Findings, v.Rules, v.Facets = 0, []string{}, []FindingFacet{}
 	}
 	return v
 }

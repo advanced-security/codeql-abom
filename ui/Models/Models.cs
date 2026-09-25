@@ -28,6 +28,9 @@ public sealed record Summary
     /// run, and printing the corpus total as yours offers work you cannot do.
     /// </summary>
     public int OwnedFindings { get; init; }
+
+    /// <summary>The same findings by band of their rules' own scores.</summary>
+    public SeverityCounts OwnedSeverity { get; init; } = new();
     public int Rules { get; init; }
     public int LinkedFindings { get; init; }
     public int Advisories { get; init; }
@@ -46,8 +49,26 @@ public sealed record Summary
 }
 
 /// <summary>
-/// One advisory ranked by published severity against how many repositories reach it.
-/// CVSS and EPSS travel alongside but are deliberately absent from <see cref="Priority"/>.
+/// How many findings sit in each band of their rules' own scores, summing to the count beside it.
+/// Unknown is a rule declaring no score, which is not the lowest band.
+/// </summary>
+public sealed record SeverityCounts
+{
+    public int Critical { get; init; }
+    public int High { get; init; }
+    public int Medium { get; init; }
+    public int Low { get; init; }
+    public int Unknown { get; init; }
+
+    /// <summary>The most severe band holding a finding, empty when none does.</summary>
+    public string Worst =>
+        Critical > 0 ? "critical" : High > 0 ? "high" : Medium > 0 ? "medium" :
+        Low > 0 ? "low" : Unknown > 0 ? "unknown" : string.Empty;
+}
+
+/// <summary>
+/// One advisory ranked by published severity, then by how many repositories reach it.
+/// CVSS and EPSS travel alongside but are deliberately absent from <see cref="Rank"/>.
 /// </summary>
 public sealed record RemediationItem
 {
@@ -63,7 +84,7 @@ public sealed record RemediationItem
     public double EpssPercentage { get; init; }
     public bool HasEpss { get; init; }
     public bool Fixable { get; init; }
-    public int Priority { get; init; }
+    public int Rank { get; init; }
 
     public int TotalRepos => DirectRepos + TransitiveRepos;
 }
@@ -317,6 +338,10 @@ public sealed record FilterTerm
 
     /// <summary>The surfaces that apply this term. Elsewhere it would be refused by name.</summary>
     public IReadOnlyList<string> Surfaces { get; init; } = [];
+
+    /// <summary>The values a surface answers, where it answers fewer than the term allows.</summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> SurfaceValues { get; init; } =
+        new Dictionary<string, IReadOnlyList<string>>();
 }
 
 /// <summary>
@@ -397,6 +422,7 @@ public sealed record WorkflowRow
     public int Dependencies { get; init; }
     public int PrivilegedJobs { get; init; }
     public int Findings { get; init; }
+    public SeverityCounts Severity { get; init; } = new();
     public int DependedOnBy { get; init; }
 }
 
@@ -420,6 +446,7 @@ public sealed record JobRow
     public int Steps { get; init; }
     public int Dependencies { get; init; }
     public int Findings { get; init; }
+    public SeverityCounts Severity { get; init; } = new();
 }
 
 public sealed record JobsPage
@@ -448,6 +475,9 @@ public sealed record InventoryPage
     /// source is asked: those are the rows the source term could not answer for.
     /// </summary>
     public int Unsourced { get; init; }
+
+    /// <summary>The same for a provider term: rows whose matching finding recorded no provider.</summary>
+    public int Unprovided { get; init; }
 }
 
 /// <summary>How many nodes of one kind a predicate matched.</summary>
@@ -493,6 +523,7 @@ public sealed record RelationshipSummary
 
     /// <summary>What was reported against the line itself, rather than against either end.</summary>
     public int Findings { get; init; }
+    public SeverityCounts Severity { get; init; } = new();
     public IReadOnlyList<string> Rules { get; init; } = [];
 
     public bool? AdvisoryRoute { get; init; }
@@ -533,6 +564,14 @@ public sealed record ActionSummary
     /// <summary>Different references pointing here; each is a separate upgrade decision.</summary>
     public int DistinctRefs { get; init; }
     public int Findings { get; init; }
+    public SeverityCounts Severity { get; init; } = new();
+
+    /// <summary>
+    /// The worst band, as a column the grid can name: the server orders it across the whole match
+    /// as severity first, then whether anything reaches it, then reach.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string WorstSeverity => Severity.Worst;
     public int Advisories { get; init; }
     public bool Analyzed { get; init; }
     public IReadOnlyList<string> Refs { get; init; } = [];
@@ -545,6 +584,7 @@ public sealed record RepositorySummary
     public int Workflows { get; init; }
     public int Dependencies { get; init; }
     public int Findings { get; init; }
+    public SeverityCounts Severity { get; init; } = new();
     public int Exposures { get; init; }
     public int DirectExposures { get; init; }
 }
@@ -559,6 +599,9 @@ public sealed record RuleCount
 
     /// <summary>Findings no evaluation recorded a source for, which are not known to be from any.</summary>
     public int Unsourced { get; init; }
+
+    /// <summary>The same findings by band; one rule usually lands in one.</summary>
+    public SeverityCounts Severity { get; init; } = new();
 }
 
 public sealed record OwnerCandidate
@@ -1110,6 +1153,9 @@ public sealed record GraphNodeBrief
     public bool ReachKnown { get; init; }
     public int Findings { get; init; }
     public IReadOnlyList<string> Rules { get; init; } = [];
+
+    /// <summary>Each kind of finding the node carries: rule, producer and severity together.</summary>
+    public IReadOnlyList<FindingFacet> Facets { get; init; } = [];
     public int Advisories { get; init; }
 
     /// <summary>References in use and analyzed. Both zero means nothing ever queued it.</summary>
@@ -1118,6 +1164,25 @@ public sealed record GraphNodeBrief
     public string Discovery { get; init; } = string.Empty;
     public int Depth { get; init; }
     public bool IsExternal { get; init; }
+}
+
+/// <summary>One kind of finding a graph node carries, and how many findings share it.</summary>
+public sealed record FindingFacet
+{
+    public string Rule { get; init; } = string.Empty;
+
+    /// <summary>Who reported it. Empty where no producer was recorded, never read as CodeQL.</summary>
+    public string Provider { get; init; } = string.Empty;
+
+    /// <summary>The level the result reported: error, warning or recommendation.</summary>
+    public string Severity { get; init; } = string.Empty;
+
+    /// <summary>The rule's own security score, absent where the rule declares none.</summary>
+    public double? SecuritySeverity { get; init; }
+
+    /// <summary>That score read as code scanning reads it, by the server: no copy of the thresholds here.</summary>
+    public string Band { get; init; } = string.Empty;
+    public int Count { get; init; }
 }
 
 /// <summary>Everything known about one node, as its own page shows it.</summary>
@@ -1240,6 +1305,15 @@ public sealed record CatalogQuery
     /// before anybody presses it. Empty where it would not be refused.
     /// </summary>
     public string ExtendedTestRefusal { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Every pair this version declares, as the CLI resolved them. Null where nothing resolved the
+    /// version, which is not a query that declares nothing.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? Metadata { get; init; }
+
+    /// <summary>The declared score's band, for a query that reports findings; empty otherwise.</summary>
+    public string Band { get; init; } = string.Empty;
 }
 
 /// <summary>
@@ -1306,6 +1380,21 @@ public sealed record AnalysisMember
         new Dictionary<string, int>(StringComparer.Ordinal);
     public string StartedAt { get; init; } = string.Empty;
     public string FinishedAt { get; init; } = string.Empty;
+
+    /// <summary>Still to reach in the start under way, which the server decides.</summary>
+    public bool ToDo { get; init; }
+}
+
+/// <summary>What a run under way has still to do, and a time remaining from its own pace.</summary>
+public sealed record RunLeft
+{
+    public int Members { get; init; }
+
+    /// <summary>The members this start has finished, which the pace is taken from.</summary>
+    public int Finished { get; init; }
+
+    /// <summary>Absent until one of them has finished; never a forecast from elsewhere.</summary>
+    public long? RemainingSeconds { get; init; }
 }
 
 /// <summary>A run somebody asked for, its members and how far it has got.</summary>
@@ -1319,10 +1408,19 @@ public sealed record AnalysisRun
     public string RequestedBy { get; init; } = string.Empty;
     public string State { get; init; } = string.Empty;
 
-    /// <summary>What its queries would report, held apart and never stored as findings.</summary>
-    public bool Prediction { get; init; }
+    /// <summary>Findings off: what its queries report is held until somebody converts it.</summary>
+    public bool Held { get; init; }
     public string CreatedAt { get; init; } = string.Empty;
     public string FinishedAt { get; init; } = string.Empty;
+
+    /// <summary>When the start under way, or the last one, began.</summary>
+    public string StartedAt { get; init; } = string.Empty;
+
+    /// <summary>The named scope the run was chosen by; empty for one chosen otherwise.</summary>
+    public string ScopeName { get; init; } = string.Empty;
+
+    /// <summary>What a pending or running run has left; null for any other.</summary>
+    public RunLeft? Left { get; init; }
     public IReadOnlyList<AnalysisQueryRef> Queries { get; init; } = [];
     public IReadOnlyList<AnalysisMember> Members { get; init; } = [];
 
@@ -1357,6 +1455,12 @@ public sealed record ScopedDatabase
 
     /// <summary><c>retained</c> or <c>buildable</c>.</summary>
     public string Status { get; init; } = string.Empty;
+
+    /// <summary>The CodeQL that built what is held, empty where nothing recorded one.</summary>
+    public string CliVersion { get; init; } = string.Empty;
+
+    /// <summary>Why a database that is held resolves as buildable; empty otherwise.</summary>
+    public string Reason { get; init; } = string.Empty;
 }
 
 /// <summary>A repository a run's scope reached that resolved to no database, and why.</summary>
@@ -1381,13 +1485,25 @@ public sealed record DatabaseSet
 /// <summary>One result a member of a run reported.</summary>
 public sealed record RunFinding
 {
+    /// <summary>The finding; for a held result, the finding somebody converted it to, or zero.</summary>
     public long FindingRowId { get; init; }
+
+    /// <summary>A result a held run kept; zero for a finding a run stored.</summary>
+    public long HeldResultId { get; init; }
+
+    /// <summary>Who converted a held result to a finding, and when; empty when nobody has.</summary>
+    public string ConvertedBy { get; init; } = string.Empty;
+    public string ConvertedAt { get; init; } = string.Empty;
     public string RuleId { get; init; } = string.Empty;
     public string FilePath { get; init; } = string.Empty;
     public int StartLine { get; init; }
     public int StartColumn { get; init; }
     public string Message { get; init; } = string.Empty;
     public string Severity { get; init; } = string.Empty;
+
+    /// <summary>The rule's own score, absent where it declares none, and the band it falls in.</summary>
+    public double? SecuritySeverity { get; init; }
+    public string Band { get; init; } = string.Empty;
 
     /// <summary>What the member's evaluation recorded about the rule's query; empty when nothing.</summary>
     public string Source { get; init; } = string.Empty;
@@ -1451,8 +1567,8 @@ public sealed record MemberFindings
     public string Repository { get; init; } = string.Empty;
     public bool Evaluated { get; init; }
 
-    /// <summary>What a prediction would report here: no finding stands behind any of it.</summary>
-    public bool Predicted { get; init; }
+    /// <summary>What a held run kept here: no finding stands behind it until somebody converts it.</summary>
+    public bool Held { get; init; }
 
     /// <summary>
     /// Counted by a run recorded before ABOM kept each repository's own evaluation, so its results
@@ -1496,16 +1612,19 @@ public sealed record QueryRequest
 }
 
 /// <summary>
-/// One result picked from a run: a finding that should not have fired, or a repository where the
-/// query ran and something should have.
+/// One result picked from a run: a finding that should not have fired, a result a held run kept that
+/// should not have, or a repository where the query ran and something should have.
 /// </summary>
 public sealed record RequestEvidence
 {
     public long RunId { get; init; }
     public string Repository { get; init; } = string.Empty;
 
-    /// <summary>Zero for a missed detection, which names a repository rather than a finding.</summary>
+    /// <summary>Zero for a missed detection, or for a result a held run kept.</summary>
     public long FindingRowId { get; init; }
+
+    /// <summary>The result a held run kept; zero for a finding or a missed detection.</summary>
+    public long HeldResultId { get; init; }
 
     /// <summary><c>false-alarm</c> or <c>missed</c>.</summary>
     public string Kind { get; init; } = string.Empty;
@@ -1517,6 +1636,33 @@ public sealed record QueryRequestList
     public IReadOnlyList<QueryRequest> Requests { get; init; } = [];
     public IReadOnlyList<string> Kinds { get; init; } = [];
     public IReadOnlyList<string> Statuses { get; init; } = [];
+}
+
+/// <summary>
+/// Whether a run of some query versions should store what it finds as findings, and why. One
+/// setting covers the whole run, so it is on only when every query is promoted.
+/// </summary>
+public sealed record FindingsSuggestion
+{
+    public bool Findings { get; init; }
+    public string Reason { get; init; } = string.Empty;
+    public IReadOnlyList<QuerySuggestion> Queries { get; init; } = [];
+}
+
+/// <summary>What one query version contributes to a run's suggestion.</summary>
+public sealed record QuerySuggestion
+{
+    public string QueryId { get; init; } = string.Empty;
+    public string QueryVersion { get; init; } = string.Empty;
+    public bool Promoted { get; init; }
+    public string Why { get; init; } = string.Empty;
+}
+
+/// <summary>What converting a held run's results did.</summary>
+public sealed record Conversion
+{
+    public int Converted { get; init; }
+    public int Already { get; init; }
 }
 
 /// <summary>One agent session on a request, and how much of what it tried was refused.</summary>

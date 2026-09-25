@@ -513,20 +513,142 @@ public class QueryCatalogTests : AbomTestContext
         Assert.DoesNotContain(">yours<", page.Markup);
     }
 
-    /// <summary>A new rule reaches nothing, so its own reach could never be a run's scope.</summary>
+    /// <summary>
+    /// Run on a row adds its version to the draft, here: the draft that holds several is one draft,
+    /// on this page and the Inventory alike, rather than a copy on each.
+    /// </summary>
     [Fact]
-    public void RunningAVersionChoosesItsRepositoriesInTheInventory()
+    public void RunningAVersionDraftsItOnThisPage()
     {
         var page = Render(OperatorWritten);
         var rows = page.FindAll("[data-abom-query-id]").Select(e => e.TextContent.Trim()).ToList();
 
         page.FindAll("[data-abom-query-run]")[rows.IndexOf("acme/self-hosted-runner")].Click();
 
+        page.WaitForAssertion(() => page.Find("[data-abom-run-draft] [data-abom-run-picked='acme/self-hosted-runner']"));
+        var at = Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.Uri;
+        Assert.EndsWith("/codeql?tab=catalog", at);
+        var draft = Services.GetRequiredService<RunDraft>();
+        Assert.Equal("9b5327ab01d7", Assert.Single(draft.Queries).QueryVersion);
+
+        page.FindAll("[data-abom-query-run]")[rows.IndexOf("actions/unpinned-tag")].Click();
+        page.WaitForAssertion(() => Assert.Equal(2, page.FindAll("[data-abom-run-picked]").Count));
+    }
+
+    /// <summary>Choosing repositories one by one is still the Inventory's, and the draft goes too.</summary>
+    [Fact]
+    public void RunningAVersionCanStillChooseItsRepositoriesInTheInventory()
+    {
+        var page = Render(OperatorWritten);
+        var rows = page.FindAll("[data-abom-query-id]").Select(e => e.TextContent.Trim()).ToList();
+        page.FindAll("[data-abom-query-run]")[rows.IndexOf("acme/self-hosted-runner")].Click();
+        page.WaitForAssertion(() => page.Find("[data-abom-run-in-inventory]"));
+
+        page.Find("[data-abom-run-in-inventory]").Click();
+
         var at = Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.Uri;
         Assert.EndsWith("/inventory?unit=repositories", at);
         var draft = Services.GetRequiredService<RunDraft>();
         Assert.Equal("acme/self-hosted-runner", Assert.Single(draft.Queries).QueryId);
-        Assert.Equal("9b5327ab01d7", draft.Queries[0].QueryVersion);
+    }
+
+    private const string RunViews = """
+        [{"name":"owned","title":"What you own","predicate":"scope=owned","builtin":true,
+          "refuses":{"inventory":[],"repositories":[],"graph":[],"run":[]}},
+         {"name":"unpinned","title":"Floating references","predicate":"ref=tag","builtin":true,
+          "refuses":{"inventory":[],"repositories":["ref"],"graph":[],"run":["ref"]}},
+         {"name":"mine","predicate":"q=octo&scope=owned","builtin":false,
+          "refuses":{"inventory":[],"repositories":[],"graph":[],"run":[]}}]
+        """;
+
+    private const string RunTerms = """
+        [{"name":"ref","label":"Reference style","help":"h","arity":"scalar","surfaces":["inventory"]},
+         {"name":"scope","label":"Scope","help":"h","arity":"scalar","surfaces":["inventory"]}]
+        """;
+
+    private IRenderedComponent<CodeQL> Drafting()
+    {
+        Answer("api/views", RunViews);
+        Answer("api/filters", RunTerms);
+        Answer("api/databases", """
+            {"databases":[
+              {"repository":"octo-org/app","commit":"a1","sourceFilter":"f","mode":"regular",
+               "status":"retained","path":"/db/app","bytes":10,"cliVersion":"2.27.1","reason":""}],
+             "gaps":[{"repository":"octo-org/new","reason":"no regular analysis on record"}],
+             "mode":"regular","unresolved":""}
+            """);
+        var page = Render(OperatorWritten);
+        page.FindAll("[data-abom-query-run]")[0].Click();
+        page.WaitForAssertion(() => page.Find("[data-abom-run-draft] [data-abom-view='owned']"));
+        return page;
+    }
+
+    /// <summary>
+    /// A run's scope here is a named one: those a run refuses are disabled with their terms named,
+    /// and nothing is resolved until one is chosen.
+    /// </summary>
+    [Fact]
+    public void ANamedScopeARunRefusesIsDisabledInTheDraftWithItsTermsNamed()
+    {
+        var page = Drafting();
+
+        page.WaitForAssertion(() =>
+            Assert.Contains("mud-disabled", page.Find("[data-abom-view='unpinned']").ClassName));
+        var reason = page.Find("[data-abom-view-reason='unpinned']").GetAttribute("title") ?? "";
+        Assert.Contains("A run cannot narrow by", reason);
+        Assert.Contains("Reference style: tag", reason);
+        Assert.DoesNotContain(Sent, r => r.Url.Contains("api/databases"));
+        Assert.True(page.Find("[data-abom-run-go]").HasAttribute("disabled"));
+    }
+
+    /// <summary>
+    /// A chosen scope shows its size before Run, from the resolution the run uses, and the run is
+    /// asked for by the scope's name so the server records the name beside what it resolved to.
+    /// </summary>
+    [Fact]
+    public void AChosenScopeShowsItsSizeAndTheRunIsAskedForByName()
+    {
+        var page = Drafting();
+        Answer("api/runs", """{"rowId":9,"predicate":"scope=owned","scopeName":"owned","state":"pending"}""");
+        Answer("api/runs/9/start", """{"rowId":9,"state":"running"}""");
+
+        page.Find("[data-abom-view='owned']").Click();
+
+        page.WaitForAssertion(() =>
+            Assert.Contains("2 repositories", page.Find("[data-abom-run-size]").TextContent));
+        Assert.Contains("What you own", page.Find("[data-abom-run-scope]").TextContent);
+        Assert.Contains(Sent, r => r.Method == "GET" && r.Url.EndsWith("api/databases?view=owned"));
+
+        page.Find("[data-abom-run-go]").Click();
+
+        page.WaitForAssertion(() =>
+            Assert.Contains(Sent, r => r.Method == "POST" && r.Url.EndsWith("api/runs?view=owned")));
+    }
+
+    /// <summary>
+    /// Keep here names the scope the draft holds, which this page has none of until a named one is
+    /// chosen, and it keeps that scope's predicate byte for byte.
+    /// </summary>
+    [Fact]
+    public void KeepHereNamesTheChosenScopeByItsStoredPredicate()
+    {
+        // Left by another page: it is not what this draft is over.
+        Services.GetRequiredService<ScopeService>().Set(ViewSpec.Parse("q=elsewhere"));
+        var page = Drafting();
+
+        Assert.True(page.Find("[data-abom-save-scope]").HasAttribute("disabled"),
+            "Keep offered a scope this draft does not hold");
+
+        page.Find("[data-abom-view='mine']").Click();
+        page.Find("[data-abom-scope-name]").Input("mine again");
+        page.Find("[data-abom-save-scope]").Click();
+
+        page.WaitForAssertion(() =>
+        {
+            var kept = Sent.Last(r => r.Url.Contains("api/views/"));
+            Assert.Equal("PUT", kept.Method);
+            Assert.Contains("\"predicate\":\"q=octo\\u0026scope=owned\"", kept.Body);
+        });
     }
 
     /// <summary>Two names both beginning "Run this version" sound like one control twice.</summary>

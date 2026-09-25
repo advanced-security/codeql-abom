@@ -1,7 +1,9 @@
 package serve
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -21,7 +23,7 @@ func (s *Server) databases(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	set, err := s.runSet(spec)
+	set, err := s.runSet(r.Context(), spec)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -43,21 +45,33 @@ func (s *Server) runPredicate(r *http.Request) (viewspec.Spec, error) {
 	return spec, nil
 }
 
-// runSet resolves a run's scope to the databases it covers.
+// runSet resolves a run's scope to the databases it covers, as the CodeQL running now would.
 //
 // A scope asking the repositories unit's question covers exactly what that unit lists, so a run's
 // population is a tab a reader can open and count; names and findings terms narrow it. Without
 // one, names and findings keep the set path's meaning.
-func (s *Server) runSet(spec viewspec.Spec) (store.DatabaseSet, error) {
+func (s *Server) runSet(ctx context.Context, spec viewspec.Spec) (store.DatabaseSet, error) {
 	sel := store.SelectorFor(spec)
-	if !spec.AsksRepositoriesUnit() {
-		return s.Store.DatabasesMatching(sel)
+	var set store.DatabaseSet
+	var err error
+	if spec.AsksRepositoriesUnit() {
+		var query store.RepositoriesQuery
+		if query, err = s.repositoriesQuery(spec); err != nil {
+			return set, err
+		}
+		set, err = s.Store.DatabasesListed(query, sel)
+	} else {
+		set, err = s.Store.DatabasesMatching(sel)
 	}
-	query, err := s.repositoriesQuery(spec)
 	if err != nil {
-		return store.DatabaseSet{}, err
+		return set, err
 	}
-	return s.Store.DatabasesListed(query, sel)
+	cli, err := s.codeQL(ctx)
+	if err != nil {
+		return set, fmt.Errorf("which CodeQL would run this cannot be read, so nothing held "+
+			"can be counted as usable: %w", err)
+	}
+	return set.BuiltBy(cli), nil
 }
 
 // repositoriesQuery is the repositories unit's population for a predicate, shared by the unit and

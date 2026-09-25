@@ -76,10 +76,38 @@ func TestAFullyEnforceablePredicateIsStillAccepted(t *testing.T) {
 func policyRequest(predicate string) *http.Request {
 	body := `{"name":"enforcement-probe","predicate":"` + predicate +
 		`","scopeKind":"organization","scopeValue":""}`
+	return policyBody(body)
+}
+
+func policyBody(body string) *http.Request {
 	r := httptest.NewRequest(http.MethodPut, "/api/policies", strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("X-Abom-Control", "1")
 	// Control endpoints answer only over loopback, and httptest addresses the request to example.com.
 	r.Host = "127.0.0.1"
 	return r
+}
+
+// A scope beside the predicate is retired, and a client still sending one is refused rather than
+// having it dropped: saved without it, a policy for one unit would refuse the whole organization.
+func TestAPolicyNamingARetiredScopeIsRefusedWithWhereItNowGoes(t *testing.T) {
+	srv, _ := unitServer(t)
+
+	for _, body := range []string{
+		`{"name":"u","predicate":"rules=actions%2F*","scopeKind":"unit","scopeValue":"3"}`,
+		`{"name":"k","predicate":"rules=actions%2F*","scopeKind":"unit"}`,
+		`{"name":"r","predicate":"rules=actions%2F*","scopeKind":"repository","scopeValue":"octo-org/app"}`,
+	} {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, policyBody(body))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s answered %d, want a refusal", body, rec.Code)
+			continue
+		}
+		for _, want := range []string{"repositories", "properties"} {
+			if !strings.Contains(rec.Body.String(), want) {
+				t.Errorf("the refusal does not say to write %s: %s", want, rec.Body.String())
+			}
+		}
+	}
 }

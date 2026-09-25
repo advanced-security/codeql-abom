@@ -42,9 +42,9 @@ flowchart LR
    longer owned, and identity are unrelated, and a reader looking for one reads past the others.
    Depends on nothing.
 2. **The bar says a run is under way, not only a crawl.** An [on-demand
-   run](../api/on-demand-analysis.md) also spends CodeQL on every core, competes for the same lock,
-   and is visible only on the CodeQL page's Runs tab. A reader who sees the crawl paused and the
-   machine busy has no way to find out why. Depends on nothing.
+   run](../../docs/architecture.md#reading-the-data-out) also spends CodeQL on every core, competes
+   for the same lock, and is visible only on the CodeQL page's Runs tab. A reader who sees the crawl
+   paused and the machine busy has no way to find out why. Depends on nothing.
 
 ## The constraints that must not be broken
 

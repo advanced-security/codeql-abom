@@ -13,35 +13,6 @@ CREATE TABLE IF NOT EXISTS repository (
   origin                 TEXT NOT NULL DEFAULT 'seed'
 );
 
-CREATE TABLE IF NOT EXISTS rule (
-  row_id            INTEGER PRIMARY KEY,
-  id                TEXT NOT NULL UNIQUE,
-  rule_name         TEXT NOT NULL,
-  rule_description  TEXT,
-  property_tags     TEXT,
-  kind              TEXT,
-  severity_level    TEXT,
-  security_severity TEXT
-);
-
-CREATE TABLE IF NOT EXISTS alert (
-  row_id              INTEGER PRIMARY KEY,
-  repository_row_id   INTEGER NOT NULL REFERENCES repository(row_id),
-  rule_row_id         INTEGER NOT NULL REFERENCES rule(row_id),
-  file_path           TEXT NOT NULL,
-  start_line          INTEGER,
-  start_column        INTEGER,
-  end_line            INTEGER,
-  end_column          INTEGER,
-  message             TEXT,
-  level               TEXT,
-  code_snippet        TEXT,
-  code_snippet_source TEXT,
-  code_snippet_sink   TEXT,
-  step_count          INTEGER,
-  result_fingerprint  TEXT
-);
-
 CREATE TABLE IF NOT EXISTS abom_node (
   row_id            INTEGER PRIMARY KEY,
   node_key          TEXT NOT NULL UNIQUE,
@@ -88,6 +59,9 @@ CREATE TABLE IF NOT EXISTS abom_query_run (
   -- What produced the evaluation: 'crawl', an on-demand 'run', or the 'corpus' replay. NULL is
   -- not recorded, which every row written before the column existed is.
   recorded_by  TEXT,
+  -- 1 for an evaluation whose results a run held rather than stored. It answers no skip, and only
+  -- what somebody converted to findings is sighted under it.
+  held         INTEGER NOT NULL DEFAULT 0,
   ran_at       TEXT NOT NULL
 );
 
@@ -245,13 +219,6 @@ CREATE TABLE IF NOT EXISTS abom_surface (
   is_privileged         INTEGER NOT NULL DEFAULT 0,
   is_externally_trigger INTEGER NOT NULL DEFAULT 0,
   UNIQUE(node_row_id)
-);
-
-CREATE TABLE IF NOT EXISTS abom_alert_link (
-  alert_row_id INTEGER NOT NULL REFERENCES alert(row_id),
-  node_row_id  INTEGER NOT NULL REFERENCES abom_node(row_id),
-  match_kind   TEXT NOT NULL,
-  PRIMARY KEY (alert_row_id, node_row_id)
 );
 
 CREATE TABLE IF NOT EXISTS abom_ingest_ledger (
@@ -467,9 +434,17 @@ CREATE TABLE IF NOT EXISTS abom_analysis_run (
   -- Why the run could not start the last time it was asked to, in the executor's words. NULL for
   -- a run that started, or that nobody has asked to start.
   refusal       TEXT,
-  -- 1 for a prediction: its results are held in abom_predicted_result and never stored as
-  -- findings, because a query nobody adopted has found nothing yet.
-  prediction    INTEGER NOT NULL DEFAULT 0
+  -- 1 for a run with findings off: its results are held in abom_held_result until somebody
+  -- converts them, because a query still being refined should not write findings everything reads.
+  held          INTEGER NOT NULL DEFAULT 0,
+  -- When the start under way, or the last one, began. A run started again keeps each member's
+  -- state until it is reached, so this is what tells a member still to do from one this start
+  -- finished. NULL for a run never started, or started before starts were stamped.
+  started_at    TEXT,
+  -- The named scope the run was chosen by, beside the predicate it resolved to, which is what
+  -- the run covers: keeping another scope under the name later changes neither. NULL for a run
+  -- chosen any other way.
+  scope_name    TEXT
 );
 
 -- The explicit queries a run names. A list rather than a suite: the point of the run is to be more
@@ -530,10 +505,11 @@ CREATE TABLE IF NOT EXISTS abom_analysis_result (
   PRIMARY KEY (run_id, repository, db_commit, source_filter, analysis_mode, query_id)
 );
 
--- What a prediction's queries would report in one member, one row per result. Apart from
+-- What a held run's queries reported in one member, one row per result, carrying every column a
+-- finding does so converting one writes the finding adopting the query would have. Apart from
 -- abom_finding on purpose: merged, every count on every surface would include results nobody
--- chose to look for. Replaced whole when the member is predicted again.
-CREATE TABLE IF NOT EXISTS abom_predicted_result (
+-- chose to look for. Replaced whole when the member is analyzed again.
+CREATE TABLE IF NOT EXISTS abom_held_result (
   row_id        INTEGER PRIMARY KEY,
   run_id        INTEGER NOT NULL REFERENCES abom_analysis_run(row_id),
   repository    TEXT NOT NULL,
@@ -549,7 +525,20 @@ CREATE TABLE IF NOT EXISTS abom_predicted_result (
   message       TEXT NOT NULL DEFAULT '',
   severity      TEXT NOT NULL DEFAULT '',
   fingerprint   TEXT NOT NULL DEFAULT '',
-  result_hash   TEXT NOT NULL DEFAULT ''
+  result_hash   TEXT NOT NULL DEFAULT '',
+  provider      TEXT NOT NULL DEFAULT '',
+  -- NULL where the rule declares no score, as on abom_finding.
+  security_severity REAL
+);
+
+-- Who made a finding of what a held run kept, and when. Keyed by the finding rather than by the
+-- held row, which analyzing the member again replaces: what was adopted is the finding.
+CREATE TABLE IF NOT EXISTS abom_held_conversion (
+  run_id         INTEGER NOT NULL REFERENCES abom_analysis_run(row_id),
+  finding_row_id INTEGER NOT NULL,
+  converted_by   TEXT NOT NULL,
+  converted_at   TEXT NOT NULL,
+  PRIMARY KEY (run_id, finding_row_id)
 );
 
 -- Which lifecycle stage somebody put a query version in.
@@ -611,6 +600,19 @@ CREATE TABLE IF NOT EXISTS abom_suite_query (
   kind         TEXT,
   resolved_at  TEXT NOT NULL,
   PRIMARY KEY (suite, query_id)
+);
+
+-- Every metadata pair a query version declares, as codeql resolve metadata read it: severity,
+-- precision, tags, and whatever else the query says about itself. Keyed by version, because a new
+-- version may declare a different score. A version nobody resolved has no rows, which is not one
+-- that declares nothing. Replaced whole when the version is resolved again.
+CREATE TABLE IF NOT EXISTS abom_query_metadata (
+  query_id      TEXT NOT NULL,
+  query_version TEXT NOT NULL DEFAULT '',
+  name          TEXT NOT NULL,
+  value         TEXT NOT NULL DEFAULT '',
+  resolved_at   TEXT NOT NULL,
+  PRIMARY KEY (query_id, query_version, name)
 );
 
 -- A marker the interface polls to learn the graph changed, carrying the row ids the change is
@@ -795,7 +797,13 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_authoring_ast", "cli_version", "TEXT"},
 	{"abom_analysis_run", "cli_version", "TEXT"},
 	{"abom_analysis_run", "refusal", "TEXT"},
-	{"abom_analysis_run", "prediction", "INTEGER NOT NULL DEFAULT 0"},
+	{"abom_analysis_run", "held", "INTEGER NOT NULL DEFAULT 0"},
+	{"abom_analysis_run", "started_at", "TEXT"},
+	{"abom_analysis_run", "scope_name", "TEXT"},
+	{"abom_query_run", "held", "INTEGER NOT NULL DEFAULT 0"},
+	{"abom_held_result", "provider", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_held_result", "security_severity", "REAL"},
+	{"abom_policy_simulation", "advisories", "INTEGER"},
 }
 
 // indexDDL is applied only after bulk loading. Maintaining these indexes during a multi-million
@@ -817,15 +825,12 @@ CREATE INDEX IF NOT EXISTS idx_node_kind       ON abom_node(node_kind);
 CREATE INDEX IF NOT EXISTS idx_node_external   ON abom_node(is_external);
 CREATE INDEX IF NOT EXISTS idx_node_repo       ON abom_node(repository_row_id);
 CREATE INDEX IF NOT EXISTS idx_node_container  ON abom_node(container_node_row_id);
-CREATE INDEX IF NOT EXISTS idx_alert_rule_repo ON alert(rule_row_id, repository_row_id);
-CREATE INDEX IF NOT EXISTS idx_alert_location  ON alert(repository_row_id, file_path, start_line);
-CREATE INDEX IF NOT EXISTS idx_link_node       ON abom_alert_link(node_row_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_status   ON abom_ingest_ledger(status);
 ` + queryRunIndexDDL + `
 ` + observationIndexDDL + `
 CREATE INDEX IF NOT EXISTS idx_catalog_has_db   ON abom_database_catalog(has_database);
 CREATE INDEX IF NOT EXISTS idx_local_db_used    ON abom_local_database(used_seq);
-CREATE INDEX IF NOT EXISTS idx_predicted_member ON abom_predicted_result(run_id, repository, rule_id);
+CREATE INDEX IF NOT EXISTS idx_held_member ON abom_held_result(run_id, repository, rule_id);
 `
 
 // queryRunIndexDDL is created on open rather than after bulk loading, unlike every other index.

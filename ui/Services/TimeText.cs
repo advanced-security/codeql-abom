@@ -33,4 +33,13 @@ public static class TimeText
             System.Globalization.DateTimeStyles.AdjustToUniversal, out var at)
             ? (at.Kind == DateTimeKind.Utc ? at.ToLocalTime() : at).ToString("HH:mm:ss")
             : "--:--:--";
+
+    /// <summary>A rough span, in the minutes a reader plans around rather than seconds.</summary>
+    public static string Roughly(long seconds)
+    {
+        var minutes = (long)Math.Round(seconds / 60.0);
+        return seconds < 60 ? "under a minute"
+            : minutes < 60 ? $"about {minutes} min"
+            : $"about {minutes / 60} h {minutes % 60} min";
+    }
 }

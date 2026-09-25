@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	viewspec "github.com/advanced-security/codeql-abom/internal/view"
 )
 
 // fillComponents turns the walked closure into the document's components and relationships.
@@ -258,6 +260,7 @@ func (s *Store) componentFindings(depth map[string]int) (map[string][]BOMFinding
 			return nil, fmt.Errorf("scanning a component finding: %w", err)
 		}
 		f.AnalysisModes = splitSorted(modes)
+		f.Band = viewspec.BandOf(&f.SecuritySeverity)
 		if KnownProvider(f.Provider) {
 			reproducible := Reproducible(f.Provider)
 			f.Reproducible = &reproducible

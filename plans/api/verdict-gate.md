@@ -59,8 +59,9 @@ the common case on first adoption.
   blocking, or inferred from severity alone.
 - **A rule may only be written in terms the evaluation actually applies.** A policy predicate is a
   saved view; silently dropping a term could make the gate refuse more than its author selected.
-  [policy-language.md](policy-language.md) owns what a rule may say and what advisory or reachability
-  terms assert. This plan enforces that vocabulary rather than inventing one of its own.
+  [`docs/architecture.md`](../../docs/architecture.md) states what a rule may say — findings or
+  advisories, how an owned repository reaches either, and other policies by name. This plan
+  enforces that vocabulary rather than inventing one of its own.
 - **A verdict records both inputs**, evidence and policy together, or the block cannot be
   explained afterwards and will be disabled the first time it is disputed.
 - **Inconclusive is never silently a pass.** A check that passes when it could not analyze the head

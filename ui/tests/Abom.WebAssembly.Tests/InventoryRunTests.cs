@@ -39,8 +39,18 @@ public class InventoryRunTests : AbomTestContext
         Answer("api/queries", Catalog);
         Answer("api/accounts", """{"authenticated":true,"login":"operator","accounts":[]}""");
         Answer("api/runs/12/start", Created);
-        Answer("api/runs", Created);
+        Answer("api/runs?", Created);
     }
+
+    private const string Refining = """
+        {"findings":false,"reason":"acme/self-hosted-runner is still being refined (this version is at test), so what this run finds is held until somebody converts it",
+         "queries":[{"queryId":"acme/self-hosted-runner","queryVersion":"9b5327ab01d7","promoted":false,"why":"this version is at test"}]}
+        """;
+
+    private const string Promoted = """
+        {"findings":true,"reason":"Every query is a version a pack published or a suite promoted, so what this run finds is stored as findings",
+         "queries":[{"queryId":"acme/self-hosted-runner","queryVersion":"9b5327ab01d7","promoted":true,"why":"this version is at deploy"}]}
+        """;
 
     private IRenderedComponent<Pages.Inventory> Arrive()
     {
@@ -84,44 +94,69 @@ public class InventoryRunTests : AbomTestContext
         Assert.Empty(Services.GetRequiredService<RunDraft>().Queries);
     }
 
-    /// <summary>
-    /// Predicting is the same draft sent as a prediction, so what its queries would report is held
-    /// apart rather than stored as findings. A plain run must not be sent as one.
-    /// </summary>
-    [Fact]
-    public void PredictingSendsTheDraftAsAPredictionAndStartsIt()
+    private string SentBody(IRenderedComponent<Pages.Inventory> page)
     {
-        var page = Arrive();
-        Assert.True(page.Find("[data-abom-run-predict]").HasAttribute("disabled"));
-        Assert.False(string.IsNullOrWhiteSpace(page.Find("[data-abom-run-predict-reason]").GetAttribute("title")));
-
-        page.Find("[data-abom-run-choose='octo-org/clean'] input").Change(true);
-        page.Find("[data-abom-run-predict]").Click();
-
-        page.WaitForAssertion(() =>
-        {
-            var created = Assert.Single(Sent, r => r.Method == "POST" && r.Url.Contains("api/runs?"));
-            Assert.Contains("\"prediction\":true", created.Body);
-            Assert.Contains("repositories=octo-org%2Fclean", created.Url);
-            Assert.Contains(Sent, r => r.Method == "POST" && r.Url.EndsWith("api/runs/12/start"));
-        });
-        Assert.EndsWith("/codeql?tab=runs&run=12",
-            Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.Uri);
-    }
-
-    [Fact]
-    public void RunningIsNotSentAsAPrediction()
-    {
-        var page = Arrive();
-
         page.Find("[data-abom-run-choose='octo-org/clean'] input").Change(true);
         page.Find("[data-abom-run-go]").Click();
-
+        string body = string.Empty;
         page.WaitForAssertion(() =>
-        {
-            var created = Assert.Single(Sent, r => r.Method == "POST" && r.Url.Contains("api/runs?"));
-            Assert.Contains("\"prediction\":false", created.Body);
-        });
+            body = Assert.Single(Sent, r => r.Method == "POST" && r.Url.Contains("api/runs?")).Body);
+        return body;
+    }
+
+    /// <summary>
+    /// One setting for the whole run, taken from what the server suggests for its queries and saying
+    /// why: a version still being refined holds what it finds rather than writing findings.
+    /// </summary>
+    [Fact]
+    public void TheFindingsSettingFollowsTheSuggestionAndSaysWhy()
+    {
+        Answer("api/runs/suggestion", Refining);
+        var page = Arrive();
+
+        page.WaitForAssertion(() => Assert.Contains("still being refined",
+            page.Find("[data-abom-run-findings]").GetAttribute("title")));
+        Assert.Contains(Sent, r => r.Url.Contains("api/runs/suggestion?query=acme%2Fself-hosted-runner%409b5327ab01d7"));
+        Assert.Empty(page.FindAll("[data-abom-run-predict]"));
+        Assert.Contains("\"held\":true", SentBody(page));
+    }
+
+    /// <summary>A promoted version's results are what its promotion already stands behind.</summary>
+    [Fact]
+    public void APromotedQueryIsRunWithFindingsOn()
+    {
+        Answer("api/runs/suggestion", Promoted);
+        var page = Arrive();
+
+        page.WaitForAssertion(() => Assert.StartsWith("Suggested:",
+            page.Find("[data-abom-run-findings]").GetAttribute("title")));
+        Assert.Contains("\"held\":false", SentBody(page));
+    }
+
+    /// <summary>The toggle overrides the suggestion for this run, and says it did.</summary>
+    [Fact]
+    public void TurningFindingsOnOverridesTheSuggestionForThisRun()
+    {
+        Answer("api/runs/suggestion", Refining);
+        var page = Arrive();
+        page.WaitForAssertion(() => Assert.StartsWith("Suggested:",
+            page.Find("[data-abom-run-findings]").GetAttribute("title")));
+
+        page.Find("[data-abom-run-findings] input").Change(true);
+
+        Assert.StartsWith("Changed from the suggestion (off)",
+            page.Find("[data-abom-run-findings]").GetAttribute("title"));
+        Assert.Contains("\"held\":false", SentBody(page));
+    }
+
+    /// <summary>With no answer from the server the run holds: findings nobody chose write everywhere.</summary>
+    [Fact]
+    public void WithNoSuggestionTheRunHoldsWhatItFinds()
+    {
+        Answer("api/runs/suggestion", "not json");
+        var page = Arrive();
+
+        Assert.Contains("\"held\":true", SentBody(page));
     }
 
     /// <summary>The crawl's own queries build the graph; there is nothing in them to run on demand.</summary>
@@ -230,5 +265,38 @@ public class InventoryRunTests : AbomTestContext
             Assert.Contains("2 without one", size);
         });
         Assert.Contains(Sent, r => r.Method == "GET" && r.Url.EndsWith("api/databases?scope=owned"));
+    }
+
+    /// <summary>
+    /// A database another CodeQL built is rebuilt by the run, so it is counted apart from what is
+    /// held and not as missing either: the reader sees the cost the run will spend.
+    /// </summary>
+    [Fact]
+    public void ADatabaseAnotherCodeQLBuiltIsCountedApartBeforeRun()
+    {
+        Answer("api/databases", """
+            {"databases":[
+              {"repository":"octo-org/billing","commit":"a1","sourceFilter":"f","mode":"regular",
+               "status":"retained","path":"/db/billing","bytes":10,"cliVersion":"2.27.1","reason":""},
+              {"repository":"octo-org/tool","commit":"c3","sourceFilter":"f","mode":"regular",
+               "status":"buildable","path":"","bytes":0,"cliVersion":"2.27.0",
+               "reason":"held, but CodeQL 2.27.0 built it"},
+              {"repository":"octo-org/clean","commit":"b2","sourceFilter":"f","mode":"regular",
+               "status":"buildable","path":"","bytes":0,"cliVersion":"","reason":""}],
+             "gaps":[],"mode":"regular","unresolved":""}
+            """);
+        var page = ArriveAt("/inventory?unit=repositories&scope=owned");
+        page.WaitForAssertion(() => page.Find("[data-abom-run-all] input"));
+
+        page.Find("[data-abom-run-all] input").Change(true);
+
+        page.WaitForAssertion(() =>
+        {
+            var size = page.Find("[data-abom-run-size]").TextContent;
+            Assert.Contains("3 repositories", size);
+            Assert.Contains("1 with a database held", size);
+            Assert.Contains("1 held but not built by this CodeQL", size);
+            Assert.Contains("1 without one", size);
+        });
     }
 }

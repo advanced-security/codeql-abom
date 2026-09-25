@@ -29,6 +29,34 @@ public sealed class ExplorerPresentationTests : AbomTestContext
     }
 
     /// <summary>
+    /// Distance in the Priority view is the advisories unit's rank, so an action carrying the
+    /// first-ranked advisory sits closest in even where a lower-ranked one reaches more.
+    /// </summary>
+    [Fact]
+    public void ThePriorityViewPlacesActionsByTheAdvisoriesRank()
+    {
+        Answer("api/owned-scope", "[{\"owner\":\"octo-org\"}]");
+        Answer("api/remediation", """
+            {"items":[
+              {"ghsaId":"GHSA-high","severity":"high","directRepos":1,"transitiveRepos":0,
+               "actions":["actions/cache"],"rank":1},
+              {"ghsaId":"GHSA-low","severity":"low","directRepos":4,"transitiveRepos":0,
+               "actions":["actions/checkout"],"rank":2}],"total":2,"unreached":0}
+            """);
+        StubGraphModule();
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+            .NavigateTo("/explore?scope=owned&view=priority");
+
+        var page = Render<Explorer>();
+
+        page.WaitForAssertion(() => Assert.NotEmpty(JSInterop.Invocations["setPriorities"]));
+        var urgency = (Dictionary<string, int>)
+            JSInterop.Invocations["setPriorities"].Last().Arguments[1]!;
+        Assert.True(urgency["actions/cache"] > urgency["actions/checkout"],
+            $"cache {urgency["actions/cache"]} is not closer than checkout {urgency["actions/checkout"]}");
+    }
+
+    /// <summary>
     /// What the Explorer would save has to describe what is on screen. Reading it from anywhere
     /// but the page's own state would let a saved view record a picture nobody was looking at.
     /// </summary>

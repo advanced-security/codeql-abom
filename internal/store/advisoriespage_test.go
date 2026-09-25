@@ -49,7 +49,7 @@ func TestAdvisoriesPageReportsHowManyRowsItLeftOut(t *testing.T) {
 	}
 }
 
-// Severity times reach, and nothing else. Ordering the page rather than the match would name the
+// Severity first, then reach. Ordering the page rather than the match would name the
 // worst advisory on this page, which is not what the reader asked.
 func TestAdvisoriesPageOrdersByPriorityAcrossTheWholeMatch(t *testing.T) {
 	s := advisoryStore(t)
@@ -66,5 +66,14 @@ func TestAdvisoriesPageOrdersByPriorityAcrossTheWholeMatch(t *testing.T) {
 	}
 	if len(page.Items) == 0 || page.Items[0].GHSAID != "GHSA-critical" {
 		t.Errorf("first row = %+v, want the highest priority across the match", page.Items)
+	}
+
+	// A rank is a position in the match, so the second page's first row is second.
+	next, err := s.AdvisoriesPage(AdvisoriesQuery{Offset: 1, Limit: 1})
+	if err != nil {
+		t.Fatalf("AdvisoriesPage: %v", err)
+	}
+	if len(next.Items) != 1 || next.Items[0].Rank != 2 {
+		t.Errorf("second page = %+v, want GHSA-low at rank 2", next.Items)
 	}
 }

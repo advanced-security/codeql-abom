@@ -32,6 +32,8 @@ type WorkflowSummary struct {
 	// "nine of nine", and a boolean would report them alike.
 	PrivilegedJobs int `json:"privilegedJobs"`
 	Findings       int `json:"findings"`
+	// Severity is the same findings by band.
+	Severity SeverityCounts `json:"severity"`
 	// DependedOnBy counts references pointing at this workflow, which is only ever non-zero for a
 	// reusable one. Reported rather than assumed absent.
 	DependedOnBy int `json:"dependedOnBy"`
@@ -155,6 +157,17 @@ func (s *Store) WorkflowsPage(q WorkflowsQuery) (WorkflowsPage, error) {
 	if err != nil {
 		return WorkflowsPage{}, err
 	}
+	keys := make([]string, 0, len(items))
+	for _, w := range items {
+		keys = append(keys, w.NodeKey)
+	}
+	bands, err := s.severityByNode(AnalysisModeRegular, keys)
+	if err != nil {
+		return WorkflowsPage{}, err
+	}
+	for i := range items {
+		items[i].Severity = bands[items[i].NodeKey]
+	}
 	return WorkflowsPage{Items: items, Total: total}, nil
 }
 
@@ -175,6 +188,8 @@ type JobSummary struct {
 	Steps                 int    `json:"steps"`
 	Dependencies          int    `json:"dependencies"`
 	Findings              int    `json:"findings"`
+	// Severity is the same findings by band.
+	Severity SeverityCounts `json:"severity"`
 }
 
 // JobsQuery narrows and orders the jobs unit, and cuts one page out of the match.
@@ -293,6 +308,17 @@ func (s *Store) JobsPage(q JobsQuery) (JobsPage, error) {
 	}, query, args...)
 	if err != nil {
 		return JobsPage{}, err
+	}
+	keys := make([]string, 0, len(items))
+	for _, j := range items {
+		keys = append(keys, j.NodeKey)
+	}
+	bands, err := s.severityByNode(AnalysisModeRegular, keys)
+	if err != nil {
+		return JobsPage{}, err
+	}
+	for i := range items {
+		items[i].Severity = bands[items[i].NodeKey]
 	}
 	return JobsPage{Items: items, Total: total}, nil
 }

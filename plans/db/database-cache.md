@@ -11,9 +11,9 @@ consults nothing about what is still wanted.
 Every question a person asks of a repository's code needs a CodeQL database, and until one was kept
 the only way to get one was to build it: clone, extract, analyze, delete. That is correct for a
 crawl, which visits each repository once a cycle and has no reason to hold anything. It is ruinous
-for [on-demand analysis](../api/on-demand-analysis.md), where the whole point is to change a query
-and ask again — and the second ask paid the full extraction a second time for a commit that cannot
-have changed.
+for [on-demand analysis](../../docs/architecture.md#reading-the-data-out), where the whole point is
+to change a query and ask again — and the second ask paid the full extraction a second time for a
+commit that cannot have changed.
 
 [`db/checkout-cache.md`](checkout-cache.md) removed the fetch from that loop. The extraction is the
 larger half and was still being repeated.

@@ -26,6 +26,10 @@ type ScopedDatabase struct {
 	// A size nobody has measured is absent rather than zero.
 	Path  string `json:"path"`
 	Bytes int64  `json:"bytes"`
+	// CLIVersion is the CodeQL that built what is held, empty where nothing recorded one.
+	CLIVersion string `json:"cliVersion"`
+	// Reason says why a database that is held resolves as buildable, and is empty otherwise.
+	Reason string `json:"reason"`
 }
 
 // DatabaseGap is a repository the scope reached that resolves to no database, and why.
@@ -49,6 +53,31 @@ type DatabaseSet struct {
 	// asking for a shape nothing has ever been built in is indistinguishable from a scope that
 	// genuinely matched nothing -- and the two call for opposite responses.
 	Unresolved string `json:"unresolved"`
+}
+
+// BuiltBy re-reads a resolution against the CodeQL that would run it.
+//
+// The executor rebuilds a database another CodeQL built, so counting one as held before Run
+// states a cost that is not the cost spent. A row that records no CodeQL is not known to be this
+// one's either. With no CodeQL to compare against, nothing is moved: inventing a mismatch would
+// send every run to rebuild everything.
+func (d DatabaseSet) BuiltBy(cli string) DatabaseSet {
+	if cli == "" {
+		return d
+	}
+	databases := make([]ScopedDatabase, 0, len(d.Databases))
+	for _, db := range d.Databases {
+		if db.Status == DatabaseRetained && db.CLIVersion != cli {
+			db.Status, db.Path, db.Bytes = DatabaseBuildable, "", 0
+			db.Reason = "held, but no CodeQL is recorded as having built it"
+			if db.CLIVersion != "" {
+				db.Reason = "held, but CodeQL " + db.CLIVersion + " built it"
+			}
+		}
+		databases = append(databases, db)
+	}
+	d.Databases = databases
+	return d
 }
 
 // gapped reports whether a repository was named as a gap.
@@ -165,7 +194,8 @@ func namedAmong(listed, names []string) []string {
 // namesOnlyRepositories reports a bare repository list; findings would never reach a clean one.
 func (f FindingSelector) namesOnlyRepositories() bool {
 	return len(f.Repositories) > 0 && len(f.Rules) == 0 && len(f.Exclude) == 0 &&
-		f.Provider == "" && f.Severity == "" && len(f.Sources) == 0 && len(f.Properties) == 0 &&
+		f.Provider == "" && f.Severity == "" && len(f.SecuritySeverities) == 0 &&
+		len(f.Sources) == 0 && len(f.Properties) == 0 &&
 		len(f.ExcludeProperties) == 0
 }
 
@@ -267,6 +297,7 @@ func (s *Store) retainedFor(repository, mode string) (*ScopedDatabase, error) {
 		Status:           DatabaseRetained,
 		Path:             d.Path,
 		Bytes:            d.Bytes,
+		CLIVersion:       d.CLIVersion,
 	}, rows.Err()
 }
 

@@ -291,9 +291,12 @@ func TestARulesCountSaysWhereItsFindingsCameFrom(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NodeDetailOf: %v", err)
 	}
+	unscored := SeverityCounts{Unknown: 1}
 	want := []RuleCount{
-		{RuleID: "acme/checkout-tag-pin", Count: 1, Sources: []string{QuerySourceCustom}},
-		{RuleID: "actions/unpinned-tag", Count: 1, Sources: []string{}, Unsourced: 1},
+		{RuleID: "acme/checkout-tag-pin", Count: 1, Sources: []string{QuerySourceCustom},
+			Severity: unscored},
+		{RuleID: "actions/unpinned-tag", Count: 1, Sources: []string{}, Unsourced: 1,
+			Severity: unscored},
 	}
 	if !reflect.DeepEqual(node.Rules, want) {
 		t.Errorf("the node's rules read %+v, want %+v", node.Rules, want)
@@ -305,8 +308,10 @@ func TestARulesCountSaysWhereItsFindingsCameFrom(t *testing.T) {
 		t.Fatalf("RepositoryDetailOf: %v", err)
 	}
 	want = []RuleCount{
-		{RuleID: "abom/secrets-inherit", Count: 1, Sources: []string{QuerySourceAbom}},
-		{RuleID: "actions/unpinned-tag", Count: 1, Sources: []string{QuerySourceCustom, QuerySourceUpstream}},
+		{RuleID: "abom/secrets-inherit", Count: 1, Sources: []string{QuerySourceAbom},
+			Severity: unscored},
+		{RuleID: "actions/unpinned-tag", Count: 1, Sources: []string{QuerySourceCustom, QuerySourceUpstream},
+			Severity: unscored},
 	}
 	if !reflect.DeepEqual(repo.FindingsByRule, want) {
 		t.Errorf("the repository's rules read %+v, want %+v", repo.FindingsByRule, want)

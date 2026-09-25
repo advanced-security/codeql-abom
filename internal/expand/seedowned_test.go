@@ -158,6 +158,9 @@ func (h *seedHarness) queued() []queuedRow {
 		}
 		out = append(out, r)
 	}
+	if err := rows.Err(); err != nil {
+		h.t.Fatalf("reading the queue: %v", err)
+	}
 	return out
 }
 

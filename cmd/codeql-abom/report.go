@@ -117,14 +117,14 @@ func writeRemediation(w io.Writer, items []store.RemediationItem) {
 		fmt.Fprintln(w, "Remediation priorities: none")
 		return
 	}
-	fmt.Fprintln(w, "Remediation priorities (severity x reach):")
+	fmt.Fprintln(w, "Remediation priorities (severity, then reach):")
 	for _, it := range items {
 		id := it.GHSAID
 		if it.CVEID != "" {
 			id = fmt.Sprintf("%s (%s)", id, it.CVEID)
 		}
 		fmt.Fprintf(w, "  [%d] %s %s - %d direct, %d transitive repositories\n",
-			it.Priority, id, it.Severity, it.DirectRepos, it.TransitiveRepos)
+			it.Rank, id, it.Severity, it.DirectRepos, it.TransitiveRepos)
 		if it.Summary != "" {
 			fmt.Fprintf(w, "        %s\n", it.Summary)
 		}

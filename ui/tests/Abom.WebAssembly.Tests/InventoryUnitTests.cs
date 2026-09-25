@@ -38,7 +38,7 @@ public class InventoryUnitTests : AbomTestContext
         {"items":[{"ghsaId":"GHSA-aaaa-bbbb-cccc","cveId":"CVE-2024-1","severity":"high",
           "summary":"A thing","directRepos":2,"transitiveRepos":5,"actions":["actions/checkout"],
           "cvssV3Score":7.5,"hasCvss":true,"epssPercentage":0.1,"hasEpss":true,
-          "fixable":true,"priority":21}],"total":3,"unreached":8}
+          "fixable":true,"rank":4}],"total":3,"unreached":8}
         """;
 
     private const string Relationships = """
@@ -205,6 +205,22 @@ public class InventoryUnitTests : AbomTestContext
     }
 
     /// <summary>
+    /// An advisory's rank is its place in the whole match, which the server knows and a page does
+    /// not: the first row of a later page is not first.
+    /// </summary>
+    [Fact]
+    public void TheAdvisoriesUnitShowsEachRowsRankInTheWholeMatch()
+    {
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+                .NavigateTo("/inventory?unit=advisories");
+
+        var page = Render<Pages.Inventory>();
+
+        page.WaitForAssertion(() => Assert.Equal("4",
+            page.Find("[data-abom-advisory-rank]").TextContent.Trim()));
+    }
+
+    /// <summary>
     /// The line under the grid claims an order. Naming the dependency default under a unit ordered
     /// by something else tells the reader the ranking is one thing while it is another — and the
     /// ranking is the only reason to read the top of a list at all.
@@ -212,7 +228,7 @@ public class InventoryUnitTests : AbomTestContext
     [Theory]
     [InlineData("dependencies", "reach")]
     [InlineData("repositories", "findings")]
-    [InlineData("advisories", "severity and reach")]
+    [InlineData("advisories", "severity, then reach")]
     public void TheOrderStatedIsTheOrderInForce(string unit, string order)
     {
         Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!

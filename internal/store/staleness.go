@@ -70,7 +70,8 @@ func (s *Store) StaleFindings() (StalenessReport, error) {
 			SELECT DISTINCT sq.suite, sq.query_id FROM abom_suite_query sq
 		),
 		-- The newest run per repository, commit and query. Older runs of the same commit are
-		-- superseded; runs at other commits are not, which is the whole correction this makes.
+		-- superseded; runs at other commits are not, which is the whole correction this makes. A held
+		-- evaluation sights only what somebody converted, so it is never the newest word.
 		newest AS (
 			SELECT r.row_id, r.repository, o.suite
 			FROM abom_query_run r
@@ -82,7 +83,8 @@ func (s *Store) StaleFindings() (StalenessReport, error) {
 				WHERE r2.repository = r.repository
 				  AND r2.db_commit = r.db_commit
 				  AND r2.query_id = r.query_id
-				  AND r2.analysis_mode = 'regular')
+				  AND r2.analysis_mode = 'regular'
+				  AND r2.held = 0)
 		),
 		-- A run that attributed nothing is not evidence that anything went away.
 		attributing AS (
@@ -102,6 +104,11 @@ func (s *Store) StaleFindings() (StalenessReport, error) {
 			SELECT 1 FROM abom_finding_sighting sg
 			JOIN attributing a ON a.row_id = sg.query_run_id
 			WHERE sg.finding_row_id = f.row_id AND a.suite = o.suite)
+		  -- Somebody converted it from what a run held, which is a report nothing supersedes.
+		  AND NOT EXISTS (
+			SELECT 1 FROM abom_finding_sighting sg
+			JOIN abom_query_run h ON h.row_id = sg.query_run_id
+			WHERE sg.finding_row_id = f.row_id AND h.held = 1 AND h.analysis_mode = 'regular')
 		ORDER BY rp.repository_full_name, f.rule_id, f.file_path, f.start_line`)
 	if err != nil {
 		return out, fmt.Errorf("reading stale findings: %w", err)
@@ -133,7 +140,8 @@ func (s *Store) StaleFindings() (StalenessReport, error) {
 				WHERE r2.repository = r.repository
 				  AND r2.db_commit = r.db_commit
 				  AND r2.query_id = r.query_id
-				  AND r2.analysis_mode = 'regular')
+				  AND r2.analysis_mode = 'regular'
+				  AND r2.held = 0)
 		)
 		SELECT COUNT(DISTINCT n.repository) FROM newest n
 		WHERE EXISTS (SELECT 1 FROM abom_finding_sighting sg WHERE sg.query_run_id = n.row_id)`,

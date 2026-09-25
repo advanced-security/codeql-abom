@@ -70,6 +70,7 @@ func (s *Store) attachOwnedRepositories(nodes []GraphNode, opts FullGraphOptions
 			Origin:     origin,
 			Path:       fullName,
 			Rules:      []string{},
+			Facets:     []FindingFacet{},
 			Discovery:  discovery,
 			Analyzed:   analyzed,
 			// Nothing has been ingested for this repository, so nothing measured what depends

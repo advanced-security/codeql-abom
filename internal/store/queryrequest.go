@@ -28,14 +28,19 @@ CREATE TABLE IF NOT EXISTS abom_query_request (
 );
 
 -- What was picked from the run a request was asked from.
-CREATE TABLE IF NOT EXISTS abom_query_request_evidence (
+CREATE TABLE IF NOT EXISTS abom_query_request_evidence ` + evidenceTable
+
+// evidenceTable is the evidence table's body, shared with the rebuild that gave it held results.
+// A false alarm names a finding a run stored or a result a held run kept; zero stands for neither,
+// since NULLs are distinct in a key and two held picks in one repository must both be kept.
+const evidenceTable = `(
   request_id     INTEGER NOT NULL REFERENCES abom_query_request(row_id),
   run_id         INTEGER NOT NULL REFERENCES abom_analysis_run(row_id),
   repository     TEXT NOT NULL,
-  -- Zero for a repository where nothing fired, since NULLs are distinct in a key.
   finding_row_id INTEGER NOT NULL DEFAULT 0,
   kind           TEXT NOT NULL,
-  PRIMARY KEY (request_id, run_id, repository, finding_row_id)
+  held_result_id INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (request_id, run_id, repository, finding_row_id, held_result_id)
 );`
 
 // What a request asks for. Empty is a request that has not said.
@@ -93,12 +98,14 @@ type QueryRequest struct {
 	Evidence []RequestEvidence `json:"evidence"`
 }
 
-// RequestEvidence is one result picked from a run: a finding that should not have fired, or a
-// repository where the query ran and something should have.
+// RequestEvidence is one result picked from a run: a finding that should not have fired, a result a
+// held run kept that should not have, or a repository where the query ran and something should
+// have.
 type RequestEvidence struct {
 	RunID        int64  `json:"runId"`
 	Repository   string `json:"repository"`
 	FindingRowID int64  `json:"findingRowId"`
+	HeldResultID int64  `json:"heldResultId"`
 	Kind         string `json:"kind"`
 }
 
@@ -138,8 +145,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	}
 	for _, e := range r.Evidence {
 		if _, err := tx.Exec(`
-INSERT OR IGNORE INTO abom_query_request_evidence (request_id, run_id, repository, finding_row_id, kind)
-VALUES (?, ?, ?, ?, ?)`, id, e.RunID, e.Repository, e.FindingRowID, e.Kind); err != nil {
+INSERT OR IGNORE INTO abom_query_request_evidence
+  (request_id, run_id, repository, finding_row_id, held_result_id, kind)
+VALUES (?, ?, ?, ?, ?, ?)`, id, e.RunID, e.Repository, e.FindingRowID, e.HeldResultID, e.Kind); err != nil {
 			return 0, fmt.Errorf("keeping what request %d was asked from: %w", id, err)
 		}
 	}
@@ -165,10 +173,10 @@ func (r QueryRequest) checkEvidence() error {
 		case e.Kind != RequestFalseAlarm && e.Kind != RequestMissed:
 			return fmt.Errorf("evidence is a %s or a %s, not %q", RequestFalseAlarm, RequestMissed,
 				e.Kind)
-		case e.Kind == RequestFalseAlarm && e.FindingRowID == 0:
-			return errors.New("a false alarm names the finding that should not have fired")
-		case e.Kind == RequestMissed && e.FindingRowID != 0:
-			return errors.New("a missed detection names the repository, not a finding")
+		case e.Kind == RequestFalseAlarm && (e.FindingRowID == 0) == (e.HeldResultID == 0):
+			return errors.New("a false alarm names the one result that should not have fired")
+		case e.Kind == RequestMissed && (e.FindingRowID != 0 || e.HeldResultID != 0):
+			return errors.New("a missed detection names the repository, not a result")
 		case r.Kind != RequestBoth && r.Kind != e.Kind:
 			return fmt.Errorf("a request for %q cannot rest on a %s", r.Kind, e.Kind)
 		}
@@ -192,41 +200,69 @@ func evidenceShown(tx *sql.Tx, r QueryRequest) error {
 		return fmt.Errorf("run %d did not run %s, so a request about it was not asked from there",
 			r.SourceRunID, r.QueryID)
 	}
-	predicted, err := runIsPrediction(tx, r.SourceRunID)
+	held, err := runIsHeld(tx, r.SourceRunID)
 	if err != nil {
 		return err
 	}
-	if predicted && len(r.Evidence) > 0 {
-		return fmt.Errorf("run %d is a prediction, and what it would report stores no finding "+
-			"or evaluation for evidence to name", r.SourceRunID)
-	}
 	for _, e := range r.Evidence {
-		var evaluated int
+		if err := pickShown(tx, r.QueryID, held, e); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// pickShown refuses one pick the run did not show. A held run shows what it kept, and a member it
+// counted is one it evaluated even when a store from before held evaluations links none.
+func pickShown(tx *sql.Tx, queryID string, held bool, e RequestEvidence) error {
+	switch {
+	case held && e.FindingRowID != 0:
+		return fmt.Errorf("run %d held what it found, so it stored no finding %d to cite",
+			e.RunID, e.FindingRowID)
+	case !held && e.HeldResultID != 0:
+		return fmt.Errorf("run %d stored what it found as findings, so it held no result %d to cite",
+			e.RunID, e.HeldResultID)
+	}
+	var evaluated int
+	if err := tx.QueryRow(`
+		SELECT CASE WHEN ? THEN COUNT(result_count) ELSE COUNT(query_run_id) END
+		FROM abom_analysis_member WHERE run_id = ? AND repository = ?`,
+		held, e.RunID, e.Repository).Scan(&evaluated); err != nil {
+		return fmt.Errorf("reading %s in run %d: %w", e.Repository, e.RunID, err)
+	}
+	if evaluated == 0 {
+		return fmt.Errorf("run %d evaluated nothing in %s, so it shows nothing there",
+			e.RunID, e.Repository)
+	}
+	if e.Kind != RequestFalseAlarm {
+		return nil
+	}
+	if held {
+		var kept int
 		if err := tx.QueryRow(`
-			SELECT COUNT(query_run_id) FROM abom_analysis_member WHERE run_id = ? AND repository = ?`,
-			e.RunID, e.Repository).Scan(&evaluated); err != nil {
-			return fmt.Errorf("reading %s in run %d: %w", e.Repository, e.RunID, err)
+			SELECT COUNT(*) FROM abom_held_result
+			WHERE row_id = ? AND run_id = ? AND repository = ? AND rule_id = ?`,
+			e.HeldResultID, e.RunID, e.Repository, queryID).Scan(&kept); err != nil {
+			return fmt.Errorf("reading held result %d: %w", e.HeldResultID, err)
 		}
-		if evaluated == 0 {
-			return fmt.Errorf("run %d evaluated nothing in %s, so it shows nothing there",
-				e.RunID, e.Repository)
+		if kept == 0 {
+			return fmt.Errorf("result %d is not one %s reported in %s in run %d",
+				e.HeldResultID, queryID, e.Repository, e.RunID)
 		}
-		if e.Kind != RequestFalseAlarm {
-			continue
-		}
-		var reported int
-		if err := tx.QueryRow(`
-			SELECT COUNT(*) FROM abom_analysis_member m
-			JOIN abom_finding_sighting sg ON sg.query_run_id = m.query_run_id
-			JOIN abom_finding_any_mode f ON f.row_id = sg.finding_row_id
-			WHERE m.run_id = ? AND m.repository = ? AND f.row_id = ? AND f.rule_id = ?`,
-			e.RunID, e.Repository, e.FindingRowID, r.QueryID).Scan(&reported); err != nil {
-			return fmt.Errorf("reading finding %d: %w", e.FindingRowID, err)
-		}
-		if reported == 0 {
-			return fmt.Errorf("finding %d is not one %s reported in %s in run %d",
-				e.FindingRowID, r.QueryID, e.Repository, e.RunID)
-		}
+		return nil
+	}
+	var reported int
+	if err := tx.QueryRow(`
+		SELECT COUNT(*) FROM abom_analysis_member m
+		JOIN abom_finding_sighting sg ON sg.query_run_id = m.query_run_id
+		JOIN abom_finding_any_mode f ON f.row_id = sg.finding_row_id
+		WHERE m.run_id = ? AND m.repository = ? AND f.row_id = ? AND f.rule_id = ?`,
+		e.RunID, e.Repository, e.FindingRowID, queryID).Scan(&reported); err != nil {
+		return fmt.Errorf("reading finding %d: %w", e.FindingRowID, err)
+	}
+	if reported == 0 {
+		return fmt.Errorf("finding %d is not one %s reported in %s in run %d",
+			e.FindingRowID, queryID, e.Repository, e.RunID)
 	}
 	return nil
 }
@@ -326,8 +362,9 @@ func (s *Store) QueryRequests() ([]QueryRequest, error) {
 func (s *Store) requestEvidence() (map[int64][]RequestEvidence, error) {
 	out := map[int64][]RequestEvidence{}
 	rows, err := s.db.Query(`
-		SELECT request_id, run_id, repository, finding_row_id, kind
-		FROM abom_query_request_evidence ORDER BY request_id, repository, finding_row_id`)
+		SELECT request_id, run_id, repository, finding_row_id, held_result_id, kind
+		FROM abom_query_request_evidence
+		ORDER BY request_id, repository, finding_row_id, held_result_id`)
 	if err != nil {
 		return nil, fmt.Errorf("reading what requests were asked from: %w", err)
 	}
@@ -336,7 +373,8 @@ func (s *Store) requestEvidence() (map[int64][]RequestEvidence, error) {
 	for rows.Next() {
 		var id int64
 		var e RequestEvidence
-		if err := rows.Scan(&id, &e.RunID, &e.Repository, &e.FindingRowID, &e.Kind); err != nil {
+		if err := rows.Scan(&id, &e.RunID, &e.Repository, &e.FindingRowID, &e.HeldResultID,
+			&e.Kind); err != nil {
 			return nil, fmt.Errorf("scanning a request's evidence: %w", err)
 		}
 		out[id] = append(out[id], e)

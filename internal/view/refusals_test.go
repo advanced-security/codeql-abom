@@ -9,7 +9,7 @@ import (
 var everySurface = []string{
 	SurfaceSet, SurfaceGraph, SurfaceInventory, SurfaceWorkflows, SurfaceJobs,
 	SurfaceRepositories, SurfaceAdvisories, SurfaceRelationships, SurfaceCoverage,
-	SurfaceDocument, SurfaceRun,
+	SurfaceDocument, SurfaceRun, SurfacePolicy,
 }
 
 // A page decides whether to offer a named scope from this answer, so a surface missing from it
@@ -46,6 +46,7 @@ func TestEachSurfacesRefusalIsWhatThatSurfaceEnforces(t *testing.T) {
 		SurfaceAdvisories:    spec.UnenforceableAsAdvisories(),
 		SurfaceRelationships: spec.UnenforceableAsRelationships(),
 		SurfaceRun:           spec.UnenforceableAsRun(),
+		SurfacePolicy:        spec.UnenforceableAsPolicy(),
 	} {
 		if len(enforced) == 0 {
 			t.Fatalf("%s applies every term, so this comparison proves nothing", surface)
@@ -62,7 +63,7 @@ func TestTheCatalogOffersARunExactlyTheTermsARunApplies(t *testing.T) {
 	offered := 0
 	for _, term := range Catalog() {
 		claimed := slices.Contains(term.Surfaces, SurfaceRun)
-		applies := repositoryTerms[term.Name] || setTerms[term.Name]
+		applies := appliedByRun(term.Name)
 		if claimed != applies {
 			t.Errorf("%q claims run=%v, but a run applies it = %v", term.Name, claimed, applies)
 		}

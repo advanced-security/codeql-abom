@@ -6,11 +6,33 @@
 @inject FollowService Follow
 @inject NavigationManager Nav
 @inject RunDraft Draft
+@inject ScopeService Scope
 
 @if (_refusal is not null)
 {
     <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" ShowCloseIcon="true"
               CloseIconClicked="@(() => _refusal = null)" data-abom-queries-refusal>@_refusal</MudAlert>
+}
+
+@* The draft the Inventory holds, over a named scope rather than repositories ticked one by one. *@
+@if (_drafting)
+{
+    <RunDraftPanel Predicate="@DraftPredicate" Closed="CloseDraft">
+        <Scope>
+            <MudText Typo="Typo.body2" data-abom-run-scope>
+                on @(_view is null ? "a named scope, chosen below" : _view.Label)
+            </MudText>
+        </Scope>
+        <ChildContent>
+            <div class="d-flex flex-wrap align-center gap-2 mt-2">
+                <NamedScopes Surface="run" Chosen="ChooseScope" />
+                <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
+                           OnClick="ChooseInInventory" data-abom-run-in-inventory>
+                    Choose repositories in the Inventory
+                </MudButton>
+            </div>
+        </ChildContent>
+    </RunDraftPanel>
 }
 
 @if (_catalog is null)
@@ -81,6 +103,20 @@ else
                     <div class="abom-query-id" data-abom-query-id="@context.Item.QueryId">
                         @context.Item.QueryId
                     </div>
+                    @* What the version would report at, before anything runs it. A version nothing
+                       has resolved says so, rather than reading as one that declares nothing. *@
+                    @if (!context.Item.Lane && context.Item.Metadata is null)
+                    {
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block"
+                                 data-abom-query-metadata-absent="@context.Item.QueryId">declared metadata not read yet</MudText>
+                    }
+                    else if (context.Item.Band.Length > 0)
+                    {
+                        <div class="d-flex align-center gap-1" data-abom-query-band="@context.Item.QueryId">
+                            <SeverityChip Severity="@context.Item.Band" />
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">@DeclaredLevel(context.Item)</MudText>
+                        </div>
+                    }
                     @* Under the id rather than in the action column, which would widen every row for one. *@
                     @if (context.Item.Working && context.Item.Steps.Count > 0)
                     {
@@ -116,8 +152,8 @@ else
                                 <MudIconButton Icon="@Icons.Material.Outlined.PlayArrow"
                                                Size="Size.Small" Color="Color.Primary"
                                                Disabled="@(!CanRun(context.Item))"
-                                               OnClick="@(() => ChooseRepositories(context.Item))"
-                                               aria-label="Run on chosen repositories"
+                                               OnClick="@(() => AddToRun(context.Item))"
+                                               aria-label="Add this version to a run"
                                                data-abom-query-run />
                             </span>
                         </MudTooltip>
@@ -215,6 +251,16 @@ else
         </Columns>
         <ChildRowContent>
             <div class="abom-row-detail">
+                @if (context.Item.Metadata is { Count: > 0 } declared)
+                {
+                    <dl class="abom-query-metadata" data-abom-query-metadata>
+                        @foreach (var (name, value) in declared.OrderBy(p => p.Key, StringComparer.Ordinal))
+                        {
+                            <dt>@name</dt>
+                            <dd>@value</dd>
+                        }
+                    </dl>
+                }
                 @if (context.Item.Requests.Count > 0)
                 {
                     <MudText Typo="Typo.caption" Class="d-block mb-2" data-abom-query-requests>
@@ -262,6 +308,11 @@ else
     protected override async Task OnInitializedAsync()
     {
         Follow.Changed += Arm;
+        // A draft left on either page opens on this one too, over no scope until one is chosen.
+        if (Draft.Queries.Count > 0)
+        {
+            OpenDraft();
+        }
         await Accounts.EnsureLoadedAsync();
         await Load();
         Arm();
@@ -309,18 +360,52 @@ else
         : q.Lane ? "This is a whole suite the crawl invoked, not a query to run on its own"
         : q.Discovery ? "This query builds the dependency graph; it reports no findings to review"
         : q.QueryVersion.Length == 0 ? "This ran before versions were recorded, so there is no version to run"
-        : "Choose repositories in the Inventory to run this version on";
+        : "Add this version to a run, over a named scope or repositories chosen in the Inventory";
 
-    /// <summary>Repositories are chosen on the Inventory: a new query's own reach is empty.</summary>
-    private void ChooseRepositories(CatalogQuery query)
+    // A run drafted here, and the named scope it is over. The versions are the shared draft's.
+    private bool _drafting;
+    private NamedView? _view;
+
+    // By name, so the server resolves it and records the name beside what it resolved to.
+    private string DraftPredicate => _view is null ? string.Empty : "view=" + Uri.EscapeDataString(_view.Name);
+
+    private void AddToRun(CatalogQuery query)
     {
         if (!CanRun(query))
         {
             return;
         }
-        Draft.Set([new AnalysisQueryRef { QueryId = query.QueryId, QueryVersion = query.QueryVersion }]);
-        Nav.NavigateTo("/inventory?unit=repositories");
+        if (!_drafting)
+        {
+            OpenDraft();
+        }
+        Draft.Add(new AnalysisQueryRef { QueryId = query.QueryId, QueryVersion = query.QueryVersion });
     }
+
+    // This page holds no scope until a named one is chosen, whatever another page left in force,
+    // so Keep here keeps only what the draft is over.
+    private void OpenDraft()
+    {
+        _drafting = true;
+        _view = null;
+        Scope.Set(new ViewSpec());
+    }
+
+    private void ChooseScope(NamedView view)
+    {
+        _view = view;
+        Scope.Set(ViewSpec.Parse(view.Predicate));
+    }
+
+    private void CloseDraft()
+    {
+        _drafting = false;
+        _view = null;
+        Scope.Set(new ViewSpec());
+    }
+
+    /// <summary>Repositories one by one are chosen on the Inventory, and the draft goes with them.</summary>
+    private void ChooseInInventory() => Nav.NavigateTo("/inventory?unit=repositories");
 
     private RenderFragment StageItems(CatalogQuery query) => __builder =>
     {
@@ -410,6 +495,14 @@ else
     /// <summary>Short enough to read; the full hash stays on the element for copying.</summary>
     private static string Short(string version) =>
         version.Length <= 12 ? version : version[..12];
+
+    /// <summary>The level a result reports at and the score behind the band, as the query declares them.</summary>
+    private static string DeclaredLevel(CatalogQuery q)
+    {
+        var level = q.Metadata!.TryGetValue("problem.severity", out var l) ? l : "no level declared";
+        var score = q.Metadata.TryGetValue("security-severity", out var s) ? s : "no score declared";
+        return $"{level} \u00b7 {score}";
+    }
 
     /// <summary>"Yours" is the word for what the operator owns; a query they wrote is custom.</summary>
     public static string SourceText(string source) => source switch

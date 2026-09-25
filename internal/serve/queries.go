@@ -26,6 +26,8 @@ type QueryTester interface {
 	// InstallPack installs what the operator's pack depends on wherever it has no lock, and does
 	// nothing where it has one.
 	InstallPack(ctx context.Context) error
+	// ResolveMetadata reads every pair a query declares, as `codeql resolve metadata` does.
+	ResolveMetadata(ctx context.Context, queryPath string) (runner.Metadata, error)
 }
 
 // codeQL is the CodeQL this server runs, under which alone a query's marks are current. The
@@ -109,6 +111,17 @@ func (s *Server) ownTests(ctx context.Context, q authoring.Query) (runner.TestRe
 	if err := s.Tester.InstallPack(ctx); err != nil {
 		return runner.TestResult{}, http.StatusBadGateway,
 			fmt.Errorf("installing what the query pack depends on: %w", err)
+	}
+	// The one place the CLI reads a working version before anything runs it, so what it declares
+	// is on its catalog row as every resolved version's is.
+	md, err := s.Tester.ResolveMetadata(ctx, q.Path)
+	if err != nil {
+		return runner.TestResult{}, http.StatusBadGateway,
+			fmt.Errorf("reading what %s declares: %w", q.ID, err)
+	}
+	if err := s.Store.RecordQueryMetadata([]store.QueryMetadata{
+		{QueryID: q.ID, QueryVersion: q.Version, Pairs: md.Pairs}}); err != nil {
+		return runner.TestResult{}, http.StatusInternalServerError, err
 	}
 	result, err := authoring.RecordTests(ctx, s.Store, s.Tester.RunTests, s.QueryDir, q, cli)
 	switch {

@@ -33,6 +33,8 @@ const (
 	SurfaceCoverage = "coverage"
 	// SurfaceRun is a run over repositories, built from a scope like any page.
 	SurfaceRun = "run"
+	// SurfacePolicy is a policy's predicate: the set path's terms, and other policies by name.
+	SurfacePolicy = "policy"
 )
 
 // documentTerms are the filter terms a bill of materials applies. Unexported and read through the
@@ -87,6 +89,9 @@ type Term struct {
 	// Surfaces are the sides that apply this term. A control on a surface not named here leaves
 	// the term out rather than offering a filter that would be refused.
 	Surfaces []string `json:"surfaces"`
+	// SurfaceValues narrows Values on a surface that answers only some of them, so its control
+	// offers what it answers rather than a member it refuses by name. Absent means all of them.
+	SurfaceValues map[string][]string `json:"surfaceValues,omitempty"`
 }
 
 // catalogEntry is the half of a term that cannot be derived: what to call it, and what to say
@@ -157,6 +162,25 @@ var catalogWords = map[string]catalogEntry{
 		label: "Severity", arity: ArityScalar, valuesFrom: "api/filters/severity/values",
 		help: "As the analysis reported it",
 	},
+	// The rule's own score, banded as code scanning bands it. Unknown is a rule declaring none.
+	paramSecuritySeverity: {
+		label: "Security severity", arity: ArityList,
+		help: "Critical, high, medium, low",
+	},
+	// What GitHub published, never whether a reference is inside the range. Asks about advisories
+	// instead of findings.
+	paramAdvisorySeverity: {
+		label: "Advisory severity", arity: ArityList,
+		help: "Live advisories, as GitHub rated them",
+	},
+	paramReached: {
+		label: "Reached from yours", arity: ArityList,
+		help: "Directly, or through a dependency",
+	},
+	paramPolicies: {
+		label: "Any of these policies", arity: ArityList,
+		help: "Refuses what any of them refuses",
+	},
 	// Absent is not a third shape: everything on record reads regular.
 	paramMode: {
 		label: "Analysis shape", arity: ArityScalar,
@@ -210,6 +234,7 @@ var surfaceTerms = map[string]func(string) bool{
 	SurfaceCoverage:      func(string) bool { return false },
 	SurfaceDocument:      IsDocumentTerm,
 	SurfaceRun:           appliedByRun,
+	SurfacePolicy:        func(t string) bool { return policyTerms[t] },
 }
 
 // surfaceOrder keeps the catalog stable between calls, so a control does not reorder itself and a
@@ -217,7 +242,7 @@ var surfaceTerms = map[string]func(string) bool{
 var surfaceOrder = []string{
 	SurfaceSet, SurfaceGraph, SurfaceInventory, SurfaceWorkflows,
 	SurfaceJobs, SurfaceRepositories, SurfaceAdvisories, SurfaceRelationships,
-	SurfaceDocument, SurfaceCoverage, SurfaceRun,
+	SurfaceDocument, SurfaceCoverage, SurfaceRun, SurfacePolicy,
 }
 
 // Refusals names, for every surface, the terms this predicate carries that the surface cannot
@@ -229,7 +254,7 @@ var surfaceOrder = []string{
 func (s Spec) Refusals() map[string][]string {
 	out := make(map[string][]string, len(surfaceOrder))
 	for _, surface := range surfaceOrder {
-		out[surface] = s.carried(surfaceTerms[surface])
+		out[surface] = append(s.carried(surfaceTerms[surface]), s.unanswered(surface)...)
 	}
 	return out
 }
@@ -251,6 +276,12 @@ func Catalog() []Term {
 			if surfaceTerms[surface](name) {
 				term.Surfaces = append(term.Surfaces, surface)
 			}
+			if answered, partial := partialMembers[surface][name]; partial {
+				if term.SurfaceValues == nil {
+					term.SurfaceValues = map[string][]string{}
+				}
+				term.SurfaceValues[surface] = slices.Clone(answered)
+			}
 		}
 		out = append(out, term)
 	}
@@ -261,7 +292,8 @@ func Catalog() []Term {
 // then how it is referenced, then the shapes of the question itself.
 var catalogOrder = []string{
 	paramScope, paramSearch, paramKinds, paramOrigins,
-	paramFlags, paramRules, paramNotRules, paramSource, paramSeverity, paramProvider, paramRepos,
+	paramFlags, paramRules, paramNotRules, paramSource, paramSecuritySeverity, paramSeverity,
+	paramAdvisorySeverity, paramReached, paramProvider, paramRepos,
 	paramRefStyle, paramMinReach, paramBoundary, paramEdgeClass, paramEdgeKinds,
-	paramProperties, paramNotProperties, paramMode, paramSteps,
+	paramProperties, paramNotProperties, paramMode, paramSteps, paramPolicies,
 }

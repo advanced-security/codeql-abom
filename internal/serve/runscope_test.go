@@ -149,6 +149,36 @@ func TestARunRecordsTheQuestionANameResolvedToRatherThanTheName(t *testing.T) {
 	if again.Predicate != "scope=owned" {
 		t.Errorf("the run records %q, want the question the name resolved to", again.Predicate)
 	}
+	if again.ScopeName != "mine" {
+		t.Errorf("the run records it was chosen as %q, want the name it was chosen by", again.ScopeName)
+	}
+}
+
+// A run chosen by name says so, beside the question; one chosen any other way names no scope,
+// rather than a name somebody might take for how it was chosen.
+func TestARunNamesTheScopeItWasChosenByAndOnlyThatOne(t *testing.T) {
+	srv, _ := scopedServer(t)
+
+	named, code := start(t, srv, "view=owned", oneQuery)
+	if code != http.StatusOK {
+		t.Fatalf("a run over a built-in answered %d", code)
+	}
+	listed := decode[struct {
+		Runs []store.AnalysisRun `json:"runs"`
+	}](t, get(t, srv, "/api/runs"))
+	if len(listed.Runs) != 1 || listed.Runs[0].ScopeName != "owned" || named.ScopeName != "owned" {
+		t.Errorf("a run chosen as owned lists as %+v", listed.Runs)
+	}
+
+	for _, query := range []string{"scope=owned", "repositories=octo-org%2Fquiet"} {
+		run, code := start(t, srv, query, oneQuery)
+		if code != http.StatusOK {
+			t.Fatalf("running %s answered %d", query, code)
+		}
+		if run.ScopeName != "" {
+			t.Errorf("%s names the scope %q it was never chosen by", query, run.ScopeName)
+		}
+	}
 }
 
 // What a reader is shown before pressing Run is what the run covers, compared rather than assumed.

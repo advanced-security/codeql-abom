@@ -1,28 +1,26 @@
 # A query's effect across the organization is known before anybody turns it on
 
-**Status:** Nothing compares a run's results with what GitHub already alerts. What exists instead is
-*Predict*, a run of its own kind whose results are held in `abom_predicted_result`, and it is a
-dead approach: [on-demand analysis](on-demand-analysis.md) deletes it into a run with findings off,
-which is all this plan ever needed. What is left is the comparison itself, the enablement
-condition, the merge with Default Setup, the staleness of each commit, what earns `review`, and the
-check once published. What is left waits on the on-demand analysis work.
+**Status:** Nothing compares a run's results with what GitHub already alerts. A run with findings
+off holds what a query reports, per repository and rule, stating first how many of the scope's
+repositories it covers; that is what this plan reads. What is left is the comparison itself, the
+enablement condition, the merge with Default Setup, the staleness of each commit, what earns
+`review`, and the check once published. What is left waits on what a scope means wherever it is
+reused.
 
 **Decided: this plan is a comparison, not a kind of run.** It sets some run's results, over regular
 databases, against the code scanning alerts GitHub holds now, for one or more repositories. A run
 with findings off is what it usually reads, because a query nobody adopted should not have written
-findings yet, and nothing here keeps a second run kind, a second results table or a second button
-alive.
+findings yet.
 
-**Decided: nothing here starts until the on-demand analysis work has landed** — what is left of
-[on-demand analysis](on-demand-analysis.md) itself, and what a scope means wherever it is reused:
-[filter enforcement](filter-enforcement.md), [the policy language](policy-language.md) and [org
-enumeration](org-enumeration.md). A comparison reads a run over a scope. What is left of the run —
-its findings setting, a scope named on the CodeQL page, what is still to do while it runs, a size
-before Run that is honest about databases another CodeQL built — and what is left of the scope —
-every term enforced or refused on every surface, the terms a rule is actually about, and an
-organization read without one request per repository — is what every comparison is asked for and
-read through. Each item below that says it depends on nothing depends on nothing *within this
-plan*.
+**Decided: nothing here starts until the on-demand analysis work has landed.** The run half has: a
+run is drafted on the CodeQL page over a named scope, says what it still has to do while it runs,
+and states its size before Run against the CodeQL running now
+([`docs/architecture.md`](../../docs/architecture.md#reading-the-data-out)), and every term of the
+language is applied or refused by name on every surface. What is left is what a scope means
+wherever it is reused: [org enumeration](org-enumeration.md) — an organization read
+without one request per repository. A comparison reads a run over a scope, so that is what every
+comparison is asked for and read through. Each item below that says it depends on nothing depends
+on nothing *within this plan*.
 
 ## Why this exists
 
@@ -51,7 +49,7 @@ comparison, not to the run. Preserve the implemented
 
 ```mermaid
 flowchart LR
-    DRAFT["a run's draft"] -->|"Predict, deleted when<br/>findings off replaces it"| HELD["what a run held:<br/>a count per rule, every result"]
+    DRAFT["a run's draft"] -->|"findings off"| HELD["what a run held:<br/>a count per rule, every result"]
     HELD -. "not compared yet" .-> CMP["new, and<br/>already alerted"]
     ALERTS["code scanning alerts,<br/>read now"] -. "not read yet" .-> CMP
     EXT["a run over<br/>extended databases"] -. "refused" .-> CMP
@@ -127,8 +125,8 @@ query is refined against one.
 
 **A held result is not a finding until somebody converts it.** It is what *would* be reported by
 a query nobody has adopted. Merging a run's held results into `abom_finding` without anybody
-choosing it would make the counts on every surface include things nobody chose to look for;
-[on-demand analysis](on-demand-analysis.md) owns the conversion that is chosen.
+choosing it would make the counts on every surface include things nobody chose to look for; the
+run's [conversion](../../docs/architecture.md#reading-the-data-out) is the one that is chosen.
 
 **Say what was not compared.** Repositories with no database, with no Actions analysis, whose
 alerts could not be read, or with an analysis too old to trust are named individually. A confident

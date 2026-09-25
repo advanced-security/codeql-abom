@@ -1,0 +1,261 @@
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@implements IDisposable
+@inject AbomApi Api
+@inject AccountService Accounts
+@inject NavigationManager Nav
+@inject RunDraft Draft
+
+@* One draft for every page that offers Run: the versions, whether their results are findings, the
+   size of what the host's scope resolves to, and Run. The host says what the run is over; the
+   rest is the same on each page because it is this, rather than a copy of it. *@
+<MudPaper Outlined="true" Class="pa-3 mb-3" data-abom-run-draft>
+    <div class="d-flex flex-wrap align-center gap-2">
+        <MudText Typo="Typo.body2">Run</MudText>
+        @foreach (var q in Draft.Queries)
+        {
+            @* A named button: MudChip's close icon cannot be named and reads as "Close". *@
+            <span class="d-inline-flex align-center" data-abom-run-picked="@q.QueryId">
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">
+                    @q.QueryId <code class="ml-1">@Short(q.QueryVersion)</code>
+                </MudChip>
+                <MudIconButton Icon="@Icons.Material.Outlined.Close" Size="Size.Small"
+                               OnClick="@(() => Draft.Remove(q))"
+                               aria-label="@($"Remove {q.QueryId} from the run")" />
+            </span>
+        }
+        <div class="abom-run-add">
+            <MudSelect T="string" Value="@string.Empty" ValueChanged="Pick" Dense="true"
+                       Variant="Variant.Outlined" Margin="Margin.Dense"
+                       Placeholder="@(Draft.Queries.Count == 0 ? "Choose a query" : "Add a query")"
+                       aria-label="Add a query version to the run">
+                @foreach (var q in _runnable.Where(r => !Draft.Queries.Any(p => SameVersion(p, r))))
+                {
+                    <MudSelectItem T="string" Value="@VersionKey(q)">@q.QueryId @Short(q.QueryVersion)</MudSelectItem>
+                }
+            </MudSelect>
+        </div>
+        @Scope
+        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" DropShadow="false"
+                   Disabled="@(!CanStartRun)" OnClick="StartRun" data-abom-run-go>Run</MudButton>
+        @* One setting for the whole run, suggested from what its queries are. The reason sits on
+           the span, where a disabled switch still shows it. *@
+        <span data-abom-run-findings title="@FindingsReason">
+            <MudSwitch T="bool" Value="@_findings" ValueChanged="@((bool on) => _findings = on)"
+                       Color="Color.Primary" Size="Size.Small" Disabled="@(Draft.Queries.Count == 0)"
+                       Label="Findings" aria-label="Store what this run finds as findings" />
+        </span>
+        <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                   OnClick="Discard" data-abom-run-discard>Cancel</MudButton>
+    </div>
+    @ChildContent
+    @if (_size is { } size)
+    {
+        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1" data-abom-run-size>
+            @SizeText(size)
+        </MudText>
+    }
+    else if (_sizeRefusal is { Length: > 0 } sizeRefused)
+    {
+        <MudText Typo="Typo.caption" Class="d-block mt-1" data-abom-run-size>@sizeRefused</MudText>
+    }
+    @if (_runRefusal is { Length: > 0 } refusedRun)
+    {
+        <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true" Class="mt-2">@refusedRun</MudAlert>
+    }
+</MudPaper>
+
+@code {
+    /// <summary>
+    /// What the run is over, as the query string <c>POST /api/runs</c> takes; empty until the host
+    /// has a scope, which is also when nothing is resolved.
+    /// </summary>
+    [Parameter, EditorRequired] public string Predicate { get; set; } = string.Empty;
+
+    /// <summary>The host's words for what the run is over, inline before Run.</summary>
+    [Parameter] public RenderFragment? Scope { get; set; }
+
+    /// <summary>Anything the host chooses the scope with, under the draft's own row.</summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>Raised when the draft is put away, by Cancel or by a run it started.</summary>
+    [Parameter] public EventCallback Closed { get; set; }
+
+    private IReadOnlyList<CatalogQuery> _runnable = [];
+    private string? _runRefusal;
+    private bool _starting;
+
+    // Whether the run stores what it finds as findings, and what the server suggested for its
+    // queries. Held until a suggestion says otherwise: a findings run nobody chose writes to every
+    // surface.
+    private bool _findings;
+    private FindingsSuggestion? _suggestion;
+    private IReadOnlyList<AnalysisQueryRef> _suggestedFor = [];
+
+    // What the server resolved the host's scope to before anything is spent, and for which scope.
+    private DatabaseSet? _size;
+    private string? _sizeRefusal;
+    private string _sized = string.Empty;
+
+    private bool CanStartRun =>
+        !_starting && Draft.Queries.Count > 0 && Predicate.Length > 0 && Accounts.Identity.Login.Length > 0;
+
+    private string FindingsReason => _suggestion is not { } s
+        ? "Choose a query to see whether what this run finds should be stored as findings"
+        : _findings == s.Findings
+            ? $"Suggested: {s.Reason}."
+            : $"Changed from the suggestion ({(s.Findings ? "on" : "off")}): {s.Reason}.";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Draft.Changed += OnDraftChanged;
+        await Accounts.EnsureLoadedAsync();
+        // The crawl's own queries build the graph and report nothing, so they are not on offer.
+        var catalog = await Api.GetQueryCatalogAsync();
+        _runnable = [.. catalog.Queries.Where(q => !q.Discovery && !q.Lane && q.QueryVersion.Length > 0)];
+        await Suggest();
+    }
+
+    // Asked of the resolution the run itself uses, whenever the host's scope changes.
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Predicate != _sized)
+        {
+            await StateSize();
+        }
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        Draft.Changed -= OnDraftChanged;
+    }
+
+    private bool _disposed;
+
+    // Another page, or this one's catalog row, changed the versions: the suggestion follows them.
+    private void OnDraftChanged() => InvokeAsync(async () =>
+    {
+        if (_disposed)
+        {
+            return;
+        }
+        await Suggest();
+        StateHasChanged();
+    });
+
+    // Asked again whenever the queries change, and set to what the server suggests for them.
+    private async Task Suggest()
+    {
+        var asked = Draft.Queries;
+        if (_suggestion is not null && asked.SequenceEqual(_suggestedFor))
+        {
+            return;
+        }
+        var suggestion = await Api.GetFindingsSuggestionAsync(asked);
+        // A later choice has already asked again, and this answer is about queries no longer picked.
+        if (!ReferenceEquals(asked, Draft.Queries))
+        {
+            return;
+        }
+        _suggestion = suggestion;
+        _suggestedFor = asked;
+        _findings = suggestion?.Findings ?? false;
+    }
+
+    private async Task StateSize()
+    {
+        var asked = Predicate;
+        _sized = asked;
+        _size = null;
+        _sizeRefusal = null;
+        if (asked.Length == 0)
+        {
+            return;
+        }
+        var (set, refusal) = await Api.GetDatabasesAsync(asked);
+        // A later choice has already asked again, and this answer is about a draft that is gone.
+        if (asked != Predicate)
+        {
+            return;
+        }
+        _size = set;
+        _sizeRefusal = refusal;
+    }
+
+    // Counts of what the server resolved, never a claim about what the run will make of them.
+    private static string SizeText(DatabaseSet set)
+    {
+        var total = set.Databases.Count + set.Gaps.Count;
+        if (total == 0)
+        {
+            return set.Unresolved.Length > 0 ? set.Unresolved : "This names no repository.";
+        }
+        var held = set.Databases.Count(d => d.Status == "retained");
+        // Held, but the run rebuilds it: neither usable as it is nor missing.
+        var stale = set.Databases.Count(d => d.Status == "buildable" && d.Reason.Length > 0);
+        var builtElsewhere = stale > 0
+            ? $"{CountText.Number(stale)} held but not built by this CodeQL, "
+            : string.Empty;
+        return $"{CountText.Of(total, "repository", "repositories")}: " +
+               $"{CountText.Number(held)} with a database held, {builtElsewhere}" +
+               $"{CountText.Number(total - held - stale)} without one";
+    }
+
+    private static string VersionKey(CatalogQuery q) => q.QueryId + "\n" + q.QueryVersion;
+
+    private static bool SameVersion(AnalysisQueryRef a, CatalogQuery b) =>
+        a.QueryId == b.QueryId && a.QueryVersion == b.QueryVersion;
+
+    private void Pick(string key)
+    {
+        if (_runnable.FirstOrDefault(r => VersionKey(r) == key) is { } q)
+        {
+            Draft.Add(new AnalysisQueryRef { QueryId = q.QueryId, QueryVersion = q.QueryVersion });
+        }
+    }
+
+    private static string Short(string version) => version.Length <= 12 ? version : version[..12];
+
+    private async Task Discard()
+    {
+        Draft.Clear();
+        await Closed.InvokeAsync();
+    }
+
+    /// <summary>
+    /// Findings off holds what it finds apart until somebody converts it. A run that is recorded
+    /// and does not start says so here, where it was asked for.
+    /// </summary>
+    private async Task StartRun()
+    {
+        if (!CanStartRun)
+        {
+            return;
+        }
+        _starting = true;
+        try
+        {
+            var (run, refusal) = await Api.StartAnalysisRunAsync(
+                Predicate, Draft.Queries, Accounts.Identity.Login, held: !_findings);
+            if (run is null)
+            {
+                _runRefusal = refusal ?? Api.LastError;
+                return;
+            }
+            var (_, notStarted) = await Api.ExecuteAnalysisRunAsync(run.RowId);
+            if (notStarted is not null)
+            {
+                _runRefusal = $"Run #{run.RowId} is recorded and has not started: {notStarted}";
+                return;
+            }
+            Draft.Clear();
+            await Closed.InvokeAsync();
+            Nav.NavigateTo($"/codeql?tab=runs&run={run.RowId}");
+        }
+        finally
+        {
+            _starting = false;
+        }
+    }
+}

@@ -434,6 +434,32 @@ func TestTheSetPathNarrowsBySourceOverTheAPI(t *testing.T) {
 	}
 }
 
+// A provider answer carries what it left out, as a source answer does: most findings on record
+// predate the column, so the only provider on offer answers for a fraction in silence otherwise.
+func TestTheSetPathSaysHowManyMatchesRecordedNoProvider(t *testing.T) {
+	s, st := newServer(t)
+	seedSourcedFinding(t, st)
+	repoID, err := st.UpsertRepository("octo-org/app", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddFindings([]store.Finding{
+		{RuleID: "actions/untrusted-checkout", RepositoryID: repoID, Provider: "CodeQL",
+			FilePath: ".github/workflows/ci.yml", StartLine: 5},
+		{RuleID: "actions/untrusted-checkout", RepositoryID: repoID,
+			FilePath: ".github/workflows/ci.yml", StartLine: 6},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.LinkFindingsToNodes(); err != nil {
+		t.Fatal(err)
+	}
+	got := decode[Match](t, get(t, s, "/api/match?provider=CodeQL&rules=actions%2Funtrusted-checkout"))
+	if got.Findings != 1 || got.Unprovided != 1 {
+		t.Errorf("matched %d with %d unprovided, want 1 and 1", got.Findings, got.Unprovided)
+	}
+}
+
 // The listing narrows by source with the set path's meaning, which it can do only once its route
 // declares the term: an undeclared one is refused before the handler reads it.
 func TestTheActionsListingNarrowsBySource(t *testing.T) {

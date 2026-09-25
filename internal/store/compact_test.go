@@ -140,7 +140,7 @@ func TestAGenerationRecordedAfterACompactionIsStillHonored(t *testing.T) {
 }
 
 // The foreign key closure is the part that bit when the junk `/` repository was deleted by hand:
-// `abom_finding_node`, `abom_alert_link` and edges naming a node as an endpoint all held it.
+// `abom_finding_node` and edges naming a node as an endpoint both held it.
 func TestCompactionLeavesNoDanglingReferences(t *testing.T) {
 	s := pruneFixture(t)
 	if _, err := s.MarkOutsideClosure([]string{"octo-org/app"}); err != nil {

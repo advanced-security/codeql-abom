@@ -79,7 +79,8 @@ func (s *Server) picked(run int64, queryID string, evidence []store.RequestEvide
 				return nil, err
 			}
 			for _, f := range member.Findings {
-				if f.FindingRowID == e.FindingRowID {
+				if (e.FindingRowID != 0 && f.FindingRowID == e.FindingRowID) ||
+					(e.HeldResultID != 0 && f.HeldResultID == e.HeldResultID) {
 					p.FilePath, p.StartLine, p.Message = f.FilePath, f.StartLine, f.Message
 				}
 			}

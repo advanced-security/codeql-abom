@@ -141,14 +141,13 @@ session, driven through the
 and confined by ABOM, writes the fixtures and the query. The operator accepts what it reported, and
 ABOM then tests it itself. A test fails first on the lines its fixture marks before the query is
 written, one `actions-all` answers for authoring and execution, and every mark names the CodeQL it
-was recorded under. A run's results are findings in full or not at all, fixed before it starts, and
-a separate prediction holds them apart. What remains is one run whose findings setting follows
-what its queries are — on for what a pack published or a suite promoted, off for a version still
-being refined — with a toggle to turn findings on for that run, a chosen part of what it held
-turned into findings in review, and its results compared with the code scanning alerts developers
-already see. Running several CodeQL releases side by side, so an upgrade can be compared before it
-is taken, is later.
-`plans/api/on-demand-analysis.md`, `plans/api/query-simulation.md`
+was recorded under. A run holds what a query still being refined reports rather than writing it
+as findings, and whoever reviews it turns all of it, or the results they chose, into findings once
+the query has earned it; a version a pack published or a suite promoted stores findings unless
+somebody says otherwise. What remains is comparing a run's results with the code scanning alerts
+developers already see. Running several CodeQL releases side by side, so an upgrade can be
+compared before it is taken, is later.
+`docs/architecture.md`, `plans/api/query-simulation.md`
 
 ## From a finding to a fix
 
@@ -172,12 +171,12 @@ Two routes out, in order:
 **ABOM's own findings stay in ABOM.** They are what a publication decision is made from, not
 something to live with afterwards.
 
-**What a rule can be about is the half that is not built.** A policy is written in the same filter
-terms a reader narrows the corpus with, and that language can name a rule id, a provider and a
-severity. It cannot yet say *carries a live advisory* or *is reached from something you own*, which
-is most of what an Actions supply-chain rule is for — and it silently drops the terms it cannot
-enforce, so a rule can bite wider than the view it was written from.
-`plans/api/policy-language.md`
+**What a rule can be about is built.** A policy is written in the same filter terms a reader narrows
+the corpus with, and that language can name a rule, a provider, a level and a security-severity
+band; a live advisory at the severity GitHub published; whether an owned repository reaches either
+directly or through an intermediary; and other policies, to refuse what any of them refuses. Every
+term it can say is applied or refused by name, so a rule never bites wider than the view it was
+written from. What is left is the gate that acts on one. `plans/api/verdict-gate.md`
 
 Both need a server a pull request can reach, which this project does not yet have.
 

@@ -878,6 +878,9 @@ func TestARunOfAnOperatorsQueryInstallsItsPackBeforeRecordingIt(t *testing.T) {
 		}
 		recorded = append(recorded, digest)
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
 	if len(recorded) != 1 || recorded[0] != want {
 		t.Errorf("the run records the pack as %v, want it as it ran, lock included: %s", recorded, want)
 	}

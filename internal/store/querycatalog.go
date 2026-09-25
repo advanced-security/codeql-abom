@@ -97,6 +97,12 @@ type CatalogQuery struct {
 	// Working marks the version on disk in the operator's pack now: the only one whose tests can
 	// be run, and the one the authoring steps describe.
 	Working bool `json:"working"`
+	// Metadata is every pair this version declares, as `codeql resolve metadata` read it. Absent
+	// where nothing has resolved the version, which is not a query that declares nothing.
+	Metadata map[string]string `json:"metadata,omitempty"`
+	// Band is the version's own `@security-severity`, banded, for a query that reports findings.
+	// Empty where the metadata is absent or the query reports none.
+	Band string `json:"band,omitempty"`
 }
 
 // WorkingQuery is a query as it is on disk in the operator's pack, which the store does not read
@@ -136,6 +142,10 @@ func (s *Store) QueryCatalog(working ...WorkingQuery) ([]CatalogQuery, error) {
 		return nil, err
 	}
 	tests, err := s.queryTests()
+	if err != nil {
+		return nil, err
+	}
+	declared, err := s.queryMetadata()
 	if err != nil {
 		return nil, err
 	}
@@ -211,6 +221,19 @@ func (s *Store) QueryCatalog(working ...WorkingQuery) ([]CatalogQuery, error) {
 		out = append(out, q)
 	}
 	out = withWorkingCopy(out, working, attach)
+	for i := range out {
+		pairs, ok := declared[out[i].QueryID+"\x00"+out[i].QueryVersion]
+		if !ok {
+			continue
+		}
+		out[i].Metadata = pairs
+		out[i].Band = declaredBand(pairs)
+		// The version's own declaration of its kind, for a row no suite resolution recorded one for.
+		if !out[i].KindRecorded && !out[i].Lane {
+			out[i].Kind, out[i].KindRecorded = pairs["kind"], true
+			out[i].Discovery = out[i].Kind == ""
+		}
+	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].QueryID != out[j].QueryID {
 			return out[i].QueryID < out[j].QueryID

@@ -158,6 +158,36 @@ func TestSummaryCountsOwnedFindingsApartFromEveryFinding(t *testing.T) {
 	}
 }
 
+// The headline says how bad as well as how many, over the same findings it counts.
+func TestSummarySaysAtWhatSeverityTheOwnedFindingsAre(t *testing.T) {
+	s := advisoryStore(t)
+	for repo, scores := range map[string][]*float64{
+		"octo-org/app":    {score(9.3), score(5.0), nil},
+		"other-org/thing": {score(9.8)},
+	} {
+		id, err := s.UpsertRepository(repo, "")
+		if err != nil {
+			t.Fatalf("UpsertRepository(%q): %v", repo, err)
+		}
+		for i, sc := range scores {
+			if _, err := s.AddFindings([]Finding{{RuleID: "r/" + itoa(i), RepositoryID: id,
+				FilePath: ".github/workflows/ci.yml", StartLine: 10 + i, SecuritySeverity: sc,
+			}}); err != nil {
+				t.Fatalf("AddFindings(%q): %v", repo, err)
+			}
+		}
+	}
+	declareOwner(t, s, "octo-org")
+
+	got, err := s.Summary()
+	if err != nil {
+		t.Fatalf("Summary: %v", err)
+	}
+	if want := (SeverityCounts{Critical: 1, Medium: 1, Unknown: 1}); got.OwnedSeverity != want {
+		t.Errorf("OwnedSeverity = %+v, want %+v over the declared repository's three", got.OwnedSeverity, want)
+	}
+}
+
 // The guard that would have caught this class at any scope: a figure reported as the operator's
 // cannot exceed the corpus it is drawn from, and with nothing declared it cannot be anything but
 // zero. Seed and owned were the same set in the previous corpus, so nothing could disagree.

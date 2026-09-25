@@ -48,11 +48,11 @@
                 <PropertyColumn Property="x => x.RowId" Title="Run" CellClass="abom-nowrap">
                     <CellTemplate>
                         <span data-abom-run-id="@context.Item.RowId">#@context.Item.RowId</span>
-                        @if (context.Item.Prediction)
+                        @if (context.Item.Held)
                         {
                             <MudText Typo="Typo.caption" Class="d-block mud-text-secondary"
-                                     title="What its queries would report, stored as no finding"
-                                     data-abom-run-prediction>prediction</MudText>
+                                     title="What its queries report is held until somebody converts it to findings"
+                                     data-abom-run-held>findings off</MudText>
                         }
                     </CellTemplate>
                 </PropertyColumn>
@@ -74,7 +74,7 @@
                                     <MudTooltip Text="@StartText(context.Item)">
                                         <MudIconButton Icon="@Icons.Material.Outlined.PlayArrow" Size="Size.Small"
                                                        Color="Color.Primary" OnClick="@(() => Execute(context.Item))"
-                                                       aria-label="@($"Start {Noun(context.Item)} #{context.Item.RowId}")"
+                                                       aria-label="@($"Start run #{context.Item.RowId}")"
                                                        data-abom-run-start />
                                     </MudTooltip>
                                     break;
@@ -83,7 +83,7 @@
                                     <MudTooltip Text="@AgainText(context.Item)">
                                         <MudIconButton Icon="@Icons.Material.Outlined.Replay" Size="Size.Small"
                                                        OnClick="@(() => Execute(context.Item))"
-                                                       aria-label="@($"{Verb(context.Item)} #{context.Item.RowId} again")"
+                                                       aria-label="@($"Run #{context.Item.RowId} again")"
                                                        data-abom-run-again />
                                     </MudTooltip>
                                     break;
@@ -122,6 +122,12 @@
 
                 <TemplateColumn Title="Scope" CellClass="abom-run-text">
                     <CellTemplate>
+                        @if (context.Item.ScopeName.Length > 0)
+                        {
+                            @* How it was chosen, beside what it resolved to, which is what it covers. *@
+                            <MudText Typo="Typo.body2" title="@($"Chosen as the named scope {context.Item.ScopeName}")"
+                                     data-abom-run-scope-name>@ScopeLabel(context.Item.ScopeName)</MudText>
+                        }
                         <MudText Typo="Typo.caption" title="@context.Item.Predicate"
                                  data-abom-run-scope>@ScopeText(context.Item.Predicate)</MudText>
                     </CellTemplate>
@@ -169,11 +175,24 @@
 
     private static readonly TimeSpan WhileRunning = TimeSpan.FromSeconds(5);
 
+    /// <summary>How often the list is read again.</summary>
+    public TimeSpan Beat => _beat;
+
     protected override async Task OnInitializedAsync()
     {
         Follow.Changed += Arm;
         await Load();
+        if (_runs?.Any(r => r.ScopeName.Length > 0) == true)
+        {
+            _scopeLabels = (await Api.GetViewsAsync())
+                .ToDictionary(v => v.Name, v => v.Label, StringComparer.Ordinal);
+        }
     }
+
+    // What a reader calls each named scope. A name no longer kept reads as itself.
+    private IReadOnlyDictionary<string, string> _scopeLabels = new Dictionary<string, string>();
+
+    private string ScopeLabel(string name) => _scopeLabels.TryGetValue(name, out var label) ? label : name;
 
     private async Task Load()
     {
@@ -181,10 +200,11 @@
         Arm();
     }
 
-    // A run in flight is watched closely; otherwise the reader's own beat.
+    // A run in flight is watched closely, and so is one asked for, which the executor starts a
+    // beat later; otherwise the reader's own beat.
     private void Arm()
     {
-        var beat = _runs?.Any(r => r.State == "running") == true && Follow.Interval > WhileRunning
+        var beat = _runs?.Any(r => r.State is "running" or "pending") == true && Follow.Interval > WhileRunning
             ? WhileRunning
             : Follow.Interval;
         if (_timer is not null && beat == _beat)
@@ -231,28 +251,21 @@
         : run.State is "pending" or "refused" ? "CodeQL chosen when it runs"
         : "CodeQL not recorded";
 
-    private static string AgainText(AnalysisRun run) => run.Prediction
-        ? run.State == "refused"
-            ? "It did not start. Predict again once what refused it is fixed."
-            // Nothing is skipped: a stored answer lists findings, and a prediction holds its own list.
-            : "Predict again over the same repositories. Every one is evaluated again, and what it would " +
-              "report replaces what this prediction held."
-        : run.State switch
-        {
-            "interrupted" => "The server stopped while this ran. Run it again: what it already analyzed is skipped.",
-            "canceled" => "Run it again: what it already analyzed is skipped.",
-            "refused" => "It did not start. Run it again once what refused it is fixed.",
-            _ => "Run it again over the same repositories. What was analyzed with these versions is skipped; " +
-                 "the rest replaces what this run recorded.",
-        };
+    private static string AgainText(AnalysisRun run) => run.State switch
+    {
+        "refused" => "It did not start. Run it again once what refused it is fixed.",
+        // Nothing is skipped: a stored answer lists findings, and a held run keeps its own list.
+        _ when run.Held => "Run it again over the same repositories. Every one is evaluated again, and " +
+            "what it reports replaces what this run held; what somebody converted stays a finding.",
+        "interrupted" => "The server stopped while this ran. Run it again: what it already analyzed is skipped.",
+        "canceled" => "Run it again: what it already analyzed is skipped.",
+        _ => "Run it again over the same repositories. What was analyzed with these versions is skipped; " +
+             "the rest replaces what this run recorded.",
+    };
 
-    private static string StartText(AnalysisRun run) => run.Prediction
-        ? "Start this prediction over the repositories it names. Nothing it finds is stored as a finding."
+    private static string StartText(AnalysisRun run) => run.Held
+        ? "Start this run over the repositories it names. What it finds is held until somebody converts it."
         : "Start this run over the repositories it names.";
-
-    private static string Noun(AnalysisRun run) => run.Prediction ? "prediction" : "run";
-
-    private static string Verb(AnalysisRun run) => run.Prediction ? "Predict" : "Run";
 
     private static Color StateColor(string state) => state switch
     {
@@ -291,6 +304,15 @@
     {
         int Of(string status) => run.Tally.TryGetValue(status, out var n) ? n : 0;
         var parts = new List<string>();
+        // What is left first while a run is under way; a time only once this start has a pace.
+        if (run.Left is { } left)
+        {
+            parts.Add($"{left.Members:N0} still to do");
+            if (left.RemainingSeconds is { } remaining)
+            {
+                parts.Add($"{TimeText.Roughly(remaining)} left");
+            }
+        }
         if (Of("succeeded") > 0) parts.Add($"{Of("succeeded"):N0} analyzed");
         if (Of("running") > 0) parts.Add($"{Of("running"):N0} running");
         if (Of("pending") > 0) parts.Add($"{Of("pending"):N0} waiting");

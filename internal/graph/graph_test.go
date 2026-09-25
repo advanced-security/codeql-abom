@@ -414,7 +414,7 @@ func seedFindings(t *testing.T, s *store.Store, ruleID string, repos ...string) 
 		findings = append(findings, store.Finding{
 			RuleID: ruleID, RepositoryID: id,
 			FilePath: ".github/workflows/ci.yml", StartLine: i + 1,
-			Message: "unpinned", Severity: "warning", SecuritySeverity: 5.0,
+			Message: "unpinned", Severity: "warning",
 		})
 	}
 	if _, err := s.AddFindings(findings); err != nil {

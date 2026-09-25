@@ -66,6 +66,59 @@ public class RunResultsTests : AbomTestContext
         var cut = Render(null);
 
         Assert.Empty(cut.FindAll("[data-abom-results-refused]"));
+        Assert.Empty(cut.FindAll("[data-abom-run-left]"));
+    }
+
+    private const string UnderWay = """
+        {"rowId":5,"predicate":"repositories=octo%2Fapp,octo%2Ftool,octo%2Fdone","mode":"regular",
+         "requestedBy":"operator","state":"running","createdAt":"2026-09-22T16:00:00Z",
+         "startedAt":"2026-09-22T16:00:02Z","finishedAt":"","results":1,
+         "queries":[{"queryId":"acme/rule","queryVersion":"v1"}],
+         "tally":{"succeeded":1,"running":1,"pending":1},
+         "left":{"members":2,"finished":1,"remainingSeconds":120},
+         "members":[
+           {"repository":"octo/app","status":"pending","counted":false,"results":0,"byQuery":{},"toDo":true},
+           {"repository":"octo/done","status":"succeeded","counted":true,"results":1,
+            "byQuery":{"acme/rule":1},"toDo":false},
+           {"repository":"octo/tool","status":"running","counted":false,"results":0,"byQuery":{},"toDo":true}]}
+        """;
+
+    /// <summary>
+    /// While a run is under way, the number and the list still to do come before what it found:
+    /// the one running first, then what waits, and a time remaining only from this start's pace.
+    /// </summary>
+    [Fact]
+    public void ARunUnderWayListsWhatIsLeftBeforeWhatItFound()
+    {
+        Answer("api/runs/5", UnderWay);
+        var cut = Render<Shared.RunResults>(p => p.Add(c => c.RunId, 5L));
+        cut.WaitForAssertion(() => cut.Find("[data-abom-run-left]"));
+
+        var left = cut.Find("[data-abom-run-left]");
+        Assert.Contains("2 still to do", left.TextContent);
+        var time = cut.Find("[data-abom-run-left-time]").TextContent;
+        Assert.Contains("about 2 min left", time);
+        Assert.Contains("the 1 this start has finished", time);
+        var listed = cut.FindAll("[data-abom-run-left-member]")
+            .Select(e => e.GetAttribute("data-abom-run-left-member")).ToList();
+        Assert.Equal(["octo/tool", "octo/app"], listed);
+        Assert.Contains("running", cut.Find("[data-abom-run-left-member='octo/tool']").TextContent);
+        Assert.True(cut.Markup.IndexOf("data-abom-run-left", StringComparison.Ordinal) <
+                    cut.Markup.IndexOf("data-abom-run-summary", StringComparison.Ordinal),
+            "what is left does not come first");
+    }
+
+    /// <summary>With nothing finished, the list stands alone: no pace, no time.</summary>
+    [Fact]
+    public void ARunNothingOfHasFinishedListsWhatIsLeftWithNoTime()
+    {
+        Answer("api/runs/5", UnderWay.Replace(
+            "\"left\":{\"members\":2,\"finished\":1,\"remainingSeconds\":120}",
+            "\"left\":{\"members\":2,\"finished\":0,\"remainingSeconds\":null}"));
+        var cut = Render<Shared.RunResults>(p => p.Add(c => c.RunId, 5L));
+        cut.WaitForAssertion(() => cut.Find("[data-abom-run-left]"));
+
+        Assert.Empty(cut.FindAll("[data-abom-run-left-time]"));
     }
 
     private static List<string> Repositories(IRenderedComponent<Shared.RunResults> cut) =>

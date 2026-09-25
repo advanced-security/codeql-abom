@@ -442,4 +442,76 @@ test.describe('a scope an operator kept', () => {
         await page.locator(`[data-abom-forget-view='${name}']`).click();
         await expect(page.locator(chip)).toHaveCount(0, { timeout: 15_000 });
     });
+
+    // The CodeQL page's run draft hosts the same control, over a named scope only. A scope kept
+    // there is the one the draft holds, and one kept elsewhere opens there as the question it was
+    // kept with, compared with the stored row rather than with what the screen shows.
+    test('a scope kept on the CodeQL page opens on the Inventory, and one kept there opens in the draft', on('/codeql?tab=catalog', '/inventory'), async ({
+        page,
+        request,
+        baseURL,
+    }) => {
+        const stamp = Date.now();
+        const here = `e2e-run-${stamp}`;
+        const there = `e2e-inv-${stamp}`;
+        const views = async () => (await (await request.get(`${baseURL}/api/views`)).json());
+        const predicateOf = (url) => new URL(url).search.replace(/^\?/, '').split('&')
+            .filter((pair) => pair && !['unit', 'tab'].includes(pair.split('=')[0]))
+            .sort()
+            .join('&');
+        const draft = async () => {
+            await page.goto('/codeql?tab=catalog');
+            await ready(page);
+            // The rows arrive after who is signed in, which is what enables Run.
+            await page.locator('[data-abom-query-id]').first().waitFor({ timeout: 15_000 });
+            const run = page.locator('[data-abom-query-run]:not([disabled])').first();
+            test.skip(await run.count() === 0, 'no query version here can be run');
+            await run.click();
+            await expect(page.locator('[data-abom-run-draft] [data-abom-views]')).toBeVisible({ timeout: 15_000 });
+        };
+
+        await draft();
+        await expect(page.locator('[data-abom-run-draft] [data-abom-save-scope]'),
+            'the draft holds no scope until one is chosen').toBeDisabled();
+        await page.locator("[data-abom-run-draft] [data-abom-view='owned']").click();
+        await expect(page.locator('[data-abom-run-size]'), 'a chosen scope states its size').toBeVisible({ timeout: 15_000 });
+        await page.locator('[data-abom-run-draft] [data-abom-scope-name]').fill(here);
+        await page.locator('[data-abom-run-draft] [data-abom-save-scope]').click();
+        await expect(page.locator(`[data-abom-run-draft] [data-abom-view='${here}']`)).toBeVisible({ timeout: 15_000 });
+
+        const owned = (await views()).find((v) => v.name === 'owned');
+        const keptHere = (await views()).find((v) => v.name === here);
+        expect(keptHere, 'the server kept it').toBeTruthy();
+        expect(keptHere.predicate, 'it kept the question the draft held').toBe(owned.predicate);
+
+        await page.goto('/inventory?unit=repositories');
+        await ready(page);
+        await page.locator(`[data-abom-views] [data-abom-view='${here}']`).click();
+        await expect.poll(() => predicateOf(page.url()), 'the Inventory holds the stored question')
+            .toBe(keptHere.predicate);
+
+        await page.goto('/inventory?unit=repositories&scope=owned&q=has');
+        await ready(page);
+        await page.locator('[data-abom-named-scopes] [data-abom-scope-name]').fill(there);
+        await page.locator('[data-abom-named-scopes] [data-abom-save-scope]').click();
+        await expect(page.locator(`[data-abom-view='${there}']`)).toBeVisible({ timeout: 15_000 });
+        const keptThere = (await views()).find((v) => v.name === there);
+        expect(keptThere, 'the server kept it').toBeTruthy();
+
+        await draft();
+        const sized = page.waitForRequest((r) => r.url().includes('/api/databases?'));
+        await page.locator(`[data-abom-run-draft] [data-abom-view='${there}']`).click();
+        expect(new URL((await sized).url()).search, 'the draft asks for the scope by its name')
+            .toBe(`?view=${encodeURIComponent(there)}`);
+        await expect(page.locator(`[data-abom-run-draft] [data-abom-view='${there}']`),
+            'and holds its stored question').toHaveClass(/abom-view-selected/);
+
+        for (const name of [here, there]) {
+            await request.delete(`${baseURL}/api/views/${encodeURIComponent(name)}`,
+                { headers: { 'X-Abom-Control': '1' } });
+        }
+        const left = (await views()).map((v) => v.name);
+        expect(left, 'both are forgotten again').not.toContain(here);
+        expect(left).not.toContain(there);
+    });
 });

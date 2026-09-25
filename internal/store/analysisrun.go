@@ -58,6 +58,8 @@ type AnalysisMember struct {
 	ByQuery    map[string]int `json:"byQuery"`
 	StartedAt  string         `json:"startedAt"`
 	FinishedAt string         `json:"finishedAt"`
+	// ToDo is a member the start under way has still to reach; see RunLeft.
+	ToDo bool `json:"toDo"`
 }
 
 // MemberResult is what became of one member once it stopped.
@@ -79,11 +81,17 @@ type AnalysisRun struct {
 	Mode        string `json:"mode"`
 	RequestedBy string `json:"requestedBy"`
 	State       string `json:"state"`
-	// Prediction is a run whose results are held as what its queries would report, never stored as
-	// findings.
-	Prediction bool   `json:"prediction"`
+	// Held is a run with findings off: what its queries report is held until somebody converts it.
+	Held       bool   `json:"held"`
 	CreatedAt  string `json:"createdAt"`
 	FinishedAt string `json:"finishedAt"`
+	// StartedAt is when the start under way, or the last one, began; empty for a run never started.
+	StartedAt string `json:"startedAt"`
+	// ScopeName is the named scope the run was chosen by, and empty for one chosen otherwise. What
+	// it covers is Predicate, which the name resolved to when it was asked for.
+	ScopeName string `json:"scopeName"`
+	// Left is what a pending or running run has still to do, and nil for any other.
+	Left *RunLeft `json:"left"`
 	// CLIVersion is the CodeQL that carried the run out, empty until it starts.
 	CLIVersion string `json:"cliVersion"`
 	// Refusal is why the run could not start the last time it was asked to, and empty otherwise.
@@ -102,9 +110,11 @@ type AnalysisRun struct {
 type AnalysisRequest struct {
 	RequestedBy string
 	Predicate   string
-	Mode        string
-	Prediction  bool
-	Queries     []AnalysisQuery
+	// ScopeName is the named scope the predicate was resolved from, empty when none was.
+	ScopeName string
+	Mode      string
+	Held      bool
+	Queries   []AnalysisQuery
 	// Databases and Gaps are what the predicate resolved to, taken straight from the resolution
 	// /api/databases previews, so the run is over exactly the set a reader was shown.
 	Databases []ScopedDatabase
@@ -130,10 +140,6 @@ func (s *Store) CreateAnalysisRun(req AnalysisRequest) (int64, error) {
 		return 0, fmt.Errorf("starting a run: the scope named no repository")
 	case !ValidAnalysisMode(mode):
 		return 0, fmt.Errorf("starting a run: %q is not an analysis mode", mode)
-	case req.Prediction && mode != AnalysisModeRegular:
-		return 0, fmt.Errorf("predicting from %s databases: a prediction is made from regular ones "+
-			"only, because Default Setup builds one repository's own checkout and stages nothing, so "+
-			"it would never report what %s analysis reveals", mode, mode)
 	}
 
 	tx, err := s.db.Begin()
@@ -145,9 +151,9 @@ func (s *Store) CreateAnalysisRun(req AnalysisRequest) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := tx.Exec(`
 		INSERT INTO abom_analysis_run
-			(predicate, analysis_mode, requested_by, state, created_at, prediction)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		req.Predicate, mode, req.RequestedBy, RunPending, now, req.Prediction)
+			(predicate, analysis_mode, requested_by, state, created_at, held, scope_name)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		req.Predicate, mode, req.RequestedBy, RunPending, now, req.Held, nullable(req.ScopeName))
 	if err != nil {
 		return 0, fmt.Errorf("recording the run: %w", err)
 	}
@@ -171,6 +177,11 @@ func (s *Store) CreateAnalysisRun(req AnalysisRequest) (int64, error) {
 		case mode != AnalysisModeRegular:
 			status = AnalysisNoDatabase
 			detail = fmt.Sprintf("no %s database held, and a run builds only regular ones", mode)
+			if d.Reason != "" {
+				detail = d.Reason + ", and a run builds only regular databases"
+			}
+		case d.Reason != "":
+			detail = d.Reason + "; the run builds it again"
 		default:
 			detail = "no database held; the run builds one"
 		}
@@ -325,14 +336,12 @@ func (s *Store) setMember(runID int64, id DatabaseIdentity, r MemberResult) erro
 	defer tx.Rollback()
 
 	if r.QueryRunID != 0 {
-		predicted, err := runIsPrediction(tx, runID)
+		held, err := runIsHeld(tx, runID)
 		if err != nil {
 			return err
 		}
-		// Linked, the prediction's answer would let a later run skip storing what it found.
-		if predicted {
-			return fmt.Errorf("run %d is a prediction, which stores no evaluation of %s",
-				runID, id.Repository)
+		if err := linksItsOwnKind(tx, runID, held, r.QueryRunID, id); err != nil {
+			return err
 		}
 	}
 	if err := updateMember(tx, runID, id, r); err != nil {
@@ -360,13 +369,17 @@ func updateMember(tx *sql.Tx, runID int64, id DatabaseIdentity, r MemberResult) 
 		results = r.Results
 	}
 
+	// A member already running keeps its start: building its database and then analyzing it is one
+	// member at work, and restarting the clock between them would leave every build out of its time.
+	// The right-hand side reads the row as it was, before this update.
 	if _, err := tx.Exec(`
 		UPDATE abom_analysis_member
 		SET status = ?, detail = ?,
 		    result_path = CASE WHEN ? <> '' THEN ? ELSE result_path END,
 		    result_count = COALESCE(?, result_count),
 		    query_run_id = COALESCE(?, query_run_id),
-		    started_at = COALESCE(?, started_at),
+		    started_at = CASE WHEN status = 'running' THEN started_at
+		                      ELSE COALESCE(?, started_at) END,
 		    finished_at = COALESCE(?, finished_at)
 		WHERE run_id = ? AND repository = ? AND db_commit = ?
 		  AND source_filter = ? AND analysis_mode = ?`,
@@ -378,18 +391,6 @@ func updateMember(tx *sql.Tx, runID int64, id DatabaseIdentity, r MemberResult) 
 		return replaceMemberResults(tx, runID, id, r.ByQuery)
 	}
 	return nil
-}
-
-func runIsPrediction(tx *sql.Tx, runID int64) (bool, error) {
-	var predicted bool
-	err := tx.QueryRow(`SELECT prediction FROM abom_analysis_run WHERE row_id = ?`, runID).Scan(&predicted)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, fmt.Errorf("no run %d", runID)
-	}
-	if err != nil {
-		return false, fmt.Errorf("reading run %d: %w", runID, err)
-	}
-	return predicted, nil
 }
 
 // replaceMemberResults replaces rather than adds, or a re-run would double every count.
@@ -437,17 +438,22 @@ func (s *Store) RefuseAnalysisRun(runID int64, reason string) error {
 	return nil
 }
 
-// SetAnalysisRunState moves the run as a whole, stamping when it finished. A refusal describes the
-// state it was recorded with, so moving on clears it.
+// SetAnalysisRunState moves the run as a whole, stamping when a start began and when it finished.
+// A refusal describes the state it was recorded with, so moving on clears it.
 func (s *Store) SetAnalysisRunState(runID int64, state string) error {
-	finished := nullable("")
+	now := time.Now().UTC().Format(time.RFC3339)
+	started, finished := nullable(""), nullable("")
+	if state == RunRunning {
+		started = now
+	}
 	if state == RunComplete || state == RunCanceled {
-		finished = time.Now().UTC().Format(time.RFC3339)
+		finished = now
 	}
 	_, err := s.db.Exec(`
 		UPDATE abom_analysis_run
-		SET state = ?, finished_at = COALESCE(?, finished_at), refusal = NULL
-		WHERE row_id = ?`, state, finished, runID)
+		SET state = ?, started_at = COALESCE(?, started_at), finished_at = COALESCE(?, finished_at),
+		    refusal = NULL
+		WHERE row_id = ?`, state, started, finished, runID)
 	if err != nil {
 		return fmt.Errorf("moving run %d to %s: %w", runID, state, err)
 	}
@@ -462,10 +468,12 @@ func (s *Store) AnalysisRun(id int64) (AnalysisRun, error) {
 	var finished sql.NullString
 	err := s.db.QueryRow(`
 		SELECT row_id, predicate, analysis_mode, requested_by, state, created_at, finished_at,
-		       COALESCE(cli_version, ''), COALESCE(refusal, ''), prediction
+		       COALESCE(cli_version, ''), COALESCE(refusal, ''), held, COALESCE(started_at, ''),
+		       COALESCE(scope_name, '')
 		FROM abom_analysis_run WHERE row_id = ?`, id).
 		Scan(&run.RowID, &run.Predicate, &run.Mode, &run.RequestedBy, &run.State,
-			&run.CreatedAt, &finished, &run.CLIVersion, &run.Refusal, &run.Prediction)
+			&run.CreatedAt, &finished, &run.CLIVersion, &run.Refusal, &run.Held, &run.StartedAt,
+			&run.ScopeName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return run, fmt.Errorf("no run %d", id)
 	}
@@ -478,6 +486,9 @@ func (s *Store) AnalysisRun(id int64) (AnalysisRun, error) {
 		return run, err
 	}
 	if run.Members, err = s.runMembersOf(id); err != nil {
+		return run, err
+	}
+	if run.Left, err = s.runLeftOf(id); err != nil {
 		return run, err
 	}
 	for _, m := range run.Members {
@@ -495,7 +506,8 @@ func (s *Store) AnalysisRuns() ([]AnalysisRun, error) {
 	out := []AnalysisRun{}
 	rows, err := s.db.Query(`
 		SELECT row_id, predicate, analysis_mode, requested_by, state, created_at, finished_at,
-		       COALESCE(cli_version, ''), COALESCE(refusal, ''), prediction
+		       COALESCE(cli_version, ''), COALESCE(refusal, ''), held, COALESCE(started_at, ''),
+		       COALESCE(scope_name, '')
 		FROM abom_analysis_run ORDER BY row_id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("listing runs: %w", err)
@@ -509,7 +521,7 @@ func (s *Store) AnalysisRuns() ([]AnalysisRun, error) {
 		var finished sql.NullString
 		if err := rows.Scan(&run.RowID, &run.Predicate, &run.Mode, &run.RequestedBy,
 			&run.State, &run.CreatedAt, &finished, &run.CLIVersion, &run.Refusal,
-			&run.Prediction); err != nil {
+			&run.Held, &run.StartedAt, &run.ScopeName); err != nil {
 			return nil, fmt.Errorf("scanning a run: %w", err)
 		}
 		run.FinishedAt = finished.String
@@ -527,6 +539,9 @@ func (s *Store) AnalysisRuns() ([]AnalysisRun, error) {
 			return nil, err
 		}
 		out[i].Tally = tally
+		if out[i].Left, err = s.runLeftOf(out[i].RowID); err != nil {
+			return nil, err
+		}
 
 		queries, err := s.runQueriesOf(out[i].RowID)
 		if err != nil {
@@ -570,10 +585,12 @@ func (s *Store) runQueriesOf(id int64) ([]AnalysisQuery, error) {
 func (s *Store) runMembersOf(id int64) ([]AnalysisMember, error) {
 	out := []AnalysisMember{}
 	rows, err := s.db.Query(`
-		SELECT repository, db_commit, source_filter, analysis_mode, status, detail,
-		       database_path, result_path, result_count,
-		       COALESCE(started_at, ''), COALESCE(finished_at, '')
-		FROM abom_analysis_member WHERE run_id = ? ORDER BY repository, db_commit`, id)
+		SELECT m.repository, m.db_commit, m.source_filter, m.analysis_mode, m.status, m.detail,
+		       m.database_path, m.result_path, m.result_count,
+		       COALESCE(m.started_at, ''), COALESCE(m.finished_at, ''),
+		       CASE WHEN `+stillToDo+` THEN 1 ELSE 0 END
+		FROM abom_analysis_member m JOIN abom_analysis_run r ON r.row_id = m.run_id
+		WHERE m.run_id = ? ORDER BY m.repository, m.db_commit`, id)
 	if err != nil {
 		return nil, fmt.Errorf("reading the members of run %d: %w", id, err)
 	}
@@ -584,7 +601,7 @@ func (s *Store) runMembersOf(id int64) ([]AnalysisMember, error) {
 		var results sql.NullInt64
 		if err := rows.Scan(&m.Repository, &m.Commit, &m.SourceFilter, &m.Mode,
 			&m.Status, &m.Detail, &m.DatabasePath, &m.ResultPath, &results,
-			&m.StartedAt, &m.FinishedAt); err != nil {
+			&m.StartedAt, &m.FinishedAt, &m.ToDo); err != nil {
 			return nil, fmt.Errorf("scanning a run member: %w", err)
 		}
 		m.Results, m.Counted = int(results.Int64), results.Valid

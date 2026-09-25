@@ -55,6 +55,8 @@ type tierPlan struct {
 	// findingsRules are the rules that lane runs and the query behind each, which is what traces a
 	// finding to its own query's version and source when one invocation ran many.
 	findingsRules []store.QueryRunRule
+	// metadata is everything each resolved query declared, against the version resolved.
+	metadata []store.QueryMetadata
 }
 
 func (p tierPlan) empty() bool { return len(p.bqrs) == 0 && len(p.findings) == 0 }
@@ -70,6 +72,7 @@ func (p *tierPlan) absorb(from tierPlan) {
 	p.contents = append(p.contents, from.contents...)
 	p.findingsVersions = append(p.findingsVersions, from.findingsVersions...)
 	p.findingsRules = append(p.findingsRules, from.findingsRules...)
+	p.metadata = append(p.metadata, from.metadata...)
 	for _, pk := range from.findingsPacks {
 		p.notePack(pk.Pack, pk.PackVersion, pk.PackDigest)
 	}
@@ -273,6 +276,9 @@ func (e *Expander) plansByTier(ctx context.Context, opts Options) (map[string]ti
 		if err != nil {
 			return nil, err
 		}
+		if err := e.Store.RecordQueryMetadata(planned.metadata); err != nil {
+			return nil, err
+		}
 		for _, tier := range tiers {
 			out[tier] = planned
 		}
@@ -297,6 +303,9 @@ func (e *Expander) plansByTier(ctx context.Context, opts Options) (map[string]ti
 				// What a suite resolves to is only knowable by resolving it, so the round that
 				// just paid that cost is the only place the answer is free.
 				if err := e.Store.RecordSuiteContents(suite, queries.contents); err != nil {
+					return nil, err
+				}
+				if err := e.Store.RecordQueryMetadata(queries.metadata); err != nil {
 					return nil, err
 				}
 			}
@@ -371,6 +380,9 @@ func (e *Expander) plan(ctx context.Context, opts Options) (tierPlan, error) {
 		planned.contents = append(planned.contents, store.SuiteQuery{
 			Pack: pack, PackVersion: packVersion, PackDigest: digest,
 			QueryID: md.ID, QueryVersion: version, Kind: md.Kind,
+		})
+		planned.metadata = append(planned.metadata, store.QueryMetadata{
+			QueryID: md.ID, QueryVersion: version, Pairs: md.Pairs,
 		})
 		if shape == ingest.ShapeFindings {
 			planned.findings = append(planned.findings, path)

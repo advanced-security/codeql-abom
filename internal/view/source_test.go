@@ -82,7 +82,7 @@ func TestTheCatalogOffersEverySource(t *testing.T) {
 		if want := []string{SourceUpstream, SourceAbom, SourceCustom, SourceMixed}; !slices.Equal(term.Values, want) {
 			t.Errorf("source offers %v, want %v", term.Values, want)
 		}
-		if want := []string{SurfaceSet, SurfaceInventory, SurfaceRun}; !slices.Equal(term.Surfaces, want) {
+		if want := []string{SurfaceSet, SurfaceInventory, SurfaceRun, SurfacePolicy}; !slices.Equal(term.Surfaces, want) {
 			t.Errorf("source is offered on %v, want %v", term.Surfaces, want)
 		}
 		return

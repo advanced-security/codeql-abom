@@ -67,8 +67,8 @@ func (i *Ingester) FindingsFromSARIF(r io.Reader, opts Options) (int, error) {
 // readFindings hands each result in a document to found as the finding it would be stored as, with
 // no repository and no evaluation named.
 //
-// One reading for storing and for predicting, so what a prediction says a query would report is
-// what adopting the query would store.
+// One reading for storing and for holding, so converting a held result writes the finding adopting
+// the query would have stored.
 func readFindings(r io.Reader, opts Options, found func(store.Finding) error) error {
 	// Rule metadata carries security-severity and arrives before the results it describes, so
 	// it is held here and joined by rule id as each result streams past.
@@ -133,15 +133,15 @@ func readFindings(r io.Reader, opts Options, found func(store.Finding) error) er
 	return nil
 }
 
-// parseSeverity converts the security-severity string CodeQL puts in rule properties, or 0
-// when the rule carries none.
-func parseSeverity(s string) float64 {
+// parseSeverity reads the security-severity string CodeQL puts in rule properties, nil when the
+// rule carries none or one that is not a number.
+func parseSeverity(s string) *float64 {
 	if s == "" {
-		return 0
+		return nil
 	}
 	v, err := strconv.ParseFloat(s, 64)
 	if err != nil {
-		return 0
+		return nil
 	}
-	return v
+	return &v
 }

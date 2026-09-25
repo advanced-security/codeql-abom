@@ -31,6 +31,48 @@ public class AnalysisRunsTests : AbomTestContext
         Assert.Equal("4", cut.Find("[data-abom-run-results]").TextContent.Trim());
     }
 
+    /// <summary>
+    /// While a run is under way, what it has still to do comes first, and a time remaining is the
+    /// server's, taken from what this start finished.
+    /// </summary>
+    [Fact]
+    public void ARunUnderWayLeadsWithWhatIsLeft()
+    {
+        var cut = Render(RunJson(3, "running").Replace("\"members\":[]",
+            "\"members\":[],\"left\":{\"members\":28,\"finished\":2,\"remainingSeconds\":1680}"));
+
+        var tally = cut.Find("[data-abom-run-tally]").TextContent.Trim();
+        Assert.StartsWith("28 still to do", tally);
+        Assert.Contains("about 28 min left", tally);
+    }
+
+    /// <summary>
+    /// A run asked for starts a beat later, so the list watches a pending run as closely as a
+    /// running one: otherwise what it says is left lags what the run's own row says.
+    /// </summary>
+    [Fact]
+    public void APendingRunIsWatchedAsCloselyAsARunningOne()
+    {
+        var cut = Render(RunJson(4, "pending"), RunJson(2, "complete"));
+
+        Assert.Equal(TimeSpan.FromSeconds(5), cut.Instance.Beat);
+    }
+
+    /// <summary>Before anything of a run has finished there is no pace, so there is no time.</summary>
+    [Fact]
+    public void ARunNothingOfHasFinishedStatesNoTimeRemaining()
+    {
+        var cut = Render(
+            RunJson(4, "pending").Replace("\"members\":[]",
+                "\"members\":[],\"left\":{\"members\":3,\"finished\":0,\"remainingSeconds\":null}"),
+            RunJson(2, "complete"));
+
+        var tallies = cut.FindAll("[data-abom-run-tally]").Select(e => e.TextContent.Trim()).ToList();
+        Assert.StartsWith("3 still to do", tallies[0]);
+        Assert.DoesNotContain("left", tallies[0]);
+        Assert.DoesNotContain("still to do", tallies[1]);
+    }
+
     [Fact]
     public void AFinishedRunOffersToRunAgainRatherThanToStart()
     {
@@ -81,6 +123,31 @@ public class AnalysisRunsTests : AbomTestContext
         var cut = Render(RunJson(1, "complete"));
 
         Assert.Contains("octo/app, octo/tool", cut.Find("[data-abom-run-scope]").TextContent);
+        Assert.Empty(cut.FindAll("[data-abom-run-scope-name]"));
+    }
+
+    /// <summary>
+    /// A run chosen by a named scope says which, beside the question it resolved to; a name no
+    /// longer kept still reads as the name it was chosen by.
+    /// </summary>
+    [Fact]
+    public void ARunChosenByANamedScopeNamesIt()
+    {
+        Answer("api/views", """
+            [{"name":"owned","title":"What you own","predicate":"scope=owned","builtin":true,"refuses":{}}]
+            """);
+        var cut = Render(
+            RunJson(2, "complete", predicate: "scope=owned").Replace("\"members\":[]",
+                "\"members\":[],\"scopeName\":\"owned\""),
+            RunJson(1, "complete", predicate: "q=octo").Replace("\"members\":[]",
+                "\"members\":[],\"scopeName\":\"gone\""));
+
+        cut.WaitForAssertion(() =>
+        {
+            var names = cut.FindAll("[data-abom-run-scope-name]").Select(e => e.TextContent.Trim()).ToList();
+            Assert.Equal(["What you own", "gone"], names);
+        });
+        Assert.Contains("scope: owned", cut.FindAll("[data-abom-run-scope]")[0].TextContent);
     }
 
     /// <summary>

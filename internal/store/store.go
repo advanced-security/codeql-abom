@@ -115,6 +115,9 @@ func (s *Store) Migrate() error {
 	if err := s.dropStaleDerivedTables(); err != nil {
 		return err
 	}
+	if err := s.migrateHeldNames(); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(schemaDDL); err != nil {
 		return fmt.Errorf("creating schema: %w", err)
 	}
@@ -161,6 +164,9 @@ func (s *Store) Migrate() error {
 		return err
 	}
 	if err := s.migrateQueryTestKey(); err != nil {
+		return err
+	}
+	if err := s.migrateEvidenceKey(); err != nil {
 		return err
 	}
 	// The one index a read-only server cannot wait for CreateIndexes to build.

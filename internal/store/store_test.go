@@ -35,7 +35,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 func TestIndexesAreNotCreatedByMigrateOnTheTablesItLoadsInBulk(t *testing.T) {
 	s := newTestStore(t)
 
-	bulk := []string{"abom_edge", "abom_node", "abom_finding", "abom_finding_node", "alert"}
+	bulk := []string{"abom_edge", "abom_node", "abom_finding", "abom_finding_node"}
 	for _, table := range bulk {
 		var count int
 		if err := s.DB().QueryRow(

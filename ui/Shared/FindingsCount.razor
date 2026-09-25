@@ -1,0 +1,13 @@
+@* A findings count says at what severity, or 36 critical findings read the same as 11,998 medium
+   ones. The bands arrive split by the server; this only names them, most severe first. *@
+<span class="abom-num">@Count</span>
+@if (Count > 0)
+{
+    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block abom-trunc"
+             data-abom-findings-severity>@SeverityText.Summary(Severity)</MudText>
+}
+
+@code {
+    [Parameter, EditorRequired] public int Count { get; set; }
+    [Parameter, EditorRequired] public SeverityCounts Severity { get; set; } = new();
+}

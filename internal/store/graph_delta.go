@@ -41,6 +41,9 @@ type GraphMetric struct {
 	RefsAnalyzed int `json:"refsAnalyzed"`
 	// Discovery moves as the queue is worked, which is the whole reason a follower refreshes.
 	Discovery string `json:"discovery,omitempty"`
+	// Facets are the kinds of finding the node now holds, absent where it holds none. A finding
+	// arriving changes them without changing the node, and a severity filter reads them.
+	Facets []FindingFacet `json:"facets,omitempty"`
 }
 
 // GraphDelta is what changed since a generation the client already holds.
@@ -315,5 +318,19 @@ func (s *Store) graphMetrics(display, mode string) ([]GraphMetric, error) {
 		}
 		out = append(out, m)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// The same read the full payload attaches them with, so a delta and a reload agree.
+	index := make(map[string]*GraphNode, len(out))
+	for _, m := range out {
+		index[m.Key] = &GraphNode{Key: m.Key, Rules: []string{}, Facets: []FindingFacet{}}
+	}
+	if err := s.attachRules(display, index, mode); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Facets = index[out[i].Key].Facets
+	}
+	return out, nil
 }

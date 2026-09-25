@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -78,6 +79,29 @@ func reclaimAbandonedWork(s *store.Store, queue *frontier.Queue, stdout, stderr 
 		fmt.Fprintf(stderr, "serve: marking abandoned authoring sessions: %v\n", err)
 	} else if n > 0 {
 		fmt.Fprintf(stdout, "serve: %d authoring sessions were interrupted when the server last stopped\n", n)
+	}
+}
+
+// migratePolicyScopes writes retired policy scopes into their predicates, with the grouping key
+// this server was started with, and names each one it cannot, which the evaluation then refuses.
+func migratePolicyScopes(s *store.Store, unitProperty string, stdout, stderr io.Writer) {
+	report, err := s.MigratePolicyScopes(unitProperty)
+	if err != nil {
+		fmt.Fprintf(stderr, "serve: migrating policy scopes: %v\n", err)
+		return
+	}
+	if len(report.Migrated) > 0 {
+		fmt.Fprintf(stdout, "serve: %d policies had their scope written into their predicate: %s\n",
+			len(report.Migrated), strings.Join(report.Migrated, ", "))
+	}
+	left := make([]string, 0, len(report.Left))
+	for name := range report.Left {
+		left = append(left, name)
+	}
+	sort.Strings(left)
+	for _, name := range left {
+		fmt.Fprintf(stderr, "serve: policy %q keeps a retired scope and is refused until migrated: %s\n",
+			name, report.Left[name])
 	}
 }
 
@@ -246,6 +270,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	if err := s.Migrate(); err != nil {
 		return fmt.Errorf("migrating %s: %w", *dbPath, err)
 	}
+	migratePolicyScopes(s, *groupProperty, stdout, stderr)
 
 	if err := seedDeclaration(s, *declareFile, stderr); err != nil {
 		return err

@@ -63,6 +63,9 @@ know they asked the same question — which is the whole reason one spelling win
 | **Build time** | Only an upstream project's CI runs it |
 | **Direct** | The repository names it itself, `hops = 1` |
 | **Transitive** | Reached through an intermediary someone else maintains |
+| **Reached from yours** | The `reached` term: charged to the repositories that reach it, directly or transitively, rather than to where a finding was found |
+| **Advisory severity** | The severity GitHub published an advisory at: critical, high, medium (GitHub also says moderate), low, or **unrated** where it published none. Never whether a reference falls inside the range |
+| **Any of these policies** | A superset: a policy naming others, which refuses what any of them refuses |
 
 Classification comes from `edge_kind`, which CodeQL already emits, and is never re-derived from
 file paths. Reporting build-time work as though this organization ran it would overstate exposure.
@@ -99,6 +102,11 @@ evidence. Neither a lock context nor a query's source substitutes for this datab
 | **Query version** | A content hash over a query's text and every library it imports. Editing a library changes it |
 | **Source** | Which pack supplied the query: upstream, ABOM's own, custom (the operator's), or several at once. A finding's source is its rule's, as the evaluation that reported it recorded |
 | **Source not recorded** | No evaluation that reported a finding recorded where its rule's query came from. It matches no source, and is counted beside an answer narrowed by one |
+| **Provider not recorded** | A finding whose SARIF named no tool, which is most findings older than the column. It matches no provider, is never relabeled CodeQL, and is counted beside an answer narrowed by one |
+| **Severity** | The level a result reported — error, warning, recommendation. A rule's own metadata, never ABOM's judgement |
+| **Security severity** | A rule's declared security score banded as code scanning bands it: **critical** from 9.0, **high** from 7.0, **medium** from 4.0, **low** above zero. Every count of findings says how many sit in each band. A rule's own metadata, never ABOM's judgement |
+| **Unknown** (security severity) | A finding whose rule declares no security score. Counted beside the bands, never as low or as zero |
+| **Declared metadata** | Every pair a query version states about itself, as `codeql resolve metadata` reads it. *Not read yet* means nothing has resolved that version, not that it declares nothing |
 | **What reported it** | A finding's evaluations: what ran, in which shape, under which CodeQL, the rule's own version, and who ran it — the crawl, run *N*, or a replayed recording |
 | **Lane** | What ran that is not one query: a whole suite invoked in one call, or several queries in one evaluation |
 | **Stage** | How far a version has been taken: `dev`, `test`, `extended-test`, `review`, `deploy` |
@@ -116,8 +124,13 @@ evidence. Neither a lock context nor a query's source substitutes for this datab
 | **Accepted** / **rejected** | An operator's decision about what a query reported. Accepting makes it the expected result; a rejection's reason is handed to the next session |
 | **Draft** | A request an agent drafted from a run's picked results. Nobody has filed it until a person saves it |
 | **AI units** | What a session spent, as the Copilot CLI reported it. Absent where it reported nothing |
-| **Run** | A request to analyze chosen query versions over chosen repositories' databases, or over every repository a scope lists |
-| **Prediction** | A run whose results are what its queries *would report*, held apart and stored as no finding. Made from regular databases only, it states first how many of the scope's repositories it covers |
+| **Run** | A request to analyze chosen query versions over chosen repositories' databases, or over every repository a scope lists. Drafted on the Inventory or the CodeQL page, one draft for both; from the CodeQL page, over a named scope, whose name the run keeps beside the question it resolved to |
+| **Still to do** | What a run under way has not reached in this start: waiting, running, or finished only before this start began. Listed first, the one running at the head |
+| ***About x left*** | A run's time remaining: its own finished members' pace times what is still to do. Absent until one of them finishes, and never forecast before Run |
+| **Held but not built by this CodeQL** | A database on disk that another CodeQL built, or that records none. Counted before Run as one the run builds, not as one it has |
+| **Findings on** / **findings off** | A run's one setting: whether what its queries report is stored as findings or held. Suggested from what its queries are — on only when every one is a version a pack published or a suite promoted — and overridden by one switch |
+| **Held** | What a run with findings off reported, kept apart from findings under an evaluation no skip reads. It states first how many of the scope's repositories it covers |
+| **Convert** | Make findings of what a held run kept — all of it, one repository, or chosen results — recording who did it and from which run |
 | **Skipped** | A run's repository already answered by an earlier run with the same versions, commit and CLI, and carrying that answer |
 | **Interrupted** | A run the server stopped under: neither finished nor canceled |
 
@@ -152,9 +165,11 @@ rendered as though ABOM measured it.
 | **Keep** | Name the scope on screen and save it. On the Explorer, how it is drawn is kept beside it |
 | **Forget** | Delete a scope an operator kept. A built-in cannot be forgotten |
 | ***Page* cannot narrow by** | Why a named scope is disabled on this page: the terms it cannot apply, and the pages that can |
+| **This graph does not apply *x*** | The Explorer arrived with a term it applies on neither side, and draws nothing rather than a wider picture |
 
 A named scope is the question, never the page it was kept on: one kept on the Explorer asks the
-same thing on the Inventory.
+same thing on the Inventory, and one kept in the CodeQL page's run draft is the scope the draft was
+over.
 
 ## Scope inside an organization
 

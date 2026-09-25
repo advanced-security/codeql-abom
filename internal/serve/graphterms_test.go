@@ -80,3 +80,31 @@ func TestAServerAppliedPredicateReportsNoClientWork(t *testing.T) {
 			rec.Body.String()[:min(200, len(rec.Body.String()))])
 	}
 }
+
+// The graph narrows by `unanalyzed` and hands `findings` and `advisory` to the browser. It claimed
+// all three, so `?flags=findings` answered the whole scope to a caller that was not the Explorer
+// and reported no work left for it to do.
+func TestTheGraphSaysWhichFlagsItLeftToTheClient(t *testing.T) {
+	srv, _ := unitServer(t)
+
+	for query, handed := range map[string]bool{
+		"flags=findings&scope=owned":   true,
+		"flags=advisory&scope=owned":   true,
+		"flags=unanalyzed&scope=owned": false,
+	} {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/graph/full?"+query, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status %d: %s", query, rec.Code, rec.Body.String())
+		}
+		var got struct {
+			ClientApplied []string `json:"clientApplied"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decoding the graph: %v", err)
+		}
+		if said := len(got.ClientApplied) == 1 && got.ClientApplied[0] == "flags"; said != handed {
+			t.Errorf("%s: clientApplied = %v, want flags named = %v", query, got.ClientApplied, handed)
+		}
+	}
+}

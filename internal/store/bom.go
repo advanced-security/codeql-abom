@@ -81,6 +81,8 @@ type BOMFinding struct {
 	Message          string  `json:"message,omitempty"`
 	Severity         string  `json:"severity,omitempty"`
 	SecuritySeverity float64 `json:"securitySeverity,omitempty"`
+	// Band is the score read as code scanning reads it, `unknown` where the rule declares none.
+	Band string `json:"band"`
 	// Provider is the producer that made the claim. Empty means nobody recorded one.
 	Provider string `json:"provider,omitempty"`
 	// Reproducible answers whether this provider's findings can be produced again from what was
@@ -237,6 +239,30 @@ func (s *Store) narrowToProperties(roots []string, include, exclude []viewspec.P
 		return nil, fmt.Errorf("%w: %s", ErrGroupingHasNoRepositories, describeMatches(include))
 	}
 	return kept, nil
+}
+
+// repositoriesWithValue names the owned repositories carrying one property value.
+func (s *Store) repositoriesWithValue(name, value string) (map[string]bool, error) {
+	rows, err := s.db.Query(`
+SELECT r.repository_full_name
+  FROM repository r
+  JOIN abom_repository_property p ON p.repository_full_name = r.repository_full_name
+ WHERE p.property_name = ? AND p.value = ?
+   AND `+ownedFullName("r.repository_full_name"), name, value)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]bool{}
+	for rows.Next() {
+		var full string
+		if err := rows.Scan(&full); err != nil {
+			return nil, err
+		}
+		out[strings.ToLower(full)] = true
+	}
+	return out, rows.Err()
 }
 
 // repositoriesMatching answers the repositories carrying every key asked for, at any of the values

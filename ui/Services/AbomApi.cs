@@ -288,12 +288,12 @@ public sealed class AbomApi(HttpClient http)
     /// </summary>
     public async Task<(AnalysisRun? Run, string? Refusal)> StartAnalysisRunAsync(
         string predicate, IReadOnlyList<AnalysisQueryRef> queries, string by,
-        bool prediction = false, CancellationToken ct = default)
+        bool held, CancellationToken ct = default)
     {
         try
         {
             using var response = await http.PostAsJsonAsync("api/runs?" + predicate,
-                new { queries, by, prediction }, ct);
+                new { queries, by, held }, ct);
             if (response.IsSuccessStatusCode)
             {
                 LastError = null;
@@ -476,6 +476,22 @@ public sealed class AbomApi(HttpClient http)
         await GetAsync<MemberFindings>(
             $"api/runs/{id}/results?repository={Uri.EscapeDataString(repository)}" +
             $"&query={Uri.EscapeDataString(queryId)}", ct);
+
+    /// <summary>Whether a run of these versions should store findings, as the server suggests it.</summary>
+    public async Task<FindingsSuggestion?> GetFindingsSuggestionAsync(
+        IReadOnlyList<AnalysisQueryRef> queries, CancellationToken ct = default) =>
+        queries.Count == 0
+            ? null
+            : await GetAsync<FindingsSuggestion>("api/runs/suggestion?" + string.Join("&",
+                queries.Select(q => "query=" + Uri.EscapeDataString(q.QueryId + "@" + q.QueryVersion))), ct);
+
+    /// <summary>
+    /// Makes findings of what a held run kept: the whole run with no repository, one member with no
+    /// results named, or the results named in it.
+    /// </summary>
+    public Task<(Conversion? Conversion, string? Refusal)> ConvertHeldAsync(
+        long run, string repository, IReadOnlyList<long> results, string by, CancellationToken ct = default) =>
+        ControlAsync<Conversion>($"api/runs/{run}/convert", new { repository, results, by }, ct);
 
     public async Task<FindingTrace?> GetFindingTraceAsync(long id, CancellationToken ct = default) =>
         await GetAsync<FindingTrace>($"api/findings/{id}", ct);
