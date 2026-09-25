@@ -1,15 +1,15 @@
 // Package discover finds which repositories in an organization have a CodeQL database.
 //
 // GitHub's code scanning endpoints are per-repository, so establishing the catalog is itself a
-// large parallel workload: one enumeration pass over the organization, then one lookup for
-// every repository it returned. Running it as its own pass means the cost is paid once and
-// ingestion can then work from the catalog.
+// large parallel workload. Batched workflow evidence narrows Actions probes without treating an
+// unprobed repository as one without a database. Ingestion then works from the measured catalog.
 package discover
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/advanced-security/codeql-abom/internal/catalog"
 	"github.com/advanced-security/codeql-abom/internal/store"
@@ -18,7 +18,7 @@ import (
 
 // Source enumerates repositories and looks up their databases.
 type Source interface {
-	ListRepositories(ctx context.Context, org string) ([]catalog.Repository, error)
+	ListAll(ctx context.Context, account string) (catalog.Listing, error)
 	FindDatabase(ctx context.Context, repository, language string) (catalog.Database, error)
 }
 
@@ -31,17 +31,22 @@ type Discoverer struct {
 	OnEvent     func(work.Event)
 }
 
-// Run enumerates the organization and records a catalog entry for every repository.
+// Run lists the account and records catalog entries only for repositories actually probed.
 func (d *Discoverer) Run(ctx context.Context, org string) (work.Stats, error) {
-	found, err := d.Source.ListRepositories(ctx, org)
+	found, err := d.Source.ListAll(ctx, org)
 	if err != nil {
 		return work.Stats{}, err
 	}
-	repos := make([]string, 0, len(found))
-	for _, r := range found {
-		repos = append(repos, r.FullName)
+	repos := make([]string, 0, len(found.Repositories))
+	for _, repository := range found.Repositories {
+		if strings.EqualFold(d.Language, "actions") && repository.HasWorkflows != nil && !*repository.HasWorkflows {
+			continue
+		}
+		repos = append(repos, repository.FullName)
 	}
-	return d.RunRepositories(ctx, repos)
+	stats, err := d.RunRepositories(ctx, repos)
+	stats.Skipped += len(found.Repositories) - len(repos)
+	return stats, err
 }
 
 // RunRepositories probes an explicit repository list.

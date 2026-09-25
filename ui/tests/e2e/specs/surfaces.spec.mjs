@@ -2,6 +2,57 @@ import { test, expect, ready, corpusSize, on, SURFACES, UNITS } from '../harness
 
 const EVERY_UNIT = UNITS.map((u) => `/inventory?unit=${u}`);
 
+for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    test(`Settings reports repository listing freshness at ${viewport.width}px`, on('/settings'), async ({
+        page, request, baseURL,
+    }) => {
+        const response = await request.get(`${baseURL}/api/owned-scope`);
+        expect(response.status()).toBe(200);
+        const declared = await response.json();
+        test.skip(!declared.length, 'no account is declared on this corpus');
+
+        await page.setViewportSize(viewport);
+        await page.addLocatorHandler(
+            page.getByRole('button', { name: 'Not now', exact: true }),
+            async (button) => { await button.click(); },
+        );
+        await page.goto('/settings');
+        await ready(page);
+        await expect(page.locator('[data-abom-listing]')).toHaveCount(declared.length);
+
+        for (const account of declared) {
+            const listing = page.locator(`[data-abom-listing='${account.owner}']`);
+            const marks = account.enumeration ?? {};
+            const route = { graphql: 'GraphQL', rest: 'REST' }[marks.route] ?? marks.route ?? 'not recorded';
+            await expect(listing).toContainText(`Route: ${route}`);
+            if (!marks.listedAt) await expect(listing).toContainText('No full listing recorded');
+            if (!marks.sweptAt) await expect(listing).toContainText('Changes checked: not recorded');
+
+            if (marks.highCreated || marks.highPushed) {
+                await listing.locator('summary').click();
+            }
+            for (const [field, attribute] of [
+                ['listedAt', 'listed-at'], ['sweptAt', 'swept-at'],
+                ['highCreated', 'high-created'], ['highPushed', 'high-pushed'],
+            ]) {
+                const time = listing.locator(`[data-abom-${attribute}]`);
+                if (marks[field]) {
+                    await expect(time).toHaveAttribute('datetime', marks[field]);
+                    await expect(time).toBeVisible();
+                } else {
+                    await expect(time).toHaveCount(0);
+                }
+            }
+        }
+
+        const dimensions = await page.evaluate(() => ({
+            page: document.documentElement.scrollWidth, viewport: window.innerWidth,
+        }));
+        expect(dimensions.page, 'tables contain their own horizontal overflow').toBeLessThanOrEqual(dimensions.viewport + 1);
+        await page.screenshot({ path: test.info().outputPath('listing-freshness.png'), fullPage: true });
+    });
+}
+
 // Four surfaces, one scope. The interface used to answer nine questions with nine pages, each
 // inventing its own scope, so an operator who narrowed on one could not carry that narrowing to
 // another. What is left is a Dashboard, an Inventory, an Explorer and Settings — and everything
@@ -460,6 +511,8 @@ test.describe('a scope an operator kept', () => {
             .sort()
             .join('&');
         const draft = async () => {
+            const catalogued = (await (await request.get(`${baseURL}/api/queries`)).json()).queries ?? [];
+            test.skip(catalogued.length === 0, 'no query version is catalogued on this corpus');
             await page.goto('/codeql?tab=catalog');
             await ready(page);
             // The rows arrive after who is signed in, which is what enables Run.

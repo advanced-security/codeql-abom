@@ -47,17 +47,19 @@ version and source of the rule that reported it. [`docs/architecture.md`](../doc
 says what they do and refuse. **Decided: the on-demand analysis work comes first**, and what is
 left of it is what a scope means wherever it is reused: every term is now applied or refused by name
 on every surface, and a rule can name advisories, how a repository reaches what it is about, and
-other policies, so what remains is an organization read without one request per repository. **The
+other policies, so what remains here is reviewing the listing evidence on screen and settling what
+a missing repository means. The crawler lists and queues without database probes; the explicit
+catalog command is the separate question. **The
 comparison waits for all of it, and the published pack is deferred until much later**, because the
 comparison reads a run over a scope, and the scope is what every comparison is asked for and read
 through.
 
-1. **[Only one read still scales with the organization](api/org-enumeration.md)** — the listing is
-   bounded by what moved and **the per-repository CodeQL probe is not**: there is no code-scanning
-   field on `Repository` in the GraphQL schema, checked by introspection, so it is one REST request
-   each. At twenty thousand repositories that is now the entire bill. The same entry owes the
-   interface the state the API already carries — which route answered, when the account was last
-   listed in full, when last swept.
+1. **[Finish validating organization enumeration](api/org-enumeration.md)** — the crawler never
+  pays the explicit catalog command's per-repository database probe, and that command now narrows
+  Actions probes by measured workflow presence without reporting the skipped repositories as
+  empty. Settings carries the route and separate read times. What remains is the visual review
+  that the image budget prevented, and the decision whether a
+  repository missing from a full listing is kept as coverage, labeled orphaned or pruned.
 2. **[A query's effect is known before anybody turns it on](api/query-simulation.md)** — what earns
    `review`. A policy is simulated before it is adopted; a query's effect is a comparison: some
    run's results, over regular databases, against the code scanning alerts GitHub holds now for
@@ -283,8 +285,9 @@ below enforces what a rule says. The run is built, so what leads is what a
 scope means: it sits above lock-aware resolution and the closure investigation, which make
 existing answers more correct, because nothing in it waits on them — a query authored against a
 regular per-repository database is the useful default and is what Default Setup would run anyway.
-What a term can say is built, so what is left of it is what reading the organization costs; every
-term a scope already carries is applied or refused on every surface. Native resolution and the closure investigation
+What a term can say and the account read paths are built; their remaining visual review and the
+missing-repository decision still lead. Every term a scope already carries
+is applied or refused on every surface. Native resolution and the closure investigation
 still sit above the long-standing interface work, because selecting the right code and
 distinguishing its analysis shape must precede new derived results. Two caches are built and
 reused rather than implementations waiting to be inserted into the ranking: the [checkout

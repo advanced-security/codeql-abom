@@ -16,9 +16,10 @@ findings yet.
 run is drafted on the CodeQL page over a named scope, says what it still has to do while it runs,
 and states its size before Run against the CodeQL running now
 ([`docs/architecture.md`](../../docs/architecture.md#reading-the-data-out)), and every term of the
-language is applied or refused by name on every surface. What is left is what a scope means
-wherever it is reused: [org enumeration](org-enumeration.md) — an organization read
-without one request per repository. A comparison reads a run over a scope, so that is what every
+language is applied or refused by name on every surface. [Org enumeration](org-enumeration.md)
+has its bounded read paths; its remaining work is the visual review of the listing evidence and
+the decision about repositories missing from a full listing. A comparison reads a run over a
+scope, so that is what every
 comparison is asked for and read through. Each item below that says it depends on nothing depends
 on nothing *within this plan*.
 

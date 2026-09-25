@@ -279,6 +279,20 @@ call returns a hundred repositories with their marks, their custom properties an
 branch for a single point, against a REST budget it does not share. `abom_enumeration_state.route`
 records which route produced a listing, because the two do not agree about everything.
 
+**Listing an account does not probe its databases.** The crawler records and queues declared
+repositories without asking whether GitHub holds a CodeQL database for them. The explicit
+`discover` command asks that separate question: its GraphQL listing includes default-branch
+workflow files, and Actions probes skip repositories with measured absence of those files.
+Unknown evidence, REST fallback and other languages still probe. A skipped repository is reported
+as unprobed, receives no negative catalog measurement and keeps any earlier evidence and its age;
+it remains eligible for ABOM's own analysis. Requests and GraphQL points are reported separately.
+
+**A full listing and a check for changes are different evidence.** Settings shows each account's
+last route, last full listing, last incremental read and newest observed creation and push.
+Missing times say *not recorded*, and an open page refreshes them without replacing unsaved edits.
+Only a full listing can establish absence; a repository missing from one remains recorded until
+the operator's removal policy is decided.
+
 ## The data model
 
 Everything is one SQLite file. `internal/store` is the only package that writes SQL.

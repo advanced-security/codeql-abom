@@ -29,7 +29,7 @@ public class EnumerationTests : AbomTestContext
         {"added":26,"promoted":1,"unchanged":0,
          "accounts":[{"owner":"data-douser","found":27,"added":26,"promoted":1}],"failed":[],
          "queued":27}
-        """)
+        """, string? scope = null)
     {
         // Registered before `api/owned-scope`: the stub matches by prefix, in order.
         Answer("api/owned-scope/preview", """
@@ -38,9 +38,105 @@ public class EnumerationTests : AbomTestContext
              "queuedNow":0,"queuedNext":0}
             """);
         Answer("api/owned-scope/enumerate", enumeration);
-        Answer("api/owned-scope", Declared);
+        Answer("api/owned-scope", scope ?? Declared);
         Answer("api/owner-candidates", "[]");
         Answer("api/accounts", Identity);
+    }
+
+    [Theory]
+    [InlineData("graphql", "GraphQL")]
+    [InlineData("rest", "REST")]
+    public void ARepositoryListingStatesItsRouteAndSeparateReadTimes(string route, string label)
+    {
+          Serve(scope: $$$"""
+            [{"owner":"data-douser","kind":"user","enabled":true,"includes":[],
+              "enumeration":{"route":"{{{route}}}","listedAt":"2026-09-10T12:30:00Z",
+                "sweptAt":"2026-09-11T08:00:00Z","highCreated":"2026-09-09T05:00:00Z",
+                "highPushed":"2026-09-11T07:45:00Z","listedPages":3}}]
+            """);
+
+        var cut = Render<Pages.Settings>();
+
+        cut.WaitForAssertion(() => Assert.Contains(label,
+            cut.Find("[data-abom-listing='data-douser']").TextContent));
+        Assert.Equal("2026-09-10T12:30:00Z", cut.Find("[data-abom-listed-at]").GetAttribute("datetime"));
+        Assert.Equal("2026-09-11T08:00:00Z", cut.Find("[data-abom-swept-at]").GetAttribute("datetime"));
+        Assert.Equal("2026-09-09T05:00:00Z", cut.Find("[data-abom-high-created]").GetAttribute("datetime"));
+        Assert.Equal("2026-09-11T07:45:00Z", cut.Find("[data-abom-high-pushed]").GetAttribute("datetime"));
+        Assert.Contains("Full listing", cut.Find("[data-abom-listing='data-douser']").TextContent);
+        Assert.Contains("Changes checked", cut.Find("[data-abom-listing='data-douser']").TextContent);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(",\"enumeration\":{}")]
+    [InlineData(",\"enumeration\":null")]
+    public void AnAccountWithoutARecordedListingDoesNotClaimAnEmptyOrCurrentAnswer(string metadata)
+    {
+        Serve(scope: $$$"""
+            [{"owner":"data-douser","kind":"user","enabled":true,"includes":[]{{{metadata}}}}]
+            """);
+
+        var cut = Render<Pages.Settings>();
+
+        cut.WaitForAssertion(() => Assert.Contains("No full listing recorded",
+            cut.Find("[data-abom-listing='data-douser']").TextContent));
+        var listing = cut.Find("[data-abom-listing='data-douser']");
+        Assert.Contains("Changes checked: not recorded", listing.TextContent);
+        Assert.Contains("Route: not recorded", listing.TextContent);
+        Assert.Empty(listing.QuerySelectorAll("time"));
+        Assert.DoesNotContain("0 repositories", listing.TextContent);
+    }
+
+    [Fact]
+    public void ReadingChangesCannotClaimAFullListing()
+    {
+        Serve(scope: """
+            [{"owner":"data-douser","kind":"user","enabled":true,"includes":[],
+              "enumeration":{"route":"rest","sweptAt":"2026-09-11T08:00:00Z"}}]
+            """);
+
+        var cut = Render<Pages.Settings>();
+
+        cut.WaitForAssertion(() => Assert.Contains("No full listing recorded",
+            cut.Find("[data-abom-listing='data-douser']").TextContent));
+        Assert.Empty(cut.FindAll("[data-abom-listed-at]"));
+        Assert.Equal("2026-09-11T08:00:00Z", cut.Find("[data-abom-swept-at]").GetAttribute("datetime"));
+    }
+
+    [Fact]
+    public void EnumeratingReloadsTheRecordedReadTimesAfterTheReadFinishes()
+    {
+        Serve();
+        var cut = Render<Pages.Settings>();
+        cut.WaitForAssertion(() => Assert.Contains("data-abom-save", cut.Markup));
+
+        Declare(cut);
+        cut.Find("[data-abom-save]").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            var requests = Sent.ToList();
+            var enumerated = requests.FindIndex(request => request.Url.Contains("api/owned-scope/enumerate"));
+            Assert.True(enumerated >= 0);
+            Assert.Contains(requests.Skip(enumerated + 1),
+                request => request.Method == "GET" && request.Url.EndsWith("api/owned-scope"));
+        });
+    }
+
+    [Fact]
+    public async Task AnOpenSettingsPageRefreshesListingEvidenceWithoutDiscardingEdits()
+    {
+        Serve();
+        var cut = Render<Pages.Settings>();
+        cut.WaitForAssertion(() => Assert.Contains("data-abom-save", cut.Markup));
+        cut.Find("[data-abom-new-owner] input").Change("unsaved-account");
+        var previousReads = Sent.Count(request => request.Method == "GET" && request.Url.EndsWith("api/owned-scope"));
+
+        await cut.InvokeAsync(() => cut.FindComponent<Shared.DiscoveryControls>().Instance.Changed.InvokeAsync());
+
+        Assert.True(Sent.Count(request => request.Method == "GET" && request.Url.EndsWith("api/owned-scope")) > previousReads);
+        Assert.Equal("unsaved-account", cut.Find("[data-abom-new-owner] input").GetAttribute("value"));
     }
 
     // Saving a declaration must enumerate it. A separate button would let an operator do the part

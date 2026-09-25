@@ -22,6 +22,7 @@ const reposPerPage = 100
 type Repository struct {
 	FullName      string
 	DefaultBranch string
+	HasWorkflows  *bool
 	// CreatedAt and PushedAt are what a sorted read stops below. Zero means GitHub named none,
 	// which a repository with no commits genuinely has: it was created and never pushed, and
 	// that is the case the creation-ordered walk exists for.
@@ -119,4 +120,38 @@ func nextLink(header string) string {
 		}
 	}
 	return ""
+}
+
+func workflowFiles(raw json.RawMessage) *bool {
+	if len(raw) == 0 {
+		return nil
+	}
+	found := false
+	if string(raw) == "null" {
+		return &found
+	}
+	var tree struct {
+		Kind    string `json:"__typename"`
+		Entries *[]struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(raw, &tree); err != nil || tree.Kind == "" {
+		return nil
+	}
+	if tree.Kind != "Tree" {
+		return &found
+	}
+	if tree.Entries == nil {
+		return nil
+	}
+	for _, entry := range *tree.Entries {
+		name := strings.ToLower(entry.Name)
+		if entry.Type == "blob" && (strings.HasSuffix(name, ".yml") || strings.HasSuffix(name, ".yaml")) {
+			found = true
+			break
+		}
+	}
+	return &found
 }

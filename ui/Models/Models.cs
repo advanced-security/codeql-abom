@@ -783,6 +783,7 @@ public sealed record DeclaredAccount
 
     public IReadOnlyList<string> Includes { get; init; } = [];
     public string DeclaredAt { get; init; } = string.Empty;
+    public EnumerationMarks? Enumeration { get; init; }
 
     /// <summary>
     /// How the row arrived: <c>cli</c>, <c>interface</c>, or empty when it predates the column and
@@ -803,6 +804,15 @@ public sealed record DeclaredAccount
 
     /// <summary>True when nobody can say how this declaration got here.</summary>
     public bool Unaccounted => string.IsNullOrEmpty(DeclaredBy);
+}
+
+public sealed record EnumerationMarks
+{
+    public string Route { get; init; } = string.Empty;
+    public string ListedAt { get; init; } = string.Empty;
+    public string SweptAt { get; init; } = string.Empty;
+    public string HighCreated { get; init; } = string.Empty;
+    public string HighPushed { get; init; } = string.Empty;
 }
 
 /// <summary>

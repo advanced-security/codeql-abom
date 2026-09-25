@@ -246,8 +246,23 @@ test.describe('geometry', () => {
         ...['catalog', 'runs', 'requests'].map((t) => ({ name: `CodeQL's ${t}`, path: `/codeql?tab=${t}` })),
         ...[...UNITS, 'coverage'].map((u) => ({ name: `Inventory's ${u}`, path: `/inventory?unit=${u}` })),
     ];
+    // Asked of the API, so an empty corpus skips and a populated grid that renders no row fails.
+    const LISTED = {
+        dependencies: ['/api/actions?top=1', (d) => d.total],
+        workflows: ['/api/workflows?top=1', (d) => d.total],
+        jobs: ['/api/jobs?top=1', (d) => d.total],
+        repositories: ['/api/repositories?top=1', (d) => d.total],
+        advisories: ['/api/remediation?top=1', (d) => d.total],
+        relationships: ['/api/relationships?top=1', (d) => d.total],
+        coverage: ['/api/frontier?top=1', (d) => d.length],
+    };
     for (const { name: tab, path } of PINNED) {
-        test(`${tab} keeps its column names in view as its rows scroll`, on(path), async ({ page }) => {
+        test(`${tab} keeps its column names in view as its rows scroll`, on(path), async ({ page, request, baseURL }) => {
+            const listed = LISTED[new URLSearchParams(path.split('?')[1]).get('unit')];
+            if (listed) {
+                const answer = await (await request.get(`${baseURL}${listed[0]}`)).json();
+                test.skip(!listed[1](answer), `${tab} lists nothing on this corpus`);
+            }
             await page.setViewportSize({ width: 1280, height: 720 });
             await page.goto(path);
             await ready(page);
