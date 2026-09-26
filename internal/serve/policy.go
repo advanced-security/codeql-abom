@@ -22,11 +22,25 @@ func (s *Server) savePolicy(w http.ResponseWriter, r *http.Request) {
 	if !s.allowControl(w, r) {
 		return
 	}
-	var p store.Policy
-	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		writeError(w, http.StatusBadRequest, "a policy is a name, a predicate and a scope")
+	var body struct {
+		Name       string `json:"name"`
+		Predicate  string `json:"predicate"`
+		ScopeKind  string `json:"scopeKind"`
+		ScopeValue string `json:"scopeValue"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "a policy is a name and a predicate")
 		return
 	}
+	// Refused rather than dropped: saved without it, a policy for one unit would refuse the whole
+	// organization. The scope is a term of the predicate now, applied by the one evaluation.
+	if (body.ScopeKind != "" && body.ScopeKind != "organization") || body.ScopeValue != "" {
+		writeError(w, http.StatusBadRequest,
+			"a policy is bound by its predicate: write repositories=<owner/name> or "+
+				"properties=<key>:<value> into it rather than a scope beside it")
+		return
+	}
+	p := store.Policy{Name: body.Name, Predicate: body.Predicate}
 	// Refused while the operator is still looking at it. A policy whose text carries more than it
 	// enforces blocks pull requests for something wider than anybody read.
 	spec, err := viewspec.Parse(p.Predicate)
@@ -34,8 +48,12 @@ func (s *Server) savePolicy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if refused := spec.UnenforceableAsSet(); len(refused) > 0 {
+	if refused := spec.UnenforceableAsPolicy(); len(refused) > 0 {
 		writeError(w, http.StatusBadRequest, unenforceable(refused))
+		return
+	}
+	if err := spec.SetConflict(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	p.CreatedBy = store.DeclaredByInterface

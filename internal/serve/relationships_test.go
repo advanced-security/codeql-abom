@@ -19,7 +19,7 @@ func everyTerm(t *testing.T) url.Values {
 		Repositories:  []string{"octo-org/app"},
 		Properties:    []viewspec.PropertyMatch{{Name: "k", Value: "v"}},
 		NotProperties: []viewspec.PropertyMatch{{Name: "k", Value: "v"}},
-		Provider:      "codeql", Severity: "high", EdgeClass: []string{"same-repo"},
+		Provider:      "codeql", Severity: "high", EdgeClass: []string{"sameRepo"},
 		EdgeKinds: []string{viewspec.EdgeKindJobNeedsJob},
 		RefStyle:  "tag", Boundary: "cross-owner", MinReach: 1,
 		Flags: []string{"findings"}, Steps: true,

@@ -200,6 +200,39 @@ public sealed class ExplorerNodePanelTests : AbomTestContext
             page.Markup);
     }
 
+    /// <summary>
+    /// How severe a node's findings are is the half of blast radius a reader cannot see from its
+    /// size. Each facet carries the band the server read its score as, and a rule declaring no
+    /// score is unknown rather than the level its result reported.
+    /// </summary>
+    [Fact]
+    public async Task ANodesFindingsAreSummarizedBySeverity()
+    {
+        StubGraphModule();
+        var page = Render<Explorer>();
+
+        await page.InvokeAsync(() => page.Instance.OnNodeHovered(new GraphNodeBrief
+        {
+            Key = "octo/app/.github/workflows/ci.yml",
+            Kind = "workflow",
+            Findings = 5,
+            Facets =
+            [
+                new FindingFacet { Rule = "actions/code-injection/critical", Severity = "error", SecuritySeverity = 9.3, Band = "critical", Count = 1 },
+                new FindingFacet { Rule = "actions/unpinned-tag", Severity = "warning", SecuritySeverity = 5.0, Band = "medium", Count = 3 },
+                new FindingFacet { Rule = "actions/unnecessary-use-of-advanced-config", Severity = "recommendation", Band = "unknown", Count = 1 },
+            ],
+        }));
+
+        var severity = page.Find("[data-abom-node-fact='severity']").TextContent;
+        Assert.Contains("1 critical", severity);
+        Assert.Contains("3 medium", severity);
+        Assert.Contains("1 unknown", severity);
+        Assert.True(severity.IndexOf("critical", StringComparison.Ordinal)
+                    < severity.IndexOf("medium", StringComparison.Ordinal),
+            "the most severe is not named first");
+    }
+
     /// Every typed call needs a result: loose mode answers `default`, which for a record is null,
     /// and the page dereferences what the module hands back.
     private void StubGraphModule()

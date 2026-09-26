@@ -1,0 +1,19 @@
+[
+{
+  "test" : "/private/tmp/abom-testrun-capture/mismatch/test/SelfHostedRunner/SelfHostedRunner.qlref",
+  "pass" : false,
+  "failureStage" : "RESULT",
+  "messages" : [ ],
+  "compilationMs" : 380,
+  "evaluationMs" : 812,
+  "expected" : "/private/tmp/abom-testrun-capture/mismatch/test/SelfHostedRunner/SelfHostedRunner.expected",
+  "actual" : "/private/tmp/abom-testrun-capture/mismatch/test/SelfHostedRunner/SelfHostedRunner.actual",
+  "diff" : [
+    "--- expected",
+    "+++ actual",
+    "@@ -1,2 +1,1 @@",
+    " | .github/workflows/runners.yml:6:5:10:2 | Job: on-hardware-we-own | This job runs on a self-hosted runner (self-hosted). |",
+    "-| .github/workflows/runners.yml:1:1:1:1 | Job: nothing | a line the query never prints |"
+  ]
+}
+]

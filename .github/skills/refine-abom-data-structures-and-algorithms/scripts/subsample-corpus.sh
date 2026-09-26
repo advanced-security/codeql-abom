@@ -80,12 +80,9 @@ UPDATE abom_node SET container_node_row_id = NULL
 
 DELETE FROM abom_blast_radius WHERE node_row_id NOT IN (SELECT row_id FROM abom_node);
 DELETE FROM abom_surface      WHERE node_row_id NOT IN (SELECT row_id FROM abom_node);
-DELETE FROM abom_alert_link   WHERE node_row_id NOT IN (SELECT row_id FROM abom_node);
 DELETE FROM abom_exposure
  WHERE node_row_id NOT IN (SELECT row_id FROM abom_node)
     OR repository_row_id NOT IN (SELECT row_id FROM keep_repo);
-DELETE FROM alert WHERE repository_row_id NOT IN (SELECT row_id FROM keep_repo);
-DELETE FROM abom_alert_link WHERE alert_row_id NOT IN (SELECT row_id FROM alert);
 
 -- These join to a repository by full name rather than by row id. abom_observation plus its
 -- autoindex is 42% of the reference database, larger than nodes and edges combined, so leaving it

@@ -31,6 +31,8 @@ type RelationshipSummary struct {
 	// step or the job itself. No unit lists either kind, so this is the only row they reach.
 	Findings int      `json:"findings"`
 	Rules    []string `json:"rules"`
+	// Severity is the same findings by band.
+	Severity SeverityCounts `json:"severity"`
 
 	AdvisoryRoute *bool `json:"advisoryRoute"`
 	FindingRoute  *bool `json:"findingRoute"`
@@ -271,6 +273,17 @@ func (s *Store) RelationshipsPage(q RelationshipsQuery) (RelationshipsPage, erro
 		}, query, pageArgs...)
 	if err != nil {
 		return RelationshipsPage{}, err
+	}
+	sources := make([]string, 0, len(items))
+	for _, r := range items {
+		sources = append(sources, r.Source)
+	}
+	bands, err := s.severityByNode(q.Mode, sources)
+	if err != nil {
+		return RelationshipsPage{}, err
+	}
+	for i := range items {
+		items[i].Severity = bands[items[i].Source]
 	}
 	return RelationshipsPage{Items: items, Total: total}, nil
 }

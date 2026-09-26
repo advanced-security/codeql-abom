@@ -87,10 +87,19 @@ type Server struct {
 	// what a server built without a CodeQL runner can honestly offer.
 	Executor RunExecutor
 
-	// Tester runs the query tests under TestDir. Both are empty unless the operator named a query
-	// directory, and a server without one says so rather than reporting a query as untestable.
-	Tester  QueryTester
-	TestDir string
+	// Tester runs the tests of a query in QueryDir, the operator's pack. Both are empty unless the
+	// operator named one, and a server without one says so rather than reporting a query as
+	// untestable.
+	Tester   QueryTester
+	QueryDir string
+
+	// Printer prints a query's tree over its test database, as a session's PrintAST does. Nil when
+	// there is no pack to print from.
+	Printer ASTPrinter
+
+	// Authoring runs agent sessions on requests, in QueryDir. Nil answers that this server has no
+	// pack to author in.
+	Authoring Authoring
 
 	// running holds how to stop each run this process started. Only those: a run left `running`
 	// by a server that died is not one this server can stop.
@@ -123,9 +132,13 @@ func (s *Server) routes() *http.ServeMux {
 
 	mux.HandleFunc("GET /api/summary", s.summary)
 	mux.HandleFunc("GET /api/remediation", reading(s.remediation,
-		"top", "offset", "sort", "desc", "view", "properties", "notProperties"))
+		"top", "offset", "sort", "desc", "view", "properties", "notProperties",
+		"advisorySeverity", "reached"))
 	mux.HandleFunc("GET /api/advisories", reading(s.advisories, "top", "properties", "notProperties"))
 	mux.HandleFunc("GET /api/exposure", reading(s.exposure, "by", "top", "properties", "notProperties"))
+	// The focus walk refuses the property terms rather than applying them: it is one node's
+	// neighborhood under a hop and node budget, no interface calls it, and "what this node reaches
+	// within my unit" is answered by /api/graph/full with properties and a focus drawn over it.
 	mux.HandleFunc("GET /api/graph", reading(s.graph,
 		"focus", "hops", "max", "direction", "granularity", "expand", "mode"))
 	mux.HandleFunc("GET /api/graph/full", s.fullGraph)
@@ -164,9 +177,29 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/queries", s.queries)
 	mux.HandleFunc("POST /api/queries/stage", s.advanceQuery)
 	mux.HandleFunc("POST /api/queries/test", s.testQuery)
+	mux.HandleFunc("POST /api/queries/ast", s.printQueryAST)
+	mux.HandleFunc("GET /api/queries/asts", reading(s.queryASTs, "query"))
+	mux.HandleFunc("GET /api/query-requests", s.queryRequests)
+	mux.HandleFunc("POST /api/query-requests", s.saveQueryRequest)
+	mux.HandleFunc("PUT /api/query-requests/{id}", s.editQueryRequest)
+	mux.HandleFunc("GET /api/query-requests/{id}/sessions", s.requestSessions)
+	mux.HandleFunc("POST /api/query-requests/{id}/sessions", s.startSession)
+	mux.HandleFunc("POST /api/query-requests/{id}/sessions/stop", s.stopSession)
+	mux.HandleFunc("GET /api/authoring-sessions/{id}/events", reading(s.sessionEvents, "after", "limit"))
+	mux.HandleFunc("GET /api/query-requests/{id}/asts", s.requestASTs)
+	mux.HandleFunc("GET /api/query-requests/{id}/review", s.requestReview)
+	mux.HandleFunc("POST /api/query-requests/{id}/review", s.reviewReport)
+	mux.HandleFunc("GET /api/runs/{id}/drafts", s.runDrafts)
+	mux.HandleFunc("POST /api/runs/{id}/drafts", s.startDraft)
+	mux.HandleFunc("POST /api/runs/{id}/drafts/stop", s.stopDraft)
+	mux.HandleFunc("GET /api/authoring-asts/{id}", s.authoringAST)
 	mux.HandleFunc("GET /api/runs", s.runs)
 	mux.HandleFunc("POST /api/runs", s.startRun)
+	mux.HandleFunc("GET /api/runs/suggestion", reading(s.runSuggestion, "query"))
 	mux.HandleFunc("GET /api/runs/{id}", s.run)
+	mux.HandleFunc("GET /api/runs/{id}/results", reading(s.runResults, "repository", "query"))
+	mux.HandleFunc("POST /api/runs/{id}/convert", s.convertHeld)
+	mux.HandleFunc("GET /api/findings/{id}", s.findingTrace)
 	mux.HandleFunc("POST /api/runs/{id}/start", s.executeRun)
 	mux.HandleFunc("POST /api/runs/{id}/cancel", s.cancelRun)
 	mux.HandleFunc("GET /api/views", s.views)
@@ -188,7 +221,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/actions", reading(s.actions,
 		"q", "top", "offset", "sort", "desc", "view",
 		"kinds", "origins", "minReach", "scope", "flags", "ref",
-		"rules", "notRules", "provider", "severity", "repositories", "mode",
+		"rules", "notRules", "provider", "severity", "securitySeverity", "source", "repositories", "mode",
 		"properties", "notProperties"))
 	mux.HandleFunc("GET /api/workflows", reading(s.workflows,
 		"q", "top", "offset", "sort", "desc", "view",
@@ -374,9 +407,11 @@ func (s *Server) remediation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	page, err := s.Store.AdvisoriesPage(store.AdvisoriesQuery{
-		Offset:   intParam(r, "offset", 0),
-		Limit:    intParam(r, "top", 50),
-		Grouping: scopeFromSpec(spec),
+		Offset:     intParam(r, "offset", 0),
+		Limit:      intParam(r, "top", 50),
+		Grouping:   scopeFromSpec(spec),
+		Severities: spec.AdvisorySeverities,
+		Reached:    spec.Reached,
 	})
 	writeJSON(w, page, err)
 }
@@ -954,10 +989,48 @@ func misdirected(name string) string {
 	case viewspec.AppliedByExplorer(name):
 		return fmt.Sprintf("this list does not narrow by %q. The Explorer does.", name)
 	case viewspec.IsTerm(name):
-		return fmt.Sprintf("this list does not narrow by %q, and no surface here does.", name)
+		switch where := appliedElsewhere(name); len(where) {
+		case 0:
+			return fmt.Sprintf("this list does not narrow by %q, and no surface here does.", name)
+		case 1:
+			return fmt.Sprintf("this list does not narrow by %q; %s does.", name, where[0])
+		default:
+			return fmt.Sprintf("this list does not narrow by %q; %s and %s do.", name,
+				strings.Join(where[:len(where)-1], ", "), where[len(where)-1])
+		}
 	default:
 		return fmt.Sprintf("ABOM has no filter called %q.", name)
 	}
+}
+
+// surfaceWords are the surfaces a refusal can send a reader to, in the words the interface uses.
+var surfaceWords = map[string]string{
+	viewspec.SurfaceSet:           "the match endpoint",
+	viewspec.SurfaceInventory:     "the Actions unit",
+	viewspec.SurfaceWorkflows:     "the Workflows unit",
+	viewspec.SurfaceJobs:          "the Jobs unit",
+	viewspec.SurfaceRepositories:  "the Repositories unit",
+	viewspec.SurfaceAdvisories:    "the Advisories unit",
+	viewspec.SurfaceRelationships: "the Relationships unit",
+	viewspec.SurfaceDocument:      "the bill of materials",
+	viewspec.SurfaceRun:           "a run",
+	viewspec.SurfacePolicy:        "a policy",
+}
+
+// appliedElsewhere names, from the catalog, the surfaces that do apply a term.
+func appliedElsewhere(name string) []string {
+	words := []string{}
+	for _, term := range viewspec.Catalog() {
+		if term.Name != name {
+			continue
+		}
+		for _, surface := range term.Surfaces {
+			if w, ok := surfaceWords[surface]; ok {
+				words = append(words, w)
+			}
+		}
+	}
+	return words
 }
 
 func (s *Server) frontier(w http.ResponseWriter, r *http.Request) {
@@ -993,9 +1066,11 @@ func (s *Server) actions(w http.ResponseWriter, r *http.Request) {
 		NotRules: spec.NotRules,
 		Provider: spec.Provider,
 		Severity: spec.Severity,
+		Sources:  spec.Sources,
 		Mode:     spec.Mode,
 
-		Repositories: spec.Repositories,
+		SecuritySeverities: spec.SecuritySeverities,
+		Repositories:       spec.Repositories,
 
 		Sort:     r.URL.Query().Get("sort"),
 		Desc:     r.URL.Query().Get("desc") == "true",
@@ -1068,9 +1143,26 @@ func (s *Server) relationships(w http.ResponseWriter, r *http.Request) {
 // reader who asked a reasonable question in the wrong place, and an API route is not a place they
 // can go.
 func unlistable(terms []string) string {
-	return strings.Join(terms, ", ") +
-		" describes a relationship or a finding, which a list of nodes cannot answer. " +
-		"The Explorer does."
+	whole, members := []string{}, []string{}
+	for _, t := range terms {
+		if strings.Contains(t, "=") {
+			members = append(members, t)
+		} else {
+			whole = append(whole, t)
+		}
+	}
+	parts := []string{}
+	if len(whole) > 0 {
+		parts = append(parts, strings.Join(whole, ", ")+
+			" describes a relationship or a finding, which a list of nodes cannot answer. "+
+			"The Explorer does.")
+	}
+	// A value of a term the unit does apply: refused rather than dropped, and answered elsewhere.
+	if len(members) > 0 {
+		parts = append(parts, strings.Join(members, ", ")+
+			" is not a value this unit narrows by. The dependencies listing answers every flag.")
+	}
+	return strings.Join(parts, " ")
 }
 
 // repositories lists one page of the repositories unit, ordered across the whole match.
@@ -1087,24 +1179,15 @@ func (s *Server) repositories(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, unlistable(refused))
 		return
 	}
-	query := store.RepositoriesQuery{
-		Search:   spec.Search,
-		Scope:    spec.Scope,
-		Sort:     r.URL.Query().Get("sort"),
-		Desc:     r.URL.Query().Get("desc") == "true",
-		Offset:   intParam(r, "offset", 0),
-		Limit:    intParam(r, "top", 50),
-		Grouping: scopeFromSpec(spec),
+	query, err := s.repositoriesQuery(spec)
+	if err != nil {
+		writeJSON(w, store.RepositoriesPage{}, err)
+		return
 	}
-	// The same closure the node listing reads, so "what you own" means one population across units.
-	if query.Scope == store.ScopeOwned {
-		keep, _, err := (&graph.Builder{Store: s.Store}).KeepList()
-		if err != nil {
-			writeJSON(w, store.RepositoriesPage{}, err)
-			return
-		}
-		query.Closure = keep
-	}
+	query.Sort = r.URL.Query().Get("sort")
+	query.Desc = r.URL.Query().Get("desc") == "true"
+	query.Offset = intParam(r, "offset", 0)
+	query.Limit = intParam(r, "top", 50)
 	page, err := s.Store.RepositoriesPage(query)
 	writeJSON(w, page, err)
 }

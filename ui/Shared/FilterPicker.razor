@@ -80,7 +80,9 @@
                     <MudText Typo="Typo.caption" Class="pa-2 mud-text-secondary d-block">
                         @(_terms.Count == 0
                             ? "No filters are available."
-                            : "Every filter this view applies is already set.")
+                            : !_terms.Any(t => t.Surfaces.Contains(Surface))
+                                ? "This view applies no filters."
+                                : "Every filter this view applies is already set.")
                     </MudText>
                 }
             }
@@ -222,6 +224,14 @@
             }
         </ChildContent>
     </MudMenu>
+    @foreach (var (key, breakdown) in Unvalued)
+    {
+        <MudText Typo="Typo.caption" Class="mud-text-secondary abom-picker-unvalued"
+                 data-abom-property-unvalued>
+            @breakdown.WithoutValue of @breakdown.Repositories repositories carry no @key, and no
+            answer here speaks for them.
+        </MudText>
+    }
 </div>
 
 @code {
@@ -261,9 +271,36 @@
         Scope.Changed += Redraw;
         _terms = await Api.GetFilterTermsAsync();
         _valueCounts = await Api.GetFilterValueCountsAsync();
+        await ReadUnvalued();
     }
 
-    private void Redraw() => InvokeAsync(StateHasChanged);
+    private void Redraw() => InvokeAsync(async () =>
+    {
+        StateHasChanged();
+        await ReadUnvalued();
+        StateHasChanged();
+    });
+
+    /// How each key a property filter keeps divides the repositories, read once per key.
+    private readonly Dictionary<string, PropertyBreakdown?> _breakdowns = new(StringComparer.Ordinal);
+
+    private async Task ReadUnvalued()
+    {
+        var keys = Scope.Spec.Properties.Select(p => p.Name).Distinct().ToList();
+        foreach (var key in keys.Where(key => !_breakdowns.ContainsKey(key)))
+        {
+            _breakdowns[key] = (await Api.GetPropertiesAsync(key))?.Breakdown;
+        }
+    }
+
+    /// <summary>
+    /// The kept keys some repositories carry no value for. Only `properties`: a repository with no
+    /// value is outside an inclusion, and inside an exclusion, which removes only what matched.
+    /// </summary>
+    private IEnumerable<(string Key, PropertyBreakdown Breakdown)> Unvalued =>
+        Scope.Spec.Properties.Select(p => p.Name).Distinct()
+            .Where(k => _breakdowns.TryGetValue(k, out var b) && b is { WithoutValue: > 0 })
+            .Select(k => (k, _breakdowns[k]!));
 
     public void Dispose() => Scope.Changed -= Redraw;
 
@@ -354,7 +391,8 @@
         // contain, and are read once per visit to the term rather than per keystroke.
         if (term.Values.Count > 0)
         {
-            _values = [.. term.Values.Select(v => new FilterValue { Value = v })];
+            var offered = term.SurfaceValues.TryGetValue(Surface, out var answered) ? answered : term.Values;
+            _values = [.. offered.Select(v => new FilterValue { Value = v })];
             StateHasChanged();
             return;
         }

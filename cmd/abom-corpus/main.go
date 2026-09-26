@@ -29,12 +29,24 @@ func main() {
 	// the only reason to keep a second rendering of every component alive.
 	without := flag.String("without", "",
 		"comma-separated facts to leave out: advisories, findings")
+	// The operator's query pack a server is given with --custom-ql-dir, laid out beside the
+	// database: without one no custom query, mark or session can be drawn.
+	queries := flag.String("queries", "", "directory to lay the corpus query pack out in, replacing it")
+	record := flag.String("record-queries", "",
+		"run the corpus query pack's tests with the CodeQL CLI and write what it said to this file")
 	flag.Parse()
+	if *record != "" {
+		if err := recordQueries(*record); err != nil {
+			fmt.Fprintf(os.Stderr, "abom-corpus: recording the query pack: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if *dbPath == "" {
 		fmt.Fprintln(os.Stderr, "abom-corpus: --db is required")
 		os.Exit(2)
 	}
-	if err := build(*dbPath, *fixtures, omitted(*without)); err != nil {
+	if err := build(*dbPath, *fixtures, *queries, omitted(*without)); err != nil {
 		fmt.Fprintf(os.Stderr, "abom-corpus: %v\n", err)
 		os.Exit(1)
 	}
@@ -51,7 +63,7 @@ func omitted(list string) map[string]bool {
 	return out
 }
 
-func build(dbPath, fixtures string, without map[string]bool) error {
+func build(dbPath, fixtures, queries string, without map[string]bool) error {
 	// A rebuild replaces rather than merges: a corpus that accumulated across runs would differ
 	// between a fresh checkout and a second invocation, which is the property this exists to have.
 	for _, suffix := range []string{"", "-wal", "-shm"} {
@@ -109,6 +121,12 @@ func build(dbPath, fixtures string, without map[string]bool) error {
 	}
 	if err := (&graph.Builder{Store: s}).RebuildAggregates(); err != nil {
 		return fmt.Errorf("rebuilding aggregates: %w", err)
+	}
+
+	if queries != "" {
+		if err := seedQueries(s, fixtures, queries); err != nil {
+			return fmt.Errorf("laying out the query pack: %w", err)
+		}
 	}
 
 	return report(os.Stdout, s, dbPath)
@@ -214,6 +232,7 @@ func ingestRepository(s *store.Store, fixtures, full string, without map[string]
 		// The recording replays one repository's own checkout, which is the shape it was taken
 		// from.
 		AnalysisMode: store.AnalysisModeRegular,
+		RecordedBy:   store.RecordedByCorpus,
 	})
 	if err != nil {
 		return fmt.Errorf("recording the fixture run: %w", err)

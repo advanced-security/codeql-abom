@@ -113,3 +113,35 @@ func TestTagsMatchIndividually(t *testing.T) {
 		t.Error("HasTag matched a fragment of a tag rather than a whole one")
 	}
 }
+
+// Every pair the CLI resolves is kept, including ones ABOM has no field for: a query's metadata is
+// the query's own statement about itself, and keeping four keys of it drops the severity.
+func TestResolveMetadataKeepsEveryPairTheQueryDeclares(t *testing.T) {
+	stub, _ := stubCodeQL(t, `printf '%s' '{"name":"Checkout of untrusted code","kind":"path-problem",`+
+		`"problem.severity":"error","precision":"very-high","security-severity":"9.3",`+
+		`"id":"actions/untrusted-checkout/critical","tags":"actions security",`+
+		`"sub-severity":"high"}'`+"\n")
+	r := &Runner{CodeQLPath: stub}
+
+	md, err := r.ResolveMetadata(context.Background(), "/q/UntrustedCheckoutCritical.ql")
+	if err != nil {
+		t.Fatalf("ResolveMetadata: %v", err)
+	}
+	want := map[string]string{
+		"name": "Checkout of untrusted code", "kind": "path-problem", "problem.severity": "error",
+		"precision": "very-high", "security-severity": "9.3",
+		"id": "actions/untrusted-checkout/critical", "tags": "actions security",
+		"sub-severity": "high",
+	}
+	if len(md.Pairs) != len(want) {
+		t.Errorf("kept %d pairs, want all %d: %v", len(md.Pairs), len(want), md.Pairs)
+	}
+	for k, v := range want {
+		if md.Pairs[k] != v {
+			t.Errorf("Pairs[%q] = %q, want %q", k, md.Pairs[k], v)
+		}
+	}
+	if md.ID != want["id"] || md.Kind != want["kind"] {
+		t.Errorf("the named fields drifted from the pairs: id %q, kind %q", md.ID, md.Kind)
+	}
+}

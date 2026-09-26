@@ -206,8 +206,8 @@ databases it already holds. **No alert exists that a person did not choose**, sa
 construction rather than by a gate: the choice is the publication, and removing the pack from the
 configuration file stops the alerts at the next scan.
 
-That prediction has a stated boundary. ABOM analyzes a pinned commit; Default Setup scans a default
-branch. Where those agree the prediction is a measurement, and where they do not it is an
+That answer has a stated boundary. ABOM analyzes a pinned commit; Default Setup scans a default
+branch. Where those agree the answer is a measurement, and where they do not it is an
 extrapolation, and it says which it is.
 
 **ABOM's own findings stay in ABOM, permanently and by design.** They are what publication decisions
@@ -243,8 +243,8 @@ rather than everything:
   where it waits on an intermediary somebody else owns.
 
 The third is the reason any of this exists. GitHub's dependency graph stops at the first hop, so a
-rule about the second hop is a rule only ABOM can evaluate — and severity against reach is already
-the arithmetic remediation is ordered by, so a policy written in those two axes is not a new model,
+rule about the second hop is a rule only ABOM can evaluate — and severity then reach is already
+the order remediation follows, so a policy written in those two axes is not a new model,
 it is the existing one given teeth. **A rule is never about a specific reference, and never about
 something the operator does not own.** Pinning is `actions/unpinned-tag`'s call, and a repository
 outside the declared scope is somebody else's to fix.

@@ -35,8 +35,8 @@ two has produced a wrong number here before.
 **Direct and transitive are different work.** One is a version bump you can make; the other waits
 on someone else. Never collapse them into a single "affected" count.
 
-**Priority is severity × reach.** CVSS and EPSS are reported alongside and stay out of the
-arithmetic, so the number remains explainable.
+**Priority is severity, then reach.** CVSS and EPSS are reported alongside and stay out of the
+order, so it remains explainable.
 
 **Say what is not known.** Coverage and unresolved dependencies are output, not omissions.
 

@@ -213,6 +213,7 @@ public class ViewSpecTests
     [InlineData("origins=seed%2Cupstream&rules=abom%2Funpinned")]
     [InlineData("notRules=abom%2Fnoisy&rules=actions%2F%2A")]
     [InlineData("provider=CodeQL&severity=error")]
+    [InlineData("rules=actions%2F%2A&source=abom%2Cupstream")]
     [InlineData("repositories=octo-org%2Fapp%2Cocto-org%2Ftool")]
     [InlineData("mode=extended")]
     [InlineData("mode=regular&rules=actions%2F%2A")]
@@ -233,4 +234,81 @@ public class ViewSpecTests
     [Fact]
     public void AnEmptyValueIsRefusedRatherThanTreatedAsAbsent() =>
         Assert.Throws<FormatException>(() => ViewSpec.Parse("kinds="));
+
+    /// <summary>
+    /// Where a finding's query came from is a closed list, the one the store records. A source it
+    /// cannot produce would match nothing and read as "none of those", so it is refused, and one
+    /// bad member refuses the term rather than being dropped from it.
+    /// </summary>
+    [Theory]
+    [InlineData("source=user")]
+    [InlineData("source=upstream%2Cgithub")]
+    public void ASourceABOMDoesNotKnowIsRefused(string text) =>
+        Assert.Throws<FormatException>(() => ViewSpec.Parse(text));
+
+    [Fact]
+    public void EverySourceTheStoreRecordsIsReadBack()
+    {
+        var spec = ViewSpec.Parse("source=upstream%2Cmixed%2Ccustom%2Cabom");
+        Assert.Equal(["abom", "custom", "mixed", "upstream"], spec.Sources);
+        Assert.Equal("source=abom%2Ccustom%2Cmixed%2Cupstream", spec.ToQueryString());
+    }
+
+    /// <summary>
+    /// The same refusal Go makes for a list whose members are fixed in code, or a link the API
+    /// refuses opens here narrowed to nothing. The store's <c>cross-owner</c> is the near-miss that
+    /// matters: it is <c>boundary</c>'s word, and <c>edges</c> says <c>crossOwner</c>.
+    /// </summary>
+    [Theory]
+    [InlineData("kinds=banana")]
+    [InlineData("kinds=action%2Cbanana")]
+    [InlineData("origins=owned")]
+    [InlineData("flags=pinned")]
+    [InlineData("edges=cross-owner")]
+    [InlineData("edgeKinds=uses")]
+    public void AListMemberOutsideItsVocabularyIsRefused(string text) =>
+        Assert.Throws<FormatException>(() => ViewSpec.Parse(text));
+
+    [Theory]
+    [InlineData("kinds=action%2Ccomposite_action%2Cdocker_image%2Cjob%2Corg%2Crepo%2Creusable_workflow%2Cstep%2Cworkflow")]
+    [InlineData("origins=external%2Cseed%2Cupstream")]
+    [InlineData("flags=advisory%2Cfindings%2Cunanalyzed")]
+    [InlineData("edges=crossOwner%2CsameOwner%2CsameRepo")]
+    [InlineData("edgeKinds=composite-step-uses-action%2Cjob-needs-job%2Cjob-uses-reusable-workflow%2Cstep-uses-action")]
+    public void EveryListMemberTheGraphProducesIsReadBack(string canonical) =>
+        Assert.Equal(canonical, ViewSpec.Parse(canonical).ToQueryString());
+
+    /// <summary>
+    /// A band is asked for as Go writes it, and one the language does not have is refused: a SARIF
+    /// level is <c>severity</c>'s vocabulary, not this one's.
+    /// </summary>
+    [Fact]
+    public void ASecuritySeverityTermCarriesBandsAsGoWritesThem()
+    {
+        var spec = ViewSpec.Parse("securitySeverity=high%2Ccritical");
+        Assert.Equal(["critical", "high"], spec.SecuritySeverities);
+        Assert.Equal("securitySeverity=critical%2Chigh", spec.ToQueryString());
+        Assert.Equal("securitySeverity=unknown",
+            ViewSpec.Parse("securitySeverity=unknown").ToQueryString());
+        Assert.Throws<FormatException>(() => ViewSpec.Parse("securitySeverity=error"));
+    }
+
+    /// <summary>
+    /// The policy language's terms travel through every page as Go writes them. Refused here, an
+    /// advisories tab narrowed by severity would not open at all.
+    /// </summary>
+    [Fact]
+    public void ThePolicyLanguageTermsTravelAsGoWritesThem()
+    {
+        var spec = ViewSpec.Parse(
+            "advisorySeverity=high%2Ccritical&reached=transitive%2Cdirect&policies=b%2Ca");
+        Assert.Equal(["critical", "high"], spec.AdvisorySeverities);
+        Assert.Equal(["direct", "transitive"], spec.Reached);
+        Assert.Equal(["a", "b"], spec.Policies);
+        Assert.Equal(
+            "advisorySeverity=critical%2Chigh&policies=a%2Cb&reached=direct%2Ctransitive",
+            spec.ToQueryString());
+        Assert.Throws<FormatException>(() => ViewSpec.Parse("advisorySeverity=moderate"));
+        Assert.Throws<FormatException>(() => ViewSpec.Parse("reached=2"));
+    }
 }

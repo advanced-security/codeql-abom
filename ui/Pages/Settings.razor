@@ -49,11 +49,12 @@ else
                 </MudText>
             </MudAlert>
         }
-        <MudSimpleTable Dense="true" Hover="true" Striped="false" Class="abom-grid abom-table mb-2">
+        <MudSimpleTable Dense="true" Hover="true" Striped="false" FixedHeader="true"
+                        Class="abom-grid abom-table abom-grid-windowed mb-2">
             <thead>
                 <tr>
                     <th>Account</th><th>Kind</th><th>Role</th><th>On</th><th>Scope</th>
-                    <th>Access</th><th></th>
+                    <th>Access</th><th>Repository listing</th><th></th>
                 </tr>
             </thead>
             <tbody>
@@ -155,6 +156,62 @@ else
                                 <MudTooltip Text="This row predates the record of how a declaration arrives, so nobody can say who wrote it. Save the declaration to account for it.">
                                     <div><span class="abom-unconfirmed" data-abom-unaccounted="@a.Owner">source unknown</span></div>
                                 </MudTooltip>
+                            }
+                        </td>
+                        <td data-abom-listing="@a.Owner">
+                            @{ var listing = ListingFor(a.Owner); }
+                            <MudText Typo="Typo.caption" Class="d-block">
+                                Route: @(listing.Route switch { "graphql" => "GraphQL", "rest" => "REST", "" => "not recorded", _ => listing.Route })
+                            </MudText>
+                            @if (listing.ListedAt.Length > 0)
+                            {
+                                <MudText Typo="Typo.caption" Class="d-block">
+                                    Full listing:
+                                    <time datetime="@listing.ListedAt" title="@listing.ListedAt" data-abom-listed-at>@TimeText.DayAndTime(listing.ListedAt)</time>
+                                </MudText>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.caption" Class="d-block abom-unconfirmed">No full listing recorded</MudText>
+                            }
+                            @if (listing.SweptAt.Length > 0)
+                            {
+                                <MudText Typo="Typo.caption" Class="d-block">
+                                    Changes checked:
+                                    <time datetime="@listing.SweptAt" title="@listing.SweptAt" data-abom-swept-at>@TimeText.DayAndTime(listing.SweptAt)</time>
+                                </MudText>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.caption" Class="d-block mud-text-secondary">Changes checked: not recorded</MudText>
+                            }
+                            @if (listing.HighCreated.Length > 0 || listing.HighPushed.Length > 0)
+                            {
+                                <details class="mud-typography-caption">
+                                    <summary>Observed changes</summary>
+                                    <div>
+                                        Newest repository created:
+                                        @if (listing.HighCreated.Length > 0)
+                                        {
+                                            <time datetime="@listing.HighCreated" title="@listing.HighCreated" data-abom-high-created>@TimeText.DayAndTime(listing.HighCreated)</time>
+                                        }
+                                        else
+                                        {
+                                            <span>not recorded</span>
+                                        }
+                                    </div>
+                                    <div>
+                                        Newest push:
+                                        @if (listing.HighPushed.Length > 0)
+                                        {
+                                            <time datetime="@listing.HighPushed" title="@listing.HighPushed" data-abom-high-pushed>@TimeText.DayAndTime(listing.HighPushed)</time>
+                                        }
+                                        else
+                                        {
+                                            <span>not recorded</span>
+                                        }
+                                    </div>
+                                </details>
                             }
                         </td>
                         <td>
@@ -385,7 +442,7 @@ else
                         </MudText>
                         <MudDataGrid T="OwnedAccount" Items="Memberships" Dense="true" Hover="true"
                                      Bordered="false" Filterable="false" SortMode="SortMode.Multiple"
-                                     RowsPerPage="10" Class="abom-grid">
+                                     RowsPerPage="10" FixedHeader="true" Class="abom-grid abom-grid-windowed">
                         <Columns>
                             <PropertyColumn Property="x => x.Owner" Title="Account" />
                             <TemplateColumn Title="Kind" SortBy="x => x.Kind">
@@ -434,14 +491,15 @@ else
 
 <MudText Typo="Typo.subtitle2" Class="mt-8 mb-1">How discovery runs</MudText>
 <MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
-    Analysis starts here, and what each tier is analyzed with is decided here. How far it has got
+    Analysis starts here; what each tier is analyzed with is chosen on the
+    <MudLink Href="/codeql?tab=suites">CodeQL page</MudLink>. How far it has got
     is read where the results are: the
     <MudLink Href="/inventory?unit=coverage">Coverage unit</MudLink> lists what is analyzed, queued
     and unavailable one dependency at a time, and the
     <MudLink Href="/explore">Explorer</MudLink> colors the graph by it.
 </MudText>
 
-<DiscoveryControls LinkToSettings="false" />
+<DiscoveryControls LinkToSettings="false" Changed="@(() => Accounts.ReloadScopeAsync())" />
 
 @* Raised rather than waited for. The check runs at startup off the request path, and what it
    found is a decision somebody has to make rather than a section they have to go and find.
@@ -451,7 +509,7 @@ else
    trap, whose four sentinels are focusable and have no accessible name. *@
 @if (_stalePrompt && _staleness is not null)
 {
-    <MudDialog @bind-Visible="_stalePrompt" Options="@(new DialogOptions {
+    <MudDialog @ref="_staleDialog" @bind-Visible="_stalePrompt" Options="@(new DialogOptions {
                    CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true })">
         <TitleContent>
             <MudText Typo="Typo.h6">Some of this is no longer reachable from what you own</MudText>
@@ -503,8 +561,8 @@ else
                  Placeholder="Filter accounts" Class="mb-3" />
 
     <MudDataGrid T="OwnerCandidate" Items="Filtered" Dense="true" Hover="true" Bordered="false"
-                 SortMode="SortMode.Multiple" Filterable="false" Class="abom-grid"
-                 RowsPerPage="25">
+                 SortMode="SortMode.Multiple" Filterable="false" FixedHeader="true"
+                 Class="abom-grid abom-grid-windowed" RowsPerPage="25">
         <Columns>
             <TemplateColumn Title="Yours" Sortable="false">
                 <CellTemplate>
@@ -530,6 +588,7 @@ else
 @code {
     private IReadOnlyList<OwnerCandidate>? _candidates;
     private Staleness? _staleness;
+    private MudDialog? _staleDialog;
     private bool _stalePrompt;
     private bool _stalePruning;
     private string _search = string.Empty;
@@ -615,6 +674,11 @@ else
         Accounts.Identity.Accounts.FirstOrDefault(
             a => string.Equals(a.Owner, owner, StringComparison.OrdinalIgnoreCase));
 
+    private EnumerationMarks ListingFor(string owner) =>
+        Accounts.Declared?.FirstOrDefault(
+            account => string.Equals(account.Owner, owner, StringComparison.OrdinalIgnoreCase))
+            ?.Enumeration ?? new();
+
     // Declarations the server is refusing to honor. Named rather than counted, because the point
     // is for the operator to recognize one they never meant to make.
     private IEnumerable<string> Held =>
@@ -637,7 +701,11 @@ else
         _stalePrompt = _staleness?.HasSomethingToRemove ?? false;
     }
 
-    private void DismissStale() => _stalePrompt = false;
+    private async Task DismissStale()
+    {
+        if (_staleDialog is not null) await _staleDialog.CloseAsync();
+        _stalePrompt = false;
+    }
 
     private async Task AcceptStale()
     {
@@ -652,7 +720,7 @@ else
         finally
         {
             _stalePruning = false;
-            _stalePrompt = false;
+            await DismissStale();
         }
     }
 
@@ -791,6 +859,7 @@ else
         try
         {
             _enumeration = await Api.EnumerateOwnedScopeAsync();
+            await Accounts.ReloadScopeAsync();
         }
         catch (HttpRequestException e)
         {

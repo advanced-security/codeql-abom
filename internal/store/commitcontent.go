@@ -102,6 +102,7 @@ func (s *Store) QueryRunExistsForContent(q QueryRun, digest string) (bool, error
 		  -- the repository's own checkout never contained, so a regular run over the same content
 		  -- has not answered the extended question.
 		  AND r.analysis_mode = ?
+		  AND r.held = 0
 		  AND c.indexed_digest = ?
 		LIMIT 1`,
 		q.Repository, q.QueryID, q.QueryVersion, q.Pack, q.PackVersion, q.PackDigest,

@@ -1,0 +1,210 @@
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@inject AbomApi Api
+
+@* Here, not in Settings: this page is where queries are written, run and promoted into suites. *@
+<div data-abom-suites>
+    @if (_loading && _suites is null)
+    {
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">Reading the binding&hellip;</MudText>
+    }
+    else if (_suites is null)
+    {
+        @* A read that failed and a read still arriving look identical if both just wait. *@
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">
+            Could not read what each tier is bound to, so nothing is shown rather than a binding
+            that might be wrong. A server older than this interface has no such endpoint.
+        </MudText>
+    }
+    else if (_suites.Available.Count == 0)
+    {
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">
+            No suites were found on disk. That is not the same as none being configured &mdash;
+            a tier may name a suite from an installed pack, which would still run.
+        </MudText>
+    }
+    else
+    {
+        <MudText Typo="Typo.body2" data-abom-binding-summary>@SuiteBindingText.Summary(_suites)</MudText>
+        @foreach (var tier in Tiers.Where(t => BoundTo(t).Count == 0))
+        {
+            @* An empty binding is a legitimate instruction, so it is stated rather than corrected. *@
+            <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1">
+                Nothing is bound to @tier, so its dependencies are fetched and left unanalyzed.
+            </MudText>
+        }
+
+        <MudSimpleTable Dense="true" Hover="true" Striped="false" FixedHeader="true"
+                        Class="abom-grid abom-table abom-config-grid abom-grid-windowed mt-2">
+            <thead>
+                <tr>
+                    <th>Suite</th>
+                    @foreach (var tier in Tiers)
+                    {
+                        @* Size is what binding costs; analyzed is what re-analyzing costs. *@
+                        <th class="abom-tier-head">
+                            <span class="abom-tier-name">@tier</span>
+                            <span class="abom-tier-why">@TierWhy(tier)</span>
+                            @if (TierOf(tier).HoldsRepositories)
+                            {
+                                @* Own repositories are not dependencies, so counted apart. *@
+                                <span class="abom-tier-count" data-abom-tier-split="@tier">
+                                    @TierOf(tier).Repositories.ToString("N0") repositories,
+                                    @TierOf(tier).Dependencies.ToString("N0") dependencies
+                                </span>
+                                <span class="abom-tier-count mud-text-secondary">
+                                    @TierOf(tier).RepositoriesAnalyzed.ToString("N0") and
+                                    @TierOf(tier).DependenciesAnalyzed.ToString("N0") analyzed
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="abom-tier-count">
+                                    @TierOf(tier).Total.ToString("N0") dependencies
+                                </span>
+                                <span class="abom-tier-count mud-text-secondary">
+                                    @TierOf(tier).Analyzed.ToString("N0") analyzed
+                                </span>
+                            }
+                        </th>
+                    }
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var suite in _suites.Available)
+                {
+                    <tr>
+                        <td>
+                            <button type="button" class="abom-suite-toggle"
+                                    @onclick="@(() => ToggleSuiteDetail(suite))"
+                                    aria-expanded="@(IsSuiteOpen(suite) ? "true" : "false")">
+                                <MudIcon Size="Size.Small" Icon="@(IsSuiteOpen(suite)
+                                    ? Icons.Material.Filled.ExpandMore
+                                    : Icons.Material.Filled.ChevronRight)" />
+                                <span class="abom-fold-text">
+                                    <span class="abom-path">@SuiteBindingText.Label(suite)</span>
+                                    <span class="abom-fold-summary">@SuiteSummary(suite)</span>
+                                </span>
+                            </button>
+                        </td>
+                        @foreach (var tier in Tiers)
+                        {
+                            <td>
+                                <MudTooltip Text="@BindHint(tier, suite)">
+                                    <MudCheckBox T="bool" Dense="true" Size="Size.Small"
+                                                 Color="Color.Primary" Disabled="@_busy"
+                                                 Value="@IsBound(tier, suite)"
+                                                 aria-label="@BindHint(tier, suite)"
+                                                 ValueChanged="@(_ => ToggleSuite(tier, suite))" />
+                                </MudTooltip>
+                            </td>
+                        }
+                    </tr>
+                    @if (IsSuiteOpen(suite) && Detail(suite) is { } detail)
+                    {
+                        <tr>
+                            <td colspan="@(Tiers.Length + 1)">
+                                @foreach (var p in detail.Packs)
+                                {
+                                    <div class="abom-pack">
+                                        <span class="abom-path">@p.Name</span>
+                                        <span class="abom-fold-summary">@p.Version</span>
+                                    </div>
+                                    <ul class="abom-query-list">
+                                        @foreach (var id in p.Queries)
+                                        {
+                                            <li class="abom-path">@id</li>
+                                        }
+                                    </ul>
+                                }
+                            </td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </MudSimpleTable>
+        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2">
+            A change takes effect on the next round. Dependencies already analyzed keep their
+            current results until that tier is re-analyzed from Settings.
+        </MudText>
+    }
+</div>
+
+@code {
+    private DiscoveryState _state = new();
+    private SuiteBinding? _suites;
+    private bool _loading = true;
+    private bool _busy;
+    private readonly HashSet<string> _openSuites = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _state = await Api.GetDiscoveryAsync();
+        _suites = await Api.GetTierSuitesAsync();
+        _loading = false;
+    }
+
+    private string[] Tiers => SuiteBindingText.Tiers(_suites);
+
+    private IReadOnlyList<string> BoundTo(string tier) => SuiteBindingText.BoundTo(_suites, tier);
+
+    private bool IsBound(string tier, string suite) => BoundTo(tier).Contains(suite);
+
+    private TierCount TierOf(string tier) =>
+        _state.Tiers.TryGetValue(tier, out var c) ? c : new TierCount();
+
+    // Stated per column: the reader deciding what a tier deserves is looking at its column.
+    private static string TierWhy(string tier) => tier switch
+    {
+        "owned" => "you own these",
+        "direct" => "your repositories name these",
+        _ => "reached through something else",
+    };
+
+    private bool IsSuiteOpen(string suite) => _openSuites.Contains(suite);
+
+    private void ToggleSuiteDetail(string suite)
+    {
+        if (!_openSuites.Remove(suite))
+        {
+            _openSuites.Add(suite);
+        }
+    }
+
+    private SuiteDetail? Detail(string suite) =>
+        _suites is not null && _suites.Contents.TryGetValue(suite, out var d) ? d : null;
+
+    // The packs stand in for a suite's version; an unresolved suite states no count rather than 0.
+    private string SuiteSummary(string suite)
+    {
+        if (Detail(suite) is not { } detail)
+        {
+            return "not yet resolved";
+        }
+        var versions = string.Join(", ", detail.Packs.Select(p => p.Version).Distinct());
+        var queries = $"{detail.QueryCount:N0} {(detail.QueryCount == 1 ? "query" : "queries")}";
+        return string.IsNullOrEmpty(versions) ? queries : $"{versions} · {queries}";
+    }
+
+    private string BindHint(string tier, string suite) => IsBound(tier, suite)
+        ? $"Stop running {SuiteBindingText.Label(suite)} on the {tier} tier. Results already recorded stay until that tier is re-analyzed."
+        : $"Run {SuiteBindingText.Label(suite)} on the {tier} tier from the next round. Its {TierOf(tier).Analyzed:N0} analyzed dependencies pick it up only when re-analyzed.";
+
+    private async Task ToggleSuite(string tier, string suite)
+    {
+        _busy = true;
+        try
+        {
+            var next = BoundTo(tier).ToList();
+            if (!next.Remove(suite))
+            {
+                next.Add(suite);
+            }
+            _suites = await Api.SetTierSuitesAsync(tier, next);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

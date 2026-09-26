@@ -1,4 +1,4 @@
-import { test, expect, ready, ROUTES, corpusSize, EXPLORE_DRAWN } from '../harness.mjs';
+import { test, expect, ready, on, ROUTES, corpusSize, EXPLORE_DRAWN } from '../harness.mjs';
 
 // Geometry is the layer nothing else owns. bUnit has no CSS engine, so a grid that overflows by
 // 288px and a label that wraps onto its own row are both green everywhere until somebody looks.
@@ -17,7 +17,7 @@ test.describe('geometry', () => {
     // navigation into the bar is this number, and it is the one thing bUnit cannot check: it has
     // no CSS engine, so a layout still reserving 240px is green everywhere until somebody looks.
     for (const route of ROUTES) {
-        test(`${route} spends its whole width on content`, async ({ page }) => {
+        test(`${route} spends its whole width on content`, on(route), async ({ page }) => {
             await page.setViewportSize({ width: 1280, height: 900 });
             await page.goto(route);
             await ready(page);
@@ -35,7 +35,7 @@ test.describe('geometry', () => {
 
     for (const { name, width, height } of WIDTHS) {
         for (const route of ROUTES) {
-            test(`${route} does not overflow horizontally at ${name} (${width}px)`, async ({ page }) => {
+            test(`${route} does not overflow horizontally at ${name} (${width}px)`, on(route), async ({ page }) => {
                 await page.setViewportSize({ width, height });
                 await page.goto(route);
                 await ready(page);
@@ -57,7 +57,7 @@ test.describe('geometry', () => {
         }
     }
 
-    test('the coverage strip fills whole rows rather than orphaning a cell', async ({
+    test('the coverage strip fills whole rows rather than orphaning a cell', on('/inventory'), async ({
         page,
         request,
         baseURL,
@@ -97,7 +97,7 @@ test.describe('geometry', () => {
         ).toBe(0);
     });
 
-    test('no text is clipped by its own container', async ({ page }) => {
+    test('no text is clipped by its own container', on('/'), async ({ page }) => {
         await page.goto('/');
         await ready(page);
 
@@ -114,7 +114,7 @@ test.describe('geometry', () => {
     // A long repository name is the ordinary case, not the edge case: the shared data set carries
     // `globex-industries/partner-integrations` alongside `octo-org/app`. A name that wraps turns a
     // dense row into a three-line block, and thirty of those is a different page.
-    test('a long repository name does not wrap its row into a block', async ({
+    test('a long repository name does not wrap its row into a block', on('/inventory?unit=repositories'), async ({
         page,
         request,
         baseURL,
@@ -142,7 +142,7 @@ test.describe('geometry', () => {
             .toEqual([]);
     });
 
-    test('the graph keeps the room the window has for it, scrolled or not', async ({
+    test('the graph keeps the room the window has for it, scrolled or not', on(EXPLORE_DRAWN), async ({
         page,
         request,
         baseURL,
@@ -186,9 +186,13 @@ test.describe('geometry', () => {
     // no way to know it is there. Measured before this was fixed, Jobs laid out 1,817px of table
     // and put Findings — the column it sorts by — off screen at every width anyone uses.
     const UNITS = ['dependencies', 'workflows', 'jobs', 'repositories', 'advisories', 'relationships'];
+    const GRIDS = [
+        ...UNITS.map((unit) => ({ name: unit, path: `/inventory?unit=${unit}` })),
+        ...['catalog', 'runs', 'requests'].map((tab) => ({ name: `CodeQL ${tab}`, path: `/codeql?tab=${tab}` })),
+    ];
 
-    for (const unit of UNITS) {
-        test(`${unit} puts none of its columns past the right-hand edge at narrow (1280px)`, async ({
+    for (const { name: unit, path } of GRIDS) {
+        test(`${unit} puts none of its columns past the right-hand edge at narrow (1280px)`, on(path), async ({
             page,
             request,
             baseURL,
@@ -197,13 +201,15 @@ test.describe('geometry', () => {
             test.skip(!summary.seedRepos, 'no corpus, so no rows to size the columns');
 
             await page.setViewportSize({ width: 1280, height: 900 });
-            await page.goto(`/inventory?unit=${unit}`);
+            await page.goto(path);
             await ready(page);
 
             // Wait for a real row. An empty grid renders one cell spanning the table, which fits
             // every width there is — this assertion passed against exactly that while Jobs was
             // 149px over, because /api/jobs takes over two seconds on this corpus.
-            await expect(page.locator('.abom-grid tbody tr td').nth(3)).toBeVisible();
+            const row = page.locator('.abom-grid tbody tr td').nth(3);
+            const rows = await row.waitFor({ timeout: 15_000 }).then(() => true, () => false);
+            test.skip(!rows, `no rows in ${unit} on this corpus`);
 
             const measured = await page.evaluate(() => {
                 const scroller = document.querySelector('.abom-grid .mud-table-container');
@@ -224,6 +230,220 @@ test.describe('geometry', () => {
                 measured.hidden,
                 `${unit} hides these columns, ${measured.over}px past the edge`,
             ).toEqual([]);
+
+            // Squeezing is not fitting; held on CodeQL only, as Inventory workflows rows reach 91px.
+            if (!path.startsWith('/codeql')) return;
+            const tallest = await page.evaluate(() => Math.max(
+                ...[...document.querySelectorAll('.abom-grid .mud-table-container tbody tr')]
+                    .filter((tr) => !tr.querySelector('.abom-row-detail'))
+                    .map((tr) => tr.getBoundingClientRect().height)));
+            expect(Math.round(tallest), `${unit}'s tallest row`).toBeLessThanOrEqual(90);
+        });
+    }
+
+    // With the last row in view, the header is still on screen and uncovered, whatever scrolled.
+    const PINNED = [
+        ...['catalog', 'runs', 'requests'].map((t) => ({ name: `CodeQL's ${t}`, path: `/codeql?tab=${t}` })),
+        ...[...UNITS, 'coverage'].map((u) => ({ name: `Inventory's ${u}`, path: `/inventory?unit=${u}` })),
+    ];
+    // Asked of the API, so an empty corpus skips and a populated grid that renders no row fails.
+    const LISTED = {
+        dependencies: ['/api/actions?top=1', (d) => d.total],
+        workflows: ['/api/workflows?top=1', (d) => d.total],
+        jobs: ['/api/jobs?top=1', (d) => d.total],
+        repositories: ['/api/repositories?top=1', (d) => d.total],
+        advisories: ['/api/remediation?top=1', (d) => d.total],
+        relationships: ['/api/relationships?top=1', (d) => d.total],
+        coverage: ['/api/frontier?top=1', (d) => d.length],
+    };
+    for (const { name: tab, path } of PINNED) {
+        test(`${tab} keeps its column names in view as its rows scroll`, on(path), async ({ page, request, baseURL }) => {
+            const listed = LISTED[new URLSearchParams(path.split('?')[1]).get('unit')];
+            if (listed) {
+                const answer = await (await request.get(`${baseURL}${listed[0]}`)).json();
+                test.skip(!listed[1](answer), `${tab} lists nothing on this corpus`);
+            }
+            await page.setViewportSize({ width: 1280, height: 720 });
+            await page.goto(path);
+            await ready(page);
+
+            const grid = page.locator('.abom-grid .mud-table-container').first();
+            const present = await grid.waitFor({ timeout: 10_000 }).then(() => true, () => false);
+            test.skip(!present, `${tab} has no rows on this corpus to scroll`);
+            await expect(grid.locator('tbody tr').first()).toBeVisible();
+
+            const fits = await grid.evaluate((el) => {
+                const table = el.querySelector('table');
+                return el.getBoundingClientRect().top + table.getBoundingClientRect().height <= innerHeight;
+            });
+            test.skip(fits, `every row of ${tab} fits in the window on this corpus, so nothing scrolls`);
+
+            const measured = await grid.evaluate(async (el) => {
+                // Both boxes scrolled to their far end; on screen means below the fixed bar.
+                window.scrollTo(0, document.documentElement.scrollHeight);
+                const rows = el.querySelectorAll('tbody tr');
+                rows[rows.length - 1].scrollIntoView({ block: 'end' });
+                window.scrollTo(0, document.documentElement.scrollHeight);
+                await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+                const th = [...el.querySelectorAll('thead th')].find((h) => h.textContent.trim());
+                const box = th.getBoundingClientRect();
+                const bar = document.querySelector('.mud-appbar').getBoundingClientRect().bottom;
+                const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+                return {
+                    name: th.textContent.trim(),
+                    top: Math.round(box.top),
+                    bar: Math.round(bar),
+                    bottom: Math.round(box.bottom),
+                    innerHeight,
+                    covered: hit && !th.contains(hit) ? `${hit.tagName}.${hit.className}`.slice(0, 80) : '',
+                };
+            });
+
+            expect(measured.top, `"${measured.name}" is under the bar`).toBeGreaterThanOrEqual(measured.bar);
+            expect(measured.bottom, `"${measured.name}" is below the window`)
+                .toBeLessThanOrEqual(measured.innerHeight);
+            expect(measured.covered, `"${measured.name}" is drawn over by`).toBe('');
+        });
+    }
+
+    // A box edge on a fractional device pixel rounds apart from its pinned header; rows show between.
+    test.describe('at a fractional pixel ratio', () => {
+        test.use({ deviceScaleFactor: 1.5 });
+
+        for (const { name: tab, path } of PINNED) {
+            test(`${tab} shows no sliver of its rows above its pinned header`, on(path), async ({ page }) => {
+                await page.setViewportSize({ width: 1280, height: 720 });
+                await page.goto(path);
+                await ready(page);
+
+                const grid = page.locator('.abom-grid .mud-table-container').first();
+                const rows = await grid.locator('tbody tr').first().waitFor({ timeout: 10_000 })
+                    .then(() => true, () => false);
+                test.skip(!rows, `${tab} has no rows on this corpus`);
+                const scrolls = await grid.evaluate((el) => el.scrollHeight > el.clientHeight + 40);
+                test.skip(!scrolls, `${tab} has too few rows on this corpus to scroll`);
+
+                // Loud rows, so a sliver of one cannot pass for the header's own color.
+                await page.addStyleTag({ content: '.abom-grid tbody td { background-color: rgb(255, 0, 255) !important; }' });
+
+                const slivers = [];
+                for (const offset of [0, 0.2, 0.4, 0.6, 0.8]) {
+                    const box = await grid.evaluate(async (el, px) => {
+                        el.closest('.abom-grid').style.marginTop = `${px}px`;
+                        el.scrollTop = 40;
+                        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+                        const r = el.getBoundingClientRect();
+                        return { x: r.left, y: r.top, width: el.clientWidth };
+                    }, offset);
+                    const png = await page.screenshot({ clip: { x: box.x, y: box.y - 3, width: box.width, height: 6 } });
+                    const loud = await page.evaluate(async (b64) => {
+                        const img = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob());
+                        const canvas = new OffscreenCanvas(img.width, img.height);
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0);
+                        const d = ctx.getImageData(0, 0, img.width, img.height).data;
+                        let n = 0;
+                        for (let k = 0; k < d.length; k += 4) if (d[k] > 180 && d[k + 1] < 90 && d[k + 2] > 180) n++;
+                        return n;
+                    }, png.toString('base64'));
+                    if (loud) slivers.push(`${loud} pixels of row at a ${offset}px offset`);
+                }
+                expect(slivers, `${tab} shows its rows above its pinned header`).toEqual([]);
+            });
+        }
+    });
+
+    // Mid-page or nested in a grid's row, so brought to its own last row rather than the page's.
+    const INSET = [
+        {
+            name: "CodeQL's suites",
+            at: '/codeql?tab=suites',
+            boxes: '[data-abom-suites] .mud-table-container',
+            address: async () => '/codeql?tab=suites',
+        },
+        {
+            name: "the largest listed run's results",
+            at: '/codeql?tab=runs',
+            boxes: '.abom-results .mud-table-container',
+            // Asked of the server first: with no run, waiting for one and then for its rows spent
+            // the whole test timeout, and a store with nothing to measure failed rather than skipped.
+            address: async (request, baseURL) => {
+                const { runs } = await (await request.get(`${baseURL}/api/runs`)).json();
+                return runs.length > 0 ? '/codeql?tab=runs' : undefined;
+            },
+            open: async (page, request, baseURL) => {
+                const ids = page.locator('[data-abom-run-id]');
+                if (!(await ids.first().waitFor({ timeout: 15_000 }).then(() => true, () => false))) return;
+                const listed = new Set(await ids.evaluateAll((els) => els.map((e) => Number(e.dataset.abomRunId))));
+                const { runs } = await (await request.get(`${baseURL}/api/runs`)).json();
+                const size = (r) => Object.values(r.tally).reduce((a, b) => a + b, 0);
+                const largest = runs.filter((r) => listed.has(r.rowId)).sort((a, b) => size(b) - size(a))[0];
+                await page.locator('tr', { has: page.locator(`[data-abom-run-id="${largest.rowId}"]`) })
+                    .locator('[data-abom-run-detail]').first().click();
+                await page.locator('[data-abom-run-summary]').waitFor({ timeout: 15_000 });
+                const all = page.locator('[data-abom-results-all]');
+                if (!(await all.count())) return;
+                await all.getByText('Show every repository').click();
+                await expect(page.locator('.abom-results thead th', { hasText: 'Status' })).toBeVisible();
+            },
+        },
+        {
+            name: "the widest-reaching node's tables",
+            at: '/node',
+            boxes: '.abom-grid .mud-table-container',
+            address: async (request, baseURL) => {
+                const { items } = await (
+                    await request.get(`${baseURL}/api/actions?top=1&offset=0&sort=dependentRepos&desc=true`)
+                ).json();
+                return items[0] && `/node/${encodeURIComponent(items[0].nodeKey)}`;
+            },
+        },
+    ];
+
+    for (const { name, at, boxes, address, open } of INSET) {
+        test(`${name} keep their column names in view as their rows scroll`, on(at), async ({ page, request, baseURL }) => {
+            const path = await address(request, baseURL);
+            test.skip(!path, `nothing on this corpus has ${name}`);
+
+            await page.setViewportSize({ width: 1280, height: 720 });
+            await page.goto(path);
+            await ready(page);
+            if (open) await open(page, request, baseURL);
+
+            const rows = page.locator(`${boxes} tbody tr`).first();
+            const present = await rows.waitFor({ timeout: 15_000 }).then(() => true, () => false);
+            test.skip(!present, `${name} has no rows on this corpus`);
+
+            const measured = await page.evaluate(async (selector) => {
+                const bar = document.querySelector('.mud-appbar').getBoundingClientRect().bottom;
+                const out = [];
+                for (const el of document.querySelectorAll(selector)) {
+                    el.scrollIntoView({ block: 'end' });
+                    el.scrollTop = el.scrollHeight;
+                    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+                    const th = [...el.querySelectorAll('thead th')].find((h) => h.textContent.trim());
+                    if (!th) continue;
+                    const box = th.getBoundingClientRect();
+                    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+                    out.push({
+                        name: th.textContent.trim().replace(/\s+/g, ' ').slice(0, 40),
+                        taller: el.scrollHeight > el.clientHeight + 1 || el.getBoundingClientRect().height > innerHeight - bar,
+                        top: Math.round(box.top),
+                        bar: Math.round(bar),
+                        bottom: Math.round(box.bottom),
+                        innerHeight,
+                        covered: hit && !th.contains(hit) ? `${hit.tagName}.${hit.className}`.slice(0, 80) : '',
+                    });
+                }
+                return out;
+            }, boxes);
+            test.skip(!measured.some((m) => m.taller), `every table in ${name} fits in the window on this corpus`);
+
+            for (const m of measured) {
+                expect(m.top, `"${m.name}" is under the bar`).toBeGreaterThanOrEqual(m.bar);
+                expect(m.bottom, `"${m.name}" is below the window`).toBeLessThanOrEqual(m.innerHeight);
+                expect(m.covered, `"${m.name}" is drawn over by`).toBe('');
+            }
         });
     }
 });

@@ -1,4 +1,4 @@
-import { test, expect, ready, corpusSize, EXPLORE_DRAWN } from '../harness.mjs';
+import { test, expect, ready, corpusSize, on, EXPLORE_DRAWN } from '../harness.mjs';
 
 // The layout claims the Explorer rests on have never been checked by anything that could see
 // them. The audit that tried ran in a backgrounded tab: `document.visibilityState` was `hidden`,
@@ -60,7 +60,7 @@ test.describe('the force-directed graph', () => {
     // against a bar of 30, so the bar decided which machine it got rather than whether the
     // simulation advanced. The same thirty frames still have to arrive, and a paused renderer
     // still fails, now on the deadline.
-    test('the simulation actually advances in this browser', async ({ page, request, baseURL }) => {
+    test('the simulation actually advances in this browser', on(EXPLORE_DRAWN), async ({ page, request, baseURL }) => {
         const summary = await corpusSize(request, baseURL);
         test.skip(!summary.nodes, 'nothing to lay out');
 
@@ -114,7 +114,7 @@ test.describe('the force-directed graph', () => {
     // Spatial memory is the whole reason the layout is worth having. `seedAt` is deterministic in
     // the node key for exactly this: a reload that reshuffles costs the reader everything they
     // learned about where things are.
-    test('a reload of the same scope draws the same graph', async ({ page, request, baseURL }) => {
+    test('a reload of the same scope draws the same graph', on(EXPLORE_DRAWN), async ({ page, request, baseURL }) => {
         const summary = await corpusSize(request, baseURL);
         test.skip(!summary.nodes, 'nothing to lay out');
 
@@ -150,7 +150,7 @@ test.describe('the force-directed graph', () => {
     // The core design claim of the semantic forces, in the words the repo states it in: a switch
     // is a re-orientation, not a reshuffle. Angle carries who a node sits with and radius carries
     // what the view is about, so the first is preserved and the second is meant to change.
-    test('switching force preserves angle and changes radius', async ({ page, request, baseURL }) => {
+    test('switching force preserves angle and changes radius', on(EXPLORE_DRAWN), async ({ page, request, baseURL }) => {
         const summary = await corpusSize(request, baseURL);
         test.skip(!summary.nodes, 'nothing to lay out');
 
@@ -205,7 +205,7 @@ test.describe('the force-directed graph', () => {
     // against `workflow` green readable to somebody who cannot tell those apart. The geometry
     // comes from the separately vendored THREE and the material from the renderer's own copy, so
     // it is a runtime arrangement that a unit test cannot see and a screenshot cannot prove.
-    test('a node kind is drawn as a shape and not only as a colour', async ({
+    test('a node kind is drawn as a shape and not only as a colour', on(EXPLORE_DRAWN), async ({
         page,
         request,
         baseURL,

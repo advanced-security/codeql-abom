@@ -219,6 +219,7 @@ query($login:String!,$after:String,$field:RepositoryOrderField!,$first:Int!,$pro
       pageInfo{hasNextPage endCursor}
       nodes{
         nameWithOwner isArchived createdAt pushedAt defaultBranchRef{name}
+				workflowTree:object(expression:"HEAD:.github/workflows"){__typename ... on Tree{entries{name type}}}
         repositoryCustomPropertyValues(first:$properties){totalCount nodes{propertyName value}}
       }
     }
@@ -244,10 +245,11 @@ func (c *Client) walkGraphQL(
 						EndCursor   string `json:"endCursor"`
 					} `json:"pageInfo"`
 					Nodes []struct {
-						NameWithOwner    string `json:"nameWithOwner"`
-						IsArchived       bool   `json:"isArchived"`
-						CreatedAt        string `json:"createdAt"`
-						PushedAt         string `json:"pushedAt"`
+						NameWithOwner    string          `json:"nameWithOwner"`
+						IsArchived       bool            `json:"isArchived"`
+						CreatedAt        string          `json:"createdAt"`
+						PushedAt         string          `json:"pushedAt"`
+						WorkflowTree     json.RawMessage `json:"workflowTree"`
 						DefaultBranchRef *struct {
 							Name string `json:"name"`
 						} `json:"defaultBranchRef"`
@@ -283,6 +285,7 @@ func (c *Client) walkGraphQL(
 			if node.DefaultBranchRef != nil {
 				repo.DefaultBranch = node.DefaultBranchRef.Name
 			}
+			repo.HasWorkflows = workflowFiles(node.WorkflowTree)
 			// Kept whole or not at all. Half the values would read as a deliberate placement in
 			// a unit the organization did not choose.
 			if node.Properties.TotalCount > len(node.Properties.Nodes) {

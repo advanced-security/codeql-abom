@@ -34,12 +34,13 @@ func TestPolicyCoverageNamesOnlyUnattributedFindingsInItsMode(t *testing.T) {
 	}
 	for index, mode := range AnalysisModes() {
 		for _, rules := range [][]string{{"actions/unpinned-tag"}, nil} {
-			count, repositories, err := database.unattributedFor(
+			ids, repositories, err := database.unattributedFor(
 				viewspec.Spec{Mode: mode, Rules: rules}, func(string) bool { return true })
 			if err != nil {
 				t.Fatal(err)
 			}
-			if count != index+1 || len(repositories) != 1 || repositories[0] != "octo/app" {
+			if count := len(ids); count != index+1 || len(repositories) != 1 ||
+				repositories[0] != "octo/app" {
 				t.Errorf("%s rules=%v: %d findings in %v, want %d in octo/app",
 					mode, rules, count, repositories, index+1)
 			}

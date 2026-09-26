@@ -1,5 +1,7 @@
 using Abom.WebAssembly.Pages;
+using Abom.WebAssembly.Services;
 using Bunit;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Abom.WebAssembly.Tests;
@@ -13,11 +15,11 @@ public class QueryCatalogTests : AbomTestContext
     private const string TwoVersions = """
         {"queries":[
           {"queryId":"abom/edges","queryVersion":"f4b6202355aa0011","pack":"advanced-security/abom-actions-graph-extraction-src",
-           "packVersion":"2.27.0","cliVersion":"2.27.0","origin":"abom","stage":"",
+           "packVersion":"2.27.0","cliVersion":"2.27.0","source":"abom","stage":"",
            "stagedBy":"","stagedAt":"","runs":9,"repositories":7,
            "firstRunAt":"2026-09-22T16:00:00Z","lastRunAt":"2026-09-22T16:20:00Z"},
           {"queryId":"actions/unpinned-tag","queryVersion":"u1aa22bb33cc4","pack":"codeql/actions-queries",
-           "packVersion":"0.6.35","cliVersion":"2.27.0","origin":"upstream","stage":"review",
+           "packVersion":"0.6.35","cliVersion":"2.27.0","source":"upstream","stage":"review",
            "stagedBy":"operator","stagedAt":"2026-09-22T15:00:00Z","runs":204,"repositories":204,
            "firstRunAt":"2026-09-20T10:00:00Z","lastRunAt":"2026-09-22T16:20:00Z"}
         ],"stages":["dev","test","extended-test","review","deploy"]}
@@ -31,11 +33,16 @@ public class QueryCatalogTests : AbomTestContext
         {"authenticated":false,"login":"","host":"","accounts":[],"canSeeAllOrganizations":false}
         """;
 
-    private IRenderedComponent<Queries> Render(string catalog, string identity = SignedIn)
+    private IRenderedComponent<CodeQL> Render(string catalog, string identity = SignedIn,
+        string address = "/codeql?tab=catalog")
     {
         Answer("api/queries", catalog);
         Answer("api/accounts", identity);
-        return base.Render<Queries>();
+        Fallback("api/runs", """{"runs":[]}""");
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.NavigateTo(address);
+        var page = base.Render<CodeQL>();
+        page.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("api/queries")));
+        return page;
     }
 
     /// <summary>
@@ -60,8 +67,9 @@ public class QueryCatalogTests : AbomTestContext
     {
         var page = Render(TwoVersions);
 
-        Assert.Equal("review", page.Find("[data-abom-query-stage]").TextContent.Trim());
-        Assert.Contains("operator", page.Find("[data-abom-query-staged-by]").TextContent);
+        var stage = page.Find("[data-abom-query-stage]");
+        Assert.Contains("review", stage.TextContent);
+        Assert.Contains("operator", stage.GetAttribute("title") ?? "");
     }
 
     /// <summary>
@@ -91,18 +99,22 @@ public class QueryCatalogTests : AbomTestContext
     }
 
     /// <summary>
-    /// Origin is read from the pack. `abom/` in a rule id is a naming convention anybody can
-    /// adopt and is never evidence of where a query came from.
+    /// A query's source is read from the pack. `abom/` in a rule id is a naming convention anybody
+    /// can adopt and is never evidence of where a query came from. The column says "Source", the
+    /// word the filter language and the API use for it.
     /// </summary>
     [Fact]
-    public void OriginIsRenderedFromThePackRatherThanTheRuleIdPrefix()
+    public void SourceIsRenderedFromThePackRatherThanTheRuleIdPrefix()
     {
         var page = Render(TwoVersions);
 
-        var origins = page.FindAll("[data-abom-query-origin]")
-            .Select(e => e.GetAttribute("data-abom-query-origin")).ToList();
-        Assert.Contains("abom", origins);
-        Assert.Contains("upstream", origins);
+        var sources = page.FindAll("[data-abom-query-source]")
+            .Select(e => e.GetAttribute("data-abom-query-source")).ToList();
+        Assert.Contains("abom", sources);
+        Assert.Contains("upstream", sources);
+        var headers = page.FindAll("th").Select(h => h.TextContent.Trim()).ToList();
+        Assert.Contains("Source", headers);
+        Assert.DoesNotContain("Origin", headers);
     }
 
     /// <summary>
@@ -115,7 +127,7 @@ public class QueryCatalogTests : AbomTestContext
         var page = Render("""
             {"queries":[
               {"queryId":"abom/legacy","queryVersion":"","pack":"","packVersion":"","cliVersion":"",
-               "origin":"","stage":"","stagedBy":"","stagedAt":"","runs":2269,"repositories":1118,
+               "source":"","stage":"","stagedBy":"","stagedAt":"","runs":2269,"repositories":1118,
                "firstRunAt":"2026-09-01T10:00:00Z","lastRunAt":"2026-09-20T10:00:00Z"}
             ],"stages":["dev","test"]}
             """);
@@ -175,11 +187,11 @@ public class QueryCatalogTests : AbomTestContext
     private const string WithDiscovery = """
         {"queries":[
           {"queryId":"abom/edges","queryVersion":"v1","pack":"advanced-security/abom-actions-graph-extraction-src",
-           "packVersion":"2.27.0","cliVersion":"2.27.0","origin":"abom","suite":"","kind":"",
+           "packVersion":"2.27.0","cliVersion":"2.27.0","source":"abom","suite":"","kind":"",
            "kindRecorded":true,"discovery":true,"stage":"","stagedBy":"","stagedAt":"",
            "runs":2269,"repositories":1118,"analyses":0,"firstRunAt":"","lastRunAt":"2026-09-22T10:15:00Z"},
           {"queryId":"actions/unpinned-tag","queryVersion":"u1","pack":"codeql/actions-queries",
-           "packVersion":"0.6.35","cliVersion":"2.27.0","origin":"upstream","suite":"","kind":"problem",
+           "packVersion":"0.6.35","cliVersion":"2.27.0","source":"upstream","suite":"","kind":"problem",
            "kindRecorded":true,"discovery":false,"stage":"","stagedBy":"","stagedAt":"",
            "runs":204,"repositories":204,"analyses":0,"firstRunAt":"","lastRunAt":"2026-09-22T10:15:00Z"}
         ],"stages":["dev","test"]}
@@ -211,14 +223,27 @@ public class QueryCatalogTests : AbomTestContext
         Assert.Contains("1 more", page.Find("[data-abom-queries-hidden]").TextContent);
     }
 
+    /// <summary>Once shown, the crawl's queries are in the count, not added to it again.</summary>
+    [Fact]
+    public void ShowingTheCrawlsQueriesDoesNotCountThemTwice()
+    {
+        var page = Render(WithDiscovery);
+        page.Find("[data-abom-queries-discovery-toggle] input").Change(true);
+
+        var counts = page.Find("[data-abom-queries-counts]").TextContent;
+        Assert.Contains("2 query versions", counts);
+        Assert.DoesNotContain("more", counts);
+        Assert.Contains("1 of them", counts);
+    }
+
     private const string WithLane = """
         {"queries":[
           {"queryId":"abom-findings.qls","queryVersion":"","pack":"codeql/actions-queries",
-           "packVersion":"0.6.34","cliVersion":"2.27.0","origin":"upstream","suite":"abom-findings.qls",
+           "packVersion":"0.6.34","cliVersion":"2.27.0","source":"upstream","suite":"abom-findings.qls",
            "kind":"","kindRecorded":false,"discovery":false,"lane":true,"stage":"","stagedBy":"","stagedAt":"",
            "runs":718,"repositories":363,"analyses":0,"firstRunAt":"","lastRunAt":"2026-09-22T10:15:00Z"},
           {"queryId":"actions/unpinned-tag","queryVersion":"u1","pack":"codeql/actions-queries",
-           "packVersion":"0.6.35","cliVersion":"2.27.0","origin":"upstream","suite":"","kind":"problem",
+           "packVersion":"0.6.35","cliVersion":"2.27.0","source":"upstream","suite":"","kind":"problem",
            "kindRecorded":true,"discovery":false,"lane":false,"stage":"","stagedBy":"","stagedAt":"",
            "runs":204,"repositories":204,"analyses":2,"firstRunAt":"","lastRunAt":"2026-09-22T10:15:00Z"}
         ],"stages":["dev","test"]}
@@ -227,34 +252,96 @@ public class QueryCatalogTests : AbomTestContext
     private const string OperatorWritten = """
         {"queries":[
           {"queryId":"acme/self-hosted-runner","queryVersion":"9b5327ab01d7","pack":"abom/custom-queries",
-           "packVersion":"2.27.0","cliVersion":"2.27.0","origin":"user","suite":"","kind":"problem",
+           "packVersion":"2.27.0","cliVersion":"2.27.0","source":"custom","suite":"","kind":"problem",
            "kindRecorded":true,"discovery":false,"lane":false,"stage":"","stagedBy":"","stagedAt":"",
-           "tested":false,"passing":false,"testDetail":"",
+           "tested":false,"passing":false,"testDetail":"","working":true,
+           "steps":[
+             {"step":"help","state":"pending","detail":"no src/SelfHostedRunner.md beside the query"},
+             {"step":"expected","state":"passing","detail":"test/SelfHostedRunner/SelfHostedRunner.expected: 1 line"},
+             {"step":"database","state":"pending","detail":"test/SelfHostedRunner has not been extracted"},
+             {"step":"ast","state":"pending","detail":"no PrintAST run is recorded over the test database"},
+             {"step":"compiles","state":"pending","detail":"not compiled for this version"},
+             {"step":"tests","state":"pending","detail":"never run for this version"}],
            "runs":57,"repositories":57,"analyses":0,"firstRunAt":"","lastRunAt":"2026-09-22T17:40:00Z"},
           {"queryId":"actions/unpinned-tag","queryVersion":"u1","pack":"codeql/actions-queries",
-           "packVersion":"0.6.35","cliVersion":"2.27.0","origin":"upstream","suite":"","kind":"problem",
+           "packVersion":"0.6.35","cliVersion":"2.27.0","source":"upstream","suite":"","kind":"problem",
            "kindRecorded":true,"discovery":false,"lane":false,"stage":"","stagedBy":"","stagedAt":"",
+           "steps":[],
            "runs":204,"repositories":204,"analyses":0,"firstRunAt":"","lastRunAt":"2026-09-22T10:15:00Z"}
         ],"stages":["dev","test"]}
         """;
 
     /// <summary>
-    /// Tests live beside the query, so only a query the operator wrote has any to run. Offering
-    /// the control on an upstream rule is a button that can only fail.
+    /// Tests live beside the query, so only the working copy of a query the operator wrote has any
+    /// to run. An upstream rule carries no Test action at all: its tests belong to the pack that
+    /// ships it, and a button that can only fail is a claim about tests ABOM does not hold.
     /// </summary>
     [Fact]
-    public void OnlyAQueryTheOperatorWroteOffersToRunItsTests()
+    public void OnlyTheWorkingCopyOfTheOperatorsQueryOffersToRunItsTests()
     {
         var page = Render(OperatorWritten);
 
-        var rows = page.FindAll("[data-abom-query-id]").Select(e => e.TextContent.Trim()).ToList();
-        var buttons = page.FindAll("[data-abom-query-test]");
+        var flask = Assert.Single(page.FindAll("[data-abom-query-test]"));
+        Assert.False(flask.HasAttribute("disabled"), "the operator's own query");
+        var row = flask.Closest("tr")!;
+        Assert.Contains("acme/self-hosted-runner", row.TextContent);
+    }
 
-        Assert.Equal(rows.Count, buttons.Count);
-        var mine = rows.IndexOf("acme/self-hosted-runner");
-        var upstream = rows.IndexOf("actions/unpinned-tag");
-        Assert.False(buttons[mine].HasAttribute("disabled"), "the operator's own query");
-        Assert.True(buttons[upstream].HasAttribute("disabled"), "an upstream query");
+    /// <summary>
+    /// The marks describe the version on disk, so they appear on that row and nowhere else, in the
+    /// order served, with the flask standing for the tests step.
+    /// </summary>
+    [Fact]
+    public void TheWorkingCopyCarriesItsMarksAndTheFlaskIsTheTestsMark()
+    {
+        var page = Render(OperatorWritten);
+
+        var strip = Assert.Single(page.FindAll("[data-abom-steps]"));
+        Assert.Contains("acme/self-hosted-runner", strip.Closest("tr")!.TextContent);
+        var order = strip.QuerySelectorAll("[data-abom-step]").Select(e => e.GetAttribute("data-abom-step"));
+        Assert.Equal(["help", "expected", "database", "ast", "compiles", "tests"], order);
+        Assert.Equal("tests", page.Find("[data-abom-query-test]").GetAttribute("data-abom-step"));
+    }
+
+    /// <summary>
+    /// A version no longer on disk cannot be tested, because the tests would run against what is
+    /// there now and vouch for this one. What its tests last said is still shown.
+    /// </summary>
+    [Fact]
+    public void AVersionNoLongerOnDiskShowsWhatItsTestsSaidAndCannotBeTested()
+    {
+        var page = Render("""
+            {"queries":[
+              {"queryId":"acme/self-hosted-runner","queryVersion":"03d18fc6adb0","pack":"abom/custom-queries",
+               "source":"custom","kind":"problem","kindRecorded":true,"stage":"","working":false,"steps":[],
+               "tested":true,"passing":true,"testDetail":"1 of 1 passed",
+               "runs":1,"repositories":1,"lastRunAt":"2026-09-22T17:40:00Z"}
+            ],"stages":["dev","test"]}
+            """);
+
+        Assert.Empty(page.FindAll("[data-abom-steps]"));
+        var flask = page.Find("[data-abom-query-superseded-test]");
+        Assert.True(flask.HasAttribute("disabled"));
+        Assert.Contains("mud-success-text", flask.OuterHtml);
+    }
+
+    /// <summary>
+    /// A query is written and tested before anything runs it. Its row says it has not run, rather
+    /// than an empty date a reader would take for a missing value.
+    /// </summary>
+    [Fact]
+    public void AQueryThatHasNotRunSaysSo()
+    {
+        var page = Render("""
+            {"queries":[
+              {"queryId":"acme/new","queryVersion":"aa11bb22cc33","pack":"abom/custom-queries",
+               "source":"custom","kind":"problem","kindRecorded":true,"stage":"","working":true,
+               "steps":[{"step":"tests","state":"pending","detail":"never run for this version"}],
+               "runs":0,"repositories":0,"lastRunAt":""}
+            ],"stages":["dev","test"]}
+            """);
+
+        Assert.Contains("not run yet", page.Find("[data-abom-query-never-run]").TextContent);
     }
 
     /// <summary>
@@ -288,25 +375,78 @@ public class QueryCatalogTests : AbomTestContext
         Assert.DoesNotContain("abom-findings.qls", ids);
     }
 
-    /// <summary>
-    /// A run belongs to the version that was asked for. Sending a reader to a separate surface
-    /// makes them carry the identity across and find it again among everyone else's runs.
-    /// </summary>
+    /// <summary>What a version's runs found opens under that version's own row.</summary>
     [Fact]
-    public void WhatARunDidOpensOnTheVersionThatAskedForIt()
+    public void WhereAVersionRanOpensUnderItsOwnRow()
     {
-        Answer("api/runs", """{"runs":[]}""");
         var page = Render(WithLane);
 
-        var analyses = page.Find("[data-abom-query-analyses]");
-        Assert.Null(analyses.GetAttribute("href"));
+        Assert.Empty(page.FindAll("[data-abom-query-runs]"));
+        page.Find("[data-abom-query-detail]").Click();
 
-        analyses.Click();
-        Assert.NotNull(page.Find("[data-abom-query-runs]"));
+        page.WaitForAssertion(() =>
+        {
+            var runs = page.Find("[data-abom-query-runs]");
+            Assert.NotNull(runs.Closest("[data-abom-queries-table]"));
+        });
+    }
+
+    /// <summary>
+    /// A request, a run or a link names a query, and following it opens that query's row rather
+    /// than leaving a reader to find it in the list.
+    /// </summary>
+    [Fact]
+    public void AnAddressNamingAQueryOpensItsRow()
+    {
+        var page = Render(OperatorWritten,
+            address: "/codeql?tab=catalog&query=acme%2Fself-hosted-runner");
+
+        page.WaitForAssertion(() =>
+        {
+            var runs = Assert.Single(page.FindAll("[data-abom-query-runs]"));
+            Assert.Contains("acme/self-hosted-runner",
+                runs.Closest("tr")!.PreviousElementSibling!.TextContent);
+        });
+    }
+
+    /// <summary>A catalog row names the requests about its query, and each opens its own row.</summary>
+    [Fact]
+    public void ARowNamesTheRequestsAboutItsQuery()
+    {
+        var page = Render(OperatorWritten.Replace("\"working\":true,", "\"working\":true,\"requests\":[3,8],"),
+            address: "/codeql?tab=catalog&query=acme%2Fself-hosted-runner");
+
+        page.WaitForAssertion(() => Assert.Equal(2, page.FindAll("[data-abom-query-request]").Count));
+        Assert.Equal(["/codeql?tab=requests&request=3", "/codeql?tab=requests&request=8"],
+            page.FindAll("[data-abom-query-request]").Select(a => a.GetAttribute("href")));
+    }
+
+    /// <summary>
+    /// A refusal somebody reads only after pressing is one they could have been told first, so
+    /// extended-test is offered disabled beside what it would be refused with.
+    /// </summary>
+    [Fact]
+    public void ExtendedTestSaysWhyItWouldBeRefusedBeforeItIsPressed()
+    {
+        var popover = base.Render<MudBlazor.MudPopoverProvider>();
+        var page = Render(OperatorWritten
+            .Replace("\"working\":true,", "\"working\":true,\"extendedTestRefusal\":\"its tests mark is pending: never run for this version\",")
+            .Replace("\"stages\":[\"dev\",\"test\"]", "\"stages\":[\"dev\",\"test\",\"extended-test\"]"));
+
+        page.FindAll("[data-abom-query-advance]")
+            .Single(m => m.Closest("tr")!.TextContent.Contains("acme/self-hosted-runner"))
+            .QuerySelector("button")!.Click();
+
+        popover.WaitForAssertion(() => popover.Find("[data-abom-stage-item='extended-test']"));
+        Assert.Contains("never run for this version",
+            popover.Find("[data-abom-stage-refused]").TextContent);
+        Assert.Equal("extended-test",
+            popover.Find("[data-abom-stage-refused]").Closest("[data-abom-stage-item]")!.GetAttribute("data-abom-stage-item"));
+        Assert.Single(popover.FindAll("[data-abom-stage-refused]"));
     }
 
     private const string OneRun = """
-        {"runs":[{"rowId":1,"predicate":"rules=actions%2Funpinned-tag","mode":"regular",
+        {"runs":[{"rowId":1,"predicate":"repositories=octo%2Fapp,octo%2Fnone","mode":"regular",
           "requestedBy":"operator","state":"complete","createdAt":"2026-09-22T16:00:00Z",
           "finishedAt":"2026-09-22T16:04:00Z","results":4,
           "queries":[{"queryId":"actions/unpinned-tag","queryVersion":"u1"}],
@@ -314,16 +454,17 @@ public class QueryCatalogTests : AbomTestContext
         """;
 
     private const string RunDetail = """
-        {"rowId":1,"predicate":"rules=actions%2Funpinned-tag","mode":"regular",
+        {"rowId":1,"predicate":"repositories=octo%2Fapp,octo%2Fnone","mode":"regular",
          "requestedBy":"operator","state":"complete","createdAt":"2026-09-22T16:00:00Z",
          "finishedAt":"2026-09-22T16:04:00Z","results":0,
          "queries":[{"queryId":"actions/unpinned-tag","queryVersion":"u1"}],
          "tally":{"succeeded":1,"no_database":1},
          "members":[
            {"repository":"octo/app","status":"succeeded","detail":"","databasePath":"/cache/app",
-            "resultPath":"/work/run-1/octo_app.sarif","results":0,"counted":true},
+            "resultPath":"/work/run-1/octo_app.sarif","results":0,"counted":true,
+            "byQuery":{"actions/unpinned-tag":0}},
            {"repository":"octo/none","status":"no_database","detail":"no analysis on record",
-            "databasePath":"","resultPath":"","results":0,"counted":false}]}
+            "databasePath":"","resultPath":"","results":0,"counted":false,"byQuery":{}}]}
         """;
 
     /// <summary>
@@ -333,30 +474,193 @@ public class QueryCatalogTests : AbomTestContext
     [Fact]
     public void ARepositoryNothingRanAgainstShowsNoCountRatherThanZero()
     {
-        Answer("api/runs", OneRun);
         Answer("api/runs/1", RunDetail);
+        Answer("api/runs", OneRun);
         var page = Render(WithLane);
 
-        page.Find("[data-abom-query-analyses]").Click();
-        page.Find("[data-abom-run-inspect]").Click();
+        page.Find("[data-abom-query-detail]").Click();
+        page.WaitForAssertion(() => page.Find("[data-abom-results-all] input"));
+        page.Find("[data-abom-results-all] input").Change(true);
 
-        Assert.Equal("0", page.Find("[data-abom-member-results]").TextContent.Trim());
-        Assert.NotNull(page.Find("[data-abom-member-uncounted]"));
+        page.WaitForAssertion(() =>
+        {
+            Assert.Equal("0", page.Find("[data-abom-member-results]").TextContent.Trim());
+            Assert.NotNull(page.Find("[data-abom-member-uncounted]"));
+        });
+    }
+
+    /// <summary>The suite's run figures, copied onto all 36 of its queries, described none.</summary>
+    [Fact]
+    public void NoColumnRepeatsTheSuitesFiguresAsAQuerys()
+    {
+        var page = Render(TwoVersions);
+
+        var headers = page.FindAll("[data-abom-queries-table] thead th")
+            .Select(h => h.TextContent.Trim()).ToList();
+        Assert.DoesNotContain("Runs", headers);
+        Assert.DoesNotContain("Repositories", headers);
+        Assert.DoesNotContain("Analyses", headers);
+    }
+
+    /// <summary>"Yours" means owned; a query the operator wrote is custom.</summary>
+    [Fact]
+    public void AQueryTheOperatorWroteIsCustomRatherThanYours()
+    {
+        var page = Render(OperatorWritten);
+
+        var sources = page.FindAll("[data-abom-query-source='custom']");
+        Assert.Equal("custom", Assert.Single(sources).TextContent.Trim());
+        Assert.DoesNotContain(">yours<", page.Markup);
     }
 
     /// <summary>
-    /// What a run found is the number two versions are compared by, so the list of runs carries it
-    /// rather than making a reader open each one.
+    /// Run on a row adds its version to the draft, here: the draft that holds several is one draft,
+    /// on this page and the Inventory alike, rather than a copy on each.
     /// </summary>
     [Fact]
-    public void AListedRunSaysHowMuchItFound()
+    public void RunningAVersionDraftsItOnThisPage()
     {
-        Answer("api/runs", OneRun);
-        var page = Render(WithLane);
+        var page = Render(OperatorWritten);
+        var rows = page.FindAll("[data-abom-query-id]").Select(e => e.TextContent.Trim()).ToList();
 
-        page.Find("[data-abom-query-analyses]").Click();
+        page.FindAll("[data-abom-query-run]")[rows.IndexOf("acme/self-hosted-runner")].Click();
 
-        Assert.Equal("4", page.Find("[data-abom-run-results]").TextContent.Trim());
+        page.WaitForAssertion(() => page.Find("[data-abom-run-draft] [data-abom-run-picked='acme/self-hosted-runner']"));
+        var at = Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.Uri;
+        Assert.EndsWith("/codeql?tab=catalog", at);
+        var draft = Services.GetRequiredService<RunDraft>();
+        Assert.Equal("9b5327ab01d7", Assert.Single(draft.Queries).QueryVersion);
+
+        page.FindAll("[data-abom-query-run]")[rows.IndexOf("actions/unpinned-tag")].Click();
+        page.WaitForAssertion(() => Assert.Equal(2, page.FindAll("[data-abom-run-picked]").Count));
+    }
+
+    /// <summary>Choosing repositories one by one is still the Inventory's, and the draft goes too.</summary>
+    [Fact]
+    public void RunningAVersionCanStillChooseItsRepositoriesInTheInventory()
+    {
+        var page = Render(OperatorWritten);
+        var rows = page.FindAll("[data-abom-query-id]").Select(e => e.TextContent.Trim()).ToList();
+        page.FindAll("[data-abom-query-run]")[rows.IndexOf("acme/self-hosted-runner")].Click();
+        page.WaitForAssertion(() => page.Find("[data-abom-run-in-inventory]"));
+
+        page.Find("[data-abom-run-in-inventory]").Click();
+
+        var at = Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.Uri;
+        Assert.EndsWith("/inventory?unit=repositories", at);
+        var draft = Services.GetRequiredService<RunDraft>();
+        Assert.Equal("acme/self-hosted-runner", Assert.Single(draft.Queries).QueryId);
+    }
+
+    private const string RunViews = """
+        [{"name":"owned","title":"What you own","predicate":"scope=owned","builtin":true,
+          "refuses":{"inventory":[],"repositories":[],"graph":[],"run":[]}},
+         {"name":"unpinned","title":"Floating references","predicate":"ref=tag","builtin":true,
+          "refuses":{"inventory":[],"repositories":["ref"],"graph":[],"run":["ref"]}},
+         {"name":"mine","predicate":"q=octo&scope=owned","builtin":false,
+          "refuses":{"inventory":[],"repositories":[],"graph":[],"run":[]}}]
+        """;
+
+    private const string RunTerms = """
+        [{"name":"ref","label":"Reference style","help":"h","arity":"scalar","surfaces":["inventory"]},
+         {"name":"scope","label":"Scope","help":"h","arity":"scalar","surfaces":["inventory"]}]
+        """;
+
+    private IRenderedComponent<CodeQL> Drafting()
+    {
+        Answer("api/views", RunViews);
+        Answer("api/filters", RunTerms);
+        Answer("api/databases", """
+            {"databases":[
+              {"repository":"octo-org/app","commit":"a1","sourceFilter":"f","mode":"regular",
+               "status":"retained","path":"/db/app","bytes":10,"cliVersion":"2.27.1","reason":""}],
+             "gaps":[{"repository":"octo-org/new","reason":"no regular analysis on record"}],
+             "mode":"regular","unresolved":""}
+            """);
+        var page = Render(OperatorWritten);
+        page.FindAll("[data-abom-query-run]")[0].Click();
+        page.WaitForAssertion(() => page.Find("[data-abom-run-draft] [data-abom-view='owned']"));
+        return page;
+    }
+
+    /// <summary>
+    /// A run's scope here is a named one: those a run refuses are disabled with their terms named,
+    /// and nothing is resolved until one is chosen.
+    /// </summary>
+    [Fact]
+    public void ANamedScopeARunRefusesIsDisabledInTheDraftWithItsTermsNamed()
+    {
+        var page = Drafting();
+
+        page.WaitForAssertion(() =>
+            Assert.Contains("mud-disabled", page.Find("[data-abom-view='unpinned']").ClassName));
+        var reason = page.Find("[data-abom-view-reason='unpinned']").GetAttribute("title") ?? "";
+        Assert.Contains("A run cannot narrow by", reason);
+        Assert.Contains("Reference style: tag", reason);
+        Assert.DoesNotContain(Sent, r => r.Url.Contains("api/databases"));
+        Assert.True(page.Find("[data-abom-run-go]").HasAttribute("disabled"));
+    }
+
+    /// <summary>
+    /// A chosen scope shows its size before Run, from the resolution the run uses, and the run is
+    /// asked for by the scope's name so the server records the name beside what it resolved to.
+    /// </summary>
+    [Fact]
+    public void AChosenScopeShowsItsSizeAndTheRunIsAskedForByName()
+    {
+        var page = Drafting();
+        Answer("api/runs", """{"rowId":9,"predicate":"scope=owned","scopeName":"owned","state":"pending"}""");
+        Answer("api/runs/9/start", """{"rowId":9,"state":"running"}""");
+
+        page.Find("[data-abom-view='owned']").Click();
+
+        page.WaitForAssertion(() =>
+            Assert.Contains("2 repositories", page.Find("[data-abom-run-size]").TextContent));
+        Assert.Contains("What you own", page.Find("[data-abom-run-scope]").TextContent);
+        Assert.Contains(Sent, r => r.Method == "GET" && r.Url.EndsWith("api/databases?view=owned"));
+
+        page.Find("[data-abom-run-go]").Click();
+
+        page.WaitForAssertion(() =>
+            Assert.Contains(Sent, r => r.Method == "POST" && r.Url.EndsWith("api/runs?view=owned")));
+    }
+
+    /// <summary>
+    /// Keep here names the scope the draft holds, which this page has none of until a named one is
+    /// chosen, and it keeps that scope's predicate byte for byte.
+    /// </summary>
+    [Fact]
+    public void KeepHereNamesTheChosenScopeByItsStoredPredicate()
+    {
+        // Left by another page: it is not what this draft is over.
+        Services.GetRequiredService<ScopeService>().Set(ViewSpec.Parse("q=elsewhere"));
+        var page = Drafting();
+
+        Assert.True(page.Find("[data-abom-save-scope]").HasAttribute("disabled"),
+            "Keep offered a scope this draft does not hold");
+
+        page.Find("[data-abom-view='mine']").Click();
+        page.Find("[data-abom-scope-name]").Input("mine again");
+        page.Find("[data-abom-save-scope]").Click();
+
+        page.WaitForAssertion(() =>
+        {
+            var kept = Sent.Last(r => r.Url.Contains("api/views/"));
+            Assert.Equal("PUT", kept.Method);
+            Assert.Contains("\"predicate\":\"q=octo\\u0026scope=owned\"", kept.Body);
+        });
+    }
+
+    /// <summary>Two names both beginning "Run this version" sound like one control twice.</summary>
+    [Fact]
+    public void RunningAndTestingHaveNamesThatCannotBeConfused()
+    {
+        var page = Render(OperatorWritten);
+
+        var run = page.Find("[data-abom-query-run]").GetAttribute("aria-label") ?? "";
+        var test = page.Find("[data-abom-query-test]").GetAttribute("aria-label") ?? "";
+        Assert.False(test.StartsWith(run, StringComparison.OrdinalIgnoreCase), $"{run} / {test}");
+        Assert.False(run.StartsWith(test, StringComparison.OrdinalIgnoreCase), $"{run} / {test}");
     }
 
     /// <summary>
@@ -398,7 +702,23 @@ public class QueryCatalogTests : AbomTestContext
     {
         var page = Render(TwoVersions);
 
-        var packs = page.FindAll("[data-abom-query-pack]").Select(e => e.TextContent.Trim()).ToList();
-        Assert.Contains(packs, p => p.Contains("codeql/actions-queries"));
+        var packs = page.FindAll("[data-abom-query-pack]").ToList();
+        Assert.Contains(packs, p => p.GetAttribute("data-abom-query-pack") == "codeql/actions-queries");
+        // Every ABOM pack shares a scope and prefix, so only its own name tells two apart.
+        Assert.Contains(packs, p => p.TextContent.Trim() == "abom-actions-graph-extraction-src");
+    }
+
+    /// <summary>The release rides on the pack as a pinned reference; its own column cost a column.</summary>
+    [Fact]
+    public void ThePackCarriesTheReleaseItCameIn()
+    {
+        var page = Render(TwoVersions);
+
+        var cell = page.FindAll("[data-abom-query-pack]")
+            .First(p => p.GetAttribute("data-abom-query-pack") == "codeql/actions-queries")
+            .ParentElement!;
+        Assert.Equal("actions-queries@0.6.35", cell.TextContent.Replace(" ", "").Trim());
+        var headers = page.FindAll("[data-abom-queries-table] thead th").Select(h => h.TextContent.Trim());
+        Assert.DoesNotContain("Pack version", headers);
     }
 }

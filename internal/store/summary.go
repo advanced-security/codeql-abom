@@ -24,7 +24,9 @@ type Summary struct {
 	// this one as findings "in what you run", and a finding in a repository nobody declared is not
 	// in what you run.
 	OwnedFindings int `json:"ownedFindings"`
-	Rules         int `json:"rules"`
+	// OwnedSeverity is the same findings by band.
+	OwnedSeverity SeverityCounts `json:"ownedSeverity"`
+	Rules         int            `json:"rules"`
 	// LinkedFindings are attached to a graph node; the rest are known only per repository.
 	LinkedFindings int `json:"linkedFindings"`
 	Advisories     int `json:"advisories"`
@@ -98,6 +100,12 @@ func (s *Store) Summary() (Summary, error) {
 		if err := s.db.QueryRow(sc.query, sc.args...).Scan(sc.into); err != nil {
 			return out, fmt.Errorf("summarizing: %w", err)
 		}
+	}
+	if err := s.db.QueryRow(`SELECT ` + bandSums("f.security_severity") + `
+		FROM abom_finding_regular f
+		JOIN repository r ON r.row_id = f.repository_row_id
+		WHERE ` + OwnedRepositoryFilter).Scan(out.OwnedSeverity.targets()...); err != nil {
+		return out, fmt.Errorf("summarizing owned findings by severity: %w", err)
 	}
 
 	rows, err := s.db.Query(`SELECT status, COUNT(*) FROM abom_frontier GROUP BY status`)

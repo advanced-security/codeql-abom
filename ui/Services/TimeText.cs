@@ -26,4 +26,20 @@ public static class TimeText
             : local.ToString("d MMM");
         return $"{day} at {local.ToString(format)}";
     }
+
+    /// <summary>A local clock time alone, for rows under a heading that already names the day.</summary>
+    public static string Clock(string timestamp) =>
+        DateTime.TryParse(timestamp, null,
+            System.Globalization.DateTimeStyles.AdjustToUniversal, out var at)
+            ? (at.Kind == DateTimeKind.Utc ? at.ToLocalTime() : at).ToString("HH:mm:ss")
+            : "--:--:--";
+
+    /// <summary>A rough span, in the minutes a reader plans around rather than seconds.</summary>
+    public static string Roughly(long seconds)
+    {
+        var minutes = (long)Math.Round(seconds / 60.0);
+        return seconds < 60 ? "under a minute"
+            : minutes < 60 ? $"about {minutes} min"
+            : $"about {minutes / 60} h {minutes % 60} min";
+    }
 }

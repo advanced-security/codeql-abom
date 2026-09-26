@@ -41,6 +41,25 @@ others, and the tests that read them start disagreeing for no visible reason.
 Read the diff before accepting it. A fixture change is a change to what every test using it
 means.
 
+### The corpus query pack
+
+`testdata/corpus/authoring.json` is what CodeQL said over the operator's pack `make corpus` lays
+out: each test run, the report it left, and one `PrintAST` tree. Record it with the CLI, never by
+hand:
+
+```bash
+go run ./cmd/abom-corpus --record-queries testdata/corpus/authoring.json
+```
+
+`scripts/regenerate-corpus-fixtures.sh` runs this last. It installs both scaffolded packs first,
+because an unlocked pack does not compile, and strips the scratch path from the tree. The queries,
+fixtures and steps live in `corpusQueries` in `cmd/abom-corpus`. Change them there and record
+again: a build refuses a recording made over other files, naming this script.
+
+`internal/runner/testdata/testrun-*.json` are `codeql test run --format=json` output, captured over
+a scaffolded pack in a scratch directory. The `.actual` beside a RESULT failure is part of the
+fixture, because the expectation counts are read from it.
+
 ## Real fixtures earn tests you would not have written
 
 The real `abom-edges.json` contains `docker://alpine:3.20` and `actions/checkout` at two

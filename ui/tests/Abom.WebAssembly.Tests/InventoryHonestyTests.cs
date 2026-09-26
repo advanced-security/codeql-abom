@@ -13,9 +13,10 @@ namespace Abom.WebAssembly.Tests;
 public class InventoryHonestyTests : AbomTestContext
 {
     private const string Views = """
-        [{"name":"owned","title":"What you own","predicate":"scope=owned","builtin":true},
+        [{"name":"owned","title":"What you own","predicate":"scope=owned","builtin":true,
+          "refuses":{"inventory":[],"relationships":[],"graph":[]}},
          {"name":"crossings","predicate":"boundary=cross-owner","builtin":false,
-          "listingRefuses":["boundary"]}]
+          "refuses":{"inventory":["boundary"],"relationships":[],"graph":[]}}]
         """;
 
     public InventoryHonestyTests() => Answer("api/views", Views);
@@ -63,6 +64,41 @@ public class InventoryHonestyTests : AbomTestContext
 
         page.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("api/actions")));
         Assert.DoesNotContain("elsewhere", page.Markup, System.StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(page.FindAll("[data-abom-unsourced]"));
+    }
+
+    /// <summary>
+    /// A source answers only for findings whose evaluation recorded one. Narrowed by source, a
+    /// listing says how many rows carry matching findings with none recorded, or zero among ABOM's
+    /// own rules reads as "they found nothing" on a corpus where none were ever attributed.
+    /// </summary>
+    [Fact]
+    public void ASourceSaysHowManyRowsItCouldNotAnswerFor()
+    {
+        Answer("api/actions", """{"items":[],"total":0,"unsourced":12}""");
+        Go("/inventory?source=abom");
+
+        var page = Render<Pages.Inventory>();
+
+        page.WaitForAssertion(() => Assert.StartsWith("12 more dependencies carry",
+            page.Find("[data-abom-unsourced]").TextContent.Trim()));
+    }
+
+    /// <summary>
+    /// A provider answers only for findings that recorded one, which on the crawled organization
+    /// is 1,641 of 12,317. Narrowed by the only provider on offer, the listing says how many rows it
+    /// could not speak for rather than presenting an eighth of the corpus as the whole.
+    /// </summary>
+    [Fact]
+    public void AProviderSaysHowManyRowsItCouldNotAnswerFor()
+    {
+        Answer("api/actions", """{"items":[],"total":0,"unprovided":7}""");
+        Go("/inventory?provider=CodeQL");
+
+        var page = Render<Pages.Inventory>();
+
+        page.WaitForAssertion(() => Assert.StartsWith("7 more dependencies carry",
+            page.Find("[data-abom-unprovided]").TextContent.Trim()));
     }
 
     /// <summary>
@@ -72,6 +108,10 @@ public class InventoryHonestyTests : AbomTestContext
     [Fact]
     public void AViewThisSurfaceCannotDrawIsMarkedBeforeItIsChosen()
     {
+        Answer("api/filters", """
+            [{"name":"boundary","label":"Boundary","help":"Which side of ownership",
+              "arity":"scalar","surfaces":["graph","relationships"]}]
+            """);
         Answer("api/actions", """{"items":[],"total":0}""");
         Go("/inventory");
 
@@ -79,13 +119,14 @@ public class InventoryHonestyTests : AbomTestContext
 
         page.WaitForAssertion(() =>
         {
-            var undrawable = page.Find("[data-abom-view='crossings']");
             // The reason, not a framework class name: what a reader needs is which term this
-            // surface cannot apply and where it is answered.
-            Assert.Contains("boundary", undrawable.GetAttribute("title") ?? "");
-            Assert.Contains("Explorer", undrawable.GetAttribute("title") ?? "");
+            // surface cannot apply and where it is answered. It sits beside the chip rather than
+            // on it, because a disabled chip shows no title.
+            var reason = page.Find("[data-abom-view-reason='crossings']").GetAttribute("title") ?? "";
+            Assert.Contains("Boundary: cross-owner", reason);
+            Assert.Contains("Relationships and the Explorer can", reason);
         });
-        Assert.Empty(page.Find("[data-abom-view='owned']").GetAttribute("title") ?? "");
+        Assert.Empty(page.Find("[data-abom-view-reason='owned']").GetAttribute("title") ?? "");
     }
 
     /// <summary>

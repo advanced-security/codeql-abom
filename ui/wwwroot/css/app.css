@@ -348,6 +348,11 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     font-size: var(--abom-text-sm);
 }
 
+/* Its own line under the chips, so the sentence about a filter does not read as another chip. */
+.abom-filter-picker .abom-picker-unvalued {
+    flex-basis: 100%;
+}
+
 /* Selectable text carries its own weight; it does not need a box around it.
    
    MudBlazor pads a toggle item and a unit button out to a touch target, which on a dense
@@ -376,6 +381,21 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     font-size: var(--abom-text-sm);
 }
 
+/* The named-scope control takes no box of its own, so its chips, name and Keep lay out in the
+   host's scope bar like its other controls. */
+.abom-named-scopes { display: contents; }
+
+/* A name wants a name's width, not whatever is left of the row. */
+.abom-named-scopes .abom-scope-name { flex: 0 1 12rem; }
+
+/* On the Explorer the chips share the filter's row, so the strip costs the canvas one row
+   rather than three. */
+.abom-explore-scope .abom-views { flex: 1 1 20rem; }
+
+/* A named scope's chip and its Forget share one span, which carries the reason and lays out as the
+   chip does rather than as a line of text around it. */
+.abom-views .abom-view { display: inline-flex; align-items: center; white-space: nowrap; }
+
 /* Row actions are icons packed between the first two columns, because a column of words there
    costs more width than the columns it separates and width is the scarce thing at organization
    scale. The column takes exactly the icons it holds and no more, and its header is empty on
@@ -394,6 +414,36 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 .abom-grid thead th:last-child,
 .abom-grid tbody td:last-child {
     width: 100%;
+}
+
+/* Capped below the bar (64), pager (52) and captions; the second selector outranks MudBlazor's 100%. */
+.abom-grid-windowed .mud-table-container,
+.mud-simple-table.abom-grid-windowed .mud-table-container {
+    max-height: calc(100vh - 64px - 52px - var(--abom-under-grid, 20px));
+}
+
+/* A fractional box top rounds the clip and each pinned cell apart; this covers the rows between. */
+.abom-grid-windowed thead th {
+    box-shadow: 0 -3px 0 1px var(--mud-palette-surface);
+}
+
+/* One caption line under the grid, or two: measured at 40px and 60px, with a line to spare. */
+.abom-grid-captioned {
+    --abom-under-grid: 64px;
+}
+.abom-grid-captioned-twice {
+    --abom-under-grid: 84px;
+}
+
+/* Inside a windowed grid, so it also clears that grid's pinned header and the lines above it. */
+.abom-grid-nested {
+    --abom-under-grid: 160px;
+}
+
+/* A wrapped column name doubles the height of every pinned header row. */
+.abom-grid .mud-table-root .mud-table-head .mud-table-cell,
+.abom-grid .mud-table-root .mud-table-head .mud-table-cell .column-header {
+    white-space: nowrap;
 }
 
 .abom-grid .abom-row-actions,
@@ -602,9 +652,21 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     font-size: var(--abom-text-xs);
 }
 
-/* Full width would put the tier checkboxes a screen away from the suite they belong to. */
+/* Sized to its content: full width put a tier's checkboxes a screen away from their suite. */
 .abom-config-grid {
-    max-width: 52rem;
+    width: fit-content;
+    max-width: 100%;
+}
+
+/* The grid-wide last-column rule stacked tier headers nine lines deep beside an empty column. */
+.abom-config-grid .abom-path,
+.abom-config-grid .abom-tier-why,
+.abom-config-grid .abom-tier-count {
+    white-space: nowrap;
+}
+.abom-grid.abom-config-grid thead th:last-child,
+.abom-grid.abom-config-grid tbody td:last-child {
+    width: auto;
 }
 
 /* MudBlazor uppercases button labels, which made "Re-analyze direct (423)" wrap to two lines and
@@ -963,16 +1025,6 @@ code {
     columns: 2;
 }
 
-/* The scope chooser on the empty Explorer. A row that wraps rather than a column: these are
-   alternatives of the same kind, and a vertical list of five reads as an ordered procedure. */
-.abom-start-views {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    justify-content: center;
-    max-width: 520px;
-}
-
 /* A value and how much of the corpus it accounts for, on one line. Stacked, each row was two
    lines tall and a list of twenty-one rules scrolled for no reason. */
 .abom-picker-value {
@@ -996,6 +1048,12 @@ code {
    elsewhere are for toolbars full of them. */
 .abom-brand:hover {
     opacity: 0.85;
+}
+
+/* The name holds its line: wrapped, it pushed the settings control off the end of a laptop's bar. */
+.abom-brand {
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 
 .abom-nav {
@@ -1062,6 +1120,9 @@ code {
    Right-aligned counts, and a stage cell that keeps its chip beside its control: flexbox wraps
    before it shrinks, so the control is what gives way rather than the state a reader is reading. */
 .abom-cell-right { text-align: right; }
+
+/* A grid header is a flex row of label and sort slot, so text-align moves nothing; reversed instead. */
+.abom-grid .mud-table-root th.abom-cell-right .column-header { flex-direction: row-reverse; }
 .abom-stage-cell {
     display: flex;
     align-items: center;
@@ -1070,6 +1131,155 @@ code {
 }
 .abom-stage-cell .abom-stage-select { max-width: 140px; flex-shrink: 1; }
 .abom-stage-cell > :first-child { flex-shrink: 0; }
+
+/* Spelled as the store spells a stage: MudBlazor uppercases button labels. */
+.abom-stage-menu .mud-button-root { text-transform: none; white-space: nowrap; }
+
+/* Contained: the detail cell spans every column and would otherwise size them all. */
+.abom-row-detail {
+    padding: 8px 12px 12px 40px;
+    border-left: 2px solid var(--mud-palette-lines-default);
+    contain: inline-size;
+}
+.abom-query-run + .abom-query-run { margin-top: 12px; }
+
+/* What a version declares, pair by pair, laid out as the node panel lays out its facts. */
+.abom-query-metadata {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.05rem 0.75rem;
+    margin: 0 0 12px;
+    font-size: var(--abom-text-xs);
+}
+.abom-query-metadata dt { opacity: 0.65; white-space: nowrap; }
+.abom-query-metadata dd { margin: 0; word-break: break-word; }
+
+/* Sized to its few columns; MudSimpleTable's own rules are two classes and two elements deep. */
+.mud-simple-table.abom-results table { width: auto; }
+.mud-simple-table.abom-results table * tr > td.abom-cell-right,
+.mud-simple-table.abom-results table * tr > th.abom-cell-right { text-align: right; }
+.mud-simple-table.abom-results table * tr th { white-space: nowrap; }
+
+/* A request's two examples side by side, because the point is the difference between them. */
+.abom-request-examples {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+    gap: 12px;
+}
+.abom-code-input textarea,
+.abom-code {
+    font-family: var(--abom-mono);
+    font-size: var(--abom-text-sm);
+}
+.abom-code {
+    margin: 4px 0 0;
+    padding: 8px 10px;
+    white-space: pre-wrap;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: 4px;
+}
+.abom-request-field { min-width: 16rem; }
+.abom-request-description { white-space: pre-wrap; }
+.abom-request-summary { display: block; min-width: 20rem; }
+
+/* Each step read out with its evidence: the strip's tooltips, without hovering. */
+.abom-request-steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-size: var(--abom-text-sm);
+}
+.abom-request-steps li { display: flex; align-items: baseline; gap: 6px; }
+.abom-request-steps .mud-icon-root { align-self: center; flex-shrink: 0; }
+.abom-request-step-name { font-weight: 500; white-space: nowrap; }
+
+/* A refused stage keeps its name and says why beneath it, in the menu's width. */
+.abom-stage-refused { max-width: 22rem; white-space: normal; }
+
+/* A session's record reads as a log: time, decision, tool and what it touched on one line. */
+.abom-request-sessions {
+    margin-top: 12px;
+    padding-top: 8px;
+    border-top: 1px solid var(--mud-palette-lines-default);
+}
+.abom-plain-button { text-transform: none; }
+/* One entry per evaluation that reported a result, under the result it traces. */
+.abom-trace { list-style: none; padding-left: 0; margin: 2px 0 6px; }
+.abom-trace li + li { margin-top: 4px; }
+/* What a run has left: every name, wrapped, and scrolled rather than pushing its results away. */
+.abom-left {
+    list-style: none;
+    padding-left: 0;
+    margin: 2px 0 6px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 16px;
+    max-height: 8rem;
+    overflow-y: auto;
+    font-size: var(--abom-text-sm);
+}
+.abom-session { margin-top: 6px; }
+.abom-session-detail {
+    margin: 2px 0 0;
+    font-size: var(--abom-text-sm);
+    white-space: pre-wrap;
+    color: var(--mud-palette-text-secondary);
+}
+.abom-timeline {
+    max-height: 24rem;
+    overflow-y: auto;
+    margin-top: 4px;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: 4px;
+}
+.abom-event {
+    padding: 3px 8px;
+    font-size: var(--abom-text-xs);
+    border-bottom: 1px solid var(--mud-palette-lines-default);
+}
+.abom-event > span + span { margin-left: 8px; }
+.abom-event-time { color: var(--mud-palette-text-secondary); font-family: var(--abom-mono); }
+.abom-event-decision { font-weight: 500; }
+.abom-event[data-abom-decision="refused"] .abom-event-decision { color: var(--mud-palette-warning); }
+.abom-event[data-abom-decision="failed"] .abom-event-decision { color: var(--mud-palette-error); }
+.abom-event-subject { font-family: var(--abom-mono); overflow-wrap: anywhere; }
+.abom-event-took { color: var(--mud-palette-text-secondary); }
+.abom-event-reason,
+.abom-event-detail { white-space: pre-wrap; margin-top: 2px; }
+.abom-event-reason { color: var(--mud-palette-warning); }
+.abom-ast-body {
+    max-height: 32rem;
+    overflow: auto;
+    white-space: pre;
+}
+.abom-review-sides {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+/* min-width 0 so a long line scrolls inside its pre instead of widening the row. */
+.abom-review-side { flex: 1 1 20rem; min-width: 0; }
+.abom-review-side pre { max-height: 16rem; overflow: auto; white-space: pre; }
+
+/* break-word, not anywhere: anywhere shrank both columns to a few letters a line. */
+.abom-grid .mud-table-root .mud-table-cell.abom-run-text {
+    min-width: 14rem;
+    max-width: 18rem;
+    overflow-wrap: break-word;
+}
+.abom-run-add { min-width: 16rem; }
+
+/* A refusal can be the CLI's whole answer, so the row shows how it begins; the title holds all of it.
+   No wider than the CodeQL line above it, or the column grows and pushes the grid off its edge. */
+.abom-run-refused {
+    display: block;
+    max-width: 11rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* The CLI's answer keeps its own line breaks. */
+.abom-refusal-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* A pack name breaks at every hyphen, so left in a column of its own it set the height of every
    row in the table. Under the id it wraps at most once and the row is one line of data again. */
@@ -1089,3 +1299,13 @@ code {
 
 /* Row actions on the catalog: a run and a stage change sit together, and neither squashes. */
 .abom-query-actions { display: flex; align-items: center; gap: 2px; flex-wrap: nowrap; }
+
+/* The authoring marks are read left to right as one strip, so they never wrap onto a second line. */
+.abom-step-strip { display: inline-flex; align-items: center; flex-wrap: nowrap; flex-shrink: 0; }
+.abom-step-strip .abom-step { display: inline-flex; padding: 2px; }
+.abom-step-strip .mud-icon-button { padding: 2px; }
+/* Under a query id, the first mark lines up with the id's first letter. */
+.abom-identity-col .abom-step-strip { margin-left: -2px; }
+
+/* A query id is matched against the catalog as written, and MudBlazor uppercases button labels. */
+.abom-ask-change { text-transform: none; }

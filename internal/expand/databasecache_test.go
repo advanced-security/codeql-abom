@@ -19,6 +19,15 @@ func regularAt(repo, sha, filter string) store.DatabaseIdentity {
 // buildInto stages a database, writes something the size of one into it, and promotes it.
 func buildInto(t *testing.T, c *DatabaseCache, id store.DatabaseIdentity, size int) string {
 	t.Helper()
+	return buildBy(t, c, id, size, cacheCLI)
+}
+
+// cacheCLI is the CodeQL the cache tests' databases say built them.
+const cacheCLI = "2.27.1"
+
+// buildBy promotes a database of about size bytes that records cli as the CodeQL that built it.
+func buildBy(t *testing.T, c *DatabaseCache, id store.DatabaseIdentity, size int, cli string) string {
+	t.Helper()
 	staged, dbDir, err := c.Stage()
 	if err != nil {
 		t.Fatalf("Stage: %v", err)
@@ -26,8 +35,11 @@ func buildInto(t *testing.T, c *DatabaseCache, id store.DatabaseIdentity, size i
 	if err := os.MkdirAll(dbDir, 0o755); err != nil {
 		t.Fatalf("building into %s: %v", dbDir, err)
 	}
-	if err := os.WriteFile(
-		filepath.Join(dbDir, "codeql-database.yml"), make([]byte, size), 0o600); err != nil {
+	body := []byte("creationMetadata:\n  cliVersion: " + cli + "\n")
+	if len(body) < size {
+		body = append(body, make([]byte, size-len(body))...)
+	}
+	if err := os.WriteFile(filepath.Join(dbDir, "codeql-database.yml"), body, 0o600); err != nil {
 		t.Fatalf("writing a database: %v", err)
 	}
 	path, _, err := c.Retain(staged, id)
@@ -37,6 +49,21 @@ func buildInto(t *testing.T, c *DatabaseCache, id store.DatabaseIdentity, size i
 	return path
 }
 
+// Extraction changes between releases, and a result names the CodeQL that produced it. A database
+// another CodeQL built would put that release's extraction under this one's name.
+func TestADatabaseIsServedOnlyToTheCodeQLThatBuiltIt(t *testing.T) {
+	cache := &DatabaseCache{Dir: t.TempDir()}
+	id := regularAt("octo/app", "abc123", "f0")
+	buildBy(t, cache, id, 1024, "2.27.0")
+
+	if _, ok := cache.Reuse(id, "2.27.1"); ok {
+		t.Error("a database CodeQL 2.27.0 built was served to 2.27.1")
+	}
+	if _, ok := cache.Reuse(id, "2.27.0"); !ok {
+		t.Error("a database was not served back to the CodeQL that built it")
+	}
+}
+
 // Retention is the point: a database built once must answer the next round's question without
 // being extracted again.
 func TestARetainedDatabaseIsServedOnTheNextRound(t *testing.T) {
@@ -44,7 +71,7 @@ func TestARetainedDatabaseIsServedOnTheNextRound(t *testing.T) {
 	id := regularAt("octo/app", "abc123", "f0")
 	built := buildInto(t, cache, id, 2048)
 
-	served, ok := cache.Reuse(id)
+	served, ok := cache.Reuse(id, cacheCLI)
 	if !ok {
 		t.Fatal("a database promoted a moment ago is not served back")
 	}
@@ -62,7 +89,7 @@ func TestADatabaseBuiltUnderOneFilterDoesNotServeAnother(t *testing.T) {
 	cache := &DatabaseCache{Dir: t.TempDir()}
 	buildInto(t, cache, regularAt("octo/app", "abc123", "f0"), 2048)
 
-	if _, ok := cache.Reuse(regularAt("octo/app", "abc123", "wider")); ok {
+	if _, ok := cache.Reuse(regularAt("octo/app", "abc123", "wider"), cacheCLI); ok {
 		t.Error("a database built under one filter was served for another")
 	}
 }
@@ -81,7 +108,7 @@ func TestTheTwoAnalysisModesOfOneCommitAreSeparateDatabases(t *testing.T) {
 		t.Fatalf("both shapes were built at %q; one has overwritten the other", first)
 	}
 	for _, id := range []store.DatabaseIdentity{regular, extended} {
-		if _, ok := cache.Reuse(id); !ok {
+		if _, ok := cache.Reuse(id, cacheCLI); !ok {
 			t.Errorf("the %s database is not served after the other was built", id.Mode)
 		}
 	}
@@ -101,7 +128,7 @@ func TestAnInterruptedBuildIsNeverServedAsAFinishedDatabase(t *testing.T) {
 		t.Fatalf("building into %s: %v", dbDir, err)
 	}
 
-	if _, ok := cache.Reuse(id); ok {
+	if _, ok := cache.Reuse(id, cacheCLI); ok {
 		t.Error("a staged build that was never promoted was served as a database")
 	}
 }
@@ -216,7 +243,7 @@ func TestDiscardingRemovesTheDatabaseAndTheEntryHoldingIt(t *testing.T) {
 	if err := cache.Discard(built); err != nil {
 		t.Fatalf("Discard: %v", err)
 	}
-	if _, ok := cache.Reuse(id); ok {
+	if _, ok := cache.Reuse(id, cacheCLI); ok {
 		t.Error("a discarded database is still served")
 	}
 	if _, err := os.Stat(built); !os.IsNotExist(err) {
@@ -284,7 +311,7 @@ func TestAStagedBuildInFlightIsNotReclaimed(t *testing.T) {
 // retention is configured.
 func TestADisabledCacheServesNothingAndRefusesToStage(t *testing.T) {
 	var cache *DatabaseCache
-	if _, ok := cache.Reuse(regularAt("octo/app", "abc123", "f0")); ok {
+	if _, ok := cache.Reuse(regularAt("octo/app", "abc123", "f0"), cacheCLI); ok {
 		t.Error("a disabled cache served a database")
 	}
 	if _, _, err := cache.Stage(); err == nil {

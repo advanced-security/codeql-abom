@@ -281,23 +281,19 @@ public sealed class AbomApi(HttpClient http)
         await GetAsync<QueryCatalog>("api/queries", ct) ?? new QueryCatalog();
 
     /// <summary>
-    /// Asks for a run of one query version over the databases a predicate resolves to.
+    /// Asks for a run of query versions over the databases a predicate resolves to.
     ///
     /// The predicate travels in the query string so the server reads it with the same code the
     /// graph and the gate read it with; a second way to express a scope is a second policy engine.
     /// </summary>
     public async Task<(AnalysisRun? Run, string? Refusal)> StartAnalysisRunAsync(
-        string predicate, string queryId, string version, string by,
-        CancellationToken ct = default)
+        string predicate, IReadOnlyList<AnalysisQueryRef> queries, string by,
+        bool held, CancellationToken ct = default)
     {
         try
         {
             using var response = await http.PostAsJsonAsync("api/runs?" + predicate,
-                new
-                {
-                    queries = new[] { new { queryId, queryVersion = version } },
-                    by,
-                }, ct);
+                new { queries, by, held }, ct);
             if (response.IsSuccessStatusCode)
             {
                 LastError = null;
@@ -319,9 +315,186 @@ public sealed class AbomApi(HttpClient http)
         CancellationToken ct = default) =>
         (await GetAsync<AnalysisRunList>("api/runs", ct))?.Runs ?? [];
 
+    /// <summary>
+    /// What a run over <paramref name="predicate"/> would cover, before anything runs. The server's
+    /// refusal comes back verbatim, since it names the term a run cannot apply.
+    /// </summary>
+    public async Task<(DatabaseSet? Set, string? Refusal)> GetDatabasesAsync(
+        string predicate, CancellationToken ct = default)
+    {
+        var url = "api/databases?" + predicate;
+        try
+        {
+            using var response = await http.GetAsync(url, ct);
+            if (response.IsSuccessStatusCode)
+            {
+                LastError = null;
+                return (await response.Content.ReadFromJsonAsync<DatabaseSet>(Json, ct), null);
+            }
+            var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
+            return (null, refusal?.Error
+                ?? $"the server refused this scope ({(int)response.StatusCode})");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
+        {
+            LastError = $"{url}: {ex.Message}";
+            return (null, null);
+        }
+    }
+
+    /// <summary>Every query request, newest first, with the vocabularies a form offers.</summary>
+    public async Task<QueryRequestList> GetQueryRequestsAsync(CancellationToken ct = default) =>
+        await GetAsync<QueryRequestList>("api/query-requests", ct) ?? new QueryRequestList();
+
+    /// <summary>A refusal is the reader leaving something out, so it is returned, not thrown.</summary>
+    public async Task<(QueryRequestList? List, string? Refusal)> SaveQueryRequestAsync(
+        QueryRequest request, CancellationToken ct = default)
+    {
+        var path = request.RowId == 0 ? "api/query-requests" : $"api/query-requests/{request.RowId}";
+        try
+        {
+            using var response = request.RowId == 0
+                ? await http.PostAsJsonAsync(path, request, ct)
+                : await http.PutAsJsonAsync(path, request, ct);
+            if (response.IsSuccessStatusCode)
+            {
+                LastError = null;
+                return (await response.Content.ReadFromJsonAsync<QueryRequestList>(Json, ct), null);
+            }
+            var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
+            return (null, refusal?.Error
+                ?? $"the server refused this request ({(int)response.StatusCode})");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
+        {
+            LastError = $"{path}: {ex.Message}";
+            return (null, null);
+        }
+    }
+
     /// <summary>One run with every member, which is where a reader sees what it could not cover.</summary>
     public async Task<AnalysisRun?> GetAnalysisRunAsync(long id, CancellationToken ct = default) =>
         await GetAsync<AnalysisRun>($"api/runs/{id}", ct);
+
+    /// <summary>A request's agent sessions, and the CodeQL its live one has under way.</summary>
+    public async Task<AuthoringSessionList?> GetAuthoringSessionsAsync(long request, CancellationToken ct = default) =>
+        await GetAsync<AuthoringSessionList>($"api/query-requests/{request}/sessions", ct);
+
+    /// <summary>
+    /// Starts an agent session on a request. A refusal names what stands in the way, such as
+    /// discovery holding CodeQL, so it is returned rather than thrown.
+    /// </summary>
+    public Task<(AuthoringSession? Session, string? Refusal)> StartAuthoringSessionAsync(
+        long request, string by, CancellationToken ct = default) =>
+        ControlAsync<AuthoringSession>($"api/query-requests/{request}/sessions", new { by }, ct);
+
+    /// <summary>Stops the session working a request.</summary>
+    public Task<(AuthoringSessionList? List, string? Refusal)> StopAuthoringSessionAsync(
+        long request, CancellationToken ct = default) =>
+        ControlAsync<AuthoringSessionList>($"api/query-requests/{request}/sessions/stop", null, ct);
+
+    /// <summary>A session's timeline from after the last event the reader holds.</summary>
+    public async Task<AuthoringEventPage?> GetAuthoringEventsAsync(
+        long session, long after, CancellationToken ct = default) =>
+        await GetAsync<AuthoringEventPage>($"api/authoring-sessions/{session}/events?after={after}", ct);
+
+    /// <summary>The trees a request's sessions printed, without their bodies.</summary>
+    public async Task<IReadOnlyList<AuthoringAst>> GetAuthoringAstsAsync(long request, CancellationToken ct = default) =>
+        (await GetAsync<AuthoringAstList>($"api/query-requests/{request}/asts", ct))?.Asts ?? [];
+
+    /// <summary>One printed tree, body and all.</summary>
+    public async Task<AuthoringAst?> GetAuthoringAstAsync(long id, CancellationToken ct = default) =>
+        await GetAsync<AuthoringAst>($"api/authoring-asts/{id}", ct);
+
+    /// <summary>The trees printed for a query, by a session or by ABOM, without their bodies.</summary>
+    public async Task<IReadOnlyList<AuthoringAst>> GetQueryAstsAsync(string queryId, CancellationToken ct = default) =>
+        (await GetAsync<AuthoringAstList>($"api/queries/asts?query={Uri.EscapeDataString(queryId)}", ct))?.Asts ?? [];
+
+    /// <summary>
+    /// Has ABOM print a query's tree over its test database, keeping who asked; a refusal names
+    /// what stands in the way, such as a database older than its fixtures.
+    /// </summary>
+    public Task<(QueryCatalog? Catalog, string? Refusal)> PrintQueryAstAsync(
+        string queryId, string queryVersion, string by, CancellationToken ct = default) =>
+        ControlAsync<QueryCatalog>("api/queries/ast", new { queryId, queryVersion, by }, ct);
+
+    /// <summary>What a request's target last reported, for reading against the request's examples.</summary>
+    public async Task<ReviewState?> GetReviewAsync(long request, CancellationToken ct = default) =>
+        await GetAsync<ReviewState>($"api/query-requests/{request}/review", ct);
+
+    /// <summary>
+    /// Approves or rejects the report that was read. An approval makes it the expected result and
+    /// ABOM then runs the tests; a refusal says what stood in the way.
+    /// </summary>
+    public Task<(ReviewState? State, string? Refusal)> ReviewAsync(
+        long request, string verdict, string reason, string by, string digest, CancellationToken ct = default) =>
+        ControlAsync<ReviewState>($"api/query-requests/{request}/review", new { verdict, reason, by, digest }, ct);
+
+    /// <summary>The sessions drafting a request from a run's picked results, each with its newest draft.</summary>
+    public async Task<DraftSessionList?> GetDraftsAsync(long run, CancellationToken ct = default) =>
+        await GetAsync<DraftSessionList>($"api/runs/{run}/drafts", ct);
+
+    /// <summary>Starts an agent drafting a request from what was picked; nothing is filed by it.</summary>
+    public Task<(AuthoringSession? Session, string? Refusal)> StartDraftAsync(
+        long run, string queryId, IReadOnlyList<RequestEvidence> evidence, string by, CancellationToken ct = default) =>
+        ControlAsync<AuthoringSession>($"api/runs/{run}/drafts", new { queryId, by, evidence }, ct);
+
+    /// <summary>Stops the session drafting from a run.</summary>
+    public Task<(DraftSessionList? List, string? Refusal)> StopDraftAsync(long run, CancellationToken ct = default) =>
+        ControlAsync<DraftSessionList>($"api/runs/{run}/drafts/stop", null, ct);
+
+    /// <summary>A guarded POST whose refusal is the reader's to read.</summary>
+    private async Task<(T? Answer, string? Refusal)> ControlAsync<T>(string path, object? body, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, path);
+        request.Headers.Add("X-Abom-Control", "1");
+        if (body is not null)
+        {
+            request.Content = JsonContent.Create(body);
+        }
+        try
+        {
+            using var response = await http.SendAsync(request, ct);
+            if (response.IsSuccessStatusCode)
+            {
+                LastError = null;
+                return (await response.Content.ReadFromJsonAsync<T>(Json, ct), null);
+            }
+            var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
+            return (default, refusal?.Error ?? $"the server refused it ({(int)response.StatusCode})");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
+        {
+            LastError = $"{path}: {ex.Message}";
+            return (default, ex.Message);
+        }
+    }
+
+    /// <summary>What one member of a run reported for one query, so results can be picked by name.</summary>
+    public async Task<MemberFindings?> GetRunFindingsAsync(
+        long id, string repository, string queryId, CancellationToken ct = default) =>
+        await GetAsync<MemberFindings>(
+            $"api/runs/{id}/results?repository={Uri.EscapeDataString(repository)}" +
+            $"&query={Uri.EscapeDataString(queryId)}", ct);
+
+    /// <summary>Whether a run of these versions should store findings, as the server suggests it.</summary>
+    public async Task<FindingsSuggestion?> GetFindingsSuggestionAsync(
+        IReadOnlyList<AnalysisQueryRef> queries, CancellationToken ct = default) =>
+        queries.Count == 0
+            ? null
+            : await GetAsync<FindingsSuggestion>("api/runs/suggestion?" + string.Join("&",
+                queries.Select(q => "query=" + Uri.EscapeDataString(q.QueryId + "@" + q.QueryVersion))), ct);
+
+    /// <summary>
+    /// Makes findings of what a held run kept: the whole run with no repository, one member with no
+    /// results named, or the results named in it.
+    /// </summary>
+    public Task<(Conversion? Conversion, string? Refusal)> ConvertHeldAsync(
+        long run, string repository, IReadOnlyList<long> results, string by, CancellationToken ct = default) =>
+        ControlAsync<Conversion>($"api/runs/{run}/convert", new { repository, results, by }, ct);
+
+    public async Task<FindingTrace?> GetFindingTraceAsync(long id, CancellationToken ct = default) =>
+        await GetAsync<FindingTrace>($"api/findings/{id}", ct);
 
     /// <summary>Carries out a recorded run, answering as soon as it has started.</summary>
     public async Task<(AnalysisRun? Run, string? Refusal)> ExecuteAnalysisRunAsync(

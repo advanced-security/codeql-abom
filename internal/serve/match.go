@@ -14,6 +14,14 @@ type Match struct {
 	Total int `json:"total"`
 	// Findings counts each finding once however many nodes carry it.
 	Findings int `json:"findings"`
+	// Unsourced counts what a source term could not answer for: findings with no recorded source.
+	Unsourced int `json:"unsourced"`
+	// Unprovided is the same for a provider term: findings that recorded no provider.
+	Unprovided int `json:"unprovided"`
+	// Population is what was counted: findings, or live advisories.
+	Population string `json:"population"`
+	// Advisories counts matched advisories once each, and is absent when none were asked about.
+	Advisories *int `json:"advisories,omitempty"`
 }
 
 // match answers a set rather than a graph.
@@ -31,6 +39,10 @@ func (s *Server) match(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, unenforceable(refused))
 		return
 	}
+	if err := spec.SetConflict(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	// The same selector a policy is evaluated through. Two constructions of one predicate is two
 	// policy engines, and the one nobody simulated is the one that refuses a pull request.
 	matched, err := s.Store.NodesMatching(store.SelectorFor(spec))
@@ -40,9 +52,15 @@ func (s *Server) match(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, Match{
+	answer := Match{
 		Nodes: matched.Nodes, Total: len(matched.Nodes), Findings: matched.Findings,
-	}, nil)
+		Unsourced: matched.Unsourced, Unprovided: matched.Unprovided,
+		Population: matched.Population,
+	}
+	if matched.Population == store.PopulationAdvisories {
+		answer.Advisories = &matched.Advisories
+	}
+	writeJSON(w, answer, nil)
 }
 
 // unenforceable is the one wording, so a term refused at the endpoint and the same term refused on

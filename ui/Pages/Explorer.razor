@@ -10,10 +10,15 @@
 <PageTitle>Explorer — ABOM</PageTitle>
 
 <MudPaper Elevation="0" Class="pa-2 mb-2 abom-filters" Outlined="true">
-    @* Every term the graph applies, behind one button. A control per term spent the width of what
-       could be asked rather than what is, and reached seven of the nineteen the language declares;
-       the other twelve travelled in a saved scope with no control at all. *@
-    <FilterPicker Surface="graph" Changed="OnPickerChanged" />
+    <div class="d-flex flex-wrap align-center gap-2 abom-explore-scope">
+        @* Every term the graph applies, behind one button. A control per term spent the width of
+           what could be asked rather than what is, and reached seven of the nineteen the language
+           declares; the other twelve travelled in a saved scope with no control at all. *@
+        <FilterPicker Surface="graph" Changed="OnPickerChanged" />
+        @* Offered whether or not anything is drawn, so a second scope replaces the first rather
+           than waiting for the reader to clear it by hand. *@
+        <NamedScopes Surface="graph" Chosen="LoadNamed" Presentation="@KeptPresentation" />
+    </div>
 
     @if (Scope.LastError is { Length: > 0 } scopeRefusal)
     {
@@ -226,18 +231,24 @@
                 <div class="abom-graph-busy abom-graph-busy-opaque" data-abom-no-scope>
                     <MudText Typo="Typo.body1">Choose what to look at.</MudText>
                     <MudText Typo="Typo.caption" Class="mt-2 mud-text-secondary abom-refusal-help">
-                        This graph draws one scope at a time, not everything recorded. Pick one
-                        below, or build your own with the filter above.
+                        This graph draws one scope at a time, not everything recorded. Pick a
+                        named scope above, or build your own with the filter.
                     </MudText>
-                    <div class="abom-start-views mt-3">
-                        @foreach (var view in _startViews)
-                        {
-                            <MudButton Variant="Variant.Outlined" Size="Size.Small"
-                                       DropShadow="false"
-                                       OnClick="@(() => StartFrom(view))"
-                                       data-abom-start-view="@view.Name">@view.Label</MudButton>
-                        }
-                    </div>
+                </div>
+            }
+            else if (_refused.Count > 0)
+            {
+                @* Replaces the canvas rather than warning over it: drawn without the term, the
+                   picture would answer a wider question than the chip beside it asks. *@
+                <div class="abom-graph-busy abom-graph-busy-opaque" data-abom-graph-refused>
+                    <MudText Typo="Typo.body1">
+                        This graph does not apply @string.Join(", ", _refused).
+                    </MudText>
+                    <MudText Typo="Typo.caption" Class="mt-2 mud-text-secondary abom-refusal-help">
+                        Drawn without it, this picture would answer a wider question than the
+                        scope asks. Remove it from the filter to draw, or open the scope in the
+                        Inventory, which applies it.
+                    </MudText>
                 </div>
             }
             else if (_counts.Withheld > 0)
@@ -335,7 +346,7 @@
                         @foreach (var fact in DetailFacts)
                         {
                             <dt>@fact.Label</dt>
-                            <dd>@fact.Value</dd>
+                            <dd data-abom-node-fact="@fact.Marker">@fact.Value</dd>
                         }
                     </dl>
                     <MudLink Href="@($"/node/{_detail.Key}")" Typo="Typo.caption">open details</MudLink>
@@ -458,6 +469,10 @@
                so there is no count to report. *@
             <span data-abom-nothing-counted>Nothing is drawn yet.</span>
         }
+        else if (_refused.Count > 0)
+        {
+            <span>Nothing is drawn: this scope carries a term the graph does not apply.</span>
+        }
         else if (_loading)
         {
             <span>@ScopeBusyMessage</span>
@@ -519,6 +534,14 @@
         {
             <span class="mud-text-secondary">
                 · @_arrived.ToString("N0") arrived from a running expansion
+            </span>
+        }
+        @* An emptied allow-list is not written down, so the link on screen asks for every one. *@
+        @if (HasScope && (_kinds.Count == 0 || _edgeClasses.Count == 0))
+        {
+            <span class="mud-text-secondary" data-abom-empty-allow-list>
+                · with every @(_kinds.Count == 0 ? "kind" : "relationship class") switched off,
+                a link to this view opens with all of them
             </span>
         }
         @if (_pollError is { } failure)
@@ -956,16 +979,27 @@
     // payload and would add 20,000 nodes.
     private static readonly string[] OffByDefault = ["step", "job"];
 
-    private IReadOnlyCollection<string> _kinds =
-        ThemeService.KindNames.Keys.Where(k => k != "step" && k != "job").ToHashSet();
+    private static HashSet<string> ArrivalKinds() =>
+        ThemeService.KindNames.Keys.Except(OffByDefault).ToHashSet();
+
+    private static HashSet<string> AllEdgeClasses() => EdgeKinds.Select(e => e.Key).ToHashSet();
+
+    // Both lists are allow-lists that start full, so a scope naming neither asks for the arrival
+    // set rather than for nothing: an empty list draws no node, or no relationship.
+    private static IReadOnlyCollection<string> KindsOf(ViewSpec spec) =>
+        spec.Kinds.Count > 0 ? spec.Kinds.ToHashSet() : ArrivalKinds();
+
+    private static IReadOnlyCollection<string> EdgeClassesOf(ViewSpec spec) =>
+        spec.EdgeClass.Count > 0 ? spec.EdgeClass.ToHashSet() : AllEdgeClasses();
+
+    private IReadOnlyCollection<string> _kinds = ArrivalKinds();
     private IReadOnlyCollection<string> _origins = [];
     private IReadOnlyCollection<string> _rules = [];
-    private IReadOnlyCollection<string> _edgeClasses =
-        new HashSet<string> { "sameRepo", "sameOwner", "crossOwner" };
-    // The second half of the arrival scope. Owned alone is the right population and an unreadable
-    // starburst — 4,805 nodes, 1,564 groups by repository; with findings it is 177. The page is
-    // for "what do I depend on that something is wrong with", not "what do I depend on".
-    private IReadOnlyCollection<string> _flags = ["findings"];
+    private IReadOnlyCollection<string> _edgeClasses = AllEdgeClasses();
+    // Silence means the question was not asked, as it does on every other consumer. Reading an
+    // absent flags term as `findings` drew `?scope=owned` and the "What you own" chip as two
+    // pictures of one predicate, and left "every flag off" with no way to be shared.
+    private IReadOnlyCollection<string> _flags = [];
     private IReadOnlyList<string> _ruleIds = [];
     private Counts _counts = new(0, 0, 0, 0);
     private IJSObjectReference? _module;
@@ -995,10 +1029,16 @@
     private bool HasScope => _scope.Length > 0 || Scope.ToQueryString().Length > 0;
 
     /// <summary>
-    /// The server-applied terms the drawn graph answers. Kept so a filter change can ask whether
-    /// the payload on screen was built for the question now being asked.
+    /// The server-applied terms the drawn graph answers, or null when nothing has been fetched for
+    /// the scope on screen. Kept so a filter change can ask whether the payload on screen was built
+    /// for the question now being asked.
     /// </summary>
-    private string _requestedTerms = string.Empty;
+    private string? _requestedTerms;
+
+    /// <summary>What the scope carries that the graph applies on neither side, by label.</summary>
+    private IReadOnlyList<string> _refused = [];
+
+    private Task<IReadOnlyList<FilterTerm>>? _catalog;
 
     private sealed record ScopeChoice(string Key, string Label, string Help);
 
@@ -1095,7 +1135,7 @@
         return sha.All(Uri.IsHexDigit) ? $"{name[..at]}@{sha[..7]}" : name;
     }
 
-    private sealed record Fact(string Label, string Value);
+    private sealed record Fact(string Label, string Value, string? Marker = null);
 
     /// <summary>
     /// What is known about the node under the pointer, and what is not.
@@ -1135,6 +1175,11 @@
             {
                 var rules = d.Rules.Count > 0 ? $" · {string.Join(", ", d.Rules)}" : string.Empty;
                 yield return new Fact("Findings", $"{d.Findings:N0}{rules}");
+            }
+            // Size says how far a node reaches; this is the other half of the blast.
+            if (d.Facets.Count > 0)
+            {
+                yield return new Fact("Severity", SeverityText.Summary(d.Facets), "severity");
             }
             // A count of statements, not a judgement that any observed reference is affected.
             if (d.Advisories > 0) yield return new Fact("Advisories", $"{d.Advisories:N0} name it");
@@ -1216,12 +1261,11 @@
     /// The address is the scope, read through the one parser the API and the gate also read.
     ///
     /// <para>
-    /// A term the address names wins; a term it does not name keeps this page's arrival default,
-    /// because almost every link in is partial — Discovery hands over a node and a direction and
-    /// nothing else, and reading the kinds it never mentioned as an empty set would draw a blank
-    /// canvas. The cost is that emptying a list whose default is non-empty does not survive a
-    /// reload: the shared language cannot spell an empty list, and giving it one is a change Go
-    /// has to make too.
+    /// A term the address names wins. A list it does not name asks nothing, which for kinds and
+    /// relationship classes is every one the payload holds rather than none: Discovery hands over
+    /// a node and a direction and nothing else, and reading the kinds it never mentioned as an
+    /// empty set would draw a blank canvas. The cost is that switching every kind off does not
+    /// survive a reload, and the page says so rather than the language growing an empty spelling.
     /// </para>
     /// </summary>
     private void ReadScopeFromAddress()
@@ -1233,7 +1277,7 @@
         if (Scope.Names("minReach")) _minReach = spec.MinReach > 0 ? spec.MinReach : null;
         if (Scope.Names("rules")) _rules = [.. spec.Rules];
         if (Scope.Names("origins")) _origins = [.. spec.Origins];
-        if (Scope.Names("flags")) _flags = [.. spec.Flags];
+        _flags = [.. spec.Flags];
         if (Scope.Names("kinds")) _kinds = spec.Kinds.ToHashSet();
         if (Scope.Names("edges")) _edgeClasses = spec.EdgeClass.ToHashSet();
 
@@ -1268,31 +1312,53 @@
             // a transport failure here would put an error over the first-run stages, before the
             // reader has done anything that could have caused one.
         }
-
-        // Only needed when nothing was chosen, but read either way: the frame appears the moment a
-        // reader clears their last filter, and fetching then would show an empty chooser first.
-        _startViews = await Api.GetViewsAsync();
     }
 
     private IReadOnlyList<DeclaredAccount>? _declared;
 
     /// <summary>
-    /// The named scopes on offer before anything is drawn. Read from the same catalog Inventory
-    /// shows rather than a list kept here: a view somebody saved on one surface is a question, and
-    /// a question the Explorer could not offer would have to be rebuilt by hand every time.
+    /// Draws a named scope in place of whatever is on screen: its question whole, and its picture
+    /// where one was kept.
     /// </summary>
-    private IReadOnlyList<NamedView> _startViews = [];
-
-    /// <summary>Draws a named scope, both halves of it: the question and, where one was saved, the picture.</summary>
-    private async Task StartFrom(NamedView view)
+    private async Task LoadNamed(NamedView view)
     {
         Scope.Set(ViewSpec.Parse(view.Predicate));
-        if (ScopeKeys.Contains(Scope.Spec.Scope)) _scope = Scope.Spec.Scope;
-        _flags = [.. Scope.Spec.Flags];
-        if (Scope.Spec.Kinds.Count > 0) _kinds = Scope.Spec.Kinds.ToHashSet();
+        TakeWholeScope();
+        // A kept scope names a node only through its picture, so a focus left from the scope on
+        // screen would narrow this one to a neighborhood nobody chose.
+        _isolated = string.Empty;
+        _selected = [];
+        _hops = 0;
+        Scope.Select([]);
         await ApplyPresentation(Presentation.Parse(view.Presentation));
         await LoadGraph(force: true);
+        if (_module is not null)
+        {
+            await _module.InvokeVoidAsync("setSelection", "abom-graph", _selected.ToArray());
+        }
     }
+
+    /// <summary>
+    /// Every term this page filters by, read out of the scope as one whole question. A term the
+    /// scope does not name takes this page's arrival choice for it, never whatever the previous
+    /// scope had set: carried over, it would narrow the new one without a word.
+    /// </summary>
+    private void TakeWholeScope()
+    {
+        var spec = Scope.Spec;
+        _search = spec.Search;
+        _minReach = spec.MinReach > 0 ? spec.MinReach : null;
+        _rules = [.. spec.Rules];
+        _origins = [.. spec.Origins];
+        _flags = [.. spec.Flags];
+        _kinds = KindsOf(spec);
+        _edgeClasses = EdgeClassesOf(spec);
+        _refStyle = RefStyles.Contains(spec.RefStyle) ? spec.RefStyle : "any";
+        _scope = ScopeKeys.Contains(spec.Scope) ? spec.Scope : string.Empty;
+    }
+
+    /// <summary>What Keep stores beside the question: the picture on screen.</summary>
+    private string KeptPresentation() => CurrentPresentation.ToQueryString();
 
     // Which of the three first-run stages the page is at, or none once there is a picture.
     //
@@ -1305,6 +1371,8 @@
         // page has not asked for anything to produce. Saying it here would report an empty
         // measurement as an empty corpus.
         : !HasScope ? null
+        // A refused scope was never asked of the server, so nothing is being waited for.
+        : _refused.Count > 0 ? null
         : "waiting";
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -1356,12 +1424,43 @@
         // are not applied anywhere. The URL is the payload cache key, so a change refetches.
         query.AddRange(Scope.Spec.Properties.Select(p => "properties=" + Uri.EscapeDataString(p.ToString())));
         query.AddRange(Scope.Spec.NotProperties.Select(p => "notProperties=" + Uri.EscapeDataString(p.ToString())));
+        // What a relationship crosses and what it is are facts of edges the payload merges, so the
+        // server that holds them unmerged applies them.
+        if (!string.IsNullOrEmpty(Scope.Spec.Boundary)) query.Add("boundary=" + Scope.Spec.Boundary);
+        if (Scope.Spec.EdgeKinds.Count > 0) query.Add("edgeKinds=" + string.Join(",", Scope.Spec.EdgeKinds));
         return query;
+    }
+
+    /// <summary>
+    /// The labels of the terms the scope carries that the graph applies on neither side, read from
+    /// the catalog the server declares rather than from a list kept here.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> RefusedHere()
+    {
+        _catalog ??= Api.GetFilterTermsAsync();
+        var carried = Scope.Spec.ToQueryString()
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(pair => Uri.UnescapeDataString(pair.Split('=')[0]))
+            .ToHashSet(StringComparer.Ordinal);
+        return [.. (await _catalog)
+            .Where(t => carried.Contains(t.Name) && !t.Surfaces.Contains("graph"))
+            .Select(t => t.Label)];
     }
 
     private async Task LoadGraph(bool force = false)
     {
         if (_module is null) return;
+        // Refused rather than drawn around: the whole scope's picture under a chip naming one
+        // source is the wider answer a refusal exists to prevent.
+        _refused = await RefusedHere();
+        if (_refused.Count > 0)
+        {
+            _requestedTerms = null;
+            _loading = false;
+            _busy = false;
+            StateHasChanged();
+            return;
+        }
         _loading = true;
         Busy(ScopeBusyMessage);
 
@@ -1485,6 +1584,12 @@
         kinds = _kinds.ToArray(),
         origins = _origins.ToArray(),
         rules = _rules.ToArray(),
+        // Handed over by the graph rather than applied by it, and applied per finding from the
+        // kinds each node carries, the way the set path reads them.
+        notRules = Scope.Spec.NotRules.ToArray(),
+        provider = Scope.Spec.Provider,
+        severity = Scope.Spec.Severity,
+        bands = Scope.Spec.SecuritySeverities.ToArray(),
         edgeClasses = _edgeClasses.ToArray(),
         refStyle = _refStyle,
         minReach = _minReach ?? 0,
@@ -1598,8 +1703,11 @@
         // Grouping, the third dimension, collapsing and the stable layout all change the picture
         // and used to leave no trace, so a shared link showed the same nodes arranged some other
         // way. Written through the same record a saved view stores, so the address and the saved
-        // view cannot disagree about what a drawing is.
-        var drawn = CurrentPresentation with { View = string.Empty, Direction = string.Empty };
+        // view cannot disagree about what a drawing is. The selection is the scope's to write.
+        var drawn = CurrentPresentation with
+        {
+            View = string.Empty, Direction = string.Empty, Selection = string.Empty,
+        };
         if (drawn.ToQueryString() is { Length: > 0 } rest) presentation.Add(rest);
         // Where the reader came from, so the way back out survives touching a filter.
         if (!string.IsNullOrEmpty(FromParam)) presentation.Add($"from={Uri.EscapeDataString(FromParam)}");
@@ -1621,6 +1729,8 @@
         // by hand, must not be quietly widened by being looked at here.
         Provider = Scope.Spec.Provider,
         Severity = Scope.Spec.Severity,
+        SecuritySeverities = Scope.Spec.SecuritySeverities,
+        Sources = Scope.Spec.Sources,
         Boundary = Scope.Spec.Boundary,
         Repositories = Scope.Spec.Repositories,
         NotRules = Scope.Spec.NotRules,
@@ -1628,16 +1738,19 @@
         NotProperties = Scope.Spec.NotProperties,
         Steps = Scope.Spec.Steps,
         Mode = Scope.Spec.Mode,
+        EdgeKinds = Scope.Spec.EdgeKinds,
 
         Scope = _scope,
         Search = _search,
-        Kinds = [.. _kinds],
+        // The arrival set is what the payload holds without a focus, so spelled out it narrows
+        // nothing here, and on any other page the scope opens on it lists kinds that page never
+        // shows.
+        Kinds = ArrivalKinds().SetEquals(_kinds) ? [] : [.. _kinds],
         Origins = [.. _origins],
         Rules = [.. _rules],
         // Selecting every value of a term is the same question as selecting none, and writing it
         // out makes a filter of something that excludes nothing. Compared against this page's own
-        // list rather than a vocabulary restated here. Kinds is not treated this way: its arrival
-        // set leaves jobs and steps out, so it really is a narrowing.
+        // list rather than a vocabulary restated here.
         EdgeClass = _edgeClasses.Count == EdgeKinds.Length ? [] : [.. _edgeClasses],
         // "any" is the absence of a reference-style question, not a third style.
         RefStyle = _refStyle == "any" ? string.Empty : _refStyle,
@@ -1686,6 +1799,7 @@
         Use3d = _use3d,
         Collapsed = _collapsed,
         StableLayout = _stableLayout,
+        Selection = _isolated,
     };
 
     /// <summary>
@@ -1697,6 +1811,14 @@
     public async Task ApplyPresentation(Presentation drawn)
     {
         if (!drawn.HasAny) return;
+        if (drawn.Selection.Length > 0 && drawn.Selection != _isolated)
+        {
+            _isolated = drawn.Selection;
+            _selected = [_isolated];
+            Scope.Select(_selected);
+            // A focus starts at its immediate neighbors unless the picture says how far it went.
+            if (drawn.Hops == 0) _hops = 1;
+        }
         if (drawn.View.Length > 0 && drawn.View != _view) await OnViewChanged(drawn.View);
         if (drawn.GroupBy.Length > 0 && drawn.GroupBy != _groupBy) await OnGroupByChanged(drawn.GroupBy);
         if (drawn.Direction.Length > 0 && drawn.Direction != _direction) await OnDirectionChanged(drawn.Direction);
@@ -1715,7 +1837,7 @@
         SyncAddress();
     }
 
-    /// <summary>Priority drives the Priority force, and is the same figure the table shows.</summary>
+    /// <summary>The advisories unit's rank drives the Priority force: the first-ranked sits closest in.</summary>
     private async Task PushPriorities()
     {
         var items = await Api.GetRemediationAsync(300);
@@ -1724,7 +1846,7 @@
         {
             foreach (var action in item.Actions)
             {
-                map[action] = Math.Max(map.GetValueOrDefault(action), item.Priority);
+                map[action] = Math.Max(map.GetValueOrDefault(action), items.Count + 1 - item.Rank);
             }
         }
         await _module!.InvokeVoidAsync("setPriorities", "abom-graph", map);
@@ -1747,10 +1869,23 @@
         _rules = [.. spec.Rules];
         _origins = [.. spec.Origins];
         _flags = [.. spec.Flags];
-        _kinds = spec.Kinds.ToHashSet();
-        _edgeClasses = spec.EdgeClass.ToHashSet();
-        if (RefStyles.Contains(spec.RefStyle)) _refStyle = spec.RefStyle;
-        if (ScopeKeys.Contains(spec.Scope)) _scope = spec.Scope;
+        _kinds = KindsOf(spec);
+        _edgeClasses = EdgeClassesOf(spec);
+        // Taken as written, so closing either chip removes the term. `any` is what no reference
+        // style asked means; no scope is drawn the way a named scope without one already is.
+        _refStyle = RefStyles.Contains(spec.RefStyle) ? spec.RefStyle : "any";
+        _scope = ScopeKeys.Contains(spec.Scope) ? spec.Scope : string.Empty;
+
+        // Nothing left is nothing asked: the frame says to choose, and no payload is fetched for
+        // a question nobody wrote.
+        if (!HasScope)
+        {
+            _requestedTerms = null;
+            _refused = [];
+            _counts = new Counts(0, 0, 0, 0);
+            StateHasChanged();
+            return;
+        }
 
         // Whether this is a refetch or a refilter is decided by asking whether the graph on
         // screen answers the question now being asked, read from ServerTerms() rather than from a
@@ -1758,7 +1893,7 @@
         // filtered in the browser against a payload built without it — narrowing that reads as an
         // answer and is not one. The comparison is against what was requested rather than against
         // the scope a moment ago, because the picker writes the shared scope before saying so.
-        if (string.Join("&", ServerTerms()) != _requestedTerms)
+        if (_requestedTerms is null || string.Join("&", ServerTerms()) != _requestedTerms)
         {
             await LoadGraph(force: true);
             return;

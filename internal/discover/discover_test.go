@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -13,21 +16,22 @@ import (
 )
 
 type fakeSource struct {
-	repos    []string
-	withDB   map[string]string
-	failOn   string
-	lookups  int32
-	listErr  error
-	listCall int32
+	repos     []string
+	withDB    map[string]string
+	workflows map[string]*bool
+	failOn    string
+	lookups   int32
+	listErr   error
+	listCall  int32
 }
 
-func (f *fakeSource) ListRepositories(context.Context, string) ([]catalog.Repository, error) {
+func (f *fakeSource) ListAll(context.Context, string) (catalog.Listing, error) {
 	atomic.AddInt32(&f.listCall, 1)
 	out := make([]catalog.Repository, 0, len(f.repos))
 	for _, r := range f.repos {
-		out = append(out, catalog.Repository{FullName: r})
+		out = append(out, catalog.Repository{FullName: r, HasWorkflows: f.workflows[r]})
 	}
-	return out, f.listErr
+	return catalog.Listing{Repositories: out}, f.listErr
 }
 
 func (f *fakeSource) FindDatabase(_ context.Context, repo, lang string) (catalog.Database, error) {
@@ -192,10 +196,138 @@ func TestEveryRepositoryIsProbedOnce(t *testing.T) {
 	}
 }
 
+func TestActionsDiscoveryLeavesRepositoriesWithoutWorkflowFilesUnprobed(t *testing.T) {
+	var probes, listings atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.URL.Path == "/graphql":
+			listings.Add(1)
+			fmt.Fprint(writer, `{"data":{"rateLimit":{"cost":1,"remaining":4999,"limit":5000},
+				"repositoryOwner":{"repositories":{"pageInfo":{"hasNextPage":false},"nodes":[
+				{"nameWithOwner":"octo-org/workflows","defaultBranchRef":{"name":"main"},
+				 "workflowTree":{"__typename":"Tree","entries":[{"name":"build.yml","type":"blob"}]}},
+				{"nameWithOwner":"octo-org/absent","defaultBranchRef":{"name":"main"},"workflowTree":null},
+				{"nameWithOwner":"octo-org/docs","defaultBranchRef":{"name":"main"},
+				 "workflowTree":{"__typename":"Tree","entries":[{"name":"README.md","type":"blob"}]}}
+				]}}}}`)
+		case request.URL.Path == "/orgs/octo-org/repos":
+			fmt.Fprint(writer, `[{"full_name":"octo-org/workflows"},
+				{"full_name":"octo-org/absent"},{"full_name":"octo-org/docs"}]`)
+		case strings.HasSuffix(request.URL.Path, "/code-scanning/codeql/databases"):
+			probes.Add(1)
+			fmt.Fprint(writer, `[{"language":"actions","commit_oid":"measured-commit"}]`)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	storage := newStore(t)
+	discovery := Discoverer{
+		Source: catalog.New(server.URL, "", server.Client()), Store: storage, Language: "actions",
+	}
+	stats, err := discovery.Run(context.Background(), "octo-org")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if probes.Load() != 1 || listings.Load() != 1 {
+		t.Errorf("database probes = %d, GraphQL listings = %d; want 1 each", probes.Load(), listings.Load())
+	}
+	if stats.Processed != 1 || stats.Skipped != 2 || stats.Failed != 0 {
+		t.Errorf("stats = %+v; want one processed, two unprobed and none failed", stats)
+	}
+	withDatabase, total, err := storage.CatalogCoverage("actions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withDatabase != 1 || total != 1 {
+		t.Errorf("measured catalog = %d/%d; want 1/1, with skipped repositories unmeasured", withDatabase, total)
+	}
+}
+
 func TestMissingLanguageIsRejected(t *testing.T) {
 	d := &Discoverer{Source: &fakeSource{}, Store: newStore(t)}
 	if _, err := d.RunRepositories(context.Background(), []string{"o/r"}); err == nil {
 		t.Error("expected an error when Language is empty")
+	}
+}
+
+func TestProbeCostTracksWorkflowCandidatesNotOrganizationSize(t *testing.T) {
+	noWorkflows := false
+	source := &fakeSource{repos: make([]string, 20000), workflows: make(map[string]*bool, 19999)}
+	for index := range source.repos {
+		repository := fmt.Sprintf("octo/r%d", index)
+		source.repos[index] = repository
+		if index > 0 {
+			source.workflows[repository] = &noWorkflows
+		}
+	}
+	discovery := Discoverer{Source: source, Store: newStore(t), Language: "actions"}
+	stats, err := discovery.Run(context.Background(), "octo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Skipped != 19999 || stats.Processed != 1 || stats.Failed != 0 || source.lookups != 1 {
+		t.Fatalf("stats = %+v, probes = %d; want 19999 unprobed and one measured", stats, source.lookups)
+	}
+}
+
+func TestOtherLanguagesDoNotUseActionsWorkflowEvidence(t *testing.T) {
+	noWorkflows := false
+	source := &fakeSource{repos: []string{"octo/library"}, workflows: map[string]*bool{"octo/library": &noWorkflows}}
+	discovery := Discoverer{Source: source, Store: newStore(t), Language: "javascript"}
+	stats, err := discovery.Run(context.Background(), "octo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Skipped != 0 || stats.Processed != 1 || stats.Failed != 0 || source.lookups != 1 {
+		t.Fatalf("stats = %+v, probes = %d; want one probe", stats, source.lookups)
+	}
+}
+
+func TestSkippingAProbeKeepsEarlierDatabaseEvidence(t *testing.T) {
+	source := &fakeSource{repos: []string{"octo/previous"}, withDB: map[string]string{"octo/previous": "earlier-commit"}}
+	storage := newStore(t)
+	discovery := Discoverer{Source: source, Store: storage, Language: "actions"}
+	if _, err := discovery.Run(context.Background(), "octo"); err != nil {
+		t.Fatal(err)
+	}
+	noWorkflows := false
+	source.workflows = map[string]*bool{"octo/previous": &noWorkflows}
+	stats, err := discovery.Run(context.Background(), "octo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit, known, err := storage.CatalogCommit("octo/previous", "actions")
+	if err != nil || !known || commit != "earlier-commit" || stats.Skipped != 1 || source.lookups != 1 {
+		t.Fatalf("commit=%q known=%v error=%v stats=%+v probes=%d", commit, known, err, stats, source.lookups)
+	}
+}
+
+func TestRESTFallbackDoesNotInventWorkflowAbsence(t *testing.T) {
+	var probes atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.URL.Path == "/graphql":
+			fmt.Fprint(writer, `{"errors":[{"message":"GraphQL is unavailable"}]}`)
+		case request.URL.Path == "/orgs/octo/repos":
+			fmt.Fprint(writer, `[{"full_name":"octo/first"},{"full_name":"octo/second"}]`)
+		case strings.HasSuffix(request.URL.Path, "/code-scanning/codeql/databases"):
+			probes.Add(1)
+			fmt.Fprint(writer, `[]`)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	storage := newStore(t)
+	discovery := Discoverer{Source: catalog.New(server.URL, "", server.Client()), Store: storage, Language: "actions"}
+	stats, err := discovery.Run(context.Background(), "octo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withDatabase, total, err := storage.CatalogCoverage("actions")
+	if err != nil || stats.Skipped != 0 || stats.Processed != 2 || probes.Load() != 2 || withDatabase != 0 || total != 2 {
+		t.Fatalf("stats=%+v probes=%d catalog=%d/%d error=%v", stats, probes.Load(), withDatabase, total, err)
 	}
 }
 

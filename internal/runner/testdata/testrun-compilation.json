@@ -1,0 +1,29 @@
+[
+{
+  "test" : "/private/tmp/abom-testrun-capture/nocompile/test/SelfHostedRunner/SelfHostedRunner.qlref",
+  "pass" : false,
+  "failureStage" : "COMPILATION",
+  "messages" : [
+    {
+      "severity" : "ERROR",
+      "message" : "unexpected input 'select' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String",
+      "position" : {
+        "fileName" : "/tmp/abom-testrun-capture/nocompile/src/SelfHostedRunner.ql",
+        "line" : 18,
+        "column" : 1,
+        "endLine" : 18,
+        "endColumn" : 7
+      }
+    }
+  ],
+  "expected" : "/private/tmp/abom-testrun-capture/nocompile/test/SelfHostedRunner/SelfHostedRunner.expected",
+  "actual" : "/private/tmp/abom-testrun-capture/nocompile/test/SelfHostedRunner/SelfHostedRunner.actual",
+  "diff" : [
+    "--- expected",
+    "+++ actual",
+    "@@ -1,1 +1,1 @@",
+    "-| .github/workflows/runners.yml:6:5:10:2 | Job: on-hardware-we-own | This job runs on a self-hosted runner (self-hosted). |",
+    "+ERROR: unexpected input 'select' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (SelfHostedRunner.ql:18,1-7)"
+  ]
+}
+]

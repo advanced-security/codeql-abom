@@ -36,25 +36,33 @@ type RemediationItem struct {
 	// Fixable reports whether any affected range has a published patch. An advisory with no
 	// fix cannot be remediated by bumping a version, however widely it reaches.
 	Fixable bool `json:"fixable"`
-	// Priority is severity rank multiplied by repositories reached.
-	Priority int `json:"priority"`
+	// Rank is the advisory's position in the whole match, from 1, before any page is cut.
+	Rank int `json:"rank"`
 }
 
-// RemediationPriority ranks advisories by published severity against how many repositories
+// RemediationPriority ranks advisories by published severity, then by how many repositories
 // under review reach them.
 //
-// The two inputs are kept visible in the result rather than collapsed into an opaque number,
-// because the ranking is a scheduling aid and a reader has to be able to disagree with it.
-// Scores that describe an advisory rather than its reach here — CVSS and EPSS — are reported
-// alongside but deliberately left out of the arithmetic, so the number means exactly what it
-// says: severity times reach.
+// Severity outranks reach, as it does for a finding. The ranking is a scheduling aid and a reader
+// has to be able to disagree with it, so it is an order over inputs the row shows rather than a
+// number combining them. CVSS and EPSS describe an advisory rather than its reach here, and are
+// reported alongside but deliberately left out of the order.
 func (s *Store) RemediationPriority(limit int, sc RepositoryScope) ([]RemediationItem, error) {
+	return s.remediation(limit, sc, nil, nil)
+}
+
+// remediation ranks the advisories published at one of `severities` and reached by one of the
+// routes `reached` names; either empty narrows by nothing.
+func (s *Store) remediation(
+	limit int, sc RepositoryScope, severities, reached []string,
+) ([]RemediationItem, error) {
 	// Before the GROUP BY, so the counts are recomputed for the grouping rather than narrowed
 	// after the fact while still spanning the organization.
 	bound, bindings, err := s.restrict(sc, "er.repository_full_name")
 	if err != nil {
 		return nil, err
 	}
+	narrowed, narrowing := advisoryNarrowing("a.severity", "e.hops", severities, reached)
 	rows, err := s.db.Query(`
 		SELECT e.ghsa_id, COALESCE(a.cve_id,''), COALESCE(a.severity,''),
 		       COALESCE(a.summary,''), a.cvss_v3_score, a.epss_percentage,
@@ -68,9 +76,9 @@ func (s *Store) RemediationPriority(limit int, sc RepositoryScope) ([]Remediatio
 		JOIN abom_node_live n ON n.row_id = e.node_row_id
 		JOIN repository er ON er.row_id = e.repository_row_id
 		LEFT JOIN abom_advisory_package p ON p.advisory_row_id = a.row_id
-		WHERE a.withdrawn_at IS NULL`+bound+`
+		WHERE a.withdrawn_at IS NULL`+narrowed+bound+`
 		GROUP BY e.ghsa_id, a.cve_id, a.severity, a.summary,
-		         a.cvss_v3_score, a.epss_percentage`, bindings...)
+		         a.cvss_v3_score, a.epss_percentage`, append(narrowing, bindings...)...)
 	if err != nil {
 		return nil, fmt.Errorf("ranking remediation: %w", err)
 	}
@@ -97,8 +105,6 @@ func (s *Store) RemediationPriority(limit int, sc RepositoryScope) ([]Remediatio
 			it.Actions = strings.Split(actions.String, ",")
 		}
 		it.Fixable = fixable == 1
-		it.Priority = severityRank[strings.ToLower(it.Severity)] *
-			(it.DirectRepos + it.TransitiveRepos)
 		out = append(out, it)
 	}
 	if err := rows.Err(); err != nil {
@@ -106,6 +112,9 @@ func (s *Store) RemediationPriority(limit int, sc RepositoryScope) ([]Remediatio
 	}
 
 	sortRemediation(out)
+	for i := range out {
+		out[i].Rank = i + 1
+	}
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
@@ -117,6 +126,9 @@ type AdvisoriesQuery struct {
 	Offset   int
 	Limit    int
 	Grouping RepositoryScope
+	// Severities and Reached are `advisorySeverity` and `reached`, read as a policy reads them.
+	Severities []string
+	Reached    []string
 }
 
 // AdvisoriesPage is one page of advisories, the size of the match, and what the match excludes.
@@ -134,14 +146,14 @@ type AdvisoriesPage struct {
 
 // AdvisoriesPage lists advisories that reach something under review, worst first.
 //
-// Ordered across the whole match before the page is cut, because priority is severity times reach
-// and the worst advisory on a page is not the worst advisory.
+// Ordered across the whole match before the page is cut, because the worst advisory on a page is
+// not the worst advisory.
 func (s *Store) AdvisoriesPage(q AdvisoriesQuery) (AdvisoriesPage, error) {
-	all, err := s.RemediationPriority(0, q.Grouping)
+	all, err := s.remediation(0, q.Grouping, q.Severities, q.Reached)
 	if err != nil {
 		return AdvisoriesPage{}, err
 	}
-	unreached, err := s.advisoriesReachingNothing()
+	unreached, err := s.advisoriesReachingNothing(q.Severities)
 	if err != nil {
 		return AdvisoriesPage{}, err
 	}
@@ -157,25 +169,60 @@ func (s *Store) AdvisoriesPage(q AdvisoriesQuery) (AdvisoriesPage, error) {
 	return page, nil
 }
 
-// advisoriesReachingNothing counts live advisories with no exposure row at all.
-func (s *Store) advisoriesReachingNothing() (int, error) {
-	var n int
-	err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM abom_advisory a
-		 WHERE a.withdrawn_at IS NULL
-		   AND NOT EXISTS (SELECT 1 FROM abom_exposure e WHERE e.ghsa_id = a.ghsa_id)`).Scan(&n)
-	if err != nil {
-		return 0, fmt.Errorf("counting advisories that reach nothing: %w", err)
-	}
-	return n, nil
+// advisoriesReachingNothing counts live advisories, at the severities asked, that nothing under
+// review reaches by any route. One reached by a route other than the one asked is left out by the
+// reader's own term, not by the corpus, and counting it here would say nothing uses it.
+func (s *Store) advisoriesReachingNothing(severities []string) (int, error) {
+	ids, err := s.advisoriesReachingNothingIDs(severities)
+	return len(ids), err
 }
 
-// sortRemediation orders by priority, then by whether a fix exists, then by direct reach.
+func (s *Store) advisoriesReachingNothingIDs(severities []string) ([]string, error) {
+	narrowed, args := advisoryNarrowing("a.severity", "", severities, nil)
+	rows, err := s.db.Query(`
+		SELECT a.ghsa_id FROM abom_advisory a
+		 WHERE a.withdrawn_at IS NULL`+narrowed+`
+		   AND NOT EXISTS (SELECT 1 FROM abom_exposure e WHERE e.ghsa_id = a.ghsa_id)`,
+		args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing advisories that reach nothing: %w", err)
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// advisoryNarrowing is the `advisorySeverity` and `reached` half of a WHERE, each an AND.
+func advisoryNarrowing(severity, hops string, severities, reached []string) (string, []any) {
+	out, args := "", []any{}
+	if len(severities) > 0 {
+		clause, a := advisoryBandClause(severity, severities)
+		out, args = out+" AND "+clause, append(args, a...)
+	}
+	if c := hopsCondition(hops, reached); c != "" {
+		out += " AND " + c
+	}
+	return out, args
+}
+
+// sortRemediation orders by severity, then reach, then whether a fix exists, then direct reach.
+// An unrated advisory ranks 0 and so sorts after every rated one, never as low.
 func sortRemediation(out []RemediationItem) {
 	sort.Slice(out, func(i, j int) bool {
 		a, b := out[i], out[j]
-		if a.Priority != b.Priority {
-			return a.Priority > b.Priority
+		if ra, rb := severityRank[strings.ToLower(a.Severity)],
+			severityRank[strings.ToLower(b.Severity)]; ra != rb {
+			return ra > rb
+		}
+		if ta, tb := a.DirectRepos+a.TransitiveRepos, b.DirectRepos+b.TransitiveRepos; ta != tb {
+			return ta > tb
 		}
 		if a.Fixable != b.Fixable {
 			return a.Fixable

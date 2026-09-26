@@ -1,6 +1,7 @@
 package store
 
 import (
+	"slices"
 	"testing"
 )
 
@@ -58,33 +59,64 @@ func find(t *testing.T, items []RemediationItem, ghsa string) RemediationItem {
 	return RemediationItem{}
 }
 
-// The ranking the organization asked for is severity against how much it touches.
-func TestRemediationRanksBySeverityTimesReach(t *testing.T) {
+// Severity outranks reach, as it does for a finding: a high advisory in one repository is worse
+// news than a low one in four, and within one severity the wider reaches first.
+func TestRemediationRanksBySeverityThenReach(t *testing.T) {
 	s := remediationStore(t)
+	seedDependency(t, s, "octo-org/app", "actions/setup-node", "v4", 14)
+	seedDependency(t, s, "octo-org/app", "actions/setup-go", "v5", 16)
 	advisoryAgainst(t, s, "GHSA-low-wide", "low", "actions/checkout", "2.0", "")
 	advisoryAgainst(t, s, "GHSA-high-narrow", "high", "actions/cache", "2.0", "")
+	advisoryAgainst(t, s, "GHSA-medium-two", "medium", "actions/setup-node", "2.0", "")
+	advisoryAgainst(t, s, "GHSA-moderate-three", "moderate", "actions/setup-go", "2.0", "")
 
-	// low severity across four repositories versus high severity in one.
 	for _, repo := range []string{"octo-org/a", "octo-org/b", "octo-org/c", "octo-org/d"} {
 		exposeRepo(t, s, repo, "GHSA-low-wide", "actions/checkout", 1)
 	}
 	exposeRepo(t, s, "octo-org/e", "GHSA-high-narrow", "actions/cache", 1)
+	for _, repo := range []string{"octo-org/a", "octo-org/b"} {
+		exposeRepo(t, s, repo, "GHSA-medium-two", "actions/setup-node", 1)
+	}
+	for _, repo := range []string{"octo-org/a", "octo-org/b", "octo-org/c"} {
+		exposeRepo(t, s, repo, "GHSA-moderate-three", "actions/setup-go", 2)
+	}
 
 	items, err := s.RemediationPriority(0, RepositoryScope{})
 	if err != nil {
 		t.Fatalf("RemediationPriority: %v", err)
 	}
-	if len(items) != 2 {
-		t.Fatalf("ranked %d advisories, want 2", len(items))
+	got := []string{}
+	for _, it := range items {
+		got = append(got, it.GHSAID)
 	}
+	want := []string{"GHSA-high-narrow", "GHSA-moderate-three", "GHSA-medium-two", "GHSA-low-wide"}
+	if !slices.Equal(got, want) {
+		t.Errorf("ranked %v, want %v", got, want)
+	}
+	for i, it := range items {
+		if it.Rank != i+1 {
+			t.Errorf("%s is rank %d at position %d", it.GHSAID, it.Rank, i+1)
+		}
+	}
+}
 
-	// low(1) x 4 = 4 beats high(3) x 1 = 3.
-	if items[0].GHSAID != "GHSA-low-wide" {
-		t.Errorf("ranked %q first, want the wider one: %d vs %d",
-			items[0].GHSAID, items[0].Priority, items[1].Priority)
+// An advisory publishing no severity is unrated, not low: it sorts after every rated one however
+// far it reaches, rather than being ranked as though it had said "harmless".
+func TestRemediationRanksAnUnratedAdvisoryAfterEveryRatedOne(t *testing.T) {
+	s := remediationStore(t)
+	advisoryAgainst(t, s, "GHSA-unrated-wide", "", "actions/checkout", "2.0", "")
+	advisoryAgainst(t, s, "GHSA-low-narrow", "low", "actions/cache", "2.0", "")
+	for _, repo := range []string{"octo-org/a", "octo-org/b", "octo-org/c"} {
+		exposeRepo(t, s, repo, "GHSA-unrated-wide", "actions/checkout", 1)
 	}
-	if got := find(t, items, "GHSA-high-narrow").Priority; got != 3 {
-		t.Errorf("high severity in one repository scored %d, want 3", got)
+	exposeRepo(t, s, "octo-org/a", "GHSA-low-narrow", "actions/cache", 1)
+
+	items, err := s.RemediationPriority(0, RepositoryScope{})
+	if err != nil {
+		t.Fatalf("RemediationPriority: %v", err)
+	}
+	if len(items) != 2 || items[0].GHSAID != "GHSA-low-narrow" {
+		t.Errorf("ranked %+v, want the rated advisory ahead of the unrated one", items)
 	}
 }
 
@@ -105,9 +137,6 @@ func TestRemediationSeparatesDirectFromTransitive(t *testing.T) {
 
 	if it.DirectRepos != 1 || it.TransitiveRepos != 2 {
 		t.Errorf("direct/transitive = %d/%d, want 1/2", it.DirectRepos, it.TransitiveRepos)
-	}
-	if it.Priority != 3*3 {
-		t.Errorf("Priority = %d, want severity times total reach", it.Priority)
 	}
 }
 
@@ -167,7 +196,7 @@ func TestRemediationExcludesWithdrawnAdvisories(t *testing.T) {
 
 // CVSS and EPSS describe the advisory, not its reach here, so they are reported but must not
 // silently change the ranking the organization asked for.
-func TestRemediationScoreIsSeverityTimesReachOnly(t *testing.T) {
+func TestRemediationOrderIgnoresCVSSAndEPSS(t *testing.T) {
 	s := remediationStore(t)
 	if _, err := s.AddAdvisories([]Advisory{{
 		GHSAID: "GHSA-scored", Severity: "medium", Summary: "scored",
@@ -179,17 +208,19 @@ func TestRemediationScoreIsSeverityTimesReachOnly(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("AddAdvisories: %v", err)
 	}
+	advisoryAgainst(t, s, "GHSA-unscored-high", "high", "actions/cache", "2.0", "")
 	exposeRepo(t, s, "octo-org/a", "GHSA-scored", "actions/checkout", 1)
+	exposeRepo(t, s, "octo-org/a", "GHSA-unscored-high", "actions/cache", 1)
 
 	items, err := s.RemediationPriority(0, RepositoryScope{})
 	if err != nil {
 		t.Fatalf("RemediationPriority: %v", err)
 	}
-	it := find(t, items, "GHSA-scored")
-
-	if it.Priority != 2 {
-		t.Errorf("Priority = %d, want medium(2) x 1 repository", it.Priority)
+	if items[0].GHSAID != "GHSA-unscored-high" {
+		t.Errorf("ranked %q first, want the high advisory whatever the medium one's CVSS",
+			items[0].GHSAID)
 	}
+	it := find(t, items, "GHSA-scored")
 	if !it.HasCVSS || it.CVSSv3Score != 9.8 {
 		t.Errorf("CVSS = %v (present=%v), want it reported alongside", it.CVSSv3Score, it.HasCVSS)
 	}

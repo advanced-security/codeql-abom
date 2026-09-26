@@ -139,7 +139,7 @@ func TestAddFindingsDeduplicates(t *testing.T) {
 	finding := Finding{
 		RuleID: "actions/unpinned-tag", RepositoryID: repoID,
 		FilePath: ".github/workflows/ci.yml", StartLine: 12, StartColumn: 9,
-		Message: "unpinned", Severity: "warning", SecuritySeverity: 5.0,
+		Message: "unpinned", Severity: "warning", SecuritySeverity: score(5.0),
 	}
 	for i := 0; i < 2; i++ {
 		if _, err := s.AddFindings([]Finding{finding}); err != nil {
@@ -174,7 +174,7 @@ func TestReanalysisAttachesTheRunThatReproducedAFinding(t *testing.T) {
 	finding := Finding{
 		RuleID: "actions/unpinned-tag", RepositoryID: repoID,
 		FilePath: ".github/workflows/ci.yml", StartLine: 12, StartColumn: 9,
-		Message: "unpinned", Severity: "warning", SecuritySeverity: 5.0,
+		Message: "unpinned", Severity: "warning", SecuritySeverity: score(5.0),
 	}
 	if _, err := s.AddFindings([]Finding{finding}); err != nil {
 		t.Fatalf("AddFindings: %v", err)

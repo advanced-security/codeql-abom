@@ -1,0 +1,77 @@
+{
+  "cliVersion": "2.27.1",
+  "runs": [
+    {
+      "query": "CheckoutTagPin",
+      "version": "0fa7a856201573de4cae646ee1a7766feb987cd0ad9c27c77824b838193cdddf",
+      "tests": "f61ef2d4e781f1c4179591038c34a0411c2e9f4dbd6f4a4a8c784dc58d322709",
+      "fixtures": "65b30d726b5ba42e8b08139d09a73aabb80871e32d3a4d7570b252d7fdc29c51",
+      "result": {
+        "Passed": false,
+        "Total": 1,
+        "Failed": 1,
+        "Detail": "0 of 1 passed; 1 expected result missing, nothing unexpected",
+        "FailureStage": "RESULT",
+        "Missing": 1,
+        "Unexpected": 0
+      },
+      "report": "#select\ntestFailures\n| .github/workflows/ci.yml:6:35:6:43 | # $ Alert | Missing result: Alert |\n"
+    },
+    {
+      "query": "CheckoutTagPin",
+      "version": "d2f0bfd12de60f6e251e1314b13078c6509b9d533c5d543397b7f9d03235d4ba",
+      "tests": "f61ef2d4e781f1c4179591038c34a0411c2e9f4dbd6f4a4a8c784dc58d322709",
+      "fixtures": "65b30d726b5ba42e8b08139d09a73aabb80871e32d3a4d7570b252d7fdc29c51",
+      "result": {
+        "Passed": false,
+        "Total": 1,
+        "Failed": 1,
+        "Detail": "0 of 1 passed; the results differ from the .expected",
+        "FailureStage": "RESULT",
+        "Missing": 0,
+        "Unexpected": 0
+      },
+      "report": "| .github/workflows/ci.yml:6:15:6:33 | actions/checkout@v4 | actions/checkout is pinned to v4, which can be moved. |\n"
+    },
+    {
+      "query": "CheckoutTagPin",
+      "version": "d2f0bfd12de60f6e251e1314b13078c6509b9d533c5d543397b7f9d03235d4ba",
+      "tests": "d021d61cea194282fd4c35deef5f9e063eaae240520f4b3ac7ad936bc504ed95",
+      "fixtures": "65b30d726b5ba42e8b08139d09a73aabb80871e32d3a4d7570b252d7fdc29c51",
+      "result": {
+        "Passed": true,
+        "Total": 1,
+        "Failed": 0,
+        "Detail": "1 of 1 passed",
+        "FailureStage": "",
+        "Missing": null,
+        "Unexpected": null
+      },
+      "report": ""
+    },
+    {
+      "query": "WritePermissions",
+      "version": "f8ee6049d2fd24c99427f68a00ecfd510db6c43fe13d69406fa1de743d1e634f",
+      "tests": "06bbd96bb8cdc4359908713d12a413f7960b69b4f213b8c86002fee1e5d2f5a0",
+      "fixtures": "ca154883197ad9f3f70fd9d1a20e7ea76316b4c3db3bb2942b2ec86d975f44fd",
+      "result": {
+        "Passed": false,
+        "Total": 1,
+        "Failed": 1,
+        "Detail": "0 of 1 passed; 1 expected result missing, nothing unexpected",
+        "FailureStage": "RESULT",
+        "Missing": 1,
+        "Unexpected": 0
+      },
+      "report": "#select\ntestFailures\n| .github/workflows/ci.yml:2:24:2:32 | # $ Alert | Missing result: Alert |\n"
+    }
+  ],
+  "tree": {
+    "query": "acme/checkout-tag-pin",
+    "database": "test/CheckoutTagPin/CheckoutTagPin.testproj",
+    "sourceFiles": ".github/workflows/ci.yml",
+    "fixtures": "65b30d726b5ba42e8b08139d09a73aabb80871e32d3a4d7570b252d7fdc29c51",
+    "body": "test/CheckoutTagPin/.github/workflows/ci.yml:\n#    1| [WorkflowImpl] on: push\n#-----| 1 -\u003e [ScalarValueImpl] push\n#-----| 1 -\u003e [OnImpl] push\n#-----| 3 -\u003e [JobImpl] Job: build\n#-----| 4 -\u003e [ScalarValueImpl] ubuntu-latest\n#-----| 5 -\u003e [ScalarValueImpl] actions/checkout@v4\n#-----| 6 -\u003e [ScalarValueImpl] actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n\n#    1| [ScalarValueImpl] push\n\n#    1| [OnImpl] push\n#-----| 1 -\u003e [ScalarValueImpl] push\n#-----| 1 -\u003e [EventImpl] push\n\n#    1| [EventImpl] push\n#-----| 1 -\u003e [ScalarValueImpl] push\n\n#    4| [JobImpl] Job: build\n#-----| 1 -\u003e [ScalarValueImpl] ubuntu-latest\n#-----| 2 -\u003e [StepImpl] Uses Step\n#-----| 3 -\u003e [ScalarValueImpl] actions/checkout@v4\n#-----| 4 -\u003e [StepImpl] Uses Step\n#-----| 5 -\u003e [ScalarValueImpl] actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n\n#    4| [ScalarValueImpl] ubuntu-latest\n\n#    6| [StepImpl] Uses Step\n#-----| 1 -\u003e [ScalarValueImpl] actions/checkout@v4\n\n#    6| [ScalarValueImpl] actions/checkout@v4\n\n#    7| [StepImpl] Uses Step\n#-----| 1 -\u003e [ScalarValueImpl] actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n\n#    7| [ScalarValueImpl] actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n",
+    "truncated": false
+  }
+}

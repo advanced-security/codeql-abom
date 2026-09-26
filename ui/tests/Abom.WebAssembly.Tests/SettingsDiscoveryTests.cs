@@ -48,10 +48,9 @@ public sealed class SettingsDiscoveryTests : AbomTestContext
         });
     }
 
-    /// The binding is the thing that was hardest to find and the thing an operator changes: which
-    /// suite of queries each tier of dependency is analyzed with.
+    /// Settings states which suite each tier runs, and names where that is changed.
     [Fact]
-    public void WhatEachTierIsAnalyzedWithIsDecidedFromSettings()
+    public void WhatEachTierIsAnalyzedWithIsStatedInSettingsAndChangedOnTheCodeQLPage()
     {
         Serve(TwoSuites);
 
@@ -63,11 +62,12 @@ public sealed class SettingsDiscoveryTests : AbomTestContext
                 "What each tier is analyzed with",
                 cut.Markup,
                 StringComparison.Ordinal);
+            Assert.Equal("/codeql?tab=suites",
+                cut.Find("[data-abom-binding-change]").GetAttribute("href"));
         });
     }
 
-    /// Collapsed is a sensible default only because the summary is not: a fold that hid the
-    /// binding would leave a reader who does not know to look assuming the default.
+    /// Stated only where it is changed, a binding leaves a reader on Settings assuming the default.
     [Fact]
     public void TheBindingStatesItselfWithoutBeingOpened()
     {
@@ -77,7 +77,7 @@ public sealed class SettingsDiscoveryTests : AbomTestContext
 
         cut.WaitForAssertion(() =>
         {
-            var summary = cut.Find(".abom-fold-summary");
+            var summary = cut.Find("[data-abom-binding-summary]");
             Assert.Contains("direct:", summary.TextContent, StringComparison.Ordinal);
             Assert.Contains("abom-findings", summary.TextContent, StringComparison.Ordinal);
         });

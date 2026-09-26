@@ -36,11 +36,12 @@ func attachOwners(nodes []GraphNode) []GraphNode {
 		org, ok := orgs[owner]
 		if !ok {
 			org = &GraphNode{
-				Key:   OrgKey(owner),
-				Kind:  OrgNodeKind,
-				Path:  owner,
-				Owner: owner,
-				Rules: []string{},
+				Key:    OrgKey(owner),
+				Kind:   OrgNodeKind,
+				Path:   owner,
+				Owner:  owner,
+				Rules:  []string{},
+				Facets: []FindingFacet{},
 				// An account is external until a repository under review proves otherwise.
 				IsExternal: true,
 				Analyzed:   true,
@@ -61,6 +62,7 @@ func attachOwners(nodes []GraphNode) []GraphNode {
 		// up only what hangs directly beneath an account would report every account as clean.
 		org.Findings += n.Findings
 		org.Rules = append(org.Rules, n.Rules...)
+		org.Facets = mergeFacets(org.Facets, n.Facets)
 		// Reach is the furthest of its members rather than the sum, which would count a
 		// repository once for every member that reaches it.
 		if n.DependentRepos > org.DependentRepos {

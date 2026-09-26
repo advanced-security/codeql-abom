@@ -172,7 +172,7 @@ test that does not passes on any corpus that has never been compacted.
 
 `removed_at` is set on the row and honored on every read; only `Compact` deletes, and it bumps the
 epoch that forces clients to reload. That is what keeps row ids monotonic, and a delta cursor valid.
-Pruning a node also takes `abom_finding_node`, `abom_alert_link` and every edge naming it as
+Pruning a node also takes `abom_finding_node` and every edge naming it as
 *either* endpoint — but never the ledger. `abom_query_run` and `abom_finding` are evidence; the
 graph is a projection, and a pruned node may legitimately come back.
 

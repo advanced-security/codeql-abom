@@ -1,5 +1,5 @@
 ---
-description: "Use when changing Go code under cmd/ or internal/ in codeql-abom: the layering, and the architectural invariants that produce data which looks right and is wrong when broken. Covers verdicts coming only from rule IDs, advisories enriching rather than adjudicating, seed versus upstream repositories, ownership versus what already has a database, direct versus transitive exposure, severity x reach, saying what is not known, absent versus zero measurements, writing to GitHub's APIs being irreversible and replacing rather than adding, append-only graph tables, and queue states a reader distinguishes."
+description: "Use when changing Go code under cmd/ or internal/ in codeql-abom: the layering, and the architectural invariants that produce data which looks right and is wrong when broken. Covers verdicts coming only from rule IDs, advisories enriching rather than adjudicating, seed versus upstream repositories, ownership versus what already has a database, direct versus transitive exposure, severity before reach, saying what is not known, absent versus zero measurements, writing to GitHub's APIs being irreversible and replacing rather than adding, append-only graph tables, and queue states a reader distinguishes."
 applyTo: "{cmd,internal}/**/*.go"
 ---
 
@@ -53,8 +53,9 @@ expensive one, the cheap one must stay callable alone.
 action itself and can fix it. `hops > 1` means it arrives via an intermediary someone else may
 own. Never collapse them into one "affected" count.
 
-**Priority is severity × reach, and nothing else.** CVSS and EPSS are reported alongside but
-stay out of the arithmetic, so the number remains explainable. Never blend scores.
+**Order is severity, then reach, and nothing else** — for findings and advisories alike, with what
+nothing reaches after what something does. CVSS and EPSS are reported alongside but stay out of
+the order, so it remains explainable. Never blend scores.
 
 **Say what is not known.** Coverage, pending frontier items and unanalyzed dependencies are
 first-class output, not omissions.

@@ -1,0 +1,166 @@
+@* Every named scope, on every page that builds one: a built-in or a kept scope is opened here, and
+   the scope on screen is kept here under a name. One control rather than a copy per page, because
+   hand-rolled copies of one serializer are how the Explorer came to write `ref` and read
+   `refStyle`.
+
+   Chips rather than a menu, for the reason the exports are not in one either: MudMenu renders its
+   items only once opened, so what is on offer is neither discoverable nor checkable.
+
+   Whether this page can open a scope is the server's answer for this page. A client deciding it
+   would be a capability that exists only in a client, and the first refusal it got wrong would
+   widen a scope without a word. *@
+
+@inject AbomApi Api
+@inject ScopeService Scope
+@implements IDisposable
+
+@* No box of its own: the chips, the name and Keep lay out in the host's scope bar as they did
+   before they were one component. *@
+<div class="abom-named-scopes" data-abom-named-scopes="@Surface">
+    <div class="abom-views d-flex flex-wrap align-center gap-1" data-abom-views="@Surface">
+        @foreach (var view in _views)
+        {
+            var reason = Refusal(view);
+            @* The reason sits on a span outside the chip: a disabled chip takes no pointer events,
+               so a title on it never shows, and that is the title a reader needs most. Forget
+               shares the span so a wrapping row cannot part it from the scope it forgets. *@
+            <span class="abom-view" title="@reason" data-abom-view-reason="@view.Name">
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                         Color="@(IsSelected(view) ? Color.Primary : Color.Default)"
+                         Class="@(IsSelected(view) ? "abom-view-selected" : null)"
+                         Disabled="@(reason.Length > 0)"
+                         OnClick="@(() => Chosen.InvokeAsync(view))"
+                         data-abom-view="@view.Name">@view.Label</MudChip>
+                @* A built-in is code: the server refuses to delete it, so offering the control
+                   would be an affordance that cannot work. *@
+                @if (!view.Builtin)
+                {
+                    <MudIconButton Size="Size.Small" Icon="@Icons.Material.Outlined.Close"
+                                   aria-label="@($"Forget {view.Label}")"
+                                   title="@($"Forget {view.Label}")"
+                                   OnClick="@(() => Forget(view))"
+                                   data-abom-forget-view="@view.Name" />
+                }
+            </span>
+        }
+    </div>
+    <MudTextField T="string" @bind-Value="_name" Placeholder="Name this scope"
+                  Immediate="true" Margin="Margin.Dense" Variant="Variant.Outlined"
+                  Class="abom-scope-name" data-abom-scope-name="1" />
+    <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
+               StartIcon="@Icons.Material.Outlined.BookmarkAdd" OnClick="Keep"
+               Disabled="@(_name.Trim().Length == 0 || Scope.Spec.ToQueryString().Length == 0)"
+               data-abom-save-scope="1">Keep</MudButton>
+    @if (_refused is { Length: > 0 } refused)
+    {
+        <MudText Typo="Typo.caption" Color="Color.Warning" data-abom-scope-refused>@refused</MudText>
+    }
+</div>
+
+@code {
+    /// <summary>Which page this is, so a scope it would refuse is disabled here rather than refused on use.</summary>
+    [Parameter, EditorRequired]
+    public string Surface { get; set; } = string.Empty;
+
+    /// <summary>Raised when a scope is chosen. The page opens it: its question, and its picture if it draws.</summary>
+    [Parameter]
+    public EventCallback<NamedView> Chosen { get; set; }
+
+    /// <summary>How the page is drawing the scope, kept beside it. None on a page that draws nothing.</summary>
+    [Parameter]
+    public Func<string>? Presentation { get; set; }
+
+    // What a reader calls each page a scope opens on, in the order the Inventory lists its units.
+    private static readonly (string Surface, string Name)[] Pages =
+    [
+        ("inventory", "Actions"), ("workflows", "Workflows"), ("jobs", "Jobs"),
+        ("repositories", "Repositories"), ("advisories", "Advisories"),
+        ("relationships", "Relationships"), ("coverage", "Coverage"), ("graph", "the Explorer"),
+    ];
+
+    private IReadOnlyList<NamedView> _views = [];
+    private IReadOnlyDictionary<string, string> _labels = new Dictionary<string, string>();
+    private string _name = string.Empty;
+    private string? _refused;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // A page loads a scope from outside this control, so what is marked in force is a reading
+        // of the scope rather than a memory of the last click.
+        Scope.Changed += Redraw;
+        _views = await Api.GetViewsAsync();
+        _labels = (await Api.GetFilterTermsAsync())
+            .ToDictionary(t => t.Name, t => t.Label, StringComparer.Ordinal);
+    }
+
+    private void Redraw() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Scope.Changed -= Redraw;
+
+    // Compared as canonical text, which is the whole reason a built-in's predicate is stored
+    // canonical rather than however it was typed.
+    private bool IsSelected(NamedView view) => Scope.Spec.ToQueryString() == view.Predicate;
+
+    /// <summary>Why this page cannot open a scope, or empty when it can.</summary>
+    private string Refusal(NamedView view)
+    {
+        if (!view.Refuses.TryGetValue(Surface, out var refused))
+        {
+            return "ABOM cannot read this scope's filter, so no page opens it.";
+        }
+        if (refused.Count == 0) return string.Empty;
+
+        var terms = refused.Select(t => $"“{Label(t)}: {Values(view.Predicate, t)}”").ToList();
+        var opens = Pages
+            .Where(p => p.Surface != Surface)
+            .Where(p => view.Refuses.TryGetValue(p.Surface, out var r) && r.Count == 0)
+            .Select(p => p.Name)
+            .ToList();
+        var sentence = $"{Here} cannot narrow by {Join(terms, "or")}.";
+        return opens.Count == 0 ? sentence : $"{sentence} {Capitalized(Join(opens, "and"))} can.";
+    }
+
+    private string Here => Surface switch
+    {
+        "graph" => "The Explorer",
+        "run" => "A run",
+        _ => Pages.FirstOrDefault(p => p.Surface == Surface).Name ?? "This page",
+    };
+
+    private string Label(string term) => _labels.TryGetValue(term, out var label) ? label : term;
+
+    private static string Values(string predicate, string term) =>
+        string.Join(", ", predicate.Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(pair => pair.Split('=', 2))
+            .Where(kv => kv.Length == 2 && ViewSpec.Unescape(kv[0]) == term)
+            .Select(kv => ViewSpec.Unescape(kv[1])));
+
+    private static string Join(IReadOnlyList<string> items, string last) => items.Count switch
+    {
+        1 => items[0],
+        _ => $"{string.Join(", ", items.Take(items.Count - 1))} {last} {items[^1]}",
+    };
+
+    private static string Capitalized(string text) =>
+        text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
+
+    /// <summary>
+    /// Keeps the scope on screen under a name: its predicate, never the selection riding beside
+    /// it, which the server would refuse as a filter it has never heard of.
+    /// </summary>
+    private async Task Keep()
+    {
+        var saved = await Api.SaveViewAsync(_name.Trim(), Scope.Spec.ToQueryString(), Presentation?.Invoke());
+        _refused = saved is null ? $"This scope could not be saved: {Api.LastError}" : null;
+        if (saved is null) return;
+        _views = saved;
+        _name = string.Empty;
+    }
+
+    private async Task Forget(NamedView view)
+    {
+        var left = await Api.ForgetViewAsync(view.Name);
+        _refused = left is null ? $"{view.Label} could not be forgotten: {Api.LastError}" : null;
+        if (left is not null) _views = left;
+    }
+}

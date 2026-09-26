@@ -90,11 +90,13 @@ clean:
 ## Refuses ABOM_DB for the reason `e2e` does — a builder that replaces its output must not be
 ## pointed at the working corpus.
 ABOM_CORPUS_DB ?= $(ABOM_TMP)/corpus/abom.db
+# The query pack a server is given with --custom-ql-dir, replaced on every build like the database.
+ABOM_CORPUS_QL ?= $(ABOM_TMP)/corpus/ql
 corpus:
 	@if [ "$(abspath $(ABOM_CORPUS_DB))" = "$(abspath $(ABOM_DB))" ]; then \
 		echo "corpus: refusing to overwrite $(ABOM_DB), which is the working database."; exit 1; \
 	fi
-	@go run ./cmd/abom-corpus --db "$(ABOM_CORPUS_DB)"
+	@go run ./cmd/abom-corpus --db "$(ABOM_CORPUS_DB)" --queries "$(ABOM_CORPUS_QL)"
 
 ## e2e: drive the published interface in a real browser.
 ##
@@ -120,19 +122,24 @@ ABOM_E2E_FLAGS ?=
 # what a developer wants. CI names a single file per job, because the suite runs on one worker
 # against one server and its slowest file would otherwise decide how long the check takes.
 ABOM_E2E_SPECS ?=
+# One page or one part of it, as an address or a tag: `/codeql?tab=runs`, `inventory:workflows`, `node`.
+ABOM_E2E_PAGE ?=
 # Which browser runs the suite. Empty takes the pinned Chromium, which is what CI should use
 # because it is identical everywhere. `chrome` borrows the system install, and is the way through
 # on a machine where that download will not complete — a partial one leaves a directory that looks
 # installed and an app bundle with no framework inside, which fails as a launch error rather than
 # as a missing browser.
 ABOM_E2E_CHANNEL ?=
+# The query pack the server is given with --custom-ql-dir. Empty serves none, as an install does
+# until an operator names one; the corpus targets name the corpus pack.
+ABOM_E2E_QL ?=
 ## e2e-corpus: the same suite against the shared data set rather than an empty database.
 ##
 ## A separate target so the path lives here rather than in a workflow: `make e2e` wipes its
 ## directory only when pointed at its own default, so naming the corpus database from outside is
 ## safe but means two files have to agree about where it is.
 e2e-corpus: corpus
-	@$(MAKE) e2e ABOM_E2E_DB="$(abspath $(ABOM_CORPUS_DB))"
+	@$(MAKE) e2e ABOM_E2E_DB="$(abspath $(ABOM_CORPUS_DB))" ABOM_E2E_QL="$(abspath $(ABOM_CORPUS_QL))"
 
 ## e2e-run, e2e-corpus-run: the suite on its own, against a binary, an interface and a database
 ## that already exist. `make e2e` builds all three every time, which is right on a workstation and
@@ -144,7 +151,10 @@ e2e-corpus-run:
 		echo "e2e-corpus-run: the server would otherwise make an empty one, and every"; \
 		echo "e2e-corpus-run: populated assertion would skip and be reported as a pass."; exit 1; \
 	fi
-	@$(MAKE) e2e-run ABOM_E2E_DB="$(abspath $(ABOM_CORPUS_DB))"
+	@if [ ! -f "$(ABOM_CORPUS_QL)/qlpack.yml" ]; then \
+		echo "e2e-corpus-run: no query pack at $(ABOM_CORPUS_QL); 'make corpus' lays it out."; exit 1; \
+	fi
+	@$(MAKE) e2e-run ABOM_E2E_DB="$(abspath $(ABOM_CORPUS_DB))" ABOM_E2E_QL="$(abspath $(ABOM_CORPUS_QL))"
 
 ## `e2e` builds, then runs. The run is a recursive invocation rather than a prerequisite because
 ## prerequisites of one target are eligible to run concurrently: under `make -j e2e` the server
@@ -170,6 +180,8 @@ e2e-run:
 		ABOM_E2E_UI="$(ABOM_UI)/wwwroot" \
 		ABOM_E2E_PORT="$(ABOM_E2E_PORT)" \
 		ABOM_E2E_CHANNEL="$(ABOM_E2E_CHANNEL)" \
+		ABOM_E2E_PAGE="$(ABOM_E2E_PAGE)" \
+		ABOM_E2E_QL="$(ABOM_E2E_QL)" \
 		npx playwright test $(ABOM_E2E_FLAGS) $(ABOM_E2E_SPECS)
 
 fmt:

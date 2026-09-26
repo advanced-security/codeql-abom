@@ -86,6 +86,50 @@ func TestThePackIsPinnedToTheRunningCodeQL(t *testing.T) {
 	}
 }
 
+// One actions library governs writing a query and running it: a wildcard resolves to whatever the
+// package cache holds when the lock is written, which is how the operator's pack came to lock
+// 0.6.2 while ABOM's own queries ran 0.6.1.
+func TestBothPacksPinTheActionsLibraryABOMsOwnQueriesRun(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "custom")
+	if _, err := Scaffold(dir, "2.27.1"); err != nil {
+		t.Fatalf("Scaffold: %v", err)
+	}
+	lib, err := os.ReadFile(filepath.Join("..", "..", "ql", "actions", "lib", "codeql-pack.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(lib), "codeql/actions-all: "+ActionsAll+"\n") {
+		t.Fatalf("ABOM's library pack does not pin codeql/actions-all %s:\n%s", ActionsAll, lib)
+	}
+	for _, manifest := range []string{"qlpack.yml", "test/qlpack.yml"} {
+		body, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(manifest)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), "codeql/actions-all: "+ActionsAll+"\n") {
+			t.Errorf("%s does not pin codeql/actions-all %s:\n%s", manifest, ActionsAll, body)
+		}
+	}
+}
+
+// A marker in a fixture is read only by the postprocess query, so a test pack without it has
+// no way to fail before its query exists except for want of an .expected.
+func TestTheTestPackCarriesTheQueryThatReadsItsMarkers(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "custom")
+	if _, err := Scaffold(dir, "2.27.1"); err != nil {
+		t.Fatalf("Scaffold: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "test", filepath.FromSlash(Postprocess)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"@kind test-postprocess", "InlineExpectationsTest", "YamlComment"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("the postprocess query does not say %q:\n%s", want, body)
+		}
+	}
+}
+
 // The operator's own work lives here. A scaffold that rewrote the manifest would silently undo a
 // dependency they added, and it runs on every start.
 func TestScaffoldingNeverOverwritesWhatIsAlreadyThere(t *testing.T) {

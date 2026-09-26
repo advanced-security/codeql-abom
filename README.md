@@ -17,7 +17,7 @@ what is next.
 - **What is the blast radius of an action?** How many repositories reach it, directly and
   through intermediaries.
 - **What depends on this workflow?** Every repository, with the exact `uses:` references.
-- **What should we fix first?** Severity × reach, and nothing else.
+- **What should we fix first?** The most severe, then the widest reach, and nothing else.
 - **What breaks if we bump this?** Which repositories are affected, split into those that name
   the action themselves and those that reach it through someone else's.
 - **How are references pinned?** Per owner, repository, workflow and individual `uses:` line.

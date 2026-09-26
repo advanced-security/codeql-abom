@@ -23,10 +23,7 @@ func policyFixture(t *testing.T, p Policy) *Store {
 }
 
 func unpinned(name string) Policy {
-	return Policy{
-		Name: name, Predicate: "rules=actions/unpinned-tag",
-		ScopeKind: PolicyScopeOrganization, CreatedBy: "cli",
-	}
+	return Policy{Name: name, Predicate: "rules=actions/unpinned-tag", CreatedBy: "cli"}
 }
 
 // A waiver excuses a repository; it does not pretend the finding is not there. Hiding the match
@@ -88,11 +85,12 @@ func TestAnExpiredExceptionIsRefusedOnTheNextEvaluation(t *testing.T) {
 }
 
 // A policy adopted for one unit must not refuse another's repositories, which is the whole reason
-// the middle scope exists: remediation has to be addressable to somebody.
-func TestAUnitScopedPolicyRefusesOnlyItsOwnUnit(t *testing.T) {
+// a policy can name a unit: remediation has to be addressable to somebody. The unit is a term of
+// the predicate, evaluated by the path every other answer takes.
+func TestAPolicyNarrowedToAUnitRefusesOnlyItsOwnUnit(t *testing.T) {
 	s := policyFixture(t, Policy{
-		Name: "unit-three", Predicate: "rules=actions/unpinned-tag",
-		ScopeKind: PolicyScopeUnit, ScopeValue: "3", CreatedBy: "cli"})
+		Name: "unit-three", Predicate: "properties=business_id:3&rules=actions/unpinned-tag",
+		CreatedBy: "cli"})
 	for repo, unit := range map[string]string{"octo-org/app": "3", "octo-org/tool": "1"} {
 		if err := s.ReplacePropertyValues(repo, []PropertyValue{
 			{Name: "business_id", Value: unit}}); err != nil {
@@ -100,24 +98,12 @@ func TestAUnitScopedPolicyRefusesOnlyItsOwnUnit(t *testing.T) {
 		}
 	}
 
-	out, err := s.EvaluatePolicy("unit-three", "business_id")
+	out, err := s.EvaluatePolicy("unit-three", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(out.Refused) != 1 || out.Refused[0] != "octo-org/app" {
 		t.Errorf("refused %v, want only unit 3's repository carrying the rule", out.Refused)
-	}
-}
-
-// A unit scope with no key configured cannot narrow anything. Falling back to the whole
-// organization would enforce a rule somewhere nobody scoped it to.
-func TestAUnitScopedPolicyWithNoConfiguredKeyIsRefused(t *testing.T) {
-	s := policyFixture(t, Policy{
-		Name: "unit-three", Predicate: "rules=actions/unpinned-tag",
-		ScopeKind: PolicyScopeUnit, ScopeValue: "3", CreatedBy: "cli"})
-
-	if _, err := s.EvaluatePolicy("unit-three", ""); err == nil {
-		t.Fatal("a unit-scoped policy was evaluated against the whole organization")
 	}
 }
 
@@ -141,11 +127,11 @@ func TestAPolicyThatCannotBeParsedRefusesNothing(t *testing.T) {
 	}
 }
 
-// A policy scoped to one repository refuses that one and says nothing about any other.
-func TestARepositoryScopedPolicyRefusesOnlyThatRepository(t *testing.T) {
+// A policy naming one repository refuses that one and says nothing about any other.
+func TestAPolicyNamingOneRepositoryRefusesOnlyThatRepository(t *testing.T) {
 	s := policyFixture(t, Policy{
-		Name: "just-tool", Predicate: "rules=actions/unpinned-tag",
-		ScopeKind: PolicyScopeRepository, ScopeValue: "octo-org/tool", CreatedBy: "cli"})
+		Name: "just-tool", Predicate: "repositories=octo-org/tool&rules=actions/unpinned-tag",
+		CreatedBy: "cli"})
 
 	out, err := s.EvaluatePolicy("just-tool", "")
 	if err != nil {

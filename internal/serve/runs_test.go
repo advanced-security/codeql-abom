@@ -29,17 +29,21 @@ func start(t *testing.T, s *Server, query, body string) (store.AnalysisRun, int)
 
 const oneQuery = `{"queries":[{"queryId":"actions/unpinned-tag","queryVersion":"u1"}],"by":"operator"}`
 
-// One language, asked in a third direction. A run expressed in a syntax of its own would be a
-// second policy engine deciding what an expensive thing covers.
-func TestStartingARunRefusesExactlyWhatTheMatchEndpointRefuses(t *testing.T) {
+// A term that chooses no repository is refused by name rather than dropped: a run that quietly
+// ignored one would cover more than the reader asked for.
+func TestStartingARunRefusesATermThatChoosesNoRepository(t *testing.T) {
 	s, _ := newServer(t)
 
-	for _, query := range []string{"kinds=workflow", "origins=seed", "minReach=5", "ref=tag"} {
-		matched := httptest.NewRecorder()
-		s.match(matched, httptest.NewRequest("GET", "/api/match?rules=abom%2Fone&"+query, nil))
-		_, code := start(t, s, "rules=abom%2Fone&"+query, oneQuery)
-		if code != matched.Code {
-			t.Errorf("%s answered %d starting a run and %d matching nodes", query, code, matched.Code)
+	for term, query := range map[string]string{
+		"kinds": "kinds=workflow", "origins": "origins=seed", "minReach": "minReach=5",
+		"ref": "ref=tag", "flags": "flags=findings",
+	} {
+		code, body := startRefusal(t, s, "rules=abom%2Fone&"+query)
+		if code != http.StatusBadRequest {
+			t.Errorf("%s answered %d starting a run, want 400", query, code)
+		}
+		if !bytes.Contains([]byte(body), []byte(term)) {
+			t.Errorf("%s was refused without naming %q: %s", query, term, body)
 		}
 	}
 }
@@ -310,5 +314,168 @@ func TestStartingARunThatDoesNotExistIsNotFound(t *testing.T) {
 	s.Executor = &fakeExecutor{}
 	if got := startExecution(t, s, "999"); got != http.StatusNotFound {
 		t.Errorf("starting an unknown run answered %d, want 404", got)
+	}
+}
+
+// Results are read one member at a time, so a reader can pick the ones to push back on. A member
+// nothing ran against says so, and a term the listing does not apply is refused by name rather
+// than answered with everything.
+func TestARunsResultsAreReadOneMemberAtATime(t *testing.T) {
+	s, st := newServer(t)
+	seedOneFinding(t, st)
+	run, code := start(t, s, "rules=actions%2F*", oneQuery)
+	if code != 200 {
+		t.Fatalf("recording a run answered %d", code)
+	}
+	base := "/api/runs/" + strconv.FormatInt(run.RowID, 10) + "/results"
+
+	got := decode[store.MemberFindings](t, get(t, s, base+"?repository=octo-org/app"))
+	if got.Evaluated || got.Findings == nil || len(got.Findings) != 0 {
+		t.Errorf("a member nothing ran against reads %+v", got)
+	}
+	for _, c := range []struct {
+		target string
+		want   int
+	}{
+		{base, http.StatusBadRequest},
+		{base + "?repository=octo-org/elsewhere", http.StatusNotFound},
+		{"/api/runs/999/results?repository=octo-org/app", http.StatusNotFound},
+		{base + "?repository=octo-org/app&severity=error", http.StatusBadRequest},
+		{base + "?repository=octo-org/app&query=actions%2Funpinned-tag", http.StatusOK},
+	} {
+		if code := get(t, s, c.target).Code; code != c.want {
+			t.Errorf("%s answered %d, want %d", c.target, code, c.want)
+		}
+	}
+}
+
+// seedSourcedFinding records one finding the crawl's lane reported through an upstream rule it
+// kept a record of, and returns the finding's row.
+func seedSourcedFinding(t *testing.T, st *store.Store) int64 {
+	t.Helper()
+	repoID, err := st.UpsertRepository("octo-org/app", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := store.NewWriter(st, 0)
+	if err := w.AddNode(store.Node{Key: "octo-org/app/.github/workflows/ci.yml", Kind: "workflow",
+		RepositoryID: repoID, Path: ".github/workflows/ci.yml"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	lane, err := st.RecordQueryRun(store.QueryRun{QueryID: "abom-findings.qls", Pack: "codeql/actions-queries",
+		Repository: "octo-org/app", DBCommit: "c1", AnalysisMode: store.AnalysisModeRegular,
+		RecordedBy: store.RecordedByCrawl, Rules: []store.QueryRunRule{
+			{RuleID: "actions/unpinned-tag", QueryVersion: "u1", Pack: "codeql/actions-queries"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddFindings([]store.Finding{{RuleID: "actions/unpinned-tag", RepositoryID: repoID,
+		QueryRunID: lane, FilePath: ".github/workflows/ci.yml", StartLine: 3}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.LinkFindingsToNodes(); err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	if err := st.DB().QueryRow(`SELECT row_id FROM abom_finding`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// A finding is traced over the API to what reported it, and one the store does not hold is not
+// found rather than answered empty.
+func TestAFindingIsTracedToWhatReportedIt(t *testing.T) {
+	s, st := newServer(t)
+	id := seedSourcedFinding(t, st)
+
+	got := decode[store.FindingTrace](t, get(t, s, "/api/findings/"+strconv.FormatInt(id, 10)))
+	if len(got.Evaluations) != 1 || got.Evaluations[0].Source != store.QuerySourceUpstream ||
+		got.Evaluations[0].RuleVersion != "u1" || got.Evaluations[0].RecordedBy != store.RecordedByCrawl {
+		t.Errorf("the finding traces to %+v", got.Evaluations)
+	}
+	for target, want := range map[string]int{
+		"/api/findings/999": http.StatusNotFound,
+		"/api/findings/one": http.StatusBadRequest,
+		"/api/findings/0":   http.StatusBadRequest,
+	} {
+		if code := get(t, s, target).Code; code != want {
+			t.Errorf("%s answered %d, want %d", target, code, want)
+		}
+	}
+}
+
+// The source term reaches the set path with the store's meaning, and a source ABOM does not know
+// is refused rather than matching nothing, which would read as "none of those".
+func TestTheSetPathNarrowsBySourceOverTheAPI(t *testing.T) {
+	s, st := newServer(t)
+	seedSourcedFinding(t, st)
+	repoID, err := st.UpsertRepository("octo-org/app", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddFindings([]store.Finding{{RuleID: "actions/untrusted-checkout", RepositoryID: repoID,
+		FilePath: ".github/workflows/ci.yml", StartLine: 5}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.LinkFindingsToNodes(); err != nil {
+		t.Fatal(err)
+	}
+	for query, want := range map[string][2]int{"source=upstream": {1, 1}, "source=custom": {0, 1}} {
+		if got := decode[Match](t, get(t, s, "/api/match?"+query)); got.Findings != want[0] || got.Unsourced != want[1] {
+			t.Errorf("%s matched %d findings with %d unsourced, want %v", query, got.Findings, got.Unsourced, want)
+		}
+	}
+	if code := get(t, s, "/api/match?source=user").Code; code != http.StatusBadRequest {
+		t.Errorf("an unknown source answered %d, want a refusal", code)
+	}
+}
+
+// A provider answer carries what it left out, as a source answer does: most findings on record
+// predate the column, so the only provider on offer answers for a fraction in silence otherwise.
+func TestTheSetPathSaysHowManyMatchesRecordedNoProvider(t *testing.T) {
+	s, st := newServer(t)
+	seedSourcedFinding(t, st)
+	repoID, err := st.UpsertRepository("octo-org/app", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddFindings([]store.Finding{
+		{RuleID: "actions/untrusted-checkout", RepositoryID: repoID, Provider: "CodeQL",
+			FilePath: ".github/workflows/ci.yml", StartLine: 5},
+		{RuleID: "actions/untrusted-checkout", RepositoryID: repoID,
+			FilePath: ".github/workflows/ci.yml", StartLine: 6},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.LinkFindingsToNodes(); err != nil {
+		t.Fatal(err)
+	}
+	got := decode[Match](t, get(t, s, "/api/match?provider=CodeQL&rules=actions%2Funtrusted-checkout"))
+	if got.Findings != 1 || got.Unprovided != 1 {
+		t.Errorf("matched %d with %d unprovided, want 1 and 1", got.Findings, got.Unprovided)
+	}
+}
+
+// The listing narrows by source with the set path's meaning, which it can do only once its route
+// declares the term: an undeclared one is refused before the handler reads it.
+func TestTheActionsListingNarrowsBySource(t *testing.T) {
+	s, st := newServer(t)
+	seedGraph(t, st)
+	id := seedSourcedFinding(t, st)
+	if _, err := st.DB().Exec(`INSERT INTO abom_finding_node (finding_row_id, node_row_id)
+		SELECT ?, row_id FROM abom_node WHERE node_key = 'actions/checkout'`, id); err != nil {
+		t.Fatal(err)
+	}
+	for query, want := range map[string]int{"source=upstream": 1, "source=custom": 0} {
+		if got := decode[store.InventoryPage](t, get(t, s, "/api/actions?"+query)); got.Total != want {
+			t.Errorf("/api/actions?%s listed %d rows, want %d", query, got.Total, want)
+		}
+	}
+	if code := get(t, s, "/api/actions?source=user").Code; code != http.StatusBadRequest {
+		t.Errorf("an unknown source answered %d, want a refusal", code)
 	}
 }

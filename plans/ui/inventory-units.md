@@ -3,7 +3,7 @@
 **Status:** seven units, each asking its own endpoint for its own columns, each offering only the
 actions that apply to it, and each row carrying its own. The dedicated bill-of-materials page is
 gone; three claims it was the only surface to make went with it, and re-homing them is what is
-left.
+left, beside two layout defects and a unit whose scope bar shows a narrowing it does not apply.
 
 ## Why this exists
 
@@ -54,6 +54,24 @@ flowchart LR
    Actions unit's own description and is the model for re-homing the rest. An export that reports
    coverage it does not state is the reassuring-half problem in a different costume. The typed
    client and the `Bom*` records went with the page and are in git history; `/api/bom` is unchanged.
+2. **Relationships' Findings cell reads as one word.** The count and the rule list share a line with
+   nothing between them — `2actions/missing-workflow-permissions` — on every row with a finding (10
+   of the first 30 on the verification corpus). The list's `d-block` sits inside MudTooltip's
+   `.mud-tooltip-root`, which is `inline-block`, so the block never starts a line of its own. The
+   wrapper is what has to be styled; the list's own class cannot reach it.
+3. **Workflows rows run past 90px, which keeps the row-height guard off Inventory.** At 1280px, 8 of
+   30 rows are over it: *Runs on* is squeezed to 138px and stacks `pull_request, push, schedule,
+   workflow_dispatch` a trigger per line, while *Findings*, the last column, takes the spare width —
+   420px for a three-digit count. `geometry.spec.mjs` holds rows to 90px on CodeQL's grids only;
+   the guard extends to Inventory once no unit exceeds it, not before.
+4. **Coverage applies no term, and the scope bar above it still shows each one as applied.**
+   `/api/frontier` takes a state and a cap and nothing else, and the language says so: the
+   Coverage unit's surface applies no term, so a named scope carrying one is disabled there with
+   the terms named, and the filter control offers none. What nothing marks is the chips already in
+   the scope: arriving from Actions under `scope=exposure&flags=findings`, Coverage lists the queue
+   unnarrowed beneath two chips that read as its narrowing. The fork: the chips say they do not
+   narrow this unit, in the words a disabled named scope uses, or the frontier applies the terms it
+   can. Depends on nothing.
 
 ## The constraints that must not be broken
 

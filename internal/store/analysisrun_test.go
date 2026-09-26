@@ -1,8 +1,172 @@
 package store
 
 import (
+	"strings"
 	"testing"
 )
+
+func memberNamed(t *testing.T, run AnalysisRun, repository string) AnalysisMember {
+	t.Helper()
+	for _, m := range run.Members {
+		if m.Repository == repository {
+			return m
+		}
+	}
+	t.Fatalf("run %d has no member %s", run.RowID, repository)
+	return AnalysisMember{}
+}
+
+// A repository ABOM tracks and nothing has analyzed names no commit to rebuild, so the run builds
+// its default branch rather than reporting no database. A shape the crawl never builds stays an
+// absence with its reason.
+func TestARepositoryNothingHasAnalyzedIsLeftForTheRunToBuild(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.UpsertRepository("octo/unanalyzed", ""); err != nil {
+		t.Fatalf("UpsertRepository: %v", err)
+	}
+	run, err := s.AnalysisRun(startedRun(t, s))
+	if err != nil {
+		t.Fatalf("AnalysisRun: %v", err)
+	}
+	member := memberNamed(t, run, "octo/unanalyzed")
+	if member.Status != AnalysisPending {
+		t.Errorf("a tracked repository nothing analyzed is %q, want %q", member.Status, AnalysisPending)
+	}
+	if !strings.Contains(member.Detail, "default branch") {
+		t.Errorf("the member says %q, want it to name what the run builds", member.Detail)
+	}
+
+	extended := runRequest(s)
+	extended.Mode = AnalysisModeExtended
+	id, err := s.CreateAnalysisRun(extended)
+	if err != nil {
+		t.Fatalf("CreateAnalysisRun: %v", err)
+	}
+	if run, err = s.AnalysisRun(id); err != nil {
+		t.Fatalf("AnalysisRun: %v", err)
+	}
+	if m := memberNamed(t, run, "octo/unanalyzed"); m.Status != AnalysisNoDatabase || m.Detail == "" {
+		t.Errorf("an extended member nothing builds is %q (%q), want %q with a reason",
+			m.Status, m.Detail, AnalysisNoDatabase)
+	}
+	if m := memberNamed(t, run, "octo/tool"); m.Status != AnalysisNoDatabase || m.Detail == "" {
+		t.Errorf("an extended database nothing holds is %q (%q), want %q with a reason",
+			m.Status, m.Detail, AnalysisNoDatabase)
+	}
+}
+
+// Ingesting a repository nothing tracks would enter it as a seed, so a run never fetches one, and
+// the member says why rather than reading as a database nobody built.
+func TestARunNeverFetchesARepositoryABOMDoesNotTrack(t *testing.T) {
+	s := newTestStore(t)
+	run, err := s.AnalysisRun(startedRun(t, s))
+	if err != nil {
+		t.Fatalf("AnalysisRun: %v", err)
+	}
+	member := memberNamed(t, run, "octo/unanalyzed")
+	if member.Status != AnalysisNoDatabase {
+		t.Errorf("an untracked repository is %q, want %q", member.Status, AnalysisNoDatabase)
+	}
+	if !strings.Contains(member.Detail, "tracks no repository") {
+		t.Errorf("the member says %q, want it to say ABOM does not track the repository", member.Detail)
+	}
+}
+
+// A re-run declines only work whose answer is stored in full: a member that finished, was counted
+// and is linked to the evaluation under this exact key. A ledger row alone is not that, because an
+// ingest that failed leaves one behind.
+func TestAnEvaluationARunStoredAnswersTheSameKey(t *testing.T) {
+	s := newTestStore(t)
+	id := startedRun(t, s)
+	at := DatabaseIdentity{
+		Repository: "octo/app", Commit: "sha-one", SourceFilter: "f0", Mode: AnalysisModeRegular,
+	}
+	q := QueryRun{
+		QueryID: "actions/unpinned-tag", QueryVersion: "u1", CLIVersion: "2.27.1",
+		Repository: "octo/app", DBCommit: "sha-one", SourceFilter: "f0",
+		AnalysisMode: AnalysisModeRegular,
+	}
+
+	ledger, err := s.RecordQueryRun(q)
+	if err != nil {
+		t.Fatalf("RecordQueryRun: %v", err)
+	}
+	if _, _, found, err := s.AnsweredBy(q); err != nil || found {
+		t.Fatalf("a ledger row no member finished storing answered (found=%v, %v)", found, err)
+	}
+
+	if err := s.RecordAnalysisMemberResult(id, at, MemberResult{
+		Status: AnalysisSucceeded, ResultPath: "/work/run-1/octo_app.sarif", Results: 2, Counted: true,
+		ByQuery: map[string]int{"actions/unpinned-tag": 2}, QueryRunID: ledger,
+	}); err != nil {
+		t.Fatalf("RecordAnalysisMemberResult: %v", err)
+	}
+	from, got, found, err := s.AnsweredBy(q)
+	if err != nil || !found {
+		t.Fatalf("the stored evaluation did not answer its own key (found=%v, %v)", found, err)
+	}
+	if from != id || got.QueryRunID != ledger || got.ResultPath != "/work/run-1/octo_app.sarif" {
+		t.Errorf("answered by run %d, row %d, %q; want run %d, row %d and its document",
+			from, got.QueryRunID, got.ResultPath, id, ledger)
+	}
+	if !got.Counted || got.Results != 2 || got.ByQuery["actions/unpinned-tag"] != 2 {
+		t.Errorf("the answer carries counted=%v results=%d %v, want what the member counted",
+			got.Counted, got.Results, got.ByQuery)
+	}
+
+	elsewhere := q
+	elsewhere.DBCommit = "sha-other"
+	if _, _, found, _ := s.AnsweredBy(elsewhere); found {
+		t.Error("an evaluation at another commit answered")
+	}
+}
+
+// A member's results are stored under the database it was built at, so a member left at the
+// identity the resolution guessed would attribute them to a database that does not exist.
+func TestAMemberMovesToTheDatabaseItWasBuiltAt(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.UpsertRepository("octo/unanalyzed", ""); err != nil {
+		t.Fatalf("UpsertRepository: %v", err)
+	}
+	id := startedRun(t, s)
+	from := DatabaseIdentity{Repository: "octo/unanalyzed", Mode: AnalysisModeRegular}
+	to := DatabaseIdentity{
+		Repository: "octo/unanalyzed", Commit: "sha-built", SourceFilter: "f1", Mode: AnalysisModeRegular,
+	}
+	if err := s.SetAnalysisMemberDatabase(id, from, to, "/cache/octo/unanalyzed/db"); err != nil {
+		t.Fatalf("SetAnalysisMemberDatabase: %v", err)
+	}
+	if err := s.RecordAnalysisMemberResult(id, to, MemberResult{
+		Status: AnalysisSucceeded, Results: 1, Counted: true,
+		ByQuery: map[string]int{"actions/unpinned-tag": 1},
+	}); err != nil {
+		t.Fatalf("RecordAnalysisMemberResult: %v", err)
+	}
+
+	run, err := s.AnalysisRun(id)
+	if err != nil {
+		t.Fatalf("AnalysisRun: %v", err)
+	}
+	if len(run.Members) != 3 {
+		t.Errorf("moving a member left %d members, want 3", len(run.Members))
+	}
+	m := memberNamed(t, run, "octo/unanalyzed")
+	if m.DatabaseIdentity != to || m.DatabasePath != "/cache/octo/unanalyzed/db" {
+		t.Errorf("the member is at %+v in %q, want %+v where it was built", m.DatabaseIdentity,
+			m.DatabasePath, to)
+	}
+	if m.Status != AnalysisSucceeded || m.ByQuery["actions/unpinned-tag"] != 1 {
+		t.Errorf("the moved member reads %q with %v, want what was recorded against it", m.Status, m.ByQuery)
+	}
+
+	other := DatabaseIdentity{Repository: "octo/other", Mode: AnalysisModeRegular}
+	if err := s.SetAnalysisMemberDatabase(id, to, other, ""); err == nil {
+		t.Error("a member became another repository")
+	}
+	if err := s.SetAnalysisMemberDatabase(id, from, to, ""); err == nil {
+		t.Error("a member was moved from an identity it no longer holds")
+	}
+}
 
 func runRequest(s *Store) AnalysisRequest {
 	return AnalysisRequest{
@@ -33,6 +197,40 @@ func startedRun(t *testing.T, s *Store) int64 {
 		t.Fatalf("CreateAnalysisRun: %v", err)
 	}
 	return id
+}
+
+// A run that could not start says why on the run. Left pending, it read as a run about to start,
+// and the reason reached only the server's log.
+func TestARefusedRunSaysWhyUntilItStartsAgain(t *testing.T) {
+	s := newTestStore(t)
+	id := startedRun(t, s)
+	why := "no suite this run can see offers acme/gone"
+
+	if err := s.RefuseAnalysisRun(id, why); err != nil {
+		t.Fatalf("RefuseAnalysisRun: %v", err)
+	}
+	run, err := s.AnalysisRun(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.State != RunRefused || run.Refusal != why || run.FinishedAt == "" {
+		t.Errorf("the refused run reads %q %q finished %q, want %q, the reason, and when",
+			run.State, run.Refusal, run.FinishedAt, RunRefused)
+	}
+	listed, err := s.AnalysisRuns()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].Refusal != why {
+		t.Errorf("the list reads %+v, want the run carrying its reason", listed)
+	}
+
+	if err := s.SetAnalysisRunState(id, RunRunning); err != nil {
+		t.Fatal(err)
+	}
+	if run, _ := s.AnalysisRun(id); run.Refusal != "" {
+		t.Errorf("a run under way still reads refused: %q", run.Refusal)
+	}
 }
 
 // A run that kept only the databases it could analyze would quietly mean something narrower than
@@ -293,5 +491,30 @@ func TestAListedRunNamesTheVersionItWasAskedFor(t *testing.T) {
 		if q != full.Queries[i] {
 			t.Errorf("listed query %d is %v, want %v", i, q, full.Queries[i])
 		}
+	}
+}
+
+// A run is carried out by one CodeQL, and the same queries over the same scope answer differently
+// under the next, so the run says which. One nothing has carried out names none.
+func TestARunNamesTheCodeQLThatCarriedItOut(t *testing.T) {
+	s := newTestStore(t)
+	id := startedRun(t, s)
+	if run, err := s.AnalysisRun(id); err != nil || run.CLIVersion != "" {
+		t.Fatalf("a run nothing has carried out names %q (%v)", run.CLIVersion, err)
+	}
+
+	if err := s.SetAnalysisRunCodeQL(id, "2.27.1"); err != nil {
+		t.Fatal(err)
+	}
+	run, err := s.AnalysisRun(id)
+	if err != nil || run.CLIVersion != "2.27.1" {
+		t.Errorf("the run names %q (%v), want 2.27.1", run.CLIVersion, err)
+	}
+	runs, err := s.AnalysisRuns()
+	if err != nil || len(runs) != 1 || runs[0].CLIVersion != "2.27.1" {
+		t.Errorf("the list names %+v (%v)", runs, err)
+	}
+	if err := s.SetAnalysisRunCodeQL(id, ""); err == nil {
+		t.Error("a run was recorded as carried out by no CodeQL")
 	}
 }

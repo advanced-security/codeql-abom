@@ -45,8 +45,7 @@ func TestASimulationAndTheMatchEndpointAgreeOnTheSameInputs(t *testing.T) {
 	srv, st := newServer(t)
 	predicate := "rules=actions/unpinned-tag"
 	if err := st.SavePolicy(store.Policy{
-		Name: "no-unpinned", Predicate: predicate,
-		ScopeKind: store.PolicyScopeOrganization, CreatedBy: "cli"}); err != nil {
+		Name: "no-unpinned", Predicate: predicate, CreatedBy: "cli"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -74,8 +73,7 @@ func TestASimulationAndTheMatchEndpointAgreeOnTheSameInputs(t *testing.T) {
 func TestAdoptingAPolicyNobodySimulatedIsRefusedWithTheReason(t *testing.T) {
 	srv, st := newServer(t)
 	if err := st.SavePolicy(store.Policy{
-		Name: "p", Predicate: "rules=actions/unpinned-tag",
-		ScopeKind: store.PolicyScopeOrganization}); err != nil {
+		Name: "p", Predicate: "rules=actions/unpinned-tag"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -97,8 +95,7 @@ func TestAdoptingAPolicyNobodySimulatedIsRefusedWithTheReason(t *testing.T) {
 func TestAWaiverWrittenAsAPatternIsRefusedWithTheReason(t *testing.T) {
 	srv, st := newServer(t)
 	if err := st.SavePolicy(store.Policy{
-		Name: "p", Predicate: "rules=actions/unpinned-tag",
-		ScopeKind: store.PolicyScopeOrganization}); err != nil {
+		Name: "p", Predicate: "rules=actions/unpinned-tag"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -122,8 +119,7 @@ func TestAWaiverWrittenAsAPatternIsRefusedWithTheReason(t *testing.T) {
 func TestTheAuditAnswerIsAvailableOnDemand(t *testing.T) {
 	srv, st := newServer(t)
 	if err := st.SavePolicy(store.Policy{
-		Name: "p", Predicate: "rules=actions/unpinned-tag",
-		ScopeKind: store.PolicyScopeOrganization}); err != nil {
+		Name: "p", Predicate: "rules=actions/unpinned-tag"}); err != nil {
 		t.Fatal(err)
 	}
 	expiry := time.Now().Add(48 * time.Hour).UTC().Format(time.RFC3339)

@@ -24,6 +24,29 @@ type Metadata struct {
 	Kind string `json:"kind"`
 	// Tags arrive space-separated, as the CLI prints them.
 	Tags string `json:"tags"`
+	// Pairs is every key the CLI resolved, the four above included. The query's metadata is its own
+	// statement about itself, and ABOM keeps all of it rather than the keys it happens to read.
+	Pairs map[string]string `json:"-"`
+}
+
+// UnmarshalJSON keeps every pair, and reads the named fields from them so the two cannot disagree.
+func (m *Metadata) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	pairs := make(map[string]string, len(raw))
+	for k, v := range raw {
+		var s string
+		if json.Unmarshal(v, &s) != nil {
+			// Not a string: kept as the CLI wrote it rather than dropped.
+			s = string(v)
+		}
+		pairs[k] = s
+	}
+	*m = Metadata{ID: pairs["id"], Name: pairs["name"], Kind: pairs["kind"], Tags: pairs["tags"],
+		Pairs: pairs}
+	return nil
 }
 
 // HasTag reports whether the query declares a tag, matching whole tags only.

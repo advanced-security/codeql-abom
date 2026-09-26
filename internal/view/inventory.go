@@ -10,20 +10,22 @@ package view
 // dependencies does this repository use" is a different question, answered by `scope` and by the
 // graph, and one word meaning both would be the divergence this split exists to prevent.
 var inventoryTerms = map[string]bool{
-	paramSearch:        true,
-	paramKinds:         true,
-	paramOrigins:       true,
-	paramMinReach:      true,
-	paramScope:         true,
-	paramFlags:         true,
-	paramRefStyle:      true,
-	paramRules:         true,
-	paramNotRules:      true,
-	paramProvider:      true,
-	paramSeverity:      true,
-	paramRepos:         true,
-	paramProperties:    true,
-	paramNotProperties: true,
+	paramSearch:           true,
+	paramKinds:            true,
+	paramOrigins:          true,
+	paramMinReach:         true,
+	paramScope:            true,
+	paramFlags:            true,
+	paramRefStyle:         true,
+	paramRules:            true,
+	paramNotRules:         true,
+	paramProvider:         true,
+	paramSource:           true,
+	paramSeverity:         true,
+	paramSecuritySeverity: true,
+	paramRepos:            true,
+	paramProperties:       true,
+	paramNotProperties:    true,
 	// A listing narrows by what was found on a node, and a finding has a shape.
 	paramMode: true,
 }
@@ -40,8 +42,7 @@ func (s Spec) UnenforceableAsInventory() []string {
 //
 // Neither narrows by anything about being depended upon — reach, reference style and origin are
 // questions about a dependency, and a workflow is a consumer. `flags=findings` is the one flag that
-// means anything here, and the rest are refused by name like any other term this surface cannot
-// answer.
+// means anything here, and `partialMembers` refuses the other two by name.
 var workflowTerms = map[string]bool{
 	paramSearch:        true,
 	paramScope:         true,
@@ -58,14 +59,24 @@ var jobTerms = map[string]bool{
 	paramNotProperties: true,
 }
 
+// partialMembers names the members of a list term a surface answers, where it answers fewer than
+// the term allows. Declaring the term alone let both units drop `advisory` and `unanalyzed` without
+// a word, answering every workflow under a predicate that asked for fewer.
+var partialMembers = map[string]map[string][]string{
+	SurfaceWorkflows: {paramFlags: {FlagFindings}},
+	SurfaceJobs:      {paramFlags: {FlagFindings}},
+}
+
 // UnenforceableAsWorkflows names the terms the workflows unit cannot apply.
 func (s Spec) UnenforceableAsWorkflows() []string {
-	return s.carried(func(t string) bool { return workflowTerms[t] })
+	return append(s.carried(func(t string) bool { return workflowTerms[t] }),
+		s.unanswered(SurfaceWorkflows)...)
 }
 
 // UnenforceableAsJobs names the terms the jobs unit cannot apply.
 func (s Spec) UnenforceableAsJobs() []string {
-	return s.carried(func(t string) bool { return jobTerms[t] })
+	return append(s.carried(func(t string) bool { return jobTerms[t] }),
+		s.unanswered(SurfaceJobs)...)
 }
 
 // repositoryTerms are the terms the repositories unit applies.
@@ -88,13 +99,36 @@ func (s Spec) UnenforceableAsRepositories() []string {
 	return s.carried(func(t string) bool { return repositoryTerms[t] })
 }
 
+// UnenforceableAsRun names the terms a run cannot apply.
+//
+// A run covers repositories: the ones the repositories unit lists, the ones named outright, and
+// where the set path's findings sit, in the shape `mode` names. Everything else describes a node
+// or a relationship, and a run has neither to narrow.
+func (s Spec) UnenforceableAsRun() []string {
+	return s.carried(appliedByRun)
+}
+
+func appliedByRun(t string) bool { return repositoryTerms[t] || setTerms[t] && !runRefuses[t] }
+
+// runRefuses are set terms a run's population is not drawn through: a run covers repositories
+// where findings sit, and neither an advisory nor a route is one.
+var runRefuses = map[string]bool{paramAdvisorySeverity: true, paramReached: true}
+
+// AsksRepositoriesUnit reports whether the predicate carries a term the repositories unit applies,
+// which makes a run's population exactly what that unit lists for it.
+func (s Spec) AsksRepositoriesUnit() bool {
+	return len(s.carried(func(t string) bool { return !repositoryTerms[t] })) > 0
+}
+
 // advisoryTerms are the terms the advisories unit applies.
 //
 // A row is an advisory rather than a node, so the node half of the language says nothing about it.
 // Even the search term is absent: it matches a node key, and an advisory has none.
 var advisoryTerms = map[string]bool{
-	paramProperties:    true,
-	paramNotProperties: true,
+	paramProperties:       true,
+	paramNotProperties:    true,
+	paramAdvisorySeverity: true,
+	paramReached:          true,
 }
 
 // UnenforceableAsAdvisories names the terms the advisories unit cannot apply.

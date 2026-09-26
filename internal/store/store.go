@@ -98,6 +98,11 @@ var createTables = []struct {
 	{"the discovery state table", discoveryStateDDL},
 	{"the discovery startup table", discoveryStartupDDL},
 	{"the query test table", queryTestDDL},
+	{"the query request table", queryRequestDDL},
+	{"the authoring session tables", authoringSessionDDL},
+	{"the printed tree table", authoringASTDDL},
+	{"the review table", authoringReviewDDL},
+	{"the request draft table", requestDraftDDL},
 	{"the enumeration state table", enumerationStateDDL},
 	{"the repository property table", repositoryPropertyDDL},
 	{"the property schema table", propertySchemaDDL},
@@ -108,6 +113,9 @@ var createTables = []struct {
 // It is safe to call on an existing database.
 func (s *Store) Migrate() error {
 	if err := s.dropStaleDerivedTables(); err != nil {
+		return err
+	}
+	if err := s.migrateHeldNames(); err != nil {
 		return err
 	}
 	if _, err := s.db.Exec(schemaDDL); err != nil {
@@ -152,6 +160,15 @@ func (s *Store) Migrate() error {
 	if err := s.migrateObservationFactKey(); err != nil {
 		return err
 	}
+	if err := s.migrateAuthoringOwners(); err != nil {
+		return err
+	}
+	if err := s.migrateQueryTestKey(); err != nil {
+		return err
+	}
+	if err := s.migrateEvidenceKey(); err != nil {
+		return err
+	}
 	// The one index a read-only server cannot wait for CreateIndexes to build.
 	if _, err := s.db.Exec(queryRunIndexDDL); err != nil {
 		return fmt.Errorf("indexing run identity: %w", err)
@@ -161,6 +178,10 @@ func (s *Store) Migrate() error {
 	// added there never reaches a database that already exists.
 	if _, err := s.db.Exec(observationIndexDDL); err != nil {
 		return fmt.Errorf("indexing observations by name: %w", err)
+	}
+	// After the column pass, which gives a session table from before drafts the column it is on.
+	if _, err := s.db.Exec(draftSessionIndexDDL); err != nil {
+		return fmt.Errorf("indexing drafting sessions: %w", err)
 	}
 	// And the rest of them, for the same reason, once there is no bulk load to slow down.
 	// `CreateIndexes` is called by the seed build alone, so every other database — one being
@@ -184,6 +205,10 @@ func (s *Store) Migrate() error {
 	// After both: the edge views read the live ones, and all of them read analysis_mode.
 	if _, err := s.db.Exec(analysisModeViewDDL); err != nil {
 		return fmt.Errorf("creating the analysis mode views: %w", err)
+	}
+	// After the views, which back-fill the sightings this reads.
+	if err := s.backfillRunRules(); err != nil {
+		return err
 	}
 	// Before seeding, so a binding that only needs renaming still counts as configured and the
 	// defaults are not written over it.

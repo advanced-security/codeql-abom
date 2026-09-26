@@ -28,6 +28,13 @@ const (
 	// a surface like the rest so an export can be refused with the terms it cannot apply named,
 	// rather than quietly dropping them and handing somebody the whole organization.
 	SurfaceDocument = "document"
+	// SurfaceCoverage is the Inventory's view of the crawl queue, which nothing in the language
+	// narrows: its endpoint takes a queue state and a cap, and refuses every term.
+	SurfaceCoverage = "coverage"
+	// SurfaceRun is a run over repositories, built from a scope like any page.
+	SurfaceRun = "run"
+	// SurfacePolicy is a policy's predicate: the set path's terms, and other policies by name.
+	SurfacePolicy = "policy"
 )
 
 // documentTerms are the filter terms a bill of materials applies. Unexported and read through the
@@ -82,12 +89,15 @@ type Term struct {
 	// Surfaces are the sides that apply this term. A control on a surface not named here leaves
 	// the term out rather than offering a filter that would be refused.
 	Surfaces []string `json:"surfaces"`
+	// SurfaceValues narrows Values on a surface that answers only some of them, so its control
+	// offers what it answers rather than a member it refuses by name. Absent means all of them.
+	SurfaceValues map[string][]string `json:"surfaceValues,omitempty"`
 }
 
 // catalogEntry is the half of a term that cannot be derived: what to call it, and what to say
 // about it. Everything else is read from the declarations that enforce the term.
 //
-// The help is a phrase rather than a sentence. It is read in a list of nineteen, where a reader is
+// The help is a phrase rather than a sentence. It is read in a list of twenty, where a reader is
 // scanning for the one they want and not studying any of them: full sentences made the list wider
 // than the table it filters and taller than the window. What a term means in detail belongs to the
 // comments here, not to the control.
@@ -142,9 +152,34 @@ var catalogWords = map[string]catalogEntry{
 		label: "Provider", arity: ArityScalar, valuesFrom: "api/filters/provider/values",
 		help: "Which analysis reported it",
 	},
+	// Whose rule reported it, which is a different question from which analysis did: every CodeQL
+	// pack reports as CodeQL.
+	paramSource: {
+		label: "Source", arity: ArityList,
+		help: "Upstream, ABOM's own, or custom rules",
+	},
 	paramSeverity: {
 		label: "Severity", arity: ArityScalar, valuesFrom: "api/filters/severity/values",
 		help: "As the analysis reported it",
+	},
+	// The rule's own score, banded as code scanning bands it. Unknown is a rule declaring none.
+	paramSecuritySeverity: {
+		label: "Security severity", arity: ArityList,
+		help: "Critical, high, medium, low",
+	},
+	// What GitHub published, never whether a reference is inside the range. Asks about advisories
+	// instead of findings.
+	paramAdvisorySeverity: {
+		label: "Advisory severity", arity: ArityList,
+		help: "Live advisories, as GitHub rated them",
+	},
+	paramReached: {
+		label: "Reached from yours", arity: ArityList,
+		help: "Directly, or through a dependency",
+	},
+	paramPolicies: {
+		label: "Any of these policies", arity: ArityList,
+		help: "Refuses what any of them refuses",
 	},
 	// Absent is not a third shape: everything on record reads regular.
 	paramMode: {
@@ -196,7 +231,10 @@ var surfaceTerms = map[string]func(string) bool{
 	SurfaceRepositories:  func(t string) bool { return repositoryTerms[t] },
 	SurfaceAdvisories:    func(t string) bool { return advisoryTerms[t] },
 	SurfaceRelationships: func(t string) bool { return relationshipTerms[t] },
+	SurfaceCoverage:      func(string) bool { return false },
 	SurfaceDocument:      IsDocumentTerm,
+	SurfaceRun:           appliedByRun,
+	SurfacePolicy:        func(t string) bool { return policyTerms[t] },
 }
 
 // surfaceOrder keeps the catalog stable between calls, so a control does not reorder itself and a
@@ -204,7 +242,21 @@ var surfaceTerms = map[string]func(string) bool{
 var surfaceOrder = []string{
 	SurfaceSet, SurfaceGraph, SurfaceInventory, SurfaceWorkflows,
 	SurfaceJobs, SurfaceRepositories, SurfaceAdvisories, SurfaceRelationships,
-	SurfaceDocument,
+	SurfaceDocument, SurfaceCoverage, SurfaceRun, SurfacePolicy,
+}
+
+// Refusals names, for every surface, the terms this predicate carries that the surface cannot
+// apply — read from the declarations each surface enforces, so a page can disable a named scope it
+// would refuse before it is chosen rather than after.
+//
+// Every surface is present, and one that applies the whole predicate holds an empty list: a page
+// told nothing about itself cannot tell "applies all of it" from "nobody asked".
+func (s Spec) Refusals() map[string][]string {
+	out := make(map[string][]string, len(surfaceOrder))
+	for _, surface := range surfaceOrder {
+		out[surface] = append(s.carried(surfaceTerms[surface]), s.unanswered(surface)...)
+	}
+	return out
 }
 
 // Catalog describes every term the language writes, in the order a control should offer them.
@@ -224,6 +276,12 @@ func Catalog() []Term {
 			if surfaceTerms[surface](name) {
 				term.Surfaces = append(term.Surfaces, surface)
 			}
+			if answered, partial := partialMembers[surface][name]; partial {
+				if term.SurfaceValues == nil {
+					term.SurfaceValues = map[string][]string{}
+				}
+				term.SurfaceValues[surface] = slices.Clone(answered)
+			}
 		}
 		out = append(out, term)
 	}
@@ -234,7 +292,8 @@ func Catalog() []Term {
 // then how it is referenced, then the shapes of the question itself.
 var catalogOrder = []string{
 	paramScope, paramSearch, paramKinds, paramOrigins,
-	paramFlags, paramRules, paramNotRules, paramSeverity, paramProvider, paramRepos,
+	paramFlags, paramRules, paramNotRules, paramSource, paramSecuritySeverity, paramSeverity,
+	paramAdvisorySeverity, paramReached, paramProvider, paramRepos,
 	paramRefStyle, paramMinReach, paramBoundary, paramEdgeClass, paramEdgeKinds,
-	paramProperties, paramNotProperties, paramMode, paramSteps,
+	paramProperties, paramNotProperties, paramMode, paramSteps, paramPolicies,
 }

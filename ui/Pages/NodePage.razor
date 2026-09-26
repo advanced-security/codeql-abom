@@ -74,6 +74,11 @@ else
             <MudPaper Elevation="0" Outlined="true" Class="pa-3">
                 <MudText Typo="Typo.h6" Class="abom-num">@_detail.Rules.Sum(r => r.Count)</MudText>
                 <MudText Typo="Typo.caption">findings</MudText>
+                @if (_detail.Rules.Count > 0)
+                {
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block"
+                             data-abom-node-severity>@SeverityText.Summary(NodeSeverity())</MudText>
+                }
             </MudPaper>
         </MudItem>
         <MudItem xs="6" sm="3">
@@ -171,7 +176,8 @@ else
                         <b>@_reach.Count(r => r.Conditions.Count > 0)</b> of them only past an
                         <code>if:</code>.
                     </MudText>
-                    <MudSimpleTable Dense="true" Hover="true" Striped="false" Class="abom-grid abom-table">
+                    <MudSimpleTable Dense="true" Hover="true" Striped="false" FixedHeader="true"
+                                    Class="abom-grid abom-table abom-grid-windowed">
                         <thead>
                             <tr><th>Repository</th><th>How it arrives</th></tr>
                         </thead>
@@ -239,7 +245,8 @@ else
                 }
                 else
                 {
-                    <MudSimpleTable Dense="true" Hover="true" Striped="false" Class="abom-grid abom-table">
+                    <MudSimpleTable Dense="true" Hover="true" Striped="false" FixedHeader="true"
+                                    Class="abom-grid abom-table abom-grid-windowed">
                         <thead>
                             <tr><th>Reference</th><th>Uses</th><th>Repositories</th></tr>
                         </thead>
@@ -323,9 +330,23 @@ else
                 {
                     @foreach (var r in _detail.Rules)
                     {
-                        <div class="d-flex justify-space-between">
+                        <div class="d-flex justify-space-between align-center gap-2" data-abom-rule="@r.RuleId">
                             <span class="abom-rule">@r.RuleId</span>
-                            <span class="abom-num">@r.Count</span>
+                            <span class="d-flex align-center gap-1 abom-nowrap">
+                                @foreach (var source in r.Sources)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                             data-abom-rule-source="@source">@QueryCatalogView.SourceText(source)</MudChip>
+                                }
+                                @if (r.Unsourced > 0)
+                                {
+                                    <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-rule-unsourced>
+                                        @(r.Unsourced == r.Count ? "source not recorded" : $"source not recorded for {r.Unsourced}")
+                                    </MudText>
+                                }
+                                <span data-abom-rule-band><SeverityChip Severity="@r.Severity.Worst" /></span>
+                                <span class="abom-num">@r.Count</span>
+                            </span>
                         </div>
                     }
                 }
@@ -337,7 +358,8 @@ else
                     The count is how many <code>uses:</code> lines in that workflow point here,
                     not how many workflows or repositories it has.
                 </MudText>
-                <MudSimpleTable Dense="true" Hover="true" Striped="false" Class="abom-grid abom-table">
+                <MudSimpleTable Dense="true" Hover="true" Striped="false" FixedHeader="true"
+                                Class="abom-grid abom-table abom-grid-windowed">
                     <thead>
                         <tr><th>Workflow</th><th>References</th><th><code>uses:</code> lines</th></tr>
                     </thead>
@@ -370,7 +392,8 @@ else
                     <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2">
                         What this pulls in, and how many times it does so.
                     </MudText>
-                    <MudSimpleTable Dense="true" Hover="true" Striped="false" Class="abom-grid abom-table">
+                    <MudSimpleTable Dense="true" Hover="true" Striped="false" FixedHeader="true"
+                                    Class="abom-grid abom-table abom-grid-windowed">
                         <thead>
                             <tr><th>Dependency</th><th>References</th><th><code>uses:</code> lines</th></tr>
                         </thead>
@@ -449,6 +472,15 @@ else
     private string KindLabel =>
         ThemeService.KindNames.TryGetValue(_detail?.Kind ?? string.Empty, out var n)
             ? n : (_detail?.Kind ?? string.Empty);
+
+    private SeverityCounts NodeSeverity() => new()
+    {
+        Critical = _detail!.Rules.Sum(r => r.Severity.Critical),
+        High = _detail.Rules.Sum(r => r.Severity.High),
+        Medium = _detail.Rules.Sum(r => r.Severity.Medium),
+        Low = _detail.Rules.Sum(r => r.Severity.Low),
+        Unknown = _detail.Rules.Sum(r => r.Severity.Unknown),
+    };
 
     // A dependency is analyzed at a reference, so "yes" is only true of a reference. Where several
     // are in use the honest answer is the ratio; "yes" from one of twenty-seven is the claim this

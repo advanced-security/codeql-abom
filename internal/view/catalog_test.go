@@ -74,18 +74,13 @@ func TestACatalogTermWithAFixedVocabularyCarriesIt(t *testing.T) {
 // TestEveryTermIsAppliedBySomeConsumer makes from the other direction. Here it has to be visible
 // to the control, so it can leave a term out rather than offering one the current surface refuses.
 func TestEveryCatalogTermNamesTheSurfacesThatApplyIt(t *testing.T) {
-	known := []string{
-		SurfaceSet, SurfaceGraph, SurfaceInventory, SurfaceWorkflows,
-		SurfaceJobs, SurfaceRepositories, SurfaceAdvisories, SurfaceRelationships,
-		SurfaceDocument,
-	}
 	for _, term := range Catalog() {
 		if len(term.Surfaces) == 0 {
 			t.Errorf("%q names no surface, so no control could decide whether to offer it",
 				term.Name)
 		}
 		for _, surface := range term.Surfaces {
-			if !slices.Contains(known, surface) {
+			if !slices.Contains(everySurface, surface) {
 				t.Errorf("%q names surface %q, which nothing enforces", term.Name, surface)
 			}
 		}

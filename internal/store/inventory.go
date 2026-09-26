@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 
 	viewspec "github.com/advanced-security/codeql-abom/internal/view"
@@ -25,6 +26,8 @@ type ActionSummary struct {
 	// different commits is forty upgrade decisions, which a total reference count hides.
 	DistinctRefs int `json:"distinctRefs"`
 	Findings     int `json:"findings"`
+	// Severity is the same findings by band, summing to Findings.
+	Severity SeverityCounts `json:"severity"`
 	// Advisories counts live advisories naming this action's repository. It is a count of
 	// published statements, not a judgement that this reference is affected.
 	Advisories int `json:"advisories"`
@@ -180,11 +183,18 @@ type InventoryQuery struct {
 	// The findings terms, carrying the meanings the set path gives them: a node matches when it
 	// carries a finding that satisfies all of them at once. `repositories` is the repository the
 	// *finding* sits in, as it is there — "which dependencies does this repository use" is `scope`.
-	Rules        []string
-	NotRules     []string
-	Provider     string
-	Severity     string
-	Repositories []string
+	Rules              []string
+	NotRules           []string
+	Provider           string
+	Severity           string
+	SecuritySeverities []string
+	Sources            []string
+	Repositories       []string
+	// unsourced narrows to findings no evaluation recorded a source for, which is how a page
+	// narrowed by source counts the rows it could not answer for.
+	unsourced bool
+	// unprovided reads the provider term as "none was recorded", for the same reason.
+	unprovided bool
 	// Mode narrows to how the databases behind this page were built. Empty is `regular`, which is
 	// every database on record, so a listing that does not ask counts what it always counted.
 	Mode string
@@ -210,6 +220,11 @@ type InventoryPage struct {
 	// crawled organization every one of the 277 `actions/unpinned-tag` findings sits on a `step`
 	// or `job` node, so the most important rule there is answers 0 among the dependency kinds.
 	Elsewhere []KindCount `json:"elsewhere,omitempty"`
+	// Unsourced counts the rows that carry a finding every other term matched with no recorded
+	// source. Counted only when a source is asked, which is the only time they are left out.
+	Unsourced int `json:"unsourced"`
+	// Unprovided counts the rows whose matching finding recorded no provider, when one is asked.
+	Unprovided int `json:"unprovided"`
 }
 
 // KindCount is how many nodes of one kind a predicate matched.
@@ -233,6 +248,8 @@ var inventorySorts = map[string]string{
 	"findings":         "findings",
 	"advisories":       "advisories",
 	"analyzed":         "analyzed",
+	// Ordered by severityOrdering, which no single expression can say.
+	"severity": "",
 }
 
 // InventorySortNames lists what may be sorted on, so the interface offers exactly what is applied.
@@ -319,8 +336,12 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 		direction = " DESC"
 	}
 	ordering := ` ORDER BY dependent_repos DESC, n.node_key`
+	var orderArgs []any
 	if ok {
 		ordering = ` ORDER BY ` + order + direction + `, n.node_key`
+	}
+	if q.Sort == "severity" {
+		ordering, orderArgs = severityOrdering(q.Mode, direction, reach, reachArgs)
 	}
 
 	query := `
@@ -347,6 +368,7 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 	args := append([]any{}, reachArgs...)
 	args = append(args, directArgs...)
 	args = append(args, whereArgs...)
+	args = append(args, orderArgs...)
 	if q.Limit > 0 {
 		query += ` LIMIT ? OFFSET ?`
 		args = append(args, q.Limit, q.Offset)
@@ -369,12 +391,58 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 		}
 		out[i].Refs = refs
 	}
+	keys := make([]string, 0, len(out))
+	for _, a := range out {
+		keys = append(keys, a.NodeKey)
+	}
+	bands, err := s.severityByNode(q.Mode, keys)
+	if err != nil {
+		return InventoryPage{}, err
+	}
+	for i := range out {
+		out[i].Severity = bands[out[i].NodeKey]
+	}
 
 	elsewhere, err := s.inventoryElsewhere(q)
 	if err != nil {
 		return InventoryPage{}, err
 	}
-	return InventoryPage{Items: out, Total: total, Elsewhere: elsewhere}, nil
+	page := InventoryPage{Items: out, Total: total, Elsewhere: elsewhere}
+	if len(q.Sources) > 0 {
+		unknown := q
+		unknown.Sources, unknown.unsourced, unknown.Limit, unknown.Offset = nil, true, 1, 0
+		counted, err := s.ActionsInventoryPage(unknown)
+		if err != nil {
+			return InventoryPage{}, err
+		}
+		page.Unsourced = counted.Total
+	}
+	if q.Provider != "" {
+		unknown := q
+		unknown.Provider, unknown.unprovided, unknown.Limit, unknown.Offset = "", true, 1, 0
+		counted, err := s.ActionsInventoryPage(unknown)
+		if err != nil {
+			return InventoryPage{}, err
+		}
+		page.Unprovided = counted.Total
+	}
+	return page, nil
+}
+
+// severityOrdering puts what carries a finding first, then what something reaches, then the worst
+// band, then reach. Severity outranks reach, and a finding nothing reaches sorts after every one
+// something does: its want of a route is the most important fact about it.
+//
+// Reach is the expression rather than its alias: inside an expression SQLite reads the alias as
+// the blast-radius column, which is NULL for most workflows and sorted them apart from zero.
+func severityOrdering(mode, direction, reach string, reachArgs []any) (string, []any) {
+	worst := `(SELECT MAX(` + bandRankSQL("f.security_severity") + `)
+		  FROM abom_finding_node fn JOIN ` + findingSource(mode) + ` f ON f.row_id = fn.finding_row_id
+		 WHERE fn.node_row_id = n.row_id)`
+	return ` ORDER BY (` + worst + ` IS NOT NULL)` + direction +
+			`, ((` + reach + `) > 0)` + direction + `, ` + worst + direction +
+			`, (` + reach + `)` + direction + `, n.node_key`,
+		append(append([]any{}, reachArgs...), reachArgs...)
 }
 
 // inventoryElsewhere names the kinds outside this view that the findings terms also matched.
@@ -396,8 +464,7 @@ func (s *Store) inventoryElsewhere(q InventoryQuery) ([]KindCount, error) {
 	}, `
 		SELECT n.node_kind, COUNT(*)
 		  FROM abom_node_live n
-		 WHERE n.node_kind NOT IN ('action', 'composite_action', 'workflow',
-		                           'reusable_workflow', 'docker_image')`+clause+`
+		 WHERE n.node_kind NOT IN ('action', 'composite_action', 'docker_image')`+clause+`
 		 GROUP BY n.node_kind
 		 ORDER BY 2 DESC, 1`, args...)
 }
@@ -442,8 +509,22 @@ func inventoryFindingFilter(q InventoryQuery) (string, []any) {
 		// Not `IS NOT DISTINCT FROM`: a NULL provider is unknown, and unknown is not a match.
 		where, whereArgs = append(where, "f.provider = ?"), append(whereArgs, q.Provider)
 	}
+	if q.unprovided {
+		where = append(where, "COALESCE(f.provider, '') = ''")
+	}
 	if q.Severity != "" {
 		where, whereArgs = append(where, "f.severity = ?"), append(whereArgs, q.Severity)
+	}
+	if len(q.SecuritySeverities) > 0 {
+		clause, a := bandClause("f.security_severity", q.SecuritySeverities)
+		where, whereArgs = append(where, clause), append(whereArgs, a...)
+	}
+	if len(q.Sources) > 0 {
+		clause, a := sourceClause("f", q.Sources)
+		where, whereArgs = append(where, clause), append(whereArgs, a...)
+	}
+	if q.unsourced {
+		where = append(where, "NOT "+recordedSource("f"))
 	}
 	if len(q.Repositories) > 0 {
 		lowered := make([]string, 0, len(q.Repositories))
@@ -543,12 +624,14 @@ func (s *Store) ActionsInventory(search string, limit int, sc RepositoryScope) (
 type RepositorySummary struct {
 	FullName string `json:"fullName"`
 	// Origin separates repositories under review from those fetched as dependencies.
-	Origin          string `json:"origin"`
-	Workflows       int    `json:"workflows"`
-	Dependencies    int    `json:"dependencies"`
-	Findings        int    `json:"findings"`
-	Exposures       int    `json:"exposures"`
-	DirectExposures int    `json:"directExposures"`
+	Origin       string `json:"origin"`
+	Workflows    int    `json:"workflows"`
+	Dependencies int    `json:"dependencies"`
+	Findings     int    `json:"findings"`
+	// Severity is the same findings by band.
+	Severity        SeverityCounts `json:"severity"`
+	Exposures       int            `json:"exposures"`
+	DirectExposures int            `json:"directExposures"`
 }
 
 // RepositoriesQuery narrows and orders the repositories unit, and cuts one page out of the match.
@@ -613,24 +696,10 @@ func (s *Store) RepositoriesPage(q RepositoriesQuery) (RepositoriesPage, error) 
 			q.Sort, sortNames(repositorySorts))
 	}
 
-	// Upstream repositories are not the organization's to remediate, and listing them alongside
-	// would imply otherwise.
-	where := `WHERE r.origin = ?`
-	args := []any{OriginSeed}
-	if q.Search != "" {
-		where += ` AND r.repository_full_name LIKE ? ESCAPE '\'`
-		args = append(args, "%"+escapeLike(q.Search)+"%")
-	}
-	bound, bindings, err := s.restrict(q.Grouping, "r.repository_full_name")
+	where, args, err := s.repositoriesWhere(q)
 	if err != nil {
 		return RepositoriesPage{}, err
 	}
-	where += bound
-	args = append(args, bindings...)
-
-	scoped, scopeArgs := repositoryScopeFilter(q)
-	where += scoped
-	args = append(args, scopeArgs...)
 
 	var total int
 	if err := s.DB().QueryRow(
@@ -675,7 +744,53 @@ func (s *Store) RepositoriesPage(q RepositoriesQuery) (RepositoriesPage, error) 
 	if err != nil {
 		return RepositoriesPage{}, err
 	}
+	names := make([]string, 0, len(items))
+	for _, r := range items {
+		names = append(names, r.FullName)
+	}
+	bands, err := s.severityByRepository(names)
+	if err != nil {
+		return RepositoriesPage{}, err
+	}
+	for i := range items {
+		items[i].Severity = bands[items[i].FullName]
+	}
 	return RepositoriesPage{Items: items, Total: total}, nil
+}
+
+// repositoriesWhere is the unit's population as a WHERE clause over `repository r`, shared by the
+// page and by a run so the two cannot come to list different repositories.
+func (s *Store) repositoriesWhere(q RepositoriesQuery) (string, []any, error) {
+	// Upstream repositories are not the organization's to remediate, and listing them alongside
+	// would imply otherwise.
+	where := `WHERE r.origin = ?`
+	args := []any{OriginSeed}
+	if q.Search != "" {
+		where += ` AND r.repository_full_name LIKE ? ESCAPE '\'`
+		args = append(args, "%"+escapeLike(q.Search)+"%")
+	}
+	bound, bindings, err := s.restrict(q.Grouping, "r.repository_full_name")
+	if err != nil {
+		return "", nil, err
+	}
+	where += bound
+	args = append(args, bindings...)
+
+	scoped, scopeArgs := repositoryScopeFilter(q)
+	return where + scoped, append(args, scopeArgs...), nil
+}
+
+// listedRepositories names every repository the unit lists for q, unpaged and in name order.
+func (s *Store) listedRepositories(q RepositoriesQuery) ([]string, error) {
+	where, args, err := s.repositoriesWhere(q)
+	if err != nil {
+		return nil, err
+	}
+	return queryAll(s, "listing repositories", func(row *sql.Rows) (string, error) {
+		var name string
+		return name, row.Scan(&name)
+	}, `SELECT r.repository_full_name FROM repository r `+where+
+		` ORDER BY r.repository_full_name`, args...)
 }
 
 // sortNames lists a sort whitelist, so a refusal can say what is on offer.
@@ -698,10 +813,23 @@ func (s *Store) RepositoriesOverview(search string, limit int, sc RepositoryScop
 	return page.Items, err
 }
 
-// RuleCount is how often one rule fired within a scope.
+// RuleCount is how often one rule fired within a scope, and where the queries that reported it
+// came from. Unsourced counts the findings no evaluation recorded a source for.
 type RuleCount struct {
-	RuleID string `json:"ruleId"`
-	Count  int    `json:"count"`
+	RuleID    string   `json:"ruleId"`
+	Count     int      `json:"count"`
+	Sources   []string `json:"sources"`
+	Unsourced int      `json:"unsourced"`
+	// Severity is the same findings by band. One rule usually lands in one band, and a version
+	// that changed its score lands in two.
+	Severity SeverityCounts `json:"severity"`
+}
+
+// mostSevereFirst orders rules by their worst band, keeping the order they arrived in within one.
+func mostSevereFirst(rules []RuleCount) {
+	sort.SliceStable(rules, func(i, j int) bool {
+		return rules[i].Severity.worstRank() > rules[j].Severity.worstRank()
+	})
 }
 
 // RepositoryWorkflow is one workflow as a repository's detail page lists it. The workflows *unit*
@@ -725,7 +853,7 @@ type RepositoryDetail struct {
 
 // RepositoryDetailOf returns one repository's posture.
 func (s *Store) RepositoryDetailOf(fullName string) (RepositoryDetail, error) {
-	out := RepositoryDetail{FullName: fullName}
+	out := RepositoryDetail{FullName: fullName, FindingsByRule: []RuleCount{}}
 
 	var rowID int64
 	if err := s.db.QueryRow(
@@ -735,23 +863,30 @@ func (s *Store) RepositoryDetailOf(fullName string) (RepositoryDetail, error) {
 	}
 
 	rules, err := s.db.Query(`
-		SELECT rule_id, COUNT(*) FROM abom_finding_regular
-		WHERE repository_row_id = ? GROUP BY rule_id ORDER BY 2 DESC`, rowID)
+		SELECT rule_id, COUNT(*), GROUP_CONCAT(sources), COUNT(*) - COUNT(sources), `+
+		bandSums("score")+`
+		FROM (SELECT f.rule_id, `+findingSources+` AS sources, f.security_severity AS score
+		      FROM abom_finding_regular f WHERE f.repository_row_id = ?)
+		GROUP BY rule_id ORDER BY 2 DESC, rule_id`, rowID)
 	if err != nil {
 		return out, fmt.Errorf("reading findings for %q: %w", fullName, err)
 	}
 	for rules.Next() {
 		var rc RuleCount
-		if err := rules.Scan(&rc.RuleID, &rc.Count); err != nil {
+		var sources sql.NullString
+		if err := rules.Scan(append([]any{&rc.RuleID, &rc.Count, &sources, &rc.Unsourced},
+			rc.Severity.targets()...)...); err != nil {
 			rules.Close()
 			return out, err
 		}
+		rc.Sources = distinctSources(sources)
 		out.FindingsByRule = append(out.FindingsByRule, rc)
 	}
 	rules.Close()
 	if err := rules.Err(); err != nil {
 		return out, err
 	}
+	mostSevereFirst(out.FindingsByRule)
 
 	flows, err := s.db.Query(`
 		SELECT n.node_key, COALESCE(n.path,''),

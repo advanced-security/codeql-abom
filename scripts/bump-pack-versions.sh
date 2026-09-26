@@ -27,7 +27,9 @@ set_scalar() {
 }
 
 if [ "${1:-}" = "--upgrade-deps" ]; then
-	for manifest in ql/*/*/src/codeql-pack.yml ql/*/*/test/codeql-pack.yml; do
+	# Libraries first: a pack depending on one through `${workspace}` resolves against the
+	# library's pins, so upgrading it later leaves every dependent held at the old version.
+	for manifest in ql/*/lib/codeql-pack.yml ql/*/*/src/codeql-pack.yml ql/*/*/test/codeql-pack.yml; do
 		[ -e "$manifest" ] || continue
 		pack_dir=$(dirname "$manifest")
 		lock="$pack_dir/codeql-pack.lock.yml"
@@ -121,7 +123,7 @@ case "$cli" in
 	;;
 esac
 
-for manifest in ql/*/*/src/codeql-pack.yml ql/*/*/test/codeql-pack.yml; do
+for manifest in ql/*/lib/codeql-pack.yml ql/*/*/src/codeql-pack.yml ql/*/*/test/codeql-pack.yml; do
 	[ -e "$manifest" ] || continue
 	set_scalar "$manifest" version "$cli"
 	echo "bumped $manifest to $cli"

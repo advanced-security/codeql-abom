@@ -30,13 +30,6 @@ func (i *Ingester) FindingsFromSARIF(r io.Reader, opts Options) (int, error) {
 		return 0, err
 	}
 
-	// Rule metadata carries security-severity and arrives before the results it describes, so
-	// it is held here and joined by rule id as each result streams past.
-	rules := make(map[string]sarifin.Rule)
-	// The producer, as the document spells it. Empty until a tool is seen, and left empty if the
-	// document names none — substituting CodeQL there would invent the provenance.
-	var producer string
-
 	var batch []store.Finding
 	stored := 0
 
@@ -53,7 +46,38 @@ func (i *Ingester) FindingsFromSARIF(r io.Reader, opts Options) (int, error) {
 		return nil
 	}
 
-	err = sarifin.Stream(r, sarifin.Handler{
+	err = readFindings(r, opts, func(f store.Finding) error {
+		f.QueryRunID = opts.QueryRunID
+		f.RepositoryID = repoID
+		batch = append(batch, f)
+		if len(batch) >= findingBatch {
+			return flush()
+		}
+		return nil
+	})
+	if err != nil {
+		return stored, err
+	}
+	if err := flush(); err != nil {
+		return stored, err
+	}
+	return stored, nil
+}
+
+// readFindings hands each result in a document to found as the finding it would be stored as, with
+// no repository and no evaluation named.
+//
+// One reading for storing and for holding, so converting a held result writes the finding adopting
+// the query would have stored.
+func readFindings(r io.Reader, opts Options, found func(store.Finding) error) error {
+	// Rule metadata carries security-severity and arrives before the results it describes, so
+	// it is held here and joined by rule id as each result streams past.
+	rules := make(map[string]sarifin.Rule)
+	// The producer, as the document spells it. Empty until a tool is seen, and left empty if the
+	// document names none — substituting CodeQL there would invent the provenance.
+	var producer string
+
+	err := sarifin.Stream(r, sarifin.Handler{
 		OnTool: func(tool sarifin.Tool) error {
 			producer = tool.Name
 			if opts.CLIVersion == "" || tool.SemanticVersion == opts.CLIVersion {
@@ -75,11 +99,9 @@ func (i *Ingester) FindingsFromSARIF(r io.Reader, opts Options) (int, error) {
 				severity = rule.Severity
 			}
 
-			batch = append(batch, store.Finding{
+			return found(store.Finding{
 				Provider:         producer,
-				QueryRunID:       opts.QueryRunID,
 				RuleID:           res.RuleID,
-				RepositoryID:     repoID,
 				FilePath:         res.FilePath,
 				StartLine:        res.Region.StartLine,
 				StartColumn:      res.Region.StartColumn,
@@ -96,38 +118,30 @@ func (i *Ingester) FindingsFromSARIF(r io.Reader, opts Options) (int, error) {
 						EndLine: res.Region.EndLine, EndColumn: res.Region.EndColumn,
 					}),
 			})
-
-			if len(batch) >= findingBatch {
-				return flush()
-			}
-			return nil
 		},
 	})
 	if err != nil {
-		return stored, fmt.Errorf("streaming sarif for %s: %w", opts.Repository, err)
+		return fmt.Errorf("streaming sarif for %s: %w", opts.Repository, err)
 	}
 	// Searching and finding nothing is a result; searching for nothing is not, and the two are
 	// the same row once stored. CodeQL lists every rule it ran whether or not it matched, so an
 	// empty rule set means the analysis covered no query at all.
 	if len(rules) == 0 {
-		return 0, fmt.Errorf(
+		return fmt.Errorf(
 			"%s: the analysis named no rules, so nothing was searched for", opts.Repository)
 	}
-	if err := flush(); err != nil {
-		return stored, err
-	}
-	return stored, nil
+	return nil
 }
 
-// parseSeverity converts the security-severity string CodeQL puts in rule properties, or 0
-// when the rule carries none.
-func parseSeverity(s string) float64 {
+// parseSeverity reads the security-severity string CodeQL puts in rule properties, nil when the
+// rule carries none or one that is not a number.
+func parseSeverity(s string) *float64 {
 	if s == "" {
-		return 0
+		return nil
 	}
 	v, err := strconv.ParseFloat(s, 64)
 	if err != nil {
-		return 0
+		return nil
 	}
-	return v
+	return &v
 }

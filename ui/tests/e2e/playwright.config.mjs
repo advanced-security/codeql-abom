@@ -1,5 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 import { detect } from './browser.mjs';
+import { grepFor } from './pages.mjs';
 
 // Paths come from the Makefile so `make e2e` and a bare `npx playwright test` agree. Defaults
 // exist only so the second one works at all; the Makefile always passes them explicitly.
@@ -7,6 +8,8 @@ const port = process.env.ABOM_E2E_PORT ?? '8231';
 const bin = process.env.ABOM_E2E_BIN ?? '../../../bin/codeql-abom';
 const db = process.env.ABOM_E2E_DB ?? '../../../.abom/e2e/abom.db';
 const ui = process.env.ABOM_E2E_UI ?? '../../../.abom/ui/wwwroot';
+// The operator's query pack, which `make e2e-corpus` names; without one no custom row is drawn.
+const ql = process.env.ABOM_E2E_QL ?? '';
 
 // Resolved once, and loudly: a machine with no usable browser has to say so, not fail every test
 // with a launch error. Throws when there is nothing to run in, which is the only honest outcome
@@ -14,8 +17,11 @@ const ui = process.env.ABOM_E2E_UI ?? '../../../.abom/ui/wwwroot';
 const browser = detect(process.env.ABOM_E2E_CHANNEL);
 console.log(`e2e: running in ${browser.channel} \u2014 ${browser.reason}`);
 
+const pages = (process.env.ABOM_E2E_PAGE ?? '').split(/\s+/).filter(Boolean);
+
 export default defineConfig({
     testDir: './specs',
+    ...(pages.length ? { grep: grepFor(pages) } : {}),
     // The suite drives one server against one SQLite file, and the store allows a single writer.
     // Parallel workers would be several readers of one connection pool, which is not the thing
     // being tested and produces failures that look like interface bugs.
@@ -62,7 +68,8 @@ export default defineConfig({
     ],
 
     webServer: {
-        command: `${bin} serve --db ${db} --addr 127.0.0.1:${port} --ui-dir ${ui}`,
+        command: `${bin} serve --db ${db} --addr 127.0.0.1:${port} --ui-dir ${ui}` +
+            (ql ? ` --custom-ql-dir ${ql}` : ''),
         url: `http://127.0.0.1:${port}/api/summary`,
         // Never reuse: a server already on this port is somebody else's, pointed at a database
         // this suite did not prepare, and its answers would be reported as ours.

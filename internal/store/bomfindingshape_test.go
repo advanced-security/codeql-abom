@@ -76,7 +76,7 @@ func TestADefectSeenInBothShapesIsOneFindingLabelledWithBoth(t *testing.T) {
 	if _, err := s.AddFindings([]Finding{
 		{Provider: ProviderCodeQL, QueryRunID: extended, RuleID: "actions/unpinned-tag",
 			RepositoryID: app, FilePath: ".github/workflows/ci.yml", StartLine: 1,
-			Severity: "warning", SecuritySeverity: 5.5, Message: "unpinned", Fingerprint: "f1",
+			Severity: "warning", SecuritySeverity: score(5.5), Message: "unpinned", Fingerprint: "f1",
 			ResultHash: "sha256:result"},
 	}); err != nil {
 		t.Fatalf("AddFindings: %v", err)

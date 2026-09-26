@@ -1,0 +1,801 @@
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@implements IDisposable
+@inject AbomApi Api
+@inject NavigationManager Nav
+@inject RequestDraft Draft
+@inject AccountService Accounts
+
+@* Repositories with results by default: a page of zeros hides the rows a query's author wants. *@
+@if (_run is null)
+{
+    <MudText Typo="Typo.caption" Class="mud-text-secondary">Reading run #@RunId&hellip;</MudText>
+}
+else
+{
+    @if (_run.Refusal.Length > 0)
+    {
+        <MudAlert Severity="Severity.Error" Dense="true" Class="mb-2" data-abom-results-refused>
+            Run #@_run.RowId did not start: <span class="abom-refusal-text">@_run.Refusal</span>
+            @if (Analyzed > 0)
+            {
+                <span>What is listed is from an earlier start.</span>
+            }
+        </MudAlert>
+    }
+    @if (_run.Left is { } left)
+    {
+        @* First while a run is under way: what is running, then what waits, then what it found. *@
+        <div class="mb-2" data-abom-run-left>
+            <MudText Typo="Typo.body2">
+                @CountText.Number(left.Members) still to do.
+                @if (left.RemainingSeconds is { } remaining)
+                {
+                    <span class="mud-text-secondary" data-abom-run-left-time>
+                        @(TimeText.Roughly(remaining)) left, at the pace of the @left.Finished this start has finished.
+                    </span>
+                }
+            </MudText>
+            @if (StillToDo.Count > 0)
+            {
+                <ul class="abom-left">
+                    @foreach (var m in StillToDo)
+                    {
+                        <li data-abom-run-left-member="@m.Repository">
+                            <span class="abom-path">@m.Repository</span>
+                            @if (m.Status == "running")
+                            {
+                                <span class="mud-text-secondary"> · running</span>
+                            }
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+    }
+    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-1" data-abom-run-summary>
+        @if (_run.Held)
+        {
+            @* Coverage first: a run over 2 of 4 repositories says something about 2. *@
+            <span data-abom-held-coverage>
+                Run #@_run.RowId covers @Analyzed of @CountText.Of(_run.Members.Count, "repository", "repositories")@(Waiting > 0 ? $", with {Waiting} still to do" : "").
+                @if (NotCovered.Count > 0)
+                {
+                    <span>Not covered: @NamesText(NotCovered) — show every repository to see why.</span>
+                }
+            </span>
+            @if (Split > 0)
+            {
+                @* Spelled out: Razor drops the whitespace between an element and a code block. *@
+                <span>
+                    @(" ")@(QueryId is null ? "Its queries" : "This query") reported
+                    @CountText.Of(Found, "result", "results") in
+                    @CountText.Of(WithResults.Count(m => !Unsplit(m)), "repository", "repositories"),
+                    held until somebody converts them to findings.
+                </span>
+            }
+        }
+        else
+        {
+            <span>
+                Run #@_run.RowId covered @CountText.Of(_run.Members.Count, "repository", "repositories"):
+                @Analyzed analyzed, @(_run.Members.Count - Analyzed) not.
+            </span>
+            @if (Split > 0)
+            {
+                <span>
+                    @(" ")@(QueryId is null ? "Its queries" : "This query") found
+                    @CountText.Of(Found, "result", "results") in
+                    @CountText.Of(WithResults.Count(m => !Unsplit(m)), "repository", "repositories").
+                </span>
+            }
+        }
+        @if (Unsplit(_run.Members) is { Count: > 0 } unsplit)
+        {
+            @* A total recorded before results were counted per query: known, and not whose. *@
+            <span data-abom-results-unsplit>
+                @CountText.Of(unsplit.Count, "repository was", "repositories were") counted before results
+                were split by query: @CountText.Of(unsplit.Sum(m => m.Results), "result", "results")
+                between them, and which query found each is not recorded.
+            </span>
+        }
+    </MudText>
+
+    <div class="d-flex align-center gap-3 mb-1">
+        @if (Hidden > 0 && !_all)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-results-hidden>
+                @CountText.Of(Hidden, "repository with no result is", "repositories with no result are") not listed.
+            </MudText>
+        }
+        @if (_run.Members.Count > WithResults.Count)
+        {
+            @* The attribute goes on a wrapper: MudBlazor splats it onto a hidden input. *@
+            <span data-abom-results-all>
+                <MudSwitch T="bool" Value="_all" ValueChanged="@((bool v) => { _all = v; })" Size="Size.Small"
+                           Color="Color.Primary" Label="Show every repository" />
+            </span>
+        }
+        @if (_run.Members.Any(m => m.Counted))
+        {
+            <MudSpacer />
+            @if (_run.Held && Found > 0)
+            {
+                @* The reason sits on the span: a disabled button fires no tooltip. *@
+                <span data-abom-held-convert-all-reason title="@ConvertAllReason">
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                               StartIcon="@Icons.Material.Outlined.PlaylistAddCheck"
+                               Disabled="@(!CanConvert)" OnClick="@(() => Convert(string.Empty, []))"
+                               data-abom-held-convert-all>Convert all to findings</MudButton>
+                </span>
+            }
+            <MudButton Size="Size.Small" DropShadow="false"
+                       Variant="@(_picking ? Variant.Filled : Variant.Outlined)"
+                       StartIcon="@Icons.Material.Outlined.RateReview"
+                       OnClick="@(() => _picking = !_picking)" data-abom-results-pick>
+                Ask for a change
+            </MudButton>
+        }
+    </div>
+
+    @if (_converted is { Length: > 0 } converted)
+    {
+        <MudAlert Severity="Severity.Success" Dense="true" Class="mb-2" data-abom-held-converted>@converted</MudAlert>
+    }
+    @if (_conversionRefusal is { Length: > 0 } refused)
+    {
+        <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-2" data-abom-held-refused>@refused</MudAlert>
+    }
+
+    @if (_picking)
+    {
+        @PickerContent
+    }
+
+    @if (Listed.Count == 0)
+    {
+        <MudText Typo="Typo.body2" data-abom-results-none>
+            @(Analyzed == 0
+                ? _run.State == "refused"
+                    ? "Nothing in this run has been analyzed, because it did not start. Run it again once what refused it is fixed."
+                    : "Nothing in this run has been analyzed yet, so there are no results to show."
+                : QueryId is null
+                    ? "No repository had a result from this run's queries."
+                    : "No repository had a result from this query.")
+        </MudText>
+    }
+    else
+    {
+        <MudSimpleTable Dense="true" Hover="true" FixedHeader="true"
+                        Class="abom-grid abom-table abom-results abom-grid-windowed abom-grid-nested">
+            <thead>
+                <tr>
+                    <th>Repository</th>
+                    @foreach (var query in Columns)
+                    {
+                        <th class="abom-cell-right" data-abom-result-query="@query">
+                            @(Columns.Count == 1 ? "Results" : query)
+                        </th>
+                    }
+                    @if (ShowsTotals)
+                    {
+                        <th class="abom-cell-right">All queries</th>
+                    }
+                    @if (_all)
+                    {
+                        <th>Status</th>
+                    }
+                    @if (_run.Held)
+                    {
+                        <th></th>
+                    }
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var member in Listed)
+                {
+                    <tr>
+                        <td class="abom-path abom-nowrap" data-abom-result-repository>@member.Repository</td>
+                        @foreach (var query in Columns)
+                        {
+                            <td class="abom-cell-right">
+                                @if (member.ByQuery.TryGetValue(query, out var n))
+                                {
+                                    <span class="abom-num" data-abom-member-results>@n</span>
+                                }
+                                else
+                                {
+                                    @* Not zero: nothing counted this query here. *@
+                                    <MudText Typo="Typo.caption" Class="abom-faint"
+                                             data-abom-member-uncounted>—</MudText>
+                                }
+                            </td>
+                        }
+                        @if (ShowsTotals)
+                        {
+                            <td class="abom-cell-right">
+                                @if (member.Counted)
+                                {
+                                    <span class="abom-num" data-abom-member-total>@member.Results</span>
+                                }
+                                else
+                                {
+                                    <MudText Typo="Typo.caption" Class="abom-faint">—</MudText>
+                                }
+                            </td>
+                        }
+                        @if (_all)
+                        {
+                            <td>
+                                <MudText Typo="Typo.caption">@StatusText(member)</MudText>
+                            </td>
+                        }
+                        @if (_run.Held)
+                        {
+                            <td>
+                                @if (Count(member) > 0)
+                                {
+                                    <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
+                                               Class="abom-plain-button" OnClick="@(() => ToggleHeld(member.Repository))"
+                                               data-abom-held-toggle="@member.Repository">
+                                        @(_held.ContainsKey(member.Repository) ? "Hide what it held" : "What it held")
+                                    </MudButton>
+                                }
+                            </td>
+                        }
+                    </tr>
+                    @if (_run.Held && _held.TryGetValue(member.Repository, out var listed))
+                    {
+                        <tr>
+                            <td colspan="@ColumnCount">
+                                @HeldFor(member.Repository, listed)
+                            </td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </MudSimpleTable>
+    }
+}
+
+@code {
+    [Parameter, EditorRequired] public long RunId { get; set; }
+
+    /// <summary>One query's column only, when the run is opened from that query's row.</summary>
+    [Parameter] public string? QueryId { get; set; }
+
+    private AnalysisRun? _run;
+    private long _loaded;
+    private bool _all;
+    private Timer? _timer;
+
+    private static readonly TimeSpan WhileRunning = TimeSpan.FromSeconds(5);
+
+    // A different run, not a parent re-rendering: a run in flight re-reads on its own beat.
+    protected override async Task OnParametersSetAsync()
+    {
+        if (RunId == _loaded)
+        {
+            return;
+        }
+        _loaded = RunId;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        _run = await Api.GetAnalysisRunAsync(RunId);
+        // Polled while pending too: the executor starts a run a beat after it is asked for.
+        if (_run?.State is "pending" or "running")
+        {
+            _timer ??= new Timer(async _ =>
+            {
+                try
+                {
+                    await Load();
+                }
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+                {
+                    return;
+                }
+                await InvokeAsync(StateHasChanged);
+            }, null, WhileRunning, WhileRunning);
+        }
+        else
+        {
+            _timer?.Dispose();
+            _timer = null;
+        }
+    }
+
+    /// <summary>Whether this is re-reading its run, which it does until the run finishes.</summary>
+    public bool Watching => _timer is not null;
+
+    /// <summary>The asked-for queries first, then any other rule the output carried.</summary>
+    private IReadOnlyList<string> Columns => QueryId is { } one
+        ? [one]
+        : [.. (_run?.Queries.Select(q => q.QueryId) ?? []).Distinct()
+              .Concat((_run?.Members ?? []).SelectMany(m => m.ByQuery.Keys).Distinct()
+                  .Where(k => _run!.Queries.All(q => q.QueryId != k)).Order(StringComparer.Ordinal))];
+
+    private int Count(AnalysisMember m) =>
+        QueryId is { } one
+            ? m.ByQuery.TryGetValue(one, out var n) ? n : 0
+            : m.ByQuery.Values.Sum();
+
+    // Counted, and counted before results were split by query: the total is known, the share is not.
+    private static bool Unsplit(AnalysisMember m) => m.Counted && m.ByQuery.Count == 0;
+
+    private static List<AnalysisMember> Unsplit(IEnumerable<AnalysisMember> members) =>
+        members.Where(m => Unsplit(m) && m.Results > 0).ToList();
+
+    private bool ShowsTotals => Unsplit(_run?.Members ?? []).Count > 0;
+
+    private int Analyzed => _run?.Members.Count(m => m.Counted) ?? 0;
+
+    // Still to do is not the same as could not be covered, so the two are counted apart.
+    private int Waiting => _run?.Members.Count(m => !m.Counted && m.Status is "pending" or "running") ?? 0;
+
+    private List<AnalysisMember> NotCovered =>
+        _run?.Members.Where(m => !m.Counted && m.Status is not ("pending" or "running")).ToList() ?? [];
+
+    // The server says which members this start has still to reach; the one running leads.
+    private List<AnalysisMember> StillToDo =>
+        _run?.Members.Where(m => m.ToDo).OrderBy(m => m.Status == "running" ? 0 : 1).ToList() ?? [];
+
+    private static string NamesText(IReadOnlyList<AnalysisMember> members) =>
+        members.Count <= NamesShown
+            ? string.Join(", ", members.Select(m => m.Repository))
+            : $"{string.Join(", ", members.Take(NamesShown).Select(m => m.Repository))} " +
+              $"and {members.Count - NamesShown} more";
+
+    private const int NamesShown = 10;
+
+    // What each opened member held, what is chosen in it for converting, and what the last
+    // conversion did or why it was refused.
+    private readonly Dictionary<string, MemberFindings?> _held = new(StringComparer.Ordinal);
+    private readonly HashSet<(string Repository, long Held)> _toConvert = [];
+    private string? _converted;
+    private string? _conversionRefusal;
+    private bool _converting;
+
+    private bool CanConvert => !_converting && Accounts.Identity.Login.Length > 0;
+
+    private string ConvertAllReason => Accounts.Identity.Login.Length == 0
+        ? "Sign in with gh: a conversion records who made it."
+        : "Store every result this run held as a finding, attributed to the evaluation that reported it.";
+
+    protected override async Task OnInitializedAsync() => await Accounts.EnsureLoadedAsync();
+
+    private async Task ToggleHeld(string repository)
+    {
+        if (!_held.Remove(repository))
+        {
+            _held[repository] = await Api.GetRunFindingsAsync(RunId, repository, QueryId ?? string.Empty);
+        }
+    }
+
+    private void ChooseToConvert(string repository, long held, bool chosen)
+    {
+        if (chosen)
+        {
+            _toConvert.Add((repository, held));
+        }
+        else
+        {
+            _toConvert.Remove((repository, held));
+        }
+    }
+
+    /// <summary>The whole run with no repository, the member with no results named, else those.</summary>
+    private async Task Convert(string repository, IReadOnlyList<long> results)
+    {
+        if (!CanConvert)
+        {
+            return;
+        }
+        _converting = true;
+        try
+        {
+            var (done, refusal) = await Api.ConvertHeldAsync(RunId, repository, results, Accounts.Identity.Login);
+            _conversionRefusal = refusal;
+            _converted = done is null ? null
+                : $"{CountText.Of(done.Converted, "result", "results")} converted to findings" +
+                  (done.Already > 0 ? $"; {CountText.Of(done.Already, "was", "were")} already." : ".");
+            _toConvert.RemoveWhere(c => repository.Length == 0 || c.Repository == repository);
+            foreach (var opened in _held.Keys.Where(r => repository.Length == 0 || r == repository).ToList())
+            {
+                _held[opened] = await Api.GetRunFindingsAsync(RunId, opened, QueryId ?? string.Empty);
+            }
+        }
+        finally
+        {
+            _converting = false;
+        }
+    }
+
+    private int ColumnCount => 1 + Columns.Count + (ShowsTotals ? 1 : 0) + (_all ? 1 : 0) + 1;
+
+    private RenderFragment HeldFor(string repository, MemberFindings? listed) => __builder =>
+    {
+        if (listed is null)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                The server did not say what this repository held: @Api.LastError
+            </MudText>
+        }
+        else
+        {
+            <ul class="abom-trace" data-abom-held="@repository">
+                @foreach (var f in listed.Findings)
+                {
+                    var label = $"{f.FilePath}:{f.StartLine} — {f.Message}" + (Columns.Count > 1 ? $" · {f.RuleId}" : "");
+                    <li class="d-flex align-center gap-1">
+                        <span data-abom-finding-band="@f.HeldResultId"><SeverityChip Severity="@f.Band" /></span>
+                        @if (f.FindingRowId != 0)
+                        {
+                            <MudText Typo="Typo.caption" Class="d-block" data-abom-held-result-converted="@f.HeldResultId">
+                                <span class="abom-path">@label</span>
+                                <span class="mud-text-secondary"> · a finding, converted by @f.ConvertedBy @TimeText.DayAndTime(f.ConvertedAt)</span>
+                            </MudText>
+                        }
+                        else
+                        {
+                            <span data-abom-held-result="@f.HeldResultId">
+                                <MudCheckBox T="bool" Size="Size.Small" Dense="true"
+                                             Value="@_toConvert.Contains((repository, f.HeldResultId))"
+                                             ValueChanged="@((bool v) => ChooseToConvert(repository, f.HeldResultId, v))"
+                                             Label="@label" />
+                            </span>
+                        }
+                    </li>
+                }
+            </ul>
+            @if (listed.Truncated)
+            {
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                    Only the first @listed.Findings.Count are listed.
+                </MudText>
+            }
+            var chosen = _toConvert.Where(c => c.Repository == repository).Select(c => c.Held).ToList();
+            @if (listed.Findings.Any(f => f.FindingRowId == 0))
+            {
+                <div class="d-flex align-center gap-2 mt-1">
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                               Disabled="@(!CanConvert || chosen.Count == 0)"
+                               OnClick="@(() => Convert(repository, chosen))"
+                               data-abom-held-convert-chosen="@repository">
+                        @(chosen.Count == 0 ? "Convert chosen" : $"Convert {CountText.Of(chosen.Count, "chosen result", "chosen results")}")
+                    </MudButton>
+                    @* Named where a reader hears it: button text is uppercased, and a repository's name is not. *@
+                    <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
+                               Disabled="@(!CanConvert)" OnClick="@(() => Convert(repository, []))"
+                               aria-label="@($"Convert everything {repository} held to findings")"
+                               data-abom-held-convert-member="@repository">
+                        Convert all in this repository
+                    </MudButton>
+                </div>
+            }
+        }
+    };
+
+    private int Split => _run?.Members.Count(m => m.Counted && m.ByQuery.Count > 0) ?? 0;
+
+    private List<AnalysisMember> WithResults =>
+        _run?.Members.Where(m => Count(m) > 0 || Unsplit(m) && m.Results > 0).ToList() ?? [];
+
+    private int Found => WithResults.Sum(Count);
+
+    private int Hidden => (_run?.Members.Count ?? 0) - WithResults.Count;
+
+    private List<AnalysisMember> Listed =>
+        _all
+            ? [.. _run?.Members ?? []]
+            : [.. WithResults.OrderByDescending(Count).ThenByDescending(m => m.Results)];
+
+    private static string StatusText(AnalysisMember m) => m.Status switch
+    {
+        "no_database" => string.IsNullOrEmpty(m.Detail) ? "no database" : m.Detail,
+        "failed" => $"failed — {m.Detail}",
+        "skipped" => string.IsNullOrEmpty(m.Detail) ? "skipped" : $"skipped — {m.Detail}",
+        _ => m.Status,
+    };
+
+    private bool _picking;
+    private string? _chosenQuery;
+    private readonly Dictionary<string, MemberFindings?> _findings = new(StringComparer.Ordinal);
+    private readonly Dictionary<long, FindingTrace?> _traces = [];
+    private readonly List<(string Repository, long FindingRowId)> _falseAlarms = [];
+    private readonly List<string> _missed = [];
+
+    /// <summary>A request is about one query: the one this was opened from, or the one chosen.</summary>
+    private string? PickQuery => QueryId ?? _chosenQuery ?? (_run?.Queries.Select(q => q.QueryId)
+        .Distinct().ToList() is [var only] ? only : null);
+
+    private void ChooseQuery(string query)
+    {
+        _chosenQuery = query;
+        _findings.Clear();
+        _falseAlarms.Clear();
+        _missed.Clear();
+    }
+
+    /// <summary>The picker lists no repository counted before the split, found something or not.</summary>
+    private int UnsplitCount => _run?.Members.Count(m => Unsplit(m)) ?? 0;
+
+    private async Task ShowFindings(string repository)
+    {
+        if (PickQuery is { } query)
+        {
+            _findings[repository] = await Api.GetRunFindingsAsync(RunId, repository, query);
+        }
+    }
+
+    private void PickFinding(string repository, long id, bool picked)
+    {
+        _falseAlarms.Remove((repository, id));
+        if (picked)
+        {
+            _falseAlarms.Add((repository, id));
+        }
+    }
+
+    private void PickMissed(string repository, bool picked)
+    {
+        _missed.Remove(repository);
+        if (picked)
+        {
+            _missed.Add(repository);
+        }
+    }
+
+    private string PickedText => _falseAlarms.Count + _missed.Count == 0
+        ? "Pick the results that should not have fired, or the repositories where one should have."
+        : string.Join(" and ", new[]
+            {
+                _falseAlarms.Count > 0 ? CountText.Of(_falseAlarms.Count, "result", "results") : null,
+                _missed.Count > 0
+                    ? CountText.Of(_missed.Count, "repository where nothing fired", "repositories where nothing fired")
+                    : null,
+            }.OfType<string>()) + " picked.";
+
+    /// <summary>Prefills a request; filing it stays the operator's act on the Requests tab.</summary>
+    private void Ask()
+    {
+        if (PickQuery is not { } query || _falseAlarms.Count + _missed.Count == 0)
+        {
+            return;
+        }
+        var evidence = _falseAlarms
+            .Select(p => _run?.Held == true
+                ? new RequestEvidence { RunId = RunId, Repository = p.Repository, HeldResultId = p.FindingRowId, Kind = "false-alarm" }
+                : new RequestEvidence { RunId = RunId, Repository = p.Repository, FindingRowId = p.FindingRowId, Kind = "false-alarm" })
+            .Concat(_missed.Select(r => new RequestEvidence { RunId = RunId, Repository = r, Kind = "missed" }))
+            .ToList();
+        var kind = _falseAlarms.Count > 0 && _missed.Count > 0 ? "both"
+            : _falseAlarms.Count > 0 ? "false-alarm" : "missed";
+        Draft.Set(new QueryRequest { QueryId = query, Kind = kind, SourceRunId = RunId, Evidence = evidence });
+        Nav.NavigateTo("/codeql?tab=requests");
+    }
+
+    private RenderFragment PickerContent => __builder =>
+    {
+        <MudPaper Outlined="true" Class="pa-3 mb-2" data-abom-results-picker>
+            @if (QueryId is null && (_run?.Queries.Select(q => q.QueryId).Distinct().Count() ?? 0) > 1)
+            {
+                <div class="d-flex flex-wrap align-center gap-1 mb-2">
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">A request is about one query:</MudText>
+                    @foreach (var q in _run!.Queries.Select(q => q.QueryId).Distinct())
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                 Color="@(PickQuery == q ? Color.Primary : Color.Default)"
+                                 OnClick="@(() => ChooseQuery(q))" data-abom-pick-query="@q">@q</MudChip>
+                    }
+                </div>
+            }
+            @if (PickQuery is { } query)
+            {
+                <MudSimpleTable Dense="true" Class="abom-grid abom-table abom-grid-nested" data-abom-results-pickable>
+                    <thead>
+                        <tr><th>Repository</th><th class="abom-cell-right">Results</th><th>Pick</th></tr>
+                    </thead>
+                    <tbody>
+                        @* Only where the query looked: a repository nothing ran against shows nothing to pick. *@
+                        @foreach (var member in _run!.Members.Where(m => m.Counted && m.ByQuery.ContainsKey(query)))
+                        {
+                            var found = member.ByQuery[query];
+                            <tr>
+                                <td class="abom-path abom-nowrap">@member.Repository</td>
+                                <td class="abom-cell-right"><span class="abom-num">@found</span></td>
+                                <td>
+                                    @if (found > 0)
+                                    {
+                                        @FindingsFor(member.Repository)
+                                    }
+                                    else
+                                    {
+                                        <span data-abom-pick-missed="@member.Repository">
+                                            <MudCheckBox T="bool" Size="Size.Small" Dense="true"
+                                                         Value="@_missed.Contains(member.Repository)"
+                                                         ValueChanged="@((bool v) => PickMissed(member.Repository, v))"
+                                                         Label="Should have found something here" />
+                                        </span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+                @if (UnsplitCount is > 0 and var unsplit)
+                {
+                    <MudText Typo="Typo.caption" Class="d-block mud-text-secondary mt-1" data-abom-results-unpickable>
+                        @(unsplit == Analyzed ? $"All {CountText.Of(unsplit, "repository", "repositories")}"
+                          : $"{unsplit} of the {CountText.Of(Analyzed, "repository", "repositories")}")
+                        this run analyzed @(unsplit == 1 ? "was" : "were") counted before ABOM kept what each query
+                        found in each one, so none of them can be picked, for what was found or what was missed;
+                        run it again to pick from them.
+                    </MudText>
+                }
+                <div class="d-flex align-center gap-2 mt-2">
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">@PickedText</MudText>
+                    <MudSpacer />
+                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" DropShadow="false"
+                               Disabled="@(_falseAlarms.Count + _missed.Count == 0)" OnClick="Ask"
+                               Class="abom-ask-change" data-abom-results-ask>Ask for a change to @query</MudButton>
+                </div>
+            }
+        </MudPaper>
+    };
+
+    private RenderFragment FindingsFor(string repository) => __builder =>
+    {
+        if (!_findings.TryGetValue(repository, out var listed))
+        {
+            <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
+                       OnClick="@(() => ShowFindings(repository))"
+                       data-abom-member-findings="@repository">Pick results that should not have fired</MudButton>
+        }
+        else if (listed is null)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                The server did not say what this repository reported: @Api.LastError
+            </MudText>
+        }
+        else if (listed.Unlinked)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-member-unlinked>
+                This run was recorded before ABOM kept each repository's own evaluation, so what it
+                counted here cannot be listed; run it again to pick from its results.
+            </MudText>
+        }
+        else
+        {
+            foreach (var f in listed.Findings)
+            {
+                // A held result is picked by what the run kept, a finding by the finding.
+                var id = listed.Held ? f.HeldResultId : f.FindingRowId;
+                <div>
+                    <span data-abom-pick-finding="@id">
+                        <MudCheckBox T="bool" Size="Size.Small" Dense="true"
+                                     Value="@_falseAlarms.Contains((repository, id))"
+                                     ValueChanged="@((bool v) => PickFinding(repository, id, v))"
+                                     Label="@($"{f.FilePath}:{f.StartLine} — {f.Message}")" />
+                    </span>
+                    @if (listed.Held && f.FindingRowId == 0)
+                    {
+                        <div class="d-flex align-center gap-1 ml-8">
+                            <span data-abom-finding-band="@id"><SeverityChip Severity="@f.Band" /></span>
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary"
+                                     data-abom-pick-held="@id">held, not a finding</MudText>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="d-flex align-center gap-1 ml-8">
+                            <span data-abom-finding-band="@id"><SeverityChip Severity="@f.Band" /></span>
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary"
+                                     data-abom-finding-provenance="@f.FindingRowId">
+                                @(listed.Held ? $"a finding, converted by {f.ConvertedBy}" : ProvenanceText(f))
+                            </MudText>
+                            <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
+                                       Class="abom-plain-button" OnClick="@(() => ToggleTrace(f.FindingRowId))"
+                                       data-abom-finding-trace-toggle="@f.FindingRowId">
+                                @(_traces.ContainsKey(f.FindingRowId) ? "Hide what reported it" : "What reported it")
+                            </MudButton>
+                        </div>
+                        @if (_traces.TryGetValue(f.FindingRowId, out var trace))
+                        {
+                            @TraceOf(trace)
+                        }
+                    }
+                </div>
+            }
+            if (listed.Truncated)
+            {
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                    Only the first @listed.Findings.Count are listed.
+                </MudText>
+            }
+        }
+    };
+
+    public void Dispose() => _timer?.Dispose();
+
+    private async Task ToggleTrace(long id)
+    {
+        if (!_traces.Remove(id))
+        {
+            _traces[id] = await Api.GetFindingTraceAsync(id);
+        }
+    }
+
+    private static string Short(string hash) => hash.Length <= 12 ? hash : hash[..12];
+
+    private static string VersionText(string version) =>
+        version.Length == 0 ? "version not recorded" : $"version {Short(version)}";
+
+    /// <summary>What the member's evaluation recorded about the rule's query, never the run's.</summary>
+    private static string ProvenanceText(RunFinding f) => f.Source.Length == 0
+        ? "source and version not recorded"
+        : $"{QueryCatalogView.SourceText(f.Source)} · {VersionText(f.RuleVersion)}";
+
+    private static string RecorderText(FindingEvaluation e) => e.RecordedBy switch
+    {
+        "crawl" => "the crawl",
+        "run" when e.Runs.Count > 0 =>
+            (e.Runs.Count == 1 ? "run " : "runs ") + string.Join(", ", e.Runs.Select(r => r.RunId).Distinct()),
+        "run" => "a run",
+        // style-check: off — the store's value for a replayed recording, matched and never shown.
+        "corpus" => "a replayed recording",
+        // style-check: on
+        _ => "who ran it was not recorded",
+    };
+
+    private static string RuleText(FindingEvaluation e)
+    {
+        if (e.Source.Length == 0)
+        {
+            return e.Packs.Count == 0
+                ? "source and version not recorded"
+                : $"source and version not recorded; it ran {string.Join(", ", e.Packs)}";
+        }
+        var pack = e.PackVersion.Length == 0 ? e.Pack : $"{e.Pack} {e.PackVersion}";
+        return $"{QueryCatalogView.SourceText(e.Source)} · {pack} · {VersionText(e.RuleVersion)}";
+    }
+
+    private RenderFragment TraceOf(FindingTrace? trace) => __builder =>
+    {
+        if (trace is null)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary d-block ml-8">
+                The server did not say what reported this: @Api.LastError
+            </MudText>
+        }
+        else if (trace.Evaluations.Count == 0)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary d-block ml-8" data-abom-trace-none>
+                No evaluation is on record as reporting this finding.
+            </MudText>
+        }
+        else
+        {
+            <ul class="abom-trace ml-8">
+                @foreach (var e in trace.Evaluations)
+                {
+                    <li data-abom-trace-evaluation="@e.QueryRunId">
+                        <MudText Typo="Typo.caption" Class="d-block">
+                            @RecorderText(e) · @e.Invoked · @e.Mode database at @Short(e.Commit)
+                            · CodeQL @(e.CliVersion.Length == 0 ? "not recorded" : e.CliVersion) · @TimeText.DayAndTime(e.RanAt)
+                        </MudText>
+                        <MudText Typo="Typo.caption" Class="d-block mud-text-secondary">@RuleText(e)</MudText>
+                        @foreach (var r in e.Runs)
+                        {
+                            <MudLink Href="@($"/codeql?tab=runs&run={r.RunId}")" Typo="Typo.caption" Class="mr-2"
+                                     data-abom-trace-run="@r.RunId">run @r.RunId: @r.Status</MudLink>
+                        }
+                    </li>
+                }
+            </ul>
+        }
+    };
+}

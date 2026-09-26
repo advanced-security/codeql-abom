@@ -1,8 +1,7 @@
 # Finding what changed without reading the whole organization
 
-**Status:** built for the reads. GraphQL is the preferred route and REST the fallback, both answer
-the same three questions, each account carries the marks a sorted walk stops at, and only a full
-listing reports what is gone. The per-repository database probe is untouched and is now the ceiling.
+**Status:** built for account reads, workflow-aware database probes and visible freshness;
+visual review and the missing-repository policy remain open.
 
 ## Why this exists
 
@@ -25,19 +24,11 @@ broader and so safer — is false: **17 of 27 repositories on the reference orga
 
 ## Pending
 
-1. **The per-repository database probe is the remaining cost.** There is no code-scanning or CodeQL
-   field on `Repository` in the GraphQL schema — checked by introspection, not supposed — so asking
-   whether a repository has an actions database is REST and is one request each. At twenty thousand
-   repositories that is the whole bill now that the listing is bounded.
-2. **Narrow that fan-out before spending it.** Establishing which repositories hold a workflow file
-   would spend the probe only where it can find something, and must report the ones it skipped as
-   unprobed rather than as holding nothing. Depends on 1 being the thing worth attacking, which the
-   measurement above says it is.
-3. **What the interface says.** The API carries it — `/api/owned-scope` reports the route, when the
-   account was last listed in full, when last swept, and the marks — and no screen reads it yet. A
-   repository deleted after the last full listing is still reported until the next one, which is
-   only defensible if a reader can see how long ago that was.
-4. **What to do about a repository that is gone.** A full listing now counts them and removes none:
+1. **Complete the visual review of Settings.** The new listing column has API-grounded browser
+   checks at 1440 and 390 CSS pixels, but the verification session exhausted its image budget.
+   Review the full-listing, incremental-read and never-read states in both themes; do not treat
+   passing DOM and overflow assertions as an appearance verdict.
+2. **What to do about a repository that is gone.** A full listing now counts them and removes none:
    `missing` is a number, and `missingKnown` is false after a sweep because a prefix cannot
    establish absence. Whether such a repository is pruned, kept as coverage or labeled orphaned is
    the open decision, and it is the same one `next.md` records for seeded repositories in no
@@ -45,8 +36,9 @@ broader and so safer — is false: **17 of 27 repositories on the reference orga
 
 ## The constraints that must not be broken
 
-**A sweep is two walks, so it has a floor of two reads.** One ordered page costs 1 point; a full
-listing of N repositories costs ⌈N/100⌉. An account that fits on one page therefore costs **2 points
+**A sweep is two walks, so it has a floor of two reads.** One ordered page costs 1 point; the
+full-listing cost follows pages read, not the active repositories returned after archived rows
+are excluded. An account that fits on one page therefore costs **2 points
 swept against 1 listed**, and gives up seeing deletions to do it; the saving begins at three pages.
 `enumerate.sweepWorthIt` encodes that, and an account at or below two pages is read whole. Making
 the incremental path unconditional would cost more and answer less.
@@ -75,11 +67,7 @@ clients.
 
 ## Verification
 
-- **The cost model holds at size.** 1 point per hundred repositories was measured on 27, and a
-  formula that divides by a hundred behaves differently either side of the rounding. Re-measure
-  where the organization is large, and re-check `sweepWorthIt` against it.
-- Requests and points spent by an incremental sweep on an organization of more than two pages, with
-  nothing changed, one repository pushed and one created. Unbounded by what moved, it is a full
-  listing wearing a sort order.
+- Review recorded, incremental-only and never-read states at desktop and mobile widths in both
+   themes. Keep the API-versus-DOM checks, but do not substitute them for viewing the captures.
 - A repository deleted after the last full listing is still reported until the next one, and the
-  interface says when that was, so the staleness is visible rather than inferred.
+   chosen removal policy must distinguish a full listing's absence from a sweep or a failed read.

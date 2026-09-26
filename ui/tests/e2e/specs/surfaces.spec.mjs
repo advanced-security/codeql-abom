@@ -1,4 +1,57 @@
-import { test, expect, ready, corpusSize, SURFACES, UNITS } from '../harness.mjs';
+import { test, expect, ready, corpusSize, on, SURFACES, UNITS } from '../harness.mjs';
+
+const EVERY_UNIT = UNITS.map((u) => `/inventory?unit=${u}`);
+
+for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    test(`Settings reports repository listing freshness at ${viewport.width}px`, on('/settings'), async ({
+        page, request, baseURL,
+    }) => {
+        const response = await request.get(`${baseURL}/api/owned-scope`);
+        expect(response.status()).toBe(200);
+        const declared = await response.json();
+        test.skip(!declared.length, 'no account is declared on this corpus');
+
+        await page.setViewportSize(viewport);
+        await page.addLocatorHandler(
+            page.getByRole('button', { name: 'Not now', exact: true }),
+            async (button) => { await button.click(); },
+        );
+        await page.goto('/settings');
+        await ready(page);
+        await expect(page.locator('[data-abom-listing]')).toHaveCount(declared.length);
+
+        for (const account of declared) {
+            const listing = page.locator(`[data-abom-listing='${account.owner}']`);
+            const marks = account.enumeration ?? {};
+            const route = { graphql: 'GraphQL', rest: 'REST' }[marks.route] ?? marks.route ?? 'not recorded';
+            await expect(listing).toContainText(`Route: ${route}`);
+            if (!marks.listedAt) await expect(listing).toContainText('No full listing recorded');
+            if (!marks.sweptAt) await expect(listing).toContainText('Changes checked: not recorded');
+
+            if (marks.highCreated || marks.highPushed) {
+                await listing.locator('summary').click();
+            }
+            for (const [field, attribute] of [
+                ['listedAt', 'listed-at'], ['sweptAt', 'swept-at'],
+                ['highCreated', 'high-created'], ['highPushed', 'high-pushed'],
+            ]) {
+                const time = listing.locator(`[data-abom-${attribute}]`);
+                if (marks[field]) {
+                    await expect(time).toHaveAttribute('datetime', marks[field]);
+                    await expect(time).toBeVisible();
+                } else {
+                    await expect(time).toHaveCount(0);
+                }
+            }
+        }
+
+        const dimensions = await page.evaluate(() => ({
+            page: document.documentElement.scrollWidth, viewport: window.innerWidth,
+        }));
+        expect(dimensions.page, 'tables contain their own horizontal overflow').toBeLessThanOrEqual(dimensions.viewport + 1);
+        await page.screenshot({ path: test.info().outputPath('listing-freshness.png'), fullPage: true });
+    });
+}
 
 // Four surfaces, one scope. The interface used to answer nine questions with nine pages, each
 // inventing its own scope, so an operator who narrowed on one could not carry that narrowing to
@@ -9,7 +62,7 @@ import { test, expect, ready, corpusSize, SURFACES, UNITS } from '../harness.mjs
 // gets rows rather than a refusal, and whether what it says about them is true.
 
 test.describe('four surfaces', () => {
-    test('the navigation offers the surfaces and nothing else', async ({ page }) => {
+    test('the navigation offers the surfaces and nothing else', on('/'), async ({ page }) => {
         await page.goto('/');
         await ready(page);
 
@@ -23,7 +76,7 @@ test.describe('four surfaces', () => {
 
     // The bar is the whole navigation. bUnit owns the markup; what it cannot own is whether the
     // links work in a browser and whether anything is still hidden behind a control.
-    test('every surface is one press away, with nothing behind a toggle', async ({ page }) => {
+    test('every surface is one press away, with nothing behind a toggle', on(...SURFACES), async ({ page }) => {
         await page.goto('/');
         await ready(page);
 
@@ -34,9 +87,9 @@ test.describe('four surfaces', () => {
         ).toBe(0);
 
         for (const [selector, expected] of [
+            ['.abom-nav a[href="/codeql"]', '/codeql'],
             ['.abom-nav a[href="/inventory"]', '/inventory'],
             ['.abom-nav a[href="/explore"]', '/explore'],
-            ['.abom-nav a[href="/queries"]', '/queries'],
             ['[data-abom-settings]', '/settings'],
         ]) {
             await page.goto('/');
@@ -47,7 +100,7 @@ test.describe('four surfaces', () => {
     });
 
     // The product name is the way back, which is what lets the bar carry no Dashboard entry.
-    test('the product name returns to the Dashboard', async ({ page }) => {
+    test('the product name returns to the Dashboard', on('/inventory', '/'), async ({ page }) => {
         await page.goto('/inventory');
         await ready(page);
 
@@ -57,7 +110,7 @@ test.describe('four surfaces', () => {
 });
 
 test.describe('Inventory reprojects one scope', () => {
-    test('every unit renders rows rather than a refusal', async ({ page, request, baseURL }) => {
+    test('every unit renders rows rather than a refusal', on(...EVERY_UNIT), async ({ page, request, baseURL }) => {
         const summary = await corpusSize(request, baseURL);
         test.skip(!summary.seedRepos, 'no corpus, so an empty unit is honest rather than broken');
 
@@ -84,7 +137,7 @@ test.describe('Inventory reprojects one scope', () => {
     // Every built-in view is written in terms the listing has to apply. Four of them were `scope`,
     // `flags` and `ref`, and a tab strip built from the catalog rendered four refusals until the
     // listing learned them.
-    test('every named view the server offers is a tab that returns rows', async ({
+    test('every named view the server offers is a tab that returns rows', on('/inventory'), async ({
         page,
         request,
         baseURL,
@@ -114,7 +167,7 @@ test.describe('Inventory reprojects one scope', () => {
     // A page that fetches a cap and pages inside it reads as the whole answer. It held 500 of
     // 1,585, and a column sorted within that page named the worst row on the page rather than the
     // worst row there is.
-    test('the grid says how much of the match it is not showing', async ({
+    test('the grid says how much of the match it is not showing', on('/inventory'), async ({
         page,
         request,
         baseURL,
@@ -139,7 +192,7 @@ test.describe('Inventory reprojects one scope', () => {
 
     // Sorting has to reach the server: reordering the rows already fetched answers a narrower
     // question than the column header asks.
-    test('sorting a column asks the server rather than reordering the page', async ({
+    test('sorting a column asks the server rather than reordering the page', on('/inventory'), async ({
         page,
         request,
         baseURL,
@@ -178,7 +231,7 @@ test.describe('Inventory reprojects one scope', () => {
 
     // The scope is the address, so it survives a reload and a unit switch, or a unit is a page
     // wearing a different hat.
-    test('the scope survives a unit switch', async ({ page, request, baseURL }) => {
+    test('the scope survives a unit switch', on('/inventory?unit=repositories', '/inventory'), async ({ page, request, baseURL }) => {
         const summary = await corpusSize(request, baseURL);
         test.skip(!summary.seedRepos, 'no corpus to scope');
 
@@ -197,7 +250,7 @@ test.describe('the advisories unit is honest about what it excludes', () => {
     // The coverage strip counted 11 live advisories over a table holding 3, with a critical among
     // the absent and nothing on screen accounting for them. The exclusion is correct — they name
     // actions only upstream repositories' own CI uses — and it has to be said.
-    test('advisories reaching nothing you own are counted, not silently dropped', async ({
+    test('advisories reaching nothing you own are counted, not silently dropped', on('/inventory?unit=advisories'), async ({
         page,
         request,
         baseURL,
@@ -219,7 +272,7 @@ test.describe('the advisories unit is honest about what it excludes', () => {
 });
 
 test.describe('an action belongs to the scope', () => {
-    test('the bill of materials export carries the scope on screen', async ({ page }) => {
+    test('the bill of materials export carries the scope on screen', on('/inventory'), async ({ page }) => {
         await page.goto('/inventory?properties=business_id%3A3');
         await ready(page);
 
@@ -232,7 +285,7 @@ test.describe('an action belongs to the scope', () => {
         );
     });
 
-    test('the graph opens on the same scope the list was showing', async ({ page }) => {
+    test('the graph opens on the same scope the list was showing', on('/inventory', '/explore'), async ({ page }) => {
         await page.goto('/inventory?kinds=action');
         await ready(page);
 
@@ -249,7 +302,7 @@ test.describe('a unit carries its own columns', () => {
     // total refs and distinct refs as zero for 1,138 of 1,585 rows on the crawled organization,
     // 1,107 of them workflows — a workflow is a consumer, so nothing depends on it and the column
     // is inapplicable rather than small.
-    test('no unit renders a column that is zero for every row it lists', async ({
+    test('no unit renders a column that is zero for every row it lists', on('/inventory?unit=workflows', '/inventory?unit=jobs'), async ({
         page,
         request,
         baseURL,
@@ -278,7 +331,7 @@ test.describe('a unit carries its own columns', () => {
         }
     });
 
-    test('every unit is reachable and renders rows rather than a refusal', async ({
+    test('every unit is reachable and renders rows rather than a refusal', on(...EVERY_UNIT), async ({
         page,
         request,
         baseURL,
@@ -304,7 +357,7 @@ test.describe('a unit carries its own columns', () => {
 test.describe('the Dashboard hands over a scope', () => {
     // It used to report coverage in a strip beside its entry points, and that shorter second
     // answer was read as the whole one. Coverage is Discovery's question.
-    test('the Dashboard states no coverage of its own', async ({ page }) => {
+    test('the Dashboard states no coverage of its own', on('/'), async ({ page }) => {
         await page.goto('/');
         await ready(page);
 
@@ -314,7 +367,7 @@ test.describe('the Dashboard hands over a scope', () => {
         ).toHaveCount(0);
     });
 
-    test('every entry opens the Inventory already narrowed', async ({ page, request, baseURL }) => {
+    test('every entry opens the Inventory already narrowed', on('/', '/inventory?unit=advisories'), async ({ page, request, baseURL }) => {
         const summary = await corpusSize(request, baseURL);
         test.skip(!summary.seedRepos, 'no corpus to scope');
 
@@ -330,7 +383,7 @@ test.describe('the Dashboard hands over a scope', () => {
 
     // Coverage left the Dashboard, and Discovery is not in the navigation, so the way to it has to
     // be here rather than nowhere.
-    test('the way to coverage is still offered', async ({ page }) => {
+    test('the way to coverage is still offered', on('/'), async ({ page }) => {
         await page.goto('/');
         await ready(page);
 
@@ -344,7 +397,7 @@ test.describe('a scope an operator kept', () => {
     // The table has held named predicates and the API has served them since before any of the
     // interface existed; what reached it was a hand-edited URL. This drives the round trip against
     // a real server, because the write path needs a control header a stub cannot refuse over.
-    test('a scope is named, becomes a tab, and can be forgotten', async ({
+    test('a scope is named, becomes a tab, and can be forgotten', on('/inventory'), async ({
         page,
         request,
         baseURL,
@@ -384,7 +437,7 @@ test.describe('a scope an operator kept', () => {
 
     // A built-in is code. Offering a control the server refuses would be an affordance that
     // cannot work, and the refusal would arrive after the click rather than before it.
-    test('a built-in offers no way to forget it', async ({ page }) => {
+    test('a built-in offers no way to forget it', on('/inventory'), async ({ page }) => {
         await page.goto('/inventory');
         await ready(page);
 
@@ -393,5 +446,125 @@ test.describe('a scope an operator kept', () => {
             page.locator("[data-abom-forget-view='owned']"),
             'the product\u2019s own questions are not the operator\u2019s to remove',
         ).toHaveCount(0);
+    });
+
+    // A scope is its predicate, never the page it was kept on, and the Explorer is the one page
+    // whose picture is kept beside it. Compared with the stored row, because a page that opened a
+    // scope with a term added or dropped would still look like it had opened it.
+    test('a scope kept on the Explorer opens on the Inventory and draws back its picture', on('/explore', '/inventory'), async ({
+        page,
+        request,
+        baseURL,
+    }) => {
+        const name = `e2e-drawn-${Date.now()}`;
+        const chip = `[data-abom-views] [data-abom-view='${name}']`;
+        const picture = new Set(['unit', 'tab', 'view', 'direction', 'from', 'status', 'hops', 'groupBy',
+            'use3d', 'collapsed', 'stableLayout', 'selection', 'focus']);
+        const predicateOf = (url) => new URL(url).search.replace(/^\?/, '').split('&')
+            .filter((pair) => pair && !picture.has(pair.split('=')[0]))
+            .sort()
+            .join('&');
+
+        await page.goto('/explore?scope=exposure&view=priority&hops=2');
+        await ready(page);
+        await page.locator('[data-abom-named-scopes] [data-abom-scope-name]').fill(name);
+        await page.locator('[data-abom-named-scopes] [data-abom-save-scope]').click();
+        await expect(page.locator(chip), 'the kept scope is offered here').toBeVisible({ timeout: 15_000 });
+
+        const kept = (await (await request.get(`${baseURL}/api/views`)).json())
+            .find((v) => v.name === name);
+        expect(kept, 'the server kept it').toBeTruthy();
+        expect(kept.presentation, 'the picture was kept beside it').toContain('view=priority');
+        expect(kept.presentation).toContain('hops=2');
+
+        await page.goto('/inventory');
+        await ready(page);
+        await page.locator(chip).click();
+        await expect.poll(() => predicateOf(page.url()), 'the Inventory holds the stored question')
+            .toBe(kept.predicate);
+
+        await page.goto('/explore');
+        await ready(page);
+        await page.locator(chip).click();
+        await expect.poll(() => predicateOf(page.url()), 'the Explorer holds it too').toBe(kept.predicate);
+        await expect.poll(() => new URL(page.url()).searchParams.get('view')).toBe('priority');
+        expect(new URL(page.url()).searchParams.get('hops'), 'drawn the way it was kept').toBe('2');
+
+        await page.locator(`[data-abom-forget-view='${name}']`).click();
+        await expect(page.locator(chip)).toHaveCount(0, { timeout: 15_000 });
+    });
+
+    // The CodeQL page's run draft hosts the same control, over a named scope only. A scope kept
+    // there is the one the draft holds, and one kept elsewhere opens there as the question it was
+    // kept with, compared with the stored row rather than with what the screen shows.
+    test('a scope kept on the CodeQL page opens on the Inventory, and one kept there opens in the draft', on('/codeql?tab=catalog', '/inventory'), async ({
+        page,
+        request,
+        baseURL,
+    }) => {
+        const stamp = Date.now();
+        const here = `e2e-run-${stamp}`;
+        const there = `e2e-inv-${stamp}`;
+        const views = async () => (await (await request.get(`${baseURL}/api/views`)).json());
+        const predicateOf = (url) => new URL(url).search.replace(/^\?/, '').split('&')
+            .filter((pair) => pair && !['unit', 'tab'].includes(pair.split('=')[0]))
+            .sort()
+            .join('&');
+        const draft = async () => {
+            const catalogued = (await (await request.get(`${baseURL}/api/queries`)).json()).queries ?? [];
+            test.skip(catalogued.length === 0, 'no query version is catalogued on this corpus');
+            await page.goto('/codeql?tab=catalog');
+            await ready(page);
+            // The rows arrive after who is signed in, which is what enables Run.
+            await page.locator('[data-abom-query-id]').first().waitFor({ timeout: 15_000 });
+            const run = page.locator('[data-abom-query-run]:not([disabled])').first();
+            test.skip(await run.count() === 0, 'no query version here can be run');
+            await run.click();
+            await expect(page.locator('[data-abom-run-draft] [data-abom-views]')).toBeVisible({ timeout: 15_000 });
+        };
+
+        await draft();
+        await expect(page.locator('[data-abom-run-draft] [data-abom-save-scope]'),
+            'the draft holds no scope until one is chosen').toBeDisabled();
+        await page.locator("[data-abom-run-draft] [data-abom-view='owned']").click();
+        await expect(page.locator('[data-abom-run-size]'), 'a chosen scope states its size').toBeVisible({ timeout: 15_000 });
+        await page.locator('[data-abom-run-draft] [data-abom-scope-name]').fill(here);
+        await page.locator('[data-abom-run-draft] [data-abom-save-scope]').click();
+        await expect(page.locator(`[data-abom-run-draft] [data-abom-view='${here}']`)).toBeVisible({ timeout: 15_000 });
+
+        const owned = (await views()).find((v) => v.name === 'owned');
+        const keptHere = (await views()).find((v) => v.name === here);
+        expect(keptHere, 'the server kept it').toBeTruthy();
+        expect(keptHere.predicate, 'it kept the question the draft held').toBe(owned.predicate);
+
+        await page.goto('/inventory?unit=repositories');
+        await ready(page);
+        await page.locator(`[data-abom-views] [data-abom-view='${here}']`).click();
+        await expect.poll(() => predicateOf(page.url()), 'the Inventory holds the stored question')
+            .toBe(keptHere.predicate);
+
+        await page.goto('/inventory?unit=repositories&scope=owned&q=has');
+        await ready(page);
+        await page.locator('[data-abom-named-scopes] [data-abom-scope-name]').fill(there);
+        await page.locator('[data-abom-named-scopes] [data-abom-save-scope]').click();
+        await expect(page.locator(`[data-abom-view='${there}']`)).toBeVisible({ timeout: 15_000 });
+        const keptThere = (await views()).find((v) => v.name === there);
+        expect(keptThere, 'the server kept it').toBeTruthy();
+
+        await draft();
+        const sized = page.waitForRequest((r) => r.url().includes('/api/databases?'));
+        await page.locator(`[data-abom-run-draft] [data-abom-view='${there}']`).click();
+        expect(new URL((await sized).url()).search, 'the draft asks for the scope by its name')
+            .toBe(`?view=${encodeURIComponent(there)}`);
+        await expect(page.locator(`[data-abom-run-draft] [data-abom-view='${there}']`),
+            'and holds its stored question').toHaveClass(/abom-view-selected/);
+
+        for (const name of [here, there]) {
+            await request.delete(`${baseURL}/api/views/${encodeURIComponent(name)}`,
+                { headers: { 'X-Abom-Control': '1' } });
+        }
+        const left = (await views()).map((v) => v.name);
+        expect(left, 'both are forgotten again').not.toContain(here);
+        expect(left).not.toContain(there);
     });
 });

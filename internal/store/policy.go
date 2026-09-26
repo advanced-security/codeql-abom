@@ -4,15 +4,23 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
+
+	viewspec "github.com/advanced-security/codeql-abom/internal/view"
 )
 
-// policyDDL holds a rule, what it binds to, and whether anybody has turned it on.
+// policyDDL holds a rule and whether anybody has turned it on.
 //
-// A policy is a saved view plus a scope plus a decision. The predicate is stored rather than
-// referenced by name so that adopting one freezes what it asked: a policy that followed a saved
-// view would change meaning when somebody edited the view, and nobody would be told.
+// A policy is a saved view plus a decision. The predicate is stored rather than referenced by name
+// so that adopting one freezes what it asked: a policy that followed a saved view would change
+// meaning when somebody edited the view, and nobody would be told.
+//
+// `scope_kind` and `scope_value` are retired: what a policy is bound to is a term of its predicate,
+// `repositories` or `properties`, evaluated by the one path every other answer takes. A migration
+// only adds, so they stay, written as `organization` and read only to refuse a row nothing has
+// migrated. See MigratePolicyScopes.
 //
 // `adopted_simulation` is the point of the table. A policy that cannot say what it was expected to
 // block cannot be argued about afterwards, and a gate enabled on a backlog is switched off within a
@@ -42,7 +50,9 @@ CREATE TABLE IF NOT EXISTS abom_policy_simulation (
   -- covers. Both are kept because a rule that matches 40 and refuses 2 is a different rule from
   -- one that matches 2, and only the pair says which was adopted.
   refused      INTEGER NOT NULL,
-  waived       INTEGER NOT NULL DEFAULT 0
+  waived       INTEGER NOT NULL DEFAULT 0,
+  -- NULL for a policy that never asked about advisories, which is not a count of none.
+  advisories   INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_policy_simulation_policy
   ON abom_policy_simulation (policy, ran_at DESC);
@@ -69,11 +79,11 @@ const (
 	PolicyAdopted = "adopted"
 )
 
-// What a policy binds to.
+// What a retired scope column holds. Every policy saved since reads `organization`.
 const (
-	PolicyScopeOrganization = "organization"
-	PolicyScopeUnit         = "unit"
-	PolicyScopeRepository   = "repository"
+	policyScopeOrganization = "organization"
+	policyScopeUnit         = "unit"
+	policyScopeRepository   = "repository"
 )
 
 // Waiver kinds. The difference is the whole design: one says the rule does not apply, the other
@@ -83,20 +93,20 @@ const (
 	WaiverException = "exception"
 )
 
-// Policy is a rule, its scope, and whether it is in force.
+// Policy is a rule and whether it is in force. What it is bound to is part of the rule.
 type Policy struct {
-	Name      string `json:"name"`
-	Predicate string `json:"predicate"`
-	ScopeKind string `json:"scopeKind"`
-	// ScopeValue is the unit or repository the scope names. Empty for an organization.
-	ScopeValue string    `json:"scopeValue,omitempty"`
-	State      string    `json:"state"`
-	CreatedBy  string    `json:"createdBy,omitempty"`
-	CreatedAt  time.Time `json:"createdAt,omitzero"`
-	AdoptedBy  string    `json:"adoptedBy,omitempty"`
-	AdoptedAt  time.Time `json:"adoptedAt,omitzero"`
+	Name      string    `json:"name"`
+	Predicate string    `json:"predicate"`
+	State     string    `json:"state"`
+	CreatedBy string    `json:"createdBy,omitempty"`
+	CreatedAt time.Time `json:"createdAt,omitzero"`
+	AdoptedBy string    `json:"adoptedBy,omitempty"`
+	AdoptedAt time.Time `json:"adoptedAt,omitzero"`
 	// AdoptedSimulation is the run that was on the table when somebody said yes.
 	AdoptedSimulation int64 `json:"adoptedSimulation,omitempty"`
+
+	// A retired scope nothing has written into the predicate yet, which the evaluation refuses.
+	scopeKind, scopeValue string
 }
 
 // Simulation is what a policy matched on one occasion, with nothing at stake.
@@ -109,6 +119,8 @@ type Simulation struct {
 	Repositories int       `json:"repositories"`
 	Refused      int       `json:"refused"`
 	Waived       int       `json:"waived"`
+	// Advisories is absent for a policy that never asked about advisories, rather than zero.
+	Advisories *int `json:"advisories,omitempty"`
 }
 
 // Waiver is one enumerated exclusion or exception.
@@ -138,20 +150,15 @@ func (s *Store) SavePolicy(p Policy) error {
 	case strings.TrimSpace(p.Predicate) == "":
 		return errors.New("store: a policy needs a predicate, or it refuses nothing")
 	}
-	switch p.ScopeKind {
-	case PolicyScopeOrganization:
-	case PolicyScopeUnit, PolicyScopeRepository:
-		if strings.TrimSpace(p.ScopeValue) == "" {
-			return fmt.Errorf("store: a %s scope has to name one", p.ScopeKind)
+	if spec, err := viewspec.Parse(p.Predicate); err == nil && len(spec.Policies) > 0 {
+		if err := s.checkSuperset(p.Name, spec.Policies); err != nil {
+			return err
 		}
-	default:
-		return fmt.Errorf("store: %q is not a policy scope; expected %q, %q or %q",
-			p.ScopeKind, PolicyScopeOrganization, PolicyScopeUnit, PolicyScopeRepository)
 	}
 
 	_, err := s.db.Exec(`
 INSERT INTO abom_policy (name, predicate, scope_kind, scope_value, state, created_by, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, '', ?, ?, ?)
 ON CONFLICT(name) DO UPDATE SET
   predicate = excluded.predicate,
   scope_kind = excluded.scope_kind,
@@ -159,9 +166,91 @@ ON CONFLICT(name) DO UPDATE SET
   -- Editing the rule un-adopts it. What was simulated is no longer what is written, and leaving
   -- it in force would enforce something nobody agreed to.
   state = ?, adopted_by = NULL, adopted_at = NULL, adopted_simulation = NULL`,
-		p.Name, p.Predicate, p.ScopeKind, p.ScopeValue, PolicyDraft, p.CreatedBy,
+		p.Name, p.Predicate, policyScopeOrganization, PolicyDraft, p.CreatedBy,
 		time.Now().UTC().Format(time.RFC3339Nano), PolicyDraft)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.unadoptSupersetsNaming(p.Name)
+}
+
+// membersOf reads the policies each policy names, keyed by the policy naming them.
+func (s *Store) membersOf() (map[string][]string, error) {
+	rows, err := s.db.Query(`SELECT name, predicate FROM abom_policy`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var name, predicate string
+		if err := rows.Scan(&name, &predicate); err != nil {
+			return nil, err
+		}
+		if spec, err := viewspec.Parse(predicate); err == nil && len(spec.Policies) > 0 {
+			out[name] = spec.Policies
+		}
+	}
+	return out, rows.Err()
+}
+
+// checkSuperset refuses a superset naming a policy that does not exist, or one that would name it
+// back: neither has an answer, and saving one would leave the refusal to the first simulation.
+func (s *Store) checkSuperset(name string, members []string) error {
+	named, err := s.membersOf()
+	if err != nil {
+		return err
+	}
+	for _, member := range members {
+		if _, ok, err := s.PolicyNamed(member); err != nil {
+			return err
+		} else if !ok && member != name {
+			return fmt.Errorf("store: %q names %q, and no policy has that name", name, member)
+		}
+		seen, queue := map[string]bool{}, []string{member}
+		for len(queue) > 0 {
+			next := queue[0]
+			queue = queue[1:]
+			if next == name {
+				return fmt.Errorf("store: %q names %q, which names %q back, so neither has an "+
+					"answer", name, member, name)
+			}
+			if seen[next] {
+				continue
+			}
+			seen[next] = true
+			queue = append(queue, named[next]...)
+		}
+	}
+	return nil
+}
+
+// unadoptSupersetsNaming returns every superset naming an edited policy to draft, directly or
+// through another: its meaning changed in the same edit, and what was simulated is not what it says.
+func (s *Store) unadoptSupersetsNaming(edited string) error {
+	named, err := s.membersOf()
+	if err != nil {
+		return err
+	}
+	changed, queue := map[string]bool{}, []string{edited}
+	for len(queue) > 0 {
+		next := queue[0]
+		queue = queue[1:]
+		for superset, members := range named {
+			if !changed[superset] && slices.Contains(members, next) {
+				changed[superset] = true
+				queue = append(queue, superset)
+			}
+		}
+	}
+	for superset := range changed {
+		if _, err := s.db.Exec(`
+UPDATE abom_policy SET state = ?, adopted_by = NULL, adopted_at = NULL, adopted_simulation = NULL
+ WHERE name = ?`, PolicyDraft, superset); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // PolicyNamed reports one policy, and whether it exists.
@@ -177,7 +266,7 @@ func (s *Store) PolicyNamed(name string) (Policy, bool, error) {
 SELECT predicate, scope_kind, scope_value, state, created_by, created_at,
        adopted_by, adopted_at, adopted_simulation
   FROM abom_policy WHERE name = ?`, name).
-		Scan(&p.Predicate, &p.ScopeKind, &scopeValue, &p.State, &createdBy, &createdAt,
+		Scan(&p.Predicate, &p.scopeKind, &scopeValue, &p.State, &createdBy, &createdAt,
 			&adoptedBy, &adoptedAt, &adoptedSimulation)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -185,7 +274,7 @@ SELECT predicate, scope_kind, scope_value, state, created_by, created_at,
 	case err != nil:
 		return Policy{}, false, err
 	}
-	p.ScopeValue = scopeValue.String
+	p.scopeValue = scopeValue.String
 	p.CreatedBy, p.AdoptedBy = createdBy.String, adoptedBy.String
 	p.CreatedAt, p.AdoptedAt = parseMark(createdAt), parseMark(adoptedAt)
 	p.AdoptedSimulation = adoptedSimulation.Int64
@@ -233,10 +322,11 @@ func (s *Store) RecordSimulation(run Simulation) (int64, error) {
 		return 0, fmt.Errorf("store: no policy named %q to simulate", run.Policy)
 	}
 	res, err := s.db.Exec(`
-INSERT INTO abom_policy_simulation (policy, ran_at, nodes, findings, repositories, refused, waived)
-VALUES (?, ?, ?, ?, ?, ?, ?)`,
+INSERT INTO abom_policy_simulation
+  (policy, ran_at, nodes, findings, repositories, refused, waived, advisories)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		run.Policy, time.Now().UTC().Format(time.RFC3339Nano),
-		run.Nodes, run.Findings, run.Repositories, run.Refused, run.Waived)
+		run.Nodes, run.Findings, run.Repositories, run.Refused, run.Waived, run.Advisories)
 	if err != nil {
 		return 0, err
 	}
@@ -246,13 +336,15 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`,
 // LatestSimulation reports the most recent run for a policy, and whether there has been one.
 func (s *Store) LatestSimulation(policy string) (Simulation, bool, error) {
 	var (
-		run   = Simulation{Policy: policy}
-		ranAt sql.NullString
+		run        = Simulation{Policy: policy}
+		ranAt      sql.NullString
+		advisories sql.NullInt64
 	)
 	err := s.db.QueryRow(`
-SELECT row_id, ran_at, nodes, findings, repositories, refused, waived
+SELECT row_id, ran_at, nodes, findings, repositories, refused, waived, advisories
   FROM abom_policy_simulation WHERE policy = ? ORDER BY ran_at DESC, row_id DESC LIMIT 1`, policy).
-		Scan(&run.ID, &ranAt, &run.Nodes, &run.Findings, &run.Repositories, &run.Refused, &run.Waived)
+		Scan(&run.ID, &ranAt, &run.Nodes, &run.Findings, &run.Repositories, &run.Refused, &run.Waived,
+			&advisories)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return Simulation{}, false, nil
@@ -260,6 +352,10 @@ SELECT row_id, ran_at, nodes, findings, repositories, refused, waived
 		return Simulation{}, false, err
 	}
 	run.RanAt = parseMark(ranAt)
+	if advisories.Valid {
+		n := int(advisories.Int64)
+		run.Advisories = &n
+	}
 	return run, true, nil
 }
 

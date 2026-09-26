@@ -108,3 +108,9 @@ codeql resolve queries "$findings" --additional-packs=ql 2>/dev/null | grep '\.q
   grep -m1 '@id' "$q" 2>/dev/null | sed 's/.*@id *//'
 done | sort -u > "$rules"
 echo "recorded $(wc -l < "$rules" | tr -d ' ') suite rules in $rules"
+
+# The query pack a server is given with --custom-ql-dir: its tests run and its tree printed
+# through ABOM's own runner, over files laid out by the same code `make corpus` lays them out
+# with. Always recorded, because the pack is defined in cmd/abom-corpus rather than a tree here.
+go run ./cmd/abom-corpus --record-queries "$corpus/authoring.json"
+echo "recorded the query pack in $corpus/authoring.json"

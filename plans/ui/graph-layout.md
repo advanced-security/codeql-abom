@@ -6,7 +6,8 @@ by engine: the view refuses above **300 nodes** without explicit approval, and t
 scope at all — a reader picks a named view, builds one, or arrives with terms in the address. What
 is left is the canvas shape, and the measurement now exists: every view places **4 ranks deep**, so
 height is constant and width grows with the population. The question is no longer which proportion
-to ask for but whether a ranked layout suits a graph this shallow.
+to ask for but whether a ranked layout suits a graph this shallow. Separately, an address carrying
+any grouping but Owner never finishes drawing.
 
 ## Why this exists
 
@@ -43,8 +44,10 @@ flowchart LR
     REFUSE -->|"explicit approval<br/>in a modal"| DRAW
     DRAW -->|"fitted to what is drawn"| RIBBON["canvas shape"]
     RIBBON -. "not re-measured since<br/>the ceiling and the frame fix" .-> SHAPE["a shape a reader can use"]
+    GROUPED["an address with any<br/>Group by but Owner"] -. "the frame loop throws<br/>on the first payload" .-> STUCK["Laying out…<br/>never finishes"]
     style REFUSE fill:#3d2d1d
     style SHAPE fill:#3d1d1d
+    style STUCK fill:#3d1d1d
 ```
 
 ## Pending
@@ -76,6 +79,18 @@ flowchart LR
    3,702 nodes is above the 300 the view will draw unasked, so the refusal a reader sees is the
    ceiling's rather than the engine's. Whether the deadline should rise, the engine change for
    large graphs, or placement be refused by name at a stated size is part of this decision.
+2. **Arriving with any *Group by* but Owner never finishes drawing.** An address carrying
+   `groupBy=repo`, `grouping`, `workflow` or `none` throws `Cannot read properties of undefined
+   (reading 'tick')` from the force-graph library's frame loop (`_animationCycle` into `tickFrame`)
+   as the first payload is drawn, and the canvas stays under *Laying out 14 nodes…* ten seconds on,
+   over `scope=exposure` on the crawled organization, where the same address without the grouping
+   draws at once. Choosing the same grouping once the graph is drawn draws correctly, and so does
+   opening a named scope kept with one — which leaves an address that fails the same way on reload.
+   Owner is the arrival default, which is why nothing caught it: no browser test arrives with a
+   grouping, and the harness fails any test that throws, so one arriving at each grouping is the
+   proof and the guard. The other half is that choosing a grouping does not reach the address until
+   something else syncs it: switching Owner to Repository leaves `groupBy=owner` there, so the link
+   a reader shares draws a different picture from the one on screen. Depends on nothing.
 
 ## What placing the real corpus measured
 

@@ -2,7 +2,12 @@
 
 **Status:** The ABOM-controlled deploy level is built — advancing a version to `deploy` rewrites a
 local suite that tier bindings can run. Nothing is published anywhere, which is the level this
-plan is about.
+plan is about, and the whole plan is deferred by decision until much later.
+
+**While it waits, ABOM's own packs resolve only from a checkout of this repository.** A server
+started anywhere else refuses every run before a member is analyzed —
+`advanced-security/abom-actions-graph-extraction-src` cannot be found — which item 1 is what
+removes. `deploy` stays a stage set by hand for as long as this plan is deferred.
 
 ## Why this exists
 
@@ -35,8 +40,8 @@ because somebody published a pack, which is a deliberate, reviewable, revertible
 never touches an alert at all.
 
 This is also why the operator's queries live in a real pack on disk from the beginning
-([`ql/query-authoring.md`](query-authoring.md)) rather than as rows in `abom.db`: a pack is the
-unit that can be tested, versioned and published without ABOM in the loop.
+([`docs/architecture.md`](../../docs/architecture.md#what-produces-the-data)) rather than as rows in
+`abom.db`: a pack is the unit that can be tested, versioned and published without ABOM in the loop.
 
 ## The constraint the built half already holds
 
@@ -50,10 +55,15 @@ the opposite of what an empty deploy set means, across the whole corpus.
 
 ## Pending
 
-1. **Publish ABOM's own packs first.** Four packs under `ql/` are pinned, version-checked by
-   `make check-versions` inside `verify`, and consumed by nothing outside this repository. Publishing
-   them to the GitHub Container registry under `advanced-security` is the smaller half of this plan
-   and the one that proves the route. Depends on nothing.
+1. **Publish ABOM's own packs first.** The query packs under `ql/` — the actions library, graph
+   extraction, findings and selfcheck, and four quality packs — are versioned at the CLI's
+   version, checked by `make check-versions` inside `verify`, and consumed by nothing outside this
+   repository. Publishing them to the GitHub Container registry under `advanced-security` is the
+   smaller half of this plan and the one that proves the route. **The library goes first**: graph
+   extraction and findings depend on it as `${workspace}`, which publishing turns into its exact
+   version, so neither resolves from the registry until the library is there. Whether the quality
+   packs, which analyze ABOM's own code, are worth publishing is part of the item. Depends on
+   nothing.
 2. **Publish an operator's pack.** Package and publish from the operator's own directory, to a
    registry the organization's repositories can read. **Packs must be accessible to the repositories
    that run code scanning**, which for a private organization means registry access is part of the
@@ -64,9 +74,9 @@ the opposite of what an empty deploy set means, across the whole corpus.
 4. **Keep the catalog entry across the boundary.** A pack that has been published is still the same
    query ABOM has results for. The catalog records that it was promoted, to what version, and where
    — so the findings ABOM holds and the alerts GitHub raises are traceable to one another without
-   either becoming the other. Depends on 3 and on [`db/query-catalog.md`](../db/query-catalog.md).
+   either becoming the other. Depends on 3.
 5. **Notice when the published version and the running version diverge.** A pack published at v3
-   while ABOM keeps simulating v4 produces predictions about a query nobody is running. Depends
+   while ABOM keeps running v4 produces comparisons about a query nobody is running. Depends
    on 4.
 
 ## What this replaces
@@ -98,7 +108,7 @@ that cannot be recovered.
 construction rather than by a gate: the choice is the publication.
 
 **A pack is published at a version, never at a branch.** A consumer pins what it resolves, and a
-moving target makes the prediction in
+moving target makes the comparison in
 [`api/query-simulation.md`](../api/query-simulation.md) describe something other than what runs.
 
 **A published query does not become an ABOM verdict.** Alerts it raises belong to GitHub's code
@@ -115,7 +125,7 @@ decided on. Once published, it is lived with in the place developers already loo
 - An operator's pack publishes from their own directory with ABOM not involved in the build, because
   that independence is the point.
 - On `codeql-abom-test1`: publish a pack, point the property at a config file naming it, and confirm
-  the alerts that appear match the prediction written down beforehand. **The disagreement is the
+  the alerts that appear match the comparison written down beforehand. **The disagreement is the
   finding**, and it is recorded rather than explained away.
 - Reversal is checked at the same time: removing the pack from the config file stops the alerts, and
   the repository's other analyses are unchanged throughout.

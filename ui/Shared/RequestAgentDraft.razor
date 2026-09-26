@@ -1,0 +1,148 @@
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@inject AbomApi Api
+@inject AccountService Accounts
+@implements IDisposable
+
+@* An agent drafts the request from what was picked; the operator decides whether the draft is used,
+   and saving is still theirs. *@
+<div class="abom-agent-draft mb-3" data-abom-agent-draft>
+    <div class="d-flex align-center flex-wrap gap-2">
+        @if (Live is not null)
+        {
+            <MudText Typo="Typo.caption" data-abom-draft-live>
+                An agent is drafting from what you picked, since @TimeText.DayAndTime(Live.StartedAt, "HH:mm:ss").
+            </MudText>
+            <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button" Disabled="@_busy"
+                       OnClick="Stop" data-abom-draft-stop>Stop drafting</MudButton>
+        }
+        else
+        {
+            <span title="@(CanStart ? "The agent reads only the results you picked and their code, and files nothing" : "Sign in with gh to record who asked")">
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                           StartIcon="@Icons.Material.Outlined.SmartToy" Disabled="@(!CanStart || _busy)"
+                           OnClick="Start" data-abom-draft-start>Draft it with an agent</MudButton>
+            </span>
+        }
+    </div>
+    @if (_refusal is { Length: > 0 } refused)
+    {
+        <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-1" data-abom-draft-refusal>@refused</MudAlert>
+    }
+    @if (Newest is { Draft: { } draft })
+    {
+        <div class="mt-1" data-abom-draft-offer>
+            <MudText Typo="Typo.caption" Class="d-block">
+                Drafted by the agent @TimeText.DayAndTime(draft.DraftedAt): @draft.Description
+            </MudText>
+            @if (draft.Rationale.Length > 0)
+            {
+                <MudText Typo="Typo.caption" Class="d-block mud-text-secondary">@draft.Rationale</MudText>
+            }
+            <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button"
+                       OnClick="@(() => OnUse.InvokeAsync(draft))" data-abom-draft-use>Use this draft</MudButton>
+        </div>
+    }
+    else if (Newest is { } ended && ended.State != "running")
+    {
+        <MudText Typo="Typo.caption" Class="d-block mud-text-secondary mt-1" data-abom-draft-ended>
+            The last drafting session @ended.State without a draft@(ended.Detail.Length > 0 ? $": {ended.Detail}" : ".")
+        </MudText>
+    }
+</div>
+
+@code {
+    /// <summary>The request being filed from a run, with what was picked.</summary>
+    [Parameter, EditorRequired] public QueryRequest Asked { get; set; } = new();
+
+    [Parameter, EditorRequired] public string QueryId { get; set; } = string.Empty;
+
+    /// <summary>Fills the form from a draft, which the operator still has to save.</summary>
+    [Parameter] public EventCallback<AgentDraft> OnUse { get; set; }
+
+    private DraftSessionList? _drafts;
+    private string? _refusal;
+    private bool _busy;
+    private Timer? _timer;
+
+    private static readonly TimeSpan WhileDrafting = TimeSpan.FromSeconds(3);
+
+    // Only this request's picks: a run's earlier drafts answered other picks.
+    private DraftSession? Newest => _drafts?.Drafts.FirstOrDefault(d => d.RowId >= _since);
+
+    private DraftSession? Live => Newest is { State: "running" } live ? live : null;
+
+    private long _since = long.MaxValue;
+
+    private bool CanStart => Accounts.Identity.Login.Length > 0 && QueryId.Length > 0;
+
+    protected override async Task OnInitializedAsync() => await Accounts.EnsureLoadedAsync();
+
+    private async Task Load()
+    {
+        _drafts = await Api.GetDraftsAsync(Asked.SourceRunId);
+        if (Live is null)
+        {
+            _timer?.Dispose();
+            _timer = null;
+        }
+    }
+
+    private async Task Start()
+    {
+        _busy = true;
+        try
+        {
+            var (session, refusal) = await Api.StartDraftAsync(Asked.SourceRunId, QueryId, Asked.Evidence,
+                Accounts.Identity.Login);
+            _refusal = refusal;
+            if (session is not null)
+            {
+                _since = session.RowId;
+                await Load();
+                Follow();
+            }
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task Stop()
+    {
+        _busy = true;
+        try
+        {
+            var (list, refusal) = await Api.StopDraftAsync(Asked.SourceRunId);
+            _refusal = refusal;
+            if (list is not null)
+            {
+                _drafts = list;
+            }
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void Follow()
+    {
+        _timer?.Dispose();
+        _timer = new Timer(async _ =>
+        {
+            try
+            {
+                await Load();
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                return;
+            }
+            await InvokeAsync(StateHasChanged);
+        }, null, WhileDrafting, WhileDrafting);
+    }
+
+    public void Dispose() => _timer?.Dispose();
+}

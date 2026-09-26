@@ -26,8 +26,7 @@ func (p *packedResolver) ResolveMetadata(_ context.Context, path string) (runner
 
 func (p *packedResolver) Version(_ context.Context) (string, error) { return "2.26.4", nil }
 
-// identityOf resolves the bound suites through a fresh expander, so a pack edited between calls
-// is actually re-read.
+// identityOf resolves the bound suites through an expander of its own.
 func identityOf(t *testing.T, queries map[string][]string, tiers map[string][]string) (string, []string) {
 	t.Helper()
 	h := newHarness(t)
@@ -103,5 +102,32 @@ func TestEditingAQueryChangesTheCurrentIdentity(t *testing.T) {
 
 	if slices.Equal(before, after) {
 		t.Error("editing a query left the identity unchanged, so nothing would be selected")
+	}
+}
+
+// A server asks one expander for its identity again and again, and a pack edited while it runs has
+// changed: an identity remembered from an earlier resolution is the stale answer a requeue exists to
+// find, and would select nothing.
+func TestAPackEditedWhileTheServerRunsMovesTheCurrentIdentity(t *testing.T) {
+	path := queryInPack(t, t.TempDir(), "advanced-security/abom-graph", "2.26.4", "Edges.ql", "select 1")
+	h := newHarness(t)
+	h.expander.Resolver = &packedResolver{queries: map[string][]string{"graph.qls": {path}}}
+	if err := h.store.SetTierSuites(store.TierDirect, []string{"graph.qls"}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, before, err := h.expander.CurrentIdentity(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("select 2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, after, err := h.expander.CurrentIdentity(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Equal(before, after) {
+		t.Error("the expander answered with the digest it read before the edit, so a requeue would select nothing")
 	}
 }

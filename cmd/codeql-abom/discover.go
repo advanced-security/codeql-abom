@@ -57,18 +57,26 @@ func runDiscover(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	if err != nil {
 		return fmt.Errorf("discover: %w", err)
 	}
-	fmt.Fprintf(stdout, "discover: %d repositories, %d with a %s database, %d failed\n",
-		stats.Processed, stats.Rows, *language, stats.Failed)
+	fmt.Fprintf(stdout, "discover: %d repositories probed, %d with a %s database, %d failed\n",
+		stats.Processed+stats.Failed, stats.Rows, *language, stats.Failed)
+	if stats.Skipped > 0 {
+		fmt.Fprintf(stdout, "discover: %d unprobed (no workflow files on the default branch); no new database measurement\n",
+			stats.Skipped)
+	}
 	// Stated rather than inferred from a shorter run: an unchanged answer still cost a round trip,
 	// and a cache that quietly stopped working looks identical to one that never helped.
 	spent := client.Stats()
 	fmt.Fprintf(stdout, "discover: %d reads, %d answered unchanged\n",
 		spent.Requests, spent.NotModified)
+	if budget := spent.GraphQL; budget.Known {
+		fmt.Fprintf(stdout, "discover: %d GraphQL points spent, %d of %d GraphQL points left\n",
+			spent.Points, budget.Remaining, budget.Limit)
+	}
 	if b := spent.RateLimit; b.Known {
 		fmt.Fprintf(stdout, "discover: %d of %d requests left, until %s\n",
 			b.Remaining, b.Limit, b.ResetAt.UTC().Format(time.RFC3339))
 	} else {
-		fmt.Fprintln(stdout, "discover: no budget was reported, so none is known")
+		fmt.Fprintln(stdout, "discover: no REST budget was reported, so none is known")
 	}
 	// Reported rather than absorbed: a crawl that was held back and one that was not are different
 	// evidence about whether the pace is set right.

@@ -297,6 +297,9 @@ export function mergeInto(all, delta) {
         n.findings = m.findings;
         n.advisories = m.advisories;
         n.analyzed = m.analyzed;
+        // The server omits facets where a node holds none, so absent is empty rather than unchanged.
+        n.facets = m.facets || [];
+        n.rules = [...new Set(n.facets.map(x => x.rule))].sort();
         // Coverage moves for the same reason reach does: a reference analyzed since the last
         // delta changes the ratio without changing the node.
         if (m.refsInUse !== undefined) n.refsInUse = m.refsInUse;
@@ -549,6 +552,30 @@ export function answersScope(node, scope) {
     return true;
 }
 
+/** A rule pattern as the set path reads one: a trailing `*` is a prefix, anything else exact. */
+export function ruleMatches(patterns, rule) {
+    return patterns.some(p => p.endsWith('*') ? rule.startsWith(p.slice(0, -1)) : rule === p);
+}
+
+/**
+ * Whether a node answers the finding terms, read per finding from the kinds it carries whole, so
+ * `rules=A&severity=error` keeps a node only where one finding is both. An excluded rule drops the
+ * node outright, and asking for none of them narrows nothing.
+ */
+export function answersFindingTerms(node, f) {
+    const facets = node.facets || [];
+    const rules = f.rules || [];
+    const notRules = f.notRules || [];
+    const bands = f.bands || [];
+    if (notRules.length && facets.some(x => ruleMatches(notRules, x.rule))) return false;
+    if (!rules.length && !f.provider && !f.severity && !bands.length) return true;
+    return facets.some(x =>
+        (!rules.length || ruleMatches(rules, x.rule)) &&
+        (!f.provider || x.provider === f.provider) &&
+        (!f.severity || x.severity === f.severity) &&
+        (!bands.length || bands.includes(x.band)));
+}
+
 export function applyFilters(elementId, spec) {
     const it = instances.get(elementId);
     if (!it || !it.all) {
@@ -571,7 +598,6 @@ export function applyFilters(elementId, spec) {
     const edgeClasses = new Set((f.edgeClasses || []).map(c =>
         c === 'externalOrg' ? 'crossOwner' : c === 'sameOrg' ? 'sameOwner' : c));
     const origins = new Set(f.origins || []);
-    const rules = new Set(f.rules || []);
     // A focus that named nothing has narrowed nothing, so the flags it would have suspended still
     // apply: suspending them anyway draws the whole graph with its default filter switched off.
     const scope = scopeFilters(f, subjects.length > 0);
@@ -584,7 +610,7 @@ export function applyFilters(elementId, spec) {
         if (!kinds.has(n.kind)) continue;
         if (origins.size && !origins.has(n.origin || 'external')) continue;
         if (search && !n.key.toLowerCase().includes(search)) continue;
-        if (rules.size && !(n.rules || []).some(r => rules.has(r))) continue;
+        if (!answersFindingTerms(n, f)) continue;
         if (f.refStyle && f.refStyle !== 'any' && !n.refStyles.has(f.refStyle)) continue;
         const answer = answersScope(n, scope);
         if (scope.removes && !answer) continue;
@@ -1342,7 +1368,8 @@ export function nodeBrief(n) {
         repository: n.repository || '', owner: n.owner || '', path: n.path || '',
         container: n.container || '', grouping: n.grouping || '', ref: n.ref || '',
         dependentRepos: n.dependentRepos || 0, reachKnown: !!n.reachKnown,
-        findings: n.findings || 0, rules: n.rules || [], advisories: n.advisories || 0,
+        findings: n.findings || 0, rules: n.rules || [], facets: n.facets || [],
+        advisories: n.advisories || 0,
         refsInUse: n.refsInUse || 0, refsAnalyzed: n.refsAnalyzed || 0,
         discovery: n.discovery || '', depth: n.depth || 0, isExternal: !!n.isExternal,
     };

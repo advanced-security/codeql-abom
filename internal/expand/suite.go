@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/advanced-security/codeql-abom/internal/customql"
 	"github.com/advanced-security/codeql-abom/internal/ingest"
 	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/store"
@@ -51,6 +52,11 @@ type tierPlan struct {
 	// the pack digests move when a pack is upgraded, and these move when a query or a library it
 	// imports is edited in place.
 	findingsVersions []string
+	// findingsRules are the rules that lane runs and the query behind each, which is what traces a
+	// finding to its own query's version and source when one invocation ran many.
+	findingsRules []store.QueryRunRule
+	// metadata is everything each resolved query declared, against the version resolved.
+	metadata []store.QueryMetadata
 }
 
 func (p tierPlan) empty() bool { return len(p.bqrs) == 0 && len(p.findings) == 0 }
@@ -65,6 +71,8 @@ func (p *tierPlan) absorb(from tierPlan) {
 	p.findings = append(p.findings, from.findings...)
 	p.contents = append(p.contents, from.contents...)
 	p.findingsVersions = append(p.findingsVersions, from.findingsVersions...)
+	p.findingsRules = append(p.findingsRules, from.findingsRules...)
+	p.metadata = append(p.metadata, from.metadata...)
 	for _, pk := range from.findingsPacks {
 		p.notePack(pk.Pack, pk.PackVersion, pk.PackDigest)
 	}
@@ -85,6 +93,21 @@ func (p *tierPlan) notePack(pack, version, digest string) {
 	p.findingsPacks = append(p.findingsPacks, store.SuiteQuery{
 		Pack: pack, PackVersion: version, PackDigest: digest,
 	})
+}
+
+// installBeforeDigest installs the operator's pack the first time a plan meets one of its queries.
+//
+// Before the pack is digested: the lock is part of what a digest covers, and one taken before the
+// install would describe a pack that never ran.
+func installBeforeDigest(ctx context.Context, install func(context.Context) error, pack string, done *bool) error {
+	if pack != customql.Pack || install == nil || *done {
+		return nil
+	}
+	if err := install(ctx); err != nil {
+		return fmt.Errorf("installing what %s depends on: %w", pack, err)
+	}
+	*done = true
+	return nil
 }
 
 // identify fills in what makes a run reproducible: the pack that supplied the query, that pack's
@@ -116,6 +139,7 @@ func (p tierPlan) identify(queryID string, run store.QueryRun) store.QueryRun {
 func (p tierPlan) identifyFindings(run store.QueryRun) store.QueryRun {
 	run.CLIVersion = p.cliVersion
 	run.QueryVersion = combinedVersion(p.findingsVersions)
+	run.Rules = p.findingsRules
 	switch len(p.findingsPacks) {
 	case 0:
 		return run
@@ -182,6 +206,7 @@ func (p tierPlan) queryRun(queryID string, at revision) store.QueryRun {
 		// Stated rather than left to a default, so a second shape cannot arrive unannounced.
 		AnalysisMode: store.AnalysisModeRegular,
 		Ref:          at.ref, AnalyzedRef: at.analyzed,
+		RecordedBy: store.RecordedByCrawl,
 	})
 }
 
@@ -193,6 +218,7 @@ func (p tierPlan) findingsRun(at revision) store.QueryRun {
 		SourceFilter: at.filter,
 		AnalysisMode: store.AnalysisModeRegular,
 		Ref:          at.ref, AnalyzedRef: at.analyzed,
+		RecordedBy: store.RecordedByCrawl,
 	})
 }
 
@@ -234,6 +260,9 @@ func tierOf(b batch, owned map[string]bool) string {
 // A suite two tiers share is resolved once: resolving shells out to the CodeQL CLI, and a crawl
 // claims batches from both tiers every round.
 func (e *Expander) plansByTier(ctx context.Context, opts Options) (map[string]tierPlan, error) {
+	// Every round and every identity reads the packs again: one edited while the server runs would
+	// otherwise keep the digest it had when the server first met it.
+	e.digests.Reset()
 	// Every tier `tierOf` can return. Omitting one hands its batches a zero-value plan, which
 	// `pendingWork` reads as nothing outstanding — so the repository is settled as *already
 	// recorded* without being analyzed. Owned was missing here until 2026-09-07.
@@ -245,6 +274,9 @@ func (e *Expander) plansByTier(ctx context.Context, opts Options) (map[string]ti
 	if opts.Suite != "" || opts.QueryPath != "" {
 		planned, err := e.plan(ctx, opts)
 		if err != nil {
+			return nil, err
+		}
+		if err := e.Store.RecordQueryMetadata(planned.metadata); err != nil {
 			return nil, err
 		}
 		for _, tier := range tiers {
@@ -271,6 +303,9 @@ func (e *Expander) plansByTier(ctx context.Context, opts Options) (map[string]ti
 				// What a suite resolves to is only knowable by resolving it, so the round that
 				// just paid that cost is the only place the answer is free.
 				if err := e.Store.RecordSuiteContents(suite, queries.contents); err != nil {
+					return nil, err
+				}
+				if err := e.Store.RecordQueryMetadata(queries.metadata); err != nil {
 					return nil, err
 				}
 			}
@@ -309,6 +344,7 @@ func (e *Expander) plan(ctx context.Context, opts Options) (tierPlan, error) {
 	if err != nil {
 		return tierPlan{}, err
 	}
+	installed := false
 	for _, path := range paths {
 		md, err := e.Resolver.ResolveMetadata(ctx, path)
 		if err != nil {
@@ -321,6 +357,9 @@ func (e *Expander) plan(ctx context.Context, opts Options) (tierPlan, error) {
 			return tierPlan{}, fmt.Errorf("suite %s: %w", opts.Suite, err)
 		}
 		pack, packVersion, packDir := runner.PackOf(path)
+		if err := installBeforeDigest(ctx, e.Install, pack, &installed); err != nil {
+			return tierPlan{}, fmt.Errorf("suite %s: %w", opts.Suite, err)
+		}
 		digest, err := e.digests.Of(packDir)
 		if err != nil {
 			return tierPlan{}, fmt.Errorf("suite %s: %w", opts.Suite, err)
@@ -342,9 +381,15 @@ func (e *Expander) plan(ctx context.Context, opts Options) (tierPlan, error) {
 			Pack: pack, PackVersion: packVersion, PackDigest: digest,
 			QueryID: md.ID, QueryVersion: version, Kind: md.Kind,
 		})
+		planned.metadata = append(planned.metadata, store.QueryMetadata{
+			QueryID: md.ID, QueryVersion: version, Pairs: md.Pairs,
+		})
 		if shape == ingest.ShapeFindings {
 			planned.findings = append(planned.findings, path)
 			planned.findingsVersions = append(planned.findingsVersions, version)
+			planned.findingsRules = append(planned.findingsRules, store.QueryRunRule{
+				RuleID: md.ID, QueryVersion: version, Pack: pack, PackVersion: packVersion, PackDigest: digest,
+			})
 			planned.notePack(pack, packVersion, digest)
 			continue
 		}

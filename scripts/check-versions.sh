@@ -21,7 +21,7 @@ cli=${cli#v}
 
 # A pack tracks the CLI it is compiled for. A pre-release attaches to the upcoming version, so
 # `2.26.5-next.1` is fine while the CLI is 2.26.4; anything else is drift.
-for manifest in ql/*/*/src/codeql-pack.yml ql/*/*/test/codeql-pack.yml; do
+for manifest in ql/*/lib/codeql-pack.yml ql/*/*/src/codeql-pack.yml ql/*/*/test/codeql-pack.yml; do
 	[ -e "$manifest" ] || continue
 	version=$(awk '/^version:/ {print $2; exit}' "$manifest")
 	case "$version" in
@@ -60,6 +60,25 @@ while IFS= read -r suite; do
 	done < <(awk '/^[[:space:]]*from:/ {from=$2; next}
 	              /^[[:space:]]*version:/ && from != "" {print from, $2; from=""}' "$suite")
 done < <(find ql -name '*.qls')
+
+# ql-mcp is released with each CodeQL, and its tool packs depend on that release's libraries. A
+# session and ABOM's own PrintAST read fixtures through them, so they move with the CLI; a pin left
+# behind is a query written against one library and run against another.
+tools=$(grep -o 'toolsPackName + "@[0-9][0-9.]*"' internal/runner/printast.go | grep -o '[0-9][0-9.]*')
+if [ "$tools" != "$cli" ]; then
+	note "internal/runner/printast.go pins ql-mcp's tool pack at ${tools:-nothing}, but .codeql-version is $cli"
+fi
+qlmcp=$(grep -o 'codeql-development-mcp-server@[0-9][0-9.]*' internal/harness/copilot.go | grep -o '[0-9][0-9.]*$')
+if [ "$qlmcp" != "$cli" ]; then
+	note "internal/harness/copilot.go starts ql-mcp ${qlmcp:-nothing}, but .codeql-version is $cli"
+fi
+
+# The operator's pack is scaffolded against the actions library ABOM's own queries run.
+lib=$(awk '$1 == "codeql/actions-all:" {print $2; exit}' ql/actions/lib/codeql-pack.yml)
+scaffold=$(grep -o 'ActionsAll = "[0-9][0-9.]*"' internal/customql/customql.go | grep -o '[0-9][0-9.]*')
+if [ "$scaffold" != "$lib" ]; then
+	note "internal/customql/customql.go scaffolds codeql/actions-all ${scaffold:-nothing}, but ql/actions/lib pins $lib"
+fi
 
 if [ "$fail" -ne 0 ]; then
 	exit 1

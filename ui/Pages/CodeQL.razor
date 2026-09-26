@@ -1,0 +1,76 @@
+@page "/codeql"
+@inject NavigationManager Nav
+
+<PageTitle>CodeQL — ABOM</PageTitle>
+
+<PageHeader Title="CodeQL">
+    Every finding comes from a CodeQL query. Ask for one, follow each version through its stages,
+    see where it ran and what it found, and choose what the crawl runs.
+</PageHeader>
+
+@* Four parts, told apart the way Inventory's units are: one strip, one part in view. *@
+<div class="abom-units d-flex flex-wrap align-center gap-1 mb-3" role="tablist" data-abom-tabs>
+    @foreach (var (key, label) in Tabs)
+    {
+        <MudButton Size="Size.Small" DropShadow="false"
+                   Variant="@(_tab == key ? Variant.Filled : Variant.Text)"
+                   Color="@(_tab == key ? Color.Primary : Color.Default)"
+                   Class="@(_tab == key ? "abom-unit-selected" : null)"
+                   role="tab" aria-selected="@(_tab == key ? "true" : "false")"
+                   OnClick="@(() => Choose(key))" data-abom-tab="@key">@label</MudButton>
+    }
+</div>
+
+@switch (_tab)
+{
+    case TabCatalog:
+        <QueryCatalogView FocusQuery="@(QueryParam ?? string.Empty)" />
+        break;
+    case TabRuns:
+        <AnalysisRuns FocusRun="@(RunParam ?? 0)" />
+        break;
+    case TabSuites:
+        <TierSuites />
+        break;
+    default:
+        <QueryRequests FocusRequest="@(RequestParam ?? 0)" />
+        break;
+}
+
+@code {
+    private const string TabRequests = "requests";
+    private const string TabCatalog = "catalog";
+    private const string TabRuns = "runs";
+    private const string TabSuites = "suites";
+
+    // In the order the work happens: asked for, written, run, then made part of the crawl.
+    private static readonly (string Key, string Label)[] Tabs =
+    [
+        (TabRequests, "Requests"),
+        (TabCatalog, "Query catalog"),
+        (TabRuns, "Runs"),
+        (TabSuites, "Suites"),
+    ];
+
+    [SupplyParameterFromQuery(Name = "tab")] public string? TabParam { get; set; }
+
+    /// <summary>A run to open on arrival, such as the one the Inventory just started.</summary>
+    [SupplyParameterFromQuery(Name = "run")] public long? RunParam { get; set; }
+
+    /// <summary>A query to open on arrival, such as the one a request is about.</summary>
+    [SupplyParameterFromQuery(Name = "query")] public string? QueryParam { get; set; }
+
+    /// <summary>A request to open on arrival, such as one a catalog row names.</summary>
+    [SupplyParameterFromQuery(Name = "request")] public long? RequestParam { get; set; }
+
+    private string _tab = TabRequests;
+
+    protected override void OnParametersSet() =>
+        _tab = Tabs.Any(t => t.Key == TabParam) ? TabParam! : TabRequests;
+
+    private void Choose(string tab)
+    {
+        _tab = tab;
+        Nav.NavigateTo($"/codeql?tab={tab}", new NavigationOptions { ReplaceHistoryEntry = true });
+    }
+}

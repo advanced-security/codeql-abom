@@ -28,18 +28,43 @@ import (
 // Comments are not stripped, so a commented-out import contributes a library the query does not
 // really use. That direction is safe: it can only make a version move when it did not have to.
 func QueryVersion(queryPath string) (string, error) {
-	abs, err := filepath.Abs(queryPath)
+	versions, err := QueryVersions([]string{queryPath})
 	if err != nil {
-		return "", fmt.Errorf("resolving %s: %w", queryPath, err)
+		return "", err
 	}
-	_, _, packDir := PackOf(abs)
-	if packDir == "" {
-		packDir = filepath.Dir(abs)
-	}
+	return versions[0], nil
+}
 
+// QueryVersions is QueryVersion for several queries, in the order given, listing each pack's
+// libraries once rather than once per query.
+func QueryVersions(paths []string) ([]string, error) {
+	roots := map[string][]string{}
+	out := make([]string, 0, len(paths))
+	for _, queryPath := range paths {
+		abs, err := filepath.Abs(queryPath)
+		if err != nil {
+			return nil, fmt.Errorf("resolving %s: %w", queryPath, err)
+		}
+		_, _, packDir := PackOf(abs)
+		if packDir == "" {
+			packDir = filepath.Dir(abs)
+		}
+		if _, listed := roots[packDir]; !listed {
+			roots[packDir] = listRoots(packDir)
+		}
+		version, err := versionWith(abs, packDir, roots[packDir])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, version)
+	}
+	return out, nil
+}
+
+func versionWith(abs, packDir string, roots []string) (string, error) {
 	hashed := map[string]string{}
 	unresolved := map[string]bool{}
-	if err := hashClosure(abs, packDir, libraryRoots(packDir), hashed, unresolved); err != nil {
+	if err := hashClosure(abs, packDir, roots, hashed, unresolved); err != nil {
 		return "", err
 	}
 
@@ -67,6 +92,9 @@ func QueryVersion(queryPath string) (string, error) {
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
+
+// listRoots is libraryRoots, named apart so a test can count the walks.
+var listRoots = libraryRoots
 
 // hashClosure records one file and follows what it imports. Already-hashed files are skipped,
 // which is also what makes a cycle of imports terminate.

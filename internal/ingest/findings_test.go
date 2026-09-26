@@ -90,6 +90,27 @@ func TestFindingsFromSARIFStoresRuleMetadata(t *testing.T) {
 	}
 }
 
+// A rule that declares no score stores none. Zero is a score code scanning's scale does not have,
+// and written for absence it is a convention every reader must remember instead of a fact.
+func TestARuleDeclaringNoScoreStoresNoneRatherThanZero(t *testing.T) {
+	s := newTestStore(t)
+	ing := New(s, store.NewWriter(s, 0))
+	if _, err := ing.FindingsFromSARIF(strings.NewReader(otherToolSarif),
+		Options{Repository: "octo-org/app"}); err != nil {
+		t.Fatalf("FindingsFromSARIF: %v", err)
+	}
+	var unscored, zero int
+	if err := s.DB().QueryRow(`
+		SELECT COUNT(*) FILTER (WHERE security_severity IS NULL),
+		       COUNT(*) FILTER (WHERE security_severity = 0)
+		FROM abom_finding`).Scan(&unscored, &zero); err != nil {
+		t.Fatalf("reading findings: %v", err)
+	}
+	if unscored != 1 || zero != 0 {
+		t.Errorf("stored %d unscored and %d scored zero, want 1 and 0", unscored, zero)
+	}
+}
+
 // Same shape, different producer. SARIF and code scanning already keep tool names unique within a
 // repository, so the name in the document is the identity and needs no massaging here.
 const otherToolSarif = `{

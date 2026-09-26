@@ -26,6 +26,11 @@
                     @(Unclaimed(s) ? "none" : s.Count.ToString("N0"))
                 </MudText>
                 <MudText Typo="Typo.caption" Class="mud-text-secondary">@s.Measures</MudText>
+                @if (s.Severity.Length > 0 && !Unclaimed(s))
+                {
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block"
+                             data-abom-entry-severity>@s.Severity</MudText>
+                }
             </MudPaper>
         </MudItem>
     }
@@ -50,7 +55,7 @@
     private void Go(string href) => Nav.NavigateTo(href);
 
     private sealed record Entry(string Key, string Title, int Count, string Measures, string Href,
-        string Icon, bool Owned = false);
+        string Icon, bool Owned = false, string Severity = "");
 
     // Nothing declared is an absence of a claim, not a measurement of zero, and the coverage strip
     // says so in this same word. A nought here would read as a set examined and found clean.
@@ -65,7 +70,7 @@
         new("findings", "Findings in what you own", _summary.OwnedFindings,
             $"of {_summary.Findings:N0} recorded, across {_summary.Rules} rules",
             "/inventory?unit=workflows&flags=findings", Icons.Material.Outlined.PlayCircleOutline,
-            Owned: true),
+            Owned: true, Severity: SeverityText.Summary(_summary.OwnedSeverity)),
         new("advisories", "Advisories recorded", _summary.Advisories,
             $"published advisories, naming {_summary.AffectedActions:N0} actions in use",
             "/inventory?unit=advisories", Icons.Material.Outlined.Build),

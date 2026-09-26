@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	viewspec "github.com/advanced-security/codeql-abom/internal/view"
 )
 
 // The lifecycle a query version moves through. ABOM computes the evidence; a person advances the
@@ -17,19 +19,20 @@ const (
 	StageDeploy       = "deploy"
 )
 
-// Where a query came from, read from the pack that supplied it.
+// Where a query came from, read from the pack that supplied it. The filter language's `source`
+// term takes the same values.
 //
 // Named apart from the repository origins in graph.go on purpose: that one records how a row
 // entered the corpus, this one records who wrote a query. Sharing a vocabulary would invite
 // joining two things that answer different questions.
 const (
-	QueryOriginUpstream = "upstream"
-	QueryOriginAbom     = "abom"
-	QueryOriginUser     = "user"
-	// QueryOriginMixed is a lane that ran rules from several packs at once, which the findings
+	QuerySourceUpstream = viewspec.SourceUpstream
+	QuerySourceAbom     = viewspec.SourceAbom
+	QuerySourceCustom   = viewspec.SourceCustom
+	// QuerySourceMixed is a lane that ran rules from several packs at once, which the findings
 	// lane does: `database analyze` takes them in one invocation, so the run names all of them
 	// and no one of them is where the results came from.
-	QueryOriginMixed = "mixed"
+	QuerySourceMixed = viewspec.SourceMixed
 )
 
 // Stages is the lifecycle in order, which is also the order a reader should be offered it.
@@ -54,7 +57,7 @@ type CatalogQuery struct {
 	Pack         string `json:"pack"`
 	PackVersion  string `json:"packVersion"`
 	CLIVersion   string `json:"cliVersion"`
-	Origin       string `json:"origin"`
+	Source       string `json:"source"`
 	// Suite is set when what ran was a whole suite rather than one query, which is how the
 	// findings lane records itself: `database analyze` takes the suite in one invocation.
 	Suite string `json:"suite"`
@@ -91,6 +94,21 @@ type CatalogQuery struct {
 	Tested     bool   `json:"tested"`
 	Passing    bool   `json:"passing"`
 	TestDetail string `json:"testDetail"`
+	// Working marks the version on disk in the operator's pack now: the only one whose tests can
+	// be run, and the one the authoring steps describe.
+	Working bool `json:"working"`
+	// Metadata is every pair this version declares, as `codeql resolve metadata` read it. Absent
+	// where nothing has resolved the version, which is not a query that declares nothing.
+	Metadata map[string]string `json:"metadata,omitempty"`
+	// Band is the version's own `@security-severity`, banded, for a query that reports findings.
+	// Empty where the metadata is absent or the query reports none.
+	Band string `json:"band,omitempty"`
+}
+
+// WorkingQuery is a query as it is on disk in the operator's pack, which the store does not read
+// for itself.
+type WorkingQuery struct {
+	QueryID, QueryVersion, Pack, Kind string
 }
 
 // QueryCatalog reports every query a suite has resolved to, identified by what identifies a
@@ -106,7 +124,7 @@ type CatalogQuery struct {
 // Run counts are then attributed back: a ledger row naming the query is that query's, and a row
 // naming a suite belongs to every query the suite resolved to. Joined in Go rather than in SQL
 // because the alternative is a correlated subquery over every run for every query.
-func (s *Store) QueryCatalog() ([]CatalogQuery, error) {
+func (s *Store) QueryCatalog(working ...WorkingQuery) ([]CatalogQuery, error) {
 	spine, err := s.catalogSpine()
 	if err != nil {
 		return nil, err
@@ -127,6 +145,20 @@ func (s *Store) QueryCatalog() ([]CatalogQuery, error) {
 	if err != nil {
 		return nil, err
 	}
+	declared, err := s.queryMetadata()
+	if err != nil {
+		return nil, err
+	}
+	// What was decided about a version and what its tests said, whichever way it was listed.
+	attach := func(q *CatalogQuery, key string) {
+		if st, ok := stages[key]; ok {
+			q.Stage, q.StagedBy, q.StagedAt = st.stage, st.by, st.at
+		}
+		q.Analyses = analyses[key]
+		if t, ok := tests[key]; ok {
+			q.Tested, q.Passing, q.TestDetail = true, t.Passed, t.Detail
+		}
+	}
 
 	out := make([]CatalogQuery, 0, len(spine))
 	covered := map[string]bool{}
@@ -138,16 +170,8 @@ func (s *Store) QueryCatalog() ([]CatalogQuery, error) {
 		q.Runs, q.Repositories = stats.runs, len(stats.repositories)
 		q.FirstRunAt, q.LastRunAt = stats.first, stats.last
 		key := q.QueryID + "\x00" + q.QueryVersion
-		if st, ok := stages[key]; ok {
-			q.Stage, q.StagedBy, q.StagedAt = st.stage, st.by, st.at
-		}
-		if n, ok := analyses[key]; ok {
-			q.Analyses = n
-		}
-		if t, ok := tests[key]; ok {
-			q.Tested, q.Passing, q.TestDetail = true, t.Passed, t.Detail
-		}
-		q.Origin = originOfPack(q.Pack)
+		attach(&q.CatalogQuery, key)
+		q.Source = sourceOfPack(q.Pack)
 		q.KindRecorded = true
 		q.Discovery = q.Kind == ""
 		covered[key] = true
@@ -159,6 +183,11 @@ func (s *Store) QueryCatalog() ([]CatalogQuery, error) {
 	kinds := map[string]string{}
 	for _, q := range spine {
 		kinds[q.QueryID] = q.Kind
+	}
+	for _, w := range working {
+		if _, recorded := kinds[w.QueryID]; !recorded && w.Kind != "" {
+			kinds[w.QueryID] = w.Kind
+		}
 	}
 
 	// A ledger row no suite resolution accounts for is still something that ran. Dropping it
@@ -175,11 +204,12 @@ func (s *Store) QueryCatalog() ([]CatalogQuery, error) {
 			Runs: stats.runs, Repositories: len(stats.repositories),
 			FirstRunAt: stats.first, LastRunAt: stats.last,
 		}
-		q.Origin = originOfPack(q.Pack)
+		q.Source = sourceOfPack(q.Pack)
 		// A lane row names what it invoked, which is a suite. Kept apart from the query column so
 		// a reader is not shown a pack-and-suite string where a rule belongs.
 		q.Suite, q.QueryID = splitSuite(q.QueryID)
-		q.Lane = q.Suite != ""
+		// A query id holds no whitespace; one that does names several queries run as one evaluation.
+		q.Lane = q.Suite != "" || strings.ContainsAny(q.QueryID, " \t")
 		// A query's kind does not vary with its version: if it did, it would be a different query.
 		// So a version too old to have been resolved still inherits what the id was recorded as,
 		// which is what keeps one query from being half hidden and half listed.
@@ -187,14 +217,22 @@ func (s *Store) QueryCatalog() ([]CatalogQuery, error) {
 			q.Kind, q.KindRecorded = kind, true
 			q.Discovery = kind == ""
 		}
-		if st, ok := stages[key]; ok {
-			q.Stage, q.StagedBy, q.StagedAt = st.stage, st.by, st.at
-		}
-		q.Analyses = analyses[key]
-		if t, ok := tests[key]; ok {
-			q.Tested, q.Passing, q.TestDetail = true, t.Passed, t.Detail
-		}
+		attach(&q, key)
 		out = append(out, q)
+	}
+	out = withWorkingCopy(out, working, attach)
+	for i := range out {
+		pairs, ok := declared[out[i].QueryID+"\x00"+out[i].QueryVersion]
+		if !ok {
+			continue
+		}
+		out[i].Metadata = pairs
+		out[i].Band = declaredBand(pairs)
+		// The version's own declaration of its kind, for a row no suite resolution recorded one for.
+		if !out[i].KindRecorded && !out[i].Lane {
+			out[i].Kind, out[i].KindRecorded = pairs["kind"], true
+			out[i].Discovery = out[i].Kind == ""
+		}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].QueryID != out[j].QueryID {
@@ -203,6 +241,37 @@ func (s *Store) QueryCatalog() ([]CatalogQuery, error) {
 		return out[i].QueryVersion < out[j].QueryVersion
 	})
 	return out, nil
+}
+
+// withWorkingCopy marks the versions on disk now, and lists the ones nothing has run yet.
+//
+// A query is written, tested and staged before anything runs it, so a catalog built only from
+// what ran would show it for the first time after its first run.
+func withWorkingCopy(
+	out []CatalogQuery, working []WorkingQuery, attach func(*CatalogQuery, string),
+) []CatalogQuery {
+	listed := make(map[string]int, len(out))
+	for i, q := range out {
+		listed[q.QueryID+"\x00"+q.QueryVersion] = i
+	}
+	for _, w := range working {
+		key := w.QueryID + "\x00" + w.QueryVersion
+		i, ok := listed[key]
+		if !ok {
+			q := CatalogQuery{QueryID: w.QueryID, QueryVersion: w.QueryVersion, Pack: w.Pack,
+				Source: sourceOfPack(w.Pack)}
+			attach(&q, key)
+			out = append(out, q)
+			i = len(out) - 1
+			listed[key] = i
+		}
+		out[i].Working = true
+		// The file is this version, so what it declares is what the version is.
+		if w.Kind != "" {
+			out[i].Kind, out[i].KindRecorded, out[i].Discovery = w.Kind, true, false
+		}
+	}
+	return out
 }
 
 // splitSuite separates a suite reference from a query id.
@@ -340,7 +409,10 @@ func (s *Store) ledgerStats() (
 			}
 			continue
 		}
-		noteRun(byQuery, id, repository, ranAt)
+		// An on-demand run of several queries names each of them, and each of them ran.
+		for _, query := range strings.Fields(id) {
+			noteRun(byQuery, query, repository, ranAt)
+		}
 	}
 	return byQuery, bySuite, byVersion, rows.Err()
 }
@@ -404,11 +476,12 @@ func (s *Store) analysisCounts() (map[string]int, error) {
 	return out, rows.Err()
 }
 
-// AdvanceQueryStage records that somebody moved a version to a stage.
+// AdvanceQueryStage records that somebody moved a version to a stage, cli naming the CodeQL that
+// runs now, whose result alone can earn the test rung.
 //
 // Who and when are part of the row because readiness is computed and advancement is not: a stage
 // that appeared on its own could not be told apart from one a person signed.
-func (s *Store) AdvanceQueryStage(queryID, version, stage, by string) error {
+func (s *Store) AdvanceQueryStage(queryID, version, stage, by, cli string) error {
 	switch {
 	case queryID == "":
 		return fmt.Errorf("advancing a query stage: no query named")
@@ -421,14 +494,14 @@ func (s *Store) AdvanceQueryStage(queryID, version, stage, by string) error {
 	// hand is an audit trail of intentions, and the first reader to treat one as a guarantee is
 	// misled by something this project built.
 	if stage == StageTest {
-		test, known, err := s.QueryTestFor(queryID, version)
+		test, known, err := s.QueryTestFor(queryID, version, cli)
 		switch {
 		case err != nil:
 			return err
 		case !known:
 			return fmt.Errorf(
-				"advancing %s to %s: nothing has run its tests, so nothing has been shown to work",
-				queryID, stage)
+				"advancing %s to %s: CodeQL %s has not run its tests, so nothing has been shown to work",
+				queryID, stage, cli)
 		case !test.Passed:
 			return fmt.Errorf("advancing %s to %s: its tests do not pass (%s)",
 				queryID, stage, test.Detail)
@@ -473,13 +546,13 @@ func (s *Store) DeployedQueryIDs() ([]string, error) {
 	return out, rows.Err()
 }
 
-// originOfPack reads provenance from the pack that supplied a query.
+// sourceOfPack reads where a query came from out of the pack that supplied it.
 //
 // Never from the rule id: `abom/` is a naming convention anybody can adopt, and a query's prefix
 // says what its author called it rather than where it came from. An unrecognized pack is the
 // operator's own, which is the reading that does not claim more than is known -- ABOM's packs and
 // the upstream ones are the two this build can name with certainty.
-func originOfPack(pack string) string {
+func sourceOfPack(pack string) string {
 	switch {
 	case pack == "":
 		return ""
@@ -488,12 +561,12 @@ func originOfPack(pack string) string {
 		// findings lane records `codeql/actions-queries advanced-security/abom-actions-findings-src`,
 		// and reading the first one called it upstream -- a suite ABOM wrote, attributed to
 		// somebody else, because whichever pack sorted first decided.
-		return QueryOriginMixed
+		return QuerySourceMixed
 	case strings.HasPrefix(pack, "codeql/"):
-		return QueryOriginUpstream
+		return QuerySourceUpstream
 	case strings.HasPrefix(pack, "advanced-security/abom-"):
-		return QueryOriginAbom
+		return QuerySourceAbom
 	default:
-		return QueryOriginUser
+		return QuerySourceCustom
 	}
 }

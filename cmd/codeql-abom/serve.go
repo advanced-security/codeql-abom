@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,6 +25,11 @@ import (
 
 // shutdownGrace bounds how long serve waits for in-flight requests once asked to stop.
 const shutdownGrace = 5 * time.Second
+
+// The tester is found by a type assertion, which a drifted signature would fail silently.
+var _ serve.QueryTester = (*runner.Runner)(nil)
+
+var _ serve.ASTPrinter = (*runner.Runner)(nil)
 
 // wireEnumeration lets the loop re-read the declared accounts on a period.
 //
@@ -54,6 +59,49 @@ func wireEnumeration(
 				report.Failed[0].Owner, report.Failed[0].Error)
 		}
 		return report.Queued, nil
+	}
+}
+
+// reclaimAbandonedWork settles queue rows and runs a stopped server left claimed, before serving.
+func reclaimAbandonedWork(s *store.Store, queue *frontier.Queue, stdout, stderr io.Writer) {
+	if n, err := queue.ReclaimOrphaned(); err != nil {
+		fmt.Fprintf(stderr, "serve: reclaiming abandoned work: %v\n", err)
+	} else if n > 0 {
+		fmt.Fprintf(stdout, "%s serve: %d dependencies were left claimed by an interrupted run\n",
+			time.Now().UTC().Format(time.RFC3339), n)
+	}
+	if n, err := s.InterruptAbandonedRuns(); err != nil {
+		fmt.Fprintf(stderr, "serve: marking abandoned analysis runs: %v\n", err)
+	} else if n > 0 {
+		fmt.Fprintf(stdout, "serve: %d analysis runs were interrupted when the server last stopped\n", n)
+	}
+	if n, err := s.InterruptAuthoringSessions(); err != nil {
+		fmt.Fprintf(stderr, "serve: marking abandoned authoring sessions: %v\n", err)
+	} else if n > 0 {
+		fmt.Fprintf(stdout, "serve: %d authoring sessions were interrupted when the server last stopped\n", n)
+	}
+}
+
+// migratePolicyScopes writes retired policy scopes into their predicates, with the grouping key
+// this server was started with, and names each one it cannot, which the evaluation then refuses.
+func migratePolicyScopes(s *store.Store, unitProperty string, stdout, stderr io.Writer) {
+	report, err := s.MigratePolicyScopes(unitProperty)
+	if err != nil {
+		fmt.Fprintf(stderr, "serve: migrating policy scopes: %v\n", err)
+		return
+	}
+	if len(report.Migrated) > 0 {
+		fmt.Fprintf(stdout, "serve: %d policies had their scope written into their predicate: %s\n",
+			len(report.Migrated), strings.Join(report.Migrated, ", "))
+	}
+	left := make([]string, 0, len(report.Left))
+	for name := range report.Left {
+		left = append(left, name)
+	}
+	sort.Strings(left)
+	for _, name := range left {
+		fmt.Fprintf(stderr, "serve: policy %q keeps a retired scope and is refused until migrated: %s\n",
+			name, report.Left[name])
 	}
 }
 
@@ -201,6 +249,8 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		"longest reach may go unmeasured, however little arrives")
 	fs.DurationVar(&d.aggregateMinPeriod, "aggregate-min-interval", supervisor.DefaultMinInterval,
 		"shortest gap between two reach rebuilds")
+	var authoring authoringOptions
+	authoring.register(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -220,6 +270,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	if err := s.Migrate(); err != nil {
 		return fmt.Errorf("migrating %s: %w", *dbPath, err)
 	}
+	migratePolicyScopes(s, *groupProperty, stdout, stderr)
 
 	if err := seedDeclaration(s, *declareFile, stderr); err != nil {
 		return err
@@ -272,12 +323,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	// Before anything is served, not on the first cycle: until discovery is started the queue
 	// would otherwise report a previous run's claims as work in flight, on a page that says
 	// discovery has never started.
-	if n, err := loop.Queue.ReclaimOrphaned(); err != nil {
-		fmt.Fprintf(stderr, "serve: reclaiming abandoned work: %v\n", err)
-	} else if n > 0 {
-		fmt.Fprintf(stdout, "%s serve: %d dependencies were left claimed by an interrupted run\n",
-			time.Now().UTC().Format(time.RFC3339), n)
-	}
+	reclaimAbandonedWork(s, loop.Queue, stdout, stderr)
 
 	srv := &serve.Server{
 		Store: s, Discovery: loop, AllowRemoteControl: *allowRemote, Log: stderr,
@@ -290,10 +336,12 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	// The runner the crawl already holds, so `codeql test run` contends for the machine-wide lock
 	// rather than racing an analysis for one compilation cache.
 	if tester, ok := loop.Expander.Resolver.(serve.QueryTester); ok {
-		if dir := runner.CustomPackRoot(); dir != "" {
-			srv.Tester, srv.TestDir = tester, filepath.Join(dir, "test")
-		}
+		srv.Tester, srv.QueryDir = tester, runner.CustomPackRoot()
 	}
+	if printer, ok := loop.Expander.Resolver.(serve.ASTPrinter); ok && srv.QueryDir != "" {
+		srv.Printer = printer
+	}
+	srv.Authoring = newAuthoring(s, authoring, loop, stderr)
 	// Without this the interface can record a declaration and never act on it: declaring names
 	// accounts, and only enumeration turns them into the repositories a report is about.
 	reader, err := readClient(ctx, *apiURL, s, *route)

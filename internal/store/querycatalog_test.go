@@ -80,22 +80,22 @@ func TestACatalogEntryCountsTheRepositoriesItHasRunAgainst(t *testing.T) {
 	}
 }
 
-// A query's provenance comes from the pack that supplied it. The `abom/` rule-id prefix is a
-// naming convention anybody can adopt and is never evidence of where a query came from.
-func TestOriginIsReadFromThePackRatherThanTheRuleId(t *testing.T) {
+// A query's source is the pack that supplied it. The `abom/` rule-id prefix is a naming convention
+// anybody can adopt and is never evidence of where a query came from.
+func TestSourceIsReadFromThePackRatherThanTheRuleId(t *testing.T) {
 	by := catalogBy(t, catalogStore(t))
-	if got := by["abom/edges@v1"].Origin; got != QueryOriginAbom {
+	if got := by["abom/edges@v1"].Source; got != QuerySourceAbom {
 		t.Errorf("abom/edges came from an ABOM pack and is recorded as %q", got)
 	}
-	if got := by["actions/unpinned-tag@u1"].Origin; got != QueryOriginUpstream {
+	if got := by["actions/unpinned-tag@u1"].Source; got != QuerySourceUpstream {
 		t.Errorf("actions/unpinned-tag came from a codeql/ pack and is recorded as %q", got)
 	}
 }
 
-// A lane that ran rules from several packs has no single origin. Measured on the crawled
+// A lane that ran rules from several packs has no single source. Measured on the crawled
 // organization: the findings lane records two packs, and reading the first called an ABOM suite
 // upstream -- a provenance claim decided by which pack sorted first.
-func TestALaneSpanningPacksIsMixedRatherThanTheFirstPacksOrigin(t *testing.T) {
+func TestALaneSpanningPacksIsMixedRatherThanTheFirstPacksSource(t *testing.T) {
 	s := catalogStore(t)
 	if _, err := s.RecordQueryRun(QueryRun{
 		AnalysisMode: AnalysisModeRegular,
@@ -106,8 +106,8 @@ func TestALaneSpanningPacksIsMixedRatherThanTheFirstPacksOrigin(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("RecordQueryRun: %v", err)
 	}
-	if got := catalogBy(t, s)["abom-findings.qls@f1"].Origin; got != QueryOriginMixed {
-		t.Errorf("a lane drawing from two packs reports origin %q, want %q", got, QueryOriginMixed)
+	if got := catalogBy(t, s)["abom-findings.qls@f1"].Source; got != QuerySourceMixed {
+		t.Errorf("a lane drawing from two packs reports source %q, want %q", got, QuerySourceMixed)
 	}
 }
 
@@ -218,6 +218,30 @@ func TestAWholeSuiteInvocationIsMarkedAsALaneRatherThanAQuery(t *testing.T) {
 	t.Fatal("the suite invocation is missing from the catalog")
 }
 
+// A multi-query ledger id is one evaluation, not a query; listed, it read as rule "acme/a acme/b".
+func TestAnEvaluationOfSeveralQueriesIsALaneRatherThanAQuery(t *testing.T) {
+	s := catalogStore(t)
+	if _, err := s.RecordQueryRun(QueryRun{
+		AnalysisMode: AnalysisModeRegular,
+		QueryID:      "acme/a acme/b",
+		QueryVersion: "set1",
+		Pack:         "abom/custom-queries",
+		Repository:   "octo/app", DBCommit: "sha-one",
+	}); err != nil {
+		t.Fatalf("RecordQueryRun: %v", err)
+	}
+
+	for _, entry := range mustCatalog(t, s) {
+		if entry.QueryVersion == "set1" {
+			if !entry.Lane {
+				t.Errorf("an evaluation of several queries is listed as the query %q", entry.QueryID)
+			}
+			return
+		}
+	}
+	t.Fatal("the evaluation is missing from the catalog, so what ran is understated")
+}
+
 // A query's kind does not change with its version. An older version that predates suite-contents
 // recording must inherit it, or one query is half hidden and half listed.
 func TestAnOlderVersionInheritsTheKindRecordedForItsQueryId(t *testing.T) {
@@ -262,7 +286,7 @@ func TestAVersionNobodyHasStagedReportsNoStage(t *testing.T) {
 // reason that has nothing to do with the audit trail.
 func TestAdvancingAVersionRecordsWhoDidItAndWhen(t *testing.T) {
 	s := catalogStore(t)
-	if err := s.AdvanceQueryStage("abom/edges", "v1", StageReview, "operator"); err != nil {
+	if err := s.AdvanceQueryStage("abom/edges", "v1", StageReview, "operator", testCLI); err != nil {
 		t.Fatalf("AdvanceQueryStage: %v", err)
 	}
 	entry := catalogBy(t, s)["abom/edges@v1"]
@@ -279,7 +303,7 @@ func TestAdvancingAVersionRecordsWhoDidItAndWhen(t *testing.T) {
 func TestAdvancingTwiceMovesTheSameEntry(t *testing.T) {
 	s := catalogStore(t)
 	for _, stage := range []string{StageExtendedTest, StageReview} {
-		if err := s.AdvanceQueryStage("abom/edges", "v1", stage, "operator"); err != nil {
+		if err := s.AdvanceQueryStage("abom/edges", "v1", stage, "operator", testCLI); err != nil {
 			t.Fatalf("AdvanceQueryStage(%s): %v", stage, err)
 		}
 	}
@@ -295,7 +319,7 @@ func TestAdvancingTwiceMovesTheSameEntry(t *testing.T) {
 // downstream knows how to read, and the refusal is where that is cheapest to notice.
 func TestAStageOutsideTheLifecycleIsRefused(t *testing.T) {
 	s := catalogStore(t)
-	if err := s.AdvanceQueryStage("abom/edges", "v1", "shipped", "operator"); err == nil {
+	if err := s.AdvanceQueryStage("abom/edges", "v1", "shipped", "operator", testCLI); err == nil {
 		t.Error("a stage outside the lifecycle was accepted")
 	}
 }
@@ -312,5 +336,85 @@ func TestRunsWithNoVersionAreStillCatalogued(t *testing.T) {
 	}
 	if _, ok := catalogBy(t, s)["abom/legacy@"]; !ok {
 		t.Error("a run recorded before query versions existed is missing from the catalog")
+	}
+}
+
+func workingCatalog(t *testing.T, s *Store, working ...WorkingQuery) map[string]CatalogQuery {
+	t.Helper()
+	rows, err := s.QueryCatalog(working...)
+	if err != nil {
+		t.Fatalf("QueryCatalog: %v", err)
+	}
+	by := map[string]CatalogQuery{}
+	for _, r := range rows {
+		key := r.QueryID + "@" + r.QueryVersion
+		if _, twice := by[key]; twice {
+			t.Errorf("%s is listed twice", key)
+		}
+		by[key] = r
+	}
+	return by
+}
+
+// A query is written, tested and staged before anything runs it, so the catalog has to hold it
+// from the moment it is on disk. Keyed on the ledger alone, it appeared only after its first run.
+func TestAQueryOnDiskIsCatalogedBeforeItHasRun(t *testing.T) {
+	s := newTestStore(t)
+
+	got, ok := workingCatalog(t, s, WorkingQuery{
+		QueryID: "acme/a", QueryVersion: "v1", Pack: "abom/custom-queries", Kind: "problem",
+	})["acme/a@v1"]
+	if !ok {
+		t.Fatal("a query on disk is missing from the catalog until it has run")
+	}
+	if !got.Working || got.Source != QuerySourceCustom || got.Kind != "problem" || !got.KindRecorded ||
+		got.Discovery || got.Runs != 0 || got.LastRunAt != "" {
+		t.Errorf("listed as %+v", got)
+	}
+}
+
+// Only the version on disk can be tested or edited, and every step describes it; an older version
+// the ledger remembers is history.
+func TestOnlyTheVersionOnDiskIsTheWorkingOne(t *testing.T) {
+	s := newTestStore(t)
+	for _, version := range []string{"v1", "v2"} {
+		if _, err := s.RecordQueryRun(QueryRun{
+			AnalysisMode: AnalysisModeRegular, QueryID: "acme/a", QueryVersion: version,
+			Pack: "abom/custom-queries", Repository: "octo/app", DBCommit: "sha-" + version,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	by := workingCatalog(t, s, WorkingQuery{
+		QueryID: "acme/a", QueryVersion: "v2", Pack: "abom/custom-queries", Kind: "problem",
+	})
+	if !by["acme/a@v2"].Working || by["acme/a@v2"].Runs != 1 {
+		t.Errorf("the version on disk reads %+v, want the working one with its own run", by["acme/a@v2"])
+	}
+	if by["acme/a@v1"].Working {
+		t.Error("a version no longer on disk is marked as the working one")
+	}
+}
+
+// A version that has never run can still have been tested and staged, and both are what its
+// readiness is read from.
+func TestAVersionThatHasNeverRunCarriesItsTestsAndStage(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.RecordQueryTest(QueryTest{
+		QueryID: "acme/a", QueryVersion: "v1", CLIVersion: testCLI, Passed: true, Total: 1,
+		Detail: "1 of 1 passed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AdvanceQueryStage("acme/a", "v1", StageTest, "operator", testCLI); err != nil {
+		t.Fatal(err)
+	}
+
+	got := workingCatalog(t, s, WorkingQuery{
+		QueryID: "acme/a", QueryVersion: "v1", Pack: "abom/custom-queries", Kind: "problem",
+	})["acme/a@v1"]
+	if !got.Tested || !got.Passing || got.Stage != StageTest || got.StagedBy != "operator" {
+		t.Errorf("a never-run version reads %+v, want its passing test and its stage", got)
 	}
 }

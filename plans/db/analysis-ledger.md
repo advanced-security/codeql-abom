@@ -82,6 +82,15 @@ picking one is the decision. Everything else here follows from it.
    is accepted, exits 0 and is a silent no-op.
    `TestTheActionsExtractorStillCannotBuildAnOverlayBase` fails when that changes, and the
    database build is **20.3%** of a repository's cost.
+7. **An evaluation recorded before its rules were kept learns them the next time it is met.** A
+   lane that drew on several packs recorded the packs and one combined version, so the migration
+   names no source for anything it reported — on the verification store that is **every one of
+   ABOM's own rules, and 624 of the 2,844 findings the graph carries**. The skip already holds the
+   answer: an unchanged evaluation is skipped because its run key matches, and the key hashes every
+   contributing pack's digest and every query's version, so the plan that declined to run it again
+   lists exactly the rules it ran. Recording them there is exact rather than inferred. A `done`
+   frontier row is never met again, so this reaches only what a requeue or a new reference brings
+   back; depends on nothing, and 1 is what brings back the rest.
 
 ## The constraint that must not be broken
 

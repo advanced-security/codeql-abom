@@ -41,11 +41,7 @@ public class AnalysisIdentityTests : AbomTestContext
             """,
             state: DiscoveryStateBuilder.Drained().WithTiers(522, 691).WithDirectAnalyzed(0));
 
-        var cut = Render<Shared.DiscoveryControls>();
-
-        // The counts live inside the fold; the buttons above it state the analyzed figure only.
-        cut.WaitForAssertion(() => cut.Find(".abom-fold-toggle"));
-        cut.Find(".abom-fold-toggle").Click();
+        var cut = Render<Shared.TierSuites>();
 
         cut.WaitForAssertion(() => Assert.Contains("522 dependencies", cut.Markup));
         Assert.Contains("0 analyzed", cut.Markup);

@@ -4,7 +4,7 @@
 # newest, so the finding count moves without the code moving.
 - import: codeql-suites/csharp-security-and-quality.qls
   from: codeql/csharp-queries
-  version: 1.9.3
+  version: 1.10.0
 
 # Read and rejected, 2026-09-10 — the only rule this suite excludes, and it stays the exception.
 #

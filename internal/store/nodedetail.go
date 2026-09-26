@@ -258,13 +258,15 @@ func (s *Store) refUsage(key string) ([]RefUsage, error) {
 
 func (s *Store) nodeRules(key string) ([]RuleCount, error) {
 	rows, err := s.db.Query(`
-		SELECT f.rule_id, COUNT(*)
-		FROM abom_finding_node fn
-		JOIN abom_node_live n ON n.row_id = fn.node_row_id
-		JOIN abom_finding_regular f ON f.row_id = fn.finding_row_id
-		WHERE n.node_key = ?
-		GROUP BY f.rule_id
-		ORDER BY COUNT(*) DESC, f.rule_id`, key)
+		SELECT rule_id, COUNT(*), GROUP_CONCAT(sources), COUNT(*) - COUNT(sources), `+
+		bandSums("score")+`
+		FROM (SELECT f.rule_id, `+findingSources+` AS sources, f.security_severity AS score
+		      FROM abom_finding_node fn
+		      JOIN abom_node_live n ON n.row_id = fn.node_row_id
+		      JOIN abom_finding_regular f ON f.row_id = fn.finding_row_id
+		      WHERE n.node_key = ?)
+		GROUP BY rule_id
+		ORDER BY COUNT(*) DESC, rule_id`, key)
 	if err != nil {
 		return nil, fmt.Errorf("reading rules for %q: %w", key, err)
 	}
@@ -273,12 +275,19 @@ func (s *Store) nodeRules(key string) ([]RuleCount, error) {
 	out := []RuleCount{}
 	for rows.Next() {
 		var c RuleCount
-		if err := rows.Scan(&c.RuleID, &c.Count); err != nil {
+		var sources sql.NullString
+		if err := rows.Scan(append([]any{&c.RuleID, &c.Count, &sources, &c.Unsourced},
+			c.Severity.targets()...)...); err != nil {
 			return nil, fmt.Errorf("scanning rule count: %w", err)
 		}
+		c.Sources = distinctSources(sources)
 		out = append(out, c)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	mostSevereFirst(out)
+	return out, nil
 }
 
 // nodeNeighbors lists what uses this node, or what it uses, folded to the container that holds

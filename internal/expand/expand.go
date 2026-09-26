@@ -124,6 +124,10 @@ type Expander struct {
 	// Pace caps the rate of outbound requests across workers; nil means unlimited.
 	Pace    *work.Limiter
 	OnEvent func(work.Event)
+	// Install installs what the operator's pack depends on wherever it has no lock, for a round
+	// over a suite drawn from it: a tier can be bound to that suite before anybody has pressed
+	// Test. Nil installs nothing.
+	Install func(context.Context) error
 
 	// digests remembers each pack's content hash for the life of a round. A pack cannot change
 	// while the round that resolved it is running.
@@ -722,7 +726,7 @@ func (e *Expander) analyzeTree(
 		SourceFilter: e.sourceFilter(),
 		Mode:         store.AnalysisModeRegular,
 	}
-	dbDir, staged, reused, err := e.databaseFor(ctx, id, dbDir, tree)
+	dbDir, staged, reused, err := e.databaseFor(ctx, id, dbDir, tree, planned.cliVersion)
 	if err != nil {
 		return work.Prepared{}, err
 	}
@@ -768,9 +772,9 @@ func (e *Expander) analyzeTree(
 // Reuse skips extraction, never analysis: whether a query still has to run is the ledger's call,
 // and a database being on disk says nothing about it.
 func (e *Expander) databaseFor(
-	ctx context.Context, id store.DatabaseIdentity, roundDB string, tree Tree,
+	ctx context.Context, id store.DatabaseIdentity, roundDB string, tree Tree, cli string,
 ) (string, string, bool, error) {
-	if held, ok := e.Databases.Reuse(id); ok {
+	if held, ok := e.Databases.Reuse(id, cli); ok {
 		return held, "", true, nil
 	}
 	// Built inside the cache when there is one, so promoting it is a rename rather than a copy

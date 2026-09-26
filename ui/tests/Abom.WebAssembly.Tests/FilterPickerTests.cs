@@ -34,7 +34,10 @@ public sealed class FilterPickerTests : AbomTestContext
           {"name":"properties","label":"Repository property","help":"Keep a property value.",
            "arity":"property","valuesFrom":"api/properties","surfaces":["graph","inventory"]},
           {"name":"boundary","label":"Boundary","help":"Which side of a boundary.","arity":"scalar",
-           "values":["same-repository","same-owner","cross-owner"],"surfaces":["relationships"]}
+           "values":["same-repository","same-owner","cross-owner"],"surfaces":["relationships"]},
+          {"name":"flags","label":"Has","help":"h","arity":"list",
+           "values":["findings","advisory","unanalyzed"],"surfaces":["inventory","workflows"],
+           "surfaceValues":{"workflows":["findings"]}}
         ]
         """;
 
@@ -169,6 +172,42 @@ public sealed class FilterPickerTests : AbomTestContext
     }
 
     /// <summary>
+    /// A property filter applied anywhere says how many repositories carry no value for its key,
+    /// because every answer beneath the chip is an answer about the rest. Said once, where the
+    /// filter is, so every surface carrying a picker says it rather than each answer counting it.
+    /// </summary>
+    [Fact]
+    public void AnAppliedPropertyFilterSaysHowManyRepositoriesCarryNoValueForItsKey()
+    {
+        Answer("api/properties?property=team", """
+            {"configured":"business_id","keys":["business_id","team"],
+             "breakdown":{"name":"team","repositories":12,"withValue":8,"withoutValue":4,
+               "values":[{"value":"core","repositories":8,"isDefault":false}],
+               "hasDefault":false,"defaultValue":""}}
+            """);
+        Scope.Set(ViewSpec.Parse("properties=team%3Acore"));
+
+        var (_, page) = Picker();
+
+        page.WaitForAssertion(() => Assert.Equal(
+            "4 of 12 repositories carry no team, and no answer here speaks for them.",
+            System.Text.RegularExpressions.Regex.Replace(
+                page.Find("[data-abom-property-unvalued]").TextContent, @"\s+", " ").Trim()));
+    }
+
+    /// And a key every repository carries says nothing, or the sentence is one nobody reads.
+    [Fact]
+    public void AKeyEveryRepositoryCarriesSaysNothing()
+    {
+        Scope.Set(ViewSpec.Parse("properties=business_id%3A3"));
+
+        var (_, page) = Picker();
+
+        page.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("api/properties?property=business_id")));
+        Assert.Empty(page.FindAll("[data-abom-property-unvalued]"));
+    }
+
+    /// <summary>
     /// The menu renders into <c>MudPopoverProvider</c>, which MainLayout supplies in the running
     /// app. Without it here the content is simply absent, which reads as the menu failing to open.
     /// </summary>
@@ -196,6 +235,21 @@ public sealed class FilterPickerTests : AbomTestContext
         var offered = Attributes(popover, "data-abom-term").ToList();
         Assert.Contains("scope", offered);
         Assert.DoesNotContain("boundary", offered);
+    }
+
+    /// <summary>
+    /// A surface that applies no filter at all says so. "Every filter this view applies is already
+    /// set" reads as a narrowing in force on the Coverage unit, whose queue nothing narrows.
+    /// </summary>
+    [Fact]
+    public void ASurfaceThatAppliesNoFilterSaysSo()
+    {
+        var (popover, page) = Picker("coverage");
+
+        page.WaitForAssertion(() => page.Find("[data-abom-add-filter]").Click());
+
+        popover.WaitForAssertion(() => Assert.Contains("This view applies no filters.", popover.Markup));
+        Assert.DoesNotContain("already set", popover.Markup);
     }
 
     /// The whole point of the control: nothing selected costs no width beyond the one button that
@@ -425,6 +479,21 @@ public sealed class FilterPickerTests : AbomTestContext
         popover.Find("[data-abom-value='exposure']").Click();
 
         Assert.Equal("exposure", Scope.Spec.Scope);
+    }
+
+    /// <summary>
+    /// A surface answering some of a term's values offers only those. The workflow unit narrows by
+    /// findings and refuses the other two flags by name, so offering them is a refusal waiting for
+    /// a click.
+    /// </summary>
+    [Fact]
+    public void ASurfaceThatAnswersSomeValuesOffersOnlyThose()
+    {
+        var (popover, page) = Picker("workflows");
+        page.WaitForAssertion(() => page.Find("[data-abom-add-filter]").Click());
+        popover.WaitForElement("[data-abom-term='flags']").Click();
+
+        Assert.Equal(["findings"], Attributes(popover, "data-abom-value"));
     }
 
     /// A term whose values come from the corpus has no closed list to offer, so it is typed. The

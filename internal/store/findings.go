@@ -42,6 +42,16 @@ type QueryRun struct {
 	// commit are one evaluation, recorded as two rows in abom_query_run_ref.
 	Ref         string
 	AnalyzedRef string
+	// RecordedBy is what produced the evaluation, one of RecordedBy*. Like the refs it is not
+	// identity, and it is kept from whichever recording came first.
+	RecordedBy string
+	// Rules are the rules the evaluation ran and where each one's query came from. One invocation
+	// runs a whole suite, so the evaluation alone cannot say which version or pack a finding's
+	// rule was.
+	Rules []QueryRunRule
+	// Held marks an evaluation whose results a run held. Part of the key, so no lookup for the
+	// evaluation that stores findings can find it and skip.
+	Held bool
 }
 
 func (q QueryRun) key() string {
@@ -54,6 +64,9 @@ func (q QueryRun) key() string {
 	// before the column existed. A length-prefixed empty field is still a field.
 	if part := analysisModeKeyPart(q.AnalysisMode); part != "" {
 		parts = append(parts, part)
+	}
+	if q.Held {
+		parts = append(parts, "held")
 	}
 	for _, part := range parts {
 		// Length-prefixed, so no two different tuples can concatenate to the same bytes.
@@ -84,18 +97,25 @@ func (s *Store) RecordQueryRun(q QueryRun) (int64, error) {
 	if err := q.identified(); err != nil {
 		return 0, err
 	}
+	if q.RecordedBy != "" && !validRecorder(q.RecordedBy) {
+		return 0, fmt.Errorf("store: QueryRun for %s names recorder %q, which is none of %v",
+			q.QueryID, q.RecordedBy, recorders)
+	}
 	key := q.key()
 
 	if _, err := s.db.Exec(`
 		INSERT INTO abom_query_run
 			(run_key, query_id, query_version, pack, pack_version, pack_digest,
-			 cli_version, repository, db_commit, source_filter, analysis_mode, ran_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(run_key) DO UPDATE SET ran_at = excluded.ran_at`,
+			 cli_version, repository, db_commit, source_filter, analysis_mode, recorded_by, held,
+			 ran_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(run_key) DO UPDATE SET
+			ran_at      = excluded.ran_at,
+			recorded_by = COALESCE(abom_query_run.recorded_by, excluded.recorded_by)`,
 		key, q.QueryID, nullable(q.QueryVersion), nullable(q.Pack), nullable(q.PackVersion),
 		nullable(q.PackDigest), nullable(q.CLIVersion),
 		q.Repository, nullable(q.DBCommit), nullable(q.SourceFilter),
-		q.AnalysisMode, now()); err != nil {
+		q.AnalysisMode, nullable(q.RecordedBy), q.Held, now()); err != nil {
 		return 0, fmt.Errorf("recording query run for %s: %w", q.QueryID, err)
 	}
 
@@ -103,6 +123,9 @@ func (s *Store) RecordQueryRun(q QueryRun) (int64, error) {
 	if err := s.db.QueryRow(
 		`SELECT row_id FROM abom_query_run WHERE run_key = ?`, key).Scan(&id); err != nil {
 		return 0, fmt.Errorf("resolving query run for %s: %w", q.QueryID, err)
+	}
+	if err := s.recordRunRules(id, q.Rules); err != nil {
+		return 0, fmt.Errorf("recording the rules %s ran: %w", q.QueryID, err)
 	}
 
 	// Only when a ref is actually known. An unrecorded ref must stay distinguishable from the
@@ -189,18 +212,19 @@ type Finding struct {
 	// Provider names the producer. Empty means nobody recorded one, which is a state and not a
 	// synonym for CodeQL: every finding predating this column is unattributed, and relabeling
 	// them would invent the provenance the field exists to hold.
-	Provider         string
-	QueryRunID       int64
-	RuleID           string
-	RepositoryID     int64
-	FilePath         string
-	StartLine        int
-	StartColumn      int
-	EndLine          int
-	EndColumn        int
-	Message          string
-	Severity         string
-	SecuritySeverity float64
+	Provider     string
+	QueryRunID   int64
+	RuleID       string
+	RepositoryID int64
+	FilePath     string
+	StartLine    int
+	StartColumn  int
+	EndLine      int
+	EndColumn    int
+	Message      string
+	Severity     string
+	// SecuritySeverity is the rule's `@security-severity`, nil where the rule declares none.
+	SecuritySeverity *float64
 	Fingerprint      string
 	// ResultHash identifies the finding by content, with the repository deliberately outside it.
 	ResultHash string
@@ -219,6 +243,18 @@ func (s *Store) AddFindings(findings []Finding) (int, error) {
 	}
 	defer tx.Rollback()
 
+	rows, err := addFindings(tx, findings)
+	if err != nil {
+		return len(rows), err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return len(rows), nil
+}
+
+// addFindings writes findings and their sightings inside tx, returning each one's row in order.
+func addFindings(tx *sql.Tx, findings []Finding) ([]int64, error) {
 	// Provenance is refreshed and identity is not: a finding seen again is the same finding, but
 	// the run that reproduced it is newer evidence than the one that first saw it. Ignoring the
 	// conflict outright left 2,759 corpus findings unable to name any run at all, 2,377 of them
@@ -245,7 +281,7 @@ func (s *Store) AddFindings(findings []Finding) (int, error) {
 			result_hash  = COALESCE(excluded.result_hash, abom_finding.result_hash)
 		RETURNING row_id`)
 	if err != nil {
-		return 0, fmt.Errorf("preparing finding insert: %w", err)
+		return nil, fmt.Errorf("preparing finding insert: %w", err)
 	}
 	defer stmt.Close()
 
@@ -255,11 +291,11 @@ func (s *Store) AddFindings(findings []Finding) (int, error) {
 		INSERT INTO abom_finding_sighting (finding_row_id, query_run_id)
 		VALUES (?, ?) ON CONFLICT DO NOTHING`)
 	if err != nil {
-		return 0, fmt.Errorf("preparing sighting insert: %w", err)
+		return nil, fmt.Errorf("preparing sighting insert: %w", err)
 	}
 	defer sighting.Close()
 
-	written := 0
+	written := make([]int64, 0, len(findings))
 	for _, f := range findings {
 		var rowID int64
 		if err := stmt.QueryRow(nullable(f.Provider), nullableID(f.QueryRunID), f.RuleID,
@@ -275,11 +311,7 @@ func (s *Store) AddFindings(findings []Finding) (int, error) {
 				return written, fmt.Errorf("recording a sighting for %s: %w", f.RuleID, err)
 			}
 		}
-		written++
-	}
-
-	if err := tx.Commit(); err != nil {
-		return 0, err
+		written = append(written, rowID)
 	}
 	return written, nil
 }

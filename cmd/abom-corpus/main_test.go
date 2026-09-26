@@ -17,7 +17,7 @@ import (
 func builtCorpus(t *testing.T) *store.Store {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "abom.db")
-	if err := build(path, filepath.Join("..", "..", "testdata", "corpus", "fixtures"), nil); err != nil {
+	if err := build(path, filepath.Join("..", "..", "testdata", "corpus", "fixtures"), "", nil); err != nil {
 		t.Fatalf("build: %v", err)
 	}
 	s, err := store.Open(path, store.Options{})
@@ -119,13 +119,26 @@ func TestTheDataSetCarriesBothAbomsOwnFindingsAndUpstreamOnes(t *testing.T) {
 	}
 }
 
+// A replay says it is one. Its evaluations carry no CodeQL version on purpose, and without this
+// they could not be told from one that failed to record it.
+func TestTheCorpusSaysItRecordedEveryEvaluationItReplays(t *testing.T) {
+	s := builtCorpus(t)
+	if count(t, s, `SELECT COUNT(*) FROM abom_query_run`) == 0 {
+		t.Fatal("the corpus records no evaluation")
+	}
+	if n := count(t, s, `SELECT COUNT(*) FROM abom_query_run WHERE COALESCE(recorded_by, '') <> ?`,
+		store.RecordedByCorpus); n != 0 {
+		t.Errorf("%d of the corpus's evaluations do not say the corpus recorded them", n)
+	}
+}
+
 // A rebuild replaces rather than accumulates, or a second run and a fresh checkout disagree.
 func TestBuildingTwiceProducesTheSameCorpus(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "abom.db")
 	fixtures := filepath.Join("..", "..", "testdata", "corpus", "fixtures")
 
 	read := func() [2]int {
-		if err := build(path, fixtures, nil); err != nil {
+		if err := build(path, fixtures, "", nil); err != nil {
 			t.Fatalf("build: %v", err)
 		}
 		s, err := store.Open(path, store.Options{})
@@ -149,7 +162,7 @@ func TestBuildingTwiceProducesTheSameCorpus(t *testing.T) {
 func TestAPathCannotForgeALineOfOutput(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "abom.db")
-	if err := build(path, filepath.Join("..", "..", "testdata", "corpus", "fixtures"), nil); err != nil {
+	if err := build(path, filepath.Join("..", "..", "testdata", "corpus", "fixtures"), "", nil); err != nil {
 		t.Fatalf("build: %v", err)
 	}
 	s, err := store.Open(path, store.Options{})

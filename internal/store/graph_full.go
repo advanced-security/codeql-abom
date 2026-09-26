@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+
+	viewspec "github.com/advanced-security/codeql-abom/internal/view"
 )
 
 // GraphNode is one node in the whole-corpus view.
@@ -37,6 +39,9 @@ type GraphNode struct {
 	// Rules are the CodeQL rule ids that produced this node's findings. Every verdict in the
 	// interface is filtered by these, never by a property this package inferred.
 	Rules []string `json:"rules"`
+	// Facets are the distinct kinds of finding this node carries, each kept whole so a filter
+	// asking for a rule and a severity matches one finding that is both.
+	Facets []FindingFacet `json:"facets"`
 	// Advisories counts published advisories naming this node's repository. It is a count of
 	// statements, not a judgement that any observed reference is affected.
 	Advisories int `json:"advisories"`
@@ -668,6 +673,7 @@ func (s *Store) graphNodes(display string, since int64, opts FullGraphOptions) (
 			return nil, nil, fmt.Errorf("scanning graph node: %w", err)
 		}
 		n.Rules = []string{}
+		n.Facets = []FindingFacet{}
 		nodes = append(nodes, n)
 	}
 	if err := rows.Err(); err != nil {
@@ -682,41 +688,51 @@ func (s *Store) graphNodes(display string, since int64, opts FullGraphOptions) (
 	return nodes, index, nil
 }
 
-// attachRules carries the rule ids that produced each node's findings.
+// attachRules carries the rule ids that produced each node's findings, and each kind of finding
+// whole.
 //
 // A finding recorded against a step belongs to the workflow once the step is folded away, or
 // collapsing would silently drop the evidence along with the node.
 func (s *Store) attachRules(display string, index map[string]*GraphNode, mode string) error {
 	rows, err := s.db.Query(`WITH ` + display + `
-		SELECT shown.node_key, f.rule_id, COUNT(*)
+		SELECT shown.node_key, f.rule_id, COALESCE(f.provider, ''), COALESCE(f.severity, ''),
+		       NULLIF(f.security_severity, 0), COUNT(*)
 		FROM abom_finding_node fn
 		JOIN disp d ON d.row_id = fn.node_row_id
 		JOIN abom_node_live shown ON shown.row_id = d.shown
 		JOIN ` + findingSource(mode) + ` f ON f.row_id = fn.finding_row_id
-		GROUP BY shown.node_key, f.rule_id`)
+		GROUP BY shown.node_key, f.rule_id, 3, 4, 5`)
 	if err != nil {
 		return fmt.Errorf("reading findings by rule: %w", err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var key, rule string
-		var count int
-		if err := rows.Scan(&key, &rule, &count); err != nil {
+		var facet FindingFacet
+		var key string
+		var security sql.NullFloat64
+		if err := rows.Scan(&key, &facet.Rule, &facet.Provider, &facet.Severity, &security,
+			&facet.Count); err != nil {
 			return fmt.Errorf("scanning finding rule: %w", err)
 		}
 		n, ok := index[key]
 		if !ok {
 			continue
 		}
-		n.Findings += count
-		n.Rules = append(n.Rules, rule)
+		if security.Valid {
+			facet.SecuritySeverity = &security.Float64
+		}
+		facet.Band = viewspec.BandOf(facet.SecuritySeverity)
+		n.Findings += facet.Count
+		n.Rules = append(n.Rules, facet.Rule)
+		n.Facets = append(n.Facets, facet)
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("reading findings by rule: %w", err)
 	}
 	for _, n := range index {
-		sort.Strings(n.Rules)
+		n.Rules = dedupeSorted(n.Rules)
+		sortFacets(n.Facets)
 	}
 	return nil
 }

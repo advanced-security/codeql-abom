@@ -120,3 +120,10 @@ func (c *DigestCache) Of(packDir string) (string, error) {
 	c.by[packDir] = digest
 	return digest, nil
 }
+
+// Reset forgets every digest, which is how the next round starts.
+func (c *DigestCache) Reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.by = nil
+}

@@ -1,0 +1,383 @@
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@inject AbomApi Api
+@inject AccountService Accounts
+@inject RequestDraft Asked
+
+@* Both examples are required: they are what a query's test is written from. *@
+<div data-abom-requests>
+    <div class="d-flex align-center gap-3 mb-3">
+        @if (_list is not null)
+        {
+            <MudText Typo="Typo.body2" Class="mud-text-secondary" data-abom-requests-counts>
+                @CountText.Of(_list.Requests.Count, "request", "requests"),
+                @_list.Requests.Count(r => r.Status == "open") open.
+            </MudText>
+        }
+        <MudSpacer />
+        @* The reason is on a span outside the button: a disabled button swallows the pointer. *@
+        <span title="@(CanFile ? "Ask for a query, or for a change to one" : "Sign in with gh to record who asked")">
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                       StartIcon="@Icons.Material.Outlined.Add" Disabled="@(!CanFile || _draft is not null)"
+                       OnClick="New" data-abom-request-new>New request</MudButton>
+        </span>
+    </div>
+
+    @if (_draft is not null)
+    {
+        <MudPaper Outlined="true" Class="pa-4 mb-4" data-abom-request-form>
+            <MudText Typo="Typo.subtitle2" Class="mb-2">
+                @(_draft.RowId != 0 ? $"Request #{_draft.RowId}"
+                  : _draft.SourceRunId != 0 ? $"New request, asked from run #{_draft.SourceRunId}"
+                  : "New request")
+            </MudText>
+            @if (_draft.RowId == 0 && _draft.Evidence.Count > 0)
+            {
+                <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3" data-abom-request-evidence>
+                    @EvidenceText(_draft), filed with the request when it is saved.
+                </MudAlert>
+                <RequestAgentDraft Asked="@_draft" QueryId="@_queryId" OnUse="UseDraft" />
+            }
+            <div data-abom-request-description>
+                <MudTextField T="string" @bind-Value="_description" Immediate="true" Lines="3"
+                              Variant="Variant.Outlined" Margin="Margin.Dense"
+                              Label="What should be detected, or stop being detected" />
+            </div>
+            <div class="abom-request-examples mt-3">
+                <div data-abom-request-compliant>
+                    <MudTextField T="string" @bind-Value="_compliant" Immediate="true" Lines="8"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense" Class="abom-code-input"
+                                  Label="COMPLIANT" HelperText="Code the query must leave alone" />
+                </div>
+                <div data-abom-request-noncompliant>
+                    <MudTextField T="string" @bind-Value="_nonCompliant" Immediate="true" Lines="8"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense" Class="abom-code-input"
+                                  Label="NON_COMPLIANT" HelperText="Code the query must report" />
+                </div>
+            </div>
+            <div class="d-flex flex-wrap align-start gap-3 mt-3">
+                <div class="abom-request-field abom-request-query" data-abom-request-query>
+                    @* A selection, never text: the server refuses a query nothing holds. *@
+                    <MudSelect T="string" @bind-Value="_queryId" Variant="Variant.Outlined"
+                               Margin="Margin.Dense" Label="Query it is about"
+                               HelperText="@(_queryId.Length == 0 ? "Let the agent decide" : "Selected by you")">
+                        <MudSelectItem T="string" Value="@(string.Empty)">Let the agent decide</MudSelectItem>
+                        @foreach (var (id, source) in Choices(_catalog))
+                        {
+                            <MudSelectItem T="string" Value="@id">@id · @source</MudSelectItem>
+                        }
+                    </MudSelect>
+                </div>
+                <div class="abom-request-field" data-abom-request-kind>
+                    <MudSelect T="string" @bind-Value="_kind" Variant="Variant.Outlined" Margin="Margin.Dense"
+                               Label="Kind">
+                        @foreach (var kind in _list?.Kinds ?? [])
+                        {
+                            <MudSelectItem T="string" Value="@kind">@KindText(kind)</MudSelectItem>
+                        }
+                    </MudSelect>
+                </div>
+                @if (_draft.RowId != 0)
+                {
+                    <div class="abom-request-field" data-abom-request-status>
+                        <MudSelect T="string" @bind-Value="_status" Variant="Variant.Outlined"
+                                   Margin="Margin.Dense" Label="Status">
+                            @foreach (var status in _list?.Statuses ?? [])
+                            {
+                                <MudSelectItem T="string" Value="@status">@status</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </div>
+                }
+            </div>
+            @if (_refusal is { Length: > 0 } refused)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-3">@refused</MudAlert>
+            }
+            <div class="d-flex gap-2 mt-3">
+                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" DropShadow="false"
+                           Disabled="@(!Complete || _saving)" OnClick="Save" data-abom-request-save>Save</MudButton>
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                           OnClick="Discard" data-abom-request-discard>Discard</MudButton>
+            </div>
+        </MudPaper>
+    }
+
+    @if (_list is null)
+    {
+        <MudProgressLinear Indeterminate="true" />
+    }
+    else if (_list.Requests.Count == 0)
+    {
+        @if (_draft is null)
+        {
+            <MudPaper Class="pa-6" Outlined="true" data-abom-requests-empty>
+                <MudText Typo="Typo.h6">No query request yet</MudText>
+                <MudText Typo="Typo.body2" Class="mt-2 mud-text-secondary">
+                    A request says what a query should catch that nothing catches now, or stop
+                    reporting that it reports wrongly, with a COMPLIANT example it must leave alone
+                    and a NON_COMPLIANT example it must report. Those two become the query's test.
+                </MudText>
+            </MudPaper>
+        }
+    }
+    else
+    {
+        <MudDataGrid T="QueryRequest" Items="_list.Requests" Dense="true" Hover="true" Bordered="false"
+                     SortMode="SortMode.None" Filterable="false" ShowColumnOptions="false"
+                     FixedHeader="true" RowsPerPage="20" Class="abom-grid abom-grid-windowed"
+                     data-abom-requests-table>
+            <Columns>
+                <HierarchyColumn T="QueryRequest" InitiallyExpandedFunc="@(r => r.RowId == FocusRequest)">
+                    <CellTemplate>
+                        <MudIconButton Size="Size.Small"
+                                       Icon="@(context.Open ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)"
+                                       aria-label="@($"Show the examples in request #{context.Item.RowId}")"
+                                       aria-expanded="@(context.Open ? "true" : "false")"
+                                       OnClick="@(() => context.Actions.ToggleHierarchyVisibilityForItemAsync())"
+                                       data-abom-request-detail />
+                    </CellTemplate>
+                </HierarchyColumn>
+                <PropertyColumn Property="x => x.RowId" Title="#" CellClass="abom-nowrap" />
+                <TemplateColumn Title="" HeaderClass="abom-row-actions-head" CellClass="abom-row-actions">
+                    <CellTemplate>
+                        <MudIconButton Icon="@Icons.Material.Outlined.Edit" Size="Size.Small"
+                                       Disabled="@(!CanFile || _draft is not null)"
+                                       OnClick="@(() => Edit(context.Item))"
+                                       aria-label="@($"Edit request #{context.Item.RowId}")"
+                                       data-abom-request-edit />
+                    </CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.Description" Title="What it asks for">
+                    <CellTemplate>
+                        <span class="abom-request-summary">@FirstLine(context.Item.Description)</span>
+                    </CellTemplate>
+                </PropertyColumn>
+                <TemplateColumn Title="Progress" CellClass="abom-nowrap">
+                    <CellTemplate>
+                        <AuthoringSteps Steps="@context.Item.Steps" />
+                    </CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.Kind" Title="Kind" CellClass="abom-nowrap">
+                    <CellTemplate><MudText Typo="Typo.caption">@KindText(context.Item.Kind)</MudText></CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.QueryId" Title="Query" CellClass="abom-nowrap">
+                    <CellTemplate>
+                        @if (context.Item.QueryId.Length == 0)
+                        {
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">a new query</MudText>
+                        }
+                        else
+                        {
+                            <MudLink Href="@CatalogHref(context.Item.QueryId)" Typo="Typo.body2"
+                                     Class="abom-path" data-abom-request-query-link>@context.Item.QueryId</MudLink>
+                        }
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.Status" Title="Status">
+                    <CellTemplate>
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                 Color="@StatusColor(context.Item.Status)"
+                                 data-abom-request-status-chip="@context.Item.Status">@context.Item.Status</MudChip>
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.RequestedBy" Title="Asked by" CellClass="abom-nowrap" />
+                <PropertyColumn Property="x => x.UpdatedAt" Title="Updated" CellClass="abom-nowrap">
+                    <CellTemplate>
+                        <MudText Typo="Typo.caption">@TimeText.DayAndTime(context.Item.UpdatedAt)</MudText>
+                    </CellTemplate>
+                </PropertyColumn>
+            </Columns>
+            <ChildRowContent>
+                <div class="abom-row-detail" data-abom-request-open="@context.Item.RowId">
+                    <MudText Typo="Typo.body2" Class="abom-request-description mb-2">@context.Item.Description</MudText>
+                    @if (context.Item.SourceRunId != 0)
+                    {
+                        <MudText Typo="Typo.caption" Class="d-block mb-2">
+                            Asked from
+                            <MudLink Href="@($"/codeql?tab=runs&run={context.Item.SourceRunId}")" Typo="Typo.caption"
+                                     data-abom-request-source-run>run #@context.Item.SourceRunId</MudLink>
+                        </MudText>
+                    }
+                    @if (context.Item.Steps.Count > 0)
+                    {
+                        <ul class="abom-request-steps mb-2" data-abom-request-steps>
+                            @foreach (var step in context.Item.Steps)
+                            {
+                                <li data-abom-request-step="@step.Step">
+                                    <MudIcon Icon="@AuthoringSteps.IconOf(step.Step)" Size="Size.Small"
+                                             Color="@AuthoringSteps.ColorOf(step.State)" />
+                                    <span class="abom-request-step-name">@AuthoringSteps.LabelOf(step.Step)</span>
+                                    <span class="mud-text-secondary">@AuthoringSteps.StateText(step.State)</span>
+                                    @if (step.Detail.Length > 0)
+                                    {
+                                        <span>— @step.Detail</span>
+                                    }
+                                </li>
+                            }
+                        </ul>
+                    }
+                    <div class="abom-request-examples">
+                        <div>
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">COMPLIANT</MudText>
+                            <pre class="abom-code" data-abom-request-shown-compliant>@context.Item.Compliant</pre>
+                        </div>
+                        <div>
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">NON_COMPLIANT</MudText>
+                            <pre class="abom-code" data-abom-request-shown-noncompliant>@context.Item.NonCompliant</pre>
+                        </div>
+                    </div>
+                    <RequestSessions Request="@context.Item" />
+                </div>
+            </ChildRowContent>
+            <PagerContent><MudDataGridPager T="QueryRequest" /></PagerContent>
+        </MudDataGrid>
+    }
+</div>
+
+@code {
+    /// <summary>A request to open on arrival, such as one a catalog row names.</summary>
+    [Parameter] public long FocusRequest { get; set; }
+
+    private QueryRequestList? _list;
+    private QueryCatalog? _catalog;
+    private QueryRequest? _draft;
+    private string _description = "";
+    private string _compliant = "";
+    private string _nonCompliant = "";
+    private string _queryId = "";
+    private string _kind = "";
+    private string _status = "open";
+    private string? _refusal;
+    private bool _saving;
+
+    private bool CanFile => Accounts.Identity.Login.Length > 0;
+
+    private bool Complete =>
+        !string.IsNullOrWhiteSpace(_description) && !string.IsNullOrWhiteSpace(_compliant)
+        && !string.IsNullOrWhiteSpace(_nonCompliant);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Accounts.EnsureLoadedAsync();
+        var catalog = Api.GetQueryCatalogAsync();
+        _list = await Api.GetQueryRequestsAsync();
+        _catalog = await catalog;
+        if (Asked.Request is { } asked)
+        {
+            Open(asked);
+        }
+    }
+
+    private void New() => Open(new QueryRequest());
+
+    private void Edit(QueryRequest request) => Open(request);
+
+    private void Open(QueryRequest request)
+    {
+        _draft = request;
+        _description = request.Description;
+        _compliant = request.Compliant;
+        _nonCompliant = request.NonCompliant;
+        _queryId = request.QueryId;
+        _kind = request.Kind;
+        _status = request.Status.Length == 0 ? "open" : request.Status;
+        _refusal = null;
+    }
+
+    private void Discard()
+    {
+        _draft = null;
+        _refusal = null;
+        Asked.Clear();
+    }
+
+    private void UseDraft(AgentDraft draft)
+    {
+        _description = draft.Description;
+        _compliant = draft.Compliant;
+        _nonCompliant = draft.NonCompliant;
+    }
+
+    private async Task Save()
+    {
+        if (_draft is null || !Complete)
+        {
+            return;
+        }
+        _saving = true;
+        try
+        {
+            var (list, refusal) = await Api.SaveQueryRequestAsync(_draft with
+            {
+                Description = _description,
+                Compliant = _compliant,
+                NonCompliant = _nonCompliant,
+                QueryId = _queryId.Trim(),
+                Kind = _kind,
+                Status = _status,
+                RequestedBy = _draft.RowId == 0 ? Accounts.Identity.Login : _draft.RequestedBy,
+            });
+            _refusal = refusal ?? (list is null ? Api.LastError : null);
+            if (list is not null)
+            {
+                _list = list;
+                _draft = null;
+                Asked.Clear();
+            }
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private static string FirstLine(string text)
+    {
+        var line = text.Split('\n', 2)[0].Trim();
+        return line.Length > 120 ? line[..117] + "…" : line;
+    }
+
+    /// <summary>
+    /// Every query a request may be about, once each: the catalog's, less what builds the graph and
+    /// what ran as a whole suite, which no request can change.
+    /// </summary>
+    public static IReadOnlyList<(string Id, string Source)> Choices(QueryCatalog? catalog) =>
+        catalog is null
+            ? []
+            : catalog.Queries
+                .Where(q => !q.Discovery && !q.Lane && q.QueryId.Length > 0)
+                .GroupBy(q => q.QueryId, StringComparer.Ordinal)
+                .Select(g => (g.Key, QueryCatalogView.SourceText(g.First().Source)))
+                .OrderBy(c => c.Key, StringComparer.Ordinal)
+                .ToList();
+
+    private static string CatalogHref(string queryId) =>
+        $"/codeql?tab=catalog&query={Uri.EscapeDataString(queryId)}";
+
+    private static string EvidenceText(QueryRequest request)
+    {
+        var alarms = request.Evidence.Count(e => e.Kind == "false-alarm");
+        var misses = request.Evidence.Count(e => e.Kind == "missed");
+        var parts = new List<string>();
+        if (alarms > 0) parts.Add(CountText.Of(alarms, "result", "results"));
+        if (misses > 0) parts.Add(CountText.Of(misses, "repository where nothing fired", "repositories where nothing fired"));
+        return $"{string.Join(" and ", parts)} picked from run #{request.SourceRunId}";
+    }
+
+    private static string KindText(string kind) => kind switch
+    {
+        "missed" => "missed detection",
+        "false-alarm" => "false alarm",
+        "both" => "both",
+        _ => "not said",
+    };
+
+    private static Color StatusColor(string status) => status switch
+    {
+        "open" => Color.Info,
+        "in-progress" => Color.Primary,
+        "done" => Color.Success,
+        _ => Color.Default,
+    };
+}
