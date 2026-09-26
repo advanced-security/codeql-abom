@@ -117,8 +117,7 @@ func createOnce(path, body string) error {
 		return err
 	}
 	if _, err := f.WriteString(body); err != nil {
-		f.Close()
-		return err
+		return errors.Join(err, f.Close())
 	}
 	return f.Close()
 }
@@ -148,8 +147,7 @@ func ScaffoldQuery(dir, name, id string, request int64) (string, string, error) 
 		return "", "", fmt.Errorf("custom queries: laying out src/%s.ql: %w", name, err)
 	}
 	if _, err := fmt.Fprintf(f, stubQuery, name, request, id); err != nil {
-		f.Close()
-		return "", "", fmt.Errorf("custom queries: laying out src/%s.ql: %w", name, err)
+		return "", "", fmt.Errorf("custom queries: laying out src/%s.ql: %w", name, errors.Join(err, f.Close()))
 	}
 	return query, tests, f.Close()
 }

@@ -287,9 +287,8 @@
     private async Task ReadUnvalued()
     {
         var keys = Scope.Spec.Properties.Select(p => p.Name).Distinct().ToList();
-        foreach (var key in keys)
+        foreach (var key in keys.Where(key => !_breakdowns.ContainsKey(key)))
         {
-            if (_breakdowns.ContainsKey(key)) continue;
             _breakdowns[key] = (await Api.GetPropertiesAsync(key))?.Breakdown;
         }
     }

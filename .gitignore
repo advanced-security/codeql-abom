@@ -20,6 +20,7 @@
 ## CodeQL query-test artifacts (.expected files are checked in; these are not)
 *.testproj/
 *.actual
+!internal/runner/testdata/testrun-*.actual
 
 ## ABOM artifacts and databases
 /analyses/

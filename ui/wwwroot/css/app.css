@@ -1180,7 +1180,7 @@ code {
 }
 .abom-request-field { min-width: 16rem; }
 .abom-request-description { white-space: pre-wrap; }
-.abom-request-summary { display: block; min-width: 24rem; }
+.abom-request-summary { display: block; min-width: 20rem; }
 
 /* Each step read out with its evidence: the strip's tooltips, without hovering. */
 .abom-request-steps {

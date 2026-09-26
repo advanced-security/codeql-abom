@@ -108,6 +108,40 @@ func TestAPackWithNoSuitesDirectoryContributesNothing(t *testing.T) {
 	}
 }
 
+func TestSuiteDirectoriesCannotEscapeTheirPack(t *testing.T) {
+	for _, escape := range []string{"parent", "absolute", "symlink"} {
+		t.Run(escape, func(t *testing.T) {
+			root := t.TempDir()
+			pack(t, root, "pack", "acme/queries", "codeql-suites", "safe.qls")
+			outside := filepath.Join(root, "outside")
+			if err := os.MkdirAll(outside, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(outside, "outside.qls"), []byte("- query: Outside.ql\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			suiteDirectory := "../outside"
+			switch escape {
+			case "absolute":
+				suiteDirectory = filepath.ToSlash(outside)
+			case "symlink":
+				suiteDirectory = "linked-suites"
+				if err := os.Symlink(outside, filepath.Join(root, "pack", suiteDirectory)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			manifest := "name: acme/queries\nversion: 1.0.0\nsuites: " + suiteDirectory + "\n"
+			if err := os.WriteFile(filepath.Join(root, "pack", "codeql-pack.yml"), []byte(manifest), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			suites, err := AvailableSuites(root)
+			if err == nil || len(suites) != 0 {
+				t.Fatalf("offered %v with error %v for a suite directory outside its pack", suites, err)
+			}
+		})
+	}
+}
+
 // Suites now live in several packs, so an interface offering only one pack's would silently hide
 // the findings lane. Every analysis pack contributes; the CI-only pack does not, which
 // TestTheSelfCheckPackIsNotOfferedAsABinding covers.

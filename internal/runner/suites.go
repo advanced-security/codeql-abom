@@ -85,14 +85,21 @@ func suitesOfPack(manifest string) ([]string, error) {
 	if name == "" || suiteDir == "" || ciOnlyPacks[name] {
 		return nil, nil
 	}
+	if !filepath.IsLocal(suiteDir) {
+		return nil, fmt.Errorf("suite directory %q must stay inside pack %s", suiteDir, name)
+	}
 
-	dir := filepath.Join(filepath.Dir(manifest), suiteDir)
-	entries, err := os.ReadDir(dir)
+	dir, err := os.OpenInRoot(filepath.Dir(manifest), suiteDir)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("reading suites in %s: %w", dir, err)
+		return nil, fmt.Errorf("opening suites in pack %s: %w", name, err)
+	}
+	defer dir.Close()
+	entries, err := dir.ReadDir(-1)
+	if err != nil {
+		return nil, fmt.Errorf("reading suites in pack %s: %w", name, err)
 	}
 
 	var out []string
