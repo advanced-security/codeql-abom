@@ -50,7 +50,7 @@ else
             </MudAlert>
         }
         <MudSimpleTable Dense="true" Hover="true" Striped="false" FixedHeader="true"
-                        Class="abom-grid abom-table abom-grid-windowed mb-2">
+                        Class="abom-grid abom-table abom-grid-windowed abom-declared-grid mb-2">
             <thead>
                 <tr>
                     <th>Account</th><th>Kind</th><th>Role</th><th>On</th><th>Scope</th>
@@ -158,7 +158,7 @@ else
                                 </MudTooltip>
                             }
                         </td>
-                        <td data-abom-listing="@a.Owner">
+                        <td class="abom-listing-cell" data-abom-listing="@a.Owner">
                             @{ var listing = ListingFor(a.Owner); }
                             <MudText Typo="Typo.caption" Class="d-block">
                                 Route: @(listing.Route switch { "graphql" => "GraphQL", "rest" => "REST", "" => "not recorded", _ => listing.Route })
@@ -169,6 +169,37 @@ else
                                     Full listing:
                                     <time datetime="@listing.ListedAt" title="@listing.ListedAt" data-abom-listed-at>@TimeText.DayAndTime(listing.ListedAt)</time>
                                 </MudText>
+                                @* Only a full listing establishes absence, so only here may nothing be missing. *@
+                                @if (listing.Missing.Count == 0)
+                                {
+                                    <MudText Typo="Typo.caption" Class="d-block mud-text-secondary" data-abom-listing-complete>
+                                        Nothing declared is missing from it.
+                                    </MudText>
+                                }
+                                else
+                                {
+                                    <div data-abom-listing-missing="@a.Owner">
+                                        <MudText Typo="Typo.caption" Class="d-block abom-unconfirmed">
+                                            @CountText.Of(listing.Missing.Count, "declared repository is", "declared repositories are")
+                                            missing from it, and no longer yours:
+                                        </MudText>
+                                        <ul class="abom-trace">
+                                            @foreach (var gone in listing.Missing)
+                                            {
+                                                <li>
+                                                    <MudText Typo="Typo.caption">
+                                                        <span class="abom-path">@gone.Repository</span>, since
+                                                        <time datetime="@gone.MissingAt" title="@gone.MissingAt" data-abom-missing-at>@TimeText.DayAndTime(gone.MissingAt)</time>
+                                                    </MudText>
+                                                </li>
+                                            }
+                                        </ul>
+                                        <MudText Typo="Typo.caption" Class="d-block mud-text-secondary">
+                                            Nothing was removed. What only these reached is offered under
+                                            Removing what you no longer own, which says what it takes before anything goes.
+                                        </MudText>
+                                    </div>
+                                }
                             }
                             else
                             {

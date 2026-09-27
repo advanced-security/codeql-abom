@@ -2,11 +2,13 @@ package enumerate
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/catalog"
+	"github.com/advanced-security/codeql-abom/internal/graph"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
@@ -137,14 +139,119 @@ func TestOnlyAFullListingCanSayARepositoryIsGone(t *testing.T) {
 			report.Accounts[0].Missing, report.Accounts[0].MissingKnown)
 	}
 
-	// Naming what is absent is not the same as removing it, and which of those should happen is
-	// an open question. Deciding it here, silently, would destroy coverage nobody agreed to lose.
 	owned, err := s.OwnedRepositories()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(owned) != 1 {
-		t.Errorf("corpus holds %v, want the absent repository kept until somebody decides", owned)
+	if len(owned) != 0 {
+		t.Errorf("active owned roots = %v, want the absent repository excluded", owned)
+	}
+	origin, err := s.RepositoryOrigin("has-ghas/vanished")
+	if err != nil || origin != store.OriginSeed {
+		t.Errorf("stored provenance = %q, error = %v; want the seed evidence retained", origin, err)
+	}
+}
+
+// A full listing that no longer names a repository removes nothing. What the repository alone
+// reached is what no longer belongs, and the prune in Settings says what it would remove before
+// anybody accepts it: removing it here, on a timer, would take out real evidence whenever a
+// listing under-reports without failing, as one read without a token did when it found 91 of 181.
+func TestAFullListingRemovesNothingAndLeavesWhatItLostToThePrune(t *testing.T) {
+	s := newStore(t)
+	repositories := map[string]int64{}
+	for _, name := range []string{"has-ghas/app", "has-ghas/shared", "has-ghas/vanished", "stranger/unrelated"} {
+		id, err := s.InsertOwnedRepository(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		repositories[name] = id
+	}
+	writer := store.NewWriter(s, 0)
+	for name, id := range repositories {
+		if err := writer.AddNode(store.Node{Key: name + "/.github/workflows/ci.yml", Kind: "workflow",
+			RepositoryID: id, Repo: name, Path: ".github/workflows/ci.yml"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, target := range []store.Node{
+		{Key: "has-ghas/shared", Kind: "action", Owner: "has-ghas", Repo: "shared", IsExternal: true},
+		{Key: "upstream/only-vanished-uses", Kind: "action", Owner: "upstream", Repo: "only-vanished-uses", IsExternal: true},
+	} {
+		if err := writer.AddNode(target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, edge := range []store.Edge{
+		{Key: "app-shared", SrcKey: "has-ghas/app/.github/workflows/ci.yml", DstKey: "has-ghas/shared",
+			Kind: "step-uses-action", RepositoryID: repositories["has-ghas/app"], FilePath: ".github/workflows/ci.yml", StartLine: 4},
+		{Key: "vanished-only", SrcKey: "has-ghas/vanished/.github/workflows/ci.yml", DstKey: "upstream/only-vanished-uses",
+			Kind: "step-uses-action", RepositoryID: repositories["has-ghas/vanished"], FilePath: ".github/workflows/ci.yml", StartLine: 4},
+	} {
+		if err := writer.AddEdge(edge); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	live := func() int {
+		var n int
+		if err := s.DB().QueryRow(`SELECT COUNT(*) FROM abom_node_live`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	explained := func() store.PruneReport {
+		keep, _, err := (&graph.Builder{Store: s}).KeepList()
+		if err != nil {
+			t.Fatal(err)
+		}
+		report, err := s.ExplainOutsideClosure(keep)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return report
+	}
+	before, beforeLive := explained(), live()
+
+	listed := &reader{listings: []catalog.Listing{{Full: true, Route: catalog.RouteGraphQL,
+		Repositories: []catalog.Repository{{FullName: "has-ghas/app"}, {FullName: "has-ghas/shared"}}}}}
+	report, err := Run(context.Background(), Options{Store: s, Read: listed.read})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := report.Accounts[0]; got.Missing != 1 || !got.MissingKnown {
+		t.Fatalf("the listing reported missing=%d known=%v, want 1 known", got.Missing, got.MissingKnown)
+	}
+	if got := live(); got != beforeLive {
+		t.Errorf("the listing left %d live nodes of %d; an enumeration removes nothing", got, beforeLive)
+	}
+	after := explained()
+	if after.Nodes-before.Nodes != 2 || after.Edges-before.Edges != 1 {
+		t.Errorf("the prune would remove %+v after the listing and %+v before, want exactly the missing "+
+			"repository's workflow and the dependency only it used on top", after, before)
+	}
+}
+
+func TestFailedReadsAndSweepsPreserveActiveRepositories(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		s := newStore(t)
+		if _, err := s.InsertOwnedRepository("has-ghas/kept"); err != nil {
+			t.Fatal(err)
+		}
+		read := func(context.Context, string, catalog.Marks) (catalog.Listing, error) {
+			if fail {
+				return catalog.Listing{}, errors.New("access refused")
+			}
+			return catalog.Listing{Full: false}, nil
+		}
+		if _, err := Run(context.Background(), Options{Store: s, Read: read}); err != nil {
+			t.Fatal(err)
+		}
+		owned, err := s.OwnedRepositories()
+		if err != nil || len(owned) != 1 {
+			t.Fatalf("failed=%v: active roots=%v, error=%v", fail, owned, err)
+		}
 	}
 }
 

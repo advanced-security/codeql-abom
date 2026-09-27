@@ -1,26 +1,43 @@
 # Analyze the commit the workflow actually locks
 
-**Status:** the lock is read at the analyzed commit and its coverage recorded per workflow;
-selection still follows the declared reference.
+**Status:** the lock is read at the analyzed commit with its whole graph, and discovery queues the
+commit it selects beside the declared ref; every reader still describes the declared ref.
 
 ## Why this exists
 
 A workflow can request `owner/action@v1` while its native lock deliberately selects an older SHA
-than `v1` points to today. ABOM currently probes live references and can therefore analyze code
-different from the code that locked workflow selects. Two consuming repositories can also lock the
-same tag to different commits. Neither a global tag cache nor an optional lock lookup fixes that.
+than `v1` points to today. Two consuming repositories can also lock the same tag to different
+commits. Neither a global tag cache nor an optional lock lookup fixes that.
 
-**Native lock-aware resolution is the gold standard and the default design.** Automatically read
-the lock belonging to the analyzed workflow revision. Preserve its symbolic version context and
-its immutable execution identity, rather than choosing between readable refs and reproducible code.
-Missing native coverage remains supported and explicit; broken locks never silently select a live
-tag instead. Platform enforcement and advisory matching remain separately evidenced capabilities.
+**Measured 2026-09-27 on every public lock GitHub code search returns** — 243 repositories, each
+lock read at its default branch's head with the pinned parser, and every symbolic pin compared
+with `git ls-remote <ref> <ref>^{}`, peeled line preferred: 240 parse at schema `v0.0.2` and 3 are
+unsupported. Of 5,007 pins, 2,199 are keyed by commit, 2,634 symbolic pins select what their ref
+resolves to today, and **174 select something else**, in 94 consumers. The corpus is lopsided:
+212 of the 243 repositories belong to two owners, and outside them only 1 of 181 symbolic pins
+has moved. `dtolnay/rust-toolchain@v1` is the plan's premise measured: 21 consumers lock today's
+commit, 4 lock `6c977a6c` and 2 lock `e97e2d8c` — three commits behind one requested tag. One
+lock records an annotated tag's own object as its commit (`haskell-actions/setup@v2.12.1`). The
+crawled organization carries no lock at all (7,704 coverage rows, every one `not_onboarded`), so
+nothing a reader shows there can move until one arrives.
 
-The existing `/.github/` sparse checkout already contains the lock. `commitWithoutFetching` lacks
-consumer context, the frontier is unique on `(node_key, ref)`, and `fetch` still passes `b.ref` on
-a cache miss. A probe-only wrapper could choose a locked SHA on a warm cache and fetch today's tag
-on a cold one. `SubmissionClosure` also joins through the frontier's single resolved SHA; readers
-claiming an effective execution graph must eventually use the consumer's selected revision.
+**What the pinned CLI actually writes, read from its v0.1.6 source and from a lock it generated
+in an isolated tree**, which settled which lock governs what:
+
+- A workflow's own steps are governed by its repository's lock, for that workflow only.
+- A composite action's nested `uses:` are governed by **the caller's** lock. The CLI resolves a
+  composite's `action.yml` recursively and records its nested pins in the root lock's DAG; it
+  never reads the callee's lock. One pin key names one commit per lock, however it is reached.
+- A workflow entry lists **the pins the workflow and its own `$/` composites name**, refuting the
+  parser's own claim that it is the flat transitive closure: a remote composite's nested pin is
+  reachable through its parent's `uses:` and nowhere else.
+- `$/` inside a composite resolves in the composite's own repository at its selected commit, and
+  at the running commit in the consumer; neither has a lock entry. A local `./` action keeps a
+  workflow from being onboarded. A remote reusable workflow is outside the `v0.0.2` grammar.
+- Pins collapse subpaths: `actions/cache/save@v4` and `actions/cache@v4` are one entry.
+
+That is generation semantics. That the runner enforces a nested pin is still unobserved; the
+[tooling plan](../tools/actions-lock.md) owns measuring it on an approved target.
 
 ## Evidence contract
 
@@ -36,6 +53,10 @@ owner/repository IDs as attributed identity evidence, not SQLite row IDs or an o
 | Supported lock with relevant entries | Contextual locked selection with its verification state stated separately |
 | Malformed, inconsistent, unsupported or incomplete lock | Named coverage failure; no silent live-tag substitute |
 | Native verification unavailable or inconclusive | Unverified selection evidence, not a verified or safe workflow |
+
+Every entry is validated, not only those a workflow lists: any entry can become a selection, so a
+lock with one malformed entry is unsupported as a whole rather than read in part. A digest of the
+wrong length or alphabet selects nothing whatever the parser allowed.
 
 Direct SHA references retain their existing pin evidence even without a native lock. A symbolic
 ref is not automatically a semantic version, and a structurally valid lock does not prove its
@@ -54,74 +75,51 @@ flowchart LR
     COV -->|"digest, not the<br/>ref field"| SEL["selected commit"]
     BAD -. "never falls back" .-> SEL
     ABSENT -. "never falls back" .-> SEL
-    SEL -. "selection not yet wired<br/>into acquisition" .-> FRONTIER["frontier ref"]
+    SEL -->|"queued beside<br/>the declared ref"| FRONTIER["frontier row<br/>at the commit"]
+    FRONTIER -. "readers still join<br/>the declared ref" .-> READERS["effective view"]
     style BAD fill:#3d1d1d
-    style FRONTIER fill:#3d2d1d
+    style READERS fill:#3d2d1d
 ```
+
+**Why the declared ref stays queued.** Every reader that joins an edge to the frontier does it on
+`(node_key, ref_value)`, which is the source as written. Queuing the selected commit *instead*
+would leave a locked consumer's dependency with no row there, and every total would call it
+unexamined. Beside it, nothing a reader says moves until it is taught the effective view, and an
+unlocked consumer of the same pin still runs what the tag names. When the selected commit is the
+one the tag resolves to — 94% of symbolic pins in the wild — the second row costs no evaluation:
+it is answered from the ledger or the checkout cache.
 
 ## Pending
 
-1. **Prove the native contract before choosing nested pins.** Use pinned native fixtures and the
-   compatibility work in [actions-lock.md](../tools/actions-lock.md) to establish which lock governs
-   nested composites, reusable workflows and `$/` references: caller, callee or a documented
-   combination. Resolve conflicting contexts explicitly. Do not implement production precedence by
-   guessing or unioning every lock encountered. This spike can start independently of deployment.
-   The parser already answers part of it: `Action.Uses` carries each dependency's direct nested
-   `uses:` as canonical pin keys, and `File.Workflows` is the flat transitive closure per workflow,
-   so the nested DAG is recorded rather than needing reconstruction. What that does not settle is
-   which lock wins when a callee carries its own.
-2. **Ingest the lock's graph evidence.** Coverage per workflow is recorded; the dependency DAG in
-   `Action.Uses` is not, nor are the numeric owner/repository IDs that detect a transferred
-   repository. Keep native graph evidence separate from source declarations; no invented declaring
-   line or finding for a lock-only dependency. Compare readers using
-   [dependency-graph-crosscheck.md](../api/dependency-graph-crosscheck.md).
-3. **Measure how much selection actually diverges.** Measured 2026-09-20: of 60 corpus
-   repositories, 59 carry no lockfile and one carries a deliberately unsupported fixture, so
-   **nothing in the corpus is covered** and the divergence question cannot be asked of it. This
-   repository is covered at schema `v0.0.2` — 35 selections, 0 missing, 4 references outside the
-   format — and every locked commit agrees with what its tag resolves to today, so lock-aware
-   selection would currently change nothing here either. Selection work therefore needs a
-   purpose-built fixture where a lock and a live tag genuinely disagree; until one exists, items 4
-   through 7 are unvalidatable rather than merely unstarted. Depends on 2 for the entry data.
-4. **Bind consumer contexts to reusable analysis work.** Represent different selected commits for
-   identical requested tags without overwriting either consumer. The relation is decided: enqueue
-   the selected commit as the frontier `ref`. Nothing widens the `(node_key, ref)` key, the
-   declared ref stays on the edge where `ref_raw`/`ref_value`/`pin_comment` already hold it, and
-   two consumers that lock the same commit share one row — which is correct, because analysis
-   identity is repository/commit, not consumer count. Two consequences shrink item 5:
-   `commitWithoutFetching` already short-circuits on `isCommit`, and `DueForRecheck` already
-   excludes a ref equal to its resolved commit, so a locked selection stops being drift-probed
-   without new logic. Preserve declared ref, action subpath and governing context through frontier
-   scheduling and recursive traversal. Depends on the precedence decision in 1 and the evidence
-   in 2.
-5. **Honor the selected commit on every acquisition path.** Change selection through precheck,
-   cache hit, cold fetch, no-cache and retry paths together. Reuse the built
-   [checkout cache](checkout-cache.md); verify the fetched commit and retain raw-ref provenance.
-   Live rechecks may report drift without repinning a locked consumer. Existing moved-tag behavior
-   remains correct for consumers using declared-ref resolution. Depends on 4.
-6. **Invalidate the context, not unrelated analyses.** A root lock change must invalidate affected
-   resolution/closure projections even if source `uses:` values are unchanged. Include lock and
-   interpretation inputs in the identity of the derivation that consumes them. Preserve
-   `QueryRun.key()`'s content-based reuse for identical upstream evaluations and attach each
-   consumer separately. Review content-equivalence and skip paths so a new lock is not ignored.
-   Depends on 4 and 5; [ref-provenance.md](ref-provenance.md) owns run attribution.
-7. **Carry effective selection into readers.** Review closure, graph, exposure, reach and BOM joins
-   that claim to describe executed dependencies, including `submissionClosureQuery`. Preserve
-   declared-versus-effective views and unknown coverage rather than silently changing the meaning
-   of a legacy aggregate. Propagate the context through API and interface, and explain any corrected
-   totals. [closure-database.md](../ql/closure-database.md) consumes this contract before staging;
-   it does not implement another selector. Depends on 4 through 6.
-8. **Consume native verification without inventing verdicts.** Run the pinned CLI only as an
+1. **Re-read a lock whose interpretation changed.** A reading records the lock's coverage and
+   graph once per commit, and a commit on record is never read again. A parser upgrade that newly
+   supports a schema recorded as `unsupported` therefore changes nothing on commits already read.
+   Record which parser read each lock and re-read on a change; that fetches the tree and runs no
+   CodeQL, because the evaluations are already on record.
+2. **Carry effective selection into readers.** Readers join edges to the frontier on the declared
+   ref, so closure, graph, exposure, reach, BOM and `submissionClosureQuery` describe the declared
+   view. The evidence an effective view needs exists: `abom_lock_workflow_pin` and the DAG say which
+   commit a consumer's edge selects, the frontier row at that commit says what was analyzed there,
+   and `abom_edge_sighting` keeps which edges each commit's run saw even where two commits' edges
+   share an identity. Preserve declared-versus-effective views and unknown coverage rather than
+   silently changing the meaning of a legacy aggregate; only the lock at a commit the consumer
+   currently resolves to describes it. Propagate the context through API and interface — the
+   queue already shows a locked selection, as a row at a commit, with nothing saying that a lock
+   chose it or whose — explain any corrected totals, and decide there whether a declared-ref row
+   no consumer runs is still worth analyzing. [closure-database.md](../ql/closure-database.md)
+   consumes the selection before staging; it does not implement another selector.
+3. **Consume native verification without inventing verdicts.** Run the pinned CLI only as an
    explicitly requested, budgeted no-fix operation, never in a getter or on every render. Store
    tool/schema version, verification time, mode, categories and inconclusive/error states. Unknown
    categories and tool failures cannot become success. Do not rename native diagnostics into
    fabricated CodeQL rule IDs or suppress query findings because a lock exists. Assess upstream
-   CodeQL lock modeling with real query fixtures before changing any rule-level claim. Depends on
-   2 and the tool contract, not on writing a replacement verifier.
-9. **Let declared policy use the recorded coverage.** Any policy requirement for native locking
+   CodeQL lock modeling with real query fixtures before changing any rule-level claim. A digest
+   that names an annotated tag's object rather than a commit is one such finding, and the frontier
+   already shows it as a row whose resolved commit is not its ref.
+4. **Let declared policy use the recorded coverage.** Any policy requirement for native locking
    must be explicit, enforceable and simulated. A missing or unsupported lock is not an automatic
    vulnerability verdict. The thin `abom-check` client reads server evidence and policy; it does
-   not scan or repair locks locally. Depends on 7 and 8 and the existing policy/gate plans.
+   not scan or repair locks locally. Depends on 2 and 3 and the existing policy/gate plans.
 
 ## The constraints that must not be broken
 
@@ -137,7 +135,14 @@ security verdict. Full semver tags can move too.
 
 **One checkout can serve many contexts; one context cannot borrow another's answer.** Distinct
 subfolder entrypoints and selected commits retain their relationships even when bytes are fetched
-once. An absent account, native identity or verification result is not a guessed value.
+once. An absent account, native identity or verification result is not a guessed value. A pin
+locked for one workflow is not an answer for another workflow of the same repository, and a lock
+the frontier has moved past answers for nothing.
+
+**A commit ref is never drift-probed.** It cannot move, and a probe of one finds no ref by that
+name and reports the dependency gone. That held already for a ref equal to its resolved commit;
+it now holds for any full commit id, because an annotated tag's object id checks out as the
+commit under it and the two disagree without anything having moved.
 
 **No hidden fallback or mutation.** Continue recording declarations with explicit coverage gaps
 when effective selection is unknown. Do not label that result locked, empty or complete. ABOM does
@@ -149,19 +154,25 @@ or make ordinary single-repository analysis interprocedural across the entire cl
 
 ## Verification
 
-- Two roots use the same tag but lock different commits: both cold and warm runs select their own
-  code and callee edges/findings, without cross-context union or last-writer replacement.
+- Two roots use the same tag but lock different commits: each consumer's view reports its own
+  commit's edges and findings, without cross-context union or last-writer replacement. The
+  analysis half holds on real consumers: `metadatastician/cleave` and `hyperpolymath/bitfuckit`
+  lock `dtolnay/rust-toolchain@v1` to `e97e2d8c` and `6c977a6c`, and both are analyzed beside
+  today's `02cb101e`, whose run sighted two CI edges neither locked commit has.
 - A live tag moves beyond the locked SHA: locked selection remains unchanged with caching enabled,
   disabled or evicted; the ordinary no-lock moved-tag test still passes. Two consumers of one
   commit share fetching and evaluation but preserve both attribution records.
-- Exercise same-repository subpaths, different refs, nested composites/reusable workflows,
-  `./` and `$/`, caller/callee conflicts and native depth limits. Compare selected revisions with
-  the native semantics proved in item 1 rather than assuming any lock found governs the traversal.
+- Exercise same-repository subpaths, different refs, nested composites, `$/` composites in the
+  consumer, and native depth limits against the generation semantics recorded above, rather than
+  assuming any lock found governs the traversal. A consumer's own composite takes its pins from
+  the workflows that reach it and from no other. Remote reusable workflows stay declared-ref.
 - Cover missing/not-onboarded/empty/invalid/future-schema states, digest algorithms, identity
   mismatch, redirects, case and host variants, denied reads and inconclusive verification.
   Unsupported input is visible and cannot silently become today's tag.
 - A lock-only root change re-derives the affected context while unchanged dependency analyses are
-  reused. Parser/interpretation upgrades invalidate their own results without duplicate CodeQL runs.
+  reused; the digest already covers the lock, so such a commit is never content-equivalent to its
+  predecessor. Parser/interpretation upgrades invalidate their own results without duplicate
+  CodeQL runs.
 - Before/after checks use a SQLite backup. The no-lock path is behavior-preserving; explain every
   changed selected revision and aggregate on locked examples instead of requiring incorrect old
   answers to remain equal. Source refs and query provenance never change to match a projection.
@@ -177,7 +188,8 @@ GitHub's [shared format and Go parser](https://github.com/github/actions-lockfil
 and [parser implementation](https://github.com/github/actions-lockfile/blob/go/v0.0.4/go/pkg/lockfile/lockfile.go)
 are the integration surface, not a schema to reimplement. The
 [native CLI](https://github.com/github/gh-actions-lock/blob/v0.1.6/README.md),
-[resolver](https://github.com/github/gh-actions-lock/blob/v0.1.6/internal/resolve/resolver.go)
+[resolver](https://github.com/github/gh-actions-lock/blob/v0.1.6/internal/resolve/resolver.go),
+[composite discovery](https://github.com/github/gh-actions-lock/blob/v0.1.6/internal/resolve/discovery.go)
 and [JSON contract tests](https://github.com/github/gh-actions-lock/blob/v0.1.6/cmd/gh-actions-lock/check_json_golden_test.go)
 inform the semantics and consumer checks. This builds on native functionality; it does not claim
 that every host already enforces it or that lock-backed transitive DG/advisory ingestion has shipped.

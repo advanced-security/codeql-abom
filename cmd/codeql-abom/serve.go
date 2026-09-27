@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/catalog"
+	"github.com/advanced-security/codeql-abom/internal/compare"
 	"github.com/advanced-security/codeql-abom/internal/declare"
 	"github.com/advanced-security/codeql-abom/internal/enumerate"
 	"github.com/advanced-security/codeql-abom/internal/expand"
@@ -62,7 +63,8 @@ func wireEnumeration(
 	}
 }
 
-// reclaimAbandonedWork settles queue rows and runs a stopped server left claimed, before serving.
+// reclaimAbandonedWork settles queue rows, runs and comparisons a stopped server left claimed,
+// before serving.
 func reclaimAbandonedWork(s *store.Store, queue *frontier.Queue, stdout, stderr io.Writer) {
 	if n, err := queue.ReclaimOrphaned(); err != nil {
 		fmt.Fprintf(stderr, "serve: reclaiming abandoned work: %v\n", err)
@@ -74,6 +76,11 @@ func reclaimAbandonedWork(s *store.Store, queue *frontier.Queue, stdout, stderr 
 		fmt.Fprintf(stderr, "serve: marking abandoned analysis runs: %v\n", err)
 	} else if n > 0 {
 		fmt.Fprintf(stdout, "serve: %d analysis runs were interrupted when the server last stopped\n", n)
+	}
+	if n, err := s.InterruptAbandonedComparisons(); err != nil {
+		fmt.Fprintf(stderr, "serve: marking abandoned comparisons: %v\n", err)
+	} else if n > 0 {
+		fmt.Fprintf(stdout, "serve: %d comparisons were interrupted when the server last stopped\n", n)
 	}
 	if n, err := s.InterruptAuthoringSessions(); err != nil {
 		fmt.Fprintf(stderr, "serve: marking abandoned authoring sessions: %v\n", err)
@@ -184,7 +191,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		"expose /api/metrics and /debug/pprof/ for local performance analysis")
 	apiURL := fs.String("api-url", defaultAPIURL(), "GitHub API base URL")
 	// How stale the list of repositories may get. A read is bounded by what moved since the last
-	// one rather than by how big the account is; see plans/api/org-enumeration.md.
+	// one rather than by how big the account is; see docs/architecture.md on reading an account.
 	enumerateEvery := fs.Duration("enumerate-every", supervisor.DefaultEnumerateEvery,
 		"how often the declared accounts are re-read for new repositories (0: never)")
 	// Only a full listing can establish that a repository is gone, so sweeping forever keeps dead
@@ -350,6 +357,8 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	srv.Enumerate = reader.Sweep
 	srv.EnumerateSchema = reader.PropertySchema
+	// The same client, so reading alerts is paced and cached with every other read of GitHub.
+	srv.Comparer = &compare.Comparer{Store: s, Read: reader}
 	srv.FullListingEvery = *listEvery
 	srv.GroupProperty = *groupProperty
 	srv.QueueOwned = func() (int, error) { return expand.SeedOwnedRepositories(s, loop.Queue) }

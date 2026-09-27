@@ -7,14 +7,16 @@ ABOM should consume those capabilities, not compete with them. Its role is to co
 workflow selects with source-level findings, ownership, reach and operator policy across an
 organization, including private actions and explicit coverage gaps.
 
-**Native lock-aware resolution is the design baseline; ABOM's reader is not built yet.** The
-existing crawl still resolves declared references. The [resolution plan](../plans/db/actions-lockfile.md)
-closes that correctness gap before extended closure analysis is built.
+**Native lock-aware resolution is the design baseline, and half of it is built.** The crawl reads
+each lock at the analyzed commit and analyzes the commit it selects beside the declared reference;
+what ABOM reports still describes the declared reference. The
+[resolution plan](../plans/db/actions-lockfile.md) closes that gap before extended closure
+analysis is built.
 
 ```mermaid
 flowchart LR
   WF["Workflow source"] --> LOCK["Native Actions lock<br/>refs, commits and dependency links"]
-  LOCK -. "planned ABOM consumption" .-> SELECT["Context-selected code"]
+  LOCK -->|"analyzed at the selected commit"| SELECT["Context-selected code"]
   SELECT --> QL["CodeQL findings and source relationships"]
   QL --> ORG["Ownership, reach, coverage and policy"]
   LOCK -. "verify each product outcome" .-> GH["GitHub inventory and remediation"]

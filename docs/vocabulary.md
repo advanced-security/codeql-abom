@@ -77,6 +77,7 @@ file paths. Reporting build-time work as though this organization ran it would o
 | **Analyzed** | A query ran against it and the result was ingested |
 | **Unanalyzed** | Known to exist, nothing has looked |
 | **Nothing to analyze** | Looked, and there was no database or no workflow |
+| **Missing** (from a full listing) | A declared repository the last full listing of its account did not name. No longer yours, and nothing removed for it; what only it reached is what the prune offers. Only a full listing can say it, and only one can say nothing is missing |
 
 A reader must be able to tell "we have not looked" from "there was nothing to look at", because
 only one of them is work somebody can do. Partial coverage is its own state, not a rounding of
@@ -133,15 +134,23 @@ evidence. Neither a lock context nor a query's source substitutes for this datab
 | **Convert** | Make findings of what a held run kept — all of it, one repository, or chosen results — recording who did it and from which run |
 | **Skipped** | A run's repository already answered by an earlier run with the same versions, commit and CLI, and carrying that answer |
 | **Interrupted** | A run the server stopped under: neither finished nor canceled |
+| **Comparison** | A finished regular run's results set against the code scanning alerts GitHub holds now. It reads and writes nothing back |
+| **Would add** | What adopting a run's queries would put in front of developers: **new** results no alert stands for, and results **reopening** a fixed alert. Never the run's total |
+| **Already alerted** | A result an open or dismissed alert already stands for, by rule and place. It adds nothing |
+| **Not compared** | A repository a comparison names and leaves out of its count, with why: no results, results counted before their evaluation was kept, no code scanning analysis, no Actions analysis, or not read |
+| **Measured** / **an inference** | A repository analyzed at the commit and under the CodeQL GitHub's alerts describe, or one where either differs |
+| **Current**, **behind**, **ahead**, **diverged**, **unknown** | How the commit analyzed relates to the default branch when a comparison read it. Unknown where the branch could not be read, never current by default |
 
 A query id names a rule; a query *version* names the code behind it, which is what a stage, a test
 result and a run all attach to. Source comes from the pack, never from the id: a prefix is a naming
 convention anybody can adopt. *Custom* is authorship; *yours* is ownership, and the two never
 share a word.
 
-Advancing a stage is an act somebody signs, never something ABOM awards. `test` and
-`extended-test` are the rungs that are earned — the first requires that version's own tests to
-pass, the second every step but the target, which belongs to a request — and the rest record intent until the evidence behind them exists.
+Advancing a stage is an act somebody signs, never something ABOM awards. `test`, `extended-test`
+and `review` are the rungs that are earned — the first requires that version's own tests to
+pass, the second every step but the target, which belongs to a request, and the third a
+comparison of a run of that version under the CodeQL the server runs — and `deploy` records intent
+until the evidence behind it exists.
 A warning is evidence gone stale, never a guess.
 
 ## Enablement

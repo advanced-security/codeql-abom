@@ -1,0 +1,298 @@
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@implements IDisposable
+@inject AbomApi Api
+@inject AccountService Accounts
+
+@* A run's results against the alerts developers already see: what adopting its queries would add. *@
+@if (Offered)
+{
+    <div class="mb-2" data-abom-comparison>
+        @if (Run.Mode != "regular")
+        {
+            <MudText Typo="Typo.caption" Class="d-block mud-text-secondary" data-abom-comparison-refused>
+                A comparison with code scanning alerts reads a regular run only. This run analyzed @Run.Mode
+                databases, and Default Setup builds each repository's own checkout, so it would never raise
+                what they show.
+            </MudText>
+        }
+        else
+        {
+            <div class="d-flex align-center gap-2">
+                <MudText Typo="Typo.body2" Class="mud-text-secondary" data-abom-comparison-heading>
+                    @HeadingText
+                </MudText>
+                <MudSpacer />
+                @* The reason sits on the span: a disabled button fires no tooltip. *@
+                <span data-abom-comparison-start title="@StartReason">
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                               StartIcon="@Icons.Material.Outlined.CompareArrows"
+                               Disabled="@(!CanCompare)" OnClick="Start">
+                        @(_comparison is null ? "Compare with code scanning alerts" : "Compare again")
+                    </MudButton>
+                </span>
+            </div>
+            @if (_refusal is { Length: > 0 } refusal)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-1" data-abom-comparison-refusal>@refusal</MudAlert>
+            }
+            @if (_comparison is { } c)
+            {
+                @Body(c)
+            }
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public AnalysisRun Run { get; set; } = default!;
+
+    private Comparison? _comparison;
+    private string? _refusal;
+    private bool _starting;
+    private long _loadedFor;
+    private Timer? _timer;
+
+    private static readonly TimeSpan WhileReading = TimeSpan.FromSeconds(3);
+
+    /// <summary>Offered once a run has stopped with something counted: results still moving compare to nothing.</summary>
+    private bool Offered => Run is { State: not ("pending" or "running") } && Run.Members.Any(m => m.Counted);
+
+    protected override async Task OnInitializedAsync() => await Accounts.EnsureLoadedAsync();
+
+    // Read once per run that has stopped: the run page re-renders this on its own beat.
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!Offered || Run.Mode != "regular" || _loadedFor == Run.RowId)
+        {
+            return;
+        }
+        _loadedFor = Run.RowId;
+        var listed = await Api.GetRunComparisonsAsync(Run.RowId);
+        if (listed?.Comparisons.FirstOrDefault() is { } newest)
+        {
+            await Load(newest.RowId);
+        }
+    }
+
+    private async Task Load(long id)
+    {
+        _comparison = await Api.GetComparisonAsync(id) ?? _comparison;
+        if (_comparison?.State == "running")
+        {
+            _timer ??= new Timer(async _ =>
+            {
+                try
+                {
+                    await Load(id);
+                }
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+                {
+                    return;
+                }
+                await InvokeAsync(StateHasChanged);
+            }, null, WhileReading, WhileReading);
+        }
+        else
+        {
+            _timer?.Dispose();
+            _timer = null;
+        }
+    }
+
+    private bool CanCompare => !_starting && Accounts.Identity.Login.Length > 0 && _comparison?.State != "running";
+
+    private string StartReason => Accounts.Identity.Login.Length == 0
+        ? "Sign in with gh: a comparison records who asked for it."
+        : _comparison?.State == "running"
+            ? "This comparison is still reading code scanning alerts."
+            : "Read the code scanning alerts GitHub holds now for these repositories and set this run's results against them. Nothing is written to GitHub.";
+
+    private async Task Start()
+    {
+        if (!CanCompare)
+        {
+            return;
+        }
+        _starting = true;
+        try
+        {
+            var (started, refusal) = await Api.StartComparisonAsync(Run.RowId, Accounts.Identity.Login);
+            _refusal = refusal;
+            if (started is not null)
+            {
+                _comparison = started;
+                await Load(started.RowId);
+            }
+        }
+        finally
+        {
+            _starting = false;
+        }
+    }
+
+    public void Dispose() => _timer?.Dispose();
+
+    private string HeadingText => _comparison is not { } c
+        ? "Not compared with code scanning alerts. A comparison says what adopting these queries would add to what developers already see."
+        : $"Comparison #{c.RowId}, asked for by {c.RequestedBy} {TimeText.DayAndTime(c.CreatedAt)}, of results CodeQL {(c.CliVersion.Length == 0 ? "not recorded" : c.CliVersion)} produced.";
+
+    private static string QueriesText(Comparison c) =>
+        c.Queries.Select(q => q.QueryId).Distinct().ToList() is [var only] ? only : "these queries";
+
+    private RenderFragment Body(Comparison c) => __builder =>
+    {
+        var compared = c.Members.Where(m => m.Status == "compared").ToList();
+        var notCompared = c.Members.Where(m => m.Status == "not_compared").ToList();
+        @if (c.State == "running")
+        {
+            <MudText Typo="Typo.body2" data-abom-comparison-reading>
+                Reading code scanning alerts: @CountText.Of(c.Pending, "repository", "repositories") still to read.
+            </MudText>
+        }
+        else if (c.State == "interrupted")
+        {
+            <MudText Typo="Typo.body2" data-abom-comparison-interrupted>
+                This comparison stopped with @CountText.Of(c.Pending, "repository", "repositories") unread; what
+                follows covers only what it read. Compare again for the rest.
+            </MudText>
+        }
+        @if (compared.Count > 0)
+        {
+            <MudText Typo="Typo.body2" Class="mt-1" data-abom-comparison-totals>
+                Adopting @QueriesText(c) would add @CountText.Of(c.Totals.Adds, "alert", "alerts") across
+                @compared.Count of @CountText.Of(c.Members.Count, "repository", "repositories"):
+                @c.Totals.New new and @c.Totals.Reopens reopening a fixed alert.
+                Of the @CountText.Of(c.Totals.Results, "result", "results") compared, @c.Totals.Open already open
+                and @c.Totals.Dismissed already dismissed add nothing.
+            </MudText>
+            @if (c.Totals.Missed > 0)
+            {
+                <MudText Typo="Typo.caption" Class="d-block mud-text-secondary" data-abom-comparison-missed>
+                    @CountText.Of(c.Totals.Missed, "open alert", "open alerts") for these rules
+                    @(c.Totals.Missed == 1 ? "was" : "were") not reported by this run, and
+                    @(c.Totals.Missed == 1 ? "stays" : "stay"), raised by what the repositories already run.
+                </MudText>
+            }
+        }
+        else if (c.State != "running")
+        {
+            <MudText Typo="Typo.body2" data-abom-comparison-none>
+                No repository in this run could be compared, so nothing is said about what adopting
+                @QueriesText(c) would add. Each is named below with why.
+            </MudText>
+        }
+        <MudText Typo="Typo.caption" Class="d-block mud-text-secondary mt-1" data-abom-comparison-condition>@c.Condition</MudText>
+        <MudText Typo="Typo.caption" Class="d-block mud-text-secondary" data-abom-comparison-merge>@c.Merge</MudText>
+        <MudText Typo="Typo.caption" Class="d-block mud-text-secondary" data-abom-comparison-boundary>@c.Boundary</MudText>
+        @if (notCompared.Count > 0)
+        {
+            <div class="mt-1" data-abom-comparison-not-compared>
+                <MudText Typo="Typo.caption" Class="d-block">
+                    Not compared, so not in the count:
+                </MudText>
+                <ul class="abom-trace">
+                    @foreach (var m in notCompared)
+                    {
+                        <li>
+                            <MudText Typo="Typo.caption">
+                                <span class="abom-path">@m.Repository</span>
+                                @(m.Counted ? $" ({CountText.Of(m.Counts.Results, "result", "results")})" : "") — @m.Detail
+                            </MudText>
+                        </li>
+                    }
+                </ul>
+            </div>
+        }
+        @if (compared.Count > 0)
+        {
+            <MudSimpleTable Dense="true" Class="abom-grid abom-table abom-grid-nested mt-1" data-abom-comparison-members>
+                <thead>
+                    <tr>
+                        <th>Repository</th>
+                        <th class="abom-cell-right">Results</th>
+                        <th class="abom-cell-right">Already alerted</th>
+                        <th class="abom-cell-right">Would add</th>
+                        <th>Commit analyzed</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var m in compared)
+                    {
+                        <tr data-abom-comparison-member="@m.Repository">
+                            <td class="abom-path abom-nowrap">@m.Repository</td>
+                            <td class="abom-cell-right"><span class="abom-num">@m.Counts.Results</span></td>
+                            <td class="abom-cell-right"><span class="abom-num">@(m.Counts.Open + m.Counts.Dismissed)</span></td>
+                            <td class="abom-cell-right"><span class="abom-num">@m.Counts.Adds</span></td>
+                            <td>
+                                <MudText Typo="Typo.caption" Class="d-block">@StalenessText(m)</MudText>
+                                <MudText Typo="Typo.caption" Class="d-block mud-text-secondary">@ExactText(m, c.CliVersion)</MudText>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </MudSimpleTable>
+        }
+        @if (c.Rules.Count > 1)
+        {
+            <MudSimpleTable Dense="true" Class="abom-grid abom-table abom-grid-nested mt-1" data-abom-comparison-rules>
+                <thead>
+                    <tr>
+                        <th>Rule</th>
+                        <th class="abom-cell-right">Results</th>
+                        <th class="abom-cell-right">Already alerted</th>
+                        <th class="abom-cell-right">Would add</th>
+                        <th class="abom-cell-right">Open alerts not reported</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in c.Rules)
+                    {
+                        <tr data-abom-comparison-rule="@r.RuleId">
+                            <td class="abom-path abom-nowrap">@r.RuleId</td>
+                            <td class="abom-cell-right"><span class="abom-num">@r.Results</span></td>
+                            <td class="abom-cell-right"><span class="abom-num">@(r.Open + r.Dismissed)</span></td>
+                            <td class="abom-cell-right"><span class="abom-num">@r.Adds</span></td>
+                            <td class="abom-cell-right"><span class="abom-num">@r.Missed</span></td>
+                        </tr>
+                    }
+                </tbody>
+            </MudSimpleTable>
+        }
+    };
+
+    private static string Short(string sha) => sha.Length <= 12 ? sha : sha[..12];
+
+    /// <summary>How the commit analyzed relates to the default branch, as it was read; never assumed current.</summary>
+    private static string StalenessText(ComparisonMember m) => m.Staleness switch
+    {
+        "current" => "At the default branch's head.",
+        "behind" when m.BehindBy is { } n =>
+            $"The default branch has moved {CountText.Of(n, "commit", "commits")} past it.",
+        "behind" => "The default branch has moved past it.",
+        "ahead" => "Ahead of the default branch, which Default Setup scans.",
+        "diverged" when m.BehindBy is { } n =>
+            $"Diverged from the default branch, which has {CountText.Of(n, "commit", "commits")} it lacks.",
+        "diverged" => "Diverged from the default branch.",
+        "moved" => "The default branch is at another commit, and how far it moved could not be read.",
+        _ => "The default branch could not be read, so whether this is current is unknown.",
+    };
+
+    /// <summary>What the count is exact for: the same commit under the same CodeQL, or an inference naming which differs.</summary>
+    private static string ExactText(ComparisonMember m, string cli)
+    {
+        if (m.Exact)
+        {
+            return $"Measured: GitHub's alerts describe the same commit, {Short(m.AnalyzedCommit)}, under the same CodeQL.";
+        }
+        if (m.AlertedCommit.Length == 0)
+        {
+            return "An inference: the commit GitHub's alerts describe was not named.";
+        }
+        var gitHub = m.AlertedCli.Length == 0 ? "a CodeQL it did not name" : $"CodeQL {m.AlertedCli}";
+        var here = cli.Length == 0 ? "a CodeQL nobody recorded" : $"CodeQL {cli}";
+        return m.AlertedCommit == m.AnalyzedCommit
+            ? $"An inference: GitHub analyzed the same commit under {gitHub}, and these results came from {here}."
+            : $"An inference: GitHub's alerts describe {Short(m.AlertedCommit)} under {gitHub}, and ABOM analyzed {Short(m.AnalyzedCommit)} under {here}.";
+    }
+}

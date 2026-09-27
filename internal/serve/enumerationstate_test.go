@@ -94,3 +94,57 @@ func TestAnAccountWithNoMarksIsStillDeclared(t *testing.T) {
 		t.Errorf("scope = %+v, want the declaration regardless of its marks", got)
 	}
 }
+
+// A repository a full listing no longer names reaches the reader by name, with when, beside the
+// listing that established it: a count alone sends a reader looking for which.
+func TestTheScopeNamesWhatAFullListingNoLongerHolds(t *testing.T) {
+	srv, st := newServer(t)
+	declare(t, st, "advanced-security")
+	for _, name := range []string{"advanced-security/one", "advanced-security/gone"} {
+		if _, err := st.InsertOwnedRepository(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := readScope(t, srv)[0].Enumeration.Missing; got == nil || len(got) != 0 {
+		t.Errorf("an unread account names %v missing, want an empty list", got)
+	}
+
+	srv.Enumerate = fakeEnumerator(map[string][]string{
+		"advanced-security": {"advanced-security/one"},
+	})
+	var report EnumerationReport
+	postJSON(t, srv, "/api/owned-scope/enumerate", &report)
+
+	missing := readScope(t, srv)[0].Enumeration.Missing
+	if len(missing) != 1 || missing[0].Repository != "advanced-security/gone" || missing[0].MissingAt.IsZero() {
+		t.Errorf("the scope names %+v missing, want advanced-security/gone with when", missing)
+	}
+}
+
+// Previewing the declaration already in force changes nothing, missing repositories included: they
+// left the scope when the listing stopped naming them, and saving the same declaration again would
+// not bring them back, so a preview naming them as entering promises something saving will not do.
+func TestPreviewingTheSameDeclarationDoesNotBringAMissingRepositoryBack(t *testing.T) {
+	srv, st := newServer(t)
+	declare(t, st, "advanced-security")
+	for _, name := range []string{"advanced-security/one", "advanced-security/gone"} {
+		if _, err := st.InsertOwnedRepository(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srv.Enumerate = fakeEnumerator(map[string][]string{
+		"advanced-security": {"advanced-security/one"},
+	})
+	var report EnumerationReport
+	postJSON(t, srv, "/api/owned-scope/enumerate", &report)
+
+	preview, err := srv.scopePreview([]store.DeclaredAccount{
+		{Owner: "advanced-security", Kind: "organization", Enabled: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.RootsNext != preview.RootsNow || preview.EnteringCount != 0 {
+		t.Errorf("the unchanged declaration previews %d roots against %d, entering %v",
+			preview.RootsNext, preview.RootsNow, preview.Entering)
+	}
+}

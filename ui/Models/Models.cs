@@ -813,6 +813,19 @@ public sealed record EnumerationMarks
     public string SweptAt { get; init; } = string.Empty;
     public string HighCreated { get; init; } = string.Empty;
     public string HighPushed { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Declared repositories a full listing of the account did not name, which are no longer the
+    /// operator's. Empty says nothing is missing only where <see cref="ListedAt"/> is set.
+    /// </summary>
+    public IReadOnlyList<RepositoryAbsence> Missing { get; init; } = [];
+}
+
+/// <summary>A declared repository a full listing did not name, and since when.</summary>
+public sealed record RepositoryAbsence
+{
+    public string Repository { get; init; } = string.Empty;
+    public string MissingAt { get; init; } = string.Empty;
 }
 
 /// <summary>
@@ -1317,6 +1330,13 @@ public sealed record CatalogQuery
     public string ExtendedTestRefusal { get; init; } = string.Empty;
 
     /// <summary>
+    /// What advancing this version to review would be refused with: review is earned by a
+    /// comparison of a run of this version with the alerts code scanning holds. Empty where it
+    /// would not be refused.
+    /// </summary>
+    public string ReviewRefusal { get; init; } = string.Empty;
+
+    /// <summary>
     /// Every pair this version declares, as the CLI resolved them. Null where nothing resolved the
     /// version, which is not a query that declares nothing.
     /// </summary>
@@ -1454,6 +1474,128 @@ public sealed record AnalysisRun
 public sealed record AnalysisRunList
 {
     public IReadOnlyList<AnalysisRun> Runs { get; init; } = [];
+}
+
+/// <summary>
+/// What a set of a run's results is, against the code scanning alerts GitHub held when compared.
+/// Served whole; nothing here is added up in the browser.
+/// </summary>
+public sealed record ComparisonCounts
+{
+    public int Results { get; init; }
+
+    /// <summary>Results an open alert already stands for; they add nothing.</summary>
+    public int Open { get; init; }
+
+    /// <summary>Results a dismissed alert stands for, which stays dismissed.</summary>
+    public int Dismissed { get; init; }
+
+    /// <summary>Results whose alert was fixed, which a developer then sees again.</summary>
+    public int Reopens { get; init; }
+    public int New { get; init; }
+
+    /// <summary>What a developer would see appear: new and reopened.</summary>
+    public int Adds { get; init; }
+
+    /// <summary>Open alerts GitHub held for the rules compared.</summary>
+    public int OpenAlerts { get; init; }
+
+    /// <summary>Of those, the ones no result stood for, which stay regardless.</summary>
+    public int Missed { get; init; }
+}
+
+/// <summary>One rule's counts in a comparison.</summary>
+public sealed record ComparisonRule
+{
+    public string RuleId { get; init; } = string.Empty;
+    public int Results { get; init; }
+    public int Open { get; init; }
+    public int Dismissed { get; init; }
+    public int Reopens { get; init; }
+    public int New { get; init; }
+    public int Adds { get; init; }
+    public int OpenAlerts { get; init; }
+    public int Missed { get; init; }
+}
+
+/// <summary>One repository in a comparison, and what became of it.</summary>
+public sealed record ComparisonMember
+{
+    public string Repository { get; init; } = string.Empty;
+    public string AnalyzedCommit { get; init; } = string.Empty;
+    public string SourceFilter { get; init; } = string.Empty;
+
+    /// <summary><c>pending</c>, <c>compared</c> or <c>not_compared</c>.</summary>
+    public string Status { get; init; } = string.Empty;
+
+    /// <summary>Why a member was not compared, and <see cref="Detail"/> in words.</summary>
+    public string Reason { get; init; } = string.Empty;
+    public string Detail { get; init; } = string.Empty;
+
+    /// <summary>Whether the run had <see cref="ComparisonCounts.Results"/> results here at all.</summary>
+    public bool Counted { get; init; }
+    public ComparisonCounts Counts { get; init; } = new();
+    public IReadOnlyList<ComparisonRule> Rules { get; init; } = [];
+
+    /// <summary>The commit GitHub's newest Actions analysis describes; empty where none was read.</summary>
+    public string AlertedCommit { get; init; } = string.Empty;
+    public string AlertedAt { get; init; } = string.Empty;
+
+    /// <summary>The CodeQL GitHub's analysis ran; empty where it was not named.</summary>
+    public string AlertedCli { get; init; } = string.Empty;
+
+    /// <summary>The default branch as it was read; empty where it could not be.</summary>
+    public string HeadCommit { get; init; } = string.Empty;
+
+    /// <summary><c>current</c>, <c>behind</c>, <c>ahead</c>, <c>diverged</c>, <c>moved</c> or <c>unknown</c>.</summary>
+    public string Staleness { get; init; } = string.Empty;
+
+    /// <summary>Commits the default branch has that the analyzed one lacks; null where nobody counted.</summary>
+    public int? BehindBy { get; init; }
+
+    /// <summary>Analyzed at the commit, and under the CodeQL, GitHub's alerts describe: a measurement
+    /// rather than an inference.</summary>
+    public bool Exact { get; init; }
+    public string ReadAt { get; init; } = string.Empty;
+}
+
+/// <summary>A run's results set against the code scanning alerts GitHub held, member by member.</summary>
+public sealed record Comparison
+{
+    public long RowId { get; init; }
+    public long RunId { get; init; }
+    public string RequestedBy { get; init; } = string.Empty;
+
+    /// <summary><c>running</c>, <c>complete</c> or <c>interrupted</c>.</summary>
+    public string State { get; init; } = string.Empty;
+    public string CreatedAt { get; init; } = string.Empty;
+    public string FinishedAt { get; init; } = string.Empty;
+
+    /// <summary>The CodeQL the run's results came from.</summary>
+    public string CliVersion { get; init; } = string.Empty;
+    public IReadOnlyList<AnalysisQueryRef> Queries { get; init; } = [];
+
+    /// <summary>Where alerts appear at all, which every count holds under.</summary>
+    public string Condition { get; init; } = string.Empty;
+
+    /// <summary>What the count is a delta over.</summary>
+    public string Merge { get; init; } = string.Empty;
+
+    /// <summary>What the count is exact for, and where it becomes an inference.</summary>
+    public string Boundary { get; init; } = string.Empty;
+    public IReadOnlyList<ComparisonMember> Members { get; init; } = [];
+
+    /// <summary>Over the compared members, and nothing else.</summary>
+    public ComparisonCounts Totals { get; init; } = new();
+    public IReadOnlyList<ComparisonRule> Rules { get; init; } = [];
+    public int Compared { get; init; }
+    public int NotCompared { get; init; }
+    public int Pending { get; init; }
+}
+
+public sealed record ComparisonList
+{
+    public IReadOnlyList<Comparison> Comparisons { get; init; } = [];
 }
 
 /// <summary>One database a run's scope resolved to: held on disk, or analyzed before and not held.</summary>

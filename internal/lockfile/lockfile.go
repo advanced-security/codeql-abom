@@ -68,7 +68,10 @@ func Read(root string) (Lock, error) {
 	sum := sha256.Sum256(contents)
 	lock := Lock{Digest: hex.EncodeToString(sum[:]), Schema: schemaOf(contents)}
 
-	file, err := native.ParseWithPolicy(contents, native.DefaultPolicy(), native.Path)
+	// No workflow paths: the parser validates only the entries the workflows it is handed list,
+	// and every entry here can become a selection. A lock with one malformed entry is therefore
+	// unsupported as a whole, which is a named failure rather than a partial answer.
+	file, err := native.ParseWithPolicy(contents, native.DefaultPolicy())
 	if err != nil {
 		lock.Coverage = Unsupported
 		lock.Reason = reasonFor(err)
@@ -213,15 +216,8 @@ func (l Lock) Selected(workflowPath, uses string) (string, bool) {
 // digestOf strips the algorithm prefix the lockfile records commits with. An entry whose commit
 // is not in that form names nothing runnable, so it selects nothing.
 func digestOf(commit string) (string, bool) {
-	name, value, ok := strings.Cut(commit, "-")
-	if !ok || value == "" {
-		return "", false
-	}
-	switch name {
-	case "sha1", "sha256":
-		return value, true
-	}
-	return "", false
+	_, digest := splitCommit(commit)
+	return digest, digest != ""
 }
 
 // schemaOf reads the version line without parsing, so an unsupported file still reports the

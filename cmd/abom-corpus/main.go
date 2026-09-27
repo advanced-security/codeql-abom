@@ -173,8 +173,9 @@ func ingestRepository(s *store.Store, fixtures, full string, without map[string]
 	if err != nil {
 		return fmt.Errorf("reading the lockfile: %w", err)
 	}
-	if err := s.RecordLockCoverage(full, "corpus-fixture", store.LockCoverageRows(
-		string(lock.Coverage), lock.Schema, lock.Digest, lock.Reason, workflows)); err != nil {
+	if err := s.RecordLockReading(full, "corpus-fixture", store.LockCoverageRows(
+		string(lock.Coverage), lock.Schema, lock.Digest, lock.Reason, workflows),
+		store.LockGraphOf(lock)); err != nil {
 		return fmt.Errorf("recording lock coverage: %w", err)
 	}
 

@@ -145,6 +145,8 @@ type catalogRow struct {
 	// ExtendedTestRefusal is what advancing the version to extended-test would be refused with,
 	// said before anybody presses it, and empty where it would not be.
 	ExtendedTestRefusal string `json:"extendedTestRefusal,omitempty"`
+	// ReviewRefusal is the same for review, which a comparison of a run of this version earns.
+	ReviewRefusal string `json:"reviewRefusal,omitempty"`
 }
 
 func (s *Server) writeCatalog(w http.ResponseWriter) {
@@ -176,10 +178,22 @@ func (s *Server) writeCatalog(w http.ResponseWriter) {
 	for _, q := range working {
 		onDisk[q.QueryID] = true
 	}
+	// Reading the catalog needs no CodeQL, so one that cannot be named leaves every review refused
+	// with that reason rather than the catalog unserved.
+	cli, err := s.codeQL(context.Background())
+	if err != nil {
+		cli = ""
+	}
+	review, err := s.Store.ReviewRefusals(cli)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	rows := make([]catalogRow, 0, len(catalog))
 	for _, q := range catalog {
 		row := catalogRow{CatalogQuery: q, Steps: []authoring.Step{}, Requests: []int64{}}
 		row.Requests = append(row.Requests, asked[q.QueryID]...)
+		row.ReviewRefusal = review.For(q.QueryID, q.QueryVersion)
 		switch {
 		case s.QueryDir == "":
 			row.ExtendedTestRefusal = refusedNoQueryDir

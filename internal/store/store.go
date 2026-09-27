@@ -107,6 +107,7 @@ var createTables = []struct {
 	{"the repository property table", repositoryPropertyDDL},
 	{"the property schema table", propertySchemaDDL},
 	{"the policy tables", policyDDL},
+	{"the comparison tables", comparisonDDL},
 }
 
 // Migrate creates all tables and adds any columns introduced since the database was created.

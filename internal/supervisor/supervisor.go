@@ -75,7 +75,7 @@ type Supervisor struct {
 	//
 	// A full listing is cheap against an unchanged account — its pages are conditional, so they
 	// cost a round trip and no quota — but it is not free, and a cycle runs every thirty seconds.
-	// Reading it more cleverly than this is `plans/api/org-enumeration.md`.
+	// Reading it more cleverly than this is the sweep, which docs/architecture.md describes.
 	EnumerateEvery time.Duration
 	// LastEnumeratedAt is when the accounts were last read, successfully or not. A failed attempt
 	// counts, or an unreachable account is retried on every cycle forever.
@@ -116,7 +116,7 @@ const (
 	// DefaultEnumerateEvery bounds how stale the list of repositories may get. An hour is short
 	// enough that a repository created in the morning is analyzed the same day, and long enough
 	// that the listing is a rounding error beside the analysis. It is a starting point rather
-	// than a measured optimum; `plans/api/org-enumeration.md` owns finding the latter.
+	// than a measured optimum, and nothing has measured one yet.
 	DefaultEnumerateEvery = time.Hour
 )
 

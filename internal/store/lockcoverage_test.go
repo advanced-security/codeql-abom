@@ -11,15 +11,15 @@ func TestReadingOneCommitTwiceReplacesItsCoverageRatherThanAddingToIt(t *testing
 		{WorkflowPath: ".github/workflows/build.yml", Coverage: "covered", Schema: "v0.0.2"},
 		{WorkflowPath: ".github/workflows/old.yml", Coverage: "not_onboarded", Schema: "v0.0.2"},
 	}
-	if err := s.RecordLockCoverage("owner/repo", "sha1", first); err != nil {
-		t.Fatalf("RecordLockCoverage: %v", err)
+	if err := s.RecordLockReading("owner/repo", "sha1", first, LockGraph{}); err != nil {
+		t.Fatalf("RecordLockReading: %v", err)
 	}
 	second := []LockCoverage{
 		{Coverage: "covered", Schema: "v0.0.2", Digest: "bbbb"},
 		{WorkflowPath: ".github/workflows/build.yml", Coverage: "covered", Schema: "v0.0.2"},
 	}
-	if err := s.RecordLockCoverage("owner/repo", "sha1", second); err != nil {
-		t.Fatalf("RecordLockCoverage: %v", err)
+	if err := s.RecordLockReading("owner/repo", "sha1", second, LockGraph{}); err != nil {
+		t.Fatalf("RecordLockReading: %v", err)
 	}
 
 	counts, err := s.LockCoverageCounts()
@@ -39,9 +39,9 @@ func TestReadingOneCommitTwiceReplacesItsCoverageRatherThanAddingToIt(t *testing
 // state nothing reached from one this build never produces.
 func TestACoverageStateNothingReachedIsAbsentRatherThanZero(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.RecordLockCoverage("owner/repo", "sha1",
-		[]LockCoverage{{Coverage: "not_onboarded"}}); err != nil {
-		t.Fatalf("RecordLockCoverage: %v", err)
+	if err := s.RecordLockReading("owner/repo", "sha1",
+		[]LockCoverage{{Coverage: "not_onboarded"}}, LockGraph{}); err != nil {
+		t.Fatalf("RecordLockReading: %v", err)
 	}
 	counts, err := s.LockCoverageCounts()
 	if err != nil {
@@ -60,11 +60,11 @@ func TestACoverageStateNothingReachedIsAbsentRatherThanZero(t *testing.T) {
 func TestRecordingOneRepositoryDoesNotClearAnotherAtTheSameCommit(t *testing.T) {
 	s := newTestStore(t)
 	rows := []LockCoverage{{Coverage: "covered", Schema: "v0.0.2"}}
-	if err := s.RecordLockCoverage("owner/one", "sha1", rows); err != nil {
-		t.Fatalf("RecordLockCoverage: %v", err)
+	if err := s.RecordLockReading("owner/one", "sha1", rows, LockGraph{}); err != nil {
+		t.Fatalf("RecordLockReading: %v", err)
 	}
-	if err := s.RecordLockCoverage("owner/two", "sha1", rows); err != nil {
-		t.Fatalf("RecordLockCoverage: %v", err)
+	if err := s.RecordLockReading("owner/two", "sha1", rows, LockGraph{}); err != nil {
+		t.Fatalf("RecordLockReading: %v", err)
 	}
 	counts, err := s.LockCoverageCounts()
 	if err != nil {
@@ -79,13 +79,13 @@ func TestRecordingOneRepositoryDoesNotClearAnotherAtTheSameCommit(t *testing.T) 
 // survive the round trip rather than being reconstructed from the state name.
 func TestAnUnsupportedLockfileKeepsItsReasonAndTheSchemaThatCausedIt(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.RecordLockCoverage("owner/repo", "sha1", []LockCoverage{{
+	if err := s.RecordLockReading("owner/repo", "sha1", []LockCoverage{{
 		Coverage: "unsupported",
 		Schema:   "future-version",
 		Digest:   "cccc",
 		Reason:   "lockfile version is newer than this binary supports",
-	}}); err != nil {
-		t.Fatalf("RecordLockCoverage: %v", err)
+	}}, LockGraph{}); err != nil {
+		t.Fatalf("RecordLockReading: %v", err)
 	}
 	var schema, reason, digest string
 	err := s.DB().QueryRow(`
@@ -111,9 +111,9 @@ func TestAnUnsupportedLockfileKeepsItsReasonAndTheSchemaThatCausedIt(t *testing.
 // again; answering "yes" for a commit nothing recorded would leave it unread for good.
 func TestACommitWithNoRecordedCoverageReportsItAsMissing(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.RecordLockCoverage("owner/repo", "sha1",
-		[]LockCoverage{{Coverage: "not_onboarded"}}); err != nil {
-		t.Fatalf("RecordLockCoverage: %v", err)
+	if err := s.RecordLockReading("owner/repo", "sha1",
+		[]LockCoverage{{Coverage: "not_onboarded"}}, LockGraph{}); err != nil {
+		t.Fatalf("RecordLockReading: %v", err)
 	}
 
 	for _, c := range []struct {

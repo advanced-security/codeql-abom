@@ -281,17 +281,17 @@ func TestAVersionNobodyHasStagedReportsNoStage(t *testing.T) {
 // Readiness is computed and the stage is advanced by a person, so the act is recorded with who
 // did it. A stage that appeared on its own could not be told from one somebody signed.
 //
-// Advanced to `review` rather than `test` because `test` is the one rung that is earned: gating
-// it is `querytest_test.go`'s subject, and asserting it here would make this test fail for a
-// reason that has nothing to do with the audit trail.
+// Advanced to `deploy` rather than `test` or `review` because those rungs are earned: gating them
+// is `querytest_test.go`'s and `reviewgate_test.go`'s subject, and asserting it here would make
+// this test fail for a reason that has nothing to do with the audit trail.
 func TestAdvancingAVersionRecordsWhoDidItAndWhen(t *testing.T) {
 	s := catalogStore(t)
-	if err := s.AdvanceQueryStage("abom/edges", "v1", StageReview, "operator", testCLI); err != nil {
+	if err := s.AdvanceQueryStage("abom/edges", "v1", StageDeploy, "operator", testCLI); err != nil {
 		t.Fatalf("AdvanceQueryStage: %v", err)
 	}
 	entry := catalogBy(t, s)["abom/edges@v1"]
-	if entry.Stage != StageReview {
-		t.Errorf("the version reports stage %q, want %q", entry.Stage, StageReview)
+	if entry.Stage != StageDeploy {
+		t.Errorf("the version reports stage %q, want %q", entry.Stage, StageDeploy)
 	}
 	if entry.StagedBy != "operator" || entry.StagedAt == "" {
 		t.Errorf("the advance was recorded as %q at %q, want both", entry.StagedBy, entry.StagedAt)
@@ -302,13 +302,13 @@ func TestAdvancingAVersionRecordsWhoDidItAndWhen(t *testing.T) {
 // one version in two stages at once.
 func TestAdvancingTwiceMovesTheSameEntry(t *testing.T) {
 	s := catalogStore(t)
-	for _, stage := range []string{StageExtendedTest, StageReview} {
+	for _, stage := range []string{StageExtendedTest, StageDeploy} {
 		if err := s.AdvanceQueryStage("abom/edges", "v1", stage, "operator", testCLI); err != nil {
 			t.Fatalf("AdvanceQueryStage(%s): %v", stage, err)
 		}
 	}
-	if got := catalogBy(t, s)["abom/edges@v1"].Stage; got != StageReview {
-		t.Errorf("after two advances the version reports %q, want %q", got, StageReview)
+	if got := catalogBy(t, s)["abom/edges@v1"].Stage; got != StageDeploy {
+		t.Errorf("after two advances the version reports %q, want %q", got, StageDeploy)
 	}
 	if n := len(catalogBy(t, s)); n != 3 {
 		t.Errorf("advancing twice left %d catalog entries, want 3", n)

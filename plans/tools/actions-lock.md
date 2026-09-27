@@ -43,9 +43,11 @@ host support and the actual execution of this repository's workflows still need 
 2. **Measure native execution semantics.** On an explicitly approved target with benign actions,
    test onboarded and unonboarded workflows, missing entries, a moved tag with an older locked SHA,
    malformed locks, `$/` references, nested composites and reusable workflows. Record the run
-   commit, lock blob, host/runner and observed selected commits. Establish caller/callee lock
-   precedence with the resolution plan before ABOM claims to reproduce it. Depends on 1;
-   local fixtures can begin without a live target, but cannot establish deployed enforcement.
+   commit, lock blob, host/runner and observed selected commits. The precedence the CLI generates
+   is recorded in the [resolution plan](../db/actions-lockfile.md) — a composite's nested pins
+   live in the caller's lock, and the callee's lock is never read — and ABOM now selects by it;
+   what is unobserved is the runner enforcing a nested pin. Depends on 1; local fixtures can begin
+   without a live target, but cannot establish deployed enforcement.
 3. **Exercise the native update path.** Inspect a Dependabot update of an onboarded workflow and
    its lock together, including transitive changes. Document what updates automatically and what
    still requires explicit onboarding or operator review. Existing Dependabot configuration is the

@@ -30,7 +30,8 @@ GitHub's native workflow lockfiles are the gold standard for ABOM's future effec
 resolution, not an optional lookup optimization. The declared ref preserves intent; the governing
 workflow lock selects the immutable commit; verified version evidence supports advisory context.
 Each belongs to the analyzed revision, and a current live tag cannot overwrite that selection.
-ABOM does not yet consume these locks.
+ABOM reads the lock at the analyzed commit and analyzes the commit it selects; what it reports
+still describes the declared ref, and the effective view is the remaining work.
 
 Use GitHub's [native tooling](../plans/tools/actions-lock.md) for generation, verification and
 updates, and its official parser for [contextual ingestion](../plans/db/actions-lockfile.md).
@@ -50,7 +51,9 @@ everything on every period is affordable at small size and not at large, and the
 organization poses have different costs: what is new and what changed can be answered from a sorted
 prefix, while **what is gone can only be answered by reading everything**. GraphQL is the efficient
 way to ask the first two and to carry whatever else is wanted about a repository, with REST as the
-fallback for the organizations that will not permit it. `plans/api/org-enumeration.md`
+fallback for the organizations that will not permit it. A repository a full listing no longer names
+is named as missing and stops being the operator's; removing what only it reached is the prune's,
+which says what it takes first. `docs/architecture.md`
 
 Staying current is also about not paying twice for what did not move, and that has the same shape
 one level down. A commit is fetched once however many references name it, and a query is evaluated
@@ -144,9 +147,12 @@ written, one `actions-all` answers for authoring and execution, and every mark n
 was recorded under. A run holds what a query still being refined reports rather than writing it
 as findings, and whoever reviews it turns all of it, or the results they chose, into findings once
 the query has earned it; a version a pack published or a suite promoted stores findings unless
-somebody says otherwise. What remains is comparing a run's results with the code scanning alerts
-developers already see. Running several CodeQL releases side by side, so an upgrade can be
-compared before it is taken, is later.
+somebody says otherwise. A finished run is compared with the code scanning alerts developers
+already see, and says what adopting it would add, where, and how stale each commit is; that
+comparison is what earns `review`. What remains is checking a comparison against what appears once
+a pack is live, which waits with publishing. Running several CodeQL releases side by side, so an
+upgrade can be compared before it is taken, is later — and the first comparison on real alerts
+showed why: the same commit under a year-older CodeQL disagreed by seven results.
 `docs/architecture.md`, `plans/api/query-simulation.md`
 
 ## From a finding to a fix

@@ -86,3 +86,22 @@ func digestOf(t *testing.T, dir string) string {
 	}
 	return got
 }
+
+// A commit that changes only its lock changes which commits its workflows run, with every
+// `uses:` as it was. Content-equivalence must not waive it, or the new selections would never be
+// read: the digest has to cover the lock even though the extractor does not.
+func TestALockOnlyChangeMovesTheDigest(t *testing.T) {
+	workflow := "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n"
+	before := tree(t, map[string]string{
+		".github/workflows/ci.yml":       workflow,
+		".github/workflows/actions.lock": "version: 'v0.0.2'\n# sha1-11bd71901bbe5b1630ceea73d27597364c9af683\n",
+	})
+	after := tree(t, map[string]string{
+		".github/workflows/ci.yml":       workflow,
+		".github/workflows/actions.lock": "version: 'v0.0.2'\n# sha1-11d5960a326750d5838078e36cf38b85af677262\n",
+	})
+
+	if digestOf(t, before) == digestOf(t, after) {
+		t.Error("a lock-only commit digests like its predecessor, so its selections would be skipped")
+	}
+}

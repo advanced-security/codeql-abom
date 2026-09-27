@@ -416,6 +416,18 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     width: 100%;
 }
 
+/* The listing is several short sentences under one heading, and the last column's spare width left
+   it the width of its longest word: at 1440px each line wrapped every word or two, and the row grew
+   so tall at 390px that the account it described sat below the visible part of the table. It holds
+   a line of prose, and every cell in the row starts at the top so the account stays beside it. */
+.mud-simple-table.abom-declared-grid table tbody tr > td.abom-listing-cell {
+    min-width: 17rem;
+}
+
+.mud-simple-table.abom-declared-grid table tbody tr > td {
+    vertical-align: top;
+}
+
 /* Capped below the bar (64), pager (52) and captions; the second selector outranks MudBlazor's 100%. */
 .abom-grid-windowed .mud-table-container,
 .mud-simple-table.abom-grid-windowed .mud-table-container {

@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -15,7 +16,7 @@ import (
 // not checked for deletions in a week report that it checked a minute ago.
 //
 // Every column is nullable, and an absent row is its own answer: an account nobody has listed has
-// an unknown shape, not zero repositories. See plans/api/org-enumeration.md.
+// an unknown shape, not zero repositories. See docs/architecture.md on reading an account.
 const enumerationStateDDL = `
 CREATE TABLE IF NOT EXISTS abom_enumeration_state (
   owner        TEXT PRIMARY KEY COLLATE NOCASE,
@@ -30,7 +31,57 @@ CREATE TABLE IF NOT EXISTS abom_enumeration_state (
   -- fits on one page costs 2 to sweep and 1 to read whole: the incremental read is only a saving
   -- above two pages, and below that it also gives up seeing deletions.
   listed_pages INTEGER
+);
+-- A declared repository a full listing of its account did not name, and when. Only a full listing
+-- writes a row, and seeing the repository in any listing removes it: a prefix cannot establish
+-- absence, but it can establish presence. A row takes the repository out of the declared scope
+-- and removes nothing from the graph; what it alone reached is what the prune offers.
+CREATE TABLE IF NOT EXISTS abom_repository_absence (
+  repository TEXT PRIMARY KEY COLLATE NOCASE,
+  missing_at TEXT NOT NULL
 );`
+
+// RecordRepositoryListing records which of an account's declared repositories a listing named,
+// and returns how many a full listing did not.
+//
+// A repository named is present, whichever listing named it. One a full listing did not name is
+// missing from then on, keeping when it first went missing across later listings; a sweep leaves
+// that alone either way, since the repositories it did not reach were never looked for.
+func (s *Store) RecordRepositoryListing(owner string, seen []string, full bool) (int, error) {
+	held, err := queryAll(s, "reading declared repositories for listing", func(rows *sql.Rows) (string, error) {
+		var name string
+		return name, rows.Scan(&name)
+	}, `SELECT repository_full_name FROM repository r
+	     WHERE LOWER(SUBSTR(r.repository_full_name, 1, INSTR(r.repository_full_name, '/') - 1)) = LOWER(?)
+	       AND `+declaredFullName("r.repository_full_name"), owner)
+	if err != nil {
+		return 0, err
+	}
+	present := make(map[string]bool, len(seen))
+	for _, name := range seen {
+		present[strings.ToLower(name)] = true
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	missing := 0
+	at := now()
+	for _, name := range held {
+		if present[strings.ToLower(name)] {
+			_, err = tx.Exec(`DELETE FROM abom_repository_absence WHERE repository = ?`, name)
+		} else if full {
+			missing++
+			_, err = tx.Exec(`INSERT INTO abom_repository_absence (repository, missing_at) VALUES (?, ?)
+				ON CONFLICT(repository) DO NOTHING`, name, at)
+		}
+		if err != nil {
+			return 0, err
+		}
+	}
+	return missing, tx.Commit()
+}
 
 // EnumerationMarks is what the last read of one account established.
 type EnumerationMarks struct {
@@ -49,12 +100,21 @@ type EnumerationMarks struct {
 	// ListedPages is how many pages the last full listing took. Zero means no full listing has
 	// run, which is not the same as an account that took no pages to read.
 	ListedPages int `json:"listedPages"`
+	// Missing names the declared repositories a full listing of this account did not, which are
+	// no longer the operator's. Empty says nothing is missing only where ListedAt is set.
+	Missing []RepositoryAbsence `json:"missing"`
+}
+
+// RepositoryAbsence is a declared repository a full listing did not name, and since when.
+type RepositoryAbsence struct {
+	Repository string    `json:"repository"`
+	MissingAt  time.Time `json:"missingAt"`
 }
 
 // EnumerationState reports the marks for one account, and whether it has ever been read.
 func (s *Store) EnumerationState(owner string) (EnumerationMarks, bool, error) {
 	var (
-		marks                                      = EnumerationMarks{Owner: owner}
+		marks                                      = EnumerationMarks{Owner: owner, Missing: []RepositoryAbsence{}}
 		route                                      sql.NullString
 		listedAt, sweptAt, highCreated, highPushed sql.NullString
 		pages                                      sql.NullInt64
@@ -65,6 +125,11 @@ SELECT route, listed_at, swept_at, high_created, high_pushed, listed_pages
 		Scan(&route, &listedAt, &sweptAt, &highCreated, &highPushed, &pages)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
+		missing, err := s.missingFrom(owner)
+		if err != nil {
+			return marks, false, err
+		}
+		marks.Missing = missing
 		return marks, false, nil
 	case err != nil:
 		return marks, false, err
@@ -75,7 +140,39 @@ SELECT route, listed_at, swept_at, high_created, high_pushed, listed_pages
 	marks.HighCreated = parseMark(highCreated)
 	marks.HighPushed = parseMark(highPushed)
 	marks.ListedPages = int(pages.Int64)
+	// Into a local, so a read that fails leaves the empty list rather than a nil one.
+	missing, err := s.missingFrom(owner)
+	if err != nil {
+		return marks, true, err
+	}
+	marks.Missing = missing
 	return marks, true, nil
+}
+
+// missingFrom lists what a full listing of one account did not name and the declaration still
+// covers, oldest absence first. One the declaration stopped covering is not something the operator
+// lost, whatever a listing recorded about it before.
+func (s *Store) missingFrom(owner string) ([]RepositoryAbsence, error) {
+	rows, err := s.db.Query(`
+		SELECT a.repository, a.missing_at FROM abom_repository_absence a
+		WHERE LOWER(SUBSTR(a.repository, 1, INSTR(a.repository, '/') - 1)) = LOWER(?)
+		  AND `+declaredFullName("a.repository")+`
+		ORDER BY a.missing_at, a.repository`, owner)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []RepositoryAbsence{}
+	for rows.Next() {
+		var a RepositoryAbsence
+		var at sql.NullString
+		if err := rows.Scan(&a.Repository, &at); err != nil {
+			return nil, err
+		}
+		a.MissingAt = parseMark(at)
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }
 
 // RecordFullListing records that every page of an account was read, with the marks it established
@@ -115,6 +212,25 @@ ON CONFLICT(owner) DO UPDATE SET
   high_pushed  = MAX(COALESCE(abom_enumeration_state.high_pushed, ''), COALESCE(excluded.high_pushed, ''))`,
 		owner, route, now, formatMark(highCreated), formatMark(highPushed))
 	return err
+}
+
+// MissingRepositories names every repository a full listing of its account no longer names,
+// lower-cased, for a caller deciding in Go what the declared scope holds.
+func (s *Store) MissingRepositories() (map[string]bool, error) {
+	rows, err := s.db.Query(`SELECT LOWER(repository) FROM abom_repository_absence`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out[name] = true
+	}
+	return out, rows.Err()
 }
 
 // formatMark renders a time for storage, and a zero time as NULL rather than as year one.

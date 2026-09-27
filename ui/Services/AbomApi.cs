@@ -493,6 +493,19 @@ public sealed class AbomApi(HttpClient http)
         long run, string repository, IReadOnlyList<long> results, string by, CancellationToken ct = default) =>
         ControlAsync<Conversion>($"api/runs/{run}/convert", new { repository, results, by }, ct);
 
+    /// <summary>A run's comparisons with the code scanning alerts, newest first and without members.</summary>
+    public async Task<ComparisonList?> GetRunComparisonsAsync(long run, CancellationToken ct = default) =>
+        await GetAsync<ComparisonList>($"api/runs/{run}/comparisons", ct);
+
+    /// <summary>One comparison with every member, which is where what was not compared is named.</summary>
+    public async Task<Comparison?> GetComparisonAsync(long id, CancellationToken ct = default) =>
+        await GetAsync<Comparison>($"api/comparisons/{id}", ct);
+
+    /// <summary>Asks for a run's results to be set against the alerts GitHub holds now.</summary>
+    public Task<(Comparison? Comparison, string? Refusal)> StartComparisonAsync(
+        long run, string by, CancellationToken ct = default) =>
+        ControlAsync<Comparison>($"api/runs/{run}/comparisons", new { by }, ct);
+
     public async Task<FindingTrace?> GetFindingTraceAsync(long id, CancellationToken ct = default) =>
         await GetAsync<FindingTrace>($"api/findings/{id}", ct);
 

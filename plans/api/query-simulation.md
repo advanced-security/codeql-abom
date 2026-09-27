@@ -1,27 +1,22 @@
 # A query's effect across the organization is known before anybody turns it on
 
-**Status:** Nothing compares a run's results with what GitHub already alerts. A run with findings
-off holds what a query reports, per repository and rule, stating first how many of the scope's
-repositories it covers; that is what this plan reads. What is left is the comparison itself, the
-enablement condition, the merge with Default Setup, the staleness of each commit, what earns
-`review`, and the check once published. What is left waits on what a scope means wherever it is
-reused.
+**Status:** Built as a comparison of a finished regular run with the code scanning alerts GitHub
+holds now, which earns `review`; what is left is checking one against what appears once a pack is
+live, and separating what a pack adds from what a CodeQL upgrade alone would raise.
+[`docs/architecture.md`](../../docs/architecture.md#reading-the-data-out) says what a comparison
+reads, counts, names and refuses.
 
 **Decided: this plan is a comparison, not a kind of run.** It sets some run's results, over regular
 databases, against the code scanning alerts GitHub holds now, for one or more repositories. A run
 with findings off is what it usually reads, because a query nobody adopted should not have written
 findings yet.
 
-**Decided: nothing here starts until the on-demand analysis work has landed.** The run half has: a
-run is drafted on the CodeQL page over a named scope, says what it still has to do while it runs,
-and states its size before Run against the CodeQL running now
-([`docs/architecture.md`](../../docs/architecture.md#reading-the-data-out)), and every term of the
-language is applied or refused by name on every surface. [Org enumeration](org-enumeration.md)
-has its bounded read paths; its remaining work is the visual review of the listing evidence and
-the decision about repositories missing from a full listing. A comparison reads a run over a
-scope, so that is what every
-comparison is asked for and read through. Each item below that says it depends on nothing depends
-on nothing *within this plan*.
+**Decided: `review` is earned over any scope somebody chose**, by a finished comparison of a run of
+that exact version under the CodeQL the server runs that compared at least one repository. That
+proves the query was looked at against what developers see before it bites. Requiring the declared
+scope instead would prove it was looked at *where* it will bite. Nothing asks for that yet, and the
+declared scope is now one set wherever it is read — a repository a full listing no longer names
+leaves it everywhere at once — so it would be a change to the refusal alone.
 
 ## Why this exists
 
@@ -51,64 +46,53 @@ comparison, not to the run. Preserve the implemented
 ```mermaid
 flowchart LR
     DRAFT["a run's draft"] -->|"findings off"| HELD["what a run held:<br/>a count per rule, every result"]
-    HELD -. "not compared yet" .-> CMP["new, and<br/>already alerted"]
-    ALERTS["code scanning alerts,<br/>read now"] -. "not read yet" .-> CMP
+    HELD --> CMP["would add, and<br/>already alerted"]
+    ALERTS["code scanning alerts,<br/>read now"] --> CMP
     EXT["a run over<br/>extended databases"] -. "refused" .-> CMP
+    CMP -. "not checked yet" .-> LIVE["what appeared<br/>once a pack is live"]
+    CMP -. "not separated yet" .-> UPGRADE["what a CodeQL<br/>upgrade alone raises"]
     CMP -. "never" .-> WRITE["an alert, a finding,<br/>or a write to GitHub"]
-    style CMP fill:#3d2d1d
-    style ALERTS fill:#3d2d1d
+    style LIVE fill:#3d2d1d
+    style UPGRADE fill:#3d2d1d
     style EXT fill:#3d1d1d
     style WRITE fill:#3d1d1d
 ```
 
 ## Pending
 
-1. **Subtract what is already alerted.** A rule that fires 400 times where 380 alerts already exist
-   adds 20. The count that matters to the person who will be asked about it is the **delta**, not
-   the total. **Decided: "already alerted" is GitHub's code scanning alerts, read now**, for the
-   repositories somebody chose — what a developer actually sees, which ABOM does not read today,
-   and which need the security-events permission per repository. The results compared are some
-   run's over regular databases, findings on or off. A result carries a `result_hash`; what an
-   alert is matched on is part of this item, since an alert is read from GitHub's API rather than
-   from a document ABOM produced, and its most recent instance sits at a commit of its own. ABOM's
-   own findings for the same rule would have been cheap and would have said less: on the
-   verification store a held run of `actions/missing-workflow-permissions` over three owned
-   repositories held 7 results, and all 7 were already findings the crawl stored, by hash and by
-   location, so its delta would be 0 whatever GitHub shows. Depends on nothing.
-2. **State the enablement condition.** A repository with no Actions analysis enabled raises no alert
-   however loudly the query fires, and GitHub's repository language statistics **do not report
-   `actions`** — which is the one gap `gh-ghas-audit` is structurally blind to and
-   [`api/ghas-enablement.md`](ghas-enablement.md) exists to close. Until that lands, the comparison
-   carries the condition rather than the answer: *this many alerts, in the repositories where
-   Actions analysis is running*. Depends on nothing here.
-3. **State the merge.** A configuration file applied through the `github-codeql-config-file`
-   property is **merged** with the configuration Default Setup generates, so the alerts that appear
-   are the union of the default suite and the added pack. A comparison that ignores the merge
-   counts the wrong set — it has to be a delta over what the repository already runs, not a
-   standalone count. Depends on 1 and 2.
-4. **Keep the comparison, so it can be checked afterwards.** Written down before publication, and
-   compared with what actually appeared once the pack is live. A comparison nobody revisits is a
-   number that was never tested. Depends on 3 and on
+1. **Check a comparison once the pack is live.** A comparison is already kept whole, so analyzing
+   its run again does not change what it said. What is left is setting it beside what actually
+   appeared after publication, because a comparison nobody revisits is a number that was never
+   tested. A disagreement is the finding, and it is recorded rather than reconciled. Depends on
    [`ql/pack-promotion.md`](../ql/pack-promotion.md), which is deferred until much later, so this
    item waits with it.
-5. **Say what earns `review`.** [`next.md`](../next.md) names this plan as what earns the stage,
-   and nothing yet asks for a comparison before it is set. The fork: a comparison of a run of that
-   exact version under the CodeQL the server runs, over any scope somebody chose, which proves the
-   query was looked at before it bites; or over the declared scope, which proves it was looked at
-   where it will bite. Either way it is a refusal naming what is missing, as `extended-test`'s is.
-   Depends on nothing.
-6. **Name the staleness.** Each member records the commit it was analyzed at, and nothing on
-   screen says how that commit relates to the default branch Default Setup scans — which the
-   inference boundary below calls the failure mode. The comparison states it per repository, and a
-   repository whose default branch nobody has read since is said to be unknown rather than current.
-   Depends on nothing.
+2. **Separate what a pack adds from what a CodeQL upgrade alone would raise.** Measured on
+   `has-ghas/build-applications-w-copilot-agent-mode`: a held run of the adopted
+   `actions/unpinned-tag` at the very commit GitHub last analyzed held 20 results against 13 open
+   alerts, all 13 matched, and the other 7 were reusable workflows the query reports under CodeQL
+   2.27.1 and did not under the 2.23.1 GitHub's year-old analysis ran. They count as *would add*,
+   and GitHub's next Default Setup analysis would raise them with no pack at all. Each repository
+   now names both CodeQL versions and reads as an inference, which is honest and does not say which
+   results are which. The fork: run the repository's own configured suite at the server's CodeQL
+   beside the query and subtract it, which doubles the analysis cost and needs the configuration
+   Default Setup generates; or read the alerts' own tool version and refuse to count a repository
+   whose last analysis ran another CodeQL, which is cheap and would have left this repository
+   uncounted. Depends on nothing.
+3. **Read enablement from the audit, not from the newest page of analyses.** A comparison names a
+   repository whose code scanning holds no Actions analysis it can recognize, by a category naming
+   `language:actions` among the newest hundred analyses, or an Actions alert. That is evidence an
+   analysis ran, never that Actions analysis is configured and running. When
+   [`api/ghas-enablement.md`](ghas-enablement.md) lands, its attributed enablement status replaces
+   the inference, and the audit's `not-configured` and *cannot inspect* stay apart. Depends on it.
 
 ## The inference boundary, stated rather than implied
 
 **Exact for the commit analyzed. An inference beyond it.** ABOM analyzes a pinned commit; Default
 Setup scans a default branch and a pull request head. Where those agree, the comparison is a
 measurement; where they do not, it is an extrapolation, and the size of the gap is how stale the
-analysis is.
+analysis is. **The same commit is not enough**: GitHub's analysis ran some CodeQL, and the same
+code under another one is another answer, so a repository is measured only where both the commit
+and the CodeQL are the ones GitHub's alerts describe.
 
 This is the same refusal [`api/dependency-graph-crosscheck.md`](dependency-graph-crosscheck.md)
 already makes for a different reason — *an SBOM describes a default branch and we analyze a pinned
@@ -129,22 +113,24 @@ a query nobody has adopted. Merging a run's held results into `abom_finding` wit
 choosing it would make the counts on every surface include things nobody chose to look for; the
 run's [conversion](../../docs/architecture.md#reading-the-data-out) is the one that is chosen.
 
-**Say what was not compared.** Repositories with no database, with no Actions analysis, whose
-alerts could not be read, or with an analysis too old to trust are named individually. A confident
-number over an unnamed subset is worse than no number, because it will be quoted.
+**Say what was not compared.** Repositories with no results, no code scanning analysis, no
+Actions analysis, or whose alerts could not be read are named individually and left out of the
+count; one analyzed at another commit or under another CodeQL than GitHub's says so beside its
+count. A confident number over an unnamed subset is worse than no number, because it will be
+quoted.
 
 **A security verdict still comes only from a rule id**, and a comparison adds no verdict of its
 own. It says what a rule would say, not whether the rule is right.
 
 ## Verification
 
-- A run's results and the actual alerts are compared once for real, on `codeql-abom-test1`, with the
-  comparison written down **before** the pack is published. A disagreement is the finding, and it is
-  recorded rather than reconciled.
-- The delta is checked against an alert set that already exists: comparing a run of an adopted
-  query returns zero new alerts.
-- A version advanced to `review` without the comparison that earns it is refused, naming what is
-  missing.
+- A comparison is written down **before** a pack is published and set beside what appeared after,
+  on `codeql-abom-test1`. That repository holds no Actions alerts and is not in the crawled corpus,
+  so the first real comparison was made on the owned `has-ghas` repositories instead; the
+  before-and-after on a test target waits with pack promotion.
+- Comparing a run of an adopted query returns zero new alerts where GitHub's analysis ran the same
+  CodeQL. Where it did not, the comparison says so beside the count, and item 2 decides what it
+  may count.
 - A comparison of a repository whose default branch has moved past the commit it was analyzed at
-  says so beside that repository's count.
-- A comparison asked of a run over extended databases is refused, naming the shape.
+  says so beside that repository's count, with how many commits, on real data. Both repositories
+  compared so far were at their default branch's head.

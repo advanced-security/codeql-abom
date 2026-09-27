@@ -351,6 +351,37 @@ func TestImmutableRefIsNeverRechecked(t *testing.T) {
 	}
 }
 
+// A commit ref cannot move even when the checkout names another commit. That happens when the
+// id is an annotated tag's own object, which a public lock was measured recording as its commit
+// (`haskell-actions/setup@v2.12.1`, 2026-09-27): the checkout peels it, the two disagree, and a
+// probe of the id finds no ref by that name, which reads as the dependency having vanished.
+func TestACommitRefIsNeverRecheckedEvenWhenItsCheckoutNamedAnotherCommit(t *testing.T) {
+	q, _ := newQueue(t)
+
+	const (
+		tagObject = "0f7370ccbc65f22514ec3e094f6601b8d61fbbf7"
+		peeled    = "0f8e8c99d88aeb3fbfd523f1ef2c6f762d10d64d"
+	)
+	it := item("haskell-actions/setup", 1)
+	it.Ref = tagObject
+	if _, err := q.Enqueue([]Item{it}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if err := q.Complete(At("haskell-actions/setup", tagObject),
+		Resolution{Ref: tagObject, SHA: peeled}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	q.Now = func() time.Time { return time.Now().UTC().Add(365 * 24 * time.Hour) }
+	due, err := q.DueForRecheck(24*time.Hour, 10)
+	if err != nil {
+		t.Fatalf("DueForRecheck: %v", err)
+	}
+	if len(due) != 0 {
+		t.Errorf("a commit ref queued for recheck: %+v", due)
+	}
+}
+
 // Rechecking is a cheap probe; only actual drift should buy a full re-analysis.
 func TestTouchDefersWithoutReanalyzing(t *testing.T) {
 	q, _ := newQueue(t)

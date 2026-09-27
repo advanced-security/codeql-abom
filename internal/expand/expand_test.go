@@ -45,6 +45,8 @@ type harness struct {
 	queried  []string
 	fetchErr map[string]error
 	buildErr map[string]error
+	// files are extra repository-relative files a repository's tree holds, such as its lock.
+	files    map[string]map[string]string
 	patterns []string
 	// The lane fixture's directory and the paths in it. Stable for the life of the harness: the
 	// findings lane is identified by the query paths it invokes, so a fresh directory per binding
@@ -168,6 +170,7 @@ func (h *harness) Fetch(_ context.Context, dest, owner, repo, ref string) (Tree,
 	h.fetched = append(h.fetched, full)
 	err := h.fetchErr[full]
 	sha, content := h.probe.state()
+	extra := h.files[full]
 	h.mu.Unlock()
 	if err != nil {
 		return Tree{}, err
@@ -179,6 +182,15 @@ func (h *harness) Fetch(_ context.Context, dest, owner, repo, ref string) (Tree,
 	if err := os.WriteFile(
 		filepath.Join(dest, ".github", "workflows", "ci.yml"), []byte(content), 0o644); err != nil {
 		return Tree{}, err
+	}
+	for rel, body := range extra {
+		path := filepath.Join(dest, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return Tree{}, err
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			return Tree{}, err
+		}
 	}
 	if sha == "" {
 		sha = "sha-" + repo
@@ -256,6 +268,7 @@ func newHarness(t *testing.T) *harness {
 		probe:    &harnessProbe{},
 		fetchErr: map[string]error{},
 		buildErr: map[string]error{},
+		files:    map[string]map[string]string{},
 	}
 	w := store.NewWriter(s, 0)
 	h.expander = &Expander{
