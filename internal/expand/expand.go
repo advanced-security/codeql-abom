@@ -14,6 +14,7 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/frontier"
 	"github.com/advanced-security/codeql-abom/internal/graph"
 	"github.com/advanced-security/codeql-abom/internal/ingest"
+	"github.com/advanced-security/codeql-abom/internal/lockfile"
 	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/store"
 	"github.com/advanced-security/codeql-abom/internal/work"
@@ -454,8 +455,8 @@ func (e *Expander) prepare(
 	}
 
 	// Read from the tree at the commit being analyzed, never from the repository's current state:
-	// a lock describes the revision it was committed with. Recorded, not acted on -- selection
-	// still follows the declared reference.
+	// a lock describes the revision it was committed with. Discovery reads what it selects when
+	// this batch settles, so it has to be on record before then.
 	if tree.SHA != "" {
 		if err := e.recordLockCoverage(b.full(), tree); err != nil {
 			return work.Prepared{}, err
@@ -694,7 +695,7 @@ func (e *Expander) settleWithoutFetching(
 	// indefinitely: a database whose analyzed refs have no pending work never fetches again, and
 	// an upgrade or a tier requeue is exactly that case. Absence of rows means nobody looked,
 	// which is a different fact from "no lockfile", so the commit is read once to say which.
-	covered, err := e.Store.HasLockCoverage(b.full(), sha)
+	covered, err := e.Store.HasLockCoverage(b.full(), sha, lockfile.Reader)
 	if err != nil {
 		return work.Prepared{}, false, err
 	}
@@ -959,7 +960,7 @@ func (e *Expander) report(repository, what string, err error) {
 // enqueued, so a run interrupted between the two would otherwise skip on the next pass and never
 // discover what it had already paid to find.
 func (e *Expander) settle(b batch, p work.Prepared, opts Options, stats *Stats) error {
-	discovered, err := e.enqueueDiscoveries(b)
+	discovered, err := e.enqueueDiscoveries(b, p.Commit)
 	if err != nil {
 		return err
 	}
@@ -985,7 +986,9 @@ func (e *Expander) settle(b batch, p work.Prepared, opts Options, stats *Stats) 
 	return nil
 }
 
-func (e *Expander) enqueueDiscoveries(b batch) (int, error) {
+// enqueueDiscoveries queues what the repository names. analyzed is the commit this settle is
+// about to record, so the lock read at it can answer before the frontier knows the commit.
+func (e *Expander) enqueueDiscoveries(b batch, analyzed string) (int, error) {
 	chain, err := (&graph.Builder{Store: e.Store}).ClassifyDependencies()
 	if err != nil {
 		return 0, err
@@ -998,7 +1001,7 @@ func (e *Expander) enqueueDiscoveries(b batch) (int, error) {
 	if !closure.Contains(b.full()) {
 		return 0, nil
 	}
-	items, err := discoveriesOf(e.Store, chain, b.full(), b.depth)
+	items, err := discoveriesOf(e.Store, chain, b.full(), b.depth, analyzed)
 	if err != nil {
 		return 0, err
 	}
@@ -1064,7 +1067,7 @@ func SweepDiscoveries(s *store.Store, q *frontier.Queue) (int, error) {
 		if !closure.Contains(src.full) {
 			continue
 		}
-		items, err := discoveriesOf(s, chain, src.full, src.depth)
+		items, err := discoveriesOf(s, chain, src.full, src.depth, "")
 		if err != nil {
 			return added, err
 		}
@@ -1090,8 +1093,12 @@ func SweepDiscoveries(s *store.Store, q *frontier.Queue) (int, error) {
 // Classification is a whole-graph question and is answered by graph.ClassifyDependencies, not
 // from the rows below: what this repository can see is whether it names a dependency, never
 // whether anyone under review reaches the file that names it.
+//
+// A dependency a lock selects is also queued at the commit it selects, beside its declared ref
+// rather than instead of it: every reader that describes the source as written is keyed on the
+// declared ref, and an unlocked consumer of the same pin still runs what the tag names.
 func discoveriesOf(
-	s *store.Store, chain *graph.SupplyChain, full string, depth int,
+	s *store.Store, chain *graph.SupplyChain, full string, depth int, analyzed string,
 ) ([]frontier.Item, error) {
 	rows, err := s.DB().Query(`
 		SELECT n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''), COALESCE(n.path,''),
@@ -1126,6 +1133,22 @@ func discoveriesOf(
 	}
 
 	sort.Slice(items, func(i, j int) bool { return items[i].NodeKey < items[j].NodeKey })
+
+	selected, err := s.LockSelectedDependencies(full, analyzed)
+	if err != nil {
+		return nil, err
+	}
+	for _, sel := range selected {
+		it := frontier.Item{
+			NodeKey: sel.NodeKey, Owner: sel.Owner, Repo: sel.Repo, Subpath: sel.Path,
+			Ref: sel.Commit, Depth: depth + 1, DiscoveredFrom: full,
+			SupplyChain: frontier.SupplyChainBuild,
+		}
+		if runtime, _ := chain.Of(it.NodeKey); runtime {
+			it.SupplyChain = frontier.SupplyChainRuntime
+		}
+		items = append(items, it)
+	}
 	return items, nil
 }
 

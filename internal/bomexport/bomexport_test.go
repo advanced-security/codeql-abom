@@ -283,3 +283,36 @@ func sample() store.BOM {
 		},
 	}
 }
+
+// What a lock selects behind a reference travels with the reference in both formats, beside it
+// and never in place of it: the reference is what the workflow says, the commit what runs.
+func TestBothFormatsCarryWhatALockSelectsBesideTheReference(t *testing.T) {
+	const locked = "11bd71901bbe5b1630ceea73d27597364c9af683"
+	doc := sample()
+	for i := range doc.Components {
+		for j := range doc.Components[i].References {
+			if doc.Components[i].References[j].Raw == "actions/checkout@v4" {
+				doc.Components[i].References[j].Locked = []store.BOMLock{
+					{Commit: locked, Consumers: []string{"octo-org/app"}, Analyzed: true}}
+			}
+		}
+	}
+	cdx, err := CycloneDX(doc)
+	if err != nil {
+		t.Fatalf("CycloneDX: %v", err)
+	}
+	spdx, err := SPDX(doc)
+	if err != nil {
+		t.Fatalf("SPDX: %v", err)
+	}
+	for name, out := range map[string][]byte{"CycloneDX": cdx, "SPDX": spdx} {
+		// JSON may escape '>' and still says the same thing.
+		text := strings.ReplaceAll(string(out), `\u003e`, ">")
+		if !strings.Contains(text, "actions/checkout@v4 locked=> "+locked) {
+			t.Errorf("%s does not carry the locked commit beside the reference", name)
+		}
+		if !strings.Contains(text, "actions/checkout@v4") {
+			t.Errorf("%s lost the reference as written", name)
+		}
+	}
+}

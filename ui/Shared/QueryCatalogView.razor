@@ -411,7 +411,10 @@ else
     {
         foreach (var stage in _catalog!.Stages)
         {
-            var refused = stage == ExtendedTest && stage != query.Stage ? query.ExtendedTestRefusal : string.Empty;
+            var refused = stage == query.Stage ? string.Empty
+                : stage == ExtendedTest ? query.ExtendedTestRefusal
+                : stage == Review ? query.ReviewRefusal
+                : string.Empty;
             <MudMenuItem Disabled="@(stage == query.Stage || refused.Length > 0)" OnClick="@(() => Advance(query, stage))"
                          data-abom-stage-item="@stage">
                 @stage
@@ -426,6 +429,9 @@ else
 
     /// <summary>The stage the server refuses until the working copy's steps have all passed.</summary>
     private const string ExtendedTest = "extended-test";
+
+    /// <summary>The stage the server refuses until a run of the version is compared with the alerts.</summary>
+    private const string Review = "review";
 
     private static string StagedTitle(CatalogQuery q) => q.StagedBy.Length == 0
         ? $"In {q.Stage}"

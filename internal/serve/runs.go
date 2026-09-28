@@ -261,6 +261,12 @@ func (s *Server) executeRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "this run is already under way")
 		return
 	}
+	// Analyzing again replaces what the comparison is reading, member by member.
+	if s.comparingRun(id) {
+		writeError(w, http.StatusConflict,
+			"a comparison of this run is reading its results; start it again once that finishes")
+		return
+	}
 
 	executor := s.Executor
 	ctx, cancel := context.WithCancel(context.Background())
@@ -316,6 +322,14 @@ func (s *Server) releaseRun(id int64) {
 	if ok {
 		cancel()
 	}
+}
+
+// runUnderWay reports whether this process is carrying the run out.
+func (s *Server) runUnderWay(id int64) bool {
+	s.runsMu.Lock()
+	defer s.runsMu.Unlock()
+	_, ok := s.running[id]
+	return ok
 }
 
 // stopRun cancels a run and reports whether there was one to cancel.

@@ -64,6 +64,11 @@ type FrontierItem struct {
 	// themselves. Reporting only the total reads as exposure they own, when on the real corpus
 	// 220 repositories name actions/checkout@v4 and far fewer are theirs.
 	UsedByOwned int `json:"usedByOwned"`
+	// LockedBy names repositories whose current lock selects exactly this row's commit, bounded
+	// like UsedBy, and LockedByCount is how many there are. A row at a commit no source names is
+	// queued because a lock chose it, and UsedBy alone would call it used by nobody.
+	LockedBy      []string `json:"lockedBy"`
+	LockedByCount int      `json:"lockedByCount"`
 }
 
 // usedBySample bounds the names carried inline. The count is exact; the list is a preview, so a
@@ -282,7 +287,7 @@ func frontierSnapshotQuery(status string, limit int) (string, []any) {
 func (s *Store) FrontierSnapshot(status string, limit int) ([]FrontierItem, error) {
 	query, args := frontierSnapshotQuery(status, limit)
 
-	return queryAll(s, "reading frontier", func(r *sql.Rows) (FrontierItem, error) {
+	items, err := queryAll(s, "reading frontier", func(r *sql.Rows) (FrontierItem, error) {
 		var it FrontierItem
 		var suites, cli sql.NullString
 		var users sql.NullString
@@ -308,6 +313,13 @@ func (s *Store) FrontierSnapshot(status string, limit int) ([]FrontierItem, erro
 		it.CLIVersion = cli.String
 		return it, nil
 	}, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.attachLockedBy(items); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 // FrontierRepositoryCounts is how many queue rows each repository holds.

@@ -57,6 +57,9 @@ type Server struct {
 	// QueueOwned puts the operator's own repositories in the analysis queue. Nil leaves them
 	// recorded and never analyzed, which is the state enumeration exists to end.
 	QueueOwned func() (int, error)
+	// VerifyLock runs GitHub's lock verification of a repository's current commit, within its
+	// budget. Nil leaves the action unavailable.
+	VerifyLock func(ctx context.Context, repository, mode string) (store.LockVerification, error)
 	// SnapshotPreview reports what a submission would send. Nil answers that this build cannot
 	SnapshotPreview func(repository string) (SnapshotPreview, error)
 	// SnapshotSubmit writes a snapshot to GitHub. Nil leaves the endpoint unavailable, which is
@@ -87,6 +90,10 @@ type Server struct {
 	// what a server built without a CodeQL runner can honestly offer.
 	Executor RunExecutor
 
+	// Comparer sets a run against the code scanning alerts GitHub holds. Nil refuses to record a
+	// comparison, which is what a server that cannot read alerts can honestly offer.
+	Comparer ComparisonExecutor
+
 	// Tester runs the tests of a query in QueryDir, the operator's pack. Both are empty unless the
 	// operator named one, and a server without one says so rather than reporting a query as
 	// untestable.
@@ -105,6 +112,10 @@ type Server struct {
 	// by a server that died is not one this server can stop.
 	runsMu  sync.Mutex
 	running map[int64]context.CancelFunc
+
+	// comparing holds the runs a comparison is reading in this process.
+	comparingMu sync.Mutex
+	comparing   map[int64]bool
 
 	// metrics is built by Handler, so a zero Server stays usable and every request is counted
 	// whether or not Log is set.
@@ -154,6 +165,8 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/discovery/requeue/{tier}", s.discoveryRequeue)
 	mux.HandleFunc("POST /api/discovery/requeue-stale", s.discoveryRequeueStale)
 	mux.HandleFunc("POST /api/discovery/requeue-repository", s.discoveryRequeueRepository)
+	mux.HandleFunc("POST /api/locks/verify", s.verifyLock)
+	mux.HandleFunc("GET /api/locks/verifications", s.lockVerifications)
 	mux.HandleFunc("GET /api/discovery/suites", s.tierSuites)
 	mux.HandleFunc("GET /api/discovery/objective", s.objective)
 	mux.HandleFunc("PUT /api/discovery/suites/{tier}", s.setTierSuites)
@@ -199,6 +212,10 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/runs/{id}", s.run)
 	mux.HandleFunc("GET /api/runs/{id}/results", reading(s.runResults, "repository", "query"))
 	mux.HandleFunc("POST /api/runs/{id}/convert", s.convertHeld)
+	mux.HandleFunc("GET /api/runs/{id}/comparisons", s.comparisons)
+	mux.HandleFunc("POST /api/runs/{id}/comparisons", s.startComparison)
+	mux.HandleFunc("GET /api/comparisons/{id}", s.comparison)
+	mux.HandleFunc("GET /api/comparisons/{id}/results", reading(s.comparisonResults, "repository"))
 	mux.HandleFunc("GET /api/findings/{id}", s.findingTrace)
 	mux.HandleFunc("POST /api/runs/{id}/start", s.executeRun)
 	mux.HandleFunc("POST /api/runs/{id}/cancel", s.cancelRun)
@@ -814,10 +831,16 @@ func (s *Server) scopePreview(candidate []store.DeclaredAccount) (ScopePreview, 
 	if err != nil {
 		return out, err
 	}
+	// A repository a full listing no longer names left the scope with the listing, and declaring
+	// its account again does not bring it back; the store's roots skip it the same way.
+	missing, err := s.Store.MissingRepositories()
+	if err != nil {
+		return out, err
+	}
 	nextRoots := make([]string, 0, len(repositories))
 	for _, full := range repositories {
 		owner, repo, ok := strings.Cut(full, "/")
-		if ok && store.CoveredBy(candidate, owner, repo) {
+		if ok && !missing[strings.ToLower(full)] && store.CoveredBy(candidate, owner, repo) {
 			nextRoots = append(nextRoots, full)
 		}
 	}

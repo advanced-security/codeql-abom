@@ -14,6 +14,9 @@ type RefUsage struct {
 	Count int    `json:"count"`
 	// Repositories is how many distinct repositories use this exact reference.
 	Repositories int `json:"repositories"`
+	// Locked is what the current locks select behind this reference, and whose locks select it:
+	// what runs, beside what the source says. Empty where nothing locks it.
+	Locked []RefLock `json:"locked"`
 }
 
 // NodeNeighbor is one end of a relationship, as the detail page lists it.
@@ -216,6 +219,9 @@ func (s *Store) NodeDetailOf(key string) (NodeDetail, error) {
 	d.Repository, d.Origin, d.Path = repo.String, origin.String, path.String
 
 	if d.Refs, err = s.refUsage(key); err != nil {
+		return d, err
+	}
+	if err := s.attachRefLocks(key, d.Refs); err != nil {
 		return d, err
 	}
 	if d.Rules, err = s.nodeRules(key); err != nil {

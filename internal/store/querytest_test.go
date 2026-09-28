@@ -2,6 +2,7 @@ package store
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -277,13 +278,19 @@ func TestAPassingVersionDoesNotVouchForTheNextOne(t *testing.T) {
 
 // Only the first rung is gated here. The stages above it are earned by evidence the run and the
 // simulation produce, and refusing them on a test result would gate them on the wrong thing.
+// Review is earned by a comparison, which reviewgate_test.go holds; here it is enough that what
+// refuses it is not a missing test.
 func TestTheOtherStagesAreNotGatedByTests(t *testing.T) {
 	s := newTestStore(t)
 
-	for _, stage := range []string{StageDev, StageExtendedTest, StageReview, StageDeploy} {
+	for _, stage := range []string{StageDev, StageExtendedTest, StageDeploy} {
 		if err := s.AdvanceQueryStage("acme/rule", "v1", stage, "operator", testCLI); err != nil {
 			t.Errorf("advancing to %s was refused for want of a test: %v", stage, err)
 		}
+	}
+	err := s.AdvanceQueryStage("acme/rule", "v1", StageReview, "operator", testCLI)
+	if err == nil || strings.Contains(err.Error(), "test") || !strings.Contains(err.Error(), "compared") {
+		t.Errorf("advancing to review returned %v, want a refusal about a comparison, not a test", err)
 	}
 }
 

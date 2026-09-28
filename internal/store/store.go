@@ -91,6 +91,7 @@ var createTables = []struct {
 }{
 	{"the commit content table", commitContentDDL},
 	{"the lock coverage table", lockCoverageDDL},
+	{"the lock verification table", lockVerificationDDL},
 	{"the declared scope tables", ownedScopeDDL},
 	{"the cycle spend table", cycleSpendDDL},
 	{"the saved view table", savedViewDDL},
@@ -107,6 +108,7 @@ var createTables = []struct {
 	{"the repository property table", repositoryPropertyDDL},
 	{"the property schema table", propertySchemaDDL},
 	{"the policy tables", policyDDL},
+	{"the comparison tables", comparisonDDL},
 }
 
 // Migrate creates all tables and adds any columns introduced since the database was created.

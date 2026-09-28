@@ -102,9 +102,13 @@ func Build(m Metadata, closure []store.ClosureEntry) Snapshot {
 		if e.Relationship != "indirect" {
 			continue
 		}
-		// The measured version when there is one: GitHub matches advisories on semantic versions
-		// and never on commits, so a pinned reference is unalertable until it can be named.
+		// What runs: the commit a lock selects over the tag the workflow wrote, and the measured
+		// version of either when there is one. GitHub matches advisories on semantic versions and
+		// never on commits, so a pinned reference is unalertable until it can be named.
 		ref := e.Ref
+		if e.LockedCommit != "" {
+			ref = e.LockedCommit
+		}
 		if e.Version != "" {
 			ref = e.Version
 		}

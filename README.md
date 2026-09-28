@@ -46,15 +46,15 @@ Silence about what was not analyzed reads as completeness, and would be a lie.
 
 ## Native Actions lockfiles
 
-**Native lock-aware resolution is ABOM's target baseline; its ingestion is not built yet.**
+**Native lock-aware resolution is ABOM's resolution baseline, and it is built.**
 GitHub's [gh-actions-lock](https://github.com/github/gh-actions-lock) retains symbolic references
-while selecting immutable commits for onboarded workflows. ABOM will consume that selection at
-the analyzed revision using GitHub's [shared parser](https://github.com/github/actions-lockfile),
-preserving the declared ref, lock context and actually analyzed commit separately. A live tag
-lookup must not replace a locked choice, and a broken lock must not silently become a live lookup.
+while selecting immutable commits for onboarded workflows. ABOM reads that selection at the
+analyzed revision with GitHub's [shared parser](https://github.com/github/actions-lockfile),
+analyzes the commit it selects, and keeps the declared ref, lock context and analyzed commit
+separately on every surface. A live tag lookup never replaces a locked choice, and a broken lock
+never silently becomes one. See [how it works](docs/architecture.md#locks).
 
-[Tool adoption](plans/tools/actions-lock.md) and [contextual resolution](plans/db/actions-lockfile.md)
-are distinct planned efforts. Native lock updates, runner enforcement, Dependency Graph ingestion
+[Tool adoption](plans/tools/actions-lock.md) is a distinct planned effort. Native lock updates, runner enforcement, Dependency Graph ingestion
 and advisory outcomes require [separate verification](plans/api/dependency-graph-crosscheck.md).
 `abom-check` remains a planned verdict client; new submission modes are deferred while that native
 coverage is measured. Existing guarded manual submission is retained, not automatically retired.

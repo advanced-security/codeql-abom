@@ -90,6 +90,11 @@ func cycloneComponent(c store.BOMComponent) cdx.Component {
 		if r.ResolvedSHA != "" {
 			props = append(props, [2]string{"abom:resolved", r.Raw + "=> " + r.ResolvedSHA})
 		}
+		// What runs for the repositories this document is about, beside what they wrote.
+		for _, l := range r.Locked {
+			props = append(props, [2]string{"abom:locked", r.Raw + " locked=> " + l.Commit +
+				" (" + strings.Join(l.Consumers, ", ") + ")"})
+		}
 	}
 	for _, f := range c.Findings {
 		if f.RunKey != "" {

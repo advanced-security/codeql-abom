@@ -32,8 +32,8 @@ blocks on the backlog is switched off within a week and a gate nobody runs prote
 1. **Base-versus-head closure diff.** Distinct from the existing generation delta, which compares
    two states of one crawl rather than two commits. It yields nodes newly reachable, exposures
    newly in range, findings on newly reached nodes, and policy-refused actions newly reachable.
-  Each side uses its own effective dependency selection from
-  [actions-lockfile.md](../db/actions-lockfile.md), including changes caused only by a new lock.
+  Each side uses its own effective dependency selection, [as ABOM records it](../../docs/architecture.md#locks),
+  including changes caused only by a new lock.
   No current live tag or current default-branch lock can substitute for either revision.
 2. **`GET /api/repositories/{owner}/{name}/verdict?sha=&base=`** — evidence, policy, outcome and
   reason in one response, with repository, both commits, governing lock contexts and resolution

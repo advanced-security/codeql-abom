@@ -57,3 +57,26 @@ func keys(m map[string]Resolved) []string {
 	}
 	return out
 }
+
+// A dependency a lock selects is submitted as what runs: the locked commit, named by the version
+// the crawl measured it as when it has one. The tag the workflow wrote names whatever that tag
+// points at today, which a locked consumer does not run.
+func TestALockedDependencyIsSubmittedAsTheCommitItsLockSelects(t *testing.T) {
+	const locked = "11bd71901bbe5b1630ceea73d27597364c9af683"
+	for name, c := range map[string]struct {
+		entry store.ClosureEntry
+		want  string
+	}{
+		"measured": {store.ClosureEntry{Owner: "actions", Repo: "checkout", Relationship: "indirect",
+			Ref: "v4", LockedCommit: locked, Version: "v4.2.2"},
+			"pkg:githubactions/actions/checkout@4.2.2"},
+		"unmeasured": {store.ClosureEntry{Owner: "actions", Repo: "checkout", Relationship: "indirect",
+			Ref: "v4", LockedCommit: locked},
+			"pkg:githubactions/actions/checkout@" + locked},
+	} {
+		resolved := Build(meta(), []store.ClosureEntry{c.entry}).Manifests[SyntheticManifestPath].Resolved
+		if _, ok := resolved[c.want]; !ok || len(resolved) != 1 {
+			t.Errorf("%s: resolved = %v, want %s alone", name, keys(resolved), c.want)
+		}
+	}
+}

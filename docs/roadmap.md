@@ -26,18 +26,18 @@ See [how it works](architecture.md) for the current shape.
 
 ## Native locking is the resolution baseline
 
-GitHub's native workflow lockfiles are the gold standard for ABOM's future effective-dependency
+GitHub's native workflow lockfiles are the gold standard for ABOM's effective-dependency
 resolution, not an optional lookup optimization. The declared ref preserves intent; the governing
 workflow lock selects the immutable commit; verified version evidence supports advisory context.
 Each belongs to the analyzed revision, and a current live tag cannot overwrite that selection.
-ABOM does not yet consume these locks.
+**This is built**: ABOM analyzes the commit a lock selects, every reader that says what runs
+follows it beside the declared ref, GitHub's own verification runs when asked, and a lock
+requirement is a policy over the lock rules. See [how it works](architecture.md#locks).
 
-Use GitHub's [native tooling](../plans/tools/actions-lock.md) for generation, verification and
-updates, and its official parser for [contextual ingestion](../plans/db/actions-lockfile.md).
-Missing native coverage stays explicit; invalid or unsupported locks do not silently fall back to
-different code. Keep parsed coverage, network verification and observed runner enforcement distinct.
-This correctness work precedes closure staging, which must stage the selected commits on cold
-fetches as well as cache hits. Database-shape work remains a separate prerequisite.
+GitHub's [native tooling](../plans/tools/actions-lock.md) keeps generation, verification and
+updates; what is left there is observing the runner enforce a nested pin on an approved target.
+Missing native coverage stays explicit, and parsed coverage, network verification and observed
+runner enforcement stay distinct facts. Closure staging comes next, staging the selected commits.
 
 ## An organization that stays current at scale
 
@@ -50,7 +50,9 @@ everything on every period is affordable at small size and not at large, and the
 organization poses have different costs: what is new and what changed can be answered from a sorted
 prefix, while **what is gone can only be answered by reading everything**. GraphQL is the efficient
 way to ask the first two and to carry whatever else is wanted about a repository, with REST as the
-fallback for the organizations that will not permit it. `plans/api/org-enumeration.md`
+fallback for the organizations that will not permit it. A repository a full listing no longer names
+is named as missing and stops being the operator's; removing what only it reached is the prune's,
+which says what it takes first. `docs/architecture.md`
 
 Staying current is also about not paying twice for what did not move, and that has the same shape
 one level down. A commit is fetched once however many references name it, and a query is evaluated
@@ -118,7 +120,7 @@ a staged dependency path that ordinary Default Setup did not analyze. The stagin
 one selected commit per dependency; rooting it at one owned repository bounds the collisions but
 does not eliminate them. Count distinct lock-selected commits, not only different ref names.
 [Closure databases](../plans/ql/closure-database.md) therefore depend on
-[lock-aware resolution](../plans/db/actions-lockfile.md) and must preserve the implemented
+[lock-aware resolution](architecture.md#locks), now built, and must preserve the implemented
 [analysis-mode isolation](architecture.md#analysis-modes).
 
 ## The questions are the organization's own
@@ -144,9 +146,12 @@ written, one `actions-all` answers for authoring and execution, and every mark n
 was recorded under. A run holds what a query still being refined reports rather than writing it
 as findings, and whoever reviews it turns all of it, or the results they chose, into findings once
 the query has earned it; a version a pack published or a suite promoted stores findings unless
-somebody says otherwise. What remains is comparing a run's results with the code scanning alerts
-developers already see. Running several CodeQL releases side by side, so an upgrade can be
-compared before it is taken, is later.
+somebody says otherwise. A finished run is compared with the code scanning alerts developers
+already see, and says what adopting it would add, where, and how stale each commit is; that
+comparison is what earns `review`. What remains is checking a comparison against what appears once
+a pack is live, which waits with publishing. Running several CodeQL releases side by side, so an
+upgrade can be compared before it is taken, is later — and the first comparison on real alerts
+showed why: the same commit under a year-older CodeQL disagreed by seven results.
 `docs/architecture.md`, `plans/api/query-simulation.md`
 
 ## From a finding to a fix

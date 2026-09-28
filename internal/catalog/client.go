@@ -395,10 +395,6 @@ func (c *Client) do(ctx context.Context, url, accept string) (*http.Response, er
 			resp.Body = io.NopCloser(bytes.NewReader(held))
 			return resp, nil
 
-		case resp.StatusCode == http.StatusNotFound:
-			resp.Body.Close()
-			return nil, fmt.Errorf("%s: %w", redact(url), ErrNoDatabase)
-
 		case isRateLimited(resp):
 			wait := c.backoff(resp)
 			resp.Body.Close()
@@ -410,10 +406,48 @@ func (c *Client) do(ctx context.Context, url, accept string) (*http.Response, er
 		default:
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 			resp.Body.Close()
-			return nil, fmt.Errorf("%s returned %d: %s",
-				redact(url), resp.StatusCode, strings.TrimSpace(string(body)))
+			return nil, &StatusError{
+				URL: redact(url), Code: resp.StatusCode,
+				Body: strings.TrimSpace(string(body)), Message: githubMessage(body),
+			}
 		}
 	}
+}
+
+// StatusError is an answer GitHub gave that was not the one asked for, with its own reason.
+//
+// A 404 still unwraps to ErrNoDatabase, which every caller from before this reads it as.
+type StatusError struct {
+	URL  string
+	Code int
+	Body string
+	// Message is GitHub's `message` field, empty where the body carried none.
+	Message string
+}
+
+func (e *StatusError) Error() string {
+	if e.Code == http.StatusNotFound {
+		return fmt.Sprintf("%s: %s", e.URL, ErrNoDatabase)
+	}
+	return fmt.Sprintf("%s returned %d: %s", e.URL, e.Code, e.Body)
+}
+
+func (e *StatusError) Unwrap() error {
+	if e.Code == http.StatusNotFound {
+		return ErrNoDatabase
+	}
+	return nil
+}
+
+// githubMessage reads the `message` GitHub puts in an error body, and nothing when there is none.
+func githubMessage(body []byte) string {
+	var payload struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(payload.Message)
 }
 
 // remember buffers an answer so a later 304 has something to replay.

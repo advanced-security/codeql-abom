@@ -52,8 +52,8 @@ findings close it off:
 
 **A default-branch report is not a pinned revision.** A repository-level SBOM cannot seed a
 consumer's effective graph unless its source revision and semantics match that consumer. Native
-lock ingestion at the analyzed commit is a different operation, owned by
-[actions-lockfile.md](../db/actions-lockfile.md). Nothing here substitutes current default-branch
+lock ingestion at the analyzed commit is a different operation, and
+[built](../../docs/architecture.md#locks). Nothing here substitutes current default-branch
 data for a dependency selected by an older workflow lock.
 
 ## Pending

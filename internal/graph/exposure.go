@@ -3,6 +3,9 @@ package graph
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
+	"strconv"
+	"strings"
 )
 
 // Exposure is one repository's shortest path to an advisory-affected action.
@@ -106,9 +109,16 @@ type reachPath struct {
 
 // reachedNode is a node the walk has arrived at, together with the commit a consumer must have
 // pinned for the route through it to exist. Empty constrains nothing.
+//
+// Two bindings follow a lock. requires names the only repository the route can end at, once a
+// caller's lock admitted a step: that lock chose the commit for that caller and nobody else.
+// excludes names repositories it cannot end at, once a step was admitted by what its ref resolves
+// to while their locks chose another commit for it. Sorted and comma-joined, so a state is a key.
 type reachedNode struct {
-	node   int64
-	commit string
+	node     int64
+	commit   string
+	requires int64
+	excludes string
 }
 
 // exposureOf walks dependents from target, keeping the shortest route to each repository.
@@ -141,43 +151,124 @@ func (m *model) exposureOf(target int64, maxDepth int) map[int64]reachPath {
 		var next []reachedNode
 		for _, cur := range frontier {
 			for _, in := range m.reverse[cur.node] {
-				// Leaving a dependency: only a consumer that pinned the version these edges
-				// were read from can be standing here.
-				if cur.commit != "" && m.resolved[m.keyOf[cur.node]+"\x00"+in.ref] != cur.commit {
+				// Leaving a dependency: only a consumer running the commit these edges were
+				// read from can be standing here.
+				requires, excludes, ok := m.admits(in, cur)
+				if !ok {
 					continue
 				}
 
 				// Steps are an implementation detail; what a caller references is the
 				// workflow or composite action holding them.
-				via := reachedNode{node: in.src}
+				vias := []reachedNode{{node: in.src, requires: requires, excludes: excludes}}
 				if c, ok := m.container[in.src]; ok {
-					via.node = c
-					// Crossing into a dependency. The edge was read out of one commit of it,
-					// so everything onward belongs to that commit.
+					vias[0].node = c
+					// Crossing into a dependency. The edge was read out of the commits of it
+					// that ship it, so everything onward belongs to one of those.
 					if m.isExternal[c] {
-						via.commit = in.commit
+						vias = vias[:0]
+						for _, commit := range in.commits {
+							vias = append(vias, reachedNode{
+								node: c, commit: commit, requires: requires, excludes: excludes,
+							})
+						}
 					}
 				}
-				if _, ok := from[via.node]; !ok && via.node != target {
-					from[via.node] = cur.node
-					enteredBy[via.node] = in.src
+				if _, ok := from[vias[0].node]; !ok && vias[0].node != target {
+					from[vias[0].node] = cur.node
+					enteredBy[vias[0].node] = in.src
 				}
 
-				if repo, ok := m.repoOf[in.src]; ok && m.seedRepo[repo] {
+				if repo, ok := m.repoOf[in.src]; ok && m.seedRepo[repo] &&
+					(requires == 0 || requires == repo) && !listed(excludes, repo) {
 					if _, seen := out[repo]; !seen {
-						path, conditions := m.routeFrom(via.node, target, from, enteredBy)
+						path, conditions := m.routeFrom(vias[0].node, target, from, enteredBy)
 						out[repo] = reachPath{hops: depth, path: path, conditions: conditions}
 					}
 				}
-				if via.node != in.src && !visited[via] {
-					visited[via] = true
-					next = append(next, via)
+				for _, via := range vias {
+					if via.node != in.src && !visited[via] {
+						visited[via] = true
+						next = append(next, via)
+					}
 				}
 			}
 		}
 		frontier = next
 	}
 	return out
+}
+
+// admits reports whether a consumer's reference can lead to the commit the walk stands at, and
+// how the route is bound from here.
+//
+// A reference its own repository's lock governs runs the commit that lock selects and nothing
+// else. One a caller's lock governs runs that commit for that caller, so admitting it by that
+// lock binds the route to the caller. Admitting it by what its ref resolves to rules out every
+// caller whose lock chose another commit for it. A reference nothing locks runs what it resolved
+// to, which is how an unlocked corpus is walked.
+func (m *model) admits(in inEdge, cur reachedNode) (int64, string, bool) {
+	if cur.commit == "" {
+		return cur.requires, cur.excludes, true
+	}
+	locks := m.locks[in.row]
+	own := false
+	for _, l := range locks {
+		if !l.own {
+			continue
+		}
+		own = true
+		if l.commit == cur.commit {
+			return cur.requires, cur.excludes, true
+		}
+	}
+	if own {
+		return 0, "", false
+	}
+	if m.resolved[m.keyOf[cur.node]+"\x00"+in.ref] == cur.commit {
+		excludes := cur.excludes
+		blocked := false
+		for _, l := range locks {
+			if l.commit == cur.commit {
+				continue
+			}
+			if cur.requires == l.consumer {
+				blocked = true
+			}
+			excludes = withListed(excludes, l.consumer)
+		}
+		if !blocked {
+			return cur.requires, excludes, true
+		}
+	}
+	for _, l := range locks {
+		if l.commit == cur.commit && (cur.requires == 0 || cur.requires == l.consumer) &&
+			!listed(cur.excludes, l.consumer) {
+			return l.consumer, cur.excludes, true
+		}
+	}
+	return 0, "", false
+}
+
+// listed reports whether a comma-joined set of repository ids holds one.
+func listed(set string, id int64) bool {
+	if set == "" {
+		return false
+	}
+	return slices.Contains(strings.Split(set, ","), strconv.FormatInt(id, 10))
+}
+
+// withListed adds a repository id to a comma-joined set, kept sorted so equal sets compare equal.
+func withListed(set string, id int64) string {
+	if listed(set, id) {
+		return set
+	}
+	ids := []string{strconv.FormatInt(id, 10)}
+	if set != "" {
+		ids = append(ids, strings.Split(set, ",")...)
+	}
+	slices.Sort(ids)
+	return strings.Join(ids, ",")
 }
 
 // routeFrom walks the recorded predecessors back to the target, collecting the containers passed

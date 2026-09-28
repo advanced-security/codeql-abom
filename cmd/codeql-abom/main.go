@@ -36,6 +36,7 @@ var subcommands = []subcommand{
 	{"bom", runBOM, "Write a bill of materials for the declared scope, or for a named root."},
 	{"stale", runStale, "Report findings no tracked run of their suite still reports."},
 	{"branches", runBranches, "Record which branches the declared repositories protect."},
+	{"verify-lock", runVerifyLock, "Run GitHub's no-fix lock verification of one repository's current commit."},
 	{"selfcheck", runSelfcheck, "Analyze a source tree with a CodeQL suite as a smoke test."},
 }
 

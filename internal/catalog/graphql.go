@@ -4,7 +4,7 @@
 //
 // Written over the standard library on purpose. `shurcooL/githubv4` is the usual answer and brings
 // three modules with it, to a project whose whole subject is transitive dependency risk, in order
-// to avoid a JSON POST. See plans/api/org-enumeration.md.
+// to avoid a JSON POST. docs/architecture.md says what each route reads and where they differ.
 
 package catalog
 

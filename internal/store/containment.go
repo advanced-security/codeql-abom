@@ -194,7 +194,7 @@ func containmentEdges(nodes []GraphNode, held []Containment) []GraphEdge {
 		for _, target := range drawnAs[c.HeldKey] {
 			out = append(out, GraphEdge{
 				Source: c.OwnerKey, Target: target, Kind: c.Kind,
-				Refs: []string{}, Count: 1,
+				Refs: []string{}, Locked: []string{}, Count: 1,
 			})
 		}
 	}

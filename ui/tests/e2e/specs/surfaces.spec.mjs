@@ -27,6 +27,17 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
             await expect(listing).toContainText(`Route: ${route}`);
             if (!marks.listedAt) await expect(listing).toContainText('No full listing recorded');
             if (!marks.sweptAt) await expect(listing).toContainText('Changes checked: not recorded');
+            // Only a full listing establishes absence, so only one may say nothing is missing.
+            const missing = marks.missing ?? [];
+            if (!marks.listedAt) {
+                await expect(listing).not.toContainText('missing');
+            } else if (missing.length === 0) {
+                await expect(listing).toContainText('Nothing declared is missing from it');
+            } else {
+                for (const gone of missing) {
+                    await expect(listing.locator('[data-abom-listing-missing]')).toContainText(gone.repository);
+                }
+            }
 
             if (marks.highCreated || marks.highPushed) {
                 await listing.locator('summary').click();

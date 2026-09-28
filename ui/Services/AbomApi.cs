@@ -193,6 +193,25 @@ public sealed class AbomApi(HttpClient http)
         string repository, CancellationToken ct = default) =>
         RequeueAsync("api/discovery/requeue-repository", new { repository }, ct);
 
+    /// <summary>
+    /// Runs GitHub's no-fix lock verification of one repository's current commit. The server
+    /// budgets it and says why when it refuses, which is returned rather than thrown.
+    /// </summary>
+    public async Task<(LockVerification? Result, string Refusal)> VerifyLockAsync(
+        string repository, string mode, CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/locks/verify");
+        request.Headers.Add("X-Abom-Control", "1");
+        request.Content = JsonContent.Create(new { repository, mode });
+        using var response = await http.SendAsync(request, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            var reason = await response.Content.ReadAsStringAsync(ct);
+            return (null, string.IsNullOrWhiteSpace(reason) ? response.ReasonPhrase ?? "refused" : reason);
+        }
+        return (await response.Content.ReadFromJsonAsync<LockVerification>(Json, ct), "");
+    }
+
     private async Task<RequeueResult> RequeueAsync(string path, object? body, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, path);
@@ -492,6 +511,19 @@ public sealed class AbomApi(HttpClient http)
     public Task<(Conversion? Conversion, string? Refusal)> ConvertHeldAsync(
         long run, string repository, IReadOnlyList<long> results, string by, CancellationToken ct = default) =>
         ControlAsync<Conversion>($"api/runs/{run}/convert", new { repository, results, by }, ct);
+
+    /// <summary>A run's comparisons with the code scanning alerts, newest first and without members.</summary>
+    public async Task<ComparisonList?> GetRunComparisonsAsync(long run, CancellationToken ct = default) =>
+        await GetAsync<ComparisonList>($"api/runs/{run}/comparisons", ct);
+
+    /// <summary>One comparison with every member, which is where what was not compared is named.</summary>
+    public async Task<Comparison?> GetComparisonAsync(long id, CancellationToken ct = default) =>
+        await GetAsync<Comparison>($"api/comparisons/{id}", ct);
+
+    /// <summary>Asks for a run's results to be set against the alerts GitHub holds now.</summary>
+    public Task<(Comparison? Comparison, string? Refusal)> StartComparisonAsync(
+        long run, string by, CancellationToken ct = default) =>
+        ControlAsync<Comparison>($"api/runs/{run}/comparisons", new { by }, ct);
 
     public async Task<FindingTrace?> GetFindingTraceAsync(long id, CancellationToken ct = default) =>
         await GetAsync<FindingTrace>($"api/findings/{id}", ct);

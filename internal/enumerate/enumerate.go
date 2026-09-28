@@ -236,7 +236,7 @@ func record(
 		PropertiesRead:   listing.PropertiesRead,
 		PropertiesUnread: listing.PropertiesUnread,
 	}
-	seen := make(map[string]struct{}, len(listing.Repositories))
+	seen := make([]string, 0, len(listing.Repositories))
 	for _, repository := range listing.Repositories {
 		fullName := repository.FullName
 		owner, repo, ok := strings.Cut(fullName, "/")
@@ -246,7 +246,7 @@ func record(
 			one.Found--
 			continue
 		}
-		seen[fullName] = struct{}{}
+		seen = append(seen, fullName)
 		before, err := s.RepositoryOrigin(fullName)
 		if err != nil {
 			return one, err
@@ -276,14 +276,14 @@ func record(
 		}
 	}
 
-	if !listing.Full {
-		return one, nil
-	}
-	missing, err := absentFrom(s, account.Owner, seen)
+	// Named and never removed here: what a missing repository alone reached is what the prune in
+	// Settings offers, which says what it would take before anybody accepts it. A listing that
+	// under-reports without failing would otherwise take out real evidence on a timer.
+	missing, err := s.RecordRepositoryListing(account.Owner, seen, listing.Full)
 	if err != nil {
 		return one, err
 	}
-	one.Missing, one.MissingKnown = missing, true
+	one.Missing, one.MissingKnown = missing, listing.Full
 	return one, nil
 }
 
@@ -342,26 +342,4 @@ func recordProperties(
 		values = append(values, store.PropertyValue{Name: p.Name, Value: p.Value})
 	}
 	return s.ReplacePropertyValues(repository.FullName, values)
-}
-
-// absentFrom counts repositories the corpus holds for an account that a full listing did not name.//
-// Counted and not removed. Whether such a repository is pruned, kept as coverage or labeled
-// orphaned is an open decision, and taking it here — silently, inside an enumeration — would
-// destroy coverage nobody agreed to lose.
-func absentFrom(s *store.Store, owner string, seen map[string]struct{}) (int, error) {
-	held, err := s.OwnedRepositories()
-	if err != nil {
-		return 0, err
-	}
-	missing := 0
-	for _, fullName := range held {
-		account, _, ok := strings.Cut(fullName, "/")
-		if !ok || !strings.EqualFold(account, owner) {
-			continue
-		}
-		if _, present := seen[fullName]; !present {
-			missing++
-		}
-	}
-	return missing, nil
 }

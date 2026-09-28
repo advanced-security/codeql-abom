@@ -37,6 +37,18 @@ type RelationshipSummary struct {
 	AdvisoryRoute *bool `json:"advisoryRoute"`
 	FindingRoute  *bool `json:"findingRoute"`
 	OwnedDepth    *int  `json:"ownedDepth"`
+
+	// Locked are the commits current locks select for this line: the repository's own lock
+	// through the workflow named, or a caller's through the pin it reached the composite by.
+	Locked []RelationshipLock `json:"locked"`
+}
+
+// RelationshipLock is one commit a current lock selects for one declaring line.
+type RelationshipLock struct {
+	Commit   string `json:"commit"`
+	Consumer string `json:"consumer"`
+	Workflow string `json:"workflow,omitempty"`
+	Via      string `json:"via,omitempty"`
 }
 
 // RelationshipsQuery narrows and orders the relationships unit, and cuts one page out of the match.
@@ -284,6 +296,9 @@ func (s *Store) RelationshipsPage(q RelationshipsQuery) (RelationshipsPage, erro
 	}
 	for i := range items {
 		items[i].Severity = bands[items[i].Source]
+	}
+	if err := s.attachRelationshipLocks(items); err != nil {
+		return RelationshipsPage{}, err
 	}
 	return RelationshipsPage{Items: items, Total: total}, nil
 }

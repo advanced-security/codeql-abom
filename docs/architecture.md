@@ -107,12 +107,16 @@ binding, which would put a saved file in front of the whole corpus. Deploying a 
 moves it into a suite a tier may bind. The directory is a pack the operator's own tooling opens:
 ABOM drives the loop and holds the catalog, and never becomes the editor.
 
-**A query version has a lifecycle, and two rungs of it are earned.** A version is identified by a
+**A query version has a lifecycle, and three rungs of it are earned.** A version is identified by a
 content hash over the query and every library it imports, so editing a library changes it. Stages
 run `dev`, `test`, `extended-test`, `review`, `deploy`; each advance records who made it. `test` is
 refused unless that version's own tests — the `.qlref` files naming it, never the whole directory —
 pass, and `extended-test` unless every step the version carries does — all but the target, which
-belongs to a request. Each step is derived from evidence on
+belongs to a request. `review` is refused unless a finished comparison of a run of that exact
+version, whose results came from the CodeQL the server runs, compared at least one repository with
+the alerts code scanning holds — over any scope somebody chose, which proves the query was looked
+at before it bites; the refusal names the nearest miss, and the catalog states it on the row before
+anybody presses. Each step is derived from evidence on
 disk or in `abom_query_test`, served by the API and never computed in the browser. ABOM computes
 readiness and never advances anything itself.
 
@@ -277,7 +281,28 @@ An account is read over **GraphQL where it answers, REST where it does not**, an
 the same three questions — what is new, what changed, what is gone. GraphQL is preferred because one
 call returns a hundred repositories with their marks, their custom properties and their default
 branch for a single point, against a REST budget it does not share. `abom_enumeration_state.route`
-records which route produced a listing, because the two do not agree about everything.
+records which route produced a listing, because the two do not agree about everything: REST reports
+a `default_branch` for a repository with no branches, because it is a setting, where GraphQL
+answers `defaultBranchRef: null`.
+
+| Question | How | Cost |
+| --- | --- | --- |
+| What is new? | Order by creation, descending; stop below the newest known | The new prefix |
+| What changed? | Order by push, descending; stop below the last read | The moved prefix |
+| What is gone? | **A full listing. Nothing else.** | Every page |
+
+- **The sorted walk follows `pushedAt`, never `updatedAt`.** Neither contains the other: 17 of 27
+  repositories on the reference organization carried a `pushedAt` later than their `updatedAt`.
+- **A sweep is two walks, so it costs at least two reads.** An account of one or two pages is read
+  whole instead (`enumerate.sweepWorthIt`), which costs less and still sees deletions; the saving
+  starts at three pages. A full listing still comes round on its period, a day by default, whatever
+  the sweeps found.
+- **A walk ordered by activity is unstable.** A push landing mid-walk reorders the pages still to
+  come, so a sweep may see one repository twice and miss another; the next full listing repairs it.
+- **A GraphQL query is bounded, and the bounds bite quietly.** `first` is capped at 100, a query
+  GitHub cannot answer in ten seconds is terminated and charged against the next hour, and
+  secondary limits cap GraphQL at 2,000 points a minute, so separate budgets are not separate
+  clients.
 
 **Listing an account does not probe its databases.** The crawler records and queues declared
 repositories without asking whether GitHub holds a CodeQL database for them. The explicit
@@ -290,8 +315,20 @@ it remains eligible for ABOM's own analysis. Requests and GraphQL points are rep
 **A full listing and a check for changes are different evidence.** Settings shows each account's
 last route, last full listing, last incremental read and newest observed creation and push.
 Missing times say *not recorded*, and an open page refreshes them without replacing unsaved edits.
-Only a full listing can establish absence; a repository missing from one remains recorded until
-the operator's removal policy is decided.
+Only a full listing can establish absence, so only one says nothing is missing.
+
+**A repository a full listing no longer names is missing, and no longer yours; nothing is removed
+for it.** A declared account covers what the account holds, so a declared repository its full
+listing does not name stops rooting the declared closure, the queue stops claiming it, and a preview
+of a declaration does not count it as entering. Settings names it beside that listing with when it
+went missing, kept across later listings, for as long as the declaration covers it. Seeing
+it in any later listing, a sweep's included, makes it yours again with nothing to rebuild; a sweep
+that does not reach it, and a read that failed, record nothing. Its ledger and its repository row
+stay. What it alone reached is what no longer belongs, which the prune in Settings states and offers
+to take out of view — it is never removed inside an enumeration, which runs on a timer, because a
+listing can under-report without failing: one read without a token found 91 of 181 repositories
+and said nothing. A seeded repository no declared account covers is treated the same way: it is
+outside the closure, kept until somebody accepts the prune that says what removing it takes.
 
 ## The data model
 
@@ -302,6 +339,7 @@ Everything is one SQLite file. `internal/store` is the only package that writes 
 | Table | |
 | --- | --- |
 | `abom_owned_org`, `abom_owned_scope`, `abom_owned_include` | What the operator declared, and how it arrived |
+| `abom_enumeration_state`, `abom_repository_absence` | When each account was last listed whole and read for changes, by which route and to which marks, and the declared repositories a full listing no longer names, since when |
 | `abom_account` | What `gh` reports about membership, with the token scopes that made the answer possible |
 | `repository` | Every repository seen, with `origin` recording how it entered |
 
@@ -314,6 +352,74 @@ Everything is one SQLite file. `internal/store` is the only package that writes 
 | `abom_tier_suite`, `abom_tier_configured`, `abom_suite_query` | Which queries run against which tier |
 | `abom_cycle_spend` | What each crawl cycle cost |
 
+### Locks
+
+A workflow can name `owner/action@v1` while its native Actions lockfile selects an older commit
+than `v1` names today, and two consumers can lock one tag to different commits. ABOM reads the
+lock from the tree at the analyzed commit with GitHub's parser, never from the repository's
+current state, and analyzes what it selects.
+
+**Which lock governs which step.** A workflow's own steps are governed by its repository's lock,
+for that workflow only; so are the steps of the repository's own composites, by the lock of each
+workflow that reaches them. Somebody else's composite is governed by its **caller's** lock, for
+that caller only: GitHub's tool records a composite's nested pins in the caller's lock and never
+reads the callee's. A workflow entry lists the pins the workflow and its own composites name, not a
+closure; what a remote composite pulls in is reachable through its entry's `uses:` alone. Only a
+lock read at a commit the queue currently resolves to governs anything. One definition of this,
+`lockGovernedQuery`, answers discovery and every reader.
+
+**What is queued.** The selected commit is queued as its own row, beside the declared ref rather
+than instead of it: the declared ref is still what an unlocked consumer runs, what a relock would
+move to, and what every count describes as written. When the two name one commit, the second row
+costs no evaluation. A full commit id is never drift-probed, because it cannot move and a probe of
+one finds no ref by that name.
+
+**What reads it.** Wherever a reader says what runs, the lock's answer stands beside the reference
+as written, never in its place:
+
+- the queue names whose lock chose a commit;
+- a node page lists the commits locks select behind each declared reference, and each repository
+  naming it says what its lock did — locked it, has no lockfile, does not list these uses, was
+  refused, or was never read, which is unknown rather than unlocked;
+- a relationship names the commit its declaring line's lock selects and through which workflow or
+  caller pin, and each drawn line carries the commits behind it;
+- the bill of materials names, beside each reference, the commits its roots' locks select, in both
+  export formats;
+- the submission closure follows the commit a root's lock selects, down every route it governs,
+  and submits that commit, named by its measured version where one exists;
+- exposure admits a consumer only through the commit it runs: its own lock's choice, or what its
+  reference resolved to, and a caller's lock binds the route to that caller.
+
+Both walks take a dependency's children from every regular run that sighted the edge, not only the
+latest: an edge two analyzed commits share is one row. Reach and the owned closure stay
+component-level by design: they already union every analyzed version's edges, so a locked commit
+enters them through its own analysis.
+
+**Unreadable and changed locks.** A lock with one malformed entry is unsupported as a whole and
+selects nothing, and a digest of the wrong length or alphabet selects nothing whatever the parser
+allowed. Each reading records the parser release and interpretation that made it; a start under a
+different one requeues every commit that has a lockfile, and re-reading one repeats the checkout
+and no evaluation.
+
+**Verification.** GitHub's own `gh actions-lock` verification runs only when somebody asks — `POST
+/api/locks/verify`, `codeql-abom verify-lock`, or *check lock* on a node page — and never in a
+read. It runs no-fix, on a copy of the tree made a repository of its own (the tool reads `$/`
+actions through git), and is not believed if it changed that copy. A network check of one commit
+is not repeated within the hour and a day has a ceiling. What the tool says is kept verbatim and
+appended: **passed**, **warnings**, **failed**, **inconclusive** — a category this build does not
+know, or reachability the tool could not confirm — and **error**, for a tool that gave no report.
+None of them is a statement that a workflow is safe.
+
+**Policy.** A requirement for native locking is a policy like any other, over the rules the crawl
+already runs — `abom/actions/uncovered-action-ref` and `abom/actions/actions-lock-missing-for-workflow`
+— simulated before it binds and refusing by rule ID, because a verdict comes only from a rule. ABOM's
+reading of a lock and GitHub's verification are evidence beside it, never a term of one. On the
+shared corpus the uncovered-reference rule fires exactly where the reading leaves a reference
+without a usable lock.
+
+Observing the runner enforce a nested pin is not done here; it needs an approved target, and the
+tooling plan in `plans/tools/actions-lock.md` owns it.
+
 ### Evidence — the ledger
 
 | Table | |
@@ -323,6 +429,8 @@ Everything is one SQLite file. `internal/store` is the only package that writes 
 | `abom_ingest_ledger` | What has already been read, so it is not read twice |
 | `abom_ref_resolution` | Which commit a tag or branch pointed at, when it was measured |
 | `abom_commit_content`, `abom_protected_branch` | Content equivalence, and which branches GitHub protects |
+| `abom_lock_coverage`, `abom_lock_dependency`, `abom_lock_use`, `abom_lock_workflow_pin` | What a repository's Actions lockfile said at one commit: coverage per workflow — not onboarded, empty, covered, or unsupported with the parser's reason — what each pin selects with the numeric ids it records, the DAG of what a composite pulls in, the pins each workflow names, and which reader read it. Asserted by the lock, verified by nothing |
+| `abom_lock_verification` | Each run of GitHub's lock verification somebody asked for, appended: the commit, mode, tool and lockfile versions, outcome, and every finding as the tool wrote it |
 
 ### Analysis modes
 
@@ -462,6 +570,8 @@ flowchart LR
 | `abom_held_result` | What a run with findings off kept in each repository, one row per result, carrying every column a finding does and apart from `abom_finding` |
 | `abom_held_conversion` | Who converted a held result to a finding, when, and from which run, keyed by the finding |
 | `abom_analysis_result` | What each query in a run found in each repository. A member counted before this existed has a total and no split |
+| `abom_comparison`, `abom_comparison_member` | A run set against the code scanning alerts, who asked and under which CodeQL its results came, and per repository whether it was compared or why not, the commit and CodeQL GitHub's analysis describes, the default branch as read and how the commit analyzed relates to it |
+| `abom_comparison_result`, `abom_comparison_alerts` | Each result compared with the alert that stands for it, and how many alerts GitHub held per rule and state, kept whole rather than pointing at the run's rows |
 | `abom_local_database` | A retained CodeQL database, keyed the way a run is: repository, commit, source filter and mode |
 
 ### Derived and external
@@ -505,7 +615,7 @@ assert an order between jobs that actually run in parallel.
 | --- | --- |
 | HTTP API | The whole capability set. Reads are open; anything that writes is guarded at the endpoint |
 | Dashboard | Where to start: each entry opens the Inventory already narrowed to it |
-| CodeQL | The queries findings come from: requests, the catalog of versions and stages, runs and their results per repository and query, and which suites each tier runs |
+| CodeQL | The queries findings come from: requests, the catalog of versions and stages, runs and their results per repository and query, what those results would add to the alerts developers already see, and which suites each tier runs |
 | Inventory | Which things match, in tabs that are named views, reprojected by a unit switch. Repositories chosen here are what a run is asked over |
 | Explorer | A force-directed graph over a scoped closure |
 | Settings | What the operator claims, and what discovery does: analysis is started and requeued here |
@@ -590,6 +700,50 @@ flowchart LR
     HELD -->|"picked"| EVIDENCE["a request's evidence"]
     HELD -. "never" .-> SKIP["an answer a run,<br/>the crawl or the sweep reads"]
     style SKIP fill:#3d1d1d
+```
+
+**A run's results are set against the alerts developers already see.** A comparison is asked of
+a finished run, findings on or off, and reads, for each repository the run has results for, the
+CodeQL alerts code scanning holds now in every state, the newest Actions analysis of the default
+branch among its newest page of analyses — never a pull request's — and the default branch. It creates nothing: no alert, no finding and no write to
+GitHub, only a count and a list kept against the run, whole, so analyzing the run again does not
+change what it said. What it counts is the delta. A result stands for an alert reported by the same
+rule at the same path, line and column, or on the same line where no alert is at the exact place,
+one alert to a result: open and dismissed alerts add nothing, a fixed one reopens, and what no
+alert stands for is new. Open alerts no result stood for are counted beside it, because what the
+repository already runs keeps raising them.
+
+- **It reads a regular run only.** Default Setup builds one repository's own checkout, so a
+  comparison asked of an extended run is refused where it is asked, naming the shape; the run
+  itself stays legitimate.
+- **It carries its condition, its merge and its boundary.** Alerts appear only where Actions
+  analysis runs; a pack added through `github-codeql-config-file` merges with what Default Setup
+  generates, so new is counted over every CodeQL alert the repository holds; and it is exact only
+  where the commit and the CodeQL analyzed are the ones GitHub's alerts describe.
+- **It names what it did not compare.** A repository the run has no results for, one it counted
+  before members kept their evaluation, one code scanning never analyzed, one whose code scanning
+  holds no Actions analysis ABOM can recognize, and one whose alerts or analyses GitHub did not
+  give are each listed with why and left out of the count.
+- **It states staleness beside each count.** The commit analyzed is current, behind by a counted
+  number of commits, ahead, diverged, or unknown where the default branch could not be read — never
+  current by default.
+
+A comparison reads through the GitHub client every other read shares, so it is paced and cached
+with them, and it runs off the request: one left running when the server stopped is `interrupted`
+on the next start, keeping what it read. It reads every member's results before it reads GitHub,
+and a run is neither analyzed again while its comparison reads nor compared while it runs, so the
+results compared are the ones the recorded CodeQL produced.
+
+```mermaid
+flowchart LR
+    RUN["a finished regular run,<br/>findings on or off"] --> CMP["abom_comparison:<br/>new, reopens, already alerted"]
+    ALERTS["code scanning alerts<br/>and analyses, read now"] --> CMP
+    HEAD["the default branch,<br/>read now"] -->|"staleness"| CMP
+    EXT["an extended run"] -. "refused, naming the shape" .-> CMP
+    CMP -->|"compared, same CodeQL"| REVIEW["the review rung"]
+    CMP -. "never" .-> WRITE["an alert, a finding,<br/>or a write to GitHub"]
+    style EXT fill:#3d1d1d
+    style WRITE fill:#3d1d1d
 ```
 
 **A unit is a shape, not a scope.** Inventory reprojects one scope as actions, workflows, jobs,
@@ -825,7 +979,7 @@ and the tests named there.
 - **An absent measurement is not a measurement of zero.** A node nothing has measured is a coverage
   gap, and must not be drawn, aggregated or exported as a measured zero.
 - **A person chooses every alert.** Nothing writes to another repository's security surface on a
-  timer or by inference.
+  timer or by inference. A comparison with the alerts reads them and writes nothing back.
 - **Say what was excluded.** A scoped view states what it left out. A bounded query that silently
   drops the rest turns a performance fix into a coverage lie.
 

@@ -175,12 +175,22 @@ const ownedFrontierRow = `EXISTS (
 	   AND (o.includes_only = 0
 	        OR EXISTS (SELECT 1 FROM abom_owned_include i
 	                    WHERE LOWER(i.owner) = LOWER(abom_frontier.owner)
-	                      AND LOWER(i.repo) = LOWER(abom_frontier.repo))))`
+	                      AND LOWER(i.repo) = LOWER(abom_frontier.repo))))
+	AND NOT EXISTS (SELECT 1 FROM abom_repository_absence absent
+	                 WHERE absent.repository = abom_frontier.owner || '/' || abom_frontier.repo)`
 
 // ownedFullName renders the predicate against a column holding `owner/name`. Built rather than
 // written out three times, so the tier, the queue view and the node users cannot drift into
-// separate answers to the same question.
+// separate answers to the same question. A repository a full listing of its account no longer
+// names is not the operator's, whatever the declaration says about the account.
 func ownedFullName(col string) string {
+	return `(` + declaredFullName(col) + ` AND NOT EXISTS (
+		SELECT 1 FROM abom_repository_absence absent WHERE absent.repository = ` + col + `))`
+}
+
+// declaredFullName is what a declaration covers, missing or not, which is what a listing of the
+// account is compared with.
+func declaredFullName(col string) string {
 	owner := `SUBSTR(` + col + `, 1, INSTR(` + col + `, '/') - 1)`
 	repo := `SUBSTR(` + col + `, INSTR(` + col + `, '/') + 1)`
 	return `EXISTS (
@@ -345,7 +355,9 @@ func (s *Store) RepositoryIsOwned(fullName string) (bool, error) {
 		return false, nil
 	}
 	var one int
-	err := s.db.QueryRow(`SELECT 1 WHERE `+ownedRepository, owner, owner, repo).Scan(&one)
+	err := s.db.QueryRow(`SELECT 1 WHERE `+ownedRepository+`
+		AND NOT EXISTS (SELECT 1 FROM abom_repository_absence WHERE repository = ?)`,
+		owner, owner, repo, fullName).Scan(&one)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}

@@ -29,7 +29,7 @@ func suggestionStore(t *testing.T) *Store {
 	}
 	for _, stage := range []struct{ id, version, stage string }{
 		{"acme/pin", "c1", StageDeploy},
-		{"acme/draft", "d1", StageReview},
+		{"acme/draft", "d1", StageExtendedTest},
 	} {
 		if err := s.AdvanceQueryStage(stage.id, stage.version, stage.stage, "operator", "2.27.1"); err != nil {
 			t.Fatalf("AdvanceQueryStage %s: %v", stage.id, err)
@@ -77,7 +77,7 @@ func TestAVersionStillBeingRefinedSuggestsHoldingAndSaysWhy(t *testing.T) {
 		q    AnalysisQuery
 		want string
 	}{
-		{AnalysisQuery{QueryID: "acme/draft", QueryVersion: "d1"}, StageReview},
+		{AnalysisQuery{QueryID: "acme/draft", QueryVersion: "d1"}, StageExtendedTest},
 		{AnalysisQuery{QueryID: "acme/pin", QueryVersion: "c2"}, "deploy"},
 		{AnalysisQuery{QueryID: "acme/new", QueryVersion: "n1"}, "stage"},
 	} {
@@ -99,7 +99,7 @@ func TestOneQueryStillBeingRefinedHoldsTheWholeRun(t *testing.T) {
 		AnalysisQuery{QueryID: "actions/unpinned-tag", QueryVersion: "up1"},
 		AnalysisQuery{QueryID: "acme/draft", QueryVersion: "d1"})
 	if got.Findings {
-		t.Errorf("a run holding a query at review suggests findings on: %+v", got)
+		t.Errorf("a run holding a query at extended-test suggests findings on: %+v", got)
 	}
 	if !got.Queries[0].Promoted || got.Queries[1].Promoted {
 		t.Errorf("per query the suggestion reads %+v, want the upstream one promoted and the draft not",

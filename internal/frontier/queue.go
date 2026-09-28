@@ -439,6 +439,9 @@ func (q *Queue) Complete(k Key, res Resolution) error {
 //
 // Immutable refs are excluded by `analyzed_ref <> resolved_sha`, which compares a ref *name*
 // against a *commit*: true for every tag and branch, false only when the ref is itself a SHA.
+// A requested ref that is a full commit id is excluded outright as well, because the two can
+// disagree without anything having moved: an annotated tag's own object id checks out as the
+// commit under it, and a probe of that id finds no ref and would report the dependency gone.
 //
 // Both clocks are consulted. `checked_at` alone would re-probe everything analyzed minutes ago,
 // which teaches nothing because the analysis already resolved the commit; `analyzed_at` alone was
@@ -457,6 +460,7 @@ func (q *Queue) DueForRecheck(ttl time.Duration, limit int) ([]Recheck, error) {
 		WHERE status = ?
 		  AND resolved_sha IS NOT NULL AND resolved_sha <> ''
 		  AND (analyzed_ref IS NULL OR analyzed_ref <> resolved_sha)
+		  AND NOT (length(ref) = 40 AND ref NOT GLOB '*[^0-9a-fA-F]*')
 		  AND (checked_at IS NULL OR checked_at <= ?)
 		  AND (analyzed_at IS NULL OR analyzed_at <= ?)
 		ORDER BY checked_at IS NOT NULL, score DESC, checked_at ASC

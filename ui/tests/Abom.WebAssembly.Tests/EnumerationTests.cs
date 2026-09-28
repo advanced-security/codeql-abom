@@ -88,6 +88,52 @@ public class EnumerationTests : AbomTestContext
         Assert.DoesNotContain("0 repositories", listing.TextContent);
     }
 
+    /// <summary>
+    /// A repository a full listing no longer names is named beside that listing, with when, as no
+    /// longer the operator's, and the reader is pointed at the removal that says what it would take
+    /// rather than told anything was removed.
+    /// </summary>
+    [Fact]
+    public void AFullListingNamesWhatItNoLongerHoldsAndWhereRemovingItIsOffered()
+    {
+        Serve(scope: """
+            [{"owner":"data-douser","kind":"user","enabled":true,"includes":[],
+              "enumeration":{"route":"graphql","listedAt":"2026-09-10T12:30:00Z","listedPages":1,
+                "missing":[{"repository":"data-douser/gone","missingAt":"2026-09-10T12:30:00Z"}]}}]
+            """);
+
+        var cut = Render<Pages.Settings>();
+
+        cut.WaitForAssertion(() => cut.Find("[data-abom-listing-missing='data-douser']"));
+        var missing = cut.Find("[data-abom-listing-missing='data-douser']");
+        Assert.Contains("data-douser/gone", missing.TextContent);
+        Assert.Contains("no longer yours", missing.TextContent);
+        Assert.Contains("Removing what you no longer own", missing.TextContent);
+        Assert.Equal("2026-09-10T12:30:00Z",
+            missing.QuerySelector("[data-abom-missing-at]")!.GetAttribute("datetime"));
+    }
+
+    /// <summary>A full listing that named every declared repository measured that nothing is gone;
+    /// an account never listed in full has measured nothing, and says neither.</summary>
+    [Fact]
+    public void OnlyAFullListingCanSayNothingIsMissing()
+    {
+        Serve(scope: """
+            [{"owner":"data-douser","kind":"user","enabled":true,"includes":[],
+              "enumeration":{"route":"graphql","listedAt":"2026-09-10T12:30:00Z","listedPages":1,"missing":[]}},
+             {"owner":"advanced-security","kind":"organization","enabled":true,"includes":[],
+              "enumeration":{"route":"rest","sweptAt":"2026-09-11T08:00:00Z","missing":[]}}]
+            """);
+
+        var cut = Render<Pages.Settings>();
+
+        cut.WaitForAssertion(() => cut.Find("[data-abom-listing='advanced-security']"));
+        Assert.Contains("Nothing declared is missing from it",
+            cut.Find("[data-abom-listing='data-douser']").TextContent);
+        Assert.DoesNotContain("missing", cut.Find("[data-abom-listing='advanced-security']").TextContent);
+        Assert.Empty(cut.FindAll("[data-abom-listing-missing]"));
+    }
+
     [Fact]
     public void ReadingChangesCannotClaimAFullListing()
     {

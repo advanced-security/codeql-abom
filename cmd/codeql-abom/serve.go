@@ -13,10 +13,12 @@ import (
 	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/catalog"
+	"github.com/advanced-security/codeql-abom/internal/compare"
 	"github.com/advanced-security/codeql-abom/internal/declare"
 	"github.com/advanced-security/codeql-abom/internal/enumerate"
 	"github.com/advanced-security/codeql-abom/internal/expand"
 	"github.com/advanced-security/codeql-abom/internal/frontier"
+	"github.com/advanced-security/codeql-abom/internal/lockfile"
 	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/serve"
 	"github.com/advanced-security/codeql-abom/internal/store"
@@ -62,7 +64,45 @@ func wireEnumeration(
 	}
 }
 
-// reclaimAbandonedWork settles queue rows and runs a stopped server left claimed, before serving.
+// prepareQueue puts in the queue what a database needs before anything is served: the owned
+// repositories, what they name, the locks another reader read, and the composite pins a
+// submission is limited by.
+func prepareQueue(s *store.Store, queue *frontier.Queue, stdout, stderr io.Writer) {
+	// Before SeedFrontier, which can only queue the dependencies of a repository that has
+	// already been analyzed. These are what get analyzed first.
+	if seeded, err := expand.SeedOwnedRepositories(s, queue); err != nil {
+		fmt.Fprintf(stderr, "serve: queueing owned repositories: %v\n", err)
+	} else if seeded > 0 {
+		fmt.Fprintf(stdout, "serve: %d repositories you own queued for analysis\n", seeded)
+	}
+	// Seeding is idempotent, and without it a database that has only been built has nothing
+	// for the loop to claim however long it runs.
+	if seeded, err := expand.SeedFrontier(s, queue); err != nil {
+		fmt.Fprintf(stderr, "serve: seeding the frontier: %v\n", err)
+	} else if seeded > 0 {
+		fmt.Fprintf(stdout, "serve: %d dependencies seeded from repositories under review\n", seeded)
+	}
+	// A lock another reader read may read differently now. Once per start, because the reader
+	// is fixed for the life of the binary; each requeued row costs a checkout and no evaluation.
+	if requeued, err := s.RequeueLocksReadByAnotherReader(lockfile.Reader); err != nil {
+		fmt.Fprintf(stderr, "serve: requeueing locks another reader read: %v\n", err)
+	} else if requeued > 0 {
+		fmt.Fprintf(stdout, "serve: %d dependencies requeued to read their lock again\n", requeued)
+	}
+	// A composite action analyzed only on its default branch contributes nothing to a submission:
+	// a child is attributable to a consumer only when the parent was analyzed at the ref that
+	// consumer pinned. These are already queued by SeedFrontier; what they lack is priority, and
+	// they are the ceiling on how deep any submission can go.
+	if pinned, err := expand.ExpediteCompositePins(s, queue); err != nil {
+		fmt.Fprintf(stderr, "serve: prioritizing composite pins: %v\n", err)
+	} else if pinned > 0 {
+		fmt.Fprintf(stdout,
+			"serve: %d composite actions prioritized at the references our workflows pin\n", pinned)
+	}
+}
+
+// reclaimAbandonedWork settles queue rows, runs and comparisons a stopped server left claimed,
+// before serving.
 func reclaimAbandonedWork(s *store.Store, queue *frontier.Queue, stdout, stderr io.Writer) {
 	if n, err := queue.ReclaimOrphaned(); err != nil {
 		fmt.Fprintf(stderr, "serve: reclaiming abandoned work: %v\n", err)
@@ -74,6 +114,11 @@ func reclaimAbandonedWork(s *store.Store, queue *frontier.Queue, stdout, stderr 
 		fmt.Fprintf(stderr, "serve: marking abandoned analysis runs: %v\n", err)
 	} else if n > 0 {
 		fmt.Fprintf(stdout, "serve: %d analysis runs were interrupted when the server last stopped\n", n)
+	}
+	if n, err := s.InterruptAbandonedComparisons(); err != nil {
+		fmt.Fprintf(stderr, "serve: marking abandoned comparisons: %v\n", err)
+	} else if n > 0 {
+		fmt.Fprintf(stdout, "serve: %d comparisons were interrupted when the server last stopped\n", n)
 	}
 	if n, err := s.InterruptAuthoringSessions(); err != nil {
 		fmt.Fprintf(stderr, "serve: marking abandoned authoring sessions: %v\n", err)
@@ -184,7 +229,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		"expose /api/metrics and /debug/pprof/ for local performance analysis")
 	apiURL := fs.String("api-url", defaultAPIURL(), "GitHub API base URL")
 	// How stale the list of repositories may get. A read is bounded by what moved since the last
-	// one rather than by how big the account is; see plans/api/org-enumeration.md.
+	// one rather than by how big the account is; see docs/architecture.md on reading an account.
 	enumerateEvery := fs.Duration("enumerate-every", supervisor.DefaultEnumerateEvery,
 		"how often the declared accounts are re-read for new repositories (0: never)")
 	// Only a full listing can establish that a repository is gone, so sweeping forever keeps dead
@@ -296,30 +341,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	if _, err := s.ClassifyEdgeBoundaries(); err != nil {
 		fmt.Fprintf(stderr, "serve: classifying edge boundaries: %v\n", err)
 	}
-	// Before SeedFrontier, which can only queue the dependencies of a repository that has
-	// already been analyzed. These are what get analyzed first.
-	if seeded, err := expand.SeedOwnedRepositories(s, loop.Queue); err != nil {
-		fmt.Fprintf(stderr, "serve: queueing owned repositories: %v\n", err)
-	} else if seeded > 0 {
-		fmt.Fprintf(stdout, "serve: %d repositories you own queued for analysis\n", seeded)
-	}
-	// Seeding is idempotent, and without it a database that has only been built has nothing
-	// for the loop to claim however long it runs.
-	if seeded, err := expand.SeedFrontier(s, loop.Queue); err != nil {
-		fmt.Fprintf(stderr, "serve: seeding the frontier: %v\n", err)
-	} else if seeded > 0 {
-		fmt.Fprintf(stdout, "serve: %d dependencies seeded from repositories under review\n", seeded)
-	}
-	// A composite action analyzed only on its default branch contributes nothing to a submission:
-	// a child is attributable to a consumer only when the parent was analyzed at the ref that
-	// consumer pinned. These are already queued by SeedFrontier; what they lack is priority, and
-	// they are the ceiling on how deep any submission can go.
-	if pinned, err := expand.ExpediteCompositePins(s, loop.Queue); err != nil {
-		fmt.Fprintf(stderr, "serve: prioritizing composite pins: %v\n", err)
-	} else if pinned > 0 {
-		fmt.Fprintf(stdout,
-			"serve: %d composite actions prioritized at the references our workflows pin\n", pinned)
-	}
+	prepareQueue(s, loop.Queue, stdout, stderr)
 	// Before anything is served, not on the first cycle: until discovery is started the queue
 	// would otherwise report a previous run's claims as work in flight, on a page that says
 	// discovery has never started.
@@ -350,9 +372,15 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	srv.Enumerate = reader.Sweep
 	srv.EnumerateSchema = reader.PropertySchema
+	// The same client, so reading alerts is paced and cached with every other read of GitHub.
+	srv.Comparer = &compare.Comparer{Store: s, Read: reader}
 	srv.FullListingEvery = *listEvery
 	srv.GroupProperty = *groupProperty
 	srv.QueueOwned = func() (int, error) { return expand.SeedOwnedRepositories(s, loop.Queue) }
+	verifier := lockVerifier(s)
+	srv.VerifyLock = func(ctx context.Context, repository, mode string) (store.LockVerification, error) {
+		return verifier.Request(ctx, repository, mode, "interface")
+	}
 	// The same enumeration the button performs, on a period. A person clicking and a loop on a
 	// timer take one path, so a repository created after the last read is not invisible until
 	// somebody happens to press it.

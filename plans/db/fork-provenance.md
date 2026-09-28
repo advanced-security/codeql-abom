@@ -53,7 +53,7 @@ later without making the two plans circular.
 This plan does not resolve a fork by analyzing the upstream in its place, create new owned roots,
 or import an upstream repository's development workflows into the fork's runtime dependencies.
 
-[Native lock evidence](actions-lockfile.md) adds owner/repository IDs and a context-selected commit.
+[Native lock evidence](../../docs/architecture.md#locks) adds owner/repository IDs and a context-selected commit.
 Those identify what was locked, not its fork ancestry or who the operator owns. Preserve that
 selected commit when looking up upstream context; a live parent tag cannot replace it. Reuse
 GitHub's identity evidence rather than reimplementing its lock verifier.

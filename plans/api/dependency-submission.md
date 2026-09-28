@@ -31,9 +31,9 @@ that a native replacement covers their use cases.
    update PR and version updates from security updates; test configuration differences rather than
    promising a PR because a package was accepted. Existing test1/test2 submissions must be accounted
    for, not mistaken for native data. Do not execute vulnerable code to observe an advisory.
-3. **Keep the current path honest at the new resolution boundary.** Once
-   [actions-lockfile.md](../db/actions-lockfile.md) supplies consumer-context selection, existing
-   submission readers must use it or explicitly refuse claims they cannot support. The current
+3. **Keep the current path honest at the new resolution boundary.** The submission closure
+   [follows the commit a root's lock selects](../../docs/architecture.md#locks) on every route it governs; any other
+   submission reader must use that selection or explicitly refuse claims it cannot support. The current
    handler resolves head when called and labels snapshots `refs/heads/main`; it cannot assert an
    arbitrary workflow commit. Before exposing broader use, bind preview and write to exact
    repository/commit/ref/context, scope coverage to that target, and refuse stale or incomplete

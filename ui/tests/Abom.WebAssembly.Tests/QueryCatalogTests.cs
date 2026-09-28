@@ -445,6 +445,28 @@ public class QueryCatalogTests : AbomTestContext
         Assert.Single(popover.FindAll("[data-abom-stage-refused]"));
     }
 
+    /// <summary>
+    /// review is earned by a comparison with the alerts code scanning holds, and is offered disabled
+    /// beside what it would be refused with, in the server's words.
+    /// </summary>
+    [Fact]
+    public void ReviewSaysWhatWouldEarnItBeforeItIsPressed()
+    {
+        var popover = base.Render<MudBlazor.MudPopoverProvider>();
+        var page = Render(OperatorWritten
+            .Replace("\"working\":true,", "\"working\":true,\"reviewRefusal\":\"no run of this version has been compared with the alerts code scanning holds\",")
+            .Replace("\"stages\":[\"dev\",\"test\"]", "\"stages\":[\"dev\",\"test\",\"review\"]"));
+
+        page.FindAll("[data-abom-query-advance]")
+            .Single(m => m.Closest("tr")!.TextContent.Contains("acme/self-hosted-runner"))
+            .QuerySelector("button")!.Click();
+
+        popover.WaitForAssertion(() => popover.Find("[data-abom-stage-item='review']"));
+        var refused = Assert.Single(popover.FindAll("[data-abom-stage-refused]"));
+        Assert.Contains("has been compared with the alerts", refused.TextContent);
+        Assert.Equal("review", refused.Closest("[data-abom-stage-item]")!.GetAttribute("data-abom-stage-item"));
+    }
+
     private const string OneRun = """
         {"runs":[{"rowId":1,"predicate":"repositories=octo%2Fapp,octo%2Fnone","mode":"regular",
           "requestedBy":"operator","state":"complete","createdAt":"2026-09-22T16:00:00Z",

@@ -270,6 +270,7 @@ export function mergeInto(all, delta) {
             // already drawn and make their later removal match nothing.
             edge.keys = union(edge.keys, incoming.keys);
             edge.refs = union(edge.refs, incoming.refs);
+            edge.locked = union(edge.locked, incoming.locked);
             edge.count = edge.keys.length || incoming.count;
             mergeEdgeFacts(edge, incoming);
         } else {

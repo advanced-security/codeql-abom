@@ -532,25 +532,32 @@
             @* Both endpoints go through IdentityCell, which exists because an unbounded key
                pushes the counts off the edge — measured here at 380px over, with five of six
                columns hidden. *@
+            @* Each cell's lines sit in one block: the stacked layout of a narrow screen lays a
+               cell's children out side by side, and the second one pushed every value in the row
+               off the edge. *@
             <PropertyColumn Property="x => x.Source" Title="Declared by">
                 <CellTemplate>
-                    <IdentityCell Reference="@context.Item.Source" />
-                    @if (context.Item.FilePath.Length > 0)
-                    {
-                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block abom-trunc">
-                            @($"{context.Item.FilePath}:{context.Item.StartLine}")
-                        </MudText>
-                    }
+                    <div class="abom-cell-stack">
+                        <IdentityCell Reference="@context.Item.Source" />
+                        @if (context.Item.FilePath.Length > 0)
+                        {
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary d-block abom-trunc">
+                                @($"{context.Item.FilePath}:{context.Item.StartLine}")
+                            </MudText>
+                        }
+                    </div>
                 </CellTemplate>
             </PropertyColumn>
             <PropertyColumn Property="x => x.Target" Title="Points at">
                 <CellTemplate>
-                    <IdentityCell Reference="@context.Item.Target" />
-                    @* Absent is not a fourth class: an edge whose ends nobody could name has no
-                       boundary, which is different from staying inside one repository. *@
-                    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
-                        @(context.Item.Boundary.Length > 0 ? context.Item.Boundary : "not known")
-                    </MudText>
+                    <div class="abom-cell-stack">
+                        <IdentityCell Reference="@context.Item.Target" />
+                        @* Absent is not a fourth class: an edge whose ends nobody could name has no
+                           boundary, which is different from staying inside one repository. *@
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
+                            @(context.Item.Boundary.Length > 0 ? context.Item.Boundary : "not known")
+                        </MudText>
+                    </div>
                 </CellTemplate>
             </PropertyColumn>
             <PropertyColumn Property="x => x.Kind" Title="Relationship">
@@ -561,6 +568,7 @@
             @* The reference verbatim, because that is the text a reader has to go and edit. *@
             <PropertyColumn Property="x => x.Ref" Title="Reference">
                 <CellTemplate>
+                    <div class="abom-cell-stack">
                     @if (context.Item.Ref.Length > 0)
                     {
                         <span class="abom-trunc abom-rule">@context.Item.Ref</span>
@@ -571,6 +579,16 @@
                             </MudText>
                         }
                     }
+                    @* What runs, beside what is written: each commit a current lock selects for
+                       this very line, and whose lock. *@
+                    @foreach (var l in context.Item.Locked)
+                    {
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block"
+                                 data-abom-relationship-locked="@l.Commit" title="@l.Commit">
+                            @RelationshipLockText(l)
+                        </MudText>
+                    }
+                    </div>
                 </CellTemplate>
             </PropertyColumn>
             <PropertyColumn Property="x => x.Findings" Title="Findings">
@@ -627,8 +645,22 @@
             <Columns>
                 <PropertyColumn Property="x => x.NodeKey" Title="Dependency">
                     <CellTemplate>
-                        <IdentityCell Reference="@context.Item.NodeKey"
-                                      Href="@($"/node/{Uri.EscapeDataString(context.Item.NodeKey)}")" />
+                        @* A dependency queued at a declared ref and at the commit a lock selects is
+                           two rows: without its version each reads as a duplicate of the other, and
+                           without whose lock chose it the second reads as used by nobody. One block,
+                           so the stacked layout of a narrow screen keeps it to the cell. *@
+                        <div class="abom-coverage-dependency">
+                            <IdentityCell Reference="@context.Item.NodeKey"
+                                          Href="@($"/node/{Uri.EscapeDataString(context.Item.NodeKey)}")" />
+                            <span class="abom-coverage-version" data-abom-coverage-version="@context.Item.Ref">
+                                <span title="@context.Item.Ref">@CoverageVersion(context.Item)</span>
+                                @if (context.Item.LockedByCount > 0)
+                                {
+                                    <span class="abom-coverage-locked mud-text-secondary"
+                                          title="@string.Join(", ", context.Item.LockedBy)">@LockedByText(context.Item)</span>
+                                }
+                            </span>
+                        </div>
                     </CellTemplate>
                 </PropertyColumn>
                 <PropertyColumn Property="x => x.State" Title="State">
@@ -1155,6 +1187,31 @@ else
 
     private string CoverageColor(string state) =>
         Theme.Palette.Discovery.TryGetValue(state, out var c) ? c : Theme.Palette.Muted;
+
+    private static string RelationshipLockText(RelationshipLock l)
+    {
+        var commit = l.Commit.Length <= 12 ? l.Commit : l.Commit[..12];
+        if (l.Via.Length > 0)
+        {
+            return $"{l.Consumer}'s lock selects {commit} through {l.Via}";
+        }
+        var workflow = l.Workflow.Split('/')[^1];
+        return workflow.Length > 0 ? $"locked to {commit} by {workflow}" : $"locked to {commit}";
+    }
+
+    // The version as the queue checks it out: a ref as written, a commit shortened, or the
+    // default branch when nothing names one.
+    private static string CoverageVersion(FrontierItem item) =>
+        item.Ref.Length == 0 ? "default branch"
+        : item.Ref.Length == 40 && item.Ref.All(Uri.IsHexDigit) ? "@" + item.Ref[..12]
+        : "@" + item.Ref;
+
+    private static string LockedByText(FrontierItem item)
+    {
+        var first = item.LockedBy.Count > 0 ? item.LockedBy[0] : "";
+        var more = item.LockedByCount - (first.Length > 0 ? 1 : 0);
+        return more > 0 ? $"locked by {first} and {more:N0} more" : $"locked by {first}";
+    }
 
     private static string CoverageSuites(FrontierItem item) =>
         string.Join(", ", item.Suites.Select(s =>

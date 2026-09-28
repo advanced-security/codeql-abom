@@ -228,3 +228,28 @@ func TestDerivingContainmentAgainDoesNotForceAReload(t *testing.T) {
 		t.Error("a settled derivation asked every open page to reload")
 	}
 }
+
+// A drawn containment line carries every list a relationship line does, empty, never null: the
+// canvas reads them as sets, and the crawled corpus drew 4,463 of these with `locked: null`.
+func TestAContainmentLineCarriesEmptyListsRatherThanNull(t *testing.T) {
+	s := edgeKindFixture(t)
+
+	g, err := s.FullGraph(FullGraphOptions{})
+	if err != nil {
+		t.Fatalf("FullGraph: %v", err)
+	}
+	drawn := 0
+	for _, e := range g.Edges {
+		if e.Kind != "org-contains" && e.Kind != "repo-contains" {
+			continue
+		}
+		drawn++
+		if e.Refs == nil || e.Locked == nil {
+			t.Errorf("%s -[%s]-> %s: refs %v, locked %v; want both empty, not nil",
+				e.Source, e.Kind, e.Target, e.Refs, e.Locked)
+		}
+	}
+	if drawn == 0 {
+		t.Fatal("no containment was drawn, so this checks nothing")
+	}
+}

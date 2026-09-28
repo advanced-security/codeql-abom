@@ -1,6 +1,9 @@
 package store
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // nodeUsersBudget bounds one answer. The corpus's widest version is named by 285 repositories,
 // so this is headroom rather than a working limit — but a list that is cut has to say so, which
@@ -17,6 +20,27 @@ type RepositoryUse struct {
 	// Uses counts the `uses:` lines, which is how much editing the repository would be. One
 	// repository naming a version from three workflows is one row and three places.
 	Uses int `json:"uses"`
+	// Locks are the commits a current lock selects for these uses instead of the declared ref.
+	// LockedUses counts the uses the repository's own lock governs for at least one of its
+	// workflows; the rest run what the ref names, unless a caller's lock, listed with the pin it
+	// reached the composite through, governs them for that caller.
+	Locks      []RepositoryLock `json:"locks"`
+	LockedUses int              `json:"lockedUses"`
+	// LockCoverage is what the repository's lock reading at the commit it currently resolves to
+	// recorded: covered, not_onboarded (no lockfile) or unsupported. Empty means no reading at
+	// that commit, which is unknown rather than unlocked.
+	LockCoverage []string `json:"lockCoverage"`
+	// Verification is the newest run of GitHub's lock verification at the commit the repository
+	// currently resolves to. Nil means nothing verified that commit, which says nothing either way.
+	Verification *VerificationBrief `json:"verification,omitempty"`
+}
+
+// VerificationBrief is what a list needs of one verification: which check, what it said, when.
+type VerificationBrief struct {
+	Mode       string    `json:"mode"`
+	Outcome    string    `json:"outcome"`
+	Findings   int       `json:"findings"`
+	VerifiedAt time.Time `json:"verifiedAt"`
 }
 
 // NodeUsers is every repository naming one node at one exact reference.
@@ -56,6 +80,9 @@ func (s *Store) nodeUsersOf(key, ref string, budget int) (NodeUsers, error) {
 		return out, err
 	}
 	if err := s.countNodeUsers(&out); err != nil {
+		return out, err
+	}
+	if err := s.attachRepositoryLocks(&out); err != nil {
 		return out, err
 	}
 	return out, nil

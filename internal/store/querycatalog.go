@@ -477,7 +477,7 @@ func (s *Store) analysisCounts() (map[string]int, error) {
 }
 
 // AdvanceQueryStage records that somebody moved a version to a stage, cli naming the CodeQL that
-// runs now, whose result alone can earn the test rung.
+// runs now, whose results alone can earn the test and review rungs.
 //
 // Who and when are part of the row because readiness is computed and advancement is not: a stage
 // that appeared on its own could not be told apart from one a person signed.
@@ -490,9 +490,9 @@ func (s *Store) AdvanceQueryStage(queryID, version, stage, by, cli string) error
 	case by == "":
 		return fmt.Errorf("advancing %s: no one is recorded as advancing it", queryID)
 	}
-	// The one rung that is earned rather than pressed. A ladder every step of which can be set by
-	// hand is an audit trail of intentions, and the first reader to treat one as a guarantee is
-	// misled by something this project built.
+	// A rung that is earned rather than pressed. A ladder every step of which can be set by hand is
+	// an audit trail of intentions, and the first reader to treat one as a guarantee is misled by
+	// something this project built.
 	if stage == StageTest {
 		test, known, err := s.QueryTestFor(queryID, version, cli)
 		switch {
@@ -505,6 +505,15 @@ func (s *Store) AdvanceQueryStage(queryID, version, stage, by, cli string) error
 		case !test.Passed:
 			return fmt.Errorf("advancing %s to %s: its tests do not pass (%s)",
 				queryID, stage, test.Detail)
+		}
+	}
+	if stage == StageReview {
+		refusal, err := s.ReviewRefusal(queryID, version, cli)
+		if err != nil {
+			return err
+		}
+		if refusal != "" {
+			return fmt.Errorf("advancing %s to %s: %s", queryID, stage, refusal)
 		}
 	}
 	_, err := s.db.Exec(`
