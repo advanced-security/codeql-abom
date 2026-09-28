@@ -3,9 +3,7 @@ package store
 import "testing"
 
 // The Dashboard prints this figure under the word "actions", and the graph is mostly not actions.
-// On the real corpus 56,939 live nodes were 34,510 steps, 12,983 jobs and 6,284 workflows against
-// 1,111 actions: counting every node overstated what the operator depends on fifty times over,
-// and it was the number they questioned first.
+// Counting every node overstates what the operator depends on.
 //
 // The kinds are the Inventory's, because the card links there and two definitions of a dependency
 // would have the page disagree with the screen it opens.

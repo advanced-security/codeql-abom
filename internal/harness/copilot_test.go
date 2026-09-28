@@ -82,8 +82,8 @@ func TestASealedSessionIsOfferedABOMsToolsAlone(t *testing.T) {
 	}
 }
 
-// ql-mcp runs the CLI itself and knows nothing of ABOM's search path, so a test that passes under
-// ABOM failed under it until the recorded agent wrote a workspace manifest to make it resolve.
+// ql-mcp runs the CLI itself and knows nothing of ABOM's search path, so ABOM provides the
+// workspace manifest it needs.
 func TestQLMCPResolvesPacksAndWritesScratchWhereABOMSays(t *testing.T) {
 	s := aSetup(t)
 	cfg := aCopilot().config(s)

@@ -1,17 +1,11 @@
 #!/usr/bin/env bash
 # Imports GitHub's own Actions query-test trees as fixture repositories.
 #
-# ABOM's shared data set is the org-level equivalent of a per-query unit test: instead of an
-# `.expected` file per query, the whole set of findings is mapped onto one fixed dependency graph.
-# For that to mean anything the set has to be able to *produce* each finding, and the trees that
-# are known to produce them are the ones CodeQL tests its own queries with.
+# ABOM's shared data set maps known CodeQL findings onto one fixed dependency graph.
 #
-# Copied rather than referenced, because `make corpus` must stay offline and the recorded CodeQL
-# output beside each tree is what a fixture is. Only `.github/` is taken: `.testproj`, `.expected`
-# and `.qlref` belong to CodeQL's test runner and would be recorded as source.
+# Copy only `.github/` so `make corpus` stays offline and test-runner files are not source.
 #
-# The source is a sparse checkout of github/codeql under .codeql/sparse-checkout, which is not
-# vendored here. Absent, this reports what it needed and exits without touching anything.
+# Source comes from the non-vendored github/codeql sparse checkout under .codeql/sparse-checkout.
 #
 #   ./scripts/import-actions-test-fixtures.sh          # copy anything new or changed
 #   ./scripts/import-actions-test-fixtures.sh --list   # show the mapping and stop
@@ -22,9 +16,7 @@ tests="$root/.codeql/sparse-checkout/actions/ql/test/query-tests"
 corpus="$root/testdata/corpus"
 owner="globex-industries"
 
-# Which CodeQL test tree becomes which repository. The repository names are ordinary ones on
-# purpose — the set is meant to read like an organization rather than like a test suite — so this
-# table is the only record of where each came from, and of which rules it is here to exercise.
+# Map each CodeQL test tree to the ordinary repository name it represents.
 mapping=(
   "Security/CWE-074|release-tooling|expression injection into a run step"
   "Security/CWE-077|build-agents|command injection"
@@ -71,12 +63,11 @@ for row in "${mapping[@]}"; do
     continue
   fi
   dst="$corpus/$owner/$repo"
-  # Replaced rather than merged, so a file deleted upstream does not live on here forever.
+  # Replace so deleted upstream files do not persist.
   rm -rf "$dst"
   mkdir -p "$dst"
   cp -R "$src" "$dst/.github"
-  # CodeQL's runner leaves build output inside the tree it tests; recording it as source would
-  # put a database's own trap files into the graph.
+  # Drop CodeQL test build output so trap files do not become source.
   find "$dst" -name '*.testproj' -type d -prune -exec rm -rf {} + 2>/dev/null || true
   copied=$((copied + 1))
   echo "imported: $from -> $owner/$repo"

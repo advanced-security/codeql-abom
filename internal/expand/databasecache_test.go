@@ -254,9 +254,6 @@ func TestDiscardingRemovesTheDatabaseAndTheEntryHoldingIt(t *testing.T) {
 // A crawl that was killed mid-build leaves a staged database nothing will ever promote. Left
 // there it is occupancy the ceiling cannot see, because the ceiling is computed from the rows
 // that name promoted databases -- which is exactly the leak a ceiling exists to stop.
-//
-// Measured 2026-09-22 on the crawled organization: 30 failed builds left 11 staged directories
-// holding 51 MB, and nothing would ever have reclaimed them.
 func TestAnAbandonedStagedBuildIsReclaimed(t *testing.T) {
 	cache := &DatabaseCache{Dir: t.TempDir()}
 	staged, dbDir, err := cache.Stage()

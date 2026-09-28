@@ -45,9 +45,7 @@ func keysOf(g Graph) map[string]bool {
 	return out
 }
 
-// The view arrives with no reason to be looking at anything. Scoping it to the routes that reach
-// an advisory-affected action is a purpose and a size bound in one decision: on the reference
-// corpus that is 213 nodes against 9,811.
+// Exposure scope is exactly the routes that reach an advisory-affected action.
 func TestTheExposureScopeKeepsEveryNodeOnARoute(t *testing.T) {
 	g, err := exposeFixture(t).FullGraph(FullGraphOptions{Scope: ScopeExposure})
 	if err != nil {

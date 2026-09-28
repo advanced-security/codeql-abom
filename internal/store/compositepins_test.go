@@ -3,9 +3,7 @@ package store
 import "testing"
 
 // The projection can only report a transitive dependency if the parent was analyzed at the ref
-// the consumer pinned. On the real corpus 35 of the 47 composite actions a seed workflow pins had
-// never been analyzed at that ref, so the closure reported 3 transitive packages across 402
-// repositories — a number floored by coverage rather than by the shape of the ecosystem.
+// the consumer pinned; otherwise coverage, not the ecosystem, floors the closure.
 func TestCompositeDependenciesPinnedButNeverAnalyzedAreReported(t *testing.T) {
 	s := newTestStore(t)
 	projectionFixture(t, s)

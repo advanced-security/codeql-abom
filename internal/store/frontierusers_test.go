@@ -5,9 +5,7 @@ import (
 	"testing"
 )
 
-// The grid used to print one "named by", because the frontier records a single first-discoverer.
-// Who runs a version is a different question, it lives on the edges, and it is the one an
-// operator acts on: actions/checkout@v4 is named by 220 repositories on the real corpus.
+// Who runs a version lives on the edges, not on the frontier's single first-discoverer.
 func TestARowNamesEveryRepositoryUsingThatVersion(t *testing.T) {
 	s := newTestStore(t)
 	w := NewWriter(s, 0)
@@ -58,10 +56,8 @@ func TestARowNamesEveryRepositoryUsingThatVersion(t *testing.T) {
 	}
 }
 
-// "220 repositories" and "12 of them yours" are different decisions. A repository under an account
-// the operator has declared is one they can change themselves, whatever its origin; the rest are
-// context. Counting them together reads as exposure the operator owns, which is the same
-// conflation that once inflated blast radius 202 to 209.
+// Total users and operator-owned users are different decisions. A declared account's repository is
+// one the operator can change; the rest are context.
 func TestARowSeparatesTheRepositoriesTheOperatorOwns(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.SetOwnedScope([]DeclaredAccount{

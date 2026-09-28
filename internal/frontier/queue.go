@@ -398,12 +398,6 @@ type Key struct {
 	Ref string
 }
 
-// At names a dependency at a reference; Of names it at its default branch.
-func At(nodeKey, ref string) Key { return Key{NodeKey: nodeKey, Ref: ref} }
-
-// Of is the default branch, spelled out so a caller that means it says so.
-func Of(nodeKey string) Key { return Key{NodeKey: nodeKey} }
-
 // Key is how an item addresses its own row.
 func (i Item) Key() Key { return Key{NodeKey: i.NodeKey, Ref: i.Ref} }
 

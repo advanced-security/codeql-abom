@@ -217,67 +217,128 @@ func (s *Store) AdvisoriesByReach(limit int, sc RepositoryScope) ([]AdvisoryReac
 	}
 	defer rows.Close()
 
-	byKey := map[string]*AdvisoryReach{}
-	var order []string
-	seenRange := map[string]bool{}
-	seenNode := map[string]bool{}
-
-	for rows.Next() {
-		var ghsa, cve, severity, summary, url, pkgName, vulnRange, patched, nodeKey string
-		var cvss, epss sql.NullFloat64
-		var repos int
-		if err := rows.Scan(&ghsa, &cve, &severity, &summary, &url, &cvss, &epss,
-			&pkgName, &vulnRange, &patched, &nodeKey, &repos); err != nil {
-			return nil, fmt.Errorf("scanning advisory reach: %w", err)
-		}
-
-		key := ghsa + "\x00" + pkgName
-		entry, ok := byKey[key]
-		if !ok {
-			entry = &AdvisoryReach{
-				GHSAID: ghsa, CVEID: cve, Severity: severity, Summary: summary, URL: url,
-				PackageName: pkgName,
-			}
-			// A zero CVSS score in the response means unscored, not harmless.
-			if cvss.Valid && cvss.Float64 > 0 {
-				entry.CVSSv3Score, entry.HasCVSS = cvss.Float64, true
-			}
-			if epss.Valid {
-				entry.EPSSPercentage, entry.HasEPSS = epss.Float64, true
-			}
-			byKey[key] = entry
-			order = append(order, key)
-		}
-
-		if rk := key + "\x00" + vulnRange; !seenRange[rk] {
-			seenRange[rk] = true
-			entry.Ranges = append(entry.Ranges,
-				AffectedRange{VulnerableRange: vulnRange, FirstPatched: patched})
-		}
-		if nk := key + "\x00" + nodeKey; !seenNode[nk] {
-			seenNode[nk] = true
-			entry.Nodes = append(entry.Nodes,
-				NodeReach{NodeKey: nodeKey, DependentRepos: repos})
-			if repos > entry.MaxDependentRepos {
-				entry.MaxDependentRepos = repos
-			}
-		}
-	}
-	if err := rows.Err(); err != nil {
+	out, err := scanAdvisoryReach(rows)
+	if err != nil {
 		return nil, err
 	}
-
-	out := make([]AdvisoryReach, 0, len(order))
-	for _, key := range order {
-		out = append(out, *byKey[key])
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		return out[i].MaxDependentRepos > out[j].MaxDependentRepos
-	})
+	sortAdvisoryReach(out)
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
 
+	if err := s.attachAdvisoryReachReferences(out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+type advisoryReachRow struct {
+	ghsa, cve, severity, summary, url string
+	pkgName, vulnRange, patched       string
+	nodeKey                           string
+	cvss, epss                        sql.NullFloat64
+	repos                             int
+}
+
+type advisoryReachAccumulator struct {
+	byKey     map[string]*AdvisoryReach
+	order     []string
+	seenRange map[string]bool
+	seenNode  map[string]bool
+}
+
+func newAdvisoryReachAccumulator() advisoryReachAccumulator {
+	return advisoryReachAccumulator{
+		byKey: map[string]*AdvisoryReach{}, seenRange: map[string]bool{}, seenNode: map[string]bool{},
+	}
+}
+
+func scanAdvisoryReach(rows *sql.Rows) ([]AdvisoryReach, error) {
+	acc := newAdvisoryReachAccumulator()
+	for rows.Next() {
+		row, err := scanAdvisoryReachRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		acc.add(row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return acc.list(), nil
+}
+
+func scanAdvisoryReachRow(rows *sql.Rows) (advisoryReachRow, error) {
+	var row advisoryReachRow
+	if err := rows.Scan(&row.ghsa, &row.cve, &row.severity, &row.summary, &row.url, &row.cvss,
+		&row.epss, &row.pkgName, &row.vulnRange, &row.patched, &row.nodeKey, &row.repos); err != nil {
+		return row, fmt.Errorf("scanning advisory reach: %w", err)
+	}
+	return row, nil
+}
+
+func (a *advisoryReachAccumulator) add(row advisoryReachRow) {
+	key := row.ghsa + "\x00" + row.pkgName
+	entry := a.entry(key, row)
+	a.addRange(entry, key, row)
+	a.addNode(entry, key, row)
+}
+
+func (a *advisoryReachAccumulator) entry(key string, row advisoryReachRow) *AdvisoryReach {
+	entry, ok := a.byKey[key]
+	if ok {
+		return entry
+	}
+	entry = &AdvisoryReach{
+		GHSAID: row.ghsa, CVEID: row.cve, Severity: row.severity, Summary: row.summary,
+		URL: row.url, PackageName: row.pkgName,
+	}
+	// A zero CVSS score in the response means unscored, not harmless.
+	if row.cvss.Valid && row.cvss.Float64 > 0 {
+		entry.CVSSv3Score, entry.HasCVSS = row.cvss.Float64, true
+	}
+	if row.epss.Valid {
+		entry.EPSSPercentage, entry.HasEPSS = row.epss.Float64, true
+	}
+	a.byKey[key] = entry
+	a.order = append(a.order, key)
+	return entry
+}
+
+func (a *advisoryReachAccumulator) addRange(entry *AdvisoryReach, key string, row advisoryReachRow) {
+	if rk := key + "\x00" + row.vulnRange; !a.seenRange[rk] {
+		a.seenRange[rk] = true
+		entry.Ranges = append(entry.Ranges,
+			AffectedRange{VulnerableRange: row.vulnRange, FirstPatched: row.patched})
+	}
+}
+
+func (a *advisoryReachAccumulator) addNode(entry *AdvisoryReach, key string, row advisoryReachRow) {
+	if nk := key + "\x00" + row.nodeKey; !a.seenNode[nk] {
+		a.seenNode[nk] = true
+		entry.Nodes = append(entry.Nodes,
+			NodeReach{NodeKey: row.nodeKey, DependentRepos: row.repos})
+		if row.repos > entry.MaxDependentRepos {
+			entry.MaxDependentRepos = row.repos
+		}
+	}
+}
+
+func (a *advisoryReachAccumulator) list() []AdvisoryReach {
+	out := make([]AdvisoryReach, 0, len(a.order))
+	for _, key := range a.order {
+		out = append(out, *a.byKey[key])
+	}
+	return out
+}
+
+func sortAdvisoryReach(out []AdvisoryReach) {
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].MaxDependentRepos > out[j].MaxDependentRepos
+	})
+}
+
+func (s *Store) attachAdvisoryReachReferences(out []AdvisoryReach) error {
 	for i := range out {
 		sort.SliceStable(out[i].Nodes, func(a, b int) bool {
 			return out[i].Nodes[a].DependentRepos > out[i].Nodes[b].DependentRepos
@@ -285,12 +346,12 @@ func (s *Store) AdvisoriesByReach(limit int, sc RepositoryScope) ([]AdvisoryReac
 		for j := range out[i].Nodes {
 			refs, err := s.referencesTo(out[i].Nodes[j].NodeKey, AnalysisModeRegular)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			out[i].Nodes[j].References = refs
 		}
 	}
-	return out, nil
+	return nil
 }
 
 // referencesTo returns the distinct references the corpus uses for a node, with how often each

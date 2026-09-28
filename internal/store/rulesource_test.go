@@ -253,8 +253,7 @@ func TestARunNamingRepositoriesStillNarrowsBySource(t *testing.T) {
 }
 
 // Asked per finding, a source has to be two key lookups — the finding's sightings, then the rule
-// each of those evaluations ran — never a scan of every rule every evaluation recorded, which is a
-// row per rule per evaluation on a crawled organization.
+// each of those evaluations ran — never a scan of every rule every evaluation recorded.
 func TestASourceIsLookedUpThroughTheFindingsOwnSightings(t *testing.T) {
 	s := newTestStore(t)
 	clause, args := sourceClause("f", []string{QuerySourceUpstream})

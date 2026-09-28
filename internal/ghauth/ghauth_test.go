@@ -117,8 +117,7 @@ func TestVerifyReportsTheAuthenticatedAccountAndEveryOrgItBelongsTo(t *testing.T
 }
 
 func TestHostComesFromTheAccountRatherThanBeingAssumed(t *testing.T) {
-	// An enterprise install answers on its own host, and pinning the result to github.com would
-	// silently attribute those accounts to the wrong place.
+	// An enterprise install answers on its own host.
 	gh := working()
 	gh.replies["api -i user"] = reply{out: withHeaders("read:org",
 		`{"login":"octocat","type":"User","html_url":"https://ghe.example.com/octocat"}`)}

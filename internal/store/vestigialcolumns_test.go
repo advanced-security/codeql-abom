@@ -12,8 +12,8 @@ var vestigialRepositoryColumns = []string{"result_count", "artifact_size_in_byte
 // Dropping a column must not take the row with it.
 //
 // Every other migration in this store is additive, which is safe by construction. This one is not,
-// and a `DROP COLUMN` that SQLite implements as a table rewrite is exactly where a real corpus —
-// hours of crawling, upgraded in place — would lose data that no fresh-database test would miss.
+// and a `DROP COLUMN` that SQLite implements as a table rewrite can lose data no fresh-database
+// test would miss.
 func TestDroppingVestigialColumnsKeepsEveryRepositoryRow(t *testing.T) {
 	s := migratedLegacyStoreWith(t, func(s *Store) {
 		if _, err := s.db.Exec(`

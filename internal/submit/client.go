@@ -14,15 +14,12 @@ import (
 // Client writes snapshots to GitHub and reads back what GitHub made of them.
 //
 // A submission cannot be withdrawn and there is no delete endpoint, so the allow-list is a code
-// guard rather than a convention: on 2026-09-08 a snapshot was written to a repository that was
-// never meant to receive one, and the only repair was another write.
+// guard rather than a convention.
 type Client struct {
-	Token        string
-	Allowed      map[string]bool
-	BaseURL      string
-	HTTP         *http.Client
-	PollInterval time.Duration
-	MaxPolls     int
+	Token   string
+	Allowed map[string]bool
+	BaseURL string
+	HTTP    *http.Client
 }
 
 func NewClient(token string, allowed []string) *Client {
@@ -31,12 +28,10 @@ func NewClient(token string, allowed []string) *Client {
 		set[strings.ToLower(strings.TrimSpace(a))] = true
 	}
 	return &Client{
-		Token:        token,
-		Allowed:      set,
-		BaseURL:      "https://api.github.com",
-		HTTP:         &http.Client{Timeout: 60 * time.Second},
-		PollInterval: 3 * time.Second,
-		MaxPolls:     40,
+		Token:   token,
+		Allowed: set,
+		BaseURL: "https://api.github.com",
+		HTTP:    &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
@@ -96,89 +91,6 @@ func (c *Client) Submit(ctx context.Context, m Metadata, snap Snapshot) (Result,
 		return Result{}, err
 	}
 	return out, nil
-}
-
-// PackageURLs reads back every purl GitHub holds for a repository, through the asynchronous SBOM
-// flow. The synchronous endpoint closes down on 2026-11-13 and already times out on real
-// repositories.
-//
-// fetch-report answers 202 with an empty body until the report exists, so an unready report must
-// not be read as an empty SBOM: that would make the round trip agree with anything.
-func (c *Client) PackageURLs(ctx context.Context, repository string) ([]string, error) {
-	var gen struct {
-		SBOMURL string `json:"sbom_url"`
-	}
-	if err := c.getJSON(ctx,
-		fmt.Sprintf("%s/repos/%s/dependency-graph/sbom/generate-report", c.BaseURL, repository),
-		&gen); err != nil {
-		return nil, err
-	}
-	uuid := gen.SBOMURL[strings.LastIndex(gen.SBOMURL, "/")+1:]
-	fetch := fmt.Sprintf("%s/repos/%s/dependency-graph/sbom/fetch-report/%s",
-		c.BaseURL, repository, uuid)
-
-	for i := 0; i < c.MaxPolls; i++ {
-		var doc struct {
-			SBOM *sbomDoc `json:"sbom"`
-			sbomDoc
-		}
-		if err := c.getJSON(ctx, fetch, &doc); err == nil {
-			s := doc.SBOM
-			if s == nil {
-				s = &doc.sbomDoc
-			}
-			if len(s.Packages) > 0 {
-				return s.purls(), nil
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(c.PollInterval):
-		}
-	}
-	return nil, fmt.Errorf("sbom for %s was not ready after %d polls", repository, c.MaxPolls)
-}
-
-type sbomDoc struct {
-	Packages []struct {
-		ExternalRefs []struct {
-			ReferenceType    string `json:"referenceType"`
-			ReferenceLocator string `json:"referenceLocator"`
-		} `json:"externalRefs"`
-	} `json:"packages"`
-}
-
-func (s *sbomDoc) purls() []string {
-	var out []string
-	for _, p := range s.Packages {
-		for _, r := range p.ExternalRefs {
-			if r.ReferenceType == "purl" {
-				out = append(out, r.ReferenceLocator)
-			}
-		}
-	}
-	return out
-}
-
-func (c *Client) getJSON(ctx context.Context, url string, into any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	c.headers(req)
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusAccepted {
-		return fmt.Errorf("not ready")
-	}
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("%s: %s", url, resp.Status)
-	}
-	return json.NewDecoder(resp.Body).Decode(into)
 }
 
 func (c *Client) headers(req *http.Request) {

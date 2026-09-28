@@ -93,14 +93,8 @@ func TestCompactionForcesEveryClientToReload(t *testing.T) {
 
 // A refused cursor is correct; a cursor that can never be honored is not.
 //
-// The compaction bumps the epoch, and every generation recorded afterwards has to carry it. When
-// it does not, the epoch comparison can never match again: the delta answers reset for the rest of
-// the database's life and every open page silently reloads the whole payload on every poll.
-// Nothing logs it and the interface looks correct throughout.
-//
-// This test compacts first on purpose. A delta test that does not passes on a corpus where every
-// epoch is already equal — which is every corpus that has never been compacted, and is why this
-// survived at least one compaction unnoticed.
+// The compaction bumps the epoch, and every generation recorded afterwards has to carry it. This
+// test compacts first so equal initial epochs cannot hide a stale cursor path.
 func TestAGenerationRecordedAfterACompactionIsStillHonored(t *testing.T) {
 	s := pruneFixture(t)
 	if _, err := s.MarkOutsideClosure([]string{"octo-org/app"}); err != nil {

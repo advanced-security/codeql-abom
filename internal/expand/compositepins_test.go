@@ -97,9 +97,7 @@ func TestOnlyThePinnedRefIsExpedited(t *testing.T) {
 	}
 }
 
-// Nothing is enqueued here. SeedFrontier already queues every (node, ref) an owned workflow names,
-// and on the real corpus all 35 unanalyzed composite pins already had pending rows — so a version
-// of this that called Enqueue added exactly zero while appearing to work.
+// Nothing is enqueued here; SeedFrontier already queues every (node, ref) an owned workflow names.
 func TestExpeditingAddsNoQueueRows(t *testing.T) {
 	h := newSeedHarness(t)
 	s, q := h.store, h.queue

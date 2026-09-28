@@ -11,12 +11,9 @@
 
 <MudPaper Elevation="0" Class="pa-2 mb-2 abom-filters" Outlined="true">
     <div class="d-flex flex-wrap align-center gap-2 abom-explore-scope">
-        @* Every term the graph applies, behind one button. A control per term spent the width of
-           what could be asked rather than what is, and reached seven of the nineteen the language
-           declares; the other twelve travelled in a saved scope with no control at all. *@
+        @* Every graph filter term lives behind one control. *@
         <FilterPicker Surface="graph" Changed="OnPickerChanged" />
-        @* Offered whether or not anything is drawn, so a second scope replaces the first rather
-           than waiting for the reader to clear it by hand. *@
+        @* Available before drawing so a named scope can replace the current one. *@
         <NamedScopes Surface="graph" Chosen="LoadNamed" Presentation="@KeptPresentation" />
     </div>
 
@@ -27,17 +24,11 @@
         </MudAlert>
     }
 
-    @* Controls for a picture, so they wait for one. Over an empty canvas a view selector and a
-       grouping do nothing when touched, which teaches a reader the controls are broken rather
-       than that nothing has been drawn. The filter picker above stays: it is how they get a
-       picture, not how they arrange one. *@
+    @* Presentation controls wait for a picture; filters remain available to create one. *@
     @if (HasScope)
     {
     <div class="d-flex flex-wrap align-center gap-3 mt-2">
-        @* Presentation, not a predicate: Inventory has no notion of "Neighborhood", so this stays
-           a single choice rather than becoming a filter chip. What it stops being is a 450px bank
-           stating one of five words. The meaning rides on each option, because that sentence is
-           the only thing telling a reader what position encodes. *@
+        @* Presentation, not a predicate; the option title states what position encodes. *@
         <MudSelect T="string" Label="View" Value="_view" ValueChanged="OnViewChanged"
                    Dense="true" Margin="Margin.Dense" Variant="Variant.Outlined"
                    ShrinkLabel="true" Class="abom-filter abom-view-select">
@@ -52,8 +43,7 @@
         </MudSelect>
         <MudCheckBox T="bool" Value="_use3d" ValueChanged="On3dChanged" Color="Color.Primary"
                      Size="Size.Small" Dense="true" Label="3D" />
-        @* The tooltip sits on a span inside the item, following the view toggle above: a native
-           title survives the popover, where a MudTooltip around a select item does not. *@
+        @* Native title survives the select popover where MudTooltip does not. *@
         <MudSelect T="string" Label="Group by" Value="_groupBy" ValueChanged="OnGroupByChanged"
                    Dense="true" Margin="Margin.Dense" Variant="Variant.Outlined"
                    ShrinkLabel="true" Class="abom-filter">
@@ -75,8 +65,7 @@
         </MudTooltip>
         @if (_groupBy == "workflow" && !ShowSteps)
         {
-            @* Actions are referenced by workflows rather than held in one, so with steps folded
-               away there is little left for this grouping to gather. *@
+            @* Workflow grouping needs steps to provide meaningful containers. *@
             <MudText Typo="Typo.caption" Class="mud-text-secondary">
                 turn on Step to group by workflow
             </MudText>
@@ -124,8 +113,7 @@
                     not in this view — it may sit outside the scope, or be filtered out by kind
                 </MudText>
             }
-            @* Naming a node is itself a scope. Suspending the flags silently would be a second
-               filter the reader cannot see, which is the thing this view keeps promising not to do. *@
+            @* Naming a node is itself a scope; suspended filters must be visible. *@
             @if (SuspendedFilters is { Length: > 0 } suspended)
             {
                 <MudText Typo="Typo.caption" Class="mud-text-secondary">
@@ -600,8 +588,7 @@
     [SupplyParameterFromQuery(Name = "from")] public string? FromParam { get; set; }
     [SupplyParameterFromQuery(Name = "status")] public string? StatusParam { get; set; }
 
-    // NeedsSelection marks a view whose force reads hop distance from a selected node. Without
-    // one it has nothing to measure from, so it is disabled rather than silently inert.
+    // NeedsSelection marks a view whose force reads hop distance from a selected node.
     private sealed record ViewOption(string Key, string Label, string Meaning,
         bool NeedsSelection = false);
     internal sealed record Counts(int Nodes, int Edges, int Hidden, int Total, int EdgeTotal = 0,
@@ -634,10 +621,7 @@
 
     private static readonly ViewOption[] Views =
     [
-        // The one view with no semantic force behind it, so its positions are whatever the
-        // simulation settled on -- and the simulation has no fixed seed. It used to claim
-        // "position is structural", which is a meaning the picture only carries under a layout
-        // somebody computed, and only for the nodes that layout placed.
+        // No semantic force: positions are the simulation's, not a measurement.
         new("neighborhood", "Neighborhood",
             "What is connected to what. Nodes pulled together share dependencies; how far "
             + "apart they sit is the simulation's, not a measurement."),
@@ -904,31 +888,21 @@
     private string _refStyle = "any";
     private int? _minReach;
     private int _hops;
-    // 2D by default. Measured on the reference corpus at one moment: 2D could draw 16 of 21
-    // boundaries honestly where 3D managed 10 of 23, because a third axis projects unrelated groups
-    // through each other and every one of those is a boundary the view then has to refuse.
+    // 2D by default: 3D projection can overlay unrelated groups and force boundary refusal.
     private bool _use3d;
     private bool _animate = true;
-    // Open by default: the key is beside the canvas rather than over it, and its checkboxes are
-    // the primary way to narrow the graph.
+    // Open by default: the key is beside the canvas and owns graph narrowing.
     private bool _showLegend = true;
     private bool _loading = true;
     private bool _busy = true;
     private string _busyMessage = "Loading the whole graph…";
     private List<string> _selected = [];
-    // Grouping supplies the owner and repository context each node is drawn inside. It arrives
-    // *uncollapsed*: once findings have cut the population, folding gathers away the very nodes
-    // this scope exists to show. Collapsing stays a tool for whoever widens the scope back out.
+    // Arrives uncollapsed so finding-scoped nodes remain visible.
     private string _groupBy = "owner";
-    // Folding is for the whole-graph view, which is 9,811 nodes and renders at under four frames
-    // a second unfolded. The exposure scope is 213 and must *not* fold, or the routes it exists
-    // to show are gathered away into their owners.
+    // Folding is for whole-graph views; exposure routes must stay expanded.
     private bool _collapsed;
 
-    // Off by default, and that is a measured choice rather than a timid one. This reaches a hop
-    // beyond the scope entirely, which drew 1,195 nodes and cost the picture — honest boundaries
-    // fell from 24 of 24 to 14 of 44. The relationships *inside* the scope no longer depend on it:
-    // what fails a filter is greyed rather than removed, so both of an edge's ends survive.
+    // Off by default: one extra hop can swamp scoped boundaries.
     private bool _dependencies;
 
     private async Task OnDependenciesChanged(bool value)
@@ -1042,9 +1016,7 @@
 
     private sealed record ScopeChoice(string Key, string Label, string Help);
 
-    // Every scope is bounded by something the operator can name. The whole corpus used to be
-    // offered here as a research view and is not a question about their estate; it grows with
-    // what the crawl walked through, and at 12,550 nodes it drew at 1.5 FPS.
+    // Every scope is bounded by something the operator can name.
     private static readonly ScopeChoice[] Scopes =
     [
         new("owned", "What you own",
@@ -1257,17 +1229,7 @@
         Follow.Changed += OnFollowChanged;
     }
 
-    /// <summary>
-    /// The address is the scope, read through the one parser the API and the gate also read.
-    ///
-    /// <para>
-    /// A term the address names wins. A list it does not name asks nothing, which for kinds and
-    /// relationship classes is every one the payload holds rather than none: Discovery hands over
-    /// a node and a direction and nothing else, and reading the kinds it never mentioned as an
-    /// empty set would draw a blank canvas. The cost is that switching every kind off does not
-    /// survive a reload, and the page says so rather than the language growing an empty spelling.
-    /// </para>
-    /// </summary>
+    /// <summary>Reads scope through the same address parser as the API and gate.</summary>
     private void ReadScopeFromAddress()
     {
         Scope.ReadFrom(Nav.Uri);
@@ -1545,8 +1507,7 @@
         _followTimer?.Dispose();
         _followTimer = new Timer(async _ =>
         {
-            // Nothing awaits a timer callback, so a failed fetch or a JS interop error raised
-            // here is discarded, and the graph silently stops following.
+            // Timer callbacks are unobserved unless exceptions are caught here.
             try
             {
                 await InvokeAsync(FollowGraph);
@@ -1700,10 +1661,7 @@
 
         var presentation = new List<string> { $"view={_view}" };
         if (_direction != "both") presentation.Add($"direction={_direction}");
-        // Grouping, the third dimension, collapsing and the stable layout all change the picture
-        // and used to leave no trace, so a shared link showed the same nodes arranged some other
-        // way. Written through the same record a saved view stores, so the address and the saved
-        // view cannot disagree about what a drawing is. The selection is the scope's to write.
+        // Drawing choices are serialized through the same record saved views use.
         var drawn = CurrentPresentation with
         {
             View = string.Empty, Direction = string.Empty, Selection = string.Empty,
@@ -1887,12 +1845,7 @@
             return;
         }
 
-        // Whether this is a refetch or a refilter is decided by asking whether the graph on
-        // screen answers the question now being asked, read from ServerTerms() rather than from a
-        // list of terms repeated here. A term the server applies that such a list forgot would be
-        // filtered in the browser against a payload built without it — narrowing that reads as an
-        // answer and is not one. The comparison is against what was requested rather than against
-        // the scope a moment ago, because the picker writes the shared scope before saying so.
+        // Refetch when server-side terms changed; browser filtering cannot narrow data it never loaded.
         if (_requestedTerms is null || string.Join("&", ServerTerms()) != _requestedTerms)
         {
             await LoadGraph(force: true);
@@ -1911,10 +1864,7 @@
 
     private void OpenDrawWarning() => _drawWarning = true;
 
-    /// <summary>Accepts one oversized picture, for this view until the node set is replaced.</summary>
-    ///
-    /// <para>Deliberately not a preference: the reader accepted <em>this</em> graph after being
-    /// told what it costs, which is a different thing from standing consent to hairballs.</para>
+    /// <summary>Accepts one oversized picture until the node set is replaced.</summary>
     private async Task ConfirmDrawAnyway()
     {
         _drawWarning = false;
@@ -1932,18 +1882,13 @@
         }
     }
 
-    /// <summary>Where the positions come from: an engine that computed them, or the simulation.</summary>
-    ///
-    /// <para><c>Text</c> is the whole claim, including the reason an engine could not be run.
-    /// Reported by the module rather than assembled here, so the canvas and this line cannot come
-    /// to disagree about which layout a reader is looking at.</para>
+    /// <summary>Where positions come from: server layout engine or simulation.</summary>
     public sealed record LayoutState(bool Stable, string Text, int Pinned, int Free);
 
     private bool _stableLayout;
     private LayoutState? _layout;
 
-    /// A force simulation seeds itself afresh, so saying nothing would leave the default -- the
-    /// case where position carries least -- as the one state the page never names.
+    /// <summary>Names the simulation fallback while no server layout is active.</summary>
     private string LayoutStateText =>
         _layout?.Text ?? "Force layout — positions change on every reload";
 
@@ -1959,11 +1904,7 @@
         await ApplyStableLayout();
     }
 
-    /// <summary>Asks the server to place the scope that is on screen.</summary>
-    ///
-    /// <para>The engine is given the same terms the graph was fetched with, so the picture and the
-    /// layout are two renderings of one scope. A refusal is not a fault: Graphviz is optional, and
-    /// the summary carries the reason while the simulation keeps drawing.</para>
+    /// <summary>Asks the server to place the scope currently on screen.</summary>
     private async Task ApplyStableLayout()
     {
         if (_module is null || !_stableLayout) return;
@@ -1979,8 +1920,7 @@
         }
         finally
         {
-            // Cleared here rather than left to OnLayoutSettled: pinned nodes may leave the engine
-            // already stopped, and a settle callback that never fires holds the overlay for ever.
+            // Pinned nodes may leave the engine already stopped, so no settle callback is guaranteed.
             _busy = false;
             StateHasChanged();
         }
@@ -1993,12 +1933,9 @@
         // Collapsing by nothing would fold the whole graph into one node.
         if (_groupBy == "none" && _collapsed) await OnCollapsedChanged(false);
         await _module!.InvokeVoidAsync("setGroupBy", "abom-graph", _groupBy);
-        // Crossing in or out of None changes whether a filter removes or greys, which is a
-        // different node set and not something a repaint can reach.
+        // Crossing in or out of None changes the filtered node set.
         if (_collapsed || wasGrouped != (_groupBy != "none")) await Refilter();
-        // The engine's boxes were drawn for the level that just changed, so they are recomputed
-        // rather than re-keyed: a box matched to the wrong level is a boundary around members
-        // nobody grouped together.
+        // Server layout boxes are tied to the grouping level.
         await ApplyStableLayout();
     }
 
@@ -2014,8 +1951,6 @@
         _scope = value;
         await LoadGraph(force: true);
         _groupBy = "owner";
-        // Every scope is now small enough to draw, and folding gathers away the nodes it exists
-        // to show.
         await OnCollapsedChanged(false);
     }
     private async Task OnCollapsedChanged(bool value)

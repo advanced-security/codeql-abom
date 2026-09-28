@@ -8,9 +8,6 @@ import (
 )
 
 // Objective is what the crawl is trying to achieve and what it has been spending to get there.
-//
-// A crawl whose priorities are invisible is one nobody can steer, and until this existed the only
-// answer to "what is it doing" was a queue depth.
 type Objective struct {
 	// Progress is completeness at every depth, shallowest first.
 	Progress []frontier.DepthProgress `json:"progress"`

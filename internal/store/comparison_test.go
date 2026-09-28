@@ -261,9 +261,8 @@ func TestAFixedAlertReopensAndADismissedOneStaysDismissed(t *testing.T) {
 	}
 }
 
-// Measured on has-ghas/build-applications-w-copilot-agent-mode: the same commit, analyzed by
-// GitHub under CodeQL 2.23.1 and by the run under 2.27.1, gave 7 results no alert stood for, all
-// of them reusable workflows the newer query reports. Same code, different analyzer: an inference.
+// Same commit under a different CodeQL version is still an inference: analyzer changes can add
+// results no alert stood for.
 func TestAMemberAnalyzedUnderAnotherCodeQLThanGitHubsIsAnInference(t *testing.T) {
 	s := newTestStore(t)
 	id, err := s.CreateComparison(comparedHeldRun(t, s), "operator")

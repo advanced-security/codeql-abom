@@ -18,9 +18,7 @@ type CompositePin struct {
 // refs no analysis has covered.
 //
 // This is the ceiling on transitive discovery. A child edge is only visible when the parent was
-// analyzed at the ref the consumer pinned, so an unanalyzed pin is a supply chain ABOM reports as
-// empty while having no evidence that it is. Measured 2026-09-08: 35 of 47 such pins had never
-// been analyzed, which is why the projection found 3 transitive packages across 402 repositories.
+// analyzed at the ref the consumer pinned, so an unanalyzed pin is coverage ABOM must name.
 //
 // Restricted to composite actions because nothing else can have children, and queueing the rest
 // would spend the crawl on work that cannot produce a transitive edge.

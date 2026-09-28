@@ -120,9 +120,8 @@ func TestCoverageTravelsInsideTheDocument(t *testing.T) {
 	}
 }
 
-// Provenance is partial on the real corpus — pack digest on 72% of runs, result hash on 58%, and
-// abom_commit_content is empty. Claiming provenance that is not held is the same failure as
-// claiming coverage that was not measured.
+// Claiming provenance that is not held is the same failure as claiming coverage that was not
+// measured.
 //
 // A finding belongs to the component that *holds* the reference, not to the one referenced:
 // `LinkFindingsToNodes` attributes by source location, so an unpinned `uses:` is a fact about the
@@ -146,8 +145,7 @@ func TestProvenanceIsStatedPerFindingAndAbsenceIsNamed(t *testing.T) {
 	}
 }
 
-// Analyzed-but-untraceable is a real state: 2,759 findings on the real corpus have no run at all.
-// The plan asserted there were only two states, and the corpus says otherwise.
+// Analyzed-but-untraceable is distinct from unanalyzed and must stay visible.
 func TestAFindingWithNoRunIsReportedAsUntracedRatherThanDropped(t *testing.T) {
 	doc := build(t, bomFixture(t), BOMOptions{})
 
@@ -192,8 +190,7 @@ func TestACodeQLFindingNamesItsProviderAndSaysItIsReproducible(t *testing.T) {
 	}
 }
 
-// Not-reproducible and not-recorded are different claims, and the corpus is entirely the second.
-// Collapsing them would report 11,370 findings as un-reproducible when nobody ever asked.
+// Not-reproducible and not-recorded are different claims.
 func TestAFindingNobodyAttributedSaysSoRatherThanClaimingItCannotBeReproduced(t *testing.T) {
 	doc := build(t, bomFixture(t), BOMOptions{})
 

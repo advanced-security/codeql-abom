@@ -174,8 +174,7 @@ func TestACycleReturnsAbandonedClaimsToTheQueue(t *testing.T) {
 
 // A claim surviving process start cannot belong to a live worker, because the store admits one
 // writer. Waiting out the lease costs an hour of dead time in which the interface reports work
-// in flight that nothing is doing: a real restart stranded 20 dependencies for 34 minutes while
-// the same screen said there was nothing to analyze.
+// in flight that nothing is doing.
 func TestTheFirstCycleReclaimsClaimsLeftByAPreviousProcess(t *testing.T) {
 	sup, s := newSupervisor(t)
 	if _, err := sup.Queue.Enqueue([]frontier.Item{
@@ -364,9 +363,7 @@ func TestARefreshWithNoAdvisorIsHarmless(t *testing.T) {
 	}
 }
 
-// A finished crawl never ingests again, so arrival alone leaves a completed corpus matched
-// against an advisory set that can never be updated. Measured on the real corpus: 1213 done, 40
-// unavailable, nothing pending, and advisoriesFetchedAt frozen a day back.
+// A finished crawl never ingests again, so staleness alone must refresh advisories.
 func TestAStaleAdvisorySetIsRefreshedOnADrainedQueue(t *testing.T) {
 	sup, _ := newSupervisor(t)
 	sup.AdvisoryMaxAge = 6 * time.Hour
@@ -403,9 +400,7 @@ func TestAFreshAdvisorySetIsNotRefetched(t *testing.T) {
 	}
 }
 
-// Measured on the reference corpus: 936 packages is 19 paced requests and took 109 seconds, with
-// the cycle blocked throughout. Without a floor a crawl ingesting on every 30s cycle would spend
-// nearly all of its time re-asking about advisories instead of analyzing dependencies.
+// The advisory floor keeps productive cycles from re-asking about the same packages.
 func TestABurstOfProductiveCyclesDoesNotRefetchAdvisoriesEachTime(t *testing.T) {
 	sup, _ := newSupervisor(t)
 	sup.Advisor = func(context.Context) (int, error) { return 0, nil }

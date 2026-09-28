@@ -45,8 +45,8 @@ func newGate(t *testing.T) (*Gate, *journal, place) {
 	return NewGate(p.bound(t), j.record), j, p
 }
 
-// Every hook invocation of a recorded session becomes one event, so the timeline can answer what
-// the agent tried as well as what it did.
+// Every hook invocation becomes one event, so the timeline can answer what the agent tried as well
+// as what it did.
 func TestEveryRecordedHookInvocationBecomesOneEvent(t *testing.T) {
 	g, j, p := newGate(t)
 	r := p.recording(t)
@@ -483,8 +483,7 @@ func TestAnOversizedPrintoutIsKeptCutAndSaysSo(t *testing.T) {
 }
 
 // graphtext output is a directory holding one file per query, named for its @id: what ql-mcp calls
-// results.txt is that directory. A live agent that viewed it saw only a folder named actions, and
-// reported that PrintAST printed nothing; the tree was one level down all along.
+// results.txt is that directory.
 func TestAPrintoutDirectoryIsKeptFileByFileAndTheAgentIsToldWhereTheTreeIs(t *testing.T) {
 	g, _, p := newGate(t)
 	scratch := filepath.Join(p.root, "scratch")

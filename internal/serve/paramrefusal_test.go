@@ -6,12 +6,7 @@ import (
 	"testing"
 )
 
-// appliesGrouping names the endpoints that bound their answer to a repository grouping, against the
-// rest of the query each one needs to answer at all.
-//
-// One declaration, read by the test that they accept the term and by the test that everything else
-// refuses it. Stated twice, an endpoint gaining the term would be added to one list and not the
-// other, and the pair would disagree about what the server does.
+// appliesGrouping names endpoints that apply repository grouping, with required query context.
 var appliesGrouping = map[string]string{
 	"/api/remediation":    "",
 	"/api/exposure":       "by=repository",
@@ -25,15 +20,7 @@ var appliesGrouping = map[string]string{
 	"/api/advisories":     "",
 }
 
-// Every endpoint refuses a parameter it does not apply.
-//
-// A reader who adds a term to a URL and gets a 200 believes they narrowed the answer. Measured on a
-// crawled organization before this existed: `/api/repositories?severity=error` returned all 7
-// matches, `/api/actions?properties=business_id:3` all 200, and `/api/frontier?notAParameter=1` all
-// 5 — each of them the whole answer, wearing the name of a filtered one.
-//
-// The graph endpoints already refused an unknown term, because they parse the shared predicate.
-// These eleven read their own parameters and so had nothing to refuse with.
+// Every endpoint refuses a parameter it does not apply, rather than answering a wider query.
 func TestAnEndpointRefusesAParameterItDoesNotApply(t *testing.T) {
 	srv, _ := unitServer(t)
 

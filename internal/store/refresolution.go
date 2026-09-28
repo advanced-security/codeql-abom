@@ -11,12 +11,9 @@ import (
 //
 // GitHub generates Dependabot alerts for actions "that use semantic versioning, not SHA
 // versioning", so a reference pinned to a commit is invisible to remediation until something can
-// name the version that commit was released as. Measured on the reference corpus, 10,881 of
-// 31,871 live edges are pinned to a commit.
-//
-// The mapping is mostly a byproduct the crawl already produces and discards: resolving
-// `actions/checkout@v4.2.2` to a commit is exactly a tag-to-commit measurement, and 888 of the
-// 1,333 distinct pinned commits are recoverable from the queue with no request to GitHub at all.
+// name the version that commit was released as. The mapping is mostly a byproduct the crawl
+// already produces and discards: resolving `actions/checkout@v4.2.2` to a commit is exactly a
+// tag-to-commit measurement.
 type RefResolution struct {
 	Owner     string
 	Repo      string

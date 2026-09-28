@@ -5,9 +5,7 @@ import (
 	"testing"
 )
 
-// A run covers repositories, so it applies the terms that choose them and names every other term.
-// Measured on the crawled organization: all six built-ins were refused for a run while the
-// repositories unit listed "What you own" as 30 repositories and "Advisory routes" as 15.
+// A run covers repositories, so it applies terms that choose them and names every other term.
 func TestARunNamesEveryTermThatChoosesNoRepository(t *testing.T) {
 	spec, err := Parse("scope=owned&flags=findings&ref=tag&kinds=action&minReach=2")
 	if err != nil {

@@ -8,9 +8,8 @@ import (
 	"testing"
 )
 
-// A reading is trusted for as long as its reader matches, so a reader that forgot to change when
-// the parser did would keep every recorded answer from before the upgrade. The parser half of the
-// name is checked against the release go.mod actually builds with.
+// A reading is trusted for as long as its reader matches, so the reader names the parser release
+// go.mod actually builds with.
 func TestTheReaderNamesTheParserReleaseTheBuildUses(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join(repoRoot(t), "go.mod"))
 	if err != nil {

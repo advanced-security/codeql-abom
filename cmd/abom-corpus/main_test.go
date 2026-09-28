@@ -260,16 +260,8 @@ func TestTheDataSetCarriesWhatAJobCanDo(t *testing.T) {
 }
 
 // notRepresented are suite rules the data set cannot yet produce, each with the reason.
-//
-// Listed rather than ignored: a rule nothing exercises is a category the shared set is blind to,
-// and a total that counted 29 of 35 without naming the six would read as coverage. The test
-// below also fails when one of these *starts* being produced, so closing a gap forces the list
-// to be corrected rather than left to rot.
 var notRepresented = map[string]string{
-	// The `/medium` variants fire where the triggering context is less trusted than the
-	// `/critical` one — a `pull_request` rather than a `pull_request_target`, typically. The
-	// imported trees carry the critical shapes; the medium counterparts need a workflow written
-	// for them.
+	// The `/medium` variants need a lower-trust trigger than the imported trees carry.
 	"actions/argument-injection/medium": "no lower-trust trigger context for argument injection",
 	"actions/artifact-poisoning/medium": "no lower-trust trigger context for artifact poisoning",
 	"actions/command-injection/medium":  "no lower-trust trigger context for command injection",

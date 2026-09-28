@@ -90,69 +90,34 @@ func (i *Ingester) EdgesFromBQRS(r io.Reader, opts Options) (int, error) {
 	seen := make(map[string]bool)
 
 	return bqrs.StreamSelect(r, func(row bqrs.Row) error {
-		return i.edge(row, opts, repoID, repoKey, provenance, seen)
+		return i.edge(row, opts, repoID, provenance, seen)
 	})
 }
 
 func (i *Ingester) edge(
-	row bqrs.Row, opts Options, repoID int64, repoKey, provenance string, seen map[string]bool,
+	row bqrs.Row, opts Options, repoID int64, provenance string, seen map[string]bool,
 ) error {
-	edgeKind, err := row.String("edgeKind")
-	if err != nil {
-		return err
-	}
-	srcPath, err := row.String("srcPath")
-	if err != nil {
-		return err
-	}
-	srcJobID, err := row.String("srcJobId")
-	if err != nil {
-		return err
-	}
-	stepIndex, err := row.Int("srcStepIndex")
-	if err != nil {
-		return err
-	}
-	usesRaw, err := row.String("usesRaw")
-	if err != nil {
-		return err
-	}
-	pinComment, err := row.String("pinComment")
-	if err != nil {
-		return err
-	}
-	startLine, err := row.Int("startLine")
-	if err != nil {
-		return err
-	}
-	startColumn, err := row.Int("startColumn")
-	if err != nil {
-		return err
-	}
-	endLine, err := row.Int("endLine")
-	if err != nil {
-		return err
-	}
-	endColumn, err := row.Int("endColumn")
+	fields, err := readEdgeFields(row)
 	if err != nil {
 		return err
 	}
 
-	srcKey, err := i.sourceChain(edgeKind, opts.Repository, srcPath, srcJobID, stepIndex,
-		repoID, repoKey, seen)
+	srcKey, err := i.sourceChain(fields.edgeKind, opts.Repository, fields.srcPath, fields.srcJobID, fields.stepIndex,
+		repoID, seen)
 	if err != nil {
 		return err
 	}
 
-	if edgeKind == edgeJobNeedsJob {
+	if fields.edgeKind == edgeJobNeedsJob {
 		return i.needsEdge(needsTarget{
-			repository: opts.Repository, srcPath: srcPath, srcKey: srcKey, neededJobID: usesRaw,
+			repository: opts.Repository, srcPath: fields.srcPath, srcKey: srcKey, neededJobID: fields.usesRaw,
 			repoID: repoID, queryRunID: opts.QueryRunID, provenance: provenance, seen: seen,
-			startLine: startLine, startColumn: startColumn, endLine: endLine, endColumn: endColumn,
+			startLine: fields.startLine, startColumn: fields.startColumn,
+			endLine: fields.endLine, endColumn: fields.endColumn,
 		})
 	}
 
-	ref := normalize.ParseUses(usesRaw, pinComment)
+	ref := normalize.ParseUses(fields.usesRaw, fields.pinComment)
 	dstKey := ref.NodeKeyIn(opts.Repository)
 
 	// A local reference and the file that defines it must resolve to one node, so local
@@ -172,7 +137,7 @@ func (i *Ingester) edge(
 		Owner:        ref.Owner,
 		Repo:         ref.Repo,
 		Path:         ref.Subpath,
-		DisplayName:  usesRaw,
+		DisplayName:  fields.usesRaw,
 		IsExternal:   ref.IsExternal,
 		RepositoryID: dstRepoID,
 	}); err != nil {
@@ -180,22 +145,70 @@ func (i *Ingester) edge(
 	}
 
 	return i.writer.AddEdge(store.Edge{
-		Key:          normalize.EdgeKey(opts.Repository, srcPath, startLine, startColumn),
+		Key:          normalize.EdgeKey(opts.Repository, fields.srcPath, fields.startLine, fields.startColumn),
 		SrcKey:       srcKey,
 		DstKey:       dstKey,
-		Kind:         edgeKind,
-		RefRaw:       usesRaw,
+		Kind:         fields.edgeKind,
+		RefRaw:       fields.usesRaw,
 		RefValue:     ref.RefValue,
 		PinComment:   ref.PinComment,
-		FilePath:     srcPath,
-		StartLine:    startLine,
-		StartColumn:  startColumn,
-		EndLine:      endLine,
-		EndColumn:    endColumn,
+		FilePath:     fields.srcPath,
+		StartLine:    fields.startLine,
+		StartColumn:  fields.startColumn,
+		EndLine:      fields.endLine,
+		EndColumn:    fields.endColumn,
 		RepositoryID: repoID,
 		QueryRunID:   opts.QueryRunID,
 		Provenance:   provenance,
 	})
+}
+
+type edgeFields struct {
+	edgeKind, srcPath, srcJobID string
+	usesRaw, pinComment         string
+	stepIndex                   int
+	startLine, startColumn      int
+	endLine, endColumn          int
+}
+
+func readEdgeFields(row bqrs.Row) (edgeFields, error) {
+	var fields edgeFields
+	steps := []func() error{
+		func() error { return readString(row, "edgeKind", &fields.edgeKind) },
+		func() error { return readString(row, "srcPath", &fields.srcPath) },
+		func() error { return readString(row, "srcJobId", &fields.srcJobID) },
+		func() error { return readInt(row, "srcStepIndex", &fields.stepIndex) },
+		func() error { return readString(row, "usesRaw", &fields.usesRaw) },
+		func() error { return readString(row, "pinComment", &fields.pinComment) },
+		func() error { return readInt(row, "startLine", &fields.startLine) },
+		func() error { return readInt(row, "startColumn", &fields.startColumn) },
+		func() error { return readInt(row, "endLine", &fields.endLine) },
+		func() error { return readInt(row, "endColumn", &fields.endColumn) },
+	}
+	for _, step := range steps {
+		if err := step(); err != nil {
+			return edgeFields{}, err
+		}
+	}
+	return fields, nil
+}
+
+func readString(row bqrs.Row, name string, dst *string) error {
+	value, err := row.String(name)
+	if err != nil {
+		return err
+	}
+	*dst = value
+	return nil
+}
+
+func readInt(row bqrs.Row, name string, dst *int) error {
+	value, err := row.Int(name)
+	if err != nil {
+		return err
+	}
+	*dst = value
+	return nil
 }
 
 // sourceChain emits the container nodes an edge hangs from and returns the key of the node the
@@ -205,7 +218,7 @@ func (i *Ingester) edge(
 // that avoids millions of rows that carry no information the columns do not already hold.
 func (i *Ingester) sourceChain(
 	edgeKind, repository, srcPath, srcJobID string, stepIndex int,
-	repoID int64, repoKey string, seen map[string]bool,
+	repoID int64, seen map[string]bool,
 ) (string, error) {
 	addOnce := func(n store.Node) error {
 		if seen[n.Key] {

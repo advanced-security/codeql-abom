@@ -39,10 +39,8 @@ func TestThePinnedParserReadsThisRepositorysOwnLockfile(t *testing.T) {
 	if got.Schema != "v0.0.2" {
 		t.Errorf("schema = %q, want v0.0.2; the compatibility baseline moved", got.Schema)
 	}
-	// A workflow whose only lockable reference is reached through a composite action still has to
-	// resolve, because the lockfile records the transitive closure per workflow.
-	if _, ok := got.Selected(".github/workflows/self-audit.yml", "actions/checkout@v7.0.1"); !ok {
-		t.Error("no selection for a reference this repository's lockfile covers")
+	if c := got.Workflow(".github/workflows/self-audit.yml"); c != Covered {
+		t.Errorf("self-audit.yml coverage = %q, want %q", c, Covered)
 	}
 }
 
@@ -63,7 +61,7 @@ func TestTheCorpusFixtureIsClassifiedUnsupportedRatherThanCovered(t *testing.T) 
 	if got.Schema != "future-version" {
 		t.Errorf("schema = %q, want %q as written", got.Schema, "future-version")
 	}
-	if _, ok := got.Selected(".github/workflows/rust-ci.yml", "missing/action@v1"); ok {
-		t.Error("an unsupported lockfile reported a selection")
+	if c := got.Workflow(".github/workflows/rust-ci.yml"); c != Unsupported {
+		t.Errorf("rust-ci.yml coverage = %q, want %q", c, Unsupported)
 	}
 }

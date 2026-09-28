@@ -37,9 +37,7 @@ func TestInventoryPageReportsHowManyRowsItLeftOut(t *testing.T) {
 	}
 }
 
-// The defect this exists to stop: sorting a truncated page answers a different question from
-// sorting the match. Measured on the real corpus, "most findings" named a row with 39 while the
-// true answer had 50, because the row holding 50 fell outside the 500 the grid had fetched.
+// Sorting a truncated page answers a different question from sorting the full match.
 func TestInventorySortsTheWholeMatchRatherThanThePage(t *testing.T) {
 	s := advisoryStore(t)
 	inventoryCorpus(t, s, 6)

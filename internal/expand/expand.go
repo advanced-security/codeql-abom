@@ -78,7 +78,7 @@ type Options struct {
 // Stats summarizes a round.
 type Stats struct {
 	// Processed counts analyses, not repositories: a repository reached at three references is
-	// three databases and three sets of results. A crawl of 101 repositories reported 319.
+	// three databases and three sets of results.
 	Processed int
 	// Skipped counts repositories the ledger already had on record, settled without analysis.
 	Skipped     int
@@ -200,30 +200,12 @@ func (e *Expander) Run(ctx context.Context, opts Options) (Stats, error) {
 		return Stats{}, fmt.Errorf("expand: WorkDir is required")
 	}
 
-	// Between rounds, where nothing is reading a cached tree. A round evicting an entry a unit
-	// is analyzing would take the source out from under a database build.
-	if _, err := e.Cache.Trim(); err != nil {
-		// The crawl is what matters; a cache that cannot be tidied costs disk, not results.
-		e.report("checkout-cache", "trimming the checkout cache", err)
-	}
-	if _, err := e.trimDatabases(); err != nil {
-		e.report("database-cache", "trimming the database cache", err)
-	}
-	reusedBefore := e.Cache.Hits()
-	fetchedBefore := e.fetches.Load()
+	e.trimBetweenRounds()
+	before := e.roundCounts()
 
-	plans, err := e.plansByTier(ctx, opts)
+	plans, err := e.checkedPlans(ctx, opts)
 	if err != nil {
 		return Stats{}, err
-	}
-	// A binding that names findings queries with nothing able to run them is the defect this
-	// lane exists to fix, so it fails loudly here rather than quietly producing no findings.
-	for tier, p := range plans {
-		if len(p.findings) > 0 && e.Analyzer == nil {
-			return Stats{}, fmt.Errorf(
-				"expand: %s is bound to %d findings queries but no Analyzer is configured",
-				tier, len(p.findings))
-		}
 	}
 
 	claimed, err := e.Queue.Claim(opts.Limit)
@@ -242,14 +224,72 @@ func (e *Expander) Run(ctx context.Context, opts Options) (Stats, error) {
 	}
 
 	var stats Stats
+	jobs, byRepo := jobsForBatches(batches)
+	pool := e.pool(opts, plans, owned, byRepo, &stats)
+
+	poolStats, err := pool.Run(ctx, jobs)
+	if err != nil {
+		return stats, err
+	}
+	stats.Processed = poolStats.Processed - stats.Skipped
+	stats.Edges = poolStats.Rows
+	stats.Reused = int(e.Cache.Hits() - before.reused)
+	stats.Fetched = int(e.fetches.Load() - before.fetched)
+	return stats, nil
+}
+
+type expanderCounts struct {
+	reused  int64
+	fetched int64
+}
+
+func (e *Expander) trimBetweenRounds() {
+	// Between rounds, where nothing is reading a cached tree. A round evicting an entry a unit
+	// is analyzing would take the source out from under a database build.
+	if _, err := e.Cache.Trim(); err != nil {
+		// The crawl is what matters; a cache that cannot be tidied costs disk, not results.
+		e.report("checkout-cache", "trimming the checkout cache", err)
+	}
+	if _, err := e.trimDatabases(); err != nil {
+		e.report("database-cache", "trimming the database cache", err)
+	}
+}
+
+func (e *Expander) roundCounts() expanderCounts {
+	return expanderCounts{reused: e.Cache.Hits(), fetched: e.fetches.Load()}
+}
+
+func (e *Expander) checkedPlans(ctx context.Context, opts Options) (map[string]tierPlan, error) {
+	plans, err := e.plansByTier(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	// A binding that names findings queries with nothing able to run them is the defect this
+	// lane exists to fix, so it fails loudly here rather than quietly producing no findings.
+	for tier, p := range plans {
+		if len(p.findings) > 0 && e.Analyzer == nil {
+			return nil, fmt.Errorf(
+				"expand: %s is bound to %d findings queries but no Analyzer is configured",
+				tier, len(p.findings))
+		}
+	}
+	return plans, nil
+}
+
+func jobsForBatches(batches []batch) ([]work.Job, map[string]batch) {
 	jobs := make([]work.Job, 0, len(batches))
 	byRepo := make(map[string]batch, len(batches))
 	for _, b := range batches {
 		jobs = append(jobs, work.Job{Repository: b.key()})
 		byRepo[b.key()] = b
 	}
+	return jobs, byRepo
+}
 
-	pool := &work.Pool{
+func (e *Expander) pool(
+	opts Options, plans map[string]tierPlan, owned map[string]bool, byRepo map[string]batch, stats *Stats,
+) *work.Pool {
+	return &work.Pool{
 		Concurrency: opts.Concurrency,
 		Prepare: func(ctx context.Context, job work.Job) (work.Prepared, error) {
 			b, err := batchFor(byRepo, job.Repository)
@@ -263,27 +303,17 @@ func (e *Expander) Run(ctx context.Context, opts Options) (Stats, error) {
 			if err != nil {
 				return 0, err
 			}
-			return e.consume(ctx, b, p, opts, plans[tierOf(b, owned)], &stats)
+			return e.consume(ctx, b, p, opts, plans[tierOf(b, owned)], stats)
 		},
 		OnEvent: func(ev work.Event) {
 			if ev.Kind == work.EventFailed {
-				e.settleFailure(byRepo[ev.Job.Repository], ev.Err, &stats)
+				e.settleFailure(byRepo[ev.Job.Repository], ev.Err, stats)
 			}
 			if e.OnEvent != nil {
 				e.OnEvent(ev)
 			}
 		},
 	}
-
-	poolStats, err := pool.Run(ctx, jobs)
-	if err != nil {
-		return stats, err
-	}
-	stats.Processed = poolStats.Processed - stats.Skipped
-	stats.Edges = poolStats.Rows
-	stats.Reused = int(e.Cache.Hits() - reusedBefore)
-	stats.Fetched = int(e.fetches.Load() - fetchedBefore)
-	return stats, nil
 }
 
 // batchFor resolves the batch a job names.

@@ -6,13 +6,7 @@ import (
 	"strings"
 )
 
-// ownedScopeDDL is the fourth ownership notion, and the only one that means responsibility.
-//
-// `repository.origin` records how a repository entered the corpus. `abom_account` records what
-// GitHub says the operator belongs to. Neither means anyone can change anything: `actions` owns a
-// repository in scope and nobody running this tool controls it. This table is the operator's own
-// statement about which accounts they hold both the privilege to analyze and the responsibility
-// to remediate, and it is the one discovery is bounded by.
+// ownedScopeDDL records the operator's responsibility boundary, distinct from origin or access.
 const ownedScopeDDL = `
 CREATE TABLE IF NOT EXISTS abom_owned_scope (
   owner         TEXT PRIMARY KEY,
@@ -48,14 +42,8 @@ const sawWholeMembershipList = `EXISTS (
 	   AND (',' || COALESCE(a.scopes, '') || ',' LIKE '%,read:org,%'
 	        OR ',' || COALESCE(a.scopes, '') || ',' LIKE '%,admin:org,%'))`
 
-// honoredScopeDDL holds back declarations `gh` answered against.
-//
-// A view rather than a clause each caller remembers, for the reason the live views exist: the
-// tier, the queue, the closure and every "yours" figure read the declaration, and one of them
-// forgetting the gate is how 44 of somebody else's repositories became this operator's to
-// remediate. Only *contradicted* is held — an unverified corpus or a token that cannot read
-// memberships leaves a declaration unproven, and gating on that locks an operator out of their
-// own bill of materials. See plans/db/declaration-provenance.md.
+// honoredScopeDDL centralizes the membership gate for every ownership read.
+// Only contradicted declarations are held back; incomplete evidence leaves them unproven.
 const honoredScopeDDL = `
 CREATE VIEW IF NOT EXISTS abom_owned_scope_honored AS
 SELECT * FROM abom_owned_scope o
@@ -79,8 +67,7 @@ const (
 	DeclaredByConfig = "config"
 )
 
-// What `gh` has to say about a declaration. Three states, because the two that used to be one are
-// opposite claims: nobody asked, and somebody asked and was told no.
+// What `gh` has to say about a declaration.
 const (
 	DeclarationUnknown      = "unknown"
 	DeclarationConfirmed    = "confirmed"
@@ -89,9 +76,7 @@ const (
 
 // DeclarationState reports how a verification bears on a declaration.
 //
-// Contradicted is not a gap in evidence, it is evidence against: `gh` listed the accounts the
-// operator belongs to and this was not among them. Drawing it the same as *never asked* is what
-// let a corpus present `facebook` as owned for months.
+// Contradicted means a complete membership list omitted the declared account.
 func DeclarationState(a DeclaredAccount, v Verification) string {
 	if v.Login == "" {
 		return DeclarationUnknown
@@ -204,12 +189,28 @@ func declaredFullName(col string) string {
 }
 
 // SetOwnedScope records the declaration wholesale, discarding whatever preceded it.
-//
-// Replacement rather than merge, for the reason ReplaceAccounts gives: an account that accumulated
-// would keep counting as the operator's long after they stopped being responsible for it.
-//
 // `by` is the code path doing the writing, not anything the caller supplied.
 func (s *Store) SetOwnedScope(accounts []DeclaredAccount, by string) error {
+	if err := validateOwnedScope(accounts, by); err != nil {
+		return err
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("declaring owned scope: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := clearOwnedScope(tx); err != nil {
+		return err
+	}
+	if err := insertOwnedScope(tx, accounts, by, now()); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func validateOwnedScope(accounts []DeclaredAccount, by string) error {
 	if by != DeclaredByCLI && by != DeclaredByInterface && by != DeclaredByConfig {
 		return fmt.Errorf("store: %q is not a declaration source; expected %q, %q or %q",
 			by, DeclaredByCLI, DeclaredByInterface, DeclaredByConfig)
@@ -223,46 +224,53 @@ func (s *Store) SetOwnedScope(accounts []DeclaredAccount, by string) error {
 				a.Kind, AccountOrganization, AccountUser)
 		}
 	}
+	return nil
+}
 
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("declaring owned scope: %w", err)
-	}
-	defer tx.Rollback()
-
+func clearOwnedScope(tx *sql.Tx) error {
 	for _, stmt := range []string{`DELETE FROM abom_owned_include`, `DELETE FROM abom_owned_scope`} {
 		if _, err := tx.Exec(stmt); err != nil {
 			return fmt.Errorf("clearing the declared scope: %w", err)
 		}
 	}
+	return nil
+}
 
-	at := now()
+func insertOwnedScope(tx *sql.Tx, accounts []DeclaredAccount, by, at string) error {
 	seen := map[string]bool{}
 	for _, a := range accounts {
 		owner := strings.TrimSpace(a.Owner)
-		if seen[strings.ToLower(owner)] {
+		key := strings.ToLower(owner)
+		if seen[key] {
 			continue
 		}
-		seen[strings.ToLower(owner)] = true
-		if _, err := tx.Exec(`
-			INSERT INTO abom_owned_scope (owner, kind, enabled, includes_only, declared_by, declared_at)
-			VALUES (?, ?, ?, ?, ?, ?)`,
-			owner, a.Kind, a.Enabled, a.IncludesOnly, by, at); err != nil {
-			return fmt.Errorf("declaring %s: %w", owner, err)
-		}
-		for _, repo := range a.Includes {
-			repo = strings.TrimSpace(repo)
-			if repo == "" {
-				continue
-			}
-			if _, err := tx.Exec(
-				`INSERT OR IGNORE INTO abom_owned_include (owner, repo) VALUES (?, ?)`,
-				owner, repo); err != nil {
-				return fmt.Errorf("including %s/%s: %w", owner, repo, err)
-			}
+		seen[key] = true
+		if err := insertOwnedAccount(tx, owner, a, by, at); err != nil {
+			return err
 		}
 	}
-	return tx.Commit()
+	return nil
+}
+
+func insertOwnedAccount(tx *sql.Tx, owner string, a DeclaredAccount, by, at string) error {
+	if _, err := tx.Exec(`
+		INSERT INTO abom_owned_scope (owner, kind, enabled, includes_only, declared_by, declared_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		owner, a.Kind, a.Enabled, a.IncludesOnly, by, at); err != nil {
+		return fmt.Errorf("declaring %s: %w", owner, err)
+	}
+	for _, repo := range a.Includes {
+		repo = strings.TrimSpace(repo)
+		if repo == "" {
+			continue
+		}
+		if _, err := tx.Exec(
+			`INSERT OR IGNORE INTO abom_owned_include (owner, repo) VALUES (?, ?)`,
+			owner, repo); err != nil {
+			return fmt.Errorf("including %s/%s: %w", owner, repo, err)
+		}
+	}
+	return nil
 }
 
 // OwnedScope reads the declaration, each account carrying the repositories it is restricted to.
@@ -367,8 +375,7 @@ func (s *Store) RepositoryIsOwned(fullName string) (bool, error) {
 	return true, nil
 }
 
-// splitRepository refuses anything that does not name both halves. The junk `/` repository this
-// corpus once held is exactly the shape that would otherwise pass as an empty owner.
+// splitRepository refuses anything that does not name both halves.
 func splitRepository(fullName string) (owner, repo string, ok bool) {
 	owner, repo, found := strings.Cut(fullName, "/")
 	if !found || owner == "" || repo == "" || strings.Contains(repo, "/") {

@@ -92,9 +92,8 @@ func TestSourceIsReadFromThePackRatherThanTheRuleId(t *testing.T) {
 	}
 }
 
-// A lane that ran rules from several packs has no single source. Measured on the crawled
-// organization: the findings lane records two packs, and reading the first called an ABOM suite
-// upstream -- a provenance claim decided by which pack sorted first.
+// A lane that ran rules from several packs has no single source. Reading the first pack would make
+// provenance depend on sort order.
 func TestALaneSpanningPacksIsMixedRatherThanTheFirstPacksSource(t *testing.T) {
 	s := catalogStore(t)
 	if _, err := s.RecordQueryRun(QueryRun{
@@ -373,8 +372,7 @@ func TestAQueryOnDiskIsCatalogedBeforeItHasRun(t *testing.T) {
 	}
 }
 
-// Only the version on disk can be tested or edited, and every step describes it; an older version
-// the ledger remembers is history.
+// Only the version on disk can be tested or edited, and every step describes it.
 func TestOnlyTheVersionOnDiskIsTheWorkingOne(t *testing.T) {
 	s := newTestStore(t)
 	for _, version := range []string{"v1", "v2"} {

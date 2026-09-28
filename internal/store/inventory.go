@@ -210,15 +210,10 @@ type InventoryQuery struct {
 // InventoryPage is one page of the inventory and the size of the match it was cut from.
 type InventoryPage struct {
 	Items []ActionSummary `json:"items"`
-	// Total is how many rows the predicate matched, before the page. A page that does not carry
-	// it reads as the whole answer: the interface paged within a fetch cap of 500 against a match
-	// of 1,585, and sorting that page by findings named a row with 39 while the real answer had 50.
+	// Total is how many rows the predicate matched before paging.
 	Total int `json:"total"`
 	// Elsewhere names the kinds outside this view that the findings terms also matched.
-	//
-	// Without it, a findings question answers 0 and the zero reads as "nothing is wrong". On the
-	// crawled organization every one of the 277 `actions/unpinned-tag` findings sits on a `step`
-	// or `job` node, so the most important rule there is answers 0 among the dependency kinds.
+	// Without it, a findings question can answer 0 in the visible kinds while matching elsewhere.
 	Elsewhere []KindCount `json:"elsewhere,omitempty"`
 	// Unsourced counts the rows that carry a finding every other term matched with no recorded
 	// source. Counted only when a source is asked, which is the only time they are left out.
@@ -261,30 +256,78 @@ func InventorySortNames() []string { return sortNames(inventorySorts) }
 // and then sorted by findings in the browser answers "the most findings among the widest-reaching
 // rows", which is a different question from the one the column header asks.
 func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
+	plan, err := s.inventoryPageQuery(q)
+	if err != nil {
+		return InventoryPage{}, err
+	}
+
+	total, err := s.inventoryTotal(plan.where, plan.whereArgs)
+	if err != nil {
+		return InventoryPage{}, err
+	}
+
+	out, err := s.inventoryPageItems(q, plan)
+	if err != nil {
+		return InventoryPage{}, err
+	}
+
+	elsewhere, err := s.inventoryElsewhere(q)
+	if err != nil {
+		return InventoryPage{}, err
+	}
+	page := InventoryPage{Items: out, Total: total, Elsewhere: elsewhere}
+	if err := s.attachInventoryUnknownCounts(q, &page); err != nil {
+		return InventoryPage{}, err
+	}
+	return page, nil
+}
+
+type inventoryPageQuery struct {
+	reach, direct         string
+	where, ordering       string
+	reachArgs, directArgs []any
+	whereArgs, orderArgs  []any
+}
+
+type inventoryWhere struct {
+	clause string
+	args   []any
+}
+
+func (s *Store) inventoryPageQuery(q InventoryQuery) (inventoryPageQuery, error) {
 	order, ok := inventorySorts[q.Sort]
 	if q.Sort != "" && !ok {
-		return InventoryPage{}, fmt.Errorf(
+		return inventoryPageQuery{}, fmt.Errorf(
 			"store: cannot sort the inventory by %q; it sorts by one of %v",
 			q.Sort, InventorySortNames())
 	}
 
 	reach, reachArgs, err := s.reachWithin(q.Grouping)
 	if err != nil {
-		return InventoryPage{}, err
+		return inventoryPageQuery{}, err
 	}
 	direct, directArgs, err := s.directRefsWithin(q.Grouping, q.Mode)
 	if err != nil {
-		return InventoryPage{}, err
+		return inventoryPageQuery{}, err
 	}
 	keep, keepArgs, err := s.reachedByScope(q.Grouping)
 	if err != nil {
-		return InventoryPage{}, err
+		return inventoryPageQuery{}, err
 	}
 
-	// The three kinds whose columns this listing measures: reach, references and advisories are all
-	// about being depended upon. Workflows and jobs are consumers and have their own units, because
-	// listing them here drew three inapplicable measurements as zero for 71% of the rows. Not a
-	// cage: naming a kind still reaches past these three.
+	where := buildInventoryWhere(q, keep, keepArgs, reach, reachArgs)
+	ordering, orderArgs := inventoryOrdering(q, order, ok, reach, reachArgs)
+	return inventoryPageQuery{
+		reach: reach, direct: direct, where: where.clause, ordering: ordering,
+		reachArgs: reachArgs, directArgs: directArgs, whereArgs: where.args, orderArgs: orderArgs,
+	}, nil
+}
+
+func buildInventoryWhere(
+	q InventoryQuery, keep string, keepArgs []any, reach string, reachArgs []any,
+) inventoryWhere {
+	// The three default kinds match columns about being depended upon. Workflows and jobs are
+	// consumers with their own units. Naming a kind still reaches past these defaults.
 	where := `WHERE n.node_kind IN ('action', 'composite_action', 'docker_image')`
 	if len(q.Kinds) > 0 {
 		where = `WHERE n.node_kind IN (` + placeholders(len(q.Kinds)) + `)`
@@ -324,12 +367,12 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 		whereArgs = append(whereArgs, reachArgs...)
 		whereArgs = append(whereArgs, q.MinReach)
 	}
+	return inventoryWhere{clause: where, args: whereArgs}
+}
 
-	total, err := s.inventoryTotal(where, whereArgs)
-	if err != nil {
-		return InventoryPage{}, err
-	}
-
+func inventoryOrdering(
+	q InventoryQuery, order string, ok bool, reach string, reachArgs []any,
+) (string, []any) {
 	// node_key breaks every tie, or two pages of an unstable order repeat a row and skip another.
 	direction := " ASC"
 	if q.Desc {
@@ -343,11 +386,14 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 	if q.Sort == "severity" {
 		ordering, orderArgs = severityOrdering(q.Mode, direction, reach, reachArgs)
 	}
+	return ordering, orderArgs
+}
 
+func (s *Store) inventoryPageItems(q InventoryQuery, plan inventoryPageQuery) ([]ActionSummary, error) {
 	query := `
 		SELECT n.node_key, n.node_kind, COALESCE(n.owner,''), COALESCE(n.repo,''),
 		       COALESCE(r.origin, '') AS origin,
-		       ` + reach + ` AS dependent_repos, ` + direct + ` AS direct_dependents,
+		       ` + plan.reach + ` AS dependent_repos, ` + plan.direct + ` AS direct_dependents,
 		       (SELECT COUNT(DISTINCT e.ref_value) FROM ` + edgeSource(q.Mode) + ` e
 		         WHERE e.dst_node_row_id = n.row_id
 		           AND e.ref_value IS NOT NULL AND e.ref_value <> '') AS distinct_refs,
@@ -363,12 +409,12 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 		FROM abom_node_live n
 		LEFT JOIN repository r ON r.row_id = n.repository_row_id
 		LEFT JOIN abom_blast_radius b ON b.node_row_id = n.row_id
-		` + where + ordering
+		` + plan.where + plan.ordering
 
-	args := append([]any{}, reachArgs...)
-	args = append(args, directArgs...)
-	args = append(args, whereArgs...)
-	args = append(args, orderArgs...)
+	args := append([]any{}, plan.reachArgs...)
+	args = append(args, plan.directArgs...)
+	args = append(args, plan.whereArgs...)
+	args = append(args, plan.orderArgs...)
 	if q.Limit > 0 {
 		query += ` LIMIT ? OFFSET ?`
 		args = append(args, q.Limit, q.Offset)
@@ -381,13 +427,19 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 			&a.Advisories, &a.Analyzed)
 	}, query, args...)
 	if err != nil {
-		return InventoryPage{}, err
+		return nil, err
 	}
+	if err := s.attachInventoryPageDetails(out, q.Mode); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
 
+func (s *Store) attachInventoryPageDetails(out []ActionSummary, mode string) error {
 	for i := range out {
-		refs, err := s.referencesTo(out[i].NodeKey, q.Mode)
+		refs, err := s.referencesTo(out[i].NodeKey, mode)
 		if err != nil {
-			return InventoryPage{}, err
+			return err
 		}
 		out[i].Refs = refs
 	}
@@ -395,25 +447,23 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 	for _, a := range out {
 		keys = append(keys, a.NodeKey)
 	}
-	bands, err := s.severityByNode(q.Mode, keys)
+	bands, err := s.severityByNode(mode, keys)
 	if err != nil {
-		return InventoryPage{}, err
+		return err
 	}
 	for i := range out {
 		out[i].Severity = bands[out[i].NodeKey]
 	}
+	return nil
+}
 
-	elsewhere, err := s.inventoryElsewhere(q)
-	if err != nil {
-		return InventoryPage{}, err
-	}
-	page := InventoryPage{Items: out, Total: total, Elsewhere: elsewhere}
+func (s *Store) attachInventoryUnknownCounts(q InventoryQuery, page *InventoryPage) error {
 	if len(q.Sources) > 0 {
 		unknown := q
 		unknown.Sources, unknown.unsourced, unknown.Limit, unknown.Offset = nil, true, 1, 0
 		counted, err := s.ActionsInventoryPage(unknown)
 		if err != nil {
-			return InventoryPage{}, err
+			return err
 		}
 		page.Unsourced = counted.Total
 	}
@@ -422,11 +472,11 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 		unknown.Provider, unknown.unprovided, unknown.Limit, unknown.Offset = "", true, 1, 0
 		counted, err := s.ActionsInventoryPage(unknown)
 		if err != nil {
-			return InventoryPage{}, err
+			return err
 		}
 		page.Unprovided = counted.Total
 	}
-	return page, nil
+	return nil
 }
 
 // severityOrdering puts what carries a finding first, then what something reaches, then the worst

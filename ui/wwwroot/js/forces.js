@@ -26,12 +26,8 @@ export function radialForce(radiusOf, strength) {
 /**
  * Draws nodes back towards the origin, hardest on the ones with fewest links.
  *
- * Repulsion acts on every pair but only edges pull back, so barely-connected and orphaned nodes
- * accelerate outward with nothing to stop them. They end up owning most of the bounding box,
- * which leaves the dense part of the graph rendered as a speck and makes zoom feel dead.
- *
- * `spread` divides the pull across x only, which is what lets the cloud take the proportions of
- * the canvas instead of being a circle with empty sides.
+ * Repulsion acts on every pair but only edges pull back; `spread` weakens x-axis gravity so the
+ * settled cloud matches the canvas aspect.
  */
 export function gravityForce(strengthOf, spread = 1) {
     let nodes = [];
@@ -51,10 +47,8 @@ export function gravityForce(strengthOf, spread = 1) {
 /**
  * How much to weaken gravity across the wide axis to spread the cloud by `aspect`.
  *
- * Repulsion falls off with the square of distance, so an equilibrium extent goes as the cube root
- * of the restoring constant: dividing gravity by the aspect ratio alone bought only 1.23x and left
- * the canvas 52% used. Cubed, the extent moves by about the aspect itself. Capped, because a pull
- * weak enough to stop mattering is how orphans came to own the bounding box in the first place.
+ * Repulsion falls off with square distance, so use a cubic correction; cap it so gravity still
+ * constrains low-degree nodes.
  */
 export function spreadFor(aspect) {
     return Math.min(Math.max(aspect, 1) ** 3, 12);
@@ -82,9 +76,7 @@ export function applyForces(it) {
             n => isSelected(it.selected, n.key) ? 0 : spread * 0.15
                 + (1 - (n.priority || 0) / max) * spread, 0.09));
     } else if (it.view === 'ownership') {
-        // Distance, not left-versus-right: an axis stops meaning anything the moment the camera
-        // orbits, and this has to read the same in 2D and 3D. Reached directly sits close in,
-        // reached through an intermediary sits out.
+        // Distance, not left-versus-right: the camera can orbit in 3D.
         g.d3Force('semantic', radialForce(n => {
             const hops = it.hopsOf ? it.hopsOf.get(n.key) : undefined;
             if (hops === undefined) return null;
@@ -97,17 +89,14 @@ export function applyForces(it) {
             return hops === undefined ? null : spread * 0.2 + hops * spread * 0.42;
         }, 0.11));
     } else if (it.view === 'frontier') {
-        // Rings are hops from the corpus under review, so the picture reads outward: what is
-        // known at the center, what is queued beyond it. Anything that was never a dependency
-        // has no depth and is left where the structure puts it.
+        // Rings are hops from the corpus under review; nodes with no dependency depth stay structural.
         g.d3Force('semantic', radialForce(n => {
             if (!n.discovery) return null;
             return spread * 0.2 + (n.depth || 1) * spread * 0.34;
         }, 0.1));
     }
 
-    // Collapsed, each group is already a single node, so pulling groups together would only
-    // gather unrelated nodes into a knot.
+    // Collapsed groups are already single nodes.
     g.d3Force('grouping', it.groupBy && it.groupBy !== 'none' && !it.collapsed
         ? clusterForce(it, spread)
         : null);
@@ -116,16 +105,8 @@ export function applyForces(it) {
 /**
  * Pulls members of a group toward the node that already represents it.
  *
- * The center is the owner, repository or workflow node itself, not a position invented for the
- * group. Synthetic centers placed around a ring fought the link forces: a workflow was dragged
- * toward its owner's arbitrary spot while its dependencies pulled it somewhere else, and the
- * result crossed the whole diagram. Anchoring to a real node means grouping and structure agree.
- *
- * A repository grouping has no node of its own — it is a property, so `anchorKey` returns nothing
- * and this force used to do nothing at all for the one grouping the filter language is about.
- * Those fall back to the running centroid of their own members, which is not the arbitrary center
- * the comment above warns of: it is derived from where the members already are, so it tightens the
- * layout rather than fighting it.
+ * Uses the owner, repository, or workflow node when one exists; property-only groupings fall back
+ * to the running centroid of their members.
  */
 function clusterForce(it, spread) {
     let nodes = [];
@@ -134,9 +115,7 @@ function clusterForce(it, spread) {
     const centroids = new Map();
 
     const force = alpha => {
-        // Firmer than it was. The boundary drawn around these members states containment, and a
-        // hull over a scattered group swallows nodes belonging to other groups -- which asserts a
-        // relationship that does not exist rather than merely looking untidy.
+        // Boundaries state containment, so keep grouped members close enough for honest hulls.
         const k = alpha * 0.26;
 
         if (groupOf2.size) {

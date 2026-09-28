@@ -70,9 +70,7 @@ func runBranches(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		}
 	}
 
-	// The branch count, not just the repository count. Measured on the real corpus, `protected`
-	// is true for 48 of one repository's branches including `naman_test` and `export-D54074479`,
-	// so a repository "having protected branches" says far less than it sounds like.
+	// Branch count matters: one repository can have many protected branches.
 	fmt.Fprintf(stdout,
 		"Asked %d of %d; %d protect at least one branch, %d branches in total.\n",
 		asked, len(repos), protected, branchCount)

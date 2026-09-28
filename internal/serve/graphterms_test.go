@@ -8,11 +8,6 @@ import (
 )
 
 // The graph refuses a term neither it nor the browser applies.
-//
-// `repositories` was in exactly that state: the interface serializes it into a shareable link, the
-// graph never read it, and no browser module filters on it. Measured on a crawled organization, the
-// graph answered 2,640 nodes with it and 2,640 without — the whole corpus, under the name of one
-// repository.
 func TestTheGraphRefusesATermNeitherSideApplies(t *testing.T) {
 	srv, _ := unitServer(t)
 

@@ -5,18 +5,7 @@ import (
 	"testing"
 )
 
-// A column in `addedColumns` and not in CREATE TABLE means a fresh database and an upgraded one
-// are different shapes, and every read works against one of them by luck.
-//
-// The opposite direction — a column in CREATE TABLE that `addedColumns` forgot — is the defect
-// that actually happened: `result_path` was declared, shipped, and answered 404 on the working
-// corpus because `Migrate` could not add it to a table that already existed. It is deliberately
-// **not** guarded here, and a round trip that drops each column and re-migrates was written and
-// thrown away: it cannot tell a column added last week from one present since the first build,
-// so it demanded `addedColumns` cover all 200-odd of them. Knowing which columns postdate their
-// table needs a schema-version history this store does not keep. Until it does, the check is a
-// reviewer asking "has this table shipped?" — and the cost of missing it is one 404 on a database
-// nobody rebuilt.
+// Every migrated column must also be present in the CREATE TABLE shape for fresh databases.
 func TestEveryMigratedColumnIsAlsoDeclared(t *testing.T) {
 	fresh := newTestStore(t)
 	for _, added := range addedColumns {

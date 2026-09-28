@@ -107,9 +107,9 @@ Every database ABOM builds is one repository's own sparse checkout — the shape
 Setup builds too, so a rule firing in one of ours is reporting something a developer could also be
 shown by their own code scanning.
 
-A second shape stages an owned repository's whole transitive closure under
-`.github/actions/external/${owner}/${repo}/`, which is a convention `codeql/actions-all` already
-recognizes. Dataflow then crosses `uses:` boundaries at any depth: taint from an externally
+A second shape stages the composite actions and reusable workflows an owned repository's closure
+reaches under `.github/actions/external/` and `.github/workflows/external/`, a convention
+`codeql/actions-all` already recognizes; nothing else is a callable, so nothing else is staged. Dataflow then crosses `uses:` boundaries at any depth: taint from an externally
 controlled value in a workflow, through three staged dependencies, into the deepest `run:`. Nothing
 in ordinary Default Setup stages that dependency closure; the extended analysis addresses that
 different input shape rather than competing with native lock generation.
@@ -117,8 +117,8 @@ different input shape rather than competing with native lock generation.
 The two must never be confused. Each analysis already records its shape and exposes that
 distinction to readers. The same rule can describe a repository's own source or
 a staged dependency path that ordinary Default Setup did not analyze. The staging namespace holds
-one selected commit per dependency; rooting it at one owned repository bounds the collisions but
-does not eliminate them. Count distinct lock-selected commits, not only different ref names.
+one selected commit per staged callee; count distinct selected commits of those, not ref names and
+not every action.
 [Closure databases](../plans/ql/closure-database.md) therefore depend on
 [lock-aware resolution](architecture.md#locks), now built, and must preserve the implemented
 [analysis-mode isolation](architecture.md#analysis-modes).

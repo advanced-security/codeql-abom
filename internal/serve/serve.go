@@ -286,15 +286,7 @@ func (s *Server) diagnostics(mux *http.ServeMux) {
 	mux.HandleFunc("GET /debug/pprof/trace", pprof.Trace)
 }
 
-// observe records what every request cost, and logs the ones worth a line.
-//
-// Recording is unconditional. The duration was already being computed here and thrown away unless
-// the request failed or took over slowRequest, which is two seconds — so an endpoint answering in
-// 0.68 s left no trace at all, and that is the gap this exists to close.
-//
-// Handlers answer an error to the caller and nothing else, so a query that breaks for every
-// reader leaves no trace on the machine actually running. Successful requests are not logged:
-// the interface polls continuously, and a line each would bury the failures.
+// observe records every request and logs failures or visibly slow responses.
 func (s *Server) observe(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// No handler here composes markup, so a browser that re-reads a body as markup can only
@@ -370,8 +362,7 @@ func (r *recorder) Write(b []byte) (int, error) {
 // assetRoots hold real files. A miss under one of them is a broken build, not a client route.
 var assetRoots = []string{"_framework/", "_content/", "css/", "js/", "lib/"}
 
-// ui serves the interface, falling back to its entry point so client-side routes survive a
-// reload.
+// ui serves the interface, falling back to its entry point so client-side routes survive reloads.
 //
 // A missing asset must 404 rather than receive HTML, or the browser reports it as a syntax error
 // in whatever it thought it was loading, which says nothing about the actual problem. That
@@ -484,11 +475,7 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, g, err)
 }
 
-// fullGraph ships the entire corpus in one payload.
-//
-// The interface filters this in the browser, so the cost is paid once on arrival rather than on
-// every interaction. Steps are folded into their workflow unless asked for: 3.6k nodes against
-// 23k, for the same set of relationships.
+// fullGraph ships the browser-filtered corpus in one payload.
 func (s *Server) fullGraph(w http.ResponseWriter, r *http.Request) {
 	spec, err := s.graphPredicate(r)
 	if err != nil {
@@ -515,15 +502,10 @@ func undrawable(terms []string) string {
 		" is applied by nothing here; a term is enforced or refused, never dropped"
 }
 
-// graphPredicate reads the shared predicate from a request, ignoring the named parameters that are
-// cursors rather than filters.
+// graphPredicate parses the shared predicate after removing cursor parameters.
 //
-// Parsed through the shared predicate rather than field by field, so an unknown filter is refused
-// here instead of silently matching everything. The browser and the pull request gate read the
-// same text, and a typo that widened the match would be invisible in all three.
-//
-// `?view=<name>` is resolved first and supplies the whole predicate, because a name is a reference
-// to a question rather than another clause of one.
+// `?view=<name>` supplies the whole predicate, because a name refers to a question rather than
+// adding a clause to one.
 func (s *Server) graphPredicate(r *http.Request, cursors ...string) (viewspec.Spec, error) {
 	if spec, named, err := s.resolveView(r, cursors...); named {
 		return spec, err
@@ -535,20 +517,11 @@ func (s *Server) graphPredicate(r *http.Request, cursors ...string) (viewspec.Sp
 	return viewspec.Parse(q.Encode())
 }
 
-// graphOptions turns a predicate into the options both graph endpoints answer from.
+// graphOptions turns a predicate into the shared options for full graph and delta answers.
 //
-// Shared so the delta cannot drift into answering a different question from the payload it is
-// updating: it carried arrivals from outside the declared scope until 2026-09-10, because it built
-// its options from `steps` alone.
-//
-// `kinds`, `search`, the finding predicates and the neighborhood walk are deliberately absent.
-// Measured 2026-09-10, they sever 74% to 99% of their own match's edges, because the graph is
-// bipartite by kind — applying them here would ship a scatter instead of a graph. They belong to
-// the set-answering endpoint the gate needs, where structure is irrelevant.
-//
-// `properties` is the exception, and the reason it is not one of them: it names repositories
-// rather than findings, so it narrows to a set of sources and then keeps everything they reach.
-// That is a subgraph rather than a scatter, and it is the same mechanism `scope=owned` uses.
+// Set-only terms stay out of the graph options because applying them here would ship a scatter
+// instead of the relationships around the match. Properties are repository terms, so they narrow
+// sources before keeping what those sources reach.
 func (s *Server) graphOptions(spec viewspec.Spec) (store.FullGraphOptions, error) {
 	opts := store.FullGraphOptions{
 		IncludeSteps:   spec.Steps,
@@ -827,24 +800,10 @@ func (s *Server) previewOwnedScope(w http.ResponseWriter, r *http.Request) {
 func (s *Server) scopePreview(candidate []store.DeclaredAccount) (ScopePreview, error) {
 	var out ScopePreview
 
-	repositories, err := s.Store.AllRepositories()
+	nextRoots, err := s.previewRoots(candidate)
 	if err != nil {
 		return out, err
 	}
-	// A repository a full listing no longer names left the scope with the listing, and declaring
-	// its account again does not bring it back; the store's roots skip it the same way.
-	missing, err := s.Store.MissingRepositories()
-	if err != nil {
-		return out, err
-	}
-	nextRoots := make([]string, 0, len(repositories))
-	for _, full := range repositories {
-		owner, repo, ok := strings.Cut(full, "/")
-		if ok && !missing[strings.ToLower(full)] && store.CoveredBy(candidate, owner, repo) {
-			nextRoots = append(nextRoots, full)
-		}
-	}
-
 	builder := &graph.Builder{Store: s.Store}
 	now, err := builder.OwnedClosure()
 	if err != nil {
@@ -857,7 +816,38 @@ func (s *Server) scopePreview(candidate []store.DeclaredAccount) (ScopePreview, 
 
 	out.RootsNow, out.RootsNext = now.Roots(), next.Roots()
 	out.ClosureNow, out.ClosureNext = now.Size(), next.Size()
+	out.collectScopeChanges(now, next)
 
+	queued, err := s.Store.FrontierRepositoryCounts()
+	if err != nil {
+		return out, err
+	}
+	out.countQueuedScope(now, next, queued)
+	return out, nil
+}
+
+func (s *Server) previewRoots(candidate []store.DeclaredAccount) ([]string, error) {
+	repositories, err := s.Store.AllRepositories()
+	if err != nil {
+		return nil, err
+	}
+	// A repository a full listing no longer names left the scope with the listing, and declaring
+	// its account again does not bring it back; the store's roots skip it the same way.
+	missing, err := s.Store.MissingRepositories()
+	if err != nil {
+		return nil, err
+	}
+	nextRoots := make([]string, 0, len(repositories))
+	for _, full := range repositories {
+		owner, repo, ok := strings.Cut(full, "/")
+		if ok && !missing[strings.ToLower(full)] && store.CoveredBy(candidate, owner, repo) {
+			nextRoots = append(nextRoots, full)
+		}
+	}
+	return nextRoots, nil
+}
+
+func (out *ScopePreview) collectScopeChanges(now, next *graph.Closure) {
 	for _, name := range next.Repositories() {
 		if !now.Contains(name) {
 			out.EnteringCount++
@@ -881,11 +871,9 @@ func (s *Server) scopePreview(candidate []store.DeclaredAccount) (ScopePreview, 
 	if out.Leaving == nil {
 		out.Leaving = []string{}
 	}
+}
 
-	queued, err := s.Store.FrontierRepositoryCounts()
-	if err != nil {
-		return out, err
-	}
+func (out *ScopePreview) countQueuedScope(now, next *graph.Closure, queued map[string]int) {
 	for full, n := range queued {
 		if now.Contains(full) {
 			out.QueuedNow += n
@@ -894,7 +882,6 @@ func (s *Server) scopePreview(candidate []store.DeclaredAccount) (ScopePreview, 
 			out.QueuedNext += n
 		}
 	}
-	return out, nil
 }
 
 // refreshAccounts re-establishes the identity from gh.
@@ -971,12 +958,6 @@ func pinningFilter(r *http.Request) (store.PinningFilter, error) {
 var wholeNumber = map[string]bool{"top": true, "hops": true, "max": true}
 
 // reading declares the query parameters an endpoint applies, and refuses every other one by name.
-//
-// The graph endpoints refuse an unknown term already, because they parse the shared predicate.
-// These read their own parameters and so had nothing to refuse with: measured on a crawled
-// organization, `/api/repositories?severity=error` returned all 7 matches and
-// `/api/actions?properties=business_id:3` all 200 — the whole answer, wearing the name of a
-// narrowed one.
 func reading(h http.HandlerFunc, params ...string) http.HandlerFunc {
 	applies := make(map[string]bool, len(params))
 	for _, p := range params {

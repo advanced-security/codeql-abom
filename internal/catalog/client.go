@@ -54,8 +54,7 @@ type Client struct {
 	// MaxBackoff caps how long a single retry will wait, so a far-future reset time cannot
 	// stall a worker indefinitely.
 	MaxBackoff time.Duration
-	// Cache lets an unchanged answer be recognized for a round trip and no primary quota. Nil
-	// asks for everything again, which is correct and is what every read cost before this.
+	// Cache lets an unchanged answer be recognized for a round trip and no primary quota.
 	Cache ResponseCache
 	// Pace spaces requests, and follows the budget GitHub reports rather than a number anybody
 	// guessed. Nil asks as fast as the caller can.
@@ -162,11 +161,6 @@ func (c *Client) observeBudget(resp *http.Response) {
 }
 
 // paceBelow is the share of the budget that must remain before requests are spaced out.
-//
-// A fifth: late enough that an ordinary crawl never waits, early enough that what is left cannot
-// be burned through before the window resets. Measured first at no threshold at all, which spread
-// 14,967 remaining requests evenly across the hour and turned a 26-request read into 13 seconds of
-// waiting for a budget that was never at risk.
 const paceBelow = 0.2
 
 // followBudget spaces requests out once the budget is running low.
@@ -213,6 +207,15 @@ const maxCachedBody = 2 << 20
 type readCloser struct {
 	io.Reader
 	io.Closer
+}
+
+type answerState struct {
+	url       string
+	resp      *http.Response
+	held      []byte
+	cacheable bool
+	attempt   int
+	retries   int
 }
 
 // DefaultMaxRetries and DefaultMaxBackoff bound rate-limit handling.
@@ -337,33 +340,16 @@ func (c *Client) DownloadDatabase(ctx context.Context, repository, language, des
 
 // do issues a request, retrying while GitHub reports rate limiting.
 func (c *Client) do(ctx context.Context, url, accept string) (*http.Response, error) {
-	retries := c.MaxRetries
-	if retries < 0 {
-		retries = 0
-	}
+	retries := c.retries()
 
 	for attempt := 0; ; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		req, held, cacheable, err := c.request(ctx, url, accept)
 		if err != nil {
-			return nil, fmt.Errorf("building request: %w", err)
-		}
-		req.Header.Set("Accept", accept)
-		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-		if c.token != "" {
-			req.Header.Set("Authorization", "Bearer "+c.token)
-		}
-
-		var held []byte
-		cacheable := c.Cache != nil && accept == jsonAccept
-		if cacheable {
-			if etag, body, ok := c.Cache.Lookup(url); ok && etag != "" {
-				req.Header.Set("If-None-Match", etag)
-				held = body
-			}
+			return nil, err
 		}
 
 		if err := c.Pace.Wait(ctx); err != nil {
@@ -375,48 +361,94 @@ func (c *Client) do(ctx context.Context, url, accept string) (*http.Response, er
 		}
 		c.requests.Add(1)
 		c.observeBudget(resp)
-		switch {
-		case resp.StatusCode == http.StatusOK:
-			if !cacheable {
-				return resp, nil
-			}
-			return c.remember(resp, url)
-
-		case resp.StatusCode == http.StatusNotModified:
-			c.notModified.Add(1)
-			resp.Body.Close()
-			if held == nil {
-				// Answering empty here would report an account as holding nothing.
-				return nil, fmt.Errorf("%s answered 304 and nothing was held to answer with",
-					redact(url))
-			}
-			// Presented as 200 because it is the same answer, established rather than assumed.
-			resp.StatusCode = http.StatusOK
-			resp.Body = io.NopCloser(bytes.NewReader(held))
-			return resp, nil
-
-		case isRateLimited(resp):
-			wait := c.backoff(resp)
-			resp.Body.Close()
-			if attempt >= retries {
-				return nil, fmt.Errorf("rate limited by %s after %d retries", redact(url), retries)
-			}
-			c.sleep(wait)
-
-		default:
-			body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-			resp.Body.Close()
-			return nil, &StatusError{
-				URL: redact(url), Code: resp.StatusCode,
-				Body: strings.TrimSpace(string(body)), Message: githubMessage(body),
-			}
+		answer, retry, err := c.answer(answerState{
+			url: url, resp: resp, held: held, cacheable: cacheable, attempt: attempt, retries: retries,
+		})
+		if !retry {
+			return answer, err
 		}
 	}
 }
 
+func (c *Client) retries() int {
+	if c.MaxRetries < 0 {
+		return 0
+	}
+	return c.MaxRetries
+}
+
+func (c *Client) request(
+	ctx context.Context, url, accept string,
+) (*http.Request, []byte, bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("building request: %w", err)
+	}
+	req.Header.Set("Accept", accept)
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	var held []byte
+	cacheable := c.Cache != nil && accept == jsonAccept
+	if cacheable {
+		if etag, body, ok := c.Cache.Lookup(url); ok && etag != "" {
+			req.Header.Set("If-None-Match", etag)
+			held = body
+		}
+	}
+	return req, held, cacheable, nil
+}
+
+func (c *Client) answer(state answerState) (*http.Response, bool, error) {
+	switch {
+	case state.resp.StatusCode == http.StatusOK:
+		if !state.cacheable {
+			return state.resp, false, nil
+		}
+		remembered, err := c.remember(state.resp, state.url)
+		return remembered, false, err
+
+	case state.resp.StatusCode == http.StatusNotModified:
+		c.notModified.Add(1)
+		return cachedResponse(state.url, state.resp, state.held)
+
+	case isRateLimited(state.resp):
+		wait := c.backoff(state.resp)
+		state.resp.Body.Close()
+		if state.attempt >= state.retries {
+			return nil, false, fmt.Errorf("rate limited by %s after %d retries", redact(state.url), state.retries)
+		}
+		c.sleep(wait)
+		return nil, true, nil
+
+	default:
+		body, _ := io.ReadAll(io.LimitReader(state.resp.Body, 512))
+		state.resp.Body.Close()
+		return nil, false, &StatusError{
+			URL: redact(state.url), Code: state.resp.StatusCode,
+			Body: strings.TrimSpace(string(body)), Message: githubMessage(body),
+		}
+	}
+}
+
+func cachedResponse(url string, resp *http.Response, held []byte) (*http.Response, bool, error) {
+	resp.Body.Close()
+	if held == nil {
+		// Answering empty here would report an account as holding nothing.
+		return nil, false, fmt.Errorf("%s answered 304 and nothing was held to answer with",
+			redact(url))
+	}
+	// Presented as 200 because it is the same answer, established rather than assumed.
+	resp.StatusCode = http.StatusOK
+	resp.Body = io.NopCloser(bytes.NewReader(held))
+	return resp, false, nil
+}
+
 // StatusError is an answer GitHub gave that was not the one asked for, with its own reason.
 //
-// A 404 still unwraps to ErrNoDatabase, which every caller from before this reads it as.
+// A 404 still unwraps to ErrNoDatabase.
 type StatusError struct {
 	URL  string
 	Code int

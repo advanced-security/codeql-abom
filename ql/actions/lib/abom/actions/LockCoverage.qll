@@ -1,11 +1,8 @@
 /**
  * Lockfile coverage for `uses:` references.
  *
- * Distinct from `ActionsLock.pins` in `codeql/actions-all`, which asks whether a reference is
- * *pinned*. Coverage asks whether the lockfile accounts for it at all, which is what
- * `gh actions-lock --verify-local` reports and what a pinning rule cannot: that rule exempts the
- * `actions` and `github` owners outright and accepts any bare SHA, so a reference those cover is
- * never examined.
+ * Distinct from `ActionsLock.pins`: coverage asks whether the lockfile accounts for a reference
+ * at all, matching `gh actions-lock --verify-local`.
  */
 
 private import actions
@@ -28,9 +25,7 @@ private predicate calleeMatches(string callee, string pinnedNwo) {
 /**
  * A `uses:` a lockfile is expected to account for.
  *
- * Local (`./`), same-repository (`$/`) and container (`docker://`) references are excluded: the
- * first two resolve from the checkout itself at the commit already being run, and `gh
- * actions-lock` records neither them nor images.
+ * Local, same-repository and container references are not recorded by `gh actions-lock`.
  */
 class LockableUses extends Uses {
   LockableUses() {
@@ -46,8 +41,7 @@ class LockableUses extends Uses {
 /**
  * Gets the file a same-repository `uses:` names.
  *
- * `./path` and `$/path` both identify either a directory holding an `action.yml` or a reusable
- * workflow file, and neither carries a ref, so the target is a file in this same checkout.
+ * `./path` and `$/path` both target a file in this same checkout.
  */
 private File sameRepositoryTarget(Uses uses) {
   exists(string path | path = uses.getCallee().regexpCapture("^[.$]/(.+)$", 1) |
@@ -69,18 +63,12 @@ private predicate callsIntoRepository(File caller, File callee) {
 /**
  * Gets a workflow file that reaches `f`, directly or through other same-repository definitions.
  *
- * What runs an action is the workflow that reaches it, however many composite actions sit in
- * between, and that workflow is the key `gh actions-lock` files the action's references under.
+ * `gh actions-lock` keys shared-action references under each workflow that reaches them.
  */
 private WorkflowFile reachingWorkflow(File f) { callsIntoRepository+(result, f) }
 
 /**
- * A workflow file, identified by where it sits rather than by what the extractor built from it.
- *
- * Not `Workflow`: a file under `.github/workflows/` that declares no `jobs:` produces no
- * `Workflow` entity at all, and a repository whose only workflow is malformed still has one.
- * Directly in the directory and not below it, because GitHub does not run workflows from
- * subdirectories even though the extractor still indexes them.
+ * A workflow file, including malformed ones that produce no `Workflow` entity.
  */
 class WorkflowFile extends File {
   WorkflowFile() {
@@ -95,8 +83,7 @@ predicate hasLockfile() { exists(AbomActionsLock lock) }
 /**
  * The workflow file a repository-level finding is reported against.
  *
- * A repository is not a thing a query can select, so the alert lands on one file and the lowest
- * path is chosen to make that file the same on every run.
+ * Repository-level findings need a stable file location.
  */
 WorkflowFile firstWorkflowFile() {
   result = min(WorkflowFile f | | f order by f.getRelativePath())
@@ -119,10 +106,7 @@ class AbomActionsLock extends ActionsLock {
   /**
    * Holds if `pin` has a dependency entry carrying a full commit digest.
    *
-   * The entry's own `ref` field is deliberately not compared against the ref in `pin`. They
-   * disagree whenever an entry is keyed by commit and narrowed to a tag -- this repository's
-   * `actions/cache@55cc8345...` records `ref: 'v6.1.0'` -- and that entry resolves a commit, so
-   * it covers. Requiring them to agree is what makes `ActionsLock.pins` reject it.
+   * The entry's own `ref` may differ from `pin`; coverage only needs a resolved commit.
    */
   pragma[nomagic]
   private predicate resolvesToCommit(string pin) {
@@ -140,8 +124,7 @@ class AbomActionsLock extends ActionsLock {
    * Holds if the section for `workflowPath` accounts for `uses`: listed at the very ref written
    * there, and resolved to a commit.
    *
-   * The ref must match what the workflow says. An entry left at `@v9.2.0` after the workflow
-   * moved to `@v9.3.0` describes a commit nothing will run, which is not coverage.
+   * The ref must match what the workflow says.
    */
   pragma[nomagic]
   private predicate accountsFor(string workflowPath, LockableUses uses) {
@@ -156,14 +139,8 @@ class AbomActionsLock extends ActionsLock {
   /**
    * Holds if this lockfile accounts for `uses` under every workflow that runs it.
    *
-   * A reference written in a workflow is looked up under that workflow. A reference written in a
-   * composite action is looked up under each workflow that reaches the action, because the
-   * `workflows` section is keyed by workflow and the same shared action contributes its
-   * references to every caller separately -- an entry present for one caller says nothing about
-   * another whose section omits it.
-   *
-   * A definition no workflow reaches is nothing this lockfile can be expected to list: `gh
-   * actions-lock` walks out from the workflows, so unreached code has no section to appear in.
+   * Composite-action references must be covered under every workflow that reaches them; unreached
+   * definitions have no workflow section to appear in.
    */
   predicate covers(LockableUses uses) {
     this.accountsFor(uses.getLocation().getFile().getRelativePath(), uses)

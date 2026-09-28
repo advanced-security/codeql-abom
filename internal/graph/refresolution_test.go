@@ -6,9 +6,7 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
-// The crawl resolves a tag to a commit and, until this pass ran, threw the pair away. A relation
-// nothing populates is a relation nothing can read, and "it is wired in" has been wrong here four
-// times, so this asserts the wiring rather than the function.
+// The crawl's resolved tag-to-commit pair must be recorded for later graph walks.
 func TestRebuildAggregatesRecordsWhatTheCrawlResolved(t *testing.T) {
 	s := newStore(t)
 	if _, err := s.DB().Exec(`

@@ -59,13 +59,7 @@ func (c *Closure) Repositories() []string {
 	return out
 }
 
-// OwnedClosure walks outward from the declared accounts.
-//
-// Repository-granular rather than node-granular, because the frontier queues repositories and a
-// boundary expressed in a different unit from the thing it bounds would need a translation nobody
-// could check. `ClassifyDependencies` answers a neighboring question — whether anything under
-// review *executes* a dependency — over containers; this one answers whether it is reachable at
-// all.
+// OwnedClosure walks outward from the declared accounts at repository granularity.
 func (b *Builder) OwnedClosure() (*Closure, error) {
 	roots, err := b.Store.OwnedRepositories()
 	if err != nil {
@@ -74,11 +68,7 @@ func (b *Builder) OwnedClosure() (*Closure, error) {
 	return b.ClosureFrom(roots)
 }
 
-// KeepList names the repositories the corpus holds that the declared scope reaches, and the
-// closure it derived them from.
-//
-// Written once because the command and the server both prune, and two answers to "what survives"
-// would be two different corpora depending on which door was used.
+// KeepList names corpus repositories the declared scope reaches, and the closure behind them.
 func (b *Builder) KeepList() ([]string, *Closure, error) {
 	closure, err := b.OwnedClosure()
 	if err != nil {

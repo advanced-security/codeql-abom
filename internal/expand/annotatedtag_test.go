@@ -11,9 +11,6 @@ import (
 // produced, so the reference reads as moved every single pass: re-analyzed, stored as the same
 // commit, and due again immediately. That is the treadmill Resolve's own documentation warns
 // about, reached through the tag rather than through the default branch.
-//
-// Measured on the corpus before this was fixed: 5 of 12 sampled symbolic references resolved to a
-// tag object, including `actions-rs/toolchain@v1` and `1password/load-secrets-action@v2`.
 func TestResolveReportsTheCommitOfAnAnnotatedTagRatherThanItsTagObject(t *testing.T) {
 	origin := originRepo(t, map[string]string{"action.yml": "name: probe\n"})
 	commit := gitIn(t, origin, "rev-parse", "HEAD")

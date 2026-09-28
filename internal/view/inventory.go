@@ -1,14 +1,7 @@
 package view
 
-// inventoryTerms are the terms a node listing applies.
-//
-// A listing is a set question asked of one table, so it narrows by what a node is, how far it
-// reaches, and what was found on it. It cannot answer the graph's questions — a boundary and an
-// edge class are properties of a relationship, and there are no relationships in a list.
-//
-// `repositories` takes the set path's meaning: the repository a *finding* sits in. "Which
-// dependencies does this repository use" is a different question, answered by `scope` and by the
-// graph, and one word meaning both would be the divergence this split exists to prevent.
+// inventoryTerms are node-listing terms; relationship-only terms stay out of this unit.
+// `repositories` keeps the set path's meaning: the repository a finding sits in.
 var inventoryTerms = map[string]bool{
 	paramSearch:           true,
 	paramKinds:            true,
@@ -30,19 +23,12 @@ var inventoryTerms = map[string]bool{
 	paramMode: true,
 }
 
-// UnenforceableAsInventory names the terms a predicate carries that a node listing cannot apply.
-//
-// Declared here beside the other two sides rather than in the endpoint, so adding a term to the
-// language forces a decision about the listing instead of defaulting it to silently ignored.
+// UnenforceableAsInventory names terms a node listing cannot apply.
 func (s Spec) UnenforceableAsInventory() []string {
 	return s.carried(func(t string) bool { return inventoryTerms[t] })
 }
 
-// workflowTerms and jobTerms are what the workflow and job units apply.
-//
-// Neither narrows by anything about being depended upon — reach, reference style and origin are
-// questions about a dependency, and a workflow is a consumer. `flags=findings` is the one flag that
-// means anything here, and `partialMembers` refuses the other two by name.
+// workflowTerms and jobTerms are consumer terms; dependency terms do not apply.
 var workflowTerms = map[string]bool{
 	paramSearch:        true,
 	paramScope:         true,
@@ -59,9 +45,7 @@ var jobTerms = map[string]bool{
 	paramNotProperties: true,
 }
 
-// partialMembers names the members of a list term a surface answers, where it answers fewer than
-// the term allows. Declaring the term alone let both units drop `advisory` and `unanalyzed` without
-// a word, answering every workflow under a predicate that asked for fewer.
+// partialMembers names list-term members a surface answers when it answers fewer than the term allows.
 var partialMembers = map[string]map[string][]string{
 	SurfaceWorkflows: {paramFlags: {FlagFindings}},
 	SurfaceJobs:      {paramFlags: {FlagFindings}},
@@ -80,13 +64,7 @@ func (s Spec) UnenforceableAsJobs() []string {
 }
 
 // repositoryTerms are the terms the repositories unit applies.
-//
-// Far fewer than the node listing, because most of the language is about nodes: a repository has
-// no kind, no reference style and no reach of its own. Refusing them by name is what tells a reader
-// their scope is not narrowing this unit, rather than leaving them to assume it did.
-//
-// `scope` is here because a repository is exactly what it selects. Refusing it made the built-in
-// "What you own" tab answer with an empty grid under a heading promising the repositories you own.
+// `scope` selects repositories directly, unlike node-only terms such as kind or reach.
 var repositoryTerms = map[string]bool{
 	paramSearch:        true,
 	paramScope:         true,
@@ -99,11 +77,7 @@ func (s Spec) UnenforceableAsRepositories() []string {
 	return s.carried(func(t string) bool { return repositoryTerms[t] })
 }
 
-// UnenforceableAsRun names the terms a run cannot apply.
-//
-// A run covers repositories: the ones the repositories unit lists, the ones named outright, and
-// where the set path's findings sit, in the shape `mode` names. Everything else describes a node
-// or a relationship, and a run has neither to narrow.
+// UnenforceableAsRun names terms a repository run cannot apply.
 func (s Spec) UnenforceableAsRun() []string {
 	return s.carried(appliedByRun)
 }
@@ -121,9 +95,6 @@ func (s Spec) AsksRepositoriesUnit() bool {
 }
 
 // advisoryTerms are the terms the advisories unit applies.
-//
-// A row is an advisory rather than a node, so the node half of the language says nothing about it.
-// Even the search term is absent: it matches a node key, and an advisory has none.
 var advisoryTerms = map[string]bool{
 	paramProperties:       true,
 	paramNotProperties:    true,
@@ -137,14 +108,7 @@ func (s Spec) UnenforceableAsAdvisories() []string {
 }
 
 // relationshipTerms are the terms the relationships unit applies.
-//
-// A row here is a `uses:` line rather than a node, so the node half of the language says nothing
-// about it: a kind, a reach floor and a reference style are facts about an end, and an edge has
-// two. What it does apply is what a relationship is — its kind, what it crosses, and how its
-// reference is written — which is the half no other unit can answer.
-//
-// `rules` is here because a rule fires on a line, not on a node. Every `actions/unpinned-tag`
-// finding sits on a `uses:`, and no unit lists the steps they sit on.
+// `rules` applies because these rows are the `uses:` lines findings sit on.
 var relationshipTerms = map[string]bool{
 	paramSearch:        true,
 	paramScope:         true,

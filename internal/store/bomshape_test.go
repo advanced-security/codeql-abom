@@ -4,9 +4,7 @@ import (
 	"testing"
 )
 
-// A step is a position in a file, not a thing you depend on. Left in, they were 10,530 of 11,290
-// components on the reference corpus — 93% of a document that is supposed to answer "what is this
-// composed of".
+// A step is a position in a file, not a thing you depend on.
 func TestStepsAndJobsAreNotComponents(t *testing.T) {
 	doc := build(t, stepFindingFixture(t), BOMOptions{})
 
@@ -22,8 +20,7 @@ func TestStepsAndJobsAreNotComponents(t *testing.T) {
 	}
 }
 
-// Folding a step away must not drop the evidence recorded against it: on the reference corpus
-// 1,223 components carrying findings were steps.
+// Folding a step away must not drop the evidence recorded against it.
 func TestAFindingOnAStepBecomesTheContainersFinding(t *testing.T) {
 	s := stepFindingFixture(t)
 	doc := build(t, s, BOMOptions{})

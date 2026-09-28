@@ -1,9 +1,7 @@
 /**
  * Extraction of GitHub Actions dependency edges for the Actions Bill of Materials (ABOM).
  *
- * Raw `uses:` strings are emitted verbatim. All reference parsing — owner/repo/subpath split,
- * sha vs tag vs branch classification, pinning posture — happens in the Go ingester, where it
- * is unit-testable and can evolve without recompiling and re-running an org-wide MRVA scan.
+ * Raw `uses:` strings are emitted verbatim; the Go ingester parses refs.
  */
 
 import actions
@@ -24,8 +22,7 @@ private string trailingComment(ScalarValue usesNode) {
 /**
  * Gets the version pin comment on `usesNode` (`uses: actions/checkout@<sha> # v4.2.2`), or `""`.
  *
- * The comment is not part of the scalar value, and MRVA artifacts carry no source archive, so
- * it has to be recovered here or it is unrecoverable downstream.
+ * MRVA artifacts carry no source archive, so this has to be recovered here.
  */
 string pinCommentOf(ScalarValue usesNode) {
   if exists(trailingComment(usesNode))
@@ -75,9 +72,7 @@ private string stepEdgeKind(string srcKind) {
 /**
  * Gets the `needs:` entry in `job` that names `needed`.
  *
- * The individual entry carries the location rather than the job, because `needs: [a, b]` is two
- * edges out of one job and edge identity is file plus line plus column — one location for both
- * would silently collapse them to a single row.
+ * The entry carries the location so `needs: [a, b]` produces two distinct edges.
  */
 private InternalYaml::YamlScalar neededJobRef(Job job, Job needed) {
   needed = job.getANeededJob() and
@@ -91,8 +86,7 @@ private InternalYaml::YamlScalar neededJobRef(Job job, Job needed) {
 /**
  * Holds if `job` must run after `needed`, per its `needs:` declaration.
  *
- * This is the only ordering GitHub Actions guarantees between jobs: everything else in a
- * workflow file runs concurrently, so document order says nothing.
+ * This is the only job ordering GitHub Actions guarantees.
  */
 predicate abomNeedsEdge(
   string edgeKind, string srcKind, string srcPath, string srcJobId, int srcStepIndex,

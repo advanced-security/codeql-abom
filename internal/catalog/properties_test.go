@@ -9,9 +9,7 @@ import (
 	"testing"
 )
 
-// The values ride on the walk that was already being made. Measured on a real organization: adding
-// `repositoryCustomPropertyValues` to a hundred-repository page leaves the price at 1 point, which
-// is the whole reason this route is preferred over a second correlated walk.
+// The values ride on the same walk as the listing, not a second correlated walk.
 func TestPropertiesArriveOnTheSameGraphQLWalk(t *testing.T) {
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -42,8 +40,7 @@ func TestPropertiesArriveOnTheSameGraphQLWalk(t *testing.T) {
 	}
 }
 
-// A multi-select property answers with a list where a single-select answers with a string. Reading
-// only one shape drops the values of every multi-select property, silently.
+// A multi-select property answers with a list where a single-select answers with a string.
 func TestAMultiSelectValueIsReadAsEveryValueItHolds(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, `{"data":{"rateLimit":{"cost":1,"remaining":9999,"limit":10000},

@@ -59,8 +59,6 @@ type tierPlan struct {
 	metadata []store.QueryMetadata
 }
 
-func (p tierPlan) empty() bool { return len(p.bqrs) == 0 && len(p.findings) == 0 }
-
 // absorb folds one suite's plan into a tier's.
 //
 // Every field has to be named here. Appending only the two query slices lost the CodeQL version
@@ -265,7 +263,7 @@ func (e *Expander) plansByTier(ctx context.Context, opts Options) (map[string]ti
 	e.digests.Reset()
 	// Every tier `tierOf` can return. Omitting one hands its batches a zero-value plan, which
 	// `pendingWork` reads as nothing outstanding — so the repository is settled as *already
-	// recorded* without being analyzed. Owned was missing here until 2026-09-07.
+	// recorded* without being analyzed.
 	tiers := []string{store.TierOwned, store.TierDirect, store.TierTransitive}
 	out := map[string]tierPlan{}
 

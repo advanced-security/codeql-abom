@@ -123,8 +123,7 @@ func TestASavedViewRecordsHowItArrivedAndNeverGuesses(t *testing.T) {
 	}
 }
 
-// Saving the same name twice replaces the question rather than accumulating copies of it — the
-// defect the observation table carried for months.
+// Saving the same name twice replaces the question rather than accumulating copies of it.
 func TestSavingAViewTwiceReplacesIt(t *testing.T) {
 	s := newTestStore(t)
 

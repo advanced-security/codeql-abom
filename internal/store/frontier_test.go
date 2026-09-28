@@ -25,8 +25,7 @@ func externalNode(t *testing.T, s *Store, key, kind string) {
 
 // A dependency named only by an upstream project's own CI is not in this organization's supply
 // chain, and expansion is right to skip it. But it is still drawn in the Explorer, so a drained
-// queue that says nothing about it reads as "everything has been analyzed" when it has not. On
-// the real corpus this is 415 of 988 external dependencies, which is not a rounding error.
+// queue that says nothing about it reads as "everything has been analyzed" when it has not.
 func TestTheQueueCountsDependenciesItWillNeverAnalyze(t *testing.T) {
 	s := newTestStore(t)
 	queueRow(t, s, "actions/checkout", "done", 0)

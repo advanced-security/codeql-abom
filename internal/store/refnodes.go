@@ -140,7 +140,7 @@ func refsInUse(
 	}
 	// A version we analyzed is a version that exists, whether or not anything in the corpus is
 	// seen using it. Its steps are already edges out of it, so omitting the node it ran as would
-	// strand them: 700 dangling sources, all of them composite actions we had in fact read.
+	// strand them.
 	for _, e := range edges {
 		if !splittable[e.Source] {
 			continue
@@ -288,11 +288,8 @@ const usersPerRef = `SELECT n.node_key AS nk, COALESCE(e.ref_value, '') AS rf,
 	  JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 	 GROUP BY n.node_key, COALESCE(e.ref_value, '')`
 
-// refStatesQuery is separate from the read so its plan can be asserted: whether this walks the
-// edge table once per queue row is a structural property, not something a stopwatch decides.
-//
-// Measured 2026-09-11: as a correlated subquery this was **30.07% of `/api/graph/full`**, more
-// than reading every edge in the corpus.
+// refStatesQuery is separate from the read so its plan can be asserted: walking the edge table
+// once per queue row is a structural property, not something a stopwatch decides.
 const refStatesQuery = `
 	WITH users AS (` + usersPerRef + `)
 	SELECT f.node_key, f.ref, f.status, f.status = 'done',

@@ -144,7 +144,7 @@ type BOMCoverage struct {
 	ReferencesInUse    int `json:"referencesInUse"`
 	ReferencesAnalyzed int `json:"referencesAnalyzed"`
 	// FindingsUntraced is analyzed-but-unattributable: the finding exists and which run produced
-	// it was not recorded. A real third state, and 2,759 findings on the reference corpus.
+	// it was not recorded.
 	Findings         int `json:"findings"`
 	FindingsUntraced int `json:"findingsUntraced"`
 	// FindingsWithoutHash and RunsWithoutPackDigest state how much of the provenance chain is
@@ -327,13 +327,10 @@ type bomEdge struct {
 // bomEdges reads every dependency relationship once, with steps and jobs folded into whatever
 // holds them.
 //
-// Folded because a step is a position in a file rather than a thing anything depends on: left in,
-// they were 10,530 of 11,290 components on the reference corpus. This is the same collapse the
-// Explorer draws by default, so the document and the picture agree about what a component is.
+// Folded because a step is a position in a file rather than a thing anything depends on. This is
+// the same collapse the Explorer draws by default, so the document and picture agree.
 //
-// Read wholesale rather than walked in SQL: a recursive CTE per root would re-read the same edges
-// for every root, and the corpus is small enough that one pass and a map is both faster and
-// checkable.
+// Read wholesale rather than walked in SQL: a recursive CTE per root would re-read the same edges.
 func (s *Store) bomEdges() ([]bomEdge, error) {
 	rows, err := s.db.Query(`WITH ` + collapsedDisplay + `
 		SELECT sn.node_key, dn.node_key,

@@ -2,9 +2,7 @@ package store
 
 import "testing"
 
-// Enumerating a declared account is what puts the operator's own repositories in the corpus. On
-// the reference corpus they owned 397 and it held 1 — and that one was marked `upstream`, because
-// it arrived only as somebody else's dependency.
+// Enumerating a declared account puts the operator's repositories in the corpus as owned.
 func TestAnEnumeratedRepositoryIsRecordedAsTheOperatorsOwn(t *testing.T) {
 	s := newTestStore(t)
 

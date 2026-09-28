@@ -154,10 +154,7 @@ func TestRequeueingARepositoryNothingKnowsAboutIsNotAnError(t *testing.T) {
 	}
 }
 
-// A repository already in the queue has nothing to put back, but the request is still "run this
-// next" and can still be answered. Found on the real corpus: a stale selection had already
-// requeued every row of the repository asked for, so the only reply left was "nothing analyzed
-// for it", which is wrong twice over.
+// A repository already in the queue has nothing to put back, but it can still be prioritized.
 func TestARepositoryAlreadyQueuedIsStillMovedAheadOfTheRanking(t *testing.T) {
 	h := newHarness(t)
 	h.enqueue(item("octo", "mine", "", 1))

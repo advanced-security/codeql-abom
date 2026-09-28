@@ -59,8 +59,8 @@ type QueryTest struct {
 	// TestDigest identifies the tests that were run, so a result for tests that have since
 	// changed can be told from a current one. Empty when nothing identified them.
 	TestDigest string `json:"testDigest"`
-	// FixturesDigest identifies the fixtures alone, which a failure of an earlier version is
-	// matched on: accepting a report rewrites the .expected and leaves them as they were.
+	// FixturesDigest identifies the fixtures alone: accepting a report rewrites the .expected and
+	// leaves the fixtures as they were.
 	FixturesDigest string `json:"fixturesDigest"`
 	// Missing and Unexpected count the inline expectations the output did not meet. Nil when no
 	// test got as far as comparing results.

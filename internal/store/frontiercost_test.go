@@ -7,20 +7,9 @@ import (
 
 // The discovery queue must not walk the edge table once per queue row.
 //
-// Measured 2026-09-11 on the seeded corpus: the sixteen plain columns of this query take 0.01 s
-// over all 3,662 rows, and the query as shipped took 1.65 s. The difference is `selectUsedBy`,
-// whose three correlated subqueries each re-walk `abom_edge_live` joined to `abom_node_live` for
-// the same (node_key, ref) pair — three times per row, 3,662 times over. A GROUP BY rollup does
-// the same work once, in 0.06 s, and agrees on every row.
-//
-// `LIMIT 500` does not rescue it: the ORDER BY is a temp b-tree, so the select list is evaluated
-// for every row before the limit can apply. The Discovery page looks bounded and is not.
-//
-// This asserts the plan rather than the clock. A stopwatch would flake, and would also pass on a
-// corpus whose edge table happens to be small — but the cost is structural, so the plan is where
-// it can be seen. `selectSuites` stays correlated on purpose: it is served by
-// `idx_query_run_repo` and measured +0.04 s, so this looks for the edge walk specifically rather
-// than banning correlation outright.
+// LIMIT does not bound the work because ORDER BY evaluates the select list before discarding rows.
+// Assert the plan rather than the clock. `selectSuites` stays correlated on purpose, so this
+// checks specifically for correlated edge-table reads.
 func TestTheFrontierQueryDoesNotWalkTheEdgeTablePerQueueRow(t *testing.T) {
 	s := newTestStore(t)
 

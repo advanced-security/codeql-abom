@@ -3,8 +3,7 @@ package store
 import "testing"
 
 // A submission cannot be withdrawn and there is no delete endpoint, so the only way to find an
-// artifact left on somebody's repository is to have written down that it was made. The
-// 2026-09-08 probe was recoverable only because a person remembered it.
+// artifact left on somebody's repository is to have written down that it was made.
 func TestASubmissionIsRecordedSoItCanBeFoundAndSuperseded(t *testing.T) {
 	s := newTestStore(t)
 

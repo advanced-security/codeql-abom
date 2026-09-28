@@ -6,10 +6,7 @@ import (
 	"testing"
 )
 
-// The Explorer draws one line for every relationship between a pair, and a reader selecting it,
-// or a delta removing one, has to be able to say which relationship they mean. The delta has
-// always named edges by `edge_key`; for a long time the payload carried no key at all, so every
-// removal matched nothing and silently did nothing.
+// Drawn edges must name their backing relationships so selections and removals are precise.
 func TestTheGraphNamesTheRelationshipsBehindADrawnEdge(t *testing.T) {
 	s := mergedEdgeFixture(t)
 

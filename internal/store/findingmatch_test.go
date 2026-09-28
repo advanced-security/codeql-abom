@@ -64,11 +64,6 @@ func matchedKeys(t *testing.T, s *Store, sel FindingSelector) []string {
 }
 
 // A finding attached to two nodes is one finding.
-//
-// Found on the real corpus, not here: **113 of 10,858 linked findings sit on more than one node**
-// — a step and the workflow holding it — so summing the per-node counts reported **10,971**, more
-// findings than the database contains. A gate quoting that number overstates the problem it is
-// failing a pull request over, which is the one direction an unearned number must never go.
 func TestAFindingOnTwoNodesIsCountedOnceInTheTotal(t *testing.T) {
 	s := matchFixture(t)
 	var toolID int64
@@ -78,11 +73,9 @@ func TestAFindingOnTwoNodesIsCountedOnceInTheTotal(t *testing.T) {
 		t.Fatalf("finding octo-org/tool: %v", err)
 	}
 
-	// Two steps naming a dependency on the same line is what produces the corpus's 113: the first
-	// linking pass attaches a finding to the source of every edge at its (repository, file, line),
-	// and there are two.
+	// Two steps naming a dependency on the same line attach one finding to both sources.
 	w := NewWriter(s, 0)
-	// Re-stated because a writer resolves only the keys it has been given, and the edge below
+	// Repeated because a writer resolves only the keys it has been given, and the edge below
 	// names a node the fixture added through a different one.
 	if err := w.AddNode(Node{
 		Key: "actions/checkout", Kind: "action", Owner: "actions", Repo: "checkout",

@@ -125,63 +125,106 @@ type WorkingQuery struct {
 // naming a suite belongs to every query the suite resolved to. Joined in Go rather than in SQL
 // because the alternative is a correlated subquery over every run for every query.
 func (s *Store) QueryCatalog(working ...WorkingQuery) ([]CatalogQuery, error) {
-	spine, err := s.catalogSpine()
+	data, err := s.queryCatalogData()
 	if err != nil {
 		return nil, err
 	}
-	ledger, suites, versioned, err := s.ledgerStats()
-	if err != nil {
-		return nil, err
-	}
-	stages, err := s.stageRows()
-	if err != nil {
-		return nil, err
-	}
-	analyses, err := s.analysisCounts()
-	if err != nil {
-		return nil, err
-	}
-	tests, err := s.queryTests()
-	if err != nil {
-		return nil, err
-	}
-	declared, err := s.queryMetadata()
-	if err != nil {
-		return nil, err
-	}
-	// What was decided about a version and what its tests said, whichever way it was listed.
-	attach := func(q *CatalogQuery, key string) {
-		if st, ok := stages[key]; ok {
-			q.Stage, q.StagedBy, q.StagedAt = st.stage, st.by, st.at
+	attach := data.attachments()
+	out, covered := data.catalogFromSpine(attach)
+	kinds := data.queryKinds(working)
+	out = append(out, data.ledgerOnly(covered, kinds, attach)...)
+	out = withWorkingCopy(out, working, attach.attach)
+	applyDeclaredMetadata(out, data.declared)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].QueryID != out[j].QueryID {
+			return out[i].QueryID < out[j].QueryID
 		}
-		q.Analyses = analyses[key]
-		if t, ok := tests[key]; ok {
-			q.Tested, q.Passing, q.TestDetail = true, t.Passed, t.Detail
-		}
-	}
+		return out[i].QueryVersion < out[j].QueryVersion
+	})
+	return out, nil
+}
 
-	out := make([]CatalogQuery, 0, len(spine))
+type queryCatalogData struct {
+	spine          []spineQuery
+	ledger, suites map[string]runStats
+	versioned      map[string]runStats
+	stages         map[string]stageRow
+	analyses       map[string]int
+	tests          map[string]QueryTest
+	declared       map[string]map[string]string
+}
+
+func (s *Store) queryCatalogData() (queryCatalogData, error) {
+	var data queryCatalogData
+	var err error
+	if data.spine, err = s.catalogSpine(); err != nil {
+		return data, err
+	}
+	if data.ledger, data.suites, data.versioned, err = s.ledgerStats(); err != nil {
+		return data, err
+	}
+	if data.stages, err = s.stageRows(); err != nil {
+		return data, err
+	}
+	if data.analyses, err = s.analysisCounts(); err != nil {
+		return data, err
+	}
+	if data.tests, err = s.queryTests(); err != nil {
+		return data, err
+	}
+	data.declared, err = s.queryMetadata()
+	return data, err
+}
+
+type catalogAttachments struct {
+	stages   map[string]stageRow
+	analyses map[string]int
+	tests    map[string]QueryTest
+}
+
+func (d queryCatalogData) attachments() catalogAttachments {
+	return catalogAttachments{stages: d.stages, analyses: d.analyses, tests: d.tests}
+}
+
+// What was decided about a version and what its tests said, whichever way it was listed.
+func (a catalogAttachments) attach(q *CatalogQuery, key string) {
+	if st, ok := a.stages[key]; ok {
+		q.Stage, q.StagedBy, q.StagedAt = st.stage, st.by, st.at
+	}
+	q.Analyses = a.analyses[key]
+	if t, ok := a.tests[key]; ok {
+		q.Tested, q.Passing, q.TestDetail = true, t.Passed, t.Detail
+	}
+}
+
+func (d queryCatalogData) catalogFromSpine(
+	attach catalogAttachments,
+) ([]CatalogQuery, map[string]bool) {
+	out := make([]CatalogQuery, 0, len(d.spine))
 	covered := map[string]bool{}
-	for _, q := range spine {
-		stats := ledger[q.QueryID]
+	for _, q := range d.spine {
+		stats := d.ledger[q.QueryID]
 		for _, suite := range q.suites {
-			stats.merge(suites[suite])
+			stats.merge(d.suites[suite])
 		}
 		q.Runs, q.Repositories = stats.runs, len(stats.repositories)
 		q.FirstRunAt, q.LastRunAt = stats.first, stats.last
 		key := q.QueryID + "\x00" + q.QueryVersion
-		attach(&q.CatalogQuery, key)
+		attach.attach(&q.CatalogQuery, key)
 		q.Source = sourceOfPack(q.Pack)
 		q.KindRecorded = true
 		q.Discovery = q.Kind == ""
 		covered[key] = true
 		out = append(out, q.CatalogQuery)
 	}
+	return out, covered
+}
 
+func (d queryCatalogData) queryKinds(working []WorkingQuery) map[string]string {
 	// What each query id was recorded as, so a version too old to have been resolved still knows
 	// what kind of query it is.
 	kinds := map[string]string{}
-	for _, q := range spine {
+	for _, q := range d.spine {
 		kinds[q.QueryID] = q.Kind
 	}
 	for _, w := range working {
@@ -189,38 +232,54 @@ func (s *Store) QueryCatalog(working ...WorkingQuery) ([]CatalogQuery, error) {
 			kinds[w.QueryID] = w.Kind
 		}
 	}
+	return kinds
+}
 
+func (d queryCatalogData) ledgerOnly(
+	covered map[string]bool, kinds map[string]string, attach catalogAttachments,
+) []CatalogQuery {
 	// A ledger row no suite resolution accounts for is still something that ran. Dropping it
 	// would understate what the corpus has been analyzed with, and the rows most likely to be
 	// here are the oldest ones -- written before suite contents were recorded at all.
-	for key, stats := range versioned {
+	out := []CatalogQuery{}
+	for key, stats := range d.versioned {
 		id, version, _ := strings.Cut(key, "\x00")
 		if covered[key] {
 			continue
 		}
-		q := CatalogQuery{
-			QueryID: id, QueryVersion: version,
-			Pack: stats.pack, PackVersion: stats.packVersion, CLIVersion: stats.cliVersion,
-			Runs: stats.runs, Repositories: len(stats.repositories),
-			FirstRunAt: stats.first, LastRunAt: stats.last,
-		}
-		q.Source = sourceOfPack(q.Pack)
-		// A lane row names what it invoked, which is a suite. Kept apart from the query column so
-		// a reader is not shown a pack-and-suite string where a rule belongs.
-		q.Suite, q.QueryID = splitSuite(q.QueryID)
-		// A query id holds no whitespace; one that does names several queries run as one evaluation.
-		q.Lane = q.Suite != "" || strings.ContainsAny(q.QueryID, " \t")
-		// A query's kind does not vary with its version: if it did, it would be a different query.
-		// So a version too old to have been resolved still inherits what the id was recorded as,
-		// which is what keeps one query from being half hidden and half listed.
-		if kind, ok := kinds[q.QueryID]; ok && !q.Lane {
-			q.Kind, q.KindRecorded = kind, true
-			q.Discovery = kind == ""
-		}
-		attach(&q, key)
+		q := ledgerOnlyCatalogQuery(id, version, stats, kinds)
+		attach.attach(&q, key)
 		out = append(out, q)
 	}
-	out = withWorkingCopy(out, working, attach)
+	return out
+}
+
+func ledgerOnlyCatalogQuery(
+	id, version string, stats runStats, kinds map[string]string,
+) CatalogQuery {
+	q := CatalogQuery{
+		QueryID: id, QueryVersion: version,
+		Pack: stats.pack, PackVersion: stats.packVersion, CLIVersion: stats.cliVersion,
+		Runs: stats.runs, Repositories: len(stats.repositories),
+		FirstRunAt: stats.first, LastRunAt: stats.last,
+	}
+	q.Source = sourceOfPack(q.Pack)
+	// A lane row names what it invoked, which is a suite. Kept apart from the query column so
+	// a reader is not shown a pack-and-suite string where a rule belongs.
+	q.Suite, q.QueryID = splitSuite(q.QueryID)
+	// A query id holds no whitespace; one that does names several queries run as one evaluation.
+	q.Lane = q.Suite != "" || strings.ContainsAny(q.QueryID, " \t")
+	// A query's kind does not vary with its version: if it did, it would be a different query.
+	// So a version too old to have been resolved still inherits what the id was recorded as,
+	// which is what keeps one query from being half hidden and half listed.
+	if kind, ok := kinds[q.QueryID]; ok && !q.Lane {
+		q.Kind, q.KindRecorded = kind, true
+		q.Discovery = kind == ""
+	}
+	return q
+}
+
+func applyDeclaredMetadata(out []CatalogQuery, declared map[string]map[string]string) {
 	for i := range out {
 		pairs, ok := declared[out[i].QueryID+"\x00"+out[i].QueryVersion]
 		if !ok {
@@ -234,13 +293,6 @@ func (s *Store) QueryCatalog(working ...WorkingQuery) ([]CatalogQuery, error) {
 			out[i].Discovery = out[i].Kind == ""
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].QueryID != out[j].QueryID {
-			return out[i].QueryID < out[j].QueryID
-		}
-		return out[i].QueryVersion < out[j].QueryVersion
-	})
-	return out, nil
 }
 
 // withWorkingCopy marks the versions on disk now, and lists the ones nothing has run yet.
@@ -566,10 +618,8 @@ func sourceOfPack(pack string) string {
 	case pack == "":
 		return ""
 	case strings.Contains(pack, " "):
-		// Several packs joined by identifyFindings. Measured on the crawled organization: the
-		// findings lane records `codeql/actions-queries advanced-security/abom-actions-findings-src`,
-		// and reading the first one called it upstream -- a suite ABOM wrote, attributed to
-		// somebody else, because whichever pack sorted first decided.
+		// Several packs joined by identifyFindings. Reading the first one would attribute a suite
+		// by sort order rather than provenance.
 		return QuerySourceMixed
 	case strings.HasPrefix(pack, "codeql/"):
 		return QuerySourceUpstream

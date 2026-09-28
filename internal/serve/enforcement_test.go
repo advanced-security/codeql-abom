@@ -8,11 +8,6 @@ import (
 )
 
 // The set endpoint and a policy are one evaluation, so they refuse the same predicate.
-//
-// Measured on a crawled organization before this existed: `/api/match` answered 400 for
-// `kinds=action&steps=true&minReach=5&rules=actions/*` and naming the terms, while the identical
-// text saved as a policy was stored verbatim and simulated to 632 nodes and 1,209 findings — what
-// `rules=actions/*` alone selects. The policy enforced something wider than its own text said.
 func TestAPolicyIsRefusedTheTermsTheSetEndpointRefuses(t *testing.T) {
 	srv, _ := unitServer(t)
 

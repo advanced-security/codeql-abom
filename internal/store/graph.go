@@ -321,8 +321,7 @@ func (s *Store) InsertUpstreamRepository(fullName string) (int64, error) {
 	return id, nil
 }
 
-// InsertOwnedRepository records a repository the operator owns, found by enumerating a declared
-// account.
+// InsertOwnedRepository records a repository the operator owns.
 //
 // It promotes an existing row rather than skipping it: a repository first seen as somebody else's
 // dependency is recorded `upstream`, and a declaration is new information about it — the operator

@@ -18,17 +18,14 @@ linters:
     - unconvert
     - copyloopvar
     - misspell
-    # The three below report nothing today and are here as a ratchet, not as an achievement.
-    # Measured 2026-09-10: gocyclo at its default 30 is clean because the worst function in the
-    # repository is `splitNodesByRef` at 28 — but **50 functions exceed 10**, 35 of them
-    # production, which is the number plans/tools/code-quality.md phase 6 exists to bring down.
-    # Tighten min-complexity toward 10 as that work lands; do not raise it to make something pass.
+    # A ratchet at their defaults (the worst production function is 29). Tighten gocyclo's
+    # min-complexity toward 10 as plans/tools/code-quality.md lands; never raise it to pass.
     - gocyclo
     - nestif
     - dupl
 
-  # `unparam` is deliberately absent: it reports 21 issues today. Enabling it now would either
-  # break `make verify` or need exclusions that hide the work. It goes on when those 21 are gone.
+  # `unparam` is deliberately absent: production is clean, and 37 test-helper findings remain.
+  # It goes on when those are gone, rather than with exclusions that hide them.
 
   # sqlclosecheck is deliberately absent. It asks for `defer rows.Close()`, but this store runs
   # on a single connection (SetMaxOpenConns(1)), so holding a cursor open until the function

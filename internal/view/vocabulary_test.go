@@ -5,18 +5,7 @@ import (
 	"testing"
 )
 
-// A term whose values are fixed in code is enforced or refused, never dropped.
-//
-// `boundary` was the case that bit: `store.boundaryFilter` returns an empty SQL fragment for any
-// value it does not recognize — correctly, because a query string must not reach the statement —
-// so an unrecognized value silently filtered nothing. That was survivable while a refusal said
-// little; it stopped being survivable once a refused term started naming the Explorer as the
-// surface that answers it, because the unfiltered graph now arrives under a promise that the
-// filter was applied.
-//
-// `scope` is the same defect with a wider blast radius: `store.scopeFilter` switches on it and
-// falls through to no filter at all, so one transposed letter answers a question about the
-// operator's own supply chain with somebody else's.
+// Fixed-vocabulary terms must be enforced or refused, never dropped into an unfiltered answer.
 func TestAValueOutsideATermsVocabularyIsRefused(t *testing.T) {
 	for _, text := range []string{
 		"boundary=nonsense",
@@ -32,7 +21,7 @@ func TestAValueOutsideATermsVocabularyIsRefused(t *testing.T) {
 	}
 }
 
-// And the vocabulary itself still parses, or the refusal has eaten the language.
+// Accepted vocabulary must still parse.
 func TestEveryValueATermAcceptsIsStillAccepted(t *testing.T) {
 	for _, text := range []string{
 		"boundary=same-repository",

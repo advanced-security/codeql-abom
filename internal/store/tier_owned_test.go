@@ -2,10 +2,8 @@ package store
 
 import "testing"
 
-// The owned tier held only dependencies until repositories were enumerated into the queue at depth
-// 0. It then reported one number for two things: on the reference corpus, 198 repositories of
-// which 91 were analyzed, and 44 dependencies of which **none** were — read as "91 of 242" under a
-// tooltip calling all 242 dependencies.
+// The owned tier holds repositories and dependencies, but their analyzed counts answer different
+// questions and must not be collapsed.
 func TestTheOwnedTierSeparatesRepositoriesFromDependencies(t *testing.T) {
 	s := newTestStore(t)
 	declareOwner(t, s, "acme")

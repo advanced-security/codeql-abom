@@ -64,25 +64,15 @@ func omitted(list string) map[string]bool {
 }
 
 func build(dbPath, fixtures, queries string, without map[string]bool) error {
-	// A rebuild replaces rather than merges: a corpus that accumulated across runs would differ
-	// between a fresh checkout and a second invocation, which is the property this exists to have.
-	for _, suffix := range []string{"", "-wal", "-shm"} {
-		if err := os.Remove(dbPath + suffix); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-	}
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+	if err := resetCorpusDatabase(dbPath); err != nil {
 		return err
 	}
 
-	s, err := store.Open(dbPath, store.Options{})
+	s, err := openCorpusStore(dbPath)
 	if err != nil {
-		return fmt.Errorf("opening %q: %w", dbPath, err)
+		return err
 	}
 	defer s.Close()
-	if err := s.Migrate(); err != nil {
-		return fmt.Errorf("migrating: %w", err)
-	}
 
 	repos, err := recorded(fixtures)
 	if err != nil {
@@ -95,24 +85,64 @@ func build(dbPath, fixtures, queries string, without map[string]bool) error {
 	if err := s.SetOwnedScope(declaredAccounts(repos), store.DeclaredByCLI); err != nil {
 		return fmt.Errorf("declaring the fixture accounts: %w", err)
 	}
+	if err := ingestFixtureRepositories(s, fixtures, repos, without); err != nil {
+		return err
+	}
+	if err := recordCorpusAdvisories(s, fixtures, without); err != nil {
+		return err
+	}
+	if err := rebuildCorpusGraph(s); err != nil {
+		return err
+	}
+	if queries != "" {
+		if err := seedQueries(s, fixtures, queries); err != nil {
+			return fmt.Errorf("laying out the query pack: %w", err)
+		}
+	}
 
+	return report(os.Stdout, s, dbPath)
+}
+
+func resetCorpusDatabase(dbPath string) error {
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if err := os.Remove(dbPath + suffix); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return os.MkdirAll(filepath.Dir(dbPath), 0o755)
+}
+
+func openCorpusStore(dbPath string) (*store.Store, error) {
+	s, err := store.Open(dbPath, store.Options{})
+	if err != nil {
+		return nil, fmt.Errorf("opening %q: %w", dbPath, err)
+	}
+	if err := s.Migrate(); err != nil {
+		_ = s.Close()
+		return nil, fmt.Errorf("migrating: %w", err)
+	}
+	return s, nil
+}
+
+func ingestFixtureRepositories(
+	s *store.Store, fixtures string, repos []string, without map[string]bool,
+) error {
 	for _, r := range repos {
 		if err := ingestRepository(s, fixtures, r, without); err != nil {
 			return fmt.Errorf("%q: %w", r, err)
 		}
 	}
+	return nil
+}
 
-	// Beside the recorded queries rather than among them: an advisory is not CodeQL output, so no
-	// number of repositories produces one. Without it the advisories unit is empty, its columns
-	// are all zero, and four browser assertions can never go green.
-	if !without["advisories"] {
-		if err := recordAdvisories(s, filepath.Join(filepath.Dir(fixtures), "advisories.json")); err != nil {
-			return err
-		}
+func recordCorpusAdvisories(s *store.Store, fixtures string, without map[string]bool) error {
+	if without["advisories"] {
+		return nil
 	}
+	return recordAdvisories(s, filepath.Join(filepath.Dir(fixtures), "advisories.json"))
+}
 
-	// Order matters: boundaries need the edges, findings need the nodes, and the aggregates need
-	// both. This is the same sequence a crawl ends with.
+func rebuildCorpusGraph(s *store.Store) error {
 	if _, err := s.ClassifyEdgeBoundaries(); err != nil {
 		return fmt.Errorf("classifying boundaries: %w", err)
 	}
@@ -122,14 +152,7 @@ func build(dbPath, fixtures, queries string, without map[string]bool) error {
 	if err := (&graph.Builder{Store: s}).RebuildAggregates(); err != nil {
 		return fmt.Errorf("rebuilding aggregates: %w", err)
 	}
-
-	if queries != "" {
-		if err := seedQueries(s, fixtures, queries); err != nil {
-			return fmt.Errorf("laying out the query pack: %w", err)
-		}
-	}
-
-	return report(os.Stdout, s, dbPath)
+	return nil
 }
 
 // declaredAccounts names every account the fixtures describe.

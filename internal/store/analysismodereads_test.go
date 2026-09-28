@@ -237,16 +237,10 @@ func TestAnExtendedEdgeStaysOutOfTheRegularGraph(t *testing.T) {
 	}
 }
 
-// Reading the mode off a run means a lookup, and a lookup that scans is one nobody will keep. The
-// column looked up is the run's INTEGER PRIMARY KEY, so SQLite resolves it as a rowid seek —
-// which is why denormalizing the mode onto every edge and finding buys nothing, and would cost
-// the correctness the tests above protect.
+// Reading the mode off a run must remain a rowid lookup; denormalizing it onto every edge and
+// finding would lose the multi-mode correctness the tests above protect.
 //
-// Measured 2026-09-20 on a fresh database: `abom_edge_regular` plans as
-// `SCAN abom_edge | CORRELATED SCALAR SUBQUERY | SEARCH q USING INTEGER PRIMARY KEY (rowid=?)`,
-// and `abom_finding_regular` reaches the run through the sighting relation's own covering index.
-// This asserts the plan rather than the clock: on a corpus this size both forms answer quickly,
-// so a stopwatch would pass on the shape that does not survive an enterprise estate.
+// Assert the plan rather than the clock, so small fixtures cannot hide a scan-shaped query.
 func TestModeCostsARowidLookupRatherThanAScan(t *testing.T) {
 	s := newTestStore(t)
 

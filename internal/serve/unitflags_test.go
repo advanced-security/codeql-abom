@@ -7,9 +7,7 @@ import (
 	"testing"
 )
 
-// The workflow and job units answer one flag and refuse the other two by name. Measured on the
-// crawled organization before this: `/api/workflows?flags=advisory` answered all 2,069 workflows,
-// and `/api/jobs?flags=unanalyzed` all 4,309 jobs.
+// The workflow and job units answer one flag and refuse the other two by name.
 func TestAUnitRefusesAFlagItCannotAnswerAndSaysWhereItIsAnswered(t *testing.T) {
 	srv, _ := unitServer(t)
 

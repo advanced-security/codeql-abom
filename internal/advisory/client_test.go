@@ -108,7 +108,7 @@ func TestFetchBatchesPackages(t *testing.T) {
 	}
 }
 
-// Stopping at the first page would silently under-report a heavily affected batch.
+// A heavily affected batch can span pages.
 func TestFetchFollowsPagination(t *testing.T) {
 	body := fixtureBody(t)
 	rec := &recorder{

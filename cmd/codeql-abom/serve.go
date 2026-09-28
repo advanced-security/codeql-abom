@@ -28,14 +28,11 @@ import (
 // shutdownGrace bounds how long serve waits for in-flight requests once asked to stop.
 const shutdownGrace = 5 * time.Second
 
-// The tester is found by a type assertion, which a drifted signature would fail silently.
 var _ serve.QueryTester = (*runner.Runner)(nil)
 
 var _ serve.ASTPrinter = (*runner.Runner)(nil)
 
-// wireEnumeration lets the loop re-read the declared accounts on a period.
-//
-// A period of zero leaves the loop unable to enumerate, which is what every build before this did.
+// wireEnumeration lets the loop re-read declared accounts on a period.
 func wireEnumeration(
 	loop *supervisor.Supervisor, srv *serve.Server, s *store.Store, every time.Duration,
 ) {
@@ -55,8 +52,6 @@ func wireEnumeration(
 			return 0, err
 		}
 		if len(report.Failed) > 0 {
-			// Named rather than counted: an account nobody can reach is a coverage gap, and
-			// "1 failed" sends a reader looking for which.
 			return report.Queued, fmt.Errorf("%s could not be read: %s",
 				report.Failed[0].Owner, report.Failed[0].Error)
 		}
@@ -64,35 +59,23 @@ func wireEnumeration(
 	}
 }
 
-// prepareQueue puts in the queue what a database needs before anything is served: the owned
-// repositories, what they name, the locks another reader read, and the composite pins a
-// submission is limited by.
+// prepareQueue puts initial owned, discovered and priority work in the queue.
 func prepareQueue(s *store.Store, queue *frontier.Queue, stdout, stderr io.Writer) {
-	// Before SeedFrontier, which can only queue the dependencies of a repository that has
-	// already been analyzed. These are what get analyzed first.
 	if seeded, err := expand.SeedOwnedRepositories(s, queue); err != nil {
 		fmt.Fprintf(stderr, "serve: queueing owned repositories: %v\n", err)
 	} else if seeded > 0 {
 		fmt.Fprintf(stdout, "serve: %d repositories you own queued for analysis\n", seeded)
 	}
-	// Seeding is idempotent, and without it a database that has only been built has nothing
-	// for the loop to claim however long it runs.
 	if seeded, err := expand.SeedFrontier(s, queue); err != nil {
 		fmt.Fprintf(stderr, "serve: seeding the frontier: %v\n", err)
 	} else if seeded > 0 {
 		fmt.Fprintf(stdout, "serve: %d dependencies seeded from repositories under review\n", seeded)
 	}
-	// A lock another reader read may read differently now. Once per start, because the reader
-	// is fixed for the life of the binary; each requeued row costs a checkout and no evaluation.
 	if requeued, err := s.RequeueLocksReadByAnotherReader(lockfile.Reader); err != nil {
 		fmt.Fprintf(stderr, "serve: requeueing locks another reader read: %v\n", err)
 	} else if requeued > 0 {
 		fmt.Fprintf(stdout, "serve: %d dependencies requeued to read their lock again\n", requeued)
 	}
-	// A composite action analyzed only on its default branch contributes nothing to a submission:
-	// a child is attributable to a consumer only when the parent was analyzed at the ref that
-	// consumer pinned. These are already queued by SeedFrontier; what they lack is priority, and
-	// they are the ceiling on how deep any submission can go.
 	if pinned, err := expand.ExpediteCompositePins(s, queue); err != nil {
 		fmt.Fprintf(stderr, "serve: prioritizing composite pins: %v\n", err)
 	} else if pinned > 0 {
@@ -101,8 +84,7 @@ func prepareQueue(s *store.Store, queue *frontier.Queue, stdout, stderr io.Write
 	}
 }
 
-// reclaimAbandonedWork settles queue rows, runs and comparisons a stopped server left claimed,
-// before serving.
+// reclaimAbandonedWork settles claims left by a stopped server before serving.
 func reclaimAbandonedWork(s *store.Store, queue *frontier.Queue, stdout, stderr io.Writer) {
 	if n, err := queue.ReclaimOrphaned(); err != nil {
 		fmt.Fprintf(stderr, "serve: reclaiming abandoned work: %v\n", err)
@@ -127,8 +109,7 @@ func reclaimAbandonedWork(s *store.Store, queue *frontier.Queue, stdout, stderr 
 	}
 }
 
-// migratePolicyScopes writes retired policy scopes into their predicates, with the grouping key
-// this server was started with, and names each one it cannot, which the evaluation then refuses.
+// migratePolicyScopes writes retired policy scopes into predicates for this grouping key.
 func migratePolicyScopes(s *store.Store, unitProperty string, stdout, stderr io.Writer) {
 	report, err := s.MigratePolicyScopes(unitProperty)
 	if err != nil {
@@ -152,9 +133,7 @@ func migratePolicyScopes(s *store.Store, unitProperty string, stdout, stderr io.
 
 // shouldResume reports whether discovery starts with the server.
 //
-// A crawl the operator started is remembered, and a restart does not act on that memory unless
-// they asked it to. Starting a crawl spends rate limit, disk and every core on the machine, and a
-// process restart is not somebody requesting that. `--expand` forces it either way.
+// `--expand` starts it; otherwise a prior crawl resumes only when resume-on-start is set.
 func shouldResume(s *store.Store, autostart bool, stdout, stderr io.Writer) bool {
 	if autostart {
 		return true
@@ -174,8 +153,6 @@ func shouldResume(s *store.Store, autostart bool, stdout, stderr io.Writer) bool
 		return false
 	}
 	if !resume {
-		// Said rather than silent: the crawl was running, it is not now, and an operator who is
-		// not told reads the stopped state as something that went wrong.
 		fmt.Fprintln(stdout,
 			"serve: discovery was running when this last stopped and is left paused; "+
 				"start it from the header, or turn on resume-on-start in Settings")
@@ -185,10 +162,7 @@ func shouldResume(s *store.Store, autostart bool, stdout, stderr io.Writer) bool
 	return true
 }
 
-// seedDeclaration applies an untracked local declaration, and only when the database holds none.
-//
-// It declares; it never vouches. What `gh` says about the account still decides whether the
-// declaration is honored, so this is a way to avoid retyping rather than a way around verification.
+// seedDeclaration applies an untracked local declaration only when the database holds none.
 func seedDeclaration(s *store.Store, path string, stderr io.Writer) error {
 	accounts, err := declare.Load(path)
 	if err != nil {
@@ -210,51 +184,99 @@ func seedDeclaration(s *store.Store, path string, stderr io.Writer) error {
 	return nil
 }
 
+type serveConfig struct {
+	dbPath         string
+	declareFile    string
+	addr           string
+	uiDir          string
+	allowRemote    bool
+	diagnostics    bool
+	apiURL         string
+	enumerateEvery time.Duration
+	listEvery      time.Duration
+	route          string
+	groupProperty  string
+	submitTargets  string
+	discovery      discoveryOptions
+	authoring      authoringOptions
+}
+
 // runServe answers interface queries over HTTP until the context is canceled.
 func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	cfg, err := parseServeArgs(args, stderr)
+	if err != nil {
+		return err
+	}
+	if reason := volatileDatabase(cfg.dbPath); reason != "" {
+		fmt.Fprintf(stderr, "serve: %s\n", reason)
+	}
+
+	s, err := openServeStore(cfg, stdout, stderr)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+
+	openCustomQueries(cfg.discovery.customQLDir, cfg.discovery.codeqlPath, stdout, stderr)
+
+	loop, err := newSupervisor(s, cfg.discovery, stderr)
+	if err != nil {
+		return fmt.Errorf("serve: %w", err)
+	}
+	primeServedStore(s, loop.Queue, stdout, stderr)
+
+	srv, err := newConfiguredServer(ctx, cfg, s, loop, stderr)
+	if err != nil {
+		return err
+	}
+	writeIdentityBanner(stdout, s)
+
+	go srv.CheckStaleness()
+
+	loopCtx, stopLoop := context.WithCancel(ctx)
+	defer stopLoop()
+	go func() {
+		if err := loop.Run(loopCtx); err != nil {
+			fmt.Fprintf(stderr, "serve: discovery stopped: %v\n", err)
+		}
+	}()
+	if shouldResume(s, cfg.discovery.autostart, stdout, stderr) {
+		if problem := loop.Start(); problem != nil {
+			fmt.Fprintf(stderr, "serve: discovery cannot start: %s\n  %s\n",
+				problem.Reason, problem.Remedy)
+		} else {
+			fmt.Fprintln(stdout, "serve: discovery running")
+		}
+	}
+
+	return serveHTTP(ctx, &http.Server{Addr: cfg.addr, Handler: srv.Handler()}, cfg.addr, stdout)
+}
+
+func parseServeArgs(args []string, stderr io.Writer) (serveConfig, error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", "", "path to the ABOM SQLite database (required)")
-	// Untracked, and only ever fills a vacuum. Development rebuilds the database often, and an
-	// operator who retypes the declaration every time stops declaring.
 	declareFile := fs.String("declare-file", declare.DefaultFileName,
 		"local file declaring owned accounts, applied only when nothing is declared")
 	addr := fs.String("addr", "localhost:8080", "address to listen on")
 	uiDir := fs.String("ui-dir", "", "directory containing the published interface (optional)")
 	allowRemote := fs.Bool("allow-remote-control", false,
 		"let a non-loopback client start discovery, which runs git and codeql on this machine")
-	// Off by default. Route latencies map what exists and what is expensive, and pprof serves
-	// goroutine stacks and heap contents; both are fine on a workstation and not by default.
 	diagnostics := fs.Bool("diagnostics", false,
 		"expose /api/metrics and /debug/pprof/ for local performance analysis")
 	apiURL := fs.String("api-url", defaultAPIURL(), "GitHub API base URL")
-	// How stale the list of repositories may get. A read is bounded by what moved since the last
-	// one rather than by how big the account is; see docs/architecture.md on reading an account.
 	enumerateEvery := fs.Duration("enumerate-every", supervisor.DefaultEnumerateEvery,
 		"how often the declared accounts are re-read for new repositories (0: never)")
-	// Only a full listing can establish that a repository is gone, so sweeping forever keeps dead
-	// repositories while looking more current than reading everything would.
 	listEvery := fs.Duration("list-every", enumerate.DefaultFullListingEvery,
 		"how often every page of an account is read, which is the only way a deletion is seen")
-	// Selection is the operator's; detection is at most a default. An empty value prefers GraphQL
-	// and falls back to REST, and a pinned route is never second-guessed.
 	route := fs.String("read-route", "",
 		"which API reads an account: graphql, rest, or empty to prefer graphql and fall back")
-	// Named by the operator, discovered by nobody. A dividing line inferred from a repository-name
-	// prefix agrees with the organization by coincidence and disagrees the first time somebody
-	// creates a repository. Empty means no grouping, which is honest rather than unhelpful. It
-	// chooses only what a screen opens on; what a filter means travels in the filter.
 	groupProperty := fs.String("group-property", "",
 		"repository custom property to group by on screen, for example business_id")
-	// Empty by default, and an empty list submits nowhere. A dependency snapshot replaces data on
-	// somebody else's repository and cannot be withdrawn, so the targets are named explicitly or
-	// this build can only preview.
 	submitTargets := fs.String("submit-targets", "",
 		"comma-separated repositories that may receive dependency snapshots")
 	var d discoveryOptions
 	fs.BoolVar(&d.autostart, "expand", false, "start discovery as soon as the server is up")
-	// Empty by default: what each tier runs is stored configuration, editable while the server is
-	// up, and naming a query here overrides it for every tier.
 	fs.StringVar(&d.queryPath, "query", "", "single edges query to run instead of the stored per-tier suites")
 	fs.StringVar(&d.queryID, "query-id", defaultEdgesQueryID, "ledger identity for the query")
 	fs.StringVar(&d.suite, "expand-suite", "",
@@ -297,134 +319,102 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	var authoring authoringOptions
 	authoring.register(fs)
 	if err := fs.Parse(args); err != nil {
-		return err
+		return serveConfig{}, err
 	}
 	if *dbPath == "" {
 		fs.Usage()
-		return errors.New("serve: --db is required")
+		return serveConfig{}, errors.New("serve: --db is required")
 	}
-	if reason := volatileDatabase(*dbPath); reason != "" {
-		fmt.Fprintf(stderr, "serve: %s\n", reason)
-	}
+	return serveConfig{
+		dbPath:         *dbPath,
+		declareFile:    *declareFile,
+		addr:           *addr,
+		uiDir:          *uiDir,
+		allowRemote:    *allowRemote,
+		diagnostics:    *diagnostics,
+		apiURL:         *apiURL,
+		enumerateEvery: *enumerateEvery,
+		listEvery:      *listEvery,
+		route:          *route,
+		groupProperty:  *groupProperty,
+		submitTargets:  *submitTargets,
+		discovery:      d,
+		authoring:      authoring,
+	}, nil
+}
 
-	s, err := store.Open(*dbPath, store.Options{})
+func openServeStore(cfg serveConfig, stdout, stderr io.Writer) (*store.Store, error) {
+	s, err := store.Open(cfg.dbPath, store.Options{})
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", *dbPath, err)
+		return nil, fmt.Errorf("opening %s: %w", cfg.dbPath, err)
 	}
-	defer s.Close()
 	if err := s.Migrate(); err != nil {
-		return fmt.Errorf("migrating %s: %w", *dbPath, err)
+		_ = s.Close()
+		return nil, fmt.Errorf("migrating %s: %w", cfg.dbPath, err)
 	}
-	migratePolicyScopes(s, *groupProperty, stdout, stderr)
-
-	if err := seedDeclaration(s, *declareFile, stderr); err != nil {
-		return err
+	migratePolicyScopes(s, cfg.groupProperty, stdout, stderr)
+	if err := seedDeclaration(s, cfg.declareFile, stderr); err != nil {
+		_ = s.Close()
+		return nil, err
 	}
+	return s, nil
+}
 
-	// Before the supervisor, because the search path has to be set before anything shells out to
-	// the CLI: a resolver that started without it would report the operator's pack as misspelled.
-	openCustomQueries(d.customQLDir, d.codeqlPath, stdout, stderr)
-
-	loop, err := newSupervisor(s, d, stderr)
-	if err != nil {
-		return fmt.Errorf("serve: %w", err)
-	}
-	// Attribution is two statements and it decides whether a finding is visible at all. Running
-	// it here means the count of unplaced findings is honest from the first page load, rather
-	// than improving on its own once a cycle happens to run.
+func primeServedStore(s *store.Store, queue *frontier.Queue, stdout, stderr io.Writer) {
 	if _, err := s.LinkFindingsToNodes(); err != nil {
 		fmt.Fprintf(stderr, "serve: attributing findings: %v\n", err)
 	}
-	// Same reasoning, and a sharper failure: the only other caller runs inside a discovery cycle,
-	// so a database migrated in place and never crawled serves every boundary filter an empty
-	// answer, which reads as "no cross-owner dependencies" rather than "never measured".
 	if _, err := s.ClassifyEdgeBoundaries(); err != nil {
 		fmt.Fprintf(stderr, "serve: classifying edge boundaries: %v\n", err)
 	}
-	prepareQueue(s, loop.Queue, stdout, stderr)
-	// Before anything is served, not on the first cycle: until discovery is started the queue
-	// would otherwise report a previous run's claims as work in flight, on a page that says
-	// discovery has never started.
-	reclaimAbandonedWork(s, loop.Queue, stdout, stderr)
+	prepareQueue(s, queue, stdout, stderr)
+	reclaimAbandonedWork(s, queue, stdout, stderr)
+}
 
+func newConfiguredServer(
+	ctx context.Context, cfg serveConfig, s *store.Store, loop *supervisor.Supervisor, stderr io.Writer,
+) (*serve.Server, error) {
 	srv := &serve.Server{
-		Store: s, Discovery: loop, AllowRemoteControl: *allowRemote, Log: stderr,
-		Diagnostics: *diagnostics,
-		// Taken from the loop rather than the flag: the flag may be empty, in which case the
-		// supervisor made a scratch directory and that is where the checkouts actually are.
-		WorkDir: loop.Options.WorkDir,
+		Store: s, Discovery: loop, AllowRemoteControl: cfg.allowRemote, Log: stderr,
+		Diagnostics: cfg.diagnostics,
+		WorkDir:     loop.Options.WorkDir,
 	}
 	srv.Executor = newRunExecutor(s, loop, stderr)
-	// The runner the crawl already holds, so `codeql test run` contends for the machine-wide lock
-	// rather than racing an analysis for one compilation cache.
 	if tester, ok := loop.Expander.Resolver.(serve.QueryTester); ok {
 		srv.Tester, srv.QueryDir = tester, runner.CustomPackRoot()
 	}
 	if printer, ok := loop.Expander.Resolver.(serve.ASTPrinter); ok && srv.QueryDir != "" {
 		srv.Printer = printer
 	}
-	srv.Authoring = newAuthoring(s, authoring, loop, stderr)
-	// Without this the interface can record a declaration and never act on it: declaring names
-	// accounts, and only enumeration turns them into the repositories a report is about.
-	reader, err := readClient(ctx, *apiURL, s, *route)
+	srv.Authoring = newAuthoring(s, cfg.authoring, loop, stderr)
+	reader, err := readClient(ctx, cfg.apiURL, s, cfg.route)
 	if err != nil {
-		return fmt.Errorf("serve: %w", err)
+		return nil, fmt.Errorf("serve: %w", err)
 	}
 	srv.Enumerate = reader.Sweep
 	srv.EnumerateSchema = reader.PropertySchema
-	// The same client, so reading alerts is paced and cached with every other read of GitHub.
 	srv.Comparer = &compare.Comparer{Store: s, Read: reader}
-	srv.FullListingEvery = *listEvery
-	srv.GroupProperty = *groupProperty
+	srv.FullListingEvery = cfg.listEvery
+	srv.GroupProperty = cfg.groupProperty
 	srv.QueueOwned = func() (int, error) { return expand.SeedOwnedRepositories(s, loop.Queue) }
 	verifier := lockVerifier(s)
 	srv.VerifyLock = func(ctx context.Context, repository, mode string) (store.LockVerification, error) {
 		return verifier.Request(ctx, repository, mode, "interface")
 	}
-	// The same enumeration the button performs, on a period. A person clicking and a loop on a
-	// timer take one path, so a repository created after the last read is not invisible until
-	// somebody happens to press it.
-	wireEnumeration(loop, srv, s, *enumerateEvery)
-	// Preview always works; submitting requires a configured target. A build with no targets can
-	// inspect what it would send and cannot write, which is the right default for something that
-	// cannot be undone.
-	wireSnapshots(srv, s, githubToken(ctx), splitTargets(*submitTargets),
-		catalog.New(*apiURL, githubToken(ctx), nil).HeadSHA)
-	if *uiDir != "" {
-		srv.UI = os.DirFS(*uiDir)
+	wireEnumeration(loop, srv, s, cfg.enumerateEvery)
+	wireSnapshots(srv, s, githubToken(ctx), splitTargets(cfg.submitTargets),
+		catalog.New(cfg.apiURL, githubToken(ctx), nil).HeadSHA)
+	if cfg.uiDir != "" {
+		srv.UI = os.DirFS(cfg.uiDir)
 	}
-	writeIdentityBanner(stdout, s)
+	return srv, nil
+}
 
-	// Off the startup path deliberately: the walk behind this covers the whole declared closure,
-	// and an operator reaching the interface must not wait through it to be told what no longer
-	// belongs. Nothing is removed by it — it records what a prune would cost, and the Settings
-	// page offers that to somebody who can accept it.
-	go srv.CheckStaleness()
-
-	loopCtx, stopLoop := context.WithCancel(ctx)
-	defer stopLoop()
-	go func() {
-		if err := loop.Run(loopCtx); err != nil {
-			fmt.Fprintf(stderr, "serve: discovery stopped: %v\n", err)
-		}
-	}()
-	if shouldResume(s, d.autostart, stdout, stderr) {
-		if problem := loop.Start(); problem != nil {
-			fmt.Fprintf(stderr, "serve: discovery cannot start: %s\n  %s\n",
-				problem.Reason, problem.Remedy)
-		} else {
-			fmt.Fprintln(stdout, "serve: discovery running")
-		}
-	}
-
-	httpServer := &http.Server{Addr: *addr, Handler: srv.Handler()}
-
+func serveHTTP(ctx context.Context, httpServer *http.Server, addr string, stdout io.Writer) error {
 	errCh := make(chan error, 1)
 	go func() {
-		// Timestamp and pid, because one log file accumulates several runs and the discovery
-		// cycle counter restarts at 1 each time: without a boundary the trail cannot be split.
 		fmt.Fprintf(stdout, "%s serve: listening on http://%s (pid %d)\n",
-			time.Now().UTC().Format(time.RFC3339), *addr, os.Getpid())
+			time.Now().UTC().Format(time.RFC3339), addr, os.Getpid())
 		errCh <- httpServer.ListenAndServe()
 	}()
 

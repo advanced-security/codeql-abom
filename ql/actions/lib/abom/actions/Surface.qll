@@ -20,9 +20,8 @@ private string workflowPermissions(Job job) {
 /**
  * Gets the effective permissions of `job` and, in `scope`, where they came from.
  *
- * A job-level `permissions` block replaces the workflow-level one outright rather than
- * merging with it, so the two are never unioned. The guards test the underlying permission
- * sets, not the concatenations, because `concat` yields `""` instead of no result.
+ * Job-level permissions replace workflow-level permissions. Test the sets, not the concatenated
+ * strings, because `concat` yields `""` instead of no result.
  */
 private string effectivePermissions(Job job, string scope) {
   exists(job.getPermissions().getAPermission()) and
@@ -66,9 +65,7 @@ private string runsOnOf(Job job) {
 /**
  * Holds if `name` is `value` for the job at `jobId` in `path`.
  *
- * One row per fact rather than one wide row per job: the ingester stores whatever a query says
- * about a subject without knowing what the query measures, so adding an attribute here needs no
- * change anywhere else.
+ * One row per fact lets the ingester accept new attributes without schema changes.
  */
 predicate surfaceFact(Job job, string path, string jobId, string name, string value) {
   path = job.getLocation().getFile().getRelativePath() and

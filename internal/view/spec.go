@@ -211,101 +211,130 @@ func Parse(text string) (Spec, error) {
 	}
 
 	var s Spec
-	scalars := map[string]*string{
-		paramScope:    &s.Scope,
-		paramSearch:   &s.Search,
-		paramRefStyle: &s.RefStyle,
-		paramBoundary: &s.Boundary,
-		paramProvider: &s.Provider,
-		paramSeverity: &s.Severity,
-		paramMode:     &s.Mode,
-	}
-	lists := map[string]*[]string{
-		paramKinds:            &s.Kinds,
-		paramOrigins:          &s.Origins,
-		paramRules:            &s.Rules,
-		paramNotRules:         &s.NotRules,
-		paramRepos:            &s.Repositories,
-		paramEdgeClass:        &s.EdgeClass,
-		paramEdgeKinds:        &s.EdgeKinds,
-		paramFlags:            &s.Flags,
-		paramSource:           &s.Sources,
-		paramSecuritySeverity: &s.SecuritySeverities,
-		paramAdvisorySeverity: &s.AdvisorySeverities,
-		paramReached:          &s.Reached,
-		paramPolicies:         &s.Policies,
-	}
-	matches := map[string]*[]PropertyMatch{
-		paramProperties:    &s.Properties,
-		paramNotProperties: &s.NotProperties,
-	}
-
+	targets := specTargetsFor(&s)
 	for key, values := range q {
-		if target, ok := matches[key]; ok {
-			parsed, err := parseMatches(key, values)
-			if err != nil {
-				return Spec{}, err
-			}
-			*target = parsed
-			continue
-		}
-		raw := strings.Join(values, ",")
-		if raw == "" {
-			return Spec{}, fmt.Errorf(
-				"%q has no value; absent and empty are different questions", key)
-		}
-		switch {
-		case scalars[key] != nil:
-			if err := checkVocabulary(key, raw); err != nil {
-				return Spec{}, err
-			}
-			*scalars[key] = raw
-		case lists[key] != nil:
-			members := normalize(strings.Split(raw, ","))
-			for _, member := range members {
-				if err := checkVocabulary(key, member); err != nil {
-					return Spec{}, err
-				}
-			}
-			*lists[key] = members
-		case key == paramMinReach:
-			n, err := strconv.Atoi(raw)
-			if err != nil || n < 0 {
-				return Spec{}, fmt.Errorf("%s must be a whole number, got %q", key, raw)
-			}
-			s.MinReach = n
-		case key == paramSteps:
-			b, err := strconv.ParseBool(raw)
-			if err != nil {
-				return Spec{}, fmt.Errorf("%s must be true or false, got %q", key, raw)
-			}
-			s.Steps = b
-		default:
-			return Spec{}, fmt.Errorf("ABOM has no filter called %q", key)
+		if err := targets.apply(key, values); err != nil {
+			return Spec{}, err
 		}
 	}
 	return s, nil
+}
+
+type specTargets struct {
+	spec    *Spec
+	scalars map[string]*string
+	lists   map[string]*[]string
+	matches map[string]*[]PropertyMatch
+}
+
+func specTargetsFor(s *Spec) specTargets {
+	return specTargets{
+		spec: s,
+		scalars: map[string]*string{
+			paramScope:    &s.Scope,
+			paramSearch:   &s.Search,
+			paramRefStyle: &s.RefStyle,
+			paramBoundary: &s.Boundary,
+			paramProvider: &s.Provider,
+			paramSeverity: &s.Severity,
+			paramMode:     &s.Mode,
+		},
+		lists: map[string]*[]string{
+			paramKinds:            &s.Kinds,
+			paramOrigins:          &s.Origins,
+			paramRules:            &s.Rules,
+			paramNotRules:         &s.NotRules,
+			paramRepos:            &s.Repositories,
+			paramEdgeClass:        &s.EdgeClass,
+			paramEdgeKinds:        &s.EdgeKinds,
+			paramFlags:            &s.Flags,
+			paramSource:           &s.Sources,
+			paramSecuritySeverity: &s.SecuritySeverities,
+			paramAdvisorySeverity: &s.AdvisorySeverities,
+			paramReached:          &s.Reached,
+			paramPolicies:         &s.Policies,
+		},
+		matches: map[string]*[]PropertyMatch{
+			paramProperties:    &s.Properties,
+			paramNotProperties: &s.NotProperties,
+		},
+	}
+}
+
+func (t specTargets) apply(key string, values []string) error {
+	if target, ok := t.matches[key]; ok {
+		parsed, err := parseMatches(key, values)
+		if err != nil {
+			return err
+		}
+		*target = parsed
+		return nil
+	}
+	raw := strings.Join(values, ",")
+	if raw == "" {
+		return fmt.Errorf("%q has no value; absent and empty are different questions", key)
+	}
+	switch {
+	case t.scalars[key] != nil:
+		return t.applyScalar(key, raw)
+	case t.lists[key] != nil:
+		return t.applyList(key, raw)
+	case key == paramMinReach:
+		return t.applyMinReach(key, raw)
+	case key == paramSteps:
+		return t.applySteps(key, raw)
+	default:
+		return fmt.Errorf("ABOM has no filter called %q", key)
+	}
+}
+
+func (t specTargets) applyScalar(key, raw string) error {
+	if err := checkVocabulary(key, raw); err != nil {
+		return err
+	}
+	*t.scalars[key] = raw
+	return nil
+}
+
+func (t specTargets) applyList(key, raw string) error {
+	members := normalize(strings.Split(raw, ","))
+	for _, member := range members {
+		if err := checkVocabulary(key, member); err != nil {
+			return err
+		}
+	}
+	*t.lists[key] = members
+	return nil
+}
+
+func (t specTargets) applyMinReach(key, raw string) error {
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return fmt.Errorf("%s must be a whole number, got %q", key, raw)
+	}
+	t.spec.MinReach = n
+	return nil
+}
+
+func (t specTargets) applySteps(key, raw string) error {
+	b, err := strconv.ParseBool(raw)
+	if err != nil {
+		return fmt.Errorf("%s must be true or false, got %q", key, raw)
+	}
+	t.spec.Steps = b
+	return nil
 }
 
 // Equal reports whether two specs ask the same question, regardless of how either was built.
 func (s Spec) Equal(other Spec) bool { return s.String() == other.String() }
 
 // IsTerm reports whether a name is part of the filter language at all.
-//
-// The difference a reader needs: a term ABOM has and this answer does not apply is a question in
-// the wrong place, and a name ABOM has never heard of is a typo. Refusing both the same way tells
-// somebody to go looking for a surface that does not exist.
 func IsTerm(name string) bool { return termNames[name] }
 
 // The terms whose values are fixed in code rather than read from the corpus.
 //
-// Listed here because this package is below every consumer of the language: the store's own
-// constants are checked against these rather than the other way round. A rule, a saved view and a
-// shared link all parse through here, so this is the only place a value can be refused once.
-//
-// Deliberately not every term. `q`, `rules`, `repositories`, `provider`, `severity` and the
-// property matches take values out of the data, where an unknown one is a question with no
-// answer rather than a question the language cannot express.
+// Data-backed terms accept values the corpus happens to contain; fixed terms refuse unknown
+// values here.
 const (
 	ScopeOwned    = "owned"
 	ScopeExposure = "exposure"
@@ -318,24 +347,17 @@ const (
 	RefStyleSHA = "sha"
 	RefStyleTag = "tag"
 
-	// How the database a result came from was built. `regular` is one repository's own checkout,
-	// which is every database ABOM has built; `extended` is an owned repository plus its staged
-	// closure, where the same rule id reports exposure across a `uses:` boundary instead of a
-	// defect in code the repository holds. The store's constants are checked against these.
+	// How the database a result came from was built.
 	ModeRegular  = "regular"
 	ModeExtended = "extended"
 
-	// Where the rule behind a result came from, read from the pack that supplied it: GitHub's
-	// maintained packs, ABOM's own, the operator's, or several packs one invocation drew the same
-	// rule id from. Never read from the rule id, whose prefix is a convention anybody can adopt.
+	// Where the rule behind a result came from; never infer it from rule ID prefixes.
 	SourceUpstream = "upstream"
 	SourceAbom     = "abom"
 	SourceCustom   = "custom"
 	SourceMixed    = "mixed"
 
-	// What a relationship is. Four because the extraction produces four, and a reader filtering
-	// by one is asking a question the aggregates already act on: `job-needs-job` is ordering
-	// rather than use, and every dependency traversal excludes it.
+	// What a relationship is; `job-needs-job` is ordering rather than use.
 	EdgeKindStepUsesAction          = "step-uses-action"
 	EdgeKindJobNeedsJob             = "job-needs-job"
 	EdgeKindJobUsesReusableWorkflow = "job-uses-reusable-workflow"
@@ -358,14 +380,8 @@ var vocabulary = map[string][]string{
 	paramBoundary: {BoundarySameRepository, BoundarySameOwner, BoundaryCrossOwner},
 	paramRefStyle: {RefStyleAny, RefStyleSHA, RefStyleTag},
 	paramMode:     {ModeRegular, ModeExtended},
-	// The lists are refused member by member, and one member outside refuses the whole term: a
-	// member is a fact ABOM records or a structure its extraction produces, so one it cannot
-	// produce is a question with no answer rather than one the corpus has not reached — and
-	// keeping the members that were recognized answers a narrower question than was written.
-	//
-	// What has been *used* is never the check. `kinds` was read from the corpus, which is right
-	// for offering and wrong for refusing: an account's node is drawn by the graph and stored
-	// nowhere, so the corpus list lacked the one kind every grouping starts from.
+	// List terms are refused member by member; keeping only recognized members would narrow the
+	// question silently.
 	paramSource: {SourceUpstream, SourceAbom, SourceCustom, SourceMixed},
 	// In the order a reader meets them: the containers, what a workflow uses, then what only a
 	// focus draws.
@@ -380,31 +396,16 @@ var vocabulary = map[string][]string{
 	paramSecuritySeverity: Bands(),
 	paramAdvisorySeverity: AdvisorySeverities(),
 	paramReached:          {ReachedDirect, ReachedTransitive},
-	// The browser's spelling of what a relationship crosses, which is not `boundary`'s: that term
-	// is the store's and says `cross-owner`. Two words for one fact is a debt; refusing the wrong
-	// one by name is what stops it from filtering nothing.
+	// The browser's relationship-crossing spelling; `boundary` uses the store vocabulary.
 	paramEdgeClass: {"sameRepo", "sameOwner", "crossOwner"},
 	paramEdgeKinds: EdgeKinds(),
 }
 
 // Vocabulary reports the values a term allows, or nothing if the corpus decides them.
-//
-// Exported so a control can offer them rather than asking a reader to type one: the same
-// declaration that refuses a wrong value is the one that says what the right ones are. A copy,
-// because a caller that sorts or appends to what it was handed would otherwise change what the
-// language accepts for every later caller.
+// It returns a copy so callers cannot change the language.
 func Vocabulary(term string) []string { return slices.Clone(vocabulary[term]) }
 
-// checkVocabulary refuses a value the term does not have.
-//
-// Silently keeping one is the failure this exists to stop: `store.boundaryFilter` is right to
-// return an empty fragment for a value it does not recognize, because a query string must never
-// reach the statement — but that made an unrecognized boundary filter nothing at all, and
-// `store.scopeFilter` falls through to the whole corpus the same way.
-//
-// The refusal names the alternatives because the near-misses are real: the browser draws
-// `crossOwner` while the store spells it `cross-owner`, and version pinning says `commit` where
-// the graph says `sha`.
+// checkVocabulary refuses values outside a term's fixed vocabulary.
 func checkVocabulary(term, value string) error {
 	allowed, ok := vocabulary[term]
 	if !ok || slices.Contains(allowed, value) {
@@ -451,12 +452,7 @@ var setTerms = map[string]bool{
 	paramMode:             true,
 }
 
-// UnenforceableAsSet names the terms a predicate carries that the set path cannot apply, sorted so
-// two runs produce one message.
-//
-// Read from the canonical text rather than from the fields, so a term that can be written down is
-// one this knows about: adding a parameter without deciding its side is then impossible rather than
-// merely discouraged.
+// UnenforceableAsSet names terms the set path cannot apply, sorted for stable messages.
 func (s Spec) UnenforceableAsSet() []string {
 	return s.carried(func(t string) bool { return setTerms[t] })
 }
@@ -476,17 +472,10 @@ var graphTerms = map[string]bool{
 	paramMode:          true,
 }
 
-// clientTerms are the terms the graph hands to the browser rather than applying.
+// clientTerms are graph terms applied by the browser so relationships around matches stay present.
 //
-// Not a euphemism for dropped. Applied per node the finding terms sever 74% to 99% of their own
-// match's edges, because the graph is bipartite by kind, so the Explorer takes one payload and
-// filters it without asking again. A caller that is not the Explorer has to be told which terms it
-// was handed, which is what `ClientApplied` is for.
-//
-// `provider`, `severity` and `securitySeverity` are applied per finding, never per node: the payload
-// carries each node's distinct (rule, provider, severity, score) combinations, so
-// `rules=A&severity=error` keeps a node only when one finding is both, exactly as the set path
-// reads it.
+// Finding terms are per finding, never per node: the payload carries each node's distinct
+// (rule, provider, severity, score) combinations.
 var clientTerms = map[string]bool{
 	paramKinds:            true,
 	paramSearch:           true,
@@ -498,12 +487,7 @@ var clientTerms = map[string]bool{
 	paramEdgeClass:        true,
 }
 
-// clientMembers are the members of a term the graph applies that it hands to the browser anyway.
-//
-// `unanalyzed` is a fact about a node and the server narrows by it. `findings` and `advisory` are
-// the finding terms' problem again — a workflow carries findings and the actions it uses mostly do
-// not — so the browser keeps what a relationship needs and greys it, which a server that dropped
-// nodes could not.
+// clientMembers are graph-applied term members also handed to the browser for presentation.
 var clientMembers = map[string][]string{
 	paramFlags: {FlagFindings, FlagAdvisory},
 }

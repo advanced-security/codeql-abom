@@ -125,15 +125,7 @@ func submittedFrom(t *testing.T, s *store.Store, repository string) map[string]b
 	return out
 }
 
-// A dependency's own CI is not part of anybody's supply chain. codecov/codecov-action carries 74
-// edges from its own workflows and 3 from its manifest, so a walk that cannot tell them apart puts
-// 74 actions into a consumer's chain that the consumer never runs.
-//
-// The submission closure excludes them by only recursing through `composite-step-uses-action` out
-// of containers it has already reached. The exposure walk has no such rule — it loads every edge
-// kind except `job-needs-job` — and excludes them only because nothing under review references the
-// widget's own workflow. That is a property of the graph's shape rather than a stated intent,
-// which is why it needs a test: the day the shape changes, nothing else would complain.
+// A dependency's own CI is not part of a consumer's supply chain.
 func TestNeitherWalkReachesThroughADependencysOwnCI(t *testing.T) {
 	s := agreementFixture(t)
 
@@ -143,8 +135,7 @@ func TestNeitherWalkReachesThroughADependencysOwnCI(t *testing.T) {
 		t.Fatal("the exposure walk found nothing, so the exclusions below would be vacuous")
 	}
 
-	// setup-node is used by the widget's CI; upload-artifact and labeler sit behind a workflow and
-	// a composite action that only the widget's CI reaches.
+	// These sit behind containers only the widget's CI reaches.
 	for _, ci := range []string{"actions/setup-node", "actions/upload-artifact", "actions/labeler"} {
 		if hops, ok := exposed[ci]; ok {
 			t.Errorf("exposure reached %s at %d hops; it belongs to the widget's own CI and not "+
@@ -173,13 +164,7 @@ func TestBothWalksReachWhatTheDependencyShips(t *testing.T) {
 	}
 }
 
-// The two walks are one claim reached from opposite ends: the closure asks what a repository
-// depends on, exposure asks which repositories reach an affected action. A dependency named by one
-// and not the other is either somebody told to fix a thing they do not run, or somebody not told
-// at all.
-//
-// Asserted over the whole result rather than over the actions this fixture was written for,
-// because a fixture only ever covers the case its author thought of.
+// The two walks must agree on the whole supply chain, not only the fixture's named actions.
 func TestEveryExposureNamesSomethingTheSubmissionWouldAlsoCarry(t *testing.T) {
 	s := agreementFixture(t)
 
@@ -200,15 +185,13 @@ func TestEveryExposureNamesSomethingTheSubmissionWouldAlsoCarry(t *testing.T) {
 	}
 }
 
-// pinnedVersionFixture builds one dependency analyzed at two references, where the consumer pins
-// the older one:
+// pinnedVersionFixture builds one dependency analyzed at two refs while the consumer pins v1:
 //
 //	consumer/app   ci.yml     -> vendor/action@v1
 //	vendor/action  action.yml -> helper/tool   produced by the run for v1, so it is the consumer's
 //	vendor/action  action.yml -> newer/tool    produced by the run for v2, so it is not
 //
-// The shared supply-chain fixture cannot express this: its edges carry no reference and it holds
-// one version of the vendor.
+// The shared supply-chain fixture has no per-ref vendor edges.
 func pinnedVersionFixture(t *testing.T) *store.Store {
 	t.Helper()
 	s, err := store.Open(filepath.Join(t.TempDir(), "abom.db"), store.Options{BulkLoad: true})
@@ -312,16 +295,8 @@ func pinnedVersionFixture(t *testing.T) *store.Store {
 	return s
 }
 
-// A child belongs to the version of the parent that was pinned, on both sides.
-//
-// The submission closure enforces this by matching the frontier's resolved SHA to the run that
-// produced the edge, and it exists because an unconstrained walk put a transitive dependency a
-// repository does not have into a live GitHub submission on 2026-09-08: ABOM has analyzed 24 refs
-// of codecov/codecov-action, and github-script only enters at v5.x.
-//
-// Exposure answers the same question from the other end and is what the interface reports, so the
-// same constraint has to hold there. It reached newer/tool at 2 hops until the traversal began
-// carrying the commit a route was read from, which is what this now holds in place.
+// A child belongs to the pinned version of its parent in both walks.
+// Exposure must carry the commit a route was read from, as the submission closure does.
 func TestBothWalksHonorTheVersionTheRepositoryPinned(t *testing.T) {
 	s := pinnedVersionFixture(t)
 

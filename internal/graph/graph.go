@@ -1,11 +1,7 @@
-// Package graph derives the aggregates that answer supply-chain questions about the ABOM.
+// Package graph derives ABOM supply-chain aggregates with in-memory reachability.
 //
-// Reachability is computed in memory rather than with a recursive SQL query. The edge list is
-// small enough to hold (millions of rows, two integers each) and a single breadth-first pass
-// per referenceable node is far cheaper than repeatedly re-walking the graph in SQLite.
-//
-// Only aggregate counts are stored. Materializing every (node, dependent) pair is quadratic in
-// the worst case, so the full dependent set is produced on demand by Dependents instead.
+// Only aggregate counts are stored; full dependent sets are produced on demand to avoid
+// materializing every (node, dependent) pair.
 package graph
 
 import (
@@ -25,16 +21,13 @@ type Builder struct {
 	MaxDepth int
 }
 
-// inEdge is one reference into a node: who made it, the commit of the analysis that produced it,
-// and the reference as written. The last two are what tell one version of a dependency from
-// another, which a walk needs in order to stay inside the version a consumer actually pinned.
+// inEdge is one reference into a node, including the analyzed commit and written ref.
 type inEdge struct {
 	row    int64
 	src    int64
 	commit string
 	ref    string
-	// commits are every commit a regular run sighted this edge at, the latest run's among them. An
-	// edge two analyzed commits share is one row, and its latest run names only one of them.
+	// commits are every commit a regular run sighted this edge at, including non-latest runs.
 	commits []string
 }
 
@@ -44,6 +37,15 @@ type edgeLock struct {
 	commit   string
 	consumer int64
 	own      bool
+}
+
+type loadedNode struct {
+	id        int64
+	key       string
+	kind      string
+	repo      sql.NullInt64
+	container sql.NullInt64
+	external  bool
 }
 
 // model is the in-memory projection of the graph used for traversal.
@@ -78,94 +80,14 @@ type model struct {
 }
 
 func (b *Builder) load() (*model, error) {
-	m := &model{
-		reverse:     make(map[int64][]inEdge),
-		container:   make(map[int64]int64),
-		repoOf:      make(map[int64]int64),
-		kindOf:      make(map[int64]string),
-		keyOf:       make(map[int64]string),
-		isExternal:  make(map[int64]bool),
-		resolved:    make(map[string]string),
-		seedRepo:    make(map[int64]bool),
-		conditionOf: make(map[int64]string),
-		locks:       make(map[int64][]edgeLock),
-	}
-
-	repos, err := b.Store.DB().Query(
-		`SELECT row_id FROM repository WHERE origin = ?`, store.OriginSeed)
-	if err != nil {
-		return nil, fmt.Errorf("loading repositories: %w", err)
-	}
-	for repos.Next() {
-		var id int64
-		if err := repos.Scan(&id); err != nil {
-			repos.Close()
-			return nil, fmt.Errorf("scanning repository: %w", err)
-		}
-		m.seedRepo[id] = true
-	}
-	repos.Close()
-	if err := repos.Err(); err != nil {
+	m := newModel()
+	if err := m.loadSeedRepositories(b.Store); err != nil {
 		return nil, err
 	}
-
-	nodes, err := b.Store.DB().Query(
-		`SELECT row_id, node_key, node_kind, repository_row_id, container_node_row_id, is_external
-		   FROM abom_node_live`)
-	if err != nil {
-		return nil, fmt.Errorf("loading nodes: %w", err)
-	}
-	defer nodes.Close()
-
-	for nodes.Next() {
-		var id int64
-		var key, kind string
-		var repo, container sql.NullInt64
-		var external bool
-		if err := nodes.Scan(&id, &key, &kind, &repo, &container, &external); err != nil {
-			return nil, fmt.Errorf("scanning node: %w", err)
-		}
-		m.kindOf[id] = kind
-		m.keyOf[id] = key
-		if external {
-			m.isExternal[id] = true
-		}
-		if repo.Valid {
-			m.repoOf[id] = repo.Int64
-		}
-		if container.Valid {
-			m.container[id] = container.Int64
-		}
-	}
-	if err := nodes.Err(); err != nil {
+	if err := m.loadNodes(b.Store); err != nil {
 		return nil, err
 	}
-
-	edges, err := b.Store.DB().Query(`
-		SELECT e.row_id, e.src_node_row_id, e.dst_node_row_id,
-		       LOWER(COALESCE(q.db_commit, '')), COALESCE(e.ref_value, '')
-		  FROM abom_edge_regular e
-		  LEFT JOIN abom_query_run q ON q.row_id = e.query_run_id
-		 WHERE ` + store.DependencyEdgeFilter)
-	if err != nil {
-		return nil, fmt.Errorf("loading edges: %w", err)
-	}
-	defer edges.Close()
-
-	seenTarget := make(map[int64]bool)
-	for edges.Next() {
-		var in inEdge
-		var dst int64
-		if err := edges.Scan(&in.row, &in.src, &dst, &in.commit, &in.ref); err != nil {
-			return nil, fmt.Errorf("scanning edge: %w", err)
-		}
-		m.reverse[dst] = append(m.reverse[dst], in)
-		if !seenTarget[dst] {
-			seenTarget[dst] = true
-			m.referenceable = append(m.referenceable, dst)
-		}
-	}
-	if err := edges.Err(); err != nil {
+	if err := m.loadEdges(b.Store); err != nil {
 		return nil, err
 	}
 	if err := m.loadResolutions(b.Store); err != nil {
@@ -178,6 +100,104 @@ func (b *Builder) load() (*model, error) {
 		return nil, err
 	}
 	return m, m.loadConditions(b.Store)
+}
+
+func newModel() *model {
+	return &model{
+		reverse:     make(map[int64][]inEdge),
+		container:   make(map[int64]int64),
+		repoOf:      make(map[int64]int64),
+		kindOf:      make(map[int64]string),
+		keyOf:       make(map[int64]string),
+		isExternal:  make(map[int64]bool),
+		resolved:    make(map[string]string),
+		seedRepo:    make(map[int64]bool),
+		conditionOf: make(map[int64]string),
+		locks:       make(map[int64][]edgeLock),
+	}
+}
+
+func (m *model) loadSeedRepositories(s *store.Store) error {
+	repos, err := s.DB().Query(
+		`SELECT row_id FROM repository WHERE origin = ?`, store.OriginSeed)
+	if err != nil {
+		return fmt.Errorf("loading repositories: %w", err)
+	}
+	for repos.Next() {
+		var id int64
+		if err := repos.Scan(&id); err != nil {
+			repos.Close()
+			return fmt.Errorf("scanning repository: %w", err)
+		}
+		m.seedRepo[id] = true
+	}
+	repos.Close()
+	return repos.Err()
+}
+
+func (m *model) loadNodes(s *store.Store) error {
+	nodes, err := s.DB().Query(
+		`SELECT row_id, node_key, node_kind, repository_row_id, container_node_row_id, is_external
+		   FROM abom_node_live`)
+	if err != nil {
+		return fmt.Errorf("loading nodes: %w", err)
+	}
+	defer nodes.Close()
+
+	for nodes.Next() {
+		var n loadedNode
+		if err := nodes.Scan(&n.id, &n.key, &n.kind, &n.repo, &n.container, &n.external); err != nil {
+			return fmt.Errorf("scanning node: %w", err)
+		}
+		m.addNode(n)
+	}
+	return nodes.Err()
+}
+
+func (m *model) addNode(n loadedNode) {
+	m.kindOf[n.id] = n.kind
+	m.keyOf[n.id] = n.key
+	if n.external {
+		m.isExternal[n.id] = true
+	}
+	if n.repo.Valid {
+		m.repoOf[n.id] = n.repo.Int64
+	}
+	if n.container.Valid {
+		m.container[n.id] = n.container.Int64
+	}
+}
+
+func (m *model) loadEdges(s *store.Store) error {
+	edges, err := s.DB().Query(`
+		SELECT e.row_id, e.src_node_row_id, e.dst_node_row_id,
+		       LOWER(COALESCE(q.db_commit, '')), COALESCE(e.ref_value, '')
+		  FROM abom_edge_regular e
+		  LEFT JOIN abom_query_run q ON q.row_id = e.query_run_id
+		 WHERE ` + store.DependencyEdgeFilter)
+	if err != nil {
+		return fmt.Errorf("loading edges: %w", err)
+	}
+	defer edges.Close()
+
+	seenTarget := make(map[int64]bool)
+	for edges.Next() {
+		var in inEdge
+		var dst int64
+		if err := edges.Scan(&in.row, &in.src, &dst, &in.commit, &in.ref); err != nil {
+			return fmt.Errorf("scanning edge: %w", err)
+		}
+		m.addInEdge(dst, in, seenTarget)
+	}
+	return edges.Err()
+}
+
+func (m *model) addInEdge(dst int64, in inEdge, seenTarget map[int64]bool) {
+	m.reverse[dst] = append(m.reverse[dst], in)
+	if !seenTarget[dst] {
+		seenTarget[dst] = true
+		m.referenceable = append(m.referenceable, dst)
+	}
 }
 
 // loadSightings records every commit a regular run sighted each edge at, so a walk can stand at

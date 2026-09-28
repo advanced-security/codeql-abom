@@ -77,3 +77,10 @@ published.
 ## Tests
 
 Test trees double as Go fixture sources — see the `regenerate-abom-fixtures` skill.
+`codeql test run` extracts every `.yml`/`.yaml` and ignores `LGTM_INDEX_FILTERS`, so a query test
+cannot show what `database create` indexes.
+
+## Staging dependencies
+
+Only composite actions and reusable workflows resolve as callees; JavaScript and Docker actions
+never do. Layout, index filters and traps: the `stage-codeql-actions-callees` skill.

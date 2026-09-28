@@ -2,9 +2,7 @@ package store
 
 import "testing"
 
-// The boundary stops the graph growing; it does nothing about what is already outside. On the
-// reference corpus that is 829 of 1,099 repositories and 2,020 of 3,662 queue rows, all still
-// drawn.
+// The boundary stops the graph growing; it does nothing about what is already outside.
 func TestWhatFallsOutsideTheClosureIsMarkedRemoved(t *testing.T) {
 	s := pruneFixture(t)
 

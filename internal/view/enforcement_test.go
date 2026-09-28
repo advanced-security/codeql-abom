@@ -6,12 +6,6 @@ import (
 )
 
 // A term is enforced or refused, never accepted and dropped.
-//
-// Measured on a crawled organization before this existed: `/api/match?rules=actions/*` answered
-// 632 nodes and 1,209 findings, and adding `scope=owned`, `q=checkout` or `flags=unanalyzed`
-// answered exactly the same — the reader had narrowed nothing and was not told. The same predicate
-// stored as a policy enforced `rules=actions/*` alone while `kinds`, `steps` and `minReach` sat in
-// its text, so a pull request would be blocked for something wider than anybody read.
 func TestTheSetPathNamesEveryTermItCannotApply(t *testing.T) {
 	spec, err := Parse("rules=actions/*&scope=owned&q=checkout&flags=unanalyzed&kinds=action")
 	if err != nil {
@@ -72,10 +66,7 @@ func TestAnEmptyPredicateNamesNoUnenforceableTerm(t *testing.T) {
 	}
 }
 
-// The graph hands the finding terms to the browser rather than applying them: measured, applied per
-// node they sever 74% to 99% of their own match's edges, because the graph is bipartite by kind. So
-// the Explorer filters one payload rather than asking again, and those terms are client-applied.
-// That is a real third category and is not the same thing as dropping a term.
+// The graph hands finding terms to the browser so it can keep relationships around matches.
 func TestTheGraphNamesTheTermsItHandsToTheClient(t *testing.T) {
 	spec, err := Parse("rules=actions/*&kinds=action&q=checkout&scope=owned&steps=true")
 	if err != nil {
@@ -98,10 +89,7 @@ func TestTheGraphNamesTheTermsItHandsToTheClient(t *testing.T) {
 	}
 }
 
-// `repositories` is applied by the server nowhere and by the browser nowhere, and `ViewSpec.cs`
-// serializes it into a shareable link. Measured on a crawled organization: the graph answered 2,640
-// nodes with and without it. A term in neither category is the defect the other two categories
-// exist to make impossible.
+// `repositories` is applied neither by the graph server path nor by the browser.
 func TestTheGraphRefusesATermNobodyApplies(t *testing.T) {
 	spec, err := Parse("repositories=octo-org/app")
 	if err != nil {

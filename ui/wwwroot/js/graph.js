@@ -1,11 +1,7 @@
 /**
  * The WebGL dependency graph: lifecycle, filtering and selection.
  *
- * The decisions this file used to make itself now live beside their own tests: what belongs
- * with what in topology.js, how it looks in appearance.js, where it settles in forces.js.
- *
- * Switching view changes only the target radius, never the angle, so nodes travel along a ray
- * and stay trackable. That is what makes a switch read as re-orientation rather than reshuffle.
+ * Topology, appearance, and forces live in separate modules with their own tests.
  */
 
 import { instances } from './state.js';
@@ -36,18 +32,8 @@ export {
 };
 export { gravityForce, spreadFor } from './forces.js';
 
-// WebGL rendering for the ABOM dependency graph.
-//
-// One renderer, two modes: 3D, and 2D as the same WebGL scene constrained to a plane. A single
-// code path is what makes it worth investing in labels, picking and projection.
-//
-// One node set, one *semantic* force at a time. Structural forces (link, charge) are always on
-// and come from the edges. A semantic force is a positional constraint derived from a metric,
-// and only ever one is active: if position encoded two things at once you could not tell whether
-// a node sits at the center because it is urgent or because it is popular.
-//
-// Switching view changes only the target radius, never the angle, so nodes travel along a ray
-// and stay trackable. That is what makes a switch read as re-orientation rather than reshuffle.
+// One renderer covers 3D and the 2D plane; one semantic force is active at a time so position has
+// exactly one meaning.
 
 
 
@@ -78,17 +64,13 @@ export { gravityForce, spreadFor } from './forces.js';
 // ---------------------------------------------------------------------------
 
 /**
- * Fetches the whole corpus straight from the API.
- *
- * Deliberately not routed through .NET: the payload is megabytes of JSON, and deserialising it
- * into the WASM heap only to hand it straight back to JavaScript would cost more than the
- * request does.
+ * Fetches the whole corpus directly from the API to avoid copying megabytes through .NET WASM.
  */
 export async function loadFull(elementId, url, force) {
     const it = instances.get(elementId);
     if (!it) return null;
 
-    // A forced load is how a client recovers when its delta cursor is too old to honor.
+    // Forced load recovers when the delta cursor is too old to honor.
     if (force) delete it.cache[url];
     const cached = !!it.cache[url];
 
@@ -96,8 +78,6 @@ export async function loadFull(elementId, url, force) {
         const res = await fetch(url);
         if (!res.ok) throw new Error(`${url} responded ${res.status}`);
         const data = await res.json().catch(err => {
-            // A truncated or non-JSON body reads as a parse error against whatever the browser
-            // guessed it was loading, which says nothing about the request that produced it.
             console.error(`abom: ${url} did not return usable JSON`, err);
             throw err;
         });
@@ -112,15 +92,11 @@ export async function loadFull(elementId, url, force) {
         for (const e of data.edges) {
             const s = byKey.get(e.source), t = byKey.get(e.target);
             if (!s || !t) continue;
-            // Classified once here rather than per frame, and recorded on both ends so that
-            // filtering by relationship is a set lookup. The store's answer wins where it has
-            // one, so the view and the bill of materials cannot disagree.
+            // Classify once and record on both ends so relationship filtering is a set lookup.
             e.cls = boundaryClass(e.boundary, s, t);
             s.edgeClasses.add(e.cls);
             t.edgeClasses.add(e.cls);
-            // Reference style is a property of the edge, but readers filter on nodes, so it is
-            // summarized onto both ends. Lexical only: whether a reference is *safe* is a
-            // query's verdict, never this file's.
+            // Reference style is lexical and summarized onto both endpoint nodes for filters.
             for (const ref of e.refs) {
                 const style = SHA.test(ref) ? 'sha' : 'tag';
                 s.refStyles.add(style);
@@ -140,8 +116,7 @@ export async function loadFull(elementId, url, force) {
         }
         it.cache[url] = {
             nodes: data.nodes, links, degree, rules: [...rules].sort(),
-            // Which generation this copy reflects. Zero means unknown, which is only true
-            // before the page has asked.
+            // Zero means generation unknown before the page asks.
             generation: 0,
         };
     }
@@ -156,8 +131,6 @@ export async function loadFull(elementId, url, force) {
         nodes: it.all.nodes.length,
         edges: it.all.links.length,
         rules: it.all.rules,
-        // Served from a previous visit, positions and all, so the caller knows to catch up on
-        // whatever arrived while it was away rather than trusting what it just got.
         cached,
         generation: it.all.generation || 0,
     };
@@ -171,21 +144,16 @@ export function setGeneration(elementId, generation) {
 
 const linkKey = e => `${e.source}\u0000${e.target}`;
 
-// force-graph rewrites an endpoint from a key to the node object once it has drawn, so a removal
-// arriving mid-session sees either shape.
+// force-graph rewrites endpoints from keys to node objects once drawn.
 const endpointKey = end => (end && typeof end === 'object' ? end.key : end);
 
-// The facts the server reports as either shared by every relationship behind a line or mixed.
-// Merging has to reach the same answer, or a line the server would call mixed is drawn asserting
-// one of its relationships' facts as the pair's.
+// Facts that can be shared by every relationship behind a merged line, or mixed.
 const EDGE_FACTS = ['kind', 'boundary', 'refStyle', 'advisoryRoute', 'findingRoute', 'ownedDepth'];
 
 /**
  * Drops the relationships a delta removed, and reports whether any are left to draw.
  *
- * A line stands for every relationship between its endpoints, so removing one of three leaves the
- * line and two relationships. Its references cannot follow: the payload carries them per line
- * rather than per relationship, so a removed reference stays on screen until the next full load.
+ * A line stands for every relationship between its endpoints; per-line references refresh on full load.
  */
 function survivesRemoval(edge, gone) {
     if (!gone.size || !edge.keys || !edge.keys.length) return true;

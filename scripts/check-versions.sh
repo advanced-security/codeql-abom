@@ -2,10 +2,7 @@
 #
 # Asserts that every version naming the same thing says the same thing.
 #
-# Exact pinning is the rule here, which means an upstream version is written in three places:
-# a suite's `from: ... version:`, the owning pack's `dependencies:`, and codeql-pack.lock.yml.
-# `codeql pack upgrade` rewrites the last two and does NOT touch a version inside a .qls, so an
-# upgrade that looks clean can leave the suites pinned to a version nothing else uses.
+# Exact pins appear in suites, manifests and lock files; all three must agree.
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
@@ -19,8 +16,7 @@ note() {
 cli=$(tr -d '[:space:]' <.codeql-version)
 cli=${cli#v}
 
-# A pack tracks the CLI it is compiled for. A pre-release attaches to the upcoming version, so
-# `2.26.5-next.1` is fine while the CLI is 2.26.4; anything else is drift.
+# Packs track the CLI version; pre-release `*-next.*` builds are allowed.
 for manifest in ql/*/lib/codeql-pack.yml ql/*/*/src/codeql-pack.yml ql/*/*/test/codeql-pack.yml; do
 	[ -e "$manifest" ] || continue
 	version=$(awk '/^version:/ {print $2; exit}' "$manifest")
@@ -30,8 +26,7 @@ for manifest in ql/*/lib/codeql-pack.yml ql/*/*/src/codeql-pack.yml ql/*/*/test/
 	esac
 done
 
-# Every `from:`/`version:` pair in a suite must match the dependency pin of the pack that owns
-# the suite, and the lock file that pack resolved.
+# Suite pins must match the owning pack and its lock file.
 while IFS= read -r suite; do
 	pack_dir=$suite
 	while [ "$pack_dir" != "." ] && [ ! -f "$pack_dir/codeql-pack.yml" ]; do
@@ -42,9 +37,7 @@ while IFS= read -r suite; do
 		continue
 	fi
 
-	# `from:` names the pack and the `version:` on the following line pins it. Read through
-	# process substitution, not a pipe: a pipe runs the loop in a subshell and `fail` never
-	# escapes it, so every mismatch would be reported and then exit 0.
+	# Process substitution keeps `fail` in this shell.
 	while read -r from version; do
 		declared=$(awk -v p="$from:" '$1 == p {print $2; exit}' "$pack_dir/codeql-pack.yml")
 		if [ -z "$declared" ]; then
@@ -61,9 +54,7 @@ while IFS= read -r suite; do
 	              /^[[:space:]]*version:/ && from != "" {print from, $2; from=""}' "$suite")
 done < <(find ql -name '*.qls')
 
-# ql-mcp is released with each CodeQL, and its tool packs depend on that release's libraries. A
-# session and ABOM's own PrintAST read fixtures through them, so they move with the CLI; a pin left
-# behind is a query written against one library and run against another.
+# ql-mcp tool packs move with the CodeQL CLI.
 tools=$(grep -o 'toolsPackName + "@[0-9][0-9.]*"' internal/runner/printast.go | grep -o '[0-9][0-9.]*')
 if [ "$tools" != "$cli" ]; then
 	note "internal/runner/printast.go pins ql-mcp's tool pack at ${tools:-nothing}, but .codeql-version is $cli"
@@ -73,7 +64,7 @@ if [ "$qlmcp" != "$cli" ]; then
 	note "internal/harness/copilot.go starts ql-mcp ${qlmcp:-nothing}, but .codeql-version is $cli"
 fi
 
-# The operator's pack is scaffolded against the actions library ABOM's own queries run.
+# The operator's pack is scaffolded against ABOM's actions library.
 lib=$(awk '$1 == "codeql/actions-all:" {print $2; exit}' ql/actions/lib/codeql-pack.yml)
 scaffold=$(grep -o 'ActionsAll = "[0-9][0-9.]*"' internal/customql/customql.go | grep -o '[0-9][0-9.]*')
 if [ "$scaffold" != "$lib" ]; then

@@ -306,9 +306,8 @@ func (h *harness) run(limit int) Stats {
 
 // enqueue puts items in the queue and declares their accounts.
 //
-// A directly enqueued item is a root, and since 2026-09-07 roots come from the declared scope —
-// `SeedFrontier` produces nothing else. Declaring here is what this helper always meant by "a
-// repository under review"; use enqueueUnowned to queue something deliberately outside it.
+// A directly enqueued item is a root. Declaring here is what this helper means by "a repository
+// under review"; use enqueueUnowned to queue something deliberately outside it.
 func (h *harness) enqueue(items ...frontier.Item) {
 	h.t.Helper()
 	h.own(items...)
@@ -511,9 +510,7 @@ func TestExpandDoesNotQueueLocalReferencesAsNewRepositories(t *testing.T) {
 }
 
 // A composite action's own steps run inside whoever calls the action, so what they pull in has
-// to be followed. Requiring some *other* repository to reference the container first dropped
-// these: on the real corpus 93 runtime dependencies were never analyzed, including
-// chef/common-github-actions' azure-login pulling lancemccarthy/akeyless-action.
+// to be followed.
 //
 // Following is a separate question from how they are labeled, which is why this asserts only
 // that they are queued.
@@ -651,8 +648,7 @@ func TestSweepIsIdempotent(t *testing.T) {
 }
 
 // Enqueue may only ever strengthen a classification, so tightening the rule cannot on its own
-// correct a row an older, looser rule already labeled runtime. On the reference corpus 254 rows
-// were stuck that way, and re-crawling would not have moved one of them.
+// lower a stale runtime label.
 func TestReclassifyingCorrectsALabelAnOlderRuleLeftBehind(t *testing.T) {
 	h := newHarness(t)
 	h.enqueue(item("octo", "composite", "", 1))

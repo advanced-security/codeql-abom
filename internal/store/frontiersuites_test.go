@@ -45,10 +45,8 @@ func TestAnAnalyzedRowNamesTheSuitesThatProducedIt(t *testing.T) {
 	}
 }
 
-// 1,555 of 1,707 runs on the real corpus were recorded before pack identity existed, so most
-// analyzed rows can name nothing. That is *not known*, and must stay distinguishable from a row
-// analyzed with no suites at all — the same rule that stops an unmeasured node being drawn at the
-// smallest radius.
+// A row analyzed before pack identity existed can name nothing. That is unknown, not an empty
+// suite set.
 func TestARowAnalyzedBeforePackIdentityNamesNothingRatherThanClaimingNoSuites(t *testing.T) {
 	s := newTestStore(t)
 	seedAnalyzedRow(t, s, "actions/cache", "", "actions", "cache", "beef5678")

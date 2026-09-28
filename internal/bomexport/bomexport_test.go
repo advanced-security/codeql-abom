@@ -118,8 +118,7 @@ func TestSPDXProducesA23DocumentWithEveryComponent(t *testing.T) {
 	}
 }
 
-// SPDX has no field for "we did not look at this", so it goes in a comment rather than being
-// silently dropped. A format's limits are not a license to omit the measurement.
+// SPDX has no field for "we did not look at this", so it goes in a comment.
 func TestSPDXStatesCoverageRatherThanImplyingCompleteness(t *testing.T) {
 	out, err := SPDX(sample())
 	if err != nil {
@@ -131,9 +130,7 @@ func TestSPDXStatesCoverageRatherThanImplyingCompleteness(t *testing.T) {
 }
 
 // SPDX element ids allow only letters, digits, `.` and `-`, so two different components can
-// reduce to one id. `actions/upload-artifact/merge` and `actions/upload-artifact-merge` did
-// exactly that on the reference corpus. Two packages sharing an id makes the document invalid,
-// and silently merging two dependencies into one is worse than that.
+// reduce to one id.
 func TestTwoComponentsNeverShareAnSPDXIdentifier(t *testing.T) {
 	doc := store.BOM{
 		Roots:       []string{"octo-org/app"},

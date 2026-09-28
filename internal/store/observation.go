@@ -55,13 +55,8 @@ type StoredObservation struct {
 
 // AddObservations records what a query said, returning how many rows were written.
 //
-// A statement already on record is not written again, whichever run made it: the row is keyed on
-// the fact and its value, so re-analysis at a new commit refreshes attribution rather than adding
-// a copy. Until 2026-09-11 the key led with the run, and this comment promised the opposite of
-// what the table did — the reference corpus had accumulated 3.38 copies of the average fact.
-//
-// Two runs that state *different* values are two statements and both are kept, because choosing
-// between them is a judgement this layer does not make.
+// A statement already on record is refreshed rather than duplicated.
+// Runs that state different values are both kept; choosing a winner is not this layer's job.
 func (s *Store) AddObservations(runID int64, obs []Observation) (int, error) {
 	if len(obs) == 0 {
 		return 0, nil

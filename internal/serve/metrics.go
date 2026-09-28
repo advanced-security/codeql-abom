@@ -7,11 +7,8 @@ import (
 	"time"
 )
 
-// latencyBucketsMillis are the upper bounds of the fixed histogram, in milliseconds.
-//
-// Fixed rather than computed: an exact percentile needs every sample retained, which is an
-// unbounded allocation on the request path. These bounds bracket the measured spread of this
-// server — most endpoints answer under 10 ms and the graph and queue answer near 700 ms.
+// latencyBucketsMillis are fixed histogram bounds, in milliseconds.
+// Fixed buckets avoid retaining every request sample for exact percentiles.
 var latencyBucketsMillis = []int64{1, 5, 10, 50, 100, 500, 1000, 5000}
 
 // unmatchedRoute buckets requests no pattern claimed. Keying those on the URL would open a bucket
@@ -31,9 +28,7 @@ type RouteStat struct {
 	TotalMillis int64 `json:"totalMillis"`
 	MaxMillis   int64 `json:"maxMillis"`
 	Bytes       int64 `json:"bytes"`
-	// MarshalMillis separates encoding from everything else. Measured 2026-09-11 at 1.4% of
-	// `/api/graph/full` and absent from `/api/frontier`, against 96% and 60% in `sqlite3_step`
-	// under cgo — so this exists to notice if that stops being true, not because it costs today.
+	// MarshalMillis separates encoding from everything else so payload growth is visible.
 	MarshalMillis int64 `json:"marshalMillis"`
 	// MarshalKnown separates "encoded nothing" from "encoded instantly". A pprof page, a UI asset
 	// and a 404 all answer without marshaling, and reporting 0 ms for them asserts a measurement

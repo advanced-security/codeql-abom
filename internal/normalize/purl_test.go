@@ -6,8 +6,6 @@ import "testing"
 // does not merge with the package GitHub already holds — it arrives beside it as a duplicate that
 // nothing consumes, behind a submission that still returns 201.
 func TestPackageURLMatchesWhatGitHubEmits(t *testing.T) {
-	// Observed 2026-09-08 in the exports of advanced-security/dismiss-alerts,
-	// codeql-abom-test1 and codeql-abom-test2.
 	cases := []struct {
 		name                   string
 		owner, repo, path, ref string
@@ -64,8 +62,7 @@ func TestPackageURLMatchesWhatGitHubEmits(t *testing.T) {
 }
 
 // The rule behind the observations: strip the `v`, then pad the missing semantic version
-// components with wildcards. `vN.M` is not published as a tag by any action in the corpus, so it
-// is covered by the rule rather than by a measurement — which is why it is stated here.
+// components with wildcards.
 func TestAMajorMinorReferencePadsOnlyThePatch(t *testing.T) {
 	if got := PackageURL("acme", "widget", "", "v2.3"); got != "pkg:githubactions/acme/widget@2.3.%2A" {
 		t.Errorf("PackageURL = %q, want the patch wildcarded", got)
@@ -77,8 +74,7 @@ func TestAMajorMinorReferencePadsOnlyThePatch(t *testing.T) {
 // `./.github/actions/build-app` and GitHub's export contains no package for it.
 //
 // Owner and repo are populated deliberately: a local action resolves to a real repository, so the
-// reference is what must suppress the package. An earlier version of this test left them empty and
-// passed because of that, never reaching the branch it claimed to cover.
+// reference is what must suppress the package.
 func TestALocalActionHasNoPackageURL(t *testing.T) {
 	for _, ref := range []string{"", "./", "./.github/actions/build-app"} {
 		if got := PackageURL("advanced-security", "codeql-abom-test1", "", ref); got != "" {

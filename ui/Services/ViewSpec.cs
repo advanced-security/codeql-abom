@@ -6,19 +6,8 @@ namespace Abom.WebAssembly.Services;
 /// <summary>
 /// The predicate half of a view: which nodes and edges an operator is asking about.
 ///
-/// <para>
-/// Presentation — grouping, collapse, 3D, selection, the neighborhood walk — is deliberately not
-/// here. A gate that carried a <c>use3d</c> field would have to ignore it, and a change to what is
-/// selected must not hide behind a change to how it is drawn.
-/// </para>
-/// <para>
-/// The canonical form is the query string, and it has to be byte-identical to what Go's
-/// <c>internal/view</c> writes, because the same text is read by the browser and by the API.
-/// </para>
-/// <para>
-/// A record, so a caller changing one term writes `with` rather than re-listing the other sixteen
-/// — which is how a term added later gets silently dropped by whoever forgot to copy it.
-/// </para>
+/// <para>Presentation choices stay outside this predicate so API and gate terms stay identical.</para>
+/// <para>The canonical query string must match Go's <c>internal/view</c> form byte-for-byte.</para>
 /// </summary>
 public sealed record ViewSpec
 {
@@ -39,10 +28,7 @@ public sealed record ViewSpec
 
     public string Severity { get; init; } = "";
 
-    /// <summary>
-    /// Bands of the rule's own security score, as code scanning bands it. Apart from
-    /// <see cref="Severity"/>, the level a result reported, which spans critical and medium alike.
-    /// </summary>
+    /// <summary>Security score bands from the rule, distinct from each result's reported severity.</summary>
     public IReadOnlyList<string> SecuritySeverities { get; init; } = [];
 
     /// <summary>
@@ -50,10 +36,7 @@ public sealed record ViewSpec
     /// </summary>
     public IReadOnlyList<string> AdvisorySeverities { get; init; } = [];
 
-    /// <summary>
-    /// Asks about what a repository reaches, directly or through another dependency, rather than
-    /// where a finding was found.
-    /// </summary>
+    /// <summary>Asks what a repository reaches, not where a finding was found.</summary>
     public IReadOnlyList<string> Reached { get; init; } = [];
 
     /// <summary>Other policies, by name; a policy carrying them refuses what any of them refuses.</summary>
@@ -74,19 +57,10 @@ public sealed record ViewSpec
     public string RefStyle { get; init; } = "";
     public string Boundary { get; init; } = "";
 
-    /// <summary>
-    /// The analysis shape the databases behind an answer were built in. Empty is <c>regular</c>,
-    /// so a reader who never spells it keeps the totals they always had. There is deliberately no
-    /// word here for both at once: a union across shapes is a decision something makes on
-    /// purpose, never something a shared link carries.
-    /// </summary>
+    /// <summary>Analysis shape for the databases behind the answer; empty is <c>regular</c>.</summary>
     public string Mode { get; init; } = "";
 
-    /// <summary>
-    /// Repositories carrying this custom property, which is how a business unit or an application
-    /// is named. The key travels with the value: carrying the value alone filtered by whichever
-    /// property each server happened to be configured with, so one shared link asked two questions.
-    /// </summary>
+    /// <summary>Repositories carrying this custom property key and value.</summary>
     public IReadOnlyList<PropertyMatch> Properties { get; init; } = [];
 
     /// <summary>
@@ -142,10 +116,7 @@ public sealed record ViewSpec
     // Only the first one divides, so a value may contain it; GitHub property names cannot.
     private const char PropertySeparator = ':';
 
-    // The terms whose values are fixed in code rather than read from the corpus, mirroring
-    // `internal/view`. An unrecognized one used to be kept and then filter nothing: the server's
-    // `boundaryFilter` drops a value it does not know rather than letting it reach the SQL, and
-    // `scopeFilter` falls through to no scope at all.
+    // Fixed vocabularies mirror `internal/view`; unknown values must be refused before SQL.
     private static readonly Dictionary<string, string[]> Vocabulary = new()
     {
         [ParamScope] = ["owned", "exposure"],

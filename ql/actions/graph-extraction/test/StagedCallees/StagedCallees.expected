@@ -1,0 +1,4 @@
+| ./.github/actions/helper | .github/actions/helper/action.yml |
+| vendor/comp | .github/actions/external/vendor/comp/action.yml |
+| vendor/js | unresolved |
+| vendor/rw/.github/workflows/reuse.yml | .github/workflows/external/vendor/rw/.github/workflows/reuse.yml |

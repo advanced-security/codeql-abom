@@ -56,14 +56,7 @@ func migrated(t *testing.T, opts Options) *Store {
 	return s
 }
 
-// An index declared in the DDL and absent from the database is not an index.
-//
-// `CreateIndexes` runs once after a bulk load, and only the seed build calls it, so an index added
-// to `indexDDL` never reached a database that already existed. Measured 2026-09-15 on the crawled
-// organization: 20 of 22 declared indexes were missing, including `idx_edge_dst`, which is why
-// every per-node reference lookup scanned all 14,196 edges and the Inventory took 2.7 s. Two
-// indexes had already been special-cased onto the migrate path, each with a comment naming this
-// same cause; this asserts it for all of them instead.
+// Migration must build every declared index, including indexes added after database creation.
 func TestMigrateBuildsEveryDeclaredIndexWhenNotBulkLoading(t *testing.T) {
 	s := migrated(t, Options{})
 	present := presentIndexes(t, s)

@@ -28,14 +28,29 @@ func TestTheCorpusHasAFullyCoveredRepository(t *testing.T) {
 			t.Errorf("%s = %q, want %q", workflow, got, Covered)
 		}
 	}
-	if _, ok := lock.Selected(".github/workflows/ci.yml", "actions/checkout@v4"); !ok {
+	if _, ok := lockedDigest(lock, ".github/workflows/ci.yml", "actions/checkout@v4"); !ok {
 		t.Error("no selection for a reference the lockfile covers")
 	}
 }
 
-// Coverage is per workflow, and a repository can hold both states at once. `gh actions-lock`
-// v0.1.6 skips any workflow containing a local `./` action -- "local path actions are not yet
-// supported" -- so the uncovered half of this fixture is what the tool itself produces.
+// lockedDigest is the digest a workflow's pin selects, read the way ingestion reads it.
+func lockedDigest(lock Lock, workflow, pin string) (string, bool) {
+	pinned := false
+	for _, wp := range lock.WorkflowPins() {
+		pinned = pinned || (wp.Path == workflow && wp.Pin == pin)
+	}
+	if !pinned {
+		return "", false
+	}
+	for _, d := range lock.Dependencies() {
+		if d.Pin == pin && d.Digest != "" {
+			return d.Digest, true
+		}
+	}
+	return "", false
+}
+
+// Coverage is per workflow, and a repository can hold both states at once.
 func TestTheCorpusHasARepositoryCoveredOnlyInPart(t *testing.T) {
 	lock := corpusRepo(t, "lockedcorp", "partial-adoption")
 	if lock.Coverage != Covered {
@@ -50,13 +65,8 @@ func TestTheCorpusHasARepositoryCoveredOnlyInPart(t *testing.T) {
 	}
 }
 
-// The fixture selection work needs: a lockfile that covers a reference and selects a *different*
-// commit than resolving the tag would. No tool can produce a stale lock on demand, so this one is
-// assembled -- but from real values. `actions/checkout@v4` pointed at v4.2.2's commit
-// (11bd7190) before it moved to v4.4.0's (11d5960), and this records the former.
-//
-// This is the only lockfile in the corpus that the pinned CLI did not generate. If it ever agrees
-// with live resolution, the fixture has stopped testing anything and must be re-staled.
+// The fixture selection work needs a lockfile that covers a reference and selects a different
+// commit than resolving the tag would.
 func TestTheCorpusHasALockThatSelectsAnOlderCommitThanItsTag(t *testing.T) {
 	const (
 		staleCommit = "11bd71901bbe5b1630ceea73d27597364c9af683" // actions/checkout v4.2.2
@@ -66,7 +76,7 @@ func TestTheCorpusHasALockThatSelectsAnOlderCommitThanItsTag(t *testing.T) {
 	if lock.Coverage != Covered {
 		t.Fatalf("coverage = %q, want %q", lock.Coverage, Covered)
 	}
-	got, ok := lock.Selected(".github/workflows/ci.yml", "actions/checkout@v4")
+	got, ok := lockedDigest(lock, ".github/workflows/ci.yml", "actions/checkout@v4")
 	if !ok {
 		t.Fatal("no selection; the fixture exists to have one")
 	}

@@ -1,7 +1,9 @@
 # One database per owned repository, holding its whole closure
 
-**Status:** An investigation with a measured spike and no implementation. The resolution mechanism
-is understood and reproduced; the cost is not measured and may not pay.
+**Status:** An investigation with a measured spike and no staging. Only composite actions and
+reusable workflows need staging, none of them collide on the crawled organization, and the cost is
+not measured and may not pay. How staging works and fails is the `stage-codeql-actions-callees`
+skill.
 
 ## Why this exists
 
@@ -80,51 +82,54 @@ so its own relative references have nothing to resolve against.
 the same dependency cannot both be staged. References are ignored entirely — `@v1` against `@v9`
 makes no difference to resolution.
 
-Rooting the closure at an **owned repository** is what makes that survivable. Within one
-repository's closure a dependency usually appears at one reference, and where it does not the
-collision is inside a single owned repository, nameable and reportable, rather than a corpus-wide
-approximation. This is why the closure is not rooted at any seed and is not configurable: an owned
-repository is also the unit a person can act on, and the unit
-[`api/query-simulation.md`](../api/query-simulation.md) needs when it compares a run's results with
-the alerts a published pack would raise.
+Rooting the closure at an **owned repository** is what makes that survivable. A collision is inside
+a single owned repository, nameable and reportable, rather than a corpus-wide approximation. This is
+why the closure is not rooted at any seed and is not configurable: an owned repository is also the
+unit a person can act on, and the unit [`api/query-simulation.md`](../api/query-simulation.md) needs
+when it compares a run's results with the alerts a published pack would raise.
 
-The collision test must count **selected commits**, not only distinct requested refs. Native
-lock-aware selection, [now built](../../docs/architecture.md#locks), is a prerequisite: a
-workflow can lock an older SHA than its tag currently names, and different contexts can select
-different SHAs behind identical ref text. A native lockfile does not enlarge CodeQL's staging
-namespace. Any distinct selected revisions of one repository inside a proposed database remain a
-collision to report or refuse, not a choice to make by last-write order.
+The collision test counts **selected commits of staged callees**, not requested refs, and not every
+action: only a composite action or a reusable workflow is a callable, so a JavaScript or Docker
+action is never staged and cannot collide. A workflow can lock an older SHA than its tag names, and
+different contexts can select different SHAs behind identical ref text; a native lockfile does not
+enlarge the namespace. Distinct selected commits of one staged callee are refused, never chosen by
+write order.
 
-**The whole-account variant is refused for the same reason.** One database over every repository
-would have to collapse **132 of 225** dependencies to a single reference each, and a graph
-projection built on that is wrong for more than half its rows. The cost argument never justified it
-either: the database build is **20.3% of a repository's cost**, and the per-repository read that
-actually scales with the organization is the code-scanning probe, which this changes not at all.
+### What the collision measurement found
+
+Measured on the crawled organization (no locks; 28 owned repositories, 17 with a closure) over the
+submission closure, with a callee counted as composite when the crawl recorded steps inside it:
+**4 (owned, reached) pairs are composite actions or reusable workflows, and 0 of them select two
+commits**, per owned repository and organization-wide alike. Counting every action instead gave 16
+of 112 colliding, almost all `actions/checkout@v3` beside `@v4` — actions that are never staged.
+
+That proxy undercounts: the graph records a composite only when it has a `uses:` step. Staging reads
+`runs.using` from the selected commit's `action.yml` instead.
+
+**The whole-account variant is not refused on collisions.** Its old figure, 132 of 225 dependencies
+collapsed, counted every action. What gates it is that `getRepoRoot()` is global: several owned
+trees in one database resolve `./` references across one another. On the crawled organization 1
+local callable path is shared by two owned repositories — two root `action.yml` files — and no
+locally called reusable workflow collides. It is admissible only where that measures zero, and
+cheaper per organization because each staged callee is extracted once. Cost never decided it: the
+database build is **20.3% of a repository's cost**, and the read that scales with the organization,
+the code-scanning probe, is unchanged either way.
 
 ## Pending
 
-0. **Measure the collision rate, before anything is built.** Within one owned repository's closure,
-   how many dependencies select more than one commit across their governing workflow/lock contexts?
-   Count unresolved selection separately; reference spelling alone is insufficient. This decides
-   whether the whole shape is sound, and **the honest outcome may be that it stops here**. The
-   contextual selection it counts is [recorded](../../docs/architecture.md#locks):
-   each consumer's lock at the analyzed commit, its DAG, and a frontier row at every commit a
-   lock selects. No lock generation belongs inside this plan.
 1. **Measure what a closure costs to extract.** Fewer databases is not less extraction: every owned
    repository re-extracts its whole closure, and closures overlap heavily because every repository
    uses `actions/checkout`. [`db/checkout-cache.md`](../db/checkout-cache.md) removes the fetch
    cost and removes none of the extraction cost. Compare total extraction time against the sum of
    the per-repository times it does *not* replace — this is an addition, not a substitution.
    **A saving is not the justification and never was; the justification is the seven-step path.**
-   Depends on 0.
-2. **Stage the closure.** The owned repository's own tree at the source root, every member of its
-   closure at `.github/actions/external/${owner}/${repo}/`, and reusable workflows at
-   `.github/workflows/external/${nwo}/.github/workflows/`. Consume the effective, context-bound
-   closure rather than a second selector. `store.SubmissionClosure` currently joins through one
-   frontier `resolved_sha`; that is not sufficient for two consumers locking the same ref
-   differently. Stage the selected commits on cache misses as well as hits. Depends on 1, the
-   [effective selection](../../docs/architecture.md#locks) the submission closure already follows and the existing checkout
-   cache.
+   Measure it with only composite actions and reusable workflows staged.
+2. **Stage the closure.** The owned repository's own tree at the source root; each composite action
+   the submission closure reaches at `.github/actions/external/${owner}/${repo}/`, and each reusable
+   workflow at `.github/workflows/external/${nwo}/.github/workflows/`, at the commit that closure
+   selects. Nothing else is staged. A member is composite when its checked-out `action.yml` says
+   `runs.using: composite`. Two selected commits of one staged callee refuse the database, naming
+   both. Stage on cache misses as well as hits. Depends on 1 and the existing checkout cache.
 3. **Index it.** Append a recursive workflow include to `LGTM_INDEX_FILTERS` rather than replacing
    the defaults — the extractor's `autobuild.sh` concatenates a provided value after its own, so a
    replacement would drop `**/action.yml` and silently lose every composite action. Depends on 2.
@@ -210,9 +215,8 @@ should be read as the workaround it is.
 
 ## Verification
 
-- **The collision measurement is taken and written down before item 2 begins**, including the case
-   where it says the shape does not work. Cover identical requested tags with different selected
-   commits, not only different tag names.
+- Staging counts collisions over the composite actions and reusable workflows it stages, at their
+  selected commits, and refuses a database with any.
 - Node, edge, reach, bill-of-materials component, submission-closure and pinning totals are
   **byte-identical** before and after, because every row this writes is `extended` and every
    aggregate reads `regular`. Take the baseline after lock-aware resolution has landed, so its
@@ -220,9 +224,11 @@ should be read as the workaround it is.
    `sqlite3 abom.db ".backup .abom/before.db"`; `cp` does not read the WAL.
 - Keys produced through a closure database are byte-identical to the keys the per-repository path
   produces for the same repository and commit. Any divergence is named, not reconciled.
-- The spike's fixture is checked in as a query test and repeated at corpus scale: a staged callee
-  resolves and taints its `run:`; a bare-staged one is refused; a `reusable_workflows/`-staged one
-  is refused; a tree with no workflow is anchored and then resolves.
+- `ql/actions/graph-extraction/test/StagedCallees` holds the resolution rules: a staged composite
+  and reusable workflow resolve, a staged JavaScript action does not. Repeat at corpus scale with
+  `database create`, which alone applies the index filters: a staged callee taints its `run:`; a
+  bare-staged one is refused; a `reusable_workflows/`-staged one is refused; a tree with no workflow
+  is anchored and then resolves.
 - A finding from a closure database attaches to a node in the repository that really holds the file
   it was reported in — the un-staging is verified by attribution, not by string inspection.
 - Extraction and evaluation time for one closure, against the sum of the per-repository times it

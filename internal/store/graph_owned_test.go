@@ -2,10 +2,7 @@ package store
 
 import "testing"
 
-// The Explorer arrives showing the whole corpus, which at 56,830 nodes is a hairball nobody can
-// follow an edge through. The scope that fixes it is the one the operator already declared, and it
-// has to be the same closure the crawl is bounded by and pruning acts on, or the picture and the
-// removal disagree about what is in scope.
+// Owned scope must match the closure the crawl is bounded by and pruning acts on.
 func TestTheOwnedScopeKeepsWhatTheDeclarationReaches(t *testing.T) {
 	g, err := subgraphFixture(t).FullGraph(FullGraphOptions{
 		Scope: ScopeOwned, Closure: []string{"octo-org/app"},
@@ -64,9 +61,7 @@ func TestTheOwnedScopeKeepsOnlyEdgesBetweenNodesItKept(t *testing.T) {
 	}
 }
 
-// Declaring nothing must show nothing. Falling back to the whole corpus is the conflation this
-// scope exists to end: it teaches a new operator that ABOM works before ownership is claimed, and
-// it is the same unearned answer pruning refuses to act on against an empty closure.
+// Declaring nothing must show nothing; an empty closure is not the whole corpus.
 func TestTheOwnedScopeShowsNothingWhenNothingIsDeclared(t *testing.T) {
 	g, err := subgraphFixture(t).FullGraph(FullGraphOptions{Scope: ScopeOwned})
 	if err != nil {

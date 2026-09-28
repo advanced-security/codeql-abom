@@ -118,8 +118,8 @@ func TestAnAccountGhAnsweredWithoutIsContradicted(t *testing.T) {
 	}
 }
 
-// GitHub treats account names case-insensitively, and 7 accounts in the reference corpus spell
-// themselves both ways. A case-sensitive compare would report a confirmed account as contradicted.
+// GitHub treats account names case-insensitively. A case-sensitive compare would report a
+// confirmed account as contradicted.
 func TestDeclarationStateComparesAccountNamesCaseInsensitively(t *testing.T) {
 	account := DeclaredAccount{Owner: "ACME", Kind: AccountOrganization, Enabled: true}
 	v := Verification{Login: "operator", Accounts: []Account{{Owner: "acme", Role: RoleAdmin}}}

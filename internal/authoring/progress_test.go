@@ -47,7 +47,7 @@ func progressUnder(t *testing.T, root, id, cli string, printed store.AuthoringAS
 	return by
 }
 
-// failedFirstOver is an earlier version's run over these fixtures that missed a marked result.
+// failedFirstOver is a run over these fixtures that missed a marked result.
 func failedFirstOver(t *testing.T, root, id string) store.QueryTest {
 	t.Helper()
 	q, _, err := Find(root, id)
@@ -240,8 +240,8 @@ func TestAPassForTestsThatHaveSinceChangedIsAWarning(t *testing.T) {
 	}
 }
 
-// A pass shows a query agrees with its tests. Only a failure of an earlier version over the same
-// fixtures, on a result they mark, shows the tests could have caught a query that disagreed.
+// A pass shows a query agrees with its tests. Only a failure over the same fixtures, on a result
+// they mark, shows the tests could have caught a query that disagreed.
 func TestAPassIsEvidenceOnlyOnceTheSameFixturesWereSeenFailingForAMarkedResult(t *testing.T) {
 	root := workspace(t, map[string]string{"A": "acme/a"})
 	q, digest := mustVersion(t, root, "acme/a")
@@ -311,8 +311,7 @@ func TestEvidenceFromAnotherCodeQLReadsAsStale(t *testing.T) {
 	}
 }
 
-// A server that cannot read which CodeQL it runs cannot say anything on record is current, and a
-// result kept before ABOM recorded the CodeQL is not thereby the current one.
+// A server that cannot read which CodeQL it runs cannot say anything on record is current.
 func TestAnUnreadableCodeQLLeavesNothingOnRecordCurrent(t *testing.T) {
 	root := workspace(t, map[string]string{"A": "acme/a"})
 	q, digest := mustVersion(t, root, "acme/a")

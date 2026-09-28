@@ -39,8 +39,8 @@ func (c *HTTPCache) Lookup(url string) (string, []byte, bool) {
 
 // Save records a validator and the answer it belongs to, replacing whatever the URL held before.
 func (c *HTTPCache) Save(url, etag string, body []byte) {
-	// Deliberately unchecked: see the type comment. A write that fails leaves the next read
-	// unconditional, which is correct and merely costs what it used to.
+	// Deliberately unchecked: see the type comment. A write failure leaves the next read
+	// unconditional, which is correct and only costs an uncached request.
 	_, _ = c.s.db.Exec(`
 INSERT INTO abom_http_cache (url, etag, body, stored_at) VALUES (?, ?, ?, ?)
 ON CONFLICT(url) DO UPDATE SET

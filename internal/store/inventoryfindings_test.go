@@ -204,11 +204,7 @@ func TestInventoryFindingTermsDescribeOneFinding(t *testing.T) {
 	}
 }
 
-// A findings term that matches nothing among the kinds on screen answers zero, and on the real
-// corpus that is the *normal* case for the most important rule there is: all 277
-// `actions/unpinned-tag` findings sit on `step` and `job` nodes, which are implementation detail
-// and stay out of the default five. Zero then reads as "nothing is wrong" when it means "measured
-// somewhere you are not looking", so the page has to be able to say where it matched.
+// A findings term can match kinds outside the inventory view; the page must say where.
 func TestInventoryReportsWhereAFindingsTermMatchedOutsideTheKindsShown(t *testing.T) {
 	s := advisoryStore(t)
 	inventoryCorpus(t, s, 2)

@@ -23,8 +23,8 @@ func recordingStore(t *testing.T) *store.Store {
 	return st
 }
 
-// A recorded run is evidence only with what it ran under: the CodeQL, the tests and the fixtures,
-// and what its expectations said, which is how an earlier version's failure is found again.
+// A recorded run is evidence only with what it ran under: the CodeQL, the tests, the fixtures and
+// what its expectations said.
 func TestARecordedRunNamesItsCodeQLFixturesAndExpectations(t *testing.T) {
 	root := workspace(t, map[string]string{"A": "acme/a"})
 	q, digest := mustVersion(t, root, "acme/a")

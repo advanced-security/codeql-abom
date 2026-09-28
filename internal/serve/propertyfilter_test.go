@@ -71,10 +71,7 @@ func TestAPropertyTermWithNoKeyIsRefusedByTheEndpoint(t *testing.T) {
 	}
 }
 
-// The document endpoint reads its own parameters rather than the whole predicate, so it had no
-// reason to notice one it did not recognize. Measured on a crawled organization: `units=3`, the
-// term this replaced, returned 200 and every one of the 25 roots — a reader following a saved link
-// would be handed the whole organization under the name of one part of it.
+// The document endpoint refuses filters it cannot apply.
 func TestTheDocumentRefusesAParameterItDoesNotApply(t *testing.T) {
 	srv, _ := unitServer(t)
 

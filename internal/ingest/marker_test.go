@@ -88,18 +88,14 @@ func TestTheExperimentalSuiteProducesFindingsOnACleanRepository(t *testing.T) {
 	}
 }
 
-// A known gap, pinned rather than silenced. The marker reaches every job and composite action;
-// attribution does not carry it there. Measured on this fixture:
+// A known gap, pinned rather than silenced: the marker reaches every job and composite action,
+// while attribution does not carry it there.
 //
 //   - a finding on a job lands on the *workflow*, because `LinkFindingsToNodes` matches a node by
 //     `path` and only its first pass matches a line — so job granularity survives only where the
 //     finding sits on the job's own `uses:` line, as `delegate` does;
 //   - a composite action that references nothing is not a node at all, so its finding attaches to
 //     nothing. The graph models what a `uses:` line touches, and `greet/action.yml` names none.
-//
-// The second is the reproducible case of the corpus-wide "findings linked to no node" gap, which
-// until now had only ever been counted. Both numbers are expected to change when attribution is
-// repaired, and this breaking at that point is the point.
 func TestWhereAMarkerFindingCanAndCannotBeAttributed(t *testing.T) {
 	s := markedCorpus(t)
 

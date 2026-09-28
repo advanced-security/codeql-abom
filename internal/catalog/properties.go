@@ -1,10 +1,7 @@
-// Custom property values are the dividing line an organization already administers, so ABOM reads
-// them rather than asking anyone to maintain a second copy. They arrive on the walk the listing was
-// already making; REST has no such field and pays an organization-wide walk instead.
+// Custom property values are the dividing line an organization already administers.
 //
 // `repositoryCustomPropertyValues` is a connection rather than a list, and a multi-select property's
-// value is itself a list — reading only the single-select shape drops every multi-select value
-// silently.
+// value is itself a list.
 
 package catalog
 
@@ -23,11 +20,6 @@ type PropertyValue struct {
 }
 
 // maxRepositoryProperties is the nested page asked for per repository.
-//
-// The ceiling GitHub allows, because it is free: a hundred repositories each carrying a hundred
-// property values measured the same 1 point as asking for none. An organization with more than a
-// hundred properties on one repository is not something to guess at, which is what `totalCount` is
-// checked against.
 const maxRepositoryProperties = 100
 
 // propertyNode is the shape a nested connection answers with. `value` is a `CustomPropertyValue`

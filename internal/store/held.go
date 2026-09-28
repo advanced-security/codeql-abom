@@ -181,9 +181,7 @@ func (s *Store) migrateHeldNames() error {
 	return nil
 }
 
-// migrateEvidenceKey rebuilds the evidence table of a store kept before evidence could name a held
-// result. Adding the column alone would leave two held picks in one repository sharing a key, and
-// the second silently ignored.
+// migrateEvidenceKey rebuilds evidence so multiple held picks in one repository stay distinct.
 func (s *Store) migrateEvidenceKey() error {
 	has, err := s.hasColumn("abom_query_request_evidence", "held_result_id")
 	if err != nil || has {

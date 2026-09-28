@@ -183,16 +183,7 @@ func TestRecordingDoesNotGrowWithRequestCount(t *testing.T) {
 	}
 }
 
-// Marshaling is reported apart from the rest of the request.
-//
-// The plan proposed splitting every request into query, scan and marshal. A profile refused two
-// thirds of that: `database/sql` streams, so "execute" and "scan" both live inside `Rows.Next`
-// and cannot be separated at `queryAll`; and marshaling measured **1.4% of /api/graph/full and
-// nothing at all on /api/frontier**, against 96% and 60% in `sqlite3_step` under cgo.
-//
-// One boundary survives, and it is this one: it turns a profile taken once into a fact reported on
-// every request, so a payload that grows until encoding does matter says so rather than waiting
-// for somebody to profile again.
+// Marshaling is the request phase this server can measure separately and report per route.
 func TestMarshalingIsReportedApartFromTheRequest(t *testing.T) {
 	m := newMetrics()
 

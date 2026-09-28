@@ -1,15 +1,6 @@
-# One definition of "verified", used by both a developer and CI. If they can drift, they will.
-#
-# Targets are in alphabetical order. Grouping them by theme meant every addition needed a
-# judgement about where it belonged, and the answer drifted.
+# One definition of "verified", shared by developers and CI.
 
-# Everything this repository writes at runtime lives under one directory inside the checkout,
-# gitignored, rather than in the OS temp directory. /tmp is world-writable and shared with every
-# other process on the machine, and on Linux it is cleared on reboot -- which would have taken the
-# working corpus with it, since that is what ABOM_DB names.
-#
-# Not ".abom-tmp": only `work` and `gotest` below are actually temporary. The corpus under `db`
-# is the expensive thing here, and a directory whose name says "tmp" is one somebody deletes.
+# Runtime output stays under one gitignored checkout directory; the corpus is not temporary.
 ABOM_TMP  ?= $(CURDIR)/.abom
 
 ABOM_ADDR ?= 127.0.0.1:8099
@@ -19,18 +10,10 @@ ABOM_PID  ?= $(ABOM_TMP)/serve.pid
 ABOM_UI   ?= $(ABOM_TMP)/ui
 ABOM_WORK ?= $(ABOM_TMP)/work
 
-# Extra flags for the server, so the common case needs no editing here. Discovery does not start
-# on its own: `make start ABOM_SERVE_FLAGS=--expand` opts in.
+# Extra server flags; `ABOM_SERVE_FLAGS=--expand` starts discovery.
 ABOM_SERVE_FLAGS ?=
 
-# An exact version, not the `toolchain` line in go.mod: that line is only a floor, so a developer
-# with a newer Go already installed still builds and lints with the newer one. golangci-lint cannot
-# read the export data Go 1.27 emits, and it reports that as phantom "could not import fmt" errors
-# against our own packages rather than as a version complaint -- a failure that reads like a code
-# defect. Exported so vet, test and lint all agree with each other and with CI.
-#
-# `:=` rather than `?=`, so an exported GOTOOLCHAIN=auto in a shell cannot quietly reintroduce the
-# failure. A deliberate `make lint GOTOOLCHAIN=...` on the command line still overrides this.
+# Pin the Go toolchain so vet, test and lint read the same export data as CI.
 GOTOOLCHAIN := go1.26.0
 export GOTOOLCHAIN
 
@@ -46,13 +29,6 @@ GO_FILES := $(shell find . -name '*.go' -not -path './ui/*')
 verify: check-corrupt check-versions pins fmt vet lint test js style ql ui ui-test e2e
 
 ## bench: time the store read paths against a real corpus.
-##
-## No -race, deliberately: the detector costs 2x to 20x, so a benchmark under it measures the
-## detector. `make test` keeps -race, which is where it belongs.
-##
-## ABOM_BENCH_DB must name a snapshot, not the live database. Without it every benchmark skips
-## rather than measuring an empty store, because a fast nothing is how a CLI timing ranked work
-## first that the served path was never paying for.
 ABOM_BENCH_DB ?= $(ABOM_TMP)/bench.db
 bench:
 	@if [ ! -f "$(ABOM_BENCH_DB)" ]; then \
@@ -65,10 +41,6 @@ build:
 	@go build -o $(BIN) ./cmd/codeql-abom
 
 ## check-corrupt: catch a duplicated package clause.
-##
-## This environment intermittently prepends a second `package` line when writing a Go file.
-## gofmt reports it only as a parse error, which reads like a syntax mistake in the code rather
-## than a corrupted write, so it is checked explicitly and first.
 check-corrupt:
 	@fail=0; \
 	for f in $(GO_FILES); do \
@@ -82,13 +54,6 @@ clean:
 	@rm -rf bin dist
 
 ## corpus: build a populated database from the recorded fixtures under testdata/corpus.
-##
-## Offline and deterministic: the CodeQL half is recorded, not re-run, so this needs no CLI, no
-## network and no token. Regenerating what it reads is the separate, slower step in
-## scripts/regenerate-corpus-fixtures.sh, which does need the CLI.
-##
-## Refuses ABOM_DB for the reason `e2e` does — a builder that replaces its output must not be
-## pointed at the working corpus.
 ABOM_CORPUS_DB ?= $(ABOM_TMP)/corpus/abom.db
 # The query pack a server is given with --custom-ql-dir, replaced on every build like the database.
 ABOM_CORPUS_QL ?= $(ABOM_TMP)/corpus/ql
@@ -99,52 +64,23 @@ corpus:
 	@go run ./cmd/abom-corpus --db "$(ABOM_CORPUS_DB)" --queries "$(ABOM_CORPUS_QL)"
 
 ## e2e: drive the published interface in a real browser.
-##
-## Outside `verify` for the same reason `itest` and `selfcheck` are: it needs tools the repository
-## does not carry. This one needs npm and a downloaded Chromium, which is the first npm dependency
-## in a tool whose subject is supply-chain risk, so it is opt-in until that trade is settled.
-##
-## It owns geometry. `ui-test` has no CSS engine, so a grid that overflows and a label that wraps
-## onto its own row are green everywhere else.
-##
-## Runs against a database it creates and throws away. `make corpus` builds a seeded one from
-## recorded CodeQL output, and pointing this at it reaches the assertions an empty database cannot
-## show — 5 of them fail there today, because the fixture is 3 repositories and carries no
-## advisory. Growing it until that run is green is what `plans/ui/testing.md` owes:
-##
-##   make corpus && make e2e ABOM_E2E_DB=.abom/corpus/abom.db
-##   make e2e ABOM_E2E_FLAGS="--headed --project=chromium"
 ABOM_E2E_DIR   ?= $(ABOM_TMP)/e2e
 ABOM_E2E_DB    ?= $(ABOM_E2E_DIR)/abom.db
 ABOM_E2E_PORT  ?= 8231
 ABOM_E2E_FLAGS ?=
-# Which spec files to run, as Playwright positional filters. Empty is every one of them, which is
-# what a developer wants. CI names a single file per job, because the suite runs on one worker
-# against one server and its slowest file would otherwise decide how long the check takes.
+# Playwright positional filters; empty runs every spec.
 ABOM_E2E_SPECS ?=
-# One page or one part of it, as an address or a tag: `/codeql?tab=runs`, `inventory:workflows`, `node`.
+# One page or tag: `/codeql?tab=runs`, `inventory:workflows`, `node`.
 ABOM_E2E_PAGE ?=
-# Which browser runs the suite. Empty takes the pinned Chromium, which is what CI should use
-# because it is identical everywhere. `chrome` borrows the system install, and is the way through
-# on a machine where that download will not complete — a partial one leaves a directory that looks
-# installed and an app bundle with no framework inside, which fails as a launch error rather than
-# as a missing browser.
+# Browser channel; empty uses Playwright's pinned Chromium.
 ABOM_E2E_CHANNEL ?=
-# The query pack the server is given with --custom-ql-dir. Empty serves none, as an install does
-# until an operator names one; the corpus targets name the corpus pack.
+# Query pack for --custom-ql-dir; empty serves none.
 ABOM_E2E_QL ?=
 ## e2e-corpus: the same suite against the shared data set rather than an empty database.
-##
-## A separate target so the path lives here rather than in a workflow: `make e2e` wipes its
-## directory only when pointed at its own default, so naming the corpus database from outside is
-## safe but means two files have to agree about where it is.
 e2e-corpus: corpus
 	@$(MAKE) e2e ABOM_E2E_DB="$(abspath $(ABOM_CORPUS_DB))" ABOM_E2E_QL="$(abspath $(ABOM_CORPUS_QL))"
 
-## e2e-run, e2e-corpus-run: the suite on its own, against a binary, an interface and a database
-## that already exist. `make e2e` builds all three every time, which is right on a workstation and
-## wrong across a matrix — CI builds them once and hands the same three to every job, so a job
-## that rebuilt them would pay the slowest part of the run once per spec file.
+## e2e-run, e2e-corpus-run: run against existing binary, UI and database.
 e2e-corpus-run:
 	@if [ ! -f "$(ABOM_CORPUS_DB)" ]; then \
 		echo "e2e-corpus-run: no database at $(ABOM_CORPUS_DB); 'make corpus' builds it."; \
@@ -156,9 +92,7 @@ e2e-corpus-run:
 	fi
 	@$(MAKE) e2e-run ABOM_E2E_DB="$(abspath $(ABOM_CORPUS_DB))" ABOM_E2E_QL="$(abspath $(ABOM_CORPUS_QL))"
 
-## `e2e` builds, then runs. The run is a recursive invocation rather than a prerequisite because
-## prerequisites of one target are eligible to run concurrently: under `make -j e2e` the server
-## would otherwise start while the binary and the published interface were still being written.
+## `e2e` builds, then runs; recursion keeps `make -j e2e` from starting too early.
 e2e: build publish
 	@$(MAKE) e2e-run
 
@@ -189,12 +123,11 @@ fmt:
 	if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi; \
 	echo "gofmt: clean"
 
-## js: the browser code is a third of the interface's behavior and none of it is typechecked.
+## js: test browser code that Go and Razor checks do not see.
 js:
 	@node --test ui/wwwroot/js/*.test.js ui/tests/e2e/*.test.mjs && echo "js: ok"
 
-# Part of `verify`, because CI runs it: a check that only runs in CI is one that fails after the
-# push rather than before it. A missing tool is reported as missing, not silently skipped.
+# Part of `verify`; missing golangci-lint is reported directly.
 lint:
 	@if ! command -v golangci-lint >/dev/null 2>&1; then \
 		echo "golangci-lint is not installed: brew install golangci-lint"; exit 1; \
@@ -213,17 +146,7 @@ package: build publish
 	@cp -R "$(ABOM_UI)/wwwroot" dist/ui
 	@echo "package: dist/codeql-abom + dist/ui"
 
-## pins: what `.github/workflows/actions.lock` accounts for. `--verify-local` is offline and
-## needs no token; the upstream half, which catches a tag that has moved since it was locked, is
-## `--verify` and runs on the self audit's weekly schedule.
-##
-## In `verify` because the platform already enforces it: a `uses:` the lock does not account for
-## is refused at startup under the repository's `require_lockfile` policy, and the refusal has no
-## check run, no annotation and no stated reason -- every workflow on the branch just reports
-## `startup_failure`. This is the only place that failure gets to name the ref.
-##
-## Never satisfy it by editing the lock. Only `gh actions-lock` may write that file, because a
-## hand-edited lock names a commit nobody resolved.
+## pins: verify `.github/workflows/actions.lock` without editing it.
 pins:
 	@if ! gh actions-lock --help >/dev/null 2>&1; then \
 		echo "gh actions-lock is not installed: gh extension install github/gh-actions-lock"; exit 1; \
@@ -236,27 +159,17 @@ publish:
 	@dotnet publish ui/Abom.WebAssembly.csproj -c Release -o "$(ABOM_UI)" --nologo -v quiet
 	@echo "publish: $(ABOM_UI)/wwwroot"
 
-## ql: query tests. A test directory holding a `.github/workflows/actions.lock` gets its database
-## built here first, because `codeql test run` extracts by the actions extractor's `file_types`
-## (`.yml` and `.yaml`) while the lockfile is included only by `tools/baseline-config.json`, which
-## `database create` applies and the test harness does not. Without this a lock-aware query tests
-## against a database with no lockfile in it and quietly passes on an empty result.
-## Rebuilt every run: `--reuse-dataset` would otherwise keep a stale fixture indefinitely.
+## ql: query tests. Build lockfile-bearing test databases before `codeql test run`.
 ql:
 	@codeql test run ql/actions/graph-extraction/test ql/actions/findings/test
 
 restart: stop start
 
-## itest: exercise the CodeQL protocols that only a real server can answer for. Not in `verify`:
-## it builds a database and takes tens of seconds. The query server is the CLI's IDE-facing
-## plumbing, so its message shapes are not a stable interface and drift silently. Serialized with
-## -p 1: each package shells out to CodeQL, and every invocation shares one compilation cache.
+## itest: exercise CodeQL protocols that only a real server can answer.
+# Sparse-filter coverage needs source outside .github/.
 ABOM_ITEST_DB ?= $(ABOM_TMP)/itest-db
-## A second database, from a tree with a root action.yml: the sparse-filter check cannot fail
-## against a source that has nothing outside .github/, which is the shape it exists to catch.
 ABOM_ITEST_SPARSE_DB ?= $(ABOM_TMP)/itest-sparse-db
-## A third, built with --overlay-base: the CLI accepts that flag for actions and exits 0 while
-## writing overlayBaseDatabase: false, so the blocker is asserted rather than remembered.
+# Assert that --overlay-base stays blocked for actions databases.
 ABOM_ITEST_OVERLAY_DB ?= $(ABOM_TMP)/itest-overlay-db
 itest:
 	@if ! command -v codeql >/dev/null 2>&1; then \
@@ -281,16 +194,6 @@ itest:
 	@echo "itest: ok"
 
 ## quality: analyze our own source with our own tool, in every language we write.
-## Separate from `verify` on purpose: `verify` answers "is this change correct" on every edit,
-## this answers "what does our own analyzer say about this codebase" and builds a database per
-## language to do it. Fails above zero findings, in every language; `self-audit.yml` runs the
-## same set as a matrix. Pass --max-findings=-1 to take a measurement without failing.
-##
-## The JavaScript root is the repository, not `ui/wwwroot`. Two reasons, and the second is the
-## one that bites: `ui/tools` holds JavaScript too, and `paths-ignore` in the Code Scanning config
-## is resolved against whatever root is passed -- so `ui/bin` excludes nothing unless the root is
-## the one Default Setup reads. A narrower root both misses files and silently loses the
-## exclusions that keep this answering the same question Default Setup answers.
 quality: selfcheck
 	@go run ./cmd/codeql-abom selfcheck --language=go \
 		--suite advanced-security/abom-go-quality-src:codeql-suites/abom-go-quality.qls
@@ -301,30 +204,20 @@ quality: selfcheck
 	@go run ./cmd/codeql-abom selfcheck --language=python --source-root=scripts \
 		--suite advanced-security/abom-python-quality-src:codeql-suites/abom-python-quality.qls
 
-## selfcheck: run our own analysis over our own workflows, through our own database-creation
-## path. Not in `verify`: it needs the CodeQL CLI and takes tens of seconds.
+## selfcheck: run our own analysis over our own workflows.
 selfcheck:
 	@go run ./cmd/codeql-abom selfcheck \
 		--suite advanced-security/abom-actions-selfcheck-src:codeql-suites/abom-selfcheck.qls
 
 ## serve: run in the foreground, for watching it work. `make start` for the background.
-##
-## The database and log directories are made here because nothing else does: store.Open does not
-## create its parent, and a redirect into a missing directory fails before the server ever runs.
 serve: build publish
 	@mkdir -p "$(ABOM_WORK)" "$(dir $(ABOM_DB))" "$(dir $(ABOM_LOG))"
 	@$(BIN) serve --db "$(ABOM_DB)" --addr "$(ABOM_ADDR)" \
 		--ui-dir "$(ABOM_UI)/wwwroot" --work-dir "$(ABOM_WORK)" $(ABOM_SERVE_FLAGS)
 
 ## start: serve in the background, rebuilding both halves first.
-##
-## Both halves every time, deliberately: serving a stale interface against a new binary looks
-## like a bug in the interface, and costs far more to work out than the rebuild does.
 start: build publish
-	@# One dev server per machine, found by process rather than by address: the pid file only
-	@# knows what this Makefile started, and a second server on another port is still a second
-	@# writer against the database. Matching on the executable name keeps this recipe's own
-	@# shell out of the results.
+	@# One dev server per machine; match executable names so this shell is excluded.
 	@running=$$(for pid in $$(pgrep -x $(notdir $(BIN)) 2>/dev/null); do \
 		case "$$(ps -o args= -p $$pid 2>/dev/null)" in (*" serve"*) echo $$pid;; esac; \
 	done | tr '\n' ' '); \
@@ -352,8 +245,7 @@ start: build publish
 	tail -n 20 "$(ABOM_LOG)"; exit 1
 
 status:
-	@# Found the same way stop finds it, so a server started by hand is reported rather than
-	@# denied. "Not running" gates running the test suites, so it has to mean it.
+	@# Report servers started by hand too; test suites depend on this answer.
 	@running=$$(for pid in $$(pgrep -x $(notdir $(BIN)) 2>/dev/null); do \
 		case "$$(ps -o args= -p $$pid 2>/dev/null)" in (*" serve"*) echo $$pid;; esac; \
 	done | tr '\n' ' '); \
@@ -361,9 +253,7 @@ status:
 	ps -o pid=,args= -p $$running; \
 	curl -fsS "http://$(ABOM_ADDR)/api/discovery/status" && echo
 
-## Stops every abom server on the machine, not merely what the pid file remembers: one started
-## by hand still holds the port and still writes to a database, and leaving it is what makes
-## `restart` a no-op and the next `start` refuse.
+## stop: stop every abom server on the machine, including one started by hand.
 stop:
 	@stopped=0; \
 	for pid in $$(pgrep -x $(notdir $(BIN)) 2>/dev/null); do \
@@ -382,22 +272,15 @@ stop:
 	done; \
 	echo "stop: a server is still running after 5s"; exit 1
 
-## style: one visual vocabulary. Drift here is invisible to every other check, and review had
-## already missed six font sizes, three heading shapes and forty-nine inline styles.
+## style: enforce one visual vocabulary.
 style:
 	@node ui/tools/check-style.mjs
 
-## check-versions: exact pinning means the same upstream version is written in a suite, a pack
-## manifest and a lock file. `codeql pack upgrade` rewrites two of the three.
+## check-versions: keep suite, manifest and lock pins aligned.
 check-versions:
 	@./scripts/check-versions.sh
 
-## test: needs git, which several tests clone from a local path to exercise checkout against the
-## real thing. Reported here rather than 30 seconds in, and never skipped: a suite that shrinks
-## to fit the machine reports success for tests it did not run.
-##
-## TMPDIR is what `t.TempDir()` reads, so all 144 of them land under $(ABOM_TMP) without a single
-## test naming a path.
+## test: run Go tests under $(ABOM_TMP) because checkout tests need git.
 test:
 	@if ! command -v git >/dev/null 2>&1; then \
 		echo "git is not installed, and the checkout tests need it"; exit 1; \
@@ -405,14 +288,11 @@ test:
 	@mkdir -p "$(ABOM_TMP)/gotest"
 	@TMPDIR="$(ABOM_TMP)/gotest" go test ./... -count=1 -race
 
-## ui: a Razor syntax error passes every Go check and fails in CI.
+## ui: catch Razor syntax errors that Go checks cannot see.
 ui:
 	@dotnet build ui/Abom.WebAssembly.csproj -c Release --nologo -v quiet && echo "ui: ok"
 
-## ui-test: component behavior. `make ui` only compiles Razor, so every interface regression
-## this project has shipped — a filter answering before it asked, controls enabled with nothing
-## to control — passed every other check. bUnit has no CSS engine, so layout is still the
-## screenshot pass's job.
+## ui-test: component behavior; layout stays in browser tests.
 ui-test:
 	@dotnet test ui/tests/Abom.WebAssembly.Tests/Abom.WebAssembly.Tests.csproj \
 		--nologo -v quiet && echo "ui-test: ok"

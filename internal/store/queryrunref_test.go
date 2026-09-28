@@ -6,8 +6,7 @@ import "testing"
 //
 // The run key hashes the commit, so two analyses of the same repository at the same commit
 // collapse into one ledger row — that is deliberate, and it is why the ref cannot live in a
-// column on that row. Measured on the seeded corpus 2026-09-10: 392 repository/commit pairs are
-// reached by more than one ref, so a column would name one and silently drop the rest.
+// column on that row.
 // Content equivalence is not analysis. A round skipped because some other commit had identical
 // content did not analyze this one, and attaching this ref to that run would claim a revision was
 // examined that never was.

@@ -42,8 +42,7 @@ type StalenessReport struct {
 // about a finding the repository's own checkout reports says nothing at all.
 //
 // A run that sighted nothing is excluded. It is indistinguishable from a run whose sightings were
-// never recorded, and treating it as evidence of absence condemned 2,420 findings other references
-// still report when this was priced against the corpus.
+// never recorded, so it is not evidence of absence.
 func (s *Store) StaleFindings() (StalenessReport, error) {
 	var out StalenessReport
 	if err := s.db.QueryRow(`

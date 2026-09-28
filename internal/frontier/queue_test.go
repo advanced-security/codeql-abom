@@ -103,11 +103,7 @@ func TestEnqueueRejectsBeyondMaxDepth(t *testing.T) {
 	}
 }
 
-// Value is commonality, not proximity: a widely-depended-on dependency outranks a rarely used
-// one. Narrowed on 2026-09-07 when depth became the outer key of the objective — completeness at
-// a depth before anything deeper — so commonality now decides *within* a depth rather than
-// across depths. The thing this protects is unchanged: score, not discovery order, ranks the
-// work the crawl can choose between.
+// Value is commonality within a depth, not discovery order or proximity.
 func TestClaimOrdersByCommonalityWithinADepth(t *testing.T) {
 	q, s := newQueue(t)
 
@@ -351,10 +347,7 @@ func TestImmutableRefIsNeverRechecked(t *testing.T) {
 	}
 }
 
-// A commit ref cannot move even when the checkout names another commit. That happens when the
-// id is an annotated tag's own object, which a public lock was measured recording as its commit
-// (`haskell-actions/setup@v2.12.1`, 2026-09-27): the checkout peels it, the two disagree, and a
-// probe of the id finds no ref by that name, which reads as the dependency having vanished.
+// A commit ref cannot move even when checkout peels an annotated tag object to another commit.
 func TestACommitRefIsNeverRecheckedEvenWhenItsCheckoutNamedAnotherCommit(t *testing.T) {
 	q, _ := newQueue(t)
 
@@ -636,9 +629,7 @@ func TestReclaimingAStaleClaimDoesNotCountAsAnAttempt(t *testing.T) {
 }
 
 // A claim that outlived the process holding it cannot be in flight, because the store admits a
-// single writer. Waiting out the lease leaves a stopped queue reporting work nobody is doing: a
-// restart mid-cycle stranded 20 dependencies that the interface showed as being analyzed, and
-// the same screen said discovery had never started.
+// single writer. Waiting out the lease leaves a stopped queue reporting work nobody is doing.
 func TestReclaimOrphanedTakesBackEvenAClaimMadeMomentsAgo(t *testing.T) {
 	q, s := newQueue(t)
 	if _, err := q.Enqueue([]Item{item("a", 1)}); err != nil {

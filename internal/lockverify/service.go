@@ -37,6 +37,15 @@ type Service struct {
 	Now    func() time.Time
 }
 
+type verificationRequest struct {
+	repository string
+	owner      string
+	repo       string
+	commit     string
+	mode       string
+	now        time.Time
+}
+
 func (s *Service) now() time.Time {
 	if s.Now != nil {
 		return s.Now().UTC()
@@ -46,49 +55,74 @@ func (s *Service) now() time.Time {
 
 // Request verifies the commit a repository currently resolves to, if a lockfile was read there.
 func (s *Service) Request(ctx context.Context, repository, mode, by string) (store.LockVerification, error) {
+	req, err := s.verificationRequest(repository, mode)
+	if err != nil {
+		return store.LockVerification{}, err
+	}
+	if last, ok, err := s.verifyAllowed(req); err != nil || ok {
+		return last, err
+	}
+	result := s.verify(ctx, req.owner, req.repo, req.commit, mode)
+	return s.recordVerification(req, result, by)
+}
+
+func (s *Service) verificationRequest(repository, mode string) (verificationRequest, error) {
 	if mode != ModeLocal && mode != ModeNetwork {
-		return store.LockVerification{}, fmt.Errorf("no verification mode %q: say %s or %s",
+		return verificationRequest{}, fmt.Errorf("no verification mode %q: say %s or %s",
 			mode, ModeLocal, ModeNetwork)
 	}
 	owner, repo, ok := strings.Cut(strings.TrimSpace(repository), "/")
 	if !ok || owner == "" || repo == "" {
-		return store.LockVerification{}, fmt.Errorf("name a repository as owner/name")
+		return verificationRequest{}, fmt.Errorf("name a repository as owner/name")
 	}
 	commit, ok, err := s.Store.CurrentLockfileCommit(repository)
 	if err != nil {
-		return store.LockVerification{}, err
+		return verificationRequest{}, err
 	}
 	if !ok {
-		return store.LockVerification{}, ErrNothingToVerify
+		return verificationRequest{}, ErrNothingToVerify
 	}
+	return verificationRequest{
+		repository: repository, owner: owner, repo: repo, commit: commit, mode: mode, now: s.now(),
+	}, nil
+}
 
-	now := s.now()
+func (s *Service) verifyAllowed(req verificationRequest) (store.LockVerification, bool, error) {
 	cooldown := LocalCooldown
-	if mode == ModeNetwork {
+	if req.mode == ModeNetwork {
 		cooldown = NetworkCooldown
 	}
-	last, seen, err := s.Store.LastLockVerification(repository, commit, mode)
+	last, seen, err := s.Store.LastLockVerification(req.repository, req.commit, req.mode)
 	if err != nil {
-		return store.LockVerification{}, err
+		return store.LockVerification{}, false, err
 	}
-	if seen && now.Sub(last.VerifiedAt) < cooldown {
-		return last, fmt.Errorf("%w: last run %s", ErrTooSoon, last.VerifiedAt.Format(time.RFC3339))
+	if seen && req.now.Sub(last.VerifiedAt) < cooldown {
+		return last, true, fmt.Errorf("%w: last run %s", ErrTooSoon, last.VerifiedAt.Format(time.RFC3339))
 	}
-	if mode == ModeNetwork {
-		spent, err := s.Store.LockVerificationsSince(ModeNetwork, now.Add(-24*time.Hour))
-		if err != nil {
-			return store.LockVerification{}, err
-		}
-		if spent >= NetworkPerDay {
-			return store.LockVerification{}, fmt.Errorf("%w: %d in the last day", ErrBudget, spent)
-		}
+	if req.mode != ModeNetwork {
+		return store.LockVerification{}, false, nil
 	}
+	return store.LockVerification{}, false, s.networkBudget(req.now)
+}
 
-	result := s.verify(ctx, owner, repo, commit, mode)
+func (s *Service) networkBudget(now time.Time) error {
+	spent, err := s.Store.LockVerificationsSince(ModeNetwork, now.Add(-24*time.Hour))
+	if err != nil {
+		return err
+	}
+	if spent >= NetworkPerDay {
+		return fmt.Errorf("%w: %d in the last day", ErrBudget, spent)
+	}
+	return nil
+}
+
+func (s *Service) recordVerification(
+	req verificationRequest, result Result, by string,
+) (store.LockVerification, error) {
 	v := store.LockVerification{
-		Repository: repository, Commit: commit, Mode: mode, Outcome: result.Outcome,
+		Repository: req.repository, Commit: req.commit, Mode: req.mode, Outcome: result.Outcome,
 		ToolVersion: result.ToolVersion, LockfileVersion: result.LockfileVersion,
-		Valid: result.Valid, Error: result.Error, RequestedBy: by, VerifiedAt: now,
+		Valid: result.Valid, Error: result.Error, RequestedBy: by, VerifiedAt: req.now,
 		Findings: make([]store.LockVerificationFinding, 0, len(result.Findings)),
 	}
 	for _, f := range result.Findings {

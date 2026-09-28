@@ -409,8 +409,7 @@ func call(t *testing.T, tl copilot.Tool, args map[string]any) (copilot.ToolResul
 }
 
 // refusal is why a tool refused, as the agent reads it. The SDK shows the model a handler's error
-// only as "Tool execution failed", so a refusal returned that way reaches the agent as nothing: a
-// live agent retried one three times without learning why.
+// only as "Tool execution failed", so refusal text has to be a tool result.
 func refusal(t *testing.T, tl copilot.Tool, args map[string]any) string {
 	t.Helper()
 	res, err := call(t, tl, args)
@@ -445,8 +444,7 @@ func TestTheAgentDecidesATargetOnceAndItBindsTheSession(t *testing.T) {
 	request := b.request(t, "")
 	b.finish(t, request, "operator")
 
-	// The CLI's create refuses a file that exists, and a live agent reached outside the pack
-	// looking for another way to write one.
+	// The laid-out query must be edited rather than recreated elsewhere.
 	if !strings.Contains(answer, "edit") {
 		t.Errorf("the decision does not say the laid-out query is edited: %q", answer)
 	}
@@ -539,8 +537,7 @@ func TestTheRulesStateTheBoundsAndTheReviewGate(t *testing.T) {
 	}
 }
 
-// Sessions so far wrote the query before any test failed, and nothing recorded the order. So the
-// query stays as it is until ABOM itself has seen its tests fail on a result the fixtures mark, and
+// The query stays as it is until ABOM itself has seen its tests fail on a result the fixtures mark;
 // a failure for any other reason does not count.
 func TestTheQuerysFirstChangeWaitsForItsTestsToFailOnAMarkedResult(t *testing.T) {
 	var before, afterWrongReason, afterMarked, afterChange string
@@ -612,9 +609,8 @@ func TestNothingIsTestedBeforeATargetIsDecided(t *testing.T) {
 	}
 }
 
-// PrintAST prints into ql-mcp's scratch, and a live agent that could not read it went to the
-// library sources instead. The CLI's own state beside it holds the session's history and stays
-// out of reach, and nothing in either is the agent's to write.
+// PrintAST prints into ql-mcp's scratch. The CLI's own state beside it holds the session's history
+// and stays out of reach, and nothing in either is the agent's to write.
 func TestTheAgentReadsWhatQLMCPWroteAndNotTheCLIsState(t *testing.T) {
 	var seen Setup
 	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {

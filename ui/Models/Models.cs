@@ -1,32 +1,21 @@
 namespace Abom.WebAssembly.Models;
 
-/// <summary>State of every stage, which is only meaningful read together.</summary>
+/// <summary>State of every stage, read as one snapshot.</summary>
 public sealed record Summary
 {
     public int SeedRepos { get; init; }
 
-    /// <summary>
-    /// Seeded repositories the declaration claims. Independent of <see cref="SeedRepos"/>: a
-    /// corpus can hold hundreds and own none of them, so the two are never printed as one figure.
-    /// </summary>
+    /// <summary>Seeded repositories claimed by the declaration.</summary>
     public int OwnedRepos { get; init; }
     public int UpstreamRepos { get; init; }
     public int Nodes { get; init; }
 
-    /// <summary>
-    /// Nodes that are something depended on, rather than part of the thing doing the depending.
-    /// <see cref="Nodes"/> counts steps, jobs and workflows too and they outnumber these fifty to
-    /// one, so the two are never printed under the same word.
-    /// </summary>
+    /// <summary>Nodes that something depends on; excludes workflow structure nodes.</summary>
     public int Dependencies { get; init; }
     public int Edges { get; init; }
     public int Findings { get; init; }
 
-    /// <summary>
-    /// Findings in repositories the declaration claims. Bounded for the reason
-    /// <see cref="OwnedRepos"/> is: a finding in a repository nobody declared is not in what you
-    /// run, and printing the corpus total as yours offers work you cannot do.
-    /// </summary>
+    /// <summary>Findings in repositories claimed by the declaration.</summary>
     public int OwnedFindings { get; init; }
 
     /// <summary>The same findings by band of their rules' own scores.</summary>
@@ -48,10 +37,7 @@ public sealed record Summary
     public int PendingDependencies => Frontier.TryGetValue("pending", out var n) ? n : 0;
 }
 
-/// <summary>
-/// How many findings sit in each band of their rules' own scores, summing to the count beside it.
-/// Unknown is a rule declaring no score, which is not the lowest band.
-/// </summary>
+/// <summary>Finding counts by rule score band; unknown is not low severity.</summary>
 public sealed record SeverityCounts
 {
     public int Critical { get; init; }
@@ -66,10 +52,7 @@ public sealed record SeverityCounts
         Low > 0 ? "low" : Unknown > 0 ? "unknown" : string.Empty;
 }
 
-/// <summary>
-/// One advisory ranked by published severity, then by how many repositories reach it.
-/// CVSS and EPSS travel alongside but are deliberately absent from <see cref="Rank"/>.
-/// </summary>
+/// <summary>Advisory ranked by severity and reachable repository count.</summary>
 public sealed record RemediationItem
 {
     public string GhsaId { get; init; } = string.Empty;
@@ -135,17 +118,10 @@ public sealed record DiscoveryStatus
     public int Reclaimed { get; init; }
     public int Analyzed { get; init; }
 
-    /// <summary>
-    /// Repositories the ledger already had on record. Analyzed cannot stand in for it, so a
-    /// re-analysis of a current corpus would otherwise move no number at all.
-    /// </summary>
+    /// <summary>Repositories already recorded by the ledger.</summary>
     public int Skipped { get; init; }
 
-    /// <summary>
-    /// Checkouts served from the cache instead of cloned. Not a skip: each one was analyzed or
-    /// settled on the ledger's say-so, so a cycle that fetched nothing and analyzed everything
-    /// would otherwise read exactly like one that cloned the whole corpus again.
-    /// </summary>
+    /// <summary>Checkouts served from the cache instead of cloned.</summary>
     public int Reused { get; init; }
     public int Settled { get; init; }
     public int Failed { get; init; }
@@ -178,12 +154,7 @@ public sealed record DiscoveryStatus
     public bool IsPausing => State == "pausing";
 }
 
-/// <summary>
-/// What a selective requeue put back, beside the state it left behind.
-///
-/// The identity travels with the count because the count alone cannot be checked: "1,742
-/// requeued" is a number, "against CodeQL 2.26.4 and 4 packs" is a claim anyone can test.
-/// </summary>
+/// <summary>Selective requeue result plus the state it left behind.</summary>
 public sealed record RequeueResult
 {
     public int Requeued { get; init; }
@@ -217,17 +188,10 @@ public sealed record DiscoveryState
 
     public GraphVersion Version { get; init; } = new();
 
-    /// <summary>
-    /// Whether a server start may act on a recorded intent to run. Off unless the operator asked
-    /// for it: having been running is not a request to start again.
-    /// </summary>
+    /// <summary>Whether server start may resume discovery by recorded intent.</summary>
     public bool ResumeOnStart { get; init; }
 
-    /// <summary>
-    /// Whether anybody has ever started discovery here. The loop's state cannot answer it — a
-    /// supervisor is new in every process — so without this a restarted server reports a fully
-    /// crawled installation as never started.
-    /// </summary>
+    /// <summary>Whether discovery has ever started in this installation.</summary>
     public bool EverStarted { get; init; }
 
     /// <summary>Empty when advisories were never collected.</summary>
@@ -239,7 +203,7 @@ public sealed record DiscoveryState
 
     public int Count(string state) => Frontier.TryGetValue(state, out var n) ? n : 0;
 
-    /// <summary>Everything not yet looked inside, however many attempts it has cost.</summary>
+    /// <summary>Queued, retrying, or running dependencies.</summary>
     public int Unresolved => Count("queued") + Count("retrying") + Running;
 }
 
@@ -247,10 +211,7 @@ public sealed record FrontierItem
 {
     public string NodeKey { get; init; } = string.Empty;
 
-    /// <summary>
-    /// The reference this row analyzes, empty for the default branch. The queue is keyed
-    /// (node_key, ref), so without this a row cannot say which version it is.
-    /// </summary>
+    /// <summary>The analyzed reference, empty for the default branch.</summary>
     public string Ref { get; init; } = string.Empty;
 
     public string Owner { get; init; } = string.Empty;
@@ -275,50 +236,31 @@ public sealed record FrontierItem
     /// <summary>"runtime" when an analyzed repository executes it, "build_time" when only its own project's CI does.</summary>
     public string SupplyChain { get; init; } = string.Empty;
 
-    /// <summary>
-    /// What analyzed this row, as <c>pack@version</c>, taken from the runs recorded against its
-    /// commit rather than from the tier's current binding.
-    /// </summary>
+    /// <summary>Suites that analyzed this row, formatted as <c>pack@version</c>.</summary>
     public IReadOnlyList<string> Suites { get; init; } = Array.Empty<string>();
 
-    /// <summary>
-    /// False when nothing recorded which suites ran. Most analyzed rows predate pack identity,
-    /// and "not recorded" must not render as "nothing looked" — those are opposite statements.
-    /// </summary>
+    /// <summary>False when suite identity was not recorded.</summary>
     public bool SuitesKnown { get; init; }
 
     /// <summary>The CodeQL that produced the row, empty when unrecorded.</summary>
     public string CliVersion { get; init; } = string.Empty;
 
-    /// <summary>
-    /// Repositories running this exact version, a bounded preview. <see cref="UsedByCount"/> is
-    /// the real total; the queue's DiscoveredFrom is only the first to reach it.
-    /// </summary>
+    /// <summary>Bounded preview of repositories running this exact version.</summary>
     public IReadOnlyList<string> UsedBy { get; init; } = Array.Empty<string>();
 
     /// <summary>How many repositories name this version in total.</summary>
     public int UsedByCount { get; init; }
 
-    /// <summary>
-    /// How many of them the operator is verified against. These are the ones they can change
-    /// themselves, which is a different decision from the total.
-    /// </summary>
+    /// <summary>How many listed users are in repositories the operator can change.</summary>
     public int UsedByOwned { get; init; }
 
-    /// <summary>
-    /// Repositories whose current lock selects exactly this row's commit, a bounded preview.
-    /// A row at a commit no source names is queued because a lock chose it, and would otherwise
-    /// read as a duplicate of its declared row, used by nobody.
-    /// </summary>
+    /// <summary>Bounded preview of repositories whose lock selects this commit.</summary>
     public IReadOnlyList<string> LockedBy { get; init; } = Array.Empty<string>();
 
     /// <summary>How many repositories' locks select this commit in total.</summary>
     public int LockedByCount { get; init; }
 
-    /// <summary>
-    /// The state a reader distinguishes, which is one more than the queue stores: a dependency
-    /// waiting on a retry has already cost something, and a queued one has not.
-    /// </summary>
+    /// <summary>UI state that distinguishes fresh queued work from retries.</summary>
     public string State => Status switch
     {
         "pending" when Attempts > 0 => "retrying",
@@ -327,10 +269,7 @@ public sealed record FrontierItem
     };
 }
 
-/// <summary>One filter a reader can apply, and everything a control needs to offer it.</summary>
-///
-/// Read from the server rather than kept here, because two declarations drift: a term the browser
-/// knew about and the language had withdrawn would be offered and then refused by name.
+/// <summary>Filter term from the server catalog, plus control metadata.</summary>
 public sealed record FilterTerm
 {
     public string Name { get; init; } = string.Empty;
@@ -786,9 +725,7 @@ public sealed record NodeRoute
 /// One account the operator has stated is theirs — the fourth ownership notion, and the only one
 /// that means responsibility.
 ///
-/// <c>repository.origin</c> records how a repository entered the corpus and <see
-/// cref="OwnedAccount"/> records what GitHub says you belong to. Neither means anyone can change
-/// anything.
+/// <c>repository.origin</c> and <see cref="OwnedAccount"/> are evidence, not responsibility.
 /// </summary>
 public sealed record DeclaredAccount
 {
@@ -799,11 +736,7 @@ public sealed record DeclaredAccount
 
     public bool Enabled { get; init; }
 
-    /// <summary>
-    /// True when the account is restricted to <see cref="Includes"/>. Held rather than derived
-    /// from the list being non-empty, so removing the last include cannot silently widen an
-    /// account from two repositories to all of them.
-    /// </summary>
+    /// <summary>True when the account is restricted to <see cref="Includes"/>.</summary>
     public bool IncludesOnly { get; init; }
 
     public IReadOnlyList<string> Includes { get; init; } = [];
@@ -823,8 +756,7 @@ public sealed record DeclaredAccount
     /// </summary>
     public string State { get; init; } = string.Empty;
 
-    /// <summary>True when gh answered and did not list this account. Not a gap in evidence —
-    /// evidence against, which is why it may not carry an ownership mark.</summary>
+    /// <summary>True when gh answered and did not list this account.</summary>
     public bool Contradicted => State == "contradicted";
 
     /// <summary>True when nobody can say how this declaration got here.</summary>
@@ -887,11 +819,7 @@ public sealed record ScopePreview
 }
 
 /// <summary>What declaring an account turned out to mean.</summary>
-/// <remarks>
-/// Declaring names accounts; enumerating turns them into repositories. The two were separate for
-/// a week, and a corpus was found where the operator had declared both accounts they owned — 397
-/// repositories — and it held one, arrived at as somebody else's dependency.
-/// </remarks>
+/// <remarks>Declaring names accounts; enumerating turns them into repositories.</remarks>
 public sealed record EnumerationReport
 {
     /// <summary>Repositories the corpus had never seen.</summary>

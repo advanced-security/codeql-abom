@@ -1,9 +1,4 @@
 // Package enumerate turns declared accounts into repositories the corpus holds.
-//
-// Extracted from the HTTP handler so that a person clicking a button and a loop running on a timer
-// take the same path. The rule worth protecting is `DeclaredAccount.Covers`: an includes-only
-// declaration covers the repositories it names and no others, and a second implementation of that
-// is how an account smuggles the rest of itself in.
 package enumerate
 
 import (
@@ -16,10 +11,6 @@ import (
 )
 
 // DefaultFullListingEvery is how often every page of an account is read.
-//
-// A trade rather than a tuning: reads spent, against how long a repository that no longer exists is
-// still reported as the operator's. A day is short enough that a deletion is stale for one cycle of
-// a working week and long enough that a twenty-thousand repository account pays for it once.
 const DefaultFullListingEvery = 24 * time.Hour
 
 // Report is what declaring an account turned out to mean.
@@ -198,9 +189,8 @@ func (o Options) marksFor(owner string) (catalog.Marks, error) {
 	if state.ListedAt.IsZero() || o.clock().Sub(state.ListedAt) >= o.period() {
 		return catalog.Marks{}, nil
 	}
-	// A sweep is two ordered walks, so it costs two reads at minimum. An account whose whole
-	// listing fit in one is cheaper read whole — and that read also answers what is gone, which
-	// the sweep cannot. Measured on a 27 repository organization: 1 point against 2.
+	// A sweep is two ordered walks, so an account whose whole listing fits in one page is cheaper
+	// read whole. That read also answers what is gone, which a sweep cannot.
 	if state.ListedPages <= sweepWorthIt {
 		return catalog.Marks{}, nil
 	}
@@ -208,9 +198,6 @@ func (o Options) marksFor(owner string) (catalog.Marks, error) {
 }
 
 // sweepWorthIt is the page count at or below which a full listing is the cheaper read.
-//
-// Two, because a sweep is two ordered walks of at least one page each. The saving only begins for
-// an account that takes three or more pages to list, which is three hundred repositories.
 const sweepWorthIt = 2
 
 // remember writes back what the read established, as the kind of read it was.

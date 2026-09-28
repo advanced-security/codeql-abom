@@ -177,49 +177,6 @@ func workflowPaths(root string) []string {
 	return paths
 }
 
-// Selected reports the commit this lockfile selects for a `uses:` string in a workflow.
-//
-// The answer is the dependency entry's digest, never its `ref` field. The two disagree whenever an
-// entry is keyed by commit and narrowed to the tag it was resolved from, which is the shape the
-// CLI writes for an inline SHA, and the entry still names exactly one commit.
-func (l Lock) Selected(workflowPath, uses string) (string, bool) {
-	if !l.parsed {
-		return "", false
-	}
-	// Anything the lockfile grammar does not describe -- expressions, `docker://`, local and
-	// same-repository paths, reusable workflow files -- is not a gap in coverage.
-	ref := native.ParseActionRef(uses)
-	if ref == nil {
-		return "", false
-	}
-	pins, ok := l.file.LookupWorkflow(workflowPath)
-	if !ok {
-		return "", false
-	}
-	want := native.Pin{NWO: ref.NWO(), Owner: ref.Owner, Repo: ref.Repo, Ref: ref.Ref}.Canonical()
-	for _, key := range pins {
-		pin, ok := native.ParsePin(key)
-		if !ok {
-			continue
-		}
-		if pin.Canonical() != want {
-			continue
-		}
-		commit := l.file.Dependencies[key].Commit
-		if digest, ok := digestOf(commit); ok {
-			return digest, true
-		}
-	}
-	return "", false
-}
-
-// digestOf strips the algorithm prefix the lockfile records commits with. An entry whose commit
-// is not in that form names nothing runnable, so it selects nothing.
-func digestOf(commit string) (string, bool) {
-	_, digest := splitCommit(commit)
-	return digest, digest != ""
-}
-
 // schemaOf reads the version line without parsing, so an unsupported file still reports the
 // version that made it unsupported.
 func schemaOf(contents []byte) string {

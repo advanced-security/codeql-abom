@@ -68,8 +68,7 @@ func (h *seedHarness) declare(repoFullName string) {
 }
 
 // reference records repoFullName using targetKey, as a real query's edges table would. origin
-// distinguishes a repository under review from one only fetched to resolve dependencies — and
-// since 2026-09-07 "under review" is a declaration, so a seed repository is declared here.
+// distinguishes a repository under review from one only fetched to resolve dependencies.
 func (h *seedHarness) reference(repoFullName, origin, targetKey string) {
 	h.t.Helper()
 	if origin == store.OriginSeed {

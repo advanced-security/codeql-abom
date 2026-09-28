@@ -122,8 +122,7 @@ func runSelfcheck(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	dbDir := filepath.Join(dir, "db")
 	sarifPath := filepath.Join(dir, "findings.sarif")
 
-	// Vendored minified libraries need no exclusion: measured 2026-09-10, the JavaScript
-	// extractor skips *.min.js of its own accord, so 1.3 MB of vendored code never enters.
+	// Vendored minified libraries need no exclusion: the JavaScript extractor skips *.min.js.
 	r := &runner.Runner{
 		CodeQLPath: cfg.codeqlPath,
 		Lock:       runner.SharedLock(),

@@ -28,26 +28,21 @@ type ClosureEntry struct {
 // submissionClosureQuery walks a repository's workflows outward into what those workflows
 // actually run.
 //
-// Three rules in here were established by measuring the corpus, and each is easy to get wrong in a
-// way that still returns plausible rows:
-//
-// Only `composite-step-uses-action` leaves a dependency. ABOM attributes an edge to the repository
-// whose database produced it, so a dependency's rows also contain how that dependency tests
-// itself. codecov/codecov-action carries 74 edges from its own CI and 3 from its action manifest;
-// following the former would put 74 actions in a consumer's supply chain that the consumer never
-// runs.
+// A dependency is left only through what its reached container holds: a composite action's steps,
+// or a called reusable workflow's jobs and steps. Edges are attributed to the repository whose
+// database produced them, so a dependency's own CI hangs from its own workflow nodes and is never
+// reached.
 //
 // The step inside a composite action is joined by `container_node_row_id`, not by rebuilding a key
 // from owner and path, which diverge once the manifest filename is stripped.
 //
 // A child is taken only from an analysis of the commit the consumer actually runs, matched to a
 // run that sighted the edge. ABOM analyzes many refs of a popular action, and without this the
-// closure reports the union of every version's children: codecov/codecov-action vendors
-// actions/github-script from v5.x onward, so an unconstrained walk hands a repository pinning v4 a
-// transitive dependency it does not have. The commit is the one the repository's current lock
-// selects where a lock governs the route (?2, the choices of this repository's locks, by edge),
-// and otherwise the one the declared ref resolved to. Any run that sighted the edge counts, not
-// only the latest: an edge two commits share is one row, and its latest run names one of them.
+// closure reports the union of every version's children. The commit is the one the repository's
+// current lock selects where a lock governs the route (?2, the choices of this repository's
+// locks, by edge), and otherwise the one the declared ref resolved to. Any run that sighted the
+// edge counts, not only the latest: an edge two commits share is one row, and its latest run names
+// one of them.
 const submissionClosureQuery = `
 WITH RECURSIVE lock_choice(edge_row_id, commit_sha) AS (
 	SELECT CAST(json_extract(j.value, '$.e') AS INTEGER), LOWER(json_extract(j.value, '$.c'))
@@ -86,7 +81,7 @@ closure(manifest, node_row, node_key, owner, repo, subpath, ref, locked, depth, 
 	  FROM closure c
 	  JOIN abom_node_live st ON st.container_node_row_id = c.node_row
 	  JOIN abom_edge_regular ce ON ce.src_node_row_id = st.row_id
-	                        AND ce.edge_kind = 'composite-step-uses-action'
+	                        AND ce.edge_kind <> 'job-needs-job'
 	  JOIN abom_node_live dst ON dst.row_id = ce.dst_node_row_id
 	  LEFT JOIN lock_choice lc ON lc.edge_row_id = ce.row_id
 	 WHERE c.depth < 10

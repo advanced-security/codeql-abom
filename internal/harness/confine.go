@@ -408,7 +408,7 @@ func loopNames() []string {
 	return names
 }
 
-// detours are ql-mcp tools an agent reached for in a recorded session, and why each is not the way.
+// detours are ql-mcp tools the session refuses, with why each is not the way.
 var detours = map[string]string{
 	"create_codeql_query": "ABOM lays out the target's query and test directory itself; this tool " +
 		"writes another layout, and was used to make directories anywhere",
@@ -439,6 +439,13 @@ func (b Bounds) qlmcp(name string, fields map[string]any) Verdict {
 	if !b.bound() && !slices.Contains(unbound, name) {
 		return refuse("decide the query this request is about with %s before running %s", ToolTarget, name)
 	}
+	if v, ok := b.validQlmcpArgs(name, tool, fields); !ok {
+		return v
+	}
+	return qlmcpVerdict(name, tool, fields)
+}
+
+func (b Bounds) validQlmcpArgs(name string, tool loopTool, fields map[string]any) (Verdict, bool) {
 	takes := make([]string, 0, len(tool.args))
 	for key := range tool.args {
 		takes = append(takes, key)
@@ -457,18 +464,22 @@ func (b Bounds) qlmcp(name string, fields map[string]any) Verdict {
 			if why, ok := dangerous[key]; ok {
 				v.Reason += ", since " + why
 			}
-			return v
+			return v, false
 		}
 		if err := judge(b, fields[key]); err != nil {
-			return refuse("%s %s: %v", name, key, err)
+			return refuse("%s %s: %v", name, key, err), false
 		}
 	}
 	for _, key := range tool.required {
 		if _, ok := fields[key]; !ok {
-			return refuse("%s needs %s; it takes %s", name, key, strings.Join(takes, ", "))
+			return refuse("%s needs %s; it takes %s", name, key, strings.Join(takes, ", ")), false
 		}
 	}
 
+	return Verdict{}, true
+}
+
+func qlmcpVerdict(name string, tool loopTool, fields map[string]any) Verdict {
 	v := Verdict{Allowed: true, Step: tool.step}
 	switch name {
 	case "codeql_query_run":
@@ -613,47 +624,67 @@ func (b Bounds) Request(req rpc.PermissionRequest) Verdict {
 	}
 	switch r := req.(type) {
 	case *rpc.PermissionRequestRead:
-		if r.RequestSandboxBypass != nil && *r.RequestSandboxBypass {
-			return refuse("a session never reads outside the sandbox")
-		}
-		for _, p := range named(r.Path, r.ResolvedPath) {
-			if err := b.readable(p); err != nil {
-				return refuse("%v", err)
-			}
-		}
-		return Verdict{Allowed: true}
+		return b.readRequest(r)
 	case *rpc.PermissionRequestWrite:
-		if r.RequestSandboxBypass != nil && *r.RequestSandboxBypass {
-			return refuse("a session never writes outside the sandbox")
-		}
-		v := Verdict{Allowed: true}
-		for _, p := range named(r.FileName, r.ResolvedPath) {
-			step, err := b.writable(p)
-			if err != nil {
-				return refuse("%v", err)
-			}
-			v.Step = step
-		}
-		return v
+		return b.writeRequest(r)
 	case *rpc.PermissionRequestMCP:
-		name, ok := strings.CutPrefix(r.ToolName, r.ServerName+"-")
-		if r.ServerName != Server || !ok {
-			return refuse("%s is not one of %s's tools", r.ToolName, Server)
-		}
-		fields, _ := r.Args.(map[string]any)
-		return b.qlmcp(name, fields)
+		return b.mcpRequest(r)
 	case *rpc.PermissionRequestHook:
-		if v := b.Call(r.ToolName, r.ToolArgs); v.Review {
-			return v
-		}
-		return refuse("only accepting expected output is held for an operator, not %s", r.ToolName)
+		return b.hookRequest(r)
 	case *rpc.PermissionRequestCustomTool:
-		if slices.Contains([]string{ToolCatalog, ToolTarget, ToolTest, ToolResults, ToolSource, ToolDraft}, r.ToolName) {
-			return b.Call(r.ToolName, r.Args)
-		}
-		return refuse("%s is not one of ABOM's tools", r.ToolName)
+		return b.customToolRequest(r)
 	}
 	return refuse("a %s request is not part of the authoring loop", req.Kind())
+}
+
+func (b Bounds) readRequest(r *rpc.PermissionRequestRead) Verdict {
+	if r.RequestSandboxBypass != nil && *r.RequestSandboxBypass {
+		return refuse("a session never reads outside the sandbox")
+	}
+	for _, p := range named(r.Path, r.ResolvedPath) {
+		if err := b.readable(p); err != nil {
+			return refuse("%v", err)
+		}
+	}
+	return Verdict{Allowed: true}
+}
+
+func (b Bounds) writeRequest(r *rpc.PermissionRequestWrite) Verdict {
+	if r.RequestSandboxBypass != nil && *r.RequestSandboxBypass {
+		return refuse("a session never writes outside the sandbox")
+	}
+	v := Verdict{Allowed: true}
+	for _, p := range named(r.FileName, r.ResolvedPath) {
+		step, err := b.writable(p)
+		if err != nil {
+			return refuse("%v", err)
+		}
+		v.Step = step
+	}
+	return v
+}
+
+func (b Bounds) mcpRequest(r *rpc.PermissionRequestMCP) Verdict {
+	name, ok := strings.CutPrefix(r.ToolName, r.ServerName+"-")
+	if r.ServerName != Server || !ok {
+		return refuse("%s is not one of %s's tools", r.ToolName, Server)
+	}
+	fields, _ := r.Args.(map[string]any)
+	return b.qlmcp(name, fields)
+}
+
+func (b Bounds) hookRequest(r *rpc.PermissionRequestHook) Verdict {
+	if v := b.Call(r.ToolName, r.ToolArgs); v.Review {
+		return v
+	}
+	return refuse("only accepting expected output is held for an operator, not %s", r.ToolName)
+}
+
+func (b Bounds) customToolRequest(r *rpc.PermissionRequestCustomTool) Verdict {
+	if slices.Contains([]string{ToolCatalog, ToolTarget, ToolTest, ToolResults, ToolSource, ToolDraft}, r.ToolName) {
+		return b.Call(r.ToolName, r.Args)
+	}
+	return refuse("%s is not one of ABOM's tools", r.ToolName)
 }
 
 // named is the path a request states, and the CLI's resolution of it when it gave one.

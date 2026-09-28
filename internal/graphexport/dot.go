@@ -1,8 +1,4 @@
-// Package graphexport renders the graph projection as documents other tools read.
-//
-// It mirrors internal/bomexport: the store owns the facts, this owns how they are written down.
-// What it encodes is store.Graph, already scoped and filtered, so an export answers exactly the
-// question the interface was showing rather than a second one assembled here.
+// Package graphexport renders scoped graph projections for other tools.
 package graphexport
 
 import (
@@ -18,9 +14,7 @@ import (
 type Options struct {
 	// Name identifies the graph. Empty is "abom".
 	Name string
-	// Predicate is the filter text this projection came from, carried verbatim. Empty means
-	// nothing narrowed it; a file omitting this would look like the whole corpus whatever it
-	// actually held.
+	// Predicate is the filter text this projection came from, carried verbatim.
 	Predicate string
 	// GroupBy draws one cluster per distinct value: "owner", "repository" or "workflow". Empty
 	// draws none, because ungrouped the file claims no set is complete.
@@ -29,9 +23,7 @@ type Options struct {
 
 // DOT renders the projection as a Graphviz digraph.
 //
-// Every statement is indented, which is also what keeps one safe: the DOT parser discards a line
-// beginning with `#` as a preprocessor marker, so a node key starting with one would vanish from
-// an unindented file with no error reported anywhere.
+// Every statement is indented so node keys beginning with `#` cannot become preprocessor lines.
 func DOT(g store.Graph, opts Options) ([]byte, error) {
 	name := opts.Name
 	if name == "" {
@@ -39,9 +31,7 @@ func DOT(g store.Graph, opts Options) ([]byte, error) {
 	}
 
 	var b strings.Builder
-	// Never `strict`. It folds relationships sharing a pair of endpoints into one, which is the
-	// identity loss this export exists to avoid: two `uses:` lines naming one action are two
-	// relationships, told apart by the references carried on the edges.
+	// Never `strict`: parallel relationships carry distinct references.
 	fmt.Fprintf(&b, "digraph %s {\n", quote(name))
 	writeStatement(&b, 1, "graph", documentAttrs(g, opts))
 	b.WriteByte('\n')
@@ -68,11 +58,7 @@ func DOT(g store.Graph, opts Options) ([]byte, error) {
 	return []byte(b.String()), nil
 }
 
-// writeClusters boxes each group and leaves the rest at the top level.
-//
-// A node with no value for the grouping belongs to no group, and is never put in one named for
-// the absence: a box asserts its members belong together, and "these have nothing in common" is
-// not that.
+// writeClusters boxes each group and leaves nodes without that value at the top level.
 func writeClusters(b *strings.Builder, nodes []store.GraphNode, by string) {
 	members := map[string][]store.GraphNode{}
 	var ungrouped []store.GraphNode
@@ -107,11 +93,8 @@ func writeClusters(b *strings.Builder, nodes []store.GraphNode, by string) {
 
 // groupKey is the value a node is clustered by, or "" for one that belongs to no group.
 //
-// Owner follows store.ownerOf rather than reading GraphNode.Owner, which names the account a
-// *dependency* lives under: a repository's own workflows and jobs carry the repository instead,
-// so reading the field alone boxed the dependencies and left everything the organization owns
-// loose. A node with neither -- a container image, say -- is grouped by nothing rather than by a
-// name invented for the absence.
+// Owner grouping derives from Repository first because GraphNode.Owner names dependency owners;
+// repository-owned workflows and jobs otherwise lose their organization group.
 func groupKey(n store.GraphNode, by string) string {
 	switch by {
 	case "owner":
@@ -132,11 +115,7 @@ func groupKey(n store.GraphNode, by string) string {
 	}
 }
 
-// documentAttrs states what the file is a view of.
-//
-// `abom_terms_not_applied` is the sharpest of them: those terms narrow nothing here, because the
-// payload expects whoever draws it to apply them and Graphviz will not. A file that stayed quiet
-// about that would read as the answer to a narrower question than it is.
+// documentAttrs states what the file is a view of, including client-applied terms.
 func documentAttrs(g store.Graph, opts Options) [][2]string {
 	attrs := [][2]string{
 		{"abom_predicate", opts.Predicate},
@@ -169,8 +148,7 @@ func nodeAttrs(n store.GraphNode) [][2]string {
 		[2]string{"abom_analyzed", strconv.FormatBool(n.Analyzed)},
 		[2]string{"abom_reach_known", strconv.FormatBool(n.ReachKnown)},
 	)
-	// DOT has no null. Writing zero for a node reach was never computed for asserts a measurement
-	// nobody made, in the one attribute that decides how large it is drawn.
+	// DOT has no null; omit unmeasured reach rather than writing zero.
 	if n.ReachKnown {
 		attrs = append(attrs, [2]string{"abom_dependent_repos", strconv.Itoa(n.DependentRepos)})
 	}
@@ -192,8 +170,7 @@ func nodeAttrs(n store.GraphNode) [][2]string {
 // from another relationship between the same pair.
 func edgeAttrs(e store.GraphEdge) [][2]string {
 	attrs := [][2]string{{"abom_kind", e.Kind}}
-	// An edge whose ends nobody could name has no boundary, which is unknown rather than a
-	// fourth class. Left absent it would read as one of the three.
+	// An unnamed boundary is unknown, not another boundary class.
 	if e.Boundary == "" {
 		attrs = append(attrs, [2]string{"abom_boundary_known", "false"})
 	} else {

@@ -68,8 +68,7 @@ type Listing struct {
 	// Fallback says why the preferred route did not answer. Empty when it did.
 	Fallback string `json:"fallback,omitempty"`
 	// Pages is how many round trips the read took. An account whose full listing fits on one page
-	// costs less to read whole than to sweep, because a sweep is two ordered walks: measured at
-	// 1 point against 2 on a 27 repository organization.
+	// costs less to read whole than to sweep, because a sweep is two ordered walks.
 	Pages int `json:"pages"`
 	// PropertiesRead says the custom property values were actually read. False leaves them
 	// unknown rather than known to be empty, which is the difference between a repository the

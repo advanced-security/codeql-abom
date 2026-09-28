@@ -156,7 +156,7 @@ func (s *Store) walk(opts SubgraphOptions) (Subgraph, error) {
 		}
 		frontier = next
 	}
-	return v.result(focusID)
+	return v.result()
 }
 
 // subgraphWalk carries the state of one bounded traversal.
@@ -340,7 +340,7 @@ func (v *subgraphWalk) resolveDisplay(id int64) (int64, error) {
 }
 
 // result materializes the walked ids into the returned view.
-func (v *subgraphWalk) result(focusID int64) (Subgraph, error) {
+func (v *subgraphWalk) result() (Subgraph, error) {
 	// Empty, not nil: a nil slice marshals to null, and a client reading a collection as null
 	// has to special-case what is simply an empty result.
 	out := Subgraph{

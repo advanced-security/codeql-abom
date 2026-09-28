@@ -154,12 +154,7 @@ func TestAnInventoryBoundedToAGroupingNobodyIsInIsEmpty(t *testing.T) {
 	}
 }
 
-// An upgrade finds the table empty, because reach is recomputed wholesale and the breakdown is
-// only written by a rebuild. Answering "nothing" then would report a grouping as depending on
-// nothing at all — an absent measurement presented as a measurement of zero.
-//
-// Measured on the crawled organization before this refused: the unbounded inventory returned 1,585
-// actions and the bounded one returned 0, with 448 rollup rows still asserting reach.
+// A bounded inventory must refuse rollup reach with no grouping breakdown.
 func TestABoundedInventoryRefusesWhenTheBreakdownHasNotBeenDerived(t *testing.T) {
 	s := pinningGroupingFixture(t)
 

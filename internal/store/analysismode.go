@@ -43,10 +43,8 @@ func ValidAnalysisMode(mode string) bool {
 
 // analysisModeKeyPart is what a mode contributes to a run's identity.
 //
-// Regular contributes nothing, so every run key computed before the column existed still names the
-// run it named: all of them described one repository's own checkout, which is what the backfill
-// rests on. Anything else is a different database and has to be a different key, or an extended
-// evaluation would collide with the regular one and silently take over its row.
+// Regular contributes nothing, so pre-mode run keys still name their original regular database.
+// Anything else is a different database and has to be a different key.
 func analysisModeKeyPart(mode string) string {
 	if mode == AnalysisModeRegular {
 		return ""
@@ -65,11 +63,9 @@ func analysisModeKeyPart(mode string) string {
 // shapes saw, so whichever lane wrote last would decide which totals the row joined. Reading the
 // mode through the run instead costs a lookup on an INTEGER PRIMARY KEY, which is a rowid seek.
 //
-// The regular views admit a row whose provenance is absent: `abom_edge.query_run_id` is nullable
-// and 2,759 corpus findings name no run at all. Absent is not extended — those rows were on
-// record before the column existed, all of them from one repository's own checkout, which is the
-// documented backfill. Treating absence as a third mode would silently drop them from the totals
-// this change is required to leave byte-identical.
+// The regular views admit a row whose provenance is absent: `abom_edge.query_run_id` is nullable.
+// Absent is not extended; treating it as a third mode would drop historical regular rows from the
+// totals this change is required to leave byte-identical.
 const analysisModeViewDDL = `
 INSERT OR IGNORE INTO abom_edge_sighting (edge_row_id, query_run_id)
 SELECT row_id, query_run_id FROM abom_edge_live WHERE query_run_id IS NOT NULL;

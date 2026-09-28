@@ -16,10 +16,6 @@ func ownedRow(t *testing.T, st *Store, key, owner string, depth int) {
 }
 
 // declares states that the accounts are the operator's, which is what decides the owned tier.
-//
-// It replaced `verifies` on 2026-09-07. Every test below still protects what it always did —
-// ownership beats depth, the tiers are exclusive, a requeue takes what it counted — and only the
-// source of ownership moved, from what `gh` says you belong to, to what you have said is yours.
 func declares(t *testing.T, st *Store, owners ...string) {
 	t.Helper()
 	accounts := make([]DeclaredAccount, 0, len(owners))

@@ -385,8 +385,9 @@ as written, never in its place:
   caller pin, and each drawn line carries the commits behind it;
 - the bill of materials names, beside each reference, the commits its roots' locks select, in both
   export formats;
-- the submission closure follows the commit a root's lock selects, down every route it governs,
-  and submits that commit, named by its measured version where one exists;
+- the submission closure follows the commit a root's lock selects, down every route it governs —
+  through composite actions and into called reusable workflows' jobs and steps — and submits that
+  commit, named by its measured version where one exists;
 - exposure admits a consumer only through the commit it runs: its own lock's choice, or what its
   reference resolved to, and a caller's lock binds the route to that caller.
 

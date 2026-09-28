@@ -56,29 +56,50 @@ func (e *Executor) Run(ctx context.Context, runID int64) error {
 		return err
 	}
 
+	planned, dir, err := e.prepareRun(ctx, runID, run.Queries)
+	if err != nil {
+		return e.refuse(ctx, runID, err)
+	}
+
+	if err := e.startRun(runID, planned); err != nil {
+		return err
+	}
+
+	if err := e.carryOutRunMembers(ctx, runID, dir, run, planned); err != nil {
+		return err
+	}
+
+	return e.completeRun(runID, run.Held)
+}
+
+func (e *Executor) prepareRun(
+	ctx context.Context, runID int64, queries []store.AnalysisQuery,
+) (tierPlan, string, error) {
 	// Resolved before anything runs. A run that analyzed the queries it could find and quietly
 	// dropped the rest would report a result for a request that was not carried out.
-	planned, err := e.resolve(ctx, run.Queries)
+	planned, err := e.resolve(ctx, queries)
 	dir := filepath.Join(e.WorkDir, fmt.Sprintf("run-%d", runID))
 	if err == nil {
 		if err = os.MkdirAll(dir, 0o700); err != nil {
 			err = fmt.Errorf("preparing %s: %w", dir, err)
 		}
 	}
-	if err != nil {
-		return e.refuse(ctx, runID, err)
-	}
+	return planned, dir, err
+}
 
+func (e *Executor) startRun(runID int64, planned tierPlan) error {
 	if err := e.Store.SetAnalysisRunCodeQL(runID, planned.cliVersion); err != nil {
 		return err
 	}
 	if err := e.Store.RecordQueryMetadata(planned.metadata); err != nil {
 		return err
 	}
-	if err := e.Store.SetAnalysisRunState(runID, store.RunRunning); err != nil {
-		return err
-	}
+	return e.Store.SetAnalysisRunState(runID, store.RunRunning)
+}
 
+func (e *Executor) carryOutRunMembers(
+	ctx context.Context, runID int64, dir string, run store.AnalysisRun, planned tierPlan,
+) error {
 	for _, member := range run.Members {
 		if err := ctx.Err(); err != nil {
 			// Recorded as canceled rather than left running: a run nobody stopped and nobody
@@ -96,11 +117,14 @@ func (e *Executor) Run(ctx context.Context, runID int64) error {
 			return err
 		}
 	}
+	return nil
+}
 
+func (e *Executor) completeRun(runID int64, hold bool) error {
 	// Attribution is what makes a finding visible to anything built on the graph, and the crawl
 	// does it once at the end of a cycle for the same reason: the join is over the whole table,
 	// so doing it per member would repeat the same work for every repository in the run.
-	if !run.Held {
+	if !hold {
 		if _, err := e.Store.LinkFindingsToNodes(); err != nil {
 			return fmt.Errorf("attributing what run %d found: %w", runID, err)
 		}

@@ -57,9 +57,7 @@ func TestATightBudgetSpreadsWhatIsLeft(t *testing.T) {
 	}
 }
 
-// A budget with room must not be spread at all. Measured before this rule existed: 14,967 of
-// 15,000 requests remaining still produced 240ms between reads, turning a 26-request crawl into
-// 13 seconds of waiting for a budget nothing was threatening.
+// A budget with room must not be spread at all.
 func TestAPlentifulBudgetDoesNotPaceAtAll(t *testing.T) {
 	c := budgetServer(t, 14900, time.Hour)
 	c.Pace = work.NewLimiter(0)

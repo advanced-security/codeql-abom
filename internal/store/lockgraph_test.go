@@ -86,8 +86,7 @@ func TestReadingACommitAgainReplacesItsGraph(t *testing.T) {
 	}
 }
 
-// Two consumers can lock the same tag to different commits, and each keeps its own answer. The
-// digests are two public consumers' locks of `dtolnay/rust-toolchain@v1`, measured 2026-09-27.
+// Two consumers can lock the same tag to different commits, and each keeps its own answer.
 func TestTwoConsumersKeepTheirOwnSelectionForOneTag(t *testing.T) {
 	s := newTestStore(t)
 	for consumer, digest := range map[string]string{

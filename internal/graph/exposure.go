@@ -107,13 +107,8 @@ type reachPath struct {
 	conditions []StepCondition
 }
 
-// reachedNode is a node the walk has arrived at, together with the commit a consumer must have
-// pinned for the route through it to exist. Empty constrains nothing.
-//
-// Two bindings follow a lock. requires names the only repository the route can end at, once a
-// caller's lock admitted a step: that lock chose the commit for that caller and nobody else.
-// excludes names repositories it cannot end at, once a step was admitted by what its ref resolves
-// to while their locks chose another commit for it. Sorted and comma-joined, so a state is a key.
+// reachedNode carries the commit and consumer bindings that make a route possible.
+// excludes is sorted and comma-joined so reachedNode stays usable as a map key.
 type reachedNode struct {
 	node     int64
 	commit   string
@@ -121,17 +116,10 @@ type reachedNode struct {
 	excludes string
 }
 
-// exposureOf walks dependents from target, keeping the shortest route to each repository.
+// exposureOf walks dependents from target, keeping each repository's shortest route.
 //
-// Breadth-first order means the first time a repository is reached is by its shortest route,
-// which is the one worth reporting: a repository that uses an action directly does not need to
-// hear about a longer path to the same action.
-//
-// A route stays inside the version that was pinned. The edges inside a dependency were read from
-// one commit of it, so they belong to whoever pinned that commit and to nobody else; ABOM analyzes
-// many references of a popular action, and without this a repository on v4 is told to act on a
-// dependency that only enters at v5. The submission closure enforces the same rule walking the
-// other way, and the two are held together by the tests in exposureagreement_test.go.
+// Routes stay inside the dependency commit a consumer pinned; exposureagreement_test.go holds
+// this walk to the same rule as the submission closure.
 func (m *model) exposureOf(target int64, maxDepth int) map[int64]reachPath {
 	out := map[int64]reachPath{}
 
@@ -151,8 +139,7 @@ func (m *model) exposureOf(target int64, maxDepth int) map[int64]reachPath {
 		var next []reachedNode
 		for _, cur := range frontier {
 			for _, in := range m.reverse[cur.node] {
-				// Leaving a dependency: only a consumer running the commit these edges were
-				// read from can be standing here.
+				// Leaving a dependency requires a consumer that can run this commit.
 				requires, excludes, ok := m.admits(in, cur)
 				if !ok {
 					continue
@@ -163,8 +150,7 @@ func (m *model) exposureOf(target int64, maxDepth int) map[int64]reachPath {
 				vias := []reachedNode{{node: in.src, requires: requires, excludes: excludes}}
 				if c, ok := m.container[in.src]; ok {
 					vias[0].node = c
-					// Crossing into a dependency. The edge was read out of the commits of it
-					// that ship it, so everything onward belongs to one of those.
+					// Crossing into a dependency binds the onward route to one shipped commit.
 					if m.isExternal[c] {
 						vias = vias[:0]
 						for _, commit := range in.commits {
@@ -199,14 +185,7 @@ func (m *model) exposureOf(target int64, maxDepth int) map[int64]reachPath {
 	return out
 }
 
-// admits reports whether a consumer's reference can lead to the commit the walk stands at, and
-// how the route is bound from here.
-//
-// A reference its own repository's lock governs runs the commit that lock selects and nothing
-// else. One a caller's lock governs runs that commit for that caller, so admitting it by that
-// lock binds the route to the caller. Admitting it by what its ref resolves to rules out every
-// caller whose lock chose another commit for it. A reference nothing locks runs what it resolved
-// to, which is how an unlocked corpus is walked.
+// admits reports whether a reference can reach cur.commit and how that binds later routes.
 func (m *model) admits(in inEdge, cur reachedNode) (int64, string, bool) {
 	if cur.commit == "" {
 		return cur.requires, cur.excludes, true

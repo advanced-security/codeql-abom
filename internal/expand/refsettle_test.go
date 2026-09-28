@@ -8,12 +8,6 @@ import (
 
 // A dependency claimed at a reference must come out of the queue when its analysis finishes.
 //
-// The queue is keyed `(node_key, ref)` and a batch is looked up by `owner/repo@ref`, but the
-// prepared job carried `owner/repo`. The lookup missed, `consume` ran against a zero-value batch
-// holding no items, and nothing was ever settled. On the real corpus that left 40 rows `running`
-// for good, froze `done` at 1,169, and attributed 125 query runs and 203 edges to a repository
-// literally named "/" — the zero batch's own `full()`.
-//
 // It only shows with a reference, because `key()` and `full()` are the same string without one.
 func TestADependencyAnalyzedAtARefIsSettledRatherThanLeftRunning(t *testing.T) {
 	h := newHarness(t)

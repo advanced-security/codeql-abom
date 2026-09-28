@@ -31,8 +31,7 @@ func TestBumpImpactSeparatesDirectFromTransitive(t *testing.T) {
 	}
 }
 
-// Upstream repositories were fetched only to resolve what the repositories in scope depend on.
-// Counting them as affected inflated this figure from 202 to 221 against real data.
+// Upstream repositories are resolution context, not repositories the operator can change.
 func TestBumpImpactExcludesUpstreamRepositories(t *testing.T) {
 	s := subgraphFixture(t)
 

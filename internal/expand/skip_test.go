@@ -46,9 +46,6 @@ func (h *harness) pending() int {
 }
 
 // requeueDirect puts the analyzed rows back, whichever tier holds them.
-//
-// It requeued only `direct` until 2026-09-07, when a declared root became owned-tier and this
-// started finding nothing. Every caller wants "put back what was analyzed", not one tier.
 func (h *harness) requeueDirect() int {
 	h.t.Helper()
 	total := 0
@@ -168,12 +165,8 @@ func TestAQueryNotYetOnRecordIsStillAnalyzed(t *testing.T) {
 // A skip must still record the commit it skipped on, or the row claims an analysis of a commit
 // nobody established.
 //
-// This used to assert a fetch, on the reasoning that the commit is only knowable once the source
-// is in hand. That is no longer true: a reference resolves remotely, so the commit is known
-// before the clone and the clone is skipped with it. The guarantee is unchanged and asserted
-// directly. Deciding from the frontier's *stored* sha would still be wrong — it would skip
-// precisely when a ref had moved — and is not what happens, because the probe asks the remote
-// what the reference points at now.
+// Deciding from the frontier's stored SHA would skip precisely when a ref had moved; the probe
+// must ask the remote what the reference points at now.
 func TestASkipStillResolvesTheCommitItSkippedOn(t *testing.T) {
 	h := drainedHarness(t)
 

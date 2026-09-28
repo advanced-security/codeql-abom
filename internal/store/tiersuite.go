@@ -12,8 +12,7 @@ import (
 // and outnumber them several times over, so they get the graph alone — that is a cost decision,
 // not a claim that they matter less.
 //
-// Source repositories are absent because they are not in this queue at all: they are what the
-// queue is measured from.
+// Source repositories are absent because they are not in this queue at all.
 var DefaultTierSuites = map[string][]string{
 	TierDirect: {
 		"advanced-security/abom-actions-graph-extraction-src:codeql-suites/abom-dependency-graph.qls",

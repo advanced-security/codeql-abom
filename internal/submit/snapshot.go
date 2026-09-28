@@ -1,10 +1,7 @@
 // Package submit projects ABOM's dependency closure into GitHub's dependency submission format.
 //
-// The shape of everything here follows from one measurement. A submission that names a path
-// GitHub analyzes *replaces* GitHub's reading of that path, and on 2026-09-08 a partial snapshot
-// deleted two correct dependencies from a live repository. A submission that names a path GitHub
-// does not analyze is purely additive. So ABOM submits only what GitHub cannot see, under a path
-// of its own, and can never remove somebody else's data.
+// A submission that names a path GitHub analyzes replaces GitHub's reading of that path, so ABOM
+// submits only what GitHub cannot see, under a path of its own.
 package submit
 
 import (
@@ -102,7 +99,7 @@ func Build(m Metadata, closure []store.ClosureEntry) Snapshot {
 		if e.Relationship != "indirect" {
 			continue
 		}
-		// What runs: the commit a lock selects over the tag the workflow wrote, and the measured
+		// What runs: the commit a lock selects over the tag the workflow wrote, and the verified
 		// version of either when there is one. GitHub matches advisories on semantic versions and
 		// never on commits, so a pinned reference is unalertable until it can be named.
 		ref := e.Ref

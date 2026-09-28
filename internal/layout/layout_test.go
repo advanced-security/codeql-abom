@@ -3,6 +3,7 @@ package layout
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -42,8 +43,7 @@ func requireGraphviz(t *testing.T, e Engine) {
 	}
 }
 
-// The whole reason for laying out on the server is that a picture can be depended on. An engine
-// that placed nodes differently each run would leave the interface exactly where it started.
+// Server layouts must be repeatable so the interface can depend on their coordinates.
 func TestTheSameGraphLaysOutIdentically(t *testing.T) {
 	requireGraphviz(t, Dot)
 	dot := fixtureDOT(t, "")
@@ -67,8 +67,7 @@ func TestTheSameGraphLaysOutIdentically(t *testing.T) {
 	}
 }
 
-// A force engine seeds itself from the clock unless told not to, so the one thing this is for --
-// the same graph drawing the same picture -- is lost by default.
+// Force engines need an explicit seed to be repeatable.
 func TestAForceEngineIsSeededSoItTooIsRepeatable(t *testing.T) {
 	requireGraphviz(t, Fdp)
 	dot := fixtureDOT(t, "")
@@ -88,8 +87,7 @@ func TestAForceEngineIsSeededSoItTooIsRepeatable(t *testing.T) {
 	}
 }
 
-// The engine name selects a binary to execute. Anything outside the known set is refused before
-// a process is started, never passed through as a program to run.
+// Unknown engine names must not become process names.
 func TestAnUnknownEngineIsRefusedBeforeAnythingRuns(t *testing.T) {
 	for _, engine := range []Engine{"rm", "dot; rm -rf /", "", "../../bin/sh"} {
 		_, err := Compute(context.Background(), fixtureDOT(t, ""), Options{Engine: engine})
@@ -103,8 +101,7 @@ func TestAnUnknownEngineIsRefusedBeforeAnythingRuns(t *testing.T) {
 	}
 }
 
-// The boundary is the point: a cluster is drawn as a box around its members rather than a hull
-// guessed afterwards, and the box has to reach the caller for anything to draw it.
+// Cluster boxes are the group boundaries the caller draws.
 func TestClusterBoundariesComeBackWithTheirBox(t *testing.T) {
 	requireGraphviz(t, Dot)
 
@@ -125,8 +122,7 @@ func TestClusterBoundariesComeBackWithTheirBox(t *testing.T) {
 	}
 }
 
-// An engine given a pathological graph runs for as long as it takes. A request that cannot be
-// abandoned is a request that holds a connection open until somebody restarts the server.
+// Layout work must stop when its request is canceled.
 func TestLayoutStopsWhenTheCallerGivesUp(t *testing.T) {
 	requireGraphviz(t, Dot)
 
@@ -138,8 +134,7 @@ func TestLayoutStopsWhenTheCallerGivesUp(t *testing.T) {
 	}
 }
 
-// Graphviz is optional, so its absence is an answer rather than a fault -- but a silent one would
-// leave a reader believing they were looking at a stable layout when they were not.
+// Missing optional Graphviz is reported distinctly so callers can degrade.
 func TestAMissingEngineIsReportedRatherThanHidden(t *testing.T) {
 	_, err := Compute(context.Background(), fixtureDOT(t, ""), Options{
 		Engine: Dot,
@@ -154,8 +149,7 @@ func TestAMissingEngineIsReportedRatherThanHidden(t *testing.T) {
 	}
 }
 
-// Every node in the document has to come back, or the interface silently falls back to the force
-// simulation for whichever ones went missing and draws half a picture from each.
+// Every node must get a server position; otherwise the browser mixes layout modes.
 func TestEveryNodeComesBackWithAPosition(t *testing.T) {
 	requireGraphviz(t, Dot)
 
@@ -176,9 +170,7 @@ func TestEveryNodeComesBackWithAPosition(t *testing.T) {
 	}
 }
 
-// Which engines box a group is a property of Graphviz, not of this code, so it is measured rather
-// than assumed -- and asserted here so an upgrade that changes it fails loudly instead of quietly
-// drawing a grouped corpus with no boundaries.
+// Cluster support is a Graphviz behavior this package exposes to callers.
 func TestOnlySomeEnginesDrawAClusterBoundary(t *testing.T) {
 	dot := fixtureDOT(t, "owner")
 	for _, e := range Engines() {
@@ -197,9 +189,7 @@ func TestOnlySomeEnginesDrawAClusterBoundary(t *testing.T) {
 	}
 }
 
-// fannedDOT is a corpus shape rather than a toy: several repositories whose workflows fan into a
-// shared pool of actions. A broad rank of siblings is what a ranking engine spreads sideways, so
-// this is the shape that exposes an engine's aspect ratio -- and the shape the Explorer holds.
+// fannedDOT exposes whether broad sibling ranks keep group boundaries readable.
 func fannedDOT(t *testing.T) []byte {
 	t.Helper()
 	const actions = 12
@@ -236,10 +226,7 @@ func fannedDOT(t *testing.T) []byte {
 	return dot
 }
 
-// Two group boxes that cross put a node inside both of them, and a reader cannot tell which group
-// it belongs to at any zoom. This is the property a default is chosen on rather than how square
-// the canvas comes back: a wide canvas is still readable once it is scaled to fit, but crossed
-// boundaries are not readable at any size.
+// Group boxes must not cross, or containment becomes ambiguous.
 func TestTheDefaultEngineKeepsGroupBoundariesApart(t *testing.T) {
 	requireGraphviz(t, Default)
 
@@ -260,10 +247,19 @@ func TestTheDefaultEngineKeepsGroupBoundariesApart(t *testing.T) {
 	}
 }
 
-// The interface offers to group, so the engine it asks for when nobody names one has to be able
-// to draw a boundary. Defaulting to one that cannot would report every grouped corpus as ungrouped.
+// The default engine must draw the group boundaries the interface offers.
 func TestTheDefaultEngineDrawsTheBoundariesAGroupingPromises(t *testing.T) {
 	if !SupportsClusters(Default) {
 		t.Errorf("the default engine %s does not lay clusters out", Default)
 	}
+}
+
+// Available reports whether an engine can be run at all.
+func Available(e Engine) bool {
+	program, known := programFor(e)
+	if !known {
+		return false
+	}
+	_, err := exec.LookPath(program)
+	return err == nil
 }

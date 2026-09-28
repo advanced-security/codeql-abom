@@ -34,8 +34,8 @@ func TestAFindingReportsTheShapeItWasSeenIn(t *testing.T) {
 	}
 }
 
-// A finding no run claims has no shape to state. Reporting `regular` would be a guess dressed as
-// provenance, and 2,759 findings on the reference corpus are in exactly that state.
+// A finding no run claims has no shape to state; reporting `regular` would be a guess dressed as
+// provenance.
 func TestAFindingWithNoRunStatesNoShape(t *testing.T) {
 	s := bomFixture(t)
 

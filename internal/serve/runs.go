@@ -21,15 +21,7 @@ type RunExecutor interface {
 	Run(ctx context.Context, runID int64) error
 }
 
-// startRun records a request to run an explicit list of queries over the databases a scope
-// resolves to.
-//
-// The predicate arrives in the query string rather than the body so it is parsed by
-// `graphPredicate`, exactly as every other surface parses one, and resolved by `runSet`, exactly
-// as /api/databases previews it. A reader is shown the set a run will cover before pressing it.
-//
-// It records and does not execute. Keeping those apart is what lets a reader see the size of a
-// thing before it happens.
+// startRun records, but does not execute, queries over the databases a scope resolves to.
 func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 	spec, err := s.runPredicate(r)
 	if err != nil {

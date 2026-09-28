@@ -6,11 +6,8 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/normalize"
 )
 
-// A repository has three states — analyzed, enumerated but not yet looked inside, and holding
-// nothing to analyze — and on the reference corpus all three looked alike. Of 198 repositories the
-// operator owns, 105 were absent from the Explorer entirely and the 93 that were drawn all
-// reported `analyzed = false`, because a repository node is keyed `repo:owner/name` and the
-// frontier is keyed `owner/name`, so the join could never match.
+// A repository has three states: analyzed, queued, and holding nothing to analyze.
+// Repository nodes are keyed `repo:owner/name`; frontier rows are keyed `owner/name`.
 func TestARepositoryCarriesTheAnalysisStateOfItsOwnQueueRow(t *testing.T) {
 	s := newTestStore(t)
 	id := seedOwnedRepo(t, s, "acme/service")
@@ -86,10 +83,7 @@ func TestADependencyQueueRowIsNotReadAsItsRepositoryNode(t *testing.T) {
 	}
 }
 
-// A repository the operator owns but nothing has analyzed produces no nodes, so nothing stood for
-// it in the graph. On the reference corpus that hid 105 of 198 owned repositories — every one
-// still queued and every one that held nothing to analyze — leaving a picture of the operator's
-// estate made only of the parts that happened to succeed.
+// An owned repository must be drawn even before anything has analyzed it.
 func TestAnOwnedRepositoryIsDrawnBeforeAnythingHasAnalyzedIt(t *testing.T) {
 	s := newTestStore(t)
 	seedOwnedRepo(t, s, "acme/waiting")

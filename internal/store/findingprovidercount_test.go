@@ -3,8 +3,7 @@ package store
 import "testing"
 
 // An answer narrowed by a provider says how many matches it could not speak for, the way a source
-// answer does. On the crawled organization one provider is on offer and 10,676 of 12,317 findings
-// recorded none, so filtering by the only value answers for an eighth of the corpus in silence.
+// answer does.
 func TestAProviderAnswerCountsTheMatchesThatRecordedNoProvider(t *testing.T) {
 	s := matchFixture(t)
 	var sharedID int64

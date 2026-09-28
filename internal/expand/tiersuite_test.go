@@ -119,7 +119,7 @@ func TestATierBoundToNothingPlansNothing(t *testing.T) {
 		t.Fatalf("plansByTier: %v", err)
 	}
 
-	if !plans[store.TierTransitive].empty() {
+	if !planIsEmpty(plans[store.TierTransitive]) {
 		t.Errorf("transitive planned %+v, want nothing", plans[store.TierTransitive])
 	}
 }
@@ -150,3 +150,5 @@ func TestAnOwnedBatchIsPlannedAsOwnedAtAnyDepth(t *testing.T) {
 		t.Errorf("an unowned batch is the %q tier, got %q", store.TierDirect, got)
 	}
 }
+
+func planIsEmpty(p tierPlan) bool { return len(p.bqrs) == 0 && len(p.findings) == 0 }

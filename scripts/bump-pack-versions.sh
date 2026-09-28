@@ -6,12 +6,8 @@
 #   bump-pack-versions.sh --upgrade-deps  move each upstream dependency to the latest compatible
 #   bump-pack-versions.sh --repin         rewrite each suite's `version:` from the lock files
 #
-# The last two modes exist because `codeql pack upgrade` alone does neither. It never looks inside
-# a .qls, so an upgrade that appears clean leaves the suites pinned to a version nothing else uses.
-# And it is a no-op against an exact pin, because the pin already satisfies its own constraint:
-# measured 2026-09-09 with `codeql/actions-all: 0.6.0` and 0.6.1 published, it left both the
-# manifest and the lock file at 0.6.0. Exact pinning is this repository's rule, so resolution has
-# to be forced by wildcarding the dependency and reading the answer back out of the lock file.
+# `codeql pack upgrade` does not update suites or exact pins; force resolution by wildcarding
+# each exact dependency and reading the resolved version back from the lock file.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -27,23 +23,20 @@ set_scalar() {
 }
 
 if [ "${1:-}" = "--upgrade-deps" ]; then
-	# Libraries first: a pack depending on one through `${workspace}` resolves against the
-	# library's pins, so upgrading it later leaves every dependent held at the old version.
+	# Libraries first: workspace dependents resolve through their pins.
 	for manifest in ql/*/lib/codeql-pack.yml ql/*/*/src/codeql-pack.yml ql/*/*/test/codeql-pack.yml; do
 		[ -e "$manifest" ] || continue
 		pack_dir=$(dirname "$manifest")
 		lock="$pack_dir/codeql-pack.lock.yml"
 
-		# Only exact pins are forced. `${workspace}` resolves to a sibling in this repository and
-		# a wildcard is already floating; wildcarding either would send the CLI to the registry
-		# for a pack that is not published.
+		# Only exact pins are forced; workspace and wildcard dependencies already float locally.
 		pinned=$(awk '/^dependencies:/ {deps=1; next}
 		              /^[^[:space:]]/ {deps=0}
 		              deps && $1 ~ /:$/ && $2 ~ /^[0-9]+\./ {print substr($1, 1, length($1)-1)}
 		             ' "$manifest")
 
 		if [ -z "$pinned" ]; then
-			# Still upgrade, so a pack whose sibling moved gets a refreshed lock file.
+			# Refresh lock files even when no exact dependency needs forcing.
 			codeql pack upgrade -- "$pack_dir" >/dev/null
 			echo "$manifest: no exact pins; lock file refreshed"
 			continue
@@ -60,7 +53,7 @@ if [ "${1:-}" = "--upgrade-deps" ]; then
 			exit 1
 		fi
 
-		# Restore first, so a dependency the lock file does not name keeps the pin it had.
+		# Restore first so unresolved dependencies keep their existing pins.
 		mv "$manifest.bak" "$manifest"
 		for dep in $pinned; do
 			resolved=$(awk -v p="$dep:" '$1 == p {getline; print $2; exit}' "$lock")
@@ -103,7 +96,7 @@ if [ "${1:-}" = "--repin" ]; then
 		' "$suite" >"$suite.tmp"
 		mv "$suite.tmp" "$suite"
 
-		# The manifest dependency has to say the same thing the suite now says.
+		# Keep the manifest dependency aligned with the suite pin.
 		while read -r dep version; do
 			set_scalar "$pack_dir/codeql-pack.yml" "  $dep" "$version"
 		done < <(awk '/^[[:space:]]*from:/ {f=$2; next}

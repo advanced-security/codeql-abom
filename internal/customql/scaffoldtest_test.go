@@ -16,8 +16,8 @@ func aPack(t *testing.T) string {
 	return dir
 }
 
-// An agent has no shell and its file tools cannot make a directory, so the one its fixtures go in
-// is laid out before it starts. A recorded session without it misused a scaffolding tool to get one.
+// An agent has no shell and its file tools cannot make a directory, so the fixture directory is
+// laid out before it starts.
 func TestATestIsLaidOutWhereTheFixturesGoAndNamesItsQuery(t *testing.T) {
 	dir := aPack(t)
 	tests, err := ScaffoldTest(dir, "CheckoutTagPin")

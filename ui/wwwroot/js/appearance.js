@@ -29,10 +29,8 @@ export function discoveryColor(node, palette) {
 /**
  * Color by how much of a node has been analyzed, for the view whose legend promises exactly that.
  *
- * A queue state answers "has anything been looked at", which is the same question while every node
- * carries one reference — the split makes all 955 on the real corpus all-or-nothing. A collapsed
- * group is where they differ: it sums its members' references and carries no queue state at all, so
- * coloring by state painted every group muted, which this legend reads as "never a dependency".
+ * Queue state answers "has anything been looked at"; collapsed groups need the summed coverage
+ * ratio because they carry no single queue state.
  *
  * No references in use keeps the state, because "not a dependency" is a fact about a workflow
  * inside the corpus under review and must not be drawn as "we have not looked yet".
