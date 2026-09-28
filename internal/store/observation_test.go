@@ -48,12 +48,7 @@ func TestAnObservationCarriesTheQueryThatProducedIt(t *testing.T) {
 	}
 }
 
-// A fact that changes keeps both statements, and the newest carries the highest row id.
-//
-// This used to assert that a second write left exactly one row, which was true only while the
-// key led with `query_run_id` — and a single run restating a value is not what a re-run is. The
-// guarantee that matters is the one `graph.loadConditions` depends on: it orders by row id and
-// lets the last win, so a later statement must sort after the one it supersedes.
+// A changed fact keeps both statements; the newest carries the highest row id.
 func TestALaterStatementSortsAfterTheOneItSupersedes(t *testing.T) {
 	s := newTestStore(t)
 	obs := Observation{

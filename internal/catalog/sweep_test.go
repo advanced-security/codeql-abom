@@ -325,12 +325,8 @@ func TestASweepWithNoMarksIsAFullListing(t *testing.T) {
 }
 
 // A repository with no commits has no branch, and GraphQL says so by answering null. REST answers
-// the repository's *setting*, which names a branch that does not exist — measured on
-// has-ghas/codeql-clone, which REST calls `main` and which has zero branches. The routes agree on
-// which repositories exist and on the marks; this one field is where they cannot, because telling
-// the two apart over REST costs a request per repository, which is the fan-out this whole design
-// exists to avoid. The preferred route is the one that does not invent the branch, and which route
-// answered is recorded so the difference is attributable rather than silent.
+// the repository's *setting*, which can name a branch that does not exist. The preferred route is
+// the one that does not invent the branch, and the recorded route makes the difference attributable.
 func TestAnEmptyRepositoryIsNotGivenABranchItDoesNotHave(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, `{"data":{"rateLimit":{"cost":1,"remaining":9999,"limit":10000},

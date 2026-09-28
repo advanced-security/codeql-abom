@@ -23,8 +23,8 @@ func TestAResolvedVersionIsSubmittedInsteadOfTheCommit(t *testing.T) {
 	}
 }
 
-// And with nothing measured, the commit is still what is submitted. A version nobody verified
-// would put a dependency the repository does not have in front of Dependabot.
+// With no version, the commit is still what is submitted. A version nobody verified would put a
+// dependency the repository does not have in front of Dependabot.
 func TestAnUnresolvedCommitIsStillSubmittedAsTheCommit(t *testing.T) {
 	snap := Build(meta(), []store.ClosureEntry{{
 		Owner: "actions", Repo: "checkout", Relationship: "indirect",
@@ -58,9 +58,8 @@ func keys(m map[string]Resolved) []string {
 	return out
 }
 
-// A dependency a lock selects is submitted as what runs: the locked commit, named by the version
-// the crawl measured it as when it has one. The tag the workflow wrote names whatever that tag
-// points at today, which a locked consumer does not run.
+// A dependency a lock selects is submitted as what runs: the locked commit, named by a verified
+// version when it has one.
 func TestALockedDependencyIsSubmittedAsTheCommitItsLockSelects(t *testing.T) {
 	const locked = "11bd71901bbe5b1630ceea73d27597364c9af683"
 	for name, c := range map[string]struct {

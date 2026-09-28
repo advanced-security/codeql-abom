@@ -238,21 +238,14 @@ public sealed class ThemeService(IJSRuntime js)
         ["step"] = "#868E96",
     };
 
-    // The semantic colors, stated once. MudBlazor's components read them from the theme and the
-    // graph canvas cannot read CSS at all, so without a single source here the same state ends up
-    // two different colors depending on which half of the interface drew it.
+    // Semantic colors live here because MudBlazor and the graph canvas use different renderers.
     private const string SuccessDark = "#51CF66";
     private const string InfoDark = "#4DABF7";
-    // Bolder and darker than the orange this was, so it clears the yellow "queued" now sits at.
-    // It is the semantic warning, so every warning in the interface moves with it — which is the
-    // point: a legend with a private orange would drift from the components beside it.
+    // Warning must remain visually distinct from queued yellow.
     private const string WarningDark = "#FF922B";
     private const string ErrorDark = "#FF6B6B";
 
-    // Success and Warning are darker than the Open Color values they were. On white, #2F9E44
-    // measured 3.45:1 and #E8590C 3.58:1 — fine for a swatch, short of the 4.5:1 an outlined chip
-    // needs, and this interface draws "build-time only" and every pinning level as exactly that.
-    // Dark mode was never the problem, which is the point: it is the scheme that gets looked at.
+    // Light-scheme semantic colors must meet outlined-chip contrast, not just swatch contrast.
     private const string SuccessLight = "#2A833B";
     private const string InfoLight = "#1971C2";
     private const string WarningLight = "#C25100";

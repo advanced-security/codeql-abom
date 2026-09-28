@@ -30,7 +30,6 @@ func TestAFindingRecordsWhichProviderProducedIt(t *testing.T) {
 
 // The `declared_by` rule, applied to findings: a row written before the column existed is
 // **unknown**, and relabeling it `codeql` would invent the provenance the column exists to record.
-// Every finding on the reference corpus is one of these.
 func TestAFindingThatPredatesTheProviderColumnClaimsNone(t *testing.T) {
 	s := newTestStore(t)
 	repoID, err := s.UpsertRepository("octo-org/app", "")
@@ -50,9 +49,8 @@ func TestAFindingThatPredatesTheProviderColumnClaimsNone(t *testing.T) {
 	}
 }
 
-// A finding already on record gains its provider when a provider re-reports it, for the reason
-// `query_run_id` does: without it the corpus can never learn what it did not record the first time.
-// COALESCE, so a lane carrying no provider cannot erase one.
+// A finding already on record gains its provider when a provider re-reports it. COALESCE keeps a
+// lane carrying no provider from erasing one.
 func TestReingestAttachesTheProviderAndNeverErasesIt(t *testing.T) {
 	s := newTestStore(t)
 	repoID, err := s.UpsertRepository("octo-org/app", "")

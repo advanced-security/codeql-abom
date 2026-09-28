@@ -67,8 +67,8 @@ func bandRankSQL(column string) string {
 	return b.String()
 }
 
-// SeverityCounts is how many findings sit in each band. A findings count without it counts 36
-// critical findings in the same column as 11,998 medium ones.
+// SeverityCounts is how many findings sit in each band. A findings count without it hides the
+// severity mix.
 type SeverityCounts struct {
 	Critical int `json:"critical"`
 	High     int `json:"high"`
@@ -91,8 +91,6 @@ func (c *SeverityCounts) add(band string, n int) {
 		c.Unknown += n
 	}
 }
-
-func (c SeverityCounts) total() int { return c.Critical + c.High + c.Medium + c.Low + c.Unknown }
 
 // bandSums aggregates a score column into the bands, in the order targets scans them.
 func bandSums(column string) string {

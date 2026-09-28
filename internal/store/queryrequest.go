@@ -159,27 +159,41 @@ VALUES (?, ?, ?, ?, ?, ?)`, id, e.RunID, e.Repository, e.FindingRowID, e.HeldRes
 
 // checkEvidence refuses picked results whose shape cannot be what a run showed.
 func (r QueryRequest) checkEvidence() error {
+	if err := r.checkEvidenceSource(); err != nil {
+		return err
+	}
+	for _, e := range r.Evidence {
+		if err := r.checkEvidenceRow(e); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r QueryRequest) checkEvidenceSource() error {
 	switch {
 	case len(r.Evidence) > 0 && r.SourceRunID == 0:
 		return errors.New("evidence is picked from a run; name the run it came from")
 	case r.SourceRunID != 0 && r.QueryID == "":
 		return errors.New("a request asked from a run is about a query that ran in it")
 	}
-	for _, e := range r.Evidence {
-		switch {
-		case e.RunID != r.SourceRunID:
-			return fmt.Errorf("evidence from run %d on a request asked from run %d",
-				e.RunID, r.SourceRunID)
-		case e.Kind != RequestFalseAlarm && e.Kind != RequestMissed:
-			return fmt.Errorf("evidence is a %s or a %s, not %q", RequestFalseAlarm, RequestMissed,
-				e.Kind)
-		case e.Kind == RequestFalseAlarm && (e.FindingRowID == 0) == (e.HeldResultID == 0):
-			return errors.New("a false alarm names the one result that should not have fired")
-		case e.Kind == RequestMissed && (e.FindingRowID != 0 || e.HeldResultID != 0):
-			return errors.New("a missed detection names the repository, not a result")
-		case r.Kind != RequestBoth && r.Kind != e.Kind:
-			return fmt.Errorf("a request for %q cannot rest on a %s", r.Kind, e.Kind)
-		}
+	return nil
+}
+
+func (r QueryRequest) checkEvidenceRow(e RequestEvidence) error {
+	switch {
+	case e.RunID != r.SourceRunID:
+		return fmt.Errorf("evidence from run %d on a request asked from run %d",
+			e.RunID, r.SourceRunID)
+	case e.Kind != RequestFalseAlarm && e.Kind != RequestMissed:
+		return fmt.Errorf("evidence is a %s or a %s, not %q", RequestFalseAlarm, RequestMissed,
+			e.Kind)
+	case e.Kind == RequestFalseAlarm && (e.FindingRowID == 0) == (e.HeldResultID == 0):
+		return errors.New("a false alarm names the one result that should not have fired")
+	case e.Kind == RequestMissed && (e.FindingRowID != 0 || e.HeldResultID != 0):
+		return errors.New("a missed detection names the repository, not a result")
+	case r.Kind != RequestBoth && r.Kind != e.Kind:
+		return fmt.Errorf("a request for %q cannot rest on a %s", r.Kind, e.Kind)
 	}
 	return nil
 }

@@ -7,7 +7,7 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
-// supplyChainFixture builds the cases a one-hop test cannot tell apart.
+// supplyChainFixture builds runtime and build-time routes a one-hop test cannot distinguish.
 //
 //	octo-org/app (seed)  ci.yml      -> actions/checkout
 //	                     ci.yml      -> third-party/widget
@@ -130,9 +130,7 @@ func assertChain(t *testing.T, c *SupplyChain, key string, wantRuntime bool, why
 	}
 }
 
-// The base case, and the one a local "is this container referenced by anything" test gets
-// backwards: a plain CI workflow in a repository under review is referenced by nothing at all,
-// yet the organization runs it every day.
+// A seed repository's own workflow is runtime even when no graph edge references it.
 func TestASeedRepositorysOwnWorkflowMakesItsDependenciesRuntime(t *testing.T) {
 	c := classify(t, supplyChainFixture(t))
 
@@ -140,8 +138,7 @@ func TestASeedRepositorysOwnWorkflowMakesItsDependenciesRuntime(t *testing.T) {
 		"a repository under review names it in its own workflow")
 }
 
-// An upstream project's own CI is followed, because a compromised release pipeline is how a
-// consumer receives a malicious version, but nothing under review executes it.
+// An upstream project's own CI is build-time for the consumer.
 func TestAnUpstreamProjectsOwnCIDependencyIsBuildTime(t *testing.T) {
 	c := classify(t, supplyChainFixture(t))
 
@@ -149,9 +146,7 @@ func TestAnUpstreamProjectsOwnCIDependencyIsBuildTime(t *testing.T) {
 		"only third-party/widget's own CI runs it")
 }
 
-// The whole point of the closure. release.yml is referenced, so a local test calls it runtime —
-// but its only caller is a workflow nothing under review reaches, so the claim travels one hop
-// further than the evidence does.
+// Runtime does not propagate through a caller nothing under review reaches.
 func TestABuildTimeOnlyCallerDoesNotPropagateRuntime(t *testing.T) {
 	c := classify(t, supplyChainFixture(t))
 
@@ -159,8 +154,7 @@ func TestABuildTimeOnlyCallerDoesNotPropagateRuntime(t *testing.T) {
 		"its caller is reached only from an upstream project's own CI")
 }
 
-// Same leak through the other door: being a step inside a composite action's `runs:` block says
-// the step runs for whoever calls the action, not that anyone under review does.
+// Composite-action steps are runtime only when the composite action is reached.
 func TestACompositeActionNobodyUnderReviewCallsIsBuildTime(t *testing.T) {
 	c := classify(t, supplyChainFixture(t))
 
@@ -168,8 +162,7 @@ func TestACompositeActionNobodyUnderReviewCallsIsBuildTime(t *testing.T) {
 		"the composite action holding it is called only from an upstream project's own CI")
 }
 
-// The behavior the earlier fix bought, which the exactness work must not undo: once something
-// under review calls a composite action, that action's own steps run for it.
+// A called composite action's own steps run for the caller.
 func TestACalledCompositeActionsOwnStepsAreRuntime(t *testing.T) {
 	c := classify(t, supplyChainFixture(t))
 
@@ -177,8 +170,7 @@ func TestACalledCompositeActionsOwnStepsAreRuntime(t *testing.T) {
 		"octo-org/app calls third-party/widget, whose own steps run inside it")
 }
 
-// A key nothing in the graph names is unclassified, which is not the same as build-time. A
-// caller that cannot tell them apart would silently demote whatever it has not measured.
+// Missing graph keys are unclassified, not build-time.
 func TestANodeTheGraphDoesNotNameIsUnclassifiedRatherThanBuildTime(t *testing.T) {
 	c := classify(t, supplyChainFixture(t))
 

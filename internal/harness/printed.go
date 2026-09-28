@@ -85,19 +85,40 @@ func (g *Gate) print(tool string, args any, result string) string {
 // readPrinted reads what ql-mcp says it wrote, a file or the directory graphtext writes, only from
 // the session's scratch: the answer naming it is text the agent's own call shaped.
 func readPrinted(scratch, result string) (string, []string, bool, error) {
-	m := savedTo.FindStringSubmatch(result)
-	if m == nil {
-		return "", nil, false, errors.New("ql-mcp did not say where it wrote the output")
-	}
-	root, err := filepath.EvalSymlinks(m[1])
+	root, err := printedRoot(scratch, result)
 	if err != nil {
 		return "", nil, false, err
 	}
-	if scratch == "" || !inside(scratch, root) {
-		return "", nil, false, fmt.Errorf("%s is outside the session's scratch", m[1])
+	files, err := printedFiles(scratch, root, result)
+	if err != nil {
+		return "", nil, false, err
 	}
+	body, truncated, err := readPrintedFiles(root, files)
+	if err != nil {
+		return "", nil, false, err
+	}
+	return body, files, truncated, nil
+}
+
+func printedRoot(scratch, result string) (string, error) {
+	m := savedTo.FindStringSubmatch(result)
+	if m == nil {
+		return "", errors.New("ql-mcp did not say where it wrote the output")
+	}
+	root, err := filepath.EvalSymlinks(m[1])
+	if err != nil {
+		return "", err
+	}
+	if scratch == "" || !inside(scratch, root) {
+		return "", fmt.Errorf("%s is outside the session's scratch", m[1])
+	}
+	return root, nil
+}
+
+func printedFiles(scratch, root, result string) ([]string, error) {
+	m := savedTo.FindStringSubmatch(result)
 	var files []string
-	err = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -110,12 +131,16 @@ func readPrinted(scratch, result string) (string, []string, bool, error) {
 		return nil
 	})
 	if err != nil {
-		return "", nil, false, err
+		return nil, err
 	}
 	if len(files) == 0 {
-		return "", nil, false, fmt.Errorf("%s holds no file", m[1])
+		return nil, fmt.Errorf("%s holds no file", m[1])
 	}
 	sort.Strings(files)
+	return files, nil
+}
+
+func readPrintedFiles(root string, files []string) (string, bool, error) {
 	var buf []byte
 	for _, file := range files {
 		if len(files) > 1 {
@@ -124,23 +149,23 @@ func readPrinted(scratch, result string) (string, []string, bool, error) {
 		}
 		f, err := os.Open(file)
 		if err != nil {
-			return "", nil, false, err
+			return "", false, err
 		}
 		part, err := io.ReadAll(io.LimitReader(f, int64(maxPrinted+1-len(buf))))
 		f.Close()
 		if err != nil {
-			return "", nil, false, err
+			return "", false, err
 		}
 		if buf = append(buf, part...); len(buf) > maxPrinted {
 			break
 		}
 	}
 	if len(buf) <= maxPrinted {
-		return string(buf), files, false, nil
+		return string(buf), false, nil
 	}
 	cut := maxPrinted
 	for cut > 0 && !utf8.RuneStart(buf[cut]) {
 		cut--
 	}
-	return string(buf[:cut]), files, true, nil
+	return string(buf[:cut]), true, nil
 }

@@ -5,8 +5,8 @@ import (
 )
 
 // The corpus figure and the declared one are independent, and the interface prints one of them
-// beside the word "scope". On the reference corpus they are 204 and 0, so a reader who takes the
-// first for the second believes 204 repositories are theirs when none have been claimed.
+// beside the word "scope". A reader who takes the first for the second sees unclaimed repositories
+// as theirs.
 func TestSummaryCountsOwnedRepositoriesApartFromSeeded(t *testing.T) {
 	s := advisoryStore(t)
 	for _, name := range []string{"octo-org/app", "octo-org/tools", "other-org/thing"} {
@@ -29,8 +29,7 @@ func TestSummaryCountsOwnedRepositoriesApartFromSeeded(t *testing.T) {
 	}
 }
 
-// Nothing declared means nothing owned, whatever the corpus holds. This is the reference corpus's
-// own state, and the case the interface got wrong.
+// Nothing declared means nothing owned, whatever the corpus holds.
 func TestSummaryOwnsNothingWhenNothingIsDeclared(t *testing.T) {
 	s := advisoryStore(t)
 	if _, err := s.UpsertRepository("octo-org/app", ""); err != nil {
@@ -105,9 +104,8 @@ func TestSummaryCountsOwnedExposuresApartFromEveryExposure(t *testing.T) {
 	}
 }
 
-// The state of the restored reference corpus: 253 routes across 115 repositories, none of them
-// declared. Reporting the corpus figure as the operator's told them they had 253 routes to act on
-// from the zero repositories they own.
+// Reporting the corpus figure as the operator's offers them routes to act on from repositories
+// they do not own.
 func TestSummaryOwnsNoExposureWhenNothingIsDeclared(t *testing.T) {
 	s := advisoryStore(t)
 	seedDependency(t, s, "other-org/thing", "github/codeql-action/init", "v3", 10)
@@ -190,7 +188,7 @@ func TestSummarySaysAtWhatSeverityTheOwnedFindingsAre(t *testing.T) {
 
 // The guard that would have caught this class at any scope: a figure reported as the operator's
 // cannot exceed the corpus it is drawn from, and with nothing declared it cannot be anything but
-// zero. Seed and owned were the same set in the previous corpus, so nothing could disagree.
+// zero.
 func TestNoOwnedFigureOutrunsTheCorpusItIsDrawnFrom(t *testing.T) {
 	s := advisoryStore(t)
 	seedDependency(t, s, "octo-org/app", "github/codeql-action/init", "v3", 10)

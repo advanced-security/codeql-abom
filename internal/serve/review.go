@@ -31,6 +31,13 @@ type reviewState struct {
 	Tested string `json:"tested,omitempty"`
 }
 
+type reviewReportRequest struct {
+	Verdict string `json:"verdict"`
+	Reason  string `json:"reason"`
+	By      string `json:"by"`
+	Digest  string `json:"digest"`
+}
+
 // requestReview serves what a request's target reported, for an operator to read against the
 // request's examples.
 func (s *Server) requestReview(w http.ResponseWriter, r *http.Request) {
@@ -61,86 +68,35 @@ func (s *Server) reviewReport(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var body struct {
-		Verdict string `json:"verdict"`
-		Reason  string `json:"reason"`
-		By      string `json:"by"`
-		Digest  string `json:"digest"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "the request body is not the expected JSON")
-		return
-	}
-	switch {
-	case body.Verdict != store.ReviewApproved && body.Verdict != store.ReviewRejected:
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("a review is %s or %s, not %q",
-			store.ReviewApproved, store.ReviewRejected, body.Verdict))
-		return
-	case strings.TrimSpace(body.By) == "":
-		writeError(w, http.StatusBadRequest, "a review records who made it; sign in with gh")
-		return
-	case body.Verdict == store.ReviewRejected && strings.TrimSpace(body.Reason) == "":
-		writeError(w, http.StatusBadRequest, "a rejection says why, because the next session is told")
+	body, ok := decodeReviewReport(w, r)
+	if !ok {
 		return
 	}
 	if msg := s.sessionUnderWay(id); msg != "" {
 		writeError(w, http.StatusConflict, msg)
 		return
 	}
-	state, q, err := s.review(id)
-	switch {
-	case errors.Is(err, store.ErrNoQueryRequest):
-		writeError(w, http.StatusNotFound, err.Error())
-		return
-	case err != nil:
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	case !state.Reviewable:
-		writeError(w, http.StatusConflict, state.Reason)
-		return
-	case body.Digest != state.Digest:
-		writeError(w, http.StatusConflict, "what the query reported has changed since it was read; "+
-			"read it again before deciding")
+	state, q, ok := s.reviewForDecision(w, id, body.Digest)
+	if !ok {
 		return
 	}
 	approved := body.Verdict == store.ReviewApproved
-	if approved {
-		if state.CannotAccept != "" {
-			writeError(w, http.StatusConflict, state.CannotAccept)
-			return
-		}
-		if code, msg := s.cannotAccept(); msg != "" {
-			writeError(w, code, msg)
-			return
-		}
+	if approved && !s.canAcceptReview(w, state) {
+		return
 	}
 	fixtures, err := authoring.DigestFixtures(s.QueryDir, q.Tests)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// Recorded before anything is accepted: an approval nobody can find is an accept done blind.
-	if _, err := s.Store.RecordAuthoringReview(store.AuthoringReview{
-		RequestID: id, QueryID: q.ID, QueryVersion: q.Version, TestDigest: fixtures,
-		Actual: reportText(state.Tests), Verdict: body.Verdict, Reason: strings.TrimSpace(body.Reason),
-		ReviewedBy: body.By,
-	}); err != nil {
+	if err := s.recordReview(id, q, state, body, fixtures); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	var tested string
-	if approved {
-		if err := s.Tester.AcceptTests(r.Context(), reportedTests(q, state.Tests)); err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
-			return
-		}
-		result, code, err := s.ownTests(r.Context(), q)
-		if err != nil {
-			writeError(w, code, "the report was accepted, and ABOM's own test run then failed: "+err.Error())
-			return
-		}
-		tested = "ABOM ran the tests: " + result.Detail
+	tested, ok := s.acceptIfApproved(w, r, approved, q, state)
+	if !ok {
+		return
 	}
 	after, _, err := s.review(id)
 	if err != nil {
@@ -149,6 +105,108 @@ func (s *Server) reviewReport(w http.ResponseWriter, r *http.Request) {
 	}
 	after.Tested = tested
 	writeJSON(w, after, nil)
+}
+
+func decodeReviewReport(w http.ResponseWriter, r *http.Request) (reviewReportRequest, bool) {
+	var body reviewReportRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "the request body is not the expected JSON")
+		return reviewReportRequest{}, false
+	}
+	switch {
+	case body.Verdict != store.ReviewApproved && body.Verdict != store.ReviewRejected:
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("a review is %s or %s, not %q",
+			store.ReviewApproved, store.ReviewRejected, body.Verdict))
+		return reviewReportRequest{}, false
+	case strings.TrimSpace(body.By) == "":
+		writeError(w, http.StatusBadRequest, "a review records who made it; sign in with gh")
+		return reviewReportRequest{}, false
+	case body.Verdict == store.ReviewRejected && strings.TrimSpace(body.Reason) == "":
+		writeError(w, http.StatusBadRequest, "a rejection says why, because the next session is told")
+		return reviewReportRequest{}, false
+	default:
+		return body, true
+	}
+}
+
+func (s *Server) reviewForDecision(w http.ResponseWriter, id int64, digest string) (reviewState, authoring.Query, bool) {
+	state, q, err := s.review(id)
+	switch {
+	case errors.Is(err, store.ErrNoQueryRequest):
+		writeError(w, http.StatusNotFound, err.Error())
+		return reviewState{}, authoring.Query{}, false
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return reviewState{}, authoring.Query{}, false
+	case !state.Reviewable:
+		writeError(w, http.StatusConflict, state.Reason)
+		return reviewState{}, authoring.Query{}, false
+	case digest != state.Digest:
+		writeError(w, http.StatusConflict, "what the query reported has changed since it was read; "+
+			"read it again before deciding")
+		return reviewState{}, authoring.Query{}, false
+	default:
+		return state, q, true
+	}
+}
+
+func (s *Server) canAcceptReview(w http.ResponseWriter, state reviewState) bool {
+	if state.CannotAccept != "" {
+		writeError(w, http.StatusConflict, state.CannotAccept)
+		return false
+	}
+	if code, msg := s.cannotAccept(); msg != "" {
+		writeError(w, code, msg)
+		return false
+	}
+	return true
+}
+
+func (s *Server) recordReview(
+	id int64,
+	q authoring.Query,
+	state reviewState,
+	body reviewReportRequest,
+	fixtures string,
+) error {
+	// Recorded before anything is accepted: an approval nobody can find is an accept done blind.
+	_, err := s.Store.RecordAuthoringReview(store.AuthoringReview{
+		RequestID: id, QueryID: q.ID, QueryVersion: q.Version, TestDigest: fixtures,
+		Actual: reportText(state.Tests), Verdict: body.Verdict, Reason: strings.TrimSpace(body.Reason),
+		ReviewedBy: body.By,
+	})
+	return err
+}
+
+func (s *Server) acceptReviewedReport(
+	w http.ResponseWriter,
+	r *http.Request,
+	q authoring.Query,
+	state reviewState,
+) (string, bool) {
+	if err := s.Tester.AcceptTests(r.Context(), reportedTests(q, state.Tests)); err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return "", false
+	}
+	result, code, err := s.ownTests(r.Context(), q)
+	if err != nil {
+		writeError(w, code, "the report was accepted, and ABOM's own test run then failed: "+err.Error())
+		return "", false
+	}
+	return "ABOM ran the tests: " + result.Detail, true
+}
+
+func (s *Server) acceptIfApproved(
+	w http.ResponseWriter,
+	r *http.Request,
+	approved bool,
+	q authoring.Query,
+	state reviewState,
+) (string, bool) {
+	if !approved {
+		return "", true
+	}
+	return s.acceptReviewedReport(w, r, q, state)
 }
 
 // review reads what a request's target last reported, and the query it came from.

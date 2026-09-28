@@ -197,9 +197,7 @@ func TestPinningTotalsCarryBothHalvesOfTheSplit(t *testing.T) {
 			before.Yours.Elsewhere, before.Pinnable)
 	}
 
-	// Declared rather than verified since 2026-09-07: the split counts what the operator has
-	// said is theirs. What this test protects — that the halves sum to the whole and the totals
-	// do not move — is unchanged.
+	// The split counts what the operator has declared theirs; the halves must still sum to the whole.
 	if rec := put(t, srv, "/api/owned-scope",
 		`[{"owner":"octo-org","kind":"organization","enabled":true}]`); rec.Code != http.StatusOK {
 		t.Fatalf("declaring: status %d: %s", rec.Code, rec.Body.String())

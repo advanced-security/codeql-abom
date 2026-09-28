@@ -83,42 +83,19 @@ func (c *Checkout) Fetch(ctx context.Context, dest, owner, repo, ref string) (Tr
 		ctx, cancel = context.WithTimeout(ctx, c.Timeout)
 		defer cancel()
 	}
-	if err := os.RemoveAll(dest); err != nil {
-		return Tree{}, fmt.Errorf("clearing %s: %w", dest, err)
-	}
-	if err := os.MkdirAll(dest, 0o755); err != nil {
-		return Tree{}, fmt.Errorf("creating %s: %w", dest, err)
+	if err := prepareCheckoutDir(dest); err != nil {
+		return Tree{}, err
 	}
 
 	url := c.cloneURL(owner, repo)
-	// blob:none defers file downloads until sparse-checkout has decided what is wanted, so
-	// only the matching blobs ever cross the network.
-	clone := []string{"clone", "--filter=blob:none", "--no-checkout", "--depth=1"}
-	// A tag or branch is fetched by name at depth 1. A commit cannot be: `clone --branch` only
-	// accepts refs, so a SHA-pinned use is fetched below instead.
-	if ref != "" && !isCommit(ref) {
-		clone = append(clone, "--branch", ref)
-	}
-	clone = append(clone, url, ".")
-	if out, err := c.run(ctx, dest, clone...); err != nil {
+	if out, err := c.clone(ctx, dest, url, ref); err != nil {
 		return Tree{}, fmt.Errorf("%w: cloning %s at %q: %s", ErrUnavailable, url, ref, out)
 	}
-
-	args := append([]string{"sparse-checkout", "set", "--no-cone"}, sparsePatterns...)
-	if out, err := c.run(ctx, dest, args...); err != nil {
+	if out, err := c.sparseCheckout(ctx, dest); err != nil {
 		return Tree{}, fmt.Errorf("selecting actions content in %s: %s", repo, out)
 	}
-
-	if ref != "" && isCommit(ref) {
-		if out, err := c.run(ctx, dest, "fetch", "--depth=1", "origin", ref); err != nil {
-			return Tree{}, fmt.Errorf("%w: fetching %s of %s: %s", ErrUnavailable, ref, repo, out)
-		}
-		if out, err := c.run(ctx, dest, "checkout", ref); err != nil {
-			return Tree{}, fmt.Errorf("%w: checking out %s of %s: %s",
-				ErrUnavailable, ref, repo, out)
-		}
-	} else if out, err := c.run(ctx, dest, "checkout"); err != nil {
-		return Tree{}, fmt.Errorf("checking out %s: %s", repo, out)
+	if err := c.checkout(ctx, dest, repo, ref); err != nil {
+		return Tree{}, err
 	}
 
 	sha, err := c.run(ctx, dest, "rev-parse", "HEAD")
@@ -133,6 +110,51 @@ func (c *Checkout) Fetch(ctx context.Context, dest, owner, repo, ref string) (Tr
 		return Tree{}, fmt.Errorf("%w: %s has no workflows or action manifest", ErrUnavailable, repo)
 	}
 	return tree, nil
+}
+
+func prepareCheckoutDir(dest string) error {
+	if err := os.RemoveAll(dest); err != nil {
+		return fmt.Errorf("clearing %s: %w", dest, err)
+	}
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return fmt.Errorf("creating %s: %w", dest, err)
+	}
+	return nil
+}
+
+func (c *Checkout) clone(ctx context.Context, dest, url, ref string) (string, error) {
+	// blob:none defers file downloads until sparse-checkout has decided what is wanted, so
+	// only the matching blobs ever cross the network.
+	clone := []string{"clone", "--filter=blob:none", "--no-checkout", "--depth=1"}
+	// A tag or branch is fetched by name at depth 1. A commit cannot be: `clone --branch` only
+	// accepts refs, so a SHA-pinned use is fetched below instead.
+	if ref != "" && !isCommit(ref) {
+		clone = append(clone, "--branch", ref)
+	}
+	clone = append(clone, url, ".")
+	return c.run(ctx, dest, clone...)
+}
+
+func (c *Checkout) sparseCheckout(ctx context.Context, dest string) (string, error) {
+	args := append([]string{"sparse-checkout", "set", "--no-cone"}, sparsePatterns...)
+	return c.run(ctx, dest, args...)
+}
+
+func (c *Checkout) checkout(ctx context.Context, dest, repo, ref string) error {
+	if ref != "" && isCommit(ref) {
+		if out, err := c.run(ctx, dest, "fetch", "--depth=1", "origin", ref); err != nil {
+			return fmt.Errorf("%w: fetching %s of %s: %s", ErrUnavailable, ref, repo, out)
+		}
+		if out, err := c.run(ctx, dest, "checkout", ref); err != nil {
+			return fmt.Errorf("%w: checking out %s of %s: %s",
+				ErrUnavailable, ref, repo, out)
+		}
+		return nil
+	}
+	if out, err := c.run(ctx, dest, "checkout"); err != nil {
+		return fmt.Errorf("checking out %s: %s", repo, out)
+	}
+	return nil
 }
 
 // hasActionsContent reports whether anything survived the sparse filter.

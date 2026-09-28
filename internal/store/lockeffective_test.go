@@ -6,25 +6,20 @@ import (
 	"time"
 )
 
-// Two public consumers' locks of `dtolnay/rust-toolchain@v1`, measured 2026-09-27, and what the
-// tag named that day.
+// Distinct locks of one tag, plus the tag's current commit.
 const (
 	cleaveLocked = "e97e2d8cc328f1b50210efc529dca0028893a2d9"
 	bitLocked    = "6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772"
 	liveV1       = "02cb101ec7c40f2c49e1d9714d64511d8e1b74de"
 )
 
-// Invented for the caller's case, like the composite it belongs to.
 const (
 	toolLocked   = "0123456789abcdef0123456789abcdef01234567"
 	pythonLocked = "89abcdef0123456789abcdef0123456789abcdef"
 	retiredLock  = "fedcba9876543210fedcba9876543210fedcba98"
 )
 
-// lockedCorpus holds five repositories naming `dtolnay/rust-toolchain@v1` from their own
-// workflow: two lock it to different commits, one was read and has no lock, one has a lock this
-// reader refused, and one was never read. `octo/tool` is a composite whose step names
-// `actions/setup-python@v5`, and `octo/cleave`'s lock reaches it.
+// lockedCorpus covers locked, unlocked, refused and unread repositories plus a locked composite.
 func lockedCorpus(t *testing.T) *Store {
 	t.Helper()
 	s := newTestStore(t)
@@ -103,7 +98,7 @@ func lockedCorpus(t *testing.T) *Store {
 	lock("octo/bitfuckit", "c-bit", LockGraph{
 		Dependencies: []LockDependency{rust(bitLocked)}, WorkflowPins: kernel,
 	})
-	// The lock octo/cleave had before its current commit: it answers for nothing now.
+	// A lock from a previous commit must answer for nothing now.
 	lock("octo/cleave", "c-old", LockGraph{
 		Dependencies: []LockDependency{rust(retiredLock)}, WorkflowPins: kernel,
 	})
@@ -318,8 +313,7 @@ func TestALockItsRepositoryMovedPastAppearsNowhere(t *testing.T) {
 	}
 }
 
-// Every list is present and empty where nothing is locked, never null: the interface iterates
-// them, and a corpus without a single lock is the one this was measured on.
+// Empty lock lists must be non-nil because the interface iterates them.
 func TestAnUnlockedCorpusReportsEmptyLocksRatherThanNone(t *testing.T) {
 	s := newTestStore(t)
 	id, err := s.UpsertRepository("octo/plain", "")

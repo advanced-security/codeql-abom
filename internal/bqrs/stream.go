@@ -47,38 +47,54 @@ func streamResultSet(dec *json.Decoder, fn RowFunc) (int, error) {
 		if err != nil {
 			return count, err
 		}
-		switch key {
-		case "columns":
-			if err := dec.Decode(&set.Columns); err != nil {
-				return count, fmt.Errorf("decoding columns: %w", err)
-			}
-		case "tuples":
-			if len(set.Columns) == 0 {
-				return count, errors.New(`bqrs "tuples" appeared before "columns"`)
-			}
-			if err := expectDelim(dec, '['); err != nil {
-				return count, err
-			}
-			for dec.More() {
-				var values []json.RawMessage
-				if err := dec.Decode(&values); err != nil {
-					return count, fmt.Errorf("decoding tuple %d: %w", count, err)
-				}
-				if err := fn(Row{set: set, values: values}); err != nil {
-					return count, err
-				}
-				count++
-			}
-			if err := expectDelim(dec, ']'); err != nil {
-				return count, err
-			}
-		default:
-			if err := skipValue(dec); err != nil {
-				return count, err
-			}
+		count, err = streamResultSetField(dec, key, &set, count, fn)
+		if err != nil {
+			return count, err
 		}
 	}
 	if err := expectDelim(dec, '}'); err != nil {
+		return count, err
+	}
+	return count, nil
+}
+
+func streamResultSetField(
+	dec *json.Decoder, key string, set *ResultSet, count int, fn RowFunc,
+) (int, error) {
+	switch key {
+	case "columns":
+		if err := dec.Decode(&set.Columns); err != nil {
+			return count, fmt.Errorf("decoding columns: %w", err)
+		}
+		return count, nil
+	case "tuples":
+		return streamTuples(dec, *set, count, fn)
+	default:
+		if err := skipValue(dec); err != nil {
+			return count, err
+		}
+		return count, nil
+	}
+}
+
+func streamTuples(dec *json.Decoder, set ResultSet, count int, fn RowFunc) (int, error) {
+	if len(set.Columns) == 0 {
+		return count, errors.New(`bqrs "tuples" appeared before "columns"`)
+	}
+	if err := expectDelim(dec, '['); err != nil {
+		return count, err
+	}
+	for dec.More() {
+		var values []json.RawMessage
+		if err := dec.Decode(&values); err != nil {
+			return count, fmt.Errorf("decoding tuple %d: %w", count, err)
+		}
+		if err := fn(Row{set: set, values: values}); err != nil {
+			return count, err
+		}
+		count++
+	}
+	if err := expectDelim(dec, ']'); err != nil {
 		return count, err
 	}
 	return count, nil

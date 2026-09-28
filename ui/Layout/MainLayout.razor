@@ -10,11 +10,8 @@
 <MudSnackbarProvider />
 
 <MudLayout>
-    @* One bar, and it is the whole navigation. The drawer spent a fixed slice of every page on
-       four links that never changed, and the grid and the graph — the two surfaces needing width
-       most — are the two that paid for it. *@
+    @* One bar owns the whole navigation so grids and graphs keep the page width. *@
     <MudAppBar Elevation="1">
-        @* The product name is the way back to the Dashboard, so no second link says it again. *@
         <MudLink Href="/" Underline="Underline.None" Color="Color.Inherit"
                  Class="d-flex align-center abom-brand" data-abom-brand>
             <MudText Typo="Typo.h6">ABOM</MudText>
@@ -23,7 +20,6 @@
             </MudText>
         </MudLink>
 
-        @* CodeQL first: a finding exists only once a query has run. *@
         <nav class="abom-nav ml-8 d-flex align-center">
             <MudButton Href="/codeql" Variant="Variant.Text" Color="Color.Inherit"
                        DropShadow="false" StartIcon="@Icons.Material.Outlined.ManageSearch"
@@ -37,16 +33,12 @@
         </nav>
 
         <MudSpacer />
-        @* The crawl is the one thing here that runs with nobody watching, so its state is on
-           every page rather than several folds down inside Settings. Between the journey and the
-           preferences because it is neither: it is what the data is doing right now. *@
+        @* Crawl state stays visible on every page because it changes without a viewer. *@
         <CrawlStatus />
         <MudTooltip Text="@ThemeTooltip">
             <MudIconButton Icon="@ThemeIcon" Color="Color.Inherit" OnClick="CycleTheme"
                            aria-label="@ThemeTooltip" data-abom-theme />
         </MudTooltip>
-        @* Configuration rather than a stop on the journey, so an icon at the far end rather than
-           a fourth word competing with the ones that are. *@
         <MudTooltip Text="Settings">
             <MudIconButton Icon="@Icons.Material.Outlined.Settings" Color="Color.Inherit"
                            Href="/settings" aria-label="Settings" data-abom-settings />
@@ -54,10 +46,7 @@
     </MudAppBar>
 
     <MudMainContent>
-        @* Not on the Dashboard: that surface hands over a scope and states nothing else, because a
-           second, shorter coverage answer beside the entry points was read as the whole one.
-           Not on CodeQL either: its unit is a query, and a banner counting repositories and
-           findings is an answer to a question that page is not asking. *@
+        @* Dashboard chooses a scope; CodeQL answers by query, not by repository coverage. *@
         @if (!IsDashboard && !IsCodeQL)
         {
             <CoverageStrip Summary="_summary" />
@@ -82,7 +71,6 @@
 
     private bool IsCodeQL => Path.StartsWith("/codeql", StringComparison.Ordinal);
 
-    /// <summary>Marks the surface being read, since the bar is now the only thing saying which.</summary>
     private string NavClass(string href) =>
         Path.StartsWith(href, StringComparison.Ordinal) ? "abom-nav-link abom-nav-here" : "abom-nav-link";
 
@@ -128,8 +116,6 @@
         await Theme.SetAsync(next, _systemPrefersDark);
     }
 
-    // Sun, crescent, half-and-half. The dial that meant "auto" sat next to a real settings gear
-    // and read as a second one.
     private string ThemeIcon => Theme.Choice switch
     {
         ThemeChoice.Light => Icons.Material.Outlined.LightMode,

@@ -201,57 +201,26 @@ func (s *Store) GraphDelta(since int64, opts FullGraphOptions) (GraphDelta, erro
 	}
 	out.Generation = version.Generation
 
-	var nodeMark, edgeMark int64
-	var containMark int64
-	var epoch int64
-	err = s.db.QueryRow(`
-		SELECT node_watermark, edge_watermark, containment_watermark, epoch
-		  FROM abom_graph_generation
-		 WHERE generation = ?`, since).Scan(&nodeMark, &edgeMark, &containMark, &epoch)
-	if err == sql.ErrNoRows {
-		out.Reset = true
-		return out, nil
-	}
+	cursor, reset, err := s.graphDeltaCursor(since)
 	if err != nil {
-		return out, fmt.Errorf("reading generation %d: %w", since, err)
+		return out, err
 	}
-	// Compaction deletes rows, so a cursor from before it names row ids that no longer mean what
-	// the client thinks. Nothing short of a reload is honest here.
-	var current int64
-	if err := s.db.QueryRow(
-		`SELECT COALESCE(MAX(epoch), 0) FROM abom_graph_generation`).Scan(&current); err != nil {
-		return out, fmt.Errorf("reading the epoch: %w", err)
-	}
-	if current != epoch {
+	if reset {
 		out.Reset = true
 		return out, nil
 	}
 
-	if out.RemovedNodes, err = s.removedSince("abom_node", since); err != nil {
-		return out, err
-	}
-	if out.RemovedEdges, err = s.removedSince("abom_edge", since); err != nil {
+	if err := s.attachGraphRemovals(&out, since); err != nil {
 		return out, err
 	}
 
-	display := collapsedDisplay
-	if opts.IncludeSteps {
-		display = identityDisplay
-	}
-
-	nodes, index, err := s.graphNodes(display, nodeMark, opts)
-	if err != nil {
-		return out, err
-	}
-	if err := s.attachRules(display, index, opts.Mode); err != nil {
-		return out, err
-	}
-	edges, err := s.graphEdges(display, edgeMark, opts)
+	display := graphDeltaDisplay(opts)
+	nodes, edges, err := s.graphDeltaArrivals(display, cursor, opts)
 	if err != nil {
 		return out, err
 	}
 	out.Nodes = attachOwners(nodes)
-	held, err := s.containmentSince(containMark)
+	held, err := s.containmentSince(cursor.containMark)
 	if err != nil {
 		return out, err
 	}
@@ -278,6 +247,68 @@ func (s *Store) GraphDelta(since int64, opts FullGraphOptions) (GraphDelta, erro
 		return out, err
 	}
 	return out, nil
+}
+
+type graphDeltaCursor struct {
+	nodeMark, edgeMark, containMark int64
+}
+
+func (s *Store) graphDeltaCursor(since int64) (graphDeltaCursor, bool, error) {
+	var cursor graphDeltaCursor
+	var epoch int64
+	err := s.db.QueryRow(`
+		SELECT node_watermark, edge_watermark, containment_watermark, epoch
+		  FROM abom_graph_generation
+		 WHERE generation = ?`, since).Scan(
+		&cursor.nodeMark, &cursor.edgeMark, &cursor.containMark, &epoch)
+	if err == sql.ErrNoRows {
+		return cursor, true, nil
+	}
+	if err != nil {
+		return cursor, false, fmt.Errorf("reading generation %d: %w", since, err)
+	}
+	// Compaction deletes rows, so a cursor from before it names row ids that no longer mean what
+	// the client thinks. Nothing short of a reload is honest here.
+	current, err := s.currentEpoch()
+	if err != nil {
+		return cursor, false, err
+	}
+	return cursor, current != epoch, nil
+}
+
+func (s *Store) attachGraphRemovals(out *GraphDelta, since int64) error {
+	var err error
+	if out.RemovedNodes, err = s.removedSince("abom_node", since); err != nil {
+		return err
+	}
+	if out.RemovedEdges, err = s.removedSince("abom_edge", since); err != nil {
+		return err
+	}
+	return nil
+}
+
+func graphDeltaDisplay(opts FullGraphOptions) string {
+	if opts.IncludeSteps {
+		return identityDisplay
+	}
+	return collapsedDisplay
+}
+
+func (s *Store) graphDeltaArrivals(
+	display string, cursor graphDeltaCursor, opts FullGraphOptions,
+) ([]GraphNode, []GraphEdge, error) {
+	nodes, index, err := s.graphNodes(display, cursor.nodeMark, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.attachRules(display, index, opts.Mode); err != nil {
+		return nil, nil, err
+	}
+	edges, err := s.graphEdges(display, cursor.edgeMark, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	return nodes, edges, nil
 }
 
 // graphMetrics carries the counts that change for nodes the client already holds. Reach is

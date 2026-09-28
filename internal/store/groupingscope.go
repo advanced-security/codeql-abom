@@ -19,9 +19,9 @@ func (sc RepositoryScope) asked() bool { return len(sc.Include) > 0 || len(sc.Ex
 // restrict returns a SQL fragment bounding `column` to the scope's repositories, and the arguments
 // binding it. The fragment is empty when nothing was asked.
 //
-// **It belongs before an aggregation, never after.** A remediation row is an advisory and its
-// numbers count repositories, so a restriction applied to the finished rows would narrow the list
-// while every count still spanned the organization — an answer that reads as bounded and is not.
+// It belongs before an aggregation, never after. A remediation row is an advisory and its
+// numbers count repositories, so a restriction applied to finished rows would narrow the list
+// while every count still spanned the organization.
 // Placed in the WHERE, the counts are recomputed and an advisory that reaches nothing in the
 // grouping produces no row at all.
 //

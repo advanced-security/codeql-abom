@@ -2,13 +2,7 @@ package store
 
 import "testing"
 
-// Scoping reads the repository the finding was *found in*, never the one the node belongs to.
-//
-// Found in the browser, not here: on the reference corpus **93 of the 179 nodes matching
-// `actions/code-injection/*` have no repository row at all** — they are steps inside external
-// composite actions — and the finding names a repository in every one of those 93. Scoping on the
-// node would have silently dropped 52% of a gate's answer, which is the direction that lets a pull
-// request pass because the check quietly did not see anything.
+// Scoping reads the repository the finding was found in, never the one the node belongs to.
 func TestScopingReadsWhereTheFindingWasFoundNotWhereTheNodeLives(t *testing.T) {
 	s := matchFixture(t)
 	var toolID int64
@@ -90,9 +84,7 @@ func TestAMatchCanBeScopedToTheRepositoriesAGateIsAskingAbout(t *testing.T) {
 	}
 }
 
-// Seven accounts in the reference corpus spell themselves both ways, and a case-sensitive compare
-// once misclassified 211 edges. A gate handed `Octo-Org/Tool` by an Actions context must get the
-// same answer as one handed `octo-org/tool`, or a policy passes because of capitalization.
+// Repository scoping follows GitHub's case-insensitive name matching.
 func TestRepositoryScopingIsCaseInsensitive(t *testing.T) {
 	s := matchFixture(t)
 

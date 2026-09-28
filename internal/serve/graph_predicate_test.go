@@ -8,12 +8,7 @@ import (
 	viewspec "github.com/advanced-security/codeql-abom/internal/view"
 )
 
-// A predicate the API accepts and does not apply is worse than one it refuses.
-//
-// Measured on the reference corpus 2026-09-11: `/api/graph/full?origins=seed` parsed cleanly and
-// returned all **12,550 nodes and 35,384 edges** — byte-identical to asking nothing. A gate asking
-// for one tier would have been handed every tier with no way to tell, which is the same failure
-// the 400 on an unknown filter exists to prevent, arriving through the front door.
+// Every predicate the graph accepts must reach the store options.
 func TestEveryPredicateTheGraphAcceptsReachesTheStore(t *testing.T) {
 	for _, c := range []struct {
 		query   string

@@ -729,17 +729,14 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_query_run", "recorded_by", "TEXT"},
 	{"abom_suite_query", "pack_digest", "TEXT"},
 	// Nullable, and rows written before it stay NULL. Defaulting them to a source would invent the
-	// provenance the column exists to establish — a corpus once declared accounts the operator had
-	// never owned, and no row could say who wrote it.
+	// provenance the column exists to establish.
 	{"abom_owned_scope", "declared_by", "TEXT"},
 	// What the token could see when the accounts were read. NULL means nobody asked, which must
 	// not be read as "carried none": one is an unanswered question, the other an answer.
 	{"abom_account", "scopes", "TEXT"},
 	{"abom_finding", "result_hash", "TEXT"},
-	// Which producer made the claim. Nullable on purpose, and the 11,370 findings already on the
-	// reference corpus stay NULL: they came from CodeQL, but nothing recorded that at the time,
-	// and back-filling a producer from what the code happens to run today is how a ledger starts
-	// attesting to things nobody checked.
+	// Which producer made the claim. Nullable on purpose: rows recorded before this column say
+	// nothing about their producer, and back-filling one would attest to things nobody checked.
 	{"abom_finding", "provider", "TEXT"},
 	{"abom_frontier", "expedited_at", "TEXT"},
 	// Generations written before containment was stored carry 0, so the first delta after the
@@ -852,7 +849,6 @@ CREATE INDEX IF NOT EXISTS idx_query_run_repo  ON abom_query_run(repository, db_
 //
 // Created on open for the same reason as the run index, and for one more: an index added to
 // indexDDL alone never reaches a database that already exists, because CreateIndexes runs only
-// after a bulk load. That is why the reference corpus carried no observation index at all while
-// the DDL had declared one for months.
+// after a bulk load.
 const observationIndexDDL = `
 CREATE INDEX IF NOT EXISTS idx_observation_name ON abom_observation(subject_kind, name);`

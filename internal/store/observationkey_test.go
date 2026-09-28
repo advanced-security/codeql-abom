@@ -7,11 +7,6 @@ import (
 )
 
 // A fact restated by a later run must not become a second copy of itself.
-//
-// The table's UNIQUE key led with `query_run_id`, which is new for every run, so re-analysis at a
-// new commit or after a pack bump wrote a complete second copy of everything the query said. On
-// the reference corpus that was **140,421 rows carrying 41,565 distinct facts** — a mean of 3.38
-// copies and a maximum of 37 — while `AddObservations` documented the opposite guarantee.
 func TestReRunningAQueryDoesNotAccumulateCopiesOfTheSameFact(t *testing.T) {
 	s := newTestStore(t)
 	obs := Observation{
@@ -63,9 +58,7 @@ func TestARestatedFactNamesTheRunThatStatedItLast(t *testing.T) {
 	}
 }
 
-// Deduplication is keyed on the value, never on the fact. Two runs that genuinely disagree are
-// two statements, and picking a winner is a judgement this layer does not make — 1,614 of the
-// reference corpus's 41,565 facts disagree across their copies.
+// Deduplication is keyed on the value; disagreeing values are separate statements.
 func TestTwoRunsThatDisagreeAboutAFactAreBothKept(t *testing.T) {
 	s := newTestStore(t)
 	obs := Observation{
@@ -91,12 +84,7 @@ func TestTwoRunsThatDisagreeAboutAFactAreBothKept(t *testing.T) {
 	}
 }
 
-// An empty value and an absent one are the same statement, and must collapse to one row.
-//
-// They did not: `value` was nullable and NULL never equals NULL in a UNIQUE constraint, so a fact
-// with no value could never deduplicate against itself. **10,755 of the corpus's 140,421 rows
-// carry a NULL value**, and both readers already `COALESCE` it to the empty string — so the two
-// spellings were indistinguishable on the way out and distinct on the way in.
+// Empty and absent values are the same statement and must collapse to one row.
 func TestAFactWithNoValueStillDeduplicates(t *testing.T) {
 	s := newTestStore(t)
 	obs := Observation{
@@ -118,15 +106,8 @@ func TestAFactWithNoValueStillDeduplicates(t *testing.T) {
 	}
 }
 
-// Neither reader may scan the largest table in the database.
-//
-// The only index was the autoindex behind the old UNIQUE key, and its leading column was
-// `query_run_id` — which **no read filters on**. So 16.5 MiB of index served no query while both
-// readers scanned 140,421 rows. The two reads filter different columns, so one index cannot serve
-// both: `ObservationsOf` asks by subject, the traversal asks by attribute name.
-//
-// The plan is asserted rather than the clock, because the cost is structural and a stopwatch on a
-// small test corpus would pass either way.
+// Observation reads must use indexes. The two reads filter different columns, so one index cannot
+// serve both: `ObservationsOf` asks by subject, the traversal asks by attribute name.
 func TestTheObservationReadsAreIndexedRatherThanScanned(t *testing.T) {
 	s := newTestStore(t)
 
@@ -150,12 +131,7 @@ func TestTheObservationReadsAreIndexedRatherThanScanned(t *testing.T) {
 	}
 }
 
-// An existing database has to be re-keyed in place, and the rows it already holds deduplicated,
-// or the fix only helps corpora created after it.
-//
-// Last-wins is what the traversal already relies on: `loadConditions` orders by `row_id` and lets
-// the highest win, so the surviving row of a duplicate set must be the newest one. Keeping the
-// earliest would silently rewrite history to the first thing anybody said.
+// Existing databases must be re-keyed in place, keeping the newest duplicate row.
 func TestMigratingAnOldObservationTableDeduplicatesItKeepingTheNewest(t *testing.T) {
 	s := newTestStore(t)
 
@@ -165,8 +141,7 @@ func TestMigratingAnOldObservationTableDeduplicatesItKeepingTheNewest(t *testing
 	if _, err := s.db.Exec(legacyObservationDDL); err != nil {
 		t.Fatalf("creating the legacy table: %v", err)
 	}
-	// Each copy comes from its own run, which is how the corpus accumulated them: the old key led
-	// with query_run_id, so a second run never collided with the first.
+	// The legacy key led with query_run_id, so a second run never collided with the first.
 	for i, row := range []struct {
 		name, value string
 		null        bool
@@ -227,12 +202,7 @@ func TestMigratingAnOldObservationTableDeduplicatesItKeepingTheNewest(t *testing
 	}
 }
 
-// The rebuild must give the freed space back, or an upgrade makes the file bigger.
-//
-// Dropping 97,042 rows leaves their pages on the freelist, and SQLite does not return those to
-// the filesystem on its own. Measured on the reference corpus: the migration alone took it from
-// 80.82 MiB to **92.96 MiB** — a headline of "33.8% smaller" delivered as 15% larger — and
-// reclaiming 8,470 free pages costs 0.38 s once.
+// The rebuild must return freed pages; SQLite otherwise leaves them on the freelist.
 func TestTheObservationRebuildReturnsTheSpaceItFrees(t *testing.T) {
 	s := newTestStore(t)
 

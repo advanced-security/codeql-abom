@@ -7,10 +7,7 @@ import (
 	"testing"
 )
 
-// Enumeration ran anonymously on 2026-09-08 because no token was in the environment, and reported
-// 91 of the 181 repositories the operator owns in one organization with no failures — a partial
-// answer indistinguishable from a complete one. The credentials that verified their identity were
-// available the whole time.
+// The credentials that verified the operator's identity are used for API calls too.
 func TestTheTokenFallsBackToTheCliThatVerifiedTheIdentity(t *testing.T) {
 	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
 		if name == "gh" && strings.Join(args, " ") == "auth token" {

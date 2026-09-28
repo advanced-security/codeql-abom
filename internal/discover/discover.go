@@ -1,8 +1,8 @@
 // Package discover finds which repositories in an organization have a CodeQL database.
 //
-// GitHub's code scanning endpoints are per-repository, so establishing the catalog is itself a
-// large parallel workload. Batched workflow evidence narrows Actions probes without treating an
-// unprobed repository as one without a database. Ingestion then works from the measured catalog.
+// GitHub's code scanning endpoints are per-repository, so establishing the catalog is a parallel
+// workload. Batched workflow evidence narrows Actions probes without treating an unprobed
+// repository as one without a database.
 package discover
 
 import (

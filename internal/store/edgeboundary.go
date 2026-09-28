@@ -36,10 +36,8 @@ func (s *Store) ClassifyEdgeBoundaries() (int, error) {
 	// boundary, not a cross-owner one: reporting a third-party dependency nobody observed is an
 	// absent measurement drawn as a measurement.
 	//
-	// Restricted to live edges, so a corpus that has been pruned does not pay to classify the
-	// tombstoned two-thirds of it. The endpoint is read from `abom_node` rather than the live
-	// view because the boundary is a structural property of the two rows, true whether or not
-	// the target is currently drawn.
+	// Restricted to live edges, so pruned stores do not classify tombstones. The endpoint is read
+	// from `abom_node` because the boundary is structural, whether or not the target is drawn.
 	res, err := s.db.Exec(`
 		UPDATE abom_edge SET boundary = (
 			SELECT CASE

@@ -39,7 +39,7 @@ type NodeDetail struct {
 	IsExternal bool   `json:"isExternal"`
 	Analyzed   bool   `json:"analyzed"`
 	// RefsInUse and RefsAnalyzed say how much of the dependency was looked at. Analyzed alone is
-	// true as soon as one reference has results, which on this corpus is routinely 1 of 27.
+	// true as soon as one reference has results.
 	RefsInUse    int `json:"refsInUse"`
 	RefsAnalyzed int `json:"refsAnalyzed"`
 
@@ -83,10 +83,8 @@ type BumpImpact struct {
 
 // BumpImpactOf reports the repositories affected by changing one node.
 //
-// Walks the edge table rather than abom_exposure: exposure only holds rows for actions named by
-// an advisory, so reading it here returned nothing for the overwhelming majority of nodes while
-// looking like a real answer. Hops count edges back from the node, so a repository at hop 1
-// names it directly and can change the reference itself.
+// Walks the edge table rather than abom_exposure, which only covers advisory exposure paths.
+// Hops count edges back from the node, so hop 1 means the repository names it directly.
 func (s *Store) BumpImpactOf(key string) (BumpImpact, error) {
 	out := BumpImpact{Key: key, Repos: []AffectedRepo{}}
 

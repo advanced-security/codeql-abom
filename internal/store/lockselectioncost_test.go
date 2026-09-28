@@ -35,8 +35,7 @@ func TestLockSelectionReachesEveryLockTableByItsKey(t *testing.T) {
 				}
 			}
 			// The walk through a repository's own composites goes outward from what a workflow
-			// reaches. Starting from every internal node the corpus holds was measured at eight
-			// times the cost on the crawled organization, per settle.
+			// reaches, not from every internal node.
 			if strings.Contains(step, "idx_node_external") {
 				t.Errorf("%s: the composite walk starts from every node of one kind:\n\t%s",
 					name, strings.Join(plan, "\n\t"))

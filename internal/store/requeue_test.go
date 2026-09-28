@@ -23,8 +23,7 @@ const (
 func currentIdentity() []string { return []string{graphDigest, findingsDigest} }
 
 // A whole-tier requeue re-clones every repository in the tier, and the checkout is the one cost
-// the skip cannot avoid. Selecting only what is actually out of date is the difference between
-// re-analyzing a pack bump and re-cloning the corpus.
+// the skip cannot avoid. Selecting only what is actually out of date avoids re-cloning everything.
 func TestOnlyRepositoriesMissingTheCurrentIdentityAreRequeued(t *testing.T) {
 	s := newTestStore(t)
 	tierRow(t, s, "current", 1, "done")
@@ -97,8 +96,7 @@ func TestRequeueingWhatIsStaleLeavesUnfetchableDependenciesAlone(t *testing.T) {
 }
 
 // Asking for nothing must not mean asking for everything: an empty identity is a caller that
-// failed to resolve its packs, and requeueing the corpus on that would be a very expensive way
-// to report a bug.
+// failed to resolve its packs.
 func TestAnEmptyIdentityRequeuesNothing(t *testing.T) {
 	s := newTestStore(t)
 	tierRow(t, s, "one", 1, "done")
@@ -115,8 +113,7 @@ func TestAnEmptyIdentityRequeuesNothing(t *testing.T) {
 	}
 }
 
-// "Re-analyze this one dependency I own" is a sentence the queue could not express: the only
-// control was the whole tier it happens to sit in.
+// A single dependency can be requeued without requeueing its whole tier.
 func TestOneRepositoryCanBeRequeuedOnItsOwn(t *testing.T) {
 	s := newTestStore(t)
 	tierRow(t, s, "mine", 1, "done")

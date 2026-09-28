@@ -5,9 +5,7 @@ import (
 	"time"
 )
 
-// nodeUsersBudget bounds one answer. The corpus's widest version is named by 285 repositories,
-// so this is headroom rather than a working limit — but a list that is cut has to say so, which
-// is why the budget travels with a Truncated flag instead of being assumed generous.
+// nodeUsersBudget bounds one answer; cuts are reported with Truncated.
 const nodeUsersBudget = 2000
 
 // RepositoryUse is one repository naming a node at one reference.

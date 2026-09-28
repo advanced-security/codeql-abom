@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	copilot "github.com/github/copilot-sdk/go"
 
@@ -47,6 +48,17 @@ func (s *Sessions) Draft(run int64, queryID string, picked []Picked, by string) 
 	return session, err
 }
 
+type draftRun struct {
+	run    int64
+	id     int64
+	dir    string
+	limit  time.Duration
+	ctx    context.Context
+	cancel context.CancelFunc
+	live   *live
+	setup  Setup
+}
+
 func (s *Sessions) draft(run int64, queryID string, picked []Picked, by string) (store.AuthoringSession, <-chan struct{}, error) {
 	if s.Agent == nil {
 		return store.AuthoringSession{}, nil, ErrNoAgent
@@ -57,32 +69,15 @@ func (s *Sessions) draft(run int64, queryID string, picked []Picked, by string) 
 	if s.WorkDir == "" {
 		return store.AuthoringSession{}, nil, errors.New("no directory is configured for session state")
 	}
-	record, err := s.Store.AnalysisRun(run)
+	databases, err := s.draftDatabases(run, picked)
 	if err != nil {
 		return store.AuthoringSession{}, nil, err
-	}
-	databases := map[string]string{}
-	for _, m := range record.Members {
-		databases[m.Repository] = m.DatabasePath
-	}
-	for _, p := range picked {
-		if _, ok := databases[p.Repository]; !ok {
-			return store.AuthoringSession{}, nil, fmt.Errorf("run %d holds no %s", run, p.Repository)
-		}
 	}
 	id, err := s.Store.StartDraftSession(run, queryID, by, s.Model)
 	if err != nil {
 		return store.AuthoringSession{}, nil, err
 	}
-	dir := filepath.Join(s.WorkDir, fmt.Sprintf("draft-%d", id))
-	home := filepath.Join(dir, "copilot")
-	bounds, err := NewBounds(s.Workspace, s.Libraries)
-	if err == nil {
-		err = os.MkdirAll(home, 0o700)
-	}
-	if err == nil {
-		bounds, err = bounds.Deny(home)
-	}
+	dir, home, bounds, err := s.prepareDraftBounds(id)
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		_ = s.Store.EndAuthoringSession(id, store.SessionFailed, "preparing the session: "+err.Error())
@@ -94,35 +89,18 @@ func (s *Sessions) draft(run int64, queryID string, picked []Picked, by string) 
 		return s.Store.AddAuthoringSpend(id, store.AuthoringSpend{InputTokens: sp.InputTokens,
 			OutputTokens: sp.OutputTokens, NanoAIU: sp.NanoAIU})
 	})
-	limit := s.Limit
-	if limit <= 0 {
-		limit = DefaultLimit
-	}
+	limit := s.limit()
 	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	l := &live{session: id, gate: gate, cancel: cancel}
-	s.mu.Lock()
-	if s.drafting == nil {
-		s.drafting = map[int64]*live{}
-	}
-	s.drafting[run] = l
-	s.mu.Unlock()
+	s.recordDraft(run, l)
 
 	d := drafter{store: s.Store, workspace: s.Workspace, session: id, run: run, query: queryID,
 		picked: picked, databases: databases}
 	setup := Setup{Home: home, Workspace: bounds.Workspace(), Prompt: d.prompt(), Rules: d.rules(),
 		Gate: gate, Tools: d.tools(), Sealed: true}
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		final, err := s.run(ctx, setup)
-		state, detail := s.outcome(ctx, l, limit, final, err)
-		cancel()
-		s.mu.Lock()
-		delete(s.drafting, run)
-		s.mu.Unlock()
-		_ = os.RemoveAll(dir)
-		_ = s.Store.EndAuthoringSession(id, state, detail)
-	}()
+	done := s.launchDraft(draftRun{
+		run: run, id: id, dir: dir, limit: limit, ctx: ctx, cancel: cancel, live: l, setup: setup,
+	})
 
 	drafts, err := s.Store.DraftSessions(run)
 	if err != nil {
@@ -134,6 +112,61 @@ func (s *Sessions) draft(run int64, queryID string, picked []Picked, by string) 
 		}
 	}
 	return store.AuthoringSession{}, done, fmt.Errorf("session %d is not on record", id)
+}
+
+func (s *Sessions) draftDatabases(run int64, picked []Picked) (map[string]string, error) {
+	record, err := s.Store.AnalysisRun(run)
+	if err != nil {
+		return nil, err
+	}
+	databases := map[string]string{}
+	for _, m := range record.Members {
+		databases[m.Repository] = m.DatabasePath
+	}
+	for _, p := range picked {
+		if _, ok := databases[p.Repository]; !ok {
+			return nil, fmt.Errorf("run %d holds no %s", run, p.Repository)
+		}
+	}
+	return databases, nil
+}
+
+func (s *Sessions) prepareDraftBounds(id int64) (dir, home string, bounds Bounds, err error) {
+	dir = filepath.Join(s.WorkDir, fmt.Sprintf("draft-%d", id))
+	home = filepath.Join(dir, "copilot")
+	bounds, err = NewBounds(s.Workspace, s.Libraries)
+	if err == nil {
+		err = os.MkdirAll(home, 0o700)
+	}
+	if err == nil {
+		bounds, err = bounds.Deny(home)
+	}
+	return dir, home, bounds, err
+}
+
+func (s *Sessions) recordDraft(run int64, l *live) {
+	s.mu.Lock()
+	if s.drafting == nil {
+		s.drafting = map[int64]*live{}
+	}
+	s.drafting[run] = l
+	s.mu.Unlock()
+}
+
+func (s *Sessions) launchDraft(run draftRun) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		final, err := s.run(run.ctx, run.setup)
+		state, detail := s.outcome(run.ctx, run.live, run.limit, final, err)
+		run.cancel()
+		s.mu.Lock()
+		delete(s.drafting, run.run)
+		s.mu.Unlock()
+		_ = os.RemoveAll(run.dir)
+		_ = s.Store.EndAuthoringSession(run.id, state, detail)
+	}()
+	return done
 }
 
 // StopDraft ends the session drafting from a run, and reports whether there was one on this server.

@@ -1,7 +1,4 @@
-/* One vocabulary for every size, spacing and family in the interface.
- *
- * The scale exists because six sizes had accumulated between 0.68rem and 0.8rem, which reads as
- * unevenness rather than as hierarchy. Anything that needs a size takes one of these. */
+/* One vocabulary for every size, spacing and family in the interface. */
 :root {
     --abom-text-xs: 0.72rem;
     --abom-text-sm: 0.78rem;
@@ -26,7 +23,7 @@
     --abom-filter-w: 150px;
     --abom-filter-wide-w: 215px;
     --abom-filter-narrow-w: 100px;
-    /* One search width. Two pages used 420px and one 280px, for no reason either could state. */
+    /* One search width across pages. */
     --abom-search-w: 340px;
 
     --abom-dim: 0.7;
@@ -73,15 +70,7 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 #blazor-error-ui .reload { color: #fff; text-decoration: underline; }
 /* style-check: on */
 
-/* The coverage strip states what is not known, so it stays visible on every page.
-
-   A grid rather than a flex row because the items are ragged — 107px to 193px — and packing them
-   greedily left the sixth alone on a second line, reading as an afterthought rather than the last
-   of six. One line is not available at the middle widths at any gap: the items want 1,062px and
-   the strip has 880px at 1152. So the column count is stated rather than fitted, because only 2,
-   3 and 6 divide six evenly and `auto-fit` will happily choose 5 and orphan one. Four and five
-   items — when nothing is unresolved — can still leave a short last row; six is the case that
-   occurs while discovery has anything left to do. */
+/* The coverage strip states unknowns and uses fixed column counts that divide six evenly. */
 .abom-coverage {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
@@ -105,8 +94,7 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 .abom-coverage-item { display: flex; align-items: baseline; gap: 0.35rem; }
 .abom-coverage-value { font-weight: 600; font-variant-numeric: tabular-nums; }
 .abom-coverage-label { opacity: 0.7; }
-/* Dotted underline marks the two items that carry an explanation, without an icon breaking the
-   baseline the other four share. */
+/* Dotted underline marks items with an explanation without adding an icon. */
 .abom-coverage-unknown {
     opacity: 0.85;
     font-style: italic;
@@ -135,10 +123,7 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 /* View names are the vocabulary of the page; truncating them defeats the point of naming them. */
 .abom-views .mud-toggle-item { white-space: nowrap; }
 
-/* The filter bar is instrumentation, not content: it should read as one compact strip rather
-   than compete with the graph it controls. Sized explicitly rather than with `zoom`, which
-   scales the painted box but leaves hit-testing on the unscaled geometry, so neighboring rows
-   end up intercepting each other's clicks. */
+/* Explicit sizing keeps hit targets aligned; `zoom` scales paint but not geometry. */
 .abom-filters .mud-input.mud-input-outlined > input,
 .abom-filters .mud-input.mud-input-outlined > div.mud-input-slot {
     padding-top: 6px;
@@ -151,8 +136,7 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 .abom-filters .mud-chip { font-size: var(--abom-text-sm); height: 26px; }
 .abom-filters .mud-toggle-item { font-size: var(--abom-text-sm); }
 
-/* The second row was never covered by the rules above, so switches, buttons and links stayed at
-   full size and the bar outshouted the graph it controls. */
+/* Keep every control in the filter bar compact. */
 .abom-filters .mud-button-root { font-size: var(--abom-text-sm); padding: 3px 10px; min-height: 28px; }
 .abom-filters .mud-button-root .mud-icon-root { font-size: var(--abom-icon-sm); }
 .abom-filters .mud-checkbox .mud-typography { font-size: var(--abom-text-sm); }
@@ -209,8 +193,7 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 
 .abom-graph-wrap { position: relative; }
 
-/* A large layout takes seconds to settle, during which the canvas is drawn but empty. Without
-   this the interface is indistinguishable from a broken one. */
+/* A settling graph can draw an empty canvas, so keep an explicit busy layer. */
 .abom-graph-busy {
     position: absolute;
     inset: 0;

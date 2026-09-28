@@ -3,9 +3,8 @@ package store
 import "testing"
 
 // The Explorer draws one node per dependency while the queue analyzes one row per reference, so a
-// node has to carry how much of itself has been looked at. Without it, `actions/checkout` with one
-// reference analyzed out of 27 is indistinguishable from one fully covered, and the filter whose
-// job is finding unanalyzed work excludes it.
+// node has to carry how much of itself has been looked at. Otherwise a partly analyzed node is
+// indistinguishable from one fully covered.
 func TestANodeReportsHowManyOfItsReferencesAreAnalyzed(t *testing.T) {
 	s := newTestStore(t)
 	externalNode(t, s, "actions/checkout", "action")

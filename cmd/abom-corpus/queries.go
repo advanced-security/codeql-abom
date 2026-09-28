@@ -184,52 +184,81 @@ func walk(ctx context.Context, dir string, a author) error {
 }
 
 func walkStep(ctx context.Context, dir string, q corpusQuery, request int64, step string, a author) error {
-	expected := filepath.Join(dir, "test", q.name, q.name+".expected")
+	w := queryStep{ctx: ctx, dir: dir, q: q, request: request, step: step, author: a}
 	switch step {
-	case layStub:
-		tests, err := scaffoldCorpusQuery(dir, q, request)
-		if err != nil {
-			return err
-		}
-		if err := put(filepath.Join(tests, ".github", "workflows", "ci.yml"), q.fixture); err != nil {
-			return err
-		}
-		if err := a.begin(q, dir, request); err != nil {
-			return err
-		}
-	case layWritten:
-		if err := put(filepath.Join(dir, "src", q.name+".ql"), q.written); err != nil {
-			return err
-		}
-	case layAccept:
-		report, err := a.report(q)
-		if err != nil {
-			return err
-		}
-		if err := put(expected, report); err != nil {
-			return err
-		}
-	case layEmpty:
-		if err := put(expected, ""); err != nil {
-			return err
-		}
+	case layStub, layWritten, layAccept, layEmpty:
+		return w.lay()
 	case doRun, doPrint:
-		found, ok, err := authoring.Find(dir, q.id)
-		switch {
-		case err != nil:
-			return err
-		case !ok:
-			return errors.New("not in the query directory")
-		case step == doRun:
-			return a.run(ctx, found, dir)
-		}
-		return a.print(ctx, found, dir)
+		return w.runOrPrint()
 	case doFinish:
 		return a.finish(q)
 	default:
 		return fmt.Errorf("no step %q", step)
 	}
-	return a.lay(q, dir, step)
+}
+
+type queryStep struct {
+	ctx     context.Context
+	dir     string
+	q       corpusQuery
+	request int64
+	step    string
+	author  author
+}
+
+func (w queryStep) lay() error {
+	if err := w.writeLayout(); err != nil {
+		return err
+	}
+	return w.author.lay(w.q, w.dir, w.step)
+}
+
+func (w queryStep) writeLayout() error {
+	switch w.step {
+	case layStub:
+		return w.writeStub()
+	case layWritten:
+		return put(filepath.Join(w.dir, "src", w.q.name+".ql"), w.q.written)
+	case layAccept:
+		report, err := w.author.report(w.q)
+		if err != nil {
+			return err
+		}
+		return put(w.expectedPath(), report)
+	case layEmpty:
+		return put(w.expectedPath(), "")
+	default:
+		return fmt.Errorf("no step %q", w.step)
+	}
+}
+
+func (w queryStep) writeStub() error {
+	tests, err := scaffoldCorpusQuery(w.dir, w.q, w.request)
+	if err != nil {
+		return err
+	}
+	if err := put(filepath.Join(tests, ".github", "workflows", "ci.yml"), w.q.fixture); err != nil {
+		return err
+	}
+	return w.author.begin(w.q, w.dir, w.request)
+}
+
+func (w queryStep) runOrPrint() error {
+	found, ok, err := authoring.Find(w.dir, w.q.id)
+	switch {
+	case err != nil:
+		return err
+	case !ok:
+		return errors.New("not in the query directory")
+	case w.step == doRun:
+		return w.author.run(w.ctx, found, w.dir)
+	default:
+		return w.author.print(w.ctx, found, w.dir)
+	}
+}
+
+func (w queryStep) expectedPath() string {
+	return filepath.Join(w.dir, "test", w.q.name, w.q.name+".expected")
 }
 
 func scaffoldCorpusQuery(dir string, q corpusQuery, request int64) (string, error) {
@@ -586,24 +615,34 @@ func seedQueries(s *store.Store, fixtures, dir string) error {
 	if err := clearQueries(dir); err != nil {
 		return err
 	}
-	body, err := os.ReadFile(filepath.Join(filepath.Dir(fixtures), recordingFile))
+	rec, err := readQueryRecording(fixtures)
 	if err != nil {
-		return fmt.Errorf("reading the query recording: %w; run scripts/regenerate-corpus-fixtures.sh", err)
-	}
-	var rec recording
-	if err := json.Unmarshal(body, &rec); err != nil {
-		return fmt.Errorf("reading the query recording: %w", err)
+		return err
 	}
 	if err := put(filepath.Join(dir, corpusMarker), "written by cmd/abom-corpus; a rebuild replaces this directory\n"); err != nil {
 		return err
 	}
+	if err := seedQueryRequests(s); err != nil {
+		return err
+	}
+	return replayQueryRecording(s, rec, dir)
+}
+
+func readQueryRecording(fixtures string) (recording, error) {
+	body, err := os.ReadFile(filepath.Join(filepath.Dir(fixtures), recordingFile))
+	if err != nil {
+		return recording{}, fmt.Errorf("reading the query recording: %w; run scripts/regenerate-corpus-fixtures.sh", err)
+	}
+	var rec recording
+	if err := json.Unmarshal(body, &rec); err != nil {
+		return recording{}, fmt.Errorf("reading the query recording: %w", err)
+	}
+	return rec, nil
+}
+
+func seedQueryRequests(s *store.Store) error {
 	for i, q := range corpusQueries {
-		r := store.QueryRequest{Description: q.description, Compliant: q.compliant,
-			NonCompliant: q.noncompliant, Kind: store.RequestMissed, RequestedBy: seededBy}
-		if q.agent == "" {
-			r.QueryID, r.TargetSource = q.id, store.TargetOperator
-		}
-		id, err := s.SaveQueryRequest(r)
+		id, err := seedQueryRequest(s, q)
 		if err != nil {
 			return err
 		}
@@ -617,9 +656,24 @@ func seedQueries(s *store.Store, fixtures, dir string) error {
 			}
 		}
 	}
-	if _, err := s.SaveQueryRequest(untargeted); err != nil {
-		return err
+	_, err := s.SaveQueryRequest(untargeted)
+	return err
+}
+
+func seedQueryRequest(s *store.Store, q corpusQuery) (int64, error) {
+	r := store.QueryRequest{Description: q.description, Compliant: q.compliant,
+		NonCompliant: q.noncompliant, Kind: store.RequestMissed, RequestedBy: seededBy}
+	if q.agent == "" {
+		r.QueryID, r.TargetSource = q.id, store.TargetOperator
 	}
+	id, err := s.SaveQueryRequest(r)
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+func replayQueryRecording(s *store.Store, rec recording, dir string) error {
 	p := &replayer{st: s, rec: rec, requests: map[string]int64{}}
 	if _, err := customql.Scaffold(dir, rec.CLIVersion); err != nil {
 		return err

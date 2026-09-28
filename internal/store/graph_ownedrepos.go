@@ -7,21 +7,8 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/normalize"
 )
 
-// attachOwnedRepositories adds a node for every declared repository the graph does not already
-// hold one for.
-//
-// A repository produces nodes only when something analyzes it, so one enumerated an hour ago and
-// one holding nothing to analyze are both simply absent — and absence reads as an estate made
-// only of the parts that succeeded. On the reference corpus this hid **105 of 198** owned
-// repositories: 40 still queued and 65 `unavailable`.
-//
-// Derived at read time rather than stored, for the reason attachOwners gives: it is a view over
-// facts the store already holds, and writing it would create a second source of truth for which
-// repositories exist.
-//
-// A property filter applies here too. Backfilling past it would put every declared repository into
-// a graph narrowed to one part of the organization — the same silent widening the filter exists to
-// prevent, arriving after the query rather than inside it.
+// attachOwnedRepositories adds missing declared repositories without widening group filters.
+// It is derived at read time to avoid a second source of repository existence.
 func (s *Store) attachOwnedRepositories(nodes []GraphNode, opts FullGraphOptions) ([]GraphNode, error) {
 	var admitted map[string]bool
 	if opts.GroupFiltered {
@@ -73,9 +60,7 @@ func (s *Store) attachOwnedRepositories(nodes []GraphNode, opts FullGraphOptions
 			Facets:     []FindingFacet{},
 			Discovery:  discovery,
 			Analyzed:   analyzed,
-			// Nothing has been ingested for this repository, so nothing measured what depends
-			// on it. Reporting reach as known-and-zero would draw it at the size that means
-			// "nothing depends on this", which is an assertion nobody earned.
+			// Reach is unknown; zero would assert that nothing depends on this repository.
 			ReachKnown: false,
 		})
 	}

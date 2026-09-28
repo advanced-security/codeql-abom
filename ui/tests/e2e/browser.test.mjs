@@ -44,11 +44,7 @@ test('an empty request means decide, not a channel called nothing', () => {
     assert.equal(resolveChannel({ requested: '', pinnedComplete: true, chromeInstalled: false }).channel, 'chromium');
 });
 
-// The check that was written to catch a half-extracted download, and did not. Measured on this
-// workstation: `Contents/MacOS/Chromium` was present while
-// `Contents/Frameworks/Chromium Framework.framework` was not, so a launcher-only check reported the
-// build as complete and every test still died in `dlopen`. The framework is what actually gets
-// loaded, so it is what has to be there.
+// A pinned Mac Chromium build is incomplete without its framework, even if the launcher exists.
 test('completeness means the framework, not just the launcher', () => {
     const mac = requiredPaths('darwin');
     assert.ok(

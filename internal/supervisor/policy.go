@@ -53,8 +53,8 @@ func (p AggregatePolicy) minInterval() time.Duration {
 
 // due reports whether reach should be recomputed now, and why.
 //
-// The reason is returned rather than logged because it is shown to the operator: "reach is 26
-// hours old" and "1,200 dependencies arrived since" call for different next actions.
+// The reason is returned rather than logged because it is shown to the operator, and different
+// causes call for different next actions.
 func (p AggregatePolicy) due(st store.ReachStaleness, drained bool, now time.Time) (bool, string) {
 	if st.Never {
 		return true, "reach has never been measured"

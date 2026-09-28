@@ -67,9 +67,8 @@ func (s *Store) CommitContentDigest(repository, commit string) (string, bool, er
 // thing the commit was standing for. An action's release moves a tag over a rebuilt `dist/` and
 // touches nothing the extractor reads, which is the case this exists for.
 //
-// The checkout filter is matched too. A commit holds one content row, re-measured whenever it is
-// fetched, so a widened filter rewrites the digest of a commit whose runs all happened against
-// the smaller tree: without the filter, the join credits those runs with content they never saw.
+// The checkout filter is matched too: without it, a later wider fetch could credit a run with
+// content it never saw.
 //
 // Nothing is written on this path. The run stays recorded against the commit it actually ran at,
 // and the findings stay attributed to it, because recording a run that did not happen is the one

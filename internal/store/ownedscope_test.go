@@ -2,9 +2,7 @@ package store
 
 import "testing"
 
-// Ownership has to be stated. `gh` reports 33 accounts on the reference corpus because it reports
-// membership, and being in the `docs` organization does not make its supply chain anyone's
-// remediation work.
+// Membership alone is not ownership; the operator must declare responsibility.
 func TestADeclaredAccountIsOwnedAndAnUndeclaredOneIsNot(t *testing.T) {
 	s := newTestStore(t)
 	declare(t, s, DeclaredAccount{Owner: "acme", Kind: AccountOrganization, Enabled: true})
@@ -138,8 +136,7 @@ func TestAnUnknownAccountKindIsRefused(t *testing.T) {
 	}
 }
 
-// A repository name with no owner cannot be attributed to anyone. The junk `/` repository this
-// corpus once held is exactly this shape.
+// A repository name with no owner cannot be attributed to anyone.
 func TestARepositoryWithNoOwnerIsNotOwned(t *testing.T) {
 	s := newTestStore(t)
 	declare(t, s, DeclaredAccount{Owner: "acme", Kind: AccountOrganization, Enabled: true})
@@ -151,9 +148,7 @@ func TestARepositoryWithNoOwnerIsNotOwned(t *testing.T) {
 	}
 }
 
-// The whole complaint: `gh` reports 33 accounts on the reference corpus, and the tier, the queue
-// and every "yours" split read from that. Membership is evidence about access, never a statement
-// of responsibility, and after this it decides nothing on its own.
+// Verified membership is evidence about access, never responsibility.
 func TestVerifiedMembershipAloneMakesNothingOwned(t *testing.T) {
 	s := newTestStore(t)
 	verifies(t, s, "docs", "codeql", "github")
@@ -172,11 +167,7 @@ func TestVerifiedMembershipAloneMakesNothingOwned(t *testing.T) {
 	}
 }
 
-// The two facts are kept apart rather than one replacing the other: `gh` still says what access
-// exists, and that is worth showing beside a declaration it disagrees with.
-//
-// `verifies` records no token scopes, so this is the *unproven* case, not the contradicted one —
-// which the gate honors deliberately. `TestAContradictedDeclarationOwnsNothing` holds the other.
+// Verification without membership scopes leaves declarations unproven, not contradicted.
 func TestADeclarationIsOwnedEvenWhenVerificationDisagrees(t *testing.T) {
 	s := newTestStore(t)
 	verifies(t, s, "docs")
@@ -193,10 +184,7 @@ func TestADeclarationIsOwnedEvenWhenVerificationDisagrees(t *testing.T) {
 	}
 }
 
-// The interface has to answer "what would this reach" for a declaration nobody has stored yet, so
-// that question cannot go through the SQL predicate. Two derivations of one fact are two answers
-// waiting to disagree, which is the argument `db/edge-relationships.md` already lost once — this
-// is the guard that they stay one answer.
+// Previewing an unstored declaration and the stored SQL predicate must answer identically.
 func TestCoveredByAgreesWithTheStoredScopePredicate(t *testing.T) {
 	s := newTestStore(t)
 	scope := []DeclaredAccount{

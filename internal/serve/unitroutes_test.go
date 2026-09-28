@@ -10,10 +10,7 @@ import (
 	viewspec "github.com/advanced-security/codeql-abom/internal/view"
 )
 
-// A unit's route accepts every term the language declares the unit applies. The route keeps its own
-// parameter list, and a term added to the declaration and not to the list was refused as a term
-// "the Explorer does": measured on the crawled organization, `securitySeverity` answered 400 on the
-// dependencies listing while the store under it applied the band.
+// A unit's route accepts every term the language declares the unit applies.
 func TestAUnitsRouteAcceptsEveryTermItsUnitApplies(t *testing.T) {
 	srv, _ := unitServer(t)
 	routes := map[string]string{

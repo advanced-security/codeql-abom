@@ -18,8 +18,7 @@ import abom.actions.LockCoverage
 
 from LockableUses uses, AbomActionsLock lock
 where
-  // Only where the repository already keeps a lockfile. Absence of the feature is a different
-  // finding from using it and leaving a reference out of it, and this query reports the second.
+  // Missing lockfiles are reported by abom/actions/actions-lock-missing-for-workflow.
   lock.getFile().getRelativePath() = ".github/workflows/actions.lock" and
   not any(AbomActionsLock l).covers(uses)
 select uses,

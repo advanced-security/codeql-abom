@@ -3,10 +3,8 @@ package store
 import "testing"
 
 // A required property with a default has no unset state: every repository carries a value whether
-// anybody chose one or not. Reporting that bucket like any other tells a reader that eight teams
-// picked unit "0" when the truth is that none did — which is the default bucket this plan forbids,
-// arriving from upstream rather than from us. Measured on has-ghas: `business_id` is required with
-// `default_value: "0"`, and 8 of 25 repositories sit in it.
+// anybody chose one or not. Reporting that bucket like any other tells a reader teams picked the
+// default when none did.
 func TestTheBucketNobodyChoseIsLabelledAsTheDefault(t *testing.T) {
 	s := ownedStore(t, "has-ghas/a", "has-ghas/b", "has-ghas/c")
 	if err := s.ReplacePropertySchema("has-ghas", []PropertyDefinition{

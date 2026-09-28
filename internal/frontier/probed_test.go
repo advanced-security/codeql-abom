@@ -5,9 +5,8 @@ import (
 	"time"
 )
 
-// `checked_at` is the signal that says whether freshness is working. Complete wrote it equal to
-// `analyzed_at`, so `checked_at > analyzed_at` was not merely 0 across all 2,800 rows — it was
-// structurally impossible, and the measurement read as if freshness always worked.
+// `checked_at` is the signal that says whether freshness is working. If Complete writes it equal
+// to `analyzed_at`, freshness measurements are structurally impossible.
 func TestCompletingAnAnalysisDoesNotCountAsProbingIt(t *testing.T) {
 	q := probeQueue(t)
 	enqueueOne(t, q, "actions/checkout", "v4")

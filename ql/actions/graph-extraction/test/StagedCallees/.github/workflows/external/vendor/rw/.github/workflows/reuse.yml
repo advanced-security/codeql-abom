@@ -1,0 +1,10 @@
+on:
+  workflow_call:
+    inputs:
+      title:
+        type: string
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "${{ inputs.title }}"

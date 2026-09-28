@@ -8,14 +8,8 @@ import (
 	"testing"
 )
 
-// A generation cursor is a row id watermark, which only means anything while a client is told
-// when rows go away. An unannounced DELETE would silently hand every client a delta that skips
-// or repeats work, so the absence is pinned here rather than left to review.
-//
-// Narrowed on 2026-09-07 from "nothing may delete" to "only the compaction may". The stated
-// reason was always the cursor, not deletion as such: `store/prune.go` bumps an epoch that makes
-// every client reload, which is precisely what the cursor needed and what nothing else does.
-// Deleting anywhere else is still the defect this was written for.
+// A generation cursor is a row id watermark, so only compaction may delete graph rows.
+// Compaction bumps an epoch that makes every client reload.
 func TestGraphTablesAreDeletedOnlyByTheCompaction(t *testing.T) {
 	root, err := filepath.Abs("../..")
 	if err != nil {
@@ -60,14 +54,7 @@ func TestGraphTablesAreDeletedOnlyByTheCompaction(t *testing.T) {
 	}
 }
 
-// skipNonSource prunes directories that hold no Go source belonging to this module: git metadata,
-// the npm and .NET trees, and `.abom`, which since `make test` points TMPDIR inside the checkout
-// also holds the Go toolchain's own build scratch. Those directories appear and vanish while a
-// walk is in progress, which failed this guard with "no such file or directory" rather than with
-// anything about the invariant it exists to protect.
-//
-// Not a narrowing of what is checked: every name here is either git metadata or a path git
-// ignores, and a Go file that is not in the repository is not source this invariant governs.
+// skipNonSource prunes generated and ignored trees that are not module source.
 func skipNonSource(root, path string, d os.DirEntry) error {
 	if !d.IsDir() || path == root {
 		return nil

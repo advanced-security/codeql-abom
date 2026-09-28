@@ -139,9 +139,7 @@ func TestARepositoryWithNothingLeftToRemoveIsNotCountedAgain(t *testing.T) {
 	}
 }
 
-// Pruning the graph without pruning the queue does not settle. The rows survive, the crawl claims
-// them, ingestion is not closure-gated, and their nodes come straight back — measured on the real
-// corpus as 2,021 queue rows still pointing outside a closure the graph had just been cut to.
+// Pruning the graph without pruning the queue does not settle: queued rows can reintroduce nodes.
 func TestPruningTakesTheQueueWithIt(t *testing.T) {
 	srv, s := newServer(t)
 	seedGraph(t, s)

@@ -35,8 +35,7 @@ const Postprocess = "utils/InlineExpectationsTestQuery.ql"
 
 // Scaffold creates the pack if it is not already there, and reports whether it wrote anything.
 //
-// Idempotent, and it never overwrites: the operator's queries live here, and a scaffold that
-// rewrote a manifest would silently undo a dependency they added.
+// Idempotent, and it never overwrites: the operator's queries and dependencies live here.
 func Scaffold(dir, cliVersion string) (bool, error) {
 	if dir == "" {
 		return false, fmt.Errorf("custom queries: no directory named")

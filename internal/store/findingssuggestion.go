@@ -63,6 +63,30 @@ func (s *Store) promotion(q AnalysisQuery) (string, bool, error) {
 	if q.QueryVersion == "" {
 		return "no version is recorded for it", false, nil
 	}
+	if why, promoted, err := s.upstreamPromotion(q); why != "" || promoted || err != nil {
+		return why, promoted, err
+	}
+
+	stages, err := s.stagesOf(q.QueryID)
+	if err != nil {
+		return "", false, err
+	}
+	if stages[q.QueryVersion] == StageDeploy {
+		return "this version is at deploy", true, nil
+	}
+
+	tiers, err := s.tiersPromoting(q)
+	if err != nil {
+		return "", false, err
+	}
+	if len(tiers) > 0 {
+		return "the " + strings.Join(tiers, " and ") + " tier runs this version", true, nil
+	}
+
+	return stagedPromotion(q, stages), false, nil
+}
+
+func (s *Store) upstreamPromotion(q AnalysisQuery) (string, bool, error) {
 	var pack string
 	err := s.db.QueryRow(`
 		SELECT pack FROM abom_suite_query
@@ -74,48 +98,43 @@ func (s *Store) promotion(q AnalysisQuery) (string, bool, error) {
 	case err != nil && !errors.Is(err, sql.ErrNoRows):
 		return "", false, fmt.Errorf("reading which pack published %s: %w", q.QueryID, err)
 	}
+	return "", false, nil
+}
 
-	stages, err := s.stagesOf(q.QueryID)
-	if err != nil {
-		return "", false, err
-	}
-	if stages[q.QueryVersion] == StageDeploy {
-		return "this version is at deploy", true, nil
-	}
-
-	var tiers []string
+func (s *Store) tiersPromoting(q AnalysisQuery) ([]string, error) {
 	rows, err := s.db.Query(`
 		SELECT DISTINCT ts.tier FROM abom_suite_query sq
 		JOIN abom_tier_suite ts ON ts.suite = sq.suite
 		WHERE sq.query_id = ? AND sq.query_version = ?
 		ORDER BY ts.tier`, q.QueryID, q.QueryVersion)
 	if err != nil {
-		return "", false, fmt.Errorf("reading which tiers run %s: %w", q.QueryID, err)
+		return nil, fmt.Errorf("reading which tiers run %s: %w", q.QueryID, err)
 	}
 	defer rows.Close()
+	var tiers []string
 	for rows.Next() {
 		var tier string
 		if err := rows.Scan(&tier); err != nil {
-			return "", false, fmt.Errorf("scanning a tier that runs %s: %w", q.QueryID, err)
+			return nil, fmt.Errorf("scanning a tier that runs %s: %w", q.QueryID, err)
 		}
 		tiers = append(tiers, tier)
 	}
 	if err := rows.Err(); err != nil {
-		return "", false, err
+		return nil, err
 	}
-	if len(tiers) > 0 {
-		return "the " + strings.Join(tiers, " and ") + " tier runs this version", true, nil
-	}
+	return tiers, nil
+}
 
+func stagedPromotion(q AnalysisQuery, stages map[string]string) string {
 	if stage := stages[q.QueryVersion]; stage != "" {
-		return "this version is at " + stage, false, nil
+		return "this version is at " + stage
 	}
 	for version, stage := range stages {
 		if stage == StageDeploy && version != q.QueryVersion {
-			return "changed since the version at deploy", false, nil
+			return "changed since the version at deploy"
 		}
 	}
-	return "nobody has put this version at any stage", false, nil
+	return "nobody has put this version at any stage"
 }
 
 // stagesOf reads the stage of every version of one query somebody advanced.

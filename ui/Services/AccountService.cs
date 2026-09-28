@@ -3,11 +3,7 @@ using Abom.WebAssembly.Models;
 namespace Abom.WebAssembly.Services;
 
 /// <summary>
-/// What the operator has declared is theirs, and what <c>gh</c> says they belong to.
-///
-/// The two are kept apart. The declaration decides ownership; the verification is evidence about
-/// access, shown beside it. Loaded once and shared, because a page disagreeing with its neighbor
-/// about what is yours would be worse than marking nothing at all.
+/// Declared ownership and verified account access, kept separate for rendering.
 /// </summary>
 public sealed class AccountService(AbomApi api)
 {
@@ -19,12 +15,9 @@ public sealed class AccountService(AbomApi api)
 
     public AccountIdentity Identity { get; private set; } = new();
 
-    /// <summary>Null until the declaration has arrived, so "still loading" and "nothing
-    /// declared" stay distinguishable — they are opposite claims.</summary>
+    /// <summary>Null until declarations load, so loading and none declared stay distinct.</summary>
     public IReadOnlyList<DeclaredAccount>? Declared { get; private set; }
 
-    /// <summary>With nothing declared every figure stays undivided, as it read before the
-    /// feature existed.</summary>
     public bool AnyVerified => _owned.Count > 0;
 
     /// <summary>False when nothing is declared and enabled, which is what stops discovery.</summary>
@@ -44,7 +37,6 @@ public sealed class AccountService(AbomApi api)
         Adopt(await api.RefreshAccountsAsync(ct));
     }
 
-    /// <summary>Reloads the declaration after it has been edited.</summary>
     public async Task ReloadScopeAsync(CancellationToken ct = default) =>
         AdoptScope(await api.GetOwnedScopeAsync(ct));
 
@@ -69,7 +61,7 @@ public sealed class AccountService(AbomApi api)
         Changed?.Invoke();
     }
 
-    /// <summary>Every scope key starts with the account, so one test serves them all.</summary>
+    /// <summary>Scope keys start with the account owner.</summary>
     public bool IsOwned(string? scopeKey)
     {
         if (string.IsNullOrEmpty(scopeKey)) return false;

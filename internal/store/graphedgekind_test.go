@@ -53,9 +53,7 @@ func TestNarrowingToAKindKeepsTheContainmentThatPlacesTheNodes(t *testing.T) {
 	}
 }
 
-// A kind nothing produces has an empty answer. Returning the whole graph instead is the failure
-// the boundary filter was caught in: the unfiltered corpus arriving under a promise it was
-// narrowed.
+// A kind nothing produces has an empty answer rather than the whole graph.
 func TestAKindNothingDeclaresDrawsNoRelationships(t *testing.T) {
 	s := edgeKindFixture(t)
 

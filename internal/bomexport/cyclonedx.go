@@ -13,9 +13,7 @@ import (
 // CycloneDX writes the document as CycloneDX 1.6.
 //
 // Coverage and provenance have no first-class home in the format, so they are carried as `abom:`
-// properties rather than dropped. A format's limits are not a license to omit the measurement:
-// silently emitting an unexamined component beside an examined one is the failure the coverage
-// statement exists to prevent.
+// properties rather than dropped.
 func CycloneDX(doc store.BOM) ([]byte, error) {
 	bom := cdx.NewBOM()
 	bom.SerialNumber = ""
@@ -81,8 +79,7 @@ func cycloneComponent(c store.BOMComponent) cdx.Component {
 		{"abom:referencesInUse", fmt.Sprintf("%d", c.RefsInUse)},
 		{"abom:referencesAnalyzed", fmt.Sprintf("%d", c.RefsAnalyzed)},
 	}
-	// Every reference as written, because the version field can hold only one and which one it
-	// holds is a choice this document should not make silently.
+	// Every reference as written, because the version field can hold only one.
 	for _, r := range c.References {
 		if r.Raw != "" {
 			props = append(props, [2]string{"abom:reference", r.Raw})

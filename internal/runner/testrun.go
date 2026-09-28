@@ -162,15 +162,6 @@ func (r *Runner) runTests(ctx context.Context, dirs []string, lock bool) (TestRe
 	return result, nil
 }
 
-// parseTestOutput reads the CLI's per-test JSON, without the output files it names.
-func parseTestOutput(out []byte) (TestResult, error) {
-	outcomes, err := decodeOutcomes(out)
-	if err != nil {
-		return TestResult{}, err
-	}
-	return verdict(outcomes, nil), nil
-}
-
 // decodeOutcomes reads the CLI's per-test JSON.
 //
 // A stream of objects rather than one array on some versions, so it is decoded as a stream and
@@ -212,48 +203,62 @@ func verdict(outcomes []testOutcome, read func(string) ([]byte, error)) TestResu
 	if len(outcomes) == 0 {
 		return TestResult{}
 	}
-	var result TestResult
-	var first *testOutcome
-	var missing, unexpected int64
-	compared, readable := false, read != nil
+
+	scan := verdictScan{read: read, readable: read != nil}
 	for i, t := range outcomes {
-		result.Total++
-		if t.Pass {
-			continue
-		}
-		result.Failed++
-		if first == nil || stageRank(t.FailureStage) < stageRank(first.FailureStage) {
-			first = &outcomes[i]
-		}
-		if t.FailureStage != "RESULT" || !readable {
-			continue
-		}
-		compared = true
-		body, err := read(t.Actual)
-		if t.Actual == "" || err != nil {
-			readable = false
-			continue
-		}
-		m, u := ExpectationFailures(body)
-		missing, unexpected = missing+m, unexpected+u
+		scan.add(t, &outcomes[i])
 	}
-	if compared && readable {
-		result.Missing, result.Unexpected = &missing, &unexpected
+	return scan.finish()
+}
+
+type verdictScan struct {
+	result              TestResult
+	first               *testOutcome
+	missing, unexpected int64
+	compared, readable  bool
+	read                func(string) ([]byte, error)
+}
+
+func (s *verdictScan) add(t testOutcome, ptr *testOutcome) {
+	s.result.Total++
+	if t.Pass {
+		return
 	}
-	result.Passed = result.Failed == 0
-	result.Detail = fmt.Sprintf("%d of %d passed", result.Total-result.Failed, result.Total)
-	if first == nil {
-		return result
+	s.result.Failed++
+	if s.first == nil || stageRank(t.FailureStage) < stageRank(s.first.FailureStage) {
+		s.first = ptr
 	}
-	result.FailureStage = first.FailureStage
-	reason := first.reason()
-	if first.FailureStage == "RESULT" && result.Missing != nil && missing+unexpected > 0 {
-		reason = ExpectationsDetail(missing, unexpected)
+	if t.FailureStage != "RESULT" || !s.readable {
+		return
+	}
+	s.compared = true
+	body, err := s.read(t.Actual)
+	if t.Actual == "" || err != nil {
+		s.readable = false
+		return
+	}
+	m, u := ExpectationFailures(body)
+	s.missing, s.unexpected = s.missing+m, s.unexpected+u
+}
+
+func (s *verdictScan) finish() TestResult {
+	if s.compared && s.readable {
+		s.result.Missing, s.result.Unexpected = &s.missing, &s.unexpected
+	}
+	s.result.Passed = s.result.Failed == 0
+	s.result.Detail = fmt.Sprintf("%d of %d passed", s.result.Total-s.result.Failed, s.result.Total)
+	if s.first == nil {
+		return s.result
+	}
+	s.result.FailureStage = s.first.FailureStage
+	reason := s.first.reason()
+	if s.first.FailureStage == "RESULT" && s.result.Missing != nil && s.missing+s.unexpected > 0 {
+		reason = ExpectationsDetail(s.missing, s.unexpected)
 	}
 	if reason != "" {
-		result.Detail += "; " + reason
+		s.result.Detail += "; " + reason
 	}
-	return result
+	return s.result
 }
 
 // testFailures is the result set an inline-expectations test adds to its output, one row per

@@ -221,8 +221,8 @@ func TestAnEdgeIngestedSinceTheLastPassCarriesNoFacts(t *testing.T) {
 	}
 }
 
-// Re-analysis can move an edge to a different target, which is how correcting the parser corrects
-// the graph. A fact derived from where it used to point is a stale claim no later pass revisits.
+// Re-analysis can move an edge to a different target, which invalidates facts derived from the
+// previous target.
 func TestARepointedEdgeLosesTheFactsDerivedFromItsOldTarget(t *testing.T) {
 	s := edgeFactsFixture(t)
 	derive(t, s)

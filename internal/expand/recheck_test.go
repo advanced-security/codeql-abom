@@ -63,7 +63,7 @@ func analyzed(t *testing.T, q *frontier.Queue, owner, repo, ref, sha string) {
 	}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
-	if err := q.Complete(frontier.Of(key), frontier.Resolution{Ref: ref, SHA: sha}); err != nil {
+	if err := q.Complete(frontier.Key{NodeKey: key}, frontier.Resolution{Ref: ref, SHA: sha}); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 }
@@ -228,8 +228,7 @@ func TestRecheckRespectsTheLimit(t *testing.T) {
 // A row requesting `v4` is asking about `v4`, and the drift question is whether *that* tag has
 // moved. Probing the default branch instead compares two unrelated commits, so a tag that has
 // not moved reads as drifted — and re-analyzing it produces the identical result, which makes it
-// due again next pass. On the real corpus that is 800 of the 1,997 mutable rows on a permanent
-// 24-hour treadmill, indistinguishable from real drift.
+// due again next pass, indistinguishable from real drift.
 func TestARefIsProbedAgainstItselfRatherThanTheDefaultBranch(t *testing.T) {
 	r, q, p, s := newRechecker(t)
 	analyzedAtRef(t, q, "actions", "checkout", "v4", "v4-sha")

@@ -164,9 +164,7 @@ var notSPDXSafe = regexp.MustCompile(`[^a-zA-Z0-9.-]+`)
 // ids hands out SPDX element ids that are unique within one document.
 //
 // The character set SPDX allows is narrower than a node key's, so distinct components can reduce
-// to one id: `actions/upload-artifact/merge` and `actions/upload-artifact-merge` did exactly that
-// on the reference corpus. Two packages sharing an id makes the document invalid, and silently
-// merging two dependencies into one is worse than that.
+// to one id.
 type ids struct{ taken map[string]int }
 
 func newIDs() *ids { return &ids{taken: map[string]int{}} }

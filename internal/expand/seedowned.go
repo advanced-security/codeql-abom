@@ -11,10 +11,7 @@ import (
 // SeedOwnedRepositories queues the operator's own repositories for analysis.
 //
 // SeedFrontier reads edges, so it can only queue the dependencies of a repository that has already
-// been analyzed — and nothing analyzed the operator's repositories in the first place. On the
-// reference corpus that left 198 declared repositories sitting as roots of a graph built entirely
-// from other people's code, with an empty database catalog and a queue that had never contained
-// one of them.
+// been analyzed; the operator's own repositories need an explicit first batch.
 //
 // Analysis batches by `owner/repo@ref` (see groupByRepository), so a repository needs no different
 // treatment from a dependency: it is checked out and analyzed by the same loop. Depth 0 is what

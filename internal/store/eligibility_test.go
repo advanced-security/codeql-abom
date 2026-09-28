@@ -5,8 +5,7 @@ import (
 	"testing"
 )
 
-// Being in an organization is not being answerable for it. `gh` reports 33 accounts for one
-// operator, and offering all 33 as declarable is how a corpus came to assert they own `facebook`.
+// Being in an organization is not being answerable for it.
 func TestOnlyOwnerAndAdminCanDeclareAnAccount(t *testing.T) {
 	for _, c := range []struct {
 		role string

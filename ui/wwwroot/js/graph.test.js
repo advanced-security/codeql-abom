@@ -16,9 +16,7 @@ import {
 } from './graph.js';
 import { withAlpha, coverageColor } from './appearance.js';import { hullOf, inflate, containsPoint, overlapArea, groupSizes } from './regions.js';
 
-// These are the pure decisions behind the whole view: which edges are drawn, how big a node is,
-// what groups with what. Every bug this file has had lived in one of them, and none of it was
-// reachable by any test until now.
+// Pure decisions behind the view: edge classes, node size, and grouping.
 
 test('an edge is classified by the closest true relationship', () => {
     const a = { key: 'octo/app/.github/workflows/ci.yml', repository: 'octo/app' };
@@ -27,7 +25,7 @@ test('an edge is classified by the closest true relationship', () => {
     const d = { key: 'actions/checkout' };
 
     assert.equal(edgeClass(a, b), 'sameRepo');
-    // Same repository outranks same owner, or the broadest reading would always win.
+    // Same repository outranks same owner.
     assert.equal(edgeClass(a, c), 'sameOwner');
     assert.equal(edgeClass(a, d), 'crossOwner');
 });
@@ -43,37 +41,31 @@ test('an owner node compares by its account and not by a repository it does not 
     assert.equal(edgeClass(org, foreign), 'crossOwner');
 });
 
-// The store now classifies boundaries too, and two derivations of one fact are two answers
-// waiting to disagree. The stored value is the authoritative one — it is what the bill of
-// materials reads — so where it exists the view must not re-derive a second opinion.
+// Stored boundaries are authoritative; the browser derives only when they are absent.
 test('a stored boundary is preferred over deriving one again in the browser', () => {
     const s = { key: 'octo/app/.github/workflows/ci.yml', repository: 'octo/app' };
     const t = { key: 'octo/app/.github/workflows/build.yml', repository: 'octo/app' };
 
-    // Deliberately contradicts what edgeClass would say, so preferring the store is visible.
+    // Contradicts edgeClass so preferring the stored value is visible.
     assert.equal(edgeClass(s, t), 'sameRepo');
     assert.equal(boundaryClass('cross-owner', s, t), 'crossOwner');
     assert.equal(boundaryClass('same-owner', s, t), 'sameOwner');
     assert.equal(boundaryClass('same-repository', s, t), 'sameRepo');
 });
 
-// Containment edges and the merged edges a collapsed view builds have no stored boundary,
-// because they were never observed as references. Falling back keeps them drawable rather than
-// dropping them out of every class the panel can check.
+// Containment and merged collapsed edges have no stored boundary, so they fall back to endpoints.
 test('an edge with no stored boundary still gets one from its endpoints', () => {
     const org = { key: 'org:actions', kind: 'org', owner: 'actions' };
     const action = { key: 'actions/checkout' };
 
     assert.equal(boundaryClass('', org, action), 'sameOwner');
     assert.equal(boundaryClass(undefined, org, action), 'sameOwner');
-    // An unrecognized value is not a class. Trusting it would put edges in a bucket no filter
-    // checkbox names, and they would silently never draw.
+    // Unrecognized values are not filterable classes.
     assert.equal(boundaryClass('something-else', org, action), 'sameOwner');
 });
 
 test('grouping by workflow does not put every node in a group of its own', () => {
-    // The bug: with steps folded away nothing has a container, so each node became its own
-    // group and collapsing changed nothing at all.
+    // Steps inherit their workflow container before grouping.
     const workflow = { key: 'octo/app/.github/workflows/ci.yml', kind: 'workflow' };
     const step = { key: 'step:1', kind: 'step', container: 'octo/app/.github/workflows/ci.yml' };
     const action = { key: 'actions/checkout', kind: 'action' };
@@ -104,15 +96,11 @@ test('size carries reach, and selecting a node barely changes it', () => {
 
     assert.ok(nodeRadius(hub) > nodeRadius(leaf), 'reach must be visible as size');
 
-    // Selecting used to multiply by 2.2, which filled the canvas and hid the neighborhood the
-    // selection was meant to reveal.
     const selected = nodeRadius(hub, new Set([hub.key]));
     assert.ok(selected / nodeRadius(hub) < 1.5, `selected node grew ${selected / nodeRadius(hub)}x`);
 });
 
 test('an owner is sized as a container rather than by the reach of its largest member', () => {
-    // Inheriting reach drew the account larger than the dependency inside it, counting one
-    // member's reach twice on screen.
     const org = { key: 'org:actions', kind: 'org', dependentRepos: 202 };
     const action = { key: 'actions/checkout', kind: 'action', dependentRepos: 202 };
     assert.ok(nodeRadius(org) < nodeRadius(action));
@@ -126,7 +114,7 @@ test('selection accepts a set or a single key', () => {
 });
 
 test('a link endpoint reads the same before and after the renderer rewrites it', () => {
-    // force-graph replaces the string with the node object once seeded; both forms occur.
+    // force-graph replaces endpoint keys with node objects once seeded.
     assert.equal(keyOf('actions/checkout'), 'actions/checkout');
     assert.equal(keyOf({ key: 'actions/checkout' }), 'actions/checkout');
 });
@@ -138,8 +126,7 @@ test('fading an edge changes its alpha and keeps its hue', () => {
 });
 
 test('layout and animation are deterministic for the same corpus', () => {
-    // Positions are seeded by key so the same graph always lays out identically; drift would
-    // destroy the spatial memory a reader builds up.
+    // Positions are seeded by key so the same graph lays out identically.
     assert.equal(seed('actions/checkout'), seed('actions/checkout'));
     assert.notEqual(seed('actions/checkout'), seed('actions/cache'));
 
@@ -155,17 +142,14 @@ test('particles move slowly enough to read as drift rather than a pulse', () => 
     const slowest = Math.min(...speeds);
     const fastest = Math.max(...speeds);
 
-    // A traverse under about four seconds at 60fps reads as a pulse, which is what the shared
-    // speed used to produce.
+    // A traverse under about four seconds at 60fps reads as a pulse.
     assert.ok(1 / (fastest * 60) > 4, `fastest traverse is ${(1 / (fastest * 60)).toFixed(1)}s`);
     // Distinct periods are what pull them out of lockstep; there is no phase offset available.
     assert.ok(fastest / slowest > 2, `speed spread is only ${(fastest / slowest).toFixed(1)}x`);
 });
 
 test('a collapsed graph is rebuilt whenever anything it is folded from changes', () => {
-    // Two bugs, one cause: applyFilters skipped render() whenever the graph was already seeded,
-    // but the fold is built inside render(). Regrouping relabeled the caption while leaving the
-    // previous grouping on screen, and hiding an edge class left its merged edges drawn.
+    // The fold is built inside render(), so collapsed data must rebuild with filter changes.
     const collapsed = { seeded: true, collapsed: true, groupBy: 'owner' };
     assert.equal(needsRender(collapsed), true);
 
@@ -380,10 +364,7 @@ test('a group of fully measured members reports its reach as known', () => {
     assert.equal(group.reachKnown, true, 'a measured zero is a measurement');
 });
 
-// The queue analyzes a reference; the graph draws a name. `analyzed` is true as soon as ONE
-// reference has results, so the "not analyzed" filter excluded 467 partially covered actions on
-// the real corpus — including actions/checkout at 1 of 27. The filter whose entire job is finding
-// unanalyzed work was hiding the largest gaps in it.
+// The queue analyzes refs; a node is fully analyzed only when every ref in use has results.
 test('a dependency is only analyzed when every reference in use has been', () => {
     assert.equal(fullyAnalyzed({ analyzed: true, refsInUse: 27, refsAnalyzed: 1 }), false,
         'one reference of twenty-seven is not coverage');
@@ -888,10 +869,7 @@ test('every mutator that changes what a frame shows wakes the view', () => {
         'these change what a frame shows without waking the view, so a rested renderer never repaints');
 });
 
-// The mutators above are not the only thing that changes a frame: so does the reader dragging the
-// camera. At `still` the label loop returns without rescheduling and the renderer is paused, so
-// nothing is left polling the camera signature — a rotate moves a camera whose frame nobody draws.
-// Measured: the same drag changed 97% of pixels on a freshly loaded view and 0% once it had settled.
+// Reader gestures must wake a rested renderer before moving the camera.
 test('a view that has come to rest is woken by the reader touching it', () => {
     const source = readFileSync(new URL('./graph.js', import.meta.url), 'utf8');
     const start = source.indexOf('export function create(');
@@ -918,19 +896,14 @@ test('priorities set the scale the priority force divides by', () => {
         'setPriorities must refresh maxPriority, or the force divides by a stale scale');
 });
 
-// The graph is the page's whole point, and it collapsed to its floor whenever the reader had
-// scrolled. `getBoundingClientRect().top` is already viewport-relative; adding `window.scrollY`
-// made it document-relative and then subtracted that from a viewport height, so the further down
-// the page the reader was, the shorter the graph got. Measured on a 1440x1200 window after
-// scrolling: 360px, the floor, against the ~700px the layout had for it.
+// `getBoundingClientRect().top` is already viewport-relative; scrollY must not shrink the graph.
 test('the graph fills the window below itself, wherever the page is scrolled', () => {
     // Unscrolled: the host sits 200px down a 1000px window, so it takes the rest bar the gutter.
-    // This is the case that always worked, which is why the defect survived every fresh load.
     assert.equal(graphHeight({ top: 200, innerHeight: 1000, gutter: 64 }), 736);
 
     // Scrolled far enough that the host's top has left the top of the window. It has not become
     // smaller — there is more room below it, not less — so it takes the whole window bar the
-    // gutter. The old arithmetic returned the floor here.
+    // gutter.
     assert.equal(graphHeight({ top: -400, innerHeight: 1000, gutter: 64 }), 936);
 });
 
@@ -940,9 +913,7 @@ test('a host with no room below it still gets a usable floor', () => {
     assert.equal(graphHeight({ top: 900, innerHeight: 1000, gutter: 64 }), 360);
 });
 
-// The formula above was already right about scrolling; nothing re-ran it. The graph opens part
-// way down a page that scrolls, so it is sized for a position the reader leaves immediately.
-// Measured on the crawled organization: 360px at rest against 536px once scrolled into view.
+// Refit only when scrolling materially changes the available canvas height.
 test('a refit is worth paying for only when the room has materially changed', () => {
     // Resizing a WebGL canvas reallocates its drawing buffer. Doing that for a few pixels of
     // scroll costs frames and flickers, so small differences are left alone.
@@ -1133,9 +1104,7 @@ test('a container put back on screen names its account, not its key', () => {
     assert.equal(leafLabel({ key: 'org:super-linter', kind: 'org' }, ''), 'super-linter');
 });
 
-// A label is centred on its node, so one near the right edge is drawn half off the canvas. Seen on
-// the real corpus: `apache/skywalking-eyes/dependency@e1a0235…` ran past the edge and was
-// unreadable exactly where the graph is densest.
+// A label centered near the canvas edge must be clamped back inside it.
 test('a label at the edge is kept inside the canvas', () => {
     assert.equal(clampToCanvas({ x: -20, w: 100 }, 600), 4);
     assert.equal(clampToCanvas({ x: 560, w: 100 }, 600), 496);
@@ -1391,10 +1360,7 @@ test('two nodes the same distance away resolve the same way every frame', () => 
     assert.equal(nearestTo([...points].reverse(), { x: 100, y: 100 }, 20).key, 'a');
 });
 
-// An edge needs both its ends, so a filter keeping a sixth of the nodes kept 39 of 7,552
-// relationships on the real corpus and the view read as a dependency graph with no dependencies.
-// Outward only: what a shown node *uses* was worth 2,947 edges, what uses it only 469, and the
-// page exists to answer "what do I depend on that something is wrong with".
+// An edge needs both ends; outward dependency context answers what shown nodes use.
 test('a shown node keeps what it uses, so a relationship has both of its ends', () => {
     const visible = new Set(['octo/app']);
     const links = [
@@ -1422,13 +1388,7 @@ test('nothing is added for a relationship that already has both ends', () => {
     assert.equal(withDependencies(visible, links, new Set(['crossOwner'])).size, 0);
 });
 
-// The renderer's hit test never fires on a node drawn at half a pixel: ten clicks aimed dead centre
-// at a node selected nothing, so selecting, comparing and isolating were all unreachable at the
-// default scope. A click means what the nearest node says, and the second one still isolates.
-// Isolating a node asked for its neighbourhood — 23 nodes and 22 edges on the real corpus — and
-// drew **1 node and 0 edges**, because `has findings` was applied on top and none of the neighbours
-// had one. The reader has already named the subject; the flags that decide which nodes are worth
-// showing have nothing left to decide.
+// Naming a node suspends arrival filters that would hide its neighborhood.
 test('naming a node is itself a scope, so the arrival filters stop deciding', () => {
     const asked = { hasFindings: true, hasAdvisory: true, unanalyzedOnly: true, minReach: 5 };
 
@@ -1578,11 +1538,7 @@ test('a focus that named nothing does not suspend the filters it never narrowed'
     assert.equal(missing.minReach, 4);
 });
 
-// The Coverage view's legend promises "how much is known about each dependency", and the color
-// carried a queue state instead. Expanded that is the same thing — the reference split gives every
-// node exactly one reference, so 955 of 955 nodes on the real corpus are all-or-nothing. Collapsed
-// it is not: a group sums its members' references and carries no queue state at all, so every
-// group was painted muted, which this legend says means "never a dependency".
+// Coverage color is a reference ratio for collapsed groups, not their absent queue state.
 test('coverage is colored by how much of a node has been analyzed, not by a queue state', () => {
     const palette = { muted: '#555', discovery: { queued: '#fc0', done: '#0c8' } };
 
@@ -1623,10 +1579,7 @@ test('a region name that would collide is moved rather than dropped', () => {
         && rect.y < t.y + t.h && t.y < rect.y + rect.h), JSON.stringify([rect, t]));
 });
 
-// Measured on the real corpus at owner level: 22 of 24 boundaries were on the canvas and four of
-// their names ran off its edge — `github`, the largest account, at x=609 on a 669px canvas, and
-// `has-ghas`, the operator's own, at y=-5. A boundary whose name is drawn where nobody can read it
-// is a boundary that reads as unimportant, which is the one thing this view may never say.
+// Boundary names must stay on-canvas even when the region sits against an edge.
 test('a boundary name is kept on the canvas, however close to the edge its region sits', () => {
     const canvas = { width: 669, height: 533 };
     const corner = (x, y) => inflate(hullOf([
@@ -1685,8 +1638,7 @@ test('a name with nowhere above it to go is placed elsewhere, not abandoned', ()
         && rect.y < t.y + t.h && t.y < rect.y + rect.h), 'the name landed on the caption');
 });
 
-// The checks the regions shipped without. A boundary that looks right and is wrong is exactly the
-// failure mode this view has: a picture that carries no information and appears to.
+// Region helpers guard boundaries that look valid but assert false containment.
 
 /** A repository laid out at a screen position, which is all a region decision needs. */
 function placed(repository, sx, sy, extra = {}) {
@@ -1836,9 +1788,7 @@ test('one line says how the view is grouped and how much of it is missing', () =
     assert.equal(regionCaption(2, 0, 'grouping'), 'grouped by grouping');
 });
 
-// A boundary drawn with no name is a shape a reader cannot attribute to anyone, and the canvas
-// ran out of room for one on the real corpus. Silence would leave them counting boundaries and
-// names and finding different numbers, with nothing saying why.
+// A boundary drawn without a name must be counted.
 test('a boundary the canvas had no room to name says so', () => {
     assert.equal(regionCaption(23, 0, 'owner', 1),
         'grouped by owner · 1 has no room for its name');
@@ -1852,9 +1802,7 @@ test('a boundary the canvas had no room to name says so', () => {
     assert.equal(regionCaption(23, 0, 'owner', 0), 'grouped by owner');
 });
 
-// Refusing a boundary removed the account from the view entirely: the container node is hidden
-// because a region stands for it, and then no region was drawn. Measured on the real corpus —
-// 14 of 23 accounts at owner level had neither a point nor a boundary.
+// If a boundary is refused, draw its container node again.
 test('a container whose boundary was refused is drawn as a node again', () => {
     const account = { kind: 'org', owner: 'actions', key: 'org:actions' };
 
@@ -1867,9 +1815,7 @@ test('a container whose boundary was refused is drawn as a node again', () => {
     assert.equal(drawnAsRegion(account, 'owner', true, null), false, 'a collapsed view wants the point');
 });
 
-// Putting a refused container back changes what the next boundary has to clear, so the answer
-// depends on itself. Deciding it one frame at a time left a view that came to rest before it had
-// finished: 9 boundaries drawn where 17 were drawable, and nothing to wake it.
+// Boundary refusal is a fixed point because refused containers become obstacles.
 test('the boundaries a view draws are a fixed point, reached before anything is painted', () => {
     const nodes = [
         // A C-shaped account with a stranger in its mouth: refused, so its own point comes back.

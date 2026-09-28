@@ -11,9 +11,7 @@ import (
 // references they pin, so the crawl reads the trees a submission is actually made of.
 //
 // It reprioritizes and never enqueues. SeedFrontier already queues every (node, ref) an owned
-// workflow names, and on the reference corpus all 35 unanalyzed composite pins already had pending
-// rows sitting at claim positions 50 to 145 of 437 — not starved, just not yet reached. An earlier
-// version of this called Enqueue, added exactly zero rows, and looked like it had worked.
+// workflow names; this only moves those pending rows ahead.
 //
 // This is the ceiling on transitive discovery: a child edge is attributable to a consumer only
 // when the parent was analyzed at the reference that consumer pinned, so until these are read the

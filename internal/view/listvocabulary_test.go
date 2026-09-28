@@ -6,13 +6,7 @@ import (
 	"testing"
 )
 
-// A list term whose members are fixed in code refuses one it does not have, and refuses the whole
-// term rather than keeping the members it recognized.
-//
-// Measured on the crawled organization before this existed: `flags=banana` on the dependencies
-// listing answered every row, because the flag switch had no arm for it, and `kinds=banana`
-// answered nothing — two different wrong answers to one typo. Keeping the recognized half of
-// `kinds=action,banana` would answer a question narrower than the reader wrote without saying so.
+// A fixed list term refuses unknown members and refuses the whole term.
 func TestAListMemberOutsideItsVocabularyRefusesTheWholeTerm(t *testing.T) {
 	for text, allowed := range map[string]string{
 		"kinds=banana":                  "composite_action",
@@ -72,9 +66,7 @@ func TestAListTermOffersTheMembersItAllows(t *testing.T) {
 	}
 }
 
-// A unit that answers one flag refuses the others by name. The workflow and job units narrow by
-// `findings` and nothing else, and until this was declared they dropped `advisory` and
-// `unanalyzed` without a word — answering the whole unit under a predicate that said otherwise.
+// Units that answer only `findings` refuse the other flags by name.
 func TestAUnitRefusesTheFlagsItCannotAnswer(t *testing.T) {
 	spec, err := Parse("flags=advisory,findings,unanalyzed")
 	if err != nil {

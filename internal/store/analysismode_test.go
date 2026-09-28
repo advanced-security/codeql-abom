@@ -63,9 +63,8 @@ func TestTheSameQueryInTwoShapesIsTwoRuns(t *testing.T) {
 	}
 }
 
-// Recording the shape must not re-analyze the corpus. Every run key ever computed described one
-// repository's own checkout, so a regular run keeps the key it already had; only a shape that is
-// not that one has anything to add to the identity.
+// Recording the shape must not re-analyze existing regular runs. A regular run keeps the key it
+// already had; only another shape has anything to add to the identity.
 func TestARegularRunKeepsTheKeyItHadBeforeTheColumnExisted(t *testing.T) {
 	run := QueryRun{
 		QueryID: "abom/edges", QueryVersion: "1.0.0",

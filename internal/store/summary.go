@@ -8,9 +8,8 @@ import (
 // Summary is the state of the whole pipeline, for an operator deciding what to run next.
 type Summary struct {
 	SeedRepos int `json:"seedRepos"`
-	// OwnedRepos are the seeded repositories the declaration claims. Reported separately because
-	// the two are independent: the reference corpus holds 204 seeded and owns none of them, and
-	// printing the first as the operator's is a claim of responsibility nobody made.
+	// OwnedRepos are the seeded repositories the declaration claims. Reporting all seeded
+	// repositories as owned would claim responsibility nobody accepted.
 	OwnedRepos    int `json:"ownedRepos"`
 	UpstreamRepos int `json:"upstreamRepos"`
 	Nodes         int `json:"nodes"`
@@ -39,9 +38,7 @@ type Summary struct {
 	Exposures       int `json:"exposures"`
 	DirectExposures int `json:"directExposures"`
 	// OwnedExposures are the routes that start in a repository the declaration claims, kept apart
-	// from Exposures for the reason OwnedRepos is kept apart from SeedRepos. The reference corpus
-	// holds 253 routes across 115 repositories and owns none of them, so presenting the corpus
-	// figure as the operator's offers them work to do from repositories they cannot change.
+	// from Exposures for the reason OwnedRepos is kept apart from SeedRepos.
 	OwnedExposures       int            `json:"ownedExposures"`
 	OwnedDirectExposures int            `json:"ownedDirectExposures"`
 	Frontier             map[string]int `json:"frontier"`

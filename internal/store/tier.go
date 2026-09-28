@@ -24,9 +24,7 @@ const (
 )
 
 // isOwned matches a queued dependency against the declared scope — the accounts the operator has
-// stated they hold both the privilege to analyze and the responsibility to remediate. It read the
-// `gh`-verified accounts until 2026-09-07, which reported membership: being in an organization
-// does not make its supply chain anyone's work.
+// stated they hold both the privilege to analyze and the responsibility to remediate.
 const isOwned = ownedFrontierRow
 
 // tierOfRow is the precedence, written once. It feeds both the counts and the requeue, which
@@ -81,9 +79,7 @@ type TierCount struct {
 	Total    int `json:"total"`
 	Analyzed int `json:"analyzed"`
 	// Repositories are queue rows for the operator's own repositories, which enumeration writes
-	// at depth 0. They joined the owned tier when enumeration started queueing them, and one
-	// number for both hid that on the reference corpus all 91 analyzed rows were repositories
-	// and not one of the 44 owned dependencies had been looked at.
+	// at depth 0. They are split from owned dependencies so analysis coverage stays legible.
 	Repositories         int `json:"repositories"`
 	RepositoriesAnalyzed int `json:"repositoriesAnalyzed"`
 }

@@ -37,11 +37,7 @@ export function resolveChannel({ requested, pinnedComplete, chromeInstalled }) {
 
 // What has to exist before a pinned build counts as installed.
 //
-// More than the launcher, because the launcher is not what fails. A download that stalls
-// mid-extraction leaves `Contents/MacOS/Chromium` in place and no
-// `Contents/Frameworks/Chromium Framework.framework` beside it, and the process then aborts in
-// `dlopen` — which reads as 32 broken tests rather than as a browser that was never installed.
-// Measured on this workstation, twice.
+// More than the launcher: a half-extracted Chromium aborts in `dlopen` without its framework.
 const REQUIRED = {
     darwin: [
         ['chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'],

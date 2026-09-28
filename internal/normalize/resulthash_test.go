@@ -49,8 +49,7 @@ func TestTheSameRuleInADifferentFileIsADifferentFinding(t *testing.T) {
 }
 
 // Without a line hash there is nothing content-addressed about the location left, so the region
-// has to stand in for it. Every finding in the real corpus carries one, but SARIF does not
-// promise it, and silently hashing rule-and-path alone would group unrelated findings.
+// has to stand in for it; silently hashing rule-and-path alone would group unrelated findings.
 func TestWithoutALineHashTheRegionIdentifiesTheLocation(t *testing.T) {
 	here := ResultHash("actions/unpinned-tag", ".github/workflows/ci.yml", "", Region{12, 9, 12, 40})
 	there := ResultHash("actions/unpinned-tag", ".github/workflows/ci.yml", "", Region{88, 9, 88, 40})

@@ -138,9 +138,8 @@ type AdvisoriesPage struct {
 	// Unreached counts live advisories that name no action anything under review uses.
 	//
 	// The exclusion is the invariant working — those advisories name actions that appear only in
-	// upstream repositories' own CI, which is nobody's supply chain — but it is why a coverage
-	// strip counting 11 sat above a table holding 3, with a critical among the absent and nothing
-	// on screen accounting for it. Silence reads as completeness.
+	// upstream repositories' own CI, which is nobody's supply chain. Silence reads as completeness,
+	// so the absent advisories are still counted.
 	Unreached int `json:"unreached"`
 }
 

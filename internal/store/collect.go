@@ -7,10 +7,7 @@ import (
 
 // queryAll runs a query and reads every row into a slice.
 //
-// The open, the close, the loop and the final rows.Err() are identical at more than twenty call
-// sites and are the parts that get forgotten - a missing rows.Err() silently truncates a result
-// rather than failing it. Scan stays with the caller, because that is the part that differs and
-// the part worth reading.
+// Scan stays with the caller; row lifecycle and rows.Err() handling stay here.
 //
 // A free function rather than a method: Go has no generic methods.
 func queryAll[T any](s *Store, what string, scan func(*sql.Rows) (T, error),

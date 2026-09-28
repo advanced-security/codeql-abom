@@ -11,10 +11,8 @@ import (
 
 // FindingSelector names a set of findings, and through them the nodes carrying them.
 //
-// This answers a **set**, never a graph. Measured 2026-09-10: applied as node filters the finding
-// predicates leave 74% to 99% of their own match with no edges, because the graph is bipartite by
-// kind — a workflow's edges run to actions, which mostly have no findings. So the gate and the
-// snapshot Action get the set, and the Explorer goes on drawing its own picture.
+// This answers a set, never a graph: finding predicates do not imply the edge closure among the
+// matching nodes.
 type FindingSelector struct {
 	// Rules to include, by exact query id or by a `prefix/*` pattern. A rule id *is* a CodeQL
 	// query id, and query ids are hierarchical, so a pack has to be nameable without listing it.
@@ -31,9 +29,8 @@ type FindingSelector struct {
 	// Sources narrows to findings whose rule's query came from one of these, as an evaluation that
 	// reported the finding recorded it. A finding none recorded a source for matches none.
 	Sources []string
-	// Repositories narrows to what a gate is asking about. Compared case-insensitively: seven
-	// accounts in the reference corpus spell themselves both ways, and a case-sensitive compare
-	// once misclassified 211 edges.
+	// Repositories narrows to what a gate is asking about. Compared case-insensitively because
+	// GitHub account names are case-insensitive.
 	Repositories []string
 	// Properties narrows by what the organization says a repository is. Several keys are an AND and
 	// several values of one key are an OR, which is a plain join because the store holds one row
@@ -61,10 +58,8 @@ type FindingSelector struct {
 type MatchedNode struct {
 	Key  string `json:"key"`
 	Kind string `json:"kind"`
-	// Repositories are where the findings were *found*, which is not always where the node lives:
-	// a step inside an external composite action belongs to no repository, and 93 of the 179 nodes
-	// matching `actions/code-injection/*` on the reference corpus are exactly that. Every finding
-	// names a repository; not every node does.
+	// Repositories are where the findings were found, which is not always where the node lives.
+	// Every finding names a repository; not every node does.
 	Repositories []string `json:"repositories"`
 	Findings     int      `json:"findings"`
 	Rules        []string `json:"rules"`
@@ -74,9 +69,8 @@ type MatchedNode struct {
 
 // FindingMatch is the whole answer, nodes and total together.
 //
-// The total is here rather than left to the caller because summing `MatchedNode.Findings` is
-// wrong and looks right: **113 of the reference corpus's 10,858 linked findings sit on two nodes**
-// — a step and the workflow holding it — so the sum reported 10,971, more findings than exist.
+// The total is here rather than left to the caller because a finding can sit on more than one node,
+// such as a step and the workflow holding it.
 type FindingMatch struct {
 	Nodes []MatchedNode `json:"nodes"`
 	// Findings counts each finding once however many nodes carry it.
@@ -171,8 +165,62 @@ func (s *Store) NodesMatching(sel FindingSelector) (FindingMatch, error) {
 		return out, nil
 	}
 
-	// Under `reached` a finding is charged to who reaches its node, or the composite action or
-	// reusable workflow holding it, and the repository terms narrow that repository instead.
+	query := buildFindingMatchQuery(sel)
+	if err := s.attachMatchedNodes(&out, query); err != nil {
+		return out, err
+	}
+
+	// Listed rather than summed, because one finding can sit on two nodes.
+	var err error
+	if out.findingIDs, err = s.matchedFindingIDs(query.from, query.where, query.exclusion, query.args); err != nil {
+		return out, err
+	}
+	out.Findings = len(out.findingIDs)
+	if len(sel.Sources) > 0 {
+		if out.Unsourced, err = s.countMatched(
+			query.from, query.unsourced, query.exclusion, query.unsourcedArgs); err != nil {
+			return out, err
+		}
+	}
+	if sel.Provider != "" {
+		if out.Unprovided, err = s.countMatched(
+			query.from, query.unprovided, query.exclusion, query.unprovidedArgs); err != nil {
+			return out, err
+		}
+	}
+	return out, nil
+}
+
+type findingMatchQuery struct {
+	repository     string
+	from           string
+	where          []string
+	args           []any
+	unprovided     []string
+	unprovidedArgs []any
+	unsourced      []string
+	unsourcedArgs  []any
+	exclusion      string
+	exclusionArgs  []any
+}
+
+func buildFindingMatchQuery(sel FindingSelector) findingMatchQuery {
+	query := newFindingMatchQuery(sel)
+	query.applyRules(sel.Rules)
+	query.applyProvider(sel.Provider)
+	query.applySeverity(sel.Severity)
+	query.applySecuritySeverities(sel.SecuritySeverities)
+	query.applyRepositories(sel.Repositories)
+	query.applyProperties(sel.Properties)
+	query.applyExcludedProperties(sel.ExcludeProperties)
+	query.applyExclusions(sel)
+	query.prepareUnsourced()
+	query.applySources(sel.Sources)
+	query.appendExclusionArgs()
+	return query
+}
+
+func newFindingMatchQuery(sel FindingSelector) findingMatchQuery {
 	repository, reach := "fr.repository_full_name", ""
 	if len(sel.Reached) > 0 {
 		repository = "rr.repository_full_name"
@@ -184,95 +232,124 @@ func (s *Store) NodesMatching(sel FindingSelector) (FindingMatch, error) {
 		reach += `
 		JOIN repository rr ON rr.row_id = nr.repository_row_id`
 	}
-	from := findingSource(sel.Mode) + ` f
+	return findingMatchQuery{
+		repository: repository,
+		from: findingSource(sel.Mode) + ` f
 		JOIN abom_finding_node fn ON fn.finding_row_id = f.row_id
 		JOIN abom_node_live n ON n.row_id = fn.node_row_id
-		LEFT JOIN repository fr ON fr.row_id = f.repository_row_id` + reach
+		LEFT JOIN repository fr ON fr.row_id = f.repository_row_id` + reach,
+		where:      []string{"1"},
+		unprovided: []string{"1", "COALESCE(f.provider, '') = ''"},
+	}
+}
 
-	where := []string{"1"}
-	args := []any{}
-	// The same question with the provider term read as "none was recorded", so what it left out is
-	// counted against exactly what everything else narrowed.
-	unprovided := []string{"1", "COALESCE(f.provider, '') = ''"}
-	unprovidedArgs := []any{}
-	both := func(clause string, a ...any) {
-		where, args = append(where, clause), append(args, a...)
-		unprovided, unprovidedArgs = append(unprovided, clause), append(unprovidedArgs, a...)
+func (q *findingMatchQuery) both(clause string, args ...any) {
+	q.where, q.args = append(q.where, clause), append(q.args, args...)
+	q.unprovided = append(q.unprovided, clause)
+	q.unprovidedArgs = append(q.unprovidedArgs, args...)
+}
+
+func (q *findingMatchQuery) applyRules(rules []string) {
+	if len(rules) > 0 {
+		clause, args := ruleClause("f.rule_id", rules)
+		q.both(clause, args...)
 	}
-	if len(sel.Rules) > 0 {
-		clause, a := ruleClause("f.rule_id", sel.Rules)
-		both(clause, a...)
-	}
-	if sel.Provider != "" {
+}
+
+func (q *findingMatchQuery) applyProvider(provider string) {
+	if provider != "" {
 		// Not `IS NOT DISTINCT FROM`: a NULL provider is unknown, and unknown is not a match.
-		where = append(where, "f.provider = ?")
-		args = append(args, sel.Provider)
+		q.where = append(q.where, "f.provider = ?")
+		q.args = append(q.args, provider)
 	}
-	if sel.Severity != "" {
-		both("f.severity = ?", sel.Severity)
-	}
-	if len(sel.SecuritySeverities) > 0 {
-		clause, a := bandClause("f.security_severity", sel.SecuritySeverities)
-		both(clause, a...)
-	}
-	if len(sel.Repositories) > 0 {
-		lowered := make([]string, 0, len(sel.Repositories))
-		for _, name := range sel.Repositories {
-			lowered = append(lowered, strings.ToLower(name))
-		}
-		list, names := inList(lowered)
-		both("LOWER("+repository+") IN "+list, names...)
-	}
+}
 
-	if len(sel.Properties) > 0 {
-		names, by := valuesByKey(sel.Properties)
-		for _, name := range names {
-			clause, a := propertyClause(repository, name, by[name])
-			both(clause, a...)
-		}
+func (q *findingMatchQuery) applySeverity(severity string) {
+	if severity != "" {
+		q.both("f.severity = ?", severity)
 	}
-	if len(sel.ExcludeProperties) > 0 {
-		names, by := valuesByKey(sel.ExcludeProperties)
-		for _, name := range names {
-			clause, a := propertyClause(repository, name, by[name])
-			both("NOT "+clause, a...)
-		}
-	}
+}
 
-	exclusion := ""
-	var exclusionArgs []any
-	if len(sel.Exclude) > 0 {
-		clause, a := ruleClause("x.rule_id", sel.Exclude)
-		exclusion = `
+func (q *findingMatchQuery) applySecuritySeverities(severities []string) {
+	if len(severities) > 0 {
+		clause, args := bandClause("f.security_severity", severities)
+		q.both(clause, args...)
+	}
+}
+
+func (q *findingMatchQuery) applyRepositories(repositories []string) {
+	if len(repositories) == 0 {
+		return
+	}
+	lowered := make([]string, 0, len(repositories))
+	for _, name := range repositories {
+		lowered = append(lowered, strings.ToLower(name))
+	}
+	list, names := inList(lowered)
+	q.both("LOWER("+q.repository+") IN "+list, names...)
+}
+
+func (q *findingMatchQuery) applyProperties(properties []viewspec.PropertyMatch) {
+	names, by := valuesByKey(properties)
+	for _, name := range names {
+		clause, args := propertyClause(q.repository, name, by[name])
+		q.both(clause, args...)
+	}
+}
+
+func (q *findingMatchQuery) applyExcludedProperties(properties []viewspec.PropertyMatch) {
+	names, by := valuesByKey(properties)
+	for _, name := range names {
+		clause, args := propertyClause(q.repository, name, by[name])
+		q.both("NOT "+clause, args...)
+	}
+}
+
+func (q *findingMatchQuery) applyExclusions(sel FindingSelector) {
+	if len(sel.Exclude) == 0 {
+		return
+	}
+	clause, args := ruleClause("x.rule_id", sel.Exclude)
+	q.exclusion = `
 		  AND NOT EXISTS (SELECT 1 FROM ` + findingSource(sel.Mode) + ` x
 		                    JOIN abom_finding_node xn ON xn.finding_row_id = x.row_id
 		                   WHERE xn.node_row_id = n.row_id AND ` + clause + `)`
-		exclusionArgs = a
-	}
+	q.exclusionArgs = args
+}
+
+func (q *findingMatchQuery) prepareUnsourced() {
 	// The rest of the question, kept apart so the findings no source was recorded for are counted
 	// against exactly what the source term narrowed.
-	unsourced := append(append([]string{}, where...), "NOT "+recordedSource("f"))
-	unsourcedArgs := append(append([]any{}, args...), exclusionArgs...)
-	if len(sel.Sources) > 0 {
-		clause, a := sourceClause("f", sel.Sources)
-		where = append(where, clause)
-		args = append(args, a...)
-		unprovided = append(unprovided, clause)
-		unprovidedArgs = append(unprovidedArgs, a...)
-	}
-	args = append(args, exclusionArgs...)
-	unprovidedArgs = append(unprovidedArgs, exclusionArgs...)
+	q.unsourced = append(append([]string{}, q.where...), "NOT "+recordedSource("f"))
+	q.unsourcedArgs = append(append([]any{}, q.args...), q.exclusionArgs...)
+}
 
+func (q *findingMatchQuery) applySources(sources []string) {
+	if len(sources) > 0 {
+		clause, args := sourceClause("f", sources)
+		q.where = append(q.where, clause)
+		q.args = append(q.args, args...)
+		q.unprovided = append(q.unprovided, clause)
+		q.unprovidedArgs = append(q.unprovidedArgs, args...)
+	}
+}
+
+func (q *findingMatchQuery) appendExclusionArgs() {
+	q.args = append(q.args, q.exclusionArgs...)
+	q.unprovidedArgs = append(q.unprovidedArgs, q.exclusionArgs...)
+}
+
+func (s *Store) attachMatchedNodes(out *FindingMatch, query findingMatchQuery) error {
 	rows, err := s.db.Query(`
 		SELECT n.node_key, n.node_kind,
-		       GROUP_CONCAT(DISTINCT `+repository+`),
+		       GROUP_CONCAT(DISTINCT `+query.repository+`),
 		       COUNT(DISTINCT f.row_id), GROUP_CONCAT(DISTINCT f.rule_id)
-		FROM `+from+`
-		WHERE `+strings.Join(where, " AND ")+exclusion+`
+		FROM `+query.from+`
+		WHERE `+strings.Join(query.where, " AND ")+query.exclusion+`
 		GROUP BY n.node_key, n.node_kind
-		ORDER BY n.node_key`, args...)
+		ORDER BY n.node_key`, query.args...)
 	if err != nil {
-		return out, fmt.Errorf("matching findings: %w", err)
+		return fmt.Errorf("matching findings: %w", err)
 	}
 	defer rows.Close()
 
@@ -280,32 +357,13 @@ func (s *Store) NodesMatching(sel FindingSelector) (FindingMatch, error) {
 		var m MatchedNode
 		var rules, repos sql.NullString
 		if err := rows.Scan(&m.Key, &m.Kind, &repos, &m.Findings, &rules); err != nil {
-			return out, fmt.Errorf("scanning a match: %w", err)
+			return fmt.Errorf("scanning a match: %w", err)
 		}
 		m.Rules = splitSorted(rules)
 		m.Repositories = splitSorted(repos)
 		out.Nodes = append(out.Nodes, m)
 	}
-	if err := rows.Err(); err != nil {
-		return out, err
-	}
-
-	// Listed rather than summed, because one finding can sit on two nodes.
-	if out.findingIDs, err = s.matchedFindingIDs(from, where, exclusion, args); err != nil {
-		return out, err
-	}
-	out.Findings = len(out.findingIDs)
-	if len(sel.Sources) > 0 {
-		if out.Unsourced, err = s.countMatched(from, unsourced, exclusion, unsourcedArgs); err != nil {
-			return out, err
-		}
-	}
-	if sel.Provider != "" {
-		if out.Unprovided, err = s.countMatched(from, unprovided, exclusion, unprovidedArgs); err != nil {
-			return out, err
-		}
-	}
-	return out, nil
+	return rows.Err()
 }
 
 func (s *Store) countMatched(from string, where []string, exclusion string, args []any) (int, error) {

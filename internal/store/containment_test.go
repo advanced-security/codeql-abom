@@ -87,9 +87,7 @@ func TestStoredContainmentIsExactlyWhatTheCanvasDraws(t *testing.T) {
 	}
 }
 
-// Filtering narrows what is drawn; it may never invent a holding. Containment used to be
-// recomputed against whichever nodes survived, so removing a repository's own node re-parented its
-// workflows onto the account — a holding nothing in the corpus states.
+// Filtering narrows what is drawn; it may never invent a holding.
 func TestAFilteredCanvasDrawsOnlyContainmentThatIsStored(t *testing.T) {
 	s := edgeKindFixture(t)
 	stored := storedContainment(t, s)

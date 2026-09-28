@@ -62,9 +62,7 @@ func TestAGraphQLReadSendsTheQueryAndItsVariables(t *testing.T) {
 	}
 }
 
-// A price predicted from the formula and never measured is how a cheap read becomes expensive after
-// a schema change nobody noticed. `rateLimit { cost }` rides along with the data so the number is
-// GitHub's rather than ours.
+// `rateLimit { cost }` rides along with the data so the price is GitHub's rather than ours.
 func TestTheCostOfAQueryIsReadFromTheAnswer(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"data":{"rateLimit":{"cost":3,"remaining":4997,"limit":5000},

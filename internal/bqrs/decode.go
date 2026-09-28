@@ -25,30 +25,8 @@ type ResultSet struct {
 	Tuples  [][]json.RawMessage `json:"tuples"`
 }
 
-// Decoded maps result-set name to result set. The default set produced by a `select` clause is
-// named "#select".
-type Decoded map[string]ResultSet
-
 // SelectSetName is the name CodeQL gives the result set of a query's `select` clause.
 const SelectSetName = "#select"
-
-// Parse reads the JSON produced by `codeql bqrs decode --format=json`.
-func Parse(data []byte) (Decoded, error) {
-	var decoded Decoded
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return nil, fmt.Errorf("parsing bqrs json: %w", err)
-	}
-	return decoded, nil
-}
-
-// Select returns the `#select` result set.
-func (d Decoded) Select() (ResultSet, error) {
-	rs, ok := d[SelectSetName]
-	if !ok {
-		return ResultSet{}, fmt.Errorf("bqrs has no %q result set", SelectSetName)
-	}
-	return rs, nil
-}
 
 // ColumnIndex returns the position of the named column.
 func (rs ResultSet) ColumnIndex(name string) (int, error) {

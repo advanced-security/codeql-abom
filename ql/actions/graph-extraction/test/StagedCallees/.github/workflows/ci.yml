@@ -1,0 +1,18 @@
+on: pull_request_target
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: vendor/comp@v1
+        with:
+          title: ${{ github.event.pull_request.title }}
+      - uses: vendor/js@v1
+        with:
+          title: ${{ github.event.pull_request.title }}
+      - uses: ./.github/actions/helper
+        with:
+          title: ${{ github.event.pull_request.title }}
+  call:
+    uses: vendor/rw/.github/workflows/reuse.yml@v1
+    with:
+      title: ${{ github.event.pull_request.title }}

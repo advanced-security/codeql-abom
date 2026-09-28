@@ -15,9 +15,8 @@ import (
 // precondition; naming a dependency at all is what makes that dependency part of a real supply
 // chain, unlike an upstream repository's own CI (see enqueueDiscoveries' doc comment).
 //
-// Roots come from the declared scope rather than from `repository.origin`. The two were assumed
-// to be the same set and are not: on the reference corpus 0 of the 204 `origin='seed'`
-// repositories belong to a declared account, because they arrived from a `gh mrva` bootstrap.
+// Roots come from the declared scope rather than from `repository.origin`; a bootstrap origin is
+// not proof that the operator owns the account.
 func SeedFrontier(s *store.Store, q *frontier.Queue) (int, error) {
 	// The referencing repository is recorded because it is the only answer to "why is this
 	// queued at all", and once the item is analyzed the edge that put it there is no longer

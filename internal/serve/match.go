@@ -24,11 +24,7 @@ type Match struct {
 	Advisories *int `json:"advisories,omitempty"`
 }
 
-// match answers a set rather than a graph.
-//
-// Measured 2026-09-10: applied as node filters the finding predicates leave 74% to 99% of their
-// own match with no edges, because the graph is bipartite by kind. The Explorer keeps drawing its
-// own picture; the gate and the snapshot Action ask here.
+// match answers a set rather than a graph; graph-shaped answers keep relationships around matches.
 func (s *Server) match(w http.ResponseWriter, r *http.Request) {
 	spec, err := s.graphPredicate(r)
 	if err != nil {

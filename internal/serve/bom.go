@@ -67,11 +67,6 @@ func (s *Server) bom(w http.ResponseWriter, r *http.Request) {
 }
 
 // documentParams are the parameters this endpoint applies. Anything else is refused by name.
-//
-// It reads its own parameters rather than the whole predicate, so nothing here would otherwise
-// notice a term it does not apply. Measured on a crawled organization: `units=3`, the term
-// `properties` replaced, was answered with all 25 roots — a saved link handing a reader the whole
-// organization under the name of one part of it.
 var documentParams = func() map[string]bool {
 	// The filter terms come from the catalog so the endpoint and the control that offers it cannot
 	// disagree about what this document narrows by. The rest are not filters: they say which

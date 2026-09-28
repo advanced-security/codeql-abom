@@ -80,16 +80,6 @@ func (d DatabaseSet) BuiltBy(cli string) DatabaseSet {
 	return d
 }
 
-// gapped reports whether a repository was named as a gap.
-func (d DatabaseSet) gapped(repository string) bool {
-	for _, g := range d.Gaps {
-		if g.Repository == repository {
-			return true
-		}
-	}
-	return false
-}
-
 // DatabasesMatching answers which databases a selector's findings were, or would be, found in.
 //
 // The sibling of NodesMatching, over the same predicate deliberately: *what am I looking at* and

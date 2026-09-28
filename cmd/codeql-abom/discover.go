@@ -104,11 +104,8 @@ func defaultAPIURL() string {
 // githubToken reads the token GitHub Actions provides automatically, then the name the gh CLI
 // honors, and finally asks the CLI itself.
 //
-// The last step is what makes a local run read the API as the operator rather than as a stranger.
-// serve is normally started by hand on a workstation where gh is authenticated and no token is
-// exported: reading only the environment left every advisory refresh on the 60-an-hour anonymous
-// budget, and on 2026-09-08 it enumerated an organization anonymously and found 91 of the
-// operator's 181 repositories, reporting no failure, because the other 90 are private.
+// The last step lets a local run use the operator's gh credential instead of the anonymous API
+// budget, which can silently miss private repositories.
 //
 // It returns "" when there is no credential anywhere, which reads whatever is public. That is a
 // worse answer than an error and callers should say so.

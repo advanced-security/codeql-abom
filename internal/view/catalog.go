@@ -2,16 +2,7 @@ package view
 
 import "slices"
 
-// What a filter control is built from.
-//
-// The browser asks for this rather than keeping its own list of terms, because two declarations
-// drift: a term added to the language would never reach the control, and one removed from it would
-// stay there offering a filter the server refuses by name. Everything here is derived from the
-// same declarations that enforce it — the arity from how the spec writes the value, the values
-// from `vocabulary`, the surfaces from the term maps each side already keeps.
-//
-// The words are here and not in the browser for the same reason. A term with no label reaches a
-// reader as a query-string key, and `notProperties` is not a question anybody asked.
+// Filter controls are derived from the same declarations that parse and refuse terms.
 
 // The surfaces a term can be applied on. Named so a control can leave out what the surface it is
 // drawn on would refuse, rather than offering it and producing a refusal on use.
@@ -24,12 +15,9 @@ const (
 	SurfaceRepositories  = "repositories"
 	SurfaceAdvisories    = "advisories"
 	SurfaceRelationships = "relationships"
-	// SurfaceDocument is the bill of materials, which narrows by grouping and nothing else. It is
-	// a surface like the rest so an export can be refused with the terms it cannot apply named,
-	// rather than quietly dropping them and handing somebody the whole organization.
+	// SurfaceDocument is the bill of materials, which narrows by grouping and nothing else.
 	SurfaceDocument = "document"
-	// SurfaceCoverage is the Inventory's view of the crawl queue, which nothing in the language
-	// narrows: its endpoint takes a queue state and a cap, and refuses every term.
+	// SurfaceCoverage is the inventory's crawl queue view; filter terms do not narrow it.
 	SurfaceCoverage = "coverage"
 	// SurfaceRun is a run over repositories, built from a scope like any page.
 	SurfaceRun = "run"
@@ -37,9 +25,7 @@ const (
 	SurfacePolicy = "policy"
 )
 
-// documentTerms are the filter terms a bill of materials applies. Unexported and read through the
-// two functions below: an exported map is writable by every package that imports it, and a
-// declaration this file exists to be the only copy of must not be one an importer can edit.
+// documentTerms are the filter terms a bill of materials applies.
 var documentTerms = map[string]bool{
 	paramProperties:    true,
 	paramNotProperties: true,
@@ -94,13 +80,8 @@ type Term struct {
 	SurfaceValues map[string][]string `json:"surfaceValues,omitempty"`
 }
 
-// catalogEntry is the half of a term that cannot be derived: what to call it, and what to say
-// about it. Everything else is read from the declarations that enforce the term.
-//
-// The help is a phrase rather than a sentence. It is read in a list of twenty, where a reader is
-// scanning for the one they want and not studying any of them: full sentences made the list wider
-// than the table it filters and taller than the window. What a term means in detail belongs to the
-// comments here, not to the control.
+// catalogEntry is the display text that cannot be derived from term declarations.
+// Help stays phrase-length because it is scanned in a dense filter list.
 type catalogEntry struct {
 	label      string
 	help       string

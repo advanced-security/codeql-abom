@@ -71,7 +71,7 @@ func (c *Client) Fetch(ctx context.Context, packages []string) ([]Advisory, erro
 			"affects":   {strings.Join(batch, ",")},
 		}.Encode()
 
-		// A batch can span pages, and stopping at the first would silently under-report.
+		// A batch can span pages.
 		for next != "" {
 			if err := c.Pace.Wait(ctx); err != nil {
 				return out, err

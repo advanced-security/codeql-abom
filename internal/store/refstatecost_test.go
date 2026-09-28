@@ -7,18 +7,9 @@ import (
 
 // The graph's reference states must not walk the edge table once per queue row.
 //
-// This is `usedByCount` a second time, in a second place. `FrontierSnapshot` carried the same
-// correlated subquery — `COUNT(DISTINCT e.repository_row_id)` over `abom_edge_live` joined to
-// `abom_node_live`, matched on `(node_key, ref)` — and it measured **0.54 s of that query's
-// 1.65 s** before `usedByRollup` replaced it with a `GROUP BY`.
-//
-// A CPU profile on 2026-09-11 found the copy: `/api/graph/full` spent **30.07% in
-// `splitNodesByRef` via `refStates`**, against 28.52% in `graphEdges` and 4.07% in `graphNodes`.
-// Reading one node's references cost as much as reading every edge in the corpus.
-//
-// The plan is asserted rather than the clock, for the same reason as the frontier: a stopwatch
-// flakes, and it would also pass on a corpus whose edge table happens to be small. The cost is
-// structural, so the plan is where it can be seen.
+// This is `usedByCount` a second time, in a second place. The plan is asserted rather than the
+// clock: a stopwatch flakes, and it would also pass on a corpus whose edge table happens to be
+// small. The cost is structural, so the plan is where it can be seen.
 func TestTheReferenceStateQueryDoesNotWalkTheEdgeTablePerQueueRow(t *testing.T) {
 	s := newTestStore(t)
 

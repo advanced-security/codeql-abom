@@ -67,6 +67,18 @@ type live struct {
 	stopped bool
 }
 
+type startedAuthoring struct {
+	id      int64
+	request int64
+	dir     string
+	limit   time.Duration
+	ctx     context.Context
+	cancel  context.CancelFunc
+	live    *live
+	setup   Setup
+	unlock  func()
+}
+
 // Start begins a session on a request and answers once it is under way; the agent works on in
 // the background, and its timeline is the store's.
 func (s *Sessions) Start(request int64, by string) (store.AuthoringSession, error) {
@@ -101,30 +113,15 @@ func (s *Sessions) start(request int64, by string) (store.AuthoringSession, <-ch
 		unlock()
 		return store.AuthoringSession{}, nil, err
 	}
-	dir := filepath.Join(s.WorkDir, fmt.Sprintf("session-%d", id))
-	home, scratch := filepath.Join(dir, "copilot"), filepath.Join(dir, "ql-mcp")
-	for _, d := range []string{home, scratch} {
-		if err := os.MkdirAll(d, 0o700); err != nil {
-			unlock()
-			_ = s.Store.EndAuthoringSession(id, store.SessionFailed, "preparing the session's directory: "+err.Error())
-			return store.AuthoringSession{}, nil, err
-		}
-	}
-	if bounds, err = bounds.Deny(home); err == nil {
-		bounds, err = bounds.Read(scratch)
-	}
+	dir, home, scratch, bounds, detail, err := s.prepareAuthoringBounds(id, bounds)
 	if err != nil {
-		unlock()
-		_ = s.Store.EndAuthoringSession(id, store.SessionFailed, "bounding the session: "+err.Error())
-		return store.AuthoringSession{}, nil, err
+		return s.failStarted(id, unlock, detail, err)
 	}
 	bounds = bounds.Guard(s.firstChange(request))
 
 	gate := NewGate(bounds, s.recorder(id))
 	if err := gate.KeepPrinted(scratch, s.keeper(id, request)); err != nil {
-		unlock()
-		_ = s.Store.EndAuthoringSession(id, store.SessionFailed, err.Error())
-		return store.AuthoringSession{}, nil, err
+		return s.failStarted(id, unlock, err.Error(), err)
 	}
 	gate.KeepSpend(func(sp Spend) error {
 		return s.Store.AddAuthoringSpend(id, store.AuthoringSpend{InputTokens: sp.InputTokens,
@@ -132,22 +129,12 @@ func (s *Sessions) start(request int64, by string) (store.AuthoringSession, <-ch
 	})
 	reviews, err := s.Store.AuthoringReviews(request)
 	if err != nil {
-		unlock()
-		_ = s.Store.EndAuthoringSession(id, store.SessionFailed, err.Error())
-		return store.AuthoringSession{}, nil, err
+		return s.failStarted(id, unlock, err.Error(), err)
 	}
-	limit := s.Limit
-	if limit <= 0 {
-		limit = DefaultLimit
-	}
+	limit := s.limit()
 	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	l := &live{session: id, gate: gate, cancel: cancel}
-	s.mu.Lock()
-	if s.live == nil {
-		s.live = map[int64]*live{}
-	}
-	s.live[request] = l
-	s.mu.Unlock()
+	s.recordLive(request, l)
 
 	setup := Setup{
 		Home:      home,
@@ -158,25 +145,76 @@ func (s *Sessions) start(request int64, by string) (store.AuthoringSession, <-ch
 		Gate:      gate,
 		Tools:     s.tools(ctx, request, gate),
 	}
+	done := s.launchAuthoring(startedAuthoring{
+		id: id, request: request, dir: dir, limit: limit, ctx: ctx, cancel: cancel, live: l,
+		setup: setup, unlock: unlock,
+	})
+	session, err := s.session(request, id)
+	return session, done, err
+}
+
+func (s *Sessions) prepareAuthoringBounds(
+	id int64, bounds Bounds,
+) (dir, home, scratch string, out Bounds, detail string, err error) {
+	dir = filepath.Join(s.WorkDir, fmt.Sprintf("session-%d", id))
+	home, scratch = filepath.Join(dir, "copilot"), filepath.Join(dir, "ql-mcp")
+	for _, d := range []string{home, scratch} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			return dir, home, scratch, bounds, "preparing the session's directory: " + err.Error(), err
+		}
+	}
+	if bounds, err = bounds.Deny(home); err == nil {
+		bounds, err = bounds.Read(scratch)
+	}
+	if err != nil {
+		return dir, home, scratch, bounds, "bounding the session: " + err.Error(), err
+	}
+	return dir, home, scratch, bounds, "", nil
+}
+
+func (s *Sessions) failStarted(
+	id int64, unlock func(), detail string, err error,
+) (store.AuthoringSession, <-chan struct{}, error) {
+	unlock()
+	_ = s.Store.EndAuthoringSession(id, store.SessionFailed, detail)
+	return store.AuthoringSession{}, nil, err
+}
+
+func (s *Sessions) limit() time.Duration {
+	limit := s.Limit
+	if limit <= 0 {
+		limit = DefaultLimit
+	}
+	return limit
+}
+
+func (s *Sessions) recordLive(request int64, l *live) {
+	s.mu.Lock()
+	if s.live == nil {
+		s.live = map[int64]*live{}
+	}
+	s.live[request] = l
+	s.mu.Unlock()
+}
+
+func (s *Sessions) launchAuthoring(run startedAuthoring) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		defer unlock()
-		final, err := "", s.prepare(ctx)
+		defer run.unlock()
+		final, err := "", s.prepare(run.ctx)
 		if err == nil {
-			final, err = s.run(ctx, setup)
+			final, err = s.run(run.ctx, run.setup)
 		}
-		state, detail := s.outcome(ctx, l, limit, final, err)
-		cancel()
+		state, detail := s.outcome(run.ctx, run.live, run.limit, final, err)
+		run.cancel()
 		s.mu.Lock()
-		delete(s.live, request)
+		delete(s.live, run.request)
 		s.mu.Unlock()
-		_ = os.RemoveAll(dir)
-		_ = s.Store.EndAuthoringSession(id, state, detail)
+		_ = os.RemoveAll(run.dir)
+		_ = s.Store.EndAuthoringSession(run.id, state, detail)
 	}()
-
-	session, err := s.session(request, id)
-	return session, done, err
+	return done
 }
 
 // prepare installs the pack a session works in. A pack that cannot be installed compiles nothing
@@ -314,8 +352,7 @@ func (s *Sessions) codeQL(ctx context.Context) (string, error) {
 }
 
 // firstChange keeps the target query as it is until ABOM has recorded its tests failing on a result
-// the fixtures mark, over the fixtures as they are. Sessions so far wrote the query before any test
-// failed, and nothing recorded the order a test and its query were written in.
+// the fixtures mark, over the fixtures as they are.
 //
 // Once the query has changed there is nothing left to hold: the first change could only get past
 // this with the failure on record.
@@ -543,7 +580,7 @@ func (s *Sessions) testTarget(ctx context.Context, request int64, gate *Gate) (s
 }
 
 // answering hands a tool's refusal to the agent as the tool's answer: the SDK shows the model a
-// handler's error only as "Tool execution failed", and a live agent retried one blind three times.
+// handler's error only as "Tool execution failed".
 func answering[T any](handle func(T) (string, error)) func(T, copilot.ToolInvocation) (copilot.ToolResult, error) {
 	return func(args T, _ copilot.ToolInvocation) (copilot.ToolResult, error) {
 		text, err := handle(args)

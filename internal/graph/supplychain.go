@@ -8,12 +8,8 @@ import (
 
 // SupplyChain is how each dependency in the graph comes to be part of it.
 //
-// Runtime means something under review executes the dependency: a composite action's own steps
-// run inside whoever calls the action, and a reusable workflow's steps run for whoever invokes
-// it. Build-time means it only ever runs in an upstream project's own CI. Both are followed —
-// compromising a release pipeline is how consumers receive a malicious version — but they are
-// different claims, and reporting build-time work as though this organization ran it would
-// overstate the exposure.
+// Runtime means something under review executes the dependency; build-time means only an upstream
+// project's own CI does.
 type SupplyChain struct {
 	// byKey holds runtime for every dependency the graph names. Absence is not build-time; see Of.
 	byKey map[string]bool
@@ -21,9 +17,7 @@ type SupplyChain struct {
 
 // Of reports how a dependency is classified.
 //
-// known is false when nothing in the graph names the key at all, which is a different fact from
-// build-time: an absent measurement is not a measurement of zero, and a caller that conflated
-// them would demote whatever it had never looked at.
+// known is false when nothing in the graph names the key; that is not the same as build-time.
 func (c *SupplyChain) Of(nodeKey string) (runtime, known bool) {
 	runtime, known = c.byKey[nodeKey]
 	return runtime, known
@@ -43,16 +37,11 @@ func (c *SupplyChain) Runtime() int {
 // Len counts every dependency the graph names.
 func (c *SupplyChain) Len() int { return len(c.byKey) }
 
-// ClassifyDependencies decides, for every dependency in the graph, whether anything under
-// review executes it.
+// ClassifyDependencies decides, for every dependency in the graph, whether anything under review
+// executes it.
 //
-// The test is transitive reachability from the seed repositories, not "is this container
-// referenced by something". A local test answers the base case backwards — a repository under
-// review runs its own CI workflow, which nothing references — and carries a claim one hop past
-// its evidence, because a caller that is itself build-time-only still counts as a reference.
-//
-// Reachability is computed here rather than with a recursive SQL query for the reason the rest
-// of this package gives: the same closure in SQLite took 36 seconds on the reference corpus.
+// The test is transitive reachability from seed repositories, not whether a container is
+// referenced. Reachability stays in Go because the equivalent recursive SQL is too slow here.
 func (b *Builder) ClassifyDependencies() (*SupplyChain, error) {
 	// A container is a workflow or a composite action's `runs:` block; it is what a `uses:` can
 	// name, and what the callee's own edges hang from once that repository is analyzed. The

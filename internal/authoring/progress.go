@@ -47,6 +47,13 @@ type Evidence struct {
 	Printed store.AuthoringAST
 }
 
+type recordedRuns struct {
+	current           *store.QueryTest
+	otherCLI          *store.QueryTest
+	compiledElsewhere *store.QueryTest
+	passedElsewhere   *store.QueryTest
+}
+
 // Progress derives the steps a query version on disk has taken, from the files in root and the
 // evidence on record for it.
 func Progress(root string, q Query, ev Evidence) ([]Step, error) {
@@ -58,27 +65,7 @@ func Progress(root string, q Query, ev Evidence) ([]Step, error) {
 	if err != nil {
 		return nil, err
 	}
-	var current, otherCLI, compiledElsewhere, passedElsewhere *store.QueryTest
-	for i := range ev.Tests {
-		t := &ev.Tests[i]
-		switch {
-		// An unreadable CodeQL is not one of no version: a result kept before ABOM recorded the
-		// CodeQL names none, and would otherwise read as current.
-		case t.QueryVersion == q.Version && ev.CLI != "" && t.CLIVersion == ev.CLI:
-			current = t
-		case t.QueryVersion == q.Version:
-			if otherCLI == nil || t.RanAt > otherCLI.RanAt {
-				otherCLI = t
-			}
-		case t.Passed && (passedElsewhere == nil || t.RanAt > passedElsewhere.RanAt):
-			passedElsewhere = t
-		}
-		if t.QueryVersion != q.Version && compiled(*t) &&
-			(compiledElsewhere == nil || t.RanAt > compiledElsewhere.RanAt) {
-			compiledElsewhere = t
-		}
-	}
-
+	recorded := classifyRuns(q, ev)
 	help, err := helpStep(root, q)
 	if err != nil {
 		return nil, err
@@ -87,16 +74,16 @@ func Progress(root string, q Query, ev Evidence) ([]Step, error) {
 	if err != nil {
 		return nil, err
 	}
-	database, err := databaseStep(root, q, current, digest, ev.CLI)
+	database, err := databaseStep(root, q, recorded.current, digest, ev.CLI)
 	if err != nil {
 		return nil, err
 	}
 	first, staleFirst := seenFailing(q, ev.Tests, fixtures)
-	tests := testsStep(q, current, otherCLI, passedElsewhere, digest, ev.CLI)
+	tests := testsStep(q, recorded.current, recorded.otherCLI, recorded.passedElsewhere, digest, ev.CLI)
 	if tests.State == Passing {
 		tests = failedFirstStep(q, tests, first, staleFirst)
 	}
-	compiles := compilesStep(current, otherCLI, compiledElsewhere, ev.CLI)
+	compiles := compilesStep(recorded.current, recorded.otherCLI, recorded.compiledElsewhere, ev.CLI)
 	if compiles.State == Passing {
 		if compiles, err = libraryStep(root, compiles); err != nil {
 			return nil, err
@@ -105,6 +92,37 @@ func Progress(root string, q Query, ev Evidence) ([]Step, error) {
 	return []Step{
 		help, expected, database, astStep(ev.Printed, fixtures, ev.CLI), compiles, tests,
 	}, nil
+}
+
+func classifyRuns(q Query, ev Evidence) recordedRuns {
+	var out recordedRuns
+	for i := range ev.Tests {
+		t := &ev.Tests[i]
+		out.classifyVersion(q, ev.CLI, t)
+		out.classifyCompiled(q, t)
+	}
+	return out
+}
+
+func (r *recordedRuns) classifyVersion(q Query, cli string, t *store.QueryTest) {
+	switch {
+	// An unreadable CodeQL is not the same as no version.
+	case t.QueryVersion == q.Version && cli != "" && t.CLIVersion == cli:
+		r.current = t
+	case t.QueryVersion == q.Version:
+		if r.otherCLI == nil || t.RanAt > r.otherCLI.RanAt {
+			r.otherCLI = t
+		}
+	case t.Passed && (r.passedElsewhere == nil || t.RanAt > r.passedElsewhere.RanAt):
+		r.passedElsewhere = t
+	}
+}
+
+func (r *recordedRuns) classifyCompiled(q Query, t *store.QueryTest) {
+	if t.QueryVersion != q.Version && compiled(*t) &&
+		(r.compiledElsewhere == nil || t.RanAt > r.compiledElsewhere.RanAt) {
+		r.compiledElsewhere = t
+	}
 }
 
 // libraryStep is (f) for a version that compiled: a warning where either of the operator's packs
@@ -180,8 +198,8 @@ func seenFailing(q Query, tests []store.QueryTest, fixtures string) (current, st
 	return current, stale
 }
 
-// failedFirstStep is (g) for a version whose tests pass: passing only once the same fixtures were
-// seen failing an earlier version on a result they mark.
+// failedFirstStep is (g) for a version whose tests pass only once the same fixtures were seen
+// failing a marked result.
 func failedFirstStep(q Query, passed Step, first, stale *store.QueryTest) Step {
 	switch {
 	case first != nil:
@@ -529,7 +547,7 @@ func compilesStep(current, otherCLI, elsewhere *store.QueryTest, cli string) Ste
 	return step
 }
 
-// codeql names the CodeQL a result was recorded under, which is unknown for one kept before it was.
+// codeql names the CodeQL a result was recorded under.
 func codeql(version string) string {
 	if version == "" {
 		return "a CodeQL ABOM did not record"

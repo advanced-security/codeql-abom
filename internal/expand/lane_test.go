@@ -55,8 +55,7 @@ func drainedLanes(t *testing.T) (*harness, *fakeAnalyzer) {
 }
 
 // The two lanes come from different packs with different digests, and nothing about running one
-// requires running the other. Measured on a real repository the database build is 13% of the cost
-// and the lanes are 87%, so re-running the lane that did not change is most of the bill.
+// requires running the other.
 func TestAFindingsChangeDoesNotReRunTheGraphLane(t *testing.T) {
 	h, a := drainedLanes(t)
 

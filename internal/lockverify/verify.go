@@ -129,38 +129,19 @@ func (r Runner) Verify(ctx context.Context, tree, mode string) Result {
 		defer cancel()
 	}
 
-	work, err := os.MkdirTemp("", "abom-lockverify-*")
+	work, err := r.verifyTree(ctx, tree)
 	if err != nil {
 		out.Outcome, out.Error = OutcomeError, err.Error()
 		return out
 	}
 	defer os.RemoveAll(work)
-	if err := copyTree(tree, work); err != nil {
-		out.Outcome, out.Error = OutcomeError, "copying the tree: "+err.Error()
-		return out
-	}
-	if err := r.commit(ctx, work); err != nil {
-		out.Outcome, out.Error = OutcomeError, "making the copy a repository: "+err.Error()
-		return out
-	}
 	before, err := digestTree(work)
 	if err != nil {
 		out.Outcome, out.Error = OutcomeError, err.Error()
 		return out
 	}
 
-	gh := r.Gh
-	if gh == "" {
-		gh = "gh"
-	}
-	cmd := exec.CommandContext(ctx, gh, "actions-lock", flag, "--no-fix", "--no-interactive",
-		"--json=valid,findings")
-	cmd.Dir = work
-	cmd.Env = append(os.Environ(), "GH_PROMPT_DISABLED=1", "GIT_TERMINAL_PROMPT=0")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	runErr := cmd.Run()
-
+	stdout, stderr, runErr := r.runActionsLock(ctx, work, flag)
 	after, err := digestTree(work)
 	if err != nil {
 		out.Outcome, out.Error = OutcomeError, err.Error()
@@ -177,6 +158,44 @@ func (r Runner) Verify(ctx context.Context, tree, mode string) Result {
 		out.Outcome, out.Error = OutcomeError, failureMessage(runErr, stderr.String())
 		return out
 	}
+	out.applyReport(rep)
+	return out
+}
+
+func (r Runner) verifyTree(ctx context.Context, tree string) (string, error) {
+	work, err := os.MkdirTemp("", "abom-lockverify-*")
+	if err != nil {
+		return "", err
+	}
+	if err := copyTree(tree, work); err != nil {
+		os.RemoveAll(work)
+		return "", errors.New("copying the tree: " + err.Error())
+	}
+	if err := r.commit(ctx, work); err != nil {
+		os.RemoveAll(work)
+		return "", errors.New("making the copy a repository: " + err.Error())
+	}
+	return work, nil
+}
+
+func (r Runner) runActionsLock(
+	ctx context.Context, work, flag string,
+) (bytes.Buffer, bytes.Buffer, error) {
+	gh := r.Gh
+	if gh == "" {
+		gh = "gh"
+	}
+	cmd := exec.CommandContext(ctx, gh, "actions-lock", flag, "--no-fix", "--no-interactive",
+		"--json=valid,findings")
+	cmd.Dir = work
+	cmd.Env = append(os.Environ(), "GH_PROMPT_DISABLED=1", "GIT_TERMINAL_PROMPT=0")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	runErr := cmd.Run()
+	return stdout, stderr, runErr
+}
+
+func (out *Result) applyReport(rep report) {
 	out.ToolVersion, out.LockfileVersion, out.Valid = rep.CLIVersion, rep.LockfileVersion, rep.Valid
 	unknown, undecided := false, false
 	for _, f := range rep.Findings {
@@ -201,7 +220,6 @@ func (r Runner) Verify(ctx context.Context, tree, mode string) Result {
 	default:
 		out.Outcome = OutcomePassed
 	}
-	return out
 }
 
 // failureMessage names why the tool gave no report: its own words when it left any.

@@ -143,7 +143,26 @@ func (e GraphEdge) IsMixed(fact string) bool {
 // Every fact is either shared by all of them or named in Mixed and left absent, so a client that
 // ignores Mixed reads "unknown" rather than a value that is true of one constituent.
 func (e *GraphEdge) summarize() {
+	e.resetSummary()
+	e.collectLockedCommits()
+	e.Count = len(e.parts)
+	if len(e.parts) == 0 {
+		return
+	}
+
+	facts := e.summarizeSharedFacts()
+	e.applySharedFacts(facts)
+	e.collectKeys()
+}
+
+func (e *GraphEdge) resetSummary() {
 	e.Keys, e.Mixed, e.Locked = []string{}, []string{}, []string{}
+	e.Count = 0
+	e.Kind, e.Boundary, e.RefStyle = "", "", ""
+	e.AdvisoryRoute, e.FindingRoute, e.OwnedDepth = nil, nil, nil
+}
+
+func (e *GraphEdge) collectLockedCommits() {
 	for _, p := range e.parts {
 		for _, commit := range p.locked {
 			if !slices.Contains(e.Locked, commit) {
@@ -152,41 +171,49 @@ func (e *GraphEdge) summarize() {
 		}
 	}
 	slices.Sort(e.Locked)
-	e.Count = len(e.parts)
-	e.Kind, e.Boundary, e.RefStyle = "", "", ""
-	e.AdvisoryRoute, e.FindingRoute, e.OwnedDepth = nil, nil, nil
-	if len(e.parts) == 0 {
-		return
-	}
+}
 
+type graphEdgeFacts struct {
+	advisory sql.NullBool
+	finding  sql.NullBool
+	depth    sql.NullInt64
+}
+
+func (e *GraphEdge) summarizeSharedFacts() graphEdgeFacts {
 	first := e.parts[0]
 	e.Kind, e.Boundary, e.RefStyle = first.kind, first.boundary, first.refStyle
-	advisory, finding, depth := first.advisory, first.finding, first.depth
+	facts := graphEdgeFacts{advisory: first.advisory, finding: first.finding, depth: first.depth}
 	for _, p := range e.parts[1:] {
 		e.Kind = shared(e, edgeFactKind, e.Kind, p.kind)
 		e.Boundary = shared(e, edgeFactBoundary, e.Boundary, p.boundary)
 		e.RefStyle = shared(e, edgeFactRefStyle, e.RefStyle, p.refStyle)
-		if advisory != p.advisory {
+		if facts.advisory != p.advisory {
 			e.mix(edgeFactAdvisory)
 		}
-		if finding != p.finding {
+		if facts.finding != p.finding {
 			e.mix(edgeFactFinding)
 		}
-		if depth != p.depth {
+		if facts.depth != p.depth {
 			e.mix(edgeFactDepth)
 		}
 	}
-	if advisory.Valid && !e.IsMixed(edgeFactAdvisory) {
-		e.AdvisoryRoute = &advisory.Bool
+	return facts
+}
+
+func (e *GraphEdge) applySharedFacts(facts graphEdgeFacts) {
+	if facts.advisory.Valid && !e.IsMixed(edgeFactAdvisory) {
+		e.AdvisoryRoute = &facts.advisory.Bool
 	}
-	if finding.Valid && !e.IsMixed(edgeFactFinding) {
-		e.FindingRoute = &finding.Bool
+	if facts.finding.Valid && !e.IsMixed(edgeFactFinding) {
+		e.FindingRoute = &facts.finding.Bool
 	}
-	if depth.Valid && !e.IsMixed(edgeFactDepth) {
-		hops := int(depth.Int64)
+	if facts.depth.Valid && !e.IsMixed(edgeFactDepth) {
+		hops := int(facts.depth.Int64)
 		e.OwnedDepth = &hops
 	}
+}
 
+func (e *GraphEdge) collectKeys() {
 	for _, p := range e.parts {
 		// Containment carries no key, and a merged edge never mixes it with a declared one.
 		if p.key != "" {
@@ -325,72 +352,90 @@ func originTierOf(n GraphNode) string {
 	return n.Origin
 }
 
-// applyNodePredicates drops what the predicate excludes, and the edges left dangling.
-//
-// **None of these can be pushed into SQL, and measuring on the real corpus is what proved it.**
-// The node set is not what the query returns: `splitNodesByRef` derives each per-reference node
-// from the *edges* that name a reference, so removing a node before the split removes edges, and
-// removing edges removes the references a dependency exists at. Filtering `origins=external` in
-// SQL cut the seed and upstream steps that point at external actions, and **1,889 of 3,433 action
-// nodes then vanished entirely** — not hidden, absent, because nothing was left to name their
-// versions. The three origin buckets stopped partitioning the corpus: 11,045 nodes against 12,550.
-//
-// The scope filter survives in SQL only because a closure is edge-closed by construction: it
-// admits any node a declared repository's edge names, so both ends of those edges are kept. An
-// origin is not, and neither is a reach floor.
-//
-// Applied after owners are attached, because that is the node set the browser applies the same
-// predicates to, and an account is judged on its own rolled-up figures exactly as it is on screen.
+// applyNodePredicates drops what the predicate excludes and the edges left dangling.
+// It must run after ref splitting: per-reference nodes are derived from edges.
+// The scope filter may stay in SQL because a closure is edge-closed; origins and reach are not.
+// Applied after owners are attached so account rollups match the browser's node set.
 func applyNodePredicates(nodes []GraphNode, edges []GraphEdge, opts FullGraphOptions) ([]GraphNode, []GraphEdge) {
+	predicate := newNodePredicate(opts, edges)
+	if !predicate.active() {
+		return nodes, edges
+	}
+	kept, visible := predicate.keepNodes(nodes)
+	return kept, visibleEdges(edges, visible)
+}
+
+type nodePredicate struct {
+	opts   FullGraphOptions
+	style  string
+	wanted map[string]bool
+	styles map[string]map[string]bool
+}
+
+func newNodePredicate(opts FullGraphOptions, edges []GraphEdge) nodePredicate {
 	style := opts.RefStyle
 	if style == "any" {
 		style = ""
-	}
-	if len(opts.Origins) == 0 && opts.MinReach <= 0 && !opts.UnanalyzedOnly && style == "" {
-		return nodes, edges
-	}
-	var styles map[string]map[string]bool
-	if style != "" {
-		styles = refStylesOf(edges)
 	}
 	wanted := make(map[string]bool, len(opts.Origins))
 	for _, o := range opts.Origins {
 		wanted[o] = true
 	}
+	var styles map[string]map[string]bool
+	if style != "" {
+		styles = refStylesOf(edges)
+	}
+	return nodePredicate{opts: opts, style: style, wanted: wanted, styles: styles}
+}
+
+func (p nodePredicate) active() bool {
+	return len(p.wanted) > 0 || p.opts.MinReach > 0 || p.opts.UnanalyzedOnly || p.style != ""
+}
+
+func (p nodePredicate) keepNodes(nodes []GraphNode) ([]GraphNode, map[string]bool) {
 	kept := make([]GraphNode, 0, len(nodes))
 	visible := make(map[string]bool, len(nodes))
 	for _, n := range nodes {
-		if len(wanted) > 0 && !wanted[originTierOf(n)] {
-			continue
-		}
-		// An unmeasured reach meets no floor: the alternative claims a reach nothing established.
-		if opts.MinReach > 0 && n.DependentRepos < opts.MinReach {
-			continue
-		}
-		if opts.UnanalyzedOnly && fullyAnalyzedNode(n) {
-			continue
-		}
-		if style != "" && !styles[n.Key][style] {
+		if !p.keepNode(n) {
 			continue
 		}
 		kept = append(kept, n)
 		visible[n.Key] = true
 	}
+	return kept, visible
+}
+
+func (p nodePredicate) keepNode(n GraphNode) bool {
+	if len(p.wanted) > 0 && !p.wanted[originTierOf(n)] {
+		return false
+	}
+	// An unmeasured reach meets no floor: the alternative claims a reach nothing established.
+	if p.opts.MinReach > 0 && n.DependentRepos < p.opts.MinReach {
+		return false
+	}
+	if p.opts.UnanalyzedOnly && fullyAnalyzedNode(n) {
+		return false
+	}
+	if p.style != "" && !p.styles[n.Key][p.style] {
+		return false
+	}
+	return true
+}
+
+func visibleEdges(edges []GraphEdge, visible map[string]bool) []GraphEdge {
 	surviving := make([]GraphEdge, 0, len(edges))
 	for _, e := range edges {
 		if visible[e.Source] && visible[e.Target] {
 			surviving = append(surviving, e)
 		}
 	}
-	return kept, surviving
+	return surviving
 }
 
 // ScopeExposure keeps only what lies on a route from a repository under review to an action an
 // advisory names.
 //
-// The route is the unit, not the affected action: whether a fix is yours or an intermediary's is
-// a fact about the path, and it is the question the whole graph exists to answer. On the
-// reference corpus that is 213 nodes against 9,811, so it is also the cheapest view to draw.
+// The route is the unit: whether a fix is yours or an intermediary's is a path property.
 const ScopeExposure = "exposure"
 
 // onExposureRoute is every node key lying on a stored exposure route.
@@ -402,9 +447,8 @@ const onExposureRoute = `(SELECT j.value FROM abom_exposure ex, json_each(ex.pat
 
 // ScopeOwned keeps only what the operator's declaration reaches.
 //
-// The whole corpus is not a view anybody asked for: it is everything the crawl happened to walk
-// through, and at 56,830 nodes no edge can be followed from one end to the other. What an operator
-// has a word for is what they own and what it pulls in.
+// The whole corpus is everything the crawl walked through; the useful view is what the operator
+// owns and what it pulls in.
 const ScopeOwned = "owned"
 
 // closureCTE is every live node a closure reaches, as a named CTE the scope filter selects from.
@@ -453,8 +497,7 @@ func scopeParts(opts FullGraphOptions) (string, []any) {
 
 // scopeFilter restricts a query to the chosen scope, as a fragment appended to its WHERE clause.
 //
-// Applied in SQL rather than to the assembled graph: filtering afterwards still paid for all
-// 9,811 nodes and their per-node advisory and frontier subqueries in order to return 277.
+// Applied in SQL so excluded nodes do not pay per-node advisory and frontier subqueries.
 func scopeFilter(opts FullGraphOptions, column string) string {
 	out := ""
 	switch opts.Scope {
@@ -492,16 +535,10 @@ const identityDisplay = `disp AS (SELECT row_id, row_id AS shown FROM abom_node_
 // frontierMatch pairs a node with its queue rows.
 //
 // A repository node is keyed `repo:owner/name` and lowercased by normalize.RepoKey, while its
-// queue row is keyed `owner/name` in GitHub's own spelling. An exact match on node_key therefore
-// never fired for a repository: on the reference corpus 93 repositories analyzed minutes earlier
-// all reported `analyzed = false`, and none carried a discovery state at all.
+// queue row is keyed `owner/name` in GitHub's own spelling.
 //
-// The repository takes only its **root** row, `depth = 0`, which `expand.SeedOwnedRepositories`
-// is the sole producer of. A project the operator owns is two nodes — the repository, and the
-// same project as a dependency others use at particular references — and they answer different
-// questions. `advanced-security/filter-sarif` is analyzed at its default branch and queued at
-// `main` and `v1.1` because somebody else uses those; letting the repository see those rows
-// reported the operator's own work as unanalyzed when it was not.
+// The repository takes only its root row (`depth = 0`). The same project as a dependency at a
+// particular reference is a different node and answers a different question.
 const frontierMatch = `(f.node_key = n.node_key
 		OR (n.node_kind = 'repo' AND f.depth = 0
 		    AND LOWER(f.node_key) = SUBSTR(n.node_key, 6)))`

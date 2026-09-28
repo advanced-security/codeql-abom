@@ -129,9 +129,7 @@ func TestAUseWithNoReferenceKeepsTheBareName(t *testing.T) {
 }
 
 // Splitting a name into versions rewrites every edge that touches it, and an endpoint naming a
-// node the graph does not contain is a break nothing can draw. This caught 700 at once on the
-// real corpus: composite actions whose own steps ran out of the bare name and were left behind
-// when the name became versions.
+// node the graph does not contain is a break nothing can draw.
 func TestSplittingByReferenceLeavesNoEdgeWithoutBothEnds(t *testing.T) {
 	s := newTestStore(t)
 	w := NewWriter(s, 0)

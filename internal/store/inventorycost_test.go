@@ -7,16 +7,8 @@ import (
 	viewspec "github.com/advanced-security/codeql-abom/internal/view"
 )
 
-// A bounded inventory must drive from the pairs, not test every node.
-//
-// Measured 2026-09-15 on the crawled organization: written as a correlated subquery in the WHERE,
-// the plan is `SCAN abom_node` with the subquery evaluated per node — 11,235 evaluations to return
-// 38 rows. Written as a list subquery over `abom_node_reach`, the planner uses the covering index
-// on `repository_row_id` and reduces the outer table to a primary key lookup, because the pair set
-// for one grouping is small and the node table is not.
-//
-// This asserts the plan rather than the clock: on a corpus this size both forms answer quickly, so
-// a stopwatch would pass on the shape that does not survive an enterprise estate.
+// A bounded inventory must drive from reach pairs, not test every node.
+// This asserts the plan rather than the clock so small corpora cannot hide the shape.
 func TestABoundedInventoryDrivesFromTheReachPairsRatherThanScanningNodes(t *testing.T) {
 	s := newTestStore(t)
 

@@ -7,22 +7,8 @@ import (
 
 // The queue's sort must name every column that distinguishes a row.
 //
-// It was `expedited_at IS NULL, score DESC, depth ASC, node_key` and `ref` was not in it, so
-// every reference of one action tied on the whole key. Measured 2026-09-11 on the seeded corpus:
-// **3,094 of 3,662 rows (84%) sat in a tied group**, the largest holding 28. Ties come back in
-// whatever order the plan produces, so adding a join silently changed which rows fell inside
-// `LIMIT 500` — 252 of 500 positions moved, with every shared row identical in every field. The
-// page was never wrong, it was arbitrary, and a reader comparing two loads sees rows appear and
-// vanish.
-//
-// This asserts the sort rather than an observed sequence, and the first attempt at the latter is
-// why. Seeding three references and checking they came back in order **passed without the fix**:
-// on a three-row table SQLite reads the primary key index, which is `(node_key, ref)`, so they
-// arrive sorted by accident. A test that cannot fail against the defect it names is worse than no
-// test, and the property here is structural.
-//
-// Same class as the `splitNodesByRef` map-iteration defect that made `/api/graph/full`
-// non-deterministic: an order nobody stated is an order nobody can rely on.
+// Otherwise LIMIT selects an arbitrary subset when multiple references of one action tie. Assert
+// the ORDER BY itself rather than an observed sequence, which can be stable by accident.
 func TestTheQueueSortIsATotalOrder(t *testing.T) {
 	query, _ := frontierSnapshotQuery("", 500)
 

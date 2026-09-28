@@ -32,18 +32,8 @@ CREATE TABLE IF NOT EXISTS abom_observation (
 const observationColumns = `row_id, query_run_id, subject_kind, subject_key, name,
 	value, value_num, file_path, start_line`
 
-// migrateObservationFactKey re-keys observations from the run that stated a fact to the fact
-// itself, deduplicating what the old key let accumulate.
-//
-// The old UNIQUE led with `query_run_id`, which is new for every run, so re-analysis at a new
-// commit or after a pack bump wrote a complete second copy of everything a query said. The
-// reference corpus held 140,421 rows carrying 41,565 distinct facts — 69% redundant — and its
-// only index led on that same column, which no read filters on.
-//
-// The surviving row of a duplicate set is the newest, because `loadConditions` orders by row id
-// and lets the highest win; keeping the earliest would rewrite history to the first thing
-// anybody said. Rows that disagree are not a duplicate set and all of them survive.
-//
+// migrateObservationFactKey re-keys observations from runs to facts.
+// The newest duplicate survives because `loadConditions` lets the highest row id win.
 // SQLite cannot alter a UNIQUE constraint, hence the rebuild.
 func (s *Store) migrateObservationFactKey() error {
 	keyed, err := s.observationsKeyedByFact()
@@ -63,8 +53,7 @@ func (s *Store) migrateObservationFactKey() error {
 	if _, err := tx.Exec(observationDDL); err != nil {
 		return fmt.Errorf("creating the re-keyed observation table: %w", err)
 	}
-	// A GROUP BY rollup rather than a correlated MAX per row: the same query shape that took the
-	// frontier from 0.688 s to 0.122 s, and this runs over 140,421 rows on open.
+	// A GROUP BY rollup avoids a correlated MAX per row during open.
 	if _, err := tx.Exec(`INSERT INTO abom_observation (` + observationColumns + `)
 		SELECT o.row_id, o.query_run_id, o.subject_kind, o.subject_key, o.name,
 		       COALESCE(o.value, ''), o.value_num, o.file_path, o.start_line
@@ -85,10 +74,8 @@ func (s *Store) migrateObservationFactKey() error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	// Outside the transaction because VACUUM cannot run in one. Without it the dropped rows stay
-	// on the freelist and the upgrade makes the file *bigger*: 80.82 MiB to 92.96 MiB on the
-	// reference corpus, against 55.29 MiB once the 8,470 free pages are returned. It costs 0.38 s
-	// and runs once, because the rebuild above never happens twice.
+	// Outside the transaction because VACUUM cannot run in one; otherwise dropped rows stay
+	// on the freelist after the one-time rebuild.
 	if _, err := s.db.Exec(`VACUUM`); err != nil {
 		return fmt.Errorf("reclaiming the space the rebuild freed: %w", err)
 	}

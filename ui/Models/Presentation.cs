@@ -2,20 +2,12 @@ using System.Globalization;
 
 namespace Abom.WebAssembly.Models;
 
-/// <summary>
-/// How the Explorer drew a scope: which view, grouping, depth and direction, the node in focus, and
-/// the three switches that change the picture rather than the question.
-/// </summary>
+/// <summary>How the Explorer drew a scope: view, grouping, depth, direction, focus and switches.</summary>
 ///
 /// <remarks>
-/// <para>Deliberately not part of <see cref="ViewSpec"/>. A spec is a predicate the server
-/// enforces and the pull request gate answers; adding <c>view</c> or <c>groupBy</c> to it would
-/// make the server responsible for browser rendering, and would pad every listing's refusal list
-/// with terms that are not filters. The server stores this text and never parses it.</para>
+/// <para>Not part of <see cref="ViewSpec"/>: these are browser rendering choices, not filters.</para>
 ///
-/// <para>Absent is not a default. A presentation with nothing set means "draw it however you
-/// would anyway", which is what a view saved before a knob existed must keep meaning — so a
-/// choice left at its default is written as absent rather than spelled out.</para>
+/// <para>Absent means "draw with current defaults"; explicit defaults are not serialized.</para>
 /// </remarks>
 public sealed record Presentation
 {
@@ -50,11 +42,7 @@ public sealed record Presentation
         return string.Join("&", parts);
     }
 
-    /// <summary>
-    /// Reads the drawing choices out of an address, ignoring everything else. The two halves
-    /// travel together, and a presentation that swallowed <c>scope</c> would let applying a saved
-    /// view silently renarrow the question.
-    /// </summary>
+    /// <summary>Reads drawing choices from an address, ignoring predicate terms.</summary>
     public static Presentation Parse(string? query)
     {
         var found = new Dictionary<string, string>(StringComparer.Ordinal);

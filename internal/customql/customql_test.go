@@ -86,9 +86,7 @@ func TestThePackIsPinnedToTheRunningCodeQL(t *testing.T) {
 	}
 }
 
-// One actions library governs writing a query and running it: a wildcard resolves to whatever the
-// package cache holds when the lock is written, which is how the operator's pack came to lock
-// 0.6.2 while ABOM's own queries ran 0.6.1.
+// One actions library governs writing a query and running it.
 func TestBothPacksPinTheActionsLibraryABOMsOwnQueriesRun(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "custom")
 	if _, err := Scaffold(dir, "2.27.1"); err != nil {
@@ -130,8 +128,7 @@ func TestTheTestPackCarriesTheQueryThatReadsItsMarkers(t *testing.T) {
 	}
 }
 
-// The operator's own work lives here. A scaffold that rewrote the manifest would silently undo a
-// dependency they added, and it runs on every start.
+// The operator's own work lives here, and scaffolding runs on every start.
 func TestScaffoldingNeverOverwritesWhatIsAlreadyThere(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "custom")
 	if _, err := Scaffold(dir, "2.27.0"); err != nil {
@@ -160,9 +157,7 @@ func TestScaffoldingNeverOverwritesWhatIsAlreadyThere(t *testing.T) {
 	}
 }
 
-// The suite selects the pack rather than listing queries, so adding a `.ql` is enough. A suite
-// naming queries one by one is a second place to keep in step, and the one that falls behind
-// silently stops running something the operator wrote.
+// The suite selects the pack rather than listing queries, so adding a `.ql` is enough.
 func TestTheSuiteSelectsThePackRatherThanListingQueries(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "custom")
 	if _, err := Scaffold(dir, "2.27.0"); err != nil {

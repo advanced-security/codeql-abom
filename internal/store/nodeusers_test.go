@@ -4,9 +4,7 @@ import (
 	"testing"
 )
 
-// The Discovery grid previews five names and says "and 280 more", which is honest and a dead end
-// — 291 of the corpus's 5,787 name-and-version pairs end there. This is the read behind the rest
-// of the list.
+// Node users lists the full set behind the grid preview.
 func TestEveryRepositoryNamingAVersionIsListed(t *testing.T) {
 	s := subgraphFixture(t)
 
@@ -135,8 +133,7 @@ func TestADeclaredAccountMarksItsOwnRepositories(t *testing.T) {
 	}
 }
 
-// An empty reference is *default branch*, a real answer that 1,253 rows give. Treating it as a
-// wildcard would make one row list every user of the action.
+// An empty reference is default branch, not a wildcard for every reference.
 func TestAnEmptyReferenceIsTheDefaultBranchNotEveryReference(t *testing.T) {
 	s := subgraphFixture(t)
 

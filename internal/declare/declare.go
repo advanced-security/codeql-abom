@@ -53,8 +53,7 @@ func Load(path string) ([]store.DeclaredAccount, error) {
 	}
 
 	dec := json.NewDecoder(bytes.NewReader(body))
-	// A misspelled key would otherwise parse cleanly and declare nothing, which looks exactly like
-	// a file nobody filled in.
+	// Unknown keys are refused so a misspelling cannot declare nothing.
 	dec.DisallowUnknownFields()
 	var f File
 	if err := dec.Decode(&f); err != nil {
@@ -121,9 +120,8 @@ type Scope interface {
 
 // Seed declares accounts only when nothing is declared, and reports whether it did.
 //
-// Replacing an existing declaration would make a restart silently revert a choice somebody made in
-// the interface. Seeding an empty one is the case this exists for: drop the database, start the
-// server, and the organization under development is claimed again.
+// Seeding an empty declaration keeps a fresh database pointed at the organization under
+// development.
 func Seed(s Scope, accounts []store.DeclaredAccount) (bool, error) {
 	if len(accounts) == 0 {
 		return false, nil

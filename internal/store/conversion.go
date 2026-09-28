@@ -30,11 +30,8 @@ type heldRow struct {
 // reported it, and the conversion records who made it and from which run.
 func (s *Store) ConvertHeld(runID int64, repository string, ids []int64, by string) (Conversion, error) {
 	var out Conversion
-	if strings.TrimSpace(by) == "" {
-		return out, errors.New("converting results to findings records who did it; sign in with gh")
-	}
-	if repository == "" && len(ids) > 0 {
-		return out, errors.New("results are named within one repository; name it")
+	if err := validateConversionRequest(repository, ids, by); err != nil {
+		return out, err
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -54,31 +51,84 @@ func (s *Store) ConvertHeld(runID int64, repository string, ids []int64, by stri
 		return out, err
 	}
 
-	repositories := map[string]int64{}
-	var findings []Finding
-	for _, r := range rows {
-		if !r.evaluation.Valid {
-			return out, fmt.Errorf("run %d held %s's results before it recorded the evaluation that "+
-				"reported them, so they cannot be traced; run it again with findings off to convert them",
-				runID, r.repository)
-		}
-		id, ok := repositories[r.repository]
-		if !ok {
-			if err := tx.QueryRow(`SELECT row_id FROM repository WHERE repository_full_name = ?`,
-				r.repository).Scan(&id); err != nil {
-				return out, fmt.Errorf("%s is not a repository ABOM tracks, so it holds no findings: %w",
-					r.repository, err)
-			}
-			repositories[r.repository] = id
-		}
-		f := r.finding
-		f.RepositoryID, f.QueryRunID = id, r.evaluation.Int64
-		findings = append(findings, f)
+	findings, err := conversionFindings(tx, runID, rows)
+	if err != nil {
+		return out, err
 	}
 	written, err := addFindings(tx, findings)
 	if err != nil {
 		return out, err
 	}
+	out, err = recordHeldConversions(tx, runID, written, by)
+	if err != nil {
+		return out, err
+	}
+	if err := tx.Commit(); err != nil {
+		return out, fmt.Errorf("committing the conversion: %w", err)
+	}
+	// Attribution is what makes a finding visible to anything built on the graph.
+	if out.Converted > 0 {
+		if _, err := s.LinkFindingsToNodes(); err != nil {
+			return out, fmt.Errorf("attributing what run %d converted: %w", runID, err)
+		}
+	}
+	return out, nil
+}
+
+func validateConversionRequest(repository string, ids []int64, by string) error {
+	if strings.TrimSpace(by) == "" {
+		return errors.New("converting results to findings records who did it; sign in with gh")
+	}
+	if repository == "" && len(ids) > 0 {
+		return errors.New("results are named within one repository; name it")
+	}
+	return nil
+}
+
+func conversionFindings(tx *sql.Tx, runID int64, rows []heldRow) ([]Finding, error) {
+	repositories := map[string]int64{}
+	var findings []Finding
+	for _, r := range rows {
+		finding, err := heldFinding(tx, runID, repositories, r)
+		if err != nil {
+			return nil, err
+		}
+		findings = append(findings, finding)
+	}
+	return findings, nil
+}
+
+func heldFinding(tx *sql.Tx, runID int64, repositories map[string]int64, r heldRow) (Finding, error) {
+	if !r.evaluation.Valid {
+		return Finding{}, fmt.Errorf("run %d held %s's results before it recorded the evaluation that "+
+			"reported them, so they cannot be traced; run it again with findings off to convert them",
+			runID, r.repository)
+	}
+	id, err := repositoryRowID(tx, repositories, r.repository)
+	if err != nil {
+		return Finding{}, err
+	}
+	f := r.finding
+	f.RepositoryID, f.QueryRunID = id, r.evaluation.Int64
+	return f, nil
+}
+
+func repositoryRowID(tx *sql.Tx, repositories map[string]int64, repository string) (int64, error) {
+	if id, ok := repositories[repository]; ok {
+		return id, nil
+	}
+	var id int64
+	if err := tx.QueryRow(`SELECT row_id FROM repository WHERE repository_full_name = ?`,
+		repository).Scan(&id); err != nil {
+		return 0, fmt.Errorf("%s is not a repository ABOM tracks, so it holds no findings: %w",
+			repository, err)
+	}
+	repositories[repository] = id
+	return id, nil
+}
+
+func recordHeldConversions(tx *sql.Tx, runID int64, written []int64, by string) (Conversion, error) {
+	var out Conversion
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, finding := range written {
 		res, err := tx.Exec(`
@@ -91,15 +141,6 @@ func (s *Store) ConvertHeld(runID int64, repository string, ids []int64, by stri
 			out.Converted++
 		} else {
 			out.Already++
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return out, fmt.Errorf("committing the conversion: %w", err)
-	}
-	// Attribution is what makes a finding visible to anything built on the graph.
-	if out.Converted > 0 {
-		if _, err := s.LinkFindingsToNodes(); err != nil {
-			return out, fmt.Errorf("attributing what run %d converted: %w", runID, err)
 		}
 	}
 	return out, nil

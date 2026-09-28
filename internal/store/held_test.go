@@ -302,8 +302,7 @@ func TestAHeldEvaluationNeverMakesAFindingStale(t *testing.T) {
 	}
 }
 
-// A store written before holding replaced predicting keeps every run and every result, under the
-// names that say what they are, and carries no second name for either.
+// A predicting-era store migrates runs and results to held names in place.
 func TestAStoreThatPredictedIsMigratedToHeldResultsInPlace(t *testing.T) {
 	s := newTestStore(t)
 	id, err := s.CreateAnalysisRun(heldRequest(s))
@@ -315,7 +314,7 @@ func TestAStoreThatPredictedIsMigratedToHeldResultsInPlace(t *testing.T) {
 	}, twoHeld()); err != nil {
 		t.Fatalf("RecordHeldMemberResult: %v", err)
 	}
-	// Back to the shape a predicting build wrote.
+	// Recreate the predicting-era shape.
 	for _, stmt := range []string{
 		`ALTER TABLE abom_analysis_run RENAME COLUMN held TO prediction`,
 		`DROP INDEX IF EXISTS idx_held_member`,
@@ -433,8 +432,7 @@ func TestWhatARunHeldIsPickedAsEvidence(t *testing.T) {
 	}
 }
 
-// Two false alarms held in one repository are two pieces of evidence, not one kept and one
-// silently ignored for sharing a key.
+// Two false alarms held in one repository are two pieces of evidence.
 func TestTwoHeldResultsInOneRepositoryAreBothKept(t *testing.T) {
 	s := newTestStore(t)
 	runID, reported, other := heldPickedRun(t, s)
@@ -500,8 +498,7 @@ func TestHeldEvidenceIsOnlyWhatTheRunHeld(t *testing.T) {
 	}
 }
 
-// A store kept before evidence could name a held result keeps what was filed, and can then hold
-// two held picks in one repository.
+// Migrated evidence keeps what was filed and can then hold two picks in one repository.
 func TestEvidenceKeptBeforeHeldResultsIsMigratedInPlace(t *testing.T) {
 	s := newTestStore(t)
 	runID, fired := pickedRun(t, s)

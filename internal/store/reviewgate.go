@@ -100,45 +100,70 @@ func reviewRefusal(evidence []reviewEvidence, cli string) string {
 	if len(evidence) == 0 {
 		return noRunRefusal
 	}
-	var otherCLI, nothing, unfinished *reviewEvidence
-	regular := false
+	misses, ok := reviewMissesFor(evidence, cli)
+	if ok {
+		return ""
+	}
+	return misses.refusal(evidence[0], cli)
+}
+
+type reviewMisses struct {
+	otherCLI, nothing, unfinished *reviewEvidence
+	regular                       bool
+}
+
+func reviewMissesFor(evidence []reviewEvidence, cli string) (reviewMisses, bool) {
+	var misses reviewMisses
 	for i := range evidence {
 		e := &evidence[i]
-		regular = regular || e.mode == AnalysisModeRegular
-		switch {
-		case e.comparison == 0:
-		case e.state != ComparisonComplete:
-			if unfinished == nil {
-				unfinished = e
-			}
-		case e.cli != cli:
-			if otherCLI == nil {
-				otherCLI = e
-			}
-		case e.compared == 0:
-			if nothing == nil {
-				nothing = e
-			}
-		default:
-			return ""
+		misses.regular = misses.regular || e.mode == AnalysisModeRegular
+		if comparisonShowsReview(e, cli) {
+			return misses, true
+		}
+		misses.note(e, cli)
+	}
+	return misses, false
+}
+
+func comparisonShowsReview(e *reviewEvidence, cli string) bool {
+	return e.comparison != 0 && e.state == ComparisonComplete && e.cli == cli && e.compared != 0
+}
+
+func (m *reviewMisses) note(e *reviewEvidence, cli string) {
+	switch {
+	case e.comparison == 0:
+	case e.state != ComparisonComplete:
+		if m.unfinished == nil {
+			m.unfinished = e
+		}
+	case e.cli != cli:
+		if m.otherCLI == nil {
+			m.otherCLI = e
+		}
+	case e.compared == 0:
+		if m.nothing == nil {
+			m.nothing = e
 		}
 	}
+}
+
+func (m reviewMisses) refusal(first reviewEvidence, cli string) string {
 	switch {
-	case otherCLI != nil:
+	case m.otherCLI != nil:
 		return fmt.Sprintf("the comparison of run %d is of results CodeQL %s produced, and this "+
-			"server runs %s; run it again and compare that", otherCLI.run, cliText(otherCLI.cli), cli)
-	case nothing != nil:
+			"server runs %s; run it again and compare that", m.otherCLI.run, cliText(m.otherCLI.cli), cli)
+	case m.nothing != nil:
 		return fmt.Sprintf("the comparison of run %d compared no repository, so it says nothing "+
-			"about the alerts this version would add", nothing.run)
-	case unfinished != nil:
+			"about the alerts this version would add", m.nothing.run)
+	case m.unfinished != nil:
 		return fmt.Sprintf("the comparison of run %d is %s; compare the run again",
-			unfinished.run, unfinished.state)
-	case !regular:
+			m.unfinished.run, m.unfinished.state)
+	case !m.regular:
 		return fmt.Sprintf("run %d of this version analyzed %s databases, which a comparison does "+
-			"not read; run it over regular databases, then compare it", evidence[0].run, evidence[0].mode)
+			"not read; run it over regular databases, then compare it", first.run, first.mode)
 	}
-	return fmt.Sprintf("run %d of this version has not been compared with the alerts code "+
-		"scanning holds", evidence[0].run)
+	return fmt.Sprintf("run %d of this version has not been compared with the alerts code scanning holds",
+		first.run)
 }
 
 func cliText(cli string) string {

@@ -57,21 +57,15 @@ at once, removing nothing until somebody accepts the prune. **The published pack
 much later**, and checking a comparison against what appears once it is live waits with it.
 
 1. **[One database per owned repository, holding its whole closure](ql/closure-database.md)** — an
-   investigation with a measured spike and no implementation, ranked here because the measurement
-   it rests on is cheap and may stop it. `codeql/actions-all` resolves a `uses:` by string equality
-   against a callee staged at `.github/actions/external/${owner}/${repo}/`, so the namespace is flat
-   and **depth is free**: three chained staged actions resolve, and the upstream
-   `actions/code-injection/critical` reports a **seven-step taint path** across all three on default
-   filters. Four hazards were measured and are refused by construction, not patched — bare sibling
-   staging resolved one local reference to **two** callables, `.github/reusable_workflows/` staging
-   manufactured a taint path into a file the repository does not contain, a staged reusable workflow
-   is invisible without a recursive index filter, and a tree with no workflow anywhere resolves
-  nothing at all. **The ceiling is one selected commit per dependency per database**, which is survivable
-   only because the closure is rooted at one owned repository. Its headline verification is that
-  **every existing total is byte-identical afterwards**, against the corpus as lock-aware
-   resolution left it. The selections it counts and stages are recorded, and the submission
-   closure already follows them ([how](../docs/architecture.md#locks)), so its collision
-   measurement can start now. Lockfiles do not remove staging collisions.
+   investigation with a measured spike and no staging, ranked here because the cost measurement it
+   rests on is cheap and may stop it. `codeql/actions-all` resolves a `uses:` by string equality
+   against a callee staged under `.github/actions/external/` or `.github/workflows/external/`, so
+   the namespace is flat and **depth is free**: the upstream `actions/code-injection/critical`
+   reports a **seven-step taint path** across three staged composites. **Only composite actions
+   and reusable workflows are callables**, so only they are staged, and on the crawled organization
+   none of the 4 an owned closure reaches collide; the hazards and index filters are the
+   `stage-codeql-actions-callees` skill. Its headline verification is that **every existing total
+   is byte-identical afterwards**. Its extraction cost is measured next.
 2. **[What the extended analysis reveals, and whether any number should move](db/extended-findings.md)**
     [The closure database](ql/closure-database.md) is built to change nothing; this is where the
    decision to let it change something gets

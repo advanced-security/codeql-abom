@@ -5,8 +5,8 @@ import (
 )
 
 // A pinned SHA carries no version, and GitHub generates Dependabot alerts for actions "that use
-// semantic versioning, not SHA versioning". Measured on the reference corpus: 10,881 of 31,871
-// live edges are SHA-pinned, so a third of the graph is un-alertable until the SHA can be named.
+// semantic versioning, not SHA versioning". SHA-pinned edges are un-alertable until the SHA can be
+// named.
 //
 // What makes that safe is provenance. A tag that the crawl watched resolve to a SHA is a
 // measurement; a trailing `# v4.2.2` comment is a claim somebody typed, and submitting a version
@@ -115,8 +115,7 @@ func TestAMovingTagKeepsItsHistoryAndReportsTheNewest(t *testing.T) {
 	}
 }
 
-// The crawl already resolves a tag to a commit and throws the pair away. On the reference corpus
-// this recovers 888 of 1,333 pinned commits with no API call at all.
+// The crawl already resolves a tag to a commit and throws the pair away.
 func TestBackfillDerivesResolutionsFromWhatTheCrawlAlreadyResolved(t *testing.T) {
 	s := newTestStore(t)
 	seedFrontierResolution(t, s, "actions", "checkout", "v4.2.2",

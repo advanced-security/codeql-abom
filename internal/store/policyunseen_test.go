@@ -3,10 +3,8 @@ package store
 import "testing"
 
 // A finding nobody attributed to a node is invisible to the evaluation, because the match runs
-// through `abom_finding_node`. Found on the reference corpus: `facebook/install-dotslash` carries
-// 15 `actions/*` findings, none linked, so a simulation reported 40 repositories where the raw
-// findings table said 41. The gate cannot refuse what it cannot see — but a reader told "40" and
-// not told about the 41st is being handed a complete-looking answer that is not.
+// through `abom_finding_node`. The gate cannot refuse what it cannot see, but a reader needs to
+// know the answer is incomplete.
 func TestASimulationSaysWhatItCouldNotSee(t *testing.T) {
 	s := policyFixture(t, unpinned("no-unpinned"))
 	var appID int64

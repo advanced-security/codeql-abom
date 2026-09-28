@@ -28,8 +28,7 @@ type PolicyOutcome struct {
 	// Unattributed counts findings the policy's rules select that no node carries, and which the
 	// evaluation therefore cannot see. The gate cannot refuse what it cannot see; a reader told
 	// what would be refused, and not told what was invisible, has a complete-looking answer that
-	// is not one. Measured on the reference corpus: `facebook/install-dotslash` holds 15 such
-	// findings, which is the difference between 40 repositories and 41.
+	// is not one.
 	Unattributed             int      `json:"unattributed"`
 	UnattributedRepositories []string `json:"unattributedRepositories"`
 	// Population is what the policy asks about: findings, advisories, or other policies.
@@ -128,35 +127,9 @@ func (s *Store) evaluatePolicy(
 ) (PolicyOutcome, evidence, error) {
 	out, ev := newOutcome(name), newEvidence()
 
-	policy, ok, err := s.PolicyNamed(name)
+	spec, err := s.policySpec(name, unitProperty)
 	if err != nil {
 		return out, ev, err
-	}
-	if !ok {
-		return out, ev, fmt.Errorf("store: no policy named %q", name)
-	}
-	// Refused rather than evaluated without it: the scope is still what the policy says, and
-	// answering for the whole organization would enforce it somewhere nobody scoped it to.
-	if policy.scopeKind != "" && policy.scopeKind != policyScopeOrganization {
-		return out, ev, fmt.Errorf(
-			"store: policy %q is bound to %s %q by a retired scope nothing has written into its "+
-				"predicate; %s", name, policy.scopeKind, policy.scopeValue,
-			unmigrated(policy.scopeKind, unitProperty))
-	}
-	spec, err := viewspec.Parse(policy.Predicate)
-	if err != nil {
-		// Refuses nothing rather than everything: a gate whose policy failed to parse would
-		// otherwise fail every pull request instead of none.
-		return out, ev, fmt.Errorf("store: policy %q does not parse: %w", name, err)
-	}
-	// Checked again here, not only where it was saved: the gate reads this, and a policy stored
-	// before the rule existed would otherwise enforce the wider half of its own text forever.
-	if refused := spec.UnenforceableAsPolicy(); len(refused) > 0 {
-		return out, ev, fmt.Errorf("store: policy %q carries %s, which it cannot enforce",
-			name, strings.Join(refused, ", "))
-	}
-	if err := spec.SetConflict(); err != nil {
-		return out, ev, fmt.Errorf("store: policy %q: %w", name, err)
 	}
 	if len(spec.Policies) > 0 {
 		visiting[name] = true
@@ -174,6 +147,59 @@ func (s *Store) evaluatePolicy(
 	if err != nil {
 		return out, ev, err
 	}
+	out, ev, err = s.policyMatchOutcome(out, ev, matched, sel, inScope)
+	if err != nil {
+		return out, ev, err
+	}
+	if err := s.applyPolicyWaivers(name, &out); err != nil {
+		return out, ev, err
+	}
+
+	ids, repos, err := s.unattributedFor(spec, inScope)
+	if err != nil {
+		return out, ev, err
+	}
+	addUnattributed(&out, &ev, ids, repos)
+	return out, ev, nil
+}
+
+func (s *Store) policySpec(name, unitProperty string) (viewspec.Spec, error) {
+	policy, ok, err := s.PolicyNamed(name)
+	if err != nil {
+		return viewspec.Spec{}, err
+	}
+	if !ok {
+		return viewspec.Spec{}, fmt.Errorf("store: no policy named %q", name)
+	}
+	// Refused rather than evaluated without it: the scope is still what the policy says, and
+	// answering for the whole organization would enforce it somewhere nobody scoped it to.
+	if policy.scopeKind != "" && policy.scopeKind != policyScopeOrganization {
+		return viewspec.Spec{}, fmt.Errorf(
+			"store: policy %q is bound to %s %q by a retired scope nothing has written into its "+
+				"predicate; %s", name, policy.scopeKind, policy.scopeValue,
+			unmigrated(policy.scopeKind, unitProperty))
+	}
+	spec, err := viewspec.Parse(policy.Predicate)
+	if err != nil {
+		// Refuses nothing rather than everything: a gate whose policy failed to parse would
+		// otherwise fail every pull request instead of none.
+		return viewspec.Spec{}, fmt.Errorf("store: policy %q does not parse: %w", name, err)
+	}
+	// Checked again here, not only where it was saved: the gate reads this, and a policy stored
+	// before the rule existed would otherwise enforce the wider half of its own text forever.
+	if refused := spec.UnenforceableAsPolicy(); len(refused) > 0 {
+		return viewspec.Spec{}, fmt.Errorf("store: policy %q carries %s, which it cannot enforce",
+			name, strings.Join(refused, ", "))
+	}
+	if err := spec.SetConflict(); err != nil {
+		return viewspec.Spec{}, fmt.Errorf("store: policy %q: %w", name, err)
+	}
+	return spec, nil
+}
+
+func (s *Store) policyMatchOutcome(
+	out PolicyOutcome, ev evidence, matched FindingMatch, sel FindingSelector, inScope func(string) bool,
+) (PolicyOutcome, evidence, error) {
 	out.Population = matched.Population
 	out.Nodes, out.Findings = len(matched.Nodes), matched.Findings
 	for _, node := range matched.Nodes {
@@ -197,23 +223,31 @@ func (s *Store) evaluatePolicy(
 		advisories, none := len(ev.advisories), len(ev.unreached)
 		out.Advisories, out.Unreached = &advisories, &none
 	}
+	out.Matched = repositoriesMatchedByPolicy(matched.Nodes, inScope)
+	return out, ev, nil
+}
 
+func repositoriesMatchedByPolicy(nodes []MatchedNode, inScope func(string) bool) []string {
 	seen := map[string]bool{}
-	for _, node := range matched.Nodes {
+	out := []string{}
+	for _, node := range nodes {
 		for _, repo := range node.Repositories {
 			key := strings.ToLower(repo)
 			if seen[key] || !inScope(key) {
 				continue
 			}
 			seen[key] = true
-			out.Matched = append(out.Matched, repo)
+			out = append(out, repo)
 		}
 	}
-	sort.Strings(out.Matched)
+	sort.Strings(out)
+	return out
+}
 
+func (s *Store) applyPolicyWaivers(name string, out *PolicyOutcome) error {
 	waived, err := s.WaivedRepositories(name)
 	if err != nil {
-		return out, ev, err
+		return err
 	}
 	for _, repo := range out.Matched {
 		if w, excused := waived[strings.ToLower(repo)]; excused {
@@ -222,11 +256,10 @@ func (s *Store) evaluatePolicy(
 		}
 		out.Refused = append(out.Refused, repo)
 	}
+	return nil
+}
 
-	ids, repos, err := s.unattributedFor(spec, inScope)
-	if err != nil {
-		return out, ev, err
-	}
+func addUnattributed(out *PolicyOutcome, ev *evidence, ids []int64, repos []string) {
 	for _, id := range ids {
 		ev.unattributed[id] = true
 	}
@@ -234,7 +267,6 @@ func (s *Store) evaluatePolicy(
 		ev.unattributedRepos[repo] = true
 	}
 	out.Unattributed, out.UnattributedRepositories = len(ids), repos
-	return out, ev, nil
 }
 
 // evaluateSuperset refuses what any named policy refuses.
@@ -246,56 +278,96 @@ func (s *Store) evaluateSuperset(
 	out PolicyOutcome, members []string, unitProperty string, visiting map[string]bool,
 ) (PolicyOutcome, evidence, error) {
 	out.Population = PopulationPolicies
-	ev := newEvidence()
-	matched := map[string]string{}
-	refused := map[string]bool{}
-	excusedBy := map[string]Waiver{}
-	for _, member := range members {
-		if visiting[member] {
-			return newOutcome(out.Policy), newEvidence(), fmt.Errorf(
-				"store: policy %q names %q, which names it back, so neither has an answer",
-				out.Policy, member)
-		}
-		got, memberEvidence, err := s.evaluatePolicy(member, unitProperty, visiting)
-		if err != nil {
-			return newOutcome(out.Policy), newEvidence(),
-				fmt.Errorf("store: policy %q names %q: %w", out.Policy, member, err)
-		}
-		out.Members = append(out.Members, got)
-		ev = ev.merge(memberEvidence)
-		for _, repo := range got.Matched {
-			matched[strings.ToLower(repo)] = repo
-		}
-		for _, repo := range got.Refused {
-			refused[strings.ToLower(repo)] = true
-		}
-		for _, w := range got.Waived {
-			if _, first := excusedBy[strings.ToLower(w.Repository)]; !first {
-				excusedBy[strings.ToLower(w.Repository)] = w
-			}
-		}
+	acc, err := s.supersetMembers(out.Policy, members, unitProperty, visiting)
+	if err != nil {
+		return newOutcome(out.Policy), newEvidence(), err
 	}
+	out.Members = acc.members
+	ev := acc.evidence
 
 	own, err := s.WaivedRepositories(out.Policy)
 	if err != nil {
 		return out, ev, err
 	}
-	for _, repo := range matched {
-		out.Matched = append(out.Matched, repo)
-	}
+	out.Matched = sortedMatched(acc.matched)
 	sort.Strings(out.Matched)
 	for _, repo := range out.Matched {
 		key := strings.ToLower(repo)
 		switch w, excused := own[key]; {
-		case refused[key] && excused:
+		case acc.refused[key] && excused:
 			out.Waived = append(out.Waived, w)
-		case refused[key]:
+		case acc.refused[key]:
 			out.Refused = append(out.Refused, repo)
 		default:
-			out.Waived = append(out.Waived, excusedBy[key])
+			out.Waived = append(out.Waived, acc.excusedBy[key])
 		}
 	}
 
+	finishSupersetEvidence(&out, ev)
+	return out, ev, nil
+}
+
+type supersetAccum struct {
+	evidence  evidence
+	members   []PolicyOutcome
+	matched   map[string]string
+	refused   map[string]bool
+	excusedBy map[string]Waiver
+}
+
+func newSupersetAccum() supersetAccum {
+	return supersetAccum{
+		evidence:  newEvidence(),
+		matched:   map[string]string{},
+		refused:   map[string]bool{},
+		excusedBy: map[string]Waiver{},
+	}
+}
+
+func (s *Store) supersetMembers(
+	policy string, members []string, unitProperty string, visiting map[string]bool,
+) (supersetAccum, error) {
+	acc := newSupersetAccum()
+	for _, member := range members {
+		if visiting[member] {
+			return acc, fmt.Errorf(
+				"store: policy %q names %q, which names it back, so neither has an answer",
+				policy, member)
+		}
+		got, memberEvidence, err := s.evaluatePolicy(member, unitProperty, visiting)
+		if err != nil {
+			return acc, fmt.Errorf("store: policy %q names %q: %w", policy, member, err)
+		}
+		acc.add(got, memberEvidence)
+	}
+	return acc, nil
+}
+
+func (a *supersetAccum) add(got PolicyOutcome, ev evidence) {
+	a.members = append(a.members, got)
+	a.evidence = a.evidence.merge(ev)
+	for _, repo := range got.Matched {
+		a.matched[strings.ToLower(repo)] = repo
+	}
+	for _, repo := range got.Refused {
+		a.refused[strings.ToLower(repo)] = true
+	}
+	for _, w := range got.Waived {
+		if _, first := a.excusedBy[strings.ToLower(w.Repository)]; !first {
+			a.excusedBy[strings.ToLower(w.Repository)] = w
+		}
+	}
+}
+
+func sortedMatched(matched map[string]string) []string {
+	out := make([]string, 0, len(matched))
+	for _, repo := range matched {
+		out = append(out, repo)
+	}
+	return out
+}
+
+func finishSupersetEvidence(out *PolicyOutcome, ev evidence) {
 	out.Nodes, out.Findings = len(ev.nodes), len(ev.findings)
 	out.Unattributed = len(ev.unattributed)
 	for repo := range ev.unattributedRepos {
@@ -306,7 +378,6 @@ func (s *Store) evaluateSuperset(
 		advisories, none := len(ev.advisories), len(ev.unreached)
 		out.Advisories, out.Unreached = &advisories, &none
 	}
-	return out, ev, nil
 }
 
 // unattributedFor lists the findings a policy's rules name that no node carries, and the owned

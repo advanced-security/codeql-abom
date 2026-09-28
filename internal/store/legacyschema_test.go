@@ -5,11 +5,8 @@ import (
 	"testing"
 )
 
-// The shape these tables had before the identity chain existed, written out rather than derived
-// from the current schema so that the two can actually disagree. A database in the wild took
-// hours of crawling to build and is upgraded in place, so every column added to a CREATE TABLE
-// has to be added to addedColumns as well. Forgetting that produced "table abom_suite_query has
-// no column named pack_digest" against a real corpus, after unit tests on fresh databases passed.
+// The legacy shape is written out rather than derived so it can disagree with the current schema.
+// Any column added to CREATE TABLE must also be added to addedColumns for in-place upgrades.
 const legacySchema = `
 CREATE TABLE abom_owned_scope (
   owner         TEXT PRIMARY KEY,

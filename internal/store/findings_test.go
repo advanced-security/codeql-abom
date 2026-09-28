@@ -155,9 +155,7 @@ func TestAddFindingsDeduplicates(t *testing.T) {
 }
 
 // A finding already on record has to gain the run that reproduced it, or its provenance is
-// pinned to the first sighting forever. Measured on the reference corpus: 2,759 findings carry no
-// `query_run_id`, and 2,377 of them sit in repositories that have since been re-analyzed — the
-// rows could not be reproduced or aged out with their pack, and no amount of crawling fixed it.
+// pinned to the first sighting forever.
 func TestReanalysisAttachesTheRunThatReproducedAFinding(t *testing.T) {
 	s := newTestStore(t)
 	repoID, err := s.UpsertRepository("octo-org/app", "")

@@ -7,8 +7,7 @@ import (
 
 // The state that made this necessary: an account was declared and enumerated, which gave it
 // repositories, and no analysis had run yet, which gave it no edges. A closure with no edges
-// reaches nothing, so every one of the 56,939 nodes already in the corpus fell outside it and
-// the interface offered to remove all of them.
+// reaches nothing, so everything falls outside it.
 //
 // Nothing about that is a measurement. It is the same absence the empty-closure refusal already
 // covers, arriving one step later.

@@ -9,8 +9,7 @@ import (
 //
 // Workflows and jobs were listed through the actions column set — reach, total refs, distinct refs
 // — which measure being *depended upon*. A workflow is a consumer: nothing points at it, so those
-// columns were not small, they were inapplicable, and 1,138 of 1,585 rows on the crawled
-// organization read zero across all three. These two listings carry what those kinds actually have.
+// columns were inapplicable. These two listings carry what those kinds actually have.
 //
 // The facts come from `abom_observation` rather than `abom_surface`, which declares all of them and
 // is never populated, and every one of them is recorded against a *job*: a workflow's answer is an

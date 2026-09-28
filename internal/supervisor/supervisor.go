@@ -52,14 +52,13 @@ type Supervisor struct {
 	// AdvisoryMaxAge bounds how stale the advisory set may get once the crawl stops growing.
 	//
 	// Arrival alone is not enough: a finished corpus never ingests again, so a refresh keyed only
-	// on discovery would leave 1213 analyzed repositories matched forever against whatever was
-	// fetched the day the queue drained. Zero disables the ceiling.
+	// on discovery would leave analyzed repositories matched forever against whatever was fetched
+	// the day the queue drained. Zero disables the ceiling.
 	AdvisoryMaxAge time.Duration
 	// AdvisoryMinInterval floors how often the set is refetched, however much arrives.
 	//
-	// The refresh runs inside the cycle: 936 packages measured at 19 paced requests over 109
-	// seconds, and the loop analyzes nothing meanwhile. Without a floor a crawl ingesting on
-	// every 30s cycle would spend nearly all of its time re-asking the same question.
+	// The refresh runs inside the cycle, and the loop analyzes nothing meanwhile. Without a floor
+	// a crawl ingesting on every cycle would spend most of its time re-asking the same question.
 	AdvisoryMinInterval time.Duration
 	// LastAdvisoryAt seeds the ceiling from what the store already holds, so a restart does not
 	// re-fetch a set collected minutes ago.
@@ -108,15 +107,13 @@ const (
 	DefaultRecheckTTL   = 24 * time.Hour
 	DefaultRecheckLimit = 50
 	// DefaultAdvisoryMaxAge matches the aggregate ceiling: new advisories are published daily,
-	// and 936 packages is a handful of batched requests.
+	// and package advisory lookups are batched.
 	DefaultAdvisoryMaxAge = 24 * time.Hour
-	// DefaultAdvisoryMinInterval keeps a productive crawl from spending most of a cycle on a
-	// refresh that measured 109 seconds over 936 packages.
+	// DefaultAdvisoryMinInterval keeps a productive crawl from refreshing on every cycle.
 	DefaultAdvisoryMinInterval = 15 * time.Minute
 	// DefaultEnumerateEvery bounds how stale the list of repositories may get. An hour is short
 	// enough that a repository created in the morning is analyzed the same day, and long enough
-	// that the listing is a rounding error beside the analysis. It is a starting point rather
-	// than a measured optimum, and nothing has measured one yet.
+	// that the listing is a rounding error beside the analysis.
 	DefaultEnumerateEvery = time.Hour
 )
 

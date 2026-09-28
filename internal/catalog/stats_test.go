@@ -7,9 +7,7 @@ import (
 	"testing"
 )
 
-// Efficiency that cannot be seen cannot be trusted. A crawl that spent half its reads on answers
-// GitHub said were unchanged should be able to say so, and a cache that silently stopped working
-// would otherwise look exactly like one that never helped.
+// Unchanged answers must be counted, so cache use is visible.
 func TestUnchangedAnswersAreCountedRatherThanAbsorbed(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("If-None-Match") == `"v1"` {
@@ -35,7 +33,6 @@ func TestUnchangedAnswersAreCountedRatherThanAbsorbed(t *testing.T) {
 	if got.Requests != 3 {
 		t.Errorf("three reads were made; got %d", got.Requests)
 	}
-	// The first is a full read; the two after it are answered as unchanged.
 	if got.NotModified != 2 {
 		t.Errorf("two of three answers were unchanged; got %d", got.NotModified)
 	}

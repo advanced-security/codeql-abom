@@ -47,8 +47,7 @@ func TestAQueuedDependencyReportsNoAnalysisTime(t *testing.T) {
 }
 
 // The tier header sits above the control that binds a suite to a tier, so the number it needs is
-// how many dependencies that tier holds. Counting only the analyzed ones made a tier read as
-// empty the moment it was re-analyzed, which is the false zero this repository refuses elsewhere.
+// how many dependencies that tier holds, not only the analyzed ones.
 func TestATierReportsItsSizeAndNotOnlyWhatIsAnalyzed(t *testing.T) {
 	s := newTestStore(t)
 	queueRow(t, s, "done-one", "done", 0)

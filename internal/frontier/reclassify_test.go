@@ -21,10 +21,8 @@ func chainOf(t *testing.T, q *Queue, key string) string {
 	return chain
 }
 
-// Enqueue may only ever strengthen a classification, so a rule that admits fewer runtime
-// dependencies can never take effect through it. Without a pass that is allowed to lower one,
-// the stored answer stays at whatever the loosest rule ever said — which is how 254 rows on the
-// reference corpus were still labeled runtime under a rule that no longer claimed it.
+// Enqueue may only ever strengthen a classification, so a tightened rule needs a pass that can
+// lower stale runtime labels.
 func TestReclassifyLowersAClaimEnqueueWouldHaveKept(t *testing.T) {
 	q, _ := newQueue(t)
 	if _, err := q.Enqueue([]Item{item("a", 1)}); err != nil {

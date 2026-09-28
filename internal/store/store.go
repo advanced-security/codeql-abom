@@ -187,10 +187,8 @@ func (s *Store) Migrate() error {
 	}
 	// And the rest of them, for the same reason, once there is no bulk load to slow down.
 	// `CreateIndexes` is called by the seed build alone, so every other database — one being
-	// served, expanded or read by the CLI — carried whatever indexes existed when it was first
-	// built and none added since. Measured 2026-09-15: 20 of 22 were missing from the reference
-	// corpus, and the absent `idx_edge_dst` alone made the Inventory scan all 14,196 edges once
-	// per row. Rebuilding an index that exists costs a catalog lookup.
+	// served, expanded or read by the CLI — otherwise carries only the indexes it was built with.
+	// Rebuilding an index that exists costs a catalog lookup.
 	if !s.bulkMode {
 		if err := s.CreateIndexes(); err != nil {
 			return err

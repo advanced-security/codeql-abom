@@ -6,21 +6,8 @@ import (
 )
 
 // The graph node query must not re-read the frontier once per node.
-//
-// Measured 2026-09-10 on the seeded corpus: `frontierMatch` matches on `f.node_key = n.node_key`
-// OR on `LOWER(f.node_key)`, and a function on the column means no index can serve the second
-// branch, so SQLite scans the whole frontier for every node — five times over, once per frontier
-// column. One of those five subqueries cost 17.7 s against 0.045 s with the OR branch removed,
-// and the whole endpoint took 21 s for 12,550 nodes.
-//
-// This asserts the plan rather than the clock, because a stopwatch here would flake and would
-// also pass on a corpus whose frontier happens to be small. The cost has to be structural.
-//
-// Narrowed from "no correlated step anywhere" to "none in the per-node pass". The owned-scope
-// predicate is an EXISTS, so resolving each repository's business unit in a materialized CTE puts
-// a correlation in the plan that runs once over the property rows rather than once per node. The
-// stated reason has always been the per-node re-read; the blunter assertion also forbade the shape
-// that fixes it.
+// The guard asserts the plan shape, not elapsed time, so corpus size cannot hide the cost.
+// Correlation inside a materialized CTE is allowed because it runs before the per-node pass.
 func TestTheGraphNodeQueryDoesNotRereadTheFrontierPerNode(t *testing.T) {
 	for _, shape := range []struct {
 		name string

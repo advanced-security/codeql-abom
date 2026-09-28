@@ -101,10 +101,7 @@ func (s *Store) attachRefLocks(key string, refs []RefUsage) error {
 // selects and which of its uses that covers, and what any caller's lock selects for a composite
 // it holds.
 func (s *Store) attachRepositoryLocks(out *NodeUsers) error {
-	for i := range out.Repos {
-		out.Repos[i].Locks = []RepositoryLock{}
-		out.Repos[i].LockCoverage = []string{}
-	}
+	resetRepositoryLockFields(out)
 	if err := s.attachLockCoverage(out); err != nil {
 		return err
 	}
@@ -115,49 +112,61 @@ func (s *Store) attachRepositoryLocks(out *NodeUsers) error {
 	if err != nil || len(governed) == 0 {
 		return err
 	}
-	type lockKey struct{ commit, consumer, via string }
-	locks := map[string]map[lockKey]map[string]bool{}
-	ownUses := map[string]map[int64]bool{}
+	collectRepositoryLockSummary(out.Ref, governed).apply(out)
+	return nil
+}
+
+func resetRepositoryLockFields(out *NodeUsers) {
+	for i := range out.Repos {
+		out.Repos[i].Locks = []RepositoryLock{}
+		out.Repos[i].LockCoverage = []string{}
+	}
+}
+
+type repositoryLockKey struct{ commit, consumer, via string }
+
+type repositoryLockSummary struct {
+	locks   map[string]map[repositoryLockKey]map[string]bool
+	ownUses map[string]map[int64]bool
+}
+
+func collectRepositoryLockSummary(ref string, governed []LockGoverned) repositoryLockSummary {
+	summary := repositoryLockSummary{
+		locks:   map[string]map[repositoryLockKey]map[string]bool{},
+		ownUses: map[string]map[int64]bool{},
+	}
 	for _, g := range governed {
-		if g.DeclaredRef != out.Ref {
+		if g.DeclaredRef != ref {
 			continue
 		}
-		k := lockKey{commit: g.Commit, consumer: g.Consumer}
+		k := repositoryLockKey{commit: g.Commit, consumer: g.Consumer}
 		if g.Rule == LockRuleCaller {
 			k.via = g.Context
 		} else {
-			if ownUses[g.Repository] == nil {
-				ownUses[g.Repository] = map[int64]bool{}
+			if summary.ownUses[g.Repository] == nil {
+				summary.ownUses[g.Repository] = map[int64]bool{}
 			}
-			ownUses[g.Repository][g.EdgeID] = true
+			summary.ownUses[g.Repository][g.EdgeID] = true
 		}
-		if locks[g.Repository] == nil {
-			locks[g.Repository] = map[lockKey]map[string]bool{}
+		if summary.locks[g.Repository] == nil {
+			summary.locks[g.Repository] = map[repositoryLockKey]map[string]bool{}
 		}
-		if locks[g.Repository][k] == nil {
-			locks[g.Repository][k] = map[string]bool{}
+		if summary.locks[g.Repository][k] == nil {
+			summary.locks[g.Repository][k] = map[string]bool{}
 		}
 		if g.Rule != LockRuleCaller {
-			locks[g.Repository][k][g.Context] = true
+			summary.locks[g.Repository][k][g.Context] = true
 		}
 	}
+	return summary
+}
+
+func (summary repositoryLockSummary) apply(out *NodeUsers) {
 	for i := range out.Repos {
 		u := &out.Repos[i]
-		u.LockedUses = len(ownUses[u.FullName])
-		byKey := locks[u.FullName]
-		keys := make([]lockKey, 0, len(byKey))
-		for k := range byKey {
-			keys = append(keys, k)
-		}
-		sort.Slice(keys, func(a, b int) bool {
-			if keys[a].commit != keys[b].commit {
-				return keys[a].commit < keys[b].commit
-			}
-			if keys[a].consumer != keys[b].consumer {
-				return keys[a].consumer < keys[b].consumer
-			}
-			return keys[a].via < keys[b].via
-		})
+		u.LockedUses = len(summary.ownUses[u.FullName])
+		byKey := summary.locks[u.FullName]
+		keys := sortedRepositoryLockKeys(byKey)
 		for _, k := range keys {
 			u.Locks = append(u.Locks, RepositoryLock{
 				Commit: k.commit, Consumer: k.consumer, Via: k.via,
@@ -165,7 +174,23 @@ func (s *Store) attachRepositoryLocks(out *NodeUsers) error {
 			})
 		}
 	}
-	return nil
+}
+
+func sortedRepositoryLockKeys(byKey map[repositoryLockKey]map[string]bool) []repositoryLockKey {
+	keys := make([]repositoryLockKey, 0, len(byKey))
+	for k := range byKey {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(a, b int) bool {
+		if keys[a].commit != keys[b].commit {
+			return keys[a].commit < keys[b].commit
+		}
+		if keys[a].consumer != keys[b].consumer {
+			return keys[a].consumer < keys[b].consumer
+		}
+		return keys[a].via < keys[b].via
+	})
+	return keys
 }
 
 // attachLockCoverage says what each listed repository's lock reading at the commit it currently

@@ -7,11 +7,7 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
-// The DOT export writes nodes the graph payload does not carry — measured on the crawled
-// organization, 516 positions came back for a 411-node scope, the extra 105 being `repo:`
-// containers. Counting the difference therefore measures the wrong thing in both directions: it
-// goes negative when the engine places more than the payload holds, and a genuine gap hides behind
-// that padding. A node with no position must be counted by name.
+// Layout gaps must be counted by node name because Graphviz may return extra container positions.
 func TestUnplacedCountsNodesWithNoPositionRatherThanTheDifferenceInCounts(t *testing.T) {
 	g := store.Graph{Nodes: []store.GraphNode{
 		{Key: "a"}, {Key: "b"}, {Key: "c"},

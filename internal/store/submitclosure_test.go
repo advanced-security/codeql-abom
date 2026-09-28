@@ -104,13 +104,8 @@ func projectionFixture(t *testing.T, s *Store) {
 }
 
 // A dependency's children belong to the version the consumer pinned, not to every version ABOM
-// has ever analyzed.
-//
-// Measured on the real corpus and it invalidated a live submission: ABOM has analyzed 24 refs of
-// codecov/codecov-action, three of which vendor actions/github-script. add-everyone-to-everyone
-// pins v4, whose tree contains none of them — github-script entered codecov-action at v5.x. An
-// unconstrained closure therefore reported three versions of a transitive dependency the
-// repository does not have, and one of them was submitted to GitHub on 2026-09-08.
+// has analyzed. An unconstrained closure reports transitive dependencies the repository does not
+// have.
 func TestAChildBelongsToTheVersionOfTheParentThatWasPinned(t *testing.T) {
 	s := newTestStore(t)
 	projectionFixture(t, s)
@@ -130,11 +125,8 @@ func TestAChildBelongsToTheVersionOfTheParentThatWasPinned(t *testing.T) {
 	}
 }
 
-// A repository's own composite action is the commonest invisible dependency, and it was the case
-// codeql-abom-test1 was built to demonstrate: GitHub reports 2 of its 4 dependencies because the
-// other two are declared in .github/actions/build-app/action.yml, which is not a manifest to
-// GitHub. Those edges never leave the repository, so a traversal that only walks outward from
-// external dependencies misses them entirely.
+// A repository's own composite action is not a manifest to GitHub. Those edges never leave the
+// repository, so a traversal that only walks outward from external dependencies misses them.
 func TestARepositorysOwnCompositeActionIsATransitiveDependency(t *testing.T) {
 	s := newTestStore(t)
 	projectionFixture(t, s)
@@ -187,11 +179,8 @@ func TestARepositorysOwnCompositeActionIsATransitiveDependency(t *testing.T) {
 	t.Fatalf("the repository's own composite action contributed nothing: %+v", got)
 }
 
-// The defect this guards is a 25x fabrication, not an edge case. ABOM attributes an edge to the
-// repository whose database produced it, so a dependency's rows include how that dependency tests
-// itself. On the real corpus codecov/codecov-action carries 74 edges from its own CI against 3
-// from its action manifest; following all of them would tell a consumer it depends on 74 actions
-// it never runs.
+// ABOM attributes an edge to the repository whose database produced it, so a dependency's rows
+// include how that dependency tests itself. A consumer's closure must not include that upstream CI.
 func TestAnUpstreamProjectsOwnCIIsNotTheConsumersSupplyChain(t *testing.T) {
 	s := newTestStore(t)
 	projectionFixture(t, s)
@@ -212,9 +201,8 @@ func TestAnUpstreamProjectsOwnCIIsNotTheConsumersSupplyChain(t *testing.T) {
 	}
 }
 
-// direct and indirect are a depth axis. An earlier version of this plan proposed taking them from
-// the edge's boundary column, which is an ownership axis (same-repository, same-owner,
-// cross-owner) and orthogonal to depth: both entries below are cross-owner and only one is direct.
+// Direct and indirect are a depth axis, while the edge boundary is an ownership axis. Both entries
+// below are cross-owner and only one is direct.
 func TestRelationshipIsDepthFromTheManifestNotOwnership(t *testing.T) {
 	s := newTestStore(t)
 	projectionFixture(t, s)

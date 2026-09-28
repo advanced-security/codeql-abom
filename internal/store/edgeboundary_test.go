@@ -9,8 +9,7 @@ import (
 
 // A workflow calling a reusable workflow in its own repository is a refactor away from being
 // inlined. The same call across two repositories of one account is coordination inside a team.
-// The same call to another account is a dependency on a third party. Drawing them identically is
-// the conflation that once inflated blast radius from 202 to 209.
+// The same call to another account is a dependency on a third party.
 func TestAReferenceInsideOneRepositoryIsSameRepository(t *testing.T) {
 	s := boundaryFixture(t)
 	classify(t, s)

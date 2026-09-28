@@ -1,0 +1,8 @@
+name: comp
+inputs:
+  title: {}
+runs:
+  using: composite
+  steps:
+    - run: echo "${{ inputs.title }}"
+      shell: bash

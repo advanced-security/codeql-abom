@@ -1,19 +1,11 @@
-// A container whose children are visible is a region enclosing them, not a point beside them.
-//
-// Pure geometry and membership over screen-space positions, so both are testable without a
-// renderer, and so the same code serves 2D and 3D: the caller has already projected.
+// Pure screen-space geometry for visible group regions.
 
 import { groupOf, ungroupedName } from './topology.js';
 
 /**
  * Members per region, keyed by group.
  *
- * Membership is `collapse.js`'s to decide, never this module's. A region and the node a collapsed
- * view folds the same members into are two renderings of one fold, and a second rule here is how
- * they would come to disagree about who belongs together.
- *
- * The ungrouped bucket is not a region: nothing contains it. A dependency carries no grouping at
- * all, because a placement is read from the organization rather than guessed from an edge.
+ * Membership comes from `collapse.js`; the ungrouped bucket is not a region.
  */
 export function regionMembers(nodes, by) {
     const out = new Map();
@@ -33,9 +25,6 @@ export function regionMembers(nodes, by) {
 
 /**
  * How many nodes each group holds, whether or not the layout has placed them.
- *
- * The denominator behind a region's count. `regionMembers` reports what reached the screen, and a
- * boundary drawn around that set with no denominator implies the container is only that.
  */
 export function groupSizes(nodes, by) {
     const out = new Map();
@@ -53,10 +42,7 @@ export function groupSizes(nodes, by) {
 /**
  * How far a boundary sits outside its members.
  *
- * A share of their own extent rather than a fixed number of screen pixels. A fixed gap is a
- * different thing at every zoom: the nodes shrink as the reader zooms out and the gap does not, so
- * the boundary ends up almost entirely margin with the cluster a speck inside it. The floor keeps a
- * group of one drawable and the ceiling stops a large account becoming a bubble.
+ * Scales with member extent; the floor keeps singletons drawable and the ceiling caps large groups.
  */
 export function regionPadding(points, floor, ceiling) {
     let lo = Infinity, hi = -Infinity, top = Infinity, bottom = -Infinity;
@@ -69,14 +55,12 @@ export function regionPadding(points, floor, ceiling) {
     return Math.min(ceiling, Math.max(floor, extent * PADDING_RATIO));
 }
 
-// Measured against what looks like a boundary rather than a halo: about a tenth of the cluster.
 const PADDING_RATIO = 0.085;
 
 /**
  * The convex hull of a set of placed nodes, by Andrew's monotone chain.
  *
- * Returned counter-clockwise. Fewer than three points has no hull worth the name and is returned
- * as given, because a group of one is the common case and still has to be drawable.
+ * Returned counter-clockwise. Fewer than three points is returned as given.
  */
 export function hullOf(points) {
     const pts = points
@@ -101,8 +85,7 @@ export function hullOf(points) {
 /**
  * A rectangle the layout engine reserved for a group, as a hull the rest of this module can use.
  *
- * Counter-clockwise to match `hullOf`, and already padded: the engine placed its members inside
- * this box, so inflating it again would push the boundary into whatever the engine put next to it.
+ * Counter-clockwise to match `hullOf`; already padded by the layout engine.
  */
 export function boxHull(box) {
     if (!box) return [];
@@ -270,4 +253,3 @@ function splitAtWidestGap(members) {
     }
     return [sorted.slice(0, at), sorted.slice(at)];
 }
-

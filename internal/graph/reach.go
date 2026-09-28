@@ -32,12 +32,7 @@ type NodeReach struct {
 }
 
 // ReachOfNode reports which repositories under review reach a node, and by what route.
-//
-// This is the question a package-version match cannot answer. Depending on an action says the
-// name appears somewhere; reaching a step says something the organization actually runs arrives
-// at it, and through whom — which decides whether the fix is theirs to make or someone else's.
-//
-// Nothing here judges whether arriving is dangerous. Reach is a route, not a verdict.
+// Reach is a route, not a verdict.
 func (b *Builder) ReachOfNode(nodeKey string, maxDepth int) ([]NodeReach, error) {
 	m, err := b.load()
 	if err != nil {

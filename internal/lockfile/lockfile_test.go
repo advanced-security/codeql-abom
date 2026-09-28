@@ -68,9 +68,7 @@ func TestARepositoryWithNoLockfileIsNotOnboardedRatherThanAnError(t *testing.T) 
 	}
 }
 
-// The corpus fixture declares `version: future-version`. A schema this consumer cannot read must
-// be a named failure and must never degrade into "no lockfile", which would silently hand the
-// dependency back to live-tag resolution.
+// A schema this consumer cannot read must be a named failure, not "no lockfile".
 func TestAnUnsupportedSchemaIsNamedRatherThanTreatedAsAbsent(t *testing.T) {
 	got, err := Read(writeLock(t, futureLock))
 	if err != nil {
@@ -118,63 +116,11 @@ func TestAnOnboardedWorkflowWithNoDependenciesIsEmptyNotAbsent(t *testing.T) {
 	}
 }
 
-// The selection is the digest, never the `ref` field. An entry keyed by commit and narrowed to a
-// tag disagrees with itself by design -- `actions/cache@55cc8345...` records `ref: 'v6.1.0'` --
-// and upstream's own `ActionsLock.pins` rejects that shape by requiring the two to agree.
-func TestSelectionReadsTheDigestEvenWhenTheRefFieldDisagrees(t *testing.T) {
-	lock, err := Read(writeLock(t, coveredLock))
-	if err != nil {
-		t.Fatalf("reading a supported lockfile: %v", err)
-	}
-	cases := []struct {
-		uses string
-		want string
-	}{
-		{"actions/checkout@v7.0.1", "3d3c42e5aac5ba805825da76410c181273ba90b1"},
-		{"actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"},
-		// A repository pin covers its sub-actions; the runner downloads owner/repo@ref once.
-		{"actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"},
-	}
-	for _, c := range cases {
-		got, ok := lock.Selected(".github/workflows/build.yml", c.uses)
-		if !ok {
-			t.Errorf("%s: no selection, want %s", c.uses, c.want)
-			continue
-		}
-		if got != c.want {
-			t.Errorf("%s: selected %s, want %s", c.uses, got, c.want)
-		}
-	}
-}
-
-// References the lockfile format does not describe must not be reported as uncovered, or every
-// local and container reference in the corpus becomes a false gap.
-func TestReferencesTheFormatDoesNotDescribeAreNotSelections(t *testing.T) {
-	lock, err := Read(writeLock(t, coveredLock))
-	if err != nil {
-		t.Fatalf("reading a supported lockfile: %v", err)
-	}
-	for _, uses := range []string{
-		"./.github/actions/local",
-		"$/.github/actions/selfref",
-		"docker://alpine:3.20",
-		"${{ matrix.action }}",
-	} {
-		if _, ok := lock.Selected(".github/workflows/build.yml", uses); ok {
-			t.Errorf("%s: reported a selection; the lockfile grammar does not cover it", uses)
-		}
-	}
-}
-
-// An unsupported lockfile selects nothing at all. This is the invariant that keeps a broken lock
-// from silently becoming today's tag somewhere downstream.
-func TestAnUnsupportedLockfileSelectsNothing(t *testing.T) {
+// An unsupported lockfile covers nothing, so a broken lock never passes as today's tag.
+func TestAnUnsupportedLockfileCoversNothing(t *testing.T) {
 	lock, err := Read(writeLock(t, futureLock))
 	if err != nil {
 		t.Fatalf("reading a future-version lockfile: %v", err)
-	}
-	if _, ok := lock.Selected(".github/workflows/rust-ci.yml", "missing/action@v1"); ok {
-		t.Error("an unsupported lockfile reported a selection")
 	}
 	if c := lock.Workflow(".github/workflows/rust-ci.yml"); c != Unsupported {
 		t.Errorf("workflow coverage = %q, want %q", c, Unsupported)

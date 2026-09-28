@@ -183,12 +183,7 @@ func TestAGroupingNobodyIsInReportsNothing(t *testing.T) {
 	}
 }
 
-// An empty answer is an empty list, never nil.
-//
-// A nil slice marshals to JSON `null`, which the interface's `.Select()` throws on rather than
-// rendering as nothing. Latent until a filter existed — these reports always had rows on a
-// populated corpus — and reachable the moment an answer can be bounded to a part of the estate
-// that happens to be clean. Measured: `business_id:dev` returned `null` from `/api/exposure`.
+// Empty answers must be non-nil slices because JSON `null` breaks callers expecting lists.
 func TestAnEmptyBoundedReportIsAnEmptyListNotNil(t *testing.T) {
 	s := groupingScopeFixture(t)
 

@@ -17,9 +17,7 @@ func meta() Metadata {
 	}
 }
 
-// Owning a path GitHub analyzes replaces GitHub's reading of it, and on 2026-09-08 a partial
-// snapshot deleted two correct dependencies from a live repository. Submitting under a path
-// GitHub does not analyze was measured to be purely additive, so the manifest path is the whole
+// Owning a path GitHub analyzes replaces GitHub's reading of it, so the manifest path is the
 // safety property and nothing may point it at a workflow.
 func TestTheManifestNeverClaimsAPathGitHubAnalyzes(t *testing.T) {
 	closure := []store.ClosureEntry{
@@ -78,9 +76,7 @@ func TestAReferenceWithNoPackageIsDropped(t *testing.T) {
 }
 
 // Nothing to add must produce a snapshot with no manifests rather than no submission at all.
-// Measured 2026-09-08: an empty manifests object releases a previously submitted path back to
-// GitHub's static analysis, and it is the only mechanism that does \u2014 an empty resolved set inside
-// a manifest removes the packages but keeps the path owned, leaving it permanently blank.
+// An empty manifests object releases a previously submitted path back to GitHub's static analysis.
 func TestAnEmptyClosureReleasesThePathInsteadOfHoldingItBlank(t *testing.T) {
 	snap := Build(meta(), nil)
 

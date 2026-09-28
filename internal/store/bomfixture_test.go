@@ -113,7 +113,7 @@ func bomFixture(t *testing.T) *Store {
 			SecuritySeverity: score(5.5), Message: "unpinned", Fingerprint: "f1",
 			ResultHash: "sha256:result"},
 
-		// No run at all: 2,759 findings on the real corpus are in exactly this state.
+		// No run at all: analyzed but untraceable.
 		{RuleID: "actions/unpinned-tag", RepositoryID: checkout,
 			FilePath: ".github/workflows/test.yml", StartLine: 1, Severity: "warning",
 			Fingerprint: "f2"},

@@ -720,10 +720,7 @@ public sealed class AbomApi(HttpClient http)
         CancellationToken ct = default) =>
         await GetListAsync<DeclaredAccount>("api/owned-scope", ct);
 
-    /// <summary>
-    /// Replaces the declaration wholesale, matching the store: a diff nobody assembled is a diff
-    /// nobody can check, so the caller sends the scope it wants to end up with.
-    /// </summary>
+    /// <summary>Replaces the declaration wholesale with the intended final scope.</summary>
     public async Task<IReadOnlyList<DeclaredAccount>> SetOwnedScopeAsync(
         IReadOnlyList<DeclaredAccount> accounts, CancellationToken ct = default)
     {
@@ -738,14 +735,7 @@ public sealed class AbomApi(HttpClient http)
                ?? [];
     }
 
-    /// <summary>
-    /// Turns the declared scope into repositories.
-    ///
-    /// Declaring records which accounts are the operator's; only this acts on it. The two were
-    /// separate for a week and a corpus was found where every account the operator owned was
-    /// declared and one of their repositories was present, because nothing had ever asked GitHub
-    /// what those accounts held.
-    /// </summary>
+    /// <summary>Turns the declared account scope into repositories.</summary>
     public async Task<EnumerationReport?> EnumerateOwnedScopeAsync(CancellationToken ct = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "api/owned-scope/enumerate");
@@ -755,10 +745,7 @@ public sealed class AbomApi(HttpClient http)
         return await response.Content.ReadFromJsonAsync<EnumerationReport>(Json, ct);
     }
 
-    /// <summary>
-    /// Asks what a candidate declaration would admit and drop. Carries no control header because
-    /// it writes nothing, and guarding a read would tell the next reader that it does.
-    /// </summary>
+    /// <summary>Asks what a candidate declaration would admit and drop, without writing.</summary>
     public async Task<ScopePreview?> PreviewOwnedScopeAsync(
         IReadOnlyList<DeclaredAccount> accounts, CancellationToken ct = default)
     {
@@ -767,11 +754,7 @@ public sealed class AbomApi(HttpClient http)
         return await response.Content.ReadFromJsonAsync<ScopePreview>(Json, ct);
     }
 
-    /// <summary>
-    /// Reads how one property divides the repositories under review, defaulting to the configured
-    /// key. An answer with no values means the organization sets that key nowhere, which is a state
-    /// rather than a failure.
-    /// </summary>
+    /// <summary>Reads how one property key divides repositories under review.</summary>
     public async Task<PropertiesView?> GetPropertiesAsync(
         string? property = null, CancellationToken ct = default)
         => await GetAsync<PropertiesView>(
@@ -780,13 +763,7 @@ public sealed class AbomApi(HttpClient http)
                 : "api/properties?property=" + Uri.EscapeDataString(property),
             ct);
 
-    /// <summary>
-    /// The address a download link points at. Built here rather than in markup so the page and
-    /// the API cannot drift apart about what the parameters are called.
-    ///
-    /// The scope belongs here for a sharper reason: a download that ignored the filter on screen
-    /// would hand somebody a document about the whole organization under the name of one part.
-    /// </summary>
+    /// <summary>Builds a BOM download URL that preserves the visible scope.</summary>
     public static string BomDownloadUrl(string format, IEnumerable<string>? roots = null,
         IEnumerable<string>? properties = null, string? mode = null)
     {
@@ -797,8 +774,7 @@ public sealed class AbomApi(HttpClient http)
         return "api/bom?" + string.Join("&", parts);
     }
 
-    // The reference goes in the query string rather than the path: it may be empty, and an empty
-    // path segment cannot say "default branch" apart from a malformed route.
+    // Reference may be empty, so it belongs in the query string.
     public async Task<NodeUsers?> GetNodeUsersAsync(
         string key, string reference, CancellationToken ct = default) =>
         await GetAsync<NodeUsers>(
@@ -815,8 +791,6 @@ public sealed class AbomApi(HttpClient http)
         try
         {
             var result = await http.GetFromJsonAsync<T>(url, Json, ct);
-            // Cleared on success, or a single transient failure would be reported for the rest
-            // of the session.
             LastError = null;
             Record(url, started, ok: true);
             return result;
@@ -824,7 +798,7 @@ public sealed class AbomApi(HttpClient http)
         catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
         {
             LastError = $"{url}: {ex.Message}";
-            // A failed fetch is still a wait, and usually the one a reader is complaining about.
+            // Failed fetches still count as waits.
             Record(url, started, ok: false);
             return default;
         }
@@ -834,7 +808,7 @@ public sealed class AbomApi(HttpClient http)
     {
         var elapsed = Stopwatch.GetElapsedTime(started);
         _recent.Add(new FetchTiming(url, (long)elapsed.TotalMilliseconds, ok));
-        // Bounded, or a page that polls forever becomes the leak this was added to find.
+        // Bound polling history.
         if (_recent.Count > RecentFetchLimit)
         {
             _recent.RemoveRange(0, _recent.Count - RecentFetchLimit);
@@ -847,18 +821,12 @@ public sealed class AbomApi(HttpClient http)
     /// <summary>The most recent transport failure, surfaced rather than swallowed.</summary>
     public string? LastError { get; private set; }
 
-    /// <summary>How many fetches are kept. Bounded for the same reason the server's ring is.</summary>
+    /// <summary>How many recent fetches are kept.</summary>
     public const int RecentFetchLimit = 64;
 
     private readonly List<FetchTiming> _recent = [];
 
-    /// <summary>
-    /// What the interface waited for, oldest first.
-    ///
-    /// `/api/metrics` measures from the first byte of a request to the last byte written, and
-    /// knows nothing about transfer, deserialization or the render that follows. Without this,
-    /// "the Explorer is slow" names two suspects at once and neither can be ruled out.
-    /// </summary>
+    /// <summary>Browser-observed API waits, oldest first.</summary>
     public IReadOnlyList<FetchTiming> RecentFetches => _recent;
 }
 

@@ -771,8 +771,7 @@ func TestOneMemberFailingDoesNotStopTheRest(t *testing.T) {
 	}
 }
 
-// A run reports complete once nothing is left to attempt, whatever became of its members: a run
-// that only completed on total success could never finish over a real corpus.
+// A run reports complete once nothing is left to attempt, whatever became of its members.
 func TestARunCompletesEvenWhenSomeMembersFailed(t *testing.T) {
 	s, e, id, analyzer := executorFixture(t)
 	analyzer.failOn = "octo-app"

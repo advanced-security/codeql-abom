@@ -1,9 +1,4 @@
-// Package layout turns a DOT document into coordinates.
-//
-// Graphviz does the placing. This owns which engines may run, that the same document places the
-// same way twice, and that a request which cannot be finished is abandoned rather than waited on.
-//
-// The interface keeps its own renderer: what arrives here is where things go, not a picture.
+// Package layout turns DOT into stable Graphviz coordinates.
 package layout
 
 import (
@@ -21,12 +16,8 @@ import (
 // Engine is a Graphviz layout program.
 type Engine string
 
-// The engines this may run. An engine name selects a program to execute, so the set is closed:
-// anything outside it is refused before a process is started rather than passed through.
+// The engines this may run. The closed set keeps caller text from becoming an executable name.
 const (
-	// Dot ranks a directed graph, which reads a closure as distance from what you own. That
-	// ranking is also what makes it wrong for a screen: a broad rank of siblings spreads sideways
-	// without bound, so it suits a printed hierarchy rather than a canvas.
 	Dot   Engine = "dot"
 	Neato Engine = "neato"
 	Fdp   Engine = "fdp"
@@ -36,16 +27,14 @@ const (
 	Osage Engine = "osage"
 )
 
-// Engines lists what may be asked for, so a caller can offer the set rather than guess at it.
+// Engines lists what may be asked for.
 func Engines() []Engine {
 	return []Engine{Dot, Neato, Fdp, Sfdp, Twopi, Circo, Osage}
 }
 
 // programFor names the program an engine runs, or reports that nothing goes by that name.
 //
-// What it returns is this package's own constant rather than the caller's string, even where the
-// two compare equal: the value that reaches exec is then one of the names above by construction,
-// not one that was checked against them.
+// Returning this package's constant ensures exec receives a value from Engines, not caller text.
 func programFor(e Engine) (string, bool) {
 	for _, known := range Engines() {
 		if e == known {
@@ -57,54 +46,29 @@ func programFor(e Engine) (string, bool) {
 
 // Default is the engine used when a caller names none.
 //
-// Measured against Graphviz 16.1.0 on a corpus shape -- repositories fanning into a shared pool
-// of actions -- and the compact answer is the wrong one. Asked to place it, neato returned a
-// canvas near a screen's proportions and dot returned a ribbon nine times wider than it was
-// tall, which is why dot looks like the worse choice on the numbers alone. It is not: neato
-// bought those proportions by stacking 75 pairs of nodes on top of each other, and with overlap
-// removal turned on to fix that, all 21 pairs of its group boxes crossed instead. dot overlapped
-// no nodes and crossed no boundaries.
-//
-// A wide canvas is a cost the interface can pay, because positions are scaled to fit and the
-// canvas pans and zooms. Nodes stacked on nodes, and a group box drawn across another group box,
-// are not readable at any zoom. So the default is the engine that keeps things apart, and a
-// caller who wants a squarer picture asks for one by name.
+// A wide canvas is preferable to overlapped nodes or crossing group boxes: positions can be
+// scaled and panned, but ambiguous containment is unreadable at any zoom.
 var Default = Dot
 
 // clustering is the set that lays a cluster out as a box rather than ignoring the subgraph.
 //
-// Measured against Graphviz 16.1.0 rather than read from documentation: asked for two clusters,
-// dot, neato, fdp and osage each returned two boxes and sfdp, twopi and circo returned none. An
-// engine that cannot do it is not a failure, but a reader who grouped and saw no boundaries with
-// nothing said would take it for a corpus where nothing shared a group.
+// An engine that cannot draw clusters is not a failure, but it must be reported so grouped data
+// does not look ungrouped.
 var clustering = map[Engine]bool{Dot: true, Neato: true, Fdp: true, Osage: true}
 
 // SupportsClusters reports whether an engine draws a boundary around a grouped subgraph.
 func SupportsClusters(e Engine) bool { return clustering[e] }
 
-// errUnavailable marks an engine that is not installed, which is a different answer from one that
-// ran and failed: the first is a machine without Graphviz and the interface degrades, the second
-// is a document Graphviz would not accept and somebody has to look at it.
+// errUnavailable distinguishes a missing optional engine from a Graphviz failure.
 var errUnavailable = errors.New("layout engine is not installed")
 
 // ErrUnavailable reports whether the engine was missing rather than unhappy.
 func ErrUnavailable(err error) bool { return errors.Is(err, errUnavailable) }
 
-// Available reports whether an engine can be run at all.
-func Available(e Engine) bool {
-	program, known := programFor(e)
-	if !known {
-		return false
-	}
-	_, err := exec.LookPath(program)
-	return err == nil
-}
-
 // Options selects the engine and bounds what it may cost.
 type Options struct {
 	Engine Engine
-	// Timeout bounds one layout. Zero is DefaultTimeout. A pathological graph otherwise holds a
-	// connection until somebody restarts the server.
+	// Timeout bounds one layout. Zero is DefaultTimeout.
 	Timeout time.Duration
 	// MaxOutput caps what will be read back. Zero is DefaultMaxOutput.
 	MaxOutput int
@@ -112,9 +76,7 @@ type Options struct {
 	binary string
 }
 
-// Defaults chosen against the seeded corpus: a layout that has not finished in ten seconds is not
-// one anybody is still waiting for, and a document larger than the cap is past what a browser
-// would draw regardless.
+// Defaults bound optional layout work before it outlives the request or browser budget.
 const (
 	DefaultTimeout   = 10 * time.Second
 	DefaultMaxOutput = 64 << 20
@@ -127,8 +89,7 @@ type Position struct {
 	Y   float64 `json:"y"`
 }
 
-// Cluster is the box an engine drew around a group. It is the boundary itself rather than a hull
-// computed from member positions afterwards, which is the whole reason for laying out here.
+// Cluster is the boundary an engine drew around a group.
 type Cluster struct {
 	Name string  `json:"name"`
 	X1   float64 `json:"x1"`
@@ -172,12 +133,8 @@ func Compute(ctx context.Context, document []byte, opts Options) (Result, error)
 		max = DefaultMaxOutput
 	}
 
-	// Fixed argv, and the document arrives on stdin rather than as a path: there is then no
-	// filename to quote, no temporary file to clean up and nothing for anything else on the
-	// machine to swap between writing it and reading it.
-	//
-	// `-Gstart=1` seeds the force engines. Without it neato, fdp and sfdp seed themselves and
-	// the same document draws a different picture every run, which is what this exists to stop.
+	// Fixed argv and stdin avoid filename quoting and races. `-Gstart=1` makes force engines
+	// deterministic.
 	cmd := exec.CommandContext(ctx, program, "-Tjson", "-Gstart=1")
 	cmd.Stdin = bytes.NewReader(document)
 	var out, stderr bytes.Buffer
@@ -202,8 +159,7 @@ func Compute(ctx context.Context, document []byte, opts Options) (Result, error)
 	return result, nil
 }
 
-// gvOutput is the part of Graphviz's JSON this reads. Nodes carry a position, clusters carry a
-// bounding box, and everything else in the document is somebody else's business.
+// gvOutput is the part of Graphviz's JSON this reads.
 type gvOutput struct {
 	BB      string `json:"bb"`
 	Objects []struct {

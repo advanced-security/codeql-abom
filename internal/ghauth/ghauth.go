@@ -155,9 +155,7 @@ func Verify(ctx context.Context, run Runner) (Identity, error) {
 
 // memberships decodes the membership pages, keeping only those actually joined.
 //
-// gh 2.97 merges --paginate results into one array, but older versions emit one array per page
-// back to back. Reading successive values off the stream accepts either, so the org list cannot
-// silently lose everything past the first page on a version that concatenates.
+// gh versions differ on whether --paginate emits one array or adjacent arrays.
 func memberships(out []byte) ([]Account, error) {
 	dec := json.NewDecoder(bytes.NewReader(out))
 	var accounts []Account

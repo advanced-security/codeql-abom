@@ -2,10 +2,8 @@ package store
 
 import "testing"
 
-// Two fetches of the same graph from the same idle server returned 4,053 and 4,051 nodes, with 12
-// keys differing — every one a per-reference node. `analyzedRef` was a single-valued map filled by
-// ranging over `states`, which is a map, so a dependency analyzed at nine references kept whichever
-// one Go's randomized iteration visited last, and only that one got a node.
+// Splitting by reference must not depend on Go's randomized map iteration. A dependency analyzed
+// at several references gets a node for each of them.
 func TestSplittingByReferenceIsDeterministic(t *testing.T) {
 	s := newTestStore(t)
 	for _, ref := range []string{"v1", "v2", "v3", "v4", "v5", "v6"} {
@@ -88,7 +86,6 @@ func TestAnEdgeLeavesTheVersionWhoseResultsAreInTheGraph(t *testing.T) {
 }
 
 // Every edge must still leave a node that exists, which is the reason the bare node is not kept.
-// 700 dangling sources were the original symptom.
 func TestNoEdgeLeavesANodeThatWasSplitAway(t *testing.T) {
 	s := newTestStore(t)
 	enqueueAnalyzed(t, s, "acme/widget", "v1", "2026-09-01T00:00:00Z")

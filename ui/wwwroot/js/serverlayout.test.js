@@ -128,10 +128,7 @@ test('an engine that cannot box a group carries the reason through', () => {
     assert.match(summary.text, /no cluster boundary/);
 });
 
-// Measured on the crawled organization: the layout endpoint answers from server terms only, so it
-// placed 411 nodes while the browser's `findings` flag left 205 on screen. Fitting to the engine's
-// own canvas frames the view for nodes it is not drawing, and the drawn ones end up in a corner of
-// it.
+// Fit to the browser's drawn node set, not the engine's wider server-term result.
 test('the fit is taken from the nodes that will actually be drawn', () => {
     const drawn = new Set(['bottom-left']);
     const placed = fitPositions(layout(), { drawn });
@@ -220,9 +217,7 @@ test('a cluster box is fitted like the positions it encloses', () => {
     assert.equal(box.y2, fitted.y2);
 });
 
-// Measured against the crawled organization: `scope=owned` is 3,703 nodes and `dot` gives up on
-// it after the server's ten seconds. That is the common case rather than an edge one, so the
-// sentence a reader gets has to be about their graph -- not the transport's JSON.
+// Timeout refusals should name graph size, not transport JSON.
 test('a layout that ran out of time says so in words a reader can act on', () => {
     const text = refusalText(
         '{"error":"dot layout abandoned: context deadline exceeded"}', 400, 3703);

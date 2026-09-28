@@ -2,10 +2,8 @@ package store
 
 import "testing"
 
-// A unit only exists once its columns are its own. The dependencies unit rendered five kinds
-// through one column set, so 1,138 of 1,585 rows on the crawled organization read zero for reach,
-// total refs and distinct refs at once — 1,107 of them workflows, which nothing depends on because
-// a workflow is a consumer. These pin the two units that carry the kinds out of it.
+// A unit only exists once its columns are its own. The dependencies and workflows units carry
+// different meanings for reach, total refs, and distinct refs.
 
 func TestWorkflowsPageListsOnlyWorkflowKinds(t *testing.T) {
 	s := advisoryStore(t)

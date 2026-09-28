@@ -47,8 +47,7 @@ type FrontierItem struct {
 	// showing it would make a suite enabled this morning look retroactively applied.
 	Suites []string `json:"suites"`
 	// SuitesKnown separates "analyzed, and here is with what" from "analyzed before we recorded
-	// what with". 1,555 of 1,707 runs on the real corpus predate pack identity, so the second is
-	// the common case, and rendering it as no suites would assert that nothing looked.
+	// what with"; rendering unknown suites as none would assert that nothing looked.
 	SuitesKnown bool `json:"suitesKnown"`
 	// CLIVersion is the CodeQL that produced the row. Extraction and evaluation both change
 	// between releases, so it is part of what a result means.
@@ -57,12 +56,9 @@ type FrontierItem struct {
 	// own discovered_from holds only the first repository to reach it, which is provenance for
 	// the crawl rather than an answer to "who runs this".
 	UsedBy []string `json:"usedBy"`
-	// UsedByCount is how many there are in total, which is the number worth acting on:
-	// actions/checkout@v4 is named by 220 repositories and the sample shows five.
+	// UsedByCount is how many there are in total; UsedBy is only a bounded sample.
 	UsedByCount int `json:"usedByCount"`
-	// UsedByOwned is how many of those the operator is verified against, and so can change
-	// themselves. Reporting only the total reads as exposure they own, when on the real corpus
-	// 220 repositories name actions/checkout@v4 and far fewer are theirs.
+	// UsedByOwned is how many of those the operator is verified against, and so can change.
 	UsedByOwned int `json:"usedByOwned"`
 	// LockedBy names repositories whose current lock selects exactly this row's commit, bounded
 	// like UsedBy, and LockedByCount is how many there are. A row at a commit no source names is
@@ -81,10 +77,8 @@ const usedBySample = 5
 // Matched on the edge's ref rather than the node, because one action at two references is two
 // different things to everyone downstream and sharing users between them would undo that.
 //
-// Measured 2026-09-11 on the seeded corpus: as three correlated subqueries this was 1.65 s over
-// 3,662 rows against 0.01 s for the plain columns, and `LIMIT 500` did not help because the
-// ORDER BY evaluates the select list for every row before the limit applies. As one rollup it is
-// 0.06 s and agrees on all 3,662 rows.
+// One rollup avoids re-reading the edge table for every queued row; ORDER BY evaluates the select
+// list before LIMIT can discard rows.
 //
 // DENSE_RANK rather than ROW_NUMBER: the sample is the alphabetically first `usedBySample`
 // *distinct* names, and two edges from one repository would otherwise spend two of the five

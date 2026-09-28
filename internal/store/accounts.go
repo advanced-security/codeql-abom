@@ -20,10 +20,8 @@ type Account struct {
 
 // The roles that carry enough access to answer for an account.
 //
-// Deliberately coarse: a member can read an organization and change nothing in it, so offering
-// every membership as declarable is what let a corpus assert the operator owns `facebook`. Finer
-// roles and a scoped token are the intended refinement, not this.
-// See `plans/db/declaration-provenance.md`.
+// Deliberately coarse: read-only membership is not enough to make an operator responsible for an
+// account. Finer roles belong with scoped-token support.
 const (
 	RoleOwner = "owner"
 	RoleAdmin = "admin"
@@ -44,8 +42,7 @@ func (a Account) MarshalJSON() ([]byte, error) {
 
 // Verification is a completed identity check and the accounts it established.
 //
-// Login, Host and VerifiedAt are the provenance: without them an account is indistinguishable
-// from something typed in, which is exactly what this replaced.
+// Login, Host and VerifiedAt distinguish verified accounts from manually declared ones.
 type Verification struct {
 	Login      string    `json:"login"`
 	Host       string    `json:"host"`
@@ -76,9 +73,7 @@ func (v Verification) CanReadMemberships() bool {
 
 // ReplaceAccounts records a verification wholesale, discarding whatever preceded it.
 //
-// Replacement rather than merge, because losing access to an organization has to be able to
-// remove it: accounts that accumulated would keep reporting findings as the operator's to fix
-// long after they could do anything about them.
+// Replacement rather than merge: losing access to an organization has to remove it.
 func (s *Store) ReplaceAccounts(v Verification) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -170,8 +165,7 @@ func (s *Store) OwnedSet() (map[string]bool, error) {
 	return set, nil
 }
 
-// Verified reports whether an identity has been established at all. With none, every figure is
-// undivided and the interface must read exactly as it did before the feature existed.
+// Verified reports whether an identity has been established at all.
 func (s *Store) Verified() (bool, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM abom_account`).Scan(&n)
@@ -189,9 +183,7 @@ type OwnerCandidate struct {
 	Owned        bool `json:"owned"`
 }
 
-// OwnerCandidates lists the accounts the corpus contains, marking those verified as the
-// operator's. The actions account appears here because it holds a seed repository, which is
-// precisely why holding one cannot be what makes an account yours.
+// OwnerCandidates lists seeded repository owners, marking those verified as the operator's.
 func (s *Store) OwnerCandidates() ([]OwnerCandidate, error) {
 	// Read before opening the cursor below: one connection serves this store, so a query issued
 	// while another's rows are still open waits for a connection that only closing them frees.

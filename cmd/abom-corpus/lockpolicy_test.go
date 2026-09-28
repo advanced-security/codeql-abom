@@ -11,9 +11,7 @@ import (
 // reports it: explicit, simulated before it binds, and refusing by rule ID, which is the only
 // source of a verdict. ABOM's own reading of the lock is evidence beside it and never a term.
 //
-// Measured on the shared corpus's real CodeQL recordings: `abom/actions/uncovered-action-ref`
-// fires exactly where ABOM's reading leaves a reference without a usable lock — a workflow the
-// lock does not list, or a lock the native parser refuses — and nowhere the lock covers.
+// The lock rule should fire exactly where ABOM's reading leaves a reference without a usable lock.
 func TestALockRequirementIsAPolicyOverTheLockRuleAndAgreesWithTheReading(t *testing.T) {
 	s := builtCorpus(t)
 	if err := s.SavePolicy(store.Policy{Name: "require-locks",

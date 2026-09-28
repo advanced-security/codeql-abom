@@ -7,12 +7,7 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
-// The corpus this exists for: 204 repositories analyzed, 0 owned, 56,830 nodes, and the one
-// declared thing anywhere sat unanalyzed at depth 2 behind somebody else's supply chain. Nothing
-// stopped any of it, because Enqueue drops a candidate only on depth and "names no repository".
-//
-// The sweep is where it showed worst: it re-applied the discovery rule to every repository in the
-// table, including the 895 upstream ones nothing owned reaches.
+// The sweep must not re-apply discovery to repositories outside the declared closure.
 func TestTheSweepDoesNotReachOutsideTheClosure(t *testing.T) {
 	h := newHarness(t)
 	h.enqueue(item("gradle", "actions", "setup-gradle", 1))
@@ -60,8 +55,7 @@ func TestWithNothingDeclaredNothingIsDiscovered(t *testing.T) {
 }
 
 // Seeding is the same question asked before anything has been analyzed: the roots are what is
-// declared, not what happens to carry `origin='seed'`. The two were assumed to be the same set
-// and are not — 0 of the reference corpus's 204 seed repositories belong to a declared account.
+// declared, not what happens to carry `origin='seed'`.
 func TestSeedingStartsFromWhatIsDeclaredNotFromOrigin(t *testing.T) {
 	h := newHarness(t)
 	h.enqueue(item("gradle", "actions", "setup-gradle", 1))

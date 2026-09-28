@@ -6,9 +6,8 @@ import (
 
 // A finding row is unique on a key that spans commits, so it can name exactly one run while
 // having been reported by several. That is why "is this still reported" is not answerable from
-// `abom_finding`: it is a missing relation, not a missing WHERE clause. Priced on the reference
-// corpus, the rule that used the single run condemned 2,420 findings other references still
-// report. See plans/db/finding-lifecycle.md.
+// `abom_finding`: it is a missing relation, not a missing WHERE clause. See
+// plans/db/finding-lifecycle.md.
 func TestASightingRecordsWhichRunReportedAFinding(t *testing.T) {
 	s := newTestStore(t)
 	repoID, runID := sightingFixture(t, s, "octo-org/app", "cafe1234")
@@ -60,7 +59,7 @@ func TestTheSameFindingSeenByASecondRunGainsASecondSighting(t *testing.T) {
 }
 
 // A finding ingested with no run cannot be attributed, and inventing a sighting for it would put
-// a claim in the relation the sweep then trusts. 2,759 corpus findings are in exactly this state.
+// a claim in the relation the sweep then trusts.
 func TestAFindingWithNoRunRecordsNoSighting(t *testing.T) {
 	s := newTestStore(t)
 	repoID, _ := sightingFixture(t, s, "octo-org/app", "cafe1234")
@@ -77,9 +76,9 @@ func TestAFindingWithNoRunRecordsNoSighting(t *testing.T) {
 	}
 }
 
-// The guard that matters most. No sighting exists for any of the 11,370 findings already stored,
-// so a sweep that read "no sighting" as "not reported" would condemn the entire table on its
-// first run. Absence in a run that could not have reported it is not absence.
+// The guard that matters most. A sweep that read "no sighting" as "not reported" would condemn
+// findings recorded before sightings existed. Absence in a run that could not have reported it is
+// not absence.
 func TestACorpusWithNoSightingsReportsNothingStale(t *testing.T) {
 	s := newTestStore(t)
 	repoID, runID := sightingFixture(t, s, "octo-org/app", "cafe1234")
@@ -106,8 +105,7 @@ func TestACorpusWithNoSightingsReportsNothingStale(t *testing.T) {
 	}
 }
 
-// The failure this plan was rewritten around: a finding carried only by an older reference is
-// still reported, and the first design condemned 2,420 of them.
+// A finding carried only by an older reference is still reported.
 func TestAFindingSightedOnlyByAnOlderReferenceIsNotStale(t *testing.T) {
 	s := newTestStore(t)
 	repoID, old := sightingFixture(t, s, "octo-org/app", "cafe1234")

@@ -11,9 +11,8 @@ import (
 
 // fillComponents turns the walked closure into the document's components and relationships.
 //
-// Everything is read in whole passes keyed by node, rather than per component, because a document
-// over the reference corpus has thousands of components and a query each would be thousands of
-// round trips against a store held to one connection.
+// Everything is read in whole passes keyed by node, rather than per component, to avoid per-row
+// queries on a single-connection store.
 func (s *Store) fillComponents(out *BOM, depth map[string]int, edges []bomEdge) error {
 	kinds, repositories, err := s.componentIdentity(depth)
 	if err != nil {
@@ -265,12 +264,10 @@ func (s *Store) componentIdentity(depth map[string]int) (map[string]string, map[
 // provenance its run recorded.
 //
 // Findings recorded against a step belong to the workflow once the step is folded away, or
-// collapsing would drop the evidence along with the node: 1,223 components carrying findings on
-// the reference corpus were steps.
+// collapsing would drop the evidence along with the node.
 //
-// A LEFT JOIN to the run, not an inner one: 2,759 findings on the reference corpus have no
-// query_run_id, and an inner join would silently drop every one of them. Analyzed-but-untraceable
-// is a state the document reports, not one it hides.
+// A LEFT JOIN to the run, not an inner one: analyzed-but-untraceable is a state the document
+// reports, not one it hides.
 func (s *Store) componentFindings(depth map[string]int) (map[string][]BOMFinding, error) {
 	rows, err := s.db.Query(`WITH ` + collapsedDisplay + `
 		SELECT shown.node_key, f.rule_id, COALESCE(fr.repository_full_name, ''),

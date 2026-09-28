@@ -20,32 +20,19 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/work"
 )
 
-// maxExpandRounds bounds how many times expand-all reclaims the frontier in one invocation. It
-// exists only as a safety net: a healthy run empties the frontier in far fewer rounds, and
-// without a cap a queue whose failures keep becoming reclaimable would never let the process
-// exit.
+// maxExpandRounds stops a run whose failures keep becoming reclaimable.
 const maxExpandRounds = 1000
 
-// staleClaimLease bounds how long a dependency may sit claimed before another run may take it.
-// A claim is released only by the process holding it, so a crash needs a time bound; an hour is
-// far longer than a clone, database build and query take.
+// staleClaimLease lets another run take work left claimed by a crashed process.
 const staleClaimLease = time.Hour
 
-// defaultCacheMaxMB bounds retained checkouts. Measured across twelve real action repositories
-// at a mean of 0.18 MiB per commit, tree and .git together, so this holds on the order of ten
-// thousand commits — several times the closure of the reference corpus — and the ceiling is what
-// the disk cost is bounded by rather than the crawl's appetite.
+// defaultCacheMaxMB bounds retained checkouts.
 const defaultCacheMaxMB = 2048
 
 // checkoutCache prepares the directory retained checkouts live in, or nil for no retention.
 //
-// Outside WorkDir by construction: a scratch directory is removed when the run that made it
-// ends, and a cache that does not outlive the round cannot answer the next one.
-//
-// Owner-only, and tightened even when the directory already exists. The temporary work directory
-// this replaces was private by construction; a persistent cache holds fetched source from private
-// repositories, so leaving it traversable would make a performance option a disclosure. Claimed
-// too: two processes sharing one cache would evict each other's trees mid-analysis.
+// It is owner-only and claimed, since it holds fetched private source and is not safe to share
+// between concurrent writers.
 func checkoutCache(dir string, maxMB int64) (*expand.CheckoutCache, error) {
 	if dir == "" {
 		return nil, nil
@@ -57,8 +44,7 @@ func checkoutCache(dir string, maxMB int64) (*expand.CheckoutCache, error) {
 	if err := os.MkdirAll(abs, 0o700); err != nil {
 		return nil, fmt.Errorf("creating %s: %w", abs, err)
 	}
-	// MkdirAll leaves an existing directory's mode alone, and a cache reused from an earlier
-	// version was created at 0755.
+	// MkdirAll leaves an existing directory's mode alone.
 	if err := os.Chmod(abs, 0o700); err != nil {
 		return nil, fmt.Errorf("restricting %s: %w", abs, err)
 	}
@@ -70,29 +56,11 @@ func checkoutCache(dir string, maxMB int64) (*expand.CheckoutCache, error) {
 }
 
 // defaultDatabaseCacheMaxMB bounds retained CodeQL databases at 25 GiB.
-//
-// Retaining them is the point rather than a cost to be minimized: a corpus that already exists is
-// what makes running one more query across the organization cheap. The ceiling is here so the
-// appetite is bounded by a number somebody chose, not by the disk filling up.
-//
-// Measured 2026-09-22 on the crawled organization, over the first 14 actions databases: a mean of
-// **18.7 MB** each, across a range of only 17.9 to 20.2 MB. The tightness is the finding — an
-// actions database holds a handful of YAML files, so almost all of that is CodeQL's fixed
-// per-database overhead and `actions/github-script` costs the same as `juice-shop`. Cost is
-// therefore per database and flat, not proportional to a repository.
-//
-// So this ceiling holds about **1,370 databases** against a corpus of 1,124 repositories, and a
-// database is per commit rather than per repository — `actions/setup-java` already occupies two.
-// That is roughly one corpus with little headroom, and it will begin evicting once references
-// move. Raise it before concluding that re-extraction is inherent.
 const defaultDatabaseCacheMaxMB = 25600
 
 // databaseCache prepares the directory retained databases live in, or nil for no retention.
 //
-// Owner-only for the same reason the checkout cache is: a database is built from fetched source,
-// including private source, so leaving it traversable would make a performance option a
-// disclosure. It takes no lock of its own — a process sharing this directory is already sharing
-// the store that indexes it, which is where the single-writer rule is enforced.
+// It is owner-only because databases are built from fetched private source.
 func databaseCache(dir string, maxMB int64) (*expand.DatabaseCache, error) {
 	if dir == "" {
 		return nil, nil
@@ -120,9 +88,120 @@ func roundDidWork(s expand.Stats) bool {
 	return s.Processed > 0 || s.Skipped > 0 || s.Failed > 0 || s.Unavailable > 0
 }
 
+type expandAllConfig struct {
+	dbPath             string
+	queryPath          string
+	queryID            string
+	codeqlPath         string
+	workDir            string
+	concurrency        int
+	limit              int
+	maxDepth           int
+	rateLimitPerHour   int
+	cacheDir           string
+	cacheMaxMB         int64
+	databaseCacheDir   string
+	databaseCacheMaxMB int64
+	keepArtifacts      bool
+	requeueStale       bool
+	requeueRepo        string
+}
+
 // runExpandAll follows dependencies out from the seed repositories until the frontier is empty,
 // then refreshes every aggregate the graph reports on.
 func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	cfg, err := parseExpandAllArgs(args, stderr)
+	if err != nil {
+		return err
+	}
+
+	dir, cleanup, err := workingDirectory(cfg.workDir, "abom-expand-*")
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	s, err := openExpandAllStore(cfg)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+
+	queue := &frontier.Queue{Store: s, MaxDepth: cfg.maxDepth}
+	if err := prepareExpandAllQueue(s, queue, stdout); err != nil {
+		return err
+	}
+
+	e, cache, cleanupRunner, err := newExpandAllExpander(s, queue, cfg, stdout)
+	if err != nil {
+		return err
+	}
+	defer cleanupRunner()
+	defer cache.Release()
+
+	if err := requeueSelection(ctx, e, cfg.requeueStale, cfg.requeueRepo, stdout); err != nil {
+		return fmt.Errorf("expand-all: %w", err)
+	}
+
+	total, err := runExpandRounds(ctx, e, expandAllOptions(cfg, dir), s, queue)
+	if err != nil {
+		return err
+	}
+	reportExpandAllSummary(stdout, total, cache)
+
+	if err := reportWorkLeftWaiting(stdout, queue); err != nil {
+		return fmt.Errorf("expand-all: %w", err)
+	}
+	return finishExpandAll(s, queue)
+}
+
+func openExpandAllStore(cfg expandAllConfig) (*store.Store, error) {
+	s, err := store.Open(cfg.dbPath, store.Options{BulkLoad: true})
+	if err != nil {
+		return nil, fmt.Errorf("opening %s: %w", cfg.dbPath, err)
+	}
+	if err := s.Migrate(); err != nil {
+		_ = s.Close()
+		return nil, fmt.Errorf("migrating %s: %w", cfg.dbPath, err)
+	}
+	return s, nil
+}
+
+func expandAllOptions(cfg expandAllConfig, dir string) expand.Options {
+	return expand.Options{
+		QueryPath:     cfg.queryPath,
+		QueryID:       cfg.queryID,
+		WorkDir:       dir,
+		Concurrency:   cfg.concurrency,
+		Limit:         cfg.limit,
+		KeepArtifacts: cfg.keepArtifacts,
+	}
+}
+
+func reportExpandAllSummary(stdout io.Writer, total expand.Stats, cache *expand.CheckoutCache) {
+	fmt.Fprintf(stdout, "expand-all: %d analyses, %d already on record, %d items settled, "+
+		"%d failed, %d unavailable, %d newly discovered, %d edges ingested\n",
+		total.Processed, total.Skipped, total.Items, total.Failed, total.Unavailable,
+		total.Discovered, total.Edges)
+	if cache != nil {
+		fmt.Fprintf(stdout, "expand-all: %d checkouts served from %s\n", total.Reused, cache.Dir)
+	}
+}
+
+func finishExpandAll(s *store.Store, queue *frontier.Queue) error {
+	if err := (&graph.Builder{Store: s}).BuildAll(); err != nil {
+		return fmt.Errorf("expand-all: rebuilding aggregates: %w", err)
+	}
+	if err := queue.Rescore(); err != nil {
+		return fmt.Errorf("expand-all: rescoring the frontier: %w", err)
+	}
+	if err := finalizeStore(s); err != nil {
+		return fmt.Errorf("expand-all: %w", err)
+	}
+	return nil
+}
+
+func parseExpandAllArgs(args []string, stderr io.Writer) (expandAllConfig, error) {
 	fs := flag.NewFlagSet("expand-all", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", "", "path to the ABOM SQLite database (required)")
@@ -148,29 +227,34 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	requeueRepo := fs.String("requeue", "",
 		"first requeue one repository (owner/name) and run it ahead of the ranking")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return expandAllConfig{}, err
 	}
 	if *dbPath == "" {
 		fs.Usage()
-		return errors.New("expand-all: --db is required")
+		return expandAllConfig{}, errors.New("expand-all: --db is required")
 	}
 
-	dir, cleanup, err := workingDirectory(*workDir, "abom-expand-*")
-	if err != nil {
-		return err
-	}
-	defer cleanup()
+	return expandAllConfig{
+		dbPath:             *dbPath,
+		queryPath:          *queryPath,
+		queryID:            *queryID,
+		codeqlPath:         *codeqlPath,
+		workDir:            *workDir,
+		concurrency:        *concurrency,
+		limit:              *limit,
+		maxDepth:           *maxDepth,
+		rateLimitPerHour:   *rateLimitPerHour,
+		cacheDir:           *cacheDir,
+		cacheMaxMB:         *cacheMaxMB,
+		databaseCacheDir:   *databaseCacheDir,
+		databaseCacheMaxMB: *databaseCacheMaxMB,
+		keepArtifacts:      *keepArtifacts,
+		requeueStale:       *requeueStale,
+		requeueRepo:        *requeueRepo,
+	}, nil
+}
 
-	s, err := store.Open(*dbPath, store.Options{BulkLoad: true})
-	if err != nil {
-		return fmt.Errorf("opening %s: %w", *dbPath, err)
-	}
-	defer s.Close()
-	if err := s.Migrate(); err != nil {
-		return fmt.Errorf("migrating %s: %w", *dbPath, err)
-	}
-
-	queue := &frontier.Queue{Store: s, MaxDepth: *maxDepth}
+func prepareExpandAllQueue(s *store.Store, queue *frontier.Queue, stdout io.Writer) error {
 	reclaimed, err := queue.ReclaimStale(staleClaimLease)
 	if err != nil {
 		return fmt.Errorf("expand-all: reclaiming abandoned work: %w", err)
@@ -194,32 +278,41 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	if err := rank(s, queue); err != nil {
 		return fmt.Errorf("expand-all: %w", err)
 	}
+	return nil
+}
 
+func newExpandAllExpander(
+	s *store.Store, queue *frontier.Queue, cfg expandAllConfig, stdout io.Writer,
+) (*expand.Expander, *expand.CheckoutCache, func(), error) {
 	var pace *work.Limiter
-	if *rateLimitPerHour > 0 {
-		pace = work.NewLimiter(*rateLimitPerHour)
+	if cfg.rateLimitPerHour > 0 {
+		pace = work.NewLimiter(cfg.rateLimitPerHour)
 	}
 
 	w := store.NewWriter(s, 0)
-	server := &runner.CLIServer{CodeQLPath: *codeqlPath}
-	defer func() { _ = server.Close() }()
-	evaluator := &runner.QueryServer{CodeQLPath: *codeqlPath}
-	defer func() { _ = evaluator.Close() }()
+	server := &runner.CLIServer{CodeQLPath: cfg.codeqlPath}
+	evaluator := &runner.QueryServer{CodeQLPath: cfg.codeqlPath}
+	cleanup := func() {
+		_ = evaluator.Close()
+		_ = server.Close()
+	}
 	r := &runner.Runner{
-		CodeQLPath: *codeqlPath, Lock: runner.SharedLock(),
+		CodeQLPath: cfg.codeqlPath, Lock: runner.SharedLock(),
 		Server: server, Evaluator: evaluator,
 	}
 	checkout := &expand.Checkout{}
-	cache, err := checkoutCache(*cacheDir, *cacheMaxMB)
+	cache, err := checkoutCache(cfg.cacheDir, cfg.cacheMaxMB)
 	if err != nil {
-		return fmt.Errorf("expand-all: %w", err)
+		cleanup()
+		return nil, nil, nil, fmt.Errorf("expand-all: %w", err)
 	}
-	defer cache.Release()
-	databases, err := databaseCache(*databaseCacheDir, *databaseCacheMaxMB)
+	databases, err := databaseCache(cfg.databaseCacheDir, cfg.databaseCacheMaxMB)
 	if err != nil {
-		return fmt.Errorf("expand-all: %w", err)
+		cache.Release()
+		cleanup()
+		return nil, nil, nil, fmt.Errorf("expand-all: %w", err)
 	}
-	e := &expand.Expander{
+	return &expand.Expander{
 		Queue:    queue,
 		Store:    s,
 		Ingester: ingest.New(s, w),
@@ -236,26 +329,17 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		Cache:     cache,
 		Databases: databases,
 		OnEvent:   logFailures(stdout),
-	}
+	}, cache, cleanup, nil
+}
 
-	if err := requeueSelection(ctx, e, *requeueStale, *requeueRepo, stdout); err != nil {
-		return fmt.Errorf("expand-all: %w", err)
-	}
-
-	opts := expand.Options{
-		QueryPath:     *queryPath,
-		QueryID:       *queryID,
-		WorkDir:       dir,
-		Concurrency:   *concurrency,
-		Limit:         *limit,
-		KeepArtifacts: *keepArtifacts,
-	}
-
+func runExpandRounds(
+	ctx context.Context, e *expand.Expander, opts expand.Options, s *store.Store, queue *frontier.Queue,
+) (expand.Stats, error) {
 	var total expand.Stats
 	for round := 0; round < maxExpandRounds; round++ {
 		stats, err := e.Run(ctx, opts)
 		if err != nil {
-			return fmt.Errorf("expand-all: %w", err)
+			return expand.Stats{}, fmt.Errorf("expand-all: %w", err)
 		}
 		total.Processed += stats.Processed
 		total.Skipped += stats.Skipped
@@ -269,31 +353,10 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 			break
 		}
 		if err := rank(s, queue); err != nil {
-			return fmt.Errorf("expand-all: %w", err)
+			return expand.Stats{}, fmt.Errorf("expand-all: %w", err)
 		}
 	}
-	fmt.Fprintf(stdout, "expand-all: %d analyses, %d already on record, %d items settled, "+
-		"%d failed, %d unavailable, %d newly discovered, %d edges ingested\n",
-		total.Processed, total.Skipped, total.Items, total.Failed, total.Unavailable,
-		total.Discovered, total.Edges)
-	if cache != nil {
-		fmt.Fprintf(stdout, "expand-all: %d checkouts served from %s\n", total.Reused, cache.Dir)
-	}
-
-	if err := reportWorkLeftWaiting(stdout, queue); err != nil {
-		return fmt.Errorf("expand-all: %w", err)
-	}
-
-	if err := (&graph.Builder{Store: s}).BuildAll(); err != nil {
-		return fmt.Errorf("expand-all: rebuilding aggregates: %w", err)
-	}
-	if err := queue.Rescore(); err != nil {
-		return fmt.Errorf("expand-all: rescoring the frontier: %w", err)
-	}
-	if err := finalizeStore(s); err != nil {
-		return fmt.Errorf("expand-all: %w", err)
-	}
-	return nil
+	return total, nil
 }
 
 // rank refreshes what the next claim is ordered by.

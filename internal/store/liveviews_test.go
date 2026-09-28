@@ -8,12 +8,7 @@ import (
 	"testing"
 )
 
-// Reading the graph tables directly bypasses the tombstone, so a pruned node stays drawn — and
-// nothing fails, which is the worst shape a defect can take.
-//
-// This exists because the alternative was 110 hand edits every time what "live" means changes.
-// `abom_node_live` and `abom_edge_live` are views, so the definition lives in one place and a
-// read cannot opt out of it by accident.
+// Reading graph tables directly bypasses tombstones; live views keep that rule in one place.
 func TestReadsGoThroughTheLiveViews(t *testing.T) {
 	root, err := filepath.Abs("../..")
 	if err != nil {
@@ -67,9 +62,7 @@ func TestReadsGoThroughTheLiveViews(t *testing.T) {
 	}
 }
 
-// The same argument for the declaration. A read that names `abom_owned_scope` itself honors a
-// declaration `gh` answered against, which is how 44 of somebody else's repositories became this
-// operator's to remediate. `abom_owned_scope_honored` is the view that cannot be forgotten.
+// Ownership reads must use the honored view so contradicted declarations stay gated.
 func TestOwnershipReadsGoThroughTheHonoredView(t *testing.T) {
 	root, err := filepath.Abs("../..")
 	if err != nil {

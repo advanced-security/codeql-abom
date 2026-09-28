@@ -1,9 +1,7 @@
 /**
  * Where a step sits, shared by every ABOM query that reports one.
  *
- * A step lives either in a workflow job or in a composite action's `runs:` block, and nothing
- * else: the two containers are kept in one place so a query reporting a step and a query
- * reporting an edge out of that step cannot disagree about its index.
+ * A step lives either in a workflow job or in a composite action's `runs:` block.
  */
 
 import actions
@@ -37,9 +35,6 @@ predicate stepPosition(Step step, string kind, string path, string jobId, int in
 /**
  * Gets the `if:` condition on `step`, verbatim.
  *
- * Verbatim because ABOM does not decide whether a condition holds: `github.ref == 'refs/heads/main'`
- * is a fact about the workflow, and whether it is true on any given run is not something static
- * analysis can settle. Reporting the expression lets a reader judge; evaluating it would be this
- * tool inventing a verdict.
+ * ABOM reports the expression rather than trying to evaluate run-time context.
  */
 string conditionOf(Step step) { result = step.getIf().getCondition() }

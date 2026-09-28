@@ -32,19 +32,34 @@ type Comparer struct {
 	Parallel int
 }
 
+type comparisonWork struct {
+	pending []store.DatabaseIdentity
+	results map[store.DatabaseIdentity][]store.ComparedResult
+	asked   map[string]bool
+}
+
 // Compare reads every member a comparison has still to read and records each as it is read, so a
 // comparison stopped part way keeps what it established and says it was interrupted.
 //
 // Every member's results are read before GitHub is: reading them one at a time between paced
 // requests would let the run analyzed again part way through mix two runs under one CodeQL.
 func (c *Comparer) Compare(ctx context.Context, id int64) error {
-	comparison, err := c.Store.Comparison(id)
+	work, err := c.comparisonWork(id)
 	if err != nil {
 		return err
 	}
+	failure := c.compareMembers(ctx, id, work)
+	return c.finishComparison(ctx, id, failure)
+}
+
+func (c *Comparer) comparisonWork(id int64) (comparisonWork, error) {
+	comparison, err := c.Store.Comparison(id)
+	if err != nil {
+		return comparisonWork{}, err
+	}
 	pending, err := c.Store.PendingComparisonMembers(id)
 	if err != nil {
-		return err
+		return comparisonWork{}, err
 	}
 	asked := map[string]bool{}
 	for _, q := range comparison.Queries {
@@ -53,10 +68,13 @@ func (c *Comparer) Compare(ctx context.Context, id int64) error {
 	results := make(map[store.DatabaseIdentity][]store.ComparedResult, len(pending))
 	for _, member := range pending {
 		if results[member], err = c.Store.MemberResults(comparison.RunID, member); err != nil {
-			return err
+			return comparisonWork{}, err
 		}
 	}
+	return comparisonWork{pending: pending, results: results, asked: asked}, nil
+}
 
+func (c *Comparer) compareMembers(ctx context.Context, id int64, cw comparisonWork) error {
 	parallel := c.Parallel
 	if parallel <= 0 {
 		parallel = 4
@@ -70,7 +88,7 @@ func (c *Comparer) Compare(ctx context.Context, id int64) error {
 		go func() {
 			defer wg.Done()
 			for member := range work {
-				if err := c.member(ctx, id, member, results[member], asked); err != nil {
+				if err := c.member(ctx, id, member, cw.results[member], cw.asked); err != nil {
 					mu.Lock()
 					if failure == nil {
 						failure = err
@@ -80,7 +98,7 @@ func (c *Comparer) Compare(ctx context.Context, id int64) error {
 			}
 		}()
 	}
-	for _, member := range pending {
+	for _, member := range cw.pending {
 		if ctx.Err() != nil {
 			break
 		}
@@ -88,7 +106,10 @@ func (c *Comparer) Compare(ctx context.Context, id int64) error {
 	}
 	close(work)
 	wg.Wait()
+	return failure
+}
 
+func (c *Comparer) finishComparison(ctx context.Context, id int64, failure error) error {
 	switch {
 	case ctx.Err() != nil:
 		if err := c.Store.InterruptComparison(id); err != nil {

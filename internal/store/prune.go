@@ -11,10 +11,7 @@ import (
 // `abom_node_live` and `abom_edge_live` instead, so what "live" means is defined once and a read
 // cannot opt out of it by forgetting a clause.
 //
-// A tombstone rather than a DELETE because every delta cursor the interface holds is a row-id
-// watermark: removing rows would silently hand a client an update that skips or repeats work.
-// Marking keeps row ids monotonic and lets the delta *say* what disappeared, which is what makes
-// removal expressible at all.
+// Tombstones keep row ids monotonic for delta cursors and let a delta name what disappeared.
 const (
 	LiveNode = `abom_node.removed_at IS NULL`
 	LiveEdge = `abom_edge.removed_at IS NULL`
@@ -174,7 +171,7 @@ func (s *Store) pruneOutsideClosure(inClosure []string, act bool) (PruneReport, 
 		return out, ErrEmptyClosure
 	}
 	// A closure with no edges behind it has never been analyzed, and everything outside it is
-	// everything: this is the empty-closure refusal arriving one enumeration later.
+	// everything.
 	if ok, err := s.closureHasEvidence(inClosure); err != nil {
 		return out, err
 	} else if !ok {
@@ -194,8 +191,7 @@ func (s *Store) pruneOutsideClosure(inClosure []string, act bool) (PruneReport, 
 		{&out.Nodes, `SELECT COUNT(*) FROM abom_node WHERE ` + LiveNode + ` AND ` + deadNodes, 3},
 		// Repositories that lose something, not repositories that merely sit outside the closure.
 		// The looser count reports the same number after a prune as before it, and an outside
-		// repository whose nodes are all held live by an edge from inside loses nothing at all —
-		// both read as work that does not exist. Measured on the real corpus: 838, then 1, then 0.
+		// repository whose nodes are all held live by an edge from inside loses nothing at all.
 		{&out.Repositories, `SELECT COUNT(*) FROM (
 		        SELECT r.row_id FROM abom_node
 		          JOIN repository r ON r.row_id = abom_node.repository_row_id

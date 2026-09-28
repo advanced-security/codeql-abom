@@ -155,7 +155,7 @@ func TestOnlyAFullListingCanSayARepositoryIsGone(t *testing.T) {
 // A full listing that no longer names a repository removes nothing. What the repository alone
 // reached is what no longer belongs, and the prune in Settings says what it would remove before
 // anybody accepts it: removing it here, on a timer, would take out real evidence whenever a
-// listing under-reports without failing, as one read without a token did when it found 91 of 181.
+// listing under-reports without failing.
 func TestAFullListingRemovesNothingAndLeavesWhatItLostToThePrune(t *testing.T) {
 	s := newStore(t)
 	repositories := map[string]int64{}
@@ -283,9 +283,8 @@ func TestTheFullListingComesRoundAgainOnItsPeriod(t *testing.T) {
 	}
 }
 
-// A sweep is two ordered walks, so it costs two reads at minimum. An account whose whole listing
-// fit in one page is cheaper read whole — and that read also answers what is gone, which a sweep
-// cannot. Measured on a 27 repository organization: one point for the listing, two for the sweep.
+// A sweep is two ordered walks, so an account whose whole listing fits in one page is cheaper read
+// whole. That read also answers what is gone, which a sweep cannot.
 func TestAnAccountThatFitsOnOnePageIsReadWholeRatherThanSwept(t *testing.T) {
 	s := newStore(t)
 	pushed := time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC)

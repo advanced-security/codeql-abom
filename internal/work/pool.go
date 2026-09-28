@@ -103,37 +103,49 @@ type Pool struct {
 	OnEvent func(Event)
 }
 
+type poolOutcome struct {
+	prepared Prepared
+	job      Job
+	err      error
+}
+
 // Run processes every job, returning aggregate statistics.
 //
 // A failing job is recorded and the run continues; only cancellation stops the pool, so one
 // unreachable repository cannot abandon the rest of the organization.
 func (p *Pool) Run(ctx context.Context, jobs []Job) (Stats, error) {
-	if p.Prepare == nil {
-		return Stats{}, errors.New("work: Pool.Prepare is required")
-	}
-	if p.Consume == nil {
-		return Stats{}, errors.New("work: Pool.Consume is required")
+	if err := p.validate(); err != nil {
+		return Stats{}, err
 	}
 	if len(jobs) == 0 {
 		return Stats{}, nil
 	}
 
-	concurrency := p.Concurrency
-	if concurrency < 1 {
-		concurrency = 1
-	}
-
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	return p.collect(ctx, cancel, p.start(ctx, jobs, p.concurrency()))
+}
 
-	type outcome struct {
-		prepared Prepared
-		job      Job
-		err      error
+func (p *Pool) validate() error {
+	if p.Prepare == nil {
+		return errors.New("work: Pool.Prepare is required")
 	}
+	if p.Consume == nil {
+		return errors.New("work: Pool.Consume is required")
+	}
+	return nil
+}
 
+func (p *Pool) concurrency() int {
+	if p.Concurrency < 1 {
+		return 1
+	}
+	return p.Concurrency
+}
+
+func (p *Pool) start(ctx context.Context, jobs []Job, concurrency int) <-chan poolOutcome {
 	jobCh := make(chan Job)
-	outCh := make(chan outcome, concurrency)
+	outCh := make(chan poolOutcome, concurrency)
 
 	var wg sync.WaitGroup
 	for i := 0; i < concurrency; i++ {
@@ -143,7 +155,7 @@ func (p *Pool) Run(ctx context.Context, jobs []Job) (Stats, error) {
 			for job := range jobCh {
 				prepared, err := p.Prepare(ctx, job)
 				select {
-				case outCh <- outcome{prepared: prepared, job: job, err: err}:
+				case outCh <- poolOutcome{prepared: prepared, job: job, err: err}:
 				case <-ctx.Done():
 					return
 				}
@@ -166,29 +178,15 @@ func (p *Pool) Run(ctx context.Context, jobs []Job) (Stats, error) {
 		wg.Wait()
 		close(outCh)
 	}()
+	return outCh
+}
 
+func (p *Pool) collect(
+	ctx context.Context, cancel context.CancelFunc, outCh <-chan poolOutcome,
+) (Stats, error) {
 	var stats Stats
 	for out := range outCh {
-		switch {
-		case out.err != nil && errors.Is(out.err, ErrSkip):
-			stats.Skipped++
-			p.emit(Event{Kind: EventSkipped, Job: out.job, Err: out.err})
-
-		case out.err != nil:
-			stats.Failed++
-			p.emit(Event{Kind: EventFailed, Job: out.job, Err: out.err})
-
-		default:
-			rows, err := p.Consume(ctx, out.prepared)
-			if err != nil {
-				stats.Failed++
-				p.emit(Event{Kind: EventFailed, Job: out.job, Err: err})
-				break
-			}
-			stats.Processed++
-			stats.Rows += rows
-			p.emit(Event{Kind: EventDone, Job: out.job, Rows: rows})
-		}
+		p.record(ctx, &stats, out)
 
 		if err := ctx.Err(); err != nil {
 			cancel()
@@ -200,6 +198,29 @@ func (p *Pool) Run(ctx context.Context, jobs []Job) (Stats, error) {
 	}
 
 	return stats, nil
+}
+
+func (p *Pool) record(ctx context.Context, stats *Stats, out poolOutcome) {
+	switch {
+	case out.err != nil && errors.Is(out.err, ErrSkip):
+		stats.Skipped++
+		p.emit(Event{Kind: EventSkipped, Job: out.job, Err: out.err})
+
+	case out.err != nil:
+		stats.Failed++
+		p.emit(Event{Kind: EventFailed, Job: out.job, Err: out.err})
+
+	default:
+		rows, err := p.Consume(ctx, out.prepared)
+		if err != nil {
+			stats.Failed++
+			p.emit(Event{Kind: EventFailed, Job: out.job, Err: err})
+			return
+		}
+		stats.Processed++
+		stats.Rows += rows
+		p.emit(Event{Kind: EventDone, Job: out.job, Rows: rows})
+	}
 }
 
 func (p *Pool) emit(e Event) {

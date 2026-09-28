@@ -292,24 +292,8 @@ func (s *Store) CreateComparison(runID int64, by string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	switch {
-	case run.Mode != AnalysisModeRegular:
-		return 0, fmt.Errorf("run %d analyzed %s databases, and Default Setup builds one "+
-			"repository's own checkout, so a comparison reads a regular run only: %w",
-			runID, run.Mode, ErrComparisonRefused)
-	case run.State == RunPending || run.State == RunRunning:
-		return 0, fmt.Errorf("run %d is still %s, and a comparison of results about to change "+
-			"would describe nothing: %w", runID, run.State, ErrComparisonRefused)
-	}
-	counted := 0
-	for _, m := range run.Members {
-		if m.Counted {
-			counted++
-		}
-	}
-	if counted == 0 {
-		return 0, fmt.Errorf("run %d has results for no repository, so there is nothing to "+
-			"compare: %w", runID, ErrComparisonRefused)
+	if err := validateComparisonRun(runID, run); err != nil {
+		return 0, err
 	}
 
 	unlinked, err := s.unlinkedMembers(runID, run.Held)
@@ -323,10 +307,50 @@ func (s *Store) CreateComparison(runID int64, by string) (int64, error) {
 	}
 	defer tx.Rollback()
 
+	id, err := insertComparison(tx, runID, by, run.CLIVersion)
+	if err != nil {
+		return 0, err
+	}
+	if err := insertComparisonMembers(tx, id, run.Members, unlinked); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("committing the comparison of run %d: %w", runID, err)
+	}
+	return id, nil
+}
+
+func validateComparisonRun(runID int64, run AnalysisRun) error {
+	switch {
+	case run.Mode != AnalysisModeRegular:
+		return fmt.Errorf("run %d analyzed %s databases, and Default Setup builds one "+
+			"repository's own checkout, so a comparison reads a regular run only: %w",
+			runID, run.Mode, ErrComparisonRefused)
+	case run.State == RunPending || run.State == RunRunning:
+		return fmt.Errorf("run %d is still %s, and a comparison of results about to change "+
+			"would describe nothing: %w", runID, run.State, ErrComparisonRefused)
+	case countedComparisonMembers(run.Members) == 0:
+		return fmt.Errorf("run %d has results for no repository, so there is nothing to "+
+			"compare: %w", runID, ErrComparisonRefused)
+	}
+	return nil
+}
+
+func countedComparisonMembers(members []AnalysisMember) int {
+	counted := 0
+	for _, m := range members {
+		if m.Counted {
+			counted++
+		}
+	}
+	return counted
+}
+
+func insertComparison(tx *sql.Tx, runID int64, by, cliVersion string) (int64, error) {
 	res, err := tx.Exec(`
 		INSERT INTO abom_comparison (run_id, requested_by, state, created_at, cli_version)
 		VALUES (?, ?, ?, ?, ?)`,
-		runID, by, ComparisonRunning, time.Now().UTC().Format(time.RFC3339), run.CLIVersion)
+		runID, by, ComparisonRunning, time.Now().UTC().Format(time.RFC3339), cliVersion)
 	if err != nil {
 		return 0, fmt.Errorf("recording the comparison of run %d: %w", runID, err)
 	}
@@ -335,32 +359,40 @@ func (s *Store) CreateComparison(runID int64, by string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("reading back the comparison of run %d: %w", runID, err)
 	}
-	for _, m := range run.Members {
-		status, reason, detail := ComparisonPending, "", ""
-		var results any
-		switch {
-		case !m.Counted:
-			status, reason = ComparisonNotCompared, ReasonNotAnalyzed
-			detail = fmt.Sprintf("the run has no results here: %s", memberStatusText(m))
-		case unlinked[m.DatabaseIdentity]:
-			status, reason, results = ComparisonNotCompared, ReasonUnlinked, m.Results
-			detail = "the run counted its results here before it kept which evaluation they came " +
-				"from, so there is nothing to list them from; run it again to compare them"
-		default:
-			results = m.Results
-		}
+	return id, nil
+}
+
+func insertComparisonMembers(
+	tx *sql.Tx, id int64, members []AnalysisMember, unlinked map[DatabaseIdentity]bool,
+) error {
+	for _, m := range members {
+		status, reason, detail, results := comparisonMemberRecord(m, unlinked[m.DatabaseIdentity])
 		if _, err := tx.Exec(`
 			INSERT OR IGNORE INTO abom_comparison_member
 				(comparison_id, repository, analyzed_commit, source_filter, status, reason, detail, results)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			id, m.Repository, m.Commit, m.SourceFilter, status, reason, detail, results); err != nil {
-			return 0, fmt.Errorf("recording %s in the comparison: %w", m.Repository, err)
+			return fmt.Errorf("recording %s in the comparison: %w", m.Repository, err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("committing the comparison of run %d: %w", runID, err)
+	return nil
+}
+
+func comparisonMemberRecord(m AnalysisMember, unlinked bool) (string, string, string, any) {
+	status, reason, detail := ComparisonPending, "", ""
+	var results any
+	switch {
+	case !m.Counted:
+		status, reason = ComparisonNotCompared, ReasonNotAnalyzed
+		detail = fmt.Sprintf("the run has no results here: %s", memberStatusText(m))
+	case unlinked:
+		status, reason, results = ComparisonNotCompared, ReasonUnlinked, m.Results
+		detail = "the run counted its results here before it kept which evaluation they came " +
+			"from, so there is nothing to list them from; run it again to compare them"
+	default:
+		results = m.Results
 	}
-	return id, nil
+	return status, reason, detail, results
 }
 
 // unlinkedMembers is a findings run's counted members that name no evaluation. A held run lists
@@ -695,22 +727,37 @@ func (s *Store) comparisonMembersOf(id int64, cli string) ([]ComparisonMember, e
 // attachComparisonCounts splits each compared member's results by rule and by what the alerts
 // make of them, and adds the alerts no result stood for.
 func (s *Store) attachComparisonCounts(id int64, members []ComparisonMember) error {
-	type key struct{ repository, commit, filter string }
-	index := map[key]int{}
+	index := map[comparisonCountKey]int{}
 	for i, m := range members {
-		index[key{m.Repository, m.AnalyzedCommit, m.SourceFilter}] = i
+		index[comparisonCountKey{m.Repository, m.AnalyzedCommit, m.SourceFilter}] = i
 	}
-	perRule := map[key]map[string]*ComparisonCounts{}
-	counts := func(k key, rule string) *ComparisonCounts {
-		if perRule[k] == nil {
-			perRule[k] = map[string]*ComparisonCounts{}
-		}
-		if perRule[k][rule] == nil {
-			perRule[k][rule] = &ComparisonCounts{}
-		}
-		return perRule[k][rule]
-	}
+	perRule := comparisonCountsByRule{}
 
+	if err := s.readComparisonResultCounts(id, perRule); err != nil {
+		return err
+	}
+	if err := s.readComparisonOpenAlertCounts(id, perRule); err != nil {
+		return err
+	}
+	attachComparisonRuleCounts(members, index, perRule)
+	return nil
+}
+
+type comparisonCountKey struct{ repository, commit, filter string }
+
+type comparisonCountsByRule map[comparisonCountKey]map[string]*ComparisonCounts
+
+func (p comparisonCountsByRule) counts(k comparisonCountKey, rule string) *ComparisonCounts {
+	if p[k] == nil {
+		p[k] = map[string]*ComparisonCounts{}
+	}
+	if p[k][rule] == nil {
+		p[k][rule] = &ComparisonCounts{}
+	}
+	return p[k][rule]
+}
+
+func (s *Store) readComparisonResultCounts(id int64, perRule comparisonCountsByRule) error {
 	rows, err := s.db.Query(`
 		SELECT repository, analyzed_commit, source_filter, rule_id, alert_state, COUNT(*)
 		FROM abom_comparison_result WHERE comparison_id = ?
@@ -719,33 +766,39 @@ func (s *Store) attachComparisonCounts(id int64, members []ComparisonMember) err
 		return fmt.Errorf("counting what comparison %d found: %w", id, err)
 	}
 	for rows.Next() {
-		var k key
+		var k comparisonCountKey
 		var rule, state string
 		var n int
 		if err := rows.Scan(&k.repository, &k.commit, &k.filter, &rule, &state, &n); err != nil {
 			rows.Close()
 			return fmt.Errorf("scanning a comparison count: %w", err)
 		}
-		c := counts(k, rule)
-		c.Results += n
-		switch MatchOf(state) {
-		case MatchOpen:
-			c.Open += n
-		case MatchDismissed:
-			c.Dismissed += n
-		case MatchReopens:
-			c.Reopens += n
-			c.Adds += n
-		default:
-			c.New += n
-			c.Adds += n
-		}
+		addComparisonResultCount(perRule.counts(k, rule), state, n)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	return nil
+}
 
+func addComparisonResultCount(c *ComparisonCounts, state string, n int) {
+	c.Results += n
+	switch MatchOf(state) {
+	case MatchOpen:
+		c.Open += n
+	case MatchDismissed:
+		c.Dismissed += n
+	case MatchReopens:
+		c.Reopens += n
+		c.Adds += n
+	default:
+		c.New += n
+		c.Adds += n
+	}
+}
+
+func (s *Store) readComparisonOpenAlertCounts(id int64, perRule comparisonCountsByRule) error {
 	alerts, err := s.db.Query(`
 		SELECT repository, analyzed_commit, source_filter, rule_id, alerts
 		FROM abom_comparison_alerts WHERE comparison_id = ? AND state = 'open'`, id)
@@ -753,20 +806,25 @@ func (s *Store) attachComparisonCounts(id int64, members []ComparisonMember) err
 		return fmt.Errorf("reading the alerts of comparison %d: %w", id, err)
 	}
 	for alerts.Next() {
-		var k key
+		var k comparisonCountKey
 		var rule string
 		var n int
 		if err := alerts.Scan(&k.repository, &k.commit, &k.filter, &rule, &n); err != nil {
 			alerts.Close()
 			return fmt.Errorf("scanning an alert count: %w", err)
 		}
-		counts(k, rule).OpenAlerts += n
+		perRule.counts(k, rule).OpenAlerts += n
 	}
 	alerts.Close()
 	if err := alerts.Err(); err != nil {
 		return err
 	}
+	return nil
+}
 
+func attachComparisonRuleCounts(
+	members []ComparisonMember, index map[comparisonCountKey]int, perRule comparisonCountsByRule,
+) {
 	for k, byRule := range perRule {
 		i, ok := index[k]
 		if !ok || members[i].Status != ComparisonCompared {
@@ -787,7 +845,6 @@ func (s *Store) attachComparisonCounts(id int64, members []ComparisonMember) err
 		m.Counts.Results = results
 		sort.Slice(m.Rules, func(a, b int) bool { return m.Rules[a].RuleID < m.Rules[b].RuleID })
 	}
-	return nil
 }
 
 // MatchOf reads what an alert's state makes of the result it stands for.

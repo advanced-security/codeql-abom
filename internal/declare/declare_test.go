@@ -87,8 +87,7 @@ func TestAnIncludeMustNameADeclaredAccount(t *testing.T) {
 	}
 }
 
-// Seeding is for a database that has never been told anything. Overwriting a declaration somebody
-// made in the interface would make a restart silently revert their decision.
+// Seeding is for a database that has never been told anything.
 func TestSeedingAppliesOnlyWhenNothingIsDeclared(t *testing.T) {
 	s := newStore(t)
 	existing := store.DeclaredAccount{Owner: "chosen-by-hand", Kind: store.AccountOrganization, Enabled: true}

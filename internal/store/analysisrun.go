@@ -127,19 +127,9 @@ type AnalysisRequest struct {
 // for repositories nothing ran against, which is the absent-is-not-zero failure arriving at the
 // one place a reader is about to act on it.
 func (s *Store) CreateAnalysisRun(req AnalysisRequest) (int64, error) {
-	mode := req.Mode
-	if mode == "" {
-		mode = AnalysisModeRegular
-	}
-	switch {
-	case req.RequestedBy == "":
-		return 0, fmt.Errorf("starting a run: no one is recorded as asking for it")
-	case len(req.Queries) == 0:
-		return 0, fmt.Errorf("starting a run: no query named, so it would analyze nothing")
-	case len(req.Databases)+len(req.Gaps) == 0:
-		return 0, fmt.Errorf("starting a run: the scope named no repository")
-	case !ValidAnalysisMode(mode):
-		return 0, fmt.Errorf("starting a run: %q is not an analysis mode", mode)
+	mode, err := validatedAnalysisRequest(req)
+	if err != nil {
+		return 0, err
 	}
 
 	tx, err := s.db.Begin()
@@ -148,6 +138,45 @@ func (s *Store) CreateAnalysisRun(req AnalysisRequest) (int64, error) {
 	}
 	defer tx.Rollback()
 
+	id, err := insertAnalysisRun(tx, req, mode)
+	if err != nil {
+		return 0, err
+	}
+
+	if err := insertAnalysisQueries(tx, id, req.Queries); err != nil {
+		return 0, err
+	}
+	if err := insertAnalysisDatabaseMembers(tx, id, req.Databases, mode); err != nil {
+		return 0, err
+	}
+	if err := insertAnalysisGapMembers(tx, id, req.Gaps, mode); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("committing the run: %w", err)
+	}
+	return id, nil
+}
+
+func validatedAnalysisRequest(req AnalysisRequest) (string, error) {
+	mode := req.Mode
+	if mode == "" {
+		mode = AnalysisModeRegular
+	}
+	switch {
+	case req.RequestedBy == "":
+		return "", fmt.Errorf("starting a run: no one is recorded as asking for it")
+	case len(req.Queries) == 0:
+		return "", fmt.Errorf("starting a run: no query named, so it would analyze nothing")
+	case len(req.Databases)+len(req.Gaps) == 0:
+		return "", fmt.Errorf("starting a run: the scope named no repository")
+	case !ValidAnalysisMode(mode):
+		return "", fmt.Errorf("starting a run: %q is not an analysis mode", mode)
+	}
+	return mode, nil
+}
+
+func insertAnalysisRun(tx *sql.Tx, req AnalysisRequest, mode string) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := tx.Exec(`
 		INSERT INTO abom_analysis_run
@@ -162,47 +191,60 @@ func (s *Store) CreateAnalysisRun(req AnalysisRequest) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("reading back the run: %w", err)
 	}
+	return id, nil
+}
 
-	for _, q := range req.Queries {
+func insertAnalysisQueries(tx *sql.Tx, id int64, queries []AnalysisQuery) error {
+	for _, q := range queries {
 		if _, err := tx.Exec(`
 			INSERT OR IGNORE INTO abom_analysis_query (run_id, query_id, query_version)
 			VALUES (?, ?, ?)`, id, q.QueryID, q.QueryVersion); err != nil {
-			return 0, fmt.Errorf("recording query %s: %w", q.QueryID, err)
+			return fmt.Errorf("recording query %s: %w", q.QueryID, err)
 		}
 	}
-	for _, d := range req.Databases {
-		status, detail := AnalysisPending, ""
-		switch {
-		case d.Status != DatabaseBuildable:
-		case mode != AnalysisModeRegular:
-			status = AnalysisNoDatabase
-			detail = fmt.Sprintf("no %s database held, and a run builds only regular ones", mode)
-			if d.Reason != "" {
-				detail = d.Reason + ", and a run builds only regular databases"
-			}
-		case d.Reason != "":
-			detail = d.Reason + "; the run builds it again"
-		default:
-			detail = "no database held; the run builds one"
-		}
-		if _, err := insertMember(tx, id, d.DatabaseIdentity, status, detail, d.Path); err != nil {
-			return 0, err
+	return nil
+}
+
+func insertAnalysisDatabaseMembers(tx *sql.Tx, id int64, databases []ScopedDatabase, mode string) error {
+	for _, d := range databases {
+		status, detail := databaseMemberStatus(d, mode)
+		if err := insertMember(tx, id, d.DatabaseIdentity, status, detail, d.Path); err != nil {
+			return err
 		}
 	}
-	for _, g := range req.Gaps {
+	return nil
+}
+
+func databaseMemberStatus(d ScopedDatabase, mode string) (string, string) {
+	status, detail := AnalysisPending, ""
+	switch {
+	case d.Status != DatabaseBuildable:
+	case mode != AnalysisModeRegular:
+		status = AnalysisNoDatabase
+		detail = fmt.Sprintf("no %s database held, and a run builds only regular ones", mode)
+		if d.Reason != "" {
+			detail = d.Reason + ", and a run builds only regular databases"
+		}
+	case d.Reason != "":
+		detail = d.Reason + "; the run builds it again"
+	default:
+		detail = "no database held; the run builds one"
+	}
+	return status, detail
+}
+
+func insertAnalysisGapMembers(tx *sql.Tx, id int64, gaps []DatabaseGap, mode string) error {
+	for _, g := range gaps {
 		identity := DatabaseIdentity{Repository: g.Repository, Mode: mode}
 		status, detail, err := gapMember(tx, g, mode)
 		if err != nil {
-			return 0, err
+			return err
 		}
-		if _, err := insertMember(tx, id, identity, status, detail, ""); err != nil {
-			return 0, err
+		if err := insertMember(tx, id, identity, status, detail, ""); err != nil {
+			return err
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("committing the run: %w", err)
-	}
-	return id, nil
+	return nil
 }
 
 // gapMember decides whether the run builds a repository nothing has analyzed: only one ABOM
@@ -225,17 +267,17 @@ func gapMember(tx *sql.Tx, g DatabaseGap, mode string) (string, string, error) {
 
 func insertMember(
 	tx *sql.Tx, runID int64, id DatabaseIdentity, status, detail, path string,
-) (sql.Result, error) {
-	res, err := tx.Exec(`
+) error {
+	_, err := tx.Exec(`
 		INSERT OR IGNORE INTO abom_analysis_member
 			(run_id, repository, db_commit, source_filter, analysis_mode, status, detail,
 			 database_path)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		runID, id.Repository, id.Commit, id.SourceFilter, id.Mode, status, detail, path)
 	if err != nil {
-		return nil, fmt.Errorf("recording %s in the run: %w", id.Repository, err)
+		return fmt.Errorf("recording %s in the run: %w", id.Repository, err)
 	}
-	return res, nil
+	return nil
 }
 
 // SetAnalysisMemberStatus moves one member, recording when it started and when it stopped.
