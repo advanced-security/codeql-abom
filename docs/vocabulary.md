@@ -83,6 +83,24 @@ A reader must be able to tell "we have not looked" from "there was nothing to lo
 only one of them is work somebody can do. Partial coverage is its own state, not a rounding of
 `analyzed` in either direction.
 
+## Locks
+
+| Word | Means |
+| --- | --- |
+| **Locked to** | The commit a current Actions lockfile selects behind a declared reference: what runs, beside what the source says |
+| **Locked by** | Whose current lock selects a queued commit. A caller's lock is named with the pin it reached the composite through, and chooses for that caller only |
+| **No lockfile** | Read at the commit the repository resolves to, and there is none |
+| **Not in its lock** | A lockfile is there and does not list these uses |
+| **Lockfile unsupported** | A lockfile is there and this reader refused it, by name; it selects nothing |
+| **Lockfile not read** | Nothing read the lockfile at that commit. Unknown, not unlocked |
+| **Check lock** | Run GitHub's `gh actions-lock` verification of a repository's current commit, no-fix, once, because somebody asked |
+| **Passed** / **Warnings** / **Failed** | What GitHub's verification said: nothing to report, findings below an error, or the lock called invalid |
+| **Inconclusive** | The verification reported a category this build does not know, or could not confirm reachability. Not a pass |
+| **Error** (verification) | The tool gave no report, or changed what it was reading. Says nothing about the lock |
+
+A lock is evidence about what a workflow runs, never a verdict that it is safe. The declared
+reference stays on every count as written; what a lock selects is a second answer beside it.
+
 ## Analysis modes
 
 | Word | Means |

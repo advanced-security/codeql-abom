@@ -70,6 +70,16 @@ type BOMReference struct {
 	// resolving it to nothing.
 	ResolvedSHA string `json:"resolvedSha,omitempty"`
 	Analyzed    bool   `json:"analyzed"`
+	// Locked are the commits the roots' current locks select behind this reference: what runs,
+	// beside what is written. Only the roots' own locks, because this document is about them.
+	Locked []BOMLock `json:"locked"`
+}
+
+// BOMLock is one commit the roots' locks select behind a reference, and whether it was analyzed.
+type BOMLock struct {
+	Commit    string   `json:"commit"`
+	Consumers []string `json:"consumers"`
+	Analyzed  bool     `json:"analyzed"`
 }
 
 // BOMFinding is one result, carrying whatever provenance was recorded for it.

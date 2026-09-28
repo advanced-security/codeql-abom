@@ -53,7 +53,7 @@ Live GHES verification requires an authorized environment; a passing mock test i
 support claim. [fork-provenance.md](../db/fork-provenance.md) consumes this routing for cross-host
 ancestry without making ancestry a prerequisite of routing.
 
-[Native lock ingestion](../db/actions-lockfile.md) must agree with this host identity. The inspected
+[Native lock ingestion](../../docs/architecture.md#locks) must agree with this host identity. The inspected
 released parser/CLI combination uses schema `v0.0.2`; the shared parser's development branch
 describes `v0.0.3` with canonical GitHub.com/GHE tenant hostnames. Neither that field nor the CLI's
 hostname option proves general GHES runtime enforcement. Pin compatible releases, retain the

@@ -122,6 +122,10 @@ func componentStatement(c store.BOMComponent) string {
 		if r.Raw == "" {
 			continue
 		}
+		// What runs for the repositories this document is about, beside what they wrote.
+		for _, l := range r.Locked {
+			refs = append(refs, r.Raw+" locked=> "+l.Commit+" ("+strings.Join(l.Consumers, ", ")+")")
+		}
 		if r.ResolvedSHA != "" {
 			refs = append(refs, r.Raw+" => "+r.ResolvedSHA)
 			continue

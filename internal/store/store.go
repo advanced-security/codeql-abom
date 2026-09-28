@@ -91,6 +91,7 @@ var createTables = []struct {
 }{
 	{"the commit content table", commitContentDDL},
 	{"the lock coverage table", lockCoverageDDL},
+	{"the lock verification table", lockVerificationDDL},
 	{"the declared scope tables", ownedScopeDDL},
 	{"the cycle spend table", cycleSpendDDL},
 	{"the saved view table", savedViewDDL},

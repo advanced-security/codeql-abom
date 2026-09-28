@@ -193,6 +193,25 @@ public sealed class AbomApi(HttpClient http)
         string repository, CancellationToken ct = default) =>
         RequeueAsync("api/discovery/requeue-repository", new { repository }, ct);
 
+    /// <summary>
+    /// Runs GitHub's no-fix lock verification of one repository's current commit. The server
+    /// budgets it and says why when it refuses, which is returned rather than thrown.
+    /// </summary>
+    public async Task<(LockVerification? Result, string Refusal)> VerifyLockAsync(
+        string repository, string mode, CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/locks/verify");
+        request.Headers.Add("X-Abom-Control", "1");
+        request.Content = JsonContent.Create(new { repository, mode });
+        using var response = await http.SendAsync(request, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            var reason = await response.Content.ReadAsStringAsync(ct);
+            return (null, string.IsNullOrWhiteSpace(reason) ? response.ReasonPhrase ?? "refused" : reason);
+        }
+        return (await response.Content.ReadFromJsonAsync<LockVerification>(Json, ct), "");
+    }
+
     private async Task<RequeueResult> RequeueAsync(string path, object? body, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, path);

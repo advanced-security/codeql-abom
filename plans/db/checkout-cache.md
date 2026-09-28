@@ -34,8 +34,8 @@ price. `abom_ref_resolution` is *not* consulted: its rows are historical reading
 is unknown, and trusting one would defeat the drift detection the recheck lane exists for.
 
 That live-ref rule applies to declared-ref resolution. A native workflow lock deliberately selects
-a historical commit; [actions-lockfile.md](actions-lockfile.md) owns carrying that choice through
-precheck and cold fetch, not just cache hits. The cache remains reusable by repository/commit/input
+a historical commit, and ABOM [queues that commit](../../docs/architecture.md#locks) as its own row, so precheck, cold
+fetch and cache hits all see a commit ref rather than a tag. The cache remains reusable by repository/commit/input
 set and does not need one stored checkout per consumer. Lock-aware correctness must also work with
 retention disabled; enabling this cache is not permission to start honoring native locks.
 

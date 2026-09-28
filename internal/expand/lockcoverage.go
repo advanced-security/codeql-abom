@@ -15,6 +15,6 @@ func (e *Expander) recordLockCoverage(repository string, tree Tree) error {
 	if err != nil {
 		return err
 	}
-	return e.Store.RecordLockReading(repository, tree.SHA, store.LockCoverageRows(
+	return e.Store.RecordLockReading(repository, tree.SHA, lockfile.Reader, store.LockCoverageRows(
 		string(lock.Coverage), lock.Schema, lock.Digest, lock.Reason, rows), store.LockGraphOf(lock))
 }

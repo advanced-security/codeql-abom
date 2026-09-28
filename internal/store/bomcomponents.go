@@ -33,6 +33,9 @@ func (s *Store) fillComponents(out *BOM, depth map[string]int, edges []bomEdge) 
 	}
 
 	refs := referencesByComponent(depth, edges, coverage)
+	if err := s.attachBOMLocks(refs, out.Roots, coverage); err != nil {
+		return err
+	}
 
 	keys := make([]string, 0, len(depth))
 	for k := range depth {
@@ -101,13 +104,58 @@ func referencesByComponent(
 			refs[e.target] = map[string]BOMReference{}
 		}
 		key := e.refRaw + "\x00" + e.refValue
-		r := BOMReference{Raw: e.refRaw, Value: e.refValue}
+		r := BOMReference{Raw: e.refRaw, Value: e.refValue, Locked: []BOMLock{}}
 		if c, ok := coverage[refCoverageKey(e.target, e.refValue)]; ok {
 			r.ResolvedSHA, r.Analyzed = c.resolvedSHA, c.analyzed
 		}
 		refs[e.target][key] = r
 	}
 	return refs
+}
+
+// attachBOMLocks says, behind each reference a component is named at, which commits the roots'
+// current locks select and whether each was analyzed. The reference itself stays as written.
+func (s *Store) attachBOMLocks(
+	refs map[string]map[string]BOMReference, roots []string, coverage map[string]refCoverage,
+) error {
+	governed, err := s.LockGovernedEdges()
+	if err != nil || len(governed) == 0 {
+		return err
+	}
+	isRoot := map[string]bool{}
+	for _, r := range roots {
+		isRoot[strings.ToLower(r)] = true
+	}
+	// component, declared ref, commit -> consumers
+	chosen := map[string]map[string]map[string]map[string]bool{}
+	for _, g := range governed {
+		if !isRoot[strings.ToLower(g.Consumer)] || refs[g.NodeKey] == nil {
+			continue
+		}
+		if chosen[g.NodeKey] == nil {
+			chosen[g.NodeKey] = map[string]map[string]map[string]bool{}
+		}
+		if chosen[g.NodeKey][g.DeclaredRef] == nil {
+			chosen[g.NodeKey][g.DeclaredRef] = map[string]map[string]bool{}
+		}
+		if chosen[g.NodeKey][g.DeclaredRef][g.Commit] == nil {
+			chosen[g.NodeKey][g.DeclaredRef][g.Commit] = map[string]bool{}
+		}
+		chosen[g.NodeKey][g.DeclaredRef][g.Commit][g.Consumer] = true
+	}
+	for component, byRef := range refs {
+		for key, r := range byRef {
+			commits := chosen[component][r.Value]
+			for _, commit := range keysInOrder(commits) {
+				r.Locked = append(r.Locked, BOMLock{
+					Commit: commit, Consumers: keysInOrder(commits[commit]),
+					Analyzed: coverage[refCoverageKey(component, commit)].analyzed,
+				})
+			}
+			byRef[key] = r
+		}
+	}
+	return nil
 }
 
 // relationshipsFrom reports each distinct relationship inside the closure once, in an order that

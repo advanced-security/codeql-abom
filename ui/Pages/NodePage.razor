@@ -248,7 +248,7 @@ else
                     <MudSimpleTable Dense="true" Hover="true" Striped="false" FixedHeader="true"
                                     Class="abom-grid abom-table abom-grid-windowed">
                         <thead>
-                            <tr><th>Reference</th><th>Uses</th><th>Repositories</th></tr>
+                            <tr><th>Reference</th><th>Uses</th><th>Repositories</th><th>Locked to</th></tr>
                         </thead>
                         <tbody>
                             @foreach (var r in _detail.Refs)
@@ -263,11 +263,27 @@ else
                                     </td>
                                     <td class="abom-num">@r.Count</td>
                                     <td class="abom-num">@r.Repositories</td>
+                                    <td>
+                                        @if (r.Locked.Count > 0)
+                                        {
+                                            @* What runs, beside what the source says: each commit a current lock
+                                               selects behind this reference, and whose locks select it. *@
+                                            <span class="abom-ref-locked" data-abom-ref-locked="@r.Ref">
+                                                @foreach (var l in r.Locked)
+                                                {
+                                                    <span class="abom-ref-locked-entry" title="@RefLockTitle(l)">
+                                                        <code>@ShortCommit(l.Commit)</code>
+                                                        <span class="mud-text-secondary">@(l.Consumers == 1 ? "1 lock" : $"{l.Consumers:N0} locks")</span>
+                                                    </span>
+                                                }
+                                            </span>
+                                        }
+                                    </td>
                                 </tr>
                                 @if (_openRef == r.Ref)
                                 {
                                     <tr>
-                                        <td colspan="3" class="abom-ref-users-cell">
+                                        <td colspan="4" class="abom-ref-users-cell">
                                             @if (_users is null)
                                             {
                                                 <MudText Typo="Typo.caption" Class="mud-text-secondary">
@@ -288,10 +304,29 @@ else
                                                 <ul class="abom-ref-users-list">
                                                     @foreach (var u in _users.Repos)
                                                     {
-                                                        <li>
+                                                        <li data-abom-user="@u.FullName">
                                                             <MudLink Href="@($"/inventory?unit=repositories&q={Uri.EscapeDataString(u.FullName)}")"
                                                                      Typo="Typo.caption">@u.FullName</MudLink>
                                                             <span class="mud-text-secondary">@UseLabel(u)</span>
+                                                            <span class="abom-user-lock" data-abom-user-lock>@LockLabel(u)</span>
+                                                            @if (u.Verification is { } v)
+                                                            {
+                                                                <span class="abom-user-verification mud-text-secondary"
+                                                                      data-abom-user-verification
+                                                                      title="@v.VerifiedAt.ToString("u")">@VerificationLabel(v)</span>
+                                                            }
+                                                            @if (u.LockCoverage.Contains("covered") || u.LockCoverage.Contains("unsupported"))
+                                                            {
+                                                                @* Runs the tool once, offline and no-fix, because it was pressed. *@
+                                                                <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-verify-lock"
+                                                                           data-abom-verify-lock="@u.FullName"
+                                                                           Disabled="@(_verifying == u.FullName)"
+                                                                           OnClick="@(() => VerifyLock(u.FullName))">check lock</MudButton>
+                                                            }
+                                                            @if (_verifyRefusal.TryGetValue(u.FullName, out var refusal))
+                                                            {
+                                                                <span class="mud-text-secondary">@refusal</span>
+                                                            }
                                                         </li>
                                                     }
                                                 </ul>
@@ -457,6 +492,82 @@ else
         if (u.Owned) parts.Add("yours");
         return $" — {string.Join(", ", parts)}";
     }
+
+    // What the repository's lock did with this version. Four answers that "not locked" would
+    // collapse into one: no lockfile, one this reader could not read, one that does not list these
+    // uses, and none read at all — the last is unknown, not unlocked.
+    private static string LockLabel(RepositoryUse u)
+    {
+        var parts = new List<string>();
+        foreach (var l in u.Locks.Where(l => l.Via.Length == 0))
+        {
+            var workflows = string.Join(", ", l.Workflows.Select(w => w.Split('/')[^1]));
+            parts.Add(workflows.Length > 0
+                ? $"locked to {ShortCommit(l.Commit)} by {workflows}"
+                : $"locked to {ShortCommit(l.Commit)}");
+        }
+        if (parts.Count > 0 && u.LockedUses < u.Uses)
+        {
+            parts.Add($"{u.LockedUses:N0} of {u.Uses:N0} uses");
+        }
+        foreach (var l in u.Locks.Where(l => l.Via.Length > 0))
+        {
+            parts.Add($"{l.Consumer}'s lock selects {ShortCommit(l.Commit)} through {l.Via}");
+        }
+        if (parts.Count == 0)
+        {
+            parts.Add(OwnLockState(u.LockCoverage));
+        }
+        return $" — {string.Join("; ", parts)}";
+    }
+
+    private string? _verifying;
+    private readonly Dictionary<string, string> _verifyRefusal = [];
+
+    // GitHub's answer, named as GitHub's: which check, what it said, how much it found.
+    private static string VerificationLabel(VerificationBrief v)
+    {
+        var found = v.Findings == 1 ? "1 finding" : $"{v.Findings:N0} findings";
+        return $" · gh actions-lock ({v.Mode}): {v.Outcome}, {found}, {v.VerifiedAt:yyyy-MM-dd}";
+    }
+
+    private async Task VerifyLock(string repository)
+    {
+        _verifying = repository;
+        _verifyRefusal.Remove(repository);
+        try
+        {
+            var (_, refusal) = await Api.VerifyLockAsync(repository, "local");
+            if (refusal.Length > 0)
+            {
+                _verifyRefusal[repository] = refusal;
+            }
+            if (_openRef is { } reference)
+            {
+                _users = await Api.GetNodeUsersAsync(Key ?? string.Empty, reference);
+            }
+        }
+        finally
+        {
+            _verifying = null;
+        }
+    }
+
+    private static string OwnLockState(IReadOnlyList<string> coverage) =>
+        coverage.Contains("unsupported") ? "lockfile unsupported"
+        : coverage.Contains("covered") ? "not in its lock"
+        : coverage.Contains("not_onboarded") ? "no lockfile"
+        : "lockfile not read";
+
+    private static string RefLockTitle(RefLock l)
+    {
+        var names = string.Join(", ", l.Sample);
+        var more = l.Consumers > l.Sample.Count ? $" and {l.Consumers - l.Sample.Count:N0} more" : "";
+        return $"{l.Commit}: selected by the lock of {names}{more}";
+    }
+
+    // A commit is shown shortened, with the whole of it a hover away.
+    private static string ShortCommit(string commit) => commit.Length <= 12 ? commit : commit[..12];
 
     // "0 yours" with nothing verified is a question nobody has answered, not a count of none, so
     // ownership is only named once it can be.

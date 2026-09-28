@@ -26,19 +26,18 @@ See [how it works](architecture.md) for the current shape.
 
 ## Native locking is the resolution baseline
 
-GitHub's native workflow lockfiles are the gold standard for ABOM's future effective-dependency
+GitHub's native workflow lockfiles are the gold standard for ABOM's effective-dependency
 resolution, not an optional lookup optimization. The declared ref preserves intent; the governing
 workflow lock selects the immutable commit; verified version evidence supports advisory context.
 Each belongs to the analyzed revision, and a current live tag cannot overwrite that selection.
-ABOM reads the lock at the analyzed commit and analyzes the commit it selects; what it reports
-still describes the declared ref, and the effective view is the remaining work.
+**This is built**: ABOM analyzes the commit a lock selects, every reader that says what runs
+follows it beside the declared ref, GitHub's own verification runs when asked, and a lock
+requirement is a policy over the lock rules. See [how it works](architecture.md#locks).
 
-Use GitHub's [native tooling](../plans/tools/actions-lock.md) for generation, verification and
-updates, and its official parser for [contextual ingestion](../plans/db/actions-lockfile.md).
-Missing native coverage stays explicit; invalid or unsupported locks do not silently fall back to
-different code. Keep parsed coverage, network verification and observed runner enforcement distinct.
-This correctness work precedes closure staging, which must stage the selected commits on cold
-fetches as well as cache hits. Database-shape work remains a separate prerequisite.
+GitHub's [native tooling](../plans/tools/actions-lock.md) keeps generation, verification and
+updates; what is left there is observing the runner enforce a nested pin on an approved target.
+Missing native coverage stays explicit, and parsed coverage, network verification and observed
+runner enforcement stay distinct facts. Closure staging comes next, staging the selected commits.
 
 ## An organization that stays current at scale
 
@@ -121,7 +120,7 @@ a staged dependency path that ordinary Default Setup did not analyze. The stagin
 one selected commit per dependency; rooting it at one owned repository bounds the collisions but
 does not eliminate them. Count distinct lock-selected commits, not only different ref names.
 [Closure databases](../plans/ql/closure-database.md) therefore depend on
-[lock-aware resolution](../plans/db/actions-lockfile.md) and must preserve the implemented
+[lock-aware resolution](architecture.md#locks), now built, and must preserve the implemented
 [analysis-mode isolation](architecture.md#analysis-modes).
 
 ## The questions are the organization's own

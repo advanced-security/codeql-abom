@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 
 	viewspec "github.com/advanced-security/codeql-abom/internal/view"
@@ -94,6 +95,9 @@ type GraphEdge struct {
 	// report one relationship's fact as the pair's, which is invisible when they agree and wrong
 	// exactly when the difference matters.
 	Mixed []string `json:"mixed,omitempty"`
+	// Locked are the commits current locks select for the relationships behind the line: what
+	// runs, beside the references as written. Empty where nothing locks them.
+	Locked []string `json:"locked"`
 
 	// parts are the rows behind the line. Unexported, so they stay out of the payload: a reader
 	// acts on the keys and on shared-or-mixed facts, and these are here only so that splitting a
@@ -104,6 +108,7 @@ type GraphEdge struct {
 // edgePart is one stored relationship drawn as part of an edge.
 type edgePart struct {
 	key      string
+	locked   []string
 	ref      string
 	kind     string
 	boundary string
@@ -138,7 +143,15 @@ func (e GraphEdge) IsMixed(fact string) bool {
 // Every fact is either shared by all of them or named in Mixed and left absent, so a client that
 // ignores Mixed reads "unknown" rather than a value that is true of one constituent.
 func (e *GraphEdge) summarize() {
-	e.Keys, e.Mixed = []string{}, []string{}
+	e.Keys, e.Mixed, e.Locked = []string{}, []string{}, []string{}
+	for _, p := range e.parts {
+		for _, commit := range p.locked {
+			if !slices.Contains(e.Locked, commit) {
+				e.Locked = append(e.Locked, commit)
+			}
+		}
+	}
+	slices.Sort(e.Locked)
 	e.Count = len(e.parts)
 	e.Kind, e.Boundary, e.RefStyle = "", "", ""
 	e.AdvisoryRoute, e.FindingRoute, e.OwnedDepth = nil, nil, nil
@@ -738,6 +751,12 @@ func (s *Store) attachRules(display string, index map[string]*GraphNode, mode st
 }
 
 func (s *Store) graphEdges(display string, since int64, opts FullGraphOptions) ([]GraphEdge, error) {
+	// Read before the edges, because the store holds one connection and a query cannot be asked
+	// while another's rows are open.
+	locked, err := s.lockedCommitsByEdgeKey()
+	if err != nil {
+		return nil, err
+	}
 	cte, args := scopeParts(opts)
 	rows, err := s.db.Query(`WITH `+display+cte+`
 		SELECT sn.node_key, dn.node_key, e.edge_kind, COALESCE(e.ref_value, ''),
@@ -766,6 +785,7 @@ func (s *Store) graphEdges(display string, since int64, opts FullGraphOptions) (
 			&p.advisory, &p.finding, &p.depth); err != nil {
 			return nil, fmt.Errorf("scanning graph edge: %w", err)
 		}
+		p.locked = locked[p.key]
 		key := [2]string{src, dst}
 		e, ok := merged[key]
 		if !ok {

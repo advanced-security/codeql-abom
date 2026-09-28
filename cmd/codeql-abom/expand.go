@@ -14,6 +14,7 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/frontier"
 	"github.com/advanced-security/codeql-abom/internal/graph"
 	"github.com/advanced-security/codeql-abom/internal/ingest"
+	"github.com/advanced-security/codeql-abom/internal/lockfile"
 	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/store"
 	"github.com/advanced-security/codeql-abom/internal/work"
@@ -183,6 +184,13 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return fmt.Errorf("expand-all: seeding the frontier: %w", err)
 	}
 	fmt.Fprintf(stdout, "expand-all: %d dependencies seeded from repositories under review\n", seeded)
+	requeued, err := s.RequeueLocksReadByAnotherReader(lockfile.Reader)
+	if err != nil {
+		return fmt.Errorf("expand-all: requeueing locks another reader read: %w", err)
+	}
+	if requeued > 0 {
+		fmt.Fprintf(stdout, "expand-all: %d dependencies requeued to read their lock again\n", requeued)
+	}
 	if err := rank(s, queue); err != nil {
 		return fmt.Errorf("expand-all: %w", err)
 	}

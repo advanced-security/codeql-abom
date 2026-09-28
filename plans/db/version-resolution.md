@@ -6,7 +6,7 @@
 
 Immutable execution identity and semantic-version context are different facts, and ABOM must keep
 both. Native Actions locks select commits while retaining symbolic refs; this is the resolution
-baseline in [actions-lockfile.md](actions-lockfile.md), not an optional source behind a current tag
+baseline [ABOM now reads](../../docs/architecture.md#locks), not an optional source behind a current tag
 lookup. Bare SHAs carry no release version to compare against an advisory range, while a tag or pin
 comment alone cannot prove which code was selected.
 
@@ -41,7 +41,7 @@ Dependabot updates and automatic advisory/DG ingestion are different capabilitie
   or a pin comment is insufficient. Depends on that plan's identity collection and 1 through 3,
   not on completing its export integration.
 5. **Use lock evidence without turning it into a live-tag reading.** Consume the contextual
-    selection and verification provenance from [actions-lockfile.md](actions-lockfile.md). Preserve
+    selection and verification provenance [ABOM records](../../docs/architecture.md#locks). Preserve
     the original requested ref, lock symbolic ref and selected digest. A branch or partial version
     is not an exact release, and a parsed lock is not an independent ref/commit measurement.
     Attribute verified release evidence to its producer, repository and time; a later tag reading

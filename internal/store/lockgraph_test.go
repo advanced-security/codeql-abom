@@ -2,6 +2,7 @@ package store
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -43,7 +44,7 @@ func coveredRows() []LockCoverage {
 func TestALockReadingKeepsTheGraphTheLockDeclares(t *testing.T) {
 	s := newTestStore(t)
 	want := pagesGraph()
-	if err := s.RecordLockReading("owner/site", "c1", coveredRows(), want); err != nil {
+	if err := s.RecordLockReading("owner/site", "c1", testReader, coveredRows(), want); err != nil {
 		t.Fatalf("RecordLockReading: %v", err)
 	}
 	got, err := s.LockGraphAt("owner/site", "c1")
@@ -65,14 +66,14 @@ func TestALockReadingKeepsTheGraphTheLockDeclares(t *testing.T) {
 // longer has must not stay behind to select a commit.
 func TestReadingACommitAgainReplacesItsGraph(t *testing.T) {
 	s := newTestStore(t)
-	if err := s.RecordLockReading("owner/site", "c1", coveredRows(), pagesGraph()); err != nil {
+	if err := s.RecordLockReading("owner/site", "c1", testReader, coveredRows(), pagesGraph()); err != nil {
 		t.Fatalf("RecordLockReading: %v", err)
 	}
 	smaller := pagesGraph()
 	smaller.Dependencies = smaller.Dependencies[:1]
 	smaller.Uses = nil
 	smaller.WorkflowPins = smaller.WorkflowPins[:1]
-	if err := s.RecordLockReading("owner/site", "c1", coveredRows(), smaller); err != nil {
+	if err := s.RecordLockReading("owner/site", "c1", testReader, coveredRows(), smaller); err != nil {
 		t.Fatalf("RecordLockReading: %v", err)
 	}
 	got, err := s.LockGraphAt("owner/site", "c1")
@@ -97,7 +98,7 @@ func TestTwoConsumersKeepTheirOwnSelectionForOneTag(t *testing.T) {
 			Pin: "dtolnay/rust-toolchain@v1", Owner: "dtolnay", Repo: "rust-toolchain", Ref: "v1",
 			ResolvedFrom: "v1", Algorithm: "sha1", Digest: digest,
 		}}}
-		if err := s.RecordLockReading(consumer, "c1", coveredRows(), graph); err != nil {
+		if err := s.RecordLockReading(consumer, "c1", testReader, coveredRows(), graph); err != nil {
 			t.Fatalf("RecordLockReading(%s): %v", consumer, err)
 		}
 	}
@@ -115,9 +116,13 @@ func TestTwoConsumersKeepTheirOwnSelectionForOneTag(t *testing.T) {
 	}
 }
 
+// testReader stands in for lockfile.Reader, which the store only ever compares.
+const testReader = "test-parser@v1 interpretation/1"
+
 // A covered lock read before its graph was kept has coverage and no entries, which is not the
 // same as a lock with no entries. Reporting it as read would leave the graph missing for good,
-// because nothing fetches a commit whose reading is on record.
+// because nothing fetches a commit whose reading is on record. A reading that old names no reader
+// either, so an unsupported one is read again too: a newer parser may read what it refused.
 func TestACoveredLockReadBeforeItsGraphWasKeptIsReadAgain(t *testing.T) {
 	s := newTestStore(t)
 	for _, row := range []struct{ repository, coverage string }{
@@ -134,9 +139,9 @@ func TestACoveredLockReadBeforeItsGraphWasKeptIsReadAgain(t *testing.T) {
 	for repository, want := range map[string]bool{
 		"owner/covered": false,
 		"owner/absent":  true,
-		"owner/broken":  true,
+		"owner/broken":  false,
 	} {
-		got, err := s.HasLockCoverage(repository, "c1")
+		got, err := s.HasLockCoverage(repository, "c1", testReader)
 		if err != nil {
 			t.Fatalf("HasLockCoverage(%s): %v", repository, err)
 		}
@@ -145,10 +150,93 @@ func TestACoveredLockReadBeforeItsGraphWasKeptIsReadAgain(t *testing.T) {
 		}
 	}
 
-	if err := s.RecordLockReading("owner/covered", "c1", coveredRows(), pagesGraph()); err != nil {
+	if err := s.RecordLockReading("owner/covered", "c1", testReader, coveredRows(), pagesGraph()); err != nil {
 		t.Fatalf("RecordLockReading: %v", err)
 	}
-	if got, err := s.HasLockCoverage("owner/covered", "c1"); err != nil || !got {
+	if got, err := s.HasLockCoverage("owner/covered", "c1", testReader); err != nil || !got {
 		t.Errorf("after reading it again: HasLockCoverage = %v, %v; want true", got, err)
+	}
+}
+
+// A reader that changed may read a lock differently: a newer parser can read a schema an older
+// one refused, and a changed interpretation can refuse what an older one covered. Either way the
+// recorded answer is somebody else's, so the commit is read again.
+func TestALockReadByAnotherReaderIsReadAgain(t *testing.T) {
+	s := newTestStore(t)
+	unsupported := []LockCoverage{{Coverage: "unsupported", Schema: "v0.0.3", Reason: "newer"}}
+	if err := s.RecordLockReading("owner/site", "c1", "old-parser", coveredRows(), pagesGraph()); err != nil {
+		t.Fatalf("RecordLockReading: %v", err)
+	}
+	if err := s.RecordLockReading("owner/next", "c1", "old-parser", unsupported, LockGraph{}); err != nil {
+		t.Fatalf("RecordLockReading: %v", err)
+	}
+	for _, repository := range []string{"owner/site", "owner/next"} {
+		if got, err := s.HasLockCoverage(repository, "c1", "old-parser"); err != nil || !got {
+			t.Errorf("%s under the reader that read it = %v, %v; want true", repository, got, err)
+		}
+		if got, err := s.HasLockCoverage(repository, "c1", testReader); err != nil || got {
+			t.Errorf("%s under another reader = %v, %v; want false", repository, got, err)
+		}
+	}
+}
+
+// No lockfile is the one answer no reader can change: there is no file to read differently. Re-
+// reading every commit of an unlocked corpus on each parser upgrade would re-fetch all of it.
+func TestNoLockfileIsNotReadAgainWhenTheReaderChanges(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.RecordLockReading("owner/plain", "c1", "old-parser",
+		[]LockCoverage{{Coverage: "not_onboarded"}}, LockGraph{}); err != nil {
+		t.Fatalf("RecordLockReading: %v", err)
+	}
+	if got, err := s.HasLockCoverage("owner/plain", "c1", testReader); err != nil || !got {
+		t.Errorf("HasLockCoverage = %v, %v; want true: nothing there could read differently", got, err)
+	}
+}
+
+// What another reader read is put back in the queue so it is read again; what no reader can read
+// differently, and what this reader already read, stay where they are.
+func TestRequeueingPutsBackOnlyTheLocksAnotherReaderRead(t *testing.T) {
+	s := newTestStore(t)
+	for _, r := range []struct {
+		repository, reader, coverage string
+	}{
+		{"owner/stale", "old-parser", "covered"},
+		{"owner/refused", "old-parser", "unsupported"},
+		{"owner/plain", "old-parser", "not_onboarded"},
+		{"owner/current", testReader, "covered"},
+	} {
+		if err := s.RecordLockReading(r.repository, "c1", r.reader,
+			[]LockCoverage{{Coverage: r.coverage}}, LockGraph{}); err != nil {
+			t.Fatalf("RecordLockReading(%s): %v", r.repository, err)
+		}
+		owner, repo, _ := strings.Cut(r.repository, "/")
+		if _, err := s.DB().Exec(`
+			INSERT INTO abom_frontier (node_key, ref, owner, repo, depth, status, enqueued_at,
+			                           resolved_sha, analyzed_ref)
+			VALUES (?, 'v1', ?, ?, 1, 'done', '2026-09-27T00:00:00Z', 'c1', 'v1')`,
+			r.repository, owner, repo); err != nil {
+			t.Fatalf("queueing %s: %v", r.repository, err)
+		}
+	}
+
+	n, err := s.RequeueLocksReadByAnotherReader(testReader)
+	if err != nil {
+		t.Fatalf("RequeueLocksReadByAnotherReader: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("requeued %d, want 2", n)
+	}
+	for repository, want := range map[string]string{
+		"owner/stale": "pending", "owner/refused": "pending",
+		"owner/plain": "done", "owner/current": "done",
+	} {
+		var status string
+		if err := s.DB().QueryRow(`SELECT status FROM abom_frontier WHERE node_key = ?`,
+			repository).Scan(&status); err != nil {
+			t.Fatalf("reading %s: %v", repository, err)
+		}
+		if status != want {
+			t.Errorf("%s is %s, want %s", repository, status, want)
+		}
 	}
 }

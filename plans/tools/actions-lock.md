@@ -21,7 +21,7 @@ The composite action under `.github/actions` is covered the same way: its depend
 attributed to each of the four workflows that reach it. Only `gh actions-lock` may write either
 file; a hand-edited lock would name commits nobody resolved, and a hand-edited ref takes the whole
 repository's CI offline. This plan owns ABOM's workflow/toolchain adoption; consuming
-locks during analysis belongs to [actions-lockfile.md](../db/actions-lockfile.md).
+locks during analysis is built, and [described with the rest of the system](../../docs/architecture.md#locks).
 
 ## Compatibility baseline
 
@@ -44,7 +44,7 @@ host support and the actual execution of this repository's workflows still need 
    test onboarded and unonboarded workflows, missing entries, a moved tag with an older locked SHA,
    malformed locks, `$/` references, nested composites and reusable workflows. Record the run
    commit, lock blob, host/runner and observed selected commits. The precedence the CLI generates
-   is recorded in the [resolution plan](../db/actions-lockfile.md) — a composite's nested pins
+   is recorded in the [architecture](../../docs/architecture.md#locks) — a composite's nested pins
    live in the caller's lock, and the callee's lock is never read — and ABOM now selects by it;
    what is unobserved is the runner enforcing a nested pin. Depends on 1; local fixtures can begin
    without a live target, but cannot establish deployed enforcement.

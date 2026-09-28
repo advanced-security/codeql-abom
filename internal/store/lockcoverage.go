@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS abom_lock_coverage (
   -- 1 once the reading also kept the lock's graph below. A covered lock read before that has
   -- coverage and no entries, which is not the same as a lock that has none.
   graph_recorded INTEGER NOT NULL DEFAULT 0,
+  -- The parser release and interpretation that read it. Empty on a reading made before this was
+  -- recorded, which no current reader matches.
+  reader        TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (repository, commit_sha, workflow_path)
 );
 -- The measurement reads by state across the corpus, not by repository.
@@ -173,7 +176,9 @@ func LockGraphOf(lock lockfile.Lock) LockGraph {
 // one answer, so a second reading of the same commit is a correction, not a second opinion. One
 // transaction, because coverage on record is what stops the commit being read again, and coverage
 // without its graph would stop it for good.
-func (s *Store) RecordLockReading(repository, commit string, rows []LockCoverage, graph LockGraph) error {
+func (s *Store) RecordLockReading(
+	repository, commit, reader string, rows []LockCoverage, graph LockGraph,
+) error {
 	if repository == "" || commit == "" {
 		return fmt.Errorf("store: RecordLockReading needs a repository and a commit")
 	}
@@ -197,10 +202,10 @@ func (s *Store) RecordLockReading(repository, commit string, rows []LockCoverage
 		if _, err := tx.Exec(`
 			INSERT INTO abom_lock_coverage
 			    (repository, commit_sha, workflow_path, coverage, schema_version, lock_digest,
-			     reason, seen_at, graph_recorded)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+			     reason, seen_at, graph_recorded, reader)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
 			repository, commit, row.WorkflowPath, row.Coverage,
-			row.Schema, row.Digest, row.Reason, seen); err != nil {
+			row.Schema, row.Digest, row.Reason, seen, reader); err != nil {
 			return fmt.Errorf("recording lock coverage for %s at %s: %w", repository, commit, err)
 		}
 	}
@@ -322,27 +327,55 @@ func (s *Store) LockCoverageCounts() (map[string]int, error) {
 	return counts, nil
 }
 
-// HasLockCoverage reports whether this repository's lockfile was read at this commit.
+// HasLockCoverage reports whether this repository's lockfile was read at this commit by reader.
 //
 // Asked before a reference is settled without a checkout: a commit analyzed before this table
 // existed has no rows, and settling it again would leave the lockfile unread indefinitely. Every
 // reading writes at least the repository-level row, including "no lockfile here", so absence of
 // rows means the question was never asked rather than answered with nothing.
-func (s *Store) HasLockCoverage(repository, commit string) (bool, error) {
+func (s *Store) HasLockCoverage(repository, commit, reader string) (bool, error) {
 	if repository == "" || commit == "" {
 		return false, nil
 	}
-	// A covered lock read before its graph was kept is read again, once: its coverage is on
-	// record and its entries are not, and nothing else would ever fetch that commit again.
 	var found int
 	err := s.db.QueryRow(`
 		SELECT EXISTS(
 		  SELECT 1 FROM abom_lock_coverage
 		  WHERE repository = ? AND commit_sha = ? AND workflow_path = ''
-		    AND (coverage <> 'covered' OR graph_recorded = 1))`,
-		repository, commit).Scan(&found)
+		    AND `+readByCurrentReader+`)`,
+		repository, commit, reader).Scan(&found)
 	if err != nil {
 		return false, fmt.Errorf("reading lock coverage for %s at %s: %w", repository, commit, err)
 	}
 	return found == 1, nil
+}
+
+// readByCurrentReader holds for a repository-level reading this reader need not repeat. No
+// lockfile is an answer no reader can change; anything else another reader recorded — or a
+// reading older than the column, which names none — may read differently now, and is repeated.
+const readByCurrentReader = `(coverage = 'not_onboarded' OR reader = ?)`
+
+// RequeueLocksReadByAnotherReader puts back the dependencies whose commit's lock another reader
+// read, so each is read again.
+//
+// Only the checkout is repeated: every evaluation of an unchanged commit is already on record,
+// so a requeued row is settled from the ledger once its lock has been read. Nothing is requeued
+// for a commit with no lockfile, and nothing that has never been analyzed, which reads its lock
+// on the way anyway.
+func (s *Store) RequeueLocksReadByAnotherReader(reader string) (int, error) {
+	if reader == "" {
+		return 0, fmt.Errorf("store: RequeueLocksReadByAnotherReader needs the current reader")
+	}
+	res, err := s.db.Exec(requeueDone+`
+		AND COALESCE(resolved_sha, '') <> ''
+		AND EXISTS (
+		  SELECT 1 FROM abom_lock_coverage c
+		  WHERE c.repository = abom_frontier.owner || '/' || abom_frontier.repo
+		    AND c.commit_sha = abom_frontier.resolved_sha AND c.workflow_path = ''
+		    AND NOT `+readByCurrentReader+`)`, reader)
+	if err != nil {
+		return 0, fmt.Errorf("requeueing locks another reader read: %w", err)
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
 }

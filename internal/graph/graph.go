@@ -11,6 +11,8 @@ package graph
 import (
 	"database/sql"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
@@ -27,9 +29,21 @@ type Builder struct {
 // and the reference as written. The last two are what tell one version of a dependency from
 // another, which a walk needs in order to stay inside the version a consumer actually pinned.
 type inEdge struct {
+	row    int64
 	src    int64
 	commit string
 	ref    string
+	// commits are every commit a regular run sighted this edge at, the latest run's among them. An
+	// edge two analyzed commits share is one row, and its latest run names only one of them.
+	commits []string
+}
+
+// edgeLock is one commit a current lock selects for an edge, and whose lock: the edge's own
+// repository for its workflows and composites, or a caller whose lock reaches the composite.
+type edgeLock struct {
+	commit   string
+	consumer int64
+	own      bool
 }
 
 // model is the in-memory projection of the graph used for traversal.
@@ -56,6 +70,9 @@ type model struct {
 	// conditionOf holds the `if:` guarding a step, verbatim. Empty for the overwhelming majority
 	// of steps, which are unconditional.
 	conditionOf map[int64]string
+	// locks holds, by edge row, what the current locks select for it. Empty for every edge of an
+	// unlocked corpus.
+	locks map[int64][]edgeLock
 	// referenceable are the nodes that can appear as an edge target.
 	referenceable []int64
 }
@@ -71,6 +88,7 @@ func (b *Builder) load() (*model, error) {
 		resolved:    make(map[string]string),
 		seedRepo:    make(map[int64]bool),
 		conditionOf: make(map[int64]string),
+		locks:       make(map[int64][]edgeLock),
 	}
 
 	repos, err := b.Store.DB().Query(
@@ -124,8 +142,8 @@ func (b *Builder) load() (*model, error) {
 	}
 
 	edges, err := b.Store.DB().Query(`
-		SELECT e.src_node_row_id, e.dst_node_row_id,
-		       COALESCE(q.db_commit, ''), COALESCE(e.ref_value, '')
+		SELECT e.row_id, e.src_node_row_id, e.dst_node_row_id,
+		       LOWER(COALESCE(q.db_commit, '')), COALESCE(e.ref_value, '')
 		  FROM abom_edge_regular e
 		  LEFT JOIN abom_query_run q ON q.row_id = e.query_run_id
 		 WHERE ` + store.DependencyEdgeFilter)
@@ -138,7 +156,7 @@ func (b *Builder) load() (*model, error) {
 	for edges.Next() {
 		var in inEdge
 		var dst int64
-		if err := edges.Scan(&in.src, &dst, &in.commit, &in.ref); err != nil {
+		if err := edges.Scan(&in.row, &in.src, &dst, &in.commit, &in.ref); err != nil {
 			return nil, fmt.Errorf("scanning edge: %w", err)
 		}
 		m.reverse[dst] = append(m.reverse[dst], in)
@@ -153,7 +171,91 @@ func (b *Builder) load() (*model, error) {
 	if err := m.loadResolutions(b.Store); err != nil {
 		return nil, err
 	}
+	if err := m.loadSightings(b.Store); err != nil {
+		return nil, err
+	}
+	if err := m.loadLocks(b.Store); err != nil {
+		return nil, err
+	}
 	return m, m.loadConditions(b.Store)
+}
+
+// loadSightings records every commit a regular run sighted each edge at, so a walk can stand at
+// any commit that ships the edge rather than only at the one its latest run named.
+func (m *model) loadSightings(s *store.Store) error {
+	rows, err := s.DB().Query(`
+		SELECT s.edge_row_id, LOWER(q.db_commit)
+		  FROM abom_edge_sighting s
+		  JOIN abom_query_run q ON q.row_id = s.query_run_id
+		 WHERE q.analysis_mode = 'regular' AND COALESCE(q.db_commit, '') <> ''`)
+	if err != nil {
+		return fmt.Errorf("loading edge sightings: %w", err)
+	}
+	sighted := map[int64][]string{}
+	for rows.Next() {
+		var edge int64
+		var commit string
+		if err := rows.Scan(&edge, &commit); err != nil {
+			rows.Close()
+			return fmt.Errorf("scanning an edge sighting: %w", err)
+		}
+		sighted[edge] = append(sighted[edge], commit)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for dst, ins := range m.reverse {
+		for i := range ins {
+			commits := sighted[ins[i].row]
+			if ins[i].commit != "" && !slices.Contains(commits, ins[i].commit) {
+				commits = append(commits, ins[i].commit)
+			}
+			if len(commits) == 0 {
+				commits = []string{""}
+			}
+			ins[i].commits = commits
+		}
+		m.reverse[dst] = ins
+	}
+	return nil
+}
+
+// loadLocks records what the current locks select for each edge they govern, with whose lock.
+func (m *model) loadLocks(s *store.Store) error {
+	governed, err := s.LockGovernedEdges()
+	if err != nil || len(governed) == 0 {
+		return err
+	}
+	rows, err := s.DB().Query(`SELECT row_id, LOWER(repository_full_name) FROM repository`)
+	if err != nil {
+		return fmt.Errorf("loading repositories: %w", err)
+	}
+	repositories := map[string]int64{}
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			rows.Close()
+			return fmt.Errorf("scanning a repository: %w", err)
+		}
+		repositories[name] = id
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, g := range governed {
+		consumer, ok := repositories[strings.ToLower(g.Consumer)]
+		if !ok {
+			continue
+		}
+		m.locks[g.EdgeID] = append(m.locks[g.EdgeID], edgeLock{
+			commit: strings.ToLower(g.Commit), consumer: consumer,
+			own: g.Rule != store.LockRuleCaller,
+		})
+	}
+	return nil
 }
 
 // loadResolutions records which commit each analyzed reference of a dependency resolved to, so a
@@ -176,7 +278,7 @@ func (m *model) loadResolutions(s *store.Store) error {
 		if err := rows.Scan(&key, &ref, &sha); err != nil {
 			return fmt.Errorf("scanning reference resolution: %w", err)
 		}
-		m.resolved[key+"\x00"+ref] = sha
+		m.resolved[key+"\x00"+ref] = strings.ToLower(sha)
 	}
 	return rows.Err()
 }

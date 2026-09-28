@@ -57,6 +57,9 @@ type Server struct {
 	// QueueOwned puts the operator's own repositories in the analysis queue. Nil leaves them
 	// recorded and never analyzed, which is the state enumeration exists to end.
 	QueueOwned func() (int, error)
+	// VerifyLock runs GitHub's lock verification of a repository's current commit, within its
+	// budget. Nil leaves the action unavailable.
+	VerifyLock func(ctx context.Context, repository, mode string) (store.LockVerification, error)
 	// SnapshotPreview reports what a submission would send. Nil answers that this build cannot
 	SnapshotPreview func(repository string) (SnapshotPreview, error)
 	// SnapshotSubmit writes a snapshot to GitHub. Nil leaves the endpoint unavailable, which is
@@ -162,6 +165,8 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/discovery/requeue/{tier}", s.discoveryRequeue)
 	mux.HandleFunc("POST /api/discovery/requeue-stale", s.discoveryRequeueStale)
 	mux.HandleFunc("POST /api/discovery/requeue-repository", s.discoveryRequeueRepository)
+	mux.HandleFunc("POST /api/locks/verify", s.verifyLock)
+	mux.HandleFunc("GET /api/locks/verifications", s.lockVerifications)
 	mux.HandleFunc("GET /api/discovery/suites", s.tierSuites)
 	mux.HandleFunc("GET /api/discovery/objective", s.objective)
 	mux.HandleFunc("PUT /api/discovery/suites/{tier}", s.setTierSuites)

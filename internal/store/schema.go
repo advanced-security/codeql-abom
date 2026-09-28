@@ -706,6 +706,9 @@ var addedColumns = []struct{ table, column, decl string }{
 	// Zero on a reading made before the lock's graph was kept, so a covered lock is read again
 	// once rather than keeping coverage with none of its entries.
 	{"abom_lock_coverage", "graph_recorded", "INTEGER NOT NULL DEFAULT 0"},
+	// Empty on a reading made before the reader was recorded, which no current reader matches,
+	// so each such lock is read once more by a reader that says what it is.
+	{"abom_lock_coverage", "reader", "TEXT NOT NULL DEFAULT ''"},
 	// Rows written before the identity chain existed keep a run key computed without these, so
 	// they will not match a current key and their pairs re-run once. That is the correct
 	// outcome: nothing verified them.

@@ -14,6 +14,7 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/frontier"
 	"github.com/advanced-security/codeql-abom/internal/graph"
 	"github.com/advanced-security/codeql-abom/internal/ingest"
+	"github.com/advanced-security/codeql-abom/internal/lockfile"
 	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/store"
 	"github.com/advanced-security/codeql-abom/internal/work"
@@ -694,7 +695,7 @@ func (e *Expander) settleWithoutFetching(
 	// indefinitely: a database whose analyzed refs have no pending work never fetches again, and
 	// an upgrade or a tier requeue is exactly that case. Absence of rows means nobody looked,
 	// which is a different fact from "no lockfile", so the commit is read once to say which.
-	covered, err := e.Store.HasLockCoverage(b.full(), sha)
+	covered, err := e.Store.HasLockCoverage(b.full(), sha, lockfile.Reader)
 	if err != nil {
 		return work.Prepared{}, false, err
 	}

@@ -1037,6 +1037,19 @@ code {
     columns: 2;
 }
 
+/* What the locks select behind a declared reference: one commit per line, with how many locks
+   select it, so two commits never run together into one number. */
+.abom-ref-locked { display: flex; flex-direction: column; gap: 2px; }
+.abom-ref-locked-entry { white-space: nowrap; font-size: var(--abom-text-sm); }
+.abom-ref-locked-entry code { margin-right: 6px; }
+
+/* The version a queue row checks out, and whose lock chose it, under the dependency's name. A
+   block of its own, because the stacked layout of a narrow screen lays a cell's children out side
+   by side and a second one pushed every value in the row off the edge. */
+.abom-coverage-dependency, .abom-cell-stack { min-width: 0; }
+.abom-coverage-version { display: block; font-size: var(--abom-text-sm); line-height: 1.3; }
+.abom-coverage-locked { display: block; }
+
 /* A value and how much of the corpus it accounts for, on one line. Stacked, each row was two
    lines tall and a list of twenty-one rules scrolled for no reason. */
 .abom-picker-value {

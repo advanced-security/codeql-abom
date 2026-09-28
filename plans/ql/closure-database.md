@@ -89,7 +89,7 @@ repository is also the unit a person can act on, and the unit
 the alerts a published pack would raise.
 
 The collision test must count **selected commits**, not only distinct requested refs. Native
-lock-aware selection in [actions-lockfile.md](../db/actions-lockfile.md) is a prerequisite: a
+lock-aware selection, [now built](../../docs/architecture.md#locks), is a prerequisite: a
 workflow can lock an older SHA than its tag currently names, and different contexts can select
 different SHAs behind identical ref text. A native lockfile does not enlarge CodeQL's staging
 namespace. Any distinct selected revisions of one repository inside a proposed database remain a
@@ -107,7 +107,7 @@ actually scales with the organization is the code-scanning probe, which this cha
    how many dependencies select more than one commit across their governing workflow/lock contexts?
    Count unresolved selection separately; reference spelling alone is insufficient. This decides
    whether the whole shape is sound, and **the honest outcome may be that it stops here**. The
-   contextual selection it counts is recorded by [actions-lockfile.md](../db/actions-lockfile.md):
+   contextual selection it counts is [recorded](../../docs/architecture.md#locks):
    each consumer's lock at the analyzed commit, its DAG, and a frontier row at every commit a
    lock selects. No lock generation belongs inside this plan.
 1. **Measure what a closure costs to extract.** Fewer databases is not less extraction: every owned
@@ -123,7 +123,7 @@ actually scales with the organization is the code-scanning probe, which this cha
    closure rather than a second selector. `store.SubmissionClosure` currently joins through one
    frontier `resolved_sha`; that is not sufficient for two consumers locking the same ref
    differently. Stage the selected commits on cache misses as well as hits. Depends on 1, the
-   effective view in [actions-lockfile.md](../db/actions-lockfile.md) and the existing checkout
+   [effective selection](../../docs/architecture.md#locks) the submission closure already follows and the existing checkout
    cache.
 3. **Index it.** Append a recursive workflow include to `LGTM_INDEX_FILTERS` rather than replacing
    the defaults — the extractor's `autobuild.sh` concatenates a provided value after its own, so a

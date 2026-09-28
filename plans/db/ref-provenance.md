@@ -16,8 +16,8 @@ check can block at all. A finding reported without its ref is a measurement pres
 qualifier that makes it meaningful.
 
 A native lock adds another necessary qualifier: the workflow's requested tag can differ from the
-commit selected by its governing lock, and from where that tag points now. The binding in
-[actions-lockfile.md](actions-lockfile.md) must retain all three rather than overwrite the requested
+commit selected by its governing lock, and from where that tag points now. The lock binding
+[ABOM already records](../../docs/architecture.md#locks) keeps all three; run attribution must not overwrite the requested
 ref with a SHA or attribute every consumer to the newest tag observation.
 
 ## Pending
@@ -39,7 +39,7 @@ ref with a SHA or attribute every consumer to the newest tag observation.
 4. **Attach lock context without duplicating evaluations.** Carry consuming repository/root commit,
    workflow, lock digest/schema and selected commit through both the record and skip paths. Keep
    requested ref, lock symbolic ref and actually analyzed revision separate. Context-to-run
-   attribution consumes [actions-lockfile.md](actions-lockfile.md); a locked historical selection
+   attribution consumes the recorded [lock selection](../../docs/architecture.md#locks); a locked historical selection
    must not read as a new measurement of where a tag points today.
 
 ## The constraint that must not be broken

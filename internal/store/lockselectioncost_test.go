@@ -5,9 +5,10 @@ import (
 	"testing"
 )
 
-// Discovery asks this once per repository it settles, and the lock tables hold every entry of
-// every locked commit the corpus has read. A scan of any of them per settle is a cost that grows
-// with the corpus rather than with the repository, so each has to be reached by its key.
+// Discovery asks this once per repository it settles, and every reader that says what a lock
+// selected asks it about the whole corpus. The lock tables hold every entry of every locked
+// commit read, so a scan of any of them is a cost that grows with the corpus rather than with
+// the question, and each has to be reached by its key.
 func TestLockSelectionReachesEveryLockTableByItsKey(t *testing.T) {
 	s := newTestStore(t)
 	// The test store defers indexes, as a bulk load does; a served or crawling one has them all,
@@ -16,13 +17,41 @@ func TestLockSelectionReachesEveryLockTableByItsKey(t *testing.T) {
 		t.Fatalf("CreateIndexes: %v", err)
 	}
 
-	rows, err := s.db.Query("EXPLAIN QUERY PLAN "+lockSelectionQuery,
-		"octo/tool", "octo", "tool", "0123456789abcdef0123456789abcdef01234567")
+	for name, c := range map[string]struct {
+		scope lockScope
+		args  []any
+	}{
+		"one repository": {oneRepository, []any{"octo/tool", "octo", "tool",
+			"0123456789abcdef0123456789abcdef01234567"}},
+		"every repository": {everyRepository, nil},
+	} {
+		plan := explainSteps(t, s, lockGovernedQuery(c.scope), c.args...)
+		// The plan names each table by the alias the query gives it.
+		for _, step := range plan {
+			for _, alias := range []string{"w", "d", "parent", "u"} {
+				if step == "SCAN "+alias || strings.HasPrefix(step, "SCAN "+alias+" ") {
+					t.Errorf("%s: lock table %s is scanned:\n\t%s", name, alias,
+						strings.Join(plan, "\n\t"))
+				}
+			}
+			// The walk through a repository's own composites goes outward from what a workflow
+			// reaches. Starting from every internal node the corpus holds was measured at eight
+			// times the cost on the crawled organization, per settle.
+			if strings.Contains(step, "idx_node_external") {
+				t.Errorf("%s: the composite walk starts from every node of one kind:\n\t%s",
+					name, strings.Join(plan, "\n\t"))
+			}
+		}
+	}
+}
+
+func explainSteps(t *testing.T, s *Store, query string, args ...any) []string {
+	t.Helper()
+	rows, err := s.db.Query("EXPLAIN QUERY PLAN "+query, args...)
 	if err != nil {
-		t.Fatalf("explaining the lock selection query: %v", err)
+		t.Fatalf("explaining: %v", err)
 	}
 	defer rows.Close()
-
 	var plan []string
 	for rows.Next() {
 		var id, parent, notused int
@@ -35,23 +64,5 @@ func TestLockSelectionReachesEveryLockTableByItsKey(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("reading the query plan: %v", err)
 	}
-
-	t.Logf("plan:\n\t%s", strings.Join(plan, "\n\t"))
-	// The walk through the repository's own composites goes outward from what a workflow
-	// reaches. Starting from every internal node the corpus holds was measured at eight times
-	// the cost on the crawled organization, per settle.
-	for _, step := range plan {
-		if strings.Contains(step, "idx_node_external") {
-			t.Errorf("the composite walk starts from every node of one kind:\n\t%s",
-				strings.Join(plan, "\n\t"))
-		}
-	}
-	// The plan names each table by the alias the query gives it.
-	for _, step := range plan {
-		for _, alias := range []string{"w", "parent", "u", "child"} {
-			if step == "SCAN "+alias || strings.HasPrefix(step, "SCAN "+alias+" ") {
-				t.Errorf("lock table %s is scanned:\n\t%s", alias, strings.Join(plan, "\n\t"))
-			}
-		}
-	}
+	return plan
 }

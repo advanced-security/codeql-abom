@@ -618,6 +618,26 @@ test('a relationship seen again updates rather than duplicating', () => {
     assert.deepEqual(all.links[0].refs, ['v1', 'v2']);
 });
 
+// A delta sends only what arrived, so what a lock selects for the relationships behind a line
+// accumulates like their references do. Replacing it would forget the commits already known.
+test('a relationship seen again keeps every commit a lock selected for it', () => {
+    const all = {
+        nodes: [
+            { key: 'a', x: 0, y: 0, z: 0, refStyles: new Set(), edgeClasses: new Set() },
+            { key: 'b', x: 1, y: 1, z: 0, refStyles: new Set(), edgeClasses: new Set() },
+        ],
+        links: [{ source: 'a', target: 'b', refs: ['v1'], keys: ['k1'], locked: ['c1'], count: 1 }],
+    };
+
+    mergeInto(all, {
+        nodes: [],
+        edges: [{ source: 'a', target: 'b', refs: ['v1'], keys: ['k2'], locked: ['c2'], count: 1 }],
+        metrics: [],
+    });
+
+    assert.deepEqual(all.links[0].locked, ['c1', 'c2']);
+});
+
 // Reach is recomputed wholesale, so a node the client already holds can change size without
 // changing in any other way.
 test('metrics update nodes the client already holds', () => {

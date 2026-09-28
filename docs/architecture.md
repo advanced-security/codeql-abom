@@ -352,16 +352,73 @@ Everything is one SQLite file. `internal/store` is the only package that writes 
 | `abom_tier_suite`, `abom_tier_configured`, `abom_suite_query` | Which queries run against which tier |
 | `abom_cycle_spend` | What each crawl cycle cost |
 
-A dependency an Actions lockfile selects is queued at the commit it selects, beside its declared
-ref. The lock is read from the tree at the analyzed commit with GitHub's parser, never from the
-repository's current state. A workflow's own steps are selected by its repository's lock, for that
-workflow only, and so are the steps of the repository's own composites, by the lock of each
-workflow that reaches them; somebody else's composite action is selected by its **caller's** lock,
-because GitHub's tool records a composite's nested pins in the caller's lock and never reads the
-callee's. Only a lock read at a commit the queue currently resolves to selects anything, an
-unsupported lock selects nothing, and a full commit id is never drift-probed. The declared ref
-stays queued because every reader joins the source as written: readers describe the declared ref,
-not the locked commit.
+### Locks
+
+A workflow can name `owner/action@v1` while its native Actions lockfile selects an older commit
+than `v1` names today, and two consumers can lock one tag to different commits. ABOM reads the
+lock from the tree at the analyzed commit with GitHub's parser, never from the repository's
+current state, and analyzes what it selects.
+
+**Which lock governs which step.** A workflow's own steps are governed by its repository's lock,
+for that workflow only; so are the steps of the repository's own composites, by the lock of each
+workflow that reaches them. Somebody else's composite is governed by its **caller's** lock, for
+that caller only: GitHub's tool records a composite's nested pins in the caller's lock and never
+reads the callee's. A workflow entry lists the pins the workflow and its own composites name, not a
+closure; what a remote composite pulls in is reachable through its entry's `uses:` alone. Only a
+lock read at a commit the queue currently resolves to governs anything. One definition of this,
+`lockGovernedQuery`, answers discovery and every reader.
+
+**What is queued.** The selected commit is queued as its own row, beside the declared ref rather
+than instead of it: the declared ref is still what an unlocked consumer runs, what a relock would
+move to, and what every count describes as written. When the two name one commit, the second row
+costs no evaluation. A full commit id is never drift-probed, because it cannot move and a probe of
+one finds no ref by that name.
+
+**What reads it.** Wherever a reader says what runs, the lock's answer stands beside the reference
+as written, never in its place:
+
+- the queue names whose lock chose a commit;
+- a node page lists the commits locks select behind each declared reference, and each repository
+  naming it says what its lock did — locked it, has no lockfile, does not list these uses, was
+  refused, or was never read, which is unknown rather than unlocked;
+- a relationship names the commit its declaring line's lock selects and through which workflow or
+  caller pin, and each drawn line carries the commits behind it;
+- the bill of materials names, beside each reference, the commits its roots' locks select, in both
+  export formats;
+- the submission closure follows the commit a root's lock selects, down every route it governs,
+  and submits that commit, named by its measured version where one exists;
+- exposure admits a consumer only through the commit it runs: its own lock's choice, or what its
+  reference resolved to, and a caller's lock binds the route to that caller.
+
+Both walks take a dependency's children from every regular run that sighted the edge, not only the
+latest: an edge two analyzed commits share is one row. Reach and the owned closure stay
+component-level by design: they already union every analyzed version's edges, so a locked commit
+enters them through its own analysis.
+
+**Unreadable and changed locks.** A lock with one malformed entry is unsupported as a whole and
+selects nothing, and a digest of the wrong length or alphabet selects nothing whatever the parser
+allowed. Each reading records the parser release and interpretation that made it; a start under a
+different one requeues every commit that has a lockfile, and re-reading one repeats the checkout
+and no evaluation.
+
+**Verification.** GitHub's own `gh actions-lock` verification runs only when somebody asks — `POST
+/api/locks/verify`, `codeql-abom verify-lock`, or *check lock* on a node page — and never in a
+read. It runs no-fix, on a copy of the tree made a repository of its own (the tool reads `$/`
+actions through git), and is not believed if it changed that copy. A network check of one commit
+is not repeated within the hour and a day has a ceiling. What the tool says is kept verbatim and
+appended: **passed**, **warnings**, **failed**, **inconclusive** — a category this build does not
+know, or reachability the tool could not confirm — and **error**, for a tool that gave no report.
+None of them is a statement that a workflow is safe.
+
+**Policy.** A requirement for native locking is a policy like any other, over the rules the crawl
+already runs — `abom/actions/uncovered-action-ref` and `abom/actions/actions-lock-missing-for-workflow`
+— simulated before it binds and refusing by rule ID, because a verdict comes only from a rule. ABOM's
+reading of a lock and GitHub's verification are evidence beside it, never a term of one. On the
+shared corpus the uncovered-reference rule fires exactly where the reading leaves a reference
+without a usable lock.
+
+Observing the runner enforce a nested pin is not done here; it needs an approved target, and the
+tooling plan in `plans/tools/actions-lock.md` owns it.
 
 ### Evidence — the ledger
 
@@ -372,7 +429,8 @@ not the locked commit.
 | `abom_ingest_ledger` | What has already been read, so it is not read twice |
 | `abom_ref_resolution` | Which commit a tag or branch pointed at, when it was measured |
 | `abom_commit_content`, `abom_protected_branch` | Content equivalence, and which branches GitHub protects |
-| `abom_lock_coverage`, `abom_lock_dependency`, `abom_lock_use`, `abom_lock_workflow_pin` | What a repository's Actions lockfile said at one commit: coverage per workflow — not onboarded, empty, covered, or unsupported with the parser's reason — what each pin selects with the numeric ids it records, the DAG of what a composite pulls in, and the pins each workflow names. Asserted by the lock, verified by nothing |
+| `abom_lock_coverage`, `abom_lock_dependency`, `abom_lock_use`, `abom_lock_workflow_pin` | What a repository's Actions lockfile said at one commit: coverage per workflow — not onboarded, empty, covered, or unsupported with the parser's reason — what each pin selects with the numeric ids it records, the DAG of what a composite pulls in, the pins each workflow names, and which reader read it. Asserted by the lock, verified by nothing |
+| `abom_lock_verification` | Each run of GitHub's lock verification somebody asked for, appended: the commit, mode, tool and lockfile versions, outcome, and every finding as the tool wrote it |
 
 ### Analysis modes
 

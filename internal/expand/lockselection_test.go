@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/frontier"
+	"github.com/advanced-security/codeql-abom/internal/lockfile"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
@@ -223,7 +224,7 @@ func TestACompositeRunsItsNestedPinsAtTheCallersSelection(t *testing.T) {
 	h.run(10)
 
 	// A lock the frontier no longer resolves to: a commit of a repository nothing queued.
-	if err := h.store.RecordLockReading("octo/retired", "old-commit", nil, storeGraph(
+	if err := h.store.RecordLockReading("octo/retired", "old-commit", lockfile.Reader, nil, storeGraph(
 		"octo/tool@v1", lockedToolCommit, "actions/setup-python@v5", historicSetupPython)); err != nil {
 		t.Fatalf("recording a lock that is not current: %v", err)
 	}
@@ -330,5 +331,44 @@ func TestAConsumersOwnCompositeDoesNotBorrowTheLockOfAWorkflowThatDoesNotCallIt(
 
 	if _, ok := queuedAt(t, h, "actions/setup-python", localSetupPython); ok {
 		t.Error("the composite took a selection from a workflow that never calls it")
+	}
+}
+
+// A lock another reader read is read again, and reading it is all that happens: the tree is
+// fetched, the lock recorded by the current reader, and every evaluation answered from the ledger.
+func TestALockAnotherReaderReadIsReadAgainWithoutAnalyzingAnything(t *testing.T) {
+	h := newHarness(t)
+	h.lockFor("octo/composite", rootLock)
+	h.enqueue(item("octo", "composite", "", 1))
+	h.drain()
+	if _, err := h.store.DB().Exec(
+		`UPDATE abom_lock_coverage SET reader = 'an older parser' WHERE repository = 'octo/composite'`); err != nil {
+		t.Fatalf("recording the reading as another reader's: %v", err)
+	}
+
+	n, err := h.store.RequeueLocksReadByAnotherReader(lockfile.Reader)
+	if err != nil {
+		t.Fatalf("RequeueLocksReadByAnotherReader: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("requeued %d, want the one repository whose lock another reader read", n)
+	}
+	fetched, built := len(h.fetched), len(h.built)
+	h.run(100)
+
+	if again := h.fetched[fetched:]; len(again) != 1 || again[0] != "octo/composite" {
+		t.Errorf("fetched %v again, want octo/composite alone", again)
+	}
+	if len(h.built) != built {
+		t.Errorf("built %d databases, want none: nothing about the commit changed", len(h.built)-built)
+	}
+	var reader string
+	if err := h.store.DB().QueryRow(`
+		SELECT reader FROM abom_lock_coverage
+		WHERE repository = 'octo/composite' AND workflow_path = ''`).Scan(&reader); err != nil {
+		t.Fatalf("reading the recorded reader: %v", err)
+	}
+	if reader != lockfile.Reader {
+		t.Errorf("recorded by %q, want %q", reader, lockfile.Reader)
 	}
 }

@@ -65,7 +65,7 @@ This work does not execute builds or images, pull layers, inspect installed pack
 shell commands or Actions conditions, scan registries, or infer vulnerability from image identity.
 It does not promise Dependency Graph alerts or submit container packages to GitHub.
 
-[Native Actions locks](actions-lockfile.md) select the repository commit from which action metadata
+[Native Actions locks](../../docs/architecture.md#locks) select the repository commit from which action metadata
 and Dockerfiles must be read. That selection does not lock a registry image tag, enumerate image
 contents or cover every runtime download. Keep native action-pin coverage and container-declaration
 coverage separate; consume the selected action commit rather than resolving its live tag again.

@@ -306,6 +306,16 @@ public sealed record FrontierItem
     public int UsedByOwned { get; init; }
 
     /// <summary>
+    /// Repositories whose current lock selects exactly this row's commit, a bounded preview.
+    /// A row at a commit no source names is queued because a lock chose it, and would otherwise
+    /// read as a duplicate of its declared row, used by nobody.
+    /// </summary>
+    public IReadOnlyList<string> LockedBy { get; init; } = Array.Empty<string>();
+
+    /// <summary>How many repositories' locks select this commit in total.</summary>
+    public int LockedByCount { get; init; }
+
+    /// <summary>
     /// The state a reader distinguishes, which is one more than the queue stores: a dependency
     /// waiting on a retry has already cost something, and a queued one has not.
     /// </summary>
@@ -529,6 +539,21 @@ public sealed record RelationshipSummary
     public bool? AdvisoryRoute { get; init; }
     public bool? FindingRoute { get; init; }
     public int? OwnedDepth { get; init; }
+
+    /// <summary>
+    /// The commits current locks select for this line: the repository's own lock through the
+    /// workflow named, or a caller's through the pin it reached the composite by.
+    /// </summary>
+    public IReadOnlyList<RelationshipLock> Locked { get; init; } = [];
+}
+
+/// <summary>One commit a current lock selects for one declaring line.</summary>
+public sealed record RelationshipLock
+{
+    public string Commit { get; init; } = "";
+    public string Consumer { get; init; } = "";
+    public string Workflow { get; init; } = "";
+    public string Via { get; init; } = "";
 }
 
 /// <summary>One page of relationships, and the size of the match it was cut from.</summary>
@@ -1098,6 +1123,32 @@ public sealed record RefUsage
     public string Ref { get; init; } = string.Empty;
     public int Count { get; init; }
     public int Repositories { get; init; }
+
+    /// <summary>
+    /// The commits the current locks select behind this reference, and whose locks select them:
+    /// what runs, beside what the source says. Empty where nothing locks it.
+    /// </summary>
+    public IReadOnlyList<RefLock> Locked { get; init; } = [];
+}
+
+/// <summary>One commit the current locks select behind a declared reference.</summary>
+public sealed record RefLock
+{
+    public string Commit { get; init; } = string.Empty;
+    public int Consumers { get; init; }
+    public IReadOnlyList<string> Sample { get; init; } = [];
+}
+
+/// <summary>
+/// One commit a lock selects for a repository's use of a node at one reference: its own lock,
+/// through the workflows named, or a caller's, through the pin it reached the composite by.
+/// </summary>
+public sealed record RepositoryLock
+{
+    public string Commit { get; init; } = string.Empty;
+    public string Consumer { get; init; } = string.Empty;
+    public IReadOnlyList<string> Workflows { get; init; } = [];
+    public string Via { get; init; } = string.Empty;
 }
 
 /// <summary>One repository naming a node at one reference.</summary>
@@ -1116,6 +1167,44 @@ public sealed record RepositoryUse
 
     /// <summary>How many <c>uses:</c> lines, which is how much editing this repository would be.</summary>
     public int Uses { get; init; }
+
+    /// <summary>The commits a current lock selects for these uses instead of the declared reference.</summary>
+    public IReadOnlyList<RepositoryLock> Locks { get; init; } = [];
+
+    /// <summary>How many of the uses the repository's own lock governs; the rest run what the reference names.</summary>
+    public int LockedUses { get; init; }
+
+    /// <summary>
+    /// What the lock reading at the commit the repository currently resolves to recorded —
+    /// <c>covered</c>, <c>not_onboarded</c> or <c>unsupported</c>. Empty means nothing was read
+    /// there, which is unknown rather than unlocked.
+    /// </summary>
+    public IReadOnlyList<string> LockCoverage { get; init; } = [];
+
+    /// <summary>
+    /// The newest run of GitHub's lock verification at the commit the repository resolves to now.
+    /// Null means nothing verified it, which says nothing either way.
+    /// </summary>
+    public VerificationBrief? Verification { get; init; }
+}
+
+/// <summary>Which of GitHub's lock checks ran, what it said, and when.</summary>
+public sealed record VerificationBrief
+{
+    public string Mode { get; init; } = string.Empty;
+    public string Outcome { get; init; } = string.Empty;
+    public int Findings { get; init; }
+    public DateTimeOffset VerifiedAt { get; init; }
+}
+
+/// <summary>One run of GitHub's lock verification, as the server recorded it.</summary>
+public sealed record LockVerification
+{
+    public string Repository { get; init; } = string.Empty;
+    public string Commit { get; init; } = string.Empty;
+    public string Mode { get; init; } = string.Empty;
+    public string Outcome { get; init; } = string.Empty;
+    public string Error { get; init; } = string.Empty;
 }
 
 /// <summary>

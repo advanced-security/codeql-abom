@@ -272,6 +272,23 @@ status theatre.
 - Existing coverage, reach, BOM and submission totals remain regular. A view selecting extended
   evidence must name that regular context, and unsupported exports must refuse rather than widen.
 
+## Lock-aware checks
+
+- Ask `lockGovernedQuery` which lock governs an edge; never re-derive it in a reader. It is one
+  definition for discovery and every reader, and two would disagree exactly where a reader is
+  meant to explain what discovery queued.
+- Test the declared route and the locked route together, and a caller's lock three levels down: a
+  caller's lock binds a route to that caller, and admitting a step by its resolved ref rules out
+  every caller whose lock chose another commit. The agreement tests between exposure and the
+  submission closure must hold for both.
+- Take a dependency's children from every run that sighted the edge. An edge two commits share is
+  one row, and its latest run names only one of them.
+- The crawled organization holds no lock, so its totals cannot move. Measure a lock change on
+  public locked consumers in a scratch database, labeled as a declaration mutation, and never name
+  a private repository a token happens to see.
+- GitHub's verification runs only on request, no-fix, on a repository copy, and a category this
+  build does not know is inconclusive. Never call it from a read.
+
 ## Related
 
 - `.github/skills/maintain-abom-plans/SKILL.md` — reading, writing and re-ranking `plans/**`.
