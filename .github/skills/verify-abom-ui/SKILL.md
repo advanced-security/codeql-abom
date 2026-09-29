@@ -97,8 +97,9 @@ Four surfaces, and everything else is a unit, a tab or an action on one of them:
 A fifth nav entry is a finding: a question grew its own page again, and a page has to invent its
 own scope. `/repositories`, `/pinning`, `/remediation` and `/discovery` still **answer** at their
 old addresses so no link breaks, and none of them is in the navigation. **`/bom` no longer
-answers** — the bill of materials is an export taken from the scope on screen, not an address, and
-that address renders *Nothing here* by design.
+answers** — the bill of materials is an export taken from the scope on screen, or from a
+repository's row on the Repositories unit, not an address, and that address renders *Nothing here*
+by design.
 
 Inventory's units are `dependencies`, `workflows`, `jobs`, `repositories`, `advisories`,
 `relationships` and `coverage`, chosen with `?unit=`. Each asks its own endpoint for its own
@@ -225,6 +226,9 @@ because each one makes the interface assert something the data does not support.
 | 15 | A term is applied or refused, never dropped | A scope in the address that narrows nothing, with no refusal on screen | The reader believes they scoped when they did not. The refusal names the term, and the name is the only thing that teaches them which surface answers it |
 | 16 | An action carries the scope on screen | An export or a hand-off that widens to the whole organization | A bill of materials named after one part, describing all of it, is the worst document this project can emit |
 | 17 | A categorical encoding has a channel besides hue | Kinds, states or boundaries told apart by colour alone, or by colour plus a shape they all share | Hue alone excludes a reader who cannot judge it, and at this density it is hard to judge against neighbouring hues anyway. Severity pairs its dot with a word; kind pairs its colour with a glyph and a geometry |
+| 18 | An action applies to every row it is offered on | A row or unit action that fails, or answers about something else, when pressed on some row | Checked by pressing it on each row, not by reading the markup, which looks the same either way |
+| 19 | A refused action is disabled and says why, never hidden | A control that vanishes between units, or a reason in a tooltip that never fires | A disabled MudBlazor control suppresses pointer events on its children, so the reason goes on a span outside it |
+| 20 | A figure names the scope that produced it | A caption claiming ownership over a corpus-wide number, or `0` where nothing is declared | Nothing disagrees while every seed is owned; where a figure is bounded to the declaration, nothing declared reads **none** |
 
 For each: **PASS**, **FAIL** with the screenshot region, or **N/A** if that surface is absent.
 

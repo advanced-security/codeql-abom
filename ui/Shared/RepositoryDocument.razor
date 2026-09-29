@@ -1,0 +1,119 @@
+@* A bill of materials rooted at one repository, stated before it is downloaded.
+
+   The downloads carry the document; this carries what the document covers, which a reader holding
+   only a CycloneDX file cannot see: how much was examined, how deep it goes, and that a component
+   nothing examined is not one found clean. *@
+
+@inject AbomApi Api
+
+<MudPaper Class="pa-3 mb-3" Elevation="0" Outlined="true" data-abom-document="@Repository">
+    <div class="d-flex align-center gap-2">
+        <MudText Typo="Typo.subtitle2">Bill of materials for @Repository</MudText>
+        <MudSpacer />
+        <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" OnClick="Closed"
+                       aria-label="Close the bill of materials" title="Close the bill of materials"
+                       data-abom-document-close />
+    </div>
+
+    @if (_summary is null && _error is null)
+    {
+        <MudProgressLinear Indeterminate="true" Class="my-2" />
+    }
+    else if (_error is not null)
+    {
+        <MudText Typo="Typo.body2" Color="Color.Warning">@_error</MudText>
+    }
+    else if (_summary is { } s && s.Coverage.ComponentsInUse == 0 && Workflows == 0)
+    {
+        @* Refused rather than offered: an empty document downloads as a repository that depends
+           on nothing, when nothing was read to say so. *@
+        <MudText Typo="Typo.body2" Class="abom-coverage-unknown" data-abom-document-refused>
+            Nothing has been read from @Repository's workflows, so there is no document to download:
+            an empty one would say it depends on nothing.
+        </MudText>
+    }
+    else if (_summary is { } d)
+    {
+        <ul class="abom-document-claims">
+            <li>@Examined(d)</li>
+            <li>@Depth(d)</li>
+            <li>
+                @Found(d)
+                <span class="abom-coverage-unknown">@($"{CountText.Number(d.NotExamined)} not examined")</span>,
+                which says nothing either way about what they contain.
+            </li>
+            @if (d.Coverage.Findings > 0)
+            {
+                <li>@Provenance(d)</li>
+            }
+            <li>
+                Advisories are listed beside each component's references and are not evaluated
+                against them: whether a reference falls in a published range is a judgment ABOM has
+                not made.
+            </li>
+        </ul>
+        <div class="d-flex flex-wrap align-center gap-1">
+            @foreach (var (format, label) in Formats)
+            {
+                <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
+                           StartIcon="@Icons.Material.Outlined.Download" Target="_blank"
+                           Href="@AbomApi.BomDownloadUrl(format, roots: [Repository])"
+                           data-abom-document-format="@format">@label</MudButton>
+            }
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                ABOM JSON alone carries run keys, pack digests and result hashes.
+            </MudText>
+        </div>
+    }
+</MudPaper>
+
+@code {
+    [Parameter, EditorRequired] public string Repository { get; set; } = string.Empty;
+
+    /// <summary>How many workflows the graph holds for it: none means nothing has been read.</summary>
+    [Parameter] public int Workflows { get; set; }
+
+    [Parameter] public EventCallback Closed { get; set; }
+
+    private static readonly (string Format, string Label)[] Formats =
+        [("native", "ABOM JSON"), ("cyclonedx", "CycloneDX"), ("spdx", "SPDX")];
+
+    private static string Examined(BomSummary d) =>
+        $"{CountText.Number(d.Coverage.ComponentsAnalyzed)} of " +
+        $"{CountText.Of(d.Coverage.ComponentsInUse, "component", "components")} analyzed; " +
+        $"{CountText.Number(d.Coverage.ReferencesAnalyzed)} of " +
+        $"{CountText.Of(d.Coverage.ReferencesInUse, "reference", "references")} in use analyzed.";
+
+    private static string Depth(BomSummary d) =>
+        $"{CountText.Number(d.Direct)} direct and {CountText.Number(d.Indirect)} indirect, up to " +
+        $"{CountText.Of(d.DeepestHop, "hop", "hops")} from the repository's own workflows.";
+
+    private static string Found(BomSummary d) =>
+        $"Of those {CountText.Number(d.Coverage.ComponentsInUse)}, " +
+        $"{CountText.Number(d.WithFindings)} examined with findings and " +
+        $"{CountText.Number(d.NoneFound)} examined and none found;";
+
+    private static string Provenance(BomSummary d) =>
+        $"{CountText.Of(d.Coverage.Findings, "finding", "findings")} in the document, workflows included: " +
+        $"{CountText.Number(d.Coverage.FindingsUntraced)} not traceable to a run, " +
+        $"{CountText.Number(d.Coverage.FindingsWithoutHash)} with no result hash and " +
+        $"{CountText.Number(d.Coverage.FindingsWithoutDigest)} with no pack digest, so those " +
+        "cannot be independently reproduced.";
+
+    private BomSummary? _summary;
+    private string? _error;
+    private string _loaded = string.Empty;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loaded == Repository) return;
+        _loaded = Repository;
+        _summary = null;
+        _error = null;
+        _summary = await Api.GetBomSummaryAsync(Repository);
+        if (_summary is null)
+        {
+            _error = $"The bill of materials for {Repository} could not be read: {Api.LastError}";
+        }
+    }
+}

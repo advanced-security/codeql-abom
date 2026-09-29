@@ -774,6 +774,10 @@ public sealed class AbomApi(HttpClient http)
         return "api/bom?" + string.Join("&", parts);
     }
 
+    /// <summary>What a bill of materials rooted at one repository claims about itself.</summary>
+    public async Task<BomSummary?> GetBomSummaryAsync(string root, CancellationToken ct = default) =>
+        await GetAsync<BomSummary>($"api/bom?root={Uri.EscapeDataString(root)}&format=summary", ct);
+
     // Reference may be empty, so it belongs in the query string.
     public async Task<NodeUsers?> GetNodeUsersAsync(
         string key, string reference, CancellationToken ct = default) =>

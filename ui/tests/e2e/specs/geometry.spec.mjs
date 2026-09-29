@@ -231,8 +231,7 @@ test.describe('geometry', () => {
                 `${unit} hides these columns, ${measured.over}px past the edge`,
             ).toEqual([]);
 
-            // Squeezing is not fitting; held on CodeQL only, as Inventory workflows rows reach 91px.
-            if (!path.startsWith('/codeql')) return;
+            // Squeezing is not fitting: a column that fits by stacking its words is not a fit.
             const tallest = await page.evaluate(() => Math.max(
                 ...[...document.querySelectorAll('.abom-grid .mud-table-container tbody tr')]
                     .filter((tr) => !tr.querySelector('.abom-row-detail'))

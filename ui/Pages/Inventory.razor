@@ -9,39 +9,10 @@
 
 <PageTitle>Inventory — ABOM</PageTitle>
 
-@* The heading follows the unit. A third unit added while this asked about two put advisories
-   under a paragraph about external dependencies, and every test stayed green. *@
+@* The heading follows the unit: a unit that borrows another's description tells a reader they are
+   looking at rows they are not. *@
 <PageHeader Title="@UnitLabel(_unit)">
-    @if (_unit == UnitRepositories)
-    {
-        @("The repositories you own, most findings first. Advisory routes are split because only " +
-          "the direct ones are this repository's own to close — the rest wait on an intermediary.")
-    }
-    else if (_unit == UnitAdvisories)
-    {
-        @("Published advisories that reach something you own, ranked by severity, then by how " +
-          "many repositories reach them. The rank is a scheduling aid, not a judgement: both inputs " +
-          "stay on screen so you can disagree with it.")
-    }
-    else if (_unit == UnitWorkflows)
-    {
-        @("The workflows and reusable workflows in your repositories, most findings first. These " +
-          "are what runs, so they are measured by what they contain and what they reach out to — " +
-          "nothing depends on a workflow, which is why reach is not a column here.")
-    }
-    else if (_unit == UnitJobs)
-    {
-        @("Every job, privileged ones first. A job is where permissions, the runner and the " +
-          "triggering events are decided, so these are recorded against the job rather than " +
-          "inferred from the workflow around it.")
-    }
-    else
-    {
-        @("Every action, composite action and image the organization depends on, widest reach " +
-          "first. Origin says whose each one is. The advisory count is how many published " +
-          "advisories name the component's repository, not a claim that the references below " +
-          "fall inside them.")
-    }
+    <span data-abom-unit-description>@UnitDescription(_unit)</span>
 </PageHeader>
 
 @* One scope bar. Five stacked control rows put the first data row at y=580 of a 900px viewport,
@@ -440,6 +411,11 @@
 
 @if (_unit == UnitRepositories)
 {
+    @if (_document is { } document)
+    {
+        <RepositoryDocument Repository="@document.FullName" Workflows="@document.Workflows"
+                            Closed="@(() => _document = null)" />
+    }
     <MudDataGrid T="RepositorySummary" ServerData="LoadRepositories" @ref="_repoGrid" Dense="true"
                  Hover="true" Bordered="false" SortMode="SortMode.Single" Filterable="false"
                  RowsPerPage="30" ShowColumnOptions="false" FixedHeader="true" Class="abom-grid abom-grid-windowed abom-grid-captioned">
@@ -447,13 +423,23 @@
             <TemplateColumn Title="" Sortable="false" Hidden="@(!_choosing)" CellClass="abom-row-actions">
                 <CellTemplate>@ChooseBox(context.Item.FullName)</CellTemplate>
             </TemplateColumn>
-            <PropertyColumn Property="x => x.FullName" Title="Repository">
+            <PropertyColumn Property="x => x.FullName" Title="Repository"
+                            HeaderClass="abom-identity-col" CellClass="abom-identity-col">
                 <CellTemplate>
                     <MudLink Href="@($"/inventory?unit=repositories&q={Uri.EscapeDataString(context.Item.FullName)}")" Class="abom-rule">
                         @context.Item.FullName
                     </MudLink>
                 </CellTemplate>
             </PropertyColumn>
+            @* A repository roots a bill of materials; the Explorer draws a repository alone, with
+               nothing it contains, so that action is not offered on this row. *@
+            <TemplateColumn Title="" Sortable="false" HeaderClass="abom-row-actions-head"
+                            CellClass="abom-row-actions">
+                <CellTemplate>
+                    <RowActions Name="@context.Item.FullName"
+                                Document="@(() => _document = context.Item)" />
+                </CellTemplate>
+            </TemplateColumn>
             <PropertyColumn Property="x => x.Workflows" Title="Workflows" />
             <PropertyColumn Property="x => x.Dependencies" Title="Dependencies" />
             <PropertyColumn Property="x => x.Findings" Title="Findings">
@@ -596,9 +582,10 @@
                     <FindingsCount Count="@context.Item.Findings" Severity="@context.Item.Severity" />
                     @if (context.Item.Rules.Count > 0)
                     {
-                        <MudTooltip Text="@string.Join(", ", context.Item.Rules)">
-                            <MudText Typo="Typo.caption"
-                                     Class="mud-text-secondary d-block abom-trunc">
+                        @* Block-level, so the list starts its own line under the count. *@
+                        <MudTooltip Text="@string.Join(", ", context.Item.Rules)" Inline="false">
+                            <MudText Typo="Typo.caption" data-abom-relationship-rules
+                                     Class="mud-text-secondary d-block abom-trunc abom-one-line">
                                 @string.Join(", ", context.Item.Rules)
                             </MudText>
                         </MudTooltip>
@@ -779,6 +766,9 @@ else
 }
 
 @code {
+    /// <summary>The repository whose bill of materials is open, if any.</summary>
+    private RepositorySummary? _document;
+
     private const string UnitDependencies = "dependencies";
     private const string UnitWorkflows = "workflows";
     private const string UnitJobs = "jobs";
@@ -964,6 +954,36 @@ else
         return "/inventory?" + (scope.Length > 0 ? kinds + "&" + scope : kinds);
     }
 
+    private static string UnitDescription(string unit) => unit switch
+    {
+        UnitRepositories =>
+            "The repositories you own, most findings first. Advisory routes are split because only " +
+            "the direct ones are this repository's own to close — the rest wait on an intermediary.",
+        UnitAdvisories =>
+            "Published advisories that reach something you own, ranked by severity, then by how " +
+            "many repositories reach them. The rank is a scheduling aid, not a judgement: both inputs " +
+            "stay on screen so you can disagree with it.",
+        UnitWorkflows =>
+            "The workflows and reusable workflows in your repositories, most findings first. These " +
+            "are what runs, so they are measured by what they contain and what they reach out to — " +
+            "nothing depends on a workflow, which is why reach is not a column here.",
+        UnitJobs =>
+            "Every job, privileged ones first. A job is where permissions, the runner and the " +
+            "triggering events are decided, so these are recorded against the job rather than " +
+            "inferred from the workflow around it.",
+        UnitRelationships =>
+            "Every line that declares a dependency, ordered by what declares it: the reference as " +
+            "written, the boundary it crosses, and what was reported against that line.",
+        UnitCoverage =>
+            "What the crawl has reached and what it has not, in the order it will claim them. A " +
+            "dependency nothing has analyzed contributes nothing downstream until it is.",
+        _ =>
+            "Every action, composite action and image the organization depends on, widest reach " +
+            "first. Origin says whose each one is. The advisory count is how many published " +
+            "advisories name the component's repository, not a claim that the references below " +
+            "fall inside them.",
+    };
+
     private static string UnitLabel(string unit) =>
         Units.FirstOrDefault(u => u.Key == unit).Label ?? "Actions";
 
@@ -1114,6 +1134,7 @@ else
         if (_unit == unit) return;
         _unit = unit;
         _sort = null;
+        _document = null;
         // N actions are not N repositories, so "all" belongs to the Repositories unit alone.
         if (_unit != UnitRepositories)
         {

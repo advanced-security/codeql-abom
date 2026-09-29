@@ -105,7 +105,9 @@ func propertyMatches(q url.Values) (include, exclude []viewspec.PropertyMatch, e
 	return spec.Properties, spec.NotProperties, nil
 }
 
-// SerializeBOM renders the document in one of the supported formats.//
+// SerializeBOM renders the document in one of the supported formats. `summary` is the document's
+// own counts, for a page stating what a document covers without shipping all of it.
+//
 // Exported so the `bom` command and this endpoint share one implementation: a document written
 // from the command line and one downloaded from the page must not be able to differ.
 func SerializeBOM(doc store.BOM, format string) (body []byte, contentType, ext string, err error) {
@@ -119,9 +121,12 @@ func SerializeBOM(doc store.BOM, format string) (body []byte, contentType, ext s
 	case "spdx":
 		body, err = bomexport.SPDX(doc)
 		return body, "application/spdx+json", "spdx.json", err
+	case "summary":
+		body, err = json.MarshalIndent(store.SummarizeBOM(doc), "", "  ")
+		return body, "application/json", "summary.json", err
 	default:
 		return nil, "", "", fmt.Errorf(
-			"serve: unknown bill of materials format %q; use native, cyclonedx or spdx", format)
+			"serve: unknown bill of materials format %q; use native, cyclonedx, spdx or summary", format)
 	}
 }
 

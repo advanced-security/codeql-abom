@@ -308,6 +308,16 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     font-weight: 600;
 }
 
+/* In the scope, not applied here: dashed and struck so it cannot read as this unit's narrowing. */
+.abom-chip-unapplied {
+    border-style: dashed !important;
+}
+.abom-chip-unapplied .abom-chip-label,
+.abom-chip-unapplied .abom-chip-value {
+    text-decoration: line-through;
+    opacity: 0.7;
+}
+
 /* A pill is a word and a way to drop it, and MudBlazor sizes both for a thumb: the remove button
    arrives 36x28 inside a 26px chip, so it bulges past the pill and puts 10px of its own padding
    between the value and the cross. The chip then adds a 4px margin on top of the row's own gap,
@@ -384,19 +394,14 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
    scale. The column takes exactly the icons it holds and no more, and its header is empty on
    purpose: a title over icon buttons names the column rather than any one of them.
 
-   The table's spare width is given to the last column deliberately. Left to the browser it landed
-   on the identity column, which ran 510px wide over names half that and floated the row actions
-   against the next column, three hundred pixels from the row they act on. */
+   Identity and actions take only what they hold, so the table's spare width goes to the columns
+   whose content wraps. Given all of it, a last column of one count starved the lists before it
+   into rows over 90px. */
 .abom-grid .abom-identity-col,
 .abom-grid .abom-row-actions,
 .abom-grid .abom-row-actions-head {
     width: 1%;
     white-space: nowrap;
-}
-
-.abom-grid thead th:last-child,
-.abom-grid tbody td:last-child {
-    width: 100%;
 }
 
 /* The listing is several short sentences under one heading, and the last column's spare width left
@@ -483,15 +488,12 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     align-items: flex-end;
 }
 
-/* A list of trigger events is several short words that happened to be written on one line, which
-   made it the widest column in the table. It wraps between events — never inside one, which is
-   how "workflow_dispatch" became six lines of nonsense. 18ch is that longest event name, so this
-   is as narrow as the column goes without breaking a word. */
+/* Trigger events wrap between events, never inside one, about two to a line. */
 .abom-triggers {
     display: inline-block;
-    max-width: 18ch;
+    max-width: 30ch;
     white-space: normal;
-    overflow-wrap: break-word;
+    overflow-wrap: normal;
 }
 
 /* An identity is the widest thing in any row, and left alone it takes the width the counts need.
@@ -508,6 +510,17 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     overflow: hidden;
     text-overflow: ellipsis;
     vertical-align: bottom;
+}
+
+/* A list of identifiers cut to one line; the whole list is on its tooltip. */
+.abom-trunc.abom-one-line {
+    white-space: nowrap;
+}
+
+.abom-document-claims {
+    margin: 4px 0 8px;
+    padding-left: 18px;
+    font-size: var(--abom-text-sm);
 }
 
 /* 18ch is what the narrowest supported window can spare, not what a name deserves. Given a wide
@@ -653,15 +666,11 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     max-width: 100%;
 }
 
-/* The grid-wide last-column rule stacked tier headers nine lines deep beside an empty column. */
+/* A tier's path, reason and count read as one line each. */
 .abom-config-grid .abom-path,
 .abom-config-grid .abom-tier-why,
 .abom-config-grid .abom-tier-count {
     white-space: nowrap;
-}
-.abom-grid.abom-config-grid thead th:last-child,
-.abom-grid.abom-config-grid tbody td:last-child {
-    width: auto;
 }
 
 /* MudBlazor uppercases button labels, which made "Re-analyze direct (423)" wrap to two lines and

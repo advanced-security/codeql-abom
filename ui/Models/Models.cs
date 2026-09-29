@@ -553,6 +553,35 @@ public sealed record RepositorySummary
     public int DirectExposures { get; init; }
 }
 
+/// <summary>
+/// What a bill of materials claims about itself, counted by the server from the document a
+/// download would carry.
+/// </summary>
+public sealed record BomSummary
+{
+    public IReadOnlyList<string> Roots { get; init; } = [];
+    public string GeneratedAt { get; init; } = string.Empty;
+    public BomCoverage Coverage { get; init; } = new();
+    public int Direct { get; init; }
+    public int Indirect { get; init; }
+    public int DeepestHop { get; init; }
+    public int WithFindings { get; init; }
+    public int NoneFound { get; init; }
+    public int NotExamined { get; init; }
+}
+
+public sealed record BomCoverage
+{
+    public int ComponentsInUse { get; init; }
+    public int ComponentsAnalyzed { get; init; }
+    public int ReferencesInUse { get; init; }
+    public int ReferencesAnalyzed { get; init; }
+    public int Findings { get; init; }
+    public int FindingsUntraced { get; init; }
+    public int FindingsWithoutHash { get; init; }
+    public int FindingsWithoutDigest { get; init; }
+}
+
 public sealed record RuleCount
 {
     public string RuleId { get; init; } = string.Empty;

@@ -147,3 +147,30 @@ func getBOM(t *testing.T, target string) (string, *httptest.ResponseRecorder) {
 	srv.Handler().ServeHTTP(res, httptest.NewRequest(http.MethodGet, target, nil))
 	return res.Body.String(), res
 }
+
+// The summary is the document's own counts, so what the page states about a document and the
+// document a reader downloads cannot disagree.
+func TestTheSummaryFormatIsTheDocumentsOwnCounts(t *testing.T) {
+	body, res := getBOM(t, "/api/bom?root=octo-org/app&format=summary")
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", res.Code, body)
+	}
+	var got store.BOMSummary
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("parsing: %v", err)
+	}
+	native, _ := getBOM(t, "/api/bom?root=octo-org/app")
+	var doc store.BOM
+	if err := json.Unmarshal([]byte(native), &doc); err != nil {
+		t.Fatalf("parsing the document: %v", err)
+	}
+	if got.Coverage != doc.Coverage {
+		t.Errorf("summary coverage %+v, document %+v", got.Coverage, doc.Coverage)
+	}
+	if got.Coverage.ComponentsInUse == 0 {
+		t.Fatal("the fixture has nothing in use, so agreement is vacuous")
+	}
+	if sum := got.WithFindings + got.NoneFound + got.NotExamined; sum != got.Coverage.ComponentsInUse {
+		t.Errorf("claims sum to %d of %d components in use", sum, got.Coverage.ComponentsInUse)
+	}
+}

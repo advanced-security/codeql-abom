@@ -106,8 +106,7 @@ of 112 colliding, almost all `actions/checkout@v3` beside `@v4` — actions that
 That proxy undercounts: the graph records a composite only when it has a `uses:` step. Staging reads
 `runs.using` from the selected commit's `action.yml` instead.
 
-**The whole-account variant is not refused on collisions.** Its old figure, 132 of 225 dependencies
-collapsed, counted every action. What gates it is that `getRepoRoot()` is global: several owned
+**The whole-account variant is not refused on collisions.** What gates it is that `getRepoRoot()` is global: several owned
 trees in one database resolve `./` references across one another. On the crawled organization 1
 local callable path is shared by two owned repositories — two root `action.yml` files — and no
 locally called reusable workflow collides. It is admissible only where that measures zero, and

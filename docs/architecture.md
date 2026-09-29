@@ -757,6 +757,19 @@ line, and no unit of nodes lists the steps those lines are. Containment is absen
 construction: nothing declares a repository holding its own files, so there is no line to go and
 edit and no total for it to inflate.
 
+**An action belongs to the scope, to the unit, or to the row.** The bill-of-materials exports
+describe the scope, sit behind *this scope:*, and are absent when nothing narrows. *Show in
+Explorer* means these rows, so it is disabled on Advisories with the reason on screen. A row's own
+actions are icons between its name and the next column: a dependency opens in the Explorer, and a
+repository roots a bill of materials that states, before any download, how many of the components
+and references it uses were analyzed, how many are direct and how deep the rest go, and that a
+component nothing examined is not one found clean. A repository nothing has been read from is
+refused a document, because an empty one says it depends on nothing.
+
+**A chip a unit does not apply says so.** A term stays in the scope as a reader moves between
+units, and where the unit on screen cannot apply it its chip is struck through and named in the
+words a named scope's refusal uses — Coverage lists the crawl queue whole, and narrows by nothing.
+
 **A listing states what it is not showing.** It reports the size of the match beside the size of the
 page, orders across the whole match on the server rather than within the page, and when a findings
 term matched nodes of a kind outside the view it says so and offers them — every
@@ -884,6 +897,9 @@ nodes the view refuses and says how many, rather than drawing a hairball.
 and refuses the terms it cannot apply by name rather than widening quietly to the whole
 organization. It reports advisories against a repository rather than evaluating them against the
 references in use — a distinction no listing draws, which is why it is a rendering of its own.
+`format=summary` answers with the document's own counts — coverage, direct and indirect, deepest
+hop, and components examined with findings, examined with none, and not examined — so a page can
+state what a document covers without shipping all of it.
 
 **Purls are the join key.** `pkg:githubactions/{owner}/{name}[/{subpath}]@{version}`, matching what
 GitHub emits, is what lets a component in an ABOM export correspond to anything outside it.

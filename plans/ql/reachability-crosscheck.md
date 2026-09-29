@@ -18,11 +18,11 @@ An owned repository's closure database makes a second derivation available for t
 same edges, walked by CodeQL rather than by Go, over a database that already holds the whole closure
 — a genuinely independent path to the same number, sharing no code with the first.
 
-**One closure per owned repository is a better shape for this than one database for the account**,
-and not only because the account variant is refused. A closure is pinned at the references its root
-repository actually uses, so the two walks are comparing the same version of the same supply chain.
-A whole-account database would collapse **132 of 225** dependencies to a single reference and then
-disagree with the Go walk for a reason that is about the layout rather than about reach.
+**One closure per owned repository is a better shape for this than one database for the account.**
+A closure is pinned at the commits its root repository actually runs, so the two walks compare the
+same version of the same supply chain. A whole-account database also resolves `./` references
+across owned trees, and would disagree with the Go walk for a reason about layout rather than
+reach.
 
 ## Pending
 
@@ -48,8 +48,8 @@ what was extracted; the Go walk sees every edge ever ingested, including from re
 fetched. Coverage has to be subtracted before a difference means anything, and a crosscheck that
 reports its own coverage gap as an error will cry wolf until nobody reads it. Two narrower sources
 of the same kind of gap are known and named rather than investigated each time:
-[`ql/closure-database.md`](closure-database.md) stages one reference per dependency, so a dependency
-named twice inside one closure is walked once; and a staged dependency's own `./` local references
+[`ql/closure-database.md`](closure-database.md) refuses a closure selecting two commits of one staged
+composite action or reusable workflow, so that owned repository has no CodeQL answer at all; and a staged dependency's own `./` local references
 resolve to nothing, so CodeQL's walk stops where the Go walk continues.
 
 **Absence on one side is not zero on the other.** A node no closure database ever extracted has no

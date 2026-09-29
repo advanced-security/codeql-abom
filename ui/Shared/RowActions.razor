@@ -8,15 +8,34 @@
 <span class="abom-row-actions-group d-inline-flex align-center" role="group">
     @* Scoped to this row, not to the page: handing over the listing's scope would open the
        Explorer on everything the reader just narrowed away from. *@
-    <MudIconButton Icon="@Icons.Material.Outlined.Hub" Size="Size.Small"
-                   Href="@($"/explore?selection={Uri.EscapeDataString(NodeKey)}&direction=both")"
-                   title="@($"Show {NodeKey} in the Explorer")"
-                   aria-label="@($"Show {NodeKey} in the Explorer")"
-                   data-abom-row-action="open-in-explorer" />
+    @if (NodeKey.Length > 0)
+    {
+        <MudIconButton Icon="@Icons.Material.Outlined.Hub" Size="Size.Small"
+                       Href="@($"/explore?selection={Uri.EscapeDataString(NodeKey)}&direction=both")"
+                       title="@($"Show {NodeKey} in the Explorer")"
+                       aria-label="@($"Show {NodeKey} in the Explorer")"
+                       data-abom-row-action="open-in-explorer" />
+    }
+    @if (Document.HasDelegate)
+    {
+        <MudIconButton Icon="@Icons.Material.Outlined.Inventory2" Size="Size.Small"
+                       OnClick="Document"
+                       title="@($"Bill of materials for {Name}")"
+                       aria-label="@($"Bill of materials for {Name}")"
+                       data-abom-row-action="bill-of-materials" />
+    }
 </span>
 
 @code {
-    /// <summary>The node this row stands for, which is what the actions are scoped to.</summary>
-    [Parameter, EditorRequired]
+    /// <summary>The node this row stands for; empty where the row draws nothing in the graph.</summary>
+    [Parameter]
     public string NodeKey { get; set; } = string.Empty;
+
+    /// <summary>What the row is called, for the actions that name it.</summary>
+    [Parameter]
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>Opens a bill of materials rooted at this row, where the row can root one.</summary>
+    [Parameter]
+    public EventCallback Document { get; set; }
 }

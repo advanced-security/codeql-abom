@@ -20,7 +20,7 @@ a tag moves.
 So the ledger and the resolution table both treat the commit as the identity, and without
 `--cache-dir` the fetch is still the one step that treats the reference as the identity.
 
-**132 of 225 dependencies are analyzed at more than one reference.** Uncached, each reference is
+**322 of 377 dependencies on the crawled organization are analyzed at more than one reference.** Uncached, each reference is
 cloned separately even when both resolve to the same commit, and `internal/expand/expand.go`
 removes the checkout after each unit unless `KeepArtifacts` is set, so the next cycle re-clones
 what the previous cycle deleted for a commit that cannot have changed.
