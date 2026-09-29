@@ -71,13 +71,6 @@
     public Func<string>? Presentation { get; set; }
 
     // What a reader calls each page a scope opens on, in the order the Inventory lists its units.
-    private static readonly (string Surface, string Name)[] Pages =
-    [
-        ("inventory", "Actions"), ("workflows", "Workflows"), ("jobs", "Jobs"),
-        ("repositories", "Repositories"), ("advisories", "Advisories"),
-        ("relationships", "Relationships"), ("coverage", "Coverage"), ("graph", "the Explorer"),
-    ];
-
     private IReadOnlyList<NamedView> _views = [];
     private IReadOnlyDictionary<string, string> _labels = new Dictionary<string, string>();
     private string _name = string.Empty;
@@ -110,22 +103,17 @@
         }
         if (refused.Count == 0) return string.Empty;
 
-        var terms = refused.Select(t => $"“{Label(t)}: {Values(view.Predicate, t)}”").ToList();
-        var opens = Pages
+        var terms = refused.Select(t => RefusalText.Quoted(Label(t), Values(view.Predicate, t))).ToList();
+        var opens = RefusalText.Pages
             .Where(p => p.Surface != Surface)
             .Where(p => view.Refuses.TryGetValue(p.Surface, out var r) && r.Count == 0)
             .Select(p => p.Name)
             .ToList();
-        var sentence = $"{Here} cannot narrow by {Join(terms, "or")}.";
-        return opens.Count == 0 ? sentence : $"{sentence} {Capitalized(Join(opens, "and"))} can.";
+        var sentence = RefusalText.CannotNarrow(Surface, terms);
+        return opens.Count == 0
+            ? sentence
+            : $"{sentence} {RefusalText.Capitalized(RefusalText.Join(opens, "and"))} can.";
     }
-
-    private string Here => Surface switch
-    {
-        "graph" => "The Explorer",
-        "run" => "A run",
-        _ => Pages.FirstOrDefault(p => p.Surface == Surface).Name ?? "This page",
-    };
 
     private string Label(string term) => _labels.TryGetValue(term, out var label) ? label : term;
 
@@ -134,15 +122,6 @@
             .Select(pair => pair.Split('=', 2))
             .Where(kv => kv.Length == 2 && ViewSpec.Unescape(kv[0]) == term)
             .Select(kv => ViewSpec.Unescape(kv[1])));
-
-    private static string Join(IReadOnlyList<string> items, string last) => items.Count switch
-    {
-        1 => items[0],
-        _ => $"{string.Join(", ", items.Take(items.Count - 1))} {last} {items[^1]}",
-    };
-
-    private static string Capitalized(string text) =>
-        text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
 
     /// <summary>
     /// Keeps the scope on screen under a name: its predicate, never the selection riding beside

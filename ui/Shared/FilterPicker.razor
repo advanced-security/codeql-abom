@@ -14,9 +14,13 @@
 <div class="abom-filter-picker d-flex flex-wrap align-center gap-1" data-abom-filter-picker>
     @foreach (var (term, value) in Applied)
     {
-        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
-                 title="@($"{term.Label}: {value}")"
-                 data-abom-filter-chip="@term.Name">
+        var applies = term.Surfaces.Contains(Surface);
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                 Color="@(applies ? Color.Primary : Color.Default)"
+                 Class="@(applies ? null : "abom-chip-unapplied")"
+                 title="@(applies ? $"{term.Label}: {value}" : RefusalText.CannotNarrow(Surface, [RefusalText.Quoted(term.Label, value)]))"
+                 data-abom-filter-chip="@term.Name"
+                 data-abom-chip-unapplied="@(applies ? null : "")">
             <span class="abom-chip-label">@term.Label</span>
             <span class="abom-chip-value">@Summarize(value)</span>
             <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small"
@@ -25,6 +29,15 @@
                            OnClick="@(() => Clear(term.Name))"
                            data-abom-chip-remove />
         </MudChip>
+    }
+
+    @* A term this surface does not apply stays in the scope for the next unit, and is said not to
+       narrow this one: unmarked, it reads as the narrowing of rows it never touched. *@
+    @if (Unapplied.Count > 0)
+    {
+        <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-unapplied>
+            @RefusalText.CannotNarrow(Surface, Unapplied)
+        </MudText>
     }
 
     <MudMenu Dense="true" ActivationEvent="@MouseEvent.LeftClick"
@@ -324,6 +337,11 @@
     /// </summary>
     private bool NarrowsNothing(FilterTerm term) =>
         _valueCounts.TryGetValue(term.Name, out var available) && available <= 1;
+
+    /// What is set that this surface does not apply, quoted as a refusal quotes it.
+    private IReadOnlyList<string> Unapplied =>
+        [.. Applied.Where(a => !a.Term.Surfaces.Contains(Surface))
+                   .Select(a => RefusalText.Quoted(a.Term.Label, a.Value))];
 
     /// What is set, paired with the term that describes it, in catalog order.
     private IEnumerable<(FilterTerm Term, string Value)> Applied =>

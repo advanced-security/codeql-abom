@@ -252,6 +252,41 @@ public sealed class FilterPickerTests : AbomTestContext
         Assert.DoesNotContain("already set", popover.Markup);
     }
 
+    /// <summary>
+    /// A term already in the scope that this surface does not apply is marked on its chip and named
+    /// in the words a disabled named scope uses. Coverage lists the queue whole, and two chips above
+    /// it reading as its narrowing claimed a filter nothing applied.
+    /// </summary>
+    [Fact]
+    public void AChipTheSurfaceDoesNotApplySaysSo()
+    {
+        Scope.Set(ViewSpec.Parse("scope=exposure&flags=findings"));
+        var (_, page) = Picker("coverage");
+
+        page.WaitForAssertion(() =>
+        {
+            Assert.NotNull(page.Find("[data-abom-filter-chip='scope'][data-abom-chip-unapplied]"));
+            Assert.NotNull(page.Find("[data-abom-filter-chip='flags'][data-abom-chip-unapplied]"));
+            Assert.Contains("Coverage cannot narrow by “Scope: exposure” or “Has: findings”.",
+                page.Find("[data-abom-unapplied]").TextContent);
+        });
+    }
+
+    /// A term the surface applies is not marked, and nothing is said.
+    [Fact]
+    public void AChipTheSurfaceAppliesIsNotMarked()
+    {
+        Scope.Set(ViewSpec.Parse("scope=exposure"));
+        var (_, page) = Picker("inventory");
+
+        page.WaitForAssertion(() =>
+        {
+            Assert.Empty(page.FindAll("[data-abom-chip-unapplied]"));
+            Assert.Empty(page.FindAll("[data-abom-unapplied]"));
+            Assert.NotNull(page.Find("[data-abom-filter-chip='scope']"));
+        });
+    }
+
     /// The whole point of the control: nothing selected costs no width beyond the one button that
     /// adds something.
     [Fact]

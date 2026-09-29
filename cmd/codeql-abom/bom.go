@@ -22,7 +22,7 @@ func runBOM(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", "", "path to the ABOM SQLite database (required)")
 	format := fs.String("format", "native",
-		"native, cyclonedx or spdx; native is the only one that can carry provenance")
+		"native, cyclonedx, spdx or summary; native is the only one that can carry provenance")
 	out := fs.String("out", "", "write to this file instead of standard output")
 	var roots repeated
 	fs.Var(&roots, "root",

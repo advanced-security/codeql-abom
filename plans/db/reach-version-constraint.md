@@ -13,8 +13,8 @@ is depended on, and carries none of it**: it walks dependents through `container
 which version a route was read from, so a repository pinning v4 counts toward a dependency that only
 enters at v5.
 
-This is not a corner. **132 of 225 dependencies in a crawled organization are analyzed at more than
-one reference, and 122 resolved to more than one distinct commit.** Every one of those is a chance
+This is not a corner. **322 of 377 dependencies on the crawled organization are analyzed at more
+than one reference, and 300 resolved to more than one distinct commit.** Every one of those is a chance
 for a dependent count to include somebody who does not have the dependency.
 
 What makes it worth attention rather than a footnote is where the number goes. Commonality decides

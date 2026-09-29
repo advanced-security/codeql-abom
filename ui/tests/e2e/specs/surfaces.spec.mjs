@@ -308,6 +308,40 @@ test.describe('an action belongs to the scope', () => {
     });
 });
 
+test.describe('an action belongs to a row', () => {
+    // Pressed on every row a page lists, because an action offered against a row it cannot apply
+    // to is what this checks, and the markup looks the same either way.
+    test('every repository row roots a bill of materials that states what it covers', on('/inventory?unit=repositories'), async ({
+        page,
+        request,
+        baseURL,
+    }) => {
+        const summary = await corpusSize(request, baseURL);
+        test.skip(!summary.seedRepos, 'no corpus, so no repositories to root a document at');
+        await page.goto('/inventory?unit=repositories');
+        await ready(page);
+
+        const actions = page.locator("[data-abom-row-action='bill-of-materials']");
+        await actions.first().waitFor();
+        const rows = await actions.count();
+        for (let i = 0; i < rows; i++) {
+            const label = await actions.nth(i).getAttribute('aria-label');
+            expect(label, `row ${i}'s action has no accessible name`).toMatch(/^Bill of materials for \S+/);
+            const name = label.replace('Bill of materials for ', '');
+            await actions.nth(i).click();
+            const document = page.locator(`[data-abom-document="${name}"]`);
+            await expect(document.locator('ul, [data-abom-document-refused]').first()).toBeVisible();
+            const links = await document.locator("a[href*='api/bom']").evaluateAll((as) => as.map((a) => a.getAttribute('href')));
+            if (links.length) {
+                for (const href of links) expect(href).toContain(`root=${encodeURIComponent(name)}`);
+                const answer = await (await request.get(`${baseURL}/api/bom?root=${encodeURIComponent(name)}&format=summary`)).json();
+                await expect(document).toContainText(
+                    `${answer.coverage.componentsAnalyzed.toLocaleString('en-US')} of ${answer.coverage.componentsInUse.toLocaleString('en-US')}`);
+            }
+        }
+    });
+});
+
 test.describe('a unit carries its own columns', () => {
     // The whole reason the units exist. Listing five kinds through one column set drew reach,
     // total refs and distinct refs as zero for 1,138 of 1,585 rows on the crawled organization,
