@@ -57,6 +57,7 @@
             {
                 <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
                            StartIcon="@Icons.Material.Outlined.Download" Target="_blank"
+                           Rel="noopener noreferrer"
                            Href="@AbomApi.BomDownloadUrl(format, roots: [Repository])"
                            data-abom-document-format="@format">@label</MudButton>
             }
@@ -107,13 +108,17 @@
     protected override async Task OnParametersSetAsync()
     {
         if (_loaded == Repository) return;
-        _loaded = Repository;
+        var asked = Repository;
+        _loaded = asked;
         _summary = null;
         _error = null;
-        _summary = await Api.GetBomSummaryAsync(Repository);
+        var summary = await Api.GetBomSummaryAsync(asked);
+        // The reader may have opened another repository while this one was in flight.
+        if (_loaded != asked) return;
+        _summary = summary;
         if (_summary is null)
         {
-            _error = $"The bill of materials for {Repository} could not be read: {Api.LastError}";
+            _error = $"The bill of materials for {asked} could not be read: {Api.LastError}";
         }
     }
 }

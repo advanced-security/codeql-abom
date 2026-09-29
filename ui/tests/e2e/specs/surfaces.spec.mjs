@@ -325,7 +325,9 @@ test.describe('an action belongs to a row', () => {
         await actions.first().waitFor();
         const rows = await actions.count();
         for (let i = 0; i < rows; i++) {
-            const name = (await actions.nth(i).getAttribute('aria-label')).replace('Bill of materials for ', '');
+            const label = await actions.nth(i).getAttribute('aria-label');
+            expect(label, `row ${i}'s action has no accessible name`).toMatch(/^Bill of materials for \S+/);
+            const name = label.replace('Bill of materials for ', '');
             await actions.nth(i).click();
             const document = page.locator(`[data-abom-document="${name}"]`);
             await expect(document.locator('ul, [data-abom-document-refused]').first()).toBeVisible();

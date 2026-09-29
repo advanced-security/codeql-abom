@@ -67,6 +67,50 @@ public sealed class InventoryDocumentTests : AbomTestContext
         });
     }
 
+    /// A tab a link opens can otherwise reach back through window.opener.
+    [Fact]
+    public void ADownloadOpenedInANewTabCannotReachBackIntoThePage()
+    {
+        var page = Open("octo-org/billing", Summary);
+
+        page.WaitForAssertion(() =>
+        {
+            var links = page.FindAll("[data-abom-document] a[target='_blank']");
+            Assert.Equal(3, links.Count);
+            Assert.All(links, a => Assert.Equal("noopener noreferrer", a.GetAttribute("rel")));
+        });
+    }
+
+    /// A reply for a repository the reader has since moved away from must not be shown under the
+    /// repository they moved to.
+    [Fact]
+    public void ALateAnswerForAnEarlierRepositoryIsDiscarded()
+    {
+        Answer("api/bom?root=octo-org%2Fquiet", EmptySummary);
+        var release = Withhold("api/bom?root=octo-org%2Fbilling");
+        Answer("api/bom?root=octo-org%2Fbilling", Summary);
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+                .NavigateTo("/inventory?unit=repositories");
+        var page = Render<Pages.Inventory>();
+
+        page.WaitForAssertion(() => page.Find(
+            "[data-abom-row-action='bill-of-materials'][aria-label*='octo-org/billing']").Click());
+        page.WaitForAssertion(() => page.Find(
+            "[data-abom-row-action='bill-of-materials'][aria-label*='octo-org/quiet']").Click());
+        page.WaitForAssertion(() => Assert.NotNull(page.Find("[data-abom-document-refused]")));
+        var panel = page.FindComponent<Shared.RepositoryDocument>();
+        var renders = panel.RenderCount;
+
+        release();
+
+        // The late answer's own render, so the assertion reads what it left behind.
+        panel.WaitForState(() => panel.RenderCount > renders);
+        var document = page.Find("[data-abom-document]");
+        Assert.Equal("octo-org/quiet", document.GetAttribute("data-abom-document"));
+        Assert.Contains("Nothing has been read from octo-org/quiet", document.TextContent);
+        Assert.DoesNotContain("178 of 270", document.TextContent);
+    }
+
     [Fact]
     public void TheDocumentStatesItsCoverageDepthAndWhatWasNotExamined()
     {

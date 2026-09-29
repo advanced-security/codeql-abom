@@ -44,14 +44,16 @@
                            StartIcon="@Icons.Material.Outlined.Inventory2"
                            Disabled="@(ExportRefusal.Length > 0)"
                            Href="@(ExportRefusal.Length > 0 ? null : BomUrl("cyclonedx"))"
-                           Target="_blank" data-abom-action="bom-cyclonedx">
+                           Target="_blank" Rel="noopener noreferrer"
+                           data-abom-action="bom-cyclonedx">
                     CycloneDX
                 </MudButton>
                 <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
                            StartIcon="@Icons.Material.Outlined.Inventory2"
                            Disabled="@(ExportRefusal.Length > 0)"
                            Href="@(ExportRefusal.Length > 0 ? null : BomUrl("spdx"))"
-                           Target="_blank" data-abom-action="bom-spdx">
+                           Target="_blank" Rel="noopener noreferrer"
+                           data-abom-action="bom-spdx">
                     SPDX
                 </MudButton>
             </span>
@@ -477,7 +479,7 @@
             <PropertyColumn Property="x => x.GhsaId" Title="Advisory">
                 <CellTemplate>
                     <MudLink Href="@($"https://github.com/advisories/{context.Item.GhsaId}")"
-                             Target="_blank" Class="abom-rule">@context.Item.GhsaId</MudLink>
+                             Target="_blank" rel="noopener noreferrer" Class="abom-rule">@context.Item.GhsaId</MudLink>
                 </CellTemplate>
             </PropertyColumn>
             @* Direct and transitive are different work: one is a version bump here, the other
