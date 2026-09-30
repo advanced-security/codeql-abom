@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Writes the third-party notices for what a release archive ships.
 
-    notices.py go <executable>                 modules linked into the executable
-    notices.py nuget <project.assets.json>     packages the published interface was built from
+    notices.py go <executable>   modules linked into the executable
+    notices.py nuget             packages the published interface was restored from
 
 Go modules are read from the executable itself, so a module that is only a test dependency is not
 listed and one that is linked in cannot be missed. A component whose license text cannot be found
@@ -17,6 +17,9 @@ from pathlib import Path
 
 LICENSE_FILE = re.compile(
     r"^(licen[cs]e|copying|notice|patents|third-party-notices)([-._].*)?$", re.IGNORECASE)
+
+# Where `dotnet publish` of the interface leaves its restore, fixed rather than passed in.
+ASSETS = Path(__file__).resolve().parents[2] / "ui" / "obj" / "project.assets.json"
 
 
 def license_texts(folder: Path) -> list[tuple[str, str]]:
@@ -73,8 +76,8 @@ def nuspec_license(folder: Path) -> str:
     return ""
 
 
-def nuget_notices(assets_path: str) -> tuple[str, list[str]]:
-    assets = json.loads(Path(assets_path).read_text(encoding="utf-8"))
+def nuget_notices() -> tuple[str, list[str]]:
+    assets = json.loads(ASSETS.read_text(encoding="utf-8"))
     roots = [Path(p) for p in assets.get("packageFolders", {})]
     packages = {}
     for key, library in assets.get("libraries", {}).items():
@@ -103,10 +106,13 @@ def nuget_notices(assets_path: str) -> tuple[str, list[str]]:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 3 or argv[1] not in ("go", "nuget"):
+    if argv[1:2] == ["go"] and len(argv) == 3:
+        text, missing = go_notices(argv[2])
+    elif argv[1:] == ["nuget"]:
+        text, missing = nuget_notices()
+    else:
         print(__doc__, file=sys.stderr)
         return 2
-    text, missing = go_notices(argv[2]) if argv[1] == "go" else nuget_notices(argv[2])
     if missing:
         print("notices: no license found for " + ", ".join(missing), file=sys.stderr)
         return 1

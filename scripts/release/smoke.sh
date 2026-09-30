@@ -32,7 +32,7 @@ if [ ! -x "$root/codeql-abom" ]; then
 fi
 
 echo "smoke: the archive matches its manifest"
-python3 "$here/build_info.py" verify "$root"
+(cd "$root" && python3 "$here/build_info.py" verify)
 
 port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
 base="http://127.0.0.1:$port"

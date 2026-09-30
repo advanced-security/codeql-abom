@@ -158,7 +158,7 @@ package: build publish
 release-ui: publish
 	@rm -rf "$(ABOM_RELEASE)" && mkdir -p "$(ABOM_RELEASE)"
 	@cp -R "$(ABOM_UI)/wwwroot" "$(ABOM_RELEASE)/wwwroot"
-	@python3 scripts/release/notices.py nuget ui/obj/project.assets.json >"$(ABOM_RELEASE)/ui-notices.txt"
+	@python3 scripts/release/notices.py nuget >"$(ABOM_RELEASE)/ui-notices.txt"
 	@printf '{"dotnet": "%s"}\n' "$$(dotnet --version)" >"$(ABOM_RELEASE)/ui-tools.json"
 	@echo "release-ui: $(ABOM_RELEASE)"
 

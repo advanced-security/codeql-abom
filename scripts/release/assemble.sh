@@ -10,6 +10,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
+repo=$PWD
 
 usage="usage: assemble.sh <version> <interface-dir> <out-dir>"
 version=${1:?$usage}
@@ -56,8 +57,8 @@ cp codeql-workspace.yml LICENSE "$root/"
 	cat "$ui/ui-notices.txt"
 } >"$root/THIRD_PARTY_NOTICES"
 
-python3 scripts/release/build_info.py write "$root" --version "$version" \
-	--ui-tools "$ui/ui-tools.json"
+tools=$(cat "$ui/ui-tools.json")
+(cd "$root" && python3 "$repo/scripts/release/build_info.py" write --version "$version" --tools "$tools")
 
 # macOS tar otherwise adds AppleDouble `._` entries that the manifest does not list.
 COPYFILE_DISABLE=1 tar -C "$out" -czf "$out/$name.tar.gz" "$name"

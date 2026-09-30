@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Writes and verifies a release archive's build-info.json.
+"""Writes and verifies a release archive's build-info.json, run from the archive's root.
 
-    build_info.py write <archive-root> --version V [--ui-tools FILE] [--cc TEXT]
-    build_info.py verify <archive-root>
+    build_info.py write --version V [--tools JSON] [--cc TEXT]
+    build_info.py verify
 
 `write` reads the executable's own identity, so the manifest agrees with it by construction, then
 adds what packaging knows: the packs, the tools that built it, what the binary requires of the
 platform and a hash of every other file. `verify` recomputes all of that from an extracted archive
 and names each disagreement, so the bytes tested are shown to be the bytes described.
+
+The archive is the working directory rather than an argument, so no path this reads or writes and
+no command it runs is chosen by whoever invokes it.
 """
 
 import argparse
@@ -20,6 +23,7 @@ import sys
 from pathlib import Path
 
 SCHEMA_VERSION = 1
+ROOT = Path(".")
 MANIFEST = "build-info.json"
 EXECUTABLE = "codeql-abom"
 ASSETS = {"ui": "ui", "packs": "ql", "workspace": "codeql-workspace.yml"}
@@ -46,8 +50,9 @@ def inventory(root: Path) -> list[dict]:
     return files
 
 
-def identity(root: Path) -> dict:
-    out = subprocess.run([str(root / EXECUTABLE), "version", "--json"],
+def identity() -> dict:
+    # A bare name would be looked up on PATH rather than taken from the archive.
+    out = subprocess.run(["./" + EXECUTABLE, "version", "--json"],
                          check=True, capture_output=True, text=True).stdout
     return json.loads(out)
 
@@ -134,8 +139,8 @@ def platform_requirements(executable: Path, target_os: str) -> dict:
 
 
 def write(args: argparse.Namespace) -> int:
-    root = Path(args.root)
-    ident = identity(root)
+    root = ROOT
+    ident = identity()
     semver = args.version.removeprefix("v")
     problems = []
     if ident["development"] or ident["version"] != semver:
@@ -149,8 +154,8 @@ def write(args: argparse.Namespace) -> int:
         return 1
 
     tools = {"go": ident["goVersion"], "cc": args.cc or command_line("cc", "--version")}
-    if args.ui_tools:
-        tools.update(json.loads(Path(args.ui_tools).read_text(encoding="utf-8")))
+    if args.tools:
+        tools.update(json.loads(args.tools))
 
     info = {
         "schemaVersion": SCHEMA_VERSION,
@@ -169,8 +174,8 @@ def write(args: argparse.Namespace) -> int:
     return 0
 
 
-def verify(args: argparse.Namespace) -> int:
-    root = Path(args.root)
+def verify(_: argparse.Namespace) -> int:
+    root = ROOT
     info = json.loads((root / MANIFEST).read_text(encoding="utf-8"))
     if info.get("schemaVersion") != SCHEMA_VERSION:
         print(f"build-info: schema version {info.get('schemaVersion')} is not one this can read",
@@ -178,7 +183,7 @@ def verify(args: argparse.Namespace) -> int:
         return 1
 
     problems = []
-    ident = identity(root)
+    ident = identity()
     expected = {
         "version": info["version"], "revision": info["revision"], "dirty": info["dirty"],
         "os": info["target"]["os"], "arch": info["target"]["arch"],
@@ -208,7 +213,7 @@ def verify(args: argparse.Namespace) -> int:
         print(f"build-info: {problem}", file=sys.stderr)
     if problems:
         return 1
-    print(f"build-info: {root.name} matches its manifest ({len(recorded)} files)")
+    print(f"build-info: {Path.cwd().name} matches its manifest ({len(recorded)} files)")
     return 0
 
 
@@ -216,12 +221,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
     w = sub.add_parser("write")
-    w.add_argument("root")
     w.add_argument("--version", required=True)
-    w.add_argument("--ui-tools", help="JSON object of the tools that built the interface")
+    w.add_argument("--tools", help="JSON object of further tools that built the archive")
     w.add_argument("--cc", help="the C compiler's version line, when `cc --version` is not it")
-    v = sub.add_parser("verify")
-    v.add_argument("root")
+    sub.add_parser("verify")
     args = parser.parse_args()
     return write(args) if args.command == "write" else verify(args)
 
