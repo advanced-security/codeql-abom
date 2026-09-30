@@ -83,4 +83,54 @@ public sealed class DiscoveryActTests : AbomTestContext
             Assert.DoesNotContain("0 repositories", act.TextContent);
         });
     }
+
+    /// Nothing retries unavailable work on its own, so the one control that does has to say how
+    /// much it applies to before it is pressed, like the tier buttons beside it.
+    [Fact]
+    public void RetryingUnavailableWorkStatesHowMuchBeforeItIsPressed()
+    {
+        Serve(DiscoveryStateBuilder.Drained(), "[]");
+
+        var cut = Render<Shared.DiscoveryControls>();
+
+        cut.WaitForAssertion(() =>
+        {
+            var retry = cut.Find("[data-abom-retry-unavailable]");
+            Assert.Contains("unavailable (40)", retry.TextContent);
+            Assert.False(retry.HasAttribute("disabled"));
+        });
+    }
+
+    /// A reference assembled from an expression stays unavailable whatever access changes, and a
+    /// note that counted only what went back would leave those looking like a retry that failed.
+    [Fact]
+    public void RetryingSaysWhatItPutBackAndWhatItCouldNot()
+    {
+        Serve(DiscoveryStateBuilder.Drained(), "[]");
+        Answer("api/discovery/retry-unavailable",
+            $$"""{"requeued":37,"namesNoRepository":3,"state":{{DiscoveryStateBuilder.Drained().ToJson()}}}""");
+
+        var cut = Render<Shared.DiscoveryControls>();
+        cut.WaitForAssertion(() => cut.Find("[data-abom-retry-unavailable]"));
+        cut.Find("[data-abom-retry-unavailable]").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains(Sent, r => r.Method == "POST"
+                && r.Url.Contains("api/discovery/retry-unavailable", StringComparison.Ordinal));
+            Assert.Contains("37 put back", cut.Markup);
+            Assert.Contains("3 name no repository", cut.Markup);
+        });
+    }
+
+    [Fact]
+    public void NothingUnavailableLeavesNothingToRetry()
+    {
+        Serve(DiscoveryStateBuilder.NeverStarted(), "[]");
+
+        var cut = Render<Shared.DiscoveryControls>();
+
+        cut.WaitForAssertion(() =>
+            Assert.True(cut.Find("[data-abom-retry-unavailable]").HasAttribute("disabled")));
+    }
 }

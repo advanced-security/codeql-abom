@@ -16,14 +16,38 @@ note() {
 cli=$(tr -d '[:space:]' <.codeql-version)
 cli=${cli#v}
 
-# Packs track the CLI version; pre-release `*-next.*` builds are allowed.
+# The pin names a CodeQL CLI release, and those never carry a pre-release suffix.
+if ! [[ "$cli" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+	note ".codeql-version is v$cli, which is not a CodeQL CLI release"
+fi
+
+# Packs track the CLI version; a pre-release of that same version, such as `2.27.1-next.1`, is a
+# further ABOM release against the same CLI. Every pack is part of one release.
+abom=""
 for manifest in ql/*/lib/codeql-pack.yml ql/*/*/src/codeql-pack.yml ql/*/*/test/codeql-pack.yml; do
 	[ -e "$manifest" ] || continue
 	version=$(awk '/^version:/ {print $2; exit}' "$manifest")
 	case "$version" in
-	"$cli" | *-next.*) ;;
+	"$cli" | "$cli"-*) ;;
 	*) note "$manifest is $version, but .codeql-version is $cli" ;;
 	esac
+	if [ -z "$abom" ]; then
+		abom=$version
+		first=$manifest
+	elif [ "$version" != "$abom" ]; then
+		note "$manifest is $version, but $first is $abom"
+	fi
+
+	# An exact upstream pin is what the lock file resolved, never a version upstream did not publish.
+	lock="$(dirname "$manifest")/codeql-pack.lock.yml"
+	while read -r dep pin; do
+		locked=$(awk -v p="$dep:" '$1 == p {getline; print $2; exit}' "$lock" 2>/dev/null)
+		if [ "$locked" != "$pin" ]; then
+			note "$manifest pins $dep $pin, but $lock resolved ${locked:-nothing}"
+		fi
+	done < <(awk '/^dependencies:/ {deps=1; next}
+	              /^[^[:space:]]/ {deps=0}
+	              deps && $1 ~ /:$/ && $2 ~ /^[0-9]/ {print substr($1, 1, length($1)-1), $2}' "$manifest")
 done
 
 # Suite pins must match the owning pack and its lock file.
@@ -54,19 +78,20 @@ while IFS= read -r suite; do
 	              /^[[:space:]]*version:/ && from != "" {print from, $2; from=""}' "$suite")
 done < <(find ql -name '*.qls')
 
-# ql-mcp tool packs move with the CodeQL CLI.
-tools=$(grep -o 'toolsPackName + "@[0-9][0-9.]*"' internal/runner/printast.go | grep -o '[0-9][0-9.]*')
+# ql-mcp releases alongside the CodeQL CLI, and ABOM names that release, never a pre-release of
+# it. Read whole, so a suffix is compared rather than cut off.
+tools=$(sed -n 's/.*toolsPackName + "@\([^"]*\)".*/\1/p' internal/runner/printast.go | head -1)
 if [ "$tools" != "$cli" ]; then
 	note "internal/runner/printast.go pins ql-mcp's tool pack at ${tools:-nothing}, but .codeql-version is $cli"
 fi
-qlmcp=$(grep -o 'codeql-development-mcp-server@[0-9][0-9.]*' internal/harness/copilot.go | grep -o '[0-9][0-9.]*$')
+qlmcp=$(sed -n 's/.*codeql-development-mcp-server@\([^" ]*\).*/\1/p' internal/harness/copilot.go | head -1)
 if [ "$qlmcp" != "$cli" ]; then
 	note "internal/harness/copilot.go starts ql-mcp ${qlmcp:-nothing}, but .codeql-version is $cli"
 fi
 
 # The operator's pack is scaffolded against ABOM's actions library.
 lib=$(awk '$1 == "codeql/actions-all:" {print $2; exit}' ql/actions/lib/codeql-pack.yml)
-scaffold=$(grep -o 'ActionsAll = "[0-9][0-9.]*"' internal/customql/customql.go | grep -o '[0-9][0-9.]*')
+scaffold=$(sed -n 's/.*ActionsAll = "\([^"]*\)".*/\1/p' internal/customql/customql.go | head -1)
 if [ "$scaffold" != "$lib" ]; then
 	note "internal/customql/customql.go scaffolds codeql/actions-all ${scaffold:-nothing}, but ql/actions/lib pins $lib"
 fi

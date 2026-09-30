@@ -64,7 +64,8 @@
                 <MudText Typo="Typo.caption" Class="mud-text-secondary">
                     Settled counts what is finished: analyzed, plus
                     <b>@UnavailableAcrossDepths.ToString("N0")</b> that could not be fetched and
-                    will not be attempted again. Tier figures elsewhere count analyzed only.
+                    are not tried again until retried from Re-analyze. Tier figures elsewhere
+                    count analyzed only.
                 </MudText>
             }
         }
@@ -221,6 +222,16 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
                    OnClick="RequeueStale"
                    title="Re-analyze only what has not been analyzed by the packs and CodeQL version currently in use. Cheaper than a tier: everything already on record is left alone. How much that is has to be worked out by resolving the packs, so it is reported after it runs rather than before.">
             out of date
+        </MudButton>
+        @* Only on request: Git reports a missing credential and a deleted repository alike, so
+           only the operator knows that access changed. *@
+        <MudButton Size="Size.Small" Variant="Variant.Text"
+                   Disabled="@(_busy || _state.Count("unavailable") == 0)"
+                   StartIcon="@Icons.Material.Filled.Refresh"
+                   Class="abom-requeue abom-requeue-unavailable"
+                   OnClick="RetryUnavailable" data-abom-retry-unavailable
+                   title="Try again to fetch what could not be fetched, after fixing access. Nothing retries it on its own. A reference that names no repository, such as one built from an expression, stays unavailable.">
+            @($"unavailable ({_state.Count("unavailable"):N0})")
         </MudButton>
     </div>
 
@@ -418,6 +429,17 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
             // A current corpus is the normal outcome after a crawl, and silence here reads as a
             // button that did not work.
             : $"Nothing is out of date against CodeQL {got.CliVersion} and {got.Packs} packs.");
+
+    private async Task RetryUnavailable() => await Select(
+        () => Api.RetryUnavailableAsync(),
+        got => (got.Requeued, got.NamesNoRepository) switch
+        {
+            (> 0, > 0) => $"{got.Requeued:N0} put back to fetch again. "
+                + $"{got.NamesNoRepository:N0} name no repository and stay unavailable.",
+            (> 0, _) => $"{got.Requeued:N0} put back to fetch again.",
+            (_, > 0) => $"Nothing put back: all {got.NamesNoRepository:N0} name no repository.",
+            _ => "Nothing is unavailable.",
+        });
 
     private async Task RequeueRepository()
     {

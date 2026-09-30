@@ -161,6 +161,7 @@ public sealed record RequeueResult
     public int Expedited { get; init; }
     public string CliVersion { get; init; } = string.Empty;
     public int Packs { get; init; }
+    public int NamesNoRepository { get; init; }
     public DiscoveryState State { get; init; } = new();
 }
 

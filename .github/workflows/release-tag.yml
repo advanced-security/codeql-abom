@@ -1,0 +1,110 @@
+# This workflow is managed by gh actions-lock.
+
+name: Release - Tag
+
+# Called by release.yml only. An existing tag is checked and never moved: a tag that does not
+# carry its own version is refused, and replacing it is a decision for a person. A missing tag is
+# created from the dispatched commit, with every pack set to the release version, once the tests
+# have passed on exactly that tree.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'The release version, vX.Y.Z or vX.Y.Z-pre-release'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    name: Tag - Inspect
+    runs-on: ubuntu-latest
+    outputs:
+      exists: ${{ steps.look.outputs.exists }}
+
+    steps:
+      - name: Inspect - Checkout repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Inspect - Look for the tag
+        id: look
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Inspect - Check an existing tag carries its version
+        if: steps.look.outputs.exists == 'true'
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          git fetch --depth=1 origin "refs/tags/$VERSION:refs/tags/$VERSION"
+          git checkout --quiet --detach "refs/tags/$VERSION"
+          if ! scripts/release-version.sh --check "$VERSION"; then
+            echo "::error::$VERSION exists but its packs do not carry that version. The tag is left alone; delete or replace it deliberately."
+            exit 1
+          fi
+
+  test:
+    name: Tag - Test the tree to be tagged
+    needs: inspect
+    if: needs.inspect.outputs.exists == 'false'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Test - Checkout repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test - Setup Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          # A release restores nothing another branch could have written.
+          cache: false
+
+      - name: Test - Set the release version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: scripts/release-version.sh "$VERSION"
+
+      - name: Test - Run the Go checks
+        run: make check-corrupt check-release-version fmt vet test
+
+  create:
+    name: Tag - Create
+    needs: test
+    runs-on: ubuntu-latest
+    environment: release-tag
+    permissions:
+      contents: write
+
+    steps:
+      - name: Create - Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Create - Set the release version and tag it
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          scripts/release-version.sh "$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet; then
+            git commit --quiet --all --message "Release $VERSION: set pack versions to ${VERSION#v}"
+          fi
+          # Only the tag is pushed. The version commit is reachable through it, and main keeps
+          # the CLI's own version for the next release to start from.
+          git tag --annotate "$VERSION" --message "Release $VERSION"
+          git push origin "refs/tags/$VERSION"
+          echo "Tagged $VERSION at $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"

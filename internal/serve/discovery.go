@@ -40,9 +40,12 @@ type RequeueResult struct {
 	Expedited int `json:"expedited"`
 	// CLIVersion and Packs say what staleness was judged against, so the count is checkable
 	// rather than merely asserted.
-	CLIVersion string         `json:"cliVersion"`
-	Packs      int            `json:"packs"`
-	State      DiscoveryState `json:"state"`
+	CLIVersion string `json:"cliVersion"`
+	Packs      int    `json:"packs"`
+	// NamesNoRepository counts unavailable work a retry left alone, because no access fixes a
+	// reference that names no repository.
+	NamesNoRepository int            `json:"namesNoRepository"`
+	State             DiscoveryState `json:"state"`
 }
 
 // DiscoveryState is the whole picture the Discovery view renders from: what the loop is doing,
@@ -371,6 +374,32 @@ func (s *Server) discoveryRequeueRepository(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	s.writeRequeued(w, got)
+}
+
+// discoveryRetryUnavailable puts back every dependency that could not be fetched.
+//
+// Only on request: Git answers a missing credential and a missing repository alike, so retrying
+// on a schedule would re-clone what is gone every cycle. The operator knows when access changed.
+func (s *Server) discoveryRetryUnavailable(w http.ResponseWriter, r *http.Request) {
+	if !s.allowControl(w, r) {
+		return
+	}
+	got, err := s.Store.RetryUnavailable()
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	if s.Discovery != nil && got.Requeued > 0 {
+		s.Discovery.Wake()
+	}
+	state, err := s.discoveryState()
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	writeJSON(w, RequeueResult{
+		Requeued: got.Requeued, NamesNoRepository: got.NamesNoRepository, State: state,
+	}, nil)
 }
 
 func (s *Server) writeRequeued(w http.ResponseWriter, got expand.Selection) {

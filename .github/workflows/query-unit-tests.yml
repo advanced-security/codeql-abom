@@ -9,6 +9,11 @@ on:
       - '.github/actions/setup-codeql/action.yml'
       - '.github/workflows/query-unit-tests.yml'
       - 'ql/**'
+      # What check-versions reads besides the packs, and the scripts that write versions.
+      - 'internal/customql/customql.go'
+      - 'internal/harness/copilot.go'
+      - 'internal/runner/printast.go'
+      - 'scripts/*version*.sh'
   push:
     branches: ['main']
     paths:
@@ -16,11 +21,30 @@ on:
       - '.github/actions/setup-codeql/action.yml'
       - '.github/workflows/query-unit-tests.yml'
       - 'ql/**'
+      - 'internal/customql/customql.go'
+      - 'internal/harness/copilot.go'
+      - 'internal/runner/printast.go'
+      - 'scripts/*version*.sh'
 
 permissions:
   contents: read
 
 jobs:
+  # No CodeQL needed: pins are text, and a release candidate's suffix leaking into one is caught
+  # here rather than at release time.
+  versions:
+    name: Query Unit Tests - Versions
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Versions - Checkout repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Versions - Check
+        run: make check-versions check-release-version
+
   query-unit-tests:
     name: Query Unit Tests
     runs-on: ubuntu-latest

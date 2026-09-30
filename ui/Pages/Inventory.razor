@@ -681,6 +681,21 @@
                         }
                     </CellTemplate>
                 </PropertyColumn>
+                @* A missing credential and a reference that names no repository are both
+                   unavailable, and only the reason says which one fixing access would heal. *@
+                <PropertyColumn Property="x => x.Reason" Title="Reason" Sortable="false"
+                                Hidden="@(_coverageState is not ("unavailable" or "retrying"))">
+                    <CellTemplate>
+                        @if (context.Item.Reason is { Length: > 0 } reason)
+                        {
+                            <MudText Typo="Typo.caption" data-abom-coverage-reason>@reason</MudText>
+                        }
+                        else
+                        {
+                            <span class="abom-faint">—</span>
+                        }
+                    </CellTemplate>
+                </PropertyColumn>
                 <PropertyColumn Property="x => x.AnalyzedAt" Title="Last analyzed">
                     <CellTemplate>
                         @if (context.Item.AnalyzedAt is { Length: > 0 } at)

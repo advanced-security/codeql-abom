@@ -1,0 +1,189 @@
+# This workflow is managed by gh actions-lock.
+
+name: Release - Publish
+
+# Called by release.yml only, after every archive passed its smoke test. Two gated stages:
+# `draft` signs and stages the release where nobody can download it yet; `publish` makes it
+# public once someone approves it, and first checks the draft still holds the bytes that were
+# tested. Nothing is rebuilt here.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'The release version, vX.Y.Z or vX.Y.Z-pre-release; its tag must exist'
+        required: true
+        type: string
+      prerelease:
+        description: 'Publish as a pre-release, never marked latest'
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  draft:
+    name: Publish - Draft
+    runs-on: ubuntu-latest
+    environment: release-draft
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Draft - Download the tested archives
+        uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: release-archive-${{ inputs.version }}-*
+          path: ${{ runner.temp }}/assets
+          merge-multiple: true
+
+      - name: Draft - Count the archives
+        working-directory: ${{ runner.temp }}/assets
+        run: |
+          count=$(find . -maxdepth 1 -name 'codeql-abom_*.tar.gz' | wc -l)
+          if [ "$count" -ne 4 ]; then
+            echo "::error::found $count archives; a release has one for each of four platforms"
+            exit 1
+          fi
+
+      - name: Draft - Install Syft
+        id: syft
+        uses: anchore/sbom-action/download-syft@v0.24.2
+        with:
+          syft-version: v1.51.1
+
+      # From the extracted archive, so the SBOM describes what an operator unpacks.
+      - name: Draft - Write an SBOM for each archive
+        working-directory: ${{ runner.temp }}/assets
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+        run: |
+          for archive in codeql-abom_*.tar.gz; do
+            name=${archive%.tar.gz}
+            mkdir -p "$RUNNER_TEMP/sbom/$name"
+            tar -xzf "$archive" -C "$RUNNER_TEMP/sbom/$name"
+            "$SYFT" scan "dir:$RUNNER_TEMP/sbom/$name/$name" --source-name "$name" \
+              --output "spdx-json=$name.sbom.spdx.json"
+          done
+
+      - name: Draft - Write checksums
+        working-directory: ${{ runner.temp }}/assets
+        run: sha256sum codeql-abom_*.tar.gz codeql-abom_*.sbom.spdx.json > SHA256SUMS
+
+      - name: Draft - Attest provenance
+        id: attest
+        uses: actions/attest-build-provenance@v4.2.2
+        with:
+          subject-path: |
+            ${{ runner.temp }}/assets/codeql-abom_*.tar.gz
+            ${{ runner.temp }}/assets/codeql-abom_*.sbom.spdx.json
+            ${{ runner.temp }}/assets/SHA256SUMS
+
+      - name: Draft - Keep the attestation bundle beside the assets
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+          VERSION: ${{ inputs.version }}
+        run: cp "$BUNDLE" "$RUNNER_TEMP/assets/codeql-abom_${VERSION#v}.sigstore.json"
+
+      - name: Draft - Carry the checksums to the publish stage
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-checksums-${{ inputs.version }}
+          path: ${{ runner.temp }}/assets/SHA256SUMS
+          if-no-files-found: error
+
+      - name: Draft - Create or refresh the draft release
+        working-directory: ${{ runner.temp }}/assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          assets=(codeql-abom_*.tar.gz codeql-abom_*.sbom.spdx.json SHA256SUMS codeql-abom_*.sigstore.json)
+          if state=$(gh release view "$VERSION" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$state" != "true" ]; then
+              echo "::error::$VERSION is already published; its assets are not replaced"
+              exit 1
+            fi
+            gh release upload "$VERSION" "${assets[@]}" --clobber
+          else
+            semver=${VERSION#v}
+            cat > notes.md <<EOF
+          Built against CodeQL CLI ${semver%%-*}; install that CLI separately.
+
+          Verify an archive before unpacking it:
+
+          \`\`\`bash
+          gh attestation verify codeql-abom_${semver}_linux_amd64.tar.gz --repo $GH_REPO
+          shasum -a 256 --check --ignore-missing SHA256SUMS
+          \`\`\`
+
+          This release finds its packs and interface only when started from the extracted directory:
+
+          \`\`\`bash
+          cd codeql-abom_${semver}_linux_amd64
+          find ql -name codeql-pack.yml -exec sh -c 'codeql pack install "\$(dirname "\$1")"' _ {} \;
+          ./codeql-abom serve --db "\$HOME/.abom/abom.db" --ui-dir ui --addr 127.0.0.1:8099
+          \`\`\`
+          EOF
+            flags=(--draft --verify-tag --title "codeql-abom $VERSION" --notes-file notes.md --generate-notes)
+            if [ "$PRERELEASE" = "true" ]; then
+              flags+=(--prerelease)
+            fi
+            gh release create "$VERSION" "${flags[@]}" "${assets[@]}"
+          fi
+          echo "Draft $VERSION holds: ${assets[*]}" >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Publish - Release
+    needs: draft
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+
+    steps:
+      - name: Release - Download the recorded checksums
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: release-checksums-${{ inputs.version }}
+          path: ${{ runner.temp }}/recorded
+
+      # A draft can be edited while it waits for approval; what is published is what was tested.
+      - name: Release - Check the draft still holds the tested bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          recorded="$RUNNER_TEMP/recorded/SHA256SUMS"
+          draft="$RUNNER_TEMP/draft"
+          gh release download "$VERSION" --dir "$draft"
+          cmp "$recorded" "$draft/SHA256SUMS"
+          (cd "$draft" && sha256sum --check --strict "$recorded")
+          # Nothing added beside them either: the checksums, their subjects and the bundle only.
+          expected=$( { awk '{print $2}' "$recorded"; echo SHA256SUMS; echo "codeql-abom_${VERSION#v}.sigstore.json"; } | sort)
+          actual=$(ls "$draft" | sort)
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::the draft's assets differ from the ones staged"
+            diff <(echo "$expected") <(echo "$actual") || true
+            exit 1
+          fi
+
+      - name: Release - Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          if [ "$PRERELEASE" = "true" ]; then
+            gh release edit "$VERSION" --draft=false --prerelease --latest=false
+          else
+            gh release edit "$VERSION" --draft=false --prerelease=false --latest
+          fi
+          echo "Published $VERSION" >> "$GITHUB_STEP_SUMMARY"
