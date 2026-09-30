@@ -1377,11 +1377,13 @@ code {
 /* A query id is matched against the catalog as written, and MudBlazor uppercases button labels. */
 .abom-ask-change { text-transform: none; }
 
+/* Wrapping here was the first thing a tight table gave up, doubling the row height. */
 .abom-findings-count,
 .abom-severity-icons {
     display: inline-flex;
     align-items: center;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    white-space: nowrap;
     gap: 6px;
 }
 .abom-findings-count { gap: 10px; }

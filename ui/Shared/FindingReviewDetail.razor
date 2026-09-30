@@ -44,22 +44,19 @@
             @foreach (var thread in flow.ThreadFlows ?? [])
             {
                 <ol class="abom-review-locations" data-abom-code-flow>
-                    @foreach (var step in thread.Locations ?? [])
+                    @foreach (var location in (thread.Locations ?? []).Select(step => step.Location).OfType<ReviewLocation>())
                     {
-                        @if (step.Location is { } location)
-                        {
-                            <li>
-                                @if (location.Message?.Text is { Length: > 0 } message)
-                                {
-                                    <div>@message</div>
-                                }
-                                @LocationView(location)
-                                @if (location.Excerpt.Length > 0)
-                                {
-                                    <pre class="abom-source-excerpt"><code>@location.Excerpt</code></pre>
-                                }
-                            </li>
-                        }
+                        <li>
+                            @if (location.Message?.Text is { Length: > 0 } message)
+                            {
+                                <div>@message</div>
+                            }
+                            @LocationView(location)
+                            @if (location.Excerpt.Length > 0)
+                            {
+                                <pre class="abom-source-excerpt"><code>@location.Excerpt</code></pre>
+                            }
+                        </li>
                     }
                 </ol>
             }

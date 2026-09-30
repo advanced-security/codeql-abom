@@ -437,9 +437,8 @@
             <PropertyColumn Property="x => x.FullName" Title="Repository"
                             HeaderClass="abom-identity-col" CellClass="abom-identity-col">
                 <CellTemplate>
-                    <MudLink Href="@($"/inventory?unit=repositories&q={Uri.EscapeDataString(context.Item.FullName)}")" Class="abom-rule">
-                        @context.Item.FullName
-                    </MudLink>
+                    <MudLink Href="@($"/inventory?unit=repositories&q={Uri.EscapeDataString(context.Item.FullName)}")"
+                             Class="abom-rule abom-trunc" title="@context.Item.FullName">@context.Item.FullName</MudLink>
                 </CellTemplate>
             </PropertyColumn>
             @* A repository roots a bill of materials; the Explorer draws a repository alone, with
