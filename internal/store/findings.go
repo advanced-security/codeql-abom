@@ -300,7 +300,7 @@ func addFindings(tx *sql.Tx, findings []Finding) ([]int64, error) {
 	defer sighting.Close()
 	documentation, err := tx.Prepare(`INSERT INTO abom_query_run_rule (query_run_id, rule_id, documentation_json)
 		VALUES (?, ?, ?) ON CONFLICT(query_run_id, rule_id) DO UPDATE SET
-		documentation_json = COALESCE(abom_query_run_rule.documentation_json, excluded.documentation_json)`)
+		documentation_json = COALESCE(excluded.documentation_json, abom_query_run_rule.documentation_json)`)
 	if err != nil {
 		return nil, fmt.Errorf("preparing rule documentation insert: %w", err)
 	}

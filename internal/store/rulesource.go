@@ -226,6 +226,7 @@ func (s *Store) FindingTrace(id int64) (FindingTrace, error) {
 	return s.findingTrace(id, "", 0)
 }
 
+// findingTrace returns every evaluation oldest first, or with limit > 0 only the newest limit, newest first.
 func (s *Store) findingTrace(id int64, mode string, limit int) (FindingTrace, error) {
 	out := FindingTrace{Evaluations: []FindingEvaluation{}}
 	err := s.db.QueryRow(`

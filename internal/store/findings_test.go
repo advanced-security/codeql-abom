@@ -6,6 +6,33 @@ import (
 	"testing"
 )
 
+func TestRuleDocumentationTakesTheLatestRecordedValueAndKeepsItWhenAbsent(t *testing.T) {
+	store := newTestStore(t)
+	repositoryID, err := store.UpsertRepository("octo/app", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID, err := store.RecordQueryRun(QueryRun{QueryID: "fixture", Repository: "octo/app", AnalysisMode: AnalysisModeRegular})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, documentation := range []string{`{"title":"first"}`, `{"title":"second"}`, ``} {
+		finding := Finding{RepositoryID: repositoryID, QueryRunID: runID, RuleID: "actions/first",
+			FilePath: "action.yml", StartLine: 3, RuleDocumentation: []byte(documentation)}
+		if _, err := store.AddFindings([]Finding{finding}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var got string
+	if err := store.DB().QueryRow(`SELECT documentation_json FROM abom_query_run_rule
+		WHERE query_run_id = ? AND rule_id = 'actions/first'`, runID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != `{"title":"second"}` {
+		t.Fatalf("documentation = %s, want the latest recorded value", got)
+	}
+}
+
 func TestInventoryReviewIncludesUnlinkedFindingsAndFiltersBeforePaging(t *testing.T) {
 	store := newTestStore(t)
 	for _, repository := range []string{"octo/app", "octo/other"} {
