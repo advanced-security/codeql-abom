@@ -98,3 +98,27 @@ func TestRepositoriesPageLeavesOutUpstream(t *testing.T) {
 		}
 	}
 }
+
+// GitHub names are case-insensitive, and the listing and the property walk need not spell one
+// repository alike. A property recorded under another spelling still belongs to the row.
+func TestAPropertyRecordedUnderAnotherSpellingStillShowsOnItsRepository(t *testing.T) {
+	s := advisoryStore(t)
+	seedDependency(t, s, "octo-org/a", "actions/checkout", "v4", 1)
+	if err := s.ReplacePropertyValues("Octo-Org/A", []PropertyValue{
+		{Name: "business_id", Value: "7"},
+	}); err != nil {
+		t.Fatalf("ReplacePropertyValues: %v", err)
+	}
+
+	page, err := s.RepositoriesPage(RepositoriesQuery{})
+	if err != nil {
+		t.Fatalf("RepositoriesPage: %v", err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("listed %d repositories, want 1", len(page.Items))
+	}
+	got := page.Items[0].Properties
+	if len(got) != 1 || got[0].Name != "business_id" || got[0].Value != "7" {
+		t.Errorf("octo-org/a carries %+v, want the business_id recorded as Octo-Org/A", got)
+	}
+}

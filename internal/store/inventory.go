@@ -377,15 +377,13 @@ func inventoryOrdering(
 	if q.Desc {
 		direction = " DESC"
 	}
-	ordering := ` ORDER BY dependent_repos DESC, n.node_key`
-	var orderArgs []any
-	if ok {
-		ordering = ` ORDER BY ` + order + direction + `, n.node_key`
+	switch {
+	case q.Sort == "findings":
+		return severityOrdering(q.Mode, direction, reach, reachArgs)
+	case ok:
+		return ` ORDER BY ` + order + direction + `, n.node_key`, nil
 	}
-	if q.Sort == "findings" {
-		ordering, orderArgs = severityOrdering(q.Mode, direction, reach, reachArgs)
-	}
-	return ordering, orderArgs
+	return ` ORDER BY dependent_repos DESC, n.node_key`, nil
 }
 
 func (s *Store) inventoryPageItems(q InventoryQuery, plan inventoryPageQuery) ([]ActionSummary, error) {
@@ -829,6 +827,7 @@ func (s *Store) propertiesByRepository(names []string) (map[string][]PropertyVal
 		return out, nil
 	}
 	list, args := inList(names)
+	// The column is COLLATE NOCASE and inList lowercases, so this matches the lowercased keys below.
 	rows, err := s.db.Query(`SELECT repository_full_name, property_name, value
 		FROM abom_repository_property WHERE repository_full_name IN `+list+`
 		ORDER BY repository_full_name, property_name, value`, args...)

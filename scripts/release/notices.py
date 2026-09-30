@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""Writes the third-party notices for what a release archive ships.
+
+    notices.py go <executable>   modules linked into the executable
+    notices.py nuget             packages the published interface was restored from
+
+Go modules are read from the executable itself, so a module that is only a test dependency is not
+listed and one that is linked in cannot be missed. A component whose license text cannot be found
+fails the run: shipping without it is the one outcome this file exists to prevent.
+"""
+
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+LICENSE_FILE = re.compile(
+    r"^(licen[cs]e|copying|notice|patents|third-party-notices)([-._].*)?$", re.IGNORECASE)
+
+# Where `dotnet publish` of the interface leaves its restore, fixed rather than passed in.
+ASSETS = Path(__file__).resolve().parents[2] / "ui" / "obj" / "project.assets.json"
+
+
+def license_texts(folder: Path) -> list[tuple[str, str]]:
+    """Every license-like file at the root of a module or package, sorted by name."""
+    found = []
+    for path in sorted(folder.iterdir()):
+        if path.is_file() and LICENSE_FILE.match(path.name):
+            found.append((path.name, path.read_text(encoding="utf-8", errors="replace")))
+    return found
+
+
+def section(name: str, version: str, body: str) -> str:
+    rule = "=" * 78
+    return f"{rule}\n{name} {version}\n{'-' * 78}\n{body.rstrip()}\n\n"
+
+
+def linked_modules(executable: str) -> list[tuple[str, str]]:
+    out = subprocess.run(["go", "version", "-m", executable],
+                         check=True, capture_output=True, text=True).stdout
+    modules = []
+    for line in out.splitlines():
+        fields = line.strip().split("\t")
+        if fields[0] == "dep" and len(fields) >= 3:
+            modules.append((fields[1], fields[2]))
+        elif fields[0] == "=>" and len(fields) >= 3 and modules:
+            # A replacement is what was actually linked, so its license is the one that applies.
+            modules[-1] = (fields[1], fields[2])
+    return modules
+
+
+def go_notices(executable: str) -> tuple[str, list[str]]:
+    text, missing = [], []
+    for path, version in linked_modules(executable):
+        info = json.loads(subprocess.run(["go", "mod", "download", "-json", f"{path}@{version}"],
+                                         check=True, capture_output=True, text=True).stdout)
+        texts = license_texts(Path(info["Dir"]))
+        if not texts:
+            missing.append(f"{path}@{version}")
+            continue
+        text.append(section(path, version, "\n\n".join(body for _, body in texts)))
+    return "".join(text), missing
+
+
+def nuspec_license(folder: Path) -> str:
+    """The license a package declares in its manifest, when it ships no license file."""
+    for nuspec in folder.glob("*.nuspec"):
+        manifest = nuspec.read_text(encoding="utf-8", errors="replace")
+        expression = re.search(r'<license[^>]*type="expression"[^>]*>([^<]+)</license>', manifest)
+        if expression:
+            return f"License: {expression.group(1).strip()} (SPDX expression; the package ships no text)"
+        url = re.search(r"<licenseUrl>([^<]+)</licenseUrl>", manifest)
+        if url:
+            return f"License: see {url.group(1).strip()} (the package ships no text)"
+    return ""
+
+
+def nuget_notices() -> tuple[str, list[str]]:
+    assets = json.loads(ASSETS.read_text(encoding="utf-8"))
+    roots = [Path(p) for p in assets.get("packageFolders", {})]
+    packages = {}
+    for key, library in assets.get("libraries", {}).items():
+        if library.get("type") == "package":
+            name, version = key.split("/", 1)
+            packages[(name, version)] = library["path"]
+    # The browser runtime is downloaded rather than referenced, and it is what ships in _framework.
+    for framework in assets.get("project", {}).get("frameworks", {}).values():
+        for dep in framework.get("downloadDependencies", []):
+            version = dep["version"].strip("[]").split(",")[0].strip()
+            packages[(dep["name"], version)] = f"{dep['name'].lower()}/{version}"
+
+    text, missing = [], []
+    for (name, version), relative in sorted(packages.items()):
+        folder = next((root / relative for root in roots if (root / relative).is_dir()), None)
+        if folder is None:
+            missing.append(f"{name}@{version} (not restored)")
+            continue
+        texts = license_texts(folder)
+        body = "\n\n".join(t for _, t in texts) or nuspec_license(folder)
+        if not body:
+            missing.append(f"{name}@{version}")
+            continue
+        text.append(section(name, version, body))
+    return "".join(text), missing
+
+
+def main(argv: list[str]) -> int:
+    if argv[1:2] == ["go"] and len(argv) == 3:
+        text, missing = go_notices(argv[2])
+    elif argv[1:] == ["nuget"]:
+        text, missing = nuget_notices()
+    else:
+        print(__doc__, file=sys.stderr)
+        return 2
+    if missing:
+        print("notices: no license found for " + ", ".join(missing), file=sys.stderr)
+        return 1
+    sys.stdout.write(text)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

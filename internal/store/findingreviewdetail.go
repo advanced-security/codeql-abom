@@ -39,7 +39,7 @@ func (s *Store) FindingReviewDetails(q FindingReviewQuery, evaluationID int64) (
 	if mode == "" {
 		mode = AnalysisModeRegular
 	}
-	trace, err := s.findingTrace(q.FindingID, mode, 101)
+	trace, err := s.latestFindingTrace(q.FindingID, mode, 101)
 	if err != nil {
 		return details, err
 	}

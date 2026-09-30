@@ -223,11 +223,17 @@ func distinctSources(v sql.NullString) []string {
 
 // FindingTrace reads one finding and every evaluation that reported it, oldest first.
 func (s *Store) FindingTrace(id int64) (FindingTrace, error) {
-	return s.findingTrace(id, "", 0)
+	return s.findingTrace(id, "", ` ORDER BY q.ran_at, q.row_id`, nil)
 }
 
-// findingTrace returns every evaluation oldest first, or with limit > 0 only the newest limit, newest first.
-func (s *Store) findingTrace(id int64, mode string, limit int) (FindingTrace, error) {
+// latestFindingTrace reads one finding and at most limit of its evaluations in one mode, newest
+// first, which is the order a reviewer picks the evaluation to read from.
+func (s *Store) latestFindingTrace(id int64, mode string, limit int) (FindingTrace, error) {
+	return s.findingTrace(id, mode, ` ORDER BY q.ran_at DESC, q.row_id DESC LIMIT ?`, []any{limit})
+}
+
+// findingTrace reads a finding and its evaluations in the order the caller names.
+func (s *Store) findingTrace(id int64, mode, ordering string, orderArgs []any) (FindingTrace, error) {
 	out := FindingTrace{Evaluations: []FindingEvaluation{}}
 	err := s.db.QueryRow(`
 		SELECT f.row_id, f.rule_id, r.repository_full_name, COALESCE(f.file_path, ''),
@@ -257,12 +263,8 @@ func (s *Store) findingTrace(id int64, mode string, limit int) (FindingTrace, er
 		query += " AND q.analysis_mode = ?"
 		args = append(args, mode)
 	}
-	if limit > 0 {
-		query += " ORDER BY q.ran_at DESC, q.row_id DESC LIMIT ?"
-		args = append(args, limit)
-	} else {
-		query += " ORDER BY q.ran_at, q.row_id"
-	}
+	query += ordering
+	args = append(args, orderArgs...)
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return out, fmt.Errorf("reading what reported finding %d: %w", id, err)
