@@ -22,17 +22,7 @@ What remains is the properties no number covers yet.
    distance, or name the pairs that must correspond and check only those. It is not obvious the
    schemes should be that tightly coupled — light-mode `queued` is necessarily olive, because a
    yellow bright enough to read as yellow cannot clear 3:1 against white.
-2. **Four- and five-item coverage strips can still orphan their last row.** Only 2, 3 and 6 divide
-   six, which is why the column counts are stated rather than fitted. The strip renders 4, 5 or 6
-   items depending on what is unresolved, and the two short cases are unmeasured.
-
-   **A seventh cell is waiting on this.** The owned figure reads *"N · yours, declared of M"*,
-   which says what it counts and stops there. What a reader still cannot see is how much of that
-   declaration was ever examined — and the two are independent enough that a freshly declared
-   account is fully enumerated and **entirely unanalyzed**, which is also what makes a prune
-   against it dangerous. Stating the examined and the never-examinable needs a cell this grid has
-   no room for. Whatever replaces the six column counts decides whether that cell can exist.
-3. **Component-level layout is checked only by screenshot.** `ui-test` has no CSS engine, and
+2. **Component-level layout is checked only by screenshot.** `ui-test` has no CSS engine, and
    every layout defect this plan found was invisible to it and visible in one browser measurement.
    That measurement is now a build step: the browser suite gates a pull request twice, against an
    empty database and against the shared fixture set, and the geometry checks run in both.

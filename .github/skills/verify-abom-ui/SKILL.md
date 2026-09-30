@@ -1,7 +1,7 @@
 ---
 name: verify-abom-ui
 description: 'End-to-end verification of the codeql-abom user interface and UX, including visual review of screenshots. Use when testing, reviewing or debugging the ABOM UI; checking the force-directed dependency graph for readability or hairballing; confirming the interface honours ABOM architectural invariants (no unearned vulnerability verdicts, severity-then-reach ordering, seed vs upstream, direct vs transitive, visible coverage); cross-checking rendered numbers against the /api endpoints; or auditing color, contrast and label legibility. REQUIRES a vision-capable model that can actually view screenshot images.'
-argument-hint: 'Optionally name a page, route or invariant to focus on (e.g. "remediation page", "risk force view", "coverage strip")'
+argument-hint: 'Optionally name a page, route or invariant to focus on (e.g. "remediation page", "risk force view", "findings review")'
 ---
 
 # Verify the ABOM interface

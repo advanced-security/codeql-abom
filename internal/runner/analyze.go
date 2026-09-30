@@ -41,12 +41,12 @@ func (r *Runner) AnalyzeQueries(
 	args = append(args, localPackArgs()...)
 	args = append(args,
 		"--format=sarif-latest",
+		"--sarif-include-query-help=always",
+		"--sarif-add-snippets",
 		"--output="+sarifPath,
 		// The suite lives in a published pack, not in this repository. Without this the CLI
 		// reports it as misspelled rather than as not yet fetched.
 		"--download",
-		// Source snippets would multiply SARIF size across thousands of databases, and ABOM
-		// locates findings by position rather than by content.
 		"--no-sarif-add-file-contents",
 	)
 	if r.Threads > 0 {

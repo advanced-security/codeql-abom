@@ -1,11 +1,73 @@
 package ingest
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
+
+func TestQueryHelpAndResultEvidenceAreRecordedWithTheirEvaluation(t *testing.T) {
+	data, err := os.ReadFile("../expand/testdata/findings.sarif")
+	if err != nil {
+		t.Fatal(err)
+	}
+	database := newTestStore(t)
+	runID, err := database.RecordQueryRun(store.QueryRun{
+		QueryID: "actions-suite", Repository: "octo/app", DBCommit: "recorded-revision",
+		AnalysisMode: store.AnalysisModeRegular,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ingester := New(database, store.NewWriter(database, 0))
+	count, err := ingester.FindingsFromSARIF(strings.NewReader(string(data)), Options{Repository: "octo/app", QueryRunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := database.DB().Query(`SELECT rule.documentation_json, sight.evidence_json
+		FROM abom_finding_sighting sight
+		JOIN abom_finding finding ON finding.row_id = sight.finding_row_id
+		JOIN abom_query_run_rule rule ON rule.query_run_id = sight.query_run_id AND rule.rule_id = finding.rule_id
+		WHERE sight.query_run_id = ?`, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	seen := 0
+	for rows.Next() {
+		var documentation, evidence string
+		if err := rows.Scan(&documentation, &evidence); err != nil {
+			t.Fatal(err)
+		}
+		var help struct {
+			Title        string
+			HelpMarkdown string
+		}
+		var result struct {
+			RuleID    string
+			Locations []json.RawMessage
+		}
+		if err := json.Unmarshal([]byte(documentation), &help); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal([]byte(evidence), &result); err != nil {
+			t.Fatal(err)
+		}
+		if help.Title == "" || help.HelpMarkdown == "" || result.RuleID == "" || len(result.Locations) == 0 {
+			t.Fatalf("incomplete retained evidence: %+v, %+v", help, result)
+		}
+		seen++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if seen != count || seen == 0 {
+		t.Fatalf("retained %d evaluation records for %d findings", seen, count)
+	}
+}
 
 const suiteSarif = `{
   "version": "2.1.0",

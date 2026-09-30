@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS abom_query_run_rule (
   pack_version  TEXT,
   pack_digest   TEXT,
   source        TEXT,
+  documentation_json TEXT,
   PRIMARY KEY (query_run_id, rule_id)
 );
 
@@ -151,6 +152,7 @@ CREATE TABLE IF NOT EXISTS abom_finding_node (
 CREATE TABLE IF NOT EXISTS abom_finding_sighting (
   finding_row_id INTEGER NOT NULL REFERENCES abom_finding(row_id),
   query_run_id   INTEGER NOT NULL REFERENCES abom_query_run(row_id),
+  evidence_json TEXT,
   PRIMARY KEY (finding_row_id, query_run_id)
 );
 
@@ -679,6 +681,8 @@ var droppedColumns = []struct{ table, column string }{
 }
 
 var addedColumns = []struct{ table, column, decl string }{
+	{"abom_query_run_rule", "documentation_json", "TEXT"},
+	{"abom_finding_sighting", "evidence_json", "TEXT"},
 	{"abom_saved_view", "presentation", "TEXT"},
 	// A run recorded before results were retained keeps an empty path, which reads as "nothing was
 	// written" rather than as a file nobody can find.

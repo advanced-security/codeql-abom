@@ -119,6 +119,19 @@ func TestTheDataSetCarriesBothAbomsOwnFindingsAndUpstreamOnes(t *testing.T) {
 	}
 }
 
+func TestTheCorpusRetainsRecordedQueryDocumentationAndResultEvidence(t *testing.T) {
+	database := builtCorpus(t)
+	if count(t, database, `SELECT COUNT(*) FROM abom_query_run_rule
+		WHERE COALESCE(json_extract(documentation_json, '$.helpMarkdown'), '') <> ''`) == 0 {
+		t.Error("no recorded query help is available for review")
+	}
+	if missing := count(t, database, `SELECT COUNT(*) FROM abom_finding_regular finding
+		WHERE NOT EXISTS (SELECT 1 FROM abom_finding_sighting sight
+		WHERE sight.finding_row_id = finding.row_id AND sight.evidence_json IS NOT NULL)`); missing != 0 {
+		t.Errorf("%d fixture findings lost their recorded result evidence", missing)
+	}
+}
+
 // A replay says it is one. Its evaluations carry no CodeQL version on purpose, and without this
 // they could not be told from one that failed to record it.
 func TestTheCorpusSaysItRecordedEveryEvaluationItReplays(t *testing.T) {

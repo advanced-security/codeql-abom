@@ -37,23 +37,21 @@ func TestARefusalCarriesNoGoNamespace(t *testing.T) {
 	}
 }
 
-// Naming the term is the floor. A reader who asked a reasonable question in the wrong place needs
-// the right place named, and an API route is not a place a reader can go.
-func TestTheListingRefusalNamesTheSurfaceThatAnswersIt(t *testing.T) {
+// A refusal names the unsupported filter directly.
+func TestTheListingRefusalNamesTheFilterWithoutRoutingAdvice(t *testing.T) {
 	srv, _ := unitServer(t)
 
-	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec,
-		httptest.NewRequest(http.MethodGet, "/api/actions?boundary=cross-owner", nil))
-
-	body := rec.Body.String()
-	if !strings.Contains(body, "boundary") {
-		t.Errorf("the refusal does not name the term it refused: %s", strings.TrimSpace(body))
-	}
-	if !strings.Contains(body, "Explorer") {
-		t.Errorf("the refusal names no surface that answers it: %s", strings.TrimSpace(body))
-	}
-	if strings.Contains(body, "/api/") {
-		t.Errorf("the refusal sends a reader to an API route: %s", strings.TrimSpace(body))
+	for _, url := range []string{"/api/actions?boundary=cross-owner", "/api/relationships?flags=findings"} {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, url, nil))
+		body := rec.Body.String()
+		if !strings.Contains(body, "Not applied here:") {
+			t.Errorf("%s did not use the concise refusal: %s", url, strings.TrimSpace(body))
+		}
+		for _, unwanted := range []string{"Explorer", "does not narrow", "/api/"} {
+			if strings.Contains(body, unwanted) {
+				t.Errorf("%s refusal contains %q: %s", url, unwanted, strings.TrimSpace(body))
+			}
+		}
 	}
 }

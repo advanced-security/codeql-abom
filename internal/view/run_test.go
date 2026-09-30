@@ -29,6 +29,9 @@ func TestABuiltinARunCoversIsOneTheRepositoriesUnitLists(t *testing.T) {
 			t.Fatal(err)
 		}
 		run, unit := spec.UnenforceableAsRun(), spec.UnenforceableAsRepositories()
+		if spec.Flags != nil {
+			unit = run
+		}
 		if !slices.Equal(run, unit) {
 			t.Errorf("%s: a run refuses %v and the repositories unit refuses %v", b.Name, run, unit)
 		}

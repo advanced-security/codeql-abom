@@ -47,8 +47,9 @@ var jobTerms = map[string]bool{
 
 // partialMembers names list-term members a surface answers when it answers fewer than the term allows.
 var partialMembers = map[string]map[string][]string{
-	SurfaceWorkflows: {paramFlags: {FlagFindings}},
-	SurfaceJobs:      {paramFlags: {FlagFindings}},
+	SurfaceWorkflows:    {paramFlags: {FlagFindings}},
+	SurfaceJobs:         {paramFlags: {FlagFindings}},
+	SurfaceRepositories: {paramFlags: {FlagFindings}},
 }
 
 // UnenforceableAsWorkflows names the terms the workflows unit cannot apply.
@@ -68,13 +69,23 @@ func (s Spec) UnenforceableAsJobs() []string {
 var repositoryTerms = map[string]bool{
 	paramSearch:        true,
 	paramScope:         true,
+	paramFlags:         true,
+	paramProperties:    true,
+	paramNotProperties: true,
+}
+
+// runRepositoryTerms choose a run's repositories; list-only findings flags are not a run population.
+var runRepositoryTerms = map[string]bool{
+	paramSearch:        true,
+	paramScope:         true,
 	paramProperties:    true,
 	paramNotProperties: true,
 }
 
 // UnenforceableAsRepositories names the terms the repositories unit cannot apply.
 func (s Spec) UnenforceableAsRepositories() []string {
-	return s.carried(func(t string) bool { return repositoryTerms[t] })
+	return append(s.carried(func(t string) bool { return repositoryTerms[t] }),
+		s.unanswered(SurfaceRepositories)...)
 }
 
 // UnenforceableAsRun names terms a repository run cannot apply.
@@ -82,7 +93,7 @@ func (s Spec) UnenforceableAsRun() []string {
 	return s.carried(appliedByRun)
 }
 
-func appliedByRun(t string) bool { return repositoryTerms[t] || setTerms[t] && !runRefuses[t] }
+func appliedByRun(t string) bool { return runRepositoryTerms[t] || setTerms[t] && !runRefuses[t] }
 
 // runRefuses are set terms a run's population is not drawn through: a run covers repositories
 // where findings sit, and neither an advisory nor a route is one.
@@ -91,7 +102,7 @@ var runRefuses = map[string]bool{paramAdvisorySeverity: true, paramReached: true
 // AsksRepositoriesUnit reports whether the predicate carries a term the repositories unit applies,
 // which makes a run's population exactly what that unit lists for it.
 func (s Spec) AsksRepositoriesUnit() bool {
-	return len(s.carried(func(t string) bool { return !repositoryTerms[t] })) > 0
+	return len(s.carried(func(t string) bool { return !runRepositoryTerms[t] })) > 0
 }
 
 // advisoryTerms are the terms the advisories unit applies.

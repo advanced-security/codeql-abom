@@ -6,6 +6,38 @@ import (
 	"testing"
 )
 
+func TestInventoryReviewIncludesUnlinkedFindingsAndFiltersBeforePaging(t *testing.T) {
+	store := newTestStore(t)
+	for _, repository := range []string{"octo/app", "octo/other"} {
+		repositoryID, err := store.UpsertRepository(repository, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, rule := range []string{"actions/first", "actions/second"} {
+			_, err = store.AddFindings([]Finding{{RepositoryID: repositoryID, RuleID: rule,
+				FilePath: "action.yml", StartLine: 3, Message: "Recorded evidence", Severity: "warning"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	page, err := store.InventoryFindingsPage(FindingReviewQuery{InventoryQuery: InventoryQuery{Repositories: []string{"octo/app"}, Limit: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 2 || len(page.Items) != 1 || page.Items[0].Repository != "octo/app" || page.Items[0].Linked {
+		t.Fatalf("review lost unlinked evidence or paged before filtering: %+v", page)
+	}
+	filtered, err := store.InventoryFindingsPage(FindingReviewQuery{InventoryQuery: InventoryQuery{Repositories: []string{"octo/app"}, Rules: []string{"actions/second"}}})
+	if err != nil || filtered.Total != 1 || filtered.Items[0].RuleID != "actions/second" {
+		t.Fatalf("rule and repository must match the same finding: %+v, %v", filtered, err)
+	}
+	empty, err := store.InventoryFindingsPage(FindingReviewQuery{InventoryQuery: InventoryQuery{Scope: ScopeOwned}})
+	if err != nil || empty.Total != 0 || empty.Items == nil {
+		t.Fatalf("an empty owned scope must return an empty array: %+v, %v", empty, err)
+	}
+}
+
 // ABOM holds CodeQL query results; it never forms its own opinion about what those results
 // mean. A verdict column is how that boundary erodes in practice, so the schema is checked
 // directly rather than relying on review to catch it.

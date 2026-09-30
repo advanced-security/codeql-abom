@@ -404,6 +404,131 @@ public sealed record JobsPage
     public int Total { get; init; }
 }
 
+public sealed record FindingReview
+{
+    public long Id { get; init; }
+    public string RuleId { get; init; } = string.Empty;
+    public string Title { get; init; } = string.Empty;
+    public string Repository { get; init; } = string.Empty;
+    public string FilePath { get; init; } = string.Empty;
+    public int StartLine { get; init; }
+    public string Message { get; init; } = string.Empty;
+    public string Severity { get; init; } = string.Empty;
+    public double? SecuritySeverity { get; init; }
+    public string Provider { get; init; } = string.Empty;
+    public long QueryRunId { get; init; }
+    public string Commit { get; init; } = string.Empty;
+    public string RecordedAt { get; init; } = string.Empty;
+    public bool Linked { get; init; }
+    public bool HelpAvailable { get; init; }
+    public bool EvidenceAvailable { get; init; }
+    public string DisplayTitle => Title.Length > 0 ? Title : RuleId;
+    public string Location => FilePath.Length == 0 ? "Location not recorded"
+        : StartLine > 0 ? $"{FilePath}:{StartLine}" : FilePath;
+    public string Band => SecuritySeverity switch
+    {
+        >= 9 => "critical", >= 7 => "high", >= 4 => "medium", > 0 => "low", _ => "unknown",
+    };
+}
+
+public sealed record FindingsPage
+{
+    public IReadOnlyList<FindingReview> Items { get; init; } = [];
+    public int Total { get; init; }
+    public int UnlinkedExcluded { get; init; }
+}
+
+public sealed record FindingDetails
+{
+    public FindingReview Finding { get; init; } = new();
+    public IReadOnlyList<FindingEvaluation> Evaluations { get; init; } = [];
+    public bool EvaluationsTruncated { get; init; }
+    public long SelectedEvaluationId { get; init; }
+    public QueryDocumentation? Documentation { get; init; }
+    public ReviewResult? Result { get; init; }
+    public IReadOnlyList<FindingAssetLink> Assets { get; init; } = [];
+    public IReadOnlyList<string> References { get; init; } = [];
+}
+
+public sealed record QueryDocumentation
+{
+    public string Title { get; init; } = string.Empty;
+    public string Description { get; init; } = string.Empty;
+    public string HelpMarkdown { get; init; } = string.Empty;
+    public string HelpText { get; init; } = string.Empty;
+    public string HelpUri { get; init; } = string.Empty;
+    public IReadOnlyList<string>? Tags { get; init; }
+}
+
+public sealed record FindingAssetLink
+{
+    public string Key { get; init; } = string.Empty;
+    public string Kind { get; init; } = string.Empty;
+}
+
+public sealed record ReviewResult
+{
+    public ReviewMessage? Message { get; init; }
+    public IReadOnlyList<ReviewLocation>? Locations { get; init; }
+    public IReadOnlyList<ReviewLocation>? RelatedLocations { get; init; }
+    public IReadOnlyList<ReviewCodeFlow>? CodeFlows { get; init; }
+}
+
+public sealed record ReviewMessage
+{
+    public string Text { get; init; } = string.Empty;
+    public string Markdown { get; init; } = string.Empty;
+}
+
+public sealed record ReviewLocation
+{
+    public int Id { get; init; }
+    public ReviewMessage? Message { get; init; }
+    public ReviewPhysicalLocation? PhysicalLocation { get; init; }
+    public string Path => PhysicalLocation?.ArtifactLocation?.Uri ?? string.Empty;
+    public int Line => PhysicalLocation?.Region?.StartLine ?? 0;
+    public string Label => Path.Length == 0 ? "Location not recorded" : Line > 0 ? $"{Path}:{Line}" : Path;
+    public string Excerpt => PhysicalLocation?.ContextRegion?.Snippet?.Text
+        ?? PhysicalLocation?.Region?.Snippet?.Text ?? string.Empty;
+}
+
+public sealed record ReviewPhysicalLocation
+{
+    public ReviewArtifactLocation? ArtifactLocation { get; init; }
+    public ReviewRegion? Region { get; init; }
+    public ReviewRegion? ContextRegion { get; init; }
+}
+
+public sealed record ReviewArtifactLocation
+{
+    public string Uri { get; init; } = string.Empty;
+}
+
+public sealed record ReviewRegion
+{
+    public int StartLine { get; init; }
+    public int EndLine { get; init; }
+    public int StartColumn { get; init; }
+    public int EndColumn { get; init; }
+    public ReviewMessage? Snippet { get; init; }
+}
+
+public sealed record ReviewCodeFlow
+{
+    public ReviewMessage? Message { get; init; }
+    public IReadOnlyList<ReviewThreadFlow>? ThreadFlows { get; init; }
+}
+
+public sealed record ReviewThreadFlow
+{
+    public IReadOnlyList<ReviewThreadLocation>? Locations { get; init; }
+}
+
+public sealed record ReviewThreadLocation
+{
+    public ReviewLocation? Location { get; init; }
+}
+
 /// <summary>One page of a listing, and the size of the match it was cut from.</summary>
 ///
 /// The total is not decoration: a page that does not carry it reads as the whole answer, and a
@@ -529,16 +654,15 @@ public sealed record ActionSummary
     public int DistinctRefs { get; init; }
     public int Findings { get; init; }
     public SeverityCounts Severity { get; init; } = new();
-
-    /// <summary>
-    /// The worst band, as a column the grid can name: the server orders it across the whole match
-    /// as severity first, then whether anything reaches it, then reach.
-    /// </summary>
-    [System.Text.Json.Serialization.JsonIgnore]
-    public string WorstSeverity => Severity.Worst;
     public int Advisories { get; init; }
     public bool Analyzed { get; init; }
     public IReadOnlyList<string> Refs { get; init; } = [];
+}
+
+public sealed record RepositoryProperty
+{
+    public string Name { get; init; } = string.Empty;
+    public string Value { get; init; } = string.Empty;
 }
 
 public sealed record RepositorySummary
@@ -549,6 +673,7 @@ public sealed record RepositorySummary
     public int Dependencies { get; init; }
     public int Findings { get; init; }
     public SeverityCounts Severity { get; init; } = new();
+    public IReadOnlyList<RepositoryProperty> Properties { get; init; } = [];
     public int Exposures { get; init; }
     public int DirectExposures { get; init; }
 }

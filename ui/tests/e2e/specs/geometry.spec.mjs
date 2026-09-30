@@ -57,44 +57,11 @@ test.describe('geometry', () => {
         }
     }
 
-    test('the coverage strip fills whole rows rather than orphaning a cell', on('/inventory'), async ({
-        page,
-        request,
-        baseURL,
-    }) => {
-        // The strip's column counts are 2, 3 and 6 because they divide six. A count that does
-        // not divide them orphans a cell, on every page, and no markup assertion can see it.
-        //
-        // The defect is empty-state only, and measured: with nothing declared the strip renders
-        // four items into three columns and the fourth sits alone; with a corpus behind it there
-        // are six across three, which divides. `plans/ui/theme.md` owns it as "four- and five-item
-        // strip wrapping".
-        //
-        // So the expectation branches on what the server is holding, the same way the rest of the
-        // suite does. An unconditional `test.fail()` was wrong in the direction that matters: it
-        // made a populated run report this as a failure, so the suite could never be green against
-        // real data — which is the run that has to gate.
-        const summary = await corpusSize(request, baseURL);
-        if (!summary.seedRepos) test.fail();
-
-        // The Dashboard hands over a scope and states no coverage of its own, so the strip is not
-        // there to measure; Inventory is the nearest surface that carries it.
+    test('Inventory keeps the global count banner out of the review', on('/inventory'), async ({ page }) => {
         await page.goto('/inventory');
         await ready(page);
-
-        const strip = page.locator('.abom-coverage').first();
-        expect(await strip.count(), 'the strip renders where this measures it').toBeGreaterThan(0);
-
-        const items = await strip.locator('.abom-coverage-item').count();
-        const columns = await strip.evaluate(
-            (el) => getComputedStyle(el).gridTemplateColumns.split(' ').filter(Boolean).length,
-        );
-
-        expect(columns, 'computed column count').toBeGreaterThan(0);
-        expect(
-            items % columns,
-            `${items} items across ${columns} columns leaves a short final row`,
-        ).toBe(0);
+        await expect(page.locator('.abom-coverage')).toHaveCount(0);
+        await expect(page.locator('[data-abom-unit="findings"]')).toBeVisible();
     });
 
     test('no text is clipped by its own container', on('/'), async ({ page }) => {
@@ -110,6 +77,104 @@ test.describe('geometry', () => {
         );
         expect(clipped, 'elements whose text is clipped').toEqual([]);
     });
+
+    // GitHub's logo guidelines keep a quarter of the Invertocat's size clear on every side. That is
+    // a measurement, so it is checked as one, at every width the bar is laid out at: the name and
+    // the navigation are the neighbours that would drift into it.
+    for (const { name, width, height } of WIDTHS) {
+        test(`the Invertocat keeps its clear space at ${name} (${width}px)`, on('/'), async ({ page }) => {
+            await page.setViewportSize({ width, height });
+            await page.goto('/');
+            await ready(page);
+
+            const intruders = await page.evaluate(() => {
+                const mark = document.querySelector('[data-abom-mark]');
+                const m = mark.getBoundingClientRect();
+                const clear = m.width / 4;
+                const zone = {
+                    left: m.left - clear, right: m.right + clear, top: m.top - clear, bottom: m.bottom + clear,
+                };
+                return [...document.querySelectorAll('.mud-appbar *')]
+                    .filter((el) => !el.contains(mark) && !mark.contains(el))
+                    .filter((el) => {
+                        const r = el.getBoundingClientRect();
+                        return r.width > 0 && r.height > 0 && r.left < zone.right && r.right > zone.left &&
+                            r.top < zone.bottom && r.bottom > zone.top;
+                    })
+                    .map((el) => `${el.tagName.toLowerCase()}.${[...el.classList].join('.')}: ` +
+                        `"${el.textContent.trim().replace(/\s+/g, ' ').slice(0, 30)}"`);
+            });
+            expect(intruders, "elements inside the Invertocat's clear space").toEqual([]);
+        });
+    }
+
+    // White on the dark bar and black on the light one, square, and with nothing layered on it,
+    // under the pointer as much as at rest. The link's hover used to fade it to 85%, which turns
+    // the mark into a grey the guidelines do not offer and is an effect they rule out.
+    for (const scheme of ['dark', 'light']) {
+        test(`the Invertocat is drawn plainly in ${scheme}, at rest and under the pointer`, on('/inventory'), async ({
+            page,
+        }) => {
+            await page.emulateMedia({ colorScheme: scheme });
+            await page.goto('/inventory');
+            await ready(page);
+
+            const ink = scheme === 'dark' ? 'rgb(255, 255, 255)' : 'rgb(0, 0, 0)';
+            const mark = page.locator('[data-abom-mark]');
+            for (const state of ['at rest', 'under the pointer']) {
+                if (state === 'under the pointer') {
+                    await page.locator('[data-abom-brand]').hover();
+                    // A transition would otherwise be read at its first frame and pass.
+                    await page.evaluate(() => Promise.all(document.getAnimations()
+                        .filter((a) => a instanceof CSSTransition)
+                        .map((a) => a.finished.catch(() => {}))));
+                }
+                const drawn = await mark.evaluate((svg) => {
+                    let opacity = 1;
+                    const effects = [];
+                    for (let el = svg; el && el !== document.body; el = el.parentElement) {
+                        const style = getComputedStyle(el);
+                        opacity *= Number(style.opacity);
+                        if (style.filter !== 'none') effects.push(`${el.tagName} filter: ${style.filter}`);
+                        if (style.mixBlendMode !== 'normal') effects.push(`${el.tagName} blend: ${style.mixBlendMode}`);
+                    }
+                    const own = getComputedStyle(svg);
+                    if (own.transform !== 'none') effects.push(`transform: ${own.transform}`);
+                    const box = svg.getBoundingClientRect();
+                    return {
+                        fill: getComputedStyle(svg.querySelector('path')).fill,
+                        opacity, effects, width: box.width, height: box.height,
+                    };
+                });
+                expect(drawn.fill, `the Invertocat's ink ${state}`).toBe(ink);
+                expect(drawn.opacity, `the Invertocat's opacity ${state}`).toBe(1);
+                expect(drawn.effects, `effects on the Invertocat ${state}`).toEqual([]);
+                expect(Math.abs(drawn.width - drawn.height), `the Invertocat drawn square ${state}`)
+                    .toBeLessThan(0.5);
+            }
+        });
+    }
+
+    // Forced colors repaint the page in a palette the reader chose, and a fill is not among what
+    // the browser repaints: measured before this existed, the mark was white on a white bar and
+    // black on a black one — gone either way. Legibility comes before the ink, so there it takes
+    // the color the browser gives the link it sits in, as the words beside it do.
+    for (const [chosen, system] of [['dark', 'light'], ['light', 'dark']]) {
+        test(`the Invertocat stays visible under forced colors (${chosen} chosen, ${system} system)`, on('/inventory'), async ({
+            page,
+        }) => {
+            await page.addInitScript((choice) => localStorage.setItem('abom.theme', choice), chosen);
+            await page.emulateMedia({ colorScheme: system, forcedColors: 'active' });
+            await page.goto('/inventory');
+            await ready(page);
+
+            const drawn = await page.locator('[data-abom-mark]').evaluate((svg) => ({
+                fill: getComputedStyle(svg.querySelector('path')).fill,
+                link: getComputedStyle(svg.closest('a')).color,
+            }));
+            expect(drawn.fill, "the Invertocat's ink under forced colors").toBe(drawn.link);
+        });
+    }
 
     // A long repository name is the ordinary case, not the edge case: the shared data set carries
     // `globex-industries/partner-integrations` alongside `octo-org/app`. A name that wraps turns a

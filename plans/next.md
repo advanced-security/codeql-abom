@@ -78,22 +78,19 @@ it is live waits with it.
     third-party dependencies on an account named `$`, so the fix is to refuse the branch rather than
     to correct its output. Cheap, visible, and startable against the corpus that exists.
 5. **[Use GitHub's tooling to keep workflow locks current](tools/actions-lock.md)** — ranked here
-  because what is left needs an approved target rather than a decision. Enforcement is settled on
-  this repository: a `uses:` the lock does not account for is refused before any job starts, and a
-  run log shows the runner selecting the locked commit for a tag ref, so the pinned CLI and its
-  offline coverage check now gate every push and `make verify`. What no local check can supply is
-  which platforms that toolchain combination is good on, and what a Dependabot update does to a
-  workflow and its lock together — the same blocker [the native coverage
-  crosscheck](api/dependency-graph-crosscheck.md) carries, which is why the two sit
-  together. Approved platform experiments cannot be replaced by a run-details link.
-  GitHub owns generation and verification, not a second ABOM pinning tool.
+  for the compatibility matrix and supported-workflow documentation that can start locally.
+  Record the pinned toolchain and existing evidence without treating this repository's observed
+  enforcement as proof for other platforms or nested pins. New enforcement experiments and an
+  observed Dependabot update of workflow and lock need an approved target, coordinated with
+  [the native coverage crosscheck](api/dependency-graph-crosscheck.md). GitHub owns generation
+  and verification, not a second ABOM pinning tool.
 6. **[Measure native Actions coverage before filling a gap](api/dependency-graph-crosscheck.md)** -
-  native lock graphs and Dependabot updater support do not prove deployed DG/SBOM ingestion,
-  advisory alerts or update PRs. Compare those capabilities independently on an approved clean
-  target, without historical custom submissions masquerading as native data. Also compare source
-  extraction at identical commits using CodeQL, native lock evidence and the reference action's
-  parser. A default-branch SBOM still cannot replace a pinned revision. Publication expansion
-  waits for a concrete residual gap; this comparison does not promise one exists.
+  start with the isolated source-extraction comparison at identical commits using CodeQL, native
+  lock evidence and the reference action's parser; it needs no submission or live test target.
+  Deployed DG/SBOM ingestion, advisory alerts and update PRs require separate evidence on an
+  approved clean target, without historical custom submissions masquerading as native data.
+  A default-branch SBOM cannot replace a pinned revision. Publication expansion waits for a
+  concrete residual gap; this comparison does not promise one exists.
 7. **[A gate that blocks, and can say whose rule it was](api/verdict-gate.md)** — ABOM can apply
     declared policy to an organization's recorded transitive dependency evidence.
     **The policy half is built** — drafted, simulated, adopted, waived and auditable — so what
@@ -159,30 +156,24 @@ it is live waits with it.
     over 10, total excess 310**, most between 11 and 16. The three worst — `Store.Migrate`,
     `Supervisor.cycle` and the lock-binding exposure walk — each wait on tests they do not have yet.
     Cleanup rather than risk reduction, which is why it sits here.
-15. **[The coverage strip orphans a cell](ui/theme.md)** — with nothing declared the strip renders
-    four items into a three-column grid, so the fourth sits alone on a second row of every surface
-    that carries it: Inventory, the Explorer, Settings and the bill of materials. Only the 4 and 5
-    item cases are affected; a populated corpus renders 6 and divides cleanly, which is why this is
-    invisible in exactly the runs most likely to be looked at. Held by a `test.fail()` that will
-    break the run when it is fixed.
-16. **[The crawl says what it is doing, wherever a reader is](ui/crawl-visibility.md)** — down to
+15. **[The crawl says what it is doing, wherever a reader is](ui/crawl-visibility.md)** — down to
     how Settings is grouped. The state, the queue, a problem marker and the refresh interval are on
     the bar of every page, a restart starts nothing unless somebody configured it to, and the suite
     binding is chosen on the CodeQL page and stated in Settings. What is left is that Settings
     holds four unrelated decisions in one scroll, and that an on-demand run is visible only on the
     CodeQL page's Runs tab while it spends the same cores.
-17. **[An action remembers its upstream without becoming it](db/fork-provenance.md)** — forks and
+16. **[An action remembers its upstream without becoming it](db/fork-provenance.md)** — forks and
     naming-convention mirrors need attributed upstream context without replacing the declared
     dependency or inventing a `uses:` edge. Same-host identity collection can start independently;
     cross-host lookup consumes [GitHub hosts](api/github-hosts.md), and version explanations
     consume measured evidence from [version resolution](db/version-resolution.md).
-18. **[A repository lookup names its host and its credential](api/github-hosts.md)** — Git, REST
+17. **[A repository lookup names its host and its credential](api/github-hosts.md)** — Git, REST
     and `gh` currently choose destinations separately. Start with a shared host/identity contract
     and two-host tests, preserving one owned organization and destination-scoped credentials.
     Coordinate cache identity with the [checkout cache](db/checkout-cache.md), which keys a fetch by
     commit and sparse filter and carries no host in that key; advertising enterprise-host support
     still requires an authorized environment, not only mocks.
-19. **[Record the container references Actions actually declares](db/container-inventory.md)** —
+18. **[Record the container references Actions actually declares](db/container-inventory.md)** —
     job/service images, Docker action metadata and referenced Dockerfile `FROM` declarations are a
     broader inventory than the existing `docker://` edges. Begin with a literal-source coverage
     spike and the shared adapter contract; full dynamic/dataflow resolution is not a prerequisite.

@@ -244,6 +244,21 @@ public class PaletteContrastTests : AbomTestContext
             + $"against {Hex(p.AppbarBackground)}");
     }
 
+    // GitHub's logo guidelines allow the Invertocat in white or black, grey or green only rarely,
+    // and ask for the higher-contrast option when in doubt. The bar's text is a grey in both
+    // schemes, so the mark cannot simply take the color of the name beside it.
+    [Theory]
+    [MemberData(nameof(Schemes))]
+    public void TheInvertocatIsTheHigherContrastOfBlackAndWhiteOnTheBar(bool dark)
+    {
+        var theme = Services.GetRequiredService<ThemeService>();
+        theme.SystemPreferenceChanged(dark);
+        var bar = Hex(Semantic(dark).AppbarBackground);
+
+        var best = Contrast("#FFFFFF", bar) >= Contrast("#000000", bar) ? "#FFFFFF" : "#000000";
+        Assert.Equal(best, theme.MarkColor);
+    }
+
     // A scheme can clear every bar above and still say less than the other one. The graph falls
     // back silently when a kind has no colour, so a key in one scheme and not the other is a
     // swatch that goes blank on a theme toggle — and only dark is usually looked at.

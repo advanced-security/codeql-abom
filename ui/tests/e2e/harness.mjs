@@ -27,7 +27,7 @@ export const EXPLORE_DRAWN = '/explore?scope=exposure&flags=findings';
 
 // The units Inventory reprojects one scope into. Relationships is absent until an edge carries its
 // own identity — see plans/db/edge-facts.md.
-export const UNITS = ['dependencies', 'workflows', 'jobs', 'repositories', 'advisories', 'relationships', 'coverage'];
+export const UNITS = ['dependencies', 'findings', 'advisories', 'workflows', 'jobs', 'repositories', 'relationships', 'coverage'];
 
 // Blazor reports an unhandled exception by revealing this element rather than by failing the
 // navigation, so a page that has thrown still answers 200 and still renders its chrome. Nothing

@@ -46,30 +46,31 @@ public class SeverityEverywhereTests : AbomTestContext
     }
 
     [Fact]
-    public void ADependencysFindingsCountSaysAtWhatSeverityMostSevereFirst()
+    public void ADependencyShowsFindingSeveritiesAsCompactLabelledIcons()
     {
         var page = RenderInventory();
 
         page.WaitForAssertion(() =>
-            Assert.Equal("1 critical \u00b7 2 medium",
-                page.Find("[data-abom-findings-severity]").TextContent.Trim()));
+        {
+            var bands = page.FindAll("[data-abom-severity-icon]");
+            Assert.Equal(["critical", "medium"], bands.Select(b => b.GetAttribute("data-abom-severity-icon")));
+            Assert.Equal("1 critical finding", bands[0].GetAttribute("aria-label"));
+            Assert.Equal("2 medium findings", bands[1].GetAttribute("aria-label"));
+            Assert.DoesNotContain("1 critical \u00b7 2 medium", page.Markup);
+        });
     }
 
-    /// <summary>
-    /// The listing can be ordered worst first, and asks the server to do it across the whole match
-    /// rather than sorting the page it happens to hold.
-    /// </summary>
     [Fact]
-    public void ADependencyShowsItsWorstBandAndSortingByItAsksTheServer()
+    public void ADependencyHasNoSeverityOfItsOwnAndSortsByFindingSeverity()
     {
         var page = RenderInventory();
 
         page.WaitForAssertion(() =>
-            Assert.Contains("Critical", page.Find("[data-abom-worst-severity]").TextContent));
+            Assert.DoesNotContain(page.FindAll(".mud-table-head th"), h => h.TextContent.Trim() == "Severity"));
         page.FindAll(".sortable-column-header")
-            .First(h => h.TextContent.Contains("Severity")).Click();
+            .First(h => h.TextContent.Contains("Findings")).Click();
         page.WaitForAssertion(() =>
-            Assert.Contains(Sent, r => r.Url.Contains("api/actions") && r.Url.Contains("sort=severity")));
+            Assert.Contains(Sent, r => r.Url.Contains("api/actions") && r.Url.Contains("sort=findings")));
     }
 
     [Fact]
@@ -79,7 +80,7 @@ public class SeverityEverywhereTests : AbomTestContext
         page.Find("[data-abom-unit='relationships']").Click();
 
         page.WaitForAssertion(() =>
-            Assert.Equal("1 medium", page.Find("[data-abom-findings-severity]").TextContent.Trim()));
+            Assert.Equal("1 medium finding", page.Find("[data-abom-severity-icon='medium']").GetAttribute("aria-label")));
     }
 
     private const string NodeDetail = """

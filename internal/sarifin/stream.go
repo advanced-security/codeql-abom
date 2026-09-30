@@ -11,18 +11,23 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 )
 
 // Rule is the subset of a SARIF reportingDescriptor that ABOM stores.
 type Rule struct {
-	ID               string
-	Name             string
-	Description      string
-	Kind             string
-	Severity         string
-	SecuritySeverity string
-	Tags             []string
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	Title            string   `json:"title"`
+	Description      string   `json:"description"`
+	HelpText         string   `json:"helpText"`
+	HelpMarkdown     string   `json:"helpMarkdown"`
+	HelpURI          string   `json:"helpUri"`
+	Kind             string   `json:"kind"`
+	Severity         string   `json:"severity"`
+	SecuritySeverity string   `json:"securitySeverity"`
+	Tags             []string `json:"tags"`
 }
 
 // Region is a source span. Zero values mean the SARIF omitted the field.
@@ -48,6 +53,7 @@ type Result struct {
 	StepCount     int
 
 	Fingerprints map[string]string
+	Evidence     json.RawMessage
 }
 
 // Tool identifies the analyzer that wrote a run.
@@ -107,10 +113,17 @@ func Stream(r io.Reader, h Handler) error {
 	return nil
 }
 
-func streamRun(dec *json.Decoder, h Handler) error {
+func streamRun(dec *json.Decoder, h Handler) (err error) {
 	if err := expectDelim(dec, '{'); err != nil {
 		return err
 	}
+	toolRead := false
+	var deferred *os.File
+	defer func() {
+		if deferred != nil {
+			err = errors.Join(err, deferred.Close(), os.Remove(deferred.Name()))
+		}
+	}()
 	for dec.More() {
 		key, err := readKey(dec)
 		if err != nil {
@@ -122,8 +135,19 @@ func streamRun(dec *json.Decoder, h Handler) error {
 			if err := streamTool(dec, h); err != nil {
 				return err
 			}
+			toolRead = true
 		case "results":
-			if err := streamResults(dec, h); err != nil {
+			handler := h
+			if !toolRead {
+				var err error
+				deferred, err = os.CreateTemp("", "abom-sarif-results-*")
+				if err != nil {
+					return err
+				}
+				encoder := json.NewEncoder(deferred)
+				handler = Handler{OnResult: func(result Result) error { return encoder.Encode(result.Evidence) }}
+			}
+			if err := streamResults(dec, handler); err != nil {
 				return err
 			}
 		default:
@@ -132,7 +156,23 @@ func streamRun(dec *json.Decoder, h Handler) error {
 			}
 		}
 	}
-	return expectDelim(dec, '}')
+	if err := expectDelim(dec, '}'); err != nil {
+		return err
+	}
+	if deferred != nil {
+		if _, err := deferred.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+		reader := json.NewDecoder(deferred)
+		for {
+			if err := streamResult(reader, h); errors.Is(err, io.EOF) {
+				break
+			} else if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func streamTool(dec *json.Decoder, h Handler) error {
@@ -180,18 +220,28 @@ func streamResults(dec *json.Decoder, h Handler) error {
 		return err
 	}
 	for dec.More() {
-		var raw rawResult
-		if err := dec.Decode(&raw); err != nil {
-			return fmt.Errorf("decoding result: %w", err)
-		}
-		if h.OnResult == nil {
-			continue
-		}
-		if err := h.OnResult(raw.toResult()); err != nil {
+		if err := streamResult(dec, h); err != nil {
 			return err
 		}
 	}
 	return expectDelim(dec, ']')
+}
+
+func streamResult(dec *json.Decoder, handler Handler) error {
+	var evidence json.RawMessage
+	if err := dec.Decode(&evidence); err != nil {
+		return fmt.Errorf("decoding result: %w", err)
+	}
+	var raw rawResult
+	if err := json.Unmarshal(evidence, &raw); err != nil {
+		return fmt.Errorf("decoding result: %w", err)
+	}
+	if handler.OnResult == nil {
+		return nil
+	}
+	result := raw.toResult()
+	result.Evidence = evidence
+	return handler.OnResult(result)
 }
 
 type rawRule struct {
@@ -203,6 +253,11 @@ type rawRule struct {
 	FullDescription struct {
 		Text string `json:"text"`
 	} `json:"fullDescription"`
+	Help struct {
+		Text     string `json:"text"`
+		Markdown string `json:"markdown"`
+	} `json:"help"`
+	HelpURI    string `json:"helpUri"`
 	Properties struct {
 		Kind             string   `json:"kind"`
 		Description      string   `json:"description"`
@@ -230,7 +285,11 @@ func (r rawRule) toRule() Rule {
 	return Rule{
 		ID:               r.ID,
 		Name:             name,
+		Title:            r.ShortDescription.Text,
 		Description:      description,
+		HelpText:         r.Help.Text,
+		HelpMarkdown:     r.Help.Markdown,
+		HelpURI:          r.HelpURI,
 		Kind:             r.Properties.Kind,
 		Severity:         r.Properties.Severity,
 		SecuritySeverity: r.Properties.SecuritySeverity,

@@ -7,10 +7,11 @@ Capture at 1440×900 unless a check says otherwise.
 
 | # | Surface | Interaction before capture | Exists to catch |
 | --- | --- | --- | --- |
-| 1 | Dashboard | none | Whether the first screen says how complete the picture is; coverage strip present; four nav entries and no more |
+| 1 | Dashboard | none | Whether the first screen hands over a useful scope; four nav entries and no more |
 | 2 | Inventory — dependencies | none | Density, the *Showing N of M* line, tabs and units both legible at once |
 | 3 | Inventory — sorted by findings | click Findings twice | The first row matches `?sort=findings&desc=true` from the API, not the page |
 | 4 | Inventory — repositories unit | switch unit | Repository-shaped columns; no node column reading 0 for every row |
+| 5 | Inventory — findings review | open a finding | Recorded query help, locations and code flows fit without horizontal overflow |
 | 5 | Inventory — advisories unit | switch unit | Direct/transitive split; the line naming advisories that reach nothing |
 | 6 | Inventory — a named view | click a tab | The tab reads as selected and the scope in the address matches its predicate |
 | 7 | Inventory — property scope | narrow by a property value | The count of repositories carrying no value is stated beside the filtered total |

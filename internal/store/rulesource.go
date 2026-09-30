@@ -223,6 +223,10 @@ func distinctSources(v sql.NullString) []string {
 
 // FindingTrace reads one finding and every evaluation that reported it, oldest first.
 func (s *Store) FindingTrace(id int64) (FindingTrace, error) {
+	return s.findingTrace(id, "", 0)
+}
+
+func (s *Store) findingTrace(id int64, mode string, limit int) (FindingTrace, error) {
 	out := FindingTrace{Evaluations: []FindingEvaluation{}}
 	err := s.db.QueryRow(`
 		SELECT f.row_id, f.rule_id, r.repository_full_name, COALESCE(f.file_path, ''),
@@ -238,7 +242,7 @@ func (s *Store) FindingTrace(id int64) (FindingTrace, error) {
 		return out, fmt.Errorf("reading finding %d: %w", id, err)
 	}
 
-	rows, err := s.db.Query(`
+	query := `
 		SELECT q.row_id, q.query_id, COALESCE(q.pack, ''), COALESCE(qr.query_version, ''),
 		       COALESCE(qr.pack, ''), COALESCE(qr.pack_version, ''), COALESCE(qr.pack_digest, ''),
 		       COALESCE(qr.source, ''), COALESCE(q.cli_version, ''), q.analysis_mode,
@@ -246,8 +250,19 @@ func (s *Store) FindingTrace(id int64) (FindingTrace, error) {
 		FROM abom_finding_sighting sg
 		JOIN abom_query_run q ON q.row_id = sg.query_run_id
 		LEFT JOIN abom_query_run_rule qr ON qr.query_run_id = q.row_id AND qr.rule_id = ?
-		WHERE sg.finding_row_id = ?
-		ORDER BY q.ran_at, q.row_id`, out.RuleID, id)
+		WHERE sg.finding_row_id = ?`
+	args := []any{out.RuleID, id}
+	if mode != "" {
+		query += " AND q.analysis_mode = ?"
+		args = append(args, mode)
+	}
+	if limit > 0 {
+		query += " ORDER BY q.ran_at DESC, q.row_id DESC LIMIT ?"
+		args = append(args, limit)
+	} else {
+		query += " ORDER BY q.ran_at, q.row_id"
+	}
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return out, fmt.Errorf("reading what reported finding %d: %w", id, err)
 	}

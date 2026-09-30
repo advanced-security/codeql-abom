@@ -2,6 +2,49 @@ package store
 
 import "testing"
 
+func TestRepositoriesFindFindingsByRepositoryAndOrderByWorstSeverity(t *testing.T) {
+	s := advisoryStore(t)
+	for _, name := range []string{"octo-org/critical", "octo-org/many", "octo-org/clean"} {
+		seedDependency(t, s, name, "actions/checkout", "v4", 1)
+	}
+	critical := 9.8
+	medium := 5.0
+	for name, scores := range map[string][]*float64{
+		"octo-org/critical": {&critical},
+		"octo-org/many":     {&medium, &medium},
+	} {
+		repositoryID, err := s.UpsertRepository(name, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for index, score := range scores {
+			if _, err := s.AddFindings([]Finding{{RepositoryID: repositoryID, RuleID: "actions/example",
+				FilePath: "workflow.yml", StartLine: index + 1, SecuritySeverity: score}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := s.ReplacePropertyValues("octo-org/critical", []PropertyValue{
+		{Name: "team", Value: "payments"}, {Name: "tier", Value: "production"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := s.RepositoriesPage(RepositoriesQuery{Flags: []string{"findings"}, Sort: "findings", Desc: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 2 || page.Items[0].FullName != "octo-org/critical" || page.Items[1].FullName != "octo-org/many" {
+		t.Fatalf("repositories with findings were not ordered worst first: %+v", page.Items)
+	}
+	if got := page.Items[0].Properties; len(got) != 2 || got[0].Name != "team" || got[1].Value != "production" {
+		t.Fatalf("repository properties were not returned: %+v", got)
+	}
+	if page.Items[1].Properties == nil {
+		t.Fatal("a repository without properties must return an empty list")
+	}
+}
+
 // The repositories unit refused `scope`, and the built-in tab that names it — "What you own" —
 // therefore answered a page about the repositories you own with a refusal and an empty grid, under
 // a heading saying "The repositories you own". A term this unit plainly answers has to be applied,

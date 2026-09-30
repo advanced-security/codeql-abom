@@ -1,13 +1,23 @@
-@* A findings count says at what severity, or 36 critical findings read the same as 11,998 medium
-   ones. The bands arrive split by the server; this only names them, most severe first. *@
-<span class="abom-num">@Count</span>
-@if (Count > 0)
+@if (Review.HasDelegate && Count > 0)
 {
-    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block abom-trunc"
-             data-abom-findings-severity>@SeverityText.Summary(Severity)</MudText>
+    <span class="abom-findings-count">
+        <button type="button" class="abom-count-review abom-num" data-abom-review-asset="@Asset"
+                aria-label="@($"Review {Count:N0} findings for {Asset}")" title="@($"Review findings for {Asset}")"
+                @onclick="Review">@Count.ToString("N0")</button>
+        <SeverityIcons Severity="@Severity" />
+    </span>
+}
+else
+{
+    <span class="abom-findings-count">
+        <span class="abom-num">@Count.ToString("N0")</span>
+        <SeverityIcons Severity="@Severity" />
+    </span>
 }
 
 @code {
     [Parameter, EditorRequired] public int Count { get; set; }
     [Parameter, EditorRequired] public SeverityCounts Severity { get; set; } = new();
+    [Parameter] public string Asset { get; set; } = "";
+    [Parameter] public EventCallback Review { get; set; }
 }

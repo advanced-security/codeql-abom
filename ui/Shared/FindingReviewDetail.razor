@@ -1,0 +1,175 @@
+<section class="abom-review-detail" aria-label="Finding details" data-abom-finding-detail>
+    <header class="abom-review-detail-heading">
+        <div>
+            <SeverityChip Severity="@Details.Finding.Band" />
+            <MudText Typo="Typo.h6" HtmlTag="h2" Class="mt-2">@Title</MudText>
+            <div class="abom-rule mud-text-secondary">@Details.Finding.RuleId</div>
+        </div>
+        <MudIconButton Icon="@Icons.Material.Outlined.Close" aria-label="Close finding details" OnClick="Closed" />
+    </header>
+
+    <div class="abom-documentation abom-review-message">@((MarkupString)MessageHtml)</div>
+    <div class="abom-ref mb-2">@Details.Finding.Repository</div>
+    @foreach (var location in PrimaryLocations)
+    {
+        @LocationView(location)
+        @if (location.Excerpt.Length > 0)
+        {
+            <pre class="abom-source-excerpt"><code>@location.Excerpt</code></pre>
+        }
+    }
+
+    @if (Details.Result?.RelatedLocations is { Count: > 0 } related)
+    {
+        <MudText Typo="Typo.subtitle2" Class="mt-4 mb-2">Related locations</MudText>
+        <ol class="abom-review-locations">
+            @foreach (var location in related)
+            {
+                <li id="@(location.Id > 0 ? $"{LocationPrefix}-location-{location.Id}" : null)">
+                    @if (location.Message?.Text is { Length: > 0 } message)
+                    {
+                        <div>@message</div>
+                    }
+                    @LocationView(location)
+                </li>
+            }
+        </ol>
+    }
+
+    @if (Details.Result?.CodeFlows is { Count: > 0 } flows)
+    {
+        <MudText Typo="Typo.subtitle2" Class="mt-4 mb-2">Code-flow paths</MudText>
+        @foreach (var flow in flows)
+        {
+            @foreach (var thread in flow.ThreadFlows ?? [])
+            {
+                <ol class="abom-review-locations" data-abom-code-flow>
+                    @foreach (var step in thread.Locations ?? [])
+                    {
+                        @if (step.Location is { } location)
+                        {
+                            <li>
+                                @if (location.Message?.Text is { Length: > 0 } message)
+                                {
+                                    <div>@message</div>
+                                }
+                                @LocationView(location)
+                                @if (location.Excerpt.Length > 0)
+                                {
+                                    <pre class="abom-source-excerpt"><code>@location.Excerpt</code></pre>
+                                }
+                            </li>
+                        }
+                    }
+                </ol>
+            }
+        }
+    }
+
+    <section class="abom-review-help" aria-label="Query documentation">
+        <MudText Typo="Typo.subtitle1" HtmlTag="h3">Query documentation</MudText>
+        @if (Details.Documentation is { HelpMarkdown.Length: > 0 } documentation)
+        {
+            <div class="abom-documentation" data-abom-query-help>
+                @((MarkupString)QueryHelpHtml.Render(documentation.HelpMarkdown, documentation.HelpUri))
+            </div>
+        }
+        else if (Details.Documentation is { HelpText.Length: > 0 } plain)
+        {
+            <div class="abom-help-text" data-abom-query-help>@plain.HelpText</div>
+        }
+        else
+        {
+            @if (Details.Documentation?.Description is { Length: > 0 } description)
+            {
+                <MudText Typo="Typo.body2" Class="my-2">@description</MudText>
+            }
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">Query documentation not recorded.</MudText>
+        }
+        @if (QueryHelpHtml.SafeUrl(Details.Documentation?.HelpUri) is { } helpUrl)
+        {
+            <MudLink Href="@helpUrl" Target="_blank" rel="noopener noreferrer" Typo="Typo.caption">Query reference</MudLink>
+        }
+    </section>
+
+    <section class="abom-review-evaluation" aria-label="Recorded evaluation">
+        @if (Details.Evaluations.Count > 0)
+        {
+            <MudSelect T="long" Label="Recorded evaluation" Variant="Variant.Outlined" Margin="Margin.Dense"
+                       Value="@Details.SelectedEvaluationId" ValueChanged="EvaluationChanged" Dense="true">
+                @foreach (var evaluation in Details.Evaluations)
+                {
+                    <MudSelectItem T="long" Value="@evaluation.QueryRunId">@EvaluationLabel(evaluation)</MudSelectItem>
+                }
+            </MudSelect>
+        }
+        @if (Details.EvaluationsTruncated)
+        {
+            <MudText Typo="Typo.caption">Latest 100 evaluations shown.</MudText>
+        }
+        <dl class="abom-review-facts">
+            <dt>Revision</dt><dd class="abom-ref">@Recorded(Evaluation?.Commit)</dd>
+            <dt>Provider</dt><dd>@Recorded(Details.Finding.Provider)</dd>
+            <dt>CodeQL version</dt><dd>@Recorded(Evaluation?.CliVersion)</dd>
+            <dt>Pack</dt><dd>@Recorded(Evaluation?.Pack) @Evaluation?.PackVersion</dd>
+            <dt>Query version</dt><dd class="abom-ref">@Recorded(Evaluation?.RuleVersion)</dd>
+            <dt>Analysis</dt><dd>@Recorded(Evaluation?.Mode)</dd>
+        </dl>
+        @if (Details.References.Count > 0)
+        {
+            <MudText Typo="Typo.caption">References: @string.Join(", ", Details.References)</MudText>
+        }
+    </section>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public FindingDetails Details { get; set; } = new();
+    [Parameter] public EventCallback Closed { get; set; }
+    [Parameter] public EventCallback<long> EvaluationChanged { get; set; }
+
+    private string Title => Details.Documentation?.Title is { Length: > 0 } title ? title : Details.Finding.DisplayTitle;
+    private string LocationPrefix => $"finding-{Details.Finding.Id}";
+    private FindingEvaluation? Evaluation => Details.Evaluations.FirstOrDefault(item => item.QueryRunId == Details.SelectedEvaluationId);
+    private string Message => Details.Result?.Message?.Markdown is { Length: > 0 } markdown ? markdown
+        : Details.Result?.Message?.Text is { Length: > 0 } text ? text : Details.Finding.Message;
+    private string MessageHtml => QueryHelpHtml.Render(Message,
+        relatedLocations: (Details.Result?.RelatedLocations ?? []).Where(item => item.Id > 0).Select(item => item.Id).ToHashSet(),
+        locationPrefix: LocationPrefix);
+
+    private IReadOnlyList<ReviewLocation> PrimaryLocations => Details.Result?.Locations is { Count: > 0 } locations
+        ? locations : [new ReviewLocation { PhysicalLocation = new ReviewPhysicalLocation
+        {
+            ArtifactLocation = new ReviewArtifactLocation { Uri = Details.Finding.FilePath },
+            Region = new ReviewRegion { StartLine = Details.Finding.StartLine },
+        }}];
+
+    private static string Recorded(string? value) => string.IsNullOrEmpty(value) ? "Not recorded" : value;
+    private static string EvaluationLabel(FindingEvaluation evaluation) =>
+        $"{TimeText.DayAndTime(evaluation.RanAt)} - {(evaluation.Commit.Length > 12 ? evaluation.Commit[..12] : Recorded(evaluation.Commit))}";
+
+    private RenderFragment LocationView(ReviewLocation location) => __builder =>
+    {
+        @if (SourceUrl(location) is { } url)
+        {
+            <MudLink Href="@url" Target="_blank" rel="noopener noreferrer" Class="abom-ref">@location.Label</MudLink>
+        }
+        else
+        {
+            <span class="abom-ref">@location.Label</span>
+        }
+    };
+
+    private string? SourceUrl(ReviewLocation location)
+    {
+        var commit = Evaluation?.Commit ?? "";
+        var repository = Details.Finding.Repository.Split('/');
+        var path = location.Path.Split('/');
+        if (commit.Length != 40 || !commit.All(Uri.IsHexDigit) || repository.Length != 2
+            || repository.Any(part => part.Length == 0 || part is "." or "..") || location.Path.Length == 0
+            || location.Path.StartsWith('/') || location.Path.Contains('\\') || Uri.TryCreate(location.Path, UriKind.Absolute, out _)
+            || path.Any(part => part is "." or "..")) return null;
+        return "https://github.com/" + string.Join("/", repository.Select(Uri.EscapeDataString))
+            + "/blob/" + commit + "/" + string.Join("/", path.Select(Uri.EscapeDataString))
+            + (location.Line > 0 ? $"#L{location.Line}" : "");
+    }
+}

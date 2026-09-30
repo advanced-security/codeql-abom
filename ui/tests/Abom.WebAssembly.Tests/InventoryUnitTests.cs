@@ -23,7 +23,9 @@ public class InventoryUnitTests : AbomTestContext
 
     private const string Repositories = """
         {"items":[{"fullName":"octo-org/billing","origin":"seed","workflows":4,
-          "dependencies":37,"findings":9,"exposures":3,"directExposures":1}],"total":193}
+          "dependencies":37,"findings":9,"severity":{"critical":1,"high":2,"medium":6,"low":0,"unknown":0},
+          "properties":[{"name":"team","value":"payments"},{"name":"tier","value":"production"}],
+          "exposures":3,"directExposures":1}],"total":193}
         """;
 
     private const string Properties = """
@@ -76,6 +78,81 @@ public class InventoryUnitTests : AbomTestContext
         Assert.NotNull(page.Find("[data-abom-unit='repositories']"));
     }
 
+    [Fact]
+    public void FindingsAreReviewedInTheInventoryScopeWithoutOpeningANode()
+    {
+        Answer("api/findings", """
+            {"items":[{"id":7,"ruleId":"actions/code-injection/medium",
+              "repository":"octo-org/app","filePath":".github/workflows/ci.yml",
+              "startLine":20,"message":"Untrusted input reaches a shell command",
+              "severity":"warning","securitySeverity":6.0,"provider":"codeql",
+              "queryRunId":12,"commit":"abc123","linked":true}],"total":1}
+            """);
+                Answer("api/findings/7/review", """
+                        {"finding":{"id":7,"ruleId":"actions/code-injection/medium","repository":"octo-org/app",
+                            "filePath":".github/workflows/ci.yml","startLine":20,"message":"Untrusted input reaches a shell command",
+                            "securitySeverity":6,"commit":"abc123","queryRunId":12},
+                         "evaluations":[{"queryRunId":12,"commit":"abc123","mode":"regular"}],
+                         "selectedEvaluationId":12,"assets":[],"references":[]}
+                        """);
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+                .NavigateTo("/inventory?unit=findings&repositories=octo-org%2Fapp");
+
+        var page = Render<Pages.Inventory>();
+
+        page.WaitForAssertion(() =>
+        {
+            Assert.Contains(Sent, request => request.Url.Contains("api/findings?")
+                && request.Url.Contains("repositories=octo-org%2Fapp"));
+            Assert.Contains("Untrusted input reaches a shell command", page.Markup);
+            Assert.Contains("actions/code-injection/medium", page.Markup);
+            Assert.Contains(".github/workflows/ci.yml:20", page.Markup);
+            Assert.DoesNotContain("Missing analysis or graph attribution can leave gaps", page.Markup);
+        });
+        page.Find("[data-abom-review-finding='7']").Click();
+        var details = page.WaitForElement("[data-abom-finding-detail]");
+        Assert.Contains("abc123", details.TextContent);
+        Assert.Contains("Query documentation", details.TextContent);
+        Assert.Contains("not recorded", details.TextContent);
+        Assert.Empty(page.FindAll("a[href*='/blob/abc123']"));
+        page.Find("[aria-label='Close finding details']").Click();
+        Assert.Empty(page.FindAll("[data-abom-finding-detail]"));
+    }
+
+    [Theory]
+    [InlineData("dependencies", "actions/checkout", "node")]
+    [InlineData("workflows", "octo-org/app/.github/workflows/ci.yml", "node")]
+    [InlineData("jobs", "job:octo-org/app:ci.yml:build", "node")]
+    [InlineData("repositories", "octo-org/billing", "repository")]
+    public void AssetFindingsOpenInPlaceAndKeepTheScope(string unit, string asset, string kind)
+    {
+        Answer("api/findings", """{"items":[],"total":0}""");
+        Answer("api/workflows", """
+            {"items":[{"nodeKey":"octo-org/app/.github/workflows/ci.yml","repository":"octo-org/app",
+              "path":".github/workflows/ci.yml","findings":2}],"total":1}
+            """);
+        Answer("api/jobs", """
+            {"items":[{"nodeKey":"job:octo-org/app:ci.yml:build","jobId":"build",
+              "workflow":"octo-org/app/.github/workflows/ci.yml","findings":2}],"total":1}
+            """);
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+                .NavigateTo($"/inventory?unit={unit}&scope=owned");
+        var page = Render<Pages.Inventory>();
+        var count = page.WaitForElement($"[data-abom-review-asset='{asset}']");
+        Assert.Equal(kind == "repository" ? "9" : "2", count.TextContent.Trim());
+        Assert.Empty(count.QuerySelectorAll("svg"));
+        count.Click();
+        page.WaitForAssertion(() =>
+        {
+            Assert.NotNull(page.Find("[data-abom-asset-review]"));
+            Assert.Contains(Sent, request => request.Url.Contains("api/findings?")
+                && request.Url.Contains($"asset={Uri.EscapeDataString(asset)}")
+                && request.Url.Contains($"assetKind={kind}") && request.Url.Contains("scope=owned"));
+        });
+        page.Find("[aria-label='Close asset findings']").Click();
+        Assert.Empty(page.FindAll("[data-abom-asset-review]"));
+    }
+
     /// <summary>
     /// Each unit asks its own endpoint. Reprojecting in the browser would mean showing a repository
     /// the columns of a dependency, which is the absent-as-zero screen this replaced.
@@ -104,6 +181,9 @@ public class InventoryUnitTests : AbomTestContext
         {
             Assert.Contains("octo-org/billing", page.Markup);
             Assert.Contains("Workflows", page.Markup);
+            Assert.Contains("Repository Properties", page.Markup);
+            Assert.Contains("team: payments", page.Find("[data-abom-repository-properties='octo-org/billing']").TextContent);
+            Assert.Contains("tier: production", page.Find("[data-abom-repository-properties='octo-org/billing']").TextContent);
             Assert.DoesNotContain("Repos reached", page.Markup);
         });
     }

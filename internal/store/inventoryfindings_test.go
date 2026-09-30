@@ -1,6 +1,105 @@
 package store
 
-import "testing"
+import (
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"os"
+	"testing"
+
+	"github.com/advanced-security/codeql-abom/internal/sarifin"
+)
+
+func TestFindingReviewNeverBorrowsEvidenceFromAnotherAnalysisMode(t *testing.T) {
+	database := newTestStore(t)
+	repositoryID, err := database.UpsertRepository("octo/app", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open("../expand/testdata/findings.sarif")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	rules := map[string]sarifin.Rule{}
+	var result sarifin.Result
+	if err := sarifin.Stream(file, sarifin.Handler{
+		OnRule:   func(rule sarifin.Rule) error { rules[rule.ID] = rule; return nil },
+		OnResult: func(found sarifin.Result) error { result = found; return nil },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	documentation, err := json.Marshal(rules[result.RuleID])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var extendedRun int64
+	for _, mode := range []string{AnalysisModeRegular, AnalysisModeExtended} {
+		runID, err := database.RecordQueryRun(QueryRun{QueryID: "fixture", Repository: "octo/app", AnalysisMode: mode, DBCommit: mode})
+		if err != nil {
+			t.Fatal(err)
+		}
+		finding := Finding{RepositoryID: repositoryID, QueryRunID: runID, RuleID: result.RuleID,
+			FilePath: result.FilePath, StartLine: result.Region.StartLine, Message: result.Message}
+		if mode == AnalysisModeExtended {
+			extendedRun = runID
+			finding.RuleDocumentation, finding.Evidence = documentation, result.Evidence
+		}
+		if _, err := database.AddFindings([]Finding{finding}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, mode := range []string{AnalysisModeRegular, AnalysisModeExtended} {
+		query := FindingReviewQuery{InventoryQuery: InventoryQuery{Mode: mode}}
+		page, err := database.InventoryFindingsPage(query)
+		if err != nil || len(page.Items) != 1 {
+			t.Fatalf("%s: %+v, %v", mode, page, err)
+		}
+		query.FindingID = page.Items[0].ID
+		details, err := database.FindingReviewDetails(query, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (len(details.Documentation) > 0) != (mode == AnalysisModeExtended) || len(details.Evaluations) != 1 {
+			t.Fatalf("%s borrowed evidence: %+v", mode, details)
+		}
+		if mode == AnalysisModeRegular {
+			if _, err := database.FindingReviewDetails(query, extendedRun); !errors.Is(err, sql.ErrNoRows) {
+				t.Fatalf("accepted an evaluation outside the selected mode: %v", err)
+			}
+		}
+	}
+}
+
+func TestAnAssetReviewMatchesItsInventoryCountAndDoesNotPoolItsNeighbors(t *testing.T) {
+	database := advisoryStore(t)
+	inventoryCorpus(t, database, 2)
+	workflowWithJobs(t, database, "octo-org/app", ".github/workflows/release.yml", "build", 2)
+	keys := []string{"vendor/action-a", "vendor/action-b", "octo-org/app/.github/workflows/release.yml",
+		"job:octo-org/app:.github/workflows/release.yml:build"}
+	for _, key := range keys {
+		findOn(t, database, key, "actions/example", "warning", "CodeQL")
+	}
+	for _, key := range keys {
+		page, err := database.InventoryFindingsPage(FindingReviewQuery{AssetKey: key, AssetKind: "node"})
+		if err != nil || page.Total != 1 || len(page.Items) != 1 {
+			t.Fatalf("review for %s pooled neighboring findings: %+v, %v", key, page, err)
+		}
+	}
+	repository, err := database.InventoryFindingsPage(FindingReviewQuery{AssetKey: "octo-org/app", AssetKind: "repository"})
+	if err != nil || repository.Total != len(keys) {
+		t.Fatalf("repository review lost its findings: %+v, %v", repository, err)
+	}
+	jobs, err := database.InventoryFindingsPage(FindingReviewQuery{AssetKey: "octo-org/app", AssetKind: "repository",
+		InventoryQuery: InventoryQuery{Kinds: []string{"job"}}})
+	if err != nil || jobs.Total != 1 {
+		t.Fatalf("repository review ignored the node predicate: %+v, %v", jobs, err)
+	}
+	missing, err := database.InventoryFindingsPage(FindingReviewQuery{AssetKey: "missing/node", AssetKind: "node"})
+	if err != nil || missing.Total != 0 {
+		t.Fatalf("unknown asset broadened the answer: %+v, %v", missing, err)
+	}
+}
 
 // findOn records a finding against a node, as SARIF ingestion would. An empty provider is written
 // as NULL, because that is what an unattributed finding looks like in the corpus.

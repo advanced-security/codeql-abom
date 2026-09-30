@@ -652,6 +652,32 @@ public sealed class AbomApi(HttpClient http)
         CancellationToken ct = default) =>
         await GetPageAsync<InventoryPage>("api/actions", predicate, top, offset, sort, desc, ct);
 
+    public async Task<(FindingsPage? Page, string? Refusal)> GetFindingsPageAsync(
+        string predicate, int top, int offset, string asset = "", string assetKind = "",
+        string text = "", CancellationToken ct = default) =>
+        await GetPageAsync<FindingsPage>("api/findings", ReviewPredicate(predicate, asset, assetKind, text),
+            top, offset, null, false, ct);
+
+    public async Task<(FindingDetails? Details, string? Refusal)> GetFindingReviewAsync(
+        long id, string predicate, string asset = "", string assetKind = "",
+        long evaluation = 0, CancellationToken ct = default) =>
+        await GetPageAsync<FindingDetails>($"api/findings/{id}/review",
+            ReviewPredicate(predicate, asset, assetKind, "") + (evaluation > 0 ? $"&evaluation={evaluation}" : ""),
+            1, 0, null, false, ct);
+
+    private static string ReviewPredicate(string predicate, string asset, string assetKind, string text)
+    {
+        var parts = new List<string>();
+        if (predicate.Length > 0) parts.Add(predicate);
+        if (asset.Length > 0)
+        {
+            parts.Add($"asset={Uri.EscapeDataString(asset)}");
+            parts.Add($"assetKind={Uri.EscapeDataString(assetKind)}");
+        }
+        if (text.Length > 0) parts.Add($"text={Uri.EscapeDataString(text)}");
+        return string.Join("&", parts);
+    }
+
     /// <summary>One page of the workflows unit.</summary>
     public async Task<(WorkflowsPage? Page, string? Refusal)> GetWorkflowsPageAsync(
         string predicate, int top, int offset, string? sort, bool desc,

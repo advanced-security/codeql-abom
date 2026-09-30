@@ -132,16 +132,13 @@ func TestTheAdvisoriesUnitNarrowsByPublishedSeverity(t *testing.T) {
 	}
 }
 
-// A list refusing a term another surface applies says which, rather than that none does: measured
-// on the crawled organization, the dependencies listing told a reader nothing answered
-// advisorySeverity while the Advisories unit beside it did.
-func TestAListRefusingATermNamesTheSurfacesThatApplyIt(t *testing.T) {
+// A list refusing a term names that term directly.
+func TestAListRefusingATermNamesTheFilter(t *testing.T) {
 	srv, _ := advisoryServer(t)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
 		"/api/actions?advisorySeverity=high", nil))
-	if rec.Code != http.StatusBadRequest || strings.Contains(rec.Body.String(), "no surface") ||
-		!strings.Contains(rec.Body.String(), "Advisories unit") {
-		t.Errorf("answered %d %s, want a refusal naming the Advisories unit", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest || rec.Body.String() != "{\"error\":\"Not applied here: advisorySeverity.\"}\n" {
+		t.Errorf("answered %d %s, want the concise refusal", rec.Code, rec.Body.String())
 	}
 }

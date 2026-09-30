@@ -1,0 +1,215 @@
+@implements IDisposable
+@inject AbomApi Api
+@inject NavigationManager Nav
+
+<div class="abom-findings-toolbar">
+    <MudTextField T="string" Value="@_text" ValueChanged="SearchChanged" Immediate="true" DebounceInterval="250"
+                  Label="Search findings" Placeholder="Message, rule or file" Variant="Variant.Outlined"
+                  Margin="Margin.Dense" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Outlined.Search"
+                  Clearable="true" Class="abom-findings-search" />
+    @if (Asset.Length > 0)
+    {
+        <span class="abom-ref abom-review-asset-name">@Asset</span>
+        <MudTooltip Text="Open in Findings">
+            <MudIconButton Icon="@Icons.Material.Outlined.OpenInFull" Href="@ReviewHref" aria-label="Open in Findings" />
+        </MudTooltip>
+    }
+    <MudTooltip Text="Refresh findings">
+        <MudIconButton Icon="@Icons.Material.Outlined.Refresh" OnClick="RefreshAsync" aria-label="Refresh findings" />
+    </MudTooltip>
+</div>
+
+@if (_refusal is { Length: > 0 })
+{
+    <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true" Class="mb-3">@_refusal</MudAlert>
+}
+@if (_unlinkedExcluded > 0)
+{
+    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2" data-abom-unlinked-findings>
+        @_unlinkedExcluded.ToString("N0") findings have no live inventory asset link and are excluded from this scope.
+    </MudText>
+}
+
+<div class="abom-findings-layout @(_selectedId is not null ? "has-selection" : "")">
+    <div class="abom-findings-list">
+        <MudDataGrid T="FindingReview" ServerData="Load" @ref="_grid" Dense="true" Hover="true"
+                     SortMode="SortMode.None" Filterable="false" RowsPerPage="30" FixedHeader="true"
+                     ShowColumnOptions="false" RowClassFunc="RowClass"
+                     Class="abom-grid abom-grid-windowed abom-grid-captioned abom-findings-grid">
+            <Columns>
+                <TemplateColumn Title="Finding">
+                    <CellTemplate>
+                        <button type="button" class="abom-finding-select" data-abom-review-finding="@context.Item.Id"
+                                aria-expanded="@(_selectedId == context.Item.Id)" @onclick="@(() => Select(context.Item.Id))">
+                            @context.Item.DisplayTitle
+                        </button>
+                        <div class="abom-finding-message">
+                            @((MarkupString)QueryHelpHtml.Render(context.Item.Message))
+                        </div>
+                        <div class="abom-ref abom-review-location">@context.Item.Repository / @context.Item.Location</div>
+                        @if (context.Item.Title.Length > 0)
+                        {
+                            <div class="abom-rule mud-text-secondary">@context.Item.RuleId</div>
+                        }
+                        @if (!context.Item.Linked)
+                        {
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">No live asset link</MudText>
+                        }
+                    </CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn Title="Severity" CellClass="abom-review-severity" HeaderClass="abom-review-severity">
+                    <CellTemplate><SeverityChip Severity="@context.Item.Band" /></CellTemplate>
+                </TemplateColumn>
+            </Columns>
+            <NoRecordsContent>
+                <MudText>@(_refusal is null ? "No findings match these filters." : "Review unavailable.")</MudText>
+            </NoRecordsContent>
+            <PagerContent><MudDataGridPager T="FindingReview" /></PagerContent>
+        </MudDataGrid>
+        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2" data-abom-findings-total>
+            @_total.ToString("N0") matching findings. Severity, then reach.
+        </MudText>
+    </div>
+    @if (_selectedId is not null)
+    {
+        <aside class="abom-finding-pane" aria-label="Selected finding">
+            @if (_loadingDetails)
+            {
+                <MudProgressLinear Color="Color.Primary" Indeterminate="true" aria-label="Loading finding" />
+            }
+            else if (_detailRefusal is { } error)
+            {
+                <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true">@error</MudAlert>
+                <MudIconButton Icon="@Icons.Material.Outlined.Close" aria-label="Close finding details" OnClick="Close" />
+            }
+            else if (_details is { } details)
+            {
+                <FindingReviewDetail Details="@details" Closed="Close" EvaluationChanged="ChangeEvaluation" />
+            }
+        </aside>
+    }
+</div>
+
+@code {
+    [Parameter] public string Predicate { get; set; } = "";
+    [Parameter] public string Asset { get; set; } = "";
+    [Parameter] public string AssetKind { get; set; } = "";
+    [Parameter] public long? SelectedId { get; set; }
+    [Parameter] public EventCallback<long?> SelectedChanged { get; set; }
+
+    private MudDataGrid<FindingReview>? _grid;
+    private string _signature = "";
+    private string _text = "";
+    private string? _refusal;
+    private string? _detailRefusal;
+    private int _total;
+    private int _unlinkedExcluded;
+    private long? _selectedId;
+    private FindingDetails? _details;
+    private bool _loadingDetails;
+    private int _detailRequest;
+    private int _listRequest;
+    private readonly CancellationTokenSource _lifetime = new();
+    private GridData<FindingReview> _lastPage = new() { Items = [], TotalItems = 0 };
+
+    private string ReviewHref => Nav.GetUriWithQueryParameters(new Dictionary<string, object?>
+    {
+        ["unit"] = "findings", ["asset"] = Asset, ["assetKind"] = AssetKind, ["finding"] = _selectedId,
+    });
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var signature = $"{Predicate}\n{AssetKind}\n{Asset}";
+        if (_signature != signature)
+        {
+            _signature = signature;
+            _detailRequest++;
+            _selectedId = null;
+            _details = null;
+            _text = "";
+            if (_grid is not null) await _grid.ReloadServerData();
+        }
+        if (SelectedId != _selectedId && SelectedChanged.HasDelegate)
+        {
+            if (SelectedId is { } id) await Select(id, notify: false);
+            else await Close(notify: false);
+        }
+    }
+
+    public void Dispose()
+    {
+        _detailRequest++;
+        _lifetime.Cancel();
+        _lifetime.Dispose();
+    }
+
+    private async Task<GridData<FindingReview>> Load(GridState<FindingReview> state)
+    {
+        var request = ++_listRequest;
+        var (page, refusal) = await Api.GetFindingsPageAsync(Predicate, state.PageSize, state.Page * state.PageSize,
+            Asset, AssetKind, _text, _lifetime.Token);
+        if (request != _listRequest || _lifetime.IsCancellationRequested) return _lastPage;
+        _refusal = refusal;
+        _total = page?.Total ?? 0;
+        _unlinkedExcluded = page?.UnlinkedExcluded ?? 0;
+        _lastPage = new GridData<FindingReview> { Items = page?.Items ?? [], TotalItems = _total };
+        StateHasChanged();
+        return _lastPage;
+    }
+
+    private string RowClass(FindingReview finding, int index) => finding.Id == _selectedId ? "abom-finding-selected" : "";
+
+    private async Task Select(long id, bool notify = true)
+    {
+        _selectedId = id;
+        await LoadDetail(id, 0);
+        if (notify && SelectedChanged.HasDelegate) await SelectedChanged.InvokeAsync(id);
+    }
+
+    private async Task ChangeEvaluation(long evaluation)
+    {
+        if (_selectedId is { } id) await LoadDetail(id, evaluation);
+    }
+
+    private async Task LoadDetail(long id, long evaluation)
+    {
+        var request = ++_detailRequest;
+        _loadingDetails = true;
+        _details = null;
+        _detailRefusal = null;
+        StateHasChanged();
+        var (details, refusal) = await Api.GetFindingReviewAsync(id, Predicate, Asset, AssetKind, evaluation, _lifetime.Token);
+        if (request != _detailRequest || _lifetime.IsCancellationRequested) return;
+        _details = details;
+        _detailRefusal = refusal;
+        _loadingDetails = false;
+        StateHasChanged();
+    }
+
+    private Task Close() => Close(notify: true);
+
+    private async Task Close(bool notify)
+    {
+        _detailRequest++;
+        _selectedId = null;
+        _details = null;
+        if (notify && SelectedChanged.HasDelegate) await SelectedChanged.InvokeAsync(null);
+    }
+
+    private async Task SearchChanged(string text)
+    {
+        _text = text ?? "";
+        await Close();
+        if (_grid is not null)
+        {
+            if (_grid.CurrentPage != 0) _grid.NavigateTo(Page.First);
+            else await _grid.ReloadServerData();
+        }
+    }
+
+    public async Task RefreshAsync()
+    {
+        if (_grid is not null) await _grid.ReloadServerData();
+        if (_selectedId is { } id) await LoadDetail(id, _details?.SelectedEvaluationId ?? 0);
+    }
+}

@@ -59,7 +59,7 @@ public abstract class AbomTestContext : BunitContext
           {"name":"mode","label":"Analysis shape","help":"How the database was built",
            "arity":"scalar","values":["regular","extended"],
            "surfaces":["graph","inventory","relationships"]},
-          {"name":"properties","label":"Repository property","help":"Keep a property value",
+          {"name":"properties","label":"Repository Property","help":"Keep a property value",
            "arity":"property","valuesFrom":"api/properties",
            "surfaces":["graph","inventory","workflows","jobs","repositories","advisories","relationships","document"]}
         ]

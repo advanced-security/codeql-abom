@@ -2,6 +2,32 @@ package store
 
 import "testing"
 
+func TestWorkflowAndJobFindingsSortByWorstSeverityBeforeCount(t *testing.T) {
+	s := advisoryStore(t)
+	inventoryCorpus(t, s, 2)
+	workflowWithJobs(t, s, "octo-org/app", ".github/workflows/critical.yml", "critical", 1)
+	workflowWithJobs(t, s, "octo-org/app", ".github/workflows/many.yml", "many", 1)
+	for key, scores := range map[string][]*float64{
+		"octo-org/app/.github/workflows/critical.yml":              {score(9.5)},
+		"octo-org/app/.github/workflows/many.yml":                  {score(5), score(5)},
+		"job:octo-org/app:.github/workflows/critical.yml:critical": {score(9.5)},
+		"job:octo-org/app:.github/workflows/many.yml:many":         {score(5), score(5)},
+	} {
+		for index, value := range scores {
+			scoredOn(t, s, key, "actions/rule-"+itoa(index), "warning", value)
+		}
+	}
+
+	workflows, err := s.WorkflowsPage(WorkflowsQuery{Sort: "findings", Desc: true, Limit: 2})
+	if err != nil || len(workflows.Items) < 2 || workflows.Items[0].NodeKey != "octo-org/app/.github/workflows/critical.yml" {
+		t.Fatalf("workflows were not ordered by worst finding: %+v, %v", workflows.Items, err)
+	}
+	jobs, err := s.JobsPage(JobsQuery{Sort: "findings", Desc: true, Limit: 2})
+	if err != nil || len(jobs.Items) < 2 || jobs.Items[0].JobID != "critical" {
+		t.Fatalf("jobs were not ordered by worst finding: %+v, %v", jobs.Items, err)
+	}
+}
+
 // A unit only exists once its columns are its own. The dependencies and workflows units carry
 // different meanings for reach, total refs, and distinct refs.
 
