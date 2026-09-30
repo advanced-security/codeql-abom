@@ -20,13 +20,21 @@ export GOTOOLCHAIN
 BIN      := bin/codeql-abom
 GO_FILES := $(shell find . -name '*.go' -not -path './ui/*')
 
-.PHONY: bench build check-corrupt corpus check-versions clean e2e e2e-corpus e2e-corpus-run e2e-run \
+# Empty is a development build. A release sets it, e.g. ABOM_VERSION=v2.27.1-next.1.
+ABOM_VERSION ?=
+CODEQL_VERSION := $(patsubst v%,%,$(shell cat .codeql-version))
+LDFLAGS := -X main.codeqlVersion=$(CODEQL_VERSION) $(if $(ABOM_VERSION),-X main.version=$(patsubst v%,%,$(ABOM_VERSION)))
+# What every platform's archive shares: the published interface, its notices and its SDK.
+ABOM_RELEASE ?= $(ABOM_TMP)/release
+
+.PHONY: bench build check-corrupt corpus check-release-version check-versions clean e2e e2e-corpus e2e-corpus-run e2e-run \
 	fmt itest js lint logs package pins publish ql \
-	quality restart selfcheck serve start status stop style test ui ui-test verify vet
+	quality release-archive release-ui restart selfcheck serve start status stop style test ui \
+	ui-test verify vet
 
 .DEFAULT_GOAL := build
 
-verify: check-corrupt check-versions pins fmt vet lint test js style ql ui ui-test e2e
+verify: check-corrupt check-versions check-release-version pins fmt vet lint test js style ql ui ui-test e2e
 
 ## bench: time the store read paths against a real corpus.
 ABOM_BENCH_DB ?= $(ABOM_TMP)/bench.db
@@ -38,7 +46,7 @@ bench:
 	@ABOM_BENCH_DB="$(ABOM_BENCH_DB)" go test ./internal/... -run '^$$' -bench . -benchmem
 
 build:
-	@go build -o $(BIN) ./cmd/codeql-abom
+	@go build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/codeql-abom
 
 ## check-corrupt: catch a duplicated package clause.
 check-corrupt:
@@ -145,6 +153,24 @@ package: build publish
 	@cp $(BIN) dist/
 	@cp -R "$(ABOM_UI)/wwwroot" dist/ui
 	@echo "package: dist/codeql-abom + dist/ui"
+
+## release-ui: the interface every platform's archive shares, into $(ABOM_RELEASE).
+release-ui: publish
+	@rm -rf "$(ABOM_RELEASE)" && mkdir -p "$(ABOM_RELEASE)"
+	@cp -R "$(ABOM_UI)/wwwroot" "$(ABOM_RELEASE)/wwwroot"
+	@python3 scripts/release/notices.py nuget >"$(ABOM_RELEASE)/ui-notices.txt"
+	@printf '{"dotnet": "%s"}\n' "$$(dotnet --version)" >"$(ABOM_RELEASE)/ui-tools.json"
+	@echo "release-ui: $(ABOM_RELEASE)"
+
+## release-archive: this platform's archive under dist/, from what release-ui wrote.
+release-archive:
+	@if [ -z "$(ABOM_VERSION)" ]; then \
+		echo "release-archive: set ABOM_VERSION, such as ABOM_VERSION=v$(CODEQL_VERSION)"; exit 1; \
+	fi
+	@if [ ! -f "$(ABOM_RELEASE)/ui-tools.json" ]; then \
+		echo "release-archive: nothing at $(ABOM_RELEASE); run 'make release-ui' first"; exit 1; \
+	fi
+	@scripts/release/assemble.sh "$(ABOM_VERSION)" "$(ABOM_RELEASE)" dist
 
 ## pins: verify `.github/workflows/actions.lock` without editing it.
 pins:
@@ -279,6 +305,10 @@ style:
 ## check-versions: keep suite, manifest and lock pins aligned.
 check-versions:
 	@./scripts/check-versions.sh
+
+## check-release-version: a pre-release suffix reaches ABOM's pack versions and nothing else.
+check-release-version:
+	@./scripts/check-release-version.sh
 
 ## test: run Go tests under $(ABOM_TMP) because checkout tests need git.
 test:

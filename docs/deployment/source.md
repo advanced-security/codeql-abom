@@ -1,0 +1,163 @@
+# Build and run from source
+
+Source installation is the supported way to run ABOM. Keep the checkout: the executable resolves
+ABOM's query packs from it. Copying the binary alone, or the output of `make package`, is not a
+standalone analysis installation.
+
+```mermaid
+flowchart LR
+    CHECKOUT["Repository checkout<br/>source and query packs"] -->|"make start<br/>build, publish UI, serve"| SERVER["Local server<br/>API and interface"]
+    SERVER -->|"Settings: declare and Save"| QUEUE[("Repositories listed<br/>and queued")]
+    QUEUE -->|"Start analysis"| RUN["Clone, CodeQL<br/>and ingest"]
+    SERVER -->|"single running owner"| DB[("SQLite state")]
+```
+
+## Prerequisites
+
+| Tool | Requirement |
+| --- | --- |
+| Git, GNU Make, curl | Fetch the checkout and run the lifecycle targets; `make start` uses curl to confirm the server answered. |
+| Go and a C compiler | Go 1.21 or later: `make` pins the toolchain in the [Makefile](../../Makefile) and Go downloads it on first use. SQLite needs CGO, so install Xcode Command Line Tools on macOS or a native C toolchain on Linux, and do not disable CGO. |
+| .NET SDK | The major version named by `TargetFramework` in [the UI project](../../ui/Abom.WebAssembly.csproj). `dotnet --list-sdks` shows what is installed. No extra workloads are needed. |
+| GitHub CLI | [gh](https://cli.github.com/), for authentication and ownership verification. |
+| CodeQL | The version in [.codeql-version](../../.codeql-version), on `PATH`. See [install CodeQL](#install-codeql). |
+| Graphviz (optional) | [Graphviz](https://graphviz.org/download/) lets the server place the Explorer's graph. Without it the Explorer uses its in-browser layout and says so. |
+
+These are the only requirements for serving and analyzing. Node, Playwright and golangci-lint are
+development tools. AI authoring and explicit lock verification have
+[optional dependencies](configuration.md#optional-features). Native platform qualification is still
+pending, so this is not a promise that every Linux distribution or macOS version works.
+
+CodeQL has its own use and distribution terms. Access to a repository or membership in an
+organization is not a license grant. Use ABOM only for analysis you are authorized to perform;
+ABOM does not currently enforce base-repository Code Scanning eligibility.
+
+## Get the checkout
+
+```bash
+git clone https://github.com/advanced-security/codeql-abom.git
+cd codeql-abom
+```
+
+Run the remaining commands from this directory. Keep the checkout and its query assets available
+for the lifetime of the installation. Do not run two servers against the same database.
+
+## Install CodeQL
+
+On macOS, or Linux on x64, the `gh codeql` extension installs the pinned version and puts a
+`codeql` command on `PATH`. This is how the repository's CI installs it:
+
+```bash
+gh extension install github/gh-codeql
+gh codeql set-version "$(cat .codeql-version)"
+mkdir -p "$HOME/.local/bin"
+gh codeql install-stub "$HOME/.local/bin"
+```
+
+Add `$HOME/.local/bin` to `PATH` if it is not already there. The extension does not download Linux
+arm64 builds: on that platform, download the pinned version's `linux-arm64` distribution from the
+[CodeQL installation guide](https://docs.github.com/en/code-security/codeql-cli/getting-started-with-the-codeql-cli/setting-up-the-codeql-cli)
+and put its `codeql` executable on `PATH`. Follow that guide's Apple Silicon prerequisites on
+macOS. CodeQL needs glibc on Linux; Alpine/musl is not supported.
+
+Confirm the version and the Actions extractor:
+
+```bash
+test "v$(codeql version --format=terse)" = "$(cat .codeql-version)" && echo "CodeQL version matches"
+codeql resolve languages | grep -w actions
+```
+
+`codeql version` prints the version without the leading `v` that `.codeql-version` carries.
+
+## Configure authentication
+
+Follow [authentication](configuration.md#authentication) for unattended or token-based setups. For an
+interactive GitHub.com installation:
+
+```bash
+gh auth login --hostname github.com --git-protocol https --scopes read:org
+gh auth setup-git --hostname github.com
+gh auth status --hostname github.com
+```
+
+Run these under the same operating-system account that will run ABOM, **before** starting it: the
+server reads its GitHub token once, at startup. Organization SSO and repository access still have
+to authorize the reads your deployment needs.
+
+Then confirm Git can read a private repository in your organization without asking for anything.
+ABOM's clones never prompt, and a repository it cannot fetch is recorded as unavailable and waits
+there until you retry it:
+
+```bash
+GIT_TERMINAL_PROMPT=0 GIT_ASKPASS= git ls-remote https://github.com/YOUR_ORG/PRIVATE_REPOSITORY.git HEAD
+```
+
+A commit ID followed by `HEAD` means Git can read it. An error means analysis would record that
+repository, and every private one like it, as unavailable until access is fixed and
+[retried](operations.md#troubleshooting).
+
+## Install query dependencies
+
+Install every workspace pack, including its locked upstream dependencies:
+
+```bash
+(
+  set -e
+  root=$(git rev-parse --show-toplevel)
+  cd "$root/ql"
+  for manifest in $(find . -name codeql-pack.yml | sort); do
+    codeql pack install "$(dirname "$manifest")"
+  done
+)
+```
+
+The parentheses keep a failure from closing your shell, and it fails outside a checkout rather
+than installing nothing. This follows the repository's
+[CI setup](../../.github/actions/setup-codeql/action.yml). Run it again after changing the checkout's
+pack manifests or CodeQL pin; `make start` does not install query dependencies. It needs network
+access to the package registry.
+
+## Start and declare your scope
+
+```bash
+make start
+```
+
+`make start` builds the executable, publishes the UI, starts the server at <http://127.0.0.1:8099>
+and returns once it answers. The first run may need to download the pinned Go toolchain and the
+UI's .NET packages, so it can be slower. Discovery does not start on its own.
+
+Open <http://127.0.0.1:8099/settings>:
+
+1. Press **Check with gh**. It should report the account you authenticated as.
+2. Declare your organization, either with its **Declare** button under **Accounts you can declare**,
+   offered where gh reports you as an owner or admin, or with **Declare an account by name**. To
+   start with a few repositories, tick **only these repositories** and name them.
+3. Press **Save**. ABOM lists the repositories under the declaration and queues them, and reports
+   how many it found and anything it could not read. Nothing is analyzed yet.
+
+If the listing is not what you expected, change the declaration and save again.
+
+## Start analysis
+
+Under **How discovery runs** in Settings, press **Start analysis**. The control on the top bar
+starts and pauses it from any page. Analysis clones each queued repository, builds a CodeQL database
+and follows what it depends on, so it uses every core it is allowed.
+
+An empty or partial inventory means analysis has not finished, not that there are no dependencies
+or findings. Follow progress on the Settings page and in the log:
+
+```bash
+make logs
+```
+
+Press Ctrl+C to stop following the log. `make stop` stops the server and keeps its state. See
+[operations](operations.md) for restart, persistence and troubleshooting.
+
+For foreground operation, use `make serve` instead of `make start` and stop it with Ctrl+C. Do not
+run both at once. Keep this deployment on loopback: ABOM does not provide browser-user
+authentication or TLS, and `--allow-remote-control` is not an authentication mechanism.
+
+If port 8099 is taken, choose another address with `ABOM_ADDR`, and repeat the same override on
+every later `make` command. [Configuration](configuration.md) covers paths, a command-line
+declaration and optional features.

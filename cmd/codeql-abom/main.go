@@ -38,6 +38,7 @@ var subcommands = []subcommand{
 	{"branches", runBranches, "Record which branches the declared repositories protect."},
 	{"verify-lock", runVerifyLock, "Run GitHub's no-fix lock verification of one repository's current commit."},
 	{"selfcheck", runSelfcheck, "Analyze a source tree with a CodeQL suite as a smoke test."},
+	{"version", runVersion, "Print which build this is and the CodeQL version it was made for."},
 }
 
 func main() {

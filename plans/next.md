@@ -35,9 +35,27 @@ House rules:
 
 The ranking is itself a plan, and is subject to change.
 
+## Parallel priority
+
+**[Installable releases and distributed Kubernetes execution](tools/deployment.md) starts alongside
+the ranked work, not after it.** Release readiness deserves its own parallel effort because most
+documentation and deployment packaging can be isolated to `docs/`, `plans/` and the new `infra/`
+directory. Keep the README entry point, build integration and release workflows narrowly scoped.
+The [source-install recipe](../docs/deployment/source.md) needs clean-machine qualification;
+portable Linux/macOS amd64/arm64 release bundles are the first new deployment to build against
+the plan's archive contract. Multi-stage GHCR images and the private Helm deployment follow
+within the same workstream.
+
+**This does not demote or reorder the shared-runtime work below.** Documentation, image builds,
+chart templates and deployment tests can proceed against agreed contracts while other features
+are implemented. Asset resolution and distributed execution still need coordinated changes to the
+CLI, runner, store, queue and existing UI states. Agree those interfaces with the affected
+workstreams and integrate in small tested changes; do not serialize the entire deployment effort
+behind them or mistake parallel development for permission to skip its acceptance gates.
+
 ## Ranked next
 
-**The closure database comes next.** Every reader that says what runs follows the commit a
+**The closure database comes next for shared-runtime work.** Every reader that says what runs follows the commit a
 workflow's lock selects ([how](../docs/architecture.md#locks)), so a staged closure analyzes the code
 its consumers actually run. The QL-as-a-Service loop — request, authoring, tests, a run over a named
 scope, and a comparison with the alerts developers already see — is built as far as `review`;
@@ -242,9 +260,9 @@ refusal.
   local suite a tier can bind, and stays a stage set by hand while this waits. The upload route is
   **refused rather than deferred**; a configuration file applied through the
   `github-codeql-config-file` property lets the organization add a pack through its own consent, so
-  **no alert exists that a person did not choose**. Until its first item publishes ABOM's own packs,
-  they resolve only from a checkout of this repository, and a server started outside one refuses
-  every run.
+  **no alert exists that a person did not choose**. ABOM's own packs currently resolve from a
+  checkout of this repository. [Deployment](tools/deployment.md) owns bundling them for installed
+  runtimes; that does not require or resume registry publication.
 
 - **[A client in the workflow, thin enough to trust](api/abom-check.md)** — deferred by decision
   rather than by obstacle. Its planned release is verdict-only, over exact base/head commits and

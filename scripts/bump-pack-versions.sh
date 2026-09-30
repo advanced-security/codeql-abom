@@ -2,9 +2,13 @@
 #
 # Keeps the version numbers that have to agree, agreeing.
 #
-#   bump-pack-versions.sh <cli-version>   set every pack's version to the CLI version
+#   bump-pack-versions.sh <version>       set every pack's version to the pinned CLI version, or to
+#                                         a pre-release of it such as 2.27.1-rc1
 #   bump-pack-versions.sh --upgrade-deps  move each upstream dependency to the latest compatible
 #   bump-pack-versions.sh --repin         rewrite each suite's `version:` from the lock files
+#
+# Only each pack's own `version:` takes a pre-release suffix. Upstream pins are someone else's
+# releases and are only ever moved to what a lock file resolved.
 #
 # `codeql pack upgrade` does not update suites or exact pins; force resolution by wildcarding
 # each exact dependency and reading the resolved version back from the lock file.
@@ -106,12 +110,23 @@ if [ "${1:-}" = "--repin" ]; then
 	exit 0
 fi
 
-cli=${1:?usage: bump-pack-versions.sh <cli-version> | --repin}
+cli=${1:?usage: bump-pack-versions.sh <version> | --upgrade-deps | --repin}
 cli=${cli#v}
 
 case "$cli" in
 --*)
-	echo "usage: bump-pack-versions.sh <cli-version> | --upgrade-deps | --repin" >&2
+	echo "usage: bump-pack-versions.sh <version> | --upgrade-deps | --repin" >&2
+	exit 1
+	;;
+esac
+
+# Pin the CLI first: a pack version names the CLI it is compiled for.
+pinned=$(tr -d '[:space:]' <.codeql-version)
+pinned=${pinned#v}
+case "$cli" in
+"$pinned" | "$pinned"-*) ;;
+*)
+	echo "bump-pack-versions: $cli is not CodeQL $pinned from .codeql-version, or a pre-release of it" >&2
 	exit 1
 	;;
 esac

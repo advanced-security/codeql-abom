@@ -164,7 +164,7 @@ func (q *Queue) Enqueue(items []Item) (int, error) {
 		// Terminal on arrival, so it is dated on arrival: every other settled row carries the
 		// time it stopped moving, and a view that shows one cannot leave these blank.
 		completed := ""
-		if !namesARepository(it.Owner, it.Repo) {
+		if !store.NamesARepository(it.Owner, it.Repo) {
 			status = StatusUnavailable
 			reason = "the reference names no repository, so nothing can be fetched for it"
 			completed = q.now().Format(time.RFC3339Nano)
@@ -190,33 +190,6 @@ func (q *Queue) Enqueue(items []Item) (int, error) {
 		return 0, err
 	}
 	return added, nil
-}
-
-// namesARepository reports whether owner/repo could address a real repository.
-//
-// A `uses:` assembled from an expression extracts with the expression where the account should
-// be, giving keys like `${{ github.repository }}/setup`. Recording the reference verbatim is
-// right — it is what the workflow says — but no such repository exists, so a checkout only
-// rediscovers that.
-func namesARepository(owner, repo string) bool {
-	if owner == "" || repo == "" || len(owner) > 39 {
-		return false
-	}
-	for _, r := range owner {
-		if !isASCIILetterOrDigit(r) && r != '-' {
-			return false
-		}
-	}
-	for _, r := range repo {
-		if !isASCIILetterOrDigit(r) && r != '-' && r != '_' && r != '.' {
-			return false
-		}
-	}
-	return true
-}
-
-func isASCIILetterOrDigit(r rune) bool {
-	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }
 
 // Rescore recomputes priorities from current commonality.

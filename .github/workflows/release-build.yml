@@ -1,0 +1,199 @@
+# This workflow is managed by gh actions-lock.
+
+name: Release - Build
+
+# Called by release.yml only. Read-only: it tests the tagged commit, builds each platform's
+# archive on that platform, and smoke-tests the uploaded bytes on that platform again. Nothing
+# here signs or publishes, and nothing restores a cache another branch could have written.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'The release version, vX.Y.Z or vX.Y.Z-pre-release; its tag must exist'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Build - Verify the tagged commit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Verify - Checkout the tag
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.version }}
+          persist-credentials: false
+
+      - name: Verify - Setup Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Verify - Setup .NET
+        uses: actions/setup-dotnet@v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Verify - Setup Node.js
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: '.node-version'
+
+      - name: Verify - Setup CodeQL
+        uses: $/.github/actions/setup-codeql
+        with:
+          enable-cache: 'false'
+
+      - name: Verify - The tag carries its version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: scripts/release-version.sh --check "$VERSION"
+
+      # `make verify` less lint, pins and the browser suite, which pull requests already run and
+      # which need tools this job would otherwise install for nothing the archive contains.
+      - name: Verify - Go, interface and query tests
+        run: make check-corrupt check-release-version fmt vet test js style ui-test ql
+
+  interface:
+    name: Build - Interface
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Interface - Checkout the tag
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.version }}
+          persist-credentials: false
+
+      - name: Interface - Setup .NET
+        uses: actions/setup-dotnet@v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+
+      # Once for every platform: the published WebAssembly is the same bytes everywhere.
+      - name: Interface - Publish
+        run: make release-ui ABOM_RELEASE="$RUNNER_TEMP/abom-interface"
+
+      - name: Interface - Upload
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-interface-${{ inputs.version }}
+          path: ${{ runner.temp }}/abom-interface
+          if-no-files-found: error
+
+  archive:
+    name: Build - ${{ matrix.os }}/${{ matrix.arch }}
+    needs: interface
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # Every platform is a gate: a release missing one is not the release the contract names.
+      fail-fast: false
+      matrix:
+        include:
+          # Built on the oldest supported images, because a binary needs at least the C library
+          # it was linked against; build-info.json records what each one actually requires.
+          - { os: linux, arch: amd64, runner: ubuntu-22.04 }
+          - { os: linux, arch: arm64, runner: ubuntu-22.04-arm }
+          - { os: darwin, arch: amd64, runner: macos-15-intel }
+          - { os: darwin, arch: arm64, runner: macos-15 }
+
+    steps:
+      - name: Archive - Checkout the tag
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.version }}
+          persist-credentials: false
+
+      - name: Archive - Setup Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      # SQLite is linked through CGO, so the only honest cross-build is no cross-build.
+      - name: Archive - Confirm the runner is the target
+        env:
+          WANT: ${{ matrix.os }}/${{ matrix.arch }}
+        run: |
+          got="$(go env GOOS)/$(go env GOARCH)"
+          if [ "$got" != "$WANT" ]; then
+            echo "::error::runner is $got, not $WANT"
+            exit 1
+          fi
+
+      # Outside the checkout: anything inside it would mark the build as modified.
+      - name: Archive - Download the interface
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: release-interface-${{ inputs.version }}
+          path: ${{ runner.temp }}/abom-interface
+
+      - name: Archive - Assemble
+        env:
+          VERSION: ${{ inputs.version }}
+        run: make release-archive ABOM_VERSION="$VERSION" ABOM_RELEASE="$RUNNER_TEMP/abom-interface"
+
+      - name: Archive - Upload
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-archive-${{ inputs.version }}-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  smoke:
+    name: Smoke - ${{ matrix.os }}/${{ matrix.arch }}
+    needs: archive
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: linux, arch: amd64, runner: ubuntu-22.04, codeql: linux64 }
+          - { os: linux, arch: arm64, runner: ubuntu-22.04-arm, codeql: linux-arm64 }
+          - { os: darwin, arch: amd64, runner: macos-15-intel, codeql: osx64 }
+          - { os: darwin, arch: arm64, runner: macos-15, codeql: osx64 }
+
+    steps:
+      - name: Smoke - Checkout the tag
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.version }}
+          persist-credentials: false
+
+      # The uploaded bytes, not the ones the build left behind: these are what gets published.
+      - name: Smoke - Download the archive
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: release-archive-${{ inputs.version }}-${{ matrix.os }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/archive
+
+      # From the CLI's own release rather than `gh codeql`, which has no Linux arm64 build.
+      - name: Smoke - Install the pinned CodeQL CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLATFORM: ${{ matrix.codeql }}
+        run: |
+          cli=$(tr -d '[:space:]' < .codeql-version)
+          asset="codeql-$PLATFORM.zip"
+          gh release download "$cli" --repo github/codeql-cli-binaries --pattern "$asset" \
+            --dir "$RUNNER_TEMP"
+          want=$(gh api "repos/github/codeql-cli-binaries/releases/tags/$cli" \
+            --jq ".assets[] | select(.name == \"$asset\") | .digest")
+          got="sha256:$(shasum -a 256 "$RUNNER_TEMP/$asset" | cut -d' ' -f1)"
+          if [ -z "$want" ] || [ "$got" != "$want" ]; then
+            echo "::error::$asset is $got, but the release lists ${want:-no digest}"
+            exit 1
+          fi
+          unzip -q "$RUNNER_TEMP/$asset" -d "$RUNNER_TEMP/codeql-cli"
+          echo "$RUNNER_TEMP/codeql-cli/codeql" >> "$GITHUB_PATH"
+
+      - name: Smoke - Run
+        run: |
+          codeql version --format=terse
+          scripts/release/smoke.sh "$RUNNER_TEMP"/archive/*.tar.gz
