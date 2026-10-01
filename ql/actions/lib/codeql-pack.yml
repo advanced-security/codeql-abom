@@ -1,5 +1,5 @@
 name: advanced-security/abom-actions-lib
-version: 2.27.1
+version: 2.27.1-rc1
 description: 'Shared Actions libraries for ABOM queries'
 library: true
 dependencies:
