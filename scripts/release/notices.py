@@ -78,27 +78,29 @@ def nuspec_license(folder: Path) -> str:
     return ""
 
 
-def nuget_packages() -> tuple[list[Path], dict[tuple[str, str], str]]:
-    """The package folders, and each (name, version) the interface was restored from."""
+def nuget_packages() -> tuple[list[Path], list[tuple[str, str, str]]]:
+    """The package folders, and each (name, version, path) the interface was restored from."""
     assets = json.loads(ASSETS.read_text(encoding="utf-8"))
     roots = [Path(p) for p in assets.get("packageFolders", {})]
+    # Keyed without case, as NuGet compares ids; the first spelling seen, the restore's own, is kept.
     packages = {}
     for key, library in assets.get("libraries", {}).items():
         if library.get("type") == "package":
             name, version = key.split("/", 1)
-            packages[(name, version)] = library["path"]
+            packages.setdefault((name.lower(), version), (name, version, library["path"]))
     # The browser runtime is downloaded rather than referenced, and it is what ships in _framework.
     for framework in assets.get("project", {}).get("frameworks", {}).values():
         for dep in framework.get("downloadDependencies", []):
             version = dep["version"].strip("[]").split(",")[0].strip()
-            packages[(dep["name"], version)] = f"{dep['name'].lower()}/{version}"
-    return roots, packages
+            packages.setdefault((dep["name"].lower(), version),
+                                (dep["name"], version, f"{dep['name'].lower()}/{version}"))
+    return roots, [packages[key] for key in sorted(packages)]
 
 
 def nuget_notices() -> tuple[str, list[str]]:
     roots, packages = nuget_packages()
     text, missing = [], []
-    for (name, version), relative in sorted(packages.items()):
+    for name, version, relative in packages:
         folder = next((root / relative for root in roots if (root / relative).is_dir()), None)
         if folder is None:
             missing.append(f"{name}@{version} (not restored)")
@@ -116,7 +118,7 @@ def nuget_cyclonedx() -> str:
     """The interface's packages as a CycloneDX document, with nothing in it that varies by run."""
     _, packages = nuget_packages()
     components = []
-    for name, version in sorted(packages):
+    for name, version, _ in packages:
         purl = f"pkg:nuget/{name}@{version}"
         components.append({"type": "library", "bom-ref": purl, "name": name,
                            "version": version, "purl": purl})

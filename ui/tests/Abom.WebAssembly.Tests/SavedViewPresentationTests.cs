@@ -19,7 +19,7 @@ public sealed class SavedViewPresentationTests : AbomTestContext
 
         var api = Services.GetService<Services.AbomApi>()!;
         await api.SaveViewAsync("mine", "scope=owned", "view=priority&groupBy=owner",
-            TestContext.Current.CancellationToken);
+            ct: TestContext.Current.CancellationToken);
 
         var write = Assert.Single(Sent, r => r.Url.Contains("api/views/mine"));
         Assert.Contains("\"predicate\":\"scope=owned\"", write.Body);
