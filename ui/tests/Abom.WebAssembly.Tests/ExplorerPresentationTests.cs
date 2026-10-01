@@ -131,7 +131,7 @@ public sealed class ExplorerPresentationTests : AbomTestContext
 
     /// A saved presentation put back on the page draws it the way it was saved.
     [Fact]
-    public void ApplyingASavedPresentationRedrawsItThatWay()
+    public async Task ApplyingASavedPresentationRedrawsItThatWay()
     {
         Answer("api/owned-scope", "[{\"owner\":\"octo-org\"}]");
         StubGraphModule();
@@ -140,8 +140,8 @@ public sealed class ExplorerPresentationTests : AbomTestContext
         var page = Render<Explorer>();
         page.WaitForAssertion(() => Assert.NotEmpty(JSInterop.Invocations["loadFull"]));
 
-        page.InvokeAsync(() => page.Instance.ApplyPresentation(
-            Presentation.Parse("view=priority&groupBy=owner&hops=3"))).Wait();
+        await page.InvokeAsync(() => page.Instance.ApplyPresentation(
+            Presentation.Parse("view=priority&groupBy=owner&hops=3")));
 
         page.WaitForAssertion(() =>
         {
@@ -158,7 +158,7 @@ public sealed class ExplorerPresentationTests : AbomTestContext
     /// existed — which is every view saved so far.
     /// </summary>
     [Fact]
-    public void AViewWithNoSavedPresentationLeavesTheDrawingAlone()
+    public async Task AViewWithNoSavedPresentationLeavesTheDrawingAlone()
     {
         Answer("api/owned-scope", "[{\"owner\":\"octo-org\"}]");
         StubGraphModule();
@@ -168,7 +168,7 @@ public sealed class ExplorerPresentationTests : AbomTestContext
         var page = Render<Explorer>();
         page.WaitForAssertion(() => Assert.Equal("priority", page.Instance.CurrentPresentation.View));
 
-        page.InvokeAsync(() => page.Instance.ApplyPresentation(Presentation.Parse(""))).Wait();
+        await page.InvokeAsync(() => page.Instance.ApplyPresentation(Presentation.Parse("")));
 
         page.WaitForAssertion(() =>
         {

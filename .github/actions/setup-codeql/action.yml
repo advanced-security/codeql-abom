@@ -51,6 +51,8 @@ runs:
         CODEQL_VERSION: ${{ steps.version.outputs.codeql }}
       run: |
         gh extension install github/gh-codeql --force
+        # Otherwise every call from the checkout warns that .codeql-version, this same pin, is ignored.
+        gh codeql local-version on 2>/dev/null
         gh codeql set-version "$CODEQL_VERSION"
         # `make ql` and the selfcheck subcommand invoke `codeql` directly, not through gh.
         # install-stub takes the target directory positionally; it has no --path flag.

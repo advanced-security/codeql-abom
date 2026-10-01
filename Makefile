@@ -159,6 +159,7 @@ release-ui: publish
 	@rm -rf "$(ABOM_RELEASE)" && mkdir -p "$(ABOM_RELEASE)"
 	@cp -R "$(ABOM_UI)/wwwroot" "$(ABOM_RELEASE)/wwwroot"
 	@python3 scripts/release/notices.py nuget >"$(ABOM_RELEASE)/ui-notices.txt"
+	@python3 scripts/release/notices.py nuget-cyclonedx >"$(ABOM_RELEASE)/ui.cdx.json"
 	@printf '{"dotnet": "%s"}\n' "$$(dotnet --version)" >"$(ABOM_RELEASE)/ui-tools.json"
 	@echo "release-ui: $(ABOM_RELEASE)"
 
@@ -187,7 +188,7 @@ publish:
 
 ## ql: query tests. Build lockfile-bearing test databases before `codeql test run`.
 ql:
-	@codeql test run ql/actions/graph-extraction/test ql/actions/findings/test
+	@codeql test run --threads=0 ql/actions/graph-extraction/test ql/actions/findings/test
 
 restart: stop start
 

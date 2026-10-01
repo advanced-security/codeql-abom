@@ -4,9 +4,9 @@
 #
 #   assemble.sh <version> <interface-dir> <out-dir>
 #
-# <interface-dir> is what `make release-ui` writes: the published wwwroot, the notices for the
-# packages it was built from and the SDK that built it. Native only: SQLite is linked through CGO,
-# so each platform is built on its own runner.
+# <interface-dir> is what `make release-ui` writes: the published wwwroot, the notices and SBOM for
+# the packages it was built from and the SDK that built it. Native only: SQLite is linked through
+# CGO, so each platform is built on its own runner.
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
@@ -41,6 +41,8 @@ CGO_ENABLED=1 go build -trimpath -buildvcs=true \
 	-o "$root/codeql-abom" ./cmd/codeql-abom
 
 cp -R "$ui/wwwroot" "$root/ui"
+# Outside ui/, which is served: the release SBOM reads it, because Syft cannot read WebAssembly.
+cp "$ui/ui.cdx.json" "$root/ui.cdx.json"
 
 # Tracked files only, so no test pack, test database, pack cache or local state can ride along.
 git ls-files ql | grep -Ev '^ql/[^/]+/[^/]+/test/' | while IFS= read -r file; do

@@ -21,7 +21,7 @@ permissions:
 jobs:
   inspect:
     name: Tag - Inspect
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       exists: ${{ steps.look.outputs.exists }}
 
@@ -58,7 +58,7 @@ jobs:
     name: Tag - Test the tree to be tagged
     needs: inspect
     if: needs.inspect.outputs.exists == 'false'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Test - Checkout repository
@@ -84,7 +84,7 @@ jobs:
   create:
     name: Tag - Create
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     environment: release-tag
     permissions:
       contents: write

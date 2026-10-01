@@ -37,7 +37,7 @@ concurrency:
 jobs:
   version:
     name: Release - Resolve the version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       version: ${{ steps.resolve.outputs.version }}
       prerelease: ${{ steps.resolve.outputs.prerelease }}

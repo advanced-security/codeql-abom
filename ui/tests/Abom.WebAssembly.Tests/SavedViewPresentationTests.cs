@@ -1,5 +1,4 @@
 using Abom.WebAssembly.Models;
-using Bunit;
 using Xunit;
 
 namespace Abom.WebAssembly.Tests;
@@ -19,7 +18,8 @@ public sealed class SavedViewPresentationTests : AbomTestContext
         Answer("api/views", "[]");
 
         var api = Services.GetService<Services.AbomApi>()!;
-        await api.SaveViewAsync("mine", "scope=owned", "view=priority&groupBy=owner");
+        await api.SaveViewAsync("mine", "scope=owned", "view=priority&groupBy=owner",
+            TestContext.Current.CancellationToken);
 
         var write = Assert.Single(Sent, r => r.Url.Contains("api/views/mine"));
         Assert.Contains("\"predicate\":\"scope=owned\"", write.Body);
@@ -37,7 +37,7 @@ public sealed class SavedViewPresentationTests : AbomTestContext
         Answer("api/views", "[]");
 
         var api = Services.GetService<Services.AbomApi>()!;
-        await api.SaveViewAsync("mine", "scope=owned");
+        await api.SaveViewAsync("mine", "scope=owned", ct: TestContext.Current.CancellationToken);
 
         var write = Assert.Single(Sent, r => r.Url.Contains("api/views/mine"));
         Assert.DoesNotContain("presentation", write.Body);
@@ -51,7 +51,8 @@ public sealed class SavedViewPresentationTests : AbomTestContext
             [{"name":"drawn","predicate":"scope=owned","presentation":"view=priority","builtin":false}]
             """);
 
-        var views = await Services.GetService<Services.AbomApi>()!.GetViewsAsync();
+        var views = await Services.GetService<Services.AbomApi>()!
+            .GetViewsAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("view=priority", Assert.Single(views).Presentation);
     }
