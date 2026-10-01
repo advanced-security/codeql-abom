@@ -1,5 +1,5 @@
 name: advanced-security/abom-actions-findings-src
-version: 2.27.1
+version: 2.27.1-rc2
 description: 'Actions queries whose findings ABOM records and attributes, upstream and its own'
 library: false
 suites: codeql-suites

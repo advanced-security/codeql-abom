@@ -1,5 +1,5 @@
 name: advanced-security/abom-actions-selfcheck-src
-version: 2.27.1
+version: 2.27.1-rc2
 description: "Queries ABOM runs against ABOM's own workflows"
 library: false
 suites: codeql-suites
