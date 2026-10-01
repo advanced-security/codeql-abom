@@ -78,7 +78,7 @@ func (s *Server) runSet(ctx context.Context, spec viewspec.Spec) (store.Database
 // by a run, with the same closure the node listing reads so "what you own" is one population.
 func (s *Server) repositoriesQuery(spec viewspec.Spec) (store.RepositoriesQuery, error) {
 	query := store.RepositoriesQuery{
-		Search: spec.Search, Scope: spec.Scope, Grouping: scopeFromSpec(spec),
+		Search: spec.Search, Scope: spec.Scope, Flags: spec.Flags, Grouping: scopeFromSpec(spec),
 	}
 	if query.Scope == store.ScopeOwned {
 		keep, _, err := (&graph.Builder{Store: s.Store}).KeepList()

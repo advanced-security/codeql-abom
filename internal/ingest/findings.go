@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -93,6 +94,10 @@ func readFindings(r io.Reader, opts Options, found func(store.Finding) error) er
 		},
 		OnResult: func(res sarifin.Result) error {
 			rule := rules[res.RuleID]
+			documentation, err := json.Marshal(rule)
+			if err != nil {
+				return fmt.Errorf("encoding documentation for %s: %w", res.RuleID, err)
+			}
 
 			severity := res.Level
 			if severity == "" {
@@ -100,17 +105,19 @@ func readFindings(r io.Reader, opts Options, found func(store.Finding) error) er
 			}
 
 			return found(store.Finding{
-				Provider:         producer,
-				RuleID:           res.RuleID,
-				FilePath:         res.FilePath,
-				StartLine:        res.Region.StartLine,
-				StartColumn:      res.Region.StartColumn,
-				EndLine:          res.Region.EndLine,
-				EndColumn:        res.Region.EndColumn,
-				Message:          res.Message,
-				Severity:         severity,
-				SecuritySeverity: parseSeverity(rule.SecuritySeverity),
-				Fingerprint:      res.Fingerprints["primaryLocationLineHash"],
+				RuleDocumentation: documentation,
+				Evidence:          res.Evidence,
+				Provider:          producer,
+				RuleID:            res.RuleID,
+				FilePath:          res.FilePath,
+				StartLine:         res.Region.StartLine,
+				StartColumn:       res.Region.StartColumn,
+				EndLine:           res.Region.EndLine,
+				EndColumn:         res.Region.EndColumn,
+				Message:           res.Message,
+				Severity:          severity,
+				SecuritySeverity:  parseSeverity(rule.SecuritySeverity),
+				Fingerprint:       res.Fingerprints["primaryLocationLineHash"],
 				ResultHash: normalize.ResultHash(
 					res.RuleID, res.FilePath, res.Fingerprints["primaryLocationLineHash"],
 					normalize.Region{

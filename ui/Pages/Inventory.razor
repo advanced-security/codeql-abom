@@ -12,7 +12,10 @@
 @* The heading follows the unit: a unit that borrows another's description tells a reader they are
    looking at rows they are not. *@
 <PageHeader Title="@UnitLabel(_unit)">
-    <span data-abom-unit-description>@UnitDescription(_unit)</span>
+    @if (_unit != UnitFindings)
+    {
+        <span data-abom-unit-description>@UnitDescription(_unit)</span>
+    }
 </PageHeader>
 
 @* One scope bar. Five stacked control rows put the first data row at y=580 of a 900px viewport,
@@ -118,11 +121,6 @@
     </MudText>
 }
 
-@if (_refusal is { Length: > 0 } refused)
-{
-    <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true" Class="mb-3">@refused</MudAlert>
-}
-
 @* One scope, reprojected. A unit is a node kind and its columns are its own: listing workflows
    through the actions grid drew reach, total refs and distinct refs as zero for 1,107 of 1,585
    rows, because a workflow is a consumer and nothing depends on it. *@
@@ -137,6 +135,29 @@
                    data-abom-unit="@key">@label</MudButton>
     }
 </div>
+
+@if (_unit == UnitFindings)
+{
+    <FindingsReview Predicate="@Scope.ToQueryString()" Asset="@(AssetParam ?? "")" AssetKind="@(AssetKindParam ?? "")"
+                    SelectedId="@FindingParam" SelectedChanged="SelectFinding" />
+}
+
+@if (_reviewAsset is { } asset)
+{
+    <MudDrawer Open="true" OpenChanged="AssetDrawerChanged" Anchor="Anchor.Right" Variant="DrawerVariant.Temporary"
+               Width="min(1100px, calc(100vw - 32px))" Class="abom-asset-review-drawer" role="dialog"
+               aria-label="@($"Findings for {asset}")" data-abom-asset-review>
+        <MudFocusTrap>
+            <div class="abom-asset-review-content">
+                <header class="d-flex align-center justify-space-between mb-3">
+                    <MudText Typo="Typo.h6" HtmlTag="h2">Findings</MudText>
+                    <MudIconButton Icon="@Icons.Material.Outlined.Close" aria-label="Close asset findings" OnClick="CloseAssetReview" />
+                </header>
+                <FindingsReview Predicate="@Scope.ToQueryString()" Asset="@asset" AssetKind="@_reviewAssetKind" />
+            </div>
+        </MudFocusTrap>
+    </MudDrawer>
+}
 
 @if (_unit == UnitDependencies)
 {
@@ -201,24 +222,10 @@
             </CellTemplate>
         </PropertyColumn>
 
-        @* Severity first and reach after it, as the server orders it: a critical finding nothing
-           reaches sorts after every one something does. *@
-        <PropertyColumn Property="x => x.WorstSeverity" Title="Severity">
-            <CellTemplate>
-                @if (context.Item.WorstSeverity.Length > 0)
-                {
-                    <span data-abom-worst-severity><SeverityChip Severity="@context.Item.WorstSeverity" /></span>
-                }
-                else
-                {
-                    <span class="abom-faint">none</span>
-                }
-            </CellTemplate>
-        </PropertyColumn>
-
         <PropertyColumn Property="x => x.Findings" Title="Findings">
             <CellTemplate>
-                <FindingsCount Count="@context.Item.Findings" Severity="@context.Item.Severity" />
+                <FindingsCount Count="@context.Item.Findings" Severity="@context.Item.Severity"
+                               Asset="@context.Item.NodeKey" Review="@(() => OpenNodeFindings(context.Item.NodeKey))" />
             </CellTemplate>
         </PropertyColumn>
 
@@ -313,7 +320,8 @@
             </PropertyColumn>
             <PropertyColumn Property="x => x.Findings" Title="Findings">
                 <CellTemplate>
-                    <FindingsCount Count="@context.Item.Findings" Severity="@context.Item.Severity" />
+                    <FindingsCount Count="@context.Item.Findings" Severity="@context.Item.Severity"
+                                   Asset="@context.Item.NodeKey" Review="@(() => OpenNodeFindings(context.Item.NodeKey))" />
                 </CellTemplate>
             </PropertyColumn>
         </Columns>
@@ -401,7 +409,8 @@
             <PropertyColumn Property="x => x.Dependencies" Title="Dependencies" />
             <PropertyColumn Property="x => x.Findings" Title="Findings">
                 <CellTemplate>
-                    <FindingsCount Count="@context.Item.Findings" Severity="@context.Item.Severity" />
+                    <FindingsCount Count="@context.Item.Findings" Severity="@context.Item.Severity"
+                                   Asset="@context.Item.NodeKey" Review="@(() => OpenNodeFindings(context.Item.NodeKey))" />
                 </CellTemplate>
             </PropertyColumn>
         </Columns>
@@ -428,9 +437,8 @@
             <PropertyColumn Property="x => x.FullName" Title="Repository"
                             HeaderClass="abom-identity-col" CellClass="abom-identity-col">
                 <CellTemplate>
-                    <MudLink Href="@($"/inventory?unit=repositories&q={Uri.EscapeDataString(context.Item.FullName)}")" Class="abom-rule">
-                        @context.Item.FullName
-                    </MudLink>
+                    <MudLink Href="@($"/inventory?unit=repositories&q={Uri.EscapeDataString(context.Item.FullName)}")"
+                             Class="abom-rule abom-trunc" title="@context.Item.FullName">@context.Item.FullName</MudLink>
                 </CellTemplate>
             </PropertyColumn>
             @* A repository roots a bill of materials; the Explorer draws a repository alone, with
@@ -446,9 +454,27 @@
             <PropertyColumn Property="x => x.Dependencies" Title="Dependencies" />
             <PropertyColumn Property="x => x.Findings" Title="Findings">
                 <CellTemplate>
-                    <FindingsCount Count="@context.Item.Findings" Severity="@context.Item.Severity" />
+                    <FindingsCount Count="@context.Item.Findings" Severity="@context.Item.Severity"
+                                   Asset="@context.Item.FullName" Review="@(() => OpenRepositoryFindings(context.Item.FullName))" />
                 </CellTemplate>
             </PropertyColumn>
+            <TemplateColumn Title="Repository Properties" Sortable="false">
+                <CellTemplate>
+                    <span class="abom-repository-properties" data-abom-repository-properties="@context.Item.FullName">
+                        @if (context.Item.Properties.Count == 0)
+                        {
+                            <span class="abom-faint">None</span>
+                        }
+                        else
+                        {
+                            @foreach (var property in context.Item.Properties)
+                            {
+                                <span class="abom-property-value">@property.Name: @property.Value</span>
+                            }
+                        }
+                    </span>
+                </CellTemplate>
+            </TemplateColumn>
             @* Direct is the half this repository can fix itself; the rest wait on an
                intermediary, and collapsing the two would say every route is theirs to close. *@
             <PropertyColumn Property="x => x.DirectExposures" Title="Direct advisory routes" />
@@ -745,7 +771,7 @@
             : ", which is all of them"), ordered by what the crawl will claim next.
     </MudText>
 }
-else
+else if (_unit != UnitFindings)
 {
     <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2">
         Showing @_shown.ToString("N0") of @_total.ToString("N0") matching, ordered by
@@ -787,6 +813,7 @@ else
     private RepositorySummary? _document;
 
     private const string UnitDependencies = "dependencies";
+    private const string UnitFindings = "findings";
     private const string UnitWorkflows = "workflows";
     private const string UnitJobs = "jobs";
     private const string UnitRepositories = "repositories";
@@ -797,10 +824,11 @@ else
     private static readonly (string Key, string Label)[] Units =
     [
         (UnitDependencies, "Actions"),
+        (UnitFindings, "Findings"),
+        (UnitAdvisories, "Advisories"),
         (UnitWorkflows, "Workflows"),
         (UnitJobs, "Jobs"),
         (UnitRepositories, "Repositories"),
-        (UnitAdvisories, "Advisories"),
         (UnitRelationships, "Relationships"),
         (UnitCoverage, "Coverage"),
     ];
@@ -866,16 +894,19 @@ else
     /// <c>reusable_workflow</c> and <c>docker_image</c>. A repository is a node and so is a job;
     /// an advisory is a GHSA identifier and is not. The graph can draw what <em>reaches</em> an
     /// advisory, but that is a different question from drawing the row.</para>
-    public static bool UnitDrawsInGraph(string unit) => unit != UnitAdvisories;
+    public static bool UnitDrawsInGraph(string unit) => unit is not UnitAdvisories and not UnitFindings;
 
     /// Why the graph action is refused, or empty when it applies. A disabled control with no
     /// reason is a dead end a reader has to guess at.
     private string GraphActionReason => UnitDrawsInGraph(_unit)
         ? string.Empty
+        : _unit == UnitFindings ? "Findings are evidence, not graph nodes. Use the Actions unit to explore dependencies."
         : "An advisory is not a node, so these rows cannot be drawn. "
           + "The Actions unit draws what an advisory reaches.";
 
     private MudDataGrid<ActionSummary>? _grid;
+    private string? _reviewAsset;
+    private string _reviewAssetKind = "";
     private MudDataGrid<WorkflowRow>? _workflowGrid;
     private MudDataGrid<JobRow>? _jobGrid;
     private MudDataGrid<RepositorySummary>? _repoGrid;
@@ -900,10 +931,9 @@ else
         ["dependentRepos"] = "reach",
         ["directDependents"] = "total refs",
         ["distinctRefs"] = "distinct refs",
-        ["findings"] = "findings",
+        ["findings"] = "finding severity",
         ["advisories"] = "advisories",
         ["analyzed"] = "analyzed",
-        ["severity"] = "severity",
     };
 
     // The grid names a sort by its property; the endpoint names it by its own term. A name absent
@@ -919,7 +949,6 @@ else
         ["Findings"] = "findings",
         ["Advisories"] = "advisories",
         ["Analyzed"] = "analyzed",
-        ["WorstSeverity"] = "severity",
     };
 
     private static readonly Dictionary<string, string> RepositorySortTerms = new()
@@ -973,6 +1002,7 @@ else
 
     private static string UnitDescription(string unit) => unit switch
     {
+        UnitFindings => "Findings reported in this scope, attributed to their generating rule and source location.",
         UnitRepositories =>
             "The repositories you own, most findings first. Advisory routes are split because only " +
             "the direct ones are this repository's own to close — the rest wait on an intermediary.",
@@ -1013,6 +1043,7 @@ else
     // Each endpoint has its own default, and the line under the grid has to name the one in force.
     private static string DefaultOrder(string unit) => unit switch
     {
+        UnitFindings => "severity, then reach",
         UnitRepositories => "findings",
         UnitAdvisories => "severity, then reach",
         UnitWorkflows => "findings",
@@ -1033,6 +1064,17 @@ else
     // The unit is how the scope is being drawn rather than what it selects, so ScopeService leaves
     // it alone and it travels as its own parameter.
     [SupplyParameterFromQuery(Name = "unit")] public string? UnitParam { get; set; }
+    [SupplyParameterFromQuery(Name = "finding")] public long? FindingParam { get; set; }
+    [SupplyParameterFromQuery(Name = "asset")] public string? AssetParam { get; set; }
+    [SupplyParameterFromQuery(Name = "assetKind")] public string? AssetKindParam { get; set; }
+
+    private void SelectFinding(long? id) => Nav.NavigateTo(Nav.GetUriWithQueryParameter("finding", id),
+        new NavigationOptions { ReplaceHistoryEntry = true });
+
+    private void OpenNodeFindings(string key) => (_reviewAsset, _reviewAssetKind) = (key, "node");
+    private void OpenRepositoryFindings(string name) => (_reviewAsset, _reviewAssetKind) = (name, "repository");
+    private void CloseAssetReview() => _reviewAsset = null;
+    private void AssetDrawerChanged(bool open) { if (!open) CloseAssetReview(); }
 
     protected override void OnInitialized()
     {
@@ -1152,6 +1194,7 @@ else
         _unit = unit;
         _sort = null;
         _document = null;
+        _reviewAsset = null;
         // N actions are not N repositories, so "all" belongs to the Repositories unit alone.
         if (_unit != UnitRepositories)
         {
@@ -1173,6 +1216,7 @@ else
     private async Task Reload()
     {
         if (_unit == UnitCoverage) await LoadCoverage();
+        else if (_unit == UnitFindings) return;
         else if (_unit == UnitRepositories && _repoGrid is not null) await _repoGrid.ReloadServerData();
         else if (_unit == UnitAdvisories && _advisoryGrid is not null) await _advisoryGrid.ReloadServerData();
         else if (_unit == UnitWorkflows && _workflowGrid is not null) await _workflowGrid.ReloadServerData();

@@ -1,10 +1,84 @@
 package sarifin
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 )
+
+func TestRuleDocumentationSurvivesTheRealCodeQLRecording(t *testing.T) {
+	contents, err := os.ReadFile("../expand/testdata/findings.sarif")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Runs []struct {
+			Tool struct {
+				Driver struct {
+					Rules []struct {
+						ID               string `json:"id"`
+						ShortDescription struct {
+							Text string `json:"text"`
+						} `json:"shortDescription"`
+						Help struct {
+							Text     string `json:"text"`
+							Markdown string `json:"markdown"`
+						} `json:"help"`
+						HelpURI string `json:"helpUri"`
+					} `json:"rules"`
+				} `json:"driver"`
+			} `json:"tool"`
+		} `json:"runs"`
+	}
+	if err := json.Unmarshal(contents, &document); err != nil {
+		t.Fatal(err)
+	}
+	rules, _ := collect(t, string(contents))
+	byID := map[string]Rule{}
+	for _, rule := range rules {
+		byID[rule.ID] = rule
+	}
+	withHelp := 0
+	for _, run := range document.Runs {
+		for _, expected := range run.Tool.Driver.Rules {
+			actual := byID[expected.ID]
+			if actual.Title != expected.ShortDescription.Text || actual.HelpText != expected.Help.Text ||
+				actual.HelpMarkdown != expected.Help.Markdown || actual.HelpURI != expected.HelpURI {
+				t.Errorf("rule documentation changed for %s", expected.ID)
+			}
+			if expected.Help.Markdown != "" {
+				withHelp++
+			}
+		}
+	}
+	if withHelp == 0 {
+		t.Fatal("recording exercises no Markdown help")
+	}
+}
+
+func TestResultsWaitForRuleMetadataEvenWhenTheToolComesLast(t *testing.T) {
+	contents, err := os.ReadFile("../ingest/testdata/marker-findings.sarif")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := map[string]Rule{}
+	results := 0
+	err = Stream(strings.NewReader(string(contents)), Handler{
+		OnRule: func(rule Rule) error { rules[rule.ID] = rule; return nil },
+		OnResult: func(result Result) error {
+			if rules[result.RuleID].Title == "" {
+				t.Errorf("%s arrived before its documentation", result.RuleID)
+			}
+			results++
+			return nil
+		},
+	})
+	if err != nil || results == 0 {
+		t.Fatalf("read %d results: %v", results, err)
+	}
+}
 
 const codeFlowSarif = `{
   "version": "2.1.0",
@@ -153,6 +227,19 @@ func TestStreamResultCodeFlowEndpoints(t *testing.T) {
 	}
 	if first.Fingerprints["primaryLocationLineHash"] != "abc123" {
 		t.Errorf("Fingerprints = %v", first.Fingerprints)
+	}
+	var retained struct {
+		CodeFlows []struct {
+			ThreadFlows []struct {
+				Locations []json.RawMessage `json:"locations"`
+			} `json:"threadFlows"`
+		} `json:"codeFlows"`
+	}
+	if err := json.Unmarshal(first.Evidence, &retained); err != nil {
+		t.Fatal(err)
+	}
+	if len(retained.CodeFlows) != 1 || len(retained.CodeFlows[0].ThreadFlows[0].Locations) != 3 {
+		t.Fatalf("the complete reported path must survive: %s", first.Evidence)
 	}
 }
 

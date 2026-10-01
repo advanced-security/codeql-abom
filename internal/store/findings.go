@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -227,7 +228,9 @@ type Finding struct {
 	SecuritySeverity *float64
 	Fingerprint      string
 	// ResultHash identifies the finding by content, with the repository deliberately outside it.
-	ResultHash string
+	ResultHash        string
+	RuleDocumentation json.RawMessage
+	Evidence          json.RawMessage
 }
 
 // AddFindings writes findings in one transaction, folding a finding already on record into the
@@ -288,15 +291,26 @@ func addFindings(tx *sql.Tx, findings []Finding) ([]int64, error) {
 	// Which run reported which finding. One finding row spans commits and can name only one run,
 	// so without this relation "is it still reported" is unanswerable.
 	sighting, err := tx.Prepare(`
-		INSERT INTO abom_finding_sighting (finding_row_id, query_run_id)
-		VALUES (?, ?) ON CONFLICT DO NOTHING`)
+		INSERT INTO abom_finding_sighting (finding_row_id, query_run_id, evidence_json)
+		VALUES (?, ?, ?) ON CONFLICT DO UPDATE SET
+			evidence_json = COALESCE(excluded.evidence_json, abom_finding_sighting.evidence_json)`)
 	if err != nil {
 		return nil, fmt.Errorf("preparing sighting insert: %w", err)
 	}
 	defer sighting.Close()
+	documentation, err := tx.Prepare(`INSERT INTO abom_query_run_rule (query_run_id, rule_id, documentation_json)
+		VALUES (?, ?, ?) ON CONFLICT(query_run_id, rule_id) DO UPDATE SET
+		documentation_json = COALESCE(excluded.documentation_json, abom_query_run_rule.documentation_json)`)
+	if err != nil {
+		return nil, fmt.Errorf("preparing rule documentation insert: %w", err)
+	}
+	defer documentation.Close()
 
 	written := make([]int64, 0, len(findings))
 	for _, f := range findings {
+		if len(f.Evidence) > 0 && !json.Valid(f.Evidence) || len(f.RuleDocumentation) > 0 && !json.Valid(f.RuleDocumentation) {
+			return written, fmt.Errorf("invalid recorded JSON for %s", f.RuleID)
+		}
 		var rowID int64
 		if err := stmt.QueryRow(nullable(f.Provider), nullableID(f.QueryRunID), f.RuleID,
 			f.RepositoryID, nullable(f.FilePath), f.StartLine, f.StartColumn, f.EndLine, f.EndColumn,
@@ -307,8 +321,13 @@ func addFindings(tx *sql.Tx, findings []Finding) ([]int64, error) {
 		// A finding nobody attributed to a run gets no sighting. Inventing one would put a claim
 		// in the relation that the sweep then trusts.
 		if f.QueryRunID != 0 {
-			if _, err := sighting.Exec(rowID, f.QueryRunID); err != nil {
+			if _, err := sighting.Exec(rowID, f.QueryRunID, nullable(string(f.Evidence))); err != nil {
 				return written, fmt.Errorf("recording a sighting for %s: %w", f.RuleID, err)
+			}
+			if len(f.RuleDocumentation) > 0 {
+				if _, err := documentation.Exec(f.QueryRunID, f.RuleID, string(f.RuleDocumentation)); err != nil {
+					return written, fmt.Errorf("recording rule documentation for %s: %w", f.RuleID, err)
+				}
 			}
 		}
 		written = append(written, rowID)

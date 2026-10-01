@@ -27,6 +27,8 @@ func TestAnalyzeDatabaseInvokesCodeQL(t *testing.T) {
 		"database", "analyze", "/db",
 		"actions-all.qls",
 		"--format=sarif-latest",
+		"--sarif-include-query-help=always",
+		"--sarif-add-snippets",
 		"--output=" + out,
 	} {
 		if !strings.Contains(args, want) {

@@ -31,7 +31,7 @@ public sealed class FilterPickerTests : AbomTestContext
           {"name":"rules","label":"CodeQL rule","help":"Keep what a rule reported.",
            "arity":"list","valuesFrom":"api/filters/rules/values",
            "surfaces":["graph","inventory"]},
-          {"name":"properties","label":"Repository property","help":"Keep a property value.",
+          {"name":"properties","label":"Repository Property","help":"Keep a property value.",
            "arity":"property","valuesFrom":"api/properties","surfaces":["graph","inventory"]},
           {"name":"boundary","label":"Boundary","help":"Which side of a boundary.","arity":"scalar",
            "values":["same-repository","same-owner","cross-owner"],"surfaces":["relationships"]},
@@ -267,8 +267,7 @@ public sealed class FilterPickerTests : AbomTestContext
         {
             Assert.NotNull(page.Find("[data-abom-filter-chip='scope'][data-abom-chip-unapplied]"));
             Assert.NotNull(page.Find("[data-abom-filter-chip='flags'][data-abom-chip-unapplied]"));
-            Assert.Contains("Coverage cannot narrow by “Scope: exposure” or “Has: findings”.",
-                page.Find("[data-abom-unapplied]").TextContent);
+            Assert.Equal("Not applied here", page.Find("[data-abom-unapplied]").TextContent.Trim());
         });
     }
 

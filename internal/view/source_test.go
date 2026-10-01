@@ -70,6 +70,23 @@ func TestTheSurfacesThatAnswerASourceApplyItAndTheRestRefuseIt(t *testing.T) {
 	}
 }
 
+func TestTheRepositoriesUnitAppliesTheFindingsFlag(t *testing.T) {
+	spec, err := Parse("flags=findings&scope=owned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refused := spec.UnenforceableAsRepositories(); len(refused) != 0 {
+		t.Fatalf("Repositories refuses %v", refused)
+	}
+	other, err := Parse("flags=advisory")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refused := other.UnenforceableAsRepositories(); !slices.Equal(refused, []string{"flags=advisory"}) {
+		t.Fatalf("Repositories refused %v, want the flag value it does not answer", refused)
+	}
+}
+
 // A control offers the sources from the declaration that refuses the rest.
 func TestTheCatalogOffersEverySource(t *testing.T) {
 	for _, term := range Catalog() {

@@ -1,7 +1,7 @@
 # Use GitHub's tooling to keep workflow locks current
 
-**Status:** the pinned CLI and its offline coverage check gate CI and `make verify`, and platform
-enforcement is confirmed; the update path and the supported-workflow write-up are pending.
+**Status:** compatibility beyond this repository, nested-pin enforcement, the native update path
+and the supported-workflow write-up remain unverified or undocumented.
 
 ## Why this exists
 
@@ -31,8 +31,18 @@ The shared parser's development branch also describes `v0.0.3`; that does not ma
 supported by the installed CLI or deployed consumers. Pin tested releases and record a compatibility
 matrix rather than following `main` or treating CLI and schema versions as the same thing.
 
-The CLI is a technical preview. Its README describes runner enforcement; deployment availability,
-host support and the actual execution of this repository's workflows still need verification.
+The CLI is a technical preview. This repository's recorded enforcement evidence does not establish
+deployment availability on other hosts, nested-pin enforcement or native update behavior. Those
+remain separate measurements; the README's description is not a platform compatibility matrix.
+
+## Sequencing
+
+Start locally by recording the pinned CLI, parser and schema contracts, the evidence already
+available and the environments still unverified. Draft the supported workflow from those contracts;
+do not call the matrix or write-up complete before the pending measurements support them. Coordinate
+live experiments with [the native coverage crosscheck](../api/dependency-graph-crosscheck.md), whose
+isolated parser comparison can also start without a live target. Neither plan authorizes a write or
+a workflow trigger.
 
 ## Pending
 
@@ -55,8 +65,8 @@ host support and the actual execution of this repository's workflows still need 
 4. **Document the supported workflow.** Explain onboarding, review, no-fix checking, verification
    and upgrades, including native coverage gaps and the role of explicit SHA pins on unsupported
    platforms. Update the old SHA/comment-only explanation in the Dependabot configuration when
-   adoption is implemented. Never automate acceptance of moved or unreachable pins. Depends on
-   the preceding evidence, not only a successful local generation.
+  the supported update behavior is established. Never automate acceptance of moved or unreachable
+  pins. Completion depends on the preceding evidence, not only a successful local generation.
 
 ## Read-only commands
 
@@ -76,7 +86,7 @@ flowchart LR
     NET -->|"the pin is still<br/>reachable upstream"| REACH["reachability"]
     LOCAL -. "cannot prove identity<br/>or reachability" .-> REACH
     COVER -. "coverage is not<br/>enforcement" .-> RUNTIME["observed at runtime"]
-    REACH -. "no host enforcement<br/>evidence yet" .-> RUNTIME
+    REACH -. "does not prove<br/>platform enforcement" .-> RUNTIME
     FIX["fix mode"] -. "never run by ABOM;<br/>rewrites workflows" .-> LOCAL
     style FIX fill:#3d1d1d
     style RUNTIME fill:#3d2d1d

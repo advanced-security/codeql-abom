@@ -236,6 +236,9 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/accounts/refresh", s.refreshAccounts)
 	mux.HandleFunc("GET /api/owner-candidates", s.ownerCandidates)
 	mux.HandleFunc("GET /api/frontier", reading(s.frontier, "status", "top"))
+	mux.HandleFunc("GET /api/findings", reading(s.findings, findingReviewParameters...))
+	mux.HandleFunc("GET /api/findings/{id}/review", reading(s.findingReview,
+		append(append([]string{}, findingReviewParameters...), "evaluation")...))
 	mux.HandleFunc("GET /api/actions", reading(s.actions,
 		"q", "top", "offset", "sort", "desc", "view",
 		"kinds", "origins", "minReach", "scope", "flags", "ref",
@@ -253,7 +256,7 @@ func (s *Server) routes() *http.ServeMux {
 		"properties", "notProperties"))
 	mux.HandleFunc("GET /api/repositories",
 		reading(s.repositories, "q", "top", "offset", "sort", "desc", "view",
-			"scope", "properties", "notProperties"))
+			"scope", "flags", "properties", "notProperties"))
 	mux.HandleFunc("GET /api/repositories/{owner}/{name}", s.repository)
 	mux.HandleFunc("POST /api/repositories/{owner}/{name}/snapshot/preview", s.snapshotPreview)
 	mux.HandleFunc("POST /api/repositories/{owner}/{name}/snapshot/submit", s.snapshotSubmit)
@@ -983,59 +986,12 @@ func reading(h http.HandlerFunc, params ...string) http.HandlerFunc {
 	}
 }
 
-// misdirected is the wording for a parameter an endpoint does not apply.
-//
-// Three different things arrive here and a reader needs them told apart: a term of the filter
-// language that another surface answers, a term nothing answers, and a name ABOM has never had.
-// One wording for all three sends somebody hunting for a surface that does not exist, or hunting
-// for a typo in a word that was spelled correctly.
+// misdirected names a parameter an endpoint does not apply, without inventing a destination.
 func misdirected(name string) string {
-	switch {
-	case viewspec.AppliedByExplorer(name):
-		return fmt.Sprintf("this list does not narrow by %q. The Explorer does.", name)
-	case viewspec.IsTerm(name):
-		switch where := appliedElsewhere(name); len(where) {
-		case 0:
-			return fmt.Sprintf("this list does not narrow by %q, and no surface here does.", name)
-		case 1:
-			return fmt.Sprintf("this list does not narrow by %q; %s does.", name, where[0])
-		default:
-			return fmt.Sprintf("this list does not narrow by %q; %s and %s do.", name,
-				strings.Join(where[:len(where)-1], ", "), where[len(where)-1])
-		}
-	default:
-		return fmt.Sprintf("ABOM has no filter called %q.", name)
+	if viewspec.IsTerm(name) {
+		return fmt.Sprintf("Not applied here: %s.", name)
 	}
-}
-
-// surfaceWords are the surfaces a refusal can send a reader to, in the words the interface uses.
-var surfaceWords = map[string]string{
-	viewspec.SurfaceSet:           "the match endpoint",
-	viewspec.SurfaceInventory:     "the Actions unit",
-	viewspec.SurfaceWorkflows:     "the Workflows unit",
-	viewspec.SurfaceJobs:          "the Jobs unit",
-	viewspec.SurfaceRepositories:  "the Repositories unit",
-	viewspec.SurfaceAdvisories:    "the Advisories unit",
-	viewspec.SurfaceRelationships: "the Relationships unit",
-	viewspec.SurfaceDocument:      "the bill of materials",
-	viewspec.SurfaceRun:           "a run",
-	viewspec.SurfacePolicy:        "a policy",
-}
-
-// appliedElsewhere names, from the catalog, the surfaces that do apply a term.
-func appliedElsewhere(name string) []string {
-	words := []string{}
-	for _, term := range viewspec.Catalog() {
-		if term.Name != name {
-			continue
-		}
-		for _, surface := range term.Surfaces {
-			if w, ok := surfaceWords[surface]; ok {
-				words = append(words, w)
-			}
-		}
-	}
-	return words
+	return fmt.Sprintf("ABOM has no filter called %q.", name)
 }
 
 func (s *Server) frontier(w http.ResponseWriter, r *http.Request) {
@@ -1050,14 +1006,23 @@ func (s *Server) frontier(w http.ResponseWriter, r *http.Request) {
 // term the listing cannot apply is refused by name rather than dropped. `top`, `offset`, `sort` and
 // `desc` are cursors into the answer rather than clauses of the question.
 func (s *Server) actions(w http.ResponseWriter, r *http.Request) {
-	spec, err := s.graphPredicate(r, "top", "offset", "sort", "desc")
+	query, ok := s.inventoryQuery(w, r)
+	if !ok {
+		return
+	}
+	page, err := s.Store.ActionsInventoryPage(query)
+	writeJSON(w, page, err)
+}
+
+func (s *Server) inventoryQuery(w http.ResponseWriter, r *http.Request, cursors ...string) (store.InventoryQuery, bool) {
+	spec, err := s.graphPredicate(r, append([]string{"top", "offset", "sort", "desc"}, cursors...)...)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
-		return
+		return store.InventoryQuery{}, false
 	}
 	if refused := spec.UnenforceableAsInventory(); len(refused) > 0 {
 		writeError(w, http.StatusBadRequest, unlistable(refused))
-		return
+		return store.InventoryQuery{}, false
 	}
 	query := store.InventoryQuery{
 		Search:   spec.Search,
@@ -1089,12 +1054,11 @@ func (s *Server) actions(w http.ResponseWriter, r *http.Request) {
 		keep, _, err := (&graph.Builder{Store: s.Store}).KeepList()
 		if err != nil {
 			writeJSON(w, store.InventoryPage{}, err)
-			return
+			return store.InventoryQuery{}, false
 		}
 		query.Closure = keep
 	}
-	page, err := s.Store.ActionsInventoryPage(query)
-	writeJSON(w, page, err)
+	return query, true
 }
 
 // relationships lists one page of declared relationships, ordered across the whole match.
@@ -1109,9 +1073,7 @@ func (s *Server) relationships(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if refused := spec.UnenforceableAsRelationships(); len(refused) > 0 {
-		writeError(w, http.StatusBadRequest, strings.Join(refused, ", ")+
-			" describes a node or a finding, which a list of relationships cannot answer. "+
-			"The Explorer does.")
+		writeError(w, http.StatusBadRequest, unlistable(refused))
 		return
 	}
 	query := store.RelationshipsQuery{
@@ -1142,32 +1104,9 @@ func (s *Server) relationships(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, page, err)
 }
 
-// unlistable is the wording for a term a node listing cannot apply.
-//
-// It names the Explorer rather than the endpoint behind it: a reader who has been refused is a
-// reader who asked a reasonable question in the wrong place, and an API route is not a place they
-// can go.
+// unlistable names filters a listing cannot apply.
 func unlistable(terms []string) string {
-	whole, members := []string{}, []string{}
-	for _, t := range terms {
-		if strings.Contains(t, "=") {
-			members = append(members, t)
-		} else {
-			whole = append(whole, t)
-		}
-	}
-	parts := []string{}
-	if len(whole) > 0 {
-		parts = append(parts, strings.Join(whole, ", ")+
-			" describes a relationship or a finding, which a list of nodes cannot answer. "+
-			"The Explorer does.")
-	}
-	// A value of a term the unit does apply: refused rather than dropped, and answered elsewhere.
-	if len(members) > 0 {
-		parts = append(parts, strings.Join(members, ", ")+
-			" is not a value this unit narrows by. The dependencies listing answers every flag.")
-	}
-	return strings.Join(parts, " ")
+	return "Not applied here: " + strings.Join(terms, ", ") + "."
 }
 
 // repositories lists one page of the repositories unit, ordered across the whole match.

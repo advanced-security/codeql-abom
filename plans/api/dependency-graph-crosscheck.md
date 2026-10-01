@@ -58,25 +58,26 @@ data for a dependency selected by an older workflow lock.
 
 ## Pending
 
-1. **Establish an uncontaminated native baseline.** With explicit consent, choose a clean test
+1. **Crosscheck source extraction in isolation.** Compare CodeQL, the native lock graph/CLI JSON,
+  and the reference action's parser over identical source trees and pinned or recorded remote
+  content. Disable writes and invoke parsing components, never a submission entrypoint or default
+  native fix mode. Generate QL results with the CLI. This needs no live test target and can start
+  independently of the product comparisons below.
+2. **Establish an uncontaminated native baseline.** With explicit consent, choose a clean test
   repository containing a benign nested dependency. Confirm no ABOM or third-party snapshot owns
   its manifests; historical test1/test2 data cannot be assumed clean. If repair is needed, use the
   recorded procedure in [dependency-submission.md](dependency-submission.md) before measuring.
-2. **Compare unlocked and natively locked inputs.** Hold workflow dependency choices and selected
+3. **Compare unlocked and natively locked inputs.** Hold workflow dependency choices and selected
   commits constant except for native onboarding and the lock artifact; account for any narrowing
   or ref rewrite. Observe runs at each known commit and the default-branch DG/SBOM after processing.
   Record tool/schema/host versions and configuration. A run-details lockfile and a default-branch
-  report answer different questions. Depends on 1 and coordination with
+  report answer different questions. Depends on 2 and coordination with
   [actions-lock.md](../tools/actions-lock.md).
-3. **Read each product independently.** Record direct/transitive package and version identities,
+4. **Read each product independently.** Record direct/transitive package and version identities,
   Dependency Review, advisory outcomes and update PRs separately. Use `PackageURLs()` for the
   SBOM comparison and the existing normalization for matching package identities, keeping raw
   evidence beside them. Never execute vulnerable code just to see an advisory. Distinguish not
-  processed, denied and unavailable from an empty result. Depends on 2.
-4. **Crosscheck source extraction in isolation.** Compare CodeQL, the native lock graph/CLI JSON,
-  and the reference action's parser over identical source trees and pinned or recorded remote
-  content. Disable writes and invoke parsing components, never a submission entrypoint or default
-  native fix mode. Generate QL results with the CLI. This can start independently of 1 through 3.
+  processed, denied and unavailable from an empty result. Depends on 3.
 5. **Explain disagreement and decide the remaining need.** Compare raw refs, selected commits,
   declaring paths, subpaths and direct/transitive meaning before package projections. Include local
   actions, self references, composites, reusable workflows, multiple entrypoints/refs, cycles and

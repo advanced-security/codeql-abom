@@ -230,7 +230,7 @@ func TestSortingBySeverityPutsReachedSevereFirstAndUnreachedAfter(t *testing.T) 
 		WHERE node_row_id = (SELECT row_id FROM abom_node WHERE node_key = 'vendor/action-c')`); err != nil {
 		t.Fatal(err)
 	}
-	page, err := s.ActionsInventoryPage(InventoryQuery{Sort: "severity", Desc: true})
+	page, err := s.ActionsInventoryPage(InventoryQuery{Sort: "findings", Desc: true})
 	if err != nil {
 		t.Fatalf("ActionsInventoryPage: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestSortingBySeverityWithinAGroupingOrdersByItsReach(t *testing.T) {
 		"actions/code-injection/critical", "error", score(9.0))
 
 	page, err := s.ActionsInventoryPage(InventoryQuery{
-		Sort: "severity", Desc: true, Grouping: pinningGroup("7").Scope,
+		Sort: "findings", Desc: true, Grouping: pinningGroup("7").Scope,
 		Kinds: []string{"action", "reusable_workflow"},
 	})
 	if err != nil {

@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -19,28 +20,38 @@ func TestHeldResultsAreWhatAnIngestWouldStore(t *testing.T) {
 	}
 
 	s := newTestStore(t)
+	runID, err := s.RecordQueryRun(store.QueryRun{QueryID: "marker", Repository: "octo-org/marked",
+		AnalysisMode: store.AnalysisModeRegular, DBCommit: "recorded-revision"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := New(s, store.NewWriter(s, 0)).FindingsFromSARIF(
-		readFixture(t, "marker-findings.sarif"), Options{Repository: "octo-org/marked"}); err != nil {
+		readFixture(t, "marker-findings.sarif"), Options{Repository: "octo-org/marked", QueryRunID: runID}); err != nil {
 		t.Fatalf("FindingsFromSARIF: %v", err)
 	}
 	stored := map[string]bool{}
 	rows, err := s.DB().Query(`
-		SELECT COALESCE(provider, ''), rule_id, COALESCE(file_path, ''), COALESCE(start_line, 0),
-		       COALESCE(start_column, 0), COALESCE(end_line, 0), COALESCE(end_column, 0),
-		       COALESCE(message, ''), COALESCE(severity, ''), security_severity,
-		       COALESCE(fingerprint, ''), COALESCE(result_hash, '')
-		FROM abom_finding`)
+		SELECT COALESCE(f.provider, ''), f.rule_id, COALESCE(f.file_path, ''), COALESCE(f.start_line, 0),
+		       COALESCE(f.start_column, 0), COALESCE(f.end_line, 0), COALESCE(f.end_column, 0),
+		       COALESCE(f.message, ''), COALESCE(f.severity, ''), f.security_severity,
+		       COALESCE(f.fingerprint, ''), COALESCE(f.result_hash, ''), rule.documentation_json, sight.evidence_json
+		FROM abom_finding f
+		JOIN abom_finding_sighting sight ON sight.finding_row_id = f.row_id
+		JOIN abom_query_run_rule rule ON rule.query_run_id = sight.query_run_id AND rule.rule_id = f.rule_id`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var f store.Finding
+		var documentation, evidence string
 		if err := rows.Scan(&f.Provider, &f.RuleID, &f.FilePath, &f.StartLine, &f.StartColumn,
 			&f.EndLine, &f.EndColumn, &f.Message, &f.Severity, &f.SecuritySeverity, &f.Fingerprint,
-			&f.ResultHash); err != nil {
+			&f.ResultHash, &documentation, &evidence); err != nil {
 			t.Fatal(err)
 		}
+		f.RuleDocumentation = json.RawMessage(documentation)
+		f.Evidence = json.RawMessage(evidence)
 		stored[findingKey(f)] = true
 	}
 	if err := rows.Err(); err != nil {

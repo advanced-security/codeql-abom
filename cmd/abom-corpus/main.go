@@ -230,7 +230,14 @@ func ingestRepository(s *store.Store, fixtures, full string, without map[string]
 			return err
 		}
 		defer sarif.Close()
-		if _, err := ing.FindingsFromSARIF(sarif, ingest.Options{Repository: full}); err != nil {
+		runID, err := s.RecordQueryRun(store.QueryRun{
+			QueryID: "corpus-fixture/findings", QueryVersion: "corpus-fixture", Repository: full,
+			AnalysisMode: store.AnalysisModeRegular, RecordedBy: store.RecordedByCorpus,
+		})
+		if err != nil {
+			return fmt.Errorf("recording the findings replay: %w", err)
+		}
+		if _, err := ing.FindingsFromSARIF(sarif, ingest.Options{Repository: full, QueryRunID: runID}); err != nil {
 			return fmt.Errorf("findings: %w", err)
 		}
 	}

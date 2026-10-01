@@ -122,11 +122,11 @@ var catalogWords = map[string]catalogEntry{
 		help: "Where a finding sits",
 	},
 	paramProperties: {
-		label: "Repository property", arity: ArityProperty, valuesFrom: "api/properties",
+		label: "Repository Property", arity: ArityProperty, valuesFrom: "api/properties",
 		help: "Keep a property value",
 	},
 	paramNotProperties: {
-		label: "Not repository property", arity: ArityProperty, valuesFrom: "api/properties",
+		label: "Not Repository Property", arity: ArityProperty, valuesFrom: "api/properties",
 		help: "Drop a property value",
 	},
 	paramProvider: {

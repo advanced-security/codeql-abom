@@ -1,0 +1,37 @@
+@inject ThemeService Theme
+
+<span class="abom-severity-icons" aria-label="Finding severities">
+    @foreach (var (band, count) in Present)
+    {
+        <MudTooltip Text="@Label(band, count)">
+            <span class="abom-severity-icon" data-abom-severity-icon="@band"
+                  aria-label="@Label(band, count)" role="img"
+                  style="--abom-sev-color:@Theme.SeverityColor(band)">
+                <MudIcon Icon="@Icon(band)" Size="Size.Small" />
+                <span class="abom-severity-icon-count">@count</span>
+            </span>
+        </MudTooltip>
+    }
+</span>
+
+@code {
+    [Parameter, EditorRequired] public SeverityCounts Severity { get; set; } = new();
+
+    private IEnumerable<(string Band, int Count)> Present =>
+        new[]
+        {
+            ("critical", Severity.Critical), ("high", Severity.High), ("medium", Severity.Medium),
+            ("low", Severity.Low), ("unknown", Severity.Unknown),
+        }.Where(item => item.Item2 > 0);
+
+    private static string Label(string band, int count) => $"{count:N0} {band} finding{(count == 1 ? "" : "s")}";
+
+    private static string Icon(string band) => band switch
+    {
+        "critical" => Icons.Material.Filled.Error,
+        "high" => Icons.Material.Filled.Warning,
+        "medium" => Icons.Material.Filled.ChangeHistory,
+        "low" => Icons.Material.Filled.Info,
+        _ => Icons.Material.Filled.HelpOutline,
+    };
+}

@@ -180,6 +180,13 @@ public sealed class ThemeService(IJSRuntime js)
         _ => "#616161",
     };
 
+    /// <summary>
+    /// The Invertocat's color. GitHub's logo guidelines allow it in white or black, grey or green
+    /// only rarely, and at the highest contrast the surface offers; the bar's own text is a grey
+    /// in both schemes, so the mark does not take it.
+    /// </summary>
+    public string MarkColor => IsDark ? "#FFFFFF" : "#000000";
+
     /// <summary>The palette the canvas graph draws with, mirroring the CSS theme.</summary>
     public GraphPalette Palette => IsDark
         ? new GraphPalette(

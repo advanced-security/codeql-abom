@@ -136,7 +136,7 @@ func (s *Store) WorkflowsPage(q WorkflowsQuery) (WorkflowsPage, error) {
 		if q.Desc {
 			direction = " DESC"
 		}
-		ordering = ` ORDER BY ` + order + direction + `, n.node_key`
+		ordering = unitOrdering(q.Sort, order, direction)
 	}
 
 	query := `SELECT n.node_key, n.node_kind,` + workflowColumns + `
@@ -272,7 +272,7 @@ func (s *Store) JobsPage(q JobsQuery) (JobsPage, error) {
 		if q.Desc {
 			direction = " DESC"
 		}
-		ordering = ` ORDER BY ` + order + direction + `, n.node_key`
+		ordering = unitOrdering(q.Sort, order, direction)
 	}
 
 	query := `
@@ -348,4 +348,14 @@ func unitFindingsFlag(flags []string) string {
 		}
 	}
 	return ""
+}
+
+func unitOrdering(sort, order, direction string) string {
+	if sort != "findings" {
+		return ` ORDER BY ` + order + direction + `, n.node_key`
+	}
+	worst := `COALESCE((SELECT MAX(` + bandRankSQL("f.security_severity") + `)
+		FROM abom_finding_node fn JOIN abom_finding_regular f ON f.row_id = fn.finding_row_id
+		WHERE fn.node_row_id = n.row_id), -1)`
+	return ` ORDER BY ` + worst + direction + `, findings` + direction + `, n.node_key`
 }

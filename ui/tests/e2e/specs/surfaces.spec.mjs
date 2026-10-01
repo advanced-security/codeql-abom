@@ -110,13 +110,25 @@ test.describe('four surfaces', () => {
         }
     });
 
-    // The product name is the way back, which is what lets the bar carry no Dashboard entry.
-    test('the product name returns to the Dashboard', on('/inventory', '/'), async ({ page }) => {
-        await page.goto('/inventory');
-        await ready(page);
+    // The product name is the way back, which is what lets the bar carry no Dashboard entry. The
+    // Invertocat and the tagline share its link, and each is pressed rather than read from the
+    // markup: a part that swallowed the press looks exactly like one that passed it on.
+    test('the Invertocat, the name and the tagline each return to the Dashboard', on('/inventory', '/'), async ({
+        page,
+    }) => {
+        const brand = page.locator('[data-abom-brand]');
+        for (const [part, target] of [
+            ['the Invertocat', brand.locator('[data-abom-mark]')],
+            ['the name', brand.getByText('ABOM', { exact: true })],
+            ['the tagline', brand.getByText('Actions Bill of Materials', { exact: true })],
+        ]) {
+            await page.goto('/inventory');
+            await ready(page);
 
-        await page.locator('[data-abom-brand]').click();
-        await expect(page).toHaveURL(/\/$/);
+            await expect(target, `${part} is on screen`).toBeVisible();
+            await target.click();
+            await expect(page, `pressing ${part}`).toHaveURL(/\/$/);
+        }
     });
 });
 

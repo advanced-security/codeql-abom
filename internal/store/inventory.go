@@ -240,11 +240,10 @@ var inventorySorts = map[string]string{
 	"dependentRepos":   "dependent_repos",
 	"directDependents": "direct_dependents",
 	"distinctRefs":     "distinct_refs",
-	"findings":         "findings",
-	"advisories":       "advisories",
-	"analyzed":         "analyzed",
 	// Ordered by severityOrdering, which no single expression can say.
-	"severity": "",
+	"findings":   "",
+	"advisories": "advisories",
+	"analyzed":   "analyzed",
 }
 
 // InventorySortNames lists what may be sorted on, so the interface offers exactly what is applied.
@@ -378,15 +377,13 @@ func inventoryOrdering(
 	if q.Desc {
 		direction = " DESC"
 	}
-	ordering := ` ORDER BY dependent_repos DESC, n.node_key`
-	var orderArgs []any
-	if ok {
-		ordering = ` ORDER BY ` + order + direction + `, n.node_key`
+	switch {
+	case q.Sort == "findings":
+		return severityOrdering(q.Mode, direction, reach, reachArgs)
+	case ok:
+		return ` ORDER BY ` + order + direction + `, n.node_key`, nil
 	}
-	if q.Sort == "severity" {
-		ordering, orderArgs = severityOrdering(q.Mode, direction, reach, reachArgs)
-	}
-	return ordering, orderArgs
+	return ` ORDER BY dependent_repos DESC, n.node_key`, nil
 }
 
 func (s *Store) inventoryPageItems(q InventoryQuery, plan inventoryPageQuery) ([]ActionSummary, error) {
@@ -679,9 +676,10 @@ type RepositorySummary struct {
 	Dependencies int    `json:"dependencies"`
 	Findings     int    `json:"findings"`
 	// Severity is the same findings by band.
-	Severity        SeverityCounts `json:"severity"`
-	Exposures       int            `json:"exposures"`
-	DirectExposures int            `json:"directExposures"`
+	Severity        SeverityCounts  `json:"severity"`
+	Exposures       int             `json:"exposures"`
+	DirectExposures int             `json:"directExposures"`
+	Properties      []PropertyValue `json:"properties"`
 }
 
 // RepositoriesQuery narrows and orders the repositories unit, and cuts one page out of the match.
@@ -690,6 +688,7 @@ type RepositoriesQuery struct {
 	// Scope is `owned` or `exposure`, read against Closure the same way the node listing reads it.
 	Scope    string
 	Closure  []string
+	Flags    []string
 	Sort     string
 	Desc     bool
 	Offset   int
@@ -728,7 +727,7 @@ var repositorySorts = map[string]string{
 	"fullName":        "r.repository_full_name",
 	"workflows":       "workflows",
 	"dependencies":    "dependencies",
-	"findings":        "findings",
+	"findings":        "",
 	"exposures":       "exposures",
 	"directExposures": "direct_exposures",
 }
@@ -763,8 +762,12 @@ func (s *Store) RepositoriesPage(q RepositoriesQuery) (RepositoriesPage, error) 
 		if q.Desc {
 			direction = " DESC"
 		}
-		// The name breaks every tie, or two pages of an unstable order repeat a row and skip one.
-		ordering = ` ORDER BY ` + order + direction + `, r.repository_full_name`
+		if q.Sort == "findings" {
+			ordering = ` ORDER BY worst_severity` + direction + `, findings` + direction + `, r.repository_full_name`
+		} else {
+			// The name breaks every tie, or two pages of an unstable order repeat a row and skip one.
+			ordering = ` ORDER BY ` + order + direction + `, findings DESC, r.repository_full_name`
+		}
 	}
 
 	query := `
@@ -775,6 +778,8 @@ func (s *Store) RepositoriesPage(q RepositoriesQuery) (RepositoriesPage, error) 
 		         WHERE e.repository_row_id = r.row_id) AS dependencies,
 		       (SELECT COUNT(*) FROM abom_finding_regular f
 		         WHERE f.repository_row_id = r.row_id) AS findings,
+		       COALESCE((SELECT MAX(` + bandRankSQL("f.security_severity") + `) FROM abom_finding_regular f
+		         WHERE f.repository_row_id = r.row_id), -1) AS worst_severity,
 		       (SELECT COUNT(*) FROM abom_exposure x
 		         WHERE x.repository_row_id = r.row_id) AS exposures,
 		       (SELECT COUNT(*) FROM abom_exposure x
@@ -787,9 +792,10 @@ func (s *Store) RepositoriesPage(q RepositoriesQuery) (RepositoriesPage, error) 
 	}
 
 	items, err := queryAll(s, "listing repositories", func(row *sql.Rows) (RepositorySummary, error) {
-		var r RepositorySummary
+		r := RepositorySummary{Properties: []PropertyValue{}}
+		var worst int
 		return r, row.Scan(&r.FullName, &r.Origin, &r.Workflows, &r.Dependencies,
-			&r.Findings, &r.Exposures, &r.DirectExposures)
+			&r.Findings, &worst, &r.Exposures, &r.DirectExposures)
 	}, query, args...)
 	if err != nil {
 		return RepositoriesPage{}, err
@@ -802,10 +808,43 @@ func (s *Store) RepositoriesPage(q RepositoriesQuery) (RepositoriesPage, error) 
 	if err != nil {
 		return RepositoriesPage{}, err
 	}
+	properties, err := s.propertiesByRepository(names)
+	if err != nil {
+		return RepositoriesPage{}, err
+	}
 	for i := range items {
 		items[i].Severity = bands[items[i].FullName]
+		if values := properties[strings.ToLower(items[i].FullName)]; values != nil {
+			items[i].Properties = values
+		}
 	}
 	return RepositoriesPage{Items: items, Total: total}, nil
+}
+
+func (s *Store) propertiesByRepository(names []string) (map[string][]PropertyValue, error) {
+	out := map[string][]PropertyValue{}
+	if len(names) == 0 {
+		return out, nil
+	}
+	list, args := inList(names)
+	// The column is COLLATE NOCASE and inList lowercases, so this matches the lowercased keys below.
+	rows, err := s.db.Query(`SELECT repository_full_name, property_name, value
+		FROM abom_repository_property WHERE repository_full_name IN `+list+`
+		ORDER BY repository_full_name, property_name, value`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("reading repository properties: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var repository string
+		var value PropertyValue
+		if err := rows.Scan(&repository, &value.Name, &value.Value); err != nil {
+			return nil, fmt.Errorf("scanning a repository property: %w", err)
+		}
+		key := strings.ToLower(repository)
+		out[key] = append(out[key], value)
+	}
+	return out, rows.Err()
 }
 
 // repositoriesWhere is the unit's population as a WHERE clause over `repository r`, shared by the
@@ -827,7 +866,12 @@ func (s *Store) repositoriesWhere(q RepositoriesQuery) (string, []any, error) {
 	args = append(args, bindings...)
 
 	scoped, scopeArgs := repositoryScopeFilter(q)
-	return where + scoped, append(args, scopeArgs...), nil
+	where += scoped
+	args = append(args, scopeArgs...)
+	if slices.Contains(q.Flags, viewspec.FlagFindings) {
+		where += ` AND EXISTS (SELECT 1 FROM abom_finding_regular f WHERE f.repository_row_id = r.row_id)`
+	}
+	return where, args, nil
 }
 
 // listedRepositories names every repository the unit lists for q, unpaged and in name order.
