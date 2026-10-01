@@ -92,7 +92,7 @@ codeql database create "$scratch/db" --language=actions --source-root "$scratch/
 codeql database analyze "$scratch/db" \
 	advanced-security/abom-actions-findings-src:codeql-suites/abom-experimental-findings.qls \
 	--additional-packs "$root/ql" --format=sarif-latest --output "$scratch/findings.sarif" \
-	--quiet >/dev/null
+	--threads=0 --quiet >/dev/null
 python3 - "$scratch/findings.sarif" <<'EOF'
 import json
 import sys
@@ -106,7 +106,7 @@ EOF
 
 codeql database run-queries "$scratch/db" \
 	advanced-security/abom-actions-graph-extraction-src:codeql-suites/abom-dependency-graph.qls \
-	--additional-packs "$root/ql" --quiet >/dev/null
+	--additional-packs "$root/ql" --threads=0 --quiet >/dev/null
 rows=0
 while IFS= read -r bqrs; do
 	n=$(codeql bqrs info --format=json "$bqrs" |

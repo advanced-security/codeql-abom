@@ -7,6 +7,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <!-- A blocked wait can deadlock the renderer; CI caps annotations, so a warning goes unseen. -->
+    <WarningsAsErrors>$(WarningsAsErrors);xUnit1031;xUnit1051</WarningsAsErrors>
   </PropertyGroup>
 
   <ItemGroup>

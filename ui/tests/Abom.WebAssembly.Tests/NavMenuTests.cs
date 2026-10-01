@@ -206,9 +206,9 @@ public class NavMenuTests : AbomTestContext
     [InlineData(ThemeChoice.System)]
     [InlineData(ThemeChoice.Light)]
     [InlineData(ThemeChoice.Dark)]
-    public void TheThemeControlNeverWearsTheSettingsIcon(ThemeChoice choice)
+    public async Task TheThemeControlNeverWearsTheSettingsIcon(ThemeChoice choice)
     {
-        Services.GetService<ThemeService>()!.SetAsync(choice, systemPrefersDark: false).Wait();
+        await Services.GetService<ThemeService>()!.SetAsync(choice, systemPrefersDark: false);
 
         var bar = Bar();
 

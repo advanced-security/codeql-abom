@@ -185,6 +185,7 @@ layout. Paths in metadata use forward slashes and never name the build machine:
 codeql-abom_<semver>_<os>_<arch>/
   codeql-abom
   ui/
+  ui.cdx.json
   ql/
   codeql-workspace.yml
   build-info.json
@@ -192,11 +193,13 @@ codeql-abom_<semver>_<os>_<arch>/
   THIRD_PARTY_NOTICES
 ```
 
-`ui/` contains published `wwwroot` contents, including the browser framework. `ql/` contains the
-runtime query/library packs and their full local import closure, manifests and lockfiles, with
-the workspace descriptor needed to resolve local dependencies. No developer databases, test
-execution output, credentials or operator state belong in the archive. The release does not
-bundle a local CodeQL distribution: operators install the separately documented compatible
+`ui/` contains published `wwwroot` contents, including the browser framework. `ui.cdx.json` lists,
+as CycloneDX, the NuGet packages that interface was built from; the release SBOM reads it because
+no scanner finds packages in published WebAssembly, and it sits outside `ui/` so it is not served.
+`ql/` contains the runtime query/library packs and their full local import closure, manifests and
+lockfiles, with the workspace descriptor needed to resolve local dependencies. No developer
+databases, test execution output, credentials or operator state belong in the archive. The release
+does not bundle a local CodeQL distribution: operators install the separately documented compatible
 toolchain. Worker images have their own explicitly approved CodeQL distribution contract.
 
 `build-info.json` has this schema. Its version, revision, dirty state, target and CodeQL identity

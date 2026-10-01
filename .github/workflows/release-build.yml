@@ -20,7 +20,7 @@ permissions:
 jobs:
   verify:
     name: Build - Verify the tagged commit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Verify - Checkout the tag
@@ -62,7 +62,7 @@ jobs:
 
   interface:
     name: Build - Interface
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Interface - Checkout the tag

@@ -25,7 +25,7 @@ permissions:
 jobs:
   draft:
     name: Publish - Draft
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     environment: release-draft
     permissions:
       contents: write
@@ -55,7 +55,8 @@ jobs:
         with:
           syft-version: v1.51.1
 
-      # From the extracted archive, so the SBOM describes what an operator unpacks.
+      # From the extracted archive, so the SBOM describes what an operator unpacks. The interface
+      # is WebAssembly Syft cannot read, so it comes from the ui.cdx.json the archive carries.
       - name: Draft - Write an SBOM for each archive
         working-directory: ${{ runner.temp }}/assets
         env:
@@ -66,7 +67,16 @@ jobs:
             mkdir -p "$RUNNER_TEMP/sbom/$name"
             tar -xzf "$archive" -C "$RUNNER_TEMP/sbom/$name"
             "$SYFT" scan "dir:$RUNNER_TEMP/sbom/$name/$name" --source-name "$name" \
+              --select-catalogers +sbom-cataloger \
               --output "spdx-json=$name.sbom.spdx.json"
+            for ecosystem in golang nuget; do
+              if ! jq -e --arg p "pkg:$ecosystem/" \
+                '[.packages[].externalRefs[]? | select(.referenceLocator | startswith($p))] | length > 0' \
+                "$name.sbom.spdx.json" >/dev/null; then
+                echo "::error::$name.sbom.spdx.json lists no $ecosystem packages"
+                exit 1
+              fi
+            done
           done
 
       - name: Draft - Write checksums
@@ -133,6 +143,12 @@ jobs:
             flags=(--draft --verify-tag --title "codeql-abom $VERSION" --notes-file notes.md --generate-notes)
             if [ "$PRERELEASE" = "true" ]; then
               flags+=(--prerelease)
+              # GitHub starts notes at the last full release; a pre-release starts at the last one published.
+              previous=$(gh release list --exclude-drafts --limit 100 --json tagName,publishedAt \
+                --jq 'sort_by(.publishedAt) | last | .tagName // empty')
+              if [ -n "$previous" ]; then
+                flags+=(--notes-start-tag "$previous")
+              fi
             fi
             gh release create "$VERSION" "${flags[@]}" "${assets[@]}"
           fi
@@ -141,7 +157,7 @@ jobs:
   publish:
     name: Publish - Release
     needs: draft
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     environment: release
     permissions:
       contents: write
