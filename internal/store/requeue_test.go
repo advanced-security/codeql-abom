@@ -130,3 +130,105 @@ func TestOneRepositoryCanBeRequeuedOnItsOwn(t *testing.T) {
 		t.Errorf("theirs = %q, want untouched", got)
 	}
 }
+
+// unavailableRow records a dependency the way Unavailable leaves it: out of attempts, with the
+// reason the checkout failed.
+func unavailableRow(t *testing.T, s *Store, key, owner, repo string) {
+	t.Helper()
+	if _, err := s.DB().Exec(`
+		INSERT INTO abom_frontier (node_key, owner, repo, depth, status, score, enqueued_at,
+			attempts, completed_at, reason)
+		VALUES (?, ?, ?, 1, 'unavailable', 1, '2026-01-01T00:00:00Z', 3,
+			'2026-01-02T00:00:00Z', 'fatal: could not read Username')`,
+		key, owner, repo); err != nil {
+		t.Fatalf("inserting %s: %v", key, err)
+	}
+}
+
+// A private repository fetched before Git had a credential is recorded as unavailable. Fixing
+// the credential has to be able to heal that without starting a new database.
+func TestRetryingUnavailableWorkPutsItBackWithACleanSlate(t *testing.T) {
+	s := newTestStore(t)
+	unavailableRow(t, s, "octo/private", "octo", "private")
+
+	got, err := s.RetryUnavailable()
+	if err != nil {
+		t.Fatalf("RetryUnavailable: %v", err)
+	}
+	if got.Requeued != 1 || got.NamesNoRepository != 0 {
+		t.Errorf("retry = %+v, want the one repository put back", got)
+	}
+
+	var status string
+	var attempts int
+	var reason, next, claimed any
+	if err := s.DB().QueryRow(`
+		SELECT status, attempts, reason, next_attempt_at, claimed_at FROM abom_frontier
+		WHERE node_key = 'octo/private'`).
+		Scan(&status, &attempts, &reason, &next, &claimed); err != nil {
+		t.Fatalf("reading item: %v", err)
+	}
+	if status != "pending" || attempts != 0 || reason != nil || next != nil || claimed != nil {
+		t.Errorf("status=%q attempts=%d reason=%v next=%v claimed=%v, want a fresh pending "+
+			"row: a spent budget would fail it again at once, a kept reason would describe "+
+			"a failure that is no longer current", status, attempts, reason, next, claimed)
+	}
+}
+
+// A reference assembled from an expression can never be fetched, so retrying it would only
+// rediscover that. It stays unavailable, and the count says so rather than hiding it.
+func TestRetryingLeavesAReferenceThatNamesNoRepositoryUnavailable(t *testing.T) {
+	s := newTestStore(t)
+	unavailableRow(t, s, "${{ github.repository }}/setup", "${{ github.repository }}", "setup")
+	unavailableRow(t, s, "octo/private", "octo", "private")
+
+	got, err := s.RetryUnavailable()
+	if err != nil {
+		t.Fatalf("RetryUnavailable: %v", err)
+	}
+	if got.Requeued != 1 || got.NamesNoRepository != 1 {
+		t.Errorf("retry = %+v, want 1 put back and 1 that names no repository", got)
+	}
+	if status := statusOfKey(t, s, "${{ github.repository }}/setup"); status != "unavailable" {
+		t.Errorf("expression reference = %q, want left unavailable", status)
+	}
+}
+
+// Retrying what could not be fetched is not re-analysis: finished work is left as it is.
+func TestRetryingUnavailableWorkLeavesFinishedWorkAlone(t *testing.T) {
+	s := newTestStore(t)
+	tierRow(t, s, "finished", 1, "done")
+
+	got, err := s.RetryUnavailable()
+	if err != nil {
+		t.Fatalf("RetryUnavailable: %v", err)
+	}
+	if got.Requeued != 0 {
+		t.Errorf("requeued %d, want nothing when nothing is unavailable", got.Requeued)
+	}
+	if status := statusOfKey(t, s, "finished"); status != "done" {
+		t.Errorf("finished = %q, want untouched", status)
+	}
+}
+
+// Naming one repository is how an operator says "I fixed access to this one", so it retries that
+// repository when it was unavailable, and leaves every other unavailable row as it was.
+func TestRequeueingARepositoryRetriesItWhenItWasUnavailable(t *testing.T) {
+	s := newTestStore(t)
+	unavailableRow(t, s, "octo/mine", "octo", "mine")
+	unavailableRow(t, s, "octo/theirs", "octo", "theirs")
+
+	n, err := s.RequeueRepository("octo/mine")
+	if err != nil {
+		t.Fatalf("RequeueRepository: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("requeued %d items, want 1", n)
+	}
+	if got := statusOfKey(t, s, "octo/mine"); got != "pending" {
+		t.Errorf("mine = %q, want pending", got)
+	}
+	if got := statusOfKey(t, s, "octo/theirs"); got != "unavailable" {
+		t.Errorf("theirs = %q, want left unavailable", got)
+	}
+}

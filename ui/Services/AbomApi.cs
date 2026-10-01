@@ -194,6 +194,13 @@ public sealed class AbomApi(HttpClient http)
         RequeueAsync("api/discovery/requeue-repository", new { repository }, ct);
 
     /// <summary>
+    /// Puts back every dependency that could not be fetched. Nothing does so on its own, because
+    /// only the operator knows that access changed.
+    /// </summary>
+    public Task<RequeueResult> RetryUnavailableAsync(CancellationToken ct = default) =>
+        RequeueAsync("api/discovery/retry-unavailable", null, ct);
+
+    /// <summary>
     /// Runs GitHub's no-fix lock verification of one repository's current commit. The server
     /// budgets it and says why when it refuses, which is returned rather than thrown.
     /// </summary>

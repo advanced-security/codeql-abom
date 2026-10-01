@@ -352,6 +352,11 @@ Everything is one SQLite file. `internal/store` is the only package that writes 
 | `abom_tier_suite`, `abom_tier_configured`, `abom_suite_query` | Which queries run against which tier |
 | `abom_cycle_spend` | What each crawl cycle cost |
 
+A dependency Git could not fetch is `unavailable` and stays so: Git reports a missing credential
+and a missing repository alike, so nothing retries it on its own. An operator's retry, for all of
+them or for one named repository, puts it back with a fresh attempt budget. A reference that names
+no repository, such as one built from an expression, is never put back.
+
 ### Locks
 
 A workflow can name `owner/action@v1` while its native Actions lockfile selects an older commit

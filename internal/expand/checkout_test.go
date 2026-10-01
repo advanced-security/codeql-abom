@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -190,5 +191,35 @@ func TestCloneURLUsesOwnerAndRepo(t *testing.T) {
 	c := &Checkout{}
 	if got := c.cloneURL("actions", "checkout"); got != "https://github.com/actions/checkout.git" {
 		t.Errorf("cloneURL = %q", got)
+	}
+}
+
+// Discovery runs with nobody watching. An askpass program inherited from the launching terminal,
+// which VS Code sets, would leave a private repository's probe waiting on a dialog, not failing.
+func TestUnattendedGitNeverUsesAnInheritedAskpassProgram(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the git stand-in is a shell script")
+	}
+	dir := t.TempDir()
+	seen := filepath.Join(dir, "askpass-seen")
+	stub := filepath.Join(dir, "git")
+	script := "#!/bin/sh\n" +
+		"printf '%s' \"${GIT_ASKPASS-unset}\" > \"$ABOM_TEST_ASKPASS_SEEN\"\n" +
+		"printf '0123456789abcdef0123456789abcdef01234567\\tHEAD\\n'\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatalf("writing the git stand-in: %v", err)
+	}
+	t.Setenv("ABOM_TEST_ASKPASS_SEEN", seen)
+	t.Setenv("GIT_ASKPASS", "/Applications/Editor.app/askpass.sh")
+
+	if _, err := (&Checkout{Git: stub}).Resolve(context.Background(), "octo", "private", ""); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	got, err := os.ReadFile(seen)
+	if err != nil {
+		t.Fatalf("the git stand-in recorded nothing: %v", err)
+	}
+	if string(got) != "" {
+		t.Errorf("git ran with GIT_ASKPASS=%q; an unattended probe must have no askpass program", got)
 	}
 }

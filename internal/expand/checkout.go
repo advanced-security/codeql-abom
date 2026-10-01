@@ -192,7 +192,8 @@ func (c *Checkout) run(ctx context.Context, dir string, args ...string) (string,
 	cmd := exec.CommandContext(ctx, c.git(), args...)
 	cmd.Dir = dir
 	// Nothing here may prompt: expansion runs unattended and a credential prompt would hang it.
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never")
+	// An empty GIT_ASKPASS also overrides core.askPass and SSH_ASKPASS for git's own prompts.
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never", "GIT_ASKPASS=")
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

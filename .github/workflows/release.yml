@@ -1,0 +1,94 @@
+# This workflow is managed by gh actions-lock.
+
+name: Release
+
+# The one entry point for a release. Each stage runs with only what it needs, and the two that
+# write run in deployment environments, so a person approves them:
+#
+#   version   read-only    validate the version against .codeql-version
+#   tag       release-tag  create the tag, only for a dispatched version that has none
+#   build     read-only    test, build every platform natively, smoke-test the archives
+#   draft     release-draft attest, add SBOMs and checksums, create a draft release
+#   publish   release      publish the draft, after checking it still holds the tested bytes
+#
+# A release is vX.Y.Z, where X.Y.Z is the CodeQL CLI in .codeql-version, or vX.Y.Z-next.N for a
+# further release against that CLI. Pre-releases are never marked latest: SemVer orders
+# v2.27.1-next.1 before v2.27.1, although it is made after it.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'vX.Y.Z, where X.Y.Z is .codeql-version, or vX.Y.Z-next.N for a further release against that CLI'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Never cancelled: a release stopped between drafting and publishing leaves a draft nobody
+# approved, and one stopped mid-tag leaves a tag nothing was built from.
+concurrency:
+  group: release-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Release - Resolve the version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+
+    steps:
+      - name: Version - Checkout repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Version - Validate
+        id: resolve
+        env:
+          # Through the environment: a dispatch input is text a person typed.
+          REQUESTED: ${{ inputs.version || github.ref_name }}
+        run: |
+          version="v${REQUESTED#v}"
+          scripts/release-version.sh --name "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  tag:
+    name: Release - Tag
+    needs: version
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-tag.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+
+  build:
+    name: Release - Build
+    needs: [version, tag]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-build.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+
+  publish:
+    name: Release - Publish
+    needs: [version, build]
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/release-publish.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      prerelease: ${{ needs.version.outputs.prerelease == 'true' }}

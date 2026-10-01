@@ -6,6 +6,23 @@ Self-hosted, and meant for a central security team responsible for GitHub Action
 GitHub organization. It connects dependency source evidence, CodeQL findings, ownership and reach,
 including findings about private code that cannot travel the public advisory route.
 
+## GETTING STARTED
+
+**ABOM is unreleased. Building from source is the only supported installation.** GitHub Release
+downloads and Helm deployment are not available.
+
+1. Follow [source setup](docs/deployment/source.md) to install the prerequisites, CodeQL and its
+   query packs, and to confirm GitHub and Git access to your organization.
+2. From the checkout, run `make start` and open <http://127.0.0.1:8099>.
+3. In **Settings**, press **Check with gh**, declare your organization and **Save**. ABOM lists and
+   queues its repositories; nothing is analyzed yet.
+4. Review what was listed, then press **Start analysis**. `make stop` stops the server.
+
+[Deployment options](docs/deployment/index.md) · [Configuration](docs/deployment/configuration.md) ·
+[Operations and troubleshooting](docs/deployment/operations.md)
+
+## About ABOM
+
 **[Why ABOM exists](docs/abom-value-proposition.md)** - how ABOM builds on native GitHub capabilities
 and which organization-wide questions it answers.
 **[How it works](docs/architecture.md)** — the pipeline, the data model, and the rules that shape
@@ -24,15 +41,12 @@ what is next.
 
 ```mermaid
 flowchart LR
-  OWN["own<br/>declare your accounts"] --> DB
-  GH["GitHub"] --> DISC["discover<br/>repositories in an org"]
-  DISC --> BUILD["build<br/>fetch, query, ingest"]
-  BUILD --> DB[("abom.db")]
-  DB --> EXP["expand-all<br/>follow dependencies upstream"]
-  EXP --> DB
-  DB --> SERVE["serve<br/>interface and API"]
-  DB --> REPORT["report"]
-  DB --> BOM["bom<br/>bill of materials"]
+  OWN["declare<br/>accounts you own"] --> ENUM["enumerate<br/>list their repositories"]
+  ENUM --> QUEUE[("queue")]
+  QUEUE --> ANALYZE["analyze<br/>clone · CodeQL · ingest"]
+  ANALYZE --> DB[("abom.db")]
+  DB -->|"dependencies reached"| QUEUE
+  DB --> READ["interface · report · bom"]
 ```
 
 ## What it is not
@@ -58,54 +72,6 @@ never silently becomes one. See [how it works](docs/architecture.md#locks).
 and advisory outcomes require [separate verification](plans/api/dependency-graph-crosscheck.md).
 `abom-check` remains a planned verdict client; new submission modes are deferred while that native
 coverage is measured. Existing guarded manual submission is retained, not automatically retired.
-
-## Quick start
-
-```bash
-make build
-
-# Find repositories in an organization that have CodeQL databases.
-./bin/codeql-abom discover --org <name> --db abom.db
-
-# Fetch, query and ingest them.
-./bin/codeql-abom build --db abom.db
-
-# Follow dependencies upstream, then refresh every aggregate.
-./bin/codeql-abom expand-all --db abom.db
-
-# The same crawl, retaining fetched checkouts between runs: a commit is cloned once however
-# many references name it, bounded by --cache-max-mb with the least recently used evicted first.
-./bin/codeql-abom expand-all --db abom.db --cache-dir .abom/cache
-
-# Recompute the derived tables without crawling, which is what an upgrade needs.
-./bin/codeql-abom refresh --db abom.db
-
-# Read the result.
-./bin/codeql-abom report --db abom.db
-./bin/codeql-abom serve --db abom.db --ui-dir <published-wwwroot>
-```
-
-`codeql-abom --help` lists every subcommand, and `make start` builds both halves and serves them.
-
-## Confirming what is yours
-
-Most figures split into what you can change and what you cannot, once ABOM knows which accounts
-are yours. It never asks you: it reads the answer from an authenticated
-[`gh`](https://cli.github.com) session.
-
-```bash
-gh auth login                                   # once, with the read:org scope
-./bin/codeql-abom accounts --db abom.db --refresh
-./bin/codeql-abom own --db abom.db --org <name> # declare what you are responsible for
-```
-
-An account counts because GitHub says you belong to it, never because it was typed in. That
-matters because holding an analyzed repository proves nothing about who can change it: `actions`
-owns `actions/cache`, which is reached by many organizations and controlled by none of them.
-
-Until an identity is verified, every figure is reported undivided — which is not a claim that
-you own nothing. If `gh` is missing, logged out, or lacks `read:org`, the interface says so and
-names the command that fixes it.
 
 ## Layout
 
@@ -137,7 +103,7 @@ Requires Go (see `go.mod`), .NET 10, Node, and the CodeQL CLI at the version in
 
 GitHub's [gh-actions-lock](https://github.com/github/gh-actions-lock) and
 [actions-lockfile](https://github.com/github/actions-lockfile) provide the native pinning tool and
-shared format that ABOM's planned resolution will reuse, rather than reimplement.
+shared format that ABOM's lock-aware resolution reuses.
 
 Jesse Houwing's
 [actions-dependency-submission](https://github.com/jessehouwing/actions-dependency-submission)

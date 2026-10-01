@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/advanced-security/codeql-abom/internal/expand"
+	"github.com/advanced-security/codeql-abom/internal/store"
 	"github.com/advanced-security/codeql-abom/internal/supervisor"
 )
 
@@ -408,6 +409,82 @@ func TestSelectiveRequeueNeedsADiscoveryLoop(t *testing.T) {
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want 503", w.Code)
+	}
+}
+
+// Retrying unavailable work spends clones like any requeue, so it is guarded the same way.
+func TestRetryingUnavailableWorkIsGuardedLikeStarting(t *testing.T) {
+	s, store := newServer(t)
+	s.Discovery = &fakeDiscovery{}
+	seedUnavailable(t, store, "octo", "private")
+
+	r := httptest.NewRequest(http.MethodPost, "/api/discovery/retry-unavailable", nil)
+	r.Host = "127.0.0.1:8080"
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403 without the control header", w.Code)
+	}
+	var status string
+	if err := store.DB().QueryRow(
+		`SELECT status FROM abom_frontier WHERE node_key = 'octo/private'`).Scan(&status); err != nil {
+		t.Fatalf("reading row: %v", err)
+	}
+	if status != "unavailable" {
+		t.Errorf("a refused request changed the row to %q", status)
+	}
+}
+
+// The answer says both what was put back and what could not be, or an operator reading "1
+// requeued" beside "2 unavailable" cannot tell whether the retry failed.
+func TestRetryingUnavailableWorkReportsWhatItCouldNotPutBack(t *testing.T) {
+	s, store := newServer(t)
+	loop := &fakeDiscovery{}
+	s.Discovery = loop
+	seedUnavailable(t, store, "octo", "private")
+	seedUnavailable(t, store, "${{ github.repository }}", "setup")
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, controlRequest("/api/discovery/retry-unavailable"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	got := requeueResult(t, w)
+	if got.Requeued != 1 || got.NamesNoRepository != 1 {
+		t.Errorf("requeued=%d namesNoRepository=%d, want 1 and 1",
+			got.Requeued, got.NamesNoRepository)
+	}
+	if !loop.woken {
+		t.Error("the loop was not woken, so the retried work waits out the interval")
+	}
+}
+
+func TestRetryingWhenNothingIsUnavailableLeavesTheLoopAlone(t *testing.T) {
+	s, _ := newServer(t)
+	loop := &fakeDiscovery{}
+	s.Discovery = loop
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, controlRequest("/api/discovery/retry-unavailable"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if loop.woken {
+		t.Error("the loop was woken with nothing retried")
+	}
+}
+
+func seedUnavailable(t *testing.T, st *store.Store, owner, repo string) {
+	t.Helper()
+	if _, err := st.DB().Exec(`
+		INSERT INTO abom_frontier (node_key, owner, repo, depth, status, attempts, score,
+			enqueued_at, reason)
+		VALUES (?, ?, ?, 1, 'unavailable', 3, 1, '2026-01-01', 'fatal: could not read')`,
+		owner+"/"+repo, owner, repo); err != nil {
+		t.Fatalf("seeding %s/%s: %v", owner, repo, err)
 	}
 }
 
