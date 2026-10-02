@@ -55,7 +55,7 @@ remain available to authorized operators; they are not workflow-client operation
    immutable commit selection and advisory-version evidence. Mask credentials and avoid logging
    authorization headers or raw credentials in URLs. Depends on 1.
 4. **Credentials in both directions.** Use the authenticated workflow-caller contract in
-   [org-server.md](org-server.md): a short-lived grant scoped to repository, operation and trusted
+   [enterprise-server.md](enterprise-server.md): a short-lived grant scoped to repository, operation and trusted
    event/ref. The grant permits verdict reads, never submission, discovery or global renewal.
    Validate fork pull-request identity without granting the fork access to another repository's
    evidence. If the client writes check runs, justify that permission separately from

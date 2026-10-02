@@ -62,6 +62,13 @@ CREATE TABLE IF NOT EXISTS abom_query_run (
   -- 1 for an evaluation whose results a run held rather than stored. It answers no skip, and only
   -- what somebody converted to findings is sighted under it.
   held         INTEGER NOT NULL DEFAULT 0,
+  -- What a closure database staged, as the digest abom_closure is keyed by. NULL on every run
+  -- whose database was one repository's checkout, which is every regular run.
+  closure_digest TEXT,
+  -- 1 once every edge this run observed is sighted with what its commit declared. A run recorded
+  -- before sightings kept content cannot answer a skip for edges: only re-observing it can say
+  -- what its commit declared.
+  sighted_content INTEGER NOT NULL DEFAULT 0,
   ran_at       TEXT NOT NULL
 );
 
@@ -97,6 +104,30 @@ CREATE TABLE IF NOT EXISTS abom_query_run_rule (
   source        TEXT,
   documentation_json TEXT,
   PRIMARY KEY (query_run_id, rule_id)
+);
+
+-- What one closure database was built from, keyed by the digest its runs carry: an owned
+-- repository at the commit its regular analysis describes, and each callee staged beside it at
+-- the commit the closure selected. The digest hashes these inputs, never the database, which is
+-- not byte-reproducible. anchored is 1 where ABOM synthesized a workflow so anything resolved.
+CREATE TABLE IF NOT EXISTS abom_closure (
+  digest      TEXT PRIMARY KEY,
+  root        TEXT NOT NULL,
+  root_commit TEXT NOT NULL,
+  anchored    INTEGER NOT NULL,
+  recorded_at TEXT NOT NULL
+);
+
+-- One staged callee: the repository holding the file, the commit it came from, the path it has
+-- there, and where the closure tree put it, which is what attribution maps back.
+CREATE TABLE IF NOT EXISTS abom_closure_member (
+  digest      TEXT NOT NULL REFERENCES abom_closure(digest),
+  staged_path TEXT NOT NULL,
+  repository  TEXT NOT NULL,
+  commit_sha  TEXT NOT NULL,
+  kind        TEXT NOT NULL,
+  path        TEXT NOT NULL,
+  PRIMARY KEY (digest, staged_path)
 );
 
 -- Which branches a repository protects. A relation because a repository has many, and whether a
@@ -189,6 +220,14 @@ CREATE TABLE IF NOT EXISTS abom_edge (
 CREATE TABLE IF NOT EXISTS abom_edge_sighting (
   edge_row_id  INTEGER NOT NULL REFERENCES abom_edge(row_id) ON DELETE CASCADE,
   query_run_id INTEGER NOT NULL REFERENCES abom_query_run(row_id),
+  -- What this run's commit declared at the edge's location. An edge is keyed by where it is
+  -- declared, so commits declaring different things there share one row, which holds the last
+  -- writer's; these are the only record of every other commit's. NULL target is not recorded:
+  -- a sighting written before content was kept, by a run that did not write the row.
+  dst_node_row_id INTEGER REFERENCES abom_node(row_id),
+  ref_raw         TEXT,
+  ref_value       TEXT,
+  pin_comment     TEXT,
   PRIMARY KEY (edge_row_id, query_run_id)
 );
 
@@ -808,6 +847,14 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_analysis_run", "started_at", "TEXT"},
 	{"abom_analysis_run", "scope_name", "TEXT"},
 	{"abom_query_run", "held", "INTEGER NOT NULL DEFAULT 0"},
+	// NULL on every run recorded before closures existed, all of which were regular.
+	{"abom_query_run", "closure_digest", "TEXT"},
+	// 0 on every run recorded before sightings kept what each commit declared.
+	{"abom_query_run", "sighted_content", "INTEGER NOT NULL DEFAULT 0"},
+	{"abom_edge_sighting", "dst_node_row_id", "INTEGER REFERENCES abom_node(row_id)"},
+	{"abom_edge_sighting", "ref_raw", "TEXT"},
+	{"abom_edge_sighting", "ref_value", "TEXT"},
+	{"abom_edge_sighting", "pin_comment", "TEXT"},
 	{"abom_held_result", "provider", "TEXT NOT NULL DEFAULT ''"},
 	{"abom_held_result", "security_severity", "REAL"},
 	{"abom_policy_simulation", "advisories", "INTEGER"},

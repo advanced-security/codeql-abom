@@ -1,0 +1,14 @@
+on: pull_request_target
+jobs:
+  greet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: vendor/comp@v1
+        with:
+          title: ${{ github.event.pull_request.title }}
+      - uses: ./.github/actions/local
+  reuse:
+    uses: vendor/rw/.github/workflows/reuse.yml@v1
+    with:
+      body: ${{ github.event.pull_request.body }}

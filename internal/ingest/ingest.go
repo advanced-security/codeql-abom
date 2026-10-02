@@ -44,6 +44,27 @@ type Options struct {
 	// CLIVersion is the CodeQL the ledger recorded for this run. When set, SARIF that names a
 	// different one is refused rather than attributed to the wrong analyzer.
 	CLIVersion string
+	// Attribute says which repository holds each file a database reports on, for a database that
+	// holds more than one. Nil attributes everything to Repository, which is what one
+	// repository's own checkout is. With it set, every repository must already be on record:
+	// attribution reads repositories and never creates or rewrites one.
+	Attribute func(path string) (Located, error)
+}
+
+// Located is where a file a database reported on really lives.
+type Located struct {
+	Repository string
+	Path       string
+	// Excluded is a file ABOM wrote into the database itself, which is never a finding location.
+	Excluded bool
+}
+
+// locate attributes one path, or names it as Repository's when nothing attributes.
+func (o Options) locate(path string) (Located, error) {
+	if o.Attribute == nil {
+		return Located{Repository: o.Repository, Path: path}, nil
+	}
+	return o.Attribute(path)
 }
 
 // Ingester writes graph rows for one repository at a time.
@@ -64,6 +85,11 @@ func New(s *store.Store, w *store.Writer) *Ingester {
 func (i *Ingester) EdgesFromBQRS(r io.Reader, opts Options) (int, error) {
 	if opts.Repository == "" {
 		return 0, fmt.Errorf("ingest: Options.Repository is required")
+	}
+	// A closure's edges are the edges each repository's own analysis already recorded, key for
+	// key, so storing them would restate evidence rather than add any.
+	if opts.Attribute != nil {
+		return 0, fmt.Errorf("ingest: edges are stored only from a database holding one repository")
 	}
 	provenance := opts.Provenance
 	if provenance == "" {

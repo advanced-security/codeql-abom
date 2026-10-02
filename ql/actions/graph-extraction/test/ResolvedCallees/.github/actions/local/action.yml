@@ -1,0 +1,6 @@
+name: local
+runs:
+  using: composite
+  steps:
+    - run: echo local
+      shell: bash

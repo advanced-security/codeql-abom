@@ -747,6 +747,8 @@ else
         "run" when e.Runs.Count > 0 =>
             (e.Runs.Count == 1 ? "run " : "runs ") + string.Join(", ", e.Runs.Select(r => r.RunId).Distinct()),
         "run" => "a run",
+        "closure" when e.Repository.Length > 0 => $"the closure of {e.Repository}",
+        "closure" => "a closure",
         // style-check: off — the store's value for a replayed recording, matched and never shown.
         "corpus" => "a replayed recording",
         // style-check: on

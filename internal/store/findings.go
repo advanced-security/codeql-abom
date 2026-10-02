@@ -53,6 +53,10 @@ type QueryRun struct {
 	// Held marks an evaluation whose results a run held. Part of the key, so no lookup for the
 	// evaluation that stores findings can find it and skip.
 	Held bool
+	// Closure is the digest of what a closure database staged: the root at its commit and every
+	// callee at the commit the closure selected. Only an extended run carries one, and it joins
+	// the key, because two closures of one repository at one commit are two different databases.
+	Closure string
 }
 
 func (q QueryRun) key() string {
@@ -65,6 +69,9 @@ func (q QueryRun) key() string {
 	// before the column existed. A length-prefixed empty field is still a field.
 	if part := analysisModeKeyPart(q.AnalysisMode); part != "" {
 		parts = append(parts, part)
+	}
+	if q.Closure != "" {
+		parts = append(parts, "closure:"+q.Closure)
 	}
 	if q.Held {
 		parts = append(parts, "held")
@@ -90,6 +97,10 @@ func (q QueryRun) identified() error {
 			"store: QueryRun for %s must state how its database was built, one of %v; got %q",
 			q.QueryID, AnalysisModes(), q.AnalysisMode)
 	}
+	if q.Closure != "" && q.AnalysisMode != AnalysisModeExtended {
+		return fmt.Errorf("store: QueryRun for %s names a closure manifest, which only a "+
+			"database holding a staged closure has; its mode is %q", q.QueryID, q.AnalysisMode)
+	}
 	return nil
 }
 
@@ -108,15 +119,15 @@ func (s *Store) RecordQueryRun(q QueryRun) (int64, error) {
 		INSERT INTO abom_query_run
 			(run_key, query_id, query_version, pack, pack_version, pack_digest,
 			 cli_version, repository, db_commit, source_filter, analysis_mode, recorded_by, held,
-			 ran_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 closure_digest, ran_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(run_key) DO UPDATE SET
 			ran_at      = excluded.ran_at,
 			recorded_by = COALESCE(abom_query_run.recorded_by, excluded.recorded_by)`,
 		key, q.QueryID, nullable(q.QueryVersion), nullable(q.Pack), nullable(q.PackVersion),
 		nullable(q.PackDigest), nullable(q.CLIVersion),
 		q.Repository, nullable(q.DBCommit), nullable(q.SourceFilter),
-		q.AnalysisMode, nullable(q.RecordedBy), q.Held, now()); err != nil {
+		q.AnalysisMode, nullable(q.RecordedBy), q.Held, nullable(q.Closure), now()); err != nil {
 		return 0, fmt.Errorf("recording query run for %s: %w", q.QueryID, err)
 	}
 

@@ -567,11 +567,11 @@ func inventoryFindingFilter(q InventoryQuery) (string, []any) {
 		where, whereArgs = append(where, clause), append(whereArgs, a...)
 	}
 	if len(q.Sources) > 0 {
-		clause, a := sourceClause("f", q.Sources)
+		clause, a := sourceClause("f", q.Mode, q.Sources)
 		where, whereArgs = append(where, clause), append(whereArgs, a...)
 	}
 	if q.unsourced {
-		where = append(where, "NOT "+recordedSource("f"))
+		where = append(where, "NOT "+recordedSource("f", q.Mode))
 	}
 	if len(q.Repositories) > 0 {
 		lowered := make([]string, 0, len(q.Repositories))
@@ -959,7 +959,7 @@ func (s *Store) RepositoryDetailOf(fullName string) (RepositoryDetail, error) {
 	rules, err := s.db.Query(`
 		SELECT rule_id, COUNT(*), GROUP_CONCAT(sources), COUNT(*) - COUNT(sources), `+
 		bandSums("score")+`
-		FROM (SELECT f.rule_id, `+findingSources+` AS sources, f.security_severity AS score
+		FROM (SELECT f.rule_id, `+findingSourcesIn(AnalysisModeRegular)+` AS sources, f.security_severity AS score
 		      FROM abom_finding_regular f WHERE f.repository_row_id = ?)
 		GROUP BY rule_id ORDER BY 2 DESC, rule_id`, rowID)
 	if err != nil {

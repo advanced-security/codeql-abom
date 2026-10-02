@@ -7,7 +7,6 @@ package graph
 import (
 	"database/sql"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/advanced-security/codeql-abom/internal/store"
@@ -21,13 +20,14 @@ type Builder struct {
 	MaxDepth int
 }
 
-// inEdge is one reference into a node, including the analyzed commit and written ref.
+// inEdge is one reference into a node: what a declaring location said at the commits it said it
+// at. A location whose commits declared different things is one inEdge per thing declared.
 type inEdge struct {
-	row    int64
-	src    int64
-	commit string
-	ref    string
-	// commits are every commit a regular run sighted this edge at, including non-latest runs.
+	row int64
+	src int64
+	ref string
+	// commits are the commits a walk may stand at that declare this. Empty string is a reference
+	// recorded by no run, which binds to no commit.
 	commits []string
 }
 
@@ -91,9 +91,6 @@ func (b *Builder) load() (*model, error) {
 		return nil, err
 	}
 	if err := m.loadResolutions(b.Store); err != nil {
-		return nil, err
-	}
-	if err := m.loadSightings(b.Store); err != nil {
 		return nil, err
 	}
 	if err := m.loadLocks(b.Store); err != nil {
@@ -168,75 +165,20 @@ func (m *model) addNode(n loadedNode) {
 	}
 }
 
+// loadEdges reads what each declaring location said, at the commits a walk may stand at.
 func (m *model) loadEdges(s *store.Store) error {
-	edges, err := s.DB().Query(`
-		SELECT e.row_id, e.src_node_row_id, e.dst_node_row_id,
-		       LOWER(COALESCE(q.db_commit, '')), COALESCE(e.ref_value, '')
-		  FROM abom_edge_regular e
-		  LEFT JOIN abom_query_run q ON q.row_id = e.query_run_id
-		 WHERE ` + store.DependencyEdgeFilter)
+	edges, err := s.EdgeDeclarations()
 	if err != nil {
-		return fmt.Errorf("loading edges: %w", err)
-	}
-	defer edges.Close()
-
-	seenTarget := make(map[int64]bool)
-	for edges.Next() {
-		var in inEdge
-		var dst int64
-		if err := edges.Scan(&in.row, &in.src, &dst, &in.commit, &in.ref); err != nil {
-			return fmt.Errorf("scanning edge: %w", err)
-		}
-		m.addInEdge(dst, in, seenTarget)
-	}
-	return edges.Err()
-}
-
-func (m *model) addInEdge(dst int64, in inEdge, seenTarget map[int64]bool) {
-	m.reverse[dst] = append(m.reverse[dst], in)
-	if !seenTarget[dst] {
-		seenTarget[dst] = true
-		m.referenceable = append(m.referenceable, dst)
-	}
-}
-
-// loadSightings records every commit a regular run sighted each edge at, so a walk can stand at
-// any commit that ships the edge rather than only at the one its latest run named.
-func (m *model) loadSightings(s *store.Store) error {
-	rows, err := s.DB().Query(`
-		SELECT s.edge_row_id, LOWER(q.db_commit)
-		  FROM abom_edge_sighting s
-		  JOIN abom_query_run q ON q.row_id = s.query_run_id
-		 WHERE q.analysis_mode = 'regular' AND COALESCE(q.db_commit, '') <> ''`)
-	if err != nil {
-		return fmt.Errorf("loading edge sightings: %w", err)
-	}
-	sighted := map[int64][]string{}
-	for rows.Next() {
-		var edge int64
-		var commit string
-		if err := rows.Scan(&edge, &commit); err != nil {
-			rows.Close()
-			return fmt.Errorf("scanning an edge sighting: %w", err)
-		}
-		sighted[edge] = append(sighted[edge], commit)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
 		return err
 	}
-	for dst, ins := range m.reverse {
-		for i := range ins {
-			commits := sighted[ins[i].row]
-			if ins[i].commit != "" && !slices.Contains(commits, ins[i].commit) {
-				commits = append(commits, ins[i].commit)
-			}
-			if len(commits) == 0 {
-				commits = []string{""}
-			}
-			ins[i].commits = commits
+	referenced := map[int64]bool{}
+	for _, e := range edges {
+		m.reverse[e.Dst] = append(m.reverse[e.Dst],
+			inEdge{row: e.Row, src: e.Src, ref: e.Ref, commits: e.Commits})
+		if !referenced[e.Dst] {
+			referenced[e.Dst] = true
+			m.referenceable = append(m.referenceable, e.Dst)
 		}
-		m.reverse[dst] = ins
 	}
 	return nil
 }
@@ -349,6 +291,8 @@ func (m *model) reachOf(target int64, maxDepth int) Reach {
 
 	visited := map[int64]bool{target: true}
 	frontier := []int64{target}
+	// A location declaring this at two releases is still one direct reference.
+	direct := map[int64]bool{}
 
 	for depth := 1; len(frontier) > 0; depth++ {
 		if maxDepth > 0 && depth > maxDepth {
@@ -358,7 +302,8 @@ func (m *model) reachOf(target int64, maxDepth int) Reach {
 		for _, node := range frontier {
 			for _, in := range m.reverse[node] {
 				src := in.src
-				if depth == 1 {
+				if depth == 1 && !direct[in.row] {
+					direct[in.row] = true
 					r.Direct++
 				}
 				if visited[src] {

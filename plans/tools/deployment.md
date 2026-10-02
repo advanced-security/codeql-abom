@@ -36,14 +36,14 @@ without demoting that work or waiting for the ranked list to finish.
 | Kubernetes | Use a custom Helm chart, separate UI and coordinator components, and independent analysis Jobs. Linux amd64 and arm64 are the image targets. |
 | Infrastructure layout | Multi-stage Dockerfiles under `infra/docker/`; chart under `infra/k8s/helm/codeql-abom/`; focused deployment tests under `infra/tests/`. |
 | Registry | Publish application images and the packaged OCI Helm chart to the repository's GHCR namespace. |
-| Database | Keep embedded SQLite in exactly one coordinator. No worker opens or mounts the live database; no separate database image or database-engine migration. |
+| Database | An external PostgreSQL the chart does not provision, behind the store interface [store-backends](../db/store-backends.md) defines, so coordinators can be replicated and readers scaled out; SQLite remains the single-binary store. No worker opens the store; no data is migrated from SQLite. |
 | Artifacts | Require an existing external S3-compatible service and pre-created private bucket. Do not bundle an object-store subchart, including for local installations. |
 | Initial access | Trusted local/private clusters, with loopback-only port-forward to the UI. No public ingress, NodePort or LoadBalancer exposure in the supported initial profile. |
 | Feature coverage | Offload all CodeQL-backed features, including resolution, analysis, query tests and AST. AI authoring is an optional, separately credentialed worker profile. |
 | Versioning | Application semver is independent of the CodeQL CLI and query-pack versions. Chart semver records chart changes; `appVersion` identifies the application release. |
 | Recommendation | Kubernetes may become the recommended distributed-analysis deployment after qualification; binary installation remains the lower-dependency option. |
 
-Windows, a replicated coordinator, network SQL, multi-cluster federation, a Kubernetes operator,
+Windows, multi-cluster federation, a Kubernetes operator,
 generic arbitrary-command execution, bundled cluster/storage provisioning, package-manager
 distributions and automatic updates are outside this workstream. So are new GitHub publication
 modes and new UI pages.
@@ -266,10 +266,12 @@ matrix. A missing label fails its cell rather than dropping the platform.
 | Component | Responsibility and contents |
 | --- | --- |
 | UI image and Deployment | Published WebAssembly, an unprivileged static server and same-origin API proxy. No SDK or .NET server runtime; no UI asset ConfigMap. |
-| API/coordinator image and singleton StatefulSet | Own SQLite, scope, admission, scheduling, ledger decisions, ingestion, aggregation and persistent custom-query workspace. Include only tools needed for its remaining non-CodeQL duties. |
+| API/coordinator image and replicated Deployment | Scope, admission, scheduling, ledger decisions, ingestion, aggregation and persistent custom-query workspace, over PostgreSQL. Exactly one replica holds the scheduling lease at a time; the others serve reads. Include only tools needed for its remaining non-CodeQL duties. |
+| Event receiver Deployment | Verifies each enterprise App delivery's signature before parsing and appends it to the durable event log [change ingestion](../api/change-ingestion.md) processes. Scaled on its own; holds no GitHub write credential and no CodeQL. |
+| Consistency checker Deployment | The [graph consistency checker](graph-consistency-checker.md): reads a replica, writes only its own tables, spends only its own pools. Its agent sessions use the optional authoring profile's confinement. |
 | CodeQL worker image and Jobs | Existing ABOM binary with a typed worker entry point, verified CodeQL distribution, required query assets and runtime tools. Fetch, extract, evaluate, decode and return artifacts. No live-store access. |
 | Optional authoring worker profile | Worker-derived image with pinned authoring tools, separate credentials, existing confinement and time/credit limits. Disabled by default. |
-| External artifact service | Immutable job inputs, outputs and retained databases under an installation-specific S3 prefix. It is not the live SQLite filesystem. |
+| External artifact service | Immutable job inputs, outputs and retained databases under an installation-specific S3 prefix. It is not the store. |
 
 The CLI is not an always-running Kubernetes service. Reuse the same binary and appropriate image
 for commands. Live administration goes through supported coordinator operations; offline database
@@ -279,8 +281,8 @@ container merely because there is a database component.
 The Kubernetes coordinator must execute every enabled CodeQL-backed workflow without a CodeQL
 executable on its filesystem or `PATH`. This includes metadata resolution, dependency installation,
 query testing and AST, not just the longest analysis calls. Keep cheap non-CodeQL graph/store work
-local to the coordinator unless separately justified; this plan is not a general distributed
-database redesign.
+local to the coordinators unless separately justified. The store's backends and the rules that keep
+concurrent writers correct are [store-backends](../db/store-backends.md)'s; this plan consumes them.
 
 ### Job identity and artifact transport
 
@@ -483,13 +485,11 @@ query-kind routing rather than duplicating analysis policy.
    provisioning is hidden in `helm install`. Document required S3, CSI, CNI, DNS, egress, secret
    and internal TLS trust configuration. Depends on the execution and image contracts;
    template work can overlap their implementation.
-2. **Protect the database owner.** Enforce coordinator replicas equal to one and reject unsafe
-   scaling. Use ordered replacement and a process/database ownership lock, not volume access
-   modes alone. Require correct POSIX/SQLite WAL locking and qualified volume attach semantics;
-   never put the live database on an object mount or share it with workers through NFS/RWX.
-   Prefer ReadWriteOncePod where supported. Document ReadWriteOnce limitations and prohibit
-   force-deleting a coordinator that may still write. Retain database and query-workspace PVCs
-   on uninstall; data deletion is a separate explicit operation.
+2. **Protect scheduling and the store.** Coordinators may be replicated; exactly one holds the
+   scheduling lease, and a coordinator that loses it stops claiming before another can take it.
+   The store is an external PostgreSQL reached with its own credential, never exposed to
+   workers. Retain query-workspace PVCs on uninstall; data deletion is a separate explicit
+   operation.
 3. **Provide secure private access and bounded execution.** Port-forward the UI only to
    localhost; preserve validated Host and same-origin controls through its API proxy and do not
    proxy worker endpoints. Configure internal TLS and per-attempt worker authentication.
@@ -505,8 +505,9 @@ query-kind routing rather than duplicating analysis policy.
    expensive summary queries, a paused crawl or GitHub availability must not determine process
    liveness. Surface missing worker/storage capabilities separately. Test graceful termination
    and backend-aware restart under load.
-5. **Integrate recovery, upgrade and uninstall.** Reuse the backup/restore workstream for online
-   SQLite backups, live-restore refusal and epoch resets. Include persistent custom queries,
+5. **Integrate recovery, upgrade and uninstall.** Reuse the backup/restore workstream for its
+   live-restore refusal and epoch resets; the PostgreSQL deployment's backups are the database
+   service's own, restored under the same refusal. Include persistent custom queries,
    configuration and authoritative artifact references in the recovery contract. Retain
    referenced external objects long enough to restore; a database whose artifacts were deleted
    is not a complete recovery. Quiesce/reconcile Jobs and fence pre-restore attempts. Test
@@ -524,7 +525,7 @@ query-kind routing rather than duplicating analysis policy.
 
 ## Related work and ownership
 
-- [Organization server](../api/org-server.md) owns future App identity, authenticated ingress,
+- [Enterprise server](../api/enterprise-server.md) owns future App identity, authenticated ingress,
   organizational readers and workflow-caller authorization. This plan owns packaging and private
   Kubernetes execution. Do not make all deferred organizational hosting a prerequisite for
   port-forward support; internal worker authentication is required here regardless.
@@ -541,9 +542,9 @@ query-kind routing rather than duplicating analysis policy.
   local cache's storage format or erase that plan's latency questions.
 - [Pack promotion](../ql/pack-promotion.md) remains deferred. Bundling ABOM's runtime packs is
   separate from publishing query packs for use outside ABOM.
-- [Closure databases](../ql/closure-database.md) and [extended findings](../db/extended-findings.md)
-  own staged-source semantics and permission for derived numbers to change. Carry their mode and
-  source identities through tasks; do not implement or reinterpret those features here.
+- [Closure databases](../../docs/architecture.md#analysis-modes) are a command whose results are
+  extended evidence no derived number reads, and that settles staged-source semantics. Carry their
+  mode and source identities through tasks; do not implement or reinterpret staging here.
 
 ## Implementation surfaces
 
@@ -578,9 +579,9 @@ a Kubernetes configuration or object store merely because a remote backend exist
 **Packaging is not proof of analysis.** A binary or pod that answers HTTP but cannot resolve and
 execute the promised queries is not a supported deployment.
 
-**One coordinator owns semantic state.** Workers return evidence, never database writes or policy
-decisions. SQLite connection-pool settings, volume labels and successful retries are not proofs of
-exclusive ownership or ingestion idempotency.
+**Only coordinators own semantic state, and one schedules at a time.** Workers return evidence,
+never database writes or policy decisions. Connection-pool settings, volume labels and successful
+retries are not proofs of exclusive scheduling or ingestion idempotency.
 
 **A retry is not new evidence until accepted.** Attempts retain immutable source/query identity;
 late, canceled or incompatible results cannot advance a ledger or declare coverage complete.

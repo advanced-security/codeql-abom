@@ -263,7 +263,7 @@ func writeEdge(tx *sql.Tx, statement *sql.Stmt, edge Edge, sourceID, targetID in
 		nullableID(edge.RepositoryID), nullable(edge.Provenance)); err != nil {
 		return false, fmt.Errorf("inserting edge %q: %w", edge.Key, err)
 	}
-	return broadens, recordEdgeSighting(tx, edge)
+	return broadens, recordEdgeSighting(tx, edge, targetID)
 }
 
 func (w *Writer) inTx(fn func(*sql.Tx) error) error {

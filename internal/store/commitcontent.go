@@ -74,6 +74,11 @@ func (s *Store) CommitContentDigest(repository, commit string) (string, bool, er
 // and the findings stay attributed to it, because recording a run that did not happen is the one
 // way this could turn into a claim ABOM has not earned.
 func (s *Store) QueryRunExistsForContent(q QueryRun, digest string) (bool, error) {
+	return s.runForContent(q, digest, "")
+}
+
+// runForContent is QueryRunExistsForContent narrowed by a further condition on the run.
+func (s *Store) runForContent(q QueryRun, digest, also string) (bool, error) {
 	if err := q.identified(); err != nil {
 		return false, err
 	}
@@ -102,7 +107,7 @@ func (s *Store) QueryRunExistsForContent(q QueryRun, digest string) (bool, error
 		  -- has not answered the extended question.
 		  AND r.analysis_mode = ?
 		  AND r.held = 0
-		  AND c.indexed_digest = ?
+		  AND c.indexed_digest = ?`+also+`
 		LIMIT 1`,
 		q.Repository, q.QueryID, q.QueryVersion, q.Pack, q.PackVersion, q.PackDigest,
 		q.CLIVersion, q.SourceFilter, q.AnalysisMode, digest).Scan(&one)

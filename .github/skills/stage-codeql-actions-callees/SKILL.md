@@ -99,3 +99,29 @@ codeql query run --database=db ql/actions/graph-extraction/test/StagedCallees/St
 Every staged callee should name its file. `unresolved` means it was not indexed, or it is not a
 callable. Run `codeql/actions-queries`' `CodeInjectionCritical.ql` over the same database: a taint
 path into a staged `run:` confirms that dataflow crosses the boundary.
+
+## The closure database ABOM builds
+
+`codeql-abom closure --db <copy> --cache-dir <dir> [--repo owner/name]` builds one per owned
+repository through `internal/closure` (layout, attribution, digest) and `expand.BuildClosure`, and
+reports what it staged, left out and found. Whether staged callees resolve is checked against the
+real CLI, not per closure: `make itest` builds real closure databases and fails if the index
+include or the anchor stops being load-bearing, and `AbomResolvedCallees.ql` over a closure you
+built by hand says what each call resolved to. `regen-closure-fixture.sh` regenerates the fixtures
+from `ql/actions/graph-extraction/test/ResolvedCallees`.
+
+- **Decide a callable with GitHub's parser.** `lockfile.ParseActionMeta` on the checked-out
+  `action.yml`, or `on: workflow_call` for a workflow. Copy only that file, never the checkout:
+  a staged checkout brings its own workflows, which is a second repository root.
+- **Spell the staged path as the `uses:` line does.** Resolution is byte equality, so two
+  spellings of one callee cannot both resolve; refuse rather than pick.
+- **Write findings, never edges.** A closure's edges are each repository's own, key for key.
+  Edge rows are keyed by location, so where a later commit overwrote a row, the closure's reading
+  of the older commit would be refused as a cross-mode conflict.
+- **A closure run is named after its root at the root's commit**, so it meets every reader that
+  joins `abom_query_run` by repository and commit. Each must read regular runs, and resolving the
+  owned tier for a closure must not record suite contents. The source guard covers edge and
+  finding reads only; a before/after API diff is what found the five that did not.
+- **A key divergence is history before it is attribution.** A location two commits shared is one
+  row, and sightings before 2026-09-21 kept only its latest run, so a regular reading can lack a
+  key the older commit really has. Read the file at that commit before suspecting the resolver.

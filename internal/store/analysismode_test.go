@@ -150,27 +150,30 @@ func TestAnExtendedRunIsNotSkippedByARegularRunOverTheSameContent(t *testing.T) 
 	}
 }
 
-// The backfill is a documented exception, not a general permission, and it holds only while every
-// row on record really was one repository's own checkout. A writer that recorded `extended` before
-// the mode column shipped would leave rows the upgrade then relabels `regular` — the exception
-// would have quietly become a guess, and the extended results would have joined the regular totals.
+// The backfill is a documented exception, not a general permission: it relabelled every run on
+// record `regular` once, when the column arrived, which was true only because nothing had built
+// any other shape. A second writer of `extended` arriving unannounced would be just as invisible
+// to every aggregate, so the one writer that may record it is named here.
 //
 // Enumerating the source is the only check that survives the ordering being wrong: a unit test can
 // only prove the writers it happens to know about.
 //
 // Writing the mode onto a run, not naming it. A reader has to be able to ask for the shape and a
 // read has to be able to pass it along, so the vocabulary is spoken all over the language; what no
-// code may do yet is record a run as having been built that way.
-func TestNoWriterRecordsAnExtendedRunYet(t *testing.T) {
+// other code may do is record a run as having been built that way.
+func TestOnlyTheClosureDatabaseRecordsAnExtendedRun(t *testing.T) {
 	root, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatalf("resolving repository root: %v", err)
 	}
 
-	// analysismode.go declares the vocabulary the guard is written in.
-	allowed := map[string]bool{"internal/store/analysismode.go": true}
+	// analysismode.go declares the vocabulary the guard is written in; the closure database is
+	// the one shape that is not a single repository's checkout.
+	declares := "internal/store/analysismode.go"
+	writer := "internal/expand/closure.go"
 	claims := regexp.MustCompile(`AnalysisMode\s*[:=]+\s*(\w+\.)?(AnalysisModeExtended|"extended")`)
 
+	wrote := false
 	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -183,21 +186,29 @@ func TestNoWriterRecordsAnExtendedRunYet(t *testing.T) {
 			return nil
 		}
 		rel, _ := filepath.Rel(root, path)
-		if allowed[filepath.ToSlash(rel)] {
+		rel = filepath.ToSlash(rel)
+		if rel == declares {
 			return nil
 		}
 		body, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		if claims.Match(body) {
-			t.Errorf("%s names the extended mode; no writer may record one until the "+
-				"closure-database work lands, or the regular backfill stops being a fact", rel)
+		switch {
+		case !claims.Match(body):
+		case rel == writer:
+			wrote = true
+		default:
+			t.Errorf("%s records the extended mode; only the closure database builds a database "+
+				"that is not one repository's checkout", rel)
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("walking the repository: %v", err)
+	}
+	if !wrote {
+		t.Errorf("%s no longer records an extended run, so this allowance names nothing", writer)
 	}
 }
 

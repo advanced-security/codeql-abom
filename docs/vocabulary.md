@@ -125,8 +125,8 @@ evidence. Neither a lock context nor a query's source substitutes for this datab
 | **Severity** | The level a result reported — error, warning, recommendation. A rule's own metadata, never ABOM's judgement |
 | **Security severity** | A rule's declared security score banded as code scanning bands it: **critical** from 9.0, **high** from 7.0, **medium** from 4.0, **low** above zero. Every count of findings says how many sit in each band. A rule's own metadata, never ABOM's judgement |
 | **Unknown** (security severity) | A finding whose rule declares no security score. Counted beside the bands, never as low or as zero |
-| **Declared metadata** | Every pair a query version states about itself, as `codeql resolve metadata` reads it. *Not read yet* means nothing has resolved that version, not that it declares nothing |
-| **What reported it** | A finding's evaluations: what ran, in which shape, under which CodeQL, the rule's own version, and who ran it — the crawl, run *N*, or a replayed recording |
+| **Declared metadata** | Every pair a query version states about itself, as `codeql resolve metadata` reads it. *Not read yet* means nothing has resolved that version, not that it declares nothing, and lasts only until the server reads it. *Cannot be read* means no file on disk is that version; *cannot be known* means no version was recorded for the runs |
+| **What reported it** | A finding's evaluations: what ran, in which shape, under which CodeQL, the rule's own version, and who ran it — the crawl, run *N*, the closure of an owned repository, or a replayed recording |
 | **Lane** | What ran that is not one query: a whole suite invoked in one call, or several queries in one evaluation |
 | **Stage** | How far a version has been taken: `dev`, `test`, `extended-test`, `review`, `deploy` |
 | **Step** | One of seven marks inside `dev` and `test`: target, help, expected results, test database, AST, compiles, tests. Pending, failed, warning or passing. Pending is grey and is never a failure: nothing has been shown yet |

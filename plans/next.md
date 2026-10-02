@@ -55,61 +55,68 @@ behind them or mistake parallel development for permission to skip its acceptanc
 
 ## Ranked next
 
-**The closure database comes next for shared-runtime work.** Every reader that says what runs follows the commit a
-workflow's lock selects ([how](../docs/architecture.md#locks)), so a staged closure analyzes the code
-its consumers actually run. The QL-as-a-Service loop — request, authoring, tests, a run over a named
+**Closure databases are built, and inert.** Every reader that says what runs follows the commit a
+workflow's lock selects ([how](../docs/architecture.md#locks)), and a closure stages exactly that,
+recording what it finds as [extended evidence](../docs/architecture.md#analysis-modes) that no
+existing total reads. The QL-as-a-Service loop — request, authoring, tests, a run over a named
 scope, and a comparison with the alerts developers already see — is built as far as `review`;
 [`docs/architecture.md`](../docs/architecture.md) says what each step does and refuses. **The
 published pack is deferred until much later**, and checking a comparison against what appears once
 it is live waits with it.
 
-1. **[One database per owned repository, holding its whole closure](ql/closure-database.md)** — an
-   investigation with a measured spike and no staging, ranked here because the cost measurement it
-   rests on is cheap and may stop it. `codeql/actions-all` resolves a `uses:` by string equality
-   against a callee staged under `.github/actions/external/` or `.github/workflows/external/`, so
-   the namespace is flat and **depth is free**: the upstream `actions/code-injection/critical`
-   reports a **seven-step taint path** across three staged composites. **Only composite actions
-   and reusable workflows are callables**, so only they are staged, and on the crawled organization
-   none of the 4 an owned closure reaches collide; the hazards and index filters are the
-   `stage-codeql-actions-callees` skill. Its headline verification is that **every existing total
-   is byte-identical afterwards**. Its extraction cost is measured next.
-2. **[What the extended analysis reveals, and whether any number should move](db/extended-findings.md)**
-   — [the closure database](ql/closure-database.md) is built to change nothing; this is where the
-   decision to let it change something gets made, once there is something to look at. Reach is
-   computed from `abom_edge`, so extended rows landing there without a decision would reorder the
-   crawl, resize every node the Explorer draws and move half the remediation arithmetic **without
-   anybody choosing it**. The deferral only stays open while its default changes nothing, which is
-   the invariant this entry exists to hold. Its first item is looking at the data, and *no change*
-   is a legitimate outcome. Depends on [the closure database](ql/closure-database.md).
-3. **[Hiding something is a decision somebody signs](db/exclusions-and-exceptions.md)** — every
+**The graph is being rebuilt around commits, for an enterprise.** By the operator's decision ABOM
+is to represent many organizations in one instance, up to 100,000 repositories each, current as
+commits land, with its own correctness measured continuously. The four entries below come first for
+that reason, and **everything after them moved down four places without being re-judged**.
+
+1. **[A graph that knows which commit said what](db/commit-aware-graph.md)** — every walk named the
+   newest commit's target for older commits: **149 of 300** sampled rows shared across commits differ
+   between them. Sightings now keep what each commit declared, three walks read them, and a running
+   crawl re-observes the **1,569 commits** recorded before they did, a cycle's claim at a time;
+   reach, which orders the crawl, still counts versions consumers do not run, and every derivation
+   is recomputed wholesale. First because every other answer is read through it.
+2. **[Check the graph against the world, continuously](tools/graph-consistency-checker.md)** —
+   correctness is learned days late, on an organization about one percent of the target, by
+   somebody noticing. Its internal checks spend no API budget and can run on the crawled
+   organization now; the external ones wait for token pools.
+3. **[Learn about commits as they happen, within budgets the operator sets](api/change-ingestion.md)**
+   — the graph changes only when the crawl reaches something again, and the 24-hour sweep meant as
+   the floor probed nothing in **113 recorded cycles**: two owned repositories that fail every
+   attempt hold depth 0 incomplete, and the sweep waits on completeness. Token pools with meters and
+   freshness estimates, and polling for the 1,348 references that can move, start now; events from
+   owned repositories wait for the enterprise App.
+4. **[One store, two backends](db/store-backends.md)** — an enterprise deployment needs a replicated
+   coordinator and scaled readers, which one embedded SQLite writer cannot be. Extracting the
+   interface and the shared suite start now; SQLite stays first-class for the single binary.
+5. **[Hiding something is a decision somebody signs](db/exclusions-and-exceptions.md)** — every
    organization carries things it has decided not to look at and things it has decided not to act on
    yet. `abom_policy_waiver` already models both, with a required reason, an author, and an expiry
    that is required for an exception and read when the decision is applied. It reaches nothing but a
    policy verdict. What is owed is a scope beyond one policy, an exclusion that actually stops work,
    an exception that hides a result while the work still runs and records, and a screen that refuses
    to write either without a reason and a review date.
-4. **[A container image is not an account](db/container-images.md)** — `uses: docker://alpine:3.20`
+6. **[A container image is not an account](db/container-images.md)** — `uses: docker://alpine:3.20`
     is parsed correctly, marked external and given no owner, and the graph then groups it by
     splitting its key on the first slash — which for `docker://` is the second character of `//`.
     Every container image in the corpus is drawn inside a boundary labelled `docker:`, an account
     nobody can be a member of and nobody can declare. The same fall-through once had ABOM reporting
     third-party dependencies on an account named `$`, so the fix is to refuse the branch rather than
     to correct its output. Cheap, visible, and startable against the corpus that exists.
-5. **[Use GitHub's tooling to keep workflow locks current](tools/actions-lock.md)** — ranked here
+7. **[Use GitHub's tooling to keep workflow locks current](tools/actions-lock.md)** — ranked here
   for the compatibility matrix and supported-workflow documentation that can start locally.
   Record the pinned toolchain and existing evidence without treating this repository's observed
   enforcement as proof for other platforms or nested pins. New enforcement experiments and an
   observed Dependabot update of workflow and lock need an approved target, coordinated with
   [the native coverage crosscheck](api/dependency-graph-crosscheck.md). GitHub owns generation
   and verification, not a second ABOM pinning tool.
-6. **[Measure native Actions coverage before filling a gap](api/dependency-graph-crosscheck.md)** -
+8. **[Measure native Actions coverage before filling a gap](api/dependency-graph-crosscheck.md)** -
   start with the isolated source-extraction comparison at identical commits using CodeQL, native
   lock evidence and the reference action's parser; it needs no submission or live test target.
   Deployed DG/SBOM ingestion, advisory alerts and update PRs require separate evidence on an
   approved clean target, without historical custom submissions masquerading as native data.
   A default-branch SBOM cannot replace a pinned revision. Publication expansion waits for a
   concrete residual gap; this comparison does not promise one exists.
-7. **[A gate that blocks, and can say whose rule it was](api/verdict-gate.md)** — ABOM can apply
+9. **[A gate that blocks, and can say whose rule it was](api/verdict-gate.md)** — ABOM can apply
     declared policy to an organization's recorded transitive dependency evidence.
     **The policy half is built** — drafted, simulated, adopted, waived and auditable — so what
     remains is the base-versus-head closure diff, the verdict endpoint and the check run, over
@@ -121,19 +128,19 @@ it is live waits with it.
     is built: findings or advisories, how an owned repository reaches either, and other policies
     by name. Its verdict-only client
     remains deferred in [api/abom-check.md](api/abom-check.md).
-8. **[A commit-pinned action can still be named as a version](db/version-resolution.md)** - measured
+10. **[A commit-pinned action can still be named as a version](db/version-resolution.md)** - measured
     crawl mappings already feed versions into the existing submission path. Remaining lookup fills
     version-evidence gaps, including native lock refs whose release association is unverified;
     it never substitutes a live tag for the commit a [lock selects](../docs/architecture.md#locks). Direct-pin publication and upstream aliases remain deferred until [the native coverage
     crosscheck](api/dependency-graph-crosscheck.md) establishes a native gap.
-9. **[A finding that stops being reported is never removed](db/finding-lifecycle.md)** — unblocked.
+11. **[A finding that stops being reported is never removed](db/finding-lifecycle.md)** — unblocked.
     The sweep has only run where nothing was sighted, so it has proved nothing. The crawled
     organization holds **10,192 finding sightings**, so the tombstone and the `_live` view can be
     exercised against a finding that really does stop being reported. **First, the report judges a finding by runs of
     its suite rather than of its rule**, and never by a crawl lane: on a copy of the verification
     store, two on-demand runs of one query each over 15 repositories moved it from 313 findings to
     712, 396 of the new ones for rules neither run evaluated.
-10. **[The same graph draws a different picture every time](ui/graph-layout.md)** — a decision a
+12. **[The same graph draws a different picture every time](ui/graph-layout.md)** — a decision a
     reader has to settle rather than work, and a defect that is work. The browser draws where the
     engine placed it, **fitted to the nodes it is actually drawing**, and names which layout is on
     screen; the view refuses above **300 nodes** without explicit approval and there is **no
@@ -147,7 +154,7 @@ it is live waits with it.
     ceiling is the renderer. The defect: an address carrying any *Group by* but Owner throws from
     the force-graph library's frame loop as it draws, and never finishes drawing — a shared link
     with a grouping, or a reload after opening a named scope kept with one.
-11. **[Remediation summarizes two things into their more reassuring halves](ui/remediation-honesty.md)**
+13. **[Remediation summarizes two things into their more reassuring halves](ui/remediation-honesty.md)**
     — down to one half, and that half turns out to be **latent rather than live**. The
     strip-versus-table gap is closed: the advisories unit carries an `unreached` count and states
     it under the table, so **3 reaching you** and **8 reaching nothing** are both on screen and sum
@@ -155,12 +162,7 @@ it is live waits with it.
     ranges include **no fix published**, with 5 repositories sitting in exactly that range — and it
     reaches **no column today**. That makes it cheaper to settle, not safer to ignore: the field is
     on the model, and the next surface wanting a Fix column will find it and believe it.
-12. **[Reach counts a repository that pins a version without the dependency](db/reach-version-constraint.md)**
-    — exposure and the submission closure now agree about which version a route belongs to; reach
-    carries none of it, and reach is what orders the crawl. **300 of 377** dependencies on the crawled
-    organization are analyzed at more than one commit. It sits below the interface entries because it is invisible to
-    everyone and its first step is a decision that may legitimately conclude no change.
-13. **[A backup is a command, not a thing everybody is told to remember](db/backup-and-restore.md)**
+14. **[A backup is a command, not a thing everybody is told to remember](db/backup-and-restore.md)**
     — the correct incantation is written in the working-style instructions, printed by `make e2e`
     when it refuses the working database, and implemented nowhere. Getting it wrong raises no error:
     `cp` does not read the WAL, so the baseline is silently missing recent commits and a change that
@@ -169,35 +171,42 @@ it is live waits with it.
     is a correctness fix rather than an ergonomic one is the epoch — a restore moves generation
     history backwards underneath every connected client, and nothing currently tells them to
     reload.
-14. **[Code quality, measured by our own tool](tools/code-quality.md)** — the gate holds new
+15. **[Code quality, measured by our own tool](tools/code-quality.md)** — the gate holds new
     findings at zero in all four languages. What is left is complexity: **112 production functions
     over 10, total excess 310**, most between 11 and 16. The three worst — `Store.Migrate`,
     `Supervisor.cycle` and the lock-binding exposure walk — each wait on tests they do not have yet.
     Cleanup rather than risk reduction, which is why it sits here.
-15. **[The crawl says what it is doing, wherever a reader is](ui/crawl-visibility.md)** — down to
+16. **[The crawl says what it is doing, wherever a reader is](ui/crawl-visibility.md)** — down to
     how Settings is grouped. The state, the queue, a problem marker and the refresh interval are on
     the bar of every page, a restart starts nothing unless somebody configured it to, and the suite
     binding is chosen on the CodeQL page and stated in Settings. What is left is that Settings
     holds four unrelated decisions in one scroll, and that an on-demand run is visible only on the
     CodeQL page's Runs tab while it spends the same cores.
-16. **[An action remembers its upstream without becoming it](db/fork-provenance.md)** — forks and
+17. **[An action remembers its upstream without becoming it](db/fork-provenance.md)** — forks and
     naming-convention mirrors need attributed upstream context without replacing the declared
     dependency or inventing a `uses:` edge. Same-host identity collection can start independently;
     cross-host lookup consumes [GitHub hosts](api/github-hosts.md), and version explanations
     consume measured evidence from [version resolution](db/version-resolution.md).
-17. **[A repository lookup names its host and its credential](api/github-hosts.md)** — Git, REST
+18. **[A repository lookup names its host and its credential](api/github-hosts.md)** — Git, REST
     and `gh` currently choose destinations separately. Start with a shared host/identity contract
     and two-host tests, preserving one owned organization and destination-scoped credentials.
     Coordinate cache identity with the [checkout cache](db/checkout-cache.md), which keys a fetch by
     commit and sparse filter and carries no host in that key; advertising enterprise-host support
     still requires an authorized environment, not only mocks.
-18. **[Record the container references Actions actually declares](db/container-inventory.md)** —
+19. **[Record the container references Actions actually declares](db/container-inventory.md)** —
     job/service images, Docker action metadata and referenced Dockerfile `FROM` declarations are a
     broader inventory than the existing `docker://` edges. Begin with a literal-source coverage
     spike and the shared adapter contract; full dynamic/dataflow resolution is not a prerequisite.
     [Container images](db/container-images.md) stays the small grouping correction. No image
     execution, package scanning or GitHub
     container-alert claim is included.
+20. **[Reach is computed one way, and nothing checks it](ql/reachability-crosscheck.md)** —
+    unblocked by closure databases, and ranked last because nothing a reader sees moves until its
+    third item reports the comparison. A CodeQL walk over each owned repository's closure is a
+    second derivation of reach sharing no code with the Go walk. A closure stages callables only,
+    so both walks stop at the same leaves — every JavaScript and Docker action — and differ only
+    where one is wrong or the other has no coverage, such as the 9 of 28 owned repositories the
+    crawl never analyzed.
 
 **[Fork provenance](db/fork-provenance.md), [GitHub hosts](api/github-hosts.md) and [container
 inventory](db/container-inventory.md) keep their relative priority.** They capture
@@ -210,36 +219,35 @@ field does not prove platform support, and action pins do not inventory containe
 remains deferred and verdict-only; publisher expansion awaits [the native coverage
 crosscheck](api/dependency-graph-crosscheck.md)'s native comparison.
 
-**A closure database stages the commit the governing lock selects, never the current tag**, and
-its results preserve [analysis-mode isolation](../docs/architecture.md#analysis-modes). GitHub's
-native tooling owns lock generation, verification and updates; ABOM reuses its released contracts
-and exposes unknown coverage rather than guessing rollout.
+**GitHub's native tooling owns lock generation, verification and updates**; ABOM reuses its
+released contracts and exposes unknown coverage rather than guessing rollout. A closure database
+stages the commit a governing lock selects, never the current tag.
 
 **Everything above rests on two data sets**: a crawled organization for before/after diffs, and
 a deterministic fixture corpus that gates every pull request both empty and populated. A closure
-database's headline claim — every existing total unchanged — is held against the first.
-[Exclusions and exceptions](db/exclusions-and-exceptions.md) is what remains of one refactoring:
-a named scope already means the same thing on every surface, each of its terms applied or refused
-by name, and every Inventory unit's columns and actions are its own.
+database's claim — every existing total unchanged — is checked against the first, endpoint by
+endpoint. [Exclusions and exceptions](db/exclusions-and-exceptions.md) is what remains of one
+refactoring: a named scope already means the same thing on every surface, each of its terms
+applied or refused by name, and every Inventory unit's columns and actions are its own.
 
-**The ordering is a decision, not drift.** The closure database and extended findings lead
-because selecting the right code and naming its analysis shape must precede any new derived
-result. The interface entries follow because each is a claim a reader can already see and
-misread. The [checkout cache](db/checkout-cache.md) and [database cache](db/database-cache.md) are
-built and reused, each keeping its retention default as a measured refinement. Disagreeing with
-that is the point of writing it down.
+**The ordering is a decision, not drift.** The commit-aware graph, its checker, change ingestion
+and the store lead because the operator ranked enterprise scale and commit-awareness ahead of
+everything else. Below them, exclusions lead because hiding something is the next claim an
+organization makes about its own data, and nothing records who made it. The interface
+entries follow because each is a claim a reader can already see and misread. The
+[checkout cache](db/checkout-cache.md) and [database cache](db/database-cache.md) are built and
+reused, each keeping its retention default as a measured refinement. Disagreeing with that is the
+point of writing it down.
 
 **A query version's `deploy` rung is still set by hand.** `test`, `extended-test` and `review`
 are earned, as [`docs/architecture.md`](../docs/architecture.md#what-produces-the-data) states;
 [pack promotion](ql/pack-promotion.md), deferred until much later, owns what would earn `deploy`
 beyond ABOM. A version at an unearned rung is the same shape of claim as a measurement nobody took.
 
-**Investigate before refining.** [The closure database](ql/closure-database.md) and [extended
-findings](db/extended-findings.md) each open with a measurement rather than an implementation, and
-each names an outcome where the honest answer stops the work: extracting a closure may cost more
-than the seven-step path justifies, and the extended rows may move no number worth moving. They are
-written to be refined by what the measurement finds, not defended against it. An entry above may be
-carrying a number that has since moved; reconcile before starting.
+**Investigate before refining.** An entry above may be carrying a number that has since moved;
+reconcile before starting. A measurement that answers *no change* is a result: on the crawled
+organization the extended analysis found nothing the regular one had not, which settled what it
+may move rather than leaving it open.
 
 ## Deferred, and why
 
@@ -271,11 +279,10 @@ refusal.
   never been timed against it, so adopting the archive now would trade a disk problem for a
   latency problem on an assumption. Its first item needs none of that: two thirds of every
   retained database is build logs nothing reads.
-- **[An address the organization can reach, and an identity it granted](api/org-server.md)** —
-  ingress and an App identity, neither of which this workstation has.
-- **[Read in response to events, not on a timer](api/event-driven-reading.md)** — the detection
-  works; only the trigger is missing, and the address it would arrive at is
-  [`api/org-server.md`](api/org-server.md).
+- **[An address the enterprise can reach, an identity it granted, and readers GitHub
+  authorizes](api/enterprise-server.md)** — ingress and an enterprise App, neither of which this
+  workstation has. Owned-repository events in [change ingestion](api/change-ingestion.md) wait on it;
+  polling and token pools do not.
 - **[Findings are a pluggable class](db/finding-providers.md)** — the seam is built and carries real
   data; a second provider is deferred by decision.
 - **[Every action has an API](api/api-first-invariant.md)** — already true, and not yet provable.
@@ -290,8 +297,8 @@ refusal.
   targets, not simply removing code. No timer or automatic first submission is introduced.
 - **[A reference is known, or it is unknown in a way that can be named](ql/semantic-model.md)** —
   unblocked for design, and wider than it was: dataflow crosses a `uses:` boundary at any depth once
-  the callee is staged, so what [the closure database](ql/closure-database.md) gives it is real
-  flow rather than a lone bare checkout. One
+  the callee is staged, so what a [closure database](../docs/architecture.md#analysis-modes) gives
+  it is real flow rather than a lone bare checkout. One
   bucket currently holds a literal matrix, an environment variable set two jobs earlier, and `uses:`
   built from `github.event`, which is an attacker choosing what runs. `abom_observation` already
   keeps both readings of a changed fact and already refuses to pick a winner between two, so the
@@ -300,14 +307,6 @@ refusal.
   addable; those implementations are not in this plan. [Container
   inventory](db/container-inventory.md) owns container declarations,
   not image contents. The shared model remains unranked.
-- **[Reach is computed one way, and nothing checks it](ql/reachability-crosscheck.md)** — blocked on
-  [the closure database](ql/closure-database.md). One in-memory walk produces reach, and reach
-  orders the crawl, sizes every node drawn and
-  is half the remediation arithmetic. [The native coverage
-  crosscheck](api/dependency-graph-crosscheck.md) is this argument one level down. A closure per
-  owned repository is the second derivation because it is pinned at the commits its root runs; a
-  whole-account database would also resolve `./` references across owned trees, and disagree for a
-  reason about layout rather than about reach.
 - **[A report somebody can hand to somebody else](ui/printable-report.md)** - still blocked on
   [graph layout](ui/graph-layout.md), for a different reason than before. A drawing that was
   different every run cannot be printed, and that half is fixed: a placed scope is byte-identical
@@ -318,7 +317,7 @@ refusal.
 
 ## Built, with refinements nobody has ranked
 
-These **sixteen** plans describe workstreams that are **built and carrying real data**, and each
+These **fifteen** plans describe workstreams that are **built and carrying real data**, and each
 keeps a short list of refinements. They are not ranked because none of them is the next thing to
 build; they are the backlog a workstream leaves behind, and a reader asking "what next" should not
 have to read past them. They are listed because a plan in neither the ranking nor *Deferred* is
@@ -341,7 +340,6 @@ measurement makes it urgent.
 | [db/database-cache.md](db/database-cache.md) | the same two for retained CodeQL databases, and a run that must not evict its own working set |
 | [db/data-efficiency.md](db/data-efficiency.md) | the standing cost review; one endpoint is still linear in rows |
 | [db/declaration-provenance.md](db/declaration-provenance.md) | how a declaration arrived, and what contradicts it |
-| [db/freshness-budget.md](db/freshness-budget.md) | claim order, and depth 2 starting before depth 1 drains |
 | [db/observations.md](db/observations.md) | the fact table's keys and its readers |
 | [db/owned-scope.md](db/owned-scope.md) | ownership edges the declaration does not yet settle |
 | [db/pruning.md](db/pruning.md) | tombstones, compaction and what a delta reports |
@@ -391,7 +389,12 @@ measurement makes it urgent.
   class the gate names and steps around.** A crawl seeded with the experimental marker is the right
   thing to re-measure against: the marker reports on every job and composite action, so the share it
   fails to attach sizes the gap directly rather than by inference. Take the number once a round has
-  finished, because attribution runs at the end of one.
+  finished, because attribution runs at the end of one. **A closure makes this gap the one that
+  matters most**: a cross-boundary injection lands in the callee's `run:`, and on the staged
+  fixture (`testdata/closure`) both such sinks — a composite of `run:` steps and a
+  reusable workflow with no `uses:` — attach to no node. On the crawled organization the closures
+  added no finding, so the gap's size did not move: the 6 closure findings attached to nothing were
+  already unattached regularly.
 - **A configured property key can group an organization into a unit nobody chose.** GitHub lets a
   custom property be required with a default, so every repository carries a value and none is
   unset. Measured on the reference organization: `business_id` places **8 of 25 repositories in the

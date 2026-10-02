@@ -1,6 +1,7 @@
 # Reach is computed one way, and nothing checks it
 
-**Status:** Blocked on [`ql/closure-database.md`](closure-database.md).
+**Status:** Unblocked. Closure databases are built (`codeql-abom closure`,
+[analysis modes](../../docs/architecture.md#analysis-modes)), and nothing here has started.
 
 ## Why this exists
 
@@ -14,9 +15,12 @@ exists to close for extraction — our reading of the first hop has never been c
 else's. This is the same argument one level up: our reading of the *closure* has never been
 compared with anything either.
 
-An owned repository's closure database makes a second derivation available for the first time. The
-same edges, walked by CodeQL rather than by Go, over a database that already holds the whole closure
-— a genuinely independent path to the same number, sharing no code with the first.
+An owned repository's closure database makes a second derivation available for the first time: the
+same `uses:` lines, walked by CodeQL rather than by Go, sharing no code with the first. A closure
+stages only callables — composite actions and reusable workflows — so the CodeQL walk names every
+`uses:` reachable through them and stops at each JavaScript or Docker action, which it names and
+cannot enter. Those are the Go walk's leaves too, so the comparison is over the same closure; what
+it cannot compare is anything beneath a leaf, and nothing ABOM analyzes is.
 
 **One closure per owned repository is a better shape for this than one database for the account.**
 A closure is pinned at the commits its root repository actually runs, so the two walks compare the
@@ -27,7 +31,8 @@ reach.
 ## Pending
 
 1. **A `@kind graph` query producing the closure.** Over one owned repository's closure database,
-   one result set per closure. Depends on `closure-database`.
+   one result set per closure, run by path the way the closure already runs
+   `AbomResolvedCallees.ql`, which pins the resolution this walk follows. Depends on nothing.
 2. **Compare, and name what disagrees.** Per node: dependents according to `abom_blast_radius`,
    dependents according to the query, and the set difference in both directions. Depends on 1.
 3. **Report the comparison where a reader can see it.** A disagreement nobody looks at is not a
@@ -47,9 +52,10 @@ output of a comparison is the disagreement, and a pass that quietly picks a winn
 what was extracted; the Go walk sees every edge ever ingested, including from repositories no longer
 fetched. Coverage has to be subtracted before a difference means anything, and a crosscheck that
 reports its own coverage gap as an error will cry wolf until nobody reads it. Two narrower sources
-of the same kind of gap are known and named rather than investigated each time:
-[`ql/closure-database.md`](closure-database.md) refuses a closure selecting two commits of one staged
-composite action or reusable workflow, so that owned repository has no CodeQL answer at all; and a staged dependency's own `./` local references
+of the same kind of gap are known and named rather than investigated each time: a closure selecting
+two commits of one staged composite action or reusable workflow is refused, so that owned
+repository has no CodeQL answer at all, and neither has an owned repository the crawl never
+analyzed (9 of 28 on the crawled organization); and a staged dependency's own `./` local references
 resolve to nothing, so CodeQL's walk stops where the Go walk continues.
 
 **Absence on one side is not zero on the other.** A node no closure database ever extracted has no

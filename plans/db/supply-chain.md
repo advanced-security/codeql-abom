@@ -23,7 +23,7 @@ exposure, so they are stored and displayed apart.
 2. **Two dependencies are never queued, and that is the depth bound rather than a gap.**
    `actionsdesk/lfs-warning` and `actionutils/sticky-comment` are named by repositories sitting at
    frontier depth 5, and `Enqueue` drops anything past `MaxDepth`. Raising the bound is the only
-   thing that would change it; whether to is [`db/freshness-budget.md`](freshness-budget.md).
+   thing that would change it; whether to is [`api/change-ingestion.md`](../api/change-ingestion.md).
 
 ## The constraints that must not be broken
 

@@ -216,7 +216,7 @@ itest:
 			--source-root=internal/expand/testdata/sparse; \
 	fi
 	@ABOM_ITEST_DB="$(ABOM_ITEST_DB)" ABOM_ITEST_SPARSE_DB="$(ABOM_ITEST_SPARSE_DB)" \
-		ABOM_ITEST_OVERLAY_DB="$(ABOM_ITEST_OVERLAY_DB)" TMPDIR="$(ABOM_TMP)/gotest" \
+		ABOM_ITEST_OVERLAY_DB="$(ABOM_ITEST_OVERLAY_DB)" ABOM_ITEST_CODEQL=1 TMPDIR="$(ABOM_TMP)/gotest" \
 		go test -p 1 ./internal/runner/ ./internal/pipeline/ ./internal/expand/ -count=1
 	@echo "itest: ok"
 

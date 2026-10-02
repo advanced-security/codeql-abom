@@ -232,6 +232,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	writeIdentityBanner(stdout, s)
 
 	go srv.CheckStaleness()
+	go srv.ReadUnreadDeclarations(ctx)
 
 	loopCtx, stopLoop := context.WithCancel(ctx)
 	defer stopLoop()
@@ -385,6 +386,11 @@ func newConfiguredServer(
 	}
 	if printer, ok := loop.Expander.Resolver.(serve.ASTPrinter); ok && srv.QueryDir != "" {
 		srv.Printer = printer
+	}
+	if resolver := loop.Expander.Resolver; resolver != nil {
+		srv.ReadDeclarations = func(ctx context.Context, unread []store.CatalogQuery) (map[string]string, error) {
+			return expand.ReadDeclarations(ctx, s, resolver, unread)
+		}
 	}
 	srv.Authoring = newAuthoring(s, cfg.authoring, loop, stderr)
 	reader, err := readClient(ctx, cfg.apiURL, s, cfg.route)

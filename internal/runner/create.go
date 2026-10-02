@@ -22,6 +22,25 @@ func IsNoSourceCode(err error) bool { return errors.Is(err, ErrNoSourceCode) }
 
 // CreateDatabase builds a CodeQL database for language from the tree at srcDir.
 func (r *Runner) CreateDatabase(ctx context.Context, srcDir, dbDir, language string) error {
+	return r.createDatabase(ctx, srcDir, dbDir, language, nil)
+}
+
+// CreateDatabaseIndexing builds a database that also indexes paths the extractor's defaults
+// leave out, appended after the defaults and after any filters the environment already sets.
+func (r *Runner) CreateDatabaseIndexing(
+	ctx context.Context, srcDir, dbDir, language string, includes []string,
+) error {
+	if r.CodeScanningConfig != "" && len(includes) > 0 {
+		return fmt.Errorf("codeql database create %s: a code scanning configuration rewrites "+
+			"the index filters, so it cannot be combined with %d appended includes",
+			srcDir, len(includes))
+	}
+	return r.createDatabase(ctx, srcDir, dbDir, language, includes)
+}
+
+func (r *Runner) createDatabase(
+	ctx context.Context, srcDir, dbDir, language string, includes []string,
+) error {
 	// codeql refuses to write into an existing directory, which re-analysis would otherwise hit.
 	if err := os.RemoveAll(dbDir); err != nil {
 		return fmt.Errorf("clearing %s: %w", dbDir, err)
@@ -54,6 +73,9 @@ func (r *Runner) CreateDatabase(ctx context.Context, srcDir, dbDir, language str
 	defer release()
 
 	cmd := exec.CommandContext(ctx, r.codeql(), args...)
+	if len(includes) > 0 {
+		cmd.Env = append(os.Environ(), "LGTM_INDEX_FILTERS="+indexFilters(includes))
+	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
@@ -68,6 +90,19 @@ func (r *Runner) CreateDatabase(ctx context.Context, srcDir, dbDir, language str
 		return fmt.Errorf("codeql database create %s: %w: %s", srcDir, err, msg)
 	}
 	return nil
+}
+
+// indexFilters is the value the extractor reads: whatever the environment already set, then one
+// include per pattern. The extractor's autobuild places all of it after its own defaults.
+func indexFilters(includes []string) string {
+	lines := make([]string, 0, len(includes)+1)
+	if inherited := os.Getenv("LGTM_INDEX_FILTERS"); inherited != "" {
+		lines = append(lines, inherited)
+	}
+	for _, pattern := range includes {
+		lines = append(lines, "include:"+pattern)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func isNoSourceMessage(msg string) bool {

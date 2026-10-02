@@ -132,9 +132,9 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return err
 	}
 
-	e, cache, cleanupRunner, err := newExpandAllExpander(s, queue, cfg, stdout)
+	e, cache, cleanupRunner, err := newExpander(s, queue, cfg, stdout)
 	if err != nil {
-		return err
+		return fmt.Errorf("expand-all: %w", err)
 	}
 	defer cleanupRunner()
 	defer cache.Release()
@@ -281,7 +281,9 @@ func prepareExpandAllQueue(s *store.Store, queue *frontier.Queue, stdout io.Writ
 	return nil
 }
 
-func newExpandAllExpander(
+// newExpander is the expander a command analyzes with, the checkout cache it holds, and what
+// closes its CodeQL processes. A closure has no queue and passes nil.
+func newExpander(
 	s *store.Store, queue *frontier.Queue, cfg expandAllConfig, stdout io.Writer,
 ) (*expand.Expander, *expand.CheckoutCache, func(), error) {
 	var pace *work.Limiter
@@ -304,13 +306,13 @@ func newExpandAllExpander(
 	cache, err := checkoutCache(cfg.cacheDir, cfg.cacheMaxMB)
 	if err != nil {
 		cleanup()
-		return nil, nil, nil, fmt.Errorf("expand-all: %w", err)
+		return nil, nil, nil, err
 	}
 	databases, err := databaseCache(cfg.databaseCacheDir, cfg.databaseCacheMaxMB)
 	if err != nil {
 		cache.Release()
 		cleanup()
-		return nil, nil, nil, fmt.Errorf("expand-all: %w", err)
+		return nil, nil, nil, err
 	}
 	return &expand.Expander{
 		Queue:    queue,

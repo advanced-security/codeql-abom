@@ -103,12 +103,14 @@ else
                     <div class="abom-query-id" data-abom-query-id="@context.Item.QueryId">
                         @context.Item.QueryId
                     </div>
-                    @* What the version would report at, before anything runs it. A version nothing
-                       has resolved says so, rather than reading as one that declares nothing. *@
+                    @* What the version would report at, before anything runs it. A version without a
+                       declaration says why in the server's words: being read, gone from disk and
+                       never versioned are three states, and only the first ends in a read. *@
                     @if (!context.Item.Lane && context.Item.Metadata is null)
                     {
-                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block"
-                                 data-abom-query-metadata-absent="@context.Item.QueryId">declared metadata not read yet</MudText>
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block abom-query-unread"
+                                 data-abom-query-metadata-absent="@context.Item.QueryId">@(context.Item.MetadataUnread.Length > 0
+                                     ? context.Item.MetadataUnread : "declared metadata not read yet")</MudText>
                     }
                     else if (context.Item.Band.Length > 0)
                     {

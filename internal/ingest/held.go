@@ -11,7 +11,7 @@ import (
 // them.
 func HeldFromSARIF(r io.Reader, opts Options) ([]store.Finding, error) {
 	out := []store.Finding{}
-	if err := readFindings(r, opts, func(f store.Finding) error {
+	if err := readFindings(r, opts, func(f store.Finding, _ string) error {
 		out = append(out, f)
 		return nil
 	}); err != nil {

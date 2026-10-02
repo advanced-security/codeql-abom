@@ -264,7 +264,7 @@ func (s *Store) nodeRules(key string) ([]RuleCount, error) {
 	rows, err := s.db.Query(`
 		SELECT rule_id, COUNT(*), GROUP_CONCAT(sources), COUNT(*) - COUNT(sources), `+
 		bandSums("score")+`
-		FROM (SELECT f.rule_id, `+findingSources+` AS sources, f.security_severity AS score
+		FROM (SELECT f.rule_id, `+findingSourcesIn(AnalysisModeRegular)+` AS sources, f.security_severity AS score
 		      FROM abom_finding_node fn
 		      JOIN abom_node_live n ON n.row_id = fn.node_row_id
 		      JOIN abom_finding_regular f ON f.row_id = fn.finding_row_id

@@ -156,6 +156,37 @@ public class SeverityEverywhereTests : AbomTestContext
         });
     }
 
+    private const string CatalogRowsTheServerExplains = """
+        {"queries":[
+          {"queryId":"acme/self-hosted-runner","queryVersion":"9b5327ab01d7","pack":"abom/custom-queries",
+           "packVersion":"2.27.0","cliVersion":"2.27.0","source":"custom","kind":"problem","kindRecorded":true,
+           "stage":"","stagedBy":"","stagedAt":"","runs":57,"repositories":57,"firstRunAt":"","lastRunAt":"",
+           "steps":[],"requests":[],
+           "metadataUnread":"Declared metadata cannot be read: abom/custom-queries 2.27.0 is not on disk."}
+        ],"stages":["dev","test","extended-test","review","deploy"]}
+        """;
+
+    /// <summary>
+    /// Why a version's declaration is missing is the server's to say, and the reasons are not
+    /// alike: one being read now, one whose file is gone and one nobody versioned. Printing
+    /// <em>not read yet</em> over all three promises a read that, for two of them, never comes.
+    /// </summary>
+    [Fact]
+    public void ACatalogVersionWithoutADeclarationSaysWhyInTheServersWords()
+    {
+        Answer("api/queries", CatalogRowsTheServerExplains);
+        Answer("api/accounts", """{"authenticated":true,"login":"operator","host":"github.com","accounts":[],"canSeeAllOrganizations":true}""");
+        Fallback("api/runs", """{"runs":[]}""");
+        Fallback("api/queries/", "[]");
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.NavigateTo("/codeql?tab=catalog");
+        var page = Render<CodeQL>();
+
+        page.WaitForAssertion(() => page.Find("[data-abom-query-metadata-absent='acme/self-hosted-runner']"));
+        var said = page.Find("[data-abom-query-metadata-absent='acme/self-hosted-runner']").TextContent;
+        Assert.Contains("abom/custom-queries 2.27.0 is not on disk", said);
+        Assert.DoesNotContain("not read yet", said);
+    }
+
     private const string RunWithFindings = """
         {"rowId":3,"predicate":"repositories=octo%2Fapp","mode":"regular",
          "requestedBy":"operator","state":"complete","createdAt":"2026-09-22T16:00:00Z",

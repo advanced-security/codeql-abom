@@ -38,7 +38,7 @@ blocks on the backlog is switched off within a week and a gate nobody runs prote
 2. **`GET /api/repositories/{owner}/{name}/verdict?sha=&base=`** — evidence, policy, outcome and
   reason in one response, with repository, both commits, governing lock contexts and resolution
   coverage echoed so every client can check which evidence was evaluated. Workflow callers use
-  [org-server.md](org-server.md) authorization. Depends on 1.
+  [enterprise-server.md](enterprise-server.md) authorization. Depends on 1.
 3. **The check run**, so branch protection can require it and the outcome carries its explanation.
    Depends on 2.
 4. **The client**, thin, which asks the API for a verdict at a SHA and renders it. It analyzes

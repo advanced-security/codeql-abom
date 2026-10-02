@@ -9,10 +9,10 @@ A supply-chain analysis tool that does not analyze itself is making a claim it h
 the one codebase it can always reach. That gate is on, and the count it enforces is zero.
 
 What the gate cannot see is complexity: all 190 queries in those suites are problems, and the
-metric queries are left out. **112 production functions exceed cyclomatic complexity 10, total
-excess 310** (`gocyclo -over 10`, non-test Go) — worst `Store.Migrate` at 29, `Supervisor.cycle` at
-24, `exposureOf` at 21. Three complexity linters run as a ratchet and report zero at their
-defaults.
+metric queries are left out. **128 production functions exceed cyclomatic complexity 10, total
+excess 384** (`gocyclo -over 10`, non-test Go) — worst `Store.Migrate` at 29, `findingReviewPlan`
+at 27, `Supervisor.cycle` at 25, `exposureOf` at 21. Three complexity linters run as a ratchet and
+report zero at their defaults.
 
 ## Pending
 

@@ -24,23 +24,23 @@ must remain explainable together. GitHub owns pinning and update tooling; ABOM a
 ownership, reach and policy across the organization. A native product filling an inventory or
 publication gap is a reason to integrate and retire redundant work after verification.
 
-## One organization is the unit
+## An enterprise is the unit, and GitHub decides who reads what
 
 Two reasons, and only the first is about permission.
 
-**The organization is where ownership already means something GitHub enforces.** Membership,
-repository access and custom properties are all administered there. A tool scoped to it inherits a
-boundary somebody already drew, rather than inventing one and asking to be trusted with it.
+**The organization is still where ownership means something GitHub enforces.** Membership,
+repository access and custom properties are all administered there, so ownership stays declared
+organization by organization. An enterprise is many of them, and ABOM represents all of them in one
+instance — because a supply chain crosses organizations, and an action one of them publishes is
+another's dependency. What makes that safe is inheriting GitHub's own boundary rather than inventing
+one: a reader sees exactly what GitHub says they can read, and no aggregate they see is derived from
+what they cannot.
 
 **A ceiling you can name is a ceiling you can optimize against.** Near-real-time is a claim about a
-bounded set. The whole point of the discovery work ahead — conditional requests, a rate-limit budget
-read rather than discovered by being throttled, reading on events instead of on a timer — is to keep
-one organization's Actions graph current at a cost that does not grow with somebody else's estate.
-That target is meaningless without a stated boundary.
-
-**This is the supported configuration, not a refusal.** `abom_owned_scope` accepts several declared
-accounts and will keep doing so; a team whose responsibility spans two organizations is not locked
-out. One organization is what gets measured, tuned and stated in every figure.
+bounded set, and the bound is the enterprise App's installations: the organizations somebody
+granted. Keeping that current — events for what the enterprise owns, polling for what it depends
+on, each paced by a budget the operator sets rather than one ABOM assumes is its own — is what the
+discovery work ahead is for, at up to 100,000 repositories in one organization.
 
 ## A security team's questions are not a repository's questions
 
@@ -317,9 +317,6 @@ Four the vision adds:
 
 ## Deliberately not the vision
 
-- **Enterprise scope, or federation across organizations.** The boundary is what makes the
-  efficiency target meaningful, and a tool that spans organizations inherits no permission model it
-  can rely on.
 - **Re-implementing what `gh-ghas-audit` measures.** Enablement is a solved problem with an owner.
   ABOM consumes the answer and contributes the one gap that tool cannot see.
 - **Evaluating an `if:` condition.** Conditions are reported verbatim. Whether one holds at a given

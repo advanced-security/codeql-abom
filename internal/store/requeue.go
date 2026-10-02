@@ -41,6 +41,8 @@ func (s *Store) RequeueStale(cliVersion string, packDigests []string) (int, erro
 	res, err := s.db.Exec(requeueDone+` AND (
 			SELECT COUNT(DISTINCT r.pack_digest) FROM abom_query_run r
 			WHERE r.repository = abom_frontier.owner || '/' || abom_frontier.repo
+			  -- A closure run under the new CodeQL is not the crawl's analysis of this row.
+			  AND r.analysis_mode = 'regular'
 			  AND r.cli_version = ?
 			  AND r.pack_digest IN (`+placeholders(len(packDigests))+`)
 		) < ?`, args...)

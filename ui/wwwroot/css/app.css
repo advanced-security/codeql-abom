@@ -1352,6 +1352,10 @@ code {
    row in the table. Under the id it wraps at most once and the row is one line of data again. */
 .abom-query-id { font-weight: 500; }
 .abom-query-pack { display: block; line-height: 1.25; }
+/* A reason under an id wraps inside the width the ids set rather than setting it: on one line, why
+   a declaration could not be read took the query column to 1,365px and pushed every other column
+   off a 1440px screen. */
+.abom-grid .abom-identity-col .abom-query-unread { white-space: normal; overflow-wrap: anywhere; }
 
 /* A pack or suite reference is long and hyphenated, and a grid cell narrow enough to hold one
    breaks it character by character. Truncated instead: the whole value stays on the element, so a

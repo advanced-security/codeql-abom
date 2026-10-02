@@ -120,6 +120,8 @@ const selectUsedBy = `
 const runsForRow = `
 	FROM abom_query_run r
 	WHERE r.repository = abom_frontier.owner || '/' || abom_frontier.repo
+	  -- A closure is named after its root at the root's commit and is not an analysis of this row.
+	  AND r.analysis_mode = 'regular'
 	  AND COALESCE(abom_frontier.resolved_sha, '') <> ''
 	  AND COALESCE(r.db_commit, '') <> ''
 	  AND (r.db_commit = abom_frontier.resolved_sha

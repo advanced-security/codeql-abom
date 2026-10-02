@@ -61,6 +61,9 @@ func (w snapshotWiring) preview(repository string) (serve.SnapshotPreview, error
 	if out.Unanalyzed, err = w.unanalyzedCompositePins(); err != nil {
 		return out, err
 	}
+	if out.Unobserved, err = w.s.UnobservedClosureCommits(repository); err != nil {
+		return out, err
+	}
 	if err := w.fillSubmissionRenewal(repository, snap, &out); err != nil {
 		return out, err
 	}
@@ -119,6 +122,21 @@ func (w snapshotWiring) fillSubmissionRenewal(
 }
 
 func (w snapshotWiring) submit(repository string) (serve.SnapshotResult, error) {
+	// Before anything leaves: a snapshot replaces what GitHub found, so one read from commits whose
+	// declarations are not known could delete dependencies the repository has.
+	unobserved, err := w.s.UnobservedClosureCommits(repository)
+	if err != nil {
+		return serve.SnapshotResult{}, err
+	}
+	if len(unobserved) > 0 {
+		refused := &store.UnobservedClosureError{Repository: repository, Commits: unobserved}
+		_ = w.s.RecordSubmission(store.Submission{Repository: repository,
+			Correlator: submit.Correlator, Detector: submit.DetectorName,
+			Manifest: submit.SyntheticManifestPath, Result: "REFUSED", Message: refused.Error(),
+			SubmittedAt: time.Now().UTC().Format(time.RFC3339)})
+		return serve.SnapshotResult{}, refused
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 

@@ -108,6 +108,13 @@ type Server struct {
 	// pack to author in.
 	Authoring Authoring
 
+	// ReadDeclarations records what catalog versions declare, read from the files on disk that are
+	// them, and answers why for each it could not. Nil says nothing here can read one.
+	ReadDeclarations func(ctx context.Context, unread []store.CatalogQuery) (map[string]string, error)
+
+	// declarations is what reading them has learned, written off the request path.
+	declarations declarationState
+
 	// running holds how to stop each run this process started. Only those: a run left `running`
 	// by a server that died is not one this server can stop.
 	runsMu  sync.Mutex

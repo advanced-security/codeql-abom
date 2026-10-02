@@ -104,6 +104,42 @@ func TestAnUnsetCodeScanningConfigIsNotPassedAtAll(t *testing.T) {
 	}
 }
 
+// The extractor indexes workflows only at the source root, so a staged reusable workflow is absent
+// unless an include reaches it. Replacing the variable instead of appending would drop every
+// `action.yml` the defaults include, and an inherited value is somebody else's configuration.
+func TestAnIndexIncludeIsAppendedToTheFiltersTheExtractorReads(t *testing.T) {
+	stub, _ := stubCodeQL(t, "printf '%s' \"$LGTM_INDEX_FILTERS\" > \"$(dirname \"$0\")/filters.txt\"\nexit 0\n")
+	t.Setenv("LGTM_INDEX_FILTERS", "exclude:vendor/**")
+	r := &Runner{CodeQLPath: stub}
+
+	db := filepath.Join(t.TempDir(), "db")
+	if err := r.CreateDatabaseIndexing(context.Background(), "/src", db, "actions",
+		[]string{".github/workflows/external/**/*.yml", ".github/workflows/external/**/*.yaml"}); err != nil {
+		t.Fatalf("CreateDatabaseIndexing: %v", err)
+	}
+
+	got := string(mustRead(t, filepath.Join(filepath.Dir(stub), "filters.txt")))
+	want := "exclude:vendor/**\n" +
+		"include:.github/workflows/external/**/*.yml\n" +
+		"include:.github/workflows/external/**/*.yaml"
+	if got != want {
+		t.Errorf("LGTM_INDEX_FILTERS = %q, want %q", got, want)
+	}
+}
+
+// A code scanning configuration rewrites the index filters itself, so the two together would let
+// one silently replace the other and the staged workflows would vanish without an error.
+func TestAnIndexIncludeRefusesACodeScanningConfig(t *testing.T) {
+	stub, _ := stubCodeQL(t, "exit 0\n")
+	r := &Runner{CodeQLPath: stub, CodeScanningConfig: ".github/codeql/codeql-config.yml"}
+
+	err := r.CreateDatabaseIndexing(context.Background(), "/src", filepath.Join(t.TempDir(), "db"),
+		"actions", []string{".github/workflows/external/**/*.yml"})
+	if err == nil {
+		t.Fatal("an index include was combined with a code scanning configuration")
+	}
+}
+
 // A repository with no workflows and no action manifest yields no database, and that is a
 // permanent answer rather than a failure to retry.
 func TestCreateDatabaseReportsNoSourceCode(t *testing.T) {

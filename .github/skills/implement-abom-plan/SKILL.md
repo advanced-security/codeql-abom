@@ -172,6 +172,10 @@ That is the only definition of verified, and CI runs the same target. Do not ass
 equivalent by hand — `check-corrupt` runs first and is not optional, because this environment
 intermittently prepends a duplicate `package` clause when writing a Go file.
 
+CI also runs `self-audit.yml`, which `make quality` reproduces and `make verify` does not include.
+Run it when a change builds a path, command or URL from anything the store, a checkout or a
+response hands back: closure databases passed `make verify` with 16 Go findings they introduced.
+
 Never pipe build, test or lint output through `tail`, `head` or `grep`; read it whole.
 
 For interface work, `ui-test` has no CSS engine, so a wrapped label or an overflowing grid passes
@@ -271,6 +275,9 @@ status theatre.
   without `-race`. Inspect scan/search targets, not index-name substrings, in cost guards.
 - Existing coverage, reach, BOM and submission totals remain regular. A view selecting extended
   evidence must name that regular context, and unsupported exports must refuse rather than widen.
+- A closure run is named after its owned root at the root's commit, so any reader joining
+  `abom_query_run` by repository and commit meets it. The source guard covers edge and finding
+  reads only: diff the API before and after a closure run to find the ledger readers it misses.
 
 ## Lock-aware checks
 

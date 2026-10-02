@@ -20,6 +20,13 @@ phantom bug in `frontier.Enqueue`, which was correct all along.
 Corollary worth checking on any fixture: if its tuples share a location or other identity field,
 it is not exercising the identity logic at all.
 
+## Where a new fixture goes
+
+Under the repository-root `testdata/`, once, read from a package as `../../testdata/...` the way
+`cmd/abom-corpus` reads `testdata/corpus`. Never a new `internal/*/testdata/` directory, and never
+a copy per package that reads it: copies are a second thing to keep identical, and the operator
+asked for one place. The package-local copies described below predate that.
+
 ## Regenerate
 
 ```bash
@@ -37,6 +44,20 @@ compilation cache. Pause with `make stop` first.
 
 Those three copies are byte-identical and must stay so. Regenerating one by hand drifts the
 others, and the tests that read them start disagreeing for no visible reason.
+
+### The closure fixtures
+
+```bash
+.github/skills/regenerate-abom-fixtures/scripts/regen-closure-fixture.sh
+```
+
+`ql/actions/graph-extraction/test/ResolvedCallees` is a staged closure laid out exactly as
+`closure.Layout.Write` stages one, which `TestTheStagerReproducesTheCheckedInClosureTree` holds.
+The script builds it with the closure's index include, then builds each repository's own files as
+a regular database, and writes the closure's SARIF and each repository's SARIF and decoded edges
+into the repository-root `testdata/closure/`, the one copy `internal/ingest` and `internal/expand`
+both read. The regular copies are the crawl's record a closure is built from, and what makes "one
+defect seen both ways is one finding" testable rather than assumed.
 
 Read the diff before accepting it. A fixture change is a change to what every test using it
 means.

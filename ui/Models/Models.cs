@@ -1104,6 +1104,12 @@ public sealed record Objective
 
     public IReadOnlyList<CycleSpend> Recent { get; init; } = [];
     public CycleTotal Totals { get; init; } = new();
+
+    /// <summary>
+    /// Commits a reference resolves to whose declarations were recorded before ABOM kept each
+    /// commit's own. Counted on every request, so zero means every one is known.
+    /// </summary>
+    public int Unobserved { get; init; }
 }
 
 /// <summary>How much of one depth has been settled.</summary>
@@ -1514,6 +1520,12 @@ public sealed record CatalogQuery
     /// </summary>
     public IReadOnlyDictionary<string, string>? Metadata { get; init; }
 
+    /// <summary>
+    /// Why <see cref="Metadata"/> is absent, in the server's words: being read now, no file on disk
+    /// being this version, or no version recorded at all. Empty where it is present.
+    /// </summary>
+    public string MetadataUnread { get; init; } = string.Empty;
+
     /// <summary>The declared score's band, for a query that reports findings; empty otherwise.</summary>
     public string Band { get; init; } = string.Empty;
 }
@@ -1866,10 +1878,18 @@ public sealed record FindingEvaluation
     public string Source { get; init; } = string.Empty;
     public string CliVersion { get; init; } = string.Empty;
     public string Mode { get; init; } = string.Empty;
+
+    /// <summary>
+    /// What the evaluation analyzed: the finding's own repository for one checkout, and the owned
+    /// repository whose closure reached the finding for a closure.
+    /// </summary>
+    public string Repository { get; init; } = string.Empty;
     public string Commit { get; init; } = string.Empty;
     public string RanAt { get; init; } = string.Empty;
 
-    /// <summary><c>crawl</c>, <c>run</c> or <c>corpus</c>; empty when it was not recorded.</summary>
+    /// <summary>
+    /// <c>crawl</c>, <c>run</c>, <c>closure</c> or <c>corpus</c>; empty when it was not recorded.
+    /// </summary>
     public string RecordedBy { get; init; } = string.Empty;
     public IReadOnlyList<FindingRun> Runs { get; init; } = [];
 }

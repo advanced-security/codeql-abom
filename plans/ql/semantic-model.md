@@ -2,9 +2,10 @@
 
 **Status:** Unblocked for design, and item 3 is wider than it looked. Dataflow crosses a `uses:`
 boundary at any depth once the callee is staged under `.github/actions/external/${owner}/${repo}/`,
-so the flow item 3 needs is reachable through
-[`ql/closure-database.md`](closure-database.md) rather than confined to a repository that happens to
-appear once. What that plan cannot give it is two references to one dependency inside one closure.
+so the flow item 3 needs is reachable through a closure database (`codeql-abom closure`,
+[analysis modes](../../docs/architecture.md#analysis-modes)) rather than confined to a repository
+that happens to appear once. What a closure cannot give it is two references to one dependency
+inside one closure.
 
 ## Why this exists
 
@@ -43,8 +44,8 @@ the one that matters here: canonical data must carry structured values, never di
    a `uses:` boundary, which a staged closure provides. Each resolved candidate is a statement with
    its own provenance, never a replacement for the reference as written. **A dependency named at two
    references inside one closure can only be staged at one of them**, so a candidate resolved there
-   is a statement about the staged reference and says so. Depends on 1 and on
-   [`ql/closure-database.md`](closure-database.md).
+   is a statement about the staged reference and says so. Depends on 1; the closure database it
+   reads is built.
 4. **A remote-derived reference is reported as a finding, by a rule.** Not as a property of a node
    that the interface colours differently. Depends on 3.
 

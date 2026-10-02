@@ -357,6 +357,14 @@ and a missing repository alike, so nothing retries it on its own. An operator's 
 them or for one named repository, puts it back with a fresh attempt budget. A reference that names
 no repository, such as one built from an expression, is never put back.
 
+**A commit whose declarations are not known is met again, a cycle's claim at a time.** Before it
+claims, each cycle puts back analyzed dependencies standing at a commit [recorded before sightings
+kept content](#locks), so it analyzes those commits itself: one row per commit, in the order the
+crawl claims, until as many analyzed dependencies are back in the queue as one cycle claims. Work
+put back for any other reason holds a place, and so does an attempt that failed, so an outage
+cannot move the backlog into retrying a window at a time. A server start puts nothing back, and
+Settings states how many such commits remain.
+
 ### Locks
 
 A workflow can name `owner/action@v1` while its native Actions lockfile selects an older commit
@@ -396,10 +404,24 @@ as written, never in its place:
 - exposure admits a consumer only through the commit it runs: its own lock's choice, or what its
   reference resolved to, and a caller's lock binds the route to that caller.
 
-Both walks take a dependency's children from every regular run that sighted the edge, not only the
-latest: an edge two analyzed commits share is one row. Reach and the owned closure stay
-component-level by design: they already union every analyzed version's edges, so a locked commit
-enters them through its own analysis.
+**Each commit's declarations are its own.** An edge is keyed by the location that declares it, so
+two analyzed commits declaring different things there share one row, which holds the last writer's.
+Every regular run's sighting keeps what its own commit declared — target, reference, pin comment —
+and both walks read a dependency's children from the sightings at the commit they stand at, never
+from the row. A sighting recorded before content was kept is known only for the run that wrote the
+row; any other says its commit declared something there and not what, and adds no route rather than
+borrowing the row's. Walks stand only at live commits — those a reference resolves to; every
+analyzed commit of a repository nothing resolves — and a commit settled as identical to an analyzed
+one reads that commit's sightings. Blast radius reads the same live sightings and still counts
+across versions; the owned closure stays component-level by design.
+
+**A snapshot is never built from what is not known.** A submission is refused, before anything is
+sent and with the refusal recorded, while its closure reads a commit analyzed only before sightings
+kept content in a repository analyzed at more than one commit; the preview names those commits as
+`unobserved`. An edges run counts for the skip only once its sightings are written with content, so
+meeting such a commit again analyzes it, and a running crawl meets them [a claim's worth at a
+time](#the-queue). Where nothing is re-observed, exposure, blast radius and node reach come out
+byte-identical to the row-based walks; a re-observed commit adds the routes it declares.
 
 **Unreadable and changed locks.** A lock with one malformed entry is unsupported as a whole and
 selects nothing, and a digest of the wrong length or alphabet selects nothing whatever the parser
@@ -430,8 +452,9 @@ tooling plan in `plans/tools/actions-lock.md` owns it.
 
 | Table | |
 | --- | --- |
-| `abom_query_run`, `abom_query_run_ref` | One row per evaluation: the resolved commit, checkout filter, analysis mode, pack digest and CLI version that produced it, and what recorded it — the crawl, a run, or a replayed recording |
+| `abom_query_run`, `abom_query_run_ref` | One row per evaluation: the resolved commit, checkout filter, analysis mode, pack digest and CLI version that produced it, and what recorded it — the crawl, a run, a closure, or a replayed recording |
 | `abom_query_run_rule` | The rules one evaluation ran, each with its own query version, pack and source. A lane runs a whole suite in one invocation, so this, not the evaluation, says where a finding's rule came from |
+| `abom_closure`, `abom_closure_member` | What one closure database was built from, keyed by the digest its run carries: the owned repository at its commit, whether it was anchored, and each callee staged with its commit, its own path and where the closure put it |
 | `abom_ingest_ledger` | What has already been read, so it is not read twice |
 | `abom_ref_resolution` | Which commit a tag or branch pointed at, when it was measured |
 | `abom_commit_content`, `abom_protected_branch` | Content equivalence, and which branches GitHub protects |
@@ -460,12 +483,53 @@ Inventory and Explorer expose the selection and preserve it in shared URLs. Find
 state their recorded shapes; a shared defect is labeled mixed, not duplicated. Extended views
 identify the regular coverage and reach measurements that remain alongside them.
 
+**The closure database is the one writer of `extended`.** `codeql-abom closure` roots one
+database at each owned repository, at the commit its regular analysis describes, and stages
+every composite action and reusable workflow that repository's submission closure reaches, at
+the commit the closure selects: the one a lock chose, a commit the reference already is, or the
+one the crawl analyzed the reference at. Composites go under `.github/actions/external/` and
+reusable workflows under `.github/workflows/external/`, named exactly as the `uses:` line names
+them, because `codeql/actions-all` resolves a call by string equality; a callable is decided from
+the checked-out `action.yml` with GitHub's own parser, or a workflow's `on: workflow_call`, and
+nothing else is staged. Only the callee's file is copied, never its checkout, which would hand
+the library a second repository root. Two commits of one staged callee refuse the closure and
+name both. A repository holding no workflow is anchored with a synthesized one, never a finding
+location. Staged workflows are indexed by appending to `LGTM_INDEX_FILTERS`, and the owned tier's
+findings lane runs over the result. A member with no commit on record, or no repository, is named
+rather than guessed, and so is one whose stored name or commit is not something a directory can be
+built from: a full commit id of a repository whose names stay where they are put.
+
+A closure writes findings and their sightings, and nothing else: no edge, node, repository or
+queue row. Its edges are each repository's own, key for key, so storing them would restate
+evidence, and where a location-keyed row was overwritten by a later commit it would be refused. A finding is stored against the repository holding its file, at the path it has
+there, so it joins the defect that repository's own analysis reports and attaches to that
+repository's nodes; attribution reads repositories and never creates one. The run is named after
+the root at its commit, and its identity adds the closure digest — the root and every staged
+callee at their commits, the anchor, the layout and the index includes — whose manifest is
+recorded last, so a closure whose ingest failed is built again and one already on record is not.
+A finding's trace names the owned repository whose closure reached it.
+
+A run named after its root at the root's commit meets every reader that joins runs by repository
+and commit, so the readers of the regular ledger — what the queue says it ran, a requeue after an
+upgrade, the catalog's run counts, and where a rule's query came from — read regular runs. A
+closure resolves the owned tier without recording what its suites resolved to.
+
+**What a closure adds, and what it is not allowed to move.** A resolved callee is the edge it
+already is: the edge names the callee and the manifest names the commit, and on the crawled
+organization no staged callee went unresolved. A route across a boundary is the code flow the
+extended sighting keeps verbatim. Extended evidence enters no aggregate, reach included, and is
+read through `mode=` and a finding's trace. On the crawled organization the closures resolved 15
+calls into another repository and reported no finding the regular analysis had not; on a staged
+fixture the same rule fires as `code-injection/critical` across two staged composites where each
+callee's own analysis reports `code-injection/medium`. A sink in a composite or reusable workflow
+with no `uses:` attaches to no node, which is the attribution gap regular findings already have.
+
 ### The graph — a projection of the evidence
 
 | Table | |
 | --- | --- |
 | `abom_node`, `abom_edge` | Actions, workflows, repositories and images, and the `uses:` relationships between them |
-| `abom_edge_sighting` | Each run that observed a shared edge, without creating a second edge identity |
+| `abom_edge_sighting` | Each run that observed a shared edge, and what that run's commit declared there, without creating a second edge identity. No recorded target is unknown, never the row's |
 | `abom_containment` | What holds what — a repository's own files, an account's repositories. A table of its own because containment is drawn rather than declared |
 | `abom_observation` | Facts a query stated about a subject, keyed by the statement rather than the run. Every job-level fact — permissions, triggers, runner, privilege — attaches to a `job` node, never to the workflow above it |
 | `abom_graph_generation` | Generation and epoch, so a client can ask for a delta. Nodes, edges and containment each keep their own watermark |
@@ -537,10 +601,28 @@ working copy's tests run. The catalog shows a version's declared band before it 
 anything; a table or graph query declares none and shows none, and a version nothing has resolved
 says *not read yet* rather than *declares nothing*.
 
+**Nobody has to ask for a declaration.** The server reads every catalog version that has none as
+it starts, and the catalog sets off another read whenever it lists one nothing has looked for — an
+edited working copy, a ledger written before declarations were kept, or a database moved from
+another machine. A version is the hash of its query and the libraries it imports, so the only file
+read for it is one hashing to that version: found at the pack version it ran from, then wherever
+the search path puts the pack now, and verified by its `@id`. The same id in the same pack version
+may declare another score, so nothing else stands in. Each version is therefore read once, and one
+no file is gets a reason instead, kept until the server stops: *not on disk* names the pack version
+that is missing and the ones that are there, because a local pack answers a reference to any
+version of itself. A run that recorded no version says its declaration *cannot be known*, which
+is permanent, and a server whose CodeQL cannot run says so rather than calling every pack missing.
+Measured on the crawled organization: 0 of 45 versions declared before, 35 after the first start
+with no request made, and the 10 left are 3 unversioned rows, 5 `abom/*` versions edited since
+they ran, the operator's query outside that server's search path, and one upstream hash no file on
+disk has.
+
 ```mermaid
 flowchart LR
     META["codeql resolve metadata<br/>every pair"] -->|"a round, a run,<br/>a working copy's tests"| QM["abom_query_metadata"]
+    SWEEP["the server, as it starts<br/>and as the catalog lists<br/>a version nobody read"] -->|"only the file hashing<br/>to the version"| META
     QM --> CAT["the catalog's<br/>declared band"]
+    SWEEP -->|"no such file:<br/>why, per version"| CAT
     SARIF["a SARIF result<br/>level, @security-severity"] --> F["abom_finding<br/>NULL when undeclared"]
     F --> BAND["one banding<br/>critical, high, medium,<br/>low, unknown"]
     BAND --> COUNTS["every findings count"]
@@ -627,6 +709,7 @@ assert an order between jobs that actually run in parallel.
 | Settings | What the operator claims, and what discovery does: analysis is started and requeued here |
 | `report` | Terminal summary |
 | `bom` | CycloneDX 1.6 and SPDX 2.3, with purls |
+| `closure` | Each owned repository analyzed with its staged callees, recorded as extended evidence |
 | `submit` | A dependency snapshot sent to GitHub's submission API |
 
 **Four surfaces over one scope, and one over the queries.** A security team asks one question in

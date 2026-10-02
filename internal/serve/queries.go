@@ -147,6 +147,9 @@ type catalogRow struct {
 	ExtendedTestRefusal string `json:"extendedTestRefusal,omitempty"`
 	// ReviewRefusal is the same for review, which a comparison of a run of this version earns.
 	ReviewRefusal string `json:"reviewRefusal,omitempty"`
+	// MetadataUnread is why the version's declaration is not on the row, said by the server; empty
+	// where it is, and on a lane, which declares nothing of its own.
+	MetadataUnread string `json:"metadataUnread,omitempty"`
 }
 
 func (s *Server) writeCatalog(w http.ResponseWriter) {
@@ -207,19 +210,37 @@ func (s *Server) writeCatalog(w http.ResponseWriter) {
 		}
 		rows = append(rows, row)
 	}
+	s.noteDeclarations(rows)
 	writeJSON(w, map[string]any{"queries": rows, "stages": store.Stages()}, nil)
 }
 
-// workingCopy is what the operator's pack holds on disk now, which the store cannot read, and the
-// steps each query there has taken.
-func (s *Server) workingCopy() ([]store.WorkingQuery, map[string][]authoring.Step, error) {
-	steps := map[string][]authoring.Step{}
+// workingQueries is what the operator's pack holds on disk now, which the store cannot read, as
+// the files and as the catalog lists them.
+func (s *Server) workingQueries() ([]authoring.Query, []store.WorkingQuery, error) {
 	if s.QueryDir == "" {
-		return nil, steps, nil
+		return nil, nil, nil
 	}
 	queries, err := authoring.Workspace(s.QueryDir)
 	if err != nil {
 		return nil, nil, err
+	}
+	out := make([]store.WorkingQuery, 0, len(queries))
+	for _, q := range queries {
+		pack, _, _ := runner.PackOf(q.Path)
+		out = append(out, store.WorkingQuery{
+			QueryID: q.ID, QueryVersion: q.Version, Pack: pack, Kind: q.Kind,
+		})
+	}
+	return queries, out, nil
+}
+
+// workingCopy is what the operator's pack holds on disk now, and the steps each query there has
+// taken.
+func (s *Server) workingCopy() ([]store.WorkingQuery, map[string][]authoring.Step, error) {
+	steps := map[string][]authoring.Step{}
+	queries, out, err := s.workingQueries()
+	if err != nil || len(queries) == 0 {
+		return out, steps, err
 	}
 	printed, err := s.Store.NewestASTs()
 	if err != nil {
@@ -231,12 +252,7 @@ func (s *Server) workingCopy() ([]store.WorkingQuery, map[string][]authoring.Ste
 	if err != nil {
 		cli = ""
 	}
-	out := make([]store.WorkingQuery, 0, len(queries))
 	for _, q := range queries {
-		pack, _, _ := runner.PackOf(q.Path)
-		out = append(out, store.WorkingQuery{
-			QueryID: q.ID, QueryVersion: q.Version, Pack: pack, Kind: q.Kind,
-		})
 		tests, err := s.Store.QueryTestsOf(q.ID)
 		if err != nil {
 			return nil, nil, err

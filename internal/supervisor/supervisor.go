@@ -399,6 +399,11 @@ func (s *Supervisor) cycle(ctx context.Context) time.Duration {
 	// claims its work, rather than waiting for the next one.
 	s.readOrganization(ctx)
 
+	// Before the claim too, so what is put back is analyzed this cycle rather than the next.
+	if err := s.reobserve(); err != nil {
+		return s.fail("putting back commits whose declarations are not known", err)
+	}
+
 	s.setState(StateWorking)
 	stats, err := s.Expander.Run(ctx, s.Options)
 	s.record(func(st *Status) { recordCycle(st, stats) })
@@ -604,6 +609,24 @@ func (s *Supervisor) refreshAdvisories(ctx context.Context) {
 	if n > 0 {
 		s.logf("refreshed %d advisories for the packages now in the graph", n)
 	}
+}
+
+// reobserve returns analyzed dependencies whose commit's declarations are not known to the queue,
+// one claim's worth at a time, so the crawl analyzes those commits again.
+//
+// Claimable work rather than freshness: until a commit is observed, a walk through it can miss a
+// route it declares and a submission reading it is refused. That is a gap in what is known, and
+// freshness waits on every gap being closed.
+func (s *Supervisor) reobserve() error {
+	got, err := s.Store.Reobserve(s.Options.Limit)
+	if err != nil {
+		return err
+	}
+	if got.Requeued > 0 {
+		s.logf("put back %d analyzed dependencies to observe what their commits declared; "+
+			"%d commits are not yet observed", got.Requeued, got.Unobserved)
+	}
+	return nil
 }
 
 // recheck probes analyzed dependencies for ref drift once completeness is satisfied. It is

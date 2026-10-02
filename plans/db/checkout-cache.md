@@ -39,9 +39,9 @@ fetch and cache hits all see a commit ref rather than a tag. The cache remains r
 set and does not need one stored checkout per consumer. Lock-aware correctness must also work with
 retention disabled; enabling this cache is not permission to start honoring native locks.
 
-This is worth having on its own terms, with nothing else built. It is also the precondition for
-[`ql/closure-database.md`](../ql/closure-database.md), which needs many checkouts present at once
-and cannot afford to fetch each of them once per consumer.
+This is worth having on its own terms, with nothing else built. A closure database also fetches
+through it (`codeql-abom closure --cache-dir`), on misses as well as hits, because it needs many
+checkouts present at once and cannot afford to fetch each of them once per consumer.
 
 ## Pending
 
