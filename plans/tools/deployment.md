@@ -1,6 +1,6 @@
 # Installable releases and distributed Kubernetes execution
 
-**Status:** Source onboarding and the release workflow exist; clean-host qualification, the first release run and installed-asset resolution are pending.
+**Status:** Source onboarding and the release workflow exist; clean-host qualification, installed-asset resolution and the first regular release are pending.
 
 ## Why this exists
 
@@ -152,12 +152,13 @@ writing to GitHub.
 
 ### Release archive contract
 
-`make release-archive` and the [release workflow](#release-workflow) produce this layout; no release
-has been published, and there is no installation guide yet.
+`make release-archive` and the [release workflow](#release-workflow) produce this layout; there is
+no installation guide yet.
 
 A release is `vX.Y.Z`, where `X.Y.Z` is the CodeQL CLI pinned in `.codeql-version`, or
-`vX.Y.Z-<pre-release>` for a further release against that same CLI — `-next.N` by the convention
-the CodeQL Development MCP Server uses. [release-version.sh](../../scripts/release-version.sh)
+`vX.Y.Z-<pre-release>` against that same CLI: `-rcN` for a candidate before `vX.Y.Z`, and `-next.N`
+for a further release after it, by the convention the CodeQL Development MCP Server uses.
+[release-version.sh](../../scripts/release-version.sh)
 enforces the form and sets every pack's version to the release's; releasing never moves the CLI
 pin, which `update-codeql.yml` owns. Only ABOM's own pack versions take the suffix: the CLI pin,
 upstream pack pins and the ql-mcp release ABOM names are other projects' regular releases, and
@@ -404,15 +405,16 @@ organization-wide crawl merely to validate the instructions.
    Test unrelated working directories, symlinks, spaces and read-only installations, and resolve
    workspace pack dependencies without rewriting installed files. Then make the smoke test start
    the server from elsewhere.
-2. **Run the release workflow for the first time, as `v2.27.1`.** Needs the repository setup under
-   [Release workflow](#release-workflow). The four native cells, the attestation step and the
-   draft-to-published check have only been rehearsed locally on macOS arm64; correct this plan
-   with anything the first run refutes. Independent of item 1: a release may ship before it, with
-   release notes that say to start the server from the archive root.
+2. **Publish the first regular release, `v2.27.1`.** Every stage has run for the release
+   candidates except the one a regular release takes: publishing with `--prerelease=false
+   --latest` in [release-publish.yml](../../.github/workflows/release-publish.yml). Correct this
+   plan with anything that run refutes. Independent of item 1: the release notes already say to
+   start the server from the archive root.
 3. **Qualify the platform floors.** Linux archives are built on Ubuntu 22.04 images and record
    their newest glibc symbol; macOS archives target 12.0, Go's own floor. Run each archive on its
    recorded floor with the pinned CodeQL, including the Rosetta and Xcode requirements on Apple
-   silicon, before any floor appears in release documentation. Depends on item 2.
+   silicon, before any floor appears in release documentation. The candidates' archives are
+   enough to start on.
 4. **Exercise the actual download path.** Document download, provenance/checksum verification,
    extraction into a versioned user-writable prefix, PATH setup, configuration and startup.
    Use appropriate Linux/macOS verification commands and an expected repository/workflow with
@@ -533,7 +535,7 @@ query-kind routing rather than duplicating analysis policy.
   commands and epoch behavior. This plan consumes them and adds the task/artifact recovery
   contract; it does not implement a second restore engine.
 - [GitHub hosts](../api/github-hosts.md) owns destination and credential routing. Containerization
-  does not certify GHES or another host. Preserve the supported one-owned-organization boundary.
+  does not certify GHES or another host, and does not change which organizations ABOM reads.
 - [Checkout cache](../db/checkout-cache.md) and [database cache](../db/database-cache.md) retain
   ownership of identity and retention semantics. Coordinate host-aware and distributed reuse
   instead of changing their policies incidentally.

@@ -31,7 +31,7 @@ reach.
 ## Pending
 
 1. **A `@kind graph` query producing the closure.** Over one owned repository's closure database,
-   one result set per closure, run by path the way the closure already runs
+   one result set per closure, run by path as the closure integration test runs
    `AbomResolvedCallees.ql`, which pins the resolution this walk follows. Depends on nothing.
 2. **Compare, and name what disagrees.** Per node: dependents according to `abom_blast_radius`,
    dependents according to the query, and the set difference in both directions. Depends on 1.

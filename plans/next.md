@@ -42,7 +42,7 @@ the ranked work, not after it.** Release readiness deserves its own parallel eff
 documentation and deployment packaging can be isolated to `docs/`, `plans/` and the new `infra/`
 directory. Keep the README entry point, build integration and release workflows narrowly scoped.
 The [source-install recipe](../docs/deployment/source.md) needs clean-machine qualification;
-portable Linux/macOS amd64/arm64 release bundles are the first new deployment to build against
+portable Linux/macOS amd64/arm64 release bundles are the first new deployment to qualify against
 the plan's archive contract. Multi-stage GHCR images and the private Helm deployment follow
 within the same workstream.
 
@@ -189,7 +189,7 @@ that reason, and **everything after them moved down four places without being re
     consume measured evidence from [version resolution](db/version-resolution.md).
 18. **[A repository lookup names its host and its credential](api/github-hosts.md)** — Git, REST
     and `gh` currently choose destinations separately. Start with a shared host/identity contract
-    and two-host tests, preserving one owned organization and destination-scoped credentials.
+    and two-host tests, preserving declared ownership and destination-scoped credentials.
     Coordinate cache identity with the [checkout cache](db/checkout-cache.md), which keys a fetch by
     commit and sparse filter and carries no host in that key; advertising enterprise-host support
     still requires an authorized environment, not only mocks.
@@ -317,7 +317,7 @@ refusal.
 
 ## Built, with refinements nobody has ranked
 
-These **fifteen** plans describe workstreams that are **built and carrying real data**, and each
+These **sixteen** plans describe workstreams that are **built and carrying real data**, and each
 keeps a short list of refinements. They are not ranked because none of them is the next thing to
 build; they are the backlog a workstream leaves behind, and a reader asking "what next" should not
 have to read past them. They are listed because a plan in neither the ranking nor *Deferred* is
@@ -345,6 +345,7 @@ measurement makes it urgent.
 | [db/pruning.md](db/pruning.md) | tombstones, compaction and what a delta reports |
 | [db/ref-provenance.md](db/ref-provenance.md) | requested refs, governing locks and analyzed commits through the ledger |
 | [db/supply-chain.md](db/supply-chain.md) | classification over the seed-reachable closure |
+| [ui/theme.md](ui/theme.md) | whether a color still names the same thing after a theme toggle |
 | [ui/tier-suites.md](ui/tier-suites.md) | per-tier suite binding, its precedence, and cost guidance for a tier's re-analysis |
 
 ## Gaps with a decision to make

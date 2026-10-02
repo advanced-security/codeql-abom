@@ -44,8 +44,9 @@ credential contract across enumeration, ref resolution, cloning and submission.
 
 ## Dependencies and boundaries
 
-This is access to one owned organization's dependencies, not enterprise enumeration or federation
-across organizations. Public lookup does not declare ownership or extend the crawl's roots.
+This routes each lookup to its host; it does not choose which organizations ABOM reads, which the
+enterprise App's installations do. Public lookup does not declare ownership or extend the crawl's
+roots.
 
 [enterprise-server.md](enterprise-server.md) owns App identity, credential renewal, ingress and workflow-caller
 authentication. Those deployment requirements do not block deterministic local host-routing tests.
