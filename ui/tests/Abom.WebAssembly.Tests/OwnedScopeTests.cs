@@ -273,6 +273,22 @@ public class OwnedScopeTests : AbomTestContext
         Assert.Empty(cut.FindAll("[data-abom-unaccounted='ops-team']"));
     }
 
+    // Every titled column sorts. A template column given only a sort key draws a header nobody can
+    // click, and the accounts could not be grouped by kind.
+    [Fact]
+    public void EveryMembershipColumnSorts()
+    {
+        ServeEditable("[]");
+        var cut = Render<Pages.Settings>();
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-memberships]")));
+        OpenMemberships(cut);
+
+        var unsortable = cut.FindAll("[data-abom-memberships] thead th .column-header")
+            .Where(h => h.TextContent.Trim().Length > 0 && h.QuerySelector(".sortable-column-header") is null)
+            .Select(h => h.TextContent.Trim()).ToList();
+        Assert.Empty(unsortable);
+    }
+
     // The membership list is collapsed until asked for, so anything reaching into it opens it
     // first. Stated once here rather than as a click repeated in every test that declares.
     private static void OpenMemberships(IRenderedComponent<Pages.Settings> cut)

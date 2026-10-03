@@ -128,13 +128,14 @@ else
                     <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
                                StartIcon="@Icons.Material.Outlined.PlaylistAddCheck"
                                Disabled="@(!CanConvert)" OnClick="@(() => Convert(string.Empty, []))"
-                               data-abom-held-convert-all>Convert all to findings</MudButton>
+                               title="@ConvertAllReason" data-abom-held-convert-all>Convert all to findings</MudButton>
                 </span>
             }
             <MudButton Size="Size.Small" DropShadow="false"
                        Variant="@(_picking ? Variant.Filled : Variant.Outlined)"
                        StartIcon="@Icons.Material.Outlined.RateReview"
-                       OnClick="@(() => _picking = !_picking)" data-abom-results-pick>
+                       OnClick="@(() => _picking = !_picking)" data-abom-results-pick
+                       title="Show or hide the form for asking to change what this run's query reported.">
                 Ask for a change
             </MudButton>
         }
@@ -172,20 +173,24 @@ else
                         Class="abom-grid abom-table abom-results abom-grid-windowed abom-grid-nested">
             <thead>
                 <tr>
-                    <th>Repository</th>
+                    <th><HeaderTip Tip="Which repository this run analyzed or still has to analyze.">Repository</HeaderTip></th>
                     @foreach (var query in Columns)
                     {
                         <th class="abom-cell-right" data-abom-result-query="@query">
-                            @(Columns.Count == 1 ? "Results" : query)
+                            <HeaderTip Tip="@(Columns.Count == 1
+                                                ? $"How many results {query} reported in each repository."
+                                                : $"How many results the {query} query reported in each repository.")">
+                                @(Columns.Count == 1 ? "Results" : query)
+                            </HeaderTip>
                         </th>
                     }
                     @if (ShowsTotals)
                     {
-                        <th class="abom-cell-right">All queries</th>
+                        <th class="abom-cell-right"><HeaderTip Tip="How many total results this run recorded for the repository, including results not split by query.">All queries</HeaderTip></th>
                     }
                     @if (_all)
                     {
-                        <th>Status</th>
+                        <th><HeaderTip Tip="Whether this repository has been analyzed, is still waiting, failed, or could not be analyzed.">Status</HeaderTip></th>
                     }
                     @if (_run.Held)
                     {
@@ -239,6 +244,9 @@ else
                                 {
                                     <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
                                                Class="abom-plain-button" OnClick="@(() => ToggleHeld(member.Repository))"
+                                               title="@(_held.ContainsKey(member.Repository)
+                                                          ? $"Hide the held results for {member.Repository}."
+                                                          : $"Show the held results for {member.Repository}.")"
                                                data-abom-held-toggle="@member.Repository">
                                         @(_held.ContainsKey(member.Repository) ? "Hide what it held" : "What it held")
                                     </MudButton>
@@ -466,6 +474,7 @@ else
                     <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
                                Disabled="@(!CanConvert || chosen.Count == 0)"
                                OnClick="@(() => Convert(repository, chosen))"
+                               title="@($"Convert the chosen held results for {repository} into findings.")"
                                data-abom-held-convert-chosen="@repository">
                         @(chosen.Count == 0 ? "Convert chosen" : $"Convert {CountText.Of(chosen.Count, "chosen result", "chosen results")}")
                     </MudButton>
@@ -473,6 +482,7 @@ else
                     <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
                                Disabled="@(!CanConvert)" OnClick="@(() => Convert(repository, []))"
                                aria-label="@($"Convert everything {repository} held to findings")"
+                               title="@($"Convert every held result for {repository} into findings.")"
                                data-abom-held-convert-member="@repository">
                         Convert all in this repository
                     </MudButton>
@@ -591,7 +601,8 @@ else
                     {
                         <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
                                  Color="@(PickQuery == q ? Color.Primary : Color.Default)"
-                                 OnClick="@(() => ChooseQuery(q))" data-abom-pick-query="@q">@q</MudChip>
+                                 OnClick="@(() => ChooseQuery(q))" data-abom-pick-query="@q"
+                                 title="@($"Pick {q} as the CodeQL rule to ask about.")">@q</MudChip>
                     }
                 </div>
             }
@@ -599,8 +610,12 @@ else
             {
                 <MudSimpleTable Dense="true" Class="abom-grid abom-table abom-grid-nested" data-abom-results-pickable>
                     <thead>
-                        <tr><th>Repository</th><th class="abom-cell-right">Results</th><th>Pick</th></tr>
-                    </thead>
+                    <tr>
+                        <th><HeaderTip Tip="Which repository this query analyzed in this run.">Repository</HeaderTip></th>
+                        <th class="abom-cell-right"><HeaderTip Tip="How many results this query reported in this repository.">Results</HeaderTip></th>
+                        <th><HeaderTip Tip="Whether to ask for a false alarm or missed result change for this repository.">Pick</HeaderTip></th>
+                    </tr>
+                </thead>
                     <tbody>
                         @* Only where the query looked: a repository nothing ran against shows nothing to pick. *@
                         @foreach (var member in _run!.Members.Where(m => m.Counted && m.ByQuery.ContainsKey(query)))
@@ -643,6 +658,7 @@ else
                     <MudSpacer />
                     <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" DropShadow="false"
                                Disabled="@(_falseAlarms.Count + _missed.Count == 0)" OnClick="Ask"
+                               title="@($"Create a draft request asking to change the results for {query}.")"
                                Class="abom-ask-change" data-abom-results-ask>Ask for a change to @query</MudButton>
                 </div>
             }
@@ -655,6 +671,7 @@ else
         {
             <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
                        OnClick="@(() => ShowFindings(repository))"
+                       title="@($"Show the results reported in {repository} so you can pick false alarms.")"
                        data-abom-member-findings="@repository">Pick results that should not have fired</MudButton>
         }
         else if (listed is null)
@@ -701,6 +718,9 @@ else
                             </MudText>
                             <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
                                        Class="abom-plain-button" OnClick="@(() => ToggleTrace(f.FindingRowId))"
+                                       title="@(_traces.ContainsKey(f.FindingRowId)
+                                                  ? "Hide the evaluation details that reported this finding."
+                                                  : "Show the evaluation details that reported this finding.")"
                                        data-abom-finding-trace-toggle="@f.FindingRowId">
                                 @(_traces.ContainsKey(f.FindingRowId) ? "Hide what reported it" : "What reported it")
                             </MudButton>
@@ -795,6 +815,7 @@ else
                         @foreach (var r in e.Runs)
                         {
                             <MudLink Href="@($"/codeql?tab=runs&run={r.RunId}")" Typo="Typo.caption" Class="mr-2"
+                                     title="@($"Open run #{r.RunId}, which recorded this evaluation.")"
                                      data-abom-trace-run="@r.RunId">run @r.RunId: @r.Status</MudLink>
                         }
                     </li>

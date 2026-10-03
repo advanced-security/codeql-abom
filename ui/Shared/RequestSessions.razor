@@ -16,14 +16,16 @@
         {
             <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
                        StartIcon="@Icons.Material.Outlined.StopCircle" Disabled="@_busy" OnClick="Stop"
+                       title="Stop the authoring agent session for this request."
                        data-abom-session-stop>Stop the session</MudButton>
         }
         else
         {
             @* The reason is on a span outside the button: a disabled button swallows the pointer. *@
-            <span title="@(CanStart ? "An agent works this request through ql-mcp, inside your pack" : "Sign in with gh to record who started it")">
+            <span title="@(CanStart ? "Start an authoring agent session for this request inside your query pack." : "Sign in with gh to record who started it.")">
                 <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
                            StartIcon="@Icons.Material.Outlined.SmartToy" Disabled="@(!CanStart || _busy)"
+                           title="@(CanStart ? "Start an authoring agent session for this request inside your query pack." : "Sign in with gh to record who started it.")"
                            OnClick="Start" data-abom-session-start>Work it with an agent</MudButton>
             </span>
         }
@@ -72,6 +74,7 @@
                         <span data-abom-session-spend>@SpendText(session)</span>
                     </MudText>
                     <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button"
+                               title="@(_open == session.RowId ? $"Hide the calls and decisions for session #{session.RowId}." : $"Show the calls and decisions for session #{session.RowId}.")"
                                OnClick="@(() => Toggle(session))" data-abom-session-timeline>
                         @(_open == session.RowId ? "Hide what it did" : "What it did")
                     </MudButton>
@@ -169,11 +172,13 @@
                             <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
                                        StartIcon="@Icons.Material.Outlined.FactCheck"
                                        Disabled="@(!CanStart || _busy || review.CannotAccept.Length > 0)"
+                                       title="@AcceptTitle(review)"
                                        OnClick="@(() => Decide(review, "approved"))" data-abom-review-accept>Accept as the expected result</MudButton>
                         </span>
                         <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
                                    StartIcon="@Icons.Material.Outlined.Undo"
                                    Disabled="@(!CanStart || _busy || string.IsNullOrWhiteSpace(_reason))"
+                                   title="@(!CanStart ? "Sign in with gh to record who decided." : string.IsNullOrWhiteSpace(_reason) ? "Enter a rejection reason before rejecting this report." : "Record this report as rejected with the reason you entered.")"
                                    OnClick="@(() => Decide(review, "rejected"))" data-abom-review-reject>Reject it</MudButton>
                     </div>
                 }
@@ -221,9 +226,9 @@
     private bool CanStart => Accounts.Identity.Login.Length > 0;
 
     private string AcceptTitle(ReviewState review) =>
-        review.CannotAccept.Length > 0 ? "A report with failed expectations can be rejected, not accepted"
-        : CanStart ? "ABOM makes this report the expected result, then runs the tests itself"
-        : "Sign in with gh to record who decided";
+        review.CannotAccept.Length > 0 ? "A report with failed expectations can be rejected, not accepted."
+        : CanStart ? "ABOM makes this report the expected result, then runs the tests itself."
+        : "Sign in with gh to record who decided.";
 
     protected override async Task OnInitializedAsync()
     {

@@ -1021,7 +1021,6 @@ code {
     color: inherit;
 }
 .abom-ref-users:hover .abom-ref { text-decoration: underline; }
-.abom-ref-users-cell { padding-top: 0 !important; }
 .abom-ref-users-list {
     margin: 0;
     padding-left: 16px;
@@ -1203,9 +1202,8 @@ code {
 .abom-stage-menu .mud-button-root { text-transform: none; white-space: nowrap; }
 
 /* Contained: the detail cell spans every column and would otherwise size them all. */
-.abom-row-detail {
-    padding: 8px 12px 12px 40px;
-    border-left: 2px solid var(--mud-palette-lines-default);
+.abom-row-detail,
+.abom-ref-users-cell {
     contain: inline-size;
 }
 .abom-query-run + .abom-query-run { margin-top: 12px; }
@@ -1556,3 +1554,95 @@ code {
     .abom-findings-toolbar { align-items: stretch; }
     .abom-findings-search { max-width: none; }
 }
+
+/* A row opened in place, in every grid alike. The row that opened is marked, and what it opened
+   onto is a card set in under it on the page's own background, so nothing in it reads as part of
+   the list around it. */
+.abom-grid .mud-table-body tr:has(+ tr > td.mud-table-child-content) > td {
+    background: color-mix(in srgb, var(--mud-palette-primary) 12%, var(--mud-palette-surface));
+}
+.abom-grid .mud-table-root td.mud-table-cell.mud-table-child-content {
+    padding: 0 16px 16px 40px;
+    background: var(--mud-palette-background);
+}
+.abom-action-panel,
+.abom-row-detail,
+.abom-ref-users-cell {
+    padding: 8px 12px 8px 16px;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-top: 0;
+    border-left: 3px solid var(--mud-palette-primary);
+    border-radius: 0 0 6px 6px;
+    background: var(--mud-palette-surface);
+}
+/* The Actions panel is only as wide as what it holds, and holds one page of versions, so the rows
+   around it stay where the reader left them. */
+.abom-actions-grid tr:has([data-abom-action-expand]) { cursor: pointer; }
+/* The Depending headers break onto two lines so five levels fit beside the rest. */
+.abom-actions-grid .mud-table-head .mud-table-cell { line-height: 1.25; }
+.abom-action-panel {
+    width: fit-content;
+    max-width: 100%;
+    padding: 4px 8px 0 16px;
+    cursor: auto;
+    outline: none;
+}
+.abom-advisory-ranges {
+    margin: 4px 0 0;
+    padding-left: 16px;
+    font-size: var(--abom-text-sm);
+}
+.abom-advisory-ranges li { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
+.abom-advisory-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* Beside a page of versions, one line each; the whole statement is the line's title. */
+.abom-versions-compact .abom-advisory-summary {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.abom-tag-change-groups { display: flex; flex-direction: column; gap: 8px; }
+.abom-versions-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 36px;
+}
+/* The summary wraps; the controls beside it never squash. */
+.abom-versions-head .mud-button-root { flex-shrink: 0; }
+/* A page of versions beside the advisories naming the action, which are the same for every row, or
+   under it where both do not fit. The summary wraps to the panel rather than setting its width. */
+.abom-versions-compact { display: grid; }
+.abom-versions-compact > .abom-versions-head { width: 0; min-width: 100%; }
+.abom-versions-compact .abom-versions-body {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    column-gap: 24px;
+}
+.abom-versions-compact .abom-versions-grid { flex: 0 1 auto; min-width: 0; }
+.abom-versions-compact .abom-versions-advisories {
+    flex: 1 1 auto;
+    min-width: 14rem;
+    max-width: 32rem;
+    padding: 6px 0 12px;
+}
+.abom-versions:not(.abom-versions-compact) .abom-versions-advisories { margin-top: 8px; }
+/* The panel sits inside a windowed grid, whose window and pinned header are not its own. Its
+   header is banded and its rows denser than the list's, so neither reads as the other's. */
+.abom-versions-compact .mud-table-container { max-height: none; }
+.abom-versions-compact .mud-table { background: transparent; }
+.abom-versions-compact .mud-table-root .mud-table-head .mud-table-cell {
+    box-shadow: none;
+    background: color-mix(in srgb, var(--mud-palette-text-primary) 7%, var(--mud-palette-surface));
+}
+.abom-versions-compact .mud-table-root .mud-table-body .mud-table-cell {
+    padding-top: 3px;
+    padding-bottom: 3px;
+}
+.abom-versions-compact .mud-table-pagination-toolbar {
+    height: 40px;
+    min-height: 0;
+    padding: 0 4px;
+}
+.abom-versions-compact .mud-table-pagination-actions .mud-icon-button { padding: 6px; }
+.abom-versions-lead { color: var(--mud-palette-text-primary); font-weight: 600; }

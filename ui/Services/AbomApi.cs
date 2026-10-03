@@ -259,24 +259,7 @@ public sealed class AbomApi(HttpClient http)
 
     public async Task<IReadOnlyList<RemediationItem>> GetRemediationAsync(
         int top = 50, CancellationToken ct = default) =>
-        (await GetAdvisoriesPageAsync("", top, 0, null, false, ct)).Page?.Items ?? [];
-
-    /// <summary>
-    /// One page of the advisories unit, worst first across the whole match.
-    /// </summary>
-    public async Task<(AdvisoriesPage? Page, string? Refusal)> GetAdvisoriesPageAsync(
-        string predicate, int top, int offset, string? sort, bool desc,
-        CancellationToken ct = default) =>
-        await GetPageAsync<AdvisoriesPage>("api/remediation", predicate, top, offset, sort, desc, ct);
-
-    /// <summary>
-    /// One page of the relationships unit, ordered across the whole match.
-    /// </summary>
-    public async Task<(RelationshipsPage? Page, string? Refusal)> GetRelationshipsPageAsync(
-        string predicate, int top, int offset, string? sort, bool desc,
-        CancellationToken ct = default) =>
-        await GetPageAsync<RelationshipsPage>(
-            "api/relationships", predicate, top, offset, sort, desc, ct);
+        (await GetPageAsync<AdvisoriesPage>("api/remediation", "", top, 0, null, false, ct)).Page?.Items ?? [];
 
     /// <summary>
     /// What a reader can narrow by, and what to call it.
@@ -643,22 +626,6 @@ public sealed class AbomApi(HttpClient http)
         }
     }
 
-    /// <summary>
-    /// One page of the repositories unit, ordered across the whole match by the server.
-    /// </summary>
-    public async Task<(RepositoriesPage? Page, string? Refusal)> GetRepositoriesPageAsync(
-        string predicate, int top, int offset, string? sort, bool desc,
-        CancellationToken ct = default) =>
-        await GetPageAsync<RepositoriesPage>("api/repositories", predicate, top, offset, sort, desc, ct);
-
-    /// <summary>
-    /// One page of the inventory, ordered across the whole match by the server.
-    /// </summary>
-    public async Task<(InventoryPage? Page, string? Refusal)> GetActionsPageAsync(
-        string predicate, int top, int offset, string? sort, bool desc,
-        CancellationToken ct = default) =>
-        await GetPageAsync<InventoryPage>("api/actions", predicate, top, offset, sort, desc, ct);
-
     public async Task<(FindingsPage? Page, string? Refusal)> GetFindingsPageAsync(
         string predicate, int top, int offset, string asset = "", string assetKind = "",
         string text = "", CancellationToken ct = default) =>
@@ -685,18 +652,6 @@ public sealed class AbomApi(HttpClient http)
         return string.Join("&", parts);
     }
 
-    /// <summary>One page of the workflows unit.</summary>
-    public async Task<(WorkflowsPage? Page, string? Refusal)> GetWorkflowsPageAsync(
-        string predicate, int top, int offset, string? sort, bool desc,
-        CancellationToken ct = default) =>
-        await GetPageAsync<WorkflowsPage>("api/workflows", predicate, top, offset, sort, desc, ct);
-
-    /// <summary>One page of the jobs unit.</summary>
-    public async Task<(JobsPage? Page, string? Refusal)> GetJobsPageAsync(
-        string predicate, int top, int offset, string? sort, bool desc,
-        CancellationToken ct = default) =>
-        await GetPageAsync<JobsPage>("api/jobs", predicate, top, offset, sort, desc, ct);
-
     /// <summary>
     /// One page of a listing, with the server's refusal carried back verbatim.
     /// </summary>
@@ -706,9 +661,9 @@ public sealed class AbomApi(HttpClient http)
     /// Sorting and paging are the server's, because ordering a page answers a different question
     /// from ordering the match.
     /// </remarks>
-    private async Task<(T? Page, string? Refusal)> GetPageAsync<T>(
+    public async Task<(T? Page, string? Refusal)> GetPageAsync<T>(
         string path, string predicate, int top, int offset, string? sort, bool desc,
-        CancellationToken ct)
+        CancellationToken ct = default)
     {
         var parts = new List<string> { $"top={top}", $"offset={offset}" };
         if (!string.IsNullOrEmpty(sort))
@@ -741,13 +696,16 @@ public sealed class AbomApi(HttpClient http)
     public async Task<NodeDetail?> GetNodeAsync(string key, CancellationToken ct = default) =>
         await GetAsync<NodeDetail>($"api/node/{key}", ct);
 
-    public async Task<BumpImpact?> GetBumpImpactAsync(
-        string key, CancellationToken ct = default) =>
-        await GetAsync<BumpImpact>($"api/node/{key}/-/impact", ct);
+    /// <summary>One page of who uses a node under a scope, ordered across the whole match.</summary>
+    public async Task<(NodeUsesPage? Page, string? Refusal)> GetNodeUsesAsync(
+        string key, string predicate, int top, int offset, string? sort, bool desc,
+        CancellationToken ct = default) =>
+        await GetPageAsync<NodeUsesPage>($"api/node/{key}/-/uses", predicate, top, offset, sort, desc, ct);
 
-    public async Task<IReadOnlyList<NodeRoute>> GetReachAsync(
-        string key, CancellationToken ct = default) =>
-        await GetListAsync<NodeRoute>($"api/node/{key}/-/reach", ct);
+    /// <summary>Every reference a node is used at, counted under a scope.</summary>
+    public async Task<(NodeVersionsPage? Page, string? Refusal)> GetNodeVersionsAsync(
+        string key, string predicate, CancellationToken ct = default) =>
+        await GetPageAsync<NodeVersionsPage>($"api/node/{key}/-/versions", predicate, 0, 0, null, false, ct);
 
     public async Task<IReadOnlyList<DeclaredAccount>> GetOwnedScopeAsync(
         CancellationToken ct = default) =>

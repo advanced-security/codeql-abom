@@ -15,16 +15,19 @@
     @foreach (var s in Entries)
     {
         <MudItem xs="12" sm="6" md="4">
-            <MudPaper Elevation="0" Outlined="true" Class="pa-4 abom-section-card"
+            <MudPaper Elevation="0" Outlined="true" Class="pa-4 abom-section-card" title="@s.Tip"
                       @onclick="@(() => Go(s.Href))" data-abom-entry="@s.Key">
                 <div class="d-flex align-center gap-2 mb-2">
                     <MudIcon Icon="@s.Icon" Color="Color.Primary" Size="Size.Small" />
-                    <MudLink Href="@s.Href" Typo="Typo.subtitle1">@s.Title</MudLink>
+                    <MudLink Href="@s.Href" Typo="Typo.subtitle1" title="@s.Tip">@s.Title</MudLink>
                 </div>
+                @* style-check: off — each card is a link into the scope its figure counts, so the
+                   figure is the way in rather than a count tile beside one. *@
                 <MudText Typo="Typo.h5" data-abom-count
                          Class="@(Unclaimed(s) ? "abom-num abom-coverage-unknown" : "abom-num")">
                     @(Unclaimed(s) ? "none" : s.Count.ToString("N0"))
                 </MudText>
+                @* style-check: on *@
                 <MudText Typo="Typo.caption" Class="mud-text-secondary">@s.Measures</MudText>
                 @if (s.Severity.Length > 0 && !Unclaimed(s))
                 {
@@ -39,9 +42,11 @@
 <div class="d-flex flex-wrap align-center gap-2 mt-4">
     <MudText Typo="Typo.caption" Class="mud-text-secondary">Or go straight to</MudText>
     <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
-               StartIcon="@Icons.Material.Outlined.Hub" Href="/explore">the graph</MudButton>
+               StartIcon="@Icons.Material.Outlined.Hub" Href="/explore"
+               title="Open the Explorer graph of dependencies.">the graph</MudButton>
     <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
                StartIcon="@Icons.Material.Outlined.TravelExplore" Href="/inventory?unit=coverage"
+               title="Open the Inventory coverage unit showing what has and has not been analyzed."
                data-abom-entry="coverage">what has and has not been analyzed</MudButton>
 </div>
 
@@ -55,7 +60,7 @@
     private void Go(string href) => Nav.NavigateTo(href);
 
     private sealed record Entry(string Key, string Title, int Count, string Measures, string Href,
-        string Icon, bool Owned = false, string Severity = "");
+        string Icon, string Tip, bool Owned = false, string Severity = "");
 
     // Nothing declared is an absence of a claim, not a measurement of zero, and the coverage strip
     // says so in this same word. A nought here would read as a set examined and found clean.
@@ -70,19 +75,23 @@
         new("findings", "Findings in what you own", _summary.OwnedFindings,
             $"of {_summary.Findings:N0} recorded, across {_summary.Rules} rules",
             "/inventory?unit=workflows&flags=findings", Icons.Material.Outlined.PlayCircleOutline,
-            Owned: true, Severity: SeverityText.Summary(_summary.OwnedSeverity)),
+            "Open the Inventory at the workflows that have findings.", Owned: true, Severity: SeverityText.Summary(_summary.OwnedSeverity)),
         new("advisories", "Advisories recorded", _summary.Advisories,
             $"published advisories, naming {_summary.AffectedActions:N0} actions in use",
-            "/inventory?unit=advisories", Icons.Material.Outlined.Build),
+            "/inventory?unit=advisories", Icons.Material.Outlined.Build,
+            "Open the Inventory at the published advisories that name an action in use."),
         new("actions", "Dependencies in the graph", _summary.Dependencies,
             $"actions, composite actions and images, of {_summary.Nodes:N0} nodes at every depth",
-            "/inventory", Icons.Material.Outlined.Extension),
+            "/inventory", Icons.Material.Outlined.Extension,
+            "Open the Inventory at every action, composite action and image in the graph."),
         new("repositories", "Repositories you own", _summary.OwnedRepos,
             $"declared of {_summary.SeedRepos:N0}",
             "/inventory?unit=repositories&scope=owned", Icons.Material.Outlined.FolderOpen,
-            Owned: true),
+            "Open the Inventory at the repositories you declared as yours.", Owned: true),
         new("exposure", "On a route to an advisory", _summary.OwnedExposures,
             $"from a repository you declared, of {_summary.Exposures:N0} recorded",
-            "/inventory?scope=exposure", Icons.Material.Outlined.Route, Owned: true),
+            "/inventory?scope=exposure", Icons.Material.Outlined.Route,
+            "Open the Inventory at the actions on a route from a repository you declared to an advisory.",
+            Owned: true),
     ];
 }

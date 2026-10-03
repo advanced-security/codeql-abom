@@ -10,6 +10,7 @@
 
 import { readdir, readFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
+import { unsortable, untipped } from './tips.mjs';
 
 const root = new URL('..', import.meta.url).pathname;
 const problems = [];
@@ -89,6 +90,8 @@ const retiredWords = [
     [/\bSame org\/owner\b/, 'boundary wording; the interface says "same account"'],
     [/\bCross org\/owner\b/, 'boundary wording; the interface says "another account"'],
     [/\bSame repo\b(?!sitory)/, 'boundary wording; the interface says "same repository"'],
+    // A reader rarely controls an upstream tag; what they can ask is what its moving would change.
+    [/\bIf you bump this\b/i, 'says "If you bump this"; the section is "If this tag changes"'],
     // Only inside a quoted string, because the word is ordinary English in a comment about one.
     // It reached the Dashboard as "Advisories in the corpus" and was read as jargon, which it is.
     [
@@ -133,6 +136,39 @@ function checkHeadings(file, text, off) {    text.split('\n').forEach((line, i) 
             report(file, i + 1, 'page heading outside PageHeader');
         }
     });
+}
+
+/**
+ * A count tile: a figure set as a heading, in a box, with a caption and nowhere to go.
+ *
+ * Every page grew a row of them and every one was stripped out again. Each repeated a number a
+ * section beneath it already carried, linked nowhere, and pushed the first useful row down the
+ * screen. A figure belongs in the sentence or the column it qualifies. A heading-sized figure that
+ * is itself the way into a scope must say so inside a `style-check: off` block.
+ */
+function checkCountTiles(file, text, off) {
+    // A heading-sized element that is not a heading and whose whole text is one computed value.
+    const re = /<MudText\b([^>]*)>([^<]*)<\/MudText>/g;
+    for (const m of text.matchAll(re)) {
+        const line = text.slice(0, m.index).split('\n').length;
+        if (off.has(line)) continue;
+        const [, attributes, body] = m;
+        if (!/Typo="Typo\.h[1-6]"/.test(attributes) || /HtmlTag="h[1-6]"/.test(attributes)) continue;
+        if (/\babom-num\b/.test(attributes) || /^\s*@[\w.(]/.test(body) && !/\s\w+\s/.test(body)) {
+            report(file, line, 'count tile; put the figure in the sentence or column it qualifies');
+        }
+    }
+    for (const m of text.matchAll(/<MetricTile\b/g)) {
+        const line = text.slice(0, m.index).split('\n').length;
+        if (!off.has(line)) report(file, line, 'count tile; MetricTile was removed on purpose');
+    }
+}
+
+/** Every header and every action or link says what it is; the rule lives in tips.mjs. */
+function checkTips(file, text, off) {
+    for (const { line, message } of [...untipped(text), ...unsortable(text)]) {
+        if (!off.has(line)) report(file, line, message);
+    }
 }
 
 /** An icon with no size renders at Medium among a page of Small ones. */
@@ -181,6 +217,8 @@ for (const dir of ['Pages', 'Shared', 'Layout', 'Services', 'wwwroot/css']) {
             checkHeadings(file, text, off);
             checkIconSizes(file, text, off);
             checkVocabulary(file, text, off);
+            checkCountTiles(file, text, off);
+            checkTips(file, text, off);
         }
     }
 }

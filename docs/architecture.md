@@ -43,6 +43,14 @@ analyzed repository proves nothing about who can change it.
 does not reach. The walk is inductive — owned roots, plus what they reach — so the boundary is a
 consequence of the declaration rather than a separate configuration.
 
+**What you own is decided at the node.** Discovery and the prune bound the corpus by repository,
+because a repository is what is fetched. The `owned` scope every unit and the Explorer read is
+narrower: what the declared repositories hold, what their own lines name, what the reach walk finds
+them running through another action, the steps and jobs inside what they run, and the repositories
+holding any of it. A dependency's repository also holds that project's own CI, which is fetched and
+is never yours; admitted whole, it was 1,874 of the 1,991 workflows the crawled organization's
+owned scope listed. A property filter on the Explorer draws its group's repositories the same way.
+
 **Analysis is queued per dependency *and* reference.** `actions/checkout@v4` and
 `actions/checkout@v5` are different work, because they are different commits.
 
@@ -412,16 +420,16 @@ from the row. A sighting recorded before content was kept is known only for the 
 row; any other says its commit declared something there and not what, and adds no route rather than
 borrowing the row's. Walks stand only at live commits — those a reference resolves to; every
 analyzed commit of a repository nothing resolves — and a commit settled as identical to an analyzed
-one reads that commit's sightings. Blast radius reads the same live sightings and still counts
-across versions; the owned closure stays component-level by design.
+one reads that commit's sightings. Blast radius takes the same walk, so a repository counts toward a
+dependency only through the releases it runs; the owned closure stays component-level by design.
 
 **A snapshot is never built from what is not known.** A submission is refused, before anything is
 sent and with the refusal recorded, while its closure reads a commit analyzed only before sightings
 kept content in a repository analyzed at more than one commit; the preview names those commits as
 `unobserved`. An edges run counts for the skip only once its sightings are written with content, so
 meeting such a commit again analyzes it, and a running crawl meets them [a claim's worth at a
-time](#the-queue). Where nothing is re-observed, exposure, blast radius and node reach come out
-byte-identical to the row-based walks; a re-observed commit adds the routes it declares.
+time](#the-queue). Where nothing is re-observed, exposure and node reach come out byte-identical to
+the row-based walks; a re-observed commit adds the routes it declares.
 
 **Unreadable and changed locks.** A lock with one malformed entry is unsupported as a whole and
 selects nothing, and a digest of the wrong length or alphabet selects nothing whatever the parser
@@ -666,7 +674,7 @@ flowchart LR
 
 | Table | |
 | --- | --- |
-| `abom_blast_radius`, `abom_exposure` | Reach, recomputed wholesale rather than incrementally |
+| `abom_blast_radius`, `abom_node_reach`, `abom_node_version_reach`, `abom_exposure` | Reach — counted, by repository, by the version each repository runs, and by route — recomputed wholesale rather than incrementally |
 | `abom_advisory`, `abom_advisory_package` | GHSA records, stored as attributed external statements |
 | `abom_submission` | What was sent to GitHub, because GitHub offers no way to ask |
 | `abom_saved_view` | Named predicates, read by the API and the CLI |
@@ -690,6 +698,12 @@ step, through whom, and guarded by what" — rather than a version match against
 Hop counts mean: `0` the node lives in the repository, `1` the repository names it directly, `N` it
 is reached through `N` intermediaries.
 
+**Reach is one walk, and it runs versions.** Blast radius, exposure and a node's reach take the same
+route outward, and a route through a dependency continues only to consumers running the commit it
+stands at. A dependency's reach is the union over the versions repositories run, and the breakdown
+says which version each one runs: the commit a lock selects or its reference resolves to, or none
+where nothing recorded one. That figure is what the crawl claims in order of.
+
 Conditions on a step are reported **verbatim and never evaluated**. `github.ref == 'main'` is a fact
 about the workflow; whether it holds at a given moment is not something static analysis settles.
 
@@ -704,7 +718,8 @@ assert an order between jobs that actually run in parallel.
 | HTTP API | The whole capability set. Reads are open; anything that writes is guarded at the endpoint |
 | Dashboard | Where to start: each entry opens the Inventory already narrowed to it |
 | CodeQL | The queries findings come from: requests, the catalog of versions and stages, runs and their results per repository and query, what those results would add to the alerts developers already see, and which suites each tier runs |
-| Inventory | Which things match, in tabs that are named views, reprojected by a unit switch. Repositories chosen here are what a run is asked over |
+| Inventory | Which things match, in tabs that are named views, reprojected by a unit switch. An action's row opens in place onto its versions. Repositories chosen here are what a run is asked over |
+| Details | One node, under the scope it was opened with: its versions, and what `uses:` it — one row per repository, reference and commit, from the walk reach takes |
 | Explorer | A force-directed graph over a scoped closure |
 | Settings | What the operator claims, and what discovery does: analysis is started and requeued here |
 | `report` | Terminal summary |
@@ -723,6 +738,30 @@ finding, not a feature — a page per question has to invent its own scope, and 
 narrowed somewhere else cannot carry that narrowing to it. A question that becomes a unit takes its
 address with it: the page and its route are deleted rather than left forwarding, because a redirect
 is a second name for one thing and this is not a published tool.
+
+**An action is followed to the commit that runs.** The Inventory's Actions unit lists what
+starting points run or hold. An action only other repositories use, or nothing uses, is left out
+and counted beside the list; one that arrived since reach was last measured stays, as not counted,
+because the rebuild watermark (`reachKnown`) is all that separates it from one nothing references.
+A row opens in place onto a page of the versions starting points use, each reference with the commit it resolves
+to, what locks select behind it, which starting points run it directly and transitively, and the
+findings in its own code at that commit; versions only other repositories use are left out and
+counted, and the advisories naming the action follow verbatim, never resolved into a count of
+affected versions. The row's *Distinct refs* is the same set, counted by the reach walk and stored
+with it (`abom_blast_radius.refs_in_use`), so the row and what opens under it cannot disagree; a
+local path names no version and is in neither. What depends on the action is counted by the same
+walk at each level a reader manages — steps, jobs, workflow files, repositories, and groups of
+repositories sharing one value of `--group-property` — for starting points only, through another
+action as much as directly. A job calling a reusable workflow depends on what that workflow runs
+without a step of its own, so a count of jobs can exceed one of steps. Each level is stored per
+repository in `abom_node_reach`, so a scope sums it rather than walking again; a level that is
+missing reads as not counted, and its absence alone schedules a rebuild, which runs whether or
+not the crawl is. A reference opens the details page
+narrowed to it with `at`, which picks references exactly as written where `ref` picks only their
+style. That page answers on its own surface, `uses`: whoever runs the node, at which reference and
+commit, how, and what moving one tag would change — directly, through an intermediary, and not at
+all where a lock keeps a repository. Terms that only chose which actions a list showed travel in its
+address and are named as not applied.
 
 **A run is asked over repositories somebody chose.** The selection travels as `repositories=`,
 which resolves each name to its retained database, one it could be rebuilt from, or a named gap —

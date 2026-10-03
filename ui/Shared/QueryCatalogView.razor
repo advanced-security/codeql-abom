@@ -27,6 +27,7 @@
             <div class="d-flex flex-wrap align-center gap-2 mt-2">
                 <NamedScopes Surface="run" Chosen="ChooseScope" />
                 <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
+                           title="Go to the Inventory to choose repositories for this run draft."
                            OnClick="ChooseInInventory" data-abom-run-in-inventory>
                     Choose repositories in the Inventory
                 </MudButton>
@@ -49,6 +50,7 @@ else if (_catalog.Queries.Count == 0)
             query on repositories chosen in the Inventory, and each version is catalogued as it runs.
         </MudText>
         <MudButton Href="/settings" Variant="Variant.Outlined" Class="mt-4"
+                   title="Open Settings to configure discovery."
                    StartIcon="@Icons.Material.Outlined.Settings">Discovery</MudButton>
     </MudPaper>
 }
@@ -92,6 +94,7 @@ else
                                    Icon="@(context.Open ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)"
                                    aria-label="@($"Show where {context.Item.QueryId} ran")"
                                    aria-expanded="@(context.Open ? "true" : "false")"
+                                   title="@(context.Open ? $"Hide where {context.Item.QueryId} ran and what is recorded for it." : $"Show where {context.Item.QueryId} ran and what is recorded for it.")"
                                    OnClick="@(() => context.Actions.ToggleHierarchyVisibilityForItemAsync())"
                                    data-abom-query-detail />
                 </CellTemplate>
@@ -99,26 +102,11 @@ else
 
             <PropertyColumn Property="x => x.QueryId" Title="Query"
                             HeaderClass="abom-identity-col" CellClass="abom-identity-col">
+                <HeaderTemplate><HeaderTip Tip="The query's identifier, with its authoring steps while it is being written.">Query</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     <div class="abom-query-id" data-abom-query-id="@context.Item.QueryId">
                         @context.Item.QueryId
                     </div>
-                    @* What the version would report at, before anything runs it. A version without a
-                       declaration says why in the server's words: being read, gone from disk and
-                       never versioned are three states, and only the first ends in a read. *@
-                    @if (!context.Item.Lane && context.Item.Metadata is null)
-                    {
-                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block abom-query-unread"
-                                 data-abom-query-metadata-absent="@context.Item.QueryId">@(context.Item.MetadataUnread.Length > 0
-                                     ? context.Item.MetadataUnread : "declared metadata not read yet")</MudText>
-                    }
-                    else if (context.Item.Band.Length > 0)
-                    {
-                        <div class="d-flex align-center gap-1" data-abom-query-band="@context.Item.QueryId">
-                            <SeverityChip Severity="@context.Item.Band" />
-                            <MudText Typo="Typo.caption" Class="mud-text-secondary">@DeclaredLevel(context.Item)</MudText>
-                        </div>
-                    }
                     @* Under the id rather than in the action column, which would widen every row for one. *@
                     @if (context.Item.Working && context.Item.Steps.Count > 0)
                     {
@@ -163,7 +151,30 @@ else
                 </CellTemplate>
             </TemplateColumn>
 
+            @* What the version would report at, before anything runs it, in its own column so it
+               sorts. A version without a declaration says why in the server's words: being read,
+               gone from disk and never versioned are three states, and only the first ends in a read. *@
+            <TemplateColumn T="CatalogQuery" Title="Severity" Sortable="true" SortBy="q => SeverityText.Order(q.Band)">
+                <HeaderTemplate><HeaderTip Tip="The severity this query declares for what it reports, with its declared level and score, before anything runs it.">Severity</HeaderTip></HeaderTemplate>
+                <CellTemplate>
+                    @if (!context.Item.Lane && context.Item.Metadata is null)
+                    {
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block abom-query-unread"
+                                 data-abom-query-metadata-absent="@context.Item.QueryId">@(context.Item.MetadataUnread.Length > 0
+                                     ? context.Item.MetadataUnread : "declared metadata not read yet")</MudText>
+                    }
+                    else if (context.Item.Band.Length > 0)
+                    {
+                        <div class="d-flex align-center gap-1" data-abom-query-band="@context.Item.QueryId">
+                            <SeverityChip Severity="@context.Item.Band" />
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">@DeclaredLevel(context.Item)</MudText>
+                        </div>
+                    }
+                </CellTemplate>
+            </TemplateColumn>
+
             <PropertyColumn Property="x => x.QueryVersion" Title="Version">
+                <HeaderTemplate><HeaderTip Tip="The version of the query that ran, or a note that none was recorded.">Version</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     @if (context.Item.QueryVersion.Length == 0)
                     {
@@ -180,6 +191,7 @@ else
 
             @* Own name only: ABOM packs share a scope and prefix, so truncated they read alike. *@
             <PropertyColumn Property="x => x.Pack" Title="Pack" CellClass="abom-nowrap">
+                <HeaderTemplate><HeaderTip Tip="The CodeQL pack that supplied this version of the query.">Pack</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     <span class="abom-path" title="@context.Item.Pack" data-abom-query-pack="@context.Item.Pack">@PackText(context.Item.Pack)</span>@if (context.Item.PackVersion.Length > 0) { <code class="abom-faint" data-abom-query-pack-version>@("@" + context.Item.PackVersion)</code> }
                 </CellTemplate>
@@ -187,6 +199,7 @@ else
 
             @* Which suite the crawl ran it in. A query that only ever ran on demand has none. *@
             <PropertyColumn Property="x => x.Suite" Title="Crawl suite" CellClass="abom-nowrap">
+                <HeaderTemplate><HeaderTip Tip="The crawl suite that runs this query, or a dash when it has only run on request.">Crawl suite</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     @if (context.Item.Suite.Length == 0)
                     {
@@ -201,6 +214,7 @@ else
             </PropertyColumn>
 
             <PropertyColumn Property="x => x.Source" Title="Source">
+                <HeaderTemplate><HeaderTip Tip="Where the query came from: upstream CodeQL, ABOM's own pack, a custom pack, or several of them.">Source</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
                              data-abom-query-source="@context.Item.Source">@SourceText(context.Item.Source)</MudChip>
@@ -208,6 +222,7 @@ else
             </PropertyColumn>
 
             <PropertyColumn Property="x => x.LastRunAt" Title="Last run" CellClass="abom-nowrap">
+                <HeaderTemplate><HeaderTip Tip="When this version of the query last ran.">Last run</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     @if (context.Item.Runs == 0 && context.Item.LastRunAt.Length == 0)
                     {
@@ -223,10 +238,11 @@ else
 
             @* The stage is its own control; a menu at the row's start had no evident purpose. *@
             <PropertyColumn Property="x => x.Stage" Title="Stage">
+                <HeaderTemplate><HeaderTip Tip="The stage this version of the query is in. Click it to move the version to another stage.">Stage</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     @if (context.Item.Stage.Length == 0)
                     {
-                        <span class="abom-stage" title="Nobody has put this version in a stage"
+                        <span class="abom-stage" title="Nobody has put this version in a stage."
                               data-abom-query-unstaged>
                             <MudMenu Label="not staged" EndIcon="@Icons.Material.Filled.ArrowDropDown"
                                      Size="Size.Small" Variant="Variant.Text" Dense="true"
@@ -271,6 +287,7 @@ else
                         {
                             @(at == 0 ? "" : ", ")
                             <MudLink Href="@($"/codeql?tab=requests&request={id}")" Typo="Typo.caption"
+                                     title="@($"Open request #{id} that asked for this query.")"
                                      data-abom-query-request="@id">request #@id</MudLink>
                         }
                     </MudText>
@@ -358,11 +375,11 @@ else
         CanAdvance && !q.Discovery && !q.Lane && q.QueryVersion.Length > 0;
 
     private string RunTooltip(CatalogQuery q) =>
-        !CanAdvance ? "Sign in to ask for a run"
-        : q.Lane ? "This is a whole suite the crawl invoked, not a query to run on its own"
-        : q.Discovery ? "This query builds the dependency graph; it reports no findings to review"
-        : q.QueryVersion.Length == 0 ? "This ran before versions were recorded, so there is no version to run"
-        : "Add this version to a run, over a named scope or repositories chosen in the Inventory";
+        !CanAdvance ? "Sign in to ask for a run."
+        : q.Lane ? "This is a whole suite the crawl invoked, not a query to run on its own."
+        : q.Discovery ? "This query builds the dependency graph; it reports no findings to review."
+        : q.QueryVersion.Length == 0 ? "This ran before versions were recorded, so there is no version to run."
+        : "Add this version to a run, over a named scope or repositories chosen in the Inventory.";
 
     // A run drafted here, and the named scope it is over. The versions are the shared draft's.
     private bool _drafting;
@@ -418,6 +435,7 @@ else
                 : stage == Review ? query.ReviewRefusal
                 : string.Empty;
             <MudMenuItem Disabled="@(stage == query.Stage || refused.Length > 0)" OnClick="@(() => Advance(query, stage))"
+                         title="@(stage == query.Stage ? $"This query version is already in the {stage} stage." : refused.Length > 0 ? $"This query version cannot move to the {stage} stage yet: {refused}." : $"Move this query version to the {stage} stage.")"
                          data-abom-stage-item="@stage">
                 @stage
                 @if (refused.Length > 0)
@@ -436,8 +454,8 @@ else
     private const string Review = "review";
 
     private static string StagedTitle(CatalogQuery q) => q.StagedBy.Length == 0
-        ? $"In {q.Stage}"
-        : $"Put in {q.Stage} by {q.StagedBy}, {TimeText.DayAndTime(q.StagedAt)}";
+        ? $"This version is in the {q.Stage} stage."
+        : $"Put in the {q.Stage} stage by {q.StagedBy}, {TimeText.DayAndTime(q.StagedAt)}.";
 
     private async Task Advance(CatalogQuery query, string stage)
     {

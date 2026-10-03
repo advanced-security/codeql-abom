@@ -16,6 +16,7 @@ func TestEveryTermIsAppliedBySomeConsumer(t *testing.T) {
 	applied := map[string]bool{}
 	for _, side := range []map[string]bool{
 		setTerms, graphTerms, clientTerms, inventoryTerms, repositoryTerms, advisoryTerms, policyTerms,
+		usesTerms,
 	} {
 		for term := range side {
 			applied[term] = true
@@ -61,8 +62,8 @@ func everyTerm(t *testing.T) []string {
 	for key := range held {
 		out = append(out, key)
 	}
-	if len(out) != 24 {
-		t.Fatalf("the spec wrote %d terms, want all 24; a field was added and not set here", len(out))
+	if len(out) != 25 {
+		t.Fatalf("the spec wrote %d terms, want all 25; a field was added and not set here", len(out))
 	}
 	return out
 }
@@ -82,5 +83,6 @@ func specCarryingEveryTerm() Spec {
 		EdgeKinds:          []string{EdgeKindJobNeedsJob},
 		RefStyle:           "tag", Boundary: "cross-owner", MinReach: 1,
 		Flags: []string{"findings"}, Steps: true, Mode: ModeRegular,
+		At: []string{"v4"},
 	}
 }

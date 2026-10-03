@@ -30,6 +30,7 @@
                          Class="@(IsSelected(view) ? "abom-view-selected" : null)"
                          Disabled="@(reason.Length > 0)"
                          OnClick="@(() => Chosen.InvokeAsync(view))"
+                         title="@ViewTitle(view, reason)"
                          data-abom-view="@view.Name">@view.Label</MudChip>
                 @* A built-in is code: the server refuses to delete it, so offering the control
                    would be an affordance that cannot work. *@
@@ -37,7 +38,7 @@
                 {
                     <MudIconButton Size="Size.Small" Icon="@Icons.Material.Outlined.Close"
                                    aria-label="@($"Forget {view.Label}")"
-                                   title="@($"Forget {view.Label}")"
+                                   title="@($"Forget the saved scope {view.Label}. The filters on this page stay as they are.")"
                                    OnClick="@(() => Forget(view))"
                                    data-abom-forget-view="@view.Name" />
                 }
@@ -50,6 +51,7 @@
     <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
                StartIcon="@Icons.Material.Outlined.BookmarkAdd" OnClick="Keep"
                Disabled="@(_name.Trim().Length == 0 || Scope.Spec.ToQueryString().Length == 0)"
+               title="Save the current filters under this name for reuse on pages that can open them."
                data-abom-save-scope="1">Keep</MudButton>
     @if (_refused is { Length: > 0 } refused)
     {
@@ -93,6 +95,9 @@
     // Compared as canonical text, which is the whole reason a built-in's predicate is stored
     // canonical rather than however it was typed.
     private bool IsSelected(NamedView view) => Scope.Spec.ToQueryString() == view.Predicate;
+
+    private static string ViewTitle(NamedView view, string reason) =>
+        reason.Length > 0 ? reason : $"Open {view.Label} on this page.";
 
     /// <summary>Why this page cannot open a scope, or empty when it can.</summary>
     private string Refusal(NamedView view)

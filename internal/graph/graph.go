@@ -46,6 +46,7 @@ type loadedNode struct {
 	repo      sql.NullInt64
 	container sql.NullInt64
 	external  bool
+	job       string
 }
 
 // model is the in-memory projection of the graph used for traversal.
@@ -55,8 +56,11 @@ type model struct {
 	// container maps a node to the workflow or composite action it belongs to, which is what
 	// other repositories can reference.
 	container map[int64]int64
-	repoOf    map[int64]int64
-	kindOf    map[int64]string
+	// jobOf names the job a step or job node belongs to, as its workflow and job id: two
+	// workflows' `build` jobs are two jobs. Absent for a composite action's steps, which have none.
+	jobOf  map[int64]string
+	repoOf map[int64]int64
+	kindOf map[int64]string
 	// keyOf names nodes, which exposure paths are reported in terms of.
 	keyOf map[int64]string
 	// isExternal marks nodes that are somebody else's dependency, so a walk can tell crossing
@@ -103,6 +107,7 @@ func newModel() *model {
 	return &model{
 		reverse:     make(map[int64][]inEdge),
 		container:   make(map[int64]int64),
+		jobOf:       make(map[int64]string),
 		repoOf:      make(map[int64]int64),
 		kindOf:      make(map[int64]string),
 		keyOf:       make(map[int64]string),
@@ -134,7 +139,8 @@ func (m *model) loadSeedRepositories(s *store.Store) error {
 
 func (m *model) loadNodes(s *store.Store) error {
 	nodes, err := s.DB().Query(
-		`SELECT row_id, node_key, node_kind, repository_row_id, container_node_row_id, is_external
+		`SELECT row_id, node_key, node_kind, repository_row_id, container_node_row_id, is_external,
+		        COALESCE(job_id, '')
 		   FROM abom_node_live`)
 	if err != nil {
 		return fmt.Errorf("loading nodes: %w", err)
@@ -143,7 +149,7 @@ func (m *model) loadNodes(s *store.Store) error {
 
 	for nodes.Next() {
 		var n loadedNode
-		if err := nodes.Scan(&n.id, &n.key, &n.kind, &n.repo, &n.container, &n.external); err != nil {
+		if err := nodes.Scan(&n.id, &n.key, &n.kind, &n.repo, &n.container, &n.external, &n.job); err != nil {
 			return fmt.Errorf("scanning node: %w", err)
 		}
 		m.addNode(n)
@@ -162,6 +168,9 @@ func (m *model) addNode(n loadedNode) {
 	}
 	if n.container.Valid {
 		m.container[n.id] = n.container.Int64
+		if n.job != "" {
+			m.jobOf[n.id] = fmt.Sprintf("%d/%s", n.container.Int64, n.job)
+		}
 	}
 }
 
@@ -277,63 +286,71 @@ type Reach struct {
 	// One means it names the dependency itself; more means it inherits it from something it uses,
 	// and the two are different remediation work.
 	Repositories map[int64]int
-	Workflows    map[int64]bool
-	Direct       int
-	MaxDepth     int
+	// Versions breaks Repositories down by the commit of the node each route runs, "" where that
+	// is not known or the node has no version of its own. A repository running two versions is in
+	// both, and Repositories is their union.
+	Versions map[string]map[int64]int
+	// References are those starting points run the node by: the rows of its versions table, so the
+	// inventory's count and that table cannot disagree.
+	References map[string]bool
+	// Dependents are, by repository, its steps, jobs and workflow files that run the node.
+	Dependents map[int64]*Dependents
+	MaxDepth   int
 }
 
-// reachOf walks dependents breadth-first from target.
-//
-// Each hop moves from a node to the sources that reference it, then up to those sources'
-// containers, because depending on a container means depending on everything it uses.
-func (m *model) reachOf(target int64, maxDepth int) Reach {
-	r := Reach{Repositories: map[int64]int{}, Workflows: map[int64]bool{}}
+// Dependents are one repository's steps, jobs and workflow files that run a node, directly or
+// through another action.
+type Dependents struct {
+	Steps     map[int64]bool
+	Jobs      map[string]bool
+	Workflows map[int64]bool
+}
 
-	visited := map[int64]bool{target: true}
-	frontier := []int64{target}
-	// A location declaring this at two releases is still one direct reference.
-	direct := map[int64]bool{}
-
-	for depth := 1; len(frontier) > 0; depth++ {
-		if maxDepth > 0 && depth > maxDepth {
-			break
-		}
-		var next []int64
-		for _, node := range frontier {
-			for _, in := range m.reverse[node] {
-				src := in.src
-				if depth == 1 && !direct[in.row] {
-					direct[in.row] = true
-					r.Direct++
-				}
-				if visited[src] {
-					continue
-				}
-				visited[src] = true
-
-				if repo, ok := m.repoOf[src]; ok && m.seedRepo[repo] {
-					// Breadth-first, so the first sighting is the fewest hops.
-					if _, seen := r.Repositories[repo]; !seen {
-						r.Repositories[repo] = depth
-					}
-					switch m.kindOf[src] {
-					case "workflow", "composite_action":
-						r.Workflows[src] = true
-					}
-				}
-				if c, ok := m.container[src]; ok {
-					if repo, ok := m.repoOf[c]; ok && m.seedRepo[repo] {
-						r.Workflows[c] = true
-					}
-					if !visited[c] {
-						next = append(next, c)
-					}
-				}
-			}
-			r.MaxDepth = depth
-		}
-		frontier = next
+// note counts the step or job making a reference, and the job and workflow file holding it. A
+// composite action's own steps count as steps; the action file holding them is not a workflow.
+func (d *Dependents) note(m *model, src int64) {
+	if m.kindOf[src] == "step" {
+		d.Steps[src] = true
 	}
+	if job, ok := m.jobOf[src]; ok {
+		d.Jobs[job] = true
+	}
+	switch file := m.container[src]; m.kindOf[file] {
+	case "workflow", "reusable_workflow":
+		d.Workflows[file] = true
+	}
+}
+
+// reachOf counts what the dependents walk reaches from target, by version.
+func (m *model) reachOf(target int64, maxDepth int) Reach {
+	r := Reach{Repositories: map[int64]int{}, Versions: map[string]map[int64]int{},
+		References: map[string]bool{}, Dependents: map[int64]*Dependents{}}
+
+	r.MaxDepth = m.walk(target, maxDepth, func(s step) {
+		repo, ok := m.countedFor(s)
+		if !ok {
+			return
+		}
+		if inUse(s.depth, s.at.entry) {
+			r.References[s.at.entry] = true
+		}
+		// Breadth-first, so the first sighting is the fewest hops.
+		if _, seen := r.Repositories[repo]; !seen {
+			r.Repositories[repo] = s.depth
+		}
+		if r.Versions[s.at.version] == nil {
+			r.Versions[s.at.version] = map[int64]int{}
+		}
+		if _, seen := r.Versions[s.at.version][repo]; !seen {
+			r.Versions[s.at.version][repo] = s.depth
+		}
+		d := r.Dependents[repo]
+		if d == nil {
+			d = &Dependents{Steps: map[int64]bool{}, Jobs: map[string]bool{}, Workflows: map[int64]bool{}}
+			r.Dependents[repo] = d
+		}
+		d.note(m, s.in.src)
+	})
 	return r
 }
 
@@ -350,43 +367,86 @@ func (b *Builder) BuildBlastRadius() error {
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(`DELETE FROM abom_blast_radius`); err != nil {
-		return fmt.Errorf("clearing blast radius: %w", err)
+	// One walk writes all three, so they are cleared together. Names are constants, never input.
+	for _, table := range []string{"abom_blast_radius", "abom_node_reach", "abom_node_version_reach"} {
+		if _, err := tx.Exec(`DELETE FROM ` + table); err != nil {
+			return fmt.Errorf("clearing %s: %w", table, err)
+		}
 	}
-	if _, err := tx.Exec(`DELETE FROM abom_node_reach`); err != nil {
-		return fmt.Errorf("clearing the reach breakdown: %w", err)
-	}
-	stmt, err := tx.Prepare(`
-		INSERT INTO abom_blast_radius
-			(node_row_id, dependent_repos, dependent_workflows, direct_dependents, max_depth)
-		VALUES (?, ?, ?, ?, ?)`)
+	w, err := prepareReachWriter(tx)
 	if err != nil {
-		return fmt.Errorf("preparing insert: %w", err)
+		return err
 	}
-	defer stmt.Close()
-
-	// The walk already knows which repositories it found, so the breakdown costs one insert per
-	// pair rather than a second traversal.
-	pair, err := tx.Prepare(
-		`INSERT INTO abom_node_reach (node_row_id, repository_row_id, hops) VALUES (?, ?, ?)`)
-	if err != nil {
-		return fmt.Errorf("preparing the reach insert: %w", err)
-	}
-	defer pair.Close()
+	defer w.close()
 
 	for _, target := range m.referenceable {
-		r := m.reachOf(target, b.MaxDepth)
-		if _, err := stmt.Exec(target, len(r.Repositories), len(r.Workflows),
-			r.Direct, r.MaxDepth); err != nil {
-			return fmt.Errorf("writing blast radius for node %d: %w", target, err)
-		}
-		for repo, hops := range r.Repositories {
-			if _, err := pair.Exec(target, repo, hops); err != nil {
-				return fmt.Errorf("writing reach for node %d: %w", target, err)
-			}
+		if err := w.write(target, m.reachOf(target, b.MaxDepth)); err != nil {
+			return err
 		}
 	}
 	return tx.Commit()
+}
+
+// reachWriter writes one node's reach. The walk already knows which repositories it found and at
+// which version, so each breakdown costs one insert per row rather than a second traversal.
+type reachWriter struct {
+	rollup, repositories, versions *sql.Stmt
+}
+
+func prepareReachWriter(tx *sql.Tx) (*reachWriter, error) {
+	w := &reachWriter{}
+	var err error
+	if w.rollup, err = tx.Prepare(`
+		INSERT INTO abom_blast_radius (node_row_id, dependent_repos, dependent_steps, dependent_jobs,
+			dependent_workflows, max_depth, refs_in_use)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`); err != nil {
+		return nil, fmt.Errorf("preparing the blast radius insert: %w", err)
+	}
+	if w.repositories, err = tx.Prepare(
+		`INSERT INTO abom_node_reach (node_row_id, repository_row_id, hops, steps, jobs, workflows)
+		 VALUES (?, ?, ?, ?, ?, ?)`); err != nil {
+		w.close()
+		return nil, fmt.Errorf("preparing the reach insert: %w", err)
+	}
+	if w.versions, err = tx.Prepare(`INSERT INTO abom_node_version_reach
+		(node_row_id, commit_sha, repository_row_id, hops) VALUES (?, ?, ?, ?)`); err != nil {
+		w.close()
+		return nil, fmt.Errorf("preparing the reach-by-version insert: %w", err)
+	}
+	return w, nil
+}
+
+func (w *reachWriter) close() {
+	for _, stmt := range []*sql.Stmt{w.rollup, w.repositories, w.versions} {
+		if stmt != nil {
+			stmt.Close()
+		}
+	}
+}
+
+// write stores one node's reach. Each repository's members are its own, so the totals are the sums.
+func (w *reachWriter) write(target int64, r Reach) error {
+	var steps, jobs, workflows int
+	for repo, hops := range r.Repositories {
+		d := r.Dependents[repo]
+		steps, jobs, workflows = steps+len(d.Steps), jobs+len(d.Jobs), workflows+len(d.Workflows)
+		if _, err := w.repositories.Exec(target, repo, hops,
+			len(d.Steps), len(d.Jobs), len(d.Workflows)); err != nil {
+			return fmt.Errorf("writing reach for node %d: %w", target, err)
+		}
+	}
+	if _, err := w.rollup.Exec(target, len(r.Repositories), steps, jobs, workflows,
+		r.MaxDepth, len(r.References)); err != nil {
+		return fmt.Errorf("writing blast radius for node %d: %w", target, err)
+	}
+	for commit, repos := range r.Versions {
+		for repo, hops := range repos {
+			if _, err := w.versions.Exec(target, commit, repo, hops); err != nil {
+				return fmt.Errorf("writing reach for node %d at %q: %w", target, commit, err)
+			}
+		}
+	}
+	return nil
 }
 
 // Dependents returns the repositories that would be affected by a change to a node.

@@ -12,7 +12,7 @@
     {
         <MudIconButton Icon="@Icons.Material.Outlined.Hub" Size="Size.Small"
                        Href="@($"/explore?selection={Uri.EscapeDataString(NodeKey)}&direction=both")"
-                       title="@($"Show {NodeKey} in the Explorer")"
+                       title="@($"Open {NodeKey} in the Explorer, with what it uses and what uses it.")"
                        aria-label="@($"Show {NodeKey} in the Explorer")"
                        data-abom-row-action="open-in-explorer" />
     }
@@ -20,7 +20,7 @@
     {
         <MudIconButton Icon="@Icons.Material.Outlined.Inventory2" Size="Size.Small"
                        OnClick="Document"
-                       title="@($"Bill of materials for {Name}")"
+                       title="@($"Open the bill of materials for {Name}, ready to download.")"
                        aria-label="@($"Bill of materials for {Name}")"
                        data-abom-row-action="bill-of-materials" />
     }

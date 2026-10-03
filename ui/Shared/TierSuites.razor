@@ -38,12 +38,14 @@
                         Class="abom-grid abom-table abom-config-grid abom-grid-windowed mt-2">
             <thead>
                 <tr>
-                    <th>Suite</th>
+                    <th><HeaderTip Tip="A query suite you can bind to one or more analysis tiers.">Suite</HeaderTip></th>
                     @foreach (var tier in Tiers)
                     {
                         @* Size is what binding costs; analyzed is what re-analyzing costs. *@
                         <th class="abom-tier-head">
-                            <span class="abom-tier-name">@tier</span>
+                            <HeaderTip Tip="The analysis tier this column configures, with its current dependency and analysis counts.">
+                                <span class="abom-tier-name">@tier</span>
+                            </HeaderTip>
                             <span class="abom-tier-why">@TierWhy(tier)</span>
                             @if (TierOf(tier).HoldsRepositories)
                             {
@@ -76,6 +78,7 @@
                     <tr>
                         <td>
                             <button type="button" class="abom-suite-toggle"
+                                    title="@(IsSuiteOpen(suite) ? "Hide the packs and queries this suite selects." : "Show the packs and queries this suite selects.")"
                                     @onclick="@(() => ToggleSuiteDetail(suite))"
                                     aria-expanded="@(IsSuiteOpen(suite) ? "true" : "false")">
                                 <MudIcon Size="Size.Small" Icon="@(IsSuiteOpen(suite)

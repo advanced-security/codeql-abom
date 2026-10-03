@@ -17,7 +17,7 @@ public class InventoryUnitTests : AbomTestContext
 
     private const string Dependencies = """
         {"items":[{"nodeKey":"actions/checkout","kind":"action","origin":"external",
-          "dependentRepos":50,"directDependents":60,"distinctRefs":3,
+          "dependentRepos":50,"dependentSteps":60,"distinctRefs":3,
           "findings":2,"advisories":0,"analyzed":true,"refs":["v4"]}],"total":1585}
         """;
 
@@ -168,7 +168,7 @@ public class InventoryUnitTests : AbomTestContext
     }
 
     /// <summary>
-    /// A repository is not a node, so it gets repository columns. Showing "Repos reached" against a
+    /// A repository is not a node, so it gets repository columns. Counting what depends on a
     /// repository would be a measurement nothing made.
     /// </summary>
     [Fact]
@@ -184,7 +184,7 @@ public class InventoryUnitTests : AbomTestContext
             Assert.Contains("Repository Properties", page.Markup);
             Assert.Contains("team: payments", page.Find("[data-abom-repository-properties='octo-org/billing']").TextContent);
             Assert.Contains("tier: production", page.Find("[data-abom-repository-properties='octo-org/billing']").TextContent);
-            Assert.DoesNotContain("Repos reached", page.Markup);
+            Assert.Empty(page.FindAll("[data-abom-level]"));
         });
     }
 
@@ -399,7 +399,7 @@ public class InventoryUnitTests : AbomTestContext
     {
         Answer("api/actions", """
             {"items":[{"nodeKey":"octo-org/app/.github/workflows/ci.yml","kind":"workflow",
-              "origin":"seed","dependentRepos":0,"directDependents":0,"distinctRefs":0,
+              "origin":"seed","dependentRepos":0,"dependentSteps":0,"distinctRefs":0,
               "findings":3,"advisories":0,"analyzed":true,"refs":[]}],"total":1}
             """);
         Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.NavigateTo("/inventory");

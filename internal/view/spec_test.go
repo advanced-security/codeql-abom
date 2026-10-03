@@ -308,3 +308,68 @@ func TestUnitsIsNoLongerATerm(t *testing.T) {
 		t.Error("units= was accepted; the key must travel with the value")
 	}
 }
+
+// A reference is text a workflow wrote, and Git allows a comma in one, so each is its own
+// parameter rather than a member of a comma-joined list — the reason properties are written so.
+func TestAReferenceIsWrittenOncePerValueAndSurvivesAComma(t *testing.T) {
+	spec := Spec{At: []string{"v4", "release,1", "v4", "3d3c42e5aac5ba805825da76410c181273ba90b1"}}
+	const canonical = "at=3d3c42e5aac5ba805825da76410c181273ba90b1&at=release%2C1&at=v4"
+	if got := spec.String(); got != canonical {
+		t.Errorf("String() = %q, want %q", got, canonical)
+	}
+	back, err := Parse(canonical)
+	if err != nil {
+		t.Fatalf("Parse(%q): %v", canonical, err)
+	}
+	if want := []string{"3d3c42e5aac5ba805825da76410c181273ba90b1", "release,1", "v4"}; !slices.Equal(back.At, want) {
+		t.Errorf("At = %q, want %q", back.At, want)
+	}
+}
+
+// `at` names a reference and `ref` its style; one must not be read as the other, which is what the
+// details page's private `?ref=v4` did.
+func TestAReferenceIsNotAReferenceStyle(t *testing.T) {
+	if _, err := Parse("ref=v4"); err == nil {
+		t.Error(`ref=v4 was accepted; "ref" is the reference style and takes sha, tag or any`)
+	}
+	spec, err := Parse("at=v4&ref=tag")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.RefStyle != RefStyleTag || !slices.Equal(spec.At, []string{"v4"}) {
+		t.Errorf("parsed %+v; want style tag and reference v4", spec)
+	}
+}
+
+// The details page of one dependency applies the terms that narrow who uses it, and refuses by name
+// the ones that chose which dependencies were listed.
+func TestTheUsesSurfaceRefusesWhatOnlyChoseTheListedDependencies(t *testing.T) {
+	spec, err := Parse("at=v4&kinds=action&minReach=2&properties=team:core&reached=direct&ref=tag")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := spec.UnenforceableAsUses(), []string{"kinds", "minReach"}; !slices.Equal(got, want) {
+		t.Errorf("UnenforceableAsUses() = %v, want %v", got, want)
+	}
+	if got := spec.UnenforceableAsInventory(); slices.Contains(got, "at") {
+		t.Errorf("the inventory refuses at: %v", got)
+	}
+}
+
+// The uses surface answers who uses a dependency, so of the scopes only `owned` names a set of
+// repositories, and of the origins only the two a repository can have. The rest are refused by
+// member rather than dropped.
+func TestTheUsesSurfaceRefusesTheMembersItCannotAnswer(t *testing.T) {
+	spec, err := Parse("origins=external,seed&scope=exposure")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := spec.UnenforceableAsUses(), []string{"origins=external", "scope=exposure"}; !slices.Equal(got, want) {
+		t.Errorf("UnenforceableAsUses() = %v, want %v", got, want)
+	}
+	for _, term := range Catalog() {
+		if term.Name == "origins" && !slices.Equal(term.SurfaceValues[SurfaceUses], []string{"seed", "upstream"}) {
+			t.Errorf("the origins control on the uses surface offers %v", term.SurfaceValues[SurfaceUses])
+		}
+	}
+}

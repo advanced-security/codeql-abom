@@ -64,6 +64,13 @@ know they asked the same question — which is the whole reason one spelling win
 | **Direct** | The repository names it itself, `hops = 1` |
 | **Transitive** | Reached through an intermediary someone else maintains |
 | **Reached from yours** | The `reached` term: charged to the repositories that reach it, directly or transitively, rather than to where a finding was found |
+| **Reference** | A version exactly as a workflow wrote it — `v4`, a branch, a commit — and the `at` term that picks one. `v4` is not `v4.2.2`, even where both name one commit today. **Reference style** is only its shape |
+| **Local path** | A `uses: ./…` with no reference. It runs at its caller's own commit, so it is not a version: never listed among the versions in use, never counted in **Distinct refs**, and never the default branch |
+| **Depending** | What in the starting points runs it, directly or transitively, counted at one level: **steps**, **jobs**, **workflows** (files), **repositories**, or **groups** (one per value of the grouping property) |
+| **Commit it runs** | What a reference resolves to, or what a lock selects behind it. **Not known** where nothing recorded one |
+| **Through** | What a repository itself names that brings a dependency in, for a transitive use |
+| **What `uses:` this** | The details page's table: one row per repository, reference and commit, read from the walk reach takes |
+| **If this tag changes** | Who would run a different commit if one reference moved: directly, through an intermediary, and who a lock keeps where they are. A commit does not move |
 | **Advisory severity** | The severity GitHub published an advisory at: critical, high, medium (GitHub also says moderate), low, or **unrated** where it published none. Never whether a reference falls inside the range |
 | **Any of these policies** | A superset: a policy naming others, which refuses what any of them refuses |
 

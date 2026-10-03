@@ -3,9 +3,6 @@ package graph
 import (
 	"encoding/json"
 	"fmt"
-	"slices"
-	"strconv"
-	"strings"
 )
 
 // Exposure is one repository's shortest path to an advisory-affected action.
@@ -107,19 +104,7 @@ type reachPath struct {
 	conditions []StepCondition
 }
 
-// reachedNode carries the commit and consumer bindings that make a route possible.
-// excludes is sorted and comma-joined so reachedNode stays usable as a map key.
-type reachedNode struct {
-	node     int64
-	commit   string
-	requires int64
-	excludes string
-}
-
-// exposureOf walks dependents from target, keeping each repository's shortest route.
-//
-// Routes stay inside the dependency commit a consumer pinned; exposureagreement_test.go holds
-// this walk to the same rule as the submission closure.
+// exposureOf keeps each repository's shortest route to target, and the conditions guarding it.
 func (m *model) exposureOf(target int64, maxDepth int) map[int64]reachPath {
 	out := map[int64]reachPath{}
 
@@ -128,126 +113,20 @@ func (m *model) exposureOf(target int64, maxDepth int) map[int64]reachPath {
 	// enteredBy records the step that made the reference, which is where an `if:` sits. The
 	// container alone cannot say it: a workflow has many steps and only one of them named this.
 	enteredBy := map[int64]int64{}
-	start := reachedNode{node: target}
-	visited := map[reachedNode]bool{start: true}
-	frontier := []reachedNode{start}
 
-	for depth := 1; len(frontier) > 0; depth++ {
-		if maxDepth > 0 && depth > maxDepth {
-			break
+	m.walk(target, maxDepth, func(s step) {
+		if _, ok := from[s.via.node]; !ok && s.via.node != target {
+			from[s.via.node] = s.from.node
+			enteredBy[s.via.node] = s.in.src
 		}
-		var next []reachedNode
-		for _, cur := range frontier {
-			for _, in := range m.reverse[cur.node] {
-				// Leaving a dependency requires a consumer that can run this commit.
-				requires, excludes, ok := m.admits(in, cur)
-				if !ok {
-					continue
-				}
-
-				// Steps are an implementation detail; what a caller references is the
-				// workflow or composite action holding them.
-				vias := []reachedNode{{node: in.src, requires: requires, excludes: excludes}}
-				if c, ok := m.container[in.src]; ok {
-					vias[0].node = c
-					// Crossing into a dependency binds the onward route to one shipped commit.
-					if m.isExternal[c] {
-						vias = vias[:0]
-						for _, commit := range in.commits {
-							vias = append(vias, reachedNode{
-								node: c, commit: commit, requires: requires, excludes: excludes,
-							})
-						}
-					}
-				}
-				if _, ok := from[vias[0].node]; !ok && vias[0].node != target {
-					from[vias[0].node] = cur.node
-					enteredBy[vias[0].node] = in.src
-				}
-
-				if repo, ok := m.repoOf[in.src]; ok && m.seedRepo[repo] &&
-					(requires == 0 || requires == repo) && !listed(excludes, repo) {
-					if _, seen := out[repo]; !seen {
-						path, conditions := m.routeFrom(vias[0].node, target, from, enteredBy)
-						out[repo] = reachPath{hops: depth, path: path, conditions: conditions}
-					}
-				}
-				for _, via := range vias {
-					if via.node != in.src && !visited[via] {
-						visited[via] = true
-						next = append(next, via)
-					}
-				}
-			}
+		repo, ok := m.countedFor(s)
+		if _, seen := out[repo]; !ok || seen {
+			return
 		}
-		frontier = next
-	}
+		path, conditions := m.routeFrom(s.via.node, target, from, enteredBy)
+		out[repo] = reachPath{hops: s.depth, path: path, conditions: conditions}
+	})
 	return out
-}
-
-// admits reports whether a reference can reach cur.commit and how that binds later routes.
-func (m *model) admits(in inEdge, cur reachedNode) (int64, string, bool) {
-	if cur.commit == "" {
-		return cur.requires, cur.excludes, true
-	}
-	locks := m.locks[in.row]
-	own := false
-	for _, l := range locks {
-		if !l.own {
-			continue
-		}
-		own = true
-		if l.commit == cur.commit {
-			return cur.requires, cur.excludes, true
-		}
-	}
-	if own {
-		return 0, "", false
-	}
-	if m.resolved[m.keyOf[cur.node]+"\x00"+in.ref] == cur.commit {
-		excludes := cur.excludes
-		blocked := false
-		for _, l := range locks {
-			if l.commit == cur.commit {
-				continue
-			}
-			if cur.requires == l.consumer {
-				blocked = true
-			}
-			excludes = withListed(excludes, l.consumer)
-		}
-		if !blocked {
-			return cur.requires, excludes, true
-		}
-	}
-	for _, l := range locks {
-		if l.commit == cur.commit && (cur.requires == 0 || cur.requires == l.consumer) &&
-			!listed(cur.excludes, l.consumer) {
-			return l.consumer, cur.excludes, true
-		}
-	}
-	return 0, "", false
-}
-
-// listed reports whether a comma-joined set of repository ids holds one.
-func listed(set string, id int64) bool {
-	if set == "" {
-		return false
-	}
-	return slices.Contains(strings.Split(set, ","), strconv.FormatInt(id, 10))
-}
-
-// withListed adds a repository id to a comma-joined set, kept sorted so equal sets compare equal.
-func withListed(set string, id int64) string {
-	if listed(set, id) {
-		return set
-	}
-	ids := []string{strconv.FormatInt(id, 10)}
-	if set != "" {
-		ids = append(ids, strings.Split(set, ",")...)
-	}
-	slices.Sort(ids)
-	return strings.Join(ids, ",")
 }
 
 // routeFrom walks the recorded predecessors back to the target, collecting the containers passed

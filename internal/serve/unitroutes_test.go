@@ -20,6 +20,7 @@ func TestAUnitsRouteAcceptsEveryTermItsUnitApplies(t *testing.T) {
 		viewspec.SurfaceRepositories:  "/api/repositories",
 		viewspec.SurfaceRelationships: "/api/relationships",
 		viewspec.SurfaceAdvisories:    "/api/remediation",
+		viewspec.SurfaceUses:          "/api/node/actions/checkout/-/uses",
 	}
 	for _, term := range viewspec.Catalog() {
 		for _, surface := range term.Surfaces {

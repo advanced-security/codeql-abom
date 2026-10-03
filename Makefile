@@ -133,7 +133,7 @@ fmt:
 
 ## js: test browser code that Go and Razor checks do not see.
 js:
-	@node --test ui/wwwroot/js/*.test.js ui/tests/e2e/*.test.mjs && echo "js: ok"
+	@node --test ui/wwwroot/js/*.test.js ui/tests/e2e/*.test.mjs ui/tools/*.test.mjs && echo "js: ok"
 
 # Part of `verify`; missing golangci-lint is reported directly.
 lint:

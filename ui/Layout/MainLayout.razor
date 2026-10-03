@@ -16,12 +16,15 @@
         <nav class="abom-nav ml-8 d-flex align-center">
             <MudButton Href="/codeql" Variant="Variant.Text" Color="Color.Inherit"
                        DropShadow="false" StartIcon="@Icons.Material.Outlined.ManageSearch"
+                       title="Open the CodeQL page for query packs, suites and analysis configuration."
                        Class="@NavClass("/codeql")">CodeQL</MudButton>
             <MudButton Href="/inventory" Variant="Variant.Text" Color="Color.Inherit"
                        DropShadow="false" StartIcon="@Icons.Material.Outlined.ListAlt"
+                       title="Open the Inventory page listing repositories, actions, advisories and findings."
                        Class="@NavClass("/inventory")">Inventory</MudButton>
             <MudButton Href="/explore" Variant="Variant.Text" Color="Color.Inherit"
                        DropShadow="false" StartIcon="@Icons.Material.Outlined.Hub"
+                       title="Open the Explorer, which draws the dependency graph."
                        Class="@NavClass("/explore")">Explorer</MudButton>
         </nav>
 
@@ -32,7 +35,7 @@
             <MudIconButton Icon="@ThemeIcon" Color="Color.Inherit" OnClick="CycleTheme"
                            aria-label="@ThemeTooltip" data-abom-theme />
         </MudTooltip>
-        <MudTooltip Text="Settings">
+        <MudTooltip Text="Open Settings to declare accounts and configure discovery.">
             <MudIconButton Icon="@Icons.Material.Outlined.Settings" Color="Color.Inherit"
                            Href="/settings" aria-label="Settings" data-abom-settings />
         </MudTooltip>

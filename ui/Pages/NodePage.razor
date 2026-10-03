@@ -1,5 +1,8 @@
 @page "/node/{*Key}"
+@implements IDisposable
 @inject AbomApi Api
+@inject NavigationManager Nav
+@inject ScopeService Scope
 
 <PageTitle>@(Key ?? "Node") — ABOM</PageTitle>
 
@@ -18,8 +21,10 @@ else if (_detail is null && IsAccount)
         </MudText>
         <MudText Typo="Typo.caption">
             It stands for everything it owns rather than for anything recorded in its own right.
-            See <MudLink Href="@($"/explore?q={AccountName}")" Typo="Typo.caption">its dependencies</MudLink>,
-            or <MudLink Href="/inventory?ref=tag" Typo="Typo.caption">how its references are pinned</MudLink>.
+            See <MudLink Href="@($"/explore?q={AccountName}")" Typo="Typo.caption"
+                         title="Open the Explorer with this account name as the search term.">its dependencies</MudLink>,
+            or <MudLink Href="/inventory?ref=tag" Typo="Typo.caption"
+                        title="Open Inventory filtered to tag references, so you can review pinning.">how its references are pinned</MudLink>.
         </MudText>
     </MudAlert>
 }
@@ -29,7 +34,8 @@ else if (_detail is null)
         <MudText Typo="Typo.body2">Nothing here is named <span class="abom-rule">@Key</span>.</MudText>
         <MudText Typo="Typo.caption">
             That is not the same as it being unused: it may sit behind a dependency that has not
-            been analyzed. <MudLink Href="/inventory?unit=coverage" Typo="Typo.caption">Check coverage</MudLink>.
+            been analyzed. <MudLink Href="/inventory?unit=coverage" Typo="Typo.caption"
+                                    title="Open the coverage view in Inventory to see what has been analyzed.">Check coverage</MudLink>.
         </MudText>
     </MudAlert>
 }
@@ -44,317 +50,261 @@ else
                 @(_detail.Origin == "seed" ? "starting point" : _detail.Origin)
             </MudChip>
         }
-        @* The pivot to the graph is a deliberate click, never where a name lands you. *@
-        <MudLink Href="@($"/explore?selection={Uri.EscapeDataString(_detail.Key)}")">
+        @* The pivot to the graph is a deliberate click, never where a name lands you. Each carries
+           the terms its own surface applies; the rest would be refused there. *@
+        <MudLink Href="@ExplorerHref" title="Open this in the Explorer, with the filters the Explorer can apply."
+                 data-abom-node-explorer>
             <MudIcon Icon="@Icons.Material.Outlined.Hub" Size="Size.Small" Class="mr-1" />
             Open in Explorer
         </MudLink>
+        <MudLink Href="@InventoryHref" title="Return to the Inventory, keeping the filters it can apply."
+                 data-abom-node-inventory>
+            <MudIcon Icon="@Icons.Material.Outlined.ListAlt" Size="Size.Small" Class="mr-1" />
+            Back to Inventory
+        </MudLink>
     </div>
 
-    <MudGrid Spacing="3" Class="mb-3">
-        <MudItem xs="6" sm="3">
-            <MudPaper Elevation="0" Outlined="true" Class="pa-3">
-                <MudText Typo="Typo.h6" Class="abom-num">@_detail.DependentRepos</MudText>
-                <MudText Typo="Typo.caption">repositories reach it</MudText>
-            </MudPaper>
-        </MudItem>
-        <MudItem xs="6" sm="3">
-            <MudPaper Elevation="0" Outlined="true" Class="pa-3">
-                <MudText Typo="Typo.h6" Class="abom-num">@_detail.Refs.Sum(r => r.Count)</MudText>
-                <MudText Typo="Typo.caption"><code>uses:</code> lines point here</MudText>
-            </MudPaper>
-        </MudItem>
-        <MudItem xs="6" sm="3">
-            <MudPaper Elevation="0" Outlined="true" Class="pa-3">
-                <MudText Typo="Typo.h6" Class="abom-num">@_detail.Refs.Count</MudText>
-                <MudText Typo="Typo.caption">distinct references</MudText>
-            </MudPaper>
-        </MudItem>
-        <MudItem xs="6" sm="3">
-            <MudPaper Elevation="0" Outlined="true" Class="pa-3">
-                <MudText Typo="Typo.h6" Class="abom-num">@_detail.Rules.Sum(r => r.Count)</MudText>
-                <MudText Typo="Typo.caption">findings</MudText>
-                @if (_detail.Rules.Count > 0)
+    <div class="abom-scopebar d-flex flex-wrap align-center gap-2 mb-2">
+        <FilterPicker Surface="uses" Changed="OnPickerChanged" />
+    </div>
+
+    <MudPaper Elevation="0" Outlined="true" Class="pa-3 mb-3" data-abom-node-versions>
+        <MudText Typo="Typo.subtitle2" HtmlTag="h2">Versions in use</MudText>
+        <ActionVersions Key="@_detail.Key" Predicate="@UsesPredicate" ReferenceHref="ReferenceHref" />
+    </MudPaper>
+
+    @if (_uses?.Change is { } change)
+    {
+        <MudPaper Elevation="0" Outlined="true" Class="pa-3 mb-3" data-abom-tag-change>
+            <MudText Typo="Typo.subtitle2" HtmlTag="h2">If this tag changes</MudText>
+            @if (change.Fixed)
+            {
+                <MudText Typo="Typo.body2">
+                    <span class="abom-ref">@change.Reference</span> is a commit, which does not move.
+                    Whoever runs it keeps running it until they change the reference themselves.
+                </MudText>
+            }
+            else
+            {
+                <MudText Typo="Typo.body2" Class="mb-2" data-abom-tag-names-now>
+                    @if (change.NamesNow.Length > 0)
+                    {
+                        <span><span class="abom-ref">@change.Reference</span> names
+                            <code title="@change.NamesNow">@CommitText.Short(change.NamesNow)</code> now.</span>
+                    }
+                    else
+                    {
+                        <span>Nothing has resolved <span class="abom-ref">@change.Reference</span>, so ABOM has
+                            no reading of what it names now.</span>
+                    }
+                    If it moved, in this scope:
+                </MudText>
+                @* Never summed: one is a reference to change, the other waits on an intermediary. *@
+                <div class="abom-tag-change-groups">
+                    @ChangeGroup("direct", "name it themselves and would run the new commit", change.Direct)
+                    @ChangeGroup("transitive", "reach it through something they name, and would follow it", change.Transitive)
+                    @ChangeGroup("kept", "are kept where they are by a lock until they lock again", change.Kept)
+                </div>
+            }
+        </MudPaper>
+    }
+
+    <MudPaper Elevation="0" Outlined="true" Class="pa-3 mb-3" data-abom-node-uses>
+        <MudText Typo="Typo.subtitle2" HtmlTag="h2">What <code>uses:</code> this</MudText>
+        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2">
+            Not whether a name appears somewhere, but whether something runs it: which repository,
+            by which reference, at which commit, through whom, and guarded by what.
+            @if (_uses?.Change is null)
+            {
+                <span data-abom-tag-change-hint>Choose one reference in Versions in use to see who moves if it changes.</span>
+            }
+        </MudText>
+        @if (_usesRefusal is { Length: > 0 })
+        {
+            <MudAlert Dense="true" Severity="MudBlazor.Severity.Info" Variant="Variant.Outlined"
+                      data-abom-uses-refusal>@_usesRefusal</MudAlert>
+        }
+        else
+        {
+            <MudDataGrid T="NodeUse" ServerData="LoadUses" @ref="_usesGrid" Dense="true" Hover="true"
+                         Bordered="false" SortMode="SortMode.Single" Filterable="false" RowsPerPage="25"
+                         ShowColumnOptions="false" FixedHeader="true"
+                         Class="abom-grid abom-grid-windowed abom-grid-captioned abom-uses-grid"
+                         data-abom-uses-table>
+                <Columns>
+                    <HierarchyColumn T="NodeUse">
+                        <CellTemplate>
+                            <MudIconButton Size="Size.Small"
+                                           Icon="@(context.Open ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)"
+                                           aria-label="@($"Show how {context.Item.Repository} arrives")"
+                                           aria-expanded="@(context.Open ? "true" : "false")"
+                                           title="@($"{(context.Open ? "Hide" : "Show")} how {context.Item.Repository} reaches this action.")"
+                                           OnClick="@(() => context.Actions.ToggleHierarchyVisibilityForItemAsync())"
+                                           data-abom-use-detail />
+                        </CellTemplate>
+                    </HierarchyColumn>
+                    <PropertyColumn Property="u => u.Repository" Title="Repository"
+                                    HeaderClass="abom-identity-col" CellClass="abom-identity-col">
+                        <HeaderTemplate><HeaderTip Tip="The repository that runs this action. Click it to find that repository in the inventory.">Repository</HeaderTip></HeaderTemplate>
+                        <CellTemplate>
+                            <MudLink Href="@($"/inventory?unit=repositories&q={Uri.EscapeDataString(context.Item.Repository)}")"
+                                     Typo="Typo.caption" Class="abom-rule"
+                                     title="@($"Find {context.Item.Repository} in the repository inventory.")"
+                                     data-abom-use-repository="@context.Item.Repository">
+                                @context.Item.Repository
+                            </MudLink>
+                            @if (context.Item.Origin == "upstream")
+                            {
+                                <span class="abom-ref ml-1">upstream</span>
+                            }
+                        </CellTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn Property="u => u.Reference" Title="Reference">
+                        <HeaderTemplate><HeaderTip Tip="The version written after the @@ in the uses: line that brings this action in.">Reference</HeaderTip></HeaderTemplate>
+                        <CellTemplate>
+                            @if (context.Item.Hops > 0)
+                            {
+                                <span class="abom-ref" data-abom-use-reference>@CommitText.Reference(context.Item.Reference)</span>
+                            }
+                        </CellTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn Property="u => u.Commit" Title="Commit it runs">
+                        <HeaderTemplate><HeaderTip Tip="The commit this repository actually runs, either the one the reference points to or the one a lock pins.">Commit it runs</HeaderTip></HeaderTemplate>
+                        <CellTemplate>
+                            @if (context.Item.Commit.Length > 0)
+                            {
+                                <code title="@context.Item.Commit" data-abom-use-commit>@CommitText.Short(context.Item.Commit)</code>
+                            }
+                            else if (context.Item.Hops > 0)
+                            {
+                                <span class="abom-coverage-unknown"
+                                      title="Nothing recorded which commit this reference runs.">not known</span>
+                            }
+                        </CellTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn Property="u => u.Locked" Title="Chosen by">
+                        <HeaderTemplate><HeaderTip Tip="Whether the reference itself or an actions lock decided which commit runs.">Chosen by</HeaderTip></HeaderTemplate>
+                        <CellTemplate>
+                            <span data-abom-use-chosen>@ChosenBy(context.Item)</span>
+                        </CellTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn Property="u => u.Hops" Title="Relationship">
+                        <HeaderTemplate><HeaderTip Tip="Direct means the repository names this action itself. Transitive means it arrives through another action.">Relationship</HeaderTip></HeaderTemplate>
+                        <CellTemplate>
+                            <MudTooltip Text="@RelationshipHelp(context.Item)">
+                                <span class="abom-ref" data-abom-use-relationship>@RelationshipLabel(context.Item.Hops)</span>
+                            </MudTooltip>
+                        </CellTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn Property="u => u.Through" Title="Through">
+                        <HeaderTemplate><HeaderTip Tip="For a transitive use, the action that brings this one in.">Through</HeaderTip></HeaderTemplate>
+                        <CellTemplate>
+                            @if (context.Item.Through.Length > 0)
+                            {
+                                <MudLink Href="@($"/node/{context.Item.Through}")" Typo="Typo.caption"
+                                         Class="abom-rule"
+                                         title="@($"Open the details page for {context.Item.Through}.")">@context.Item.Through</MudLink>
+                            }
+                        </CellTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn Property="u => u.WorkflowCount" Title="Workflows" CellClass="abom-num">
+                        <HeaderTemplate><HeaderTip Tip="How many of the repository's workflows lead to this action.">Workflows</HeaderTip></HeaderTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn Property="u => u.Lines" Title="uses: lines">
+                        <HeaderTemplate><HeaderTip Tip="How many of the repository's own uses: lines name this action. Only a direct use has any.">uses: lines</HeaderTip></HeaderTemplate>
+                        <CellTemplate>
+                            @if (context.Item.Hops == 1)
+                            {
+                                <span class="abom-num">@context.Item.Lines</span>
+                            }
+                            else
+                            {
+                                <span class="abom-faint" title="It names no reference to this itself, so there is nothing of its own to edit.">—</span>
+                            }
+                        </CellTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn Property="u => u.ConditionCount" Title="Conditions">
+                        <HeaderTemplate><HeaderTip Tip="How many if: conditions sit on the route to this action. ABOM shows them as written and does not decide whether they hold.">Conditions</HeaderTip></HeaderTemplate>
+                        <CellTemplate>
+                            @if (context.Item.Conditions.Count == 0)
+                            {
+                                <span class="mud-text-secondary">none</span>
+                            }
+                            else
+                            {
+                                <span title="@string.Join("\n", context.Item.Conditions.Select(c => c.Condition))">
+                                    @CountText.Of(context.Item.Conditions.Count, "if:", "if:s")
+                                </span>
+                            }
+                        </CellTemplate>
+                    </PropertyColumn>
+                </Columns>
+                <ChildRowContent>
+                    <div class="abom-row-detail" data-abom-use-route="@context.Item.Repository">
+                        <div class="abom-path">@string.Join(" → ", context.Item.Path)</div>
+                        @if (context.Item.Conditions.Count == 0)
+                        {
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                Every step on this route is unconditional.
+                            </MudText>
+                        }
+                        else
+                        {
+                            @foreach (var c in context.Item.Conditions)
+                            {
+                                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                    only when <span class="abom-path">@c.Condition</span> — on a step in @c.In
+                                </MudText>
+                            }
+                        }
+                        @if (context.Item.Workflows.Count > 0)
+                        {
+                            <MudText Typo="Typo.caption" Class="d-block mt-1">From</MudText>
+                            <ul class="abom-ref-users-list">
+                                @foreach (var w in context.Item.Workflows)
+                                {
+                                    <li><MudLink Href="@($"/node/{w}")" Typo="Typo.caption"
+                                                 title="@($"Open the details page for {w}.")">@w</MudLink></li>
+                                }
+                            </ul>
+                        }
+                    </div>
+                </ChildRowContent>
+                <PagerContent>
+                    <MudDataGridPager T="NodeUse" />
+                </PagerContent>
+            </MudDataGrid>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2" data-abom-uses-said>
+                @UsesSummary()
+                @if (_uses is { HiddenUpstream: > 0 } u)
                 {
-                    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block"
-                             data-abom-node-severity>@SeverityText.Summary(NodeSeverity())</MudText>
+                    <span data-abom-uses-hidden-upstream>
+                        @CountText.Of(u.HiddenUpstream, "upstream repository also runs it and is", "upstream repositories also run it and are")
+                        not listed, because nobody here changes them.
+                        <MudLink Href="@UpstreamHref" Typo="Typo.caption"
+                                 title="Also list the upstream repositories that run this action.">List them too</MudLink>.
+                    </span>
                 }
-            </MudPaper>
-        </MudItem>
-        <MudItem xs="6" sm="3">
-            <MudPaper Elevation="0" Outlined="true" Class="pa-3">
-                @* "yes" was true as soon as one reference had results, which is routinely one of
-                   twenty-seven. The ratio is the only form that tells partial from complete. *@
-                <MudText Typo="Typo.h6">@CoverageAnswer()</MudText>
-                <MudText Typo="Typo.caption">@CoverageCaption()</MudText>
-            </MudPaper>
-        </MudItem>
-    </MudGrid>
+                @if (_uses is { Unanalyzed: > 0 } p)
+                {
+                    <span>
+                        @CountText.Of(p.Unanalyzed, "queued dependency has", "queued dependencies have") not been
+                        analyzed; a route that runs only through one cannot appear here.
+                    </span>
+                }
+            </MudText>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
+                Conditions are printed exactly as the workflow wrote them. Whether one holds on any
+                given run is not something static analysis settles, so ABOM reports the expression
+                rather than deciding it.
+            </MudText>
+        }
+    </MudPaper>
 
     <MudGrid Spacing="3">
-        <MudItem xs="12">
-            <MudPaper Elevation="0" Outlined="true" Class="pa-3">
-                <MudText Typo="Typo.subtitle2">If you bump this</MudText>
-                @if (_impact is null)
-                {
-                    <MudProgressLinear Indeterminate="true" Class="mt-2" />
-                }
-                else
-                {
-                    <MudText Typo="Typo.body2" Class="mb-2">
-                        <b>@(_impact.Direct + _impact.Transitive)</b> repositories would
-                        be affected by changing the version of this.
-                    </MudText>
-                    <div class="d-flex flex-wrap gap-4 mb-2">
-                        <MudTooltip Text="These name it themselves, so the reference lives in their own repository and they can change it.">
-                            <span><b>@_impact.Direct</b> directly</span>
-                        </MudTooltip>
-                        <MudTooltip Text="These reach it through an intermediary they do not own, so the fix is not theirs to make alone.">
-                            <span><b>@_impact.Transitive</b> through an intermediary</span>
-                        </MudTooltip>
-                    </div>
-                    @if (_impact.Unanalyzed > 0)
-                    {
-                        <MudAlert Severity="MudBlazor.Severity.Normal" Variant="Variant.Outlined"
-                                  Dense="true" Class="mb-2" Icon="@Icons.Material.Outlined.HelpOutline">
-                            <MudText Typo="Typo.caption">
-                                @_impact.Unanalyzed dependencies have not been analyzed. A
-                                repository that reaches this only through one of those is not
-                                counted above.
-                            </MudText>
-                        </MudAlert>
-                    }
-                    <div class="d-flex flex-wrap gap-1">
-                        @foreach (var r in _impact.Repos.Take(60))
-                        {
-                            <MudTooltip Text="@AffectedHelp(r)">
-                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
-                                         Color="@(r.Hops == 1 ? Color.Primary : Color.Default)">
-                                    @r.FullName
-                                    @if (r.Refs.Count > 0)
-                                    {
-                                        <span class="abom-ref ml-1">@string.Join(" ", r.Refs.Take(2))</span>
-                                    }
-                                </MudChip>
-                            </MudTooltip>
-                        }
-                        @if (_impact.Repos.Count > 60)
-                        {
-                            <MudText Typo="Typo.caption" Class="mud-text-secondary align-self-center">
-                                and @(_impact.Repos.Count - 60) more
-                            </MudText>
-                        }
-                    </div>
-                }
-            </MudPaper>
-        </MudItem>
-
-        <MudItem xs="12">
-            <MudPaper Elevation="0" Outlined="true" Class="pa-3">
-                <MudText Typo="Typo.subtitle2">What actually reaches this</MudText>
-                <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2">
-                    Not whether a name appears somewhere, but whether something you run arrives
-                    here, through whom, and guarded by what.
-                </MudText>
-                @if (_reach is null)
-                {
-                    <MudProgressLinear Indeterminate="true" Class="mt-2" />
-                }
-                else if (_reach.Count == 0)
-                {
-                    <MudText Typo="Typo.body2" Class="mud-text-secondary">
-                        No repository here reaches this. That is not the same as it being
-                        unreachable: anything that arrives only through a dependency that
-                        has not been analyzed cannot appear here.
-                        <MudLink Href="/inventory?unit=coverage" Typo="Typo.body2">Check coverage</MudLink>.
-                    </MudText>
-                }
-                else
-                {
-                    <MudText Typo="Typo.body2" Class="mb-2">
-                        <b>@_reach.Count</b> repositories reach this,
-                        <b>@_reach.Count(r => r.Conditions.Count > 0)</b> of them only past an
-                        <code>if:</code>.
-                    </MudText>
-                    <MudSimpleTable Dense="true" Hover="true" Striped="false" FixedHeader="true"
-                                    Class="abom-grid abom-table abom-grid-windowed">
-                        <thead>
-                            <tr><th>Repository</th><th>How it arrives</th></tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var r in _reach.OrderBy(r => r.Hops).ThenBy(r => r.Repository).Take(40))
-                            {
-                                <tr>
-                                    <td>
-                                        <MudLink Href="@($"/inventory?unit=repositories&q={Uri.EscapeDataString(r.Repository)}")" Typo="Typo.caption" Class="abom-rule">
-                                            @r.Repository
-                                        </MudLink>
-                                        <MudTooltip Text="@HopsHelp(r.Hops)">
-                                            <span class="abom-ref ml-1">@HopsLabel(r.Hops)</span>
-                                        </MudTooltip>
-                                    </td>
-                                    @* The guard shares the route's cell rather than taking a column of its own:
-                                       an `if:` runs to over a hundred characters, and a third column clipped it
-                                       off the right edge of the page. *@
-                                    <td>
-                                        <div class="abom-path">@string.Join(" → ", r.Path)</div>
-                                        @if (r.Conditions.Count == 0)
-                                        {
-                                            <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                                                Every step on this route is unconditional.
-                                            </MudText>
-                                        }
-                                        else
-                                        {
-                                            @foreach (var c in r.Conditions)
-                                            {
-                                                <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                                                    only when <span class="abom-path">@c.Condition</span>
-                                                    — on a step in @c.In
-                                                </MudText>
-                                            }
-                                        }
-                                    </td>
-                                </tr>
-                            }
-                        </tbody>
-                    </MudSimpleTable>
-                    @if (_reach.Count > 40)
-                    {
-                        <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                            and @(_reach.Count - 40) more
-                        </MudText>
-                    }
-                    <MudText Typo="Typo.caption" Class="mud-text-secondary mt-2 d-block">
-                        Conditions are printed exactly as the workflow wrote them. Whether one
-                        holds on any given run is not something static analysis settles, so ABOM
-                        reports the expression rather than deciding it.
-                    </MudText>
-                }
-            </MudPaper>
-        </MudItem>
-
         <MudItem xs="12" md="6">
             <MudPaper Elevation="0" Outlined="true" Class="pa-3">
-                <MudText Typo="Typo.subtitle2" GutterBottom="true">References in use</MudText>
-                @if (_detail.Refs.Count == 0)
-                {
-                    <MudText Typo="Typo.body2" Class="mud-text-secondary">
-                        Nothing references this by a version or commit.
-                    </MudText>
-                }
-                else
-                {
-                    <MudSimpleTable Dense="true" Hover="true" Striped="false" FixedHeader="true"
-                                    Class="abom-grid abom-table abom-grid-windowed">
-                        <thead>
-                            <tr><th>Reference</th><th>Uses</th><th>Repositories</th><th>Locked to</th></tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var r in _detail.Refs)
-                            {
-                                <tr>
-                                    <td>
-                                        <button type="button" class="abom-ref-users"
-                                                title="List every repository naming this version"
-                                                @onclick="@(() => ShowUsers(r.Ref))">
-                                            <span class="abom-ref">@r.Ref</span>
-                                        </button>
-                                    </td>
-                                    <td class="abom-num">@r.Count</td>
-                                    <td class="abom-num">@r.Repositories</td>
-                                    <td>
-                                        @if (r.Locked.Count > 0)
-                                        {
-                                            @* What runs, beside what the source says: each commit a current lock
-                                               selects behind this reference, and whose locks select it. *@
-                                            <span class="abom-ref-locked" data-abom-ref-locked="@r.Ref">
-                                                @foreach (var l in r.Locked)
-                                                {
-                                                    <span class="abom-ref-locked-entry" title="@RefLockTitle(l)">
-                                                        <code>@ShortCommit(l.Commit)</code>
-                                                        <span class="mud-text-secondary">@(l.Consumers == 1 ? "1 lock" : $"{l.Consumers:N0} locks")</span>
-                                                    </span>
-                                                }
-                                            </span>
-                                        }
-                                    </td>
-                                </tr>
-                                @if (_openRef == r.Ref)
-                                {
-                                    <tr>
-                                        <td colspan="4" class="abom-ref-users-cell">
-                                            @if (_users is null)
-                                            {
-                                                <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                                                    Loading the repositories naming this version…
-                                                </MudText>
-                                            }
-                                            else
-                                            {
-                                                <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-1">
-                                                    @UsersSummary(_users)
-                                                </MudText>
-                                                @if (_users.Repos.Count == 0)
-                                                {
-                                                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                                                        No repository names this version.
-                                                    </MudText>
-                                                }
-                                                <ul class="abom-ref-users-list">
-                                                    @foreach (var u in _users.Repos)
-                                                    {
-                                                        <li data-abom-user="@u.FullName">
-                                                            <MudLink Href="@($"/inventory?unit=repositories&q={Uri.EscapeDataString(u.FullName)}")"
-                                                                     Typo="Typo.caption">@u.FullName</MudLink>
-                                                            <span class="mud-text-secondary">@UseLabel(u)</span>
-                                                            <span class="abom-user-lock" data-abom-user-lock>@LockLabel(u)</span>
-                                                            @if (u.Verification is { } v)
-                                                            {
-                                                                <span class="abom-user-verification mud-text-secondary"
-                                                                      data-abom-user-verification
-                                                                      title="@v.VerifiedAt.ToString("u")">@VerificationLabel(v)</span>
-                                                            }
-                                                            @if (u.LockCoverage.Contains("covered") || u.LockCoverage.Contains("unsupported"))
-                                                            {
-                                                                @* Runs the tool once, offline and no-fix, because it was pressed. *@
-                                                                <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-verify-lock"
-                                                                           data-abom-verify-lock="@u.FullName"
-                                                                           Disabled="@(_verifying == u.FullName)"
-                                                                           OnClick="@(() => VerifyLock(u.FullName))">check lock</MudButton>
-                                                            }
-                                                            @if (_verifyRefusal.TryGetValue(u.FullName, out var refusal))
-                                                            {
-                                                                <span class="mud-text-secondary">@refusal</span>
-                                                            }
-                                                        </li>
-                                                    }
-                                                </ul>
-                                                @if (_users.Truncated)
-                                                {
-                                                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                                                        @(_users.Total - _users.Repos.Count) more not shown.
-                                                    </MudText>
-                                                }
-                                            }
-                                        </td>
-                                    </tr>
-                                }
-                            }
-                        </tbody>
-                    </MudSimpleTable>
-                    <MudText Typo="Typo.caption" Class="mud-text-secondary mt-2 d-block">
-                        Listed verbatim. Whether any of these falls inside an advisory's affected
-                        range is decided by the <span class="abom-rule">actions/*</span> queries,
-                        not here.
-                    </MudText>
-                }
-            </MudPaper>
-        </MudItem>
-
-        <MudItem xs="12" md="6">
-            <MudPaper Elevation="0" Outlined="true" Class="pa-3 mb-3">
-                <MudText Typo="Typo.subtitle2" GutterBottom="true">Findings by rule</MudText>
+                <MudText Typo="Typo.subtitle2" HtmlTag="h2" GutterBottom="true">Findings by rule</MudText>
                 @if (_detail.Rules.Count == 0)
                 {
                     <MudText Typo="Typo.body2" Class="mud-text-secondary">
@@ -363,6 +313,12 @@ else
                 }
                 else
                 {
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-1"
+                             data-abom-node-severity>@SeverityText.Summary(NodeSeverity())</MudText>
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-1">
+                        In its own code, at every version analyzed. Versions in use says what each
+                        reference's commit carries.
+                    </MudText>
                     @foreach (var r in _detail.Rules)
                     {
                         <div class="d-flex justify-space-between align-center gap-2" data-abom-rule="@r.RuleId">
@@ -386,58 +342,32 @@ else
                     }
                 }
             </MudPaper>
+        </MudItem>
 
-            <MudPaper Elevation="0" Outlined="true" Class="pa-3">
-                <MudText Typo="Typo.subtitle2">Used by @_detail.UsedBy.Count workflows</MudText>
-                <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2">
-                    The count is how many <code>uses:</code> lines in that workflow point here,
-                    not how many workflows or repositories it has.
-                </MudText>
-                <MudSimpleTable Dense="true" Hover="true" Striped="false" FixedHeader="true"
-                                Class="abom-grid abom-table abom-grid-windowed">
-                    <thead>
-                        <tr><th>Workflow</th><th>References</th><th><code>uses:</code> lines</th></tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var n in _detail.UsedBy.Take(25))
-                        {
-                            <tr>
-                                <td>
-                                    <MudLink Href="@($"/node/{n.Key}")" Typo="Typo.caption" Class="abom-rule">
-                                        @n.Key
-                                    </MudLink>
-                                </td>
-                                <td><RefList Refs="@n.Refs" Max="3" /></td>
-                                <td class="abom-num">@n.Count</td>
-                            </tr>
-                        }
-                    </tbody>
-                </MudSimpleTable>
-                @if (_detail.UsedBy.Count > 25)
-                {
-                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                        and @(_detail.UsedBy.Count - 25) more
-                    </MudText>
-                }
-
-                @if (_detail.Uses.Count > 0)
-                {
-                    <MudDivider Class="my-3" />
-                    <MudText Typo="Typo.subtitle2">Uses @_detail.Uses.Count dependencies</MudText>
+        @if (_detail.Uses.Count > 0)
+        {
+            <MudItem xs="12" md="6">
+                <MudPaper Elevation="0" Outlined="true" Class="pa-3">
+                    <MudText Typo="Typo.subtitle2" HtmlTag="h2">Uses @_detail.Uses.Count dependencies</MudText>
                     <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2">
-                        What this pulls in, and how many times it does so.
+                        What this pulls in, as its most recent analysis declared it, and how many times.
                     </MudText>
                     <MudSimpleTable Dense="true" Hover="true" Striped="false" FixedHeader="true"
                                     Class="abom-grid abom-table abom-grid-windowed">
                         <thead>
-                            <tr><th>Dependency</th><th>References</th><th><code>uses:</code> lines</th></tr>
+                            <tr>
+                                <th><HeaderTip Tip="An action or workflow that this one uses. Click it to open its details.">Dependency</HeaderTip></th>
+                                <th><HeaderTip Tip="The versions this one names it by in its uses: lines.">References</HeaderTip></th>
+                                <th><HeaderTip Tip="How many uses: lines in this one name that dependency."><code>uses:</code> lines</HeaderTip></th>
+                            </tr>
                         </thead>
                         <tbody>
                             @foreach (var n in _detail.Uses.Take(25))
                             {
                                 <tr>
                                     <td>
-                                        <MudLink Href="@($"/node/{n.Key}")" Typo="Typo.caption" Class="abom-rule">
+                                        <MudLink Href="@($"/node/{n.Key}")" Typo="Typo.caption" Class="abom-rule"
+                                                 title="@($"Open the details page for {n.Key}.")">
                                             @n.Key
                                         </MudLink>
                                     </td>
@@ -447,138 +377,186 @@ else
                             }
                         </tbody>
                     </MudSimpleTable>
-                }
-            </MudPaper>
-        </MudItem>
+                    @if (_detail.Uses.Count > 25)
+                    {
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                            and @(_detail.Uses.Count - 25) more
+                        </MudText>
+                    }
+                </MudPaper>
+            </MudItem>
+        }
     </MudGrid>
 }
 
 @code {
     [Parameter] public string? Key { get; set; }
 
-    // Discovery rows are one version each, so a link from there says which. Absent means the
-    // page was opened for the node itself and no reference is preselected.
-    [SupplyParameterFromQuery(Name = "ref")]
-    public string? Ref { get; set; }
-
     private NodeDetail? _detail;
-    private BumpImpact? _impact;
-    private IReadOnlyList<NodeRoute>? _reach;
     private bool _loading = true;
+    private IReadOnlyList<FilterTerm> _terms = [];
+    private MudDataGrid<NodeUse>? _usesGrid;
+    private NodeUsesPage? _uses;
+    private string? _usesRefusal;
+    private string? _loadedKey;
 
-    // The reference whose users are open, and their list. Null while a request is in flight, so
-    // "loading" and "nobody uses this" stay distinguishable.
-    private string? _openRef;
-    private NodeUsers? _users;
+    protected override void OnInitialized() => Nav.LocationChanged += OnLocationChanged;
 
-    private async Task ShowUsers(string reference)
+    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
+
+    // Runs on parameter change too, so following a neighbor link reloads rather than sticking.
+    protected override async Task OnParametersSetAsync()
     {
-        if (_openRef == reference)
+        Scope.ReadFrom(Nav.Uri);
+        if (_terms.Count == 0)
         {
-            _openRef = null;
-            return;
+            _terms = await Api.GetFilterTermsAsync();
         }
-        _openRef = reference;
-        _users = null;
-        _users = await Api.GetNodeUsersAsync(Key ?? string.Empty, reference);
+        if (Key == _loadedKey) return;
+        _loading = true;
+        _uses = null;
+        _usesRefusal = null;
+        _detail = string.IsNullOrEmpty(Key) ? null : await Api.GetNodeAsync(Key);
+        _loadedKey = Key;
+        _loading = false;
     }
 
-    // The count of places to edit is not the count of repositories: one repository naming a
-    // version from three workflows is one row and three edits.
-    private static string UseLabel(RepositoryUse u)
+    // A reference chosen in the versions table, or a term set or removed in the bar, is a new
+    // address; reading it here is what keeps the page and the address one answer.
+    private async void OnLocationChanged(object? sender, LocationChangedEventArgs e)
     {
-        var parts = new List<string> { u.Uses == 1 ? "1 use" : $"{u.Uses:N0} uses" };
-        if (u.Origin == "upstream") parts.Add("upstream");
-        if (u.Owned) parts.Add("yours");
-        return $" — {string.Join(", ", parts)}";
+        var before = Scope.ToQueryString();
+        Scope.ReadFrom(Nav.Uri);
+        if (Scope.ToQueryString() == before) return;
+        await InvokeAsync(async () =>
+        {
+            StateHasChanged();
+            if (_usesGrid is not null) await _usesGrid.ReloadServerData();
+        });
     }
 
-    // What the repository's lock did with this version. Four answers that "not locked" would
-    // collapse into one: no lockfile, one this reader could not read, one that does not list these
-    // uses, and none read at all — the last is unknown, not unlocked.
-    private static string LockLabel(RepositoryUse u)
+    private async Task OnPickerChanged()
     {
-        var parts = new List<string>();
-        foreach (var l in u.Locks.Where(l => l.Via.Length == 0))
-        {
-            var workflows = string.Join(", ", l.Workflows.Select(w => w.Split('/')[^1]));
-            parts.Add(workflows.Length > 0
-                ? $"locked to {ShortCommit(l.Commit)} by {workflows}"
-                : $"locked to {ShortCommit(l.Commit)}");
-        }
-        if (parts.Count > 0 && u.LockedUses < u.Uses)
-        {
-            parts.Add($"{u.LockedUses:N0} of {u.Uses:N0} uses");
-        }
-        foreach (var l in u.Locks.Where(l => l.Via.Length > 0))
-        {
-            parts.Add($"{l.Consumer}'s lock selects {ShortCommit(l.Commit)} through {l.Via}");
-        }
-        if (parts.Count == 0)
-        {
-            parts.Add(OwnLockState(u.LockCoverage));
-        }
-        return $" — {string.Join("; ", parts)}";
+        Nav.NavigateTo(PageHref(Scope.Spec), new NavigationOptions { ReplaceHistoryEntry = true });
+        if (_usesGrid is not null) await _usesGrid.ReloadServerData();
     }
 
-    private string? _verifying;
-    private readonly Dictionary<string, string> _verifyRefusal = [];
-
-    // GitHub's answer, named as GitHub's: which check, what it said, how much it found.
-    private static string VerificationLabel(VerificationBrief v)
+    private string PageHref(ViewSpec spec)
     {
-        var found = v.Findings == 1 ? "1 finding" : $"{v.Findings:N0} findings";
-        return $" · gh actions-lock ({v.Mode}): {v.Outcome}, {found}, {v.VerifiedAt:yyyy-MM-dd}";
+        var query = spec.ToQueryString();
+        return $"/node/{Key}" + (query.Length > 0 ? "?" + query : "");
     }
 
-    private async Task VerifyLock(string repository)
+    /// <summary>The scope as the uses surface applies it; the rest stay in the address, named.</summary>
+    private string UsesPredicate => Scope.PredicateFor(_terms, "uses");
+
+    private string ReferenceHref(string reference) => PageHref(Scope.Spec with { At = [reference] });
+
+    private string UpstreamHref => PageHref(Scope.Spec with { Origins = ["seed", "upstream"] });
+
+    private string ExplorerHref
     {
-        _verifying = repository;
-        _verifyRefusal.Remove(repository);
-        try
+        get
         {
-            var (_, refusal) = await Api.VerifyLockAsync(repository, "local");
-            if (refusal.Length > 0)
+            var scope = Scope.PredicateFor(_terms, "graph");
+            var selection = "selection=" + Uri.EscapeDataString(_detail?.Key ?? Key ?? "");
+            return "/explore?" + (scope.Length > 0 ? scope + "&" : "") + selection;
+        }
+    }
+
+    private string InventoryHref
+    {
+        get
+        {
+            var scope = Scope.PredicateFor(_terms, "inventory");
+            return "/inventory" + (scope.Length > 0 ? "?" + scope : "");
+        }
+    }
+
+    private static readonly Dictionary<string, string> UsesSortTerms = new()
+    {
+        ["Repository"] = "repository",
+        ["Reference"] = "reference",
+        ["Commit"] = "commit",
+        ["Locked"] = "locked",
+        ["Hops"] = "relationship",
+        ["Through"] = "through",
+        ["WorkflowCount"] = "workflows",
+        ["Lines"] = "lines",
+        ["ConditionCount"] = "conditions",
+    };
+
+    /// <summary>Asks the server for one page of who uses this, ordered across the whole match.</summary>
+    private async Task<GridData<NodeUse>> LoadUses(GridState<NodeUse> state)
+    {
+        var sort = state.SortDefinitions.FirstOrDefault();
+        var term = sort is not null && UsesSortTerms.TryGetValue(sort.SortBy, out var t) ? t : null;
+        var (page, refusal) = await Api.GetNodeUsesAsync(Key ?? "", UsesPredicate, state.PageSize,
+            state.Page * state.PageSize, term, sort?.Descending ?? false);
+        _uses = page;
+        _usesRefusal = refusal;
+        // The sentence under the grid and the change above it sit outside it, and the grid
+        // re-renders only itself.
+        StateHasChanged();
+        return new GridData<NodeUse> { Items = page?.Items ?? [], TotalItems = page?.Total ?? 0 };
+    }
+
+    private string UsesSummary()
+    {
+        if (_uses is null) return "";
+        if (_uses.Total == 0)
+        {
+            return "Nothing in this scope runs it. That is not the same as unused: anything arriving "
+                + "only through a dependency that has not been analyzed cannot appear here.";
+        }
+        return $"Showing {_uses.Items.Count:N0} of {CountText.Of(_uses.Total, "use", "uses")} in this scope, "
+            + "one per repository, reference and commit.";
+    }
+
+    private RenderFragment ChangeGroup(string kind, string says, IReadOnlyList<string> repositories) => __builder =>
+    {
+        <div class="abom-tag-change-group" data-abom-tag-change-group="@kind">
+            <MudText Typo="Typo.body2">
+                <b>@repositories.Count</b> @says.
+            </MudText>
+            @if (repositories.Count > 0)
             {
-                _verifyRefusal[repository] = refusal;
+                <div class="d-flex flex-wrap gap-1">
+                    @foreach (var r in repositories.Take(60))
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@r</MudChip>
+                    }
+                    @if (repositories.Count > 60)
+                    {
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary align-self-center">
+                            and @(repositories.Count - 60) more
+                        </MudText>
+                    }
+                </div>
             }
-            if (_openRef is { } reference)
-            {
-                _users = await Api.GetNodeUsersAsync(Key ?? string.Empty, reference);
-            }
-        }
-        finally
-        {
-            _verifying = null;
-        }
-    }
+        </div>
+    };
 
-    private static string OwnLockState(IReadOnlyList<string> coverage) =>
-        coverage.Contains("unsupported") ? "lockfile unsupported"
-        : coverage.Contains("covered") ? "not in its lock"
-        : coverage.Contains("not_onboarded") ? "no lockfile"
-        : "lockfile not read";
+    // What chose the commit: a lock binding this repository, or the reference itself. Nothing
+    // recorded is said as such rather than read as either.
+    private static string ChosenBy(NodeUse u) =>
+        u.Hops == 0 ? "" : u.Locked ? "a lock" : u.Commit.Length > 0 ? "the reference" : "nothing recorded";
 
-    private static string RefLockTitle(RefLock l)
+    private static string RelationshipLabel(int hops) => hops switch
     {
-        var names = string.Join(", ", l.Sample);
-        var more = l.Consumers > l.Sample.Count ? $" and {l.Consumers - l.Sample.Count:N0} more" : "";
-        return $"{l.Commit}: selected by the lock of {names}{more}";
-    }
+        0 => "lives here",
+        1 => "direct",
+        _ => "transitive",
+    };
 
-    // A commit is shown shortened, with the whole of it a hover away.
-    private static string ShortCommit(string commit) => commit.Length <= 12 ? commit : commit[..12];
-
-    // "0 yours" with nothing verified is a question nobody has answered, not a count of none, so
-    // ownership is only named once it can be.
-    private static string UsersSummary(NodeUsers users)
+    // Zero hops is not a shorter route; it is the absence of one. Drawing it as "direct" would
+    // say the repository calls itself.
+    private static string RelationshipHelp(NodeUse u) => u.Hops switch
     {
-        var parts = new List<string> { $"{users.Total:N0} repositories" };
-        if (users.Total != users.Seeds) parts.Add($"{users.Seeds:N0} starting points");
-        if (users.OwnedKnown && users.Owned > 0) parts.Add($"{users.Owned:N0} yours");
-        return string.Join(" · ", parts) + ". Named directly; anything reaching it through an "
-            + "intermediary is under \"If you bump this\".";
-    }
+        0 => "It is in this repository, so it runs without depending on anything.",
+        1 => "This repository names it itself, so the reference is its own to change.",
+        _ => $"Arrives through {u.Hops - 1} intermediaries somebody else may own.",
+    };
 
     private string KindLabel =>
         ThemeService.KindNames.TryGetValue(_detail?.Kind ?? string.Empty, out var n)
@@ -593,72 +571,8 @@ else
         Unknown = _detail.Rules.Sum(r => r.Severity.Unknown),
     };
 
-    // A dependency is analyzed at a reference, so "yes" is only true of a reference. Where several
-    // are in use the honest answer is the ratio; "yes" from one of twenty-seven is the claim this
-    // page used to make.
-    private string CoverageAnswer()
-    {
-        if (_detail is null) return "—";
-        if (_detail.RefsInUse > 1) return $"{_detail.RefsAnalyzed:N0} of {_detail.RefsInUse:N0}";
-        return _detail.Analyzed ? "yes" : "not yet";
-    }
-
-    private string CoverageCaption() =>
-        _detail is { RefsInUse: > 1 } ? "references analyzed" : "analyzed";
-
     // The graph draws an account as a node, so its key can be followed here like any other.
     private bool IsAccount => Key?.StartsWith("org:", StringComparison.Ordinal) ?? false;
 
     private string AccountName => IsAccount ? Key!["org:".Length..] : string.Empty;
-
-    // A repository with no reference of its own has nothing to edit, which is the whole point of
-    // separating direct from transitive.
-    private static string AffectedHelp(AffectedRepo r) =>
-        r.Refs.Count > 0
-            ? $"Names it directly at {string.Join(", ", r.Refs)}. This repository can change the reference itself."
-            : $"Reaches it in {r.Hops} hops through an intermediary. It holds no reference of its own to change.";
-
-    private static string HopsLabel(int hops) => hops switch
-    {
-        0 => "lives here",
-        1 => "direct",
-        _ => $"{hops} hops",
-    };
-
-    // Zero hops is not a shorter route; it is the absence of one. Drawing it as "direct" would
-    // say the repository calls itself.
-    private static string HopsHelp(int hops) => hops switch
-    {
-        0 => "The step is in this repository, so it runs it without depending on anything.",
-        1 => "This repository names the container itself, so the reference is its own to change.",
-        _ => $"Arrives through {hops - 1} intermediaries somebody else may own.",
-    };
-
-    // Runs on parameter change too, so following a neighbor link reloads rather than sticking.
-    protected override async Task OnParametersSetAsync()
-    {
-        _loading = true;
-        _impact = null;
-        _reach = null;
-        _openRef = null;
-        _users = null;
-        _detail = string.IsNullOrEmpty(Key) ? null : await Api.GetNodeAsync(Key);
-        _loading = false;
-
-        if (_detail is not null)
-        {
-            // Discovery links here for one version, so that row opens without a second click.
-            if (Ref is not null)
-            {
-                await ShowUsers(Ref);
-                StateHasChanged();
-            }
-            // Fetched after the rest has rendered: the walk is quick, but nothing else on the
-            // page needs to wait for it.
-            _impact = await Api.GetBumpImpactAsync(Key!);
-            StateHasChanged();
-            _reach = await Api.GetReachAsync(Key!);
-            StateHasChanged();
-        }
-    }
 }

@@ -68,6 +68,28 @@ func TestALoopThatWasNeverStartedIsNotReportedAsPaused(t *testing.T) {
 	t.Fatalf("state = %q, want %q", sup.Status().State, StateStopped)
 }
 
+// Reach nobody measured, or an older build measured without what this one shows, reads wrong on
+// every page until it is recomputed; a crawl nobody started is no reason to keep showing it.
+func TestALoopNobodyStartedStillMeasuresReach(t *testing.T) {
+	sup, s := newSupervisor(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() { _ = sup.Run(ctx) }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if version, err := s.GraphVersion(); err == nil && version.ReachRecomputedAt != "" {
+			if got := sup.Status().State; got != StateStopped {
+				t.Errorf("state = %q; measuring reach is not starting the crawl", got)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("reach was never measured while the crawl was stopped")
+}
+
 // Pressing Start clones repositories and runs CodeQL over each one. What that will cost has to
 // be readable before it is spent, not inferred from the flags the server happened to get.
 func TestStatusSaysWhatStartingWillSpend(t *testing.T) {

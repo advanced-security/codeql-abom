@@ -248,7 +248,7 @@ func (s *Server) routes() *http.ServeMux {
 		append(append([]string{}, findingReviewParameters...), "evaluation")...))
 	mux.HandleFunc("GET /api/actions", reading(s.actions,
 		"q", "top", "offset", "sort", "desc", "view",
-		"kinds", "origins", "minReach", "scope", "flags", "ref",
+		"kinds", "origins", "minReach", "scope", "flags", "ref", "at",
 		"rules", "notRules", "provider", "severity", "securitySeverity", "source", "repositories", "mode",
 		"properties", "notProperties"))
 	mux.HandleFunc("GET /api/workflows", reading(s.workflows,
@@ -548,25 +548,15 @@ func (s *Server) graphOptions(spec viewspec.Spec) (store.FullGraphOptions, error
 		// group by them, and labeling is not narrowing.
 		GroupProperty: s.GroupProperty,
 	}
-	// The same KeepList pruning acts on, so what the operator is shown and what removal would
-	// keep are one answer rather than two that can drift apart.
-	if opts.Scope == store.ScopeOwned {
-		keep, _, err := (&graph.Builder{Store: s.Store}).KeepList()
-		if err != nil {
-			return store.FullGraphOptions{}, err
-		}
-		opts.Closure = keep
-	}
 	if len(spec.Properties) > 0 || len(spec.NotProperties) > 0 {
 		// Recorded separately from the list, so a filter matching no repository draws nothing
 		// rather than everything.
 		opts.GroupFiltered = true
-		keep, err := (&graph.Builder{Store: s.Store}).
-			GroupingKeepList(spec.Properties, spec.NotProperties)
+		sources, err := s.Store.SourceRepositoriesFor(spec.Properties, spec.NotProperties)
 		if err != nil {
 			return store.FullGraphOptions{}, err
 		}
-		opts.GroupClosure = keep
+		opts.GroupSources = sources
 	}
 	return opts, nil
 }
@@ -613,18 +603,14 @@ func (s *Server) nodes(w http.ResponseWriter, r *http.Request) {
 // workflow is a repository-qualified path.
 func (s *Server) node(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	// The impact of changing a node hangs off the same key, so it shares the route rather than
-	// needing a second one that could disagree about what the key is.
-	if rest, ok := strings.CutSuffix(key, "/-/impact"); ok {
-		impact, err := s.Store.BumpImpactOf(rest)
-		writeJSON(w, impact, err)
+	// Who uses a node, and at which versions, hang off the same key, so they share the route rather
+	// than needing a second one that could disagree about what the key is.
+	if rest, ok := strings.CutSuffix(key, "/-/uses"); ok {
+		s.nodeUses(w, r, rest)
 		return
 	}
-	// Which repositories under review actually reach this, and by what route. Same key, same
-	// route, for the same reason.
-	if rest, ok := strings.CutSuffix(key, "/-/reach"); ok {
-		reach, err := (&graph.Builder{Store: s.Store}).ReachOfNode(rest, 0)
-		writeJSON(w, reach, err)
+	if rest, ok := strings.CutSuffix(key, "/-/versions"); ok {
+		s.nodeVersions(w, r, rest)
 		return
 	}
 	// Everything any query has said about this node, each answer naming the query that made it.
@@ -648,6 +634,63 @@ func (s *Server) node(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, detail, nil)
+}
+
+// usesQuery reads the details page's scope: who uses a node, at which reference. A term that only
+// chose which dependencies a listing showed is refused by name rather than dropped.
+func (s *Server) usesQuery(w http.ResponseWriter, r *http.Request) (graph.UsesQuery, bool) {
+	spec, err := s.graphPredicate(r, "top", "offset", "sort", "desc")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return graph.UsesQuery{}, false
+	}
+	if refused := spec.UnenforceableAsUses(); len(refused) > 0 {
+		writeError(w, http.StatusBadRequest, unlistable(refused))
+		return graph.UsesQuery{}, false
+	}
+	repositories, err := s.Store.RepositoriesInScope(spec.Scope == store.ScopeOwned, scopeFromSpec(spec))
+	if err != nil {
+		writeJSON(w, nil, err)
+		return graph.UsesQuery{}, false
+	}
+	style := spec.RefStyle
+	if style == viewspec.RefStyleAny {
+		style = ""
+	}
+	return graph.UsesQuery{
+		At: spec.At, RefStyle: style, Reached: spec.Reached, Origins: spec.Origins,
+		Repositories: repositories,
+		Sort:         r.URL.Query().Get("sort"),
+		Desc:         r.URL.Query().Get("desc") == "true",
+		Offset:       intParam(r, "offset", 0),
+		Limit:        intParam(r, "top", 50),
+	}, true
+}
+
+// nodeUses answers the details page's table from the walk reach and exposure take.
+func (s *Server) nodeUses(w http.ResponseWriter, r *http.Request, key string) {
+	q, ok := s.usesQuery(w, r)
+	if !ok {
+		return
+	}
+	// A sort nobody declared is the reader's to fix, so it is refused before anything runs.
+	if q.Sort != "" && !slices.Contains(graph.UsesSortNames(), q.Sort) {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf(
+			"cannot sort uses by %q; it sorts by one of %v", q.Sort, graph.UsesSortNames()))
+		return
+	}
+	page, err := (&graph.Builder{Store: s.Store}).UsesOf(key, q)
+	writeJSON(w, page, err)
+}
+
+// nodeVersions answers which references a node is used at, counted from the same walk.
+func (s *Server) nodeVersions(w http.ResponseWriter, r *http.Request, key string) {
+	q, ok := s.usesQuery(w, r)
+	if !ok {
+		return
+	}
+	page, err := (&graph.Builder{Store: s.Store}).VersionsOf(key, q)
+	writeJSON(w, page, err)
 }
 
 func (s *Server) pinning(w http.ResponseWriter, r *http.Request) {
@@ -1039,6 +1082,7 @@ func (s *Server) inventoryQuery(w http.ResponseWriter, r *http.Request, cursors 
 		Scope:    spec.Scope,
 		Flags:    spec.Flags,
 		RefStyle: spec.RefStyle,
+		At:       spec.At,
 		Rules:    spec.Rules,
 		NotRules: spec.NotRules,
 		Provider: spec.Provider,
@@ -1054,16 +1098,8 @@ func (s *Server) inventoryQuery(w http.ResponseWriter, r *http.Request, cursors 
 		Offset:   intParam(r, "offset", 0),
 		Limit:    intParam(r, "top", 50),
 		Grouping: scopeFromSpec(spec),
-	}
-	// The same closure the graph and pruning read, so what a listing shows and what removal would
-	// keep are one answer rather than two that drift.
-	if query.Scope == store.ScopeOwned {
-		keep, _, err := (&graph.Builder{Store: s.Store}).KeepList()
-		if err != nil {
-			writeJSON(w, store.InventoryPage{}, err)
-			return store.InventoryQuery{}, false
-		}
-		query.Closure = keep
+
+		GroupProperty: s.GroupProperty,
 	}
 	return query, true
 }
@@ -1098,15 +1134,6 @@ func (s *Server) relationships(w http.ResponseWriter, r *http.Request) {
 		Limit:     intParam(r, "top", 50),
 		Grouping:  scopeFromSpec(spec),
 	}
-	// The same closure every other unit reads, so "what you own" means one population across them.
-	if query.Scope == store.ScopeOwned {
-		keep, _, err := (&graph.Builder{Store: s.Store}).KeepList()
-		if err != nil {
-			writeJSON(w, store.RelationshipsPage{}, err)
-			return
-		}
-		query.Closure = keep
-	}
 	page, err := s.Store.RelationshipsPage(query)
 	writeJSON(w, page, err)
 }
@@ -1130,11 +1157,7 @@ func (s *Server) repositories(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, unlistable(refused))
 		return
 	}
-	query, err := s.repositoriesQuery(spec)
-	if err != nil {
-		writeJSON(w, store.RepositoriesPage{}, err)
-		return
-	}
+	query := repositoriesQuery(spec)
 	query.Sort = r.URL.Query().Get("sort")
 	query.Desc = r.URL.Query().Get("desc") == "true"
 	query.Offset = intParam(r, "offset", 0)
@@ -1155,7 +1178,7 @@ func (s *Server) workflows(w http.ResponseWriter, r *http.Request) {
 	}
 	page, err := s.Store.WorkflowsPage(store.WorkflowsQuery{
 		Search: req.Spec.Search, Scope: req.Spec.Scope, Flags: req.Spec.Flags,
-		Closure: req.Closure, Sort: req.Sort, Desc: req.Desc,
+		Sort: req.Sort, Desc: req.Desc,
 		Offset: req.Offset, Limit: req.Limit, Grouping: req.Grouping,
 	})
 	writeJSON(w, page, err)
@@ -1168,7 +1191,7 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 	}
 	page, err := s.Store.JobsPage(store.JobsQuery{
 		Search: req.Spec.Search, Scope: req.Spec.Scope, Flags: req.Spec.Flags,
-		Closure: req.Closure, Sort: req.Sort, Desc: req.Desc,
+		Sort: req.Sort, Desc: req.Desc,
 		Offset: req.Offset, Limit: req.Limit, Grouping: req.Grouping,
 	})
 	writeJSON(w, page, err)
@@ -1182,12 +1205,11 @@ type unitRequest struct {
 	Offset   int
 	Limit    int
 	Grouping store.RepositoryScope
-	Closure  []string
 }
 
-// unitRequest parses the predicate, refuses the terms this unit cannot apply, and resolves the
-// owned closure when the scope names one. It answers false once it has written the refusal, so a
-// handler that ignored the flag could not accidentally serve an unscoped answer.
+// unitRequest parses the predicate and refuses the terms this unit cannot apply. It answers false
+// once it has written the refusal, so a handler that ignored the flag could not accidentally serve
+// an unscoped answer.
 func (s *Server) unitRequest(
 	w http.ResponseWriter, r *http.Request, refuse func(viewspec.Spec) []string,
 ) (unitRequest, bool) {
@@ -1207,15 +1229,6 @@ func (s *Server) unitRequest(
 		Offset:   intParam(r, "offset", 0),
 		Limit:    intParam(r, "top", 50),
 		Grouping: scopeFromSpec(spec),
-	}
-	// The same closure the node listing reads, so "what you own" means one population across units.
-	if spec.Scope == store.ScopeOwned {
-		keep, _, err := (&graph.Builder{Store: s.Store}).KeepList()
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return unitRequest{}, false
-		}
-		req.Closure = keep
 	}
 	return req, true
 }

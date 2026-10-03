@@ -2,7 +2,7 @@
 {
     <span class="abom-findings-count">
         <button type="button" class="abom-count-review abom-num" data-abom-review-asset="@Asset"
-                aria-label="@($"Review {Count:N0} findings for {Asset}")" title="@($"Review findings for {Asset}")"
+                aria-label="@($"Review {Count:N0} findings for {Asset}")" title="@($"Review the findings reported for {Asset}, beside this list.")"
                 @onclick="Review">@Count.ToString("N0")</button>
         <SeverityIcons Severity="@Severity" />
     </span>

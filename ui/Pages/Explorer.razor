@@ -141,13 +141,15 @@
                 </MudSelect>
             </MudTooltip>
             <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default"
-                       StartIcon="@Icons.Material.Filled.ArrowBack" OnClick="ClearSelection">
+                       StartIcon="@Icons.Material.Filled.ArrowBack" OnClick="ClearSelection"
+                       title="Clear the focused node and draw the whole graph for this view again.">
                 Back to the whole graph
             </MudButton>
             @if (CameFromDiscovery)
             {
                 <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary"
-                           StartIcon="@Icons.Material.Filled.Search" Href="@BackToDiscovery">
+                           StartIcon="@Icons.Material.Filled.Search" Href="@BackToDiscovery"
+                           title="Return to the coverage view in Inventory.">
                     Back to Discovery
                 </MudButton>
             }
@@ -164,7 +166,8 @@
         @if (_selected.Count == 1)
         {
             @* One node, one detail page: the link would be ambiguous for several. *@
-            <MudLink Href="@($"/node/{_selected[0]}")" Typo="Typo.caption">open details</MudLink>
+            <MudLink Href="@($"/node/{_selected[0]}")" Typo="Typo.caption"
+                     title="@($"Open the details page for {_selected[0]}.")">open details</MudLink>
         }
         <MudSpacer />
         <MudTooltip Text="@(_showLegend ? "Hide the key and give the graph the full width." : "Show the node and edge key, and filter by it.")">
@@ -194,7 +197,8 @@
                         <MudText Typo="Typo.body1">Nothing is declared yet.</MudText>
                         <MudText Typo="Typo.caption" Class="mt-2 mud-text-secondary">
                             Declare the accounts you own in
-                            <MudLink Href="/settings">Settings</MudLink>, and the repositories
+                            <MudLink Href="/settings"
+                                     title="Open Settings to declare the accounts to analyze.">Settings</MudLink>, and the repositories
                             under them appear here.
                         </MudText>
                     }
@@ -258,6 +262,7 @@
                     </MudText>
                     <MudButton Variant="Variant.Text" Color="Color.Default" Size="Size.Small"
                                Class="mt-2" OnClick="OpenDrawWarning"
+                               title="Open a warning that explains the oversized graph before drawing it."
                                data-abom-draw-anyway>
                         Draw all @_counts.Withheld.ToString("N0") anyway
                     </MudButton>
@@ -337,7 +342,8 @@
                             <dd data-abom-node-fact="@fact.Marker">@fact.Value</dd>
                         }
                     </dl>
-                    <MudLink Href="@($"/node/{_detail.Key}")" Typo="Typo.caption">open details</MudLink>
+                    <MudLink Href="@($"/node/{_detail.Key}")" Typo="Typo.caption"
+                             title="@($"Open the details page for {_detail.Key}.")">open details</MudLink>
                 </div>
             }
             <div class="d-flex align-center abom-key-head">
@@ -570,10 +576,13 @@
             </MudText>
         </DialogContent>
         <DialogActions>
-            <MudButton OnClick="@(() => _drawWarning = false)" data-abom-draw-cancel>
+            <MudButton OnClick="@(() => _drawWarning = false)"
+                       title="Close this warning and keep the current filters."
+                       data-abom-draw-cancel>
                 Keep filtering
             </MudButton>
             <MudButton Color="Color.Warning" Variant="Variant.Filled" OnClick="ConfirmDrawAnyway"
+                       title="Draw every withheld node despite the readability warning."
                        data-abom-draw-confirm>
                 Draw @_counts.Withheld.ToString("N0") anyway
             </MudButton>

@@ -13,7 +13,7 @@ func (s *Store) attachOwnedRepositories(nodes []GraphNode, opts FullGraphOptions
 	var admitted map[string]bool
 	if opts.GroupFiltered {
 		admitted = map[string]bool{}
-		for _, name := range opts.GroupClosure {
+		for _, name := range opts.GroupSources {
 			admitted[strings.ToLower(name)] = true
 		}
 	}

@@ -76,8 +76,8 @@ ask, per kind of work, and ABOM says what freshness that buys** — never a prom
    a measurement is not one. Depends on 2.
 4. **Poll external references under their pool.** Ordered by constrained reach and mutability,
    batched, conditional, and settling a moved reference through the existing requeue, which decides
-   what happens. Depends on 2, and on reach per version in
-   [`db/commit-aware-graph.md`](../db/commit-aware-graph.md) for its order.
+   what happens. Depends on 2. The reach of the version that would move is
+   `abom_node_version_reach` at the commit its reference resolves to now.
 5. **Receive the enterprise App's events.** Verify `X-Hub-Signature-256` before a payload is parsed,
    append it to a durable log before acknowledging, and process the log in order; a receiver that
    loses an event on restart is a sweep with extra steps. Depends on the App and the address in

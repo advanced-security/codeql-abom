@@ -36,11 +36,7 @@ func subgraphFixture(t *testing.T) *Store {
 	}
 
 	w := NewWriter(s, 0)
-	add := func(n Node) {
-		if err := w.AddNode(n); err != nil {
-			t.Fatalf("AddNode(%s): %v", n.Key, err)
-		}
-	}
+	add := adder(t, w)
 	add(Node{Key: "actions/checkout", Kind: "action", Owner: "actions", Repo: "checkout",
 		IsExternal: true})
 	add(Node{Key: "octo-org/shared/.github/workflows/build.yml", Kind: "reusable_workflow",
@@ -680,7 +676,7 @@ func TestSearchNodesWithoutAQueryRanksByReach(t *testing.T) {
 	s := subgraphFixture(t)
 	if _, err := s.DB().Exec(`
 		INSERT INTO abom_blast_radius
-			(node_row_id, dependent_repos, dependent_workflows, direct_dependents, max_depth)
+			(node_row_id, dependent_repos, dependent_workflows, dependent_steps, max_depth)
 		SELECT row_id, 9, 3, 2, 2 FROM abom_node WHERE node_key = 'actions/checkout'`); err != nil {
 		t.Fatalf("seeding blast radius: %v", err)
 	}
@@ -747,7 +743,7 @@ func TestSubgraphCarriesBlastRadius(t *testing.T) {
 	s := subgraphFixture(t)
 	if _, err := s.DB().Exec(`
 		INSERT INTO abom_blast_radius
-			(node_row_id, dependent_repos, dependent_workflows, direct_dependents, max_depth)
+			(node_row_id, dependent_repos, dependent_workflows, dependent_steps, max_depth)
 		SELECT row_id, 7, 3, 2, 2 FROM abom_node WHERE node_key = 'actions/checkout'`); err != nil {
 		t.Fatalf("seeding blast radius: %v", err)
 	}

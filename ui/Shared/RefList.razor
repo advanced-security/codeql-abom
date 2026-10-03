@@ -14,7 +14,8 @@ else
 
     @if (Hidden > 0)
     {
-        <MudLink Typo="Typo.caption" @onclick="@(() => _expanded = true)" Class="abom-clickable">
+        <MudLink Typo="Typo.caption" @onclick="@(() => _expanded = true)" Class="abom-clickable"
+                 title="@($"Show the {Hidden} hidden references in this list.")">
             +@Hidden more
         </MudLink>
     }

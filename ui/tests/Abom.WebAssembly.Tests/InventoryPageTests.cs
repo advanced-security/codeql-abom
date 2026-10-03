@@ -14,10 +14,10 @@ public class InventoryPageTests : AbomTestContext
     private const string Page = """
         {"items":[
           {"nodeKey":"actions/checkout","kind":"action","origin":"external",
-           "dependentRepos":50,"directDependents":60,"distinctRefs":3,
+           "dependentRepos":50,"dependentSteps":60,"distinctRefs":3,
            "findings":2,"advisories":0,"analyzed":true,"refs":["v4"]},
           {"nodeKey":"actions/cache","kind":"action","origin":"external",
-           "dependentRepos":20,"directDependents":22,"distinctRefs":1,
+           "dependentRepos":20,"dependentSteps":22,"distinctRefs":1,
            "findings":1,"advisories":1,"analyzed":false,"refs":["v3"]}],
          "total":1585}
         """;

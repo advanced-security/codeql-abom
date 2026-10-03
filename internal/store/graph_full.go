@@ -258,9 +258,6 @@ type FullGraphOptions struct {
 	IncludeSteps bool
 	// Scope narrows the graph to a reason for looking at it. Empty is the whole corpus.
 	Scope string
-	// Closure is the repositories the declared scope reaches, as KeepList returns them. Read only
-	// under ScopeOwned, and empty there means an empty graph rather than the whole corpus.
-	Closure []string
 	// Boundary keeps only relationships of one class. Empty keeps every class *and* the
 	// unclassified, because absent is not a class to filter on.
 	Boundary string
@@ -288,10 +285,9 @@ type FullGraphOptions struct {
 	// than filtering them: grouping is not narrowing, so a graph labeled by a property still draws
 	// everything those repositories reach. Empty labels nothing.
 	GroupProperty string
-	// GroupClosure is the repositories a property filter admits — the owned ones the organization
-	// says match, plus everything they reach. Computed rather than asked for, because the sources
-	// are what include and exclude act on and the chain leaving them is the answer.
-	GroupClosure []string
+	// GroupSources is the owned repositories a property filter admits. The graph draws what they
+	// hold and run, as the owned scope does for every declared repository.
+	GroupSources []string
 	// GroupFiltered says a property filter was asked for at all, so a filter matching no repository
 	// draws nothing rather than everything. Absent and empty are different questions here too.
 	GroupFiltered bool
@@ -445,52 +441,67 @@ const ScopeExposure = "exposure"
 // means the last rebuild found nothing, not that nothing was looked at.
 const onExposureRoute = `(SELECT j.value FROM abom_exposure ex, json_each(ex.path) j)`
 
-// ScopeOwned keeps only what the operator's declaration reaches.
+// ScopeOwned keeps what the declared repositories hold and what they run.
 //
-// The whole corpus is everything the crawl walked through; the useful view is what the operator
-// owns and what it pulls in.
+// Decided at the node, not the repository: a dependency's repository also holds that project's own
+// CI and everything it uses, which nothing declared runs. Admitted whole, that CI was 1,874 of the
+// 1,991 workflows the crawled organization's owned scope listed.
 const ScopeOwned = "owned"
 
-// closureCTE is every live node a closure reaches, as a named CTE the scope filter selects from.
+// declaredRoots selects the declared repositories, which the owned scope starts from.
+var declaredRoots = `SELECT row_id FROM repository WHERE ` + ownedFullName("repository_full_name")
+
+// scopeSets names a scope's parts as CTEs over the repositories roots selects. `run` is what their
+// own lines name, in the mode asked for, and what the reach walk found them running through another
+// action; `held` is the repositories holding a root or anything run.
 //
-// A CTE rather than repeating the predicate: the filter appears five times across two queries, and
-// binding the closure once per query instead of once per occurrence is the difference between
-// three copies of the argument list and fifteen.
-//
-// The three clauses are the negation of pruneOutsideClosure's deadNodes, deliberately and
-// literally. A node is inside when its repository is declared, when it *is* a declared repository,
-// or when a live edge belonging to one names it — that last clause is what makes this a closure
-// rather than a filter, and re-deriving it here instead of mirroring it is how the picture and the
-// pruning come to disagree about what is in scope.
-//
-// Named, because the owned scope and a property filter each bring their own and a graph asked for
-// both must intersect them rather than let one silently win.
-func closureCTE(name string, closure []string, mode string) (string, []any) {
-	list, names := inList(closure)
-	args := append(append(append([]any{}, names...), names...), names...)
-	return `, ` + name + ` AS (
-		SELECT n.node_key
-		  FROM abom_node_live n
-		  LEFT JOIN repository r ON r.row_id = n.repository_row_id
-		 WHERE LOWER(r.repository_full_name) IN ` + list + `
-		    OR LOWER(n.owner || '/' || n.repo) IN ` + list + `
-		    OR EXISTS (SELECT 1 FROM ` + edgeSource(mode) + ` e
-		                JOIN repository er ON er.row_id = e.repository_row_id
-		               WHERE (e.src_node_row_id = n.row_id OR e.dst_node_row_id = n.row_id)
-		                 AND LOWER(er.repository_full_name) IN ` + list + `))`, args
+// The stored reach rather than a walk of edges, so the commit a repository runs decides what is in
+// its scope exactly as it decides what is counted.
+func scopeSets(roots, mode string) string {
+	return `WITH roots AS (` + roots + `),
+	run AS (SELECT e.dst_node_row_id AS row_id FROM ` + edgeSource(mode) + ` e
+	         WHERE e.repository_row_id IN (SELECT row_id FROM roots)
+	        UNION SELECT node_row_id FROM abom_node_reach
+	         WHERE repository_row_id IN (SELECT row_id FROM roots)),
+	held AS (SELECT row_id FROM roots
+	        UNION SELECT x.repository_row_id FROM abom_node_live x JOIN run ON run.row_id = x.row_id
+	        UNION SELECT row_id FROM repository WHERE LOWER(repository_full_name) IN (
+	          SELECT LOWER(x.owner || '/' || x.repo) FROM abom_node_live x
+	           WHERE x.row_id IN (SELECT row_id FROM run))) `
 }
 
-// scopeParts is the CTEs a query needs and the arguments that bind them. Empty for every scope that
-// reads from stored rows, which is why the exposure scope needs neither.
+// scopeNodes selects the nodes a scope covers: what its roots hold, what they run, the steps and
+// jobs inside what they run, and the repository nodes of whatever holds any of it.
+func scopeNodes(roots, mode string) string {
+	return scopeSets(roots, mode) + `SELECT n.row_id FROM abom_node_live n
+	 WHERE n.repository_row_id IN (SELECT row_id FROM roots)
+	    OR LOWER(n.owner || '/' || n.repo) IN (
+	         SELECT LOWER(repository_full_name) FROM repository WHERE row_id IN (SELECT row_id FROM roots))
+	    OR n.row_id IN (SELECT row_id FROM run)
+	    OR n.container_node_row_id IN (SELECT row_id FROM run)
+	    OR (n.node_kind = 'repo' AND n.repository_row_id IN (SELECT row_id FROM held))`
+}
+
+// scopeRepositories selects the repositories a scope covers.
+func scopeRepositories(roots, mode string) string {
+	return scopeSets(roots, mode) + `SELECT row_id FROM held`
+}
+
+// scopeParts is the CTEs a query needs and the arguments that bind them. Named, because the owned
+// scope and a property filter each bring their own and a graph asked for both must intersect them
+// rather than let one silently win.
 func scopeParts(opts FullGraphOptions) (string, []any) {
 	cte, args := "", []any{}
-	if opts.Scope == ScopeOwned && len(opts.Closure) > 0 {
-		text, a := closureCTE("closure", opts.Closure, opts.Mode)
-		cte, args = cte+text, append(args, a...)
+	if opts.Scope == ScopeOwned {
+		cte += `, owned AS (SELECT node_key FROM abom_node_live WHERE row_id IN (` +
+			scopeNodes(declaredRoots, opts.Mode) + `))`
 	}
-	if len(opts.GroupClosure) > 0 {
-		text, a := closureCTE("grouped", opts.GroupClosure, opts.Mode)
-		cte, args = cte+text, append(args, a...)
+	if len(opts.GroupSources) > 0 {
+		list, names := inList(opts.GroupSources)
+		cte += `, grouped AS (SELECT node_key FROM abom_node_live WHERE row_id IN (` +
+			scopeNodes(`SELECT row_id FROM repository WHERE LOWER(repository_full_name) IN `+list,
+				opts.Mode) + `))`
+		args = append(args, names...)
 	}
 	return cte, args
 }
@@ -504,18 +515,14 @@ func scopeFilter(opts FullGraphOptions, column string) string {
 	case ScopeExposure:
 		out += " AND " + column + " IN " + onExposureRoute
 	case ScopeOwned:
-		// Declaring nothing shows nothing. Falling through to the whole corpus would answer a
-		// question about the operator's own supply chain with somebody else's.
-		if len(opts.Closure) == 0 {
-			return " AND 0"
-		}
-		out += " AND " + column + " IN (SELECT node_key FROM closure)"
+		out += " AND " + column + " IN (SELECT node_key FROM owned)"
 	}
 	switch {
-	case len(opts.GroupClosure) > 0:
+	case len(opts.GroupSources) > 0:
 		out += " AND " + column + " IN (SELECT node_key FROM grouped)"
 	case opts.GroupFiltered:
-		// A filter nobody matches shows nothing, for the reason an undeclared scope does.
+		// A filter nobody matches shows nothing. Falling through to the whole corpus would answer a
+		// question about some repositories with everybody's.
 		return " AND 0"
 	}
 	return out

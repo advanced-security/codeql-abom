@@ -16,11 +16,7 @@ exposure, so they are stored and displayed apart.
 
 ## Pending
 
-1. **Propagate the distinction outward.** `abom_blast_radius.direct_dependents` still counts every
-   edge into a node, including an upstream project's own CI, so that one figure mixes what the
-   organization runs with what it does not. `dependent_repos` is already seed-only and does not
-   have the problem.
-2. **Two dependencies are never queued, and that is the depth bound rather than a gap.**
+1. **Two dependencies are never queued, and that is the depth bound rather than a gap.**
    `actionsdesk/lfs-warning` and `actionutils/sticky-comment` are named by repositories sitting at
    frontier depth 5, and `Enqueue` drops anything past `MaxDepth`. Raising the bound is the only
    thing that would change it; whether to is [`api/change-ingestion.md`](../api/change-ingestion.md).

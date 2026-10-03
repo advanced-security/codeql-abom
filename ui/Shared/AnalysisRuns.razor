@@ -22,7 +22,8 @@
             <MudText Typo="Typo.h6">No run has been asked for yet</MudText>
             <MudText Typo="Typo.body2" Class="mt-2 mud-text-secondary">
                 A run is a set of query versions over repositories somebody chose. Choose them in
-                the <MudLink Href="/inventory?unit=repositories">Inventory</MudLink>, or press Run
+                the <MudLink Href="/inventory?unit=repositories"
+                             title="Open the Inventory page so you can choose repositories for a run.">Inventory</MudLink>, or press Run
                 on a query in the catalog.
             </MudText>
         </MudPaper>
@@ -38,6 +39,7 @@
                     <CellTemplate>
                         <MudIconButton Size="Size.Small"
                                        Icon="@(context.Open ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)"
+                                       title="@($"Show or hide the results for run #{context.Item.RowId}.")"
                                        aria-label="@($"Show what run #{context.Item.RowId} found")"
                                        aria-expanded="@(context.Open ? "true" : "false")"
                                        OnClick="@(() => context.Actions.ToggleHierarchyVisibilityForItemAsync())"
@@ -46,12 +48,13 @@
                 </HierarchyColumn>
 
                 <PropertyColumn Property="x => x.RowId" Title="Run" CellClass="abom-nowrap">
+                    <HeaderTemplate><HeaderTip Tip="The number ABOM gave this run.">Run</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         <span data-abom-run-id="@context.Item.RowId">#@context.Item.RowId</span>
                         @if (context.Item.Held)
                         {
                             <MudText Typo="Typo.caption" Class="d-block mud-text-secondary"
-                                     title="What its queries report is held until somebody converts it to findings"
+                                     title="What this run's queries report is held until somebody converts it to findings."
                                      data-abom-run-held>findings off</MudText>
                         }
                     </CellTemplate>
@@ -93,6 +96,7 @@
                 </TemplateColumn>
 
                 <PropertyColumn Property="x => x.State" Title="State">
+                    <HeaderTemplate><HeaderTip Tip="What state the run is in, and which CodeQL version is recorded for it.">State</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
                                  Color="@StateColor(context.Item.State)"
@@ -108,12 +112,14 @@
                 </PropertyColumn>
 
                 <TemplateColumn Title="Queries" CellClass="abom-run-text">
+                    <HeaderTemplate><HeaderTip Tip="The queries, at their versions, that this run evaluates.">Queries</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         @foreach (var q in context.Item.Queries)
                         {
                             <div>
                                 <MudLink Href="@($"/codeql?tab=catalog&query={Uri.EscapeDataString(q.QueryId)}")"
-                                         Typo="Typo.body2" Class="abom-path" title="@q.QueryVersion"
+                                         Typo="Typo.body2" Class="abom-path"
+                                         title="@($"Open the catalog entry for {q.QueryId} at version {q.QueryVersion}.")"
                                          data-abom-run-query-link>@q.QueryId</MudLink>
                             </div>
                         }
@@ -121,19 +127,21 @@
                 </TemplateColumn>
 
                 <TemplateColumn Title="Scope" CellClass="abom-run-text">
+                    <HeaderTemplate><HeaderTip Tip="Which repositories this run was asked to analyze.">Scope</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         @if (context.Item.ScopeName.Length > 0)
                         {
                             @* How it was chosen, beside what it resolved to, which is what it covers. *@
-                            <MudText Typo="Typo.body2" title="@($"Chosen as the named scope {context.Item.ScopeName}")"
+                            <MudText Typo="Typo.body2" title="@($"This run was chosen as the named scope {context.Item.ScopeName}.")"
                                      data-abom-run-scope-name>@ScopeLabel(context.Item.ScopeName)</MudText>
                         }
-                        <MudText Typo="Typo.caption" title="@context.Item.Predicate"
+                        <MudText Typo="Typo.caption" title="@($"This is the exact selection string the run used: {context.Item.Predicate}.")"
                                  data-abom-run-scope>@ScopeText(context.Item.Predicate)</MudText>
                     </CellTemplate>
                 </TemplateColumn>
 
                 <TemplateColumn Title="Progress" CellClass="abom-nowrap">
+                    <HeaderTemplate><HeaderTip Tip="How much of this run is still waiting, running, analyzed or stopped.">Progress</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         <MudText Typo="Typo.caption" data-abom-run-tally>@TallyText(context.Item)</MudText>
                     </CellTemplate>
@@ -141,14 +149,18 @@
 
                 <PropertyColumn Property="x => x.Results" Title="Results"
                                 HeaderClass="abom-cell-right" CellClass="abom-cell-right">
+                    <HeaderTemplate><HeaderTip Tip="How many results this run recorded across repositories it analyzed.">Results</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         <span class="abom-num" data-abom-run-results>@context.Item.Results</span>
                     </CellTemplate>
                 </PropertyColumn>
 
-                <PropertyColumn Property="x => x.RequestedBy" Title="Asked by" CellClass="abom-nowrap" />
+                <PropertyColumn Property="x => x.RequestedBy" Title="Asked by" CellClass="abom-nowrap">
+                    <HeaderTemplate><HeaderTip Tip="Which signed-in user asked ABOM to create this run.">Asked by</HeaderTip></HeaderTemplate>
+                </PropertyColumn>
 
                 <PropertyColumn Property="x => x.CreatedAt" Title="Asked" CellClass="abom-nowrap">
+                    <HeaderTemplate><HeaderTip Tip="When ABOM recorded the request for this run.">Asked</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         <MudText Typo="Typo.caption">@TimeText.DayAndTime(context.Item.CreatedAt)</MudText>
                     </CellTemplate>

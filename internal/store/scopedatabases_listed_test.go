@@ -91,14 +91,11 @@ func TestARunOverAPropertyCoversEveryRepositoryTheUnitListsForIt(t *testing.T) {
 	}
 }
 
-// The owned closure holds upstream repositories too, and the unit leaves them out: they are not
-// the organization's to analyze on its own behalf.
+// The owned scope holds upstream repositories too, and the unit leaves them out: they are not the
+// organization's to analyze on its own behalf.
 func TestARunOverTheOwnedScopeCoversTheRepositoriesTheUnitListsAndNoOthers(t *testing.T) {
 	s := listedScope(t)
-	q := RepositoriesQuery{
-		Scope:   ScopeOwned,
-		Closure: []string{"octo-org/app", "octo-org/quiet", "octo-org/shared"},
-	}
+	q := RepositoriesQuery{Scope: ScopeOwned}
 
 	set, err := s.DatabasesListed(q, FindingSelector{})
 	if err != nil {
@@ -131,7 +128,7 @@ func TestAFindingsTermNarrowsAListedScopeToWhereTheFindingsSit(t *testing.T) {
 // a member: the scope is what was asked, and a name cannot widen it.
 func TestANameNarrowsAListedScopeAndCannotWidenIt(t *testing.T) {
 	s := listedScope(t)
-	q := RepositoriesQuery{Scope: ScopeOwned, Closure: []string{"octo-org/app", "octo-org/quiet"}}
+	q := RepositoriesQuery{Scope: ScopeOwned, Grouping: pinningGroup("3").Scope}
 
 	set, err := s.DatabasesListed(q, FindingSelector{
 		Repositories: []string{"Octo-Org/Quiet", "octo-org/tool"},
@@ -158,7 +155,7 @@ func TestANameNarrowsAListedScopeAndCannotWidenIt(t *testing.T) {
 func TestAListedScopeHoldingNothingResolvesToNothingRatherThanEverything(t *testing.T) {
 	s := listedScope(t)
 
-	set, err := s.DatabasesListed(RepositoriesQuery{Scope: ScopeOwned},
+	set, err := s.DatabasesListed(RepositoriesQuery{Scope: ScopeOwned, Search: "no-such-repository"},
 		FindingSelector{Rules: []string{"actions/unpinned-tag"}})
 	if err != nil {
 		t.Fatalf("DatabasesListed: %v", err)

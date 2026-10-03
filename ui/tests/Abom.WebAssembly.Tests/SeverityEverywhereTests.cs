@@ -19,7 +19,7 @@ public class SeverityEverywhereTests : AbomTestContext
 
     private const string Dependencies = """
         {"items":[{"nodeKey":"actions/checkout","kind":"action","origin":"external",
-          "dependentRepos":50,"directDependents":60,"distinctRefs":3,
+          "dependentRepos":50,"dependentSteps":60,"distinctRefs":3,
           "findings":3,"severity":{"critical":1,"high":0,"medium":2,"low":0,"unknown":0},
           "advisories":0,"analyzed":true,"refs":["v4"]}],"total":1}
         """;
@@ -85,8 +85,8 @@ public class SeverityEverywhereTests : AbomTestContext
 
     private const string NodeDetail = """
         {"key":"actions/cache","kind":"action","repository":"","origin":"","path":"",
-         "isExternal":true,"analyzed":true,"dependentRepos":2,"directDependents":3,
-         "refs":[],"advisories":[],"usedBy":[],"uses":[],
+         "isExternal":true,"analyzed":true,"dependentRepos":2,
+         "uses":[],
          "rules":[
            {"ruleId":"actions/code-injection/critical","count":1,"sources":["upstream"],"unsourced":0,
             "severity":{"critical":1,"high":0,"medium":0,"low":0,"unknown":0}},
@@ -97,8 +97,8 @@ public class SeverityEverywhereTests : AbomTestContext
     [Fact]
     public void ANodesRulesEachSayTheirBandAndTheTotalSaysTheSplit()
     {
-        Answer("/-/reach", "[]");
-        Answer("/-/impact", """{"key":"actions/cache","direct":1,"transitive":1,"repos":[],"unanalyzed":0}""");
+        Answer("/-/uses", """{"key":"actions/cache","total":0,"items":[]}""");
+        Answer("/-/versions", """{"key":"actions/cache","total":0,"items":[],"advisories":[]}""");
         Answer("api/node/", NodeDetail);
 
         var cut = Render<NodePage>(p => p.Add(c => c.Key, "actions/cache"));
@@ -154,6 +154,31 @@ public class SeverityEverywhereTests : AbomTestContext
             Assert.Contains("precision", declared);
             Assert.Contains("very-high", declared);
         });
+    }
+
+    /// <summary>
+    /// Severity has its own column. Folded under the query's name it could not be sorted, and the
+    /// name was harder to read.
+    /// </summary>
+    [Fact]
+    public void ACatalogQuerysSeverityHasItsOwnSortableColumn()
+    {
+        Answer("api/queries", CatalogRows);
+        Answer("api/accounts", """{"authenticated":true,"login":"operator","host":"github.com","accounts":[],"canSeeAllOrganizations":true}""");
+        Fallback("api/runs", """{"runs":[]}""");
+        Fallback("api/queries/", "[]");
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.NavigateTo("/codeql?tab=catalog");
+        var page = Render<CodeQL>();
+        page.WaitForAssertion(() => page.Find("[data-abom-query-band='actions/untrusted-checkout/critical']"));
+
+        var severity = page.FindAll("[data-abom-queries-table] thead th")
+            .Single(th => th.TextContent.Trim() == "Severity");
+        Assert.NotNull(severity.QuerySelector(".sortable-column-header"));
+        foreach (var id in new[] { "actions/untrusted-checkout/critical", "actions/never-resolved" })
+        {
+            var name = page.Find($"[data-abom-query-id='{id}']").Closest("td")!;
+            Assert.Null(name.QuerySelector("[data-abom-query-band], [data-abom-query-metadata-absent]"));
+        }
     }
 
     private const string CatalogRowsTheServerExplains = """

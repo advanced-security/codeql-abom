@@ -159,12 +159,7 @@ func (s *Store) reviewRepositoryScope(plan *findingReviewPlan, q FindingReviewQu
 		plan.add(`fr.repository_full_name LIKE ? ESCAPE '\'`, "%"+escapeLike(q.Search)+"%")
 	}
 	if q.Scope == ScopeOwned {
-		if len(q.Closure) == 0 {
-			plan.add("0")
-		} else {
-			list, args := inList(q.Closure)
-			plan.add("LOWER(fr.repository_full_name) IN "+list, args...)
-		}
+		plan.add("f.repository_row_id IN (" + scopeRepositories(declaredRoots, q.Mode) + ")")
 	} else if q.Scope == ScopeExposure {
 		plan.add(`EXISTS (SELECT 1 FROM abom_exposure exposed WHERE exposed.repository_row_id = f.repository_row_id)`)
 	}

@@ -172,7 +172,7 @@ type BOMOptions struct {
 
 // BillOfMaterials reads everything the roots depend on, at any depth.
 //
-// Outward — what does this depend on — which is the opposite direction from BumpImpactOf and the
+// Outward — what does this depend on — which is the opposite direction from graph.UsesOf and the
 // reason neither can be reused for the other. Uncapped in depth, unlike Subgraph, because a
 // closure that stops early is a neighborhood wearing a bill of materials' name.
 func (s *Store) BillOfMaterials(opts BOMOptions) (BOM, error) {

@@ -1,26 +1,37 @@
 package store
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 // Every built-in view is written in terms the listing did not apply — `scope`, `flags` and `ref` —
 // so a tab built from the catalog would have shown a refusal rather than rows. These pin the terms
 // that unblock it.
-func TestInventoryScopeOwnedKeepsOnlyTheClosure(t *testing.T) {
+func TestInventoryScopeOwnedKeepsOnlyWhatTheDeclarationHolds(t *testing.T) {
 	s := advisoryStore(t)
 	inventoryCorpus(t, s, 4)
+	for _, name := range []string{"vendor/action-a", "vendor/action-b", "vendor/action-c"} {
+		if _, err := s.UpsertRepository(name, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.SetOwnedScope([]DeclaredAccount{{Owner: "vendor", Kind: AccountOrganization,
+		Enabled: true, IncludesOnly: true, Includes: []string{"action-a", "action-b"}}},
+		DeclaredByCLI); err != nil {
+		t.Fatal(err)
+	}
 
-	page, err := s.ActionsInventoryPage(InventoryQuery{
-		Scope: ScopeOwned, Closure: []string{"vendor/action-a", "vendor/action-b"},
-	})
+	page, err := s.ActionsInventoryPage(InventoryQuery{Scope: ScopeOwned})
 	if err != nil {
 		t.Fatalf("ActionsInventoryPage: %v", err)
 	}
 	if page.Total != 2 {
-		t.Fatalf("matched %d rows, want the 2 the closure reaches", page.Total)
+		t.Fatalf("matched %d rows, want the 2 the declaration holds", page.Total)
 	}
 	for _, it := range page.Items {
 		if it.NodeKey != "vendor/action-a" && it.NodeKey != "vendor/action-b" {
-			t.Errorf("row %q is outside the closure", it.NodeKey)
+			t.Errorf("row %q is outside the declaration", it.NodeKey)
 		}
 	}
 }
@@ -113,6 +124,28 @@ func TestInventoryRefStyleMatchesHowSomethingIsReferenced(t *testing.T) {
 	}
 	if pinned.Total != 1 || pinned.Items[0].NodeKey != "vendor/by-sha" {
 		t.Errorf("ref=sha matched %+v, want only the commit-pinned row", pinned.Items)
+	}
+}
+
+// A reference is matched exactly as a workflow wrote it. `v4` is not `v4.2.2`, even where both name
+// one commit today, and a dependency named at several references matches any one asked for.
+func TestInventoryAtMatchesTheReferenceExactlyAsWritten(t *testing.T) {
+	s := advisoryStore(t)
+	seedDependency(t, s, "octo-org/app", "vendor/at-v4", "v4", 1)
+	seedDependency(t, s, "octo-org/app", "vendor/at-v4-patch", "v4.2.2", 2)
+	seedDependency(t, s, "octo-org/app", "vendor/at-main", "main", 3)
+
+	page, err := s.ActionsInventoryPage(InventoryQuery{At: []string{"v4", "main"}})
+	if err != nil {
+		t.Fatalf("ActionsInventoryPage: %v", err)
+	}
+	got := []string{}
+	for _, it := range page.Items {
+		got = append(got, it.NodeKey)
+	}
+	slices.Sort(got)
+	if want := []string{"vendor/at-main", "vendor/at-v4"}; !slices.Equal(got, want) || page.Total != 2 {
+		t.Errorf("at=v4,main matched %v (total %d), want %v", got, page.Total, want)
 	}
 }
 

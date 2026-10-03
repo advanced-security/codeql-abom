@@ -160,12 +160,7 @@ func compositeFixture(t *testing.T) *Store {
 	}
 
 	w := NewWriter(s, 0)
-	add := func(n Node) {
-		t.Helper()
-		if err := w.AddNode(n); err != nil {
-			t.Fatalf("AddNode(%s): %v", n.Key, err)
-		}
-	}
+	add := adder(t, w)
 	add(Node{Key: "octo-org/app/.github/workflows/ci.yml", Kind: "workflow", RepositoryID: app})
 	add(Node{Key: "vendor/toolkit", Kind: "action", Owner: "vendor", Repo: "toolkit",
 		IsExternal: true})

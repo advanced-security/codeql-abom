@@ -49,22 +49,24 @@ func TestRepositoriesFindFindingsByRepositoryAndOrderByWorstSeverity(t *testing.
 // therefore answered a page about the repositories you own with a refusal and an empty grid, under
 // a heading saying "The repositories you own". A term this unit plainly answers has to be applied,
 // not declined.
-func TestRepositoriesScopeOwnedKeepsOnlyTheClosure(t *testing.T) {
+func TestRepositoriesScopeOwnedKeepsOnlyTheDeclaration(t *testing.T) {
 	s := advisoryStore(t)
 	seedDependency(t, s, "octo-org/a", "actions/checkout", "v4", 1)
 	seedDependency(t, s, "other-org/b", "actions/checkout", "v4", 1)
+	if err := s.SetOwnedScope([]DeclaredAccount{{Owner: "octo-org", Kind: AccountOrganization,
+		Enabled: true}}, DeclaredByCLI); err != nil {
+		t.Fatal(err)
+	}
 
-	page, err := s.RepositoriesPage(RepositoriesQuery{
-		Scope: ScopeOwned, Closure: []string{"octo-org/a"},
-	})
+	page, err := s.RepositoriesPage(RepositoriesQuery{Scope: ScopeOwned})
 	if err != nil {
 		t.Fatalf("RepositoriesPage: %v", err)
 	}
 	if page.Total != 1 {
-		t.Fatalf("matched %d repositories, want the 1 the closure reaches", page.Total)
+		t.Fatalf("matched %d repositories, want the 1 declared", page.Total)
 	}
 	if page.Items[0].FullName != "octo-org/a" {
-		t.Errorf("listed %q, want the repository inside the closure", page.Items[0].FullName)
+		t.Errorf("listed %q, want the declared repository", page.Items[0].FullName)
 	}
 }
 

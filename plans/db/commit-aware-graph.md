@@ -1,9 +1,9 @@
 # A graph that knows which commit said what
 
-**Status:** sightings keep what each commit declared, and exposure, blast radius and the submission
-closure read them at the commits a reference resolves to; a running crawl re-observes the commits
-recorded before sightings kept content, a cycle's claim at a time; reach is still counted across
-versions, and every derivation is recomputed wholesale.
+**Status:** sightings keep what each commit declared, and one walk reads them at the commits a
+reference resolves to — reach, with the version of each dependency every repository runs, exposure
+and the node page, held to the submission closure; a running crawl re-observes the commits recorded
+before sightings kept content, a cycle's claim at a time; every derivation is recomputed wholesale.
 
 ## Why this exists
 
@@ -17,13 +17,6 @@ random sample of 300 of them found **149 that differ between commits** — 97 an
 same action, 50 a different action entirely. For each older commit, every walk named the newest
 commit's target. `pre-commit/action` at v3.0.0 declares `actions/cache@v3` at `action.yml:15:11` and
 at v3.0.1 `@v4`, so `has-ghas/codeql`, which runs v3.0.0, had no route to `actions/cache@v3`.
-
-**Reach is the same defect in the number that orders everything.** It walks dependents with no
-notion of which version a route was read from, so a repository pinning v4 counts toward a dependency
-that only v5 uses. **251 of the 320 repositories a reference resolves are live at more than one
-commit.** Commonality from that walk decides the crawl's claim order (`Queue.Rescore`) and reaches the
-interface as `QueueScore` and *used by ≥*, so an inflated count shows up as budget spent in the wrong
-order rather than as a wrong answer.
 
 And nothing here keeps up with commits. Graph facts change only when the crawl re-analyzes
 something, aggregates are recomputed over the whole graph, and ABOM's target is now an enterprise:
@@ -47,33 +40,29 @@ with them.
 
 ## Pending
 
-1. **Reach per version, and per dependency over versions somebody runs.** Reach of each
-   repository@commit over the live owned commits that transitively run it, and a dependency's reach
-   as the union over its live versions — counting only repositories that actually run one. The
-   crawl's claim order reads the same constrained figure, so there is one number and it means what a
-   reader assumes. `abom_node_reach` already materializes `(node, repository, hops)` from the walk;
-   per version is a column on it, not a second traversal. An agreement test holds reach to the rule
-   `exposureagreement_test.go` holds the other two walks to.
-2. **Derive incrementally.** A ref that moves, or a commit observed for the first time, changes the
+1. **Derive incrementally.** A ref that moves, or a commit observed for the first time, changes the
    reach, exposure and closure of what depends on that version and nothing else. Maintain those
-   rather than recomputing the graph; the wholesale recompute stays as the oracle the
-   [consistency checker](../tools/graph-consistency-checker.md) compares against. An entry nothing
-   has measured yet stays unmeasured: incremental maintenance is exactly where a missing row turns
-   into a zero.
-3. **Know a commit's content without fetching it.** Content equivalence needs a digest of the
+   rather than recomputing the graph: `abom_node_version_reach` already says which repositories run
+   each version, so a moved ref names the rows it retracts. The wholesale recompute stays as the
+   oracle the [consistency checker](../tools/graph-consistency-checker.md) compares against. An
+   entry nothing has measured yet stays unmeasured: incremental maintenance is exactly where a
+   missing row turns into a zero.
+2. **Know a commit's content without fetching it.** Content equivalence needs a digest of the
    filtered tree, which today comes from a checkout. Git tree object ids are content hashes the API
    returns, so a push that touched no workflow or action file can be settled as identical to its
    parent with one read and no clone. The digest from tree ids must equal the checkout's, proven on
    the corpus before anything settles on it.
-4. **Owned repositories live at their protected branches too.** `codeql-abom branches` records which
+3. **Owned repositories live at their protected branches too.** `codeql-abom branches` records which
    branches are protected; the live set reads it, and a branch losing protection takes its commit
    out of every walk.
-5. **Decide what the one-version views show.** The Explorer, the inventory units, pinning and the
+4. **Decide what the one-version views show.** The Explorer, the inventory units, pinning and the
    bill of materials read the row, which holds the last observed live version. Either they show one
-   entry per live version, which is what the other three walks now answer, or they keep one row and
-   say which version it is. Both are honest; showing the row without saying which commit wrote it is
-   not.
-6. **A location's kind and source per commit.** The upsert keeps the first writer's `edge_kind` and
+   entry per live version, which is what the walks now answer, or they keep one row and say which
+   version it is. Both are honest; showing the row without saying which commit wrote it is not.
+   Which version each repository runs is stored, and the details page of an action is the first
+   reader to show it, per [`ui/action-drilldown.md`](../ui/action-drilldown.md): on the crawled
+   organization 24 dependencies are run at more than one version, `actions/checkout` at 8.
+5. **A location's kind and source per commit.** The upsert keeps the first writer's `edge_kind` and
    source node and the last writer's target, so a location that became a different kind of reference
    holds a mixture. Measure how often a sighted location changes kind before deciding whether
    sightings carry it.
@@ -91,9 +80,10 @@ nothing: what a deleted step or an abandoned release declared is not what anybod
 has no reading of, not a version with no children; any constraint inherits that, or it silently
 drops real dependents on a corpus still crawling.
 
-**Three walks over one graph agree or differ on purpose.** Exposure, the submission closure and
-reach answer one question from different ends. Tests hold them together; a walk that quietly
-differs is found only when two figures cannot both be right.
+**Walks over one graph agree or differ on purpose.** Reach, exposure and the node page are one walk,
+and the submission closure answers the same question from the other end, in SQL. Tests hold them
+together, over every node of every fixture that binds a version; a derivation that quietly differs
+is found only when two figures cannot both be right.
 
 **A snapshot is never built from what is not known.** A submission replaces what GitHub found, so a
 closure reading a commit whose declarations are unknown is refused, and the preview says which
@@ -101,10 +91,6 @@ commits before anybody presses.
 
 ## Verification
 
-- Reach before and after on the crawled organization, with each difference attributed to a
-  dependency and a version rather than reported as a total, and the claim order compared too: if it
-  does not move, either the constraint is not binding or commonality was not deciding.
 - Incremental derivation equals the wholesale recompute on every change the checker samples.
-- Exposure, blast radius and node reach stay byte-identical across the change wherever nothing was
-  re-observed — measured for the sightings increment and for re-observation, and repeated for each
-  item here.
+- Exposure, blast radius and node reach stay byte-identical across each item wherever nothing was
+  re-observed, on a copy of the crawled organization.

@@ -14,13 +14,15 @@
                 An agent is drafting from what you picked, since @TimeText.DayAndTime(Live.StartedAt, "HH:mm:ss").
             </MudText>
             <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button" Disabled="@_busy"
+                       title="Stop the drafting agent for this request."
                        OnClick="Stop" data-abom-draft-stop>Stop drafting</MudButton>
         }
         else
         {
-            <span title="@(CanStart ? "The agent reads only the results you picked and their code, and files nothing" : "Sign in with gh to record who asked")">
+            <span title="@(CanStart ? "Start an agent draft from the results and code you picked without filing it." : "Sign in with gh to record who asked.")">
                 <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
                            StartIcon="@Icons.Material.Outlined.SmartToy" Disabled="@(!CanStart || _busy)"
+                           title="@(CanStart ? "Start an agent draft from the results and code you picked without filing it." : "Sign in with gh to record who asked.")"
                            OnClick="Start" data-abom-draft-start>Draft it with an agent</MudButton>
             </span>
         }
@@ -40,6 +42,7 @@
                 <MudText Typo="Typo.caption" Class="d-block mud-text-secondary">@draft.Rationale</MudText>
             }
             <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button"
+                       title="Fill the request form with this agent draft."
                        OnClick="@(() => OnUse.InvokeAsync(draft))" data-abom-draft-use>Use this draft</MudButton>
         </div>
     }

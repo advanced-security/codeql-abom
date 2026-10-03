@@ -810,7 +810,7 @@ func seedCommonalityOfKind(
 	}
 	if _, err := s.DB().Exec(`
 		INSERT INTO abom_blast_radius
-			(node_row_id, dependent_repos, dependent_workflows, direct_dependents, max_depth)
+			(node_row_id, dependent_repos, dependent_workflows, dependent_steps, max_depth)
 		VALUES (?, ?, ?, ?, 1)
 		ON CONFLICT(node_row_id) DO UPDATE SET
 			dependent_repos = excluded.dependent_repos,

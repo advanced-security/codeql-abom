@@ -19,6 +19,16 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
+// adder writes one node through w, failing the test at the first error.
+func adder(t *testing.T, w *Writer) func(Node) {
+	return func(n Node) {
+		t.Helper()
+		if err := w.AddNode(n); err != nil {
+			t.Fatalf("AddNode(%s): %v", n.Key, err)
+		}
+	}
+}
+
 func TestMigrateIsIdempotent(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.Migrate(); err != nil {

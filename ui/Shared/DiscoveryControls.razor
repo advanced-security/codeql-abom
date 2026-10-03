@@ -173,7 +173,8 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
                     @if (LinkToSettings)
                     {
                         <span>
-                            Declare one in <MudLink Href="/settings">Settings</MudLink> to list
+                            Declare one in <MudLink Href="/settings"
+                                                     title="Open Settings to declare an account and enumerate its repositories.">Settings</MudLink> to list
                             the repositories underneath it.
                         </span>
                     }
@@ -290,7 +291,9 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
     {
         <MudText Typo="Typo.body2" Class="mud-text-secondary">
             <span data-abom-binding-summary>@SuiteBindingText.Summary(_suites)</span>.
-            <MudLink Href="/codeql?tab=suites" data-abom-binding-change>Change it on the CodeQL page</MudLink>
+            <MudLink Href="/codeql?tab=suites"
+                     title="Open the CodeQL page to change which query suites each tier runs."
+                     data-abom-binding-change>Change it on the CodeQL page</MudLink>
         </MudText>
         @foreach (var tier in Tiers.Where(t => BoundCount(t) == 0))
         {

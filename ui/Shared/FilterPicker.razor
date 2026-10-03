@@ -18,14 +18,14 @@
         <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
                  Color="@(applies ? Color.Primary : Color.Default)"
                  Class="@(applies ? null : "abom-chip-unapplied")"
-                 title="@(applies ? $"{term.Label}: {value}" : "Not applied here")"
+                 title="@(applies ? $"This view is filtered to {term.Label}: {value}." : "This filter is not applied on this view.")"
                  data-abom-filter-chip="@term.Name"
                  data-abom-chip-unapplied="@(applies ? null : "")">
             <span class="abom-chip-label">@term.Label</span>
             <span class="abom-chip-value">@Summarize(value)</span>
             <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small"
                            aria-label="@($"Remove the {term.Label} filter")"
-                           title="@($"Remove the {term.Label} filter")"
+                           title="@($"Remove the {term.Label} filter and widen the view again.")"
                            OnClick="@(() => Clear(term.Name))"
                            data-abom-chip-remove />
         </MudChip>
@@ -42,6 +42,7 @@
         <ActivatorContent>
             <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Text"
                        StartIcon="@Icons.Material.Filled.Add"
+                       title="Open the filter picker to add a filter to this view."
                        data-abom-add-filter>
                 Filter
             </MudButton>
@@ -63,6 +64,7 @@
                     @* Held open: choosing a term is the first of two steps, and a menu that
                        dismissed here would take the reader back to the button they just pressed. *@
                     <MudMenuItem OnClick="@(() => Choose(term))" AutoClose="false"
+                                 title="@($"Choose the {term.Label} filter and then pick its value.")"
                                  Class="@(NarrowsNothing(term) ? "abom-picker-idle" : null)"
                                  data-abom-term="@term.Name">
                         <div class="abom-picker-term">
@@ -102,6 +104,7 @@
                 <div class="abom-picker-head pa-2">
                     <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" Size="Size.Small"
                                    aria-label="Back to the filter list"
+                                   title="Return to the list of available filters."
                                    OnClick="@(() => _term = null)" data-abom-term-back />
                     <span class="abom-picker-head-label">@_term.Label</span>
                     <span class="abom-picker-term-help">@_term.Help</span>
@@ -115,6 +118,7 @@
                         @foreach (var key in _propertyKeys)
                         {
                             <MudMenuItem OnClick="@(() => ChooseKey(key))" AutoClose="false"
+                                         title="@($"Choose the {key} property key before picking its value.")"
                                          data-abom-key="@key">@key</MudMenuItem>
                         }
                         @if (_propertyKeys.Count == 0)
@@ -144,6 +148,7 @@
                         @foreach (var value in _propertyValues)
                         {
                             <MudMenuItem OnClick="@(() => Apply(_term.Name, $"{_propertyKey}:{value.Value}"))"
+                                         title="@($"Apply the {_propertyKey}:{value.Value} property filter to this view.")"
                                          data-abom-value="@value.Value">
                                 <div class="abom-picker-term">
                                     <div class="abom-picker-term-label">@value.Value</div>
@@ -187,6 +192,7 @@
                         {
                             <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Text"
                                        OnClick="@(() => Apply(_term!.Name, _valueQuery.Trim()))"
+                                       title="@($"Apply {_valueQuery.Trim()} as a {_term.Label} filter value.")"
                                        data-abom-value-apply>Apply @_valueQuery.Trim()</MudButton>
                         }
                     </div>
@@ -210,6 +216,7 @@
                     @foreach (var value in OfferableValues)
                     {
                         <MudMenuItem OnClick="@(() => Apply(_term.Name, value.Value))"
+                                     title="@($"Apply {value.Value} as a {_term.Label} filter value.")"
                                      data-abom-value="@value.Value">
                             <div class="abom-picker-value">
                                 <span class="abom-picker-term-label">@value.Value</span>

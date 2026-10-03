@@ -12,26 +12,44 @@ public class NodeUsersTests : AbomTestContext
 {
     private const string Detail = """
         {"key":"actions/checkout","kind":"action","repository":"","origin":"","path":"",
-         "isExternal":true,"analyzed":true,"dependentRepos":2,"directDependents":3,
-         "refs":[{"ref":"v4","count":9,"repositories":3},{"ref":"v3","count":1,"repositories":1}],
-         "rules":[],"advisories":[],"usedBy":[],"uses":[]}
+         "isExternal":true,"analyzed":true,"dependentRepos":2,
+         "rules":[],"uses":[]}
         """;
+
+    // v4 first, so the first version's list is the one each test opens.
+    private const string Versions = """
+        {"key":"actions/checkout","total":2,"advisories":[],
+         "items":[
+           {"reference":"v4","commit":"","queue":"analyzed","lockedTo":[],"direct":3,"transitive":0,
+            "lines":9,"findings":null},
+           {"reference":"v3","commit":"","queue":"analyzed","lockedTo":[],"direct":1,"transitive":0,
+            "lines":1,"findings":null}]}
+        """;
+
+    private void ServeNode()
+    {
+        Answer("/-/versions", Versions);
+        Answer("/-/uses", """{"key":"actions/checkout","total":0,"items":[]}""");
+        Answer("api/node/", Detail);
+    }
 
     private void Serve(string users)
     {
         Answer("/-/users", users);
-        Answer("/-/reach", "[]");
-        Answer("/-/impact", """{"key":"actions/checkout","direct":0,"transitive":0,"repos":[],"unanalyzed":0}""");
-        Answer("api/node/", Detail);
+        ServeNode();
     }
 
     private IRenderedComponent<Pages.NodePage> RenderNode() =>
         Render<Pages.NodePage>(p => p.Add(c => c.Key, "actions/checkout"));
 
+    // The list opens from a version's row, once the versions have arrived.
+    private static void OpenUsers(IRenderedComponent<Pages.NodePage> cut) =>
+        cut.WaitForAssertion(() => cut.Find(".abom-ref-users").Click());
+
     // The whole point of the entry: a reference the grid could only count is now a reference
-    // whose users can be read.
+    // whose users can be read — the starting points, which are the ones somebody here can change.
     [Fact]
-    public void EveryRepositoryNamingAVersionCanBeRead()
+    public void EveryStartingPointNamingAVersionCanBeRead()
     {
         Serve("""
             {"key":"actions/checkout","ref":"v4","total":3,"seeds":2,"owned":0,"ownedKnown":false,
@@ -42,17 +60,16 @@ public class NodeUsersTests : AbomTestContext
             """);
 
         var cut = RenderNode();
-        cut.Find(".abom-ref-users").Click();
+        OpenUsers(cut);
 
-        cut.WaitForAssertion(() => Assert.Contains("octo-org/app", cut.Markup));
-        Assert.Contains("octo-org/tool", cut.Markup);
-        Assert.Contains("other-org/lib", cut.Markup);
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-abom-user='octo-org/app']")));
+        Assert.NotEmpty(cut.FindAll("[data-abom-user='octo-org/tool']"));
     }
 
-    // Upstream repositories run the version but are not anyone's here to change. Listing them
-    // without saying which they are would read as three repositories to go and fix.
+    // Upstream repositories run the version but are not anyone's here to change, so they are not
+    // listed; the list says how many it left out rather than reading as complete.
     [Fact]
-    public void AnUpstreamUserIsMarkedAsOutOfScope()
+    public void AnUpstreamUserIsLeftOutAndCounted()
     {
         Serve("""
             {"key":"actions/checkout","ref":"v4","total":2,"seeds":1,"owned":0,"ownedKnown":false,
@@ -62,9 +79,11 @@ public class NodeUsersTests : AbomTestContext
             """);
 
         var cut = RenderNode();
-        cut.Find(".abom-ref-users").Click();
+        OpenUsers(cut);
 
-        cut.WaitForAssertion(() => Assert.Contains("upstream", cut.Markup));
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-abom-user='octo-org/app']")));
+        Assert.Empty(cut.FindAll("[data-abom-user='other-org/lib']"));
+        Assert.Contains("1 other repository names it too", cut.Find("[data-abom-ref-users-of='v4']").TextContent);
     }
 
     // With nothing verified, "0 yours" is a question nobody has answered rather than a count of
@@ -79,7 +98,7 @@ public class NodeUsersTests : AbomTestContext
             """);
 
         var cut = RenderNode();
-        cut.Find(".abom-ref-users").Click();
+        OpenUsers(cut);
 
         cut.WaitForAssertion(() => Assert.Contains("octo-org/app", cut.Markup));
         Assert.DoesNotContain("0 yours", cut.Markup);
@@ -96,7 +115,7 @@ public class NodeUsersTests : AbomTestContext
             """);
 
         var cut = RenderNode();
-        cut.Find(".abom-ref-users").Click();
+        OpenUsers(cut);
 
         cut.WaitForAssertion(() => Assert.Contains("1 yours", cut.Markup));
     }
@@ -113,7 +132,7 @@ public class NodeUsersTests : AbomTestContext
             """);
 
         var cut = RenderNode();
-        cut.Find(".abom-ref-users").Click();
+        OpenUsers(cut);
 
         cut.WaitForAssertion(() => Assert.Contains("more not shown", cut.Markup));
     }
@@ -123,15 +142,13 @@ public class NodeUsersTests : AbomTestContext
     [Fact]
     public void TheListDoesNotClaimNobodyUsesItWhileLoading()
     {
-        Answer("/-/reach", "[]");
-        Answer("/-/impact", """{"key":"actions/checkout","direct":0,"transitive":0,"repos":[],"unanalyzed":0}""");
-        Answer("api/node/", Detail);
+        ServeNode();
         Withhold("/-/users");
 
         var cut = RenderNode();
-        cut.Find(".abom-ref-users").Click();
+        OpenUsers(cut);
 
-        cut.WaitForAssertion(() => Assert.Contains("abom-ref-users", cut.Markup));
+        cut.WaitForAssertion(() => Assert.Contains("Loading the repositories naming", cut.Markup));
         Assert.DoesNotContain("No repository names", cut.Markup);
     }
 }

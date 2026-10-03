@@ -47,12 +47,7 @@ func sharedGroupingFixture(t *testing.T) *Store {
 	}
 
 	w := NewWriter(s, 0)
-	add := func(n Node) {
-		t.Helper()
-		if err := w.AddNode(n); err != nil {
-			t.Fatalf("AddNode(%s): %v", n.Key, err)
-		}
-	}
+	add := adder(t, w)
 	edge := func(e Edge) {
 		t.Helper()
 		if err := w.AddEdge(e); err != nil {
@@ -106,8 +101,7 @@ func drawn(t *testing.T, s *Store, opts FullGraphOptions) map[string]bool {
 func TestAFilteredGraphKeepsTheGroupsOwnNodesAndWhatTheyReach(t *testing.T) {
 	s := sharedGroupingFixture(t)
 
-	got := drawn(t, s, FullGraphOptions{
-		GroupClosure: []string{"octo-org/app", "octo-org/shared", "actions/checkout"}})
+	got := drawn(t, s, FullGraphOptions{GroupSources: []string{"octo-org/app", "octo-org/shared"}})
 
 	for _, key := range []string{"octo-org/app/.github/workflows/ci.yml", "octo-org/shared",
 		"actions/checkout"} {
@@ -126,8 +120,7 @@ func TestAFilteredGraphKeepsTheGroupsOwnNodesAndWhatTheyReach(t *testing.T) {
 func TestExcludingAGroupDoesNotSeverADependencyAnotherGroupReaches(t *testing.T) {
 	s := sharedGroupingFixture(t)
 
-	got := drawn(t, s, FullGraphOptions{
-		GroupClosure: []string{"octo-org/web", "octo-org/shared"}})
+	got := drawn(t, s, FullGraphOptions{GroupSources: []string{"octo-org/web"}})
 
 	if !got["octo-org/shared"] {
 		t.Error("a dependency the kept group reaches was removed for belonging to the excluded one")
@@ -145,7 +138,7 @@ func TestExcludingAGroupDoesNotSeverADependencyAnotherGroupReaches(t *testing.T)
 func TestAFilterMatchingNoRepositoryDrawsNothing(t *testing.T) {
 	s := sharedGroupingFixture(t)
 
-	if got := drawn(t, s, FullGraphOptions{GroupClosure: []string{}, GroupFiltered: true}); len(got) != 0 {
+	if got := drawn(t, s, FullGraphOptions{GroupSources: []string{}, GroupFiltered: true}); len(got) != 0 {
 		t.Errorf("a filter matching nothing drew %d nodes", len(got))
 	}
 }
@@ -158,7 +151,7 @@ func TestAFilteredGraphStillLabelsWhatItDraws(t *testing.T) {
 	g, err := s.FullGraph(FullGraphOptions{
 		IncludeSteps:  true,
 		GroupProperty: "business_id",
-		GroupClosure:  []string{"octo-org/app", "octo-org/shared", "actions/checkout"}})
+		GroupSources:  []string{"octo-org/app", "octo-org/shared"}})
 	if err != nil {
 		t.Fatalf("FullGraph: %v", err)
 	}

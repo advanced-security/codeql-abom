@@ -13,29 +13,31 @@ func inventoryGroupingFixture(t *testing.T) *Store {
 	t.Helper()
 	s := pinningGroupingFixture(t)
 
-	// tool reaches checkout directly; app reaches it through the reusable workflow it calls.
-	reach := map[string]map[string]int{
-		"actions/checkout": {"octo-org/tool": 1, "octo-org/app": 3},
-		"octo-org/shared/.github/workflows/build.yml": {"octo-org/app": 1},
+	// tool reaches checkout directly from two steps of one job; app reaches it through the reusable
+	// workflow it calls, from one step.
+	type reached struct{ hops, steps, jobs, workflows int }
+	reach := map[string]map[string]reached{
+		"actions/checkout": {"octo-org/tool": {1, 2, 1, 1}, "octo-org/app": {3, 1, 1, 1}},
+		"octo-org/shared/.github/workflows/build.yml": {"octo-org/app": {1, 1, 1, 1}},
 	}
 	for node, repos := range reach {
-		for repo, hops := range repos {
+		for repo, r := range repos {
 			if _, err := s.DB().Exec(`
-				INSERT INTO abom_node_reach (node_row_id, repository_row_id, hops)
-				SELECT n.row_id, r.row_id, ? FROM abom_node_live n, repository r
+				INSERT INTO abom_node_reach (node_row_id, repository_row_id, hops, steps, jobs, workflows)
+				SELECT n.row_id, r.row_id, ?, ?, ?, ? FROM abom_node_live n, repository r
 				WHERE n.node_key = ? AND r.repository_full_name = ?`,
-				hops, node, repo); err != nil {
+				r.hops, r.steps, r.jobs, r.workflows, node, repo); err != nil {
 				t.Fatalf("recording reach of %s from %s: %v", node, repo, err)
 			}
 		}
 	}
-	// The rollup is the breakdown's cardinality, as one walk would have written both. A fixture
-	// where they disagree would test a state the builder cannot produce.
+	// The rollup is the breakdown's sums, as one walk would have written both. A fixture where
+	// they disagree would test a state the builder cannot produce.
 	if _, err := s.DB().Exec(`
-		INSERT INTO abom_blast_radius
-			(node_row_id, dependent_repos, dependent_workflows, direct_dependents, max_depth)
-		SELECT nr.node_row_id, COUNT(*), 0, 0, 1 FROM abom_node_reach nr
-		GROUP BY nr.node_row_id`); err != nil {
+		INSERT INTO abom_blast_radius (node_row_id, dependent_repos, dependent_steps, dependent_jobs,
+			dependent_workflows, max_depth)
+		SELECT nr.node_row_id, COUNT(*), SUM(nr.steps), SUM(nr.jobs), SUM(nr.workflows), 1
+		  FROM abom_node_reach nr GROUP BY nr.node_row_id`); err != nil {
 		t.Fatalf("recording the rollup: %v", err)
 	}
 	return s
@@ -51,9 +53,9 @@ func TestTheActionsInventoryRecountsReachWithinAGrouping(t *testing.T) {
 		t.Fatalf("ActionsInventory: %v", err)
 	}
 	whole := byNodeKey(all)
-	if whole["actions/checkout"].DependentRepos != 2 {
+	if value(whole["actions/checkout"].DependentRepos) != 2 {
 		t.Fatalf("unfiltered reports checkout reaching %d repositories, want 2",
-			whole["actions/checkout"].DependentRepos)
+			value(whole["actions/checkout"].DependentRepos))
 	}
 
 	three, err := s.ActionsInventory("", 0, pinningGroup("3").Scope)
@@ -65,9 +67,45 @@ func TestTheActionsInventoryRecountsReachWithinAGrouping(t *testing.T) {
 	if !ok {
 		t.Fatal("checkout is absent from business_id:3, which reaches it through tool")
 	}
-	if got.DependentRepos != 1 {
+	if value(got.DependentRepos) != 1 {
 		t.Errorf("checkout reaches %d repositories under business_id:3, want 1 — the count "+
-			"spans the organization rather than the grouping", got.DependentRepos)
+			"spans the organization rather than the grouping", value(got.DependentRepos))
+	}
+}
+
+// Every level below the repository is counted as the repositories are: stored totals for the whole
+// organization, recounted from the repositories in a grouping when one narrows the list. Groups are
+// the values of the configured grouping property among them, and none are counted where no
+// property is configured, which is not the same as none reached.
+func TestTheActionsInventoryCountsEveryLevelAndEveryGroupWithinAGrouping(t *testing.T) {
+	s := inventoryGroupingFixture(t)
+	checkout := func(q InventoryQuery) ActionSummary {
+		t.Helper()
+		page, err := s.ActionsInventoryPage(q)
+		if err != nil {
+			t.Fatalf("ActionsInventoryPage: %v", err)
+		}
+		if page.GroupProperty != q.GroupProperty {
+			t.Errorf("the page groups by %q, asked %q", page.GroupProperty, q.GroupProperty)
+		}
+		return byNodeKey(page.Items)["actions/checkout"]
+	}
+	type counted struct{ repos, steps, jobs, workflows, groups int }
+	of := func(a ActionSummary) counted {
+		return counted{value(a.DependentRepos), value(a.DependentSteps), value(a.DependentJobs),
+			value(a.DependentWorkflows), value(a.DependentGroups)}
+	}
+
+	if got, want := of(checkout(InventoryQuery{GroupProperty: "business_id"})),
+		(counted{2, 3, 2, 2, 2}); got != want {
+		t.Errorf("across the organization checkout is %+v, want %+v", got, want)
+	}
+	if got, want := of(checkout(InventoryQuery{GroupProperty: "business_id",
+		Grouping: pinningGroup("3").Scope})), (counted{1, 2, 1, 1, 1}); got != want {
+		t.Errorf("within business_id:3 checkout is %+v, want tool's %+v", got, want)
+	}
+	if got := checkout(InventoryQuery{}).DependentGroups; got != nil {
+		t.Errorf("with no grouping property checkout counts %d groups, want none counted", *got)
 	}
 }
 
@@ -101,13 +139,13 @@ func TestReachWithinGroupingsAccountsForTheWhole(t *testing.T) {
 			t.Fatalf("ActionsInventory(%s): %v", group, err)
 		}
 		for _, r := range rows {
-			parts[r.NodeKey] += r.DependentRepos
+			parts[r.NodeKey] += value(r.DependentRepos)
 		}
 	}
 	for key, want := range whole {
-		if parts[key] != want.DependentRepos {
+		if parts[key] != value(want.DependentRepos) {
 			t.Errorf("%s: the groupings total %d against a whole of %d",
-				key, parts[key], want.DependentRepos)
+				key, parts[key], value(want.DependentRepos))
 		}
 	}
 }
@@ -161,7 +199,7 @@ func TestABoundedInventoryRefusesWhenTheBreakdownHasNotBeenDerived(t *testing.T)
 	// The rollup asserts reach that no breakdown row explains, which is exactly an upgraded corpus.
 	if _, err := s.DB().Exec(`
 		INSERT INTO abom_blast_radius
-			(node_row_id, dependent_repos, dependent_workflows, direct_dependents, max_depth)
+			(node_row_id, dependent_repos, dependent_workflows, dependent_steps, max_depth)
 		SELECT row_id, 2, 0, 0, 1 FROM abom_node_live WHERE node_key = 'actions/checkout'`,
 	); err != nil {
 		t.Fatal(err)
@@ -186,4 +224,12 @@ func byNodeKey(rows []ActionSummary) map[string]ActionSummary {
 		out[r.NodeKey] = r
 	}
 	return out
+}
+
+// value reads a count the inventory may not have measured, as -1 where it has not.
+func value(p *int) int {
+	if p == nil {
+		return -1
+	}
+	return *p
 }

@@ -10,11 +10,11 @@
     @if (Asset.Length > 0)
     {
         <span class="abom-ref abom-review-asset-name">@Asset</span>
-        <MudTooltip Text="Open in Findings">
+        <MudTooltip Text="Open these findings in the Findings view.">
             <MudIconButton Icon="@Icons.Material.Outlined.OpenInFull" Href="@ReviewHref" aria-label="Open in Findings" />
         </MudTooltip>
     }
-    <MudTooltip Text="Refresh findings">
+    <MudTooltip Text="Reload the findings list and the selected finding details.">
         <MudIconButton Icon="@Icons.Material.Outlined.Refresh" OnClick="RefreshAsync" aria-label="Refresh findings" />
     </MudTooltip>
 </div>
@@ -38,8 +38,10 @@
                      Class="abom-grid abom-grid-windowed abom-grid-captioned abom-findings-grid">
             <Columns>
                 <TemplateColumn Title="Finding">
+                    <HeaderTemplate><HeaderTip Tip="The finding message, rule and location. Select one to read its details.">Finding</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         <button type="button" class="abom-finding-select" data-abom-review-finding="@context.Item.Id"
+                                title="Read this finding's details, its rule and where it was reported."
                                 aria-expanded="@(_selectedId == context.Item.Id)" @onclick="@(() => Select(context.Item.Id))">
                             @context.Item.DisplayTitle
                         </button>
@@ -58,6 +60,7 @@
                     </CellTemplate>
                 </TemplateColumn>
                 <TemplateColumn Title="Severity" CellClass="abom-review-severity" HeaderClass="abom-review-severity">
+                    <HeaderTemplate><HeaderTip Tip="The severity band reported for the finding by its CodeQL rule.">Severity</HeaderTip></HeaderTemplate>
                     <CellTemplate><SeverityChip Severity="@context.Item.Band" /></CellTemplate>
                 </TemplateColumn>
             </Columns>
@@ -80,7 +83,8 @@
             else if (_detailRefusal is { } error)
             {
                 <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true">@error</MudAlert>
-                <MudIconButton Icon="@Icons.Material.Outlined.Close" aria-label="Close finding details" OnClick="Close" />
+                <MudIconButton Icon="@Icons.Material.Outlined.Close" aria-label="Close finding details"
+                               title="Close the finding details pane." OnClick="Close" />
             }
             else if (_details is { } details)
             {

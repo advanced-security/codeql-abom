@@ -19,13 +19,20 @@ type ActionSummary struct {
 	Repo    string `json:"repo"`
 	// Origin separates what the organization owns from what it merely depends on.
 	Origin string `json:"origin"`
-	// DependentRepos and DirectDependents come from the graph, not from any advisory.
-	DependentRepos   int `json:"dependentRepos"`
-	DirectDependents int `json:"directDependents"`
+	// DependentRepos are the starting points that run this, directly or through another action,
+	// and the steps, jobs and workflow files below are theirs. All come from the graph, never from
+	// an advisory. A level is nil where reach has not counted it yet, which is not none.
+	DependentRepos     *int `json:"dependentRepos"`
+	DependentSteps     *int `json:"dependentSteps"`
+	DependentJobs      *int `json:"dependentJobs"`
+	DependentWorkflows *int `json:"dependentWorkflows"`
+	// DependentGroups counts the values of the grouping property among those repositories; nil
+	// where no grouping property is configured.
+	DependentGroups *int `json:"dependentGroups"`
 	// DistinctRefs counts the different references pointing here. One action used at forty
 	// different commits is forty upgrade decisions, which a total reference count hides.
-	DistinctRefs int `json:"distinctRefs"`
-	Findings     int `json:"findings"`
+	DistinctRefs *int `json:"distinctRefs"`
+	Findings     int  `json:"findings"`
 	// Severity is the same findings by band, summing to Findings.
 	Severity SeverityCounts `json:"severity"`
 	// Advisories counts live advisories naming this action's repository. It is a count of
@@ -53,14 +60,12 @@ type NodeMatch struct {
 // An empty query returns the widest-reaching candidates, because that is the opening state of
 // the picker and returning nothing there would read as broken.
 func (s *Store) SearchNodes(search string, limit int, sc RepositoryScope) ([]NodeMatch, error) {
-	reach, reachArgs, err := s.reachWithin(sc)
+	in, err := s.reachInScope(sc)
 	if err != nil {
 		return nil, err
 	}
-	keep, keepArgs, err := s.reachedByScope(sc)
-	if err != nil {
-		return nil, err
-	}
+	reach, reachArgs := in.count()
+	keep, keepArgs := in.keep()
 	where := `WHERE n.node_kind NOT IN ('step', 'job')` + keep
 	args := append(append([]any{}, reachArgs...), keepArgs...)
 	if search != "" {
@@ -96,25 +101,23 @@ var ErrReachNotDerived = errors.New(
 	"reach has not been derived per repository since the last rebuild, so an answer cannot be " +
 		"bounded to a grouping; run expand-all to refresh the aggregates")
 
-// reachedByScope filters rows to the nodes the scope's repositories reach.
-//
-// Driven from the pair table rather than tested per node: the planner turns this into a covering
-// index scan feeding a primary key lookup, where the same condition written as a correlated
-// subquery makes it scan every node and evaluate the subquery for each.
-func (s *Store) reachedByScope(sc RepositoryScope) (string, []any, error) {
+// reachIn is a grouping resolved once for every reach expression a query bounds to it: a restriction
+// on the repositories reaching a node, and its arguments. The zero value bounds nothing.
+type reachIn struct {
+	bound string
+	args  []any
+	asked bool
+}
+
+func (s *Store) reachInScope(sc RepositoryScope) (reachIn, error) {
 	if !sc.asked() {
-		return "", nil, nil
+		return reachIn{}, nil
 	}
 	if err := s.reachIsDerived(); err != nil {
-		return "", nil, err
+		return reachIn{}, err
 	}
 	bound, args, err := s.restrict(sc, "rr.repository_full_name")
-	if err != nil {
-		return "", nil, err
-	}
-	return ` AND n.row_id IN (SELECT nr.node_row_id FROM abom_node_reach nr
-		          JOIN repository rr ON rr.row_id = nr.repository_row_id
-		         WHERE 1` + bound + `)`, args, nil
+	return reachIn{bound: bound, args: args, asked: true}, err
 }
 
 // reachIsDerived refuses when the rollup asserts reach the breakdown cannot account for.
@@ -131,42 +134,77 @@ func (s *Store) reachIsDerived() error {
 	return nil
 }
 
-// reachWithin returns the expression counting how many repositories reach the node in scope, and
-// the arguments binding it.
+// keep filters rows to the nodes the scope's repositories reach.
 //
-// Unbounded it is the stored rollup. Bounded it counts the breakdown behind that rollup, because a
-// count carried over from the organization under a filtered row list is the defect this exists to
-// prevent. The two agree by construction: one walk writes both.
-func (s *Store) reachWithin(sc RepositoryScope) (string, []any, error) {
-	if !sc.asked() {
-		return `COALESCE(b.dependent_repos, 0)`, nil, nil
+// Driven from the pair table rather than tested per node: the planner turns this into a covering
+// index scan feeding a primary key lookup, where the same condition written as a correlated
+// subquery makes it scan every node and evaluate the subquery for each.
+func (r reachIn) keep() (string, []any) {
+	if !r.asked {
+		return "", nil
 	}
-	bound, args, err := s.restrict(sc, "rr.repository_full_name")
-	if err != nil {
-		return "", nil, err
-	}
-	return `(SELECT COUNT(*) FROM abom_node_reach nr
+	return ` AND n.row_id IN (SELECT nr.node_row_id FROM abom_node_reach nr
 		          JOIN repository rr ON rr.row_id = nr.repository_row_id
-		         WHERE nr.node_row_id = n.row_id` + bound + `)`, args, nil
+		         WHERE 1` + r.bound + `)`, r.args
 }
 
-// directRefsWithin counts the references pointing at the node from the scope.
-//
-// Unbounded this is the stored count, which includes references made by upstream repositories —
-// they are how a composite action's own dependencies are attributed. Bounded, only references
-// written in the grouping's own files count, because those are the ones it can change.
-func (s *Store) directRefsWithin(sc RepositoryScope, mode string) (string, []any, error) {
-	if !sc.asked() {
-		return `COALESCE(b.direct_dependents, 0)`, nil, nil
-	}
-	bound, args, err := s.restrict(sc, "er.repository_full_name")
-	if err != nil {
-		return "", nil, err
-	}
-	return `(SELECT COUNT(*) FROM ` + edgeSource(mode) + ` e
-		          JOIN repository er ON er.row_id = e.repository_row_id
-		         WHERE e.dst_node_row_id = n.row_id` + bound + `)`, args, nil
+// over aggregates the breakdown of the node's reach within the scope, correlated to `n`, among the
+// reaching repositories `also` admits.
+func (r reachIn) over(aggregate, also string) string {
+	return `(SELECT ` + aggregate + ` FROM abom_node_reach nr
+		  JOIN repository rr ON rr.row_id = nr.repository_row_id
+		 WHERE nr.node_row_id = n.row_id` + r.bound + also + `)`
 }
+
+// count is how many repositories reach the node in scope. Unbounded it is the stored rollup;
+// bounded it counts the breakdown behind it, because a count carried over from the organization
+// under a filtered row list is the defect this exists to prevent. One walk writes both.
+func (r reachIn) count() (string, []any) {
+	if !r.asked {
+		return `COALESCE(b.dependent_repos, 0)`, nil
+	}
+	return r.over(`COUNT(*)`, ""), r.args
+}
+
+// levels selects what in the starting points depends on the node below the repository, and how
+// many groups of them: the stored totals when nothing narrows the list, else the sums over the
+// repositories in the grouping. Groups are the values of the grouping property among the owned
+// repositories reaching it, each repository counted under its first value as the Explorer groups it.
+func (r reachIn) levels(property string) (string, []any) {
+	var parts []string
+	var args []any
+	for _, level := range []string{"steps", "jobs", "workflows"} {
+		stored := `b.dependent_` + level
+		if !r.asked {
+			parts = append(parts, measured(stored)+` AS dependent_`+level)
+			continue
+		}
+		parts = append(parts, `(CASE WHEN `+stored+` IS NULL THEN NULL ELSE `+
+			r.over(`COALESCE(SUM(nr.`+level+`), 0)`, "")+` END) AS dependent_`+level)
+		args = append(args, r.args...)
+	}
+	if property == "" {
+		return strings.Join(parts, ", ") + `, NULL AS dependent_groups`, args
+	}
+	parts = append(parts, `(CASE WHEN `+reachKnown+` THEN `+r.over(`COUNT(DISTINCT (
+			SELECT MIN(p.value) FROM abom_repository_property p
+			 WHERE p.repository_full_name = rr.repository_full_name AND p.property_name = ?))`,
+		` AND `+ownedFullName("rr.repository_full_name"))+` END) AS dependent_groups`)
+	// The property is bound inside the aggregate, ahead of the scope's own arguments.
+	return strings.Join(parts, ", "), append(append(args, property), r.args...)
+}
+
+// measured reads a stored level: zero where reach ran and wrote no row because nothing references
+// the node, and NULL where it has not run since the node arrived or the row predates the level.
+func measured(column string) string {
+	return `COALESCE(` + column + `, CASE WHEN b.node_row_id IS NULL AND ` + reachKnown + ` THEN 0 END)`
+}
+
+// runsOrHolds is what the Actions unit lists: what a starting point runs or holds, and whatever
+// reach has not measured yet. Anything else is used only by other repositories, or by nothing.
+// Total, so that its negation counts the rest rather than reading NULL as neither.
+var runsOrHolds = `(n.node_kind NOT IN ('action', 'composite_action', 'docker_image')
+	OR COALESCE(r.origin, '') = 'seed' OR NOT ` + reachKnown + ` OR COALESCE(b.dependent_repos, 0) > 0)`
 
 // InventoryQuery narrows and orders the inventory, and cuts one page out of what matched.
 type InventoryQuery struct {
@@ -174,12 +212,12 @@ type InventoryQuery struct {
 	Kinds    []string
 	Origins  []string
 	MinReach int
-	// Scope is the view's own scope term, `owned` or `exposure`. Closure carries the declaration
-	// the owned scope reads, because `internal/graph` derives it and this package cannot import it.
+	// Scope is the view's own scope term, `owned` or `exposure`.
 	Scope    string
-	Closure  []string
 	Flags    []string
 	RefStyle string
+	// At keeps what some workflow names at exactly one of these references, verbatim.
+	At []string
 	// The findings terms, carrying the meanings the set path gives them: a node matches when it
 	// carries a finding that satisfies all of them at once. `repositories` is the repository the
 	// *finding* sits in, as it is there — "which dependencies does this repository use" is `scope`.
@@ -205,6 +243,9 @@ type InventoryQuery struct {
 	Limit  int
 	// Grouping is the repository-property scope, which is a different question from Scope.
 	Grouping RepositoryScope
+	// GroupProperty names the property whose values divide starting points into groups. It is
+	// configuration, never a term: empty counts no groups rather than guessing a property.
+	GroupProperty string
 }
 
 // InventoryPage is one page of the inventory and the size of the match it was cut from.
@@ -220,6 +261,10 @@ type InventoryPage struct {
 	Unsourced int `json:"unsourced"`
 	// Unprovided counts the rows whose matching finding recorded no provider, when one is asked.
 	Unprovided int `json:"unprovided"`
+	// GroupProperty is the property the groups were counted by, empty where none is configured.
+	GroupProperty string `json:"groupProperty"`
+	// Unlisted counts the actions the other terms matched that no starting point runs or holds.
+	Unlisted int `json:"unlisted"`
 }
 
 // KindCount is how many nodes of one kind a predicate matched.
@@ -234,12 +279,15 @@ type KindCount struct {
 // string is an injection unless it is checked against what exists, and a sort that is silently
 // dropped shows the reader an order they did not ask for.
 var inventorySorts = map[string]string{
-	"nodeKey":          "n.node_key",
-	"kind":             "n.node_kind",
-	"origin":           "origin",
-	"dependentRepos":   "dependent_repos",
-	"directDependents": "direct_dependents",
-	"distinctRefs":     "distinct_refs",
+	"nodeKey":            "n.node_key",
+	"kind":               "n.node_kind",
+	"origin":             "origin",
+	"dependentRepos":     "dependent_repos",
+	"dependentSteps":     "dependent_steps",
+	"dependentJobs":      "dependent_jobs",
+	"dependentWorkflows": "dependent_workflows",
+	"dependentGroups":    "dependent_groups",
+	"distinctRefs":       "distinct_refs",
 	// Ordered by severityOrdering, which no single expression can say.
 	"findings":   "",
 	"advisories": "advisories",
@@ -259,6 +307,12 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 	if err != nil {
 		return InventoryPage{}, err
 	}
+	// The unit lists what starting points run or hold; a grouping already keeps only what it reaches.
+	unlisted := ""
+	if !q.Grouping.asked() {
+		unlisted = plan.where + ` AND NOT ` + runsOrHolds
+		plan.where += ` AND ` + runsOrHolds
+	}
 
 	total, err := s.inventoryTotal(plan.where, plan.whereArgs)
 	if err != nil {
@@ -274,7 +328,12 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 	if err != nil {
 		return InventoryPage{}, err
 	}
-	page := InventoryPage{Items: out, Total: total, Elsewhere: elsewhere}
+	page := InventoryPage{Items: out, Total: total, Elsewhere: elsewhere, GroupProperty: q.GroupProperty}
+	if unlisted != "" {
+		if page.Unlisted, err = s.inventoryTotal(unlisted, plan.whereArgs); err != nil {
+			return InventoryPage{}, err
+		}
+	}
 	if err := s.attachInventoryUnknownCounts(q, &page); err != nil {
 		return InventoryPage{}, err
 	}
@@ -282,10 +341,10 @@ func (s *Store) ActionsInventoryPage(q InventoryQuery) (InventoryPage, error) {
 }
 
 type inventoryPageQuery struct {
-	reach, direct         string
-	where, ordering       string
-	reachArgs, directArgs []any
-	whereArgs, orderArgs  []any
+	reach, levels        string
+	where, ordering      string
+	reachArgs, levelArgs []any
+	whereArgs, orderArgs []any
 }
 
 type inventoryWhere struct {
@@ -301,24 +360,24 @@ func (s *Store) inventoryPageQuery(q InventoryQuery) (inventoryPageQuery, error)
 			q.Sort, InventorySortNames())
 	}
 
-	reach, reachArgs, err := s.reachWithin(q.Grouping)
+	in, err := s.reachInScope(q.Grouping)
 	if err != nil {
 		return inventoryPageQuery{}, err
 	}
-	direct, directArgs, err := s.directRefsWithin(q.Grouping, q.Mode)
-	if err != nil {
-		return inventoryPageQuery{}, err
-	}
-	keep, keepArgs, err := s.reachedByScope(q.Grouping)
-	if err != nil {
-		return inventoryPageQuery{}, err
-	}
+	reach, reachArgs := in.count()
+	levels, levelArgs := in.levels(q.GroupProperty)
+	keep, keepArgs := in.keep()
 
 	where := buildInventoryWhere(q, keep, keepArgs, reach, reachArgs)
 	ordering, orderArgs := inventoryOrdering(q, order, ok, reach, reachArgs)
+	// What a row shows says where reach has not been measured; what filters and orders reads zero.
+	shown := reach
+	if !q.Grouping.asked() {
+		shown = measured("b.dependent_repos")
+	}
 	return inventoryPageQuery{
-		reach: reach, direct: direct, where: where.clause, ordering: ordering,
-		reachArgs: reachArgs, directArgs: directArgs, whereArgs: where.args, orderArgs: orderArgs,
+		reach: shown, levels: levels, where: where.clause, ordering: ordering,
+		reachArgs: reachArgs, levelArgs: levelArgs, whereArgs: where.args, orderArgs: orderArgs,
 	}, nil
 }
 
@@ -349,15 +408,21 @@ func buildInventoryWhere(
 			whereArgs = append(whereArgs, o)
 		}
 	}
-	scope, scopeArgs := inventoryScopeFilter(q)
-	where += scope
-	whereArgs = append(whereArgs, scopeArgs...)
+	where += inventoryScopeFilter(q)
 	findings, findingArgs := inventoryFindingFilter(q)
 	where += findings
 	whereArgs = append(whereArgs, findingArgs...)
 	where += inventoryFlagFilter(q.Flags, q.Mode)
 	if style := inventoryRefFilter(q.RefStyle, q.Mode); style != "" {
 		where += style
+	}
+	if len(q.At) > 0 {
+		where += ` AND EXISTS (SELECT 1 FROM ` + edgeSource(q.Mode) + ` e
+		                       WHERE e.dst_node_row_id = n.row_id
+		                         AND e.ref_value IN (` + placeholders(len(q.At)) + `))`
+		for _, ref := range q.At {
+			whereArgs = append(whereArgs, ref)
+		}
 	}
 	// A floor of zero is not a question about zero, so it must not drop the rows whose reach has
 	// never been measured.
@@ -390,10 +455,8 @@ func (s *Store) inventoryPageItems(q InventoryQuery, plan inventoryPageQuery) ([
 	query := `
 		SELECT n.node_key, n.node_kind, COALESCE(n.owner,''), COALESCE(n.repo,''),
 		       COALESCE(r.origin, '') AS origin,
-		       ` + plan.reach + ` AS dependent_repos, ` + plan.direct + ` AS direct_dependents,
-		       (SELECT COUNT(DISTINCT e.ref_value) FROM ` + edgeSource(q.Mode) + ` e
-		         WHERE e.dst_node_row_id = n.row_id
-		           AND e.ref_value IS NOT NULL AND e.ref_value <> '') AS distinct_refs,
+		       ` + plan.reach + ` AS dependent_repos, ` + plan.levels + `,
+		       ` + measured("b.refs_in_use") + ` AS distinct_refs,
 		       ` + nodeFindingCount(q.Mode, "n.row_id") + ` AS findings,
 		       (SELECT COUNT(DISTINCT a.ghsa_id)
 		          FROM abom_advisory a
@@ -409,7 +472,7 @@ func (s *Store) inventoryPageItems(q InventoryQuery, plan inventoryPageQuery) ([
 		` + plan.where + plan.ordering
 
 	args := append([]any{}, plan.reachArgs...)
-	args = append(args, plan.directArgs...)
+	args = append(args, plan.levelArgs...)
 	args = append(args, plan.whereArgs...)
 	args = append(args, plan.orderArgs...)
 	if q.Limit > 0 {
@@ -420,7 +483,8 @@ func (s *Store) inventoryPageItems(q InventoryQuery, plan inventoryPageQuery) ([
 	out, err := queryAll(s, "listing actions", func(r *sql.Rows) (ActionSummary, error) {
 		var a ActionSummary
 		return a, r.Scan(&a.NodeKey, &a.Kind, &a.Owner, &a.Repo, &a.Origin,
-			&a.DependentRepos, &a.DirectDependents, &a.DistinctRefs, &a.Findings,
+			&a.DependentRepos, &a.DependentSteps, &a.DependentJobs, &a.DependentWorkflows,
+			&a.DependentGroups, &a.DistinctRefs, &a.Findings,
 			&a.Advisories, &a.Analyzed)
 	}, query, args...)
 	if err != nil {
@@ -516,25 +580,15 @@ func (s *Store) inventoryElsewhere(q InventoryQuery) ([]KindCount, error) {
 		 ORDER BY 2 DESC, 1`, args...)
 }
 
-// inventoryScopeFilter bounds the listing to the view's scope.
-//
-// The owned scope reads the declaration's closure. Declaring nothing shows nothing rather than
-// falling through to the whole corpus, which would answer a question about the operator's own
-// supply chain with somebody else's — the same rule the graph follows.
-func inventoryScopeFilter(q InventoryQuery) (string, []any) {
+// inventoryScopeFilter bounds the listing to the view's scope, as every unit and the graph read it.
+func inventoryScopeFilter(q InventoryQuery) string {
 	switch q.Scope {
 	case ScopeExposure:
-		return " AND n.node_key IN " + onExposureRoute, nil
+		return " AND n.node_key IN " + onExposureRoute
 	case ScopeOwned:
-		if len(q.Closure) == 0 {
-			return " AND 0", nil
-		}
-		list, names := inList(q.Closure)
-		return ` AND (LOWER(r.repository_full_name) IN ` + list +
-				` OR LOWER(n.owner || '/' || n.repo) IN ` + list + `)`,
-			append(append([]any{}, names...), names...)
+		return " AND n.row_id IN (" + scopeNodes(declaredRoots, q.Mode) + ")"
 	}
-	return "", nil
+	return ""
 }
 
 // inventoryFindingFilter narrows to nodes carrying a finding the predicate names.
@@ -685,9 +739,8 @@ type RepositorySummary struct {
 // RepositoriesQuery narrows and orders the repositories unit, and cuts one page out of the match.
 type RepositoriesQuery struct {
 	Search string
-	// Scope is `owned` or `exposure`, read against Closure the same way the node listing reads it.
+	// Scope is `owned` or `exposure`, read the way the node listing reads it.
 	Scope    string
-	Closure  []string
 	Flags    []string
 	Sort     string
 	Desc     bool
@@ -703,23 +756,16 @@ type RepositoriesPage struct {
 }
 
 // repositoryScopeFilter narrows the repositories listing the way inventoryScopeFilter narrows the
-// node listing, so the same term means the same thing in both units.
-//
-// `owned` with nothing declared matches nothing rather than everything: falling through would
-// answer a question about the operator's own estate with somebody else's.
-func repositoryScopeFilter(q RepositoriesQuery) (string, []any) {
+// node listing: under `owned`, the declared repositories and those holding what they run.
+func repositoryScopeFilter(q RepositoriesQuery) string {
 	switch q.Scope {
 	case ScopeExposure:
 		return ` AND EXISTS (SELECT 1 FROM abom_exposure x
-		                      WHERE x.repository_row_id = r.row_id)`, nil
+		                      WHERE x.repository_row_id = r.row_id)`
 	case ScopeOwned:
-		if len(q.Closure) == 0 {
-			return " AND 0", nil
-		}
-		list, names := inList(q.Closure)
-		return ` AND LOWER(r.repository_full_name) IN ` + list, names
+		return ` AND r.row_id IN (` + scopeRepositories(declaredRoots, AnalysisModeRegular) + `)`
 	}
-	return "", nil
+	return ""
 }
 
 // repositorySorts is the whitelist, for the reason inventorySorts is one.
@@ -865,9 +911,7 @@ func (s *Store) repositoriesWhere(q RepositoriesQuery) (string, []any, error) {
 	where += bound
 	args = append(args, bindings...)
 
-	scoped, scopeArgs := repositoryScopeFilter(q)
-	where += scoped
-	args = append(args, scopeArgs...)
+	where += repositoryScopeFilter(q)
 	if slices.Contains(q.Flags, viewspec.FlagFindings) {
 		where += ` AND EXISTS (SELECT 1 FROM abom_finding_regular f WHERE f.repository_row_id = r.row_id)`
 	}

@@ -56,7 +56,7 @@ func runRefresh(ctx context.Context, args []string, stdout, stderr io.Writer) er
 
 	// Both halves are printed because a count that did not move is a result, not a non-event.
 	for _, name := range aggregateTables {
-		fmt.Fprintf(stdout, "%-22s %7d -> %7d\n", name, before[name], after[name])
+		fmt.Fprintf(stdout, "%-24s %7d -> %7d\n", name, before[name], after[name])
 	}
 
 	if *optimize {
@@ -70,7 +70,9 @@ func runRefresh(ctx context.Context, args []string, stdout, stderr io.Writer) er
 }
 
 // aggregateTables are the derived tables RebuildAggregates writes, in the order it writes them.
-var aggregateTables = []string{"abom_blast_radius", "abom_node_reach", "abom_exposure"}
+var aggregateTables = []string{
+	"abom_blast_radius", "abom_node_reach", "abom_node_version_reach", "abom_exposure",
+}
 
 func aggregateCounts(s *store.Store) (map[string]int, error) {
 	out := make(map[string]int, len(aggregateTables))

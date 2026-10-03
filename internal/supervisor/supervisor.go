@@ -354,6 +354,11 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		}
 		if !s.isRunning() {
 			s.setState(s.restingState())
+			// Measuring reach is not crawling: what an older build measured, or nothing did, reads
+			// wrong on every page until it is recomputed, whether or not anybody starts the crawl.
+			if err := s.refreshAggregates(false, false); err != nil {
+				s.logf("could not recompute reach: %v", err)
+			}
 			select {
 			case <-ctx.Done():
 				return nil

@@ -181,3 +181,18 @@ func TestABudgetedListSaysItWasTruncated(t *testing.T) {
 		t.Errorf("Total = %d, want the full count of 2 regardless of the budget", users.Total)
 	}
 }
+
+// A budget cuts upstream repositories before any starting point. The list a reader acts on is the
+// starting points', and an upstream repository naming the version more often must not push one
+// out of it: octo-org/shared names v4 twice, octo-org/tool once.
+func TestABudgetNeverCutsAStartingPointForAnUpstreamRepository(t *testing.T) {
+	s := subgraphFixture(t)
+
+	users, err := s.nodeUsersOf("actions/checkout", "v4", 1)
+	if err != nil {
+		t.Fatalf("nodeUsersOf: %v", err)
+	}
+	if len(users.Repos) != 1 || users.Repos[0].FullName != "octo-org/tool" {
+		t.Errorf("the one row that fitted is %+v, want the starting point octo-org/tool", users.Repos)
+	}
+}

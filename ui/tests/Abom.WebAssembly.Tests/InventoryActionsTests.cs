@@ -221,10 +221,88 @@ public sealed class InventoryActionsTests : AbomTestContext
 
     private const string Row = """
         {"items":[{"nodeKey":"actions/checkout","kind":"action","origin":"external",
-          "dependentRepos":50,"directDependents":60,"distinctRefs":3,
-          "findings":2,"advisories":0,"analyzed":true,"refs":["v4"]}],"total":1}
+          "dependentRepos":50,"dependentSteps":null,"dependentJobs":70,"dependentWorkflows":40,
+          "dependentGroups":6,"distinctRefs":3,
+          "findings":2,"advisories":0,"analyzed":true,"refs":["v4"]}],"total":1,
+         "groupProperty":"business_id"}
         """;
+
+    /// <summary>
+    /// What a reader weighs first leads: findings and advisories, then the versions in use, then
+    /// what in the starting points depends on the action at each level they manage, steps up to
+    /// groups. Total refs counted lines in repositories nobody here owns, and Repos reached is
+    /// Depending Repositories.
+    /// </summary>
+    [Fact]
+    public void TheActionsColumnsLeadWithRiskThenVersionsThenEveryLevelThatDependsOnIt()
+    {
+        Answer("api/actions", Row);
+        Go("/inventory");
+
+        var page = Render<Pages.Inventory>();
+
+        page.WaitForAssertion(() => Assert.NotEmpty(page.FindAll("[data-abom-level='jobs']")));
+        var headers = page.FindAll(".abom-actions-grid thead th")
+            .Select(th => th.TextContent.Trim()).Where(h => h.Length > 0).ToList();
+        Assert.Equal(new[]
+        {
+            "Name", "Type", "Origin", "Findings", "Advisories", "Distinct refs", "Depending Steps",
+            "Depending Jobs", "Depending Workflows", "Depending Repositories", "Depending Groups", "Analyzed",
+        }, headers);
+        Assert.Equal("70", page.Find("[data-abom-level='jobs']").TextContent.Trim());
+        Assert.Equal("6", page.Find("[data-abom-level='groups']").TextContent.Trim());
+    }
+
+    /// <summary>
+    /// A level reach has not counted yet is not none, and a group count is only ever read against
+    /// the property that divides the groups.
+    /// </summary>
+    [Fact]
+    public void ALevelNotCountedYetSaysSoAndGroupsNameTheirProperty()
+    {
+        Answer("api/actions", Row);
+        Go("/inventory");
+
+        var page = Render<Pages.Inventory>();
+
+        page.WaitForAssertion(() => Assert.NotEmpty(page.FindAll("[data-abom-level='steps']")));
+        var steps = page.Find("[data-abom-level='steps']");
+        Assert.Equal("\u2014", steps.TextContent.Trim());
+        Assert.Contains("not counted", steps.GetAttribute("title"));
+        var groups = page.FindAll(".abom-actions-grid thead th [data-abom-header-tip]")
+            .Single(t => t.TextContent.Trim() == "Depending Groups");
+        Assert.Contains("business_id", groups.GetAttribute("data-abom-header-tip"));
+    }
 
     private void Go(string url) =>
         Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.NavigateTo(url);
+
+    /// <summary>
+    /// The list is what the starting points run or hold, so what it leaves out is counted where the
+    /// reader can see it, and a row reach has not measured yet says so in every count, repositories
+    /// and versions included.
+    /// </summary>
+    [Fact]
+    public void WhatNoStartingPointRunsIsLeftOutAndCounted()
+    {
+        Answer("api/actions", """
+            {"items":[{"nodeKey":"late/new","kind":"action","origin":"external",
+              "dependentRepos":null,"dependentSteps":null,"dependentJobs":null,
+              "dependentWorkflows":null,"dependentGroups":null,"distinctRefs":null,
+              "findings":0,"advisories":0,"analyzed":false,"refs":["v1"]}],"total":1,
+             "unlisted":402}
+            """);
+        Go("/inventory");
+
+        var page = Render<Pages.Inventory>();
+
+        page.WaitForAssertion(() => Assert.NotEmpty(page.FindAll("[data-abom-unlisted]")));
+        var unlisted = string.Join(' ', page.Find("[data-abom-unlisted]").TextContent
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        Assert.Contains("402 more actions", unlisted);
+        Assert.Contains("no starting point runs or holds", unlisted);
+        Assert.Equal("\u2014", page.Find("[data-abom-level='repositories']").TextContent.Trim());
+        Assert.Equal("\u2014", page.Find("[data-abom-level='refs']").TextContent.Trim());
+        Assert.Contains("your starting points run or hold", page.Markup);
+    }
 }

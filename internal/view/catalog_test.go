@@ -100,6 +100,7 @@ func TestCatalogSurfacesAgreeWithWhatEachSideEnforces(t *testing.T) {
 		SurfaceRepositories:  repositoryTerms,
 		SurfaceAdvisories:    advisoryTerms,
 		SurfaceRelationships: relationshipTerms,
+		SurfaceUses:          usesTerms,
 	}
 
 	for _, term := range Catalog() {
