@@ -14,13 +14,12 @@ func TestTheGraphNodeQueryDoesNotRereadTheFrontierPerNode(t *testing.T) {
 		opts FullGraphOptions
 	}{
 		{"unfiltered", FullGraphOptions{}},
-		// Each closure brings a CTE of its own, and both must be computed before the per-node pass
+		// Each scope brings a CTE of its own, and both must be computed before the per-node pass
 		// rather than consulted from inside it. Asked for together because a graph narrowed to one
 		// group *and* to what the operator owns intersects them, which is when there are two.
 		{"scoped and filtered", FullGraphOptions{
 			Scope:        ScopeOwned,
-			Closure:      []string{"octo-org/app"},
-			GroupClosure: []string{"octo-org/app", "actions/checkout"},
+			GroupSources: []string{"octo-org/app"},
 		}},
 	} {
 		t.Run(shape.name, func(t *testing.T) {

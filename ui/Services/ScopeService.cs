@@ -63,6 +63,20 @@ public sealed class ScopeService
         return string.Join("&", pairs.OrderBy(KeyOf, StringComparer.Ordinal));
     }
 
+    /// <summary>
+    /// The predicate as one surface applies it: only the terms the catalog says it applies. The rest
+    /// stay in the address, where the filter bar names them as not applied here, rather than reaching
+    /// an endpoint that would refuse the whole question for them.
+    /// </summary>
+    public string PredicateFor(IEnumerable<Models.FilterTerm> catalog, string surface)
+    {
+        var applies = catalog.Where(t => t.Surfaces.Contains(surface)).Select(t => t.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        return string.Join("&", Spec.ToQueryString()
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Where(pair => applies.Contains(ViewSpec.Unescape(KeyOf(pair)))));
+    }
+
     /// <summary>Reads the scope from a full URI or bare query string.</summary>
     /// <param name="address">A full URI or a bare query string.</param>
     /// <returns>

@@ -34,6 +34,12 @@ calling the API by hand.
    rather than a tidy-up.
 5. **A control for the binding.** `ui/tier-suites.md` — the endpoints exist and nothing renders
    them.
+6. **The catalog scrolls sideways at 1280px once everything that ran is shown**, by 116px on the
+   crawled organization, with or without the declared-metadata change (the build before it measures
+   the same 116px). Lane rows hold nowrap Pack and Crawl suite cells — several packs joined, and
+   pack-qualified suite references. The recorded corpus does not reproduce it, so
+   `geometry.spec.mjs`'s catalog test passes in CI and fails only against a snapshot of a real
+   crawl, naming this. Fix it in the cells, not by loosening that test.
 
 ## The constraints that must not be broken
 

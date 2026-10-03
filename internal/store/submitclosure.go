@@ -23,7 +23,30 @@ type ClosureEntry struct {
 	// LockedCommit is the commit the repository's current lock selects for this entry, empty
 	// where no lock governs it. Ref stays as written; this is what runs.
 	LockedCommit string
+	// ReadAt is the commit this entry's own dependencies were read at: the locked one, or the one
+	// its reference resolved to. Empty where nothing resolved it, which is unanalyzed.
+	ReadAt string
 }
+
+// observedEdges is what each regular run's commit declared at each location, as a CTE named
+// `observed`: every sighting whose content was recorded, and the row itself at the commit of the
+// run that wrote it, which is "" for a row no run recorded. A sighting whose content was never
+// recorded says nothing, so it is not here at all.
+const observedEdges = `observed(edge_row_id, src_node_row_id, dst_node_row_id, ref, commit_sha,
+         repository_row_id, file_path, edge_kind) AS (
+	SELECT sg.edge_row_id, e.src_node_row_id, sg.dst_node_row_id, COALESCE(sg.ref_value, ''),
+	       LOWER(COALESCE(q.db_commit, '')), e.repository_row_id, e.file_path, e.edge_kind
+	  FROM abom_edge_sighting sg
+	  JOIN abom_query_run q ON q.row_id = sg.query_run_id AND q.analysis_mode = 'regular'
+	  JOIN abom_edge_regular e ON e.row_id = sg.edge_row_id
+	 WHERE sg.dst_node_row_id IS NOT NULL
+	UNION
+	SELECT e.row_id, e.src_node_row_id, e.dst_node_row_id, COALESCE(e.ref_value, ''),
+	       LOWER(COALESCE(q.db_commit, '')), e.repository_row_id, e.file_path, e.edge_kind
+	  FROM abom_edge_regular e
+	  LEFT JOIN abom_query_run q ON q.row_id = e.query_run_id
+	 WHERE COALESCE(q.analysis_mode, 'regular') = 'regular'
+)`
 
 // submissionClosureQuery walks a repository's workflows outward into what those workflows
 // actually run.
@@ -36,68 +59,81 @@ type ClosureEntry struct {
 // The step inside a composite action is joined by `container_node_row_id`, not by rebuilding a key
 // from owner and path, which diverge once the manifest filename is stripped.
 //
-// A child is taken only from an analysis of the commit the consumer actually runs, matched to a
-// run that sighted the edge. ABOM analyzes many refs of a popular action, and without this the
-// closure reports the union of every version's children. The commit is the one the repository's
-// current lock selects where a lock governs the route (?2, the choices of this repository's
-// locks, by edge), and otherwise the one the declared ref resolved to. Any run that sighted the
-// edge counts, not only the latest: an edge two commits share is one row, and its latest run names
-// one of them.
+// A child is taken only from what the commit the consumer actually runs declared. ABOM analyzes
+// many refs of a popular action, and without this the closure reports the union of every version's
+// children. The commit is the one the repository's current lock selects where a lock governs the
+// route (?2, the choices of this repository's locks, by edge), and otherwise the one the declared
+// ref resolved to; a commit settled as identical to an analyzed one reads that one's (?3, which
+// analyzed commits answer for each resolved commit). What it declared is read per sighting, never
+// from the row: a location is one row however many commits declare it, and the row holds the last
+// writer's target. The repository's own declarations are read at the commits its references
+// resolve to, so a step it has since deleted is not submitted as a dependency it still has.
 const submissionClosureQuery = `
 WITH RECURSIVE lock_choice(edge_row_id, commit_sha) AS (
 	SELECT CAST(json_extract(j.value, '$.e') AS INTEGER), LOWER(json_extract(j.value, '$.c'))
 	  FROM json_each(?2) j
 ),
-closure(manifest, node_row, node_key, owner, repo, subpath, ref, locked, depth, parent_key) AS (
-	SELECT e.file_path, n.row_id, n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''),
-	       COALESCE(n.path,''), COALESCE(e.ref_value,''), COALESCE(lc.commit_sha, ''), 0, ''
-	  FROM abom_edge_regular e
-	  JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
-	  JOIN repository r ON r.row_id = e.repository_row_id
-	  LEFT JOIN lock_choice lc ON lc.edge_row_id = e.row_id
+live_answer(repository, commit_sha, answer) AS (
+	SELECT json_extract(j.value, '$.r'), json_extract(j.value, '$.c'), json_extract(j.value, '$.a')
+	  FROM json_each(?3) j
+),
+` + observedEdges + `,
+own AS (
+	SELECT o.* FROM observed o
+	  JOIN repository r ON r.row_id = o.repository_row_id
 	 WHERE r.repository_full_name = ?1
-	   AND n.is_external = 1
-	   AND e.file_path LIKE '.github/workflows/%'
+	   AND (o.commit_sha = ''
+	        OR NOT EXISTS (SELECT 1 FROM live_answer la WHERE la.repository = LOWER(?1))
+	        OR o.commit_sha IN (SELECT la.answer FROM live_answer la WHERE la.repository = LOWER(?1)))
+),
+closure(manifest, node_row, node_key, owner, repo, subpath, ref, locked, pin, depth, parent_key) AS (
+	SELECT o.file_path, n.row_id, n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''),
+	       COALESCE(n.path,''), o.ref, COALESCE(lc.commit_sha, ''),
+	       COALESCE(lc.commit_sha, (SELECT LOWER(f.resolved_sha) FROM abom_frontier f
+	                                 WHERE f.node_key = n.node_key AND f.ref = o.ref)),
+	       0, ''
+	  FROM own o
+	  JOIN abom_node_live n ON n.row_id = o.dst_node_row_id
+	  LEFT JOIN lock_choice lc ON lc.edge_row_id = o.edge_row_id
+	 WHERE n.is_external = 1
+	   AND o.file_path LIKE '.github/workflows/%'
 	UNION
 	-- The repository's own composite actions. These edges never leave the repository, so nothing
 	-- reaches them by walking outward from a dependency, and they are the commonest invisible
 	-- dependency there is: an action.yml is not a manifest to GitHub.
-	SELECT e.file_path, n.row_id, n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''),
-	       COALESCE(n.path,''), COALESCE(e.ref_value,''), COALESCE(lc.commit_sha, ''), 1, ''
-	  FROM abom_edge_regular e
-	  JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
-	  JOIN repository r ON r.row_id = e.repository_row_id
-	  LEFT JOIN lock_choice lc ON lc.edge_row_id = e.row_id
-	 WHERE r.repository_full_name = ?1
-	   AND n.is_external = 1
-	   AND e.edge_kind = 'composite-step-uses-action'
+	SELECT o.file_path, n.row_id, n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''),
+	       COALESCE(n.path,''), o.ref, COALESCE(lc.commit_sha, ''),
+	       COALESCE(lc.commit_sha, (SELECT LOWER(f.resolved_sha) FROM abom_frontier f
+	                                 WHERE f.node_key = n.node_key AND f.ref = o.ref)),
+	       1, ''
+	  FROM own o
+	  JOIN abom_node_live n ON n.row_id = o.dst_node_row_id
+	  LEFT JOIN lock_choice lc ON lc.edge_row_id = o.edge_row_id
+	 WHERE n.is_external = 1
+	   AND o.edge_kind = 'composite-step-uses-action'
 	UNION
 	-- A route a lock governs stays governed: the root lock selects every commit under it. One it
 	-- does not govern is resolved by its declared refs all the way down.
 	SELECT c.manifest, dst.row_id, dst.node_key, COALESCE(dst.owner,''), COALESCE(dst.repo,''),
-	       COALESCE(dst.path,''), COALESCE(ce.ref_value,''),
+	       COALESCE(dst.path,''), o.ref,
 	       CASE WHEN c.locked <> '' THEN COALESCE(lc.commit_sha, '') ELSE '' END,
+	       CASE WHEN c.locked <> '' AND COALESCE(lc.commit_sha, '') <> '' THEN lc.commit_sha
+	            ELSE (SELECT LOWER(f.resolved_sha) FROM abom_frontier f
+	                   WHERE f.node_key = dst.node_key AND f.ref = o.ref) END,
 	       c.depth + 1, c.node_key
 	  FROM closure c
 	  JOIN abom_node_live st ON st.container_node_row_id = c.node_row
-	  JOIN abom_edge_regular ce ON ce.src_node_row_id = st.row_id
-	                        AND ce.edge_kind <> 'job-needs-job'
-	  JOIN abom_node_live dst ON dst.row_id = ce.dst_node_row_id
-	  LEFT JOIN lock_choice lc ON lc.edge_row_id = ce.row_id
+	  JOIN observed o ON o.src_node_row_id = st.row_id AND o.edge_kind <> 'job-needs-job'
+	  JOIN abom_node_live dst ON dst.row_id = o.dst_node_row_id
+	  LEFT JOIN lock_choice lc ON lc.edge_row_id = o.edge_row_id
 	 WHERE c.depth < 10
-	   AND EXISTS (
-	     SELECT 1 FROM abom_query_run q
-	      WHERE q.analysis_mode = 'regular'
-	        AND (q.row_id = ce.query_run_id
-	             OR q.row_id IN (SELECT sg.query_run_id FROM abom_edge_sighting sg
-	                              WHERE sg.edge_row_id = ce.row_id))
-	        AND LOWER(q.db_commit) = CASE
-	              WHEN c.locked <> '' THEN c.locked
-	              ELSE (SELECT LOWER(f.resolved_sha) FROM abom_frontier f
-	                     WHERE f.node_key = c.node_key AND f.ref = c.ref) END)
+	   AND o.commit_sha IN (
+	     SELECT la.answer FROM live_answer la
+	      WHERE la.repository = LOWER(c.owner || '/' || c.repo) AND la.commit_sha = c.pin
+	     UNION SELECT c.pin)
 )
 SELECT c.manifest, c.owner, c.repo, c.subpath, c.ref, c.depth, c.parent_key,
-       COALESCE((` + resolvedVersionForRef + `), ''), c.locked
+       COALESCE((` + resolvedVersionForRef + `), ''), c.locked, COALESCE(c.pin, '')
   FROM closure c
  ORDER BY c.manifest, c.depth, c.owner, c.repo, c.subpath, c.ref, c.locked`
 
@@ -122,11 +158,23 @@ const resolvedVersionForRef = `
 // rather than as an empty supply chain: submitting an empty closure replaces GitHub's own reading
 // of the workflow with nothing.
 func (s *Store) SubmissionClosure(fullName string) ([]ClosureEntry, error) {
+	live, err := s.LiveCommits()
+	if err != nil {
+		return nil, err
+	}
+	return s.submissionClosure(fullName, live)
+}
+
+func (s *Store) submissionClosure(fullName string, live map[string]map[string][]string) ([]ClosureEntry, error) {
 	choices, err := s.lockChoicesOf(fullName)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.DB().Query(submissionClosureQuery, fullName, choices)
+	answers, err := liveAnswers(live)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.DB().Query(submissionClosureQuery, fullName, choices, answers)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +185,7 @@ func (s *Store) SubmissionClosure(fullName string) ([]ClosureEntry, error) {
 		var e ClosureEntry
 		var depth int
 		if err := rows.Scan(&e.Manifest, &e.Owner, &e.Repo, &e.Subpath, &e.Ref, &depth,
-			&e.ParentKey, &e.Version, &e.LockedCommit); err != nil {
+			&e.ParentKey, &e.Version, &e.LockedCommit, &e.ReadAt); err != nil {
 			return nil, err
 		}
 		e.Relationship = "indirect"
@@ -147,6 +195,32 @@ func (s *Store) SubmissionClosure(fullName string) ([]ClosureEntry, error) {
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// liveAnswers is LiveCommits as the JSON array the closure query reads. A commit nothing answers
+// for is listed with an empty answer, so its repository still reads as one a reference resolves.
+func liveAnswers(live map[string]map[string][]string) (string, error) {
+	type answer struct {
+		Repository string `json:"r"`
+		Commit     string `json:"c"`
+		Answer     string `json:"a"`
+	}
+	out := []answer{}
+	for repository, commits := range live {
+		for commit, by := range commits {
+			if len(by) == 0 {
+				out = append(out, answer{repository, commit, ""})
+			}
+			for _, a := range by {
+				out = append(out, answer{repository, commit, a})
+			}
+		}
+	}
+	body, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encoding the commits a reference resolves to: %w", err)
+	}
+	return string(body), nil
 }
 
 // lockChoicesOf is what one repository's current locks select, by edge, as the JSON array the

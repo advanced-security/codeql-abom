@@ -56,5 +56,5 @@ itself.
   are different findings.
 - All-routes reach surfaces at least one guard the shortest route omits, `actions/cache` being the
   known case.
-- Rendering `job-needs-job` moves no dependency aggregate: `SUM(direct_dependents)` stays equal to
-  the edge count minus exactly the ordering edges.
+- Rendering `job-needs-job` moves no dependency aggregate: every level in `abom_blast_radius` and
+  `abom_node_reach` stays as it was.

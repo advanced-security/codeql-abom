@@ -167,4 +167,49 @@ public class ObjectivePanelTests : AbomTestContext
     // Normalizing is what keeps the assertion about the figure rather than about the template.
     private static string Flat(string markup) =>
         System.Text.RegularExpressions.Regex.Replace(markup, @"\s+", " ");
+
+    private static string WithUnobserved(int count) =>
+        Working.Replace("\"maxDepth\":5,", $"\"maxDepth\":5,\"unobserved\":{count},");
+
+    // A commit analyzed before ABOM kept what each commit declared is a gap in what is known: a
+    // route through it can be missing, and a submission reading it is refused. How many are left,
+    // and how fast the crawl works through them, is part of what it is working on.
+    [Fact]
+    public void TheObjectiveSaysHowManyCommitsAreStillToBeObservedAndHowFast()
+    {
+        Serve(WithUnobserved(1569));
+
+        var cut = Render<Shared.DiscoveryControls>();
+
+        cut.WaitForAssertion(() =>
+            Assert.Contains("1,569 commits", Flat(cut.Find("[data-abom-objective-unobserved]").TextContent)));
+        var said = Flat(cut.Find("[data-abom-objective-unobserved]").TextContent);
+        Assert.Contains("before ABOM kept what each commit declared", said);
+        Assert.Contains("refused", said);
+        Assert.Contains("20 at a time", said);
+    }
+
+    [Fact]
+    public void OneCommitIsNotSpokenOfAsSeveral()
+    {
+        Serve(WithUnobserved(1));
+
+        var cut = Render<Shared.DiscoveryControls>();
+
+        cut.WaitForAssertion(() =>
+            Assert.Contains("1 commit was", Flat(cut.Find("[data-abom-objective-unobserved]").TextContent)));
+    }
+
+    // The count is taken on every request, so zero is a measurement: every commit a reference
+    // resolves to is known, and nothing is shown that would say otherwise.
+    [Fact]
+    public void NothingIsSaidAboutReobservingOnceEveryCommitIsObserved()
+    {
+        Serve(WithUnobserved(0));
+
+        var cut = Render<Shared.DiscoveryControls>();
+
+        cut.WaitForAssertion(() => Assert.Contains("depth 2", cut.Markup));
+        Assert.Empty(cut.FindAll("[data-abom-objective-unobserved]"));
+    }
 }

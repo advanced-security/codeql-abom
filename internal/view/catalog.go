@@ -23,6 +23,8 @@ const (
 	SurfaceRun = "run"
 	// SurfacePolicy is a policy's predicate: the set path's terms, and other policies by name.
 	SurfacePolicy = "policy"
+	// SurfaceUses is one dependency's details page: who uses it, at which reference and commit.
+	SurfaceUses = "uses"
 )
 
 // documentTerms are the filter terms a bill of materials applies.
@@ -185,6 +187,11 @@ var catalogWords = map[string]catalogEntry{
 		label: "Boundary", arity: ArityScalar,
 		help: "Which side of ownership",
 	},
+	// Verbatim, never resolved: `v4` is not `v4.2.2`, even where both name one commit today.
+	paramAt: {
+		label: "Reference", arity: ArityList,
+		help: "Exactly as a workflow wrote it",
+	},
 	// A floor, so zero is the question not being asked rather than a match on nothing.
 	paramMinReach: {
 		label: "Used by at least", arity: ArityNumber,
@@ -216,6 +223,7 @@ var surfaceTerms = map[string]func(string) bool{
 	SurfaceDocument:      IsDocumentTerm,
 	SurfaceRun:           appliedByRun,
 	SurfacePolicy:        func(t string) bool { return policyTerms[t] },
+	SurfaceUses:          func(t string) bool { return usesTerms[t] },
 }
 
 // surfaceOrder keeps the catalog stable between calls, so a control does not reorder itself and a
@@ -223,7 +231,7 @@ var surfaceTerms = map[string]func(string) bool{
 var surfaceOrder = []string{
 	SurfaceSet, SurfaceGraph, SurfaceInventory, SurfaceWorkflows,
 	SurfaceJobs, SurfaceRepositories, SurfaceAdvisories, SurfaceRelationships,
-	SurfaceDocument, SurfaceCoverage, SurfaceRun, SurfacePolicy,
+	SurfaceDocument, SurfaceCoverage, SurfaceRun, SurfacePolicy, SurfaceUses,
 }
 
 // Refusals names, for every surface, the terms this predicate carries that the surface cannot
@@ -275,6 +283,6 @@ var catalogOrder = []string{
 	paramScope, paramSearch, paramKinds, paramOrigins,
 	paramFlags, paramRules, paramNotRules, paramSource, paramSecuritySeverity, paramSeverity,
 	paramAdvisorySeverity, paramReached, paramProvider, paramRepos,
-	paramRefStyle, paramMinReach, paramBoundary, paramEdgeClass, paramEdgeKinds,
+	paramAt, paramRefStyle, paramMinReach, paramBoundary, paramEdgeClass, paramEdgeKinds,
 	paramProperties, paramNotProperties, paramMode, paramSteps, paramPolicies,
 }

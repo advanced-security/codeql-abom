@@ -1,0 +1,19 @@
+{"#select":{"columns":[
+   {"name":"edgeKind","kind":"String"}
+  ,{"name":"srcKind","kind":"String"}
+  ,{"name":"srcPath","kind":"String"}
+  ,{"name":"srcJobId","kind":"String"}
+  ,{"name":"srcStepIndex","kind":"Integer"}
+  ,{"name":"srcStepId","kind":"String"}
+  ,{"name":"usesRaw","kind":"String"}
+  ,{"name":"pinComment","kind":"String"}
+  ,{"name":"startLine","kind":"Integer"}
+  ,{"name":"startColumn","kind":"Integer"}
+  ,{"name":"endLine","kind":"Integer"}
+  ,{"name":"endColumn","kind":"Integer"}]
+ ,"tuples":[
+   ["step-uses-action","job",".github/workflows/pr.yml","greet",0,"","actions/checkout@v4","",6,15,6,33]
+  ,["step-uses-action","job",".github/workflows/pr.yml","greet",1,"","vendor/comp@v1","",7,15,7,28]
+  ,["step-uses-action","job",".github/workflows/pr.yml","greet",2,"","./.github/actions/local","",10,15,10,37]
+  ,["job-uses-reusable-workflow","workflow",".github/workflows/pr.yml","reuse",-1,"","vendor/rw/.github/workflows/reuse.yml@v1","",12,11,12,50]]
+ }}

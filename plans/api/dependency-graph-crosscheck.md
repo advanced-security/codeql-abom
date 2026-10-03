@@ -50,6 +50,11 @@ findings close it off:
 - The SBOM flow is `generate-report` plus polling, against a sparse checkout of `.github`. It is not
   obviously the cheaper of the two.
 
+**It orders work; it never replaces it.** For an owned repository's push, the dependency-review
+comparison between base and head is a cheap hint that direct Actions dependencies moved, which
+[`change-ingestion.md`](change-ingestion.md) uses to analyze that push first. The analysis still
+runs, and nothing GitHub's graph says is written as an edge.
+
 **A default-branch report is not a pinned revision.** A repository-level SBOM cannot seed a
 consumer's effective graph unless its source revision and semantics match that consumer. Native
 lock ingestion at the analyzed commit is a different operation, and
@@ -62,7 +67,9 @@ data for a dependency selected by an older workflow lock.
   and the reference action's parser over identical source trees and pinned or recorded remote
   content. Disable writes and invoke parsing components, never a submission entrypoint or default
   native fix mode. Generate QL results with the CLI. This needs no live test target and can start
-  independently of the product comparisons below.
+  independently of the product comparisons below. Run continuously over sampled commits, it is
+  check 1 of [the graph consistency checker](../tools/graph-consistency-checker.md), and the rules
+  below govern it there.
 2. **Establish an uncontaminated native baseline.** With explicit consent, choose a clean test
   repository containing a benign nested dependency. Confirm no ABOM or third-party snapshot owns
   its manifests; historical test1/test2 data cannot be assumed clean. If repair is needed, use the

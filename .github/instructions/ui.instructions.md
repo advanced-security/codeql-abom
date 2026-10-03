@@ -55,6 +55,11 @@ something has not run, say which, and name the action that would change it.
 filters" is the floor. A default that quietly drops everything without a finding asserts a clean
 estate.
 
+**No count tiles.** A box holding a big number and a caption, linking nowhere, repeats a figure a
+section below already carries and pushes the first useful row off the screen. Put the figure in
+the sentence or column it qualifies. `check-style.mjs` rejects heading-sized figures; a card whose
+figure is itself the way into a scope says so in a `style-check: off` block.
+
 **A page does not keep its own list of query parameter names.** The address is read with the same
 `ViewSpec`/`ScopeService` code the API and the gate read it with. The Explorer kept thirteen
 `[SupplyParameterFromQuery]` attributes beside the shared serializer and the two lists drifted: it

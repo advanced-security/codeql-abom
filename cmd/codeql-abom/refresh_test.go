@@ -61,13 +61,16 @@ func TestRefreshFillsTheAggregatesWithoutCrawling(t *testing.T) {
 	}
 	defer reopened.Close()
 
-	for _, table := range []string{"abom_blast_radius", "abom_node_reach"} {
+	for _, table := range []string{"abom_blast_radius", "abom_node_reach", "abom_node_version_reach"} {
 		var n int
 		if err := reopened.DB().QueryRow("SELECT COUNT(*) FROM " + table).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
 		if n == 0 {
 			t.Errorf("%s is still empty after a refresh", table)
+		}
+		if !strings.Contains(out.String(), table) {
+			t.Errorf("the report does not mention %s:\n%s", table, out.String())
 		}
 	}
 

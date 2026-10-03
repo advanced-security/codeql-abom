@@ -311,4 +311,18 @@ public class ViewSpecTests
         Assert.Throws<FormatException>(() => ViewSpec.Parse("advisorySeverity=moderate"));
         Assert.Throws<FormatException>(() => ViewSpec.Parse("reached=2"));
     }
+
+    /// <summary>
+    /// A reference is matched verbatim, one parameter per value as Go writes it, because Git allows
+    /// a comma in a reference. It is a different term from <c>ref</c>, the reference style.
+    /// </summary>
+    [Fact]
+    public void AReferenceTravelsOneParameterPerValueAsGoWritesIt()
+    {
+        var spec = ViewSpec.Parse("at=v4&at=release%2C1&at=v4&ref=tag");
+        Assert.Equal(["release,1", "v4"], spec.At);
+        Assert.Equal("tag", spec.RefStyle);
+        Assert.Equal("at=release%2C1&at=v4&ref=tag", spec.ToQueryString());
+        Assert.Throws<FormatException>(() => ViewSpec.Parse("ref=v4"));
+    }
 }

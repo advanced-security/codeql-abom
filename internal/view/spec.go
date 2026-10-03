@@ -80,6 +80,10 @@ type Spec struct {
 	// changes which nodes exist — roughly 23k against 3.6k — so it is a predicate, not a drawing
 	// choice.
 	Steps bool
+	// At narrows to references exactly as a workflow wrote them — `v4`, a branch, a commit — where
+	// RefStyle asks only which shape they take. Matched verbatim and never resolved: `v4` is not
+	// `v4.2.2`, even where both name one commit today.
+	At []string
 }
 
 // The flags, named here so the browser, the API and the gate cannot spell them three ways.
@@ -131,6 +135,7 @@ const (
 	paramMinReach         = "minReach"
 	paramFlags            = "flags"
 	paramSteps            = "steps"
+	paramAt               = "at"
 )
 
 // String writes the canonical text: keys in a fixed order, list values sorted and deduplicated,
@@ -195,6 +200,10 @@ func (s Spec) String() string {
 	}
 	if s.Steps {
 		q.Set(paramSteps, "true")
+	}
+	// One parameter per reference, as for properties: Git allows a comma in a reference name.
+	for _, ref := range normalize(s.At) {
+		q.Add(paramAt, ref)
 	}
 	return q.Encode()
 }
@@ -262,6 +271,9 @@ func specTargetsFor(s *Spec) specTargets {
 }
 
 func (t specTargets) apply(key string, values []string) error {
+	if key == paramAt {
+		return t.applyRepeated(key, values)
+	}
 	if target, ok := t.matches[key]; ok {
 		parsed, err := parseMatches(key, values)
 		if err != nil {
@@ -304,6 +316,17 @@ func (t specTargets) applyList(key, raw string) error {
 		}
 	}
 	*t.lists[key] = members
+	return nil
+}
+
+// applyRepeated reads one value per occurrence, never splitting one.
+func (t specTargets) applyRepeated(key string, values []string) error {
+	for _, v := range values {
+		if strings.TrimSpace(v) == "" {
+			return fmt.Errorf("%q has no value; absent and empty are different questions", key)
+		}
+	}
+	t.spec.At = normalize(values)
 	return nil
 }
 
@@ -428,6 +451,7 @@ var termNames = map[string]bool{
 	paramRefStyle: true, paramBoundary: true, paramMinReach: true, paramFlags: true,
 	paramSteps: true, paramEdgeKinds: true, paramMode: true, paramSource: true,
 	paramSecuritySeverity: true, paramAdvisorySeverity: true, paramReached: true, paramPolicies: true,
+	paramAt: true,
 }
 
 // setTerms are the terms the set path applies — `/api/match`, and a policy, which are one

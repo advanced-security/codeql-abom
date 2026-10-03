@@ -214,8 +214,8 @@ func buildFindingMatchQuery(sel FindingSelector) findingMatchQuery {
 	query.applyProperties(sel.Properties)
 	query.applyExcludedProperties(sel.ExcludeProperties)
 	query.applyExclusions(sel)
-	query.prepareUnsourced()
-	query.applySources(sel.Sources)
+	query.prepareUnsourced(sel.Mode)
+	query.applySources(sel.Mode, sel.Sources)
 	query.appendExclusionArgs()
 	return query
 }
@@ -317,16 +317,16 @@ func (q *findingMatchQuery) applyExclusions(sel FindingSelector) {
 	q.exclusionArgs = args
 }
 
-func (q *findingMatchQuery) prepareUnsourced() {
+func (q *findingMatchQuery) prepareUnsourced(mode string) {
 	// The rest of the question, kept apart so the findings no source was recorded for are counted
 	// against exactly what the source term narrowed.
-	q.unsourced = append(append([]string{}, q.where...), "NOT "+recordedSource("f"))
+	q.unsourced = append(append([]string{}, q.where...), "NOT "+recordedSource("f", mode))
 	q.unsourcedArgs = append(append([]any{}, q.args...), q.exclusionArgs...)
 }
 
-func (q *findingMatchQuery) applySources(sources []string) {
+func (q *findingMatchQuery) applySources(mode string, sources []string) {
 	if len(sources) > 0 {
-		clause, args := sourceClause("f", sources)
+		clause, args := sourceClause("f", mode, sources)
 		q.where = append(q.where, clause)
 		q.args = append(q.args, args...)
 		q.unprovided = append(q.unprovided, clause)

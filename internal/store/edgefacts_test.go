@@ -310,12 +310,7 @@ func edgeFactsFixture(t *testing.T) *Store {
 	}
 
 	w := NewWriter(s, 0)
-	add := func(n Node) {
-		t.Helper()
-		if err := w.AddNode(n); err != nil {
-			t.Fatalf("AddNode(%s): %v", n.Key, err)
-		}
-	}
+	add := adder(t, w)
 	workflow := "octo-org/app/.github/workflows/ci.yml"
 	add(Node{Key: workflow, Kind: "workflow", RepositoryID: app})
 	for _, step := range []string{"0", "1", "2", "3", "4", "5", "6", "7"} {

@@ -1,0 +1,9 @@
+name: comp
+inputs:
+  title: {}
+runs:
+  using: composite
+  steps:
+    - uses: vendor/inner@v2
+      with:
+        text: ${{ inputs.title }}

@@ -34,6 +34,7 @@ var subcommands = []subcommand{
 	{"own", runOwned, "Declare which accounts you own, which is what discovery is bounded by."},
 	{"prune", runPrune, "Remove what the declared scope does not reach."},
 	{"bom", runBOM, "Write a bill of materials for the declared scope, or for a named root."},
+	{"closure", runClosure, "Analyze each owned repository with its staged callees, as extended evidence."},
 	{"stale", runStale, "Report findings no tracked run of their suite still reports."},
 	{"branches", runBranches, "Record which branches the declared repositories protect."},
 	{"verify-lock", runVerifyLock, "Run GitHub's no-fix lock verification of one repository's current commit."},

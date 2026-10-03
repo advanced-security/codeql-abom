@@ -40,11 +40,11 @@ picking one is the decision. Everything else here follows from it.
 
 1. **A requeue can name any dimension of the identity.** `store.RequeueStale(cliVersion,
    packDigests)` takes exactly the two it can select on, so each new dimension is a new argument or
-   a new function. Selection must include the recorded
-   [analysis mode](../../docs/architecture.md#analysis-modes) and the `query_version` and
-   `pack_version` columns every run now writes — a library edit changes a query version without
-   changing its pack digest, so that is a dimension nothing can currently invalidate on. Note what
-   the existing selection is already coarser than
+   a new function. Selection must include the `query_version` and `pack_version` columns every run
+   now writes — a library edit changes a query version without changing its pack digest, so that is
+   a dimension nothing can currently invalidate on — and must keep reading regular runs alone: a
+   closure run is named after its root at the root's commit, and counting it made the root look
+   current after an upgrade. Note what the existing selection is already coarser than
    anyone reasons about: `requeueDone` correlates the frontier row to `abom_query_run` **by
    repository alone**, so one stale run requeues every reference of that repository rather than the
    analysis that is actually out of date. Depends on nothing.

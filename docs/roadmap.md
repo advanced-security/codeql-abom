@@ -39,13 +39,14 @@ updates; what is left there is observing the runner enforce a nested pin on an a
 Missing native coverage stays explicit, and parsed coverage, network verification and observed
 runner enforcement stay distinct facts. Closure staging comes next, staging the selected commits.
 
-## An organization that stays current at scale
+## An enterprise that stays current at scale
 
 ABOM can be pointed at a declared organization and left alone: one loop reads the account on a
 period, queues what it finds, analyzes and reads again, from an empty database and without a command
 being run. Reads are conditional and paced by the budget GitHub reports.
 
-What is not solved is doing that for an organization of twenty thousand repositories. Reading
+What is not solved is doing that for an enterprise — many organizations in one instance, up to one
+hundred thousand repositories in one of them. Reading
 everything on every period is affordable at small size and not at large, and the three questions an
 organization poses have different costs: what is new and what changed can be answered from a sorted
 prefix, while **what is gone can only be answered by reading everything**. GraphQL is the efficient
@@ -119,9 +120,11 @@ distinction to readers. The same rule can describe a repository's own source or
 a staged dependency path that ordinary Default Setup did not analyze. The staging namespace holds
 one selected commit per staged callee; count distinct selected commits of those, not ref names and
 not every action.
-[Closure databases](../plans/ql/closure-database.md) therefore depend on
-[lock-aware resolution](architecture.md#locks), now built, and must preserve the implemented
-[analysis-mode isolation](architecture.md#analysis-modes).
+The second shape is built: `codeql-abom closure` stages what each owned repository's lock-aware
+closure reaches and records what it finds as [extended evidence](architecture.md#analysis-modes)
+that moves no existing total. On the crawled organization it adds about 86% to what the crawl
+spends analyzing the same repositories, and found nothing the regular analysis had not, which is
+an answer about this organization rather than about the shape.
 
 ## The questions are the organization's own
 
@@ -223,9 +226,25 @@ and an action's locked repository commit does not inventory its container images
 ## Staying current without being told
 
 The crawl is resumable and budgeted, and it can already detect that a reference has moved. What is
-missing is the trigger — reading in response to events rather than on a timer — and the address an
-event would arrive at. Until then a periodic sweep is the floor. `plans/api/org-server.md`,
-`plans/api/event-driven-reading.md`
+missing is being told: an enterprise App's events for every repository the enterprise owns, and
+polling for the dependencies it does not, each process drawing on a budget the operator sets and
+can watch being spent, with the freshness that budget buys stated beside it. GitHub's limits are
+shared with everything else the enterprise runs, so ABOM never assumes they are its own. Until the
+events arrive a periodic sweep is the floor. `plans/api/change-ingestion.md`,
+`plans/api/enterprise-server.md`
+
+The graph those changes land in is being made commit-aware: each commit's declarations are its own,
+every walk stands at the commits a reference actually resolves to, and reach is counted per version.
+`plans/db/commit-aware-graph.md`
+
+## Knowing the graph is right
+
+Whether ABOM's graph is right has been learned late, by somebody noticing. A checker running beside
+it compares each claim with an independent reading at the same commit — the files themselves,
+GitHub's dependency graph, where a reference points now, and what a workflow's run actually
+downloaded — and recomputes every derivation from scratch to compare with what is maintained. It
+reports fidelity per build and queues every disagreement with what it takes to reproduce it; it
+never corrects either reading. `plans/tools/graph-consistency-checker.md`
 
 Separately, a finding that stops being reported is currently never removed. The sighting record
 exists and the sweep is written; it waits on a crawl to make its report believable.
@@ -253,11 +272,16 @@ chooses between them and the canvas says which it is showing. None is urgent; al
 rather than guessed, and all have to be re-measured against a real organization rather than carried
 forward as remembered numbers. `plans/db/data-efficiency.md`
 
+An enterprise adds two ceilings that are architectural rather than measured: every derivation is
+recomputed over the whole graph, and one embedded database owned by one process is the only writer
+and the only reader. Derivations become incremental, with the wholesale recompute kept as the
+oracle that checks them, and the enterprise deployment runs PostgreSQL behind the same store
+interface, so coordinators can be replicated and readers scaled out while the single binary keeps
+SQLite. Efficiency at that scale is measured on real organizations as they become available, never
+extrapolated from this one. `plans/db/commit-aware-graph.md`, `plans/db/store-backends.md`
+
 ## Deliberately not on the roadmap
 
-- **Enterprise scope, or federation across organizations.** The boundary is what makes the
-  efficiency target mean anything, and a tool spanning organizations inherits no permission model it
-  can rely on.
 - **Uploading SARIF to code scanning.** Refused rather than deferred. An alert ABOM wrote would sit
   in somebody else's Security tab, and an upload replaces rather than adds — a wrong category
   deletes alerts that cannot be recovered. Publishing a pack achieves the same outcome through the

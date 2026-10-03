@@ -88,6 +88,13 @@ public sealed record ViewSpec
     /// </summary>
     public bool Steps { get; init; }
 
+    /// <summary>
+    /// References exactly as a workflow wrote them — <c>v4</c>, a branch, a commit — where
+    /// <see cref="RefStyle"/> asks only which shape they take. Never resolved: <c>v4</c> is not
+    /// <c>v4.2.2</c>, even where both name one commit today.
+    /// </summary>
+    public IReadOnlyList<string> At { get; init; } = [];
+
     private const string ParamScope = "scope";
     private const string ParamSearch = "q";
     private const string ParamKinds = "kinds";
@@ -112,6 +119,7 @@ public sealed record ViewSpec
     private const string ParamSteps = "steps";
     private const string ParamProperties = "properties";
     private const string ParamNotProperties = "notProperties";
+    private const string ParamAt = "at";
 
     // Only the first one divides, so a value may contain it; GitHub property names cannot.
     private const char PropertySeparator = ':';
@@ -211,6 +219,8 @@ public sealed record ViewSpec
 
         if (MinReach > 0) pairs.Add((ParamMinReach, MinReach.ToString(CultureInfo.InvariantCulture)));
         if (Steps) pairs.Add((ParamSteps, "true"));
+        // One parameter per reference, as Go writes it: Git allows a comma in a reference name.
+        foreach (var reference in Normalize(At)) pairs.Add((ParamAt, reference));
 
         return string.Join("&", pairs
             .OrderBy(p => p.Key, StringComparer.Ordinal)
@@ -231,6 +241,7 @@ public sealed record ViewSpec
             flags = [], notRules = [], repositories = [], sources = [], bands = [],
             advisorySeverities = [], reached = [], policies = [];
         List<PropertyMatch> properties = [], notProperties = [];
+        List<string> at = [];
         var minReach = 0;
         var steps = false;
 
@@ -269,6 +280,7 @@ public sealed record ViewSpec
                 case ParamFlags: flags = VettedList(key, raw); break;
                 case ParamProperties: properties.Add(ParseMatch(key, raw)); break;
                 case ParamNotProperties: notProperties.Add(ParseMatch(key, raw)); break;
+                case ParamAt: at.Add(raw); break;
                 case ParamMinReach:
                     if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture,
                             out minReach) || minReach < 0)
@@ -299,7 +311,7 @@ public sealed record ViewSpec
             Repositories = repositories,
             Properties = properties, NotProperties = notProperties,
             EdgeClass = edges, EdgeKinds = edgeKinds, Flags = flags,
-            MinReach = minReach, Steps = steps,
+            MinReach = minReach, Steps = steps, At = Normalize(at),
         };
     }
 

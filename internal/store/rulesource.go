@@ -14,9 +14,12 @@ const (
 	RecordedByCrawl  = "crawl"
 	RecordedByRun    = "run"
 	RecordedByCorpus = "corpus"
+	// RecordedByClosure is a closure database, which reads the crawl's results and adds none to
+	// the queue.
+	RecordedByClosure = "closure"
 )
 
-var recorders = []string{RecordedByCrawl, RecordedByRun, RecordedByCorpus}
+var recorders = []string{RecordedByCrawl, RecordedByRun, RecordedByCorpus, RecordedByClosure}
 
 func validRecorder(by string) bool { return slices.Contains(recorders, by) }
 
@@ -51,19 +54,22 @@ type FindingTrace struct {
 type FindingEvaluation struct {
 	QueryRunID int64 `json:"queryRunId"`
 	// Invoked is what ran: the query itself, or the suite or queries a lane ran as one.
-	Invoked     string       `json:"invoked"`
-	Packs       []string     `json:"packs"`
-	RuleVersion string       `json:"ruleVersion"`
-	Pack        string       `json:"pack"`
-	PackVersion string       `json:"packVersion"`
-	PackDigest  string       `json:"packDigest"`
-	Source      string       `json:"source"`
-	CLIVersion  string       `json:"cliVersion"`
-	Mode        string       `json:"mode"`
-	Commit      string       `json:"commit"`
-	RanAt       string       `json:"ranAt"`
-	RecordedBy  string       `json:"recordedBy"`
-	Runs        []FindingRun `json:"runs"`
+	Invoked     string   `json:"invoked"`
+	Packs       []string `json:"packs"`
+	RuleVersion string   `json:"ruleVersion"`
+	Pack        string   `json:"pack"`
+	PackVersion string   `json:"packVersion"`
+	PackDigest  string   `json:"packDigest"`
+	Source      string   `json:"source"`
+	CLIVersion  string   `json:"cliVersion"`
+	Mode        string   `json:"mode"`
+	// Repository is what the evaluation analyzed: the finding's own repository for one checkout,
+	// and the owned repository whose closure reached the finding for a closure.
+	Repository string       `json:"repository"`
+	Commit     string       `json:"commit"`
+	RanAt      string       `json:"ranAt"`
+	RecordedBy string       `json:"recordedBy"`
+	Runs       []FindingRun `json:"runs"`
 }
 
 // FindingRun is a member of an on-demand run that the evaluation answered.
@@ -185,30 +191,46 @@ func (s *Store) backfillRunRules() error {
 	return nil
 }
 
-// sourceClause keeps the finding aliased `finding` when an evaluation that reported it recorded
-// its rule's query as coming from one of these sources. Unknown is not a match.
-func sourceClause(finding string, sources []string) (string, []any) {
+// sourcedRules joins the evaluations of one shape that reported the finding aliased `finding` to
+// what each recorded about its rule's query. Where a rule came from is evidence about the
+// evaluations that ran it, so a regular reader asks regular evaluations: a closure that records
+// a source must not supply one to a finding whose own analysis never did.
+func sourcedRules(finding, mode string) string {
+	rules := ` JOIN abom_query_run_rule qr
+	                   ON qr.query_run_id = sg.query_run_id AND qr.rule_id = ` + finding + `.rule_id`
+	switch mode {
+	case AnalysisModeAnyShape:
+		return `abom_finding_sighting sg` + rules
+	case AnalysisModeExtended:
+		return `abom_finding_sighting sg JOIN abom_query_run sq
+		           ON sq.row_id = sg.query_run_id AND sq.analysis_mode = 'extended'` + rules
+	default:
+		return `abom_finding_sighting sg JOIN abom_query_run sq
+		           ON sq.row_id = sg.query_run_id AND sq.analysis_mode = 'regular'` + rules
+	}
+}
+
+// sourceClause keeps the finding aliased `finding` when an evaluation in mode that reported it
+// recorded its rule's query as coming from one of these sources. Unknown is not a match.
+func sourceClause(finding, mode string, sources []string) (string, []any) {
 	list, args := inList(sources)
-	return `EXISTS (SELECT 1 FROM abom_finding_sighting sg
-	                 JOIN abom_query_run_rule qr
-	                   ON qr.query_run_id = sg.query_run_id AND qr.rule_id = ` + finding + `.rule_id
+	return `EXISTS (SELECT 1 FROM ` + sourcedRules(finding, mode) + `
 	                WHERE sg.finding_row_id = ` + finding + `.row_id AND qr.source IN ` + list + `)`, args
 }
 
-// recordedSource holds when an evaluation that reported the finding aliased `finding` recorded
-// where its rule's query came from.
-func recordedSource(finding string) string {
-	return `EXISTS (SELECT 1 FROM abom_finding_sighting sg
-	                 JOIN abom_query_run_rule qr
-	                   ON qr.query_run_id = sg.query_run_id AND qr.rule_id = ` + finding + `.rule_id
+// recordedSource holds when an evaluation in mode that reported the finding aliased `finding`
+// recorded where its rule's query came from.
+func recordedSource(finding, mode string) string {
+	return `EXISTS (SELECT 1 FROM ` + sourcedRules(finding, mode) + `
 	                WHERE sg.finding_row_id = ` + finding + `.row_id AND qr.source IS NOT NULL)`
 }
 
-// findingSources is the sources every evaluation that reported the finding `f` recorded for its
-// rule, NULL where none did.
-const findingSources = `(SELECT GROUP_CONCAT(DISTINCT qr.source) FROM abom_finding_sighting sg
-	JOIN abom_query_run_rule qr ON qr.query_run_id = sg.query_run_id AND qr.rule_id = f.rule_id
+// findingSourcesIn is the sources every evaluation in mode that reported the finding `f`
+// recorded for its rule, NULL where none did.
+func findingSourcesIn(mode string) string {
+	return `(SELECT GROUP_CONCAT(DISTINCT qr.source) FROM ` + sourcedRules("f", mode) + `
 	WHERE sg.finding_row_id = f.row_id)`
+}
 
 // distinctSources reads a concatenation of findingSources columns once each, in a stable order.
 func distinctSources(v sql.NullString) []string {
@@ -252,7 +274,7 @@ func (s *Store) findingTrace(id int64, mode, ordering string, orderArgs []any) (
 	query := `
 		SELECT q.row_id, q.query_id, COALESCE(q.pack, ''), COALESCE(qr.query_version, ''),
 		       COALESCE(qr.pack, ''), COALESCE(qr.pack_version, ''), COALESCE(qr.pack_digest, ''),
-		       COALESCE(qr.source, ''), COALESCE(q.cli_version, ''), q.analysis_mode,
+		       COALESCE(qr.source, ''), COALESCE(q.cli_version, ''), q.analysis_mode, q.repository,
 		       COALESCE(q.db_commit, ''), q.ran_at, COALESCE(q.recorded_by, '')
 		FROM abom_finding_sighting sg
 		JOIN abom_query_run q ON q.row_id = sg.query_run_id
@@ -273,7 +295,8 @@ func (s *Store) findingTrace(id int64, mode, ordering string, orderArgs []any) (
 		e := FindingEvaluation{Runs: []FindingRun{}}
 		var packs string
 		if err := rows.Scan(&e.QueryRunID, &e.Invoked, &packs, &e.RuleVersion, &e.Pack, &e.PackVersion,
-			&e.PackDigest, &e.Source, &e.CLIVersion, &e.Mode, &e.Commit, &e.RanAt, &e.RecordedBy); err != nil {
+			&e.PackDigest, &e.Source, &e.CLIVersion, &e.Mode, &e.Repository, &e.Commit, &e.RanAt,
+			&e.RecordedBy); err != nil {
 			rows.Close()
 			return out, err
 		}

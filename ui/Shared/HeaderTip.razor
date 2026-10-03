@@ -1,0 +1,10 @@
+@* A column's name, with a line saying what its values are. It goes in a column's HeaderTemplate,
+   which replaces only the name inside the grid's sortable header, so the tip costs no sorting. *@
+<MudTooltip Text="@Tip" Placement="Placement.Top">
+    <span data-abom-header-tip="@Tip">@ChildContent</span>
+</MudTooltip>
+
+@code {
+    [Parameter, EditorRequired] public string Tip { get; set; } = string.Empty;
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

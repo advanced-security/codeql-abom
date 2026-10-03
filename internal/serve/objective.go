@@ -20,6 +20,9 @@ type Objective struct {
 	MaxDepth int                `json:"maxDepth"`
 	Recent   []store.CycleSpend `json:"recent"`
 	Totals   store.CycleTotal   `json:"totals"`
+	// Unobserved counts the commits a reference resolves to whose declarations were recorded
+	// before ABOM kept each commit's own, which the crawl analyzes again a claim at a time.
+	Unobserved int `json:"unobserved"`
 }
 
 func (s *Server) objective(w http.ResponseWriter, r *http.Request) {
@@ -42,6 +45,10 @@ func (s *Server) objective(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if out.Totals, err = s.Store.CycleTotals(); err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	if out.Unobserved, err = s.Store.UnobservedCommitCount(); err != nil {
 		writeJSON(w, nil, err)
 		return
 	}

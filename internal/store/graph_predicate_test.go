@@ -63,7 +63,7 @@ func TestTheReachFloorKeepsOnlyWhatMeetsItAndExcludesTheUnmeasured(t *testing.T)
 		t.Fatalf("finding the node to measure: %v", err)
 	}
 	if _, err := s.DB().Exec(`INSERT INTO abom_blast_radius
-		(node_row_id, dependent_repos, dependent_workflows, direct_dependents, max_depth)
+		(node_row_id, dependent_repos, dependent_workflows, dependent_steps, max_depth)
 		VALUES (?, 3, 3, 3, 1)`, checkout); err != nil {
 		t.Fatalf("recording reach: %v", err)
 	}

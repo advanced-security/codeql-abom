@@ -11,18 +11,18 @@ public class NodeRuleSourceTests : AbomTestContext
 {
     private const string Detail = """
         {"key":"actions/checkout","kind":"action","repository":"","origin":"","path":"",
-         "isExternal":true,"analyzed":true,"dependentRepos":2,"directDependents":3,"refs":[],
+         "isExternal":true,"analyzed":true,"dependentRepos":2,"refs":[],
          "rules":[
            {"ruleId":"actions/unpinned-tag","count":3,"sources":["custom","upstream"],"unsourced":1},
            {"ruleId":"abom/secrets-inherit","count":2,"sources":["abom"],"unsourced":0},
            {"ruleId":"actions/untrusted-checkout","count":1,"sources":[],"unsourced":1}],
-         "advisories":[],"usedBy":[],"uses":[]}
+         "uses":[]}
         """;
 
     private IRenderedComponent<Pages.NodePage> RenderNode()
     {
-        Answer("/-/reach", "[]");
-        Answer("/-/impact", """{"key":"actions/checkout","direct":0,"transitive":0,"repos":[],"unanalyzed":0}""");
+        Answer("/-/uses", """{"key":"actions/checkout","total":0,"items":[]}""");
+        Answer("/-/versions", """{"key":"actions/checkout","total":0,"items":[],"advisories":[]}""");
         Answer("api/node/", Detail);
         var cut = Render<Pages.NodePage>(p => p.Add(c => c.Key, "actions/checkout"));
         cut.WaitForAssertion(() => cut.Find("[data-abom-rule='abom/secrets-inherit']"));

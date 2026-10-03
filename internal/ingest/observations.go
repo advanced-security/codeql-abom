@@ -40,6 +40,10 @@ func (i *Ingester) ObservationsFromBQRS(r io.Reader, opts Options) (int, error) 
 	if opts.QueryRunID == 0 {
 		return 0, fmt.Errorf("ingest: observations need Options.QueryRunID to attribute them")
 	}
+	if opts.Attribute != nil {
+		return 0, fmt.Errorf("ingest: observations name subjects by one repository's paths, " +
+			"so they are stored only from a database holding one")
+	}
 
 	var batch []store.Observation
 	_, err := bqrs.StreamSelect(r, func(row bqrs.Row) error {

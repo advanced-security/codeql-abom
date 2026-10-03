@@ -162,6 +162,32 @@ func TestCompactionLeavesNoDanglingReferences(t *testing.T) {
 	}
 }
 
+// Reach by version is derived per node, so a compacted node takes it along. Left behind, the rows
+// name a node that no longer exists, and the foreign key refuses the compaction's own delete.
+func TestCompactionTakesAPrunedNodesReachByVersionWithIt(t *testing.T) {
+	s := pruneFixture(t)
+	if _, err := s.DB().Exec(`
+		INSERT INTO abom_node_version_reach (node_row_id, commit_sha, repository_row_id, hops)
+		SELECT n.row_id, '', r.row_id, 1 FROM abom_node n, repository r
+		 WHERE n.node_key = 'stranger/thing' AND r.repository_full_name = 'stranger/repo'`); err != nil {
+		t.Fatalf("seeding reach by version: %v", err)
+	}
+	if _, err := s.MarkOutsideClosure([]string{"octo-org/app"}); err != nil {
+		t.Fatalf("MarkOutsideClosure: %v", err)
+	}
+	if _, err := s.Compact(); err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	var left int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM abom_node_version_reach`).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != 0 {
+		t.Errorf("%d reach-by-version rows outlived the node they describe", left)
+	}
+}
+
 // Compacting a corpus nothing was pruned from must be a no-op rather than an epoch bump that
 // makes every open page reload for nothing.
 func TestCompactingWithNothingTombstonedChangesNothing(t *testing.T) {

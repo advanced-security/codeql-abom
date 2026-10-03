@@ -70,6 +70,15 @@
             }
         }
 
+        @if (objective.Unobserved > 0)
+        {
+            @* A gap in what is known rather than a detail of the queue: the commits are analyzed,
+               and what each declared is still not on record. *@
+            <MudText Typo="Typo.body2" Class="mt-2" data-abom-objective-unobserved>
+                @UnobservedSentence(objective.Unobserved)
+            </MudText>
+        }
+
         @if (LastCycle is { } last)
         {
             <MudText Typo="Typo.body2" Class="mud-text-secondary mt-2">
@@ -164,7 +173,8 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
                     @if (LinkToSettings)
                     {
                         <span>
-                            Declare one in <MudLink Href="/settings">Settings</MudLink> to list
+                            Declare one in <MudLink Href="/settings"
+                                                     title="Open Settings to declare an account and enumerate its repositories.">Settings</MudLink> to list
                             the repositories underneath it.
                         </span>
                     }
@@ -281,7 +291,9 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
     {
         <MudText Typo="Typo.body2" Class="mud-text-secondary">
             <span data-abom-binding-summary>@SuiteBindingText.Summary(_suites)</span>.
-            <MudLink Href="/codeql?tab=suites" data-abom-binding-change>Change it on the CodeQL page</MudLink>
+            <MudLink Href="/codeql?tab=suites"
+                     title="Open the CodeQL page to change which query suites each tier runs."
+                     data-abom-binding-change>Change it on the CodeQL page</MudLink>
         </MudText>
         @foreach (var tier in Tiers.Where(t => BoundCount(t) == 0))
         {
@@ -361,6 +373,19 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
     }
 
     private static string Seconds(long millis) => (millis / 1000.0).ToString("N1");
+
+    private string UnobservedSentence(int count)
+    {
+        var (subject, one, all) = count == 1
+            ? ("1 commit was", "it", "it")
+            : ($"{count:N0} commits were", "one", "them");
+        var pace = count > 1 && _state.Status.ClaimsPerCycle > 0
+            ? $", at most {_state.Status.ClaimsPerCycle:N0} at a time"
+            : string.Empty;
+        return $"{subject} analyzed before ABOM kept what each commit declared, so a route through "
+            + $"{one} may be missing and a dependency submission that reads {one} is refused. "
+            + $"While analysis runs it observes {all} again{pace}.";
+    }
 
     // Owned is offered only once an identity has established it. With none, a column reading zero
     // would assert the operator owns no dependency, which nothing has shown.

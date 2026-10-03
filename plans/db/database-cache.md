@@ -21,8 +21,10 @@ larger half and was still being repeated.
 The identity is the one the ledger already uses. `abom_query_run` hashes repository, commit, source
 filter and analysis mode; `DatabaseIdentity` carries exactly those four, deliberately, so a database
 and the run that used it agree about which database it was. The mode is in the key because a regular
-per-repository database and an extended one are different artifacts answering different questions,
-and [`ql/closure-database.md`](../ql/closure-database.md) adds a third shape to the same key later.
+per-repository database and an extended one are different artifacts answering different questions.
+A closure database is deliberately not retained: its identity is the closure digest, which this key
+does not carry, so one held under repository, commit, filter and mode would answer for a different
+closure of the same repository. Retaining one means putting the digest in the key first.
 
 ### What a retained database costs, measured
 

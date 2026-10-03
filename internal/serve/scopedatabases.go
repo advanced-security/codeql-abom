@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/advanced-security/codeql-abom/internal/graph"
 	"github.com/advanced-security/codeql-abom/internal/store"
 	viewspec "github.com/advanced-security/codeql-abom/internal/view"
 )
@@ -55,11 +54,7 @@ func (s *Server) runSet(ctx context.Context, spec viewspec.Spec) (store.Database
 	var set store.DatabaseSet
 	var err error
 	if spec.AsksRepositoriesUnit() {
-		var query store.RepositoriesQuery
-		if query, err = s.repositoriesQuery(spec); err != nil {
-			return set, err
-		}
-		set, err = s.Store.DatabasesListed(query, sel)
+		set, err = s.Store.DatabasesListed(repositoriesQuery(spec), sel)
 	} else {
 		set, err = s.Store.DatabasesMatching(sel)
 	}
@@ -75,17 +70,9 @@ func (s *Server) runSet(ctx context.Context, spec viewspec.Spec) (store.Database
 }
 
 // repositoriesQuery is the repositories unit's population for a predicate, shared by the unit and
-// by a run, with the same closure the node listing reads so "what you own" is one population.
-func (s *Server) repositoriesQuery(spec viewspec.Spec) (store.RepositoriesQuery, error) {
-	query := store.RepositoriesQuery{
+// by a run, so "what you own" is one population.
+func repositoriesQuery(spec viewspec.Spec) store.RepositoriesQuery {
+	return store.RepositoriesQuery{
 		Search: spec.Search, Scope: spec.Scope, Flags: spec.Flags, Grouping: scopeFromSpec(spec),
 	}
-	if query.Scope == store.ScopeOwned {
-		keep, _, err := (&graph.Builder{Store: s.Store}).KeepList()
-		if err != nil {
-			return query, err
-		}
-		query.Closure = keep
-	}
-	return query, nil
 }

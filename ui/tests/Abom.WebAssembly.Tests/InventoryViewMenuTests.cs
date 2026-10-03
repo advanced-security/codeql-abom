@@ -27,7 +27,7 @@ public class InventoryViewMenuTests : AbomTestContext
 
     private const string Page = """
         {"items":[{"nodeKey":"actions/checkout","kind":"action","origin":"external",
-          "dependentRepos":50,"directDependents":60,"distinctRefs":3,
+          "dependentRepos":50,"dependentSteps":60,"distinctRefs":3,
           "findings":2,"advisories":0,"analyzed":true,"refs":["v4"]}],"total":7}
         """;
 

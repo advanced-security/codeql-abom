@@ -16,9 +16,10 @@
         }
         <MudSpacer />
         @* The reason is on a span outside the button: a disabled button swallows the pointer. *@
-        <span title="@(CanFile ? "Ask for a query, or for a change to one" : "Sign in with gh to record who asked")">
+        <span title="@(!CanFile ? "Sign in with gh to record who asked." : _draft is not null ? "Finish or discard the open draft before starting another request." : "Open a blank query request form.")">
             <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
                        StartIcon="@Icons.Material.Outlined.Add" Disabled="@(!CanFile || _draft is not null)"
+                       title="@(!CanFile ? "Sign in with gh to record who asked." : _draft is not null ? "Finish or discard the open draft before starting another request." : "Open a blank query request form.")"
                        OnClick="New" data-abom-request-new>New request</MudButton>
         </span>
     </div>
@@ -96,8 +97,10 @@
             }
             <div class="d-flex gap-2 mt-3">
                 <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" DropShadow="false"
+                           title="Save this query request with its description, examples, query choice and status."
                            Disabled="@(!Complete || _saving)" OnClick="Save" data-abom-request-save>Save</MudButton>
                 <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                           title="Close this form without saving changes to the request."
                            OnClick="Discard" data-abom-request-discard>Discard</MudButton>
             </div>
         </MudPaper>
@@ -134,34 +137,42 @@
                                        Icon="@(context.Open ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)"
                                        aria-label="@($"Show the examples in request #{context.Item.RowId}")"
                                        aria-expanded="@(context.Open ? "true" : "false")"
+                                       title="@(context.Open ? $"Hide the examples and agent sessions for request #{context.Item.RowId}." : $"Show the examples and agent sessions for request #{context.Item.RowId}.")"
                                        OnClick="@(() => context.Actions.ToggleHierarchyVisibilityForItemAsync())"
                                        data-abom-request-detail />
                     </CellTemplate>
                 </HierarchyColumn>
-                <PropertyColumn Property="x => x.RowId" Title="#" CellClass="abom-nowrap" />
+                <PropertyColumn Property="x => x.RowId" Title="#" CellClass="abom-nowrap">
+                    <HeaderTemplate><HeaderTip Tip="The number ABOM gave this request when it was filed.">#</HeaderTip></HeaderTemplate>
+                </PropertyColumn>
                 <TemplateColumn Title="" HeaderClass="abom-row-actions-head" CellClass="abom-row-actions">
                     <CellTemplate>
                         <MudIconButton Icon="@Icons.Material.Outlined.Edit" Size="Size.Small"
                                        Disabled="@(!CanFile || _draft is not null)"
+                                       title="@(!CanFile ? "Sign in with gh to record who edits requests." : _draft is not null ? "Finish or discard the open draft before editing another request." : $"Edit request #{context.Item.RowId}.")"
                                        OnClick="@(() => Edit(context.Item))"
                                        aria-label="@($"Edit request #{context.Item.RowId}")"
                                        data-abom-request-edit />
                     </CellTemplate>
                 </TemplateColumn>
                 <PropertyColumn Property="x => x.Description" Title="What it asks for">
+                    <HeaderTemplate><HeaderTip Tip="The first line of what the requester wants detected or changed.">What it asks for</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         <span class="abom-request-summary">@FirstLine(context.Item.Description)</span>
                     </CellTemplate>
                 </PropertyColumn>
                 <TemplateColumn Title="Progress" CellClass="abom-nowrap">
+                    <HeaderTemplate><HeaderTip Tip="The authoring steps this request has completed so far.">Progress</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         <AuthoringSteps Steps="@context.Item.Steps" />
                     </CellTemplate>
                 </TemplateColumn>
                 <PropertyColumn Property="x => x.Kind" Title="Kind" CellClass="abom-nowrap">
+                    <HeaderTemplate><HeaderTip Tip="Whether the request is about a missed detection, a false alarm, or both.">Kind</HeaderTip></HeaderTemplate>
                     <CellTemplate><MudText Typo="Typo.caption">@KindText(context.Item.Kind)</MudText></CellTemplate>
                 </PropertyColumn>
                 <PropertyColumn Property="x => x.QueryId" Title="Query" CellClass="abom-nowrap">
+                    <HeaderTemplate><HeaderTip Tip="The query the request is about, or a note that it needs a new query.">Query</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         @if (context.Item.QueryId.Length == 0)
                         {
@@ -170,19 +181,24 @@
                         else
                         {
                             <MudLink Href="@CatalogHref(context.Item.QueryId)" Typo="Typo.body2"
-                                     Class="abom-path" data-abom-request-query-link>@context.Item.QueryId</MudLink>
+                                     Class="abom-path" title="@($"Open the catalog entry for {context.Item.QueryId}.")"
+                                     data-abom-request-query-link>@context.Item.QueryId</MudLink>
                         }
                     </CellTemplate>
                 </PropertyColumn>
                 <PropertyColumn Property="x => x.Status" Title="Status">
+                    <HeaderTemplate><HeaderTip Tip="Where the request stands, such as open, in progress or done.">Status</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
                                  Color="@StatusColor(context.Item.Status)"
                                  data-abom-request-status-chip="@context.Item.Status">@context.Item.Status</MudChip>
                     </CellTemplate>
                 </PropertyColumn>
-                <PropertyColumn Property="x => x.RequestedBy" Title="Asked by" CellClass="abom-nowrap" />
+                <PropertyColumn Property="x => x.RequestedBy" Title="Asked by" CellClass="abom-nowrap">
+                    <HeaderTemplate><HeaderTip Tip="The account that filed the request.">Asked by</HeaderTip></HeaderTemplate>
+                </PropertyColumn>
                 <PropertyColumn Property="x => x.UpdatedAt" Title="Updated" CellClass="abom-nowrap">
+                    <HeaderTemplate><HeaderTip Tip="When the request was last changed.">Updated</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         <MudText Typo="Typo.caption">@TimeText.DayAndTime(context.Item.UpdatedAt)</MudText>
                     </CellTemplate>
@@ -196,6 +212,7 @@
                         <MudText Typo="Typo.caption" Class="d-block mb-2">
                             Asked from
                             <MudLink Href="@($"/codeql?tab=runs&run={context.Item.SourceRunId}")" Typo="Typo.caption"
+                                     title="@($"Open run #{context.Item.SourceRunId} that supplied this request's evidence.")"
                                      data-abom-request-source-run>run #@context.Item.SourceRunId</MudLink>
                         </MudText>
                     }

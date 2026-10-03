@@ -1,3 +1,4 @@
+using Abom.WebAssembly.Models;
 using Abom.WebAssembly.Services;
 using Xunit;
 
@@ -260,5 +261,27 @@ public class ScopeServiceTests
 
         Assert.DoesNotContain("selection", scope.Spec.ToQueryString());
         Assert.Equal("scope=owned", scope.Spec.ToQueryString());
+    }
+
+    /// <summary>
+    /// A surface is sent only the terms it applies. The rest stay in the address, where the
+    /// filter bar names them as not applied here, rather than reaching an endpoint that would
+    /// refuse the whole question for them.
+    /// </summary>
+    [Fact]
+    public void ASurfaceIsSentOnlyTheTermsItApplies()
+    {
+        var scope = new ScopeService();
+        scope.ReadFrom("/node/actions/checkout?at=v4&kinds=action&minReach=2&ref=tag&selection=x");
+        FilterTerm Term(string name, params string[] surfaces) => new() { Name = name, Surfaces = surfaces };
+        var catalog = new[]
+        {
+            Term("at", "inventory", "uses"), Term("ref", "inventory", "uses"),
+            Term("kinds", "inventory"), Term("minReach", "inventory"),
+        };
+
+        Assert.Equal("at=v4&ref=tag", scope.PredicateFor(catalog, "uses"));
+        Assert.Equal("at=v4&kinds=action&minReach=2&ref=tag", scope.PredicateFor(catalog, "inventory"));
+        Assert.Equal("", scope.PredicateFor(catalog, "nowhere"));
     }
 }

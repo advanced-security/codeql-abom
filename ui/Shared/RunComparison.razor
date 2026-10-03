@@ -27,7 +27,7 @@
                 <span data-abom-comparison-start title="@StartReason">
                     <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
                                StartIcon="@Icons.Material.Outlined.CompareArrows"
-                               Disabled="@(!CanCompare)" OnClick="Start">
+                               Disabled="@(!CanCompare)" OnClick="Start" title="@StartReason">
                         @(_comparison is null ? "Compare with code scanning alerts" : "Compare again")
                     </MudButton>
                 </span>
@@ -209,11 +209,11 @@
             <MudSimpleTable Dense="true" Class="abom-grid abom-table abom-grid-nested mt-1" data-abom-comparison-members>
                 <thead>
                     <tr>
-                        <th>Repository</th>
-                        <th class="abom-cell-right">Results</th>
-                        <th class="abom-cell-right">Already alerted</th>
-                        <th class="abom-cell-right">Would add</th>
-                        <th>Commit analyzed</th>
+                        <th><HeaderTip Tip="Which repository this comparison read from GitHub's code scanning alerts.">Repository</HeaderTip></th>
+                        <th class="abom-cell-right"><HeaderTip Tip="How many results this run reported in this repository for the compared queries.">Results</HeaderTip></th>
+                        <th class="abom-cell-right"><HeaderTip Tip="How many of those results already match open or dismissed code scanning alerts.">Already alerted</HeaderTip></th>
+                        <th class="abom-cell-right"><HeaderTip Tip="How many alerts adopting these results would add for this repository.">Would add</HeaderTip></th>
+                        <th><HeaderTip Tip="Which commit the run analyzed, and how it relates to the default branch and GitHub's alerts.">Commit analyzed</HeaderTip></th>
                     </tr>
                 </thead>
                 <tbody>
@@ -238,11 +238,11 @@
             <MudSimpleTable Dense="true" Class="abom-grid abom-table abom-grid-nested mt-1" data-abom-comparison-rules>
                 <thead>
                     <tr>
-                        <th>Rule</th>
-                        <th class="abom-cell-right">Results</th>
-                        <th class="abom-cell-right">Already alerted</th>
-                        <th class="abom-cell-right">Would add</th>
-                        <th class="abom-cell-right">Open alerts not reported</th>
+                        <th><HeaderTip Tip="Which CodeQL rule produced the compared results.">Rule</HeaderTip></th>
+                        <th class="abom-cell-right"><HeaderTip Tip="How many results this run reported for this CodeQL rule.">Results</HeaderTip></th>
+                        <th class="abom-cell-right"><HeaderTip Tip="How many results for this rule already match open or dismissed code scanning alerts.">Already alerted</HeaderTip></th>
+                        <th class="abom-cell-right"><HeaderTip Tip="How many alerts adopting this rule's results would add.">Would add</HeaderTip></th>
+                        <th class="abom-cell-right"><HeaderTip Tip="How many open code scanning alerts for this rule were not reported by this run.">Open alerts not reported</HeaderTip></th>
                     </tr>
                 </thead>
                 <tbody>

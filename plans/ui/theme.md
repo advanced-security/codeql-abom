@@ -22,16 +22,12 @@ What remains is the properties no number covers yet.
    distance, or name the pairs that must correspond and check only those. It is not obvious the
    schemes should be that tightly coupled — light-mode `queued` is necessarily olive, because a
    yellow bright enough to read as yellow cannot clear 3:1 against white.
-2. **Component-level layout is checked only by screenshot.** `ui-test` has no CSS engine, and
-   every layout defect this plan found was invisible to it and visible in one browser measurement.
-   That measurement is now a build step: the browser suite gates a pull request twice, against an
-   empty database and against the shared fixture set, and the geometry checks run in both.
 
 ## The constraint that must not be broken
 
 **A guard written from a bug report tests the instance; closing the class needs the property
 stated independently of what went wrong.** "Clears 3:1" and "is not `Muted`" are both satisfied by
-a second grey at 9% saturation. Each pending item above is a property, not a case.
+a second grey at 9% saturation. The pending item above is a property, not a case.
 
 **`Muted` stays at 2.7:1 deliberately.** It means "never a dependency" and is supposed to recede;
 its contrast was never the defect, only that a state a reader can act on shared it. Nobody should

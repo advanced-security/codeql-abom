@@ -61,9 +61,8 @@ type RelationshipsQuery struct {
 	// Rules and NotRules match what fired on the declaring line, not on either endpoint.
 	Rules    []string
 	NotRules []string
-	// Scope is `owned` or `exposure`, read against Closure the way every other unit reads it.
-	Scope   string
-	Closure []string
+	// Scope is `owned` or `exposure`, read the way every other unit reads it.
+	Scope string
 	// Mode narrows to how the database that observed these `uses:` lines was built. Empty is
 	// `regular`, which is every edge on record.
 	Mode     string
@@ -141,23 +140,14 @@ func relationshipRefFilter(style string) (string, []any) {
 
 // relationshipScopeFilter narrows the listing the way the node listing is narrowed, so one word
 // means one thing across units.
-//
-// `owned` with nothing declared matches nothing rather than everything, for the reason it does
-// everywhere else: falling through answers a question about the operator's estate with somebody
-// else's.
 func relationshipScopeFilter(q RelationshipsQuery) (string, []any) {
 	switch q.Scope {
 	case ScopeExposure:
 		return ` AND (src.node_key IN ` + onExposureRoute +
 			` OR dst.node_key IN ` + onExposureRoute + `)`, nil
 	case ScopeOwned:
-		if len(q.Closure) == 0 {
-			return " AND 0", nil
-		}
-		list, names := inList(q.Closure)
-		return ` AND (LOWER(r.repository_full_name) IN ` + list +
-				` OR LOWER(src.owner || '/' || src.repo) IN ` + list + `)`,
-			append(append([]any{}, names...), names...)
+		// The line belongs to the scope when what declares it runs there.
+		return ` AND src.row_id IN (` + scopeNodes(declaredRoots, q.Mode) + `)`, nil
 	}
 	return "", nil
 }

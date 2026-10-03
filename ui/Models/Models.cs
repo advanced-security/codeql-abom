@@ -376,7 +376,14 @@ public sealed record WorkflowRow
     public int DependedOnBy { get; init; }
 }
 
-public sealed record WorkflowsPage
+/// <summary>One page of a unit's listing, and how many rows matched before paging.</summary>
+public interface IPage<out T>
+{
+    IReadOnlyList<T> Items { get; }
+    int Total { get; }
+}
+
+public sealed record WorkflowsPage : IPage<WorkflowRow>
 {
     public IReadOnlyList<WorkflowRow> Items { get; init; } = [];
     public int Total { get; init; }
@@ -399,7 +406,7 @@ public sealed record JobRow
     public SeverityCounts Severity { get; init; } = new();
 }
 
-public sealed record JobsPage
+public sealed record JobsPage : IPage<JobRow>
 {
     public IReadOnlyList<JobRow> Items { get; init; } = [];
     public int Total { get; init; }
@@ -534,7 +541,7 @@ public sealed record ReviewThreadLocation
 ///
 /// The total is not decoration: a page that does not carry it reads as the whole answer, and a
 /// column sorted within it answers a narrower question than its header claims.
-public sealed record InventoryPage
+public sealed record InventoryPage : IPage<ActionSummary>
 {
     public IReadOnlyList<ActionSummary> Items { get; init; } = [];
     public int Total { get; init; }
@@ -553,6 +560,11 @@ public sealed record InventoryPage
 
     /// <summary>The same for a provider term: rows whose matching finding recorded no provider.</summary>
     public int Unprovided { get; init; }
+
+    /// <summary>The property groups were counted by; empty where the operator configured none.</summary>
+    public string GroupProperty { get; init; } = string.Empty;
+    /// <summary>How many actions the other terms matched that no starting point runs or holds.</summary>
+    public int Unlisted { get; init; }
 }
 
 /// <summary>How many nodes of one kind a predicate matched.</summary>
@@ -563,7 +575,7 @@ public sealed record KindCount
 }
 
 /// <summary>One page of advisories, the size of the match, and what the match excludes.</summary>
-public sealed record AdvisoriesPage
+public sealed record AdvisoriesPage : IPage<RemediationItem>
 {
     public IReadOnlyList<RemediationItem> Items { get; init; } = [];
     public int Total { get; init; }
@@ -622,14 +634,14 @@ public sealed record RelationshipLock
 }
 
 /// <summary>One page of relationships, and the size of the match it was cut from.</summary>
-public sealed record RelationshipsPage
+public sealed record RelationshipsPage : IPage<RelationshipSummary>
 {
     public IReadOnlyList<RelationshipSummary> Items { get; init; } = [];
     public int Total { get; init; }
 }
 
 /// <summary>One page of repositories, and the size of the match it was cut from.</summary>
-public sealed record RepositoriesPage
+public sealed record RepositoriesPage : IPage<RepositorySummary>
 {
     public IReadOnlyList<RepositorySummary> Items { get; init; } = [];
     public int Total { get; init; }
@@ -649,10 +661,19 @@ public sealed record ActionSummary
     public string Repo { get; init; } = string.Empty;
     /// <summary>Separates what the organization owns from what it merely depends on.</summary>
     public string Origin { get; init; } = string.Empty;
-    public int DependentRepos { get; init; }
-    public int DirectDependents { get; init; }
+    /// <summary>
+    /// What in the starting points depends on this, directly or through another action, at each
+    /// level a reader manages. A level is null where reach has not counted it yet, which is not none.
+    /// </summary>
+    public int? DependentRepos { get; init; }
+    public int? DependentSteps { get; init; }
+    public int? DependentJobs { get; init; }
+    public int? DependentWorkflows { get; init; }
+
+    /// <summary>Values of the grouping property among those repositories; null where none is configured.</summary>
+    public int? DependentGroups { get; init; }
     /// <summary>Different references pointing here; each is a separate upgrade decision.</summary>
-    public int DistinctRefs { get; init; }
+    public int? DistinctRefs { get; init; }
     public int Findings { get; init; }
     public SeverityCounts Severity { get; init; } = new();
     public int Advisories { get; init; }
@@ -776,24 +797,6 @@ public sealed record AccountIdentity
     public bool CanReadMemberships { get; init; }
 }
 
-public sealed record AffectedRepo
-{
-    public string FullName { get; init; } = string.Empty;
-    public string Origin { get; init; } = string.Empty;
-    public int Hops { get; init; }
-    public IReadOnlyList<string> Refs { get; init; } = [];
-}
-
-/// <summary>Who would be affected by changing a node's version.</summary>
-public sealed record BumpImpact
-{
-    public string Key { get; init; } = string.Empty;
-    public int Direct { get; init; }
-    public int Transitive { get; init; }
-    public IReadOnlyList<AffectedRepo> Repos { get; init; } = [];
-    public int Unanalyzed { get; init; }
-}
-
 /// <summary>A tier's size and how much of it is currently analyzed.</summary>
 public sealed record TierCount
 {
@@ -865,15 +868,125 @@ public sealed record StepCondition
     public string Condition { get; init; } = string.Empty;
 }
 
-/// <summary>One repository that reaches a node, and the route it takes.</summary>
-/// <remarks>Named for the route because <c>NodeReach</c> already means an advisory's reach.</remarks>
-public sealed record NodeRoute
+/// <summary>
+/// One repository running a node at one version, by one reference: a row of the details page's
+/// "What uses: this" table, read from the walk reach and exposure take.
+/// </summary>
+public sealed record NodeUse
 {
     public string Repository { get; init; } = string.Empty;
-    /// <summary>0 when the node lives here, 1 when this repository names its container itself.</summary>
+
+    /// <summary><c>seed</c> or <c>upstream</c>: how it entered the record, never ownership.</summary>
+    public string Origin { get; init; } = string.Empty;
+
+    /// <summary>What the hop into the node wrote, verbatim: the repository's own, or an intermediary's.</summary>
+    public string Reference { get; init; } = string.Empty;
+
+    /// <summary>The commit that reference runs. Empty where nothing recorded one.</summary>
+    public string Commit { get; init; } = string.Empty;
+
+    /// <summary>A lock binding this repository selects <see cref="Commit"/>.</summary>
+    public bool Locked { get; init; }
+
+    /// <summary>0 when the node lives here, 1 when the repository names it, more through others.</summary>
     public int Hops { get; init; }
+
+    /// <summary>What the repository itself names that brings the node in; empty when direct.</summary>
+    public string Through { get; init; } = string.Empty;
     public IReadOnlyList<string> Path { get; init; } = [];
     public IReadOnlyList<StepCondition> Conditions { get; init; } = [];
+    public IReadOnlyList<string> Workflows { get; init; } = [];
+
+    /// <summary>The repository's own <c>uses:</c> lines naming it here; none for a transitive use.</summary>
+    public int Lines { get; init; }
+
+    /// <summary>Counted for sorting, which the server does by the same names.</summary>
+    public int WorkflowCount => Workflows.Count;
+    public int ConditionCount => Conditions.Count;
+}
+
+/// <summary>Who would run a different commit if one reference moved.</summary>
+public sealed record TagChange
+{
+    public string Reference { get; init; } = string.Empty;
+
+    /// <summary>The reference is a commit, which does not move.</summary>
+    public bool Fixed { get; init; }
+
+    /// <summary>What it resolves to now; empty where nothing resolved it.</summary>
+    public string NamesNow { get; init; } = string.Empty;
+    public IReadOnlyList<string> Direct { get; init; } = [];
+    public IReadOnlyList<string> Transitive { get; init; } = [];
+
+    /// <summary>Repositories whose every use a lock pins, so moving the reference moves nothing there.</summary>
+    public IReadOnlyList<string> Kept { get; init; } = [];
+}
+
+/// <summary>One page of who uses a node, the size of the match, and what it left out.</summary>
+public sealed record NodeUsesPage
+{
+    public string Key { get; init; } = string.Empty;
+    public IReadOnlyList<NodeUse> Items { get; init; } = [];
+    public int Total { get; init; }
+
+    /// <summary>Upstream repositories the default origin left out, counted rather than dropped.</summary>
+    public int HiddenUpstream { get; init; }
+
+    /// <summary>Queued dependencies never analyzed; a route only through one cannot appear.</summary>
+    public int Unanalyzed { get; init; }
+
+    /// <summary>Present only when exactly one reference was asked for.</summary>
+    public TagChange? Change { get; init; }
+}
+
+/// <summary>What findings runs reported in a dependency's own code at one commit.</summary>
+public sealed record VersionFindings
+{
+    public int Count { get; init; }
+    public SeverityCounts Severity { get; init; } = new();
+}
+
+/// <summary>One commit locks select behind a reference, and for how many repositories.</summary>
+public sealed record LockedCommit
+{
+    public string Commit { get; init; } = string.Empty;
+    public int Repositories { get; init; }
+}
+
+/// <summary>One reference a node is used at, what it runs, and who runs it.</summary>
+public sealed record NodeVersion
+{
+    public string Reference { get; init; } = string.Empty;
+
+    /// <summary>What the reference resolves to now; empty where nothing resolved it.</summary>
+    public string Commit { get; init; } = string.Empty;
+
+    /// <summary>Where it stands in the crawl; empty where it was never queued.</summary>
+    public string Queue { get; init; } = string.Empty;
+    public IReadOnlyList<LockedCommit> LockedTo { get; init; } = [];
+
+    /// <summary>Kept apart from <see cref="Transitive"/> and never added to it.</summary>
+    public int Direct { get; init; }
+    public int Transitive { get; init; }
+
+    public int Lines { get; init; }
+
+    /// <summary>Null where no findings run reached <see cref="Commit"/>: not analyzed, not clean.</summary>
+    public VersionFindings? Findings { get; init; }
+}
+
+/// <summary>A node's versions, with the advisories naming it verbatim and unjudged.</summary>
+public sealed record NodeVersionsPage
+{
+    public string Key { get; init; } = string.Empty;
+    public IReadOnlyList<NodeVersion> Items { get; init; } = [];
+
+    /// <summary>References the repositories counted use, before the reference terms narrowed the list.</summary>
+    public int Total { get; init; }
+
+    /// <summary>References only repositories left out of the count use, which are not listed.</summary>
+    public int Unlisted { get; init; }
+    public IReadOnlyList<AdvisoryReach> Advisories { get; init; } = [];
 }
 
 /// <summary>
@@ -1104,6 +1217,12 @@ public sealed record Objective
 
     public IReadOnlyList<CycleSpend> Recent { get; init; } = [];
     public CycleTotal Totals { get; init; } = new();
+
+    /// <summary>
+    /// Commits a reference resolves to whose declarations were recorded before ABOM kept each
+    /// commit's own. Counted on every request, so zero means every one is known.
+    /// </summary>
+    public int Unobserved { get; init; }
 }
 
 /// <summary>How much of one depth has been settled.</summary>
@@ -1200,28 +1319,6 @@ public sealed record PropertyCount
     public bool IsDefault { get; init; }
 }
 
-/// <summary>One reference and how widely it is used, verbatim and unjudged.</summary>
-public sealed record RefUsage
-{
-    public string Ref { get; init; } = string.Empty;
-    public int Count { get; init; }
-    public int Repositories { get; init; }
-
-    /// <summary>
-    /// The commits the current locks select behind this reference, and whose locks select them:
-    /// what runs, beside what the source says. Empty where nothing locks it.
-    /// </summary>
-    public IReadOnlyList<RefLock> Locked { get; init; } = [];
-}
-
-/// <summary>One commit the current locks select behind a declared reference.</summary>
-public sealed record RefLock
-{
-    public string Commit { get; init; } = string.Empty;
-    public int Consumers { get; init; }
-    public IReadOnlyList<string> Sample { get; init; } = [];
-}
-
 /// <summary>
 /// One commit a lock selects for a repository's use of a node at one reference: its own lock,
 /// through the workflows named, or a caller's, through the pin it reached the composite by.
@@ -1294,8 +1391,8 @@ public sealed record LockVerification
 /// Every repository naming one node at one exact reference — the rest of the list the Discovery
 /// grid can only preview.
 ///
-/// Direct only. Anything reaching the node through an intermediary is <see cref="BumpImpact"/>,
-/// and the two are different work rather than two halves of one number.
+/// Direct only. Anything reaching the node through an intermediary is a transitive
+/// <see cref="NodeUse"/>, and the two are different work rather than two halves of one number.
 /// </summary>
 public sealed record NodeUsers
 {
@@ -1395,11 +1492,7 @@ public sealed record NodeDetail
     public int RefsInUse { get; init; }
     public int RefsAnalyzed { get; init; }
     public int DependentRepos { get; init; }
-    public int DirectDependents { get; init; }
-    public IReadOnlyList<RefUsage> Refs { get; init; } = [];
     public IReadOnlyList<RuleCount> Rules { get; init; } = [];
-    public IReadOnlyList<AdvisoryReach> Advisories { get; init; } = [];
-    public IReadOnlyList<NodeNeighbor> UsedBy { get; init; } = [];
     public IReadOnlyList<NodeNeighbor> Uses { get; init; } = [];
 }
 
@@ -1513,6 +1606,12 @@ public sealed record CatalogQuery
     /// version, which is not a query that declares nothing.
     /// </summary>
     public IReadOnlyDictionary<string, string>? Metadata { get; init; }
+
+    /// <summary>
+    /// Why <see cref="Metadata"/> is absent, in the server's words: being read now, no file on disk
+    /// being this version, or no version recorded at all. Empty where it is present.
+    /// </summary>
+    public string MetadataUnread { get; init; } = string.Empty;
 
     /// <summary>The declared score's band, for a query that reports findings; empty otherwise.</summary>
     public string Band { get; init; } = string.Empty;
@@ -1866,10 +1965,18 @@ public sealed record FindingEvaluation
     public string Source { get; init; } = string.Empty;
     public string CliVersion { get; init; } = string.Empty;
     public string Mode { get; init; } = string.Empty;
+
+    /// <summary>
+    /// What the evaluation analyzed: the finding's own repository for one checkout, and the owned
+    /// repository whose closure reached the finding for a closure.
+    /// </summary>
+    public string Repository { get; init; } = string.Empty;
     public string Commit { get; init; } = string.Empty;
     public string RanAt { get; init; } = string.Empty;
 
-    /// <summary><c>crawl</c>, <c>run</c> or <c>corpus</c>; empty when it was not recorded.</summary>
+    /// <summary>
+    /// <c>crawl</c>, <c>run</c>, <c>closure</c> or <c>corpus</c>; empty when it was not recorded.
+    /// </summary>
     public string RecordedBy { get; init; } = string.Empty;
     public IReadOnlyList<FindingRun> Runs { get; init; } = [];
 }

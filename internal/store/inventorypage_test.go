@@ -13,7 +13,7 @@ func inventoryCorpus(t *testing.T, s *Store, n int) {
 	// test asserting on a page is asserting on something predictable.
 	if _, err := s.DB().Exec(`
 		INSERT INTO abom_blast_radius
-			(node_row_id, dependent_repos, dependent_workflows, direct_dependents, max_depth)
+			(node_row_id, dependent_repos, dependent_workflows, dependent_steps, max_depth)
 		SELECT row_id, 100 - row_id, 1, 1, 1 FROM abom_node WHERE is_external = 1`); err != nil {
 		t.Fatalf("seeding blast radius: %v", err)
 	}

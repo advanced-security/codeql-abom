@@ -36,9 +36,9 @@ second half is the comparison with what is already alerted, and it is what this 
 
 **The comparison reads `regular` mode, and only `regular` mode.** Default Setup builds one
 repository's own checkout. It stages nothing, so it never resolves a `uses:` across a repository
-boundary and never sees anything
-[`ql/closure-database.md`](../ql/closure-database.md) reveals. A comparison made from an extended
-run would confidently name alerts that will never appear. The run itself may be over any shape —
+boundary and never sees anything a
+[closure database](../../docs/architecture.md#analysis-modes) reveals. A comparison made from an
+extended run would confidently name alerts that will never appear. The run itself may be over any shape —
 refining a query against a closure database is legitimate — so the refusal belongs to the
 comparison, not to the run. Preserve the implemented
 [analysis-mode isolation](../../docs/architecture.md#analysis-modes).

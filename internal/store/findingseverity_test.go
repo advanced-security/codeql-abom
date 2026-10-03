@@ -211,8 +211,8 @@ func TestSortingBySeverityPutsReachedSevereFirstAndUnreachedAfter(t *testing.T) 
 	scoredOn(t, s, "vendor/action-c", "actions/code-injection/critical", "error", score(9.0))
 	scoredOn(t, s, "vendor/action-e", "actions/code-injection/critical", "error", score(9.0))
 	scoredOn(t, s, "vendor/action-f", "actions/unpinned-tag", "warning", score(5.0))
-	// a reaches the most, b fewer, c nothing; d reaches more than any and carries no finding; e is
-	// critical like b and reaches more; f reaches nothing, as c does, at a lower band.
+	// a reaches the most, b fewer; d reaches more than any and carries no finding; e is critical
+	// like b and reaches more; f was measured reaching nothing, so it is not listed at all.
 	for key, reach := range map[string]int{
 		"vendor/action-a": 50, "vendor/action-b": 3, "vendor/action-c": 0, "vendor/action-d": 90,
 		"vendor/action-e": 20, "vendor/action-f": 0,
@@ -239,7 +239,7 @@ func TestSortingBySeverityPutsReachedSevereFirstAndUnreachedAfter(t *testing.T) 
 		got = append(got, it.NodeKey)
 	}
 	want := []string{"vendor/action-e", "vendor/action-b", "vendor/action-a", "vendor/action-c",
-		"vendor/action-f", "vendor/action-d"}
+		"vendor/action-d"}
 	if !slices.Equal(got, want) {
 		t.Errorf("ordered %v, want %v", got, want)
 	}

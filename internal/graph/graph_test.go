@@ -101,12 +101,12 @@ func fixture(t *testing.T) *store.Store {
 	return s
 }
 
-func blastRadius(t *testing.T, s *store.Store, key string) (repos, workflows, direct int) {
+func blastRadius(t *testing.T, s *store.Store, key string) (repos, workflows, steps int) {
 	t.Helper()
 	err := s.DB().QueryRow(`
-		SELECT b.dependent_repos, b.dependent_workflows, b.direct_dependents
+		SELECT b.dependent_repos, b.dependent_workflows, b.dependent_steps
 		FROM abom_blast_radius b JOIN abom_node n ON n.row_id = b.node_row_id
-		WHERE n.node_key = ?`, key).Scan(&repos, &workflows, &direct)
+		WHERE n.node_key = ?`, key).Scan(&repos, &workflows, &steps)
 	if err != nil {
 		t.Fatalf("blast radius for %q: %v", key, err)
 	}
@@ -279,12 +279,13 @@ func TestBlastRadiusIncludesTransitiveDependents(t *testing.T) {
 		t.Fatalf("BuildBlastRadius: %v", err)
 	}
 
-	repos, _, direct := blastRadius(t, s, "actions/checkout")
+	repos, _, steps := blastRadius(t, s, "actions/checkout")
 	if repos != 4 {
 		t.Errorf("dependent_repos = %d, want 4 (tool direct; shared, app, service transitive)", repos)
 	}
-	if direct != 2 {
-		t.Errorf("direct_dependents = %d, want 2", direct)
+	// Each repository's one step runs it: two name it, two reach it through the shared workflow.
+	if steps != 4 {
+		t.Errorf("dependent_steps = %d, want 4", steps)
 	}
 }
 
@@ -294,12 +295,12 @@ func TestBlastRadiusOfSharedWorkflow(t *testing.T) {
 		t.Fatalf("BuildBlastRadius: %v", err)
 	}
 
-	repos, _, direct := blastRadius(t, s, "octo-org/shared/.github/workflows/build.yml")
+	repos, _, steps := blastRadius(t, s, "octo-org/shared/.github/workflows/build.yml")
 	if repos != 2 {
 		t.Errorf("dependent_repos = %d, want 2 (app and service)", repos)
 	}
-	if direct != 2 {
-		t.Errorf("direct_dependents = %d, want 2", direct)
+	if steps != 2 {
+		t.Errorf("dependent_steps = %d, want app's and service's steps", steps)
 	}
 }
 

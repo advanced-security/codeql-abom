@@ -11,7 +11,7 @@
         <MudText Typo="Typo.subtitle2">Bill of materials for @Repository</MudText>
         <MudSpacer />
         <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" OnClick="Closed"
-                       aria-label="Close the bill of materials" title="Close the bill of materials"
+                       aria-label="Close the bill of materials" title="Close the bill of materials panel."
                        data-abom-document-close />
     </div>
 
@@ -59,6 +59,7 @@
                            StartIcon="@Icons.Material.Outlined.Download" Target="_blank"
                            Rel="noopener noreferrer"
                            Href="@AbomApi.BomDownloadUrl(format, roots: [Repository])"
+                           title="@($"Download the bill of materials for {Repository} as {label}.")"
                            data-abom-document-format="@format">@label</MudButton>
             }
             <MudText Typo="Typo.caption" Class="mud-text-secondary">

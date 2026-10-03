@@ -1,18 +1,19 @@
 # Code quality, measured by our own tool
 
-**Status:** `make quality` analyzes actions, go, csharp and javascript against pinned packs, names
-every rule that fires, and fails above zero findings. `self-audit.yml` enforces the same threshold.
+**Status:** `make quality` analyzes actions, go, csharp, javascript and python against pinned packs,
+names every rule that fires, and fails above zero findings. `self-audit.yml` enforces the same
+threshold.
 
 ## Why this exists
 
 A supply-chain analysis tool that does not analyze itself is making a claim it has not tested on
 the one codebase it can always reach. That gate is on, and the count it enforces is zero.
 
-What the gate cannot see is complexity: all 190 queries in those suites are problems, and the
-metric queries are left out. **112 production functions exceed cyclomatic complexity 10, total
-excess 310** (`gocyclo -over 10`, non-test Go) — worst `Store.Migrate` at 29, `Supervisor.cycle` at
-24, `exposureOf` at 21. Three complexity linters run as a ratchet and report zero at their
-defaults.
+What the gate cannot see is complexity: it counts problem results, and no query in those suites
+reports complexity as one. **125 production functions exceed cyclomatic complexity 10, total
+excess 362** (`gocyclo -over 10`, non-test Go) — worst `Store.Migrate` at 29, `findingReviewPlan`
+at 27, `Supervisor.cycle` at 25, `streamRun` at 18. Three complexity linters run as a ratchet and
+report zero at their defaults.
 
 ## Pending
 
@@ -21,8 +22,8 @@ defaults.
    is load-bearing — reclassification runs before the sweep — and extracting phases reorders error
    paths no unit test exercises, so it needs a session that can run a real crawl. **`Store.Migrate`
    and the migration helpers** run against real older databases and move only with a migration
-   test per branch. The lock-binding walks (`exposureOf`, `admits`, `reachOf`) move only with the
-   agreement tests. The ~40 two-line serve handlers are **not** part of it: a wrapper would trade
+   test per branch. The lock-binding rule in `walk.go` (`admits`, `versionsRun`) moves only with
+   the agreement tests. The ~40 two-line serve handlers are **not** part of it: a wrapper would trade
    forty readable handlers for one indirection.
 2. **Decomposition, which depends on 1.** One store seam for the graph read models; the Explorer's
    filter panel and Discovery's three concerns as components, so the counts sentence and the empty

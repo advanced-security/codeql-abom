@@ -42,7 +42,6 @@ type WorkflowSummary struct {
 type WorkflowsQuery struct {
 	Search   string
 	Scope    string
-	Closure  []string
 	Flags    []string
 	Sort     string
 	Desc     bool
@@ -118,9 +117,7 @@ func (s *Store) WorkflowsPage(q WorkflowsQuery) (WorkflowsPage, error) {
 	where += bound
 	args = append(args, bindings...)
 
-	scoped, scopeArgs := unitScopeFilter(q.Scope, q.Closure)
-	where += scoped
-	args = append(args, scopeArgs...)
+	where += unitScopeFilter(q.Scope)
 	where += unitFindingsFlag(q.Flags)
 
 	var total int
@@ -195,7 +192,6 @@ type JobSummary struct {
 type JobsQuery struct {
 	Search   string
 	Scope    string
-	Closure  []string
 	Flags    []string
 	Sort     string
 	Desc     bool
@@ -254,9 +250,7 @@ func (s *Store) JobsPage(q JobsQuery) (JobsPage, error) {
 	where += bound
 	args = append(args, bindings...)
 
-	scoped, scopeArgs := unitScopeFilter(q.Scope, q.Closure)
-	where += scoped
-	args = append(args, scopeArgs...)
+	where += unitScopeFilter(q.Scope)
 	where += unitFindingsFlag(q.Flags)
 
 	var total int
@@ -323,19 +317,15 @@ func (s *Store) JobsPage(q JobsQuery) (JobsPage, error) {
 }
 
 // unitScopeFilter bounds a unit to the view's scope, the way the node listing reads it.
-func unitScopeFilter(scope string, closure []string) (string, []any) {
+func unitScopeFilter(scope string) string {
 	switch scope {
 	case ScopeExposure:
 		return ` AND EXISTS (SELECT 1 FROM abom_exposure x
-		                      WHERE x.repository_row_id = n.repository_row_id)`, nil
+		                      WHERE x.repository_row_id = n.repository_row_id)`
 	case ScopeOwned:
-		if len(closure) == 0 {
-			return " AND 0", nil
-		}
-		list, names := inList(closure)
-		return ` AND LOWER(r.repository_full_name) IN ` + list, names
+		return ` AND n.row_id IN (` + scopeNodes(declaredRoots, AnalysisModeRegular) + `)`
 	}
-	return "", nil
+	return ""
 }
 
 // unitFindingsFlag is the one flag these units can answer; the rest describe a dependency.

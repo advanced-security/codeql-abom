@@ -89,3 +89,15 @@ func TestTheFloorHoldsEvenWhenTheQueueDrains(t *testing.T) {
 		t.Errorf("rebuilt reach a second after the last rebuild: %q", why)
 	}
 }
+
+// Reach derived before this build counted what it now shows is missing those figures, and only a
+// rebuild fills them; waiting for the minimum interval would leave them blank to no purpose.
+func TestReachDerivedBeforeItsFiguresExistedIsRebuiltAtOnce(t *testing.T) {
+	now := time.Now()
+	st := store.ReachStaleness{At: now.Add(-time.Minute), Incomplete: true, TotalEdges: 15000}
+
+	due, why := AggregatePolicy{}.due(st, false, now)
+	if !due || why == "" {
+		t.Errorf("declined to fill figures reach never counted (%v, %q)", due, why)
+	}
+}

@@ -67,8 +67,20 @@ func analysisModeKeyPart(mode string) string {
 // Absent is not extended; treating it as a third mode would drop historical regular rows from the
 // totals this change is required to leave byte-identical.
 const analysisModeViewDDL = `
-INSERT OR IGNORE INTO abom_edge_sighting (edge_row_id, query_run_id)
-SELECT row_id, query_run_id FROM abom_edge_live WHERE query_run_id IS NOT NULL;
+INSERT OR IGNORE INTO abom_edge_sighting
+  (edge_row_id, query_run_id, dst_node_row_id, ref_raw, ref_value, pin_comment)
+SELECT row_id, query_run_id, dst_node_row_id, ref_raw, ref_value, pin_comment
+  FROM abom_edge_live WHERE query_run_id IS NOT NULL;
+
+-- A sighting written before content was kept is known only for the run that wrote the row: the
+-- row holds what that run saw and nothing about any other, whose commit may declare something else.
+UPDATE abom_edge_sighting
+   SET (dst_node_row_id, ref_raw, ref_value, pin_comment) =
+       (SELECT e.dst_node_row_id, e.ref_raw, e.ref_value, e.pin_comment
+          FROM abom_edge_live e WHERE e.row_id = abom_edge_sighting.edge_row_id)
+ WHERE dst_node_row_id IS NULL
+   AND query_run_id = (SELECT e.query_run_id FROM abom_edge_live e
+                        WHERE e.row_id = abom_edge_sighting.edge_row_id);
 
 INSERT OR IGNORE INTO abom_finding_sighting (finding_row_id, query_run_id)
 SELECT row_id, query_run_id FROM abom_finding WHERE query_run_id IS NOT NULL;
@@ -232,10 +244,17 @@ func edgeModeBroadens(tx *sql.Tx, edge Edge) (bool, error) {
 	return broadens, nil
 }
 
-func recordEdgeSighting(tx *sql.Tx, edge Edge) error {
-	_, err := tx.Exec(`INSERT OR IGNORE INTO abom_edge_sighting (edge_row_id, query_run_id)
-		SELECT row_id, ? FROM abom_edge_live WHERE edge_key = ? AND ? > 0`,
-		edge.QueryRunID, edge.Key, edge.QueryRunID)
+// recordEdgeSighting records that this run saw the edge, and what its commit declared there. Run
+// again for the same run, it refreshes the content rather than keeping a stale reading.
+func recordEdgeSighting(tx *sql.Tx, edge Edge, targetID int64) error {
+	_, err := tx.Exec(`INSERT INTO abom_edge_sighting
+		  (edge_row_id, query_run_id, dst_node_row_id, ref_raw, ref_value, pin_comment)
+		SELECT row_id, ?, ?, ?, ?, ? FROM abom_edge_live WHERE edge_key = ? AND ? > 0
+		ON CONFLICT(edge_row_id, query_run_id) DO UPDATE SET
+		  dst_node_row_id = excluded.dst_node_row_id, ref_raw = excluded.ref_raw,
+		  ref_value = excluded.ref_value, pin_comment = excluded.pin_comment`,
+		edge.QueryRunID, targetID, nullable(edge.RefRaw), nullable(edge.RefValue),
+		nullable(edge.PinComment), edge.Key, edge.QueryRunID)
 	if err != nil {
 		return fmt.Errorf("recording edge sighting: %w", err)
 	}

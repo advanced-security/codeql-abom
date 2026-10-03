@@ -435,4 +435,42 @@ public class RunResultsTests : AbomTestContext
         cut.Find("[data-abom-finding-trace-toggle='41']").Click();
         Assert.Empty(cut.FindAll("[data-abom-trace-evaluation]"));
     }
+
+    private const string Trace41ThroughAClosure = """
+        {"rowId":41,"ruleId":"acme/rule","repository":"vendor/comp","filePath":"action.yml",
+         "startLine":6,"message":"This job runs on a self-hosted runner.","severity":"warning","provider":"CodeQL",
+         "evaluations":[
+          {"queryRunId":9001,"invoked":"abom-findings.qls","packs":[],"ruleVersion":"","pack":"",
+           "packVersion":"","packDigest":"","source":"","cliVersion":"2.27.1","mode":"extended",
+           "repository":"octo/app","commit":"0123456789abcdef0123456789abcdef01234567",
+           "ranAt":"2026-10-01T10:00:00Z","recordedBy":"closure","runs":[]},
+          {"queryRunId":9002,"invoked":"abom-findings.qls","packs":[],"ruleVersion":"","pack":"",
+           "packVersion":"","packDigest":"","source":"","cliVersion":"2.27.1","mode":"extended",
+           "commit":"0123456789abcdef0123456789abcdef01234567",
+           "ranAt":"2026-10-01T10:00:00Z","recordedBy":"closure","runs":[]}]}
+        """;
+
+    /// <summary>
+    /// A dependency's defect seen through a closure names the owned repository whose closure
+    /// reached it, because that repository holds the exposure. One that does not say which reads
+    /// as a closure, never as nobody having recorded who ran it.
+    /// </summary>
+    [Fact]
+    public void AnEvaluationAClosureRecordedNamesTheRepositoryItReachedTheFindingThrough()
+    {
+        Answer("api/runs/3/results", SourcedFindings);
+        Answer("api/findings/41", Trace41ThroughAClosure);
+        var cut = Render("acme/rule");
+        cut.Find("[data-abom-results-pick]").Click();
+        cut.Find("[data-abom-member-findings='octo/app']").Click();
+        cut.WaitForAssertion(() => cut.Find("[data-abom-finding-trace-toggle='41']"));
+        cut.Find("[data-abom-finding-trace-toggle='41']").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("[data-abom-trace-evaluation]").Count));
+        var evaluations = cut.FindAll("[data-abom-trace-evaluation]").Select(e => e.TextContent).ToList();
+        Assert.Contains("the closure of octo/app", evaluations[0]);
+        Assert.Contains("extended", evaluations[0]);
+        Assert.Contains("a closure", evaluations[1]);
+        Assert.DoesNotContain("who ran it was not recorded", evaluations[1]);
+    }
 }

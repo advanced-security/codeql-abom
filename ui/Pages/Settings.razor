@@ -53,8 +53,8 @@ else
                         Class="abom-grid abom-table abom-grid-windowed abom-declared-grid mb-2">
             <thead>
                 <tr>
-                    <th>Account</th><th>Kind</th><th>Role</th><th>On</th><th>Scope</th>
-                    <th>Access</th><th>Repository listing</th><th></th>
+                    <th><HeaderTip Tip="The account the declaration says is yours.">Account</HeaderTip></th><th><HeaderTip Tip="Whether the declaration names your user account or an organization.">Kind</HeaderTip></th><th><HeaderTip Tip="The role gh reports for you in that account, when it can read memberships.">Role</HeaderTip></th><th><HeaderTip Tip="Whether discovery should use this declaration when it decides what to crawl.">On</HeaderTip></th><th><HeaderTip Tip="Whether the declaration covers every repository in the account or only the named repositories.">Scope</HeaderTip></th>
+                    <th><HeaderTip Tip="What gh has confirmed, contradicted or could not check about your access.">Access</HeaderTip></th><th><HeaderTip Tip="When ABOM last listed repositories under this account and whether any declared repositories are missing.">Repository listing</HeaderTip></th><th></th>
                 </tr>
             </thead>
             <tbody>
@@ -64,7 +64,7 @@ else
                         <td>
                             @if (a.Contradicted)
                             {
-                                <MudTooltip Text="@($"gh lists the accounts you belong to and {a.Owner} is not among them. The declaration is kept so you can correct it, but nothing it holds is counted as yours.")">
+                                <MudTooltip Text="@($"The accounts gh lists for you do not include {a.Owner}. The declaration is kept so you can correct it, but nothing it holds is counted as yours.")">
                                     <span class="abom-unconfirmed" data-abom-declared="@a.Owner">@a.Owner</span>
                                 </MudTooltip>
                             }
@@ -78,7 +78,7 @@ else
                             @{ var seen = Membership(a.Owner); }
                             @if (seen is null)
                             {
-                                <MudTooltip Text="gh lists the accounts you belong to and this is not among them, so the role behind this declaration is unknown.">
+                                <MudTooltip Text="The gh result lists the accounts you belong to, and this account is not among them, so the role behind this declaration is unknown.">
                                     <span class="abom-unconfirmed">not reported</span>
                                 </MudTooltip>
                             }
@@ -132,7 +132,7 @@ else
                                     <span class="mud-text-secondary">confirmed by gh</span>
                                     break;
                                 case "contradicted":
-                                    <MudTooltip Text="gh answered and did not list this account. The declaration is kept so you can correct it, and nothing it holds is counted until you do.">
+                                    <MudTooltip Text="The gh answer did not list this account. The declaration is kept so you can correct it, and nothing it holds is counted until you do.">
                                         <span class="abom-unconfirmed">gh does not list this</span>
                                     </MudTooltip>
                                     break;
@@ -145,7 +145,7 @@ else
                                     }
                                     else
                                     {
-                                        <MudTooltip Text="gh has not answered, so nothing is established either way. Press Check with gh.">
+                                        <MudTooltip Text="The gh check has not answered yet, so nothing is established either way. Press Check with gh to record the result.">
                                             <span class="abom-unconfirmed">not confirmed by gh</span>
                                         </MudTooltip>
                                     }
@@ -475,13 +475,18 @@ else
                                      Bordered="false" Filterable="false" SortMode="SortMode.Multiple"
                                      RowsPerPage="10" FixedHeader="true" Class="abom-grid abom-grid-windowed">
                         <Columns>
-                            <PropertyColumn Property="x => x.Owner" Title="Account" />
-                            <TemplateColumn Title="Kind" SortBy="x => x.Kind">
+                            <PropertyColumn Property="x => x.Owner" Title="Account">
+                                <HeaderTemplate><HeaderTip Tip="The user or organization gh reports you belong to.">Account</HeaderTip></HeaderTemplate>
+                            </PropertyColumn>
+                            <TemplateColumn Title="Kind" Sortable="true" SortBy="x => x.Kind">
+                                <HeaderTemplate><HeaderTip Tip="Whether gh reports this as your user account or an organization.">Kind</HeaderTip></HeaderTemplate>
                                 <CellTemplate>
                                     @(context.Item.Kind == "user" ? "Your account" : "Organization")
                                 </CellTemplate>
                             </TemplateColumn>
-                            <PropertyColumn Property="x => x.Role" Title="Role" />
+                            <PropertyColumn Property="x => x.Role" Title="Role">
+                                <HeaderTemplate><HeaderTip Tip="The role gh reports for you in that account.">Role</HeaderTip></HeaderTemplate>
+                            </PropertyColumn>
                             <TemplateColumn Title="" Sortable="false">
                                 <CellTemplate>
                                     <span data-abom-membership="@context.Item.Owner">
@@ -523,11 +528,14 @@ else
 <MudText Typo="Typo.subtitle2" Class="mt-8 mb-1">How discovery runs</MudText>
 <MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
     Analysis starts here; what each tier is analyzed with is chosen on the
-    <MudLink Href="/codeql?tab=suites">CodeQL page</MudLink>. How far it has got
+    <MudLink Href="/codeql?tab=suites"
+             title="Open the CodeQL page where each tier's query suites are chosen.">CodeQL page</MudLink>. How far it has got
     is read where the results are: the
-    <MudLink Href="/inventory?unit=coverage">Coverage unit</MudLink> lists what is analyzed, queued
+    <MudLink Href="/inventory?unit=coverage"
+             title="Open the coverage unit showing which dependencies have been analyzed, queued or unavailable.">Coverage unit</MudLink> lists what is analyzed, queued
     and unavailable one dependency at a time, and the
-    <MudLink Href="/explore">Explorer</MudLink> colors the graph by it.
+    <MudLink Href="/explore"
+             title="Open the Explorer graph colored by analysis coverage.">Explorer</MudLink> colors the graph by it.
 </MudText>
 
 <DiscoveryControls LinkToSettings="false" Changed="@(() => Accounts.ReloadScopeAsync())" />
@@ -563,9 +571,13 @@ else
             </MudText>
         </DialogContent>
         <DialogActions>
-            <MudButton OnClick="DismissStale" data-abom-stale-dismiss>Not now</MudButton>
+            <MudButton OnClick="DismissStale"
+                       title="Leave this no-longer-reachable work visible and close this prompt."
+                       data-abom-stale-dismiss>Not now</MudButton>
             <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="_stalePruning"
-                       OnClick="AcceptStale" data-abom-stale-accept>
+                       OnClick="AcceptStale"
+                       title="Remove the no-longer-reachable nodes and edges from every view without deleting stored analysis."
+                       data-abom-stale-accept>
                 @(_stalePruning ? "Working\u2026" : "Remove from view")
             </MudButton>
         </DialogActions>
@@ -596,6 +608,7 @@ else
                  Class="abom-grid abom-grid-windowed" RowsPerPage="25">
         <Columns>
             <TemplateColumn Title="Yours" Sortable="false">
+                <HeaderTemplate><HeaderTip Tip="Whether you have declared this account as yours.">Yours</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     @if (Accounts.IsOwned(context.Item.Owner))
                     {
@@ -606,9 +619,15 @@ else
                     }
                 </CellTemplate>
             </TemplateColumn>
-            <PropertyColumn Property="x => x.Owner" Title="Account" />
-            <PropertyColumn Property="x => x.Repositories" Title="Seeded" />
-            <PropertyColumn Property="x => x.Findings" Title="Findings" />
+            <PropertyColumn Property="x => x.Owner" Title="Account">
+                <HeaderTemplate><HeaderTip Tip="An account that holds at least one starting point.">Account</HeaderTip></HeaderTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Repositories" Title="Seeded">
+                <HeaderTemplate><HeaderTip Tip="How many starting points discovery has found under this account.">Seeded</HeaderTip></HeaderTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Findings" Title="Findings">
+                <HeaderTemplate><HeaderTip Tip="How many findings CodeQL rules reported in this account's starting points.">Findings</HeaderTip></HeaderTemplate>
+            </PropertyColumn>
         </Columns>
         <PagerContent>
             <MudDataGridPager T="OwnerCandidate" />

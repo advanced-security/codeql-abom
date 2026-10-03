@@ -252,11 +252,12 @@ func TestARunNamingRepositoriesStillNarrowsBySource(t *testing.T) {
 	}
 }
 
-// Asked per finding, a source has to be two key lookups — the finding's sightings, then the rule
-// each of those evaluations ran — never a scan of every rule every evaluation recorded.
+// Asked per finding, a source has to be key lookups — the finding's sightings, the evaluation
+// each names for its shape, then the rule it ran — never a scan of every rule every evaluation
+// recorded.
 func TestASourceIsLookedUpThroughTheFindingsOwnSightings(t *testing.T) {
 	s := newTestStore(t)
-	clause, args := sourceClause("f", []string{QuerySourceUpstream})
+	clause, args := sourceClause("f", AnalysisModeRegular, []string{QuerySourceUpstream})
 	rows, err := s.db.Query("EXPLAIN QUERY PLAN SELECT f.row_id FROM abom_finding f WHERE "+clause, args...)
 	if err != nil {
 		t.Fatalf("explaining the source filter: %v", err)
@@ -275,7 +276,7 @@ func TestASourceIsLookedUpThroughTheFindingsOwnSightings(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(plan, "\n")
-	for _, alias := range []string{"sg", "qr"} {
+	for _, alias := range []string{"sg", "sq", "qr"} {
 		if strings.Contains(joined, "SCAN "+alias) || !strings.Contains(joined, "SEARCH "+alias) {
 			t.Errorf("the source filter does not look %s up by key:\n%s", alias, joined)
 		}

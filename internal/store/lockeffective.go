@@ -10,14 +10,6 @@ import (
 	"time"
 )
 
-// RefLock is one commit the current locks select behind a declared ref, and whose locks do.
-type RefLock struct {
-	Commit string `json:"commit"`
-	// Consumers counts the repositories whose lock selects it; Sample names the first of them.
-	Consumers int      `json:"consumers"`
-	Sample    []string `json:"sample"`
-}
-
 // RepositoryLock is one commit a lock selects for a repository's use of a node at one ref.
 type RepositoryLock struct {
 	Commit string `json:"commit"`
@@ -61,38 +53,6 @@ func (s *Store) attachLockedBy(items []FrontierItem) error {
 		consumers := byRow[[2]string{items[i].NodeKey, strings.ToLower(items[i].Ref)}]
 		items[i].LockedByCount = len(consumers)
 		items[i].LockedBy = sample(consumers)
-	}
-	return nil
-}
-
-// attachRefLocks says, behind each declared ref of a node, which commits the current locks
-// select and whose locks select them. The declared counts are left as they are: they describe
-// the source as written, and the locks are a second answer beside them rather than a correction.
-func (s *Store) attachRefLocks(key string, refs []RefUsage) error {
-	for i := range refs {
-		refs[i].Locked = []RefLock{}
-	}
-	governed, err := s.lockGovernedOf(key)
-	if err != nil || len(governed) == 0 {
-		return err
-	}
-	byRef := map[string]map[string]map[string]bool{}
-	for _, g := range governed {
-		if byRef[g.DeclaredRef] == nil {
-			byRef[g.DeclaredRef] = map[string]map[string]bool{}
-		}
-		if byRef[g.DeclaredRef][g.Commit] == nil {
-			byRef[g.DeclaredRef][g.Commit] = map[string]bool{}
-		}
-		byRef[g.DeclaredRef][g.Commit][g.Consumer] = true
-	}
-	for i := range refs {
-		commits := byRef[refs[i].Ref]
-		for _, commit := range keysInOrder(commits) {
-			refs[i].Locked = append(refs[i].Locked, RefLock{
-				Commit: commit, Consumers: len(commits[commit]), Sample: sample(commits[commit]),
-			})
-		}
 	}
 	return nil
 }

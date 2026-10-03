@@ -2,17 +2,19 @@ package graph
 
 import (
 	"testing"
+
+	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
-func reachOf(t *testing.T, s reachStore, key string) map[string]NodeReach {
+// reachOf reads the details page's table for a node and keeps each repository's shortest route.
+func reachOf(t *testing.T, s *store.Store, key string) map[string]Use {
 	t.Helper()
-	got, err := (&Builder{Store: s}).ReachOfNode(key, 0)
-	if err != nil {
-		t.Fatalf("ReachOfNode(%s): %v", key, err)
-	}
-	out := map[string]NodeReach{}
-	for _, r := range got {
-		out[r.Repository] = r
+	page := usesOf(t, s, key, UsesQuery{Limit: 10000})
+	out := map[string]Use{}
+	for _, u := range page.Items {
+		if r, ok := out[u.Repository]; !ok || u.Hops < r.Hops {
+			out[u.Repository] = u
+		}
 	}
 	return out
 }
@@ -94,11 +96,8 @@ func TestReachCarriesTheRouteTaken(t *testing.T) {
 func TestAnUnreachedNodeAnswersEmptyRatherThanFailing(t *testing.T) {
 	s := fixture(t)
 
-	got, err := (&Builder{Store: s}).ReachOfNode("actions/checkout/nothing-uses-this", 0)
-	if err != nil {
-		t.Fatalf("ReachOfNode: %v", err)
-	}
-	if len(got) != 0 {
+	got := usesOf(t, s, "actions/checkout/nothing-uses-this", UsesQuery{})
+	if len(got.Items) != 0 || got.Total != 0 {
 		t.Errorf("got %+v, want nothing", got)
 	}
 }

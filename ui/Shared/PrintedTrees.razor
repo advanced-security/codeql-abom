@@ -16,6 +16,7 @@
                 @Who(ast), @(ast.CliVersion.Length > 0 ? $"CodeQL {ast.CliVersion}" : "CodeQL not recorded")
             </MudText>
             <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button"
+                       title="@(_shown?.RowId == ast.RowId ? "Hide this printed CodeQL tree." : "Load and show this printed CodeQL tree.")"
                        OnClick="@(() => Show(ast))" data-abom-ast-show>
                 @(_shown?.RowId == ast.RowId ? "Hide the tree" : "Show the tree")
             </MudButton>

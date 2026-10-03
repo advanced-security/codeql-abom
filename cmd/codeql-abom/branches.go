@@ -13,8 +13,9 @@ import (
 // runBranches records which branches the declared repositories protect.
 //
 // A subcommand rather than part of a crawl, deliberately. This is one paginated request per
-// repository and buys nothing the graph needs, so it is spend an operator chooses; see
-// `plans/db/freshness-budget.md`. Nothing calls it on a schedule.
+// repository and, until the live set reads protected branches (`plans/db/commit-aware-graph.md`),
+// buys nothing the graph needs, so it is spend an operator chooses; see
+// `plans/api/change-ingestion.md`. Nothing calls it on a schedule.
 func runBranches(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("branches", flag.ContinueOnError)
 	fs.SetOutput(stderr)

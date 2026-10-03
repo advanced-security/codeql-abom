@@ -432,10 +432,12 @@ func (s *Store) ledgerStats() (
 	byQuery, bySuite, byVersion map[string]runStats, err error,
 ) {
 	byQuery, bySuite, byVersion = map[string]runStats{}, map[string]runStats{}, map[string]runStats{}
+	// Regular runs only: the catalog counts what the crawl and on-demand runs evaluated, and a
+	// closure reaching the same query through a staged database would move every count it shows.
 	rows, err := s.db.Query(`
 		SELECT query_id, COALESCE(query_version, ''), repository, ran_at,
 		       COALESCE(pack, ''), COALESCE(pack_version, ''), COALESCE(cli_version, '')
-		FROM abom_query_run`)
+		FROM abom_query_run WHERE analysis_mode = 'regular'`)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("reading the run ledger: %w", err)
 	}

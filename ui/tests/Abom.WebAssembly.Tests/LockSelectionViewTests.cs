@@ -14,31 +14,37 @@ public class LockSelectionViewTests : AbomTestContext
     private const string CleaveLocked = "e97e2d8cc328f1b50210efc529dca0028893a2d9";
     private const string BitLocked = "6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772";
 
+    // The one reference the five consumers write, and the commits their locks select behind it.
     private static string Detail(string locked) => $$"""
-        {"key":"dtolnay/rust-toolchain","kind":"action","repository":"","origin":"","path":"",
-         "isExternal":true,"analyzed":true,"dependentRepos":5,"directDependents":5,
-         "refs":[{"ref":"v1","count":5,"repositories":5{{locked}}}],
-         "rules":[],"advisories":[],"usedBy":[],"uses":[]}
+        {"key":"dtolnay/rust-toolchain","total":1,"advisories":[],
+         "items":[{"reference":"v1","commit":"","queue":"analyzed","lockedTo":[{{locked}}],
+                   "direct":5,"transitive":0,"lines":5,"findings":null}]}
         """;
 
-    private void ServeNode(string detail, string users = """{"key":"","ref":"","repos":[]}""")
+    private void ServeNode(string versions, string users = """{"key":"","ref":"","repos":[]}""")
     {
         Answer("/-/users", users);
-        Answer("/-/reach", "[]");
-        Answer("/-/impact", """{"key":"dtolnay/rust-toolchain","direct":0,"transitive":0,"repos":[],"unanalyzed":0}""");
-        Answer("api/node/", detail);
+        Answer("/-/versions", versions);
+        Answer("/-/uses", """{"key":"dtolnay/rust-toolchain","total":0,"items":[]}""");
+        Answer("api/node/", """
+            {"key":"dtolnay/rust-toolchain","kind":"action","repository":"","origin":"","path":"",
+             "isExternal":true,"analyzed":true,"dependentRepos":5,
+             "rules":[],"uses":[]}
+            """);
     }
 
     private IRenderedComponent<Pages.NodePage> RenderNode() =>
         Render<Pages.NodePage>(p => p.Add(c => c.Key, "dtolnay/rust-toolchain"));
+
+    private static void OpenUsers(IRenderedComponent<Pages.NodePage> cut) =>
+        cut.WaitForAssertion(() => cut.Find(".abom-ref-users").Click());
 
     // What the source says and what runs are both on the row, and the declared counts do not move.
     [Fact]
     public void ADeclaredRefSaysWhichCommitsLocksSelectBehindIt()
     {
         ServeNode(Detail($$"""
-            ,"locked":[{"commit":"{{BitLocked}}","consumers":1,"sample":["octo/bitfuckit"]},
-                       {"commit":"{{CleaveLocked}}","consumers":1,"sample":["octo/cleave"]}]
+            {"commit":"{{BitLocked}}","repositories":1},{"commit":"{{CleaveLocked}}","repositories":1}
             """));
 
         var cut = RenderNode();
@@ -88,7 +94,7 @@ public class LockSelectionViewTests : AbomTestContext
             """);
 
         var cut = RenderNode();
-        cut.Find(".abom-ref-users").Click();
+        OpenUsers(cut);
 
         cut.WaitForAssertion(() => Assert.Contains("octo/cleave", cut.Markup));
         string LockOf(string repo) =>
@@ -111,14 +117,14 @@ public class LockSelectionViewTests : AbomTestContext
         ServeNode(Detail(""), $$"""
             {"key":"actions/setup-python","ref":"v5","total":1,"seeds":1,"owned":0,
              "ownedKnown":false,"truncated":false,
-             "repos":[{"fullName":"octo/tool","origin":"upstream","owned":false,"uses":1,
+             "repos":[{"fullName":"octo/tool","origin":"seed","owned":false,"uses":1,
                        "locks":[{"commit":"{{python}}","consumer":"octo/cleave","workflows":[],
                                  "via":"octo/tool@v1"}],
                        "lockedUses":0,"lockCoverage":[]}]}
             """);
 
         var cut = RenderNode();
-        cut.Find(".abom-ref-users").Click();
+        OpenUsers(cut);
 
         cut.WaitForAssertion(() => Assert.Contains("octo/tool", cut.Markup));
         var text = cut.Find("[data-abom-user='octo/tool'] [data-abom-user-lock]").TextContent;
@@ -233,7 +239,7 @@ public class LockSelectionViewTests : AbomTestContext
         ServeNode(Detail(""), VerifiedUsers);
 
         var cut = RenderNode();
-        cut.Find(".abom-ref-users").Click();
+        OpenUsers(cut);
 
         cut.WaitForAssertion(() => Assert.Contains("octo/cleave", cut.Markup));
         var cleave = cut.Find("[data-abom-user='octo/cleave'] [data-abom-user-verification]").TextContent;
@@ -252,7 +258,7 @@ public class LockSelectionViewTests : AbomTestContext
         Answer("api/locks/verify", """{"repository":"octo/cleave","commit":"c1","mode":"local","outcome":"passed","findings":[]}""");
 
         var cut = RenderNode();
-        cut.Find(".abom-ref-users").Click();
+        OpenUsers(cut);
         cut.WaitForAssertion(() => Assert.Contains("octo/cleave", cut.Markup));
 
         Assert.DoesNotContain(Sent, r => r.Url.Contains("api/locks/verify"));

@@ -24,12 +24,7 @@ func lockedCorpus(t *testing.T) *Store {
 	t.Helper()
 	s := newTestStore(t)
 	w := NewWriter(s, 0)
-	add := func(n Node) {
-		t.Helper()
-		if err := w.AddNode(n); err != nil {
-			t.Fatalf("AddNode %s: %v", n.Key, err)
-		}
-	}
+	add := adder(t, w)
 	add(Node{Key: "dtolnay/rust-toolchain", Kind: "action", Owner: "dtolnay",
 		Repo: "rust-toolchain", IsExternal: true})
 	add(Node{Key: "actions/setup-python", Kind: "action", Owner: "actions",
@@ -173,37 +168,6 @@ func TestAQueueRowALockChoseSaysWhoseLockChoseIt(t *testing.T) {
 	}
 }
 
-// A declared ref says what the source wrote; the locks behind it say what runs. Both, side by
-// side, and the declared counts do not move.
-func TestADeclaredRefSaysWhichCommitsLocksSelectBehindIt(t *testing.T) {
-	s := lockedCorpus(t)
-
-	detail, err := s.NodeDetailOf("dtolnay/rust-toolchain")
-	if err != nil {
-		t.Fatalf("NodeDetailOf: %v", err)
-	}
-	if len(detail.Refs) != 1 {
-		t.Fatalf("refs = %+v, want v1 alone", detail.Refs)
-	}
-	v1 := detail.Refs[0]
-	if v1.Ref != "v1" || v1.Count != 5 || v1.Repositories != 5 {
-		t.Errorf("v1 = %d uses in %d repositories, want the declared 5 and 5", v1.Count, v1.Repositories)
-	}
-	want := []RefLock{
-		{Commit: bitLocked, Consumers: 1, Sample: []string{"octo/bitfuckit"}},
-		{Commit: cleaveLocked, Consumers: 1, Sample: []string{"octo/cleave"}},
-	}
-	if len(v1.Locked) != len(want) {
-		t.Fatalf("locked = %+v, want %+v", v1.Locked, want)
-	}
-	for i := range want {
-		if v1.Locked[i].Commit != want[i].Commit || v1.Locked[i].Consumers != want[i].Consumers ||
-			!slices.Equal(v1.Locked[i].Sample, want[i].Sample) {
-			t.Errorf("locked[%d] = %+v, want %+v", i, v1.Locked[i], want[i])
-		}
-	}
-}
-
 // Each repository naming a version says whether its own lock chose another commit, which of its
 // workflows did, and how many of its uses that covers; one with no lock says nothing.
 func TestARepositoryNamingAVersionSaysWhatItsLockSelects(t *testing.T) {
@@ -289,17 +253,6 @@ func TestACompositesUseSaysWhichCallersLockSelectsIt(t *testing.T) {
 func TestALockItsRepositoryMovedPastAppearsNowhere(t *testing.T) {
 	s := lockedCorpus(t)
 
-	detail, err := s.NodeDetailOf("dtolnay/rust-toolchain")
-	if err != nil {
-		t.Fatalf("NodeDetailOf: %v", err)
-	}
-	for _, r := range detail.Refs {
-		for _, l := range r.Locked {
-			if l.Commit == retiredLock {
-				t.Errorf("the retired lock's commit is reported behind %s", r.Ref)
-			}
-		}
-	}
 	users, err := s.NodeUsersOf("dtolnay/rust-toolchain", "v1")
 	if err != nil {
 		t.Fatalf("NodeUsersOf: %v", err)
@@ -340,15 +293,6 @@ func TestAnUnlockedCorpusReportsEmptyLocksRatherThanNone(t *testing.T) {
 		t.Fatalf("Flush: %v", err)
 	}
 
-	detail, err := s.NodeDetailOf("actions/checkout")
-	if err != nil {
-		t.Fatalf("NodeDetailOf: %v", err)
-	}
-	for _, r := range detail.Refs {
-		if r.Locked == nil {
-			t.Errorf("%s: locked is nil", r.Ref)
-		}
-	}
 	users, err := s.NodeUsersOf("actions/checkout", "v4")
 	if err != nil {
 		t.Fatalf("NodeUsersOf: %v", err)

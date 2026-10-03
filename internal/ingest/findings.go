@@ -26,7 +26,7 @@ func (i *Ingester) FindingsFromSARIF(r io.Reader, opts Options) (int, error) {
 		return 0, errors.New("ingest: Options.Repository is required")
 	}
 
-	repoID, err := i.store.UpsertRepository(opts.Repository, opts.RepositoryURL)
+	repositoryID, err := i.repositories(opts)
 	if err != nil {
 		return 0, err
 	}
@@ -47,9 +47,13 @@ func (i *Ingester) FindingsFromSARIF(r io.Reader, opts Options) (int, error) {
 		return nil
 	}
 
-	err = readFindings(r, opts, func(f store.Finding) error {
+	err = readFindings(r, opts, func(f store.Finding, repository string) error {
+		id, err := repositoryID(repository)
+		if err != nil {
+			return err
+		}
 		f.QueryRunID = opts.QueryRunID
-		f.RepositoryID = repoID
+		f.RepositoryID = id
 		batch = append(batch, f)
 		if len(batch) >= findingBatch {
 			return flush()
@@ -65,12 +69,44 @@ func (i *Ingester) FindingsFromSARIF(r io.Reader, opts Options) (int, error) {
 	return stored, nil
 }
 
-// readFindings hands each result in a document to found as the finding it would be stored as, with
-// no repository and no evaluation named.
+// repositories resolves the repository a finding is stored against.
+//
+// One repository's own checkout records that repository, as it always has. A database holding
+// several only reads what the corpus already holds: the repositories in a closure were analyzed in
+// their own right before anything staged them, and a row created here would be one nothing
+// analyzed.
+func (i *Ingester) repositories(opts Options) (func(string) (int64, error), error) {
+	if opts.Attribute == nil {
+		id, err := i.store.UpsertRepository(opts.Repository, opts.RepositoryURL)
+		if err != nil {
+			return nil, err
+		}
+		return func(string) (int64, error) { return id, nil }, nil
+	}
+	known := map[string]int64{}
+	return func(name string) (int64, error) {
+		if id, ok := known[name]; ok {
+			return id, nil
+		}
+		id, _, ok, err := i.store.RepositoryNamed(name)
+		if err != nil {
+			return 0, err
+		}
+		if !ok {
+			return 0, fmt.Errorf("ingest: %s is not a repository the corpus holds, so nothing "+
+				"found in it is stored", name)
+		}
+		known[name] = id
+		return id, nil
+	}, nil
+}
+
+// readFindings hands each result in a document to found as the finding it would be stored as,
+// with the repository holding its file and no evaluation named.
 //
 // One reading for storing and for holding, so converting a held result writes the finding adopting
 // the query would have stored.
-func readFindings(r io.Reader, opts Options, found func(store.Finding) error) error {
+func readFindings(r io.Reader, opts Options, found func(store.Finding, string) error) error {
 	// Rule metadata carries security-severity and arrives before the results it describes, so
 	// it is held here and joined by rule id as each result streams past.
 	rules := make(map[string]sarifin.Rule)
@@ -93,6 +129,13 @@ func readFindings(r io.Reader, opts Options, found func(store.Finding) error) er
 			return nil
 		},
 		OnResult: func(res sarifin.Result) error {
+			at, err := opts.locate(res.FilePath)
+			if err != nil {
+				return fmt.Errorf("attributing a %s result: %w", res.RuleID, err)
+			}
+			if at.Excluded {
+				return nil
+			}
 			rule := rules[res.RuleID]
 			documentation, err := json.Marshal(rule)
 			if err != nil {
@@ -109,7 +152,7 @@ func readFindings(r io.Reader, opts Options, found func(store.Finding) error) er
 				Evidence:          res.Evidence,
 				Provider:          producer,
 				RuleID:            res.RuleID,
-				FilePath:          res.FilePath,
+				FilePath:          at.Path,
 				StartLine:         res.Region.StartLine,
 				StartColumn:       res.Region.StartColumn,
 				EndLine:           res.Region.EndLine,
@@ -119,12 +162,12 @@ func readFindings(r io.Reader, opts Options, found func(store.Finding) error) er
 				SecuritySeverity:  parseSeverity(rule.SecuritySeverity),
 				Fingerprint:       res.Fingerprints["primaryLocationLineHash"],
 				ResultHash: normalize.ResultHash(
-					res.RuleID, res.FilePath, res.Fingerprints["primaryLocationLineHash"],
+					res.RuleID, at.Path, res.Fingerprints["primaryLocationLineHash"],
 					normalize.Region{
 						StartLine: res.Region.StartLine, StartColumn: res.Region.StartColumn,
 						EndLine: res.Region.EndLine, EndColumn: res.Region.EndColumn,
 					}),
-			})
+			}, at.Repository)
 		},
 	})
 	if err != nil {

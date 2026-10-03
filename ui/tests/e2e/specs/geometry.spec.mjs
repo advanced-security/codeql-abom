@@ -57,6 +57,33 @@ test.describe('geometry', () => {
         }
     }
 
+    // The catalog's query column takes the width of its ids, so a sentence under one has to wrap
+    // inside it. On one line, why a declaration could not be read took the column to 1,365px and
+    // pushed every other column off a 1440px screen -- inside a table that scrolls on its own, which
+    // the page-level check above cannot see.
+    for (const { name, width, height } of WIDTHS) {
+        test(`the query catalog shows every column without scrolling at ${name} (${width}px)`,
+            on('/codeql?tab=catalog'), async ({ page }) => {
+                await page.setViewportSize({ width, height });
+                await page.goto('/codeql?tab=catalog');
+                await ready(page);
+                const settled = page.locator('[data-abom-queries-empty], [data-abom-queries-table]');
+                await expect(settled).toBeVisible();
+                test.skip(await page.locator('[data-abom-queries-empty]').count() > 0,
+                    'nothing is catalogued on this server');
+
+                const sideways = () => page.locator('[data-abom-queries-table] .mud-table-container')
+                    .evaluate((el) => el.scrollWidth - el.clientWidth);
+                expect(await sideways(), 'the catalog scrolls sideways by default').toBeLessThanOrEqual(1);
+                const everything = page.locator('[data-abom-queries-discovery-toggle] input');
+                if (await everything.count() > 0) {
+                    await everything.check();
+                    expect(await sideways(), 'the catalog scrolls sideways showing everything that ran')
+                        .toBeLessThanOrEqual(1);
+                }
+            });
+    }
+
     test('Inventory keeps the global count banner out of the review', on('/inventory'), async ({ page }) => {
         await page.goto('/inventory');
         await ready(page);

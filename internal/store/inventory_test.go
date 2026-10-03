@@ -11,7 +11,7 @@ func TestActionsInventoryRanksByReach(t *testing.T) {
 	seedDependency(t, s, "octo-org/app", "actions/cache", "v4", 12)
 	if _, err := s.DB().Exec(`
 		INSERT INTO abom_blast_radius
-			(node_row_id, dependent_repos, dependent_workflows, direct_dependents, max_depth)
+			(node_row_id, dependent_repos, dependent_workflows, dependent_steps, max_depth)
 		SELECT row_id, CASE node_key WHEN 'actions/checkout' THEN 50 ELSE 2 END, 1, 1, 1
 		FROM abom_node WHERE is_external = 1`); err != nil {
 		t.Fatalf("seeding blast radius: %v", err)
@@ -33,6 +33,28 @@ func TestActionsInventoryRanksByReach(t *testing.T) {
 	}
 	if actions != 2 {
 		t.Errorf("listed %d actions, want 2", actions)
+	}
+}
+
+// The count of references sits on the row the versions table opens under, so it is the walk's: an
+// edge only an unrun release declares names a reference nobody uses.
+func TestTheInventoryCountsTheReferencesTheWalkRuns(t *testing.T) {
+	s := advisoryStore(t)
+	seedDependency(t, s, "octo-org/app", "actions/checkout", "v4", 10)
+	seedDependency(t, s, "octo-org/app", "actions/checkout", "v3", 12)
+	if _, err := s.DB().Exec(`
+		INSERT INTO abom_blast_radius
+			(node_row_id, dependent_repos, dependent_workflows, dependent_steps, max_depth, refs_in_use)
+		SELECT row_id, 1, 1, 2, 1, 5 FROM abom_node WHERE node_key = 'actions/checkout'`); err != nil {
+		t.Fatalf("seeding blast radius: %v", err)
+	}
+
+	got, err := s.ActionsInventory("checkout", 0, RepositoryScope{})
+	if err != nil {
+		t.Fatalf("ActionsInventory: %v", err)
+	}
+	if len(got) != 1 || value(got[0].DistinctRefs) != 5 {
+		t.Errorf("distinct refs = %+v, want the 5 the walk stored rather than the 2 edges", got)
 	}
 }
 

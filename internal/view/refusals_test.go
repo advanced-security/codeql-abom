@@ -9,7 +9,7 @@ import (
 var everySurface = []string{
 	SurfaceSet, SurfaceGraph, SurfaceInventory, SurfaceWorkflows, SurfaceJobs,
 	SurfaceRepositories, SurfaceAdvisories, SurfaceRelationships, SurfaceCoverage,
-	SurfaceDocument, SurfaceRun, SurfacePolicy,
+	SurfaceDocument, SurfaceRun, SurfacePolicy, SurfaceUses,
 }
 
 // A page decides whether to offer a named scope from this answer, so a surface missing from it

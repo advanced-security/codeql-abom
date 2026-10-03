@@ -6,6 +6,7 @@
 @inject ThemeService Theme
 @inject AccountService Accounts
 @inject RunDraft Draft
+@inject IJSRuntime Js
 
 <PageTitle>Inventory — ABOM</PageTitle>
 
@@ -48,6 +49,7 @@
                            Disabled="@(ExportRefusal.Length > 0)"
                            Href="@(ExportRefusal.Length > 0 ? null : BomUrl("cyclonedx"))"
                            Target="_blank" Rel="noopener noreferrer"
+                           title="Download a CycloneDX bill of materials for this scope in a new tab."
                            data-abom-action="bom-cyclonedx">
                     CycloneDX
                 </MudButton>
@@ -56,6 +58,7 @@
                            Disabled="@(ExportRefusal.Length > 0)"
                            Href="@(ExportRefusal.Length > 0 ? null : BomUrl("spdx"))"
                            Target="_blank" Rel="noopener noreferrer"
+                           title="Download an SPDX bill of materials for this scope in a new tab."
                            data-abom-action="bom-spdx">
                     SPDX
                 </MudButton>
@@ -72,6 +75,7 @@
                    StartIcon="@Icons.Material.Outlined.Hub"
                    Disabled="@(!UnitDrawsInGraph(_unit))"
                    Href="@(UnitDrawsInGraph(_unit) ? $"/explore?{Scope.ToQueryString()}" : null)"
+                   title="Draw what this list matches in the Explorer, with the same filters."
                    data-abom-action="open-in-explorer">
             Show in Explorer
         </MudButton>
@@ -82,6 +86,7 @@
         <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
                    StartIcon="@Icons.Material.Outlined.PlayArrow"
                    Disabled="@(!UnitRunsQueries(_unit) || _choosing)"
+                   title="Choose repositories in this list to run CodeQL queries over."
                    OnClick="StartChoosing" data-abom-action="run-queries">
             Run queries
         </MudButton>
@@ -131,6 +136,7 @@
                    Variant="@(_unit == key ? Variant.Filled : Variant.Text)"
                    Color="@(_unit == key ? Color.Primary : Color.Default)"
                    Class="@(_unit == key ? "abom-unit-selected" : null)"
+                   title="@($"Switch to the {label} view while keeping the current filters.")"
                    OnClick="@(() => ChooseUnit(key))"
                    data-abom-unit="@key">@label</MudButton>
     }
@@ -151,7 +157,8 @@
             <div class="abom-asset-review-content">
                 <header class="d-flex align-center justify-space-between mb-3">
                     <MudText Typo="Typo.h6" HtmlTag="h2">Findings</MudText>
-                    <MudIconButton Icon="@Icons.Material.Outlined.Close" aria-label="Close asset findings" OnClick="CloseAssetReview" />
+                    <MudIconButton Icon="@Icons.Material.Outlined.Close" aria-label="Close asset findings"
+                                   title="Close the findings panel." OnClick="CloseAssetReview" />
                 </header>
                 <FindingsReview Predicate="@Scope.ToQueryString()" Asset="@asset" AssetKind="@_reviewAssetKind" />
             </div>
@@ -161,10 +168,28 @@
 
 @if (_unit == UnitDependencies)
 {
+@* A row opens in place onto a page of the action's versions, one row at a time, set in under it so
+   the rows around it stay where they were. Its links and buttons keep their own meaning: a click
+   on one does not also open the row. *@
 <MudDataGrid T="ActionSummary" ServerData="LoadPage" @ref="_grid" Dense="true" Hover="true"
              Bordered="false" SortMode="SortMode.Single" Filterable="false" RowsPerPage="30"
-             ShowColumnOptions="false" FixedHeader="true" Class="abom-grid abom-grid-windowed abom-grid-captioned">
+             ShowColumnOptions="false" FixedHeader="true"
+             RowClick="OnActionRowClick" RowClassFunc="ActionRowClass"
+             Class="abom-grid abom-grid-windowed abom-grid-captioned abom-actions-grid">
     <Columns>
+        <HierarchyColumn T="ActionSummary">
+            <CellTemplate>
+                <span @onclick:stopPropagation="true">
+                    <MudIconButton Size="Size.Small"
+                                   Icon="@(IsOpen(context.Item) ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)"
+                                   aria-label="@($"Show the versions of {context.Item.NodeKey} in use")"
+                                   aria-expanded="@(IsOpen(context.Item) ? "true" : "false")"
+                                   title="@(IsOpen(context.Item) ? $"Close the versions of {context.Item.NodeKey}." : $"Show the versions of {context.Item.NodeKey} in use.")"
+                                   OnClick="@(() => ToggleAction(context.Item))"
+                                   data-abom-action-expand="@context.Item.NodeKey" />
+                </span>
+            </CellTemplate>
+        </HierarchyColumn>
         <TemplateColumn Title="" Sortable="false" Hidden="@(!_choosing)" CellClass="abom-row-actions">
             <CellTemplate>
                 @if (RepositoryOf(context.Item) is { Length: > 0 } repository)
@@ -175,28 +200,34 @@
         </TemplateColumn>
         <PropertyColumn Property="x => x.NodeKey" Title="Name"
                         HeaderClass="abom-identity-col" CellClass="abom-identity-col">
+            <HeaderTemplate><HeaderTip Tip="The action as workflows name it in a uses: line. Click it to open its details.">Name</HeaderTip></HeaderTemplate>
             <CellTemplate>
                 @* A name goes to the thing itself. The graph is a pivot you choose, not
                    somewhere a list drops you. *@
-                <IdentityCell Reference="@context.Item.NodeKey"
-                              Href="@($"/node/{Uri.EscapeDataString(context.Item.NodeKey)}")" />
+                <span @onclick:stopPropagation="true">
+                    <IdentityCell Reference="@context.Item.NodeKey" Href="@DetailsHref(context.Item.NodeKey)" />
+                </span>
             </CellTemplate>
         </PropertyColumn>
 
         <TemplateColumn Title="" Sortable="false" HeaderClass="abom-row-actions-head"
                         CellClass="abom-row-actions">
             <CellTemplate>
-                <RowActions NodeKey="@context.Item.NodeKey" />
+                <span @onclick:stopPropagation="true">
+                    <RowActions NodeKey="@context.Item.NodeKey" />
+                </span>
             </CellTemplate>
         </TemplateColumn>
 
         <PropertyColumn Property="x => x.Kind" Title="Type">
+            <HeaderTemplate><HeaderTip Tip="Whether this is an action, a composite action, a reusable workflow or a container image.">Type</HeaderTip></HeaderTemplate>
             <CellTemplate>
                 <MudText Typo="Typo.caption">@TypeLabel(context.Item.Kind)</MudText>
             </CellTemplate>
         </PropertyColumn>
 
         <PropertyColumn Property="x => x.Origin" Title="Origin">
+            <HeaderTemplate><HeaderTip Tip="Whether this lives in a starting point, in an upstream repository, or outside both.">Origin</HeaderTip></HeaderTemplate>
             <CellTemplate>
                 <MudText Typo="Typo.caption">
                     @(context.Item.Origin switch
@@ -209,33 +240,22 @@
             </CellTemplate>
         </PropertyColumn>
 
-        <PropertyColumn Property="x => x.DependentRepos" Title="Repos reached" />
-        <PropertyColumn Property="x => x.DirectDependents" Title="Total refs" />
-
-        @* One action pinned at forty commits is forty upgrade decisions, which a total
-           reference count hides entirely. *@
-        <PropertyColumn Property="x => x.DistinctRefs" Title="Distinct refs">
-            <CellTemplate>
-                <MudTooltip Text="How many different references point at this. Each one is a separate decision to make.">
-                    <span class="abom-num">@context.Item.DistinctRefs</span>
-                </MudTooltip>
-            </CellTemplate>
-        </PropertyColumn>
-
         <PropertyColumn Property="x => x.Findings" Title="Findings">
+            <HeaderTemplate><HeaderTip Tip="How many findings CodeQL rules reported against this action, across every version that was analyzed.">Findings</HeaderTip></HeaderTemplate>
             <CellTemplate>
-                <FindingsCount Count="@context.Item.Findings" Severity="@context.Item.Severity"
-                               Asset="@context.Item.NodeKey" Review="@(() => OpenNodeFindings(context.Item.NodeKey))" />
+                <span @onclick:stopPropagation="true">
+                    <FindingsCount Count="@context.Item.Findings" Severity="@context.Item.Severity"
+                                   Asset="@context.Item.NodeKey" Review="@(() => OpenNodeFindings(context.Item.NodeKey))" />
+                </span>
             </CellTemplate>
         </PropertyColumn>
 
         <PropertyColumn Property="x => x.Advisories" Title="Advisories">
+            <HeaderTemplate><HeaderTip Tip="How many published security advisories name this action's repository. This does not mean the versions in use are affected.">Advisories</HeaderTip></HeaderTemplate>
             <CellTemplate>
                 @if (context.Item.Advisories > 0)
                 {
-                    <MudTooltip Text="Published advisories naming this repository. Compare the ranges against the references before concluding anything.">
-                        <span class="abom-num">@context.Item.Advisories</span>
-                    </MudTooltip>
+                    <span class="abom-num">@context.Item.Advisories</span>
                 }
                 else
                 {
@@ -244,8 +264,50 @@
             </CellTemplate>
         </PropertyColumn>
 
+        @* One action pinned at forty commits is forty upgrade decisions, which a total
+           reference count hides entirely. *@
+        <PropertyColumn Property="x => x.DistinctRefs" Title="Distinct refs">
+            <HeaderTemplate><HeaderTip Tip="How many different versions of this the starting points use. Each one is a separate version to keep up to date.">Distinct <br />refs</HeaderTip></HeaderTemplate>
+            <CellTemplate>@Level("refs", context.Item.DistinctRefs)</CellTemplate>
+        </PropertyColumn>
+
+        @* What depends on the action, from the finest level a reader edits to the coarsest one they
+           answer for. Every level counts starting points only, through another action as much as
+           directly. *@
+        <PropertyColumn Property="x => x.DependentSteps" Title="Depending Steps">
+            <HeaderTemplate><HeaderTip Tip="How many steps in starting points run this action, either by naming it or through another action they use.">Depending <br />Steps</HeaderTip></HeaderTemplate>
+            <CellTemplate>@Level("steps", context.Item.DependentSteps)</CellTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.DependentJobs" Title="Depending Jobs">
+            <HeaderTemplate><HeaderTip Tip="How many jobs in starting points run this action, through one of their steps or a reusable workflow they call.">Depending <br />Jobs</HeaderTip></HeaderTemplate>
+            <CellTemplate>@Level("jobs", context.Item.DependentJobs)</CellTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.DependentWorkflows" Title="Depending Workflows">
+            <HeaderTemplate><HeaderTip Tip="How many workflow files in starting points run this action, directly or through another action.">Depending <br />Workflows</HeaderTip></HeaderTemplate>
+            <CellTemplate>@Level("workflows", context.Item.DependentWorkflows)</CellTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.DependentRepos" Title="Depending Repositories">
+            <HeaderTemplate><HeaderTip Tip="How many starting points run this action, either by naming it or through another action they use.">Depending <br />Repositories</HeaderTip></HeaderTemplate>
+            <CellTemplate>@Level("repositories", context.Item.DependentRepos)</CellTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.DependentGroups" Title="Depending Groups">
+            <HeaderTemplate><HeaderTip Tip="@GroupsTip">Depending <br />Groups</HeaderTip></HeaderTemplate>
+            <CellTemplate>
+                @if (_groupProperty.Length == 0)
+                {
+                    <span class="abom-faint" data-abom-level="groups"
+                          title="No grouping property is configured, so ABOM does not divide repositories into groups.">&mdash;</span>
+                }
+                else
+                {
+                    @Level("groups", context.Item.DependentGroups)
+                }
+            </CellTemplate>
+        </PropertyColumn>
+
         @* Whether the dependency itself was expanded decides if anything downstream is known. *@
         <PropertyColumn Property="x => x.Analyzed" Title="Analyzed">
+            <HeaderTemplate><HeaderTip Tip="Whether ABOM has analyzed what this uses in turn. Until it has, anything it pulls in is missing here.">Analyzed</HeaderTip></HeaderTemplate>
             <CellTemplate>
                 @if (context.Item.Analyzed)
                 {
@@ -260,6 +322,30 @@
             </CellTemplate>
         </PropertyColumn>
     </Columns>
+    <ChildRowContent>
+        <div class="abom-action-panel" tabindex="-1" @ref="_actionPanel" @onkeydown="ActionPanelKey"
+             data-abom-action-panel="@context.Item.NodeKey">
+            @if (_filterTerms.Count == 0)
+            {
+                <MudProgressLinear Indeterminate="true" />
+            }
+            else
+            {
+                <ActionVersions Key="@context.Item.NodeKey" Predicate="@Scope.PredicateFor(_filterTerms, "uses")"
+                                ReferenceHref="@(r => DetailsHref(context.Item.NodeKey, r))"
+                                Compact="true" Loaded="RevealOpenRow">
+                    <MudButton Href="@DetailsHref(context.Item.NodeKey)" Variant="Variant.Outlined" Size="Size.Small"
+                               Color="Color.Primary" EndIcon="@Icons.Material.Filled.ArrowForward"
+                               title="@($"Open {context.Item.NodeKey}'s details page with the filters from this list.")"
+                               data-abom-action-details="@context.Item.NodeKey">Details</MudButton>
+                    <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small"
+                                   aria-label="@($"Close the versions of {context.Item.NodeKey}")"
+                                   title="@($"Close the versions panel for {context.Item.NodeKey}.")"
+                                   OnClick="@(() => ToggleAction(context.Item))" data-abom-action-close />
+                </ActionVersions>
+            }
+        </div>
+    </ChildRowContent>
     <PagerContent>
         <MudDataGridPager T="ActionSummary" />
     </PagerContent>
@@ -275,15 +361,20 @@
                  RowsPerPage="30" ShowColumnOptions="false" FixedHeader="true" Class="abom-grid abom-grid-windowed abom-grid-captioned">
         <Columns>
             <PropertyColumn Property="x => x.NodeKey" Title="Workflow">
+                <HeaderTemplate><HeaderTip Tip="The workflow or reusable workflow file this row describes.">Workflow</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     <MudTooltip Text="@context.Item.Path">
                         <MudLink Href="@($"/node/{Uri.EscapeDataString(context.Item.NodeKey)}")"
-                                 Class="abom-rule abom-trunc">@WorkflowLabel(context.Item)</MudLink>
+                                 Class="abom-rule abom-trunc"
+                                 title="@($"Open the details page for {WorkflowLabel(context.Item)}.")">@WorkflowLabel(context.Item)</MudLink>
                     </MudTooltip>
                 </CellTemplate>
             </PropertyColumn>
-            <PropertyColumn Property="x => x.Repository" Title="Repository" />
+            <PropertyColumn Property="x => x.Repository" Title="Repository">
+                <HeaderTemplate><HeaderTip Tip="The repository that contains this workflow.">Repository</HeaderTip></HeaderTemplate>
+            </PropertyColumn>
             <PropertyColumn Property="x => x.Triggers" Title="Runs on">
+                <HeaderTemplate><HeaderTip Tip="The events that start this workflow, where ABOM recorded them.">Runs on</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     @if (context.Item.Triggers.Length > 0)
                     {
@@ -299,12 +390,19 @@
                     }
                 </CellTemplate>
             </PropertyColumn>
-            <PropertyColumn Property="x => x.Jobs" Title="Jobs" />
-            <PropertyColumn Property="x => x.Steps" Title="Steps" />
-            <PropertyColumn Property="x => x.Dependencies" Title="Dependencies" />
+            <PropertyColumn Property="x => x.Jobs" Title="Jobs">
+                <HeaderTemplate><HeaderTip Tip="How many jobs are declared in this workflow.">Jobs</HeaderTip></HeaderTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Steps" Title="Steps">
+                <HeaderTemplate><HeaderTip Tip="How many steps this workflow's jobs contain in total.">Steps</HeaderTip></HeaderTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Dependencies" Title="Dependencies">
+                <HeaderTemplate><HeaderTip Tip="How many actions or reusable workflows this workflow calls.">Dependencies</HeaderTip></HeaderTemplate>
+            </PropertyColumn>
             @* A count, not a flag: two of nine privileged jobs is a different situation from nine
                of nine, and a yes/no reports them alike. *@
             <PropertyColumn Property="x => x.PrivilegedJobs" Title="Privileged jobs">
+                <HeaderTemplate><HeaderTip Tip="How many jobs in this workflow can write to the repository or read secrets.">Privileged jobs</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     @if (context.Item.PrivilegedJobs > 0)
                     {
@@ -319,6 +417,7 @@
                 </CellTemplate>
             </PropertyColumn>
             <PropertyColumn Property="x => x.Findings" Title="Findings">
+                <HeaderTemplate><HeaderTip Tip="How many findings CodeQL rules reported against this workflow.">Findings</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     <FindingsCount Count="@context.Item.Findings" Severity="@context.Item.Severity"
                                    Asset="@context.Item.NodeKey" Review="@(() => OpenNodeFindings(context.Item.NodeKey))" />
@@ -340,6 +439,7 @@
                  RowsPerPage="30" ShowColumnOptions="false" FixedHeader="true" Class="abom-grid abom-grid-windowed abom-grid-captioned">
         <Columns>
             <PropertyColumn Property="x => x.JobId" Title="Job">
+                <HeaderTemplate><HeaderTip Tip="The job identifier as it is written in the workflow.">Job</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     @* Bounded, because a job id is written by whoever wrote the workflow and some
                        are sentences. Unbounded it pushed five columns off the edge at 1280px. *@
@@ -349,12 +449,14 @@
                 </CellTemplate>
             </PropertyColumn>
             <PropertyColumn Property="x => x.Workflow" Title="Workflow">
+                <HeaderTemplate><HeaderTip Tip="The workflow that contains this job.">Workflow</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     <IdentityCell Reference="@context.Item.Workflow"
                                   Href="@($"/node/{Uri.EscapeDataString(context.Item.Workflow)}")" />
                 </CellTemplate>
             </PropertyColumn>
             <PropertyColumn Property="x => x.RunsOn" Title="Runner">
+                <HeaderTemplate><HeaderTip Tip="The runner label recorded for this job, or that another workflow decides it.">Runner</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     @if (context.Item.RunsOn.Length > 0)
                     {
@@ -373,6 +475,7 @@
                 </CellTemplate>
             </PropertyColumn>
             <PropertyColumn Property="x => x.Privileged" Title="Privileged">
+                <HeaderTemplate><HeaderTip Tip="Whether this job can write to the repository or read secrets.">Privileged</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     @if (context.Item.Privileged)
                     {
@@ -390,6 +493,7 @@
                width: the two below spelled out cost 73px and put Findings — the column this grid
                sorts by — off the right-hand edge at 1280px. *@
             <PropertyColumn Property="x => x.ExternallyTriggerable" Title="External">
+                <HeaderTemplate><HeaderTip Tip="Whether somebody outside the repository can trigger this job.">External</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     <MudTooltip Text="A trigger somebody outside the repository can fire.">
                         <span class="@(context.Item.ExternallyTriggerable ? "abom-num" : "abom-faint")">
@@ -399,15 +503,21 @@
                 </CellTemplate>
             </PropertyColumn>
             <PropertyColumn Property="x => x.PermissionsScope" Title="Permissions">
+                <HeaderTemplate><HeaderTip Tip="Where this job's permissions are set for the workflow run.">Permissions</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     <MudTooltip Text="Where this job's permissions are set: on the job, on the workflow, or left at the default.">
                         <span class="abom-trunc">@context.Item.PermissionsScope</span>
                     </MudTooltip>
                 </CellTemplate>
             </PropertyColumn>
-            <PropertyColumn Property="x => x.Steps" Title="Steps" />
-            <PropertyColumn Property="x => x.Dependencies" Title="Dependencies" />
+            <PropertyColumn Property="x => x.Steps" Title="Steps">
+                <HeaderTemplate><HeaderTip Tip="How many steps this job contains.">Steps</HeaderTip></HeaderTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Dependencies" Title="Dependencies">
+                <HeaderTemplate><HeaderTip Tip="How many actions or reusable workflows this job calls.">Dependencies</HeaderTip></HeaderTemplate>
+            </PropertyColumn>
             <PropertyColumn Property="x => x.Findings" Title="Findings">
+                <HeaderTemplate><HeaderTip Tip="How many findings CodeQL rules reported against this job.">Findings</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     <FindingsCount Count="@context.Item.Findings" Severity="@context.Item.Severity"
                                    Asset="@context.Item.NodeKey" Review="@(() => OpenNodeFindings(context.Item.NodeKey))" />
@@ -436,9 +546,11 @@
             </TemplateColumn>
             <PropertyColumn Property="x => x.FullName" Title="Repository"
                             HeaderClass="abom-identity-col" CellClass="abom-identity-col">
+                <HeaderTemplate><HeaderTip Tip="The repository, by owner and name.">Repository</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     <MudLink Href="@($"/inventory?unit=repositories&q={Uri.EscapeDataString(context.Item.FullName)}")"
-                             Class="abom-rule abom-trunc" title="@context.Item.FullName">@context.Item.FullName</MudLink>
+                             Class="abom-rule abom-trunc"
+                             title="@($"Filter repositories to {context.Item.FullName}.")">@context.Item.FullName</MudLink>
                 </CellTemplate>
             </PropertyColumn>
             @* A repository roots a bill of materials; the Explorer draws a repository alone, with
@@ -450,15 +562,21 @@
                                 Document="@(() => _document = context.Item)" />
                 </CellTemplate>
             </TemplateColumn>
-            <PropertyColumn Property="x => x.Workflows" Title="Workflows" />
-            <PropertyColumn Property="x => x.Dependencies" Title="Dependencies" />
+            <PropertyColumn Property="x => x.Workflows" Title="Workflows">
+                <HeaderTemplate><HeaderTip Tip="How many workflows ABOM recorded in this repository.">Workflows</HeaderTip></HeaderTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Dependencies" Title="Dependencies">
+                <HeaderTemplate><HeaderTip Tip="How many dependencies ABOM recorded from this repository's workflows.">Dependencies</HeaderTip></HeaderTemplate>
+            </PropertyColumn>
             <PropertyColumn Property="x => x.Findings" Title="Findings">
+                <HeaderTemplate><HeaderTip Tip="How many findings CodeQL rules reported against this repository.">Findings</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     <FindingsCount Count="@context.Item.Findings" Severity="@context.Item.Severity"
                                    Asset="@context.Item.FullName" Review="@(() => OpenRepositoryFindings(context.Item.FullName))" />
                 </CellTemplate>
             </PropertyColumn>
             <TemplateColumn Title="Repository Properties" Sortable="false">
+                <HeaderTemplate><HeaderTip Tip="The custom repository property values ABOM read for this repository.">Repository Properties</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     <span class="abom-repository-properties" data-abom-repository-properties="@context.Item.FullName">
                         @if (context.Item.Properties.Count == 0)
@@ -477,8 +595,12 @@
             </TemplateColumn>
             @* Direct is the half this repository can fix itself; the rest wait on an
                intermediary, and collapsing the two would say every route is theirs to close. *@
-            <PropertyColumn Property="x => x.DirectExposures" Title="Direct advisory routes" />
-            <PropertyColumn Property="x => x.Exposures" Title="All advisory routes" />
+            <PropertyColumn Property="x => x.DirectExposures" Title="Direct advisory routes">
+                <HeaderTemplate><HeaderTip Tip="How many routes to an action an advisory names start in this repository's own workflows, so it can change them itself.">Direct advisory routes</HeaderTip></HeaderTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Exposures" Title="All advisory routes">
+                <HeaderTemplate><HeaderTip Tip="How many routes lead from this repository to an action an advisory names, directly or through other actions.">All advisory routes</HeaderTip></HeaderTemplate>
+            </PropertyColumn>
         </Columns>
         <PagerContent>
             <MudDataGridPager T="RepositorySummary" />
@@ -493,6 +615,7 @@
                  RowsPerPage="30" ShowColumnOptions="false" FixedHeader="true" Class="abom-grid abom-grid-windowed abom-grid-captioned">
         <Columns>
             <PropertyColumn Property="x => x.Rank" Title="Rank">
+                <HeaderTemplate><HeaderTip Tip="The advisory's position after sorting by published severity, then by reachable repositories.">Rank</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     <MudTooltip Text="Published severity first, then how many repositories reach it. CVSS and EPSS are context and are deliberately not part of this.">
                         <span class="abom-num" data-abom-advisory-rank>@context.Item.Rank</span>
@@ -500,19 +623,28 @@
                 </CellTemplate>
             </PropertyColumn>
             <PropertyColumn Property="x => x.Severity" Title="Severity">
+                <HeaderTemplate><HeaderTip Tip="The published severity recorded for this advisory.">Severity</HeaderTip></HeaderTemplate>
                 <CellTemplate><SeverityChip Severity="@context.Item.Severity" /></CellTemplate>
             </PropertyColumn>
             <PropertyColumn Property="x => x.GhsaId" Title="Advisory">
+                <HeaderTemplate><HeaderTip Tip="The GitHub Security Advisory identifier for the published advisory.">Advisory</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     <MudLink Href="@($"https://github.com/advisories/{context.Item.GhsaId}")"
-                             Target="_blank" rel="noopener noreferrer" Class="abom-rule">@context.Item.GhsaId</MudLink>
+                             Target="_blank" rel="noopener noreferrer" Class="abom-rule"
+                             title="@($"Open {context.Item.GhsaId} on GitHub Security Advisories.")">@context.Item.GhsaId</MudLink>
                 </CellTemplate>
             </PropertyColumn>
             @* Direct and transitive are different work: one is a version bump here, the other
                waits on somebody else. One combined figure would say they are the same job. *@
-            <PropertyColumn Property="x => x.DirectRepos" Title="Direct" />
-            <PropertyColumn Property="x => x.TransitiveRepos" Title="Transitive" />
-            <PropertyColumn Property="x => x.Summary" Title="Summary" />
+            <PropertyColumn Property="x => x.DirectRepos" Title="Direct">
+                <HeaderTemplate><HeaderTip Tip="How many starting points name an action this advisory names in their own workflows, and so can change that reference themselves.">Direct</HeaderTip></HeaderTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.TransitiveRepos" Title="Transitive">
+                <HeaderTemplate><HeaderTip Tip="How many starting points get an action this advisory names only through another action, and so wait on whoever maintains it.">Transitive</HeaderTip></HeaderTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Summary" Title="Summary">
+                <HeaderTemplate><HeaderTip Tip="The published advisory summary, as GitHub reports it.">Summary</HeaderTip></HeaderTemplate>
+            </PropertyColumn>
         </Columns>
         <PagerContent>
             <MudDataGridPager T="RemediationItem" />
@@ -550,6 +682,7 @@
                cell's children out side by side, and the second one pushed every value in the row
                off the edge. *@
             <PropertyColumn Property="x => x.Source" Title="Declared by">
+                <HeaderTemplate><HeaderTip Tip="The workflow, job, or step that declares this relationship.">Declared by</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     <div class="abom-cell-stack">
                         <IdentityCell Reference="@context.Item.Source" />
@@ -563,6 +696,7 @@
                 </CellTemplate>
             </PropertyColumn>
             <PropertyColumn Property="x => x.Target" Title="Points at">
+                <HeaderTemplate><HeaderTip Tip="The action, workflow, or job this relationship points at, plus the boundary when known.">Points at</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     <div class="abom-cell-stack">
                         <IdentityCell Reference="@context.Item.Target" />
@@ -575,12 +709,14 @@
                 </CellTemplate>
             </PropertyColumn>
             <PropertyColumn Property="x => x.Kind" Title="Relationship">
+                <HeaderTemplate><HeaderTip Tip="The kind of relationship the declaring line creates.">Relationship</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     <MudText Typo="Typo.caption">@EdgeKindLabel(context.Item.Kind)</MudText>
                 </CellTemplate>
             </PropertyColumn>
             @* The reference verbatim, because that is the text a reader has to go and edit. *@
             <PropertyColumn Property="x => x.Ref" Title="Reference">
+                <HeaderTemplate><HeaderTip Tip="The reference text as it was written, plus any lock-selected commit.">Reference</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     <div class="abom-cell-stack">
                     @if (context.Item.Ref.Length > 0)
@@ -606,6 +742,7 @@
                 </CellTemplate>
             </PropertyColumn>
             <PropertyColumn Property="x => x.Findings" Title="Findings">
+                <HeaderTemplate><HeaderTip Tip="How many findings CodeQL rules reported against this declaring line.">Findings</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     <FindingsCount Count="@context.Item.Findings" Severity="@context.Item.Severity" />
                     @if (context.Item.Rules.Count > 0)
@@ -643,6 +780,7 @@
             <MudButton Size="Size.Small" DropShadow="false"
                        Variant="@(_coverageState == value ? Variant.Filled : Variant.Text)"
                        Color="@(_coverageState == value ? Color.Primary : Color.Default)"
+                       title="@(value.Length == 0 ? "Show coverage rows for every queue state." : $"Show coverage rows whose state is {label.ToLowerInvariant()}.")"
                        OnClick="@(() => ChooseCoverageState(value))"
                        data-abom-coverage-state="@value">@label</MudButton>
         }
@@ -659,6 +797,7 @@
                      ShowColumnOptions="false" FixedHeader="true" Class="abom-grid abom-grid-windowed abom-grid-captioned">
             <Columns>
                 <PropertyColumn Property="x => x.NodeKey" Title="Dependency">
+                    <HeaderTemplate><HeaderTip Tip="The dependency and version the crawl is trying to analyze.">Dependency</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         @* A dependency queued at a declared ref and at the commit a lock selects is
                            two rows: without its version each reads as a duplicate of the other, and
@@ -679,6 +818,7 @@
                     </CellTemplate>
                 </PropertyColumn>
                 <PropertyColumn Property="x => x.State" Title="State">
+                    <HeaderTemplate><HeaderTip Tip="Where this dependency stands in the analysis queue.">State</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         <span class="abom-status-cell">
                             <span class="abom-state-dot mr-1"
@@ -688,14 +828,18 @@
                     </CellTemplate>
                 </PropertyColumn>
                 <PropertyColumn Property="x => x.Tier" Title="Tier">
+                    <HeaderTemplate><HeaderTip Tip="The analysis tier that determines which CodeQL suites ran or will run.">Tier</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         <MudText Typo="Typo.caption">
                             @(string.IsNullOrEmpty(context.Item.Tier) ? "—" : context.Item.Tier)
                         </MudText>
                     </CellTemplate>
                 </PropertyColumn>
-                <PropertyColumn Property="x => x.Depth" Title="Hops" />
+                <PropertyColumn Property="x => x.Depth" Title="Hops">
+                    <HeaderTemplate><HeaderTip Tip="How many dependency steps separate this row from a starting point.">Hops</HeaderTip></HeaderTemplate>
+                </PropertyColumn>
                 <PropertyColumn Property="x => x.Attempts" Title="Attempts">
+                    <HeaderTemplate><HeaderTip Tip="How many times ABOM has tried to analyze this dependency.">Attempts</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         @if (context.Item.Attempts > 0)
                         {
@@ -711,6 +855,7 @@
                    unavailable, and only the reason says which one fixing access would heal. *@
                 <PropertyColumn Property="x => x.Reason" Title="Reason" Sortable="false"
                                 Hidden="@(_coverageState is not ("unavailable" or "retrying"))">
+                    <HeaderTemplate><HeaderTip Tip="Why this dependency is unavailable or waiting to be retried, when ABOM recorded one.">Reason</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         @if (context.Item.Reason is { Length: > 0 } reason)
                         {
@@ -723,6 +868,7 @@
                     </CellTemplate>
                 </PropertyColumn>
                 <PropertyColumn Property="x => x.AnalyzedAt" Title="Last analyzed">
+                    <HeaderTemplate><HeaderTip Tip="When ABOM last analyzed this dependency version, if it has.">Last analyzed</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         @if (context.Item.AnalyzedAt is { Length: > 0 } at)
                         {
@@ -737,6 +883,7 @@
                     </CellTemplate>
                 </PropertyColumn>
                 <PropertyColumn Property="x => x.Suites" Title="Analyzed with" Sortable="false">
+                    <HeaderTemplate><HeaderTip Tip="The CodeQL suites recorded for this analysis, where ABOM knows them.">Analyzed with</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         @if (context.Item.SuitesKnown)
                         {
@@ -789,8 +936,17 @@ else if (_unit != UnitFindings)
         This question also matches @ElsewhereText() — not listed here, because
         @(_elsewhere.Count == 1 ? "that kind is" : "those kinds are") inside your workflows rather
         than dependencies of them.
-        <MudLink Href="@ElsewhereHref()" Typo="Typo.caption">Show @(_elsewhere.Count == 1
+        <MudLink Href="@ElsewhereHref()" Typo="Typo.caption"
+                 title="Show the matching rows inside workflows that are not listed as dependencies here.">Show @(_elsewhere.Count == 1
             ? TypeLabel(_elsewhere[0].Kind).ToLowerInvariant() : "them")</MudLink>
+    </MudText>
+}
+@if (_unit == UnitDependencies && _unlisted > 0)
+{
+    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1" data-abom-unlisted>
+        @CountText.Of(_unlisted, "more action matches", "more actions match") that no starting point
+        runs or holds, so @(_unlisted == 1 ? "it is" : "they are") not listed: only other repositories
+        use @(_unlisted == 1 ? "it" : "them"), or nothing does.
     </MudText>
 }
 @if (_unsourced > 0)
@@ -921,6 +1077,7 @@ else if (_unit != UnitFindings)
     private int _unreached;
     private IReadOnlyList<KindCount> _elsewhere = [];
     private int _unsourced;
+    private int _unlisted;
     private int _unprovided;
 
     private static readonly Dictionary<string, string> SortLabels = new()
@@ -929,7 +1086,10 @@ else if (_unit != UnitFindings)
         ["kind"] = "type",
         ["origin"] = "origin",
         ["dependentRepos"] = "reach",
-        ["directDependents"] = "total refs",
+        ["dependentSteps"] = "depending steps",
+        ["dependentJobs"] = "depending jobs",
+        ["dependentWorkflows"] = "depending workflows",
+        ["dependentGroups"] = "depending groups",
         ["distinctRefs"] = "distinct refs",
         ["findings"] = "finding severity",
         ["advisories"] = "advisories",
@@ -944,7 +1104,10 @@ else if (_unit != UnitFindings)
         ["Kind"] = "kind",
         ["Origin"] = "origin",
         ["DependentRepos"] = "dependentRepos",
-        ["DirectDependents"] = "directDependents",
+        ["DependentSteps"] = "dependentSteps",
+        ["DependentJobs"] = "dependentJobs",
+        ["DependentWorkflows"] = "dependentWorkflows",
+        ["DependentGroups"] = "dependentGroups",
         ["DistinctRefs"] = "distinctRefs",
         ["Findings"] = "findings",
         ["Advisories"] = "advisories",
@@ -1025,8 +1188,8 @@ else if (_unit != UnitFindings)
             "What the crawl has reached and what it has not, in the order it will claim them. A " +
             "dependency nothing has analyzed contributes nothing downstream until it is.",
         _ =>
-            "Every action, composite action and image the organization depends on, widest reach " +
-            "first. Origin says whose each one is. The advisory count is how many published " +
+            "Every action, composite action and image your starting points run or hold, widest " +
+            "reach first. Origin says whose each one is. The advisory count is how many published " +
             "advisories name the component's repository, not a claim that the references below " +
             "fall inside them.",
     };
@@ -1086,7 +1249,11 @@ else if (_unit != UnitFindings)
         _choosing = Draft.Queries.Count > 0;
     }
 
-    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
+    public void Dispose()
+    {
+        Nav.LocationChanged -= OnLocationChanged;
+        _ = _rows?.DisposeAsync();
+    }
 
     // The repositories a run drafted here is over; the versions are the shared draft's.
     private bool _choosing;
@@ -1272,7 +1439,7 @@ else if (_unit != UnitFindings)
 
     private static string RelationshipLockText(RelationshipLock l)
     {
-        var commit = l.Commit.Length <= 12 ? l.Commit : l.Commit[..12];
+        var commit = CommitText.Short(l.Commit);
         if (l.Via.Length > 0)
         {
             return $"{l.Consumer}'s lock selects {commit} through {l.Via}";
@@ -1332,136 +1499,144 @@ else if (_unit != UnitFindings)
     /// scope is not narrowing this screen. Deciding here which terms to drop would be a second
     /// copy of the server's declaration, drifting quietly.
     /// </summary>
-    private async Task<GridData<ActionSummary>> LoadPage(GridState<ActionSummary> state)
+    // The property groups are counted by, as the server was configured; empty counts none.
+    private string _groupProperty = string.Empty;
+
+    private string GroupsTip => _groupProperty.Length > 0
+        ? $"How many groups of starting points run this action, where a group is the repositories sharing one value of the {_groupProperty} property. A repository with no value is in no group."
+        : "How many groups of starting points run this action. No grouping property is configured, so there are none to count.";
+
+    // A level reach has not counted yet says so: a zero there would say nothing depends on it.
+    private static RenderFragment Level(string level, int? count) =>
+        @<span class="@(count is null ? "abom-coverage-unknown" : "abom-num")" data-abom-level="@level"
+               title="@(count is null ? "ABOM has not counted this yet. It is counted the next time reach is recomputed." : null)">@(count?.ToString("N0") ?? "\u2014")</span>;
+
+    // The row whose versions are open. One at a time: a second would push the first off screen.
+    private ActionSummary? _openAction;
+    private ElementReference _actionPanel;
+    private bool _focusPanel;
+    private IJSObjectReference? _rows;
+
+    private bool IsOpen(ActionSummary item) => _openAction?.NodeKey == item.NodeKey;
+
+    private string? ActionRowClass(ActionSummary item, int index) => IsOpen(item) ? "abom-row-open" : null;
+
+    private Task OnActionRowClick(DataGridRowClickEventArgs<ActionSummary> e) => ToggleAction(e.Item);
+
+    private async Task ToggleAction(ActionSummary item)
     {
-        var sort = state.SortDefinitions.FirstOrDefault();
-        _sort = sort is not null && SortTerms.TryGetValue(sort.SortBy, out var term) ? term : null;
-
-        var (page, refusal) = await Api.GetActionsPageAsync(
-            Scope.Spec.ToQueryString(), state.PageSize, state.Page * state.PageSize,
-            _sort, sort?.Descending ?? false);
-
-        _refusal = refusal;
-        _total = page?.Total ?? 0;
-        _shown = page?.Items.Count ?? 0;
-        _elsewhere = page?.Elsewhere ?? [];
-        _unsourced = page?.Unsourced ?? 0;
-        _unprovided = page?.Unprovided ?? 0;
-        // The line stating what was left out sits outside the grid, and the grid re-renders only
-        // itself, so without this it keeps reporting the page before last.
-        StateHasChanged();
-        return new GridData<ActionSummary> { Items = page?.Items ?? [], TotalItems = _total };
-    }
-
-    /// <summary>One page of the workflows unit, with its own columns and its own endpoint.</summary>
-    private async Task<GridData<WorkflowRow>> LoadWorkflows(GridState<WorkflowRow> state)
-    {
-        var sort = state.SortDefinitions.FirstOrDefault();
-        _sort = sort is not null && WorkflowSortTerms.TryGetValue(sort.SortBy, out var term)
-            ? term : null;
-
-        var (page, refusal) = await Api.GetWorkflowsPageAsync(
-            Scope.Spec.ToQueryString(), state.PageSize, state.Page * state.PageSize,
-            _sort, sort?.Descending ?? false);
-
-        _refusal = refusal;
-        _total = page?.Total ?? 0;
-        _shown = page?.Items.Count ?? 0;
-        _elsewhere = [];
-        _unsourced = 0;
-        _unprovided = 0;
-        StateHasChanged();
-        return new GridData<WorkflowRow> { Items = page?.Items ?? [], TotalItems = _total };
-    }
-
-    /// <summary>One page of the jobs unit, whose facts are recorded against the job itself.</summary>
-    private async Task<GridData<JobRow>> LoadJobs(GridState<JobRow> state)
-    {
-        var sort = state.SortDefinitions.FirstOrDefault();
-        _sort = sort is not null && JobSortTerms.TryGetValue(sort.SortBy, out var term)
-            ? term : null;
-
-        var (page, refusal) = await Api.GetJobsPageAsync(
-            Scope.Spec.ToQueryString(), state.PageSize, state.Page * state.PageSize,
-            _sort, sort?.Descending ?? false);
-
-        _refusal = refusal;
-        _total = page?.Total ?? 0;
-        _shown = page?.Items.Count ?? 0;
-        _elsewhere = [];
-        _unsourced = 0;
-        _unprovided = 0;
-        StateHasChanged();
-        return new GridData<JobRow> { Items = page?.Items ?? [], TotalItems = _total };
-    }
-
-    /// <summary>One page of the repositories unit, with its own columns and its own endpoint.</summary>
-    private async Task<GridData<RepositorySummary>> LoadRepositories(
-        GridState<RepositorySummary> state)
-    {
-        var sort = state.SortDefinitions.FirstOrDefault();
-        _sort = sort is not null && RepositorySortTerms.TryGetValue(sort.SortBy, out var term)
-            ? term : null;
-
-        var (page, refusal) = await Api.GetRepositoriesPageAsync(
-            Scope.Spec.ToQueryString(), state.PageSize, state.Page * state.PageSize,
-            _sort, sort?.Descending ?? false);
-
-        _refusal = refusal;
-        _total = page?.Total ?? 0;
-        _shown = page?.Items.Count ?? 0;
-        _elsewhere = [];
-        _unsourced = 0;
-        _unprovided = 0;
-        if (_all)
+        if (_grid is null) return;
+        var closing = IsOpen(item);
+        if (_openAction is { } open)
         {
-            // "All" follows the scope, and a scope that stops listing anything has nothing to send.
-            _all = ChooseAllReason.Length == 0;
+            await _grid.ToggleHierarchyVisibilityAsync(open);
+            _openAction = null;
         }
-        StateHasChanged();
-        return new GridData<RepositorySummary> { Items = page?.Items ?? [], TotalItems = _total };
+        if (!closing)
+        {
+            await _grid.ToggleHierarchyVisibilityAsync(item);
+            _openAction = item;
+            _focusPanel = true;
+        }
+    }
+
+    private async Task ActionPanelKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape" && _openAction is { } open)
+        {
+            await ToggleAction(open);
+        }
+    }
+
+    // Focus is for Escape. Scrolling waits for the versions, because until they are drawn nobody
+    // knows how much room the panel takes.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_focusPanel) return;
+        _focusPanel = false;
+        await _actionPanel.FocusAsync(preventScroll: true);
+    }
+
+    private async Task RevealOpenRow()
+    {
+        _rows ??= await Js.InvokeAsync<IJSObjectReference>("import", "./js/rows.js");
+        await _rows.InvokeAsync<bool>("revealRow", ".abom-actions-grid tr.abom-row-open");
     }
 
     /// <summary>
-    /// One page of the advisories unit, worst first across the whole match.
+    /// The details page, carrying the scope this list was drawn under, and narrowed to one
+    /// reference when one was chosen. Terms the page does not apply stay in its address, named.
     /// </summary>
-    ///
-    /// Ordered by the server and not sortable here: the rank is a place in the whole match, and a
-    /// column header offering to re-rank one page would invite a reader to ask a question the rank
-    /// cannot answer.
-    private async Task<GridData<RemediationItem>> LoadAdvisories(GridState<RemediationItem> state)
+    private string DetailsHref(string key, string? reference = null)
     {
-        _sort = null;
-        var (page, refusal) = await Api.GetAdvisoriesPageAsync(
-            Scope.Spec.ToQueryString(), state.PageSize, state.Page * state.PageSize, null, false);
-
-        _refusal = refusal;
-        _total = page?.Total ?? 0;
-        _shown = page?.Items.Count ?? 0;
-        _unreached = page?.Unreached ?? 0;
-        _elsewhere = [];
-        _unsourced = 0;
-        _unprovided = 0;
-        StateHasChanged();
-        return new GridData<RemediationItem> { Items = page?.Items ?? [], TotalItems = _total };
+        var spec = reference is { Length: > 0 } r ? Scope.Spec with { At = [r] } : Scope.Spec;
+        var query = spec.ToQueryString();
+        return $"/node/{Uri.EscapeDataString(key)}" + (query.Length > 0 ? "?" + query : "");
     }
 
-    private async Task<GridData<RelationshipSummary>> LoadRelationships(
-        GridState<RelationshipSummary> state)
+    private Task<GridData<ActionSummary>> LoadPage(GridState<ActionSummary> state)
     {
-        _sort = null;
-        var (page, refusal) = await Api.GetRelationshipsPageAsync(
-            Scope.Spec.ToQueryString(), state.PageSize, state.Page * state.PageSize, null, false);
+        // A new page is new rows; the one that was open is not among them.
+        _openAction = null;
+        return LoadUnit<ActionSummary, InventoryPage>(state, "api/actions", SortTerms, page =>
+        {
+            _groupProperty = page?.GroupProperty ?? string.Empty;
+            _elsewhere = page?.Elsewhere ?? [];
+            _unsourced = page?.Unsourced ?? 0;
+            _unprovided = page?.Unprovided ?? 0;
+            _unlisted = page?.Unlisted ?? 0;
+        });
+    }
+
+    private Task<GridData<WorkflowRow>> LoadWorkflows(GridState<WorkflowRow> state) =>
+        LoadUnit<WorkflowRow, WorkflowsPage>(state, "api/workflows", WorkflowSortTerms);
+
+    /// <summary>The jobs unit, whose facts are recorded against the job itself.</summary>
+    private Task<GridData<JobRow>> LoadJobs(GridState<JobRow> state) =>
+        LoadUnit<JobRow, JobsPage>(state, "api/jobs", JobSortTerms);
+
+    // "All" follows the scope, and a scope that stops listing anything has nothing to send.
+    private Task<GridData<RepositorySummary>> LoadRepositories(GridState<RepositorySummary> state) =>
+        LoadUnit<RepositorySummary, RepositoriesPage>(state, "api/repositories", RepositorySortTerms,
+            _ => _all = _all && ChooseAllReason.Length == 0);
+
+    /// <summary>
+    /// The advisories unit, worst first across the whole match.
+    /// </summary>
+    ///
+    /// Not sortable here: the rank is a place in the whole match, and a column header offering to
+    /// re-rank one page would invite a reader to ask a question the rank cannot answer.
+    private Task<GridData<RemediationItem>> LoadAdvisories(GridState<RemediationItem> state) =>
+        LoadUnit<RemediationItem, AdvisoriesPage>(state, "api/remediation", null,
+            page => _unreached = page?.Unreached ?? 0);
+
+    private Task<GridData<RelationshipSummary>> LoadRelationships(GridState<RelationshipSummary> state) =>
+        LoadUnit<RelationshipSummary, RelationshipsPage>(state, "api/relationships", null);
+
+    /// <summary>
+    /// One page of a unit from its own endpoint, ordered across the whole match by the server. What
+    /// only one unit reports is cleared for every other, and set by <paramref name="also"/>.
+    /// </summary>
+    private async Task<GridData<TRow>> LoadUnit<TRow, TPage>(GridState<TRow> state, string path,
+        IReadOnlyDictionary<string, string>? sorts, Action<TPage?>? also = null)
+        where TPage : class, IPage<TRow>
+    {
+        var sort = state.SortDefinitions.FirstOrDefault();
+        _sort = sort is not null && sorts is not null && sorts.TryGetValue(sort.SortBy, out var term)
+            ? term : null;
+        var (page, refusal) = await Api.GetPageAsync<TPage>(path, Scope.Spec.ToQueryString(),
+            state.PageSize, state.Page * state.PageSize, _sort, sort?.Descending ?? false);
 
         _refusal = refusal;
         _total = page?.Total ?? 0;
         _shown = page?.Items.Count ?? 0;
-        _unreached = 0;
         _elsewhere = [];
-        _unsourced = 0;
-        _unprovided = 0;
+        _unsourced = _unprovided = _unlisted = _unreached = 0;
+        also?.Invoke(page);
+        // The lines stating what was left out sit outside the grid, and the grid re-renders only
+        // itself, so without this they keep reporting the page before last.
         StateHasChanged();
-        return new GridData<RelationshipSummary> { Items = page?.Items ?? [], TotalItems = _total };
+        return new GridData<TRow> { Items = page?.Items ?? [], TotalItems = _total };
     }
 
     // `needs:` is ordering rather than use, and a list that called it a dependency would be

@@ -2,11 +2,19 @@ package store
 
 import "testing"
 
-// Owned scope must match the closure the crawl is bounded by and pruning acts on.
+// declaringApp is the subgraph fixture with only octo-org/app declared.
+func declaringApp(t *testing.T) *Store {
+	t.Helper()
+	s := subgraphFixture(t)
+	if err := s.SetOwnedScope([]DeclaredAccount{{Owner: "octo-org", Kind: AccountOrganization,
+		Enabled: true, IncludesOnly: true, Includes: []string{"app"}}}, DeclaredByCLI); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
 func TestTheOwnedScopeKeepsWhatTheDeclarationReaches(t *testing.T) {
-	g, err := subgraphFixture(t).FullGraph(FullGraphOptions{
-		Scope: ScopeOwned, Closure: []string{"octo-org/app"},
-	})
+	g, err := declaringApp(t).FullGraph(FullGraphOptions{Scope: ScopeOwned})
 	if err != nil {
 		t.Fatalf("FullGraph: %v", err)
 	}
@@ -14,8 +22,7 @@ func TestTheOwnedScopeKeepsWhatTheDeclarationReaches(t *testing.T) {
 	keys := keysOf(g)
 	for _, want := range []string{
 		"octo-org/app/.github/workflows/ci.yml",
-		// Reached only through app's edge, so this is the clause that makes a closure a closure
-		// rather than a list of repositories.
+		// In another repository, and in scope because app runs it.
 		"octo-org/shared/.github/workflows/build.yml",
 	} {
 		if !keys[want] {
@@ -25,9 +32,7 @@ func TestTheOwnedScopeKeepsWhatTheDeclarationReaches(t *testing.T) {
 }
 
 func TestTheOwnedScopeDropsWhatTheDeclarationDoesNotReach(t *testing.T) {
-	g, err := subgraphFixture(t).FullGraph(FullGraphOptions{
-		Scope: ScopeOwned, Closure: []string{"octo-org/app"},
-	})
+	g, err := declaringApp(t).FullGraph(FullGraphOptions{Scope: ScopeOwned})
 	if err != nil {
 		t.Fatalf("FullGraph: %v", err)
 	}
@@ -35,9 +40,8 @@ func TestTheOwnedScopeDropsWhatTheDeclarationDoesNotReach(t *testing.T) {
 	keys := keysOf(g)
 	for _, gone := range []string{
 		"octo-org/tool/.github/workflows/ci.yml",
+		// The repository app depends on holds its own CI, which app does not run.
 		"octo-org/shared/.github/workflows/ci.yml",
-		// Used by tool and by shared's own workflows, never on anything app reaches.
-		"actions/checkout",
 	} {
 		if keys[gone] {
 			t.Errorf("%s is outside the declared closure and was kept", gone)
@@ -46,9 +50,7 @@ func TestTheOwnedScopeDropsWhatTheDeclarationDoesNotReach(t *testing.T) {
 }
 
 func TestTheOwnedScopeKeepsOnlyEdgesBetweenNodesItKept(t *testing.T) {
-	g, err := subgraphFixture(t).FullGraph(FullGraphOptions{
-		Scope: ScopeOwned, Closure: []string{"octo-org/app"},
-	})
+	g, err := declaringApp(t).FullGraph(FullGraphOptions{Scope: ScopeOwned})
 	if err != nil {
 		t.Fatalf("FullGraph: %v", err)
 	}

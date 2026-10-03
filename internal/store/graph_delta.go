@@ -72,6 +72,9 @@ type ReachStaleness struct {
 	// NewEdges counts dependencies ingested since, and TotalEdges the corpus they joined.
 	NewEdges   int
 	TotalEdges int
+	// Incomplete is true when stored reach predates a figure this build counts, so a row holds
+	// NULL for it until reach is next derived.
+	Incomplete bool
 }
 
 // ReachStaleness measures the gap a rebuild would close, so the decision to pay for one is made
@@ -80,6 +83,11 @@ func (s *Store) ReachStaleness() (ReachStaleness, error) {
 	out := ReachStaleness{Never: true}
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM abom_edge_regular`).Scan(&out.TotalEdges); err != nil {
 		return out, fmt.Errorf("counting edges: %w", err)
+	}
+	if err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM abom_blast_radius
+		WHERE refs_in_use IS NULL OR dependent_steps IS NULL OR dependent_jobs IS NULL)`).
+		Scan(&out.Incomplete); err != nil {
+		return out, fmt.Errorf("reading whether reach is complete: %w", err)
 	}
 
 	var at sql.NullString

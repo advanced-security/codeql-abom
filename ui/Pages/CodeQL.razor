@@ -17,6 +17,7 @@
                    Color="@(_tab == key ? Color.Primary : Color.Default)"
                    Class="@(_tab == key ? "abom-unit-selected" : null)"
                    role="tab" aria-selected="@(_tab == key ? "true" : "false")"
+                   title="@($"Switch to the {label} tab on the CodeQL page.")"
                    OnClick="@(() => Choose(key))" data-abom-tab="@key">@label</MudButton>
     }
 </div>

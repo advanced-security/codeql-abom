@@ -159,12 +159,17 @@ func (s *Store) ObservationsOf(subjectKind, subjectKey string) ([]StoredObservat
 // produce a different answer. Recognizing that is what makes re-processing affordable to offer:
 // only the queries or databases that actually changed have to run again.
 func (s *Store) QueryRunExists(q QueryRun) (bool, error) {
+	return s.runOnRecord(q, "")
+}
+
+// runOnRecord is QueryRunExists narrowed by a further condition on the run.
+func (s *Store) runOnRecord(q QueryRun, also string) (bool, error) {
 	if err := q.identified(); err != nil {
 		return false, err
 	}
 	var one int
 	err := s.db.QueryRow(
-		`SELECT 1 FROM abom_query_run WHERE run_key = ?`, q.key()).Scan(&one)
+		`SELECT 1 FROM abom_query_run WHERE run_key = ?`+also, q.key()).Scan(&one)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}

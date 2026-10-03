@@ -394,6 +394,14 @@ func (e *Expander) pendingWork(
 		}
 		return e.Store.QueryRunExistsForContent(q, digest)
 	}
+	// An edges run stands for its commit only once its sightings say what that commit declared.
+	edgesDone := func(q store.QueryRun) (bool, error) {
+		ran, err := e.Store.EdgeRunExists(q)
+		if err != nil || ran {
+			return ran, err
+		}
+		return e.Store.EdgeRunExistsForContent(q, digest)
+	}
 
 	var out pending
 	// No ref: this asks whether the evaluation is on record, and the ref is not part of a run's
@@ -401,7 +409,11 @@ func (e *Expander) pendingWork(
 	// content already analyzed, which is the case it exists for.
 	at := revision{repository: repository, commit: commit, filter: e.sourceFilter()}
 	for _, q := range planned.bqrs {
-		ran, err := done(planned.queryRun(q.id, at))
+		check := done
+		if q.shape == ingest.ShapeEdges {
+			check = edgesDone
+		}
+		ran, err := check(planned.queryRun(q.id, at))
 		if err != nil {
 			return pending{}, err
 		}
@@ -868,7 +880,7 @@ func (e *Expander) consume(
 	if err := e.recordDatabase(p, at, planned); err != nil {
 		return 0, err
 	}
-	rows, err := e.ingestEdges(p, opts, planned, at)
+	rows, edgesRun, err := e.ingestEdges(p, opts, planned, at)
 	if err != nil {
 		return 0, err
 	}
@@ -888,6 +900,11 @@ func (e *Expander) consume(
 		return 0, err
 	}
 	e.Writer.ResetLocal()
+	if edgesRun > 0 {
+		if err := e.Store.MarkSightedContent(edgesRun); err != nil {
+			return 0, err
+		}
+	}
 
 	return rows, e.settle(b, p, opts, stats)
 }
@@ -947,12 +964,13 @@ func (e *Expander) recordDatabase(p work.Prepared, at revision, planned tierPlan
 	return err
 }
 
-// ingestEdges records the dependency edges one round produced, and how many rows they were.
+// ingestEdges records the dependency edges one round produced, how many rows they were, and the
+// run they are sighted under, which answers for its commit once they are flushed.
 func (e *Expander) ingestEdges(
 	p work.Prepared, opts Options, planned tierPlan, at revision,
-) (int, error) {
+) (int, int64, error) {
 	if p.ResultPath == "" {
-		return 0, nil
+		return 0, 0, nil
 	}
 	queryID := p.ResultQueryID
 	if queryID == "" {
@@ -960,16 +978,17 @@ func (e *Expander) ingestEdges(
 	}
 	runID, err := e.Store.RecordQueryRun(planned.queryRun(queryID, at))
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	f, err := os.Open(p.ResultPath)
 	if err != nil {
-		return 0, fmt.Errorf("opening results: %w", err)
+		return 0, 0, fmt.Errorf("opening results: %w", err)
 	}
 	defer f.Close()
-	return e.Ingester.EdgesFromBQRS(f, ingest.Options{
+	rows, err := e.Ingester.EdgesFromBQRS(f, ingest.Options{
 		Repository: at.repository, QueryRunID: runID,
 	})
+	return rows, runID, err
 }
 
 // report surfaces a failure that must not abort the round, naming what failed.

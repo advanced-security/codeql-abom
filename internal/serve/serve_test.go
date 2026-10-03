@@ -206,17 +206,43 @@ func TestFrontierEndpoint(t *testing.T) {
 }
 
 // The question the interface exists to answer about a dependency: not whether the name appears
-// somewhere, but which repositories under review actually reach it and through what.
-func TestNodeReachNamesWhoActuallyGetsThere(t *testing.T) {
+// somewhere, but which repositories actually reach it, at which reference and commit, and how.
+func TestNodeUsesNamesWhoActuallyGetsThere(t *testing.T) {
 	srv, s := newServer(t)
 	seedGraph(t, s)
 
-	reach := decode[[]graph.NodeReach](t, get(t, srv, "/api/node/actions/checkout/-/reach"))
-	if len(reach) != 1 {
-		t.Fatalf("reach = %+v, want the one repository that uses it", reach)
+	uses := decode[graph.UsesPage](t, get(t, srv, "/api/node/actions/checkout/-/uses"))
+	if uses.Total != 1 || len(uses.Items) != 1 {
+		t.Fatalf("uses = %+v, want the one repository that uses it", uses)
 	}
-	if reach[0].Repository != "octo-org/app" || reach[0].Hops != 1 {
-		t.Errorf("reach = %+v, want octo-org/app at one hop", reach[0])
+	if u := uses.Items[0]; u.Repository != "octo-org/app" || u.Hops != 1 || u.Reference != "v4" {
+		t.Errorf("use = %+v, want octo-org/app at one hop by v4", u)
+	}
+	versions := decode[graph.VersionsPage](t, get(t, srv, "/api/node/actions/checkout/-/versions"))
+	if len(versions.Items) == 0 || versions.Items[0].Reference != "v4" || versions.Items[0].Direct != 1 {
+		t.Errorf("versions = %+v, want v4 named by one repository", versions.Items)
+	}
+}
+
+// A details page narrows who uses something, so a term that only chose which dependencies a list
+// showed is refused by name — as is a member the page cannot answer — rather than dropped.
+func TestNodeUsesRefusesWhatItCannotApplyByName(t *testing.T) {
+	srv, s := newServer(t)
+	seedGraph(t, s)
+
+	for _, query := range []string{"kinds=action", "scope=exposure", "sort=nonsense"} {
+		for _, route := range []string{"uses", "versions"} {
+			if route == "versions" && query == "sort=nonsense" {
+				continue
+			}
+			if rec := get(t, srv, "/api/node/actions/checkout/-/"+route+"?"+query); rec.Code != http.StatusBadRequest {
+				t.Errorf("%s?%s answered %d, want a refusal", route, query, rec.Code)
+			}
+		}
+	}
+	at := decode[graph.UsesPage](t, get(t, srv, "/api/node/actions/checkout/-/uses?at=v3"))
+	if at.Total != 0 || at.Change == nil || at.Change.Reference != "v3" {
+		t.Errorf("at=v3 answered %+v; want no row and what moving v3 would do", at)
 	}
 }
 
@@ -359,5 +385,20 @@ func TestAnUndeclaredBodyIsTypedRatherThanSniffed(t *testing.T) {
 	}
 	if ct := inner.Result().Header.Get("Content-Type"); ct != "text/plain; charset=utf-8" {
 		t.Errorf("Content-Type = %q, want the body named rather than guessed", ct)
+	}
+}
+
+// The Actions unit counts groups by the property the operator configured, and says which, so a
+// group count is never read against a property nobody named.
+func TestTheActionsListingCountsGroupsByTheConfiguredProperty(t *testing.T) {
+	srv, s := newServer(t)
+	seedGraph(t, s)
+
+	if page := decode[store.InventoryPage](t, get(t, srv, "/api/actions")); page.GroupProperty != "" {
+		t.Errorf("with no property configured the page groups by %q", page.GroupProperty)
+	}
+	srv.GroupProperty = "business_id"
+	if page := decode[store.InventoryPage](t, get(t, srv, "/api/actions")); page.GroupProperty != "business_id" {
+		t.Errorf("the page groups by %q, want the configured business_id", page.GroupProperty)
 	}
 }

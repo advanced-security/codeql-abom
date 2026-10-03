@@ -31,6 +31,10 @@ type SnapshotPreview struct {
 	// analyzed at the pinned ref. A preview reporting few transitive dependencies and a high
 	// count here is shallow rather than complete.
 	Unanalyzed int `json:"unanalyzed"`
+	// Unobserved names, as owner/repo@commit, each commit this closure reads whose declarations were
+	// recorded before ABOM kept what each commit declared. A submission is refused while any is
+	// listed: what would be sent could leave out dependencies the repository has.
+	Unobserved []string `json:"unobserved"`
 	// Submitted reports whether anything has ever been sent for this repository. Never submitted
 	// and submitted nothing are different states wanting different actions.
 	Submitted       bool   `json:"submitted"`
@@ -53,6 +57,10 @@ type SnapshotResult struct {
 // notApprovedError is implemented by the guard's refusal so the transport can answer 403 without
 // importing the submission package.
 type notApprovedError interface{ NotApproved() }
+
+// unobservedError is implemented by a refusal to submit a closure whose declarations are not known,
+// which conflicts with the data rather than with the caller's permission.
+type unobservedError interface{ Unobserved() }
 
 // snapshotPreview reports what would be submitted. It never writes.
 func (s *Server) snapshotPreview(w http.ResponseWriter, r *http.Request) {
@@ -82,6 +90,11 @@ func (s *Server) snapshotSubmit(w http.ResponseWriter, r *http.Request) {
 	var refused notApprovedError
 	if errors.As(err, &refused) {
 		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+	var unobserved unobservedError
+	if errors.As(err, &unobserved) {
+		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 	writeJSON(w, got, err)

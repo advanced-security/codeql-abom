@@ -258,6 +258,13 @@ func tierOf(b batch, owned map[string]bool) string {
 // A suite two tiers share is resolved once: resolving shells out to the CodeQL CLI, and a crawl
 // claims batches from both tiers every round.
 func (e *Expander) plansByTier(ctx context.Context, opts Options) (map[string]tierPlan, error) {
+	return e.resolveTiers(ctx, opts, true)
+}
+
+// resolveTiers resolves every tier's suites, and records what they resolved to when record is
+// set. Only the crawl records: a closure resolves the owned tier to run it, and rewriting the
+// crawl's record of its suites would move what the catalog and the queue report.
+func (e *Expander) resolveTiers(ctx context.Context, opts Options, record bool) (map[string]tierPlan, error) {
 	// Every round and every identity reads the packs again: one edited while the server runs would
 	// otherwise keep the digest it had when the server first met it.
 	e.digests.Reset()
@@ -274,8 +281,10 @@ func (e *Expander) plansByTier(ctx context.Context, opts Options) (map[string]ti
 		if err != nil {
 			return nil, err
 		}
-		if err := e.Store.RecordQueryMetadata(planned.metadata); err != nil {
-			return nil, err
+		if record {
+			if err := e.Store.RecordQueryMetadata(planned.metadata); err != nil {
+				return nil, err
+			}
 		}
 		for _, tier := range tiers {
 			out[tier] = planned
@@ -298,13 +307,10 @@ func (e *Expander) plansByTier(ctx context.Context, opts Options) (map[string]ti
 					return nil, err
 				}
 				resolved[suite] = queries
-				// What a suite resolves to is only knowable by resolving it, so the round that
-				// just paid that cost is the only place the answer is free.
-				if err := e.Store.RecordSuiteContents(suite, queries.contents); err != nil {
-					return nil, err
-				}
-				if err := e.Store.RecordQueryMetadata(queries.metadata); err != nil {
-					return nil, err
+				if record {
+					if err := e.recordSuite(suite, queries); err != nil {
+						return nil, err
+					}
 				}
 			}
 			merged.absorb(queries)
@@ -312,6 +318,15 @@ func (e *Expander) plansByTier(ctx context.Context, opts Options) (map[string]ti
 		out[tier] = merged
 	}
 	return out, nil
+}
+
+// recordSuite keeps what a suite resolved to. What a suite resolves to is only knowable by
+// resolving it, so the round that just paid that cost is the only place the answer is free.
+func (e *Expander) recordSuite(suite string, queries tierPlan) error {
+	if err := e.Store.RecordSuiteContents(suite, queries.contents); err != nil {
+		return err
+	}
+	return e.Store.RecordQueryMetadata(queries.metadata)
 }
 
 // plan works out what to run for a round, once, rather than per repository.

@@ -1,0 +1,5 @@
+| .github/actions/external/vendor/comp/action.yml | 7 | 13 | vendor/inner | .github/actions/external/vendor/inner/action.yml |
+| .github/workflows/pr.yml | 6 | 15 | actions/checkout |  |
+| .github/workflows/pr.yml | 7 | 15 | vendor/comp | .github/actions/external/vendor/comp/action.yml |
+| .github/workflows/pr.yml | 10 | 15 | ./.github/actions/local | .github/actions/local/action.yml |
+| .github/workflows/pr.yml | 12 | 11 | vendor/rw/.github/workflows/reuse.yml | .github/workflows/external/vendor/rw/.github/workflows/reuse.yml |

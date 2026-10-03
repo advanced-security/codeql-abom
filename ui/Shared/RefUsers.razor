@@ -1,0 +1,159 @@
+@inject AbomApi Api
+
+@* Every starting point naming one node at one exact reference, and what each one's lock did with
+   it. Upstream repositories are counted and not listed: nobody here changes them. Direct only:
+   anything reaching the node through an intermediary is a transitive row of the table beside this,
+   and the two are different work. *@
+
+<div class="abom-ref-users-cell" data-abom-ref-users-of="@Reference">
+    @if (_users is null)
+    {
+        <MudText Typo="Typo.caption" Class="mud-text-secondary">
+            Loading the repositories naming this version…
+        </MudText>
+    }
+    else
+    {
+        <MudText Typo="Typo.caption" Class="mud-text-secondary">@UsersSummary(_users)</MudText>
+        <ul class="abom-ref-users-list">
+            @foreach (var u in Listed)
+            {
+                <li data-abom-user="@u.FullName">
+                    <MudLink Href="@($"/inventory?unit=repositories&q={Uri.EscapeDataString(u.FullName)}")"
+                             Typo="Typo.caption"
+                             title="@($"Find {u.FullName} in the repository inventory.")">@u.FullName</MudLink>
+                    <span class="mud-text-secondary">@UseLabel(u)</span>
+                    <span class="abom-user-lock" data-abom-user-lock>@LockLabel(u)</span>
+                    @if (u.Verification is { } v)
+                    {
+                        <span class="abom-user-verification mud-text-secondary"
+                              data-abom-user-verification
+                              title="@v.VerifiedAt.ToString("u")">@VerificationLabel(v)</span>
+                    }
+                    @if (u.LockCoverage.Contains("covered") || u.LockCoverage.Contains("unsupported"))
+                    {
+                        @* Runs the tool once, offline and no-fix, because it was pressed. *@
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-verify-lock"
+                                   data-abom-verify-lock="@u.FullName"
+                                   Disabled="@(_verifying == u.FullName)"
+                                   title="@($"Check {u.FullName}'s lock file locally and refresh this row.")"
+                                   OnClick="@(() => VerifyLock(u.FullName))">check lock</MudButton>
+                    }
+                    @if (_verifyRefusal.TryGetValue(u.FullName, out var refusal))
+                    {
+                        <span class="mud-text-secondary">@refusal</span>
+                    }
+                </li>
+            }
+        </ul>
+        @if (_users.Seeds > Listed.Count)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                @(_users.Seeds - Listed.Count) more not shown.
+            </MudText>
+        }
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Key { get; set; } = string.Empty;
+
+    /// <summary>The reference as written; never empty, because a local path is not a version.</summary>
+    [Parameter, EditorRequired] public string Reference { get; set; } = string.Empty;
+
+    // Null while a request is in flight, so "loading" and "nobody uses this" stay distinguishable.
+    private NodeUsers? _users;
+    private string? _verifying;
+    private readonly Dictionary<string, string> _verifyRefusal = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _users = null;
+        _users = await Api.GetNodeUsersAsync(Key, Reference);
+    }
+
+    private async Task VerifyLock(string repository)
+    {
+        _verifying = repository;
+        _verifyRefusal.Remove(repository);
+        try
+        {
+            var (_, refusal) = await Api.VerifyLockAsync(repository, "local");
+            if (refusal.Length > 0)
+            {
+                _verifyRefusal[repository] = refusal;
+            }
+            _users = await Api.GetNodeUsersAsync(Key, Reference);
+        }
+        finally
+        {
+            _verifying = null;
+        }
+    }
+
+    // The count of places to edit is not the count of repositories: one repository naming a
+    // version from three workflows is one row and three edits.
+    private List<RepositoryUse> Listed => _users?.Repos.Where(u => u.Origin == "seed").ToList() ?? [];
+
+    private static string UseLabel(RepositoryUse u)
+    {
+        var parts = new List<string> { CountText.Of(u.Uses, "use", "uses") };
+        if (u.Owned) parts.Add("yours");
+        return $" — {string.Join(", ", parts)}";
+    }
+
+    // What the repository's lock did with this version. Four answers that "not locked" would
+    // collapse into one: no lockfile, one this reader could not read, one that does not list these
+    // uses, and none read at all — the last is unknown, not unlocked.
+    private static string LockLabel(RepositoryUse u)
+    {
+        var parts = new List<string>();
+        foreach (var l in u.Locks.Where(l => l.Via.Length == 0))
+        {
+            var workflows = string.Join(", ", l.Workflows.Select(w => w.Split('/')[^1]));
+            parts.Add(workflows.Length > 0
+                ? $"locked to {CommitText.Short(l.Commit)} by {workflows}"
+                : $"locked to {CommitText.Short(l.Commit)}");
+        }
+        if (parts.Count > 0 && u.LockedUses < u.Uses)
+        {
+            parts.Add($"{u.LockedUses:N0} of {u.Uses:N0} uses");
+        }
+        foreach (var l in u.Locks.Where(l => l.Via.Length > 0))
+        {
+            parts.Add($"{l.Consumer}'s lock selects {CommitText.Short(l.Commit)} through {l.Via}");
+        }
+        if (parts.Count == 0)
+        {
+            parts.Add(OwnLockState(u.LockCoverage));
+        }
+        return $" — {string.Join("; ", parts)}";
+    }
+
+    private static string OwnLockState(IReadOnlyList<string> coverage) =>
+        coverage.Contains("unsupported") ? "lockfile unsupported"
+        : coverage.Contains("covered") ? "not in its lock"
+        : coverage.Contains("not_onboarded") ? "no lockfile"
+        : "lockfile not read";
+
+    // GitHub's answer, named as GitHub's: which check, what it said, how much it found.
+    private static string VerificationLabel(VerificationBrief v)
+    {
+        var found = CountText.Of(v.Findings, "finding", "findings");
+        return $" · gh actions-lock ({v.Mode}): {v.Outcome}, {found}, {v.VerifiedAt:yyyy-MM-dd}";
+    }
+
+    // "0 yours" with nothing verified is a question nobody has answered, not a count of none, so
+    // ownership is only named once it can be.
+    private static string UsersSummary(NodeUsers users)
+    {
+        var named = users.Seeds == 0
+            ? "No starting point names this version directly."
+            : $"{CountText.Of(users.Seeds, "starting point names", "starting points name")} this version directly"
+              + (users.OwnedKnown && users.Owned > 0 ? $", {users.Owned:N0} yours." : ".");
+        var others = users.Total - users.Seeds;
+        return named
+            + (others > 0 ? $" {CountText.Of(others, "other repository names", "other repositories name")} it too and {(others == 1 ? "is" : "are")} not listed." : "")
+            + " One that reaches it through another action is a transitive row of What uses: this.";
+    }
+}

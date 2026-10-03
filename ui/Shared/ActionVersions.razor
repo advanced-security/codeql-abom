@@ -1,0 +1,271 @@
+@inject AbomApi Api
+
+@* One row per reference a dependency is used at: what it resolves to, who runs it by that
+   reference, what was found in it there, and what the rule that matches versions reported on the
+   lines naming it. The advisories naming the dependency follow once, verbatim, for a reader to
+   compare with the references — whether one falls inside a range is a rule's call, never this
+   table's. Every row is loaded and the grid pages them itself, so a column sorts the whole answer
+   rather than a page of it. *@
+
+<div class="@(Compact ? "abom-versions abom-versions-compact" : "abom-versions")" data-abom-versions="@Key">
+    <div class="abom-versions-head">
+        @if (_page is not null)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-versions-summary>
+                <strong class="abom-versions-lead">@Lead(_page)</strong> · @Summary(_page)
+            </MudText>
+        }
+        <MudSpacer />
+        @ChildContent
+    </div>
+    @if (_refusal is { Length: > 0 })
+    {
+        <MudAlert Dense="true" Severity="MudBlazor.Severity.Info" Variant="Variant.Outlined"
+                  data-abom-versions-refusal>@_refusal</MudAlert>
+    }
+    else if (_page is null)
+    {
+        <MudProgressLinear Indeterminate="true" />
+    }
+    else
+    {
+        <div class="abom-versions-body">
+        @* The row body always has its control, hidden where rows do not open: a grid holding a
+           body with no control draws it under every row. *@
+        <MudDataGrid T="NodeVersion" Items="_page.Items" Dense="true" Hover="true" Bordered="false"
+                     SortMode="SortMode.Single" Filterable="false" ShowColumnOptions="false"
+                     RowsPerPage="@Rows" FixedHeader="@(!Compact)" Elevation="0"
+                     Class="@(Compact ? "abom-grid abom-versions-grid" : "abom-grid abom-versions-grid abom-grid-windowed abom-grid-captioned-twice")"
+                     data-abom-versions-table>
+            <Columns>
+                <HierarchyColumn T="NodeVersion" Hidden="@Compact">
+                    <CellTemplate>
+                        <MudIconButton Size="Size.Small" Class="abom-ref-users"
+                                       Icon="@(context.Open ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)"
+                                       aria-label="@($"List every repository naming {CommitText.Reference(context.Item.Reference)}")"
+                                       aria-expanded="@(context.Open ? "true" : "false")"
+                                       title="@($"{(context.Open ? "Hide" : "Show")} the repositories that name {CommitText.Reference(context.Item.Reference)}.")"
+                                       OnClick="@(() => context.Actions.ToggleHierarchyVisibilityForItemAsync())" />
+                    </CellTemplate>
+                </HierarchyColumn>
+                <PropertyColumn Property="v => v.Reference" Title="Reference">
+                    <HeaderTemplate><HeaderTip Tip="The version exactly as a workflow writes it after the @@ in a uses: line. Click one to see only that version.">Reference</HeaderTip></HeaderTemplate>
+                    <CellTemplate>
+                        @* A reference goes to the page narrowed to it; nothing here rewrites it. *@
+                        <a href="@ReferenceHref(context.Item.Reference)"
+                           class="abom-ref"
+                           title="@($"Show only {context.Item.Reference} on this action's details page.")"
+                           data-abom-version-ref="@context.Item.Reference"
+                           @onclick:stopPropagation="true">@CommitText.Reference(context.Item.Reference)</a>
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="v => v.Commit" Title="Resolves to">
+                    <HeaderTemplate><HeaderTip Tip="The commit this version points to today.">Resolves to</HeaderTip></HeaderTemplate>
+                    <CellTemplate>
+                        @if (context.Item.Commit.Length > 0)
+                        {
+                            <code title="@context.Item.Commit" data-abom-version-commit>@CommitText.Short(context.Item.Commit)</code>
+                        }
+                        else
+                        {
+                            <span class="abom-coverage-unknown" title="Nothing has resolved this reference, so ABOM has no reading of what it runs.">not resolved</span>
+                        }
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="v => v.Queue" Title="Analysis" Hidden="@Compact">
+                    <HeaderTemplate><HeaderTip Tip="Whether ABOM has analyzed what this version uses in turn.">Analysis</HeaderTip></HeaderTemplate>
+                    <CellTemplate>
+                        <span class="@(context.Item.Queue == "analyzed" ? null : "abom-coverage-unknown")">@QueueText(context.Item.Queue)</span>
+                    </CellTemplate>
+                </PropertyColumn>
+                <TemplateColumn T="NodeVersion" Title="Locked to" Sortable="true" SortBy="v => v.LockedTo.Count" Hidden="@Compact">
+                    <HeaderTemplate><HeaderTip Tip="The commits that actions locks pin this version to instead, and how many locks pin each one.">Locked to</HeaderTip></HeaderTemplate>
+                    <CellTemplate>
+                        @if (context.Item.LockedTo.Count > 0)
+                        {
+                            @* What runs, beside what the source says. *@
+                            <span class="abom-ref-locked" data-abom-ref-locked="@context.Item.Reference">
+                                @foreach (var l in context.Item.LockedTo)
+                                {
+                                    <span class="abom-ref-locked-entry" title="@l.Commit">
+                                        <code>@CommitText.Short(l.Commit)</code>
+                                        <span class="mud-text-secondary">@CountText.Of(l.Repositories, "lock", "locks")</span>
+                                    </span>
+                                }
+                            </span>
+                        }
+                    </CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="v => v.Direct" Title="Direct" CellClass="abom-num">
+                    <HeaderTemplate><HeaderTip Tip="How many starting points name this version in their own workflows.">Direct</HeaderTip></HeaderTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="v => v.Transitive" Title="Transitive" CellClass="abom-num">
+                    <HeaderTemplate><HeaderTip Tip="How many starting points get this version only through another action they use. Each starting point counts under Direct or Transitive, never both.">Transitive</HeaderTip></HeaderTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="v => v.Lines" Title="uses: lines" CellClass="abom-num" Hidden="@Compact">
+                    <HeaderTemplate><HeaderTip Tip="How many uses: lines name this version, counting only the starting points in this view.">uses: lines</HeaderTip></HeaderTemplate>
+                </PropertyColumn>
+                <TemplateColumn T="NodeVersion" Title="Findings" Sortable="true" SortBy="FindingsOrder">
+                    <HeaderTemplate><HeaderTip Tip="How many findings CodeQL rules reported in this action's own code at the commit this version runs. Not analyzed means no rule has run there yet.">Findings</HeaderTip></HeaderTemplate>
+                    <CellTemplate>
+                        @if (context.Item.Findings is { } found)
+                        {
+                            <span data-abom-version-findings="@context.Item.Reference">
+                                <FindingsCount Count="@found.Count" Severity="@found.Severity" />
+                            </span>
+                        }
+                        else
+                        {
+                            <span class="abom-coverage-unknown" data-abom-version-findings="@context.Item.Reference"
+                                  title="@($"No findings run reached the commit this reference resolves to. Discovery: {QueueText(context.Item.Queue)}.")">not analyzed</span>
+                        }
+                    </CellTemplate>
+                </TemplateColumn>
+            </Columns>
+            <ChildRowContent>
+                <RefUsers Key="@Key" Reference="@context.Item.Reference" />
+            </ChildRowContent>
+            <NoRecordsContent>
+                <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-versions-none>@NoneText(_page)</MudText>
+            </NoRecordsContent>
+            <PagerContent>
+                @* Paging applies whenever this content is set, so only the control is withheld. *@
+                @if (_page.Items.Count > Rows)
+                {
+                    <MudDataGridPager T="NodeVersion" PageSizeSelector="@(!Compact)" PageSizeOptions="@(new[] { 10, 25, 100 })" />
+                }
+            </PagerContent>
+        </MudDataGrid>
+
+        <div class="abom-versions-advisories" data-abom-versions-advisories>
+            @if (_page.Advisories.Count == 0)
+            {
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                    No advisory on record names this action.
+                </MudText>
+            }
+            else
+            {
+                <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
+                    Advisories naming this action, as published. ABOM does not decide whether a
+                    version in use falls inside a range.
+                </MudText>
+                <ul class="abom-advisory-ranges">
+                    @foreach (var a in _page.Advisories)
+                    {
+                        <li data-abom-version-advisory="@a.GhsaId">
+                            <span class="abom-advisory-head">
+                                <MudLink Href="@a.Url" Target="_blank" Typo="Typo.caption" Class="abom-rule"
+                                         title="@($"Open advisory {a.GhsaId} in a new tab.")">@a.GhsaId</MudLink>
+                                <SeverityChip Severity="@a.Severity" />
+                                @foreach (var r in a.Ranges)
+                                {
+                                    <span class="abom-advisory-range">
+                                        affects <code>@r.VulnerableRange</code>@(r.FirstPatched.Length > 0 ? ", first patched " : ", no patched version published")@if (r.FirstPatched.Length > 0)
+                                        {<code>@r.FirstPatched</code>}
+                                    </span>
+                                }
+                            </span>
+                            <span class="abom-advisory-summary mud-text-secondary" title="@a.Summary">@a.Summary</span>
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>How many versions a row's panel shows at once, so the rows under it stay in view.</summary>
+    public const int PanelRows = 6;
+
+    [Parameter, EditorRequired] public string Key { get; set; } = string.Empty;
+
+    /// <summary>The scope, already narrowed to the terms the uses surface applies.</summary>
+    [Parameter] public string Predicate { get; set; } = string.Empty;
+
+    /// <summary>Where a reference goes when chosen: the details page narrowed to it.</summary>
+    [Parameter, EditorRequired] public Func<string, string> ReferenceHref { get; set; } = _ => "";
+
+    /// <summary>
+    /// Drawn inside a row of a list: a page at a time, without the columns only the details page
+    /// has room for, and with rows that do not open onto who names them.
+    /// </summary>
+    [Parameter] public bool Compact { get; set; }
+
+    /// <summary>Controls drawn on the summary line, right-aligned.</summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>Raised once the versions are drawn, when the space they take is known.</summary>
+    [Parameter] public EventCallback Loaded { get; set; }
+
+    private int Rows => Compact ? PanelRows : 10;
+
+    private NodeVersionsPage? _page;
+    private string? _refusal;
+    private string? _asked;
+    private bool _announce;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var asked = Key + "\n" + Predicate;
+        if (asked == _asked) return;
+        _asked = asked;
+        _page = null;
+        _refusal = null;
+        (_page, _refusal) = await Api.GetNodeVersionsAsync(Key, Predicate);
+        _announce = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_announce) return;
+        _announce = false;
+        await Loaded.InvokeAsync();
+    }
+
+    private static string QueueText(string queue) => queue switch
+    {
+        "analyzed" => "analyzed",
+        "queued" => "queued",
+        "running" => "discovering",
+        "retrying" => "retrying",
+        "unavailable" => "unavailable",
+        "" => "never queued",
+        _ => queue,
+    };
+
+    // Severity first, then how many: a reference with one critical outranks one with ten lows, and
+    // one nobody analyzed sorts below every one somebody did.
+    private static object FindingsOrder(NodeVersion v) => v.Findings is not { } f ? -1L
+        : f.Severity.Critical * 1_000_000_000L + f.Severity.High * 1_000_000L
+          + f.Severity.Medium * 1_000L + f.Severity.Low + (f.Count > 0 ? 1 : 0);
+
+    // Why nothing is listed: nobody here uses a version, or only by a local path, or the scope's
+    // reference terms matched none of those in use.
+    private static string NoneText(NodeVersionsPage page) => (page.Total, page.Unlisted) switch
+    {
+        (0, > 0) => "No starting point in this view uses any version of this.",
+        (0, _) => "Nothing names this by a reference. A local path (uses: ./) runs at its caller's own commit, so it is not a version.",
+        _ => $"None of the {CountText.Of(page.Total, "reference in use", "references in use")} is in this scope.",
+    };
+
+    private static string Lead(NodeVersionsPage page)
+    {
+        var inUse = CountText.Of(page.Total, "reference in use", "references in use");
+        return page.Items.Count == page.Total ? inUse : $"Showing {page.Items.Count:N0} of {inUse}";
+    }
+
+    private static string Summary(NodeVersionsPage page)
+    {
+        var analyzed = page.Items.Count(v => v.Queue == "analyzed");
+        var unqueued = page.Items.Count(v => v.Queue.Length == 0);
+        var parts = new List<string> { $"{analyzed:N0} analyzed" };
+        if (unqueued > 0) parts.Add($"{unqueued:N0} never queued");
+        return string.Join(" · ", parts) + "."
+            + (page.Unlisted > 0
+                ? $" {page.Unlisted:N0} more {(page.Unlisted == 1 ? "is" : "are")} used only by repositories this view does not include."
+                : "");
+    }
+}

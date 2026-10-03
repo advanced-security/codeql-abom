@@ -20,6 +20,7 @@
                     @q.QueryId <code class="ml-1">@Short(q.QueryVersion)</code>
                 </MudChip>
                 <MudIconButton Icon="@Icons.Material.Outlined.Close" Size="Size.Small"
+                               title="@($"Remove {q.QueryId} at version {Short(q.QueryVersion)} from this run draft.")"
                                OnClick="@(() => Draft.Remove(q))"
                                aria-label="@($"Remove {q.QueryId} from the run")" />
             </span>
@@ -37,7 +38,8 @@
         </div>
         @Scope
         <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" DropShadow="false"
-                   Disabled="@(!CanStartRun)" OnClick="StartRun" data-abom-run-go>Run</MudButton>
+                   Disabled="@(!CanStartRun)" OnClick="StartRun" data-abom-run-go
+                   title="Create this run, start it over the selected repositories, and open its results.">Run</MudButton>
         @* One setting for the whole run, suggested from what its queries are. The reason sits on
            the span, where a disabled switch still shows it. *@
         <span data-abom-run-findings title="@FindingsReason">
@@ -46,7 +48,8 @@
                        Label="Findings" aria-label="Store what this run finds as findings" />
         </span>
         <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
-                   OnClick="Discard" data-abom-run-discard>Cancel</MudButton>
+                   OnClick="Discard" data-abom-run-discard
+                   title="Discard this run draft without starting a run.">Cancel</MudButton>
     </div>
     @ChildContent
     @if (_size is { } size)
@@ -101,7 +104,7 @@
         !_starting && Draft.Queries.Count > 0 && Predicate.Length > 0 && Accounts.Identity.Login.Length > 0;
 
     private string FindingsReason => _suggestion is not { } s
-        ? "Choose a query to see whether what this run finds should be stored as findings"
+        ? "Choose a query to see whether what this run finds should be stored as findings."
         : _findings == s.Findings
             ? $"Suggested: {s.Reason}."
             : $"Changed from the suggestion ({(s.Findings ? "on" : "off")}): {s.Reason}.";

@@ -59,6 +59,9 @@ func (p AggregatePolicy) due(st store.ReachStaleness, drained bool, now time.Tim
 	if st.Never {
 		return true, "reach has never been measured"
 	}
+	if st.Incomplete {
+		return true, "reach was measured before this build counted what it shows"
+	}
 
 	age := now.Sub(st.At)
 	if age < p.minInterval() {

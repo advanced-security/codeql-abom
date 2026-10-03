@@ -91,7 +91,8 @@ func (s *Store) nodeUsersOf(key, ref string, budget int) (NodeUsers, error) {
 // statement rather than failing — and only on the path where the budget bites.
 func (s *Store) readNodeUsers(out *NodeUsers, budget int) error {
 	// One row per repository, not per edge: the count of places to edit and the count of
-	// repositories are different numbers and the interface needs both.
+	// repositories are different numbers and the interface needs both. Starting points come
+	// first, so a budget cuts upstream repositories before any of them.
 	rows, err := s.db.Query(`
 		SELECT r.repository_full_name, COALESCE(r.origin, ''), COUNT(*),
 		       `+ownedFullName("r.repository_full_name")+`
@@ -100,8 +101,8 @@ func (s *Store) readNodeUsers(out *NodeUsers, budget int) error {
 		JOIN repository r ON r.row_id = e.repository_row_id
 		WHERE n.node_key = ? AND COALESCE(e.ref_value, '') = ?
 		GROUP BY r.repository_full_name, r.origin
-		ORDER BY COUNT(*) DESC, r.repository_full_name
-		LIMIT ?`, out.Key, out.Ref, budget+1)
+		ORDER BY r.origin = ? DESC, COUNT(*) DESC, r.repository_full_name
+		LIMIT ?`, out.Key, out.Ref, OriginSeed, budget+1)
 	if err != nil {
 		return fmt.Errorf("reading users of %q at %q: %w", out.Key, out.Ref, err)
 	}

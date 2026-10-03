@@ -21,6 +21,8 @@ var inventoryTerms = map[string]bool{
 	paramNotProperties:    true,
 	// A listing narrows by what was found on a node, and a finding has a shape.
 	paramMode: true,
+	// Dependencies some workflow names at exactly this reference.
+	paramAt: true,
 }
 
 // UnenforceableAsInventory names terms a node listing cannot apply.
@@ -50,6 +52,9 @@ var partialMembers = map[string]map[string][]string{
 	SurfaceWorkflows:    {paramFlags: {FlagFindings}},
 	SurfaceJobs:         {paramFlags: {FlagFindings}},
 	SurfaceRepositories: {paramFlags: {FlagFindings}},
+	// Who uses a dependency is a set of repositories: owned names one, an advisory route does not,
+	// and a repository entered the record as a starting point or upstream, never as external.
+	SurfaceUses: {paramScope: {ScopeOwned}, paramOrigins: {"seed", "upstream"}},
 }
 
 // UnenforceableAsWorkflows names the terms the workflows unit cannot apply.
@@ -132,6 +137,24 @@ var relationshipTerms = map[string]bool{
 	paramNotProperties: true,
 	// A row here is an edge, and an edge was observed by a run that states its shape.
 	paramMode: true,
+}
+
+// usesTerms are what one dependency's details page applies to who uses it. The terms that chose
+// which dependencies an inventory listed — kind, reach, findings on them — are refused by name
+// there rather than dropped, so a reader arriving from a narrowed list is told what stopped.
+var usesTerms = map[string]bool{
+	paramAt:            true,
+	paramRefStyle:      true,
+	paramReached:       true,
+	paramScope:         true,
+	paramOrigins:       true,
+	paramProperties:    true,
+	paramNotProperties: true,
+}
+
+// UnenforceableAsUses names the terms a dependency's details page cannot apply.
+func (s Spec) UnenforceableAsUses() []string {
+	return append(s.carried(func(t string) bool { return usesTerms[t] }), s.unanswered(SurfaceUses)...)
 }
 
 // UnenforceableAsRelationships names the terms the relationships unit cannot apply.

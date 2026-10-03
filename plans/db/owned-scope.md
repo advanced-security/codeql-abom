@@ -1,8 +1,8 @@
 # Ownership is declared, and discovery is gated on it
 
 **Status:** Built. Ownership is declared rather than inferred, and discovery refuses to start until
-it is. Several accounts stay declarable; **one organization is the supported configuration**, and
-[the vision](../../docs/vision.md) states why that boundary is worth keeping rather than enforcing.
+it is. Several accounts are declarable, and [the vision](../../docs/vision.md) keeps ownership
+declared organization by organization now that an enterprise is the unit.
 
 ## Why this exists
 

@@ -21,9 +21,12 @@ public static class SeverityText
         Join([("critical", c.Critical), ("high", c.High), ("medium", c.Medium), ("low", c.Low),
             ("unknown", c.Unknown)]);
 
+    /// <summary>Where a band sorts: the most severe first, then unknown, then no band at all.</summary>
+    public static int Order(string band) => Array.IndexOf(Bands, band) is var at and >= 0 ? at : Bands.Length;
+
     private static string Join(IEnumerable<(string Band, int Count)> counts) =>
         string.Join(" \u00b7 ", counts
             .Where(c => c.Count > 0)
-            .OrderBy(c => Array.IndexOf(Bands, c.Band) is var at and >= 0 ? at : Bands.Length)
+            .OrderBy(c => Order(c.Band))
             .Select(c => $"{c.Count:N0} {c.Band}"));
 }

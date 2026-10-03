@@ -12,6 +12,7 @@ require (
 	github.com/github/copilot-sdk/go v1.0.14
 	github.com/mattn/go-sqlite3 v1.14.50
 	github.com/spdx/tools-golang v0.5.7
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -26,5 +27,4 @@ require (
 	go.opentelemetry.io/otel v1.35.0 // indirect
 	go.opentelemetry.io/otel/metric v1.35.0 // indirect
 	go.opentelemetry.io/otel/trace v1.35.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

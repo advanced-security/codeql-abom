@@ -50,7 +50,8 @@ public abstract class AbomTestContext : BunitContext
         [
           {"name":"scope","label":"Scope","help":"Owned accounts, or advisory routes",
            "arity":"scalar","values":["owned","exposure"],
-           "surfaces":["graph","inventory","workflows","jobs","repositories","relationships"]},
+           "surfaces":["graph","inventory","workflows","jobs","repositories","relationships","uses"],
+           "surfaceValues":{"uses":["owned"]}},
           {"name":"q","label":"Name contains","help":"Repository, workflow or action",
            "arity":"scalar",
            "surfaces":["graph","inventory","workflows","jobs","repositories","relationships"]},
@@ -61,7 +62,13 @@ public abstract class AbomTestContext : BunitContext
            "surfaces":["graph","inventory","relationships"]},
           {"name":"properties","label":"Repository Property","help":"Keep a property value",
            "arity":"property","valuesFrom":"api/properties",
-           "surfaces":["graph","inventory","workflows","jobs","repositories","advisories","relationships","document"]}
+           "surfaces":["graph","inventory","workflows","jobs","repositories","advisories","relationships","document","uses"]},
+          {"name":"kinds","label":"Kind","help":"Workflow, job, step, action, image","arity":"list",
+           "values":["workflow","action"],"surfaces":["graph","inventory"]},
+          {"name":"at","label":"Reference","help":"Exactly as a workflow wrote it","arity":"list",
+           "surfaces":["inventory","uses"]},
+          {"name":"ref","label":"Reference style","help":"Commit SHA or tag","arity":"scalar",
+           "values":["any","sha","tag"],"surfaces":["graph","inventory","relationships","uses"]}
         ]
         """;
 
