@@ -207,9 +207,10 @@ public class SeverityEverywhereTests : AbomTestContext
         var page = Render<CodeQL>();
 
         page.WaitForAssertion(() => page.Find("[data-abom-query-metadata-absent='acme/self-hosted-runner']"));
-        var said = page.Find("[data-abom-query-metadata-absent='acme/self-hosted-runner']").TextContent;
-        Assert.Contains("abom/custom-queries 2.27.0 is not on disk", said);
-        Assert.DoesNotContain("not read yet", said);
+        var cell = page.Find("[data-abom-query-metadata-absent='acme/self-hosted-runner']");
+        Assert.Contains("abom/custom-queries 2.27.0 is not on disk", cell.GetAttribute("title"));
+        // The sentence in the cell set every row's height, and a catalog row is one line of data.
+        Assert.Equal("cannot be read", cell.TextContent.Trim());
     }
 
     private const string RunWithFindings = """

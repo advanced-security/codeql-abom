@@ -267,7 +267,7 @@
         @* One action pinned at forty commits is forty upgrade decisions, which a total
            reference count hides entirely. *@
         <PropertyColumn Property="x => x.DistinctRefs" Title="Distinct refs">
-            <HeaderTemplate><HeaderTip Tip="How many different versions of this the starting points use. Each one is a separate version to keep up to date.">Distinct refs</HeaderTip></HeaderTemplate>
+            <HeaderTemplate><HeaderTip Tip="How many different versions of this the starting points use. Each one is a separate version to keep up to date.">Distinct <br />refs</HeaderTip></HeaderTemplate>
             <CellTemplate>@Level("refs", context.Item.DistinctRefs)</CellTemplate>
         </PropertyColumn>
 

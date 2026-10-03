@@ -83,6 +83,16 @@ else
         }
     </div>
 
+    @* Above the grid, not under it: the grid is sized to end at the window's foot, and a notice
+       below it scrolled the page and carried the pinned header under the bar. *@
+    @if (!CanAdvance)
+    {
+        <MudAlert Severity="Severity.Info" Dense="true" Class="mb-2" data-abom-queries-unsigned>
+            Advancing a stage and asking for a run both record who did it. Sign in with
+            <code>gh</code> and refresh your identity in Settings to enable them.
+        </MudAlert>
+    }
+
     <MudDataGrid T="CatalogQuery" Items="Shown" Dense="true" Hover="true" Bordered="false"
                  SortMode="SortMode.Single" Filterable="false" ShowColumnOptions="false"
                  FixedHeader="true" RowsPerPage="30" Class="abom-grid abom-grid-windowed"
@@ -159,9 +169,11 @@ else
                 <CellTemplate>
                     @if (!context.Item.Lane && context.Item.Metadata is null)
                     {
-                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block abom-query-unread"
-                                 data-abom-query-metadata-absent="@context.Item.QueryId">@(context.Item.MetadataUnread.Length > 0
-                                     ? context.Item.MetadataUnread : "declared metadata not read yet")</MudText>
+                        @* The server's reason, whole, in the tip: in the cell it set every row's height. *@
+                        <span class="abom-coverage-unknown abom-nowrap" data-abom-query-metadata-absent="@context.Item.QueryId"
+                              title="@(context.Item.MetadataUnread.Length > 0 ? context.Item.MetadataUnread
+                                  : "ABOM has not read the metadata this version declares yet.")">@(context.Item.MetadataUnread.Length > 0
+                                  ? "cannot be read" : "not read yet")</span>
                     }
                     else if (context.Item.Band.Length > 0)
                     {
@@ -302,13 +314,6 @@ else
         <PagerContent><MudDataGridPager T="CatalogQuery" /></PagerContent>
     </MudDataGrid>
 
-    @if (!CanAdvance)
-    {
-        <MudAlert Severity="Severity.Info" Class="mt-4" data-abom-queries-unsigned>
-            Advancing a stage and asking for a run both record who did it. Sign in with
-            <code>gh</code> and refresh your identity in Settings to enable them.
-        </MudAlert>
-    }
 }
 
 @code {

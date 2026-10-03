@@ -238,6 +238,14 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 .abom-grid thead th {
     font-size: var(--abom-text-xs);
 }
+/* The sort control is an indicator, the whole header sorts. At MudBlazor's 30px it was more than
+   half of every numeric header, and thirteen of them put the Actions unit's last column off a
+   1280px screen. */
+.abom-grid .column-options .sort-direction-icon {
+    padding: 0;
+    margin-left: 2px;
+}
+.abom-grid .sort-direction-icon .mud-icon-root { width: 16px; height: 16px; }
 
 /* The filter menu is the one control that has to stay small while the language behind it grows.
    Nineteen terms with a sentence each rendered a panel wider than the table and taller than the
@@ -1350,10 +1358,6 @@ code {
    row in the table. Under the id it wraps at most once and the row is one line of data again. */
 .abom-query-id { font-weight: 500; }
 .abom-query-pack { display: block; line-height: 1.25; }
-/* A reason under an id wraps inside the width the ids set rather than setting it: on one line, why
-   a declaration could not be read took the query column to 1,365px and pushed every other column
-   off a 1440px screen. */
-.abom-grid .abom-identity-col .abom-query-unread { white-space: normal; overflow-wrap: anywhere; }
 
 /* A pack or suite reference is long and hyphenated, and a grid cell narrow enough to hold one
    breaks it character by character. Truncated instead: the whole value stays on the element, so a
