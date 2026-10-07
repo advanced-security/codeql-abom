@@ -545,6 +545,16 @@ export function answersFindingTerms(node, f) {
         (!bands.length || bands.includes(x.band)));
 }
 
+/**
+ * Whether a node is of an origin asked for. Owned is the declaration's answer about its repository
+ * rather than a provenance, so it is asked of its own field, and seed keeps every starting point
+ * whether or not anyone declared it. Nothing asked narrows nothing.
+ */
+export function answersOrigins(n, origins) {
+    if (!origins || !origins.size) return true;
+    return origins.has(n.origin || 'external') || (!!n.owned && origins.has('owned'));
+}
+
 export function applyFilters(elementId, spec) {
     const it = instances.get(elementId);
     if (!it || !it.all) {
@@ -577,7 +587,7 @@ export function applyFilters(elementId, spec) {
     for (const n of it.all.nodes) {
         if (reachable && !reachable.has(n.key)) continue;
         if (!kinds.has(n.kind)) continue;
-        if (origins.size && !origins.has(n.origin || 'external')) continue;
+        if (!answersOrigins(n, origins)) continue;
         if (search && !n.key.toLowerCase().includes(search)) continue;
         if (!answersFindingTerms(n, f)) continue;
         if (f.refStyle && f.refStyle !== 'any' && !n.refStyles.has(f.refStyle)) continue;
@@ -1333,7 +1343,7 @@ export function nodeContext(n) {
  */
 export function nodeBrief(n) {
     return {
-        key: n.key, kind: n.kind || '', origin: n.origin || '',
+        key: n.key, kind: n.kind || '', origin: n.origin || '', owned: !!n.owned,
         repository: n.repository || '', owner: n.owner || '', path: n.path || '',
         container: n.container || '', grouping: n.grouping || '', ref: n.ref || '',
         dependentRepos: n.dependentRepos || 0, reachKnown: !!n.reachKnown,
@@ -2311,9 +2321,8 @@ export function setCollapsed(elementId, collapsed, spec) {
  * Draws the graph where an engine placed it, rather than where the simulation settles.
  *
  * A failure is not thrown: the picture falls back to the simulation and the summary carries the
- * reason, because a canvas that went blank when Graphviz was absent would make an optional tool
- * look like a broken page. The server says the same thing for its own part, answering
- * `producedBy: "none"` rather than a fault.
+ * reason as a fault, because a blank canvas would hide the picture along with the cause. The
+ * server answers 503 with the remedy when it cannot run Graphviz.
  */
 export async function applyServerLayout(elementId, url) {
     const it = instances.get(elementId);

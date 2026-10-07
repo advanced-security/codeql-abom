@@ -132,6 +132,8 @@ jobs:
           shasum -a 256 --check --ignore-missing SHA256SUMS
           \`\`\`
 
+          It needs [Graphviz](https://graphviz.org/download/) on the \`PATH\`: \`serve\` refuses to start without \`dot\`.
+
           This release finds its packs and interface only when started from the extracted directory:
 
           \`\`\`bash

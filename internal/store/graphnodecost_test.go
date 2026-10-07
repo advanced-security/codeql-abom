@@ -21,6 +21,10 @@ func TestTheGraphNodeQueryDoesNotRereadTheFrontierPerNode(t *testing.T) {
 			Scope:        ScopeOwned,
 			GroupSources: []string{"octo-org/app"},
 		}},
+		{"supply chain and filtered", FullGraphOptions{
+			Scope:        ScopeSupplyChain,
+			GroupSources: []string{"octo-org/app"},
+		}},
 	} {
 		t.Run(shape.name, func(t *testing.T) {
 			assertNoPerNodeCorrelation(t, shape.opts)

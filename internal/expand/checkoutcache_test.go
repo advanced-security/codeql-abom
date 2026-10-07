@@ -509,3 +509,65 @@ func TestACommitLockIsForgottenOnceNobodyHoldsIt(t *testing.T) {
 		t.Errorf("%d commit locks are still held after every holder released", held)
 	}
 }
+
+// A held tree is evidence only while it is still the commit's content. On the live cache, 7 of 912
+// had been rewritten in place by another tool, and the crawl reused two of them, so analyses were
+// recorded of content those commits never held.
+func TestAHeldTreeEditedSinceItWasFetchedIsNotReused(t *testing.T) {
+	cache := &CheckoutCache{Dir: t.TempDir()}
+	patterns := []string{"/.github/"}
+	entry := retain(t, cache, "octo", "app", "aaaa1111", patterns, 16)
+	if _, ok := cache.Reuse("octo", "app", "aaaa1111", patterns); !ok {
+		t.Fatal("an untouched tree was not reused, so this test would pass against a cache that reuses nothing")
+	}
+
+	ci := filepath.Join(stagedTree(entry), ".github", "workflows", "ci.yml")
+	if err := os.WriteFile(ci, []byte("uses: $/x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if tree, ok := cache.Reuse("octo", "app", "aaaa1111", patterns); ok {
+		t.Errorf("reused %s after its content changed", tree)
+	}
+	// The fetch that replaces it is kept, rather than discarded in favor of the edited tree.
+	fresh := retain(t, cache, "octo", "app", "aaaa1111", patterns, 16)
+	body, err := os.ReadFile(filepath.Join(stagedTree(fresh), ".github", "workflows", "ci.yml"))
+	if err != nil || strings.Contains(string(body), "$/") {
+		t.Errorf("the edited tree survived a fresh fetch: %q, %v", body, err)
+	}
+}
+
+// An entry retained before trees were verified cannot be checked, so it is fetched again once.
+func TestAHeldTreeWithNothingToVerifyItIsFetchedAgain(t *testing.T) {
+	cache := &CheckoutCache{Dir: t.TempDir()}
+	patterns := []string{"/.github/"}
+	entry := retain(t, cache, "octo", "app", "aaaa1111", patterns, 16)
+	legacy := `{"owner":"octo","repo":"app","commit":"aaaa1111","patterns":["/.github/"],"bytes":16}`
+	if err := os.WriteFile(filepath.Join(entry, cacheMarker), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := cache.Reuse("octo", "app", "aaaa1111", patterns); ok {
+		t.Error("reused a tree whose content was never recorded")
+	}
+}
+
+// A commit with nothing to index is still a verified tree, and must not be fetched every round.
+func TestAnEmptyHeldTreeIsStillReused(t *testing.T) {
+	cache := &CheckoutCache{Dir: t.TempDir()}
+	patterns := []string{"/.github/"}
+	staged, err := cache.Stage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(stagedTree(staged), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.Retain(staged, "octo", "empty", "bbbb2222", patterns); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := cache.Reuse("octo", "empty", "bbbb2222", patterns); !ok {
+		t.Error("an empty tree was not reused")
+	}
+}

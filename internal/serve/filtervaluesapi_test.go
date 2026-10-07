@@ -3,6 +3,7 @@ package serve
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	viewspec "github.com/advanced-security/codeql-abom/internal/view"
@@ -74,8 +75,18 @@ func TestATermWithAFixedVocabularyIsAnsweredFromTheLanguage(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &set); err != nil {
 		t.Fatalf("decoding: %v", err)
 	}
-	if len(set.Values) != 2 {
-		t.Fatalf("got %d values, want the two the language declares", len(set.Values))
+	var declared []string
+	for _, term := range viewspec.Catalog() {
+		if term.Name == "scope" {
+			declared = term.Values
+		}
+	}
+	var got []string
+	for _, v := range set.Values {
+		got = append(got, v.Value)
+	}
+	if len(declared) == 0 || !slices.Equal(got, declared) {
+		t.Fatalf("got %v, want the %v the language declares", got, declared)
 	}
 }
 

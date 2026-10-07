@@ -32,34 +32,51 @@ func (c *Checkout) Resolve(ctx context.Context, owner, repo, ref string) (string
 	if ref == "" {
 		ref = "HEAD"
 	}
-	out, err := c.run(ctx, "", "ls-remote", c.cloneURL(owner, repo), ref, ref+"^{}")
+	ctx, err := c.as(ctx, owner)
 	if err != nil {
-		return "", fmt.Errorf("%w: resolving %s/%s@%s: %s", ErrUnavailable, owner, repo, ref, out)
+		return "", err
 	}
-	sha, ok := dereferenced(out)
+	names := exactRefs(ref)
+	out, err := c.run(ctx, "", append([]string{"ls-remote", c.cloneURL(owner, repo)}, names...)...)
+	if err != nil {
+		return "", unavailable(ctx, "resolving %s/%s@%s: %s", owner, repo, ref, out)
+	}
+	sha, ok := named(out, names)
 	if !ok {
-		return "", fmt.Errorf("%w: %s/%s has no %s", ErrUnavailable, owner, repo, ref)
+		return "", fmt.Errorf("%w: %w: %s/%s has no %s", ErrUnavailable, ErrReferenceMissing, owner, repo, ref)
 	}
 	return sha, nil
 }
 
-// dereferenced picks the commit out of `ls-remote` output, preferring the `^{}` line an
-// annotated tag adds. Only a tag has one, so everything else still answers from its single line.
-func dereferenced(out string) (string, bool) {
-	var fallback string
+// exactRefs are the full names a reference can mean, in the order `git clone --branch` prefers
+// them: a branch, then a tag's commit, then the tag itself. `ls-remote` matches a pattern against
+// the end of every ref, so `v1` alone also answers with `refs/heads/releases/v1`.
+func exactRefs(ref string) []string {
+	if ref == "HEAD" {
+		return []string{ref, ref + "^{}"}
+	}
+	if strings.HasPrefix(ref, "refs/") {
+		return []string{ref + "^{}", ref}
+	}
+	return []string{"refs/heads/" + ref, "refs/tags/" + ref + "^{}", "refs/tags/" + ref}
+}
+
+// named picks the commit of the first of names that `ls-remote` listed exactly, so an annotated
+// tag answers with the commit under it rather than its own object.
+func named(out string, names []string) (string, bool) {
+	listed := map[string]string{}
 	for line := range strings.SplitSeq(out, "\n") {
 		sha, name, ok := strings.Cut(strings.TrimSpace(line), "\t")
-		if !ok || sha == "" {
-			continue
-		}
-		if strings.HasSuffix(name, "^{}") {
-			return sha, true
-		}
-		if fallback == "" {
-			fallback = sha
+		if ok && sha != "" {
+			listed[name] = sha
 		}
 	}
-	return fallback, fallback != ""
+	for _, name := range names {
+		if sha, ok := listed[name]; ok {
+			return sha, true
+		}
+	}
+	return "", false
 }
 
 // RecheckStats summarizes a recheck pass.
@@ -74,9 +91,10 @@ type RecheckStats struct {
 
 // Rechecker finds analyzes whose ref has moved and returns them to the queue.
 type Rechecker struct {
-	Queue   *frontier.Queue
-	Probe   RefProbe
-	Pace    *work.Limiter
+	Queue *frontier.Queue
+	Probe RefProbe
+	// Pace is the probing pool the sweep draws on, so its cost is metered like any other work.
+	Pace    *work.TokenPool
 	OnEvent func(nodeKey, outcome string)
 }
 
@@ -92,7 +110,7 @@ func (r *Rechecker) Run(ctx context.Context, ttl time.Duration, limit int) (Rech
 		if err := ctx.Err(); err != nil {
 			return stats, err
 		}
-		if err := r.Pace.Wait(ctx); err != nil {
+		if err := r.Pace.Take(ctx); err != nil {
 			return stats, err
 		}
 

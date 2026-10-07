@@ -52,12 +52,23 @@
                                 @* Own repositories are not dependencies, so counted apart. *@
                                 <span class="abom-tier-count" data-abom-tier-split="@tier">
                                     @TierOf(tier).Repositories.ToString("N0") repositories,
+                                    @if (TierOf(tier).Branches > 0)
+                                    {
+                                        @CountText.Of(TierOf(tier).Branches, "protected branch", "protected branches")@(",")
+                                    }
                                     @TierOf(tier).Dependencies.ToString("N0") dependencies
                                 </span>
                                 <span class="abom-tier-count mud-text-secondary">
                                     @TierOf(tier).RepositoriesAnalyzed.ToString("N0") and
                                     @TierOf(tier).DependenciesAnalyzed.ToString("N0") analyzed
                                 </span>
+                                @if (TierOf(tier).RepositoriesNothingToAnalyze > 0)
+                                {
+                                    @* Read in full and holding no workflow: neither analyzed nor left to do. *@
+                                    <span class="abom-tier-count mud-text-secondary" data-abom-tier-nothing="@tier">
+                                        @TierOf(tier).RepositoriesNothingToAnalyze.ToString("N0") with nothing to analyze
+                                    </span>
+                                }
                             }
                             else
                             {

@@ -37,7 +37,10 @@ var subcommands = []subcommand{
 	{"closure", runClosure, "Analyze each owned repository with its staged callees, as extended evidence."},
 	{"stale", runStale, "Report findings no tracked run of their suite still reports."},
 	{"branches", runBranches, "Record which branches the declared repositories protect."},
+	{"code-scanning", runCodeScanning, "Show each owned repository's Actions code scanning setup and its class."},
 	{"verify-lock", runVerifyLock, "Run GitHub's no-fix lock verification of one repository's current commit."},
+	{"check", runCheck, "Compare what ABOM claims with independent readings, on copies of the database."},
+	{"app", runApp, "Create, check, install and relay the read-only GitHub App ABOM can read as."},
 	{"selfcheck", runSelfcheck, "Analyze a source tree with a CodeQL suite as a smoke test."},
 	{"version", runVersion, "Print which build this is and the CodeQL version it was made for."},
 }

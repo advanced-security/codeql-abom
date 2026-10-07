@@ -5,6 +5,9 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
+// lockDirectory holds everything lockfile.Survey reads: the lock and the workflows it lists.
+const lockDirectory = ".github/workflows"
+
 // recordLockCoverage notes what the tree's Actions lockfile says about each of its workflows,
 // and the graph of selections it declares.
 //

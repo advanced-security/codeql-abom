@@ -42,8 +42,8 @@ func (s *Store) RecordCommitContent(repository, commit, digest string) error {
 
 // CommitContentDigest reports what a commit's indexed content hashed to, if it has been seen.
 //
-// The pre-check runs before any fetch, so a digest it has not already recorded is one it cannot
-// compute — absent is reported as absent rather than as empty.
+// The pre-check runs before any fetch, so a digest it has not already recorded costs a listing or
+// a clone to learn — absent is reported as absent rather than as empty.
 func (s *Store) CommitContentDigest(repository, commit string) (string, bool, error) {
 	var digest string
 	err := s.db.QueryRow(

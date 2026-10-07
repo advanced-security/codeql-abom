@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -105,6 +106,8 @@ type Result struct {
 	Height    float64    `json:"height"`
 	Positions []Position `json:"positions"`
 	Clusters  []Cluster  `json:"clusters"`
+	Boxes     []Box      `json:"-"`
+	Splines   []Spline   `json:"-"`
 }
 
 // Compute lays out a DOT document and returns where everything went.
@@ -159,15 +162,26 @@ func Compute(ctx context.Context, document []byte, opts Options) (Result, error)
 	return result, nil
 }
 
-// gvOutput is the part of Graphviz's JSON this reads.
+// gvOutput is the part of Graphviz's JSON this reads. An edge names its ends by their index in
+// the objects list, where clusters come before nodes.
 type gvOutput struct {
 	BB      string `json:"bb"`
 	Objects []struct {
-		Name string `json:"name"`
-		Pos  string `json:"pos"`
-		BB   string `json:"bb"`
+		Name   string `json:"name"`
+		Pos    string `json:"pos"`
+		BB     string `json:"bb"`
+		Width  string `json:"width"`
+		Height string `json:"height"`
 	} `json:"objects"`
+	Edges []struct {
+		Tail int    `json:"tail"`
+		Head int    `json:"head"`
+		Pos  string `json:"pos"`
+	} `json:"edges"`
 }
+
+// pointsPerInch converts the sizes Graphviz states in inches to the points it places in.
+const pointsPerInch = 72
 
 func parse(b []byte) (Result, error) {
 	var raw gvOutput
@@ -192,9 +206,49 @@ func parse(b []byte) (Result, error) {
 		}
 		if x, y, ok := point(obj.Pos); ok {
 			result.Positions = append(result.Positions, Position{Key: obj.Name, X: x, Y: y})
+			w, errW := strconv.ParseFloat(obj.Width, 64)
+			h, errH := strconv.ParseFloat(obj.Height, 64)
+			if errW == nil && errH == nil {
+				result.Boxes = append(result.Boxes, Box{Key: obj.Name, X: x, Y: y,
+					W: w * pointsPerInch, H: h * pointsPerInch})
+			}
 		}
 	}
+	for _, e := range raw.Edges {
+		if e.Tail < 0 || e.Tail >= len(raw.Objects) || e.Head < 0 || e.Head >= len(raw.Objects) {
+			return Result{}, fmt.Errorf("an edge names object %d or %d of %d", e.Tail, e.Head, len(raw.Objects))
+		}
+		spline, ok := splineOf(e.Pos)
+		if !ok {
+			continue
+		}
+		spline.Tail, spline.Head = raw.Objects[e.Tail].Name, raw.Objects[e.Head].Name
+		result.Splines = append(result.Splines, spline)
+	}
 	return result, nil
+}
+
+// splineOf reads an edge's pos: an optional `s,x,y` and `e,x,y` naming the arrow tips, then the
+// B-spline's control points. A route with more than one spline keeps the first.
+func splineOf(pos string) (Spline, bool) {
+	var out Spline
+	first, _, _ := strings.Cut(pos, ";")
+	for _, field := range strings.Fields(first) {
+		switch {
+		case strings.HasPrefix(field, "e,"):
+			if x, y, ok := point(field[2:]); ok {
+				out.Arrow = &Point{X: x, Y: y}
+			}
+		case strings.HasPrefix(field, "s,"):
+		default:
+			x, y, ok := point(field)
+			if !ok {
+				return Spline{}, false
+			}
+			out.Points = append(out.Points, Point{X: x, Y: y})
+		}
+	}
+	return out, len(out.Points) >= 4 && (len(out.Points)-1)%3 == 0
 }
 
 func point(s string) (x, y float64, ok bool) {
@@ -236,4 +290,63 @@ func (c *capped) Write(p []byte) (int, error) {
 	}
 	c.written += len(p)
 	return c.to.Write(p)
+}
+
+// Remedy is what to do about a server with no Graphviz, which is a broken installation.
+const Remedy = "install Graphviz so that dot is on the server's PATH (brew install graphviz, " +
+	"or apt-get install graphviz), then start ABOM again"
+
+// Box is where an engine placed a node and how big it is, in points: X and Y are the center.
+type Box struct {
+	Key        string
+	X, Y, W, H float64
+}
+
+// Point is one position in Graphviz points, the origin bottom left.
+type Point struct{ X, Y float64 }
+
+// Spline is the route an engine gave one edge: a cubic B-spline of 3n+1 points from tail to head,
+// and the tip of the arrow at its head, nil when the edge draws none.
+type Spline struct {
+	Tail, Head string
+	Points     []Point
+	Arrow      *Point
+}
+
+// versionTimeout bounds asking Graphviz its version, which answers at once when it is installed.
+const versionTimeout = 5 * time.Second
+
+// Version reports the installed Graphviz version, as `dot -V` states it.
+func Version(ctx context.Context) (string, error) {
+	program, _ := programFor(Dot)
+	if _, err := exec.LookPath(program); err != nil {
+		return "", fmt.Errorf("%w: %s", errUnavailable, program)
+	}
+	ctx, cancel := context.WithTimeout(ctx, versionTimeout)
+	defer cancel()
+	// `dot -V` writes to stderr, and some builds to stdout.
+	out, err := exec.CommandContext(ctx, program, "-V").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("asking %s its version: %w", program, err)
+	}
+	return parseVersion(string(out))
+}
+
+var versionLine = regexp.MustCompile(`(?i)graphviz version (\d+(?:\.\d+)+)`)
+
+func parseVersion(s string) (string, error) {
+	m := versionLine.FindStringSubmatch(s)
+	if m == nil {
+		return "", fmt.Errorf("no Graphviz version in %q", strings.TrimSpace(s))
+	}
+	return m[1], nil
+}
+
+// Require reports the installed Graphviz version, or why there is none and what to do about it.
+func Require(ctx context.Context) (string, error) {
+	version, err := Version(ctx)
+	if err != nil {
+		return "", fmt.Errorf("this server needs Graphviz and cannot run it (%w); %s", err, Remedy)
+	}
+	return version, nil
 }

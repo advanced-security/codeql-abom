@@ -63,6 +63,20 @@ type cacheRecord struct {
 	Patterns  []string `json:"patterns"`
 	Bytes     int64    `json:"bytes"`
 	FetchedAt string   `json:"fetched_at"`
+	// Content is what the tree held when it was fetched. Absent on an entry from before trees
+	// were verified, which cannot be told from one edited since.
+	Content *string `json:"content,omitempty"`
+}
+
+// verified reports whether an entry under these patterns still holds what was fetched. Another
+// tool editing a held tree in place would otherwise have the crawl analyze content no commit has.
+func verified(entry string, patterns []string) bool {
+	held, err := readRecord(entry)
+	if err != nil || !slices.Equal(held.Patterns, patterns) || held.Content == nil {
+		return false
+	}
+	now, err := CheckoutDigest(stagedTree(entry), nil)
+	return err == nil && now == *held.Content
 }
 
 // stagedTree is the tree within an entry. The same layout in staging and in place, so promotion
@@ -82,12 +96,8 @@ func (c *CheckoutCache) Reuse(owner, repo, sha string, patterns []string) (strin
 	if !ok {
 		return "", false
 	}
-	held, err := readRecord(entry)
-	if err != nil || !slices.Equal(held.Patterns, patterns) {
-		return "", false
-	}
 	tree := stagedTree(entry)
-	if info, err := os.Stat(tree); err != nil || !info.IsDir() {
+	if info, err := os.Stat(tree); err != nil || !info.IsDir() || !verified(entry, patterns) {
 		return "", false
 	}
 	// Recency is read from the marker, so an entry serving a crawl is not the one evicted.
@@ -130,7 +140,7 @@ func (c *CheckoutCache) Retain(
 	if !ok {
 		return "", fmt.Errorf("checkout cache: %s/%s@%s cannot name an entry", owner, repo, sha)
 	}
-	if held, err := readRecord(entry); err == nil && slices.Equal(held.Patterns, patterns) {
+	if verified(entry, patterns) {
 		// Somebody else promoted this commit first. Their entry is as good as this one, and
 		// replacing it would delete a tree another unit may be reading.
 		if err := os.RemoveAll(staged); err != nil {
@@ -143,6 +153,10 @@ func (c *CheckoutCache) Retain(
 	if err != nil {
 		return "", err
 	}
+	content, err := CheckoutDigest(stagedTree(staged), nil)
+	if err != nil {
+		return "", err
+	}
 	body, err := json.Marshal(cacheRecord{
 		Owner:     owner,
 		Repo:      repo,
@@ -150,6 +164,7 @@ func (c *CheckoutCache) Retain(
 		Patterns:  patterns,
 		Bytes:     size,
 		FetchedAt: time.Now().UTC().Format(time.RFC3339),
+		Content:   &content,
 	})
 	if err != nil {
 		return "", fmt.Errorf("checkout cache: describing %s/%s@%s: %w", owner, repo, sha, err)

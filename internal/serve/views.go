@@ -20,6 +20,8 @@ type NamedView struct {
 	Name      string `json:"name"`
 	Title     string `json:"title,omitempty"`
 	Predicate string `json:"predicate"`
+	// Description says what the scope holds, and is what every control naming it shows on hover.
+	Description string `json:"description"`
 	// Presentation is how the Explorer drew it, carried beside the predicate rather than inside
 	// it. Folding `view` or `groupBy` into the filter language would make the server responsible
 	// for browser rendering and pad every listing's refusal list with terms that are not filters.
@@ -36,14 +38,22 @@ type NamedView struct {
 }
 
 // named describes one catalog entry, working out where it can be opened from the predicate rather
-// than from where it happened to be saved.
-func named(name, title, predicate, presentation string, builtin bool, by, at string) NamedView {
+// than from where it happened to be saved. A scope nobody described is described by its predicate.
+func named(name, title, description, predicate, presentation string, builtin bool, by, at string) NamedView {
 	v := NamedView{
-		Name: name, Title: title, Predicate: predicate, Presentation: presentation,
-		Builtin: builtin, CreatedBy: by, CreatedAt: at,
+		Name: name, Title: title, Description: description, Predicate: predicate,
+		Presentation: presentation, Builtin: builtin, CreatedBy: by, CreatedAt: at,
 	}
-	if spec, err := viewspec.Parse(predicate); err == nil {
-		v.Refuses = spec.Refusals()
+	spec, err := viewspec.Parse(predicate)
+	if err != nil {
+		if v.Description == "" {
+			v.Description = "ABOM cannot read this scope's filter, so no page opens it."
+		}
+		return v
+	}
+	v.Refuses = spec.Refusals()
+	if v.Description == "" {
+		v.Description = spec.Description()
 	}
 	return v
 }
@@ -51,7 +61,7 @@ func named(name, title, predicate, presentation string, builtin bool, by, at str
 func (s *Server) views(w http.ResponseWriter, r *http.Request) {
 	out := []NamedView{}
 	for _, b := range viewspec.Builtins() {
-		out = append(out, named(b.Name, b.Title, b.Predicate, "", true, "", ""))
+		out = append(out, named(b.Name, b.Title, b.Description, b.Predicate, "", true, "", ""))
 	}
 	saved, err := s.Store.SavedViews()
 	if err != nil {
@@ -59,7 +69,7 @@ func (s *Server) views(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, v := range saved {
-		out = append(out, named(v.Name, "", v.Predicate, v.Presentation, false, v.CreatedBy, v.CreatedAt))
+		out = append(out, named(v.Name, "", "", v.Predicate, v.Presentation, false, v.CreatedBy, v.CreatedAt))
 	}
 	writeJSON(w, out, nil)
 }

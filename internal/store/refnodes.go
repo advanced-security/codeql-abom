@@ -2,6 +2,8 @@ package store
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -32,9 +34,13 @@ type refState struct {
 	depth     int
 	score     float64
 	dependent int
-	// analyzedAt decides which version an edge out of this dependency belongs to. Ingestion
-	// upserts, so the newest analysis is the one whose results the graph currently holds.
+	// analyzedAt decides which version an edge out of this dependency belongs to when nothing
+	// says which commit declared it. Ingestion upserts, so the newest analysis is the one whose
+	// results the row holds.
 	analyzedAt string
+	// resolved is the commit this version's reference resolved to, lowercased, which is the
+	// commit whose declarations are this version's own.
+	resolved string
 }
 
 // splitNodesByRef expands each dependency into one node per reference actually in use.
@@ -64,7 +70,7 @@ func (s *Store) splitNodesByRef(nodes []GraphNode, edges []GraphEdge) ([]GraphNo
 	refsOf := refsInUse(edges, splittable, analyzedRefs)
 
 	return expandNodesByRef(nodes, splittable, refsOf, states),
-		retargetEdges(edges, splittable, refsOf, sourceRefs(analyzedRefs, states)), nil
+		retargetEdges(edges, splittable, refsOf, sourceRefs(analyzedRefs, states), states), nil
 }
 
 // indexRefStates groups the queue rows by dependency: everything queued, and the analyzed
@@ -198,12 +204,13 @@ func nodeAtRef(n GraphNode, ref string, states map[[2]string]refState) GraphNode
 	return v
 }
 
-// sourceRefs picks the one version an edge out of a dependency is attributed to.
+// sourceRefs picks the one version an edge out of a dependency is attributed to when the commits
+// that declared it name none.
 //
 // The bare node is gone once a dependency is split, so every edge leaving it must name a version
 // or it dangles. Where several versions were analyzed the newest one wins: ingestion upserts, so
-// its results are the ones the graph currently holds. Ties break on the reference name, because
-// two versions analyzed in the same second must still resolve the same way on every read.
+// its results are the ones the row holds. Ties break on the reference name, because two versions
+// analyzed in the same second must still resolve the same way on every read.
 func sourceRefs(
 	analyzedRefs map[string]map[string]bool, states map[[2]string]refState,
 ) map[string]string {
@@ -224,39 +231,83 @@ func sourceRefs(
 
 // retargetEdges points each use at the version it names, splitting an edge that carries several.
 //
-// Edges *out* of a split dependency move to the version they were produced from: a composite
-// action's own steps were read from one checkout, and leaving them on the bare name would strand
-// them beside a node that no longer exists.
+// Edges *out* of a split dependency move to the versions whose commits declared them: a composite
+// action's own steps were read from a checkout of one commit, and leaving them on the bare name
+// would strand them beside a node that no longer exists. Two versions declaring different steps
+// are two different sets of edges.
 func retargetEdges(
 	edges []GraphEdge, splittable map[string]bool, refsOf map[string]map[string]bool,
-	analyzedRef map[string]string,
+	analyzedRef map[string]string, states map[[2]string]refState,
 ) []GraphEdge {
 	out := make([]GraphEdge, 0, len(edges))
-	for _, e := range edges {
-		if splittable[e.Source] && len(refsOf[e.Source]) > 0 {
-			e.Source = refNodeKey(e.Source, analyzedRef[e.Source])
+	for _, from := range edges {
+		sources := []GraphEdge{from}
+		if splittable[from.Source] && len(refsOf[from.Source]) > 0 {
+			sources = fromVersions(from, refsOf[from.Source], analyzedRef[from.Source], states)
 		}
-		if !splittable[e.Target] || len(refsOf[e.Target]) == 0 {
-			out = append(out, e)
-			continue
-		}
-		refs := e.Refs
-		if len(refs) == 0 {
-			refs = []string{""}
-		}
-		for _, ref := range refs {
-			split := e
-			split.Target = refNodeKey(e.Target, ref)
-			split.Refs = []string{ref}
-			if ref == "" {
-				split.Refs = []string{}
+		for _, e := range sources {
+			if !splittable[e.Target] || len(refsOf[e.Target]) == 0 {
+				out = append(out, e)
+				continue
 			}
-			// Only the relationships that named this version. Copying the merged edge wholesale
-			// would tell a reader selecting v3 that they had selected the line that pinned v4.
-			split.parts = partsAtRef(e.parts, ref)
-			split.summarize()
-			out = append(out, split)
+			refs := e.Refs
+			if len(refs) == 0 {
+				refs = []string{""}
+			}
+			for _, ref := range refs {
+				split := e
+				split.Target = refNodeKey(e.Target, ref)
+				split.Refs = []string{ref}
+				if ref == "" {
+					split.Refs = []string{}
+				}
+				// Only the relationships that named this version. Copying the merged edge wholesale
+				// would tell a reader selecting v3 that they had selected the line that pinned v4.
+				split.parts = partsAtRef(e.parts, ref)
+				split.summarize()
+				out = append(out, split)
+			}
 		}
+	}
+	return out
+}
+
+// fromVersions divides an edge out of a split dependency among the versions in use whose
+// reference resolved to a commit that declared it. What names no such commit — a row no run
+// recorded, or a commit no drawn version resolves to — hangs from fallback, as it always has.
+func fromVersions(
+	e GraphEdge, versions map[string]bool, fallback string, states map[[2]string]refState,
+) []GraphEdge {
+	if len(e.parts) == 0 {
+		e.Source = refNodeKey(e.Source, fallback)
+		return []GraphEdge{e}
+	}
+	byVersion := map[string][]edgePart{}
+	for _, p := range e.parts {
+		placed := false
+		for _, ref := range sortedKeys(versions) {
+			if st := states[[2]string{e.Source, ref}]; st.resolved != "" &&
+				slices.Contains(p.commits, st.resolved) {
+				byVersion[ref] = append(byVersion[ref], p)
+				placed = true
+			}
+		}
+		if !placed {
+			byVersion[fallback] = append(byVersion[fallback], p)
+		}
+	}
+	out := make([]GraphEdge, 0, len(byVersion))
+	for _, ref := range slices.Sorted(maps.Keys(byVersion)) {
+		v := e
+		v.Source = refNodeKey(e.Source, ref)
+		v.parts = byVersion[ref]
+		v.Refs = []string{}
+		for _, p := range v.parts {
+			v.addGraphRef(p.ref)
+		}
+		sort.Strings(v.Refs)
+		v.summarize()
+		out = append(out, v)
 	}
 	return out
 }
@@ -273,37 +324,47 @@ func partsAtRef(parts []edgePart, ref string) []edgePart {
 }
 
 // usersPerRef counts the repositories naming each (node_key, ref) exactly once for the whole
-// query, instead of once per row that asks.
+// query, instead of once per row that asks, from table: declared_edge as declaredEdgeTable builds
+// it, so a repository names a version where its line runs rather than where the row's last writer
+// did, and a starting point's own CI only where it stands as one.
 //
-// Shared rather than written twice: the queue view and the graph both answer "who runs this exact
-// version" from the same edges, and `ownedFullName` exists because the tier, the queue and the
-// node users had already drifted into three answers to one question.
-// `TestTheQueueAndTheGraphAgreeOnHowManyRepositoriesNameAVersion` is the guard.
+// The queue view counts the same thing beside its sample in `usedByRollup`, over the same table.
+// `TestTheQueueAndTheGraphAgreeOnHowManyRepositoriesNameAVersion` is the guard: `ownedFullName`
+// exists because the tier, the queue and the node users had already drifted into three answers to
+// one question.
 //
 // Matched on the edge's ref rather than the node, because one action at two references is two
 // different things to everyone downstream.
-const usersPerRef = `SELECT n.node_key AS nk, COALESCE(e.ref_value, '') AS rf,
+func usersPerRef(table string) string {
+	return `SELECT n.node_key AS nk, COALESCE(e.ref_value, '') AS rf,
 	       COUNT(DISTINCT e.repository_row_id) AS cnt
-	  FROM abom_edge_regular e
+	  FROM ` + table + ` e
 	  JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 	 GROUP BY n.node_key, COALESCE(e.ref_value, '')`
+}
 
 // refStatesQuery is separate from the read so its plan can be asserted: walking the edge table
 // once per queue row is a structural property, not something a stopwatch decides.
-const refStatesQuery = `
-	WITH users AS (` + usersPerRef + `)
+func refStatesQuery(table string) string {
+	return `
+	WITH users AS (` + usersPerRef(table) + `)
 	SELECT f.node_key, f.ref, f.status, f.status = 'done',
 	       f.depth, f.score,
 	       COALESCE(u.cnt, 0),
-	       COALESCE(f.analyzed_at, '')
+	       COALESCE(f.analyzed_at, ''), LOWER(COALESCE(f.resolved_sha, ''))
 	FROM abom_frontier f
 	LEFT JOIN users u ON u.nk = f.node_key AND u.rf = f.ref`
+}
 
 // refStates reads every queue row and the reach of the version it names. Reach is counted from
 // the edges rather than from blast radius, which is keyed by name and would attribute the whole
 // dependency's dependents to each of its versions.
 func (s *Store) refStates() (map[[2]string]refState, error) {
-	rows, err := s.db.Query(refStatesQuery)
+	table, err := s.declaredEdgeTable(AnalysisModeRegular)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(refStatesQuery(table))
 	if err != nil {
 		return nil, fmt.Errorf("reading reference states: %w", err)
 	}
@@ -314,7 +375,7 @@ func (s *Store) refStates() (map[[2]string]refState, error) {
 		var key, ref string
 		var st refState
 		if err := rows.Scan(&key, &ref, &st.status, &st.analyzed, &st.depth, &st.score,
-			&st.dependent, &st.analyzedAt); err != nil {
+			&st.dependent, &st.analyzedAt, &st.resolved); err != nil {
 			return nil, fmt.Errorf("scanning reference state: %w", err)
 		}
 		// The queue's states are split the way a reader reads them, as elsewhere.

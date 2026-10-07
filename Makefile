@@ -18,7 +18,8 @@ GOTOOLCHAIN := go1.26.0
 export GOTOOLCHAIN
 
 BIN      := bin/codeql-abom
-GO_FILES := $(shell find . -name '*.go' -not -path './ui/*')
+# Repository Go source only: a killed go test leaves unformatted cgo output under $(ABOM_TMP).
+GO_FILES := $(shell find . \( -path ./ui -o -path '$(patsubst $(CURDIR)/%,./%,$(abspath $(ABOM_TMP)))' \) -prune -o -name '*.go' -print)
 
 # Empty is a development build. A release sets it, e.g. ABOM_VERSION=v2.27.1-next.1.
 ABOM_VERSION ?=
@@ -127,7 +128,7 @@ e2e-run:
 		npx playwright test $(ABOM_E2E_FLAGS) $(ABOM_E2E_SPECS)
 
 fmt:
-	@out=$$(gofmt -l . 2>&1 | grep -v '^ui/' || true); \
+	@out=$$(gofmt -l $(GO_FILES) 2>&1 || true); \
 	if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi; \
 	echo "gofmt: clean"
 

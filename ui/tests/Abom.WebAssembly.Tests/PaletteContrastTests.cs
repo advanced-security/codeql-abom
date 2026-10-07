@@ -59,6 +59,21 @@ public class PaletteContrastTests : AbomTestContext
         return (Math.Max(la, lb) + 0.05) / (Math.Min(la, lb) + 0.05);
     }
 
+    // Every state the queue can be in is drawn and named, or the legend leaves one out and the
+    // bar draws it in the colour of something never measured.
+    [Theory]
+    [MemberData(nameof(Schemes))]
+    public void EveryQueueStateHasAColourAndAName(bool dark)
+    {
+        var p = Palette(dark);
+        foreach (var state in new[] { "queued", "retrying", "running", "done", "unavailable", "nothing" })
+        {
+            Assert.True(p.Discovery.ContainsKey(state), $"no {(dark ? "dark" : "light")} colour for {state}");
+            Assert.True(ThemeService.DiscoveryNames.ContainsKey(state), $"no legend name for {state}");
+        }
+        Assert.Equal("Nothing to analyze", ThemeService.DiscoveryNames["nothing"]);
+    }
+
     [Theory]
     [MemberData(nameof(Schemes))]
     public void EveryDiscoveryStateIsVisibleAgainstTheCanvas(bool dark)

@@ -23,6 +23,13 @@ type Repository struct {
 	FullName      string
 	DefaultBranch string
 	HasWorkflows  *bool
+	// HasActionsDir and HasRootAction are `.github/actions` and a root `action.yml|yaml`, read
+	// beside the workflow tree. Nil is a route that cannot look inside a tree, never "no".
+	HasActionsDir *bool
+	HasRootAction *bool
+	// Fork is nil where the answer did not say; Visibility is empty there.
+	Fork       *bool
+	Visibility string
 	// CreatedAt and PushedAt are what a sorted read stops below. Zero means GitHub named none,
 	// which a repository with no commits genuinely has: it was created and never pushed, and
 	// that is the case the creation-ordered walk exists for.
@@ -154,4 +161,37 @@ func workflowFiles(raw json.RawMessage) *bool {
 		}
 	}
 	return &found
+}
+
+// pathPresent reads one `object(expression:)` lookup: null is a path that is not there, and an
+// absent field is a query that did not ask.
+func pathPresent(raw json.RawMessage) *bool {
+	if len(raw) == 0 {
+		return nil
+	}
+	found := false
+	if string(raw) == "null" {
+		return &found
+	}
+	var object struct {
+		Kind string `json:"__typename"`
+	}
+	if err := json.Unmarshal(raw, &object); err != nil || object.Kind == "" {
+		return nil
+	}
+	found = true
+	return &found
+}
+
+// anyPresent is yes if either lookup found its path, and unknown only if neither was asked.
+func anyPresent(a, b *bool) *bool {
+	switch {
+	case a != nil && *a:
+		return a
+	case b != nil && *b:
+		return b
+	case a != nil:
+		return a
+	}
+	return b
 }

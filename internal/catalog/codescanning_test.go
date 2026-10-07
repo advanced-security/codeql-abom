@@ -1,10 +1,14 @@
 package catalog
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -210,7 +214,75 @@ func TestTheActionsAnalysisIsTheDefaultBranchsNotAPullRequests(t *testing.T) {
 	}
 }
 
-// How far a default branch has moved past a commit is GitHub's to count; the comparison only
+// The analysis that can stand in is the newest at one commit, which need not be the newest of all.
+func TestEveryActionsAnalysisIsListedNewestFirstWithTheIDThatFetchesIt(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, analysesBody)
+	})
+
+	analyses, err := c.ActionsAnalyses(context.Background(), "octo-org/app", "")
+	if err != nil {
+		t.Fatalf("ActionsAnalyses: %v", err)
+	}
+	var got []string
+	for _, a := range analyses {
+		got = append(got, fmt.Sprintf("%d@%s", a.ID, a.CommitSHA))
+	}
+	if want := []string{"2@bbbb", "1@aaaa"}; !slices.Equal(got, want) {
+		t.Errorf("analyses = %v, want %v: the Actions ones, newest first, each with its id", got, want)
+	}
+}
+
+// codeScanningFixture is GitHub's own output for an operator's test repository (regen-codescanning-fixture.sh).
+const codeScanningFixture = "../../testdata/codescanning/has-ghas__test-repo-3/"
+
+// The document is GitHub's byte for byte, asked for in the media type that returns SARIF, not a summary.
+func TestAnAnalysisIsDownloadedAsItsSarifDocument(t *testing.T) {
+	want, err := os.ReadFile(codeScanningFixture + "analysis.sarif")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Path, "/repos/has-ghas/test-repo-3/code-scanning/analyses/1894557161"; got != want {
+			t.Errorf("path = %q, want %q", got, want)
+		}
+		if got := r.Header.Get("Accept"); got != "application/sarif+json" {
+			t.Errorf("Accept = %q, want application/sarif+json", got)
+		}
+		_, _ = w.Write(want)
+	})
+
+	dest := filepath.Join(t.TempDir(), "analysis.sarif")
+	if err := c.DownloadAnalysis(context.Background(), "has-ghas/test-repo-3", 1894557161, dest); err != nil {
+		t.Fatalf("DownloadAnalysis: %v", err)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("downloaded %d bytes, want GitHub's %d unchanged", len(got), len(want))
+	}
+}
+
+// Half a document read as a whole one would take its missing results as rules that found nothing.
+func TestAFailedAnalysisDownloadLeavesNoDocument(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"message":"Resource not accessible by integration"}`)
+	})
+
+	dest := filepath.Join(t.TempDir(), "analysis.sarif")
+	err := c.DownloadAnalysis(context.Background(), "has-ghas/test-repo-3", 1894557161, dest)
+	var status *StatusError
+	if !errors.As(err, &status) || status.Code != http.StatusForbidden {
+		t.Fatalf("got %v, want the 403", err)
+	}
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Error("a refused download left a document behind")
+	}
+}
+
 // reports it.
 func TestCompareReportsHowFarTheHeadHasMovedPastACommit(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {

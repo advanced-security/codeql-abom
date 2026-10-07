@@ -325,29 +325,35 @@ type bomEdge struct {
 }
 
 // bomEdges reads every dependency relationship once, with steps and jobs folded into whatever
-// holds them.
+// holds them, as what each line declared at the commits in use: a reference only a history
+// commit made is not something the roots run.
 //
 // Folded because a step is a position in a file rather than a thing anything depends on. This is
 // the same collapse the Explorer draws by default, so the document and picture agree.
 //
 // Read wholesale rather than walked in SQL: a recursive CTE per root would re-read the same edges.
 func (s *Store) bomEdges() ([]bomEdge, error) {
-	rows, err := s.db.Query(`WITH ` + collapsedDisplay + `
-		SELECT sn.node_key, dn.node_key,
+	answers, err := s.liveAnswersNow()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`WITH `+declaredEdges(AnalysisModeRegular)+`, `+collapsedDisplay+`
+		SELECT DISTINCT sn.node_key, dn.node_key,
 		       COALESCE(sr.repository_full_name, ''),
 		       COALESCE(NULLIF(dn.owner || '/' || dn.repo, '/'),
 		                (SELECT tr.repository_full_name FROM repository tr
 		                  WHERE tr.row_id = dn.repository_row_id), ''),
-		       e.edge_kind, COALESCE(e.boundary, ''),
-		       COALESCE(e.ref_raw, ''), COALESCE(e.ref_value, '')
-		FROM abom_edge_regular e
+		       e.edge_kind, COALESCE(b.boundary, ''), e.ref_raw, e.ref
+		FROM declared e
 		JOIN disp ds ON ds.row_id = e.src_node_row_id
 		JOIN disp dd ON dd.row_id = e.dst_node_row_id
 		JOIN abom_node_live sn ON sn.row_id = ds.shown
 		JOIN abom_node_live dn ON dn.row_id = dd.shown
 		LEFT JOIN repository sr ON sr.row_id = e.repository_row_id
-		WHERE ds.shown <> dd.shown AND ` + DependencyEdgeFilter + `
-		ORDER BY sn.node_key, dn.node_key, e.ref_raw`)
+		LEFT JOIN declared_boundary b
+		  ON b.repository_row_id = e.repository_row_id AND b.dst_node_row_id = e.dst_node_row_id
+		WHERE ds.shown <> dd.shown AND `+DependencyEdgeFilter+`
+		ORDER BY 1, 2, 7, 5, 6, 8`, answers)
 	if err != nil {
 		return nil, fmt.Errorf("reading dependency edges: %w", err)
 	}

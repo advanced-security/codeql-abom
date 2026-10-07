@@ -124,7 +124,7 @@ func (f *orgFixture) serveREST(w http.ResponseWriter, r *http.Request) {
 	items := make([]string, 0, end-start)
 	for _, repo := range ordered[start:end] {
 		items = append(items, fmt.Sprintf(
-			`{"full_name":"has-ghas/%s","archived":%t,"default_branch":"main",
+			`{"full_name":"has-ghas/%s","archived":%t,"default_branch":"main","fork":false,"visibility":"public",
 			  "created_at":"%s","pushed_at":"%s"}`,
 			repo.name, repo.archived, repo.created, repo.pushed))
 	}

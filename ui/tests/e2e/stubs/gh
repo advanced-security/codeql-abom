@@ -1,0 +1,5 @@
+#!/bin/sh
+# The suite's gh: one nobody has logged in to, which is what CI has. Without it the Settings
+# page's own check would write whoever runs the suite into the store under test.
+echo "To get started with GitHub CLI, please run:  gh auth login" >&2
+exit 4

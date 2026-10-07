@@ -148,13 +148,27 @@ func (m *model) countedFor(s step) (int64, bool) {
 }
 
 // boundFor names the repository making a step's reference, of any origin, where the route's lock
-// bindings admit it.
+// bindings admit it and, for a repository under review, where it declares the reference at a commit
+// it stands at as a starting point.
 func (m *model) boundFor(s step) (int64, bool) {
 	repo, ok := m.repoOf[s.in.src]
 	if !ok || listed(s.at.excludes, repo) || (s.at.requires != 0 && s.at.requires != repo) {
 		return 0, false
 	}
+	if m.seedRepo[repo] && !m.startsAt(repo, s.in.commits) {
+		return 0, false
+	}
 	return repo, true
+}
+
+// startsAt reports whether a repository's declaration, made at commits, is its own as a starting
+// point. Where no reference resolves the repository nothing says which commit it runs, so any is.
+func (m *model) startsAt(repo int64, commits []string) bool {
+	starts, ok := m.starts[repo]
+	if !ok {
+		return true
+	}
+	return slices.ContainsFunc(commits, func(c string) bool { return starts[c] })
 }
 
 // admits reports whether a reference can reach cur.commit and how that binds later routes.

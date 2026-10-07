@@ -234,6 +234,9 @@ func writeStatement(b *strings.Builder, depth int, subject string, attrs [][2]st
 	b.WriteString("];\n")
 }
 
+// Quote writes a DOT quoted string, for another document that names the same keys.
+func Quote(s string) string { return quote(s) }
+
 // quote writes a DOT quoted string.
 //
 // `"` is the only escape the language defines inside one: `\"` becomes `"`, and everything else

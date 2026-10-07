@@ -62,6 +62,19 @@ defect seen both ways is one finding" testable rather than assumed.
 Read the diff before accepting it. A fixture change is a change to what every test using it
 means.
 
+### The code scanning fixtures
+
+```bash
+.github/skills/regenerate-abom-fixtures/scripts/regen-codescanning-fixture.sh
+```
+
+`testdata/codescanning/<owner>__<repo>/` holds what GitHub serves for one of the operator's test
+repositories: its actions `database.zip` and `analysis.sarif`, the analysis of the commit that
+database was built from. It is GitHub's output rather than the CLI's, and differs from it: rules sit
+in the `codeql/actions-queries` extension, results carry `level` and alert numbers, and rule
+properties have no `problem.severity`. The script only reads, so it runs during a crawl. Tests name
+the commit and analysis id it prints.
+
 ### The corpus query pack
 
 `testdata/corpus/authoring.json` is what CodeQL said over the operator's pack `make corpus` lays

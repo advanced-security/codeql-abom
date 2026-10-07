@@ -43,6 +43,8 @@ func TestTheUsesTableIsTheStoredReach(t *testing.T) {
 		"unresolved under a caller's lock": unresolvedLockedMid,
 		"supply chain":                     agreementFixture,
 		"shared":                           fixture,
+		"a starting point is a dependency": func(t *testing.T) *store.Store { return toolFixture(t, true).s },
+		"no default branch on record":      func(t *testing.T) *store.Store { return toolFixture(t, false).s },
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := build(t)
@@ -205,6 +207,32 @@ func TestUpstreamUsesAreHiddenAndCountedUntilAskedFor(t *testing.T) {
 	asked := usesOf(t, f.s, "vendor/comp", UsesQuery{Origins: []string{"upstream"}})
 	if got := useKeys(asked); !slices.Equal(got, []string{"third/party@v2=c2/1"}) || asked.HiddenUpstream != 0 {
 		t.Errorf("origins=upstream answered %v, hidden %d", got, asked.HiddenUpstream)
+	}
+}
+
+// A user is owned where the declaration covers its repository, never because it was seeded: of
+// four starting points the two declared answer origins=owned, and seed still answers all four.
+func TestAUseIsOwnedOnlyWhereTheDeclarationCoversItsRepository(t *testing.T) {
+	f := releasesInUse(t)
+	if err := f.s.SetOwnedScope([]store.DeclaredAccount{{Owner: "octo", Kind: store.AccountOrganization,
+		Enabled: true, IncludesOnly: true, Includes: []string{"app", "other"}}}, store.DeclaredByCLI); err != nil {
+		t.Fatal(err)
+	}
+	all := usesOf(t, f.s, "vendor/comp", UsesQuery{})
+	if len(all.Items) != 4 {
+		t.Fatalf("vendor/comp has %d users, want the fixture's four", len(all.Items))
+	}
+	for _, u := range all.Items {
+		if want := u.Repository == "octo/app" || u.Repository == "octo/other"; u.Owned != want {
+			t.Errorf("%s (origin %q) reads owned=%v, want %v", u.Repository, u.Origin, u.Owned, want)
+		}
+	}
+	owned := usesOf(t, f.s, "vendor/comp", UsesQuery{Origins: []string{store.OwnedOrigin}})
+	if got, want := useKeys(owned), []string{"octo/app@v1=c1/1", "octo/other@v2=c2/1"}; !slices.Equal(got, want) {
+		t.Errorf("origins=owned answered %v, want %v", got, want)
+	}
+	if seeds := usesOf(t, f.s, "vendor/comp", UsesQuery{Origins: []string{store.OriginSeed}}); len(seeds.Items) != 4 {
+		t.Errorf("origins=seed answered %v, want every starting point", useKeys(seeds))
 	}
 }
 

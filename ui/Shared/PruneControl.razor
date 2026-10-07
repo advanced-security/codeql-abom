@@ -65,14 +65,14 @@ else
 {
     <MudText Typo="Typo.body2" Class="mb-2" data-abom-prune-summary>
         @_prune.Declared declared @(_prune.Declared == 1 ? "repository reaches" : "repositories reach")
-        @_prune.Reachable. Outside that: <b>@_prune.Removed.Nodes.ToString("N0")</b> nodes and
-        <b>@_prune.Removed.Edges.ToString("N0")</b> edges across
-        <b>@_prune.Removed.Repositories.ToString("N0")</b> repositories@(_prune.Removed.Queued > 0
-            ? $", and {_prune.Removed.Queued:N0} queued dependencies that would otherwise be analyzed and come back"
+        @_prune.Reachable. Outside that: <b>@CountText.Of(_prune.Removed.Nodes, "node", "nodes")</b> and
+        <b>@CountText.Of(_prune.Removed.Edges, "edge", "edges")</b> across
+        <b>@CountText.Of(_prune.Removed.Repositories, "repository", "repositories")</b>@(_prune.Removed.Queued > 0
+            ? $", and {CountText.Of(_prune.Removed.Queued, "queued dependency", "queued dependencies")} that would otherwise be analyzed and come back"
             : "").
     </MudText>
     <div class="d-flex flex-wrap align-center gap-3 mb-8">
-        <MudTooltip Text="Take these out of every view. Nothing is deleted yet, and re-analysis brings back anything you declare again.">
+        <MudTooltip Text="Take these out of every view. Nothing is deleted yet, and anything a later analysis finds again comes back.">
             <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_pruning"
                        OnClick="@(() => Prune(false))" data-abom-prune-mark>
                 @(_pruning ? "Working…" : "Remove from view")

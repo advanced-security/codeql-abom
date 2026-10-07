@@ -31,10 +31,13 @@ which repositories hold `.github/workflows/**`. That is the one language gap the
 3. **Carry incompleteness through.** The audit is explicit that a zero exit does not mean a complete
    report; `stats.incomplete`, per-repository `status.incomplete`, `errors` and `warnings` are what
    say otherwise. ABOM restates them rather than flattening them into a clean answer. Depends on 1.
-4. **Contribute the `actions` gap back**, so a repository holding workflows with no Actions analysis
-   is reported as a gap by whichever surface the operator is looking at. Depends on 2.
-5. **Enablement as something a policy may reference**, on the same footing as an advisory. The rule
+4. **Enablement as something a policy may reference**, on the same footing as an advisory. The rule
    stays the operator's. Depends on 2, and on a predicate term the policy language can carry.
+
+ABOM closes the `actions` gap this plan once meant to contribute back itself, by the operator's
+decision: it reads each owned repository's default setup, because it must classify setup before it
+may add `actions` ([`docs/architecture.md`](../../docs/architecture.md) says how). The audit still
+owns execution, freshness and every other language.
 
 ## The constraints that must not be broken
 
@@ -53,7 +56,9 @@ same reason: it is somebody else's measurement, stored beside ABOM's own and att
 audit verdict of `healthy` is not ABOM saying a repository is safe.
 
 **ABOM does not re-implement what the audit measures.** If the answer is wrong, that is an upstream
-bug with an upstream owner, not a reason to grow a second implementation here.
+bug with an upstream owner, not a reason to grow a second implementation here. The one exception is
+the default setup reading ABOM needs before it may
+write, and it reads that for `actions` alone.
 
 ## Verification
 
@@ -62,7 +67,5 @@ bug with an upstream owner, not a reason to grow a second implementation here.
 - A `config`-depth report does not produce any freshness or execution claim anywhere in ABOM.
 - A report whose `stats.incomplete` is set never renders as full coverage, and what was unread is
   readable.
-- A repository holding `.github/workflows/**` with no Actions analysis is reported as a gap, and the
-  audit alone does not report it — which is the test that the two-way exchange is real.
 - Every enablement figure names the audit, its scan depth and when it ran. A figure that cannot say
   where it came from is indistinguishable from one ABOM measured.

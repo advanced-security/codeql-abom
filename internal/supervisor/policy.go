@@ -9,10 +9,8 @@ import (
 
 // Default aggregate policy settings.
 //
-// Reach is recomputed by clearing abom_blast_radius and deriving it again, so its cost tracks
-// corpus size rather than how much changed. Recomputing every cycle spends most of that on a
-// graph that gained a handful of edges; never recomputing lets a headline number drift with
-// nothing on screen admitting it.
+// The rebuild costs corpus size. Between rebuilds each cycle derives reach from what changed, so the
+// rebuild is the oracle that corrects an incremental mistake, not what keeps reach current.
 const (
 	// DefaultAfterEdges is the materiality trigger. A rebuild that would change nothing is
 	// pure cost.
@@ -23,7 +21,7 @@ const (
 	DefaultMinInterval = 5 * time.Minute
 )
 
-// AggregatePolicy decides when reach is worth recomputing.
+// AggregatePolicy decides when reach is worth rebuilding wholesale.
 type AggregatePolicy struct {
 	AfterEdges  int
 	MaxAge      time.Duration
@@ -67,8 +65,17 @@ func (p AggregatePolicy) due(st store.ReachStaleness, drained bool, now time.Tim
 	if age < p.minInterval() {
 		return false, ""
 	}
-	if drained {
-		return true, "the queue drained"
+	// A drain is when the numbers are read, but an idle crawl drains every cycle: only a drain after
+	// something changed is worth what a rebuild costs.
+	if drained && st.Generations > 0 {
+		cycles := "cycles"
+		if st.Generations == 1 {
+			cycles = "cycle"
+		}
+		return true, fmt.Sprintf("the queue drained after %d %s changed the graph", st.Generations, cycles)
+	}
+	if drained && st.NewEdges > 0 {
+		return true, fmt.Sprintf("the queue drained with %d dependencies arrived since", st.NewEdges)
 	}
 	if age >= p.maxAge() {
 		return true, fmt.Sprintf("reach was last measured %s ago", age.Round(time.Minute))

@@ -21,8 +21,8 @@ export const SURFACES = ['/', '/codeql', '/inventory', '/explore', '/settings'];
 // `/explore` correctly renders the chooser and no canvas, which is why every spec that went there
 // expecting a graph had to be pointed here instead.
 //
-// The advisory routes with findings rather than the owned closure: owned draws 3,702 nodes, which
-// is past the ceiling the view refuses at, so it would produce a refusal rather than a picture.
+// The advisory routes with findings rather than the declared closure: supply-chain drew 3,702
+// nodes, past the ceiling the view refuses at, so it would produce a refusal rather than a picture.
 export const EXPLORE_DRAWN = '/explore?scope=exposure&flags=findings';
 
 // The units Inventory reprojects one scope into. Relationships is absent until an edge carries its

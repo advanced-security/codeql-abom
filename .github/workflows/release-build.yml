@@ -55,6 +55,11 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: scripts/release-version.sh --check "$VERSION"
 
+      # Graphviz is a requirement: serve refuses to start without it, and the layout and figure
+      # tests fail rather than skip.
+      - name: Verify - Install Graphviz
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends graphviz
+
       # `make verify` less lint, pins and the browser suite, which pull requests already run and
       # which need tools this job would otherwise install for nothing the archive contains.
       - name: Verify - Go, interface and query tests

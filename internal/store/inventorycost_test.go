@@ -14,7 +14,7 @@ func TestABoundedInventoryDrivesFromTheReachPairsRatherThanScanningNodes(t *test
 
 	scope := RepositoryScope{Include: []viewspec.PropertyMatch{
 		{Name: "business_id", Value: "3"}}}
-	in, err := s.reachInScope(scope)
+	in, err := s.reachInScope(scope, false)
 	if err != nil {
 		t.Fatalf("building the row filter: %v", err)
 	}

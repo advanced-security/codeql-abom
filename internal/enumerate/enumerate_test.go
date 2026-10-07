@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -339,5 +340,131 @@ func TestTheRouteThatAnsweredIsCarriedToTheReport(t *testing.T) {
 	}
 	if marks.Route != catalog.RouteREST {
 		t.Errorf("stored route %q, want %q", marks.Route, catalog.RouteREST)
+	}
+}
+
+// An event asks for the account it names, and a listing of every other declared account on its
+// behalf would spend their budgets and move their marks for nothing.
+func TestARunNamingAnAccountReadsOnlyThatAccount(t *testing.T) {
+	s := newStore(t)
+	if err := s.SetOwnedScope([]store.DeclaredAccount{
+		{Owner: "has-ghas", Kind: store.AccountOrganization, Enabled: true},
+		{Owner: "advanced-security", Kind: store.AccountOrganization, Enabled: true},
+	}, store.DeclaredByCLI); err != nil {
+		t.Fatal(err)
+	}
+	var asked []string
+	read := func(_ context.Context, account string, since catalog.Marks) (catalog.Listing, error) {
+		asked = append(asked, account)
+		return catalog.Listing{Route: catalog.RouteGraphQL, Full: since.Empty()}, nil
+	}
+
+	report, err := Run(context.Background(), Options{Store: s, Read: read, Owners: []string{"Has-GHAS"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(asked) != 1 || asked[0] != "has-ghas" || len(report.Accounts) != 1 {
+		t.Errorf("read %v and reported %d accounts, want has-ghas alone", asked, len(report.Accounts))
+	}
+}
+
+// An event names one repository, and a sweep of a large account names only what was pushed or
+// created since its marks: a property or visibility change waits a day for the full listing.
+func TestARunNamingARepositoryReadsItAloneAndMovesNoMarks(t *testing.T) {
+	s := newStore(t)
+	if _, err := s.InsertOwnedRepository("has-ghas/other"); err != nil {
+		t.Fatal(err)
+	}
+	pushed := time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC)
+	if err := s.RecordFullListing("has-ghas", catalog.RouteGraphQL, 3, pushed, pushed); err != nil {
+		t.Fatal(err)
+	}
+	before, _, err := s.EnumerationState("has-ghas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := func(context.Context, string, catalog.Marks) (catalog.Listing, error) {
+		t.Error("a run naming only a repository listed its account")
+		return catalog.Listing{}, nil
+	}
+	var asked []string
+	readOne := func(_ context.Context, fullName string) (catalog.Listing, error) {
+		asked = append(asked, fullName)
+		return catalog.Listing{Route: catalog.RouteREST, Pages: 1, PropertiesRead: true,
+			Repositories: []catalog.Repository{{FullName: "has-ghas/new", DefaultBranch: "main",
+				Properties: []catalog.PropertyValue{{Name: "team", Value: "red"}}}}}, nil
+	}
+
+	report, err := Run(context.Background(), Options{Store: s, Read: listed, ReadRepository: readOne,
+		Repositories: []string{"has-ghas/new", "someone-else/repo"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(asked) != 1 || asked[0] != "has-ghas/new" {
+		t.Errorf("read %v, want has-ghas/new alone: someone-else is not declared", asked)
+	}
+	if origin, err := s.RepositoryOrigin("has-ghas/new"); err != nil || origin != store.OriginSeed {
+		t.Errorf("has-ghas/new origin = %q (%v), want it recorded as owned", origin, err)
+	}
+	if branch, known, err := s.DefaultBranch("has-ghas/new"); err != nil || !known || branch != "main" {
+		t.Errorf("default branch = %q (known=%v, %v), want main", branch, known, err)
+	}
+	if report.Added != 1 || len(report.Accounts) != 1 || report.Accounts[0].MissingKnown {
+		t.Errorf("report = %+v, want one repository added and nothing said to be missing", report)
+	}
+	owned, err := s.OwnedRepositories()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(owned, "has-ghas/other") {
+		t.Errorf("owned = %v; reading one repository called another missing", owned)
+	}
+	after, _, err := s.EnumerationState("has-ghas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ListedAt.Equal(before.ListedAt) || !after.SweptAt.Equal(before.SweptAt) ||
+		!after.HighPushed.Equal(before.HighPushed) {
+		t.Errorf("marks moved from %+v to %+v; one repository says nothing about its account", before, after)
+	}
+}
+
+// Only a full listing records what is gone, and a deletion, an archive or a rename is exactly
+// that; a sweep from the marks would name none of them.
+func TestAnAccountAskedForInFullIsListedWholeDespiteItsMarks(t *testing.T) {
+	s := newStore(t)
+	pushed := time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC)
+	if err := s.RecordFullListing("has-ghas", catalog.RouteGraphQL, 3, pushed, pushed); err != nil {
+		t.Fatal(err)
+	}
+	r := &reader{}
+
+	if _, err := Run(context.Background(), Options{Store: s, Read: r.read, Full: []string{"Has-GHAS"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(r.asked) != 1 || !r.asked[0].Empty() {
+		t.Errorf("asked with %+v, want no marks so the account is listed whole", r.asked)
+	}
+}
+
+// A repository read that fails is a coverage gap like an account that failed, not a reason to
+// discard what the rest of the run read.
+func TestARepositoryReadThatFailsIsReported(t *testing.T) {
+	s := newStore(t)
+	readOne := func(context.Context, string) (catalog.Listing, error) {
+		return catalog.Listing{}, errors.New("github said no")
+	}
+
+	report, err := Run(context.Background(), Options{Store: s, Read: (&reader{}).read,
+		ReadRepository: readOne, Repositories: []string{"has-ghas/new"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(report.Failed) != 1 || report.Failed[0].Owner != "has-ghas/new" {
+		t.Errorf("failed = %+v, want has-ghas/new named", report.Failed)
 	}
 }

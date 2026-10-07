@@ -19,6 +19,9 @@ type ActionSummary struct {
 	Repo    string `json:"repo"`
 	// Origin separates what the organization owns from what it merely depends on.
 	Origin string `json:"origin"`
+	// Owned is whether the declaration covers the row's repository, which Origin cannot say: a
+	// starting point nobody declared is seeded and not yours.
+	Owned bool `json:"owned"`
 	// DependentRepos are the starting points that run this, directly or through another action,
 	// and the steps, jobs and workflow files below are theirs. All come from the graph, never from
 	// an advisory. A level is nil where reach has not counted it yet, which is not none.
@@ -60,7 +63,7 @@ type NodeMatch struct {
 // An empty query returns the widest-reaching candidates, because that is the opening state of
 // the picker and returning nothing there would read as broken.
 func (s *Store) SearchNodes(search string, limit int, sc RepositoryScope) ([]NodeMatch, error) {
-	in, err := s.reachInScope(sc)
+	in, err := s.reachInScope(sc, false)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +102,7 @@ func (s *Store) SearchNodes(search string, limit int, sc RepositoryScope) ([]Nod
 // absent measurement wearing the face of a measurement of zero.
 var ErrReachNotDerived = errors.New(
 	"reach has not been derived per repository since the last rebuild, so an answer cannot be " +
-		"bounded to a grouping; run expand-all to refresh the aggregates")
+		"bounded to a grouping or to what you own; run expand-all to refresh the aggregates")
 
 // reachIn is a grouping resolved once for every reach expression a query bounds to it: a restriction
 // on the repositories reaching a node, and its arguments. The zero value bounds nothing.
@@ -107,17 +110,24 @@ type reachIn struct {
 	bound string
 	args  []any
 	asked bool
+	// grouped is set when a grouping, not only ownership, bounds the reaching repositories.
+	grouped bool
 }
 
-func (s *Store) reachInScope(sc RepositoryScope) (reachIn, error) {
-	if !sc.asked() {
+// reachInScope bounds reach to the grouping, and to the declared repositories when owned: a declared
+// scope lists what they hold or reach, and a count spanning every starting point would not be theirs.
+func (s *Store) reachInScope(sc RepositoryScope, owned bool) (reachIn, error) {
+	if !sc.asked() && !owned {
 		return reachIn{}, nil
 	}
 	if err := s.reachIsDerived(); err != nil {
 		return reachIn{}, err
 	}
 	bound, args, err := s.restrict(sc, "rr.repository_full_name")
-	return reachIn{bound: bound, args: args, asked: true}, err
+	if owned {
+		bound += ` AND ` + ownedFullName("rr.repository_full_name")
+	}
+	return reachIn{bound: bound, args: args, asked: true, grouped: sc.asked()}, err
 }
 
 // reachIsDerived refuses when the rollup asserts reach the breakdown cannot account for.
@@ -139,8 +149,9 @@ func (s *Store) reachIsDerived() error {
 // Driven from the pair table rather than tested per node: the planner turns this into a covering
 // index scan feeding a primary key lookup, where the same condition written as a correlated
 // subquery makes it scan every node and evaluate the subquery for each.
+// A declared scope's rows are its own filter's, so ownership alone bounds counts and not rows.
 func (r reachIn) keep() (string, []any) {
-	if !r.asked {
+	if !r.grouped {
 		return "", nil
 	}
 	return ` AND n.row_id IN (SELECT nr.node_row_id FROM abom_node_reach nr
@@ -279,9 +290,10 @@ type KindCount struct {
 // string is an injection unless it is checked against what exists, and a sort that is silently
 // dropped shows the reader an order they did not ask for.
 var inventorySorts = map[string]string{
-	"nodeKey":            "n.node_key",
-	"kind":               "n.node_kind",
-	"origin":             "origin",
+	"nodeKey": "n.node_key",
+	"kind":    "n.node_kind",
+	// In the words the column shows: owned, a starting point nobody declared, upstream, external.
+	"origin":             `(CASE WHEN owned THEN 0 WHEN origin = 'seed' THEN 1 WHEN origin = 'upstream' THEN 2 ELSE 3 END)`,
 	"dependentRepos":     "dependent_repos",
 	"dependentSteps":     "dependent_steps",
 	"dependentJobs":      "dependent_jobs",
@@ -360,7 +372,7 @@ func (s *Store) inventoryPageQuery(q InventoryQuery) (inventoryPageQuery, error)
 			q.Sort, InventorySortNames())
 	}
 
-	in, err := s.reachInScope(q.Grouping)
+	in, err := s.reachInScope(q.Grouping, declaresScope(q.Scope))
 	if err != nil {
 		return inventoryPageQuery{}, err
 	}
@@ -369,11 +381,19 @@ func (s *Store) inventoryPageQuery(q InventoryQuery) (inventoryPageQuery, error)
 	keep, keepArgs := in.keep()
 
 	where := buildInventoryWhere(q, keep, keepArgs, reach, reachArgs)
+	if q.RefStyle != "" || len(q.At) > 0 {
+		table, err := s.declaredEdgeTable(q.Mode)
+		if err != nil {
+			return inventoryPageQuery{}, err
+		}
+		declared, declaredArgs := inventoryDeclarationFilter(q, table)
+		where.clause, where.args = where.clause+declared, append(where.args, declaredArgs...)
+	}
 	ordering, orderArgs := inventoryOrdering(q, order, ok, reach, reachArgs)
 	// What a row shows says where reach has not been measured; what filters and orders reads zero.
-	shown := reach
-	if !q.Grouping.asked() {
-		shown = measured("b.dependent_repos")
+	shown := measured("b.dependent_repos")
+	if in.asked {
+		shown = `(CASE WHEN ` + shown + ` IS NULL THEN NULL ELSE ` + reach + ` END)`
 	}
 	return inventoryPageQuery{
 		reach: shown, levels: levels, where: where.clause, ordering: ordering,
@@ -403,9 +423,11 @@ func buildInventoryWhere(
 		whereArgs = append(whereArgs, "%"+escapeLike(q.Search)+"%")
 	}
 	if len(q.Origins) > 0 {
-		where += ` AND COALESCE(r.origin, 'external') IN (` + placeholders(len(q.Origins)) + `)`
+		where += ` AND ` + originClause(q.Origins)
 		for _, o := range q.Origins {
-			whereArgs = append(whereArgs, o)
+			if o != OwnedOrigin {
+				whereArgs = append(whereArgs, o)
+			}
 		}
 	}
 	where += inventoryScopeFilter(q)
@@ -413,17 +435,6 @@ func buildInventoryWhere(
 	where += findings
 	whereArgs = append(whereArgs, findingArgs...)
 	where += inventoryFlagFilter(q.Flags, q.Mode)
-	if style := inventoryRefFilter(q.RefStyle, q.Mode); style != "" {
-		where += style
-	}
-	if len(q.At) > 0 {
-		where += ` AND EXISTS (SELECT 1 FROM ` + edgeSource(q.Mode) + ` e
-		                       WHERE e.dst_node_row_id = n.row_id
-		                         AND e.ref_value IN (` + placeholders(len(q.At)) + `))`
-		for _, ref := range q.At {
-			whereArgs = append(whereArgs, ref)
-		}
-	}
 	// A floor of zero is not a question about zero, so it must not drop the rows whose reach has
 	// never been measured.
 	if q.MinReach > 0 {
@@ -432,6 +443,53 @@ func buildInventoryWhere(
 		whereArgs = append(whereArgs, q.MinReach)
 	}
 	return inventoryWhere{clause: where, args: whereArgs}
+}
+
+// originClause keeps a node of any origin asked for. Owned is the declaration's answer about the
+// node's repository rather than a provenance, so it is its own arm, and seed keeps every starting
+// point whether or not it is yours. Every other origin binds one argument, in the order given.
+func originClause(origins []string) string {
+	arms, provenance := []string{}, 0
+	for _, o := range origins {
+		if o == OwnedOrigin {
+			arms = append(arms, ownedNode("n")+` = 1`)
+			continue
+		}
+		provenance++
+	}
+	if provenance > 0 {
+		arms = append(arms, `COALESCE(r.origin, 'external') IN (`+placeholders(provenance)+`)`)
+	}
+	return `(` + strings.Join(arms, ` OR `) + `)`
+}
+
+// inventoryDeclarationFilter keeps what a line names, at the commits in use, by how it is
+// referenced and at which reference. table is a declaredEdgeTable.
+//
+// Driven from the declarations, so the set is computed once rather than tested per node. Lexical,
+// and a different question from which reference was analyzed: a node referenced both by tag and
+// by commit matches either.
+func inventoryDeclarationFilter(q InventoryQuery, table string) (string, []any) {
+	commit := `LENGTH(d.ref_value) = 40 AND d.ref_value GLOB '[0-9a-f]*'`
+	var conditions []string
+	var args []any
+	switch q.RefStyle {
+	case "sha":
+		conditions = append(conditions, commit)
+	case "tag":
+		conditions = append(conditions, `d.ref_value IS NOT NULL AND d.ref_value <> '' AND NOT (`+commit+`)`)
+	}
+	if len(q.At) > 0 {
+		conditions = append(conditions, `d.ref_value IN (`+placeholders(len(q.At))+`)`)
+		for _, ref := range q.At {
+			args = append(args, ref)
+		}
+	}
+	if len(conditions) == 0 {
+		return "", nil
+	}
+	return ` AND n.row_id IN (SELECT d.dst_node_row_id FROM ` + table + ` d
+	                           WHERE ` + strings.Join(conditions, " AND ") + `)`, args
 }
 
 func inventoryOrdering(
@@ -454,7 +512,7 @@ func inventoryOrdering(
 func (s *Store) inventoryPageItems(q InventoryQuery, plan inventoryPageQuery) ([]ActionSummary, error) {
 	query := `
 		SELECT n.node_key, n.node_kind, COALESCE(n.owner,''), COALESCE(n.repo,''),
-		       COALESCE(r.origin, '') AS origin,
+		       COALESCE(r.origin, '') AS origin, ` + ownedNode("n") + ` AS owned,
 		       ` + plan.reach + ` AS dependent_repos, ` + plan.levels + `,
 		       ` + measured("b.refs_in_use") + ` AS distinct_refs,
 		       ` + nodeFindingCount(q.Mode, "n.row_id") + ` AS findings,
@@ -482,7 +540,7 @@ func (s *Store) inventoryPageItems(q InventoryQuery, plan inventoryPageQuery) ([
 
 	out, err := queryAll(s, "listing actions", func(r *sql.Rows) (ActionSummary, error) {
 		var a ActionSummary
-		return a, r.Scan(&a.NodeKey, &a.Kind, &a.Owner, &a.Repo, &a.Origin,
+		return a, r.Scan(&a.NodeKey, &a.Kind, &a.Owner, &a.Repo, &a.Origin, &a.Owned,
 			&a.DependentRepos, &a.DependentSteps, &a.DependentJobs, &a.DependentWorkflows,
 			&a.DependentGroups, &a.DistinctRefs, &a.Findings,
 			&a.Advisories, &a.Analyzed)
@@ -586,6 +644,8 @@ func inventoryScopeFilter(q InventoryQuery) string {
 	case ScopeExposure:
 		return " AND n.node_key IN " + onExposureRoute
 	case ScopeOwned:
+		return " AND n.row_id IN (" + ownedNodes + ")"
+	case ScopeSupplyChain:
 		return " AND n.row_id IN (" + scopeNodes(declaredRoots, q.Mode) + ")"
 	}
 	return ""
@@ -681,25 +741,6 @@ func inventoryFlagFilter(flags []string, mode string) string {
 	return out
 }
 
-// inventoryRefFilter selects by how something is referenced.
-//
-// Lexical only, and a different question from which reference was analyzed: a node referenced both
-// by tag and by commit matches either.
-func inventoryRefFilter(style, mode string) string {
-	commit := `LENGTH(e.ref_value) = 40 AND e.ref_value GLOB '[0-9a-f]*'`
-	switch style {
-	case "sha":
-		return ` AND EXISTS (SELECT 1 FROM ` + edgeSource(mode) + ` e
-		                     WHERE e.dst_node_row_id = n.row_id AND ` + commit + `)`
-	case "tag":
-		return ` AND EXISTS (SELECT 1 FROM ` + edgeSource(mode) + ` e
-		                     WHERE e.dst_node_row_id = n.row_id
-		                       AND e.ref_value IS NOT NULL AND e.ref_value <> ''
-		                       AND NOT (` + commit + `))`
-	}
-	return ""
-}
-
 // inventoryTotal counts the match without the per-row subqueries, which the count does not need.
 func (s *Store) inventoryTotal(where string, args []any) (int, error) {
 	var n int
@@ -734,6 +775,9 @@ type RepositorySummary struct {
 	Exposures       int             `json:"exposures"`
 	DirectExposures int             `json:"directExposures"`
 	Properties      []PropertyValue `json:"properties"`
+	// CodeScanning is whether its Actions code is scanned, by which setup, and whether a database
+	// exists to pull.
+	CodeScanning RepositoryCodeScanning `json:"codeScanning"`
 }
 
 // RepositoriesQuery narrows and orders the repositories unit, and cuts one page out of the match.
@@ -747,6 +791,8 @@ type RepositoriesQuery struct {
 	Offset   int
 	Limit    int
 	Grouping RepositoryScope
+	// CodeScanning keeps repositories whose Actions code scanning class is one of these.
+	CodeScanning []string
 }
 
 // RepositoriesPage is one page of repositories and the size of the match it was cut from.
@@ -756,13 +802,16 @@ type RepositoriesPage struct {
 }
 
 // repositoryScopeFilter narrows the repositories listing the way inventoryScopeFilter narrows the
-// node listing: under `owned`, the declared repositories and those holding what they run.
+// node listing: under `owned`, the declared repositories; under `supply-chain`, those and the
+// repositories holding what they run.
 func repositoryScopeFilter(q RepositoriesQuery) string {
 	switch q.Scope {
 	case ScopeExposure:
 		return ` AND EXISTS (SELECT 1 FROM abom_exposure x
 		                      WHERE x.repository_row_id = r.row_id)`
 	case ScopeOwned:
+		return ` AND r.row_id IN (` + declaredRoots + `)`
+	case ScopeSupplyChain:
 		return ` AND r.row_id IN (` + scopeRepositories(declaredRoots, AnalysisModeRegular) + `)`
 	}
 	return ""
@@ -776,6 +825,11 @@ var repositorySorts = map[string]string{
 	"findings":        "",
 	"exposures":       "exposures",
 	"directExposures": "direct_exposures",
+	"actionsScanning": setupSortSQL("actions_scanning", []string{"off", "unknown", "advanced", "default", "both"},
+		"no-actions-code", "not-owned"),
+	"setup": setupSortSQL("setup_kind", []string{"conflict", "none", "unreadable", "not-read", "advanced", "default",
+		"unknown"}, "not-owned"),
+	"actionsDatabase": setupSortSQL("actions_database", []string{"absent", "not-read", "present"}, "not-owned"),
 }
 
 // RepositoriesPage lists one page of repositories under review, ordered across the whole match.
@@ -811,8 +865,9 @@ func (s *Store) RepositoriesPage(q RepositoriesQuery) (RepositoriesPage, error) 
 		if q.Sort == "findings" {
 			ordering = ` ORDER BY worst_severity` + direction + `, findings` + direction + `, r.repository_full_name`
 		} else {
-			// The name breaks every tie, or two pages of an unstable order repeat a row and skip one.
-			ordering = ` ORDER BY ` + order + direction + `, findings DESC, r.repository_full_name`
+			// The name breaks every tie, or two pages of an unstable order repeat a row and skip one. A
+			// value a column does not measure sorts as NULL, after every value it does either way.
+			ordering = ` ORDER BY ` + order + direction + ` NULLS LAST, findings DESC, r.repository_full_name`
 		}
 	}
 
@@ -858,10 +913,18 @@ func (s *Store) RepositoriesPage(q RepositoriesQuery) (RepositoriesPage, error) 
 	if err != nil {
 		return RepositoriesPage{}, err
 	}
+	scanning, err := s.codeScanningByRepository(names)
+	if err != nil {
+		return RepositoriesPage{}, err
+	}
 	for i := range items {
 		items[i].Severity = bands[items[i].FullName]
 		if values := properties[strings.ToLower(items[i].FullName)]; values != nil {
 			items[i].Properties = values
+		}
+		items[i].CodeScanning = scanning[strings.ToLower(items[i].FullName)]
+		if items[i].CodeScanning.Languages == nil {
+			items[i].CodeScanning.Languages = []string{}
 		}
 	}
 	return RepositoriesPage{Items: items, Total: total}, nil
@@ -914,6 +977,13 @@ func (s *Store) repositoriesWhere(q RepositoriesQuery) (string, []any, error) {
 	where += repositoryScopeFilter(q)
 	if slices.Contains(q.Flags, viewspec.FlagFindings) {
 		where += ` AND EXISTS (SELECT 1 FROM abom_finding_regular f WHERE f.repository_row_id = r.row_id)`
+	}
+	if len(q.CodeScanning) > 0 {
+		marks := strings.TrimSuffix(strings.Repeat("?, ", len(q.CodeScanning)), ", ")
+		where += ` AND r.row_id IN (SELECT repository_row_id FROM abom_setup_class WHERE class IN (` + marks + `))`
+		for _, c := range q.CodeScanning {
+			args = append(args, c)
+		}
 	}
 	return where, args, nil
 }
@@ -1069,4 +1139,10 @@ func (s *Store) RepositoryDetailOf(fullName string) (RepositoryDetail, error) {
 func escapeLike(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	return r.Replace(s)
+}
+
+// RepositoriesFor names every repository the unit lists for q, unpaged and in name order: the
+// population a preview of default setup writes covers.
+func (s *Store) RepositoriesFor(q RepositoriesQuery) ([]string, error) {
+	return s.listedRepositories(q)
 }

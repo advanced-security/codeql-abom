@@ -95,6 +95,25 @@ func TestRequeueingWhatIsStaleLeavesUnfetchableDependenciesAlone(t *testing.T) {
 	}
 }
 
+// A new CodeQL or pack cannot find Actions source a repository does not hold, and no run is on
+// record for it to be stale against.
+func TestRequeueingWhatIsStaleLeavesNothingToAnalyzeAlone(t *testing.T) {
+	s := newTestStore(t)
+	tierRow(t, s, "docs", 0, "nothing")
+	tierRow(t, s, "stale", 1, "done")
+
+	n, err := s.RequeueStale(currentCLI, currentIdentity())
+	if err != nil {
+		t.Fatalf("RequeueStale: %v", err)
+	}
+	if n != 1 || statusOfKey(t, s, "stale") != "pending" {
+		t.Fatalf("requeued %d, want the stale analysis requeued", n)
+	}
+	if got := statusOfKey(t, s, "docs"); got != "nothing" {
+		t.Errorf("docs = %q, want nothing to analyze left alone", got)
+	}
+}
+
 // Asking for nothing must not mean asking for everything: an empty identity is a caller that
 // failed to resolve its packs.
 func TestAnEmptyIdentityRequeuesNothing(t *testing.T) {
@@ -128,6 +147,40 @@ func TestOneRepositoryCanBeRequeuedOnItsOwn(t *testing.T) {
 	}
 	if got := statusOfKey(t, s, "theirs"); got != "done" {
 		t.Errorf("theirs = %q, want untouched", got)
+	}
+}
+
+// Re-analyzing one repository the operator names reads it again whatever it last held, including
+// nothing to analyze: a workflow added without an event is found that way.
+func TestOneRepositoryWithNothingToAnalyzeIsReadAgainOnRequest(t *testing.T) {
+	s := newTestStore(t)
+	tierRow(t, s, "mine", 0, "nothing")
+
+	n, err := s.RequeueRepository("octo/mine")
+	if err != nil {
+		t.Fatalf("RequeueRepository: %v", err)
+	}
+	if n != 1 || statusOfKey(t, s, "mine") != "pending" {
+		t.Errorf("requeued %d, status %q; want it read again", n, statusOfKey(t, s, "mine"))
+	}
+}
+
+// A whole tier is re-analyzed because what analyzes it changed, which reading nothing again
+// cannot answer: it would cost a clone and find nothing.
+func TestATierRequeueLeavesNothingToAnalyzeAlone(t *testing.T) {
+	s := newTestStore(t)
+	declareOwner(t, s, "octo")
+	tierRow(t, s, "mine", 0, "nothing")
+	tierRow(t, s, "analyzed", 0, "done")
+	n, err := s.RequeueTier(TierOwned)
+	if err != nil {
+		t.Fatalf("RequeueTier: %v", err)
+	}
+	if n != 1 || statusOfKey(t, s, "analyzed") != "pending" {
+		t.Fatalf("requeued %d, want the analyzed repository requeued", n)
+	}
+	if got := statusOfKey(t, s, "mine"); got != "nothing" {
+		t.Errorf("status %q, want nothing to analyze left alone", got)
 	}
 }
 

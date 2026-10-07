@@ -137,7 +137,11 @@ Document prerequisites by purpose, not as one developer-tool shopping list:
 - Source builds need the repository's pinned Go/C toolchain and .NET SDK; testing adds its own
   tools. Published bundles do not require those build tools or a source checkout.
 - Local analysis needs a compatible CodeQL distribution, Git and the documented GitHub identity
-  setup. Graphviz and lock-verification tooling belong to the features that invoke them.
+  setup. Lock-verification tooling belongs to the features that invoke it.
+- Serving needs Graphviz: `serve` refuses to start without `dot` on its `PATH`, because every
+  details page draws its figure with it. Release notes list it as a system prerequisite rather than
+  carrying it, and every image that runs `serve` must install it, as every CI job that starts one
+  does.
 - AI authoring additionally needs its supported Copilot CLI, ql-mcp, Node and credentials. These
   are not requirements for core installation.
 - Supported Linux distributions and macOS minimums follow tested toolchain/runtime constraints,
@@ -268,7 +272,7 @@ matrix. A missing label fails its cell rather than dropping the platform.
 | --- | --- |
 | UI image and Deployment | Published WebAssembly, an unprivileged static server and same-origin API proxy. No SDK or .NET server runtime; no UI asset ConfigMap. |
 | API/coordinator image and replicated Deployment | Scope, admission, scheduling, ledger decisions, ingestion, aggregation and persistent custom-query workspace, over PostgreSQL. Exactly one replica holds the scheduling lease at a time; the others serve reads. Include only tools needed for its remaining non-CodeQL duties. |
-| Event receiver Deployment | Verifies each enterprise App delivery's signature before parsing and appends it to the durable event log [change ingestion](../api/change-ingestion.md) processes. Scaled on its own; holds no GitHub write credential and no CodeQL. |
+| Event receiver Deployment | Verifies each enterprise App delivery's signature before parsing and appends it to the durable event log the [event processor](../../docs/architecture.md#the-pipeline) reads. Scaled on its own; holds no GitHub write credential and no CodeQL. |
 | Consistency checker Deployment | The [graph consistency checker](graph-consistency-checker.md): reads a replica, writes only its own tables, spends only its own pools. Its agent sessions use the optional authoring profile's confinement. |
 | CodeQL worker image and Jobs | Existing ABOM binary with a typed worker entry point, verified CodeQL distribution, required query assets and runtime tools. Fetch, extract, evaluate, decode and return artifacts. No live-store access. |
 | Optional authoring worker profile | Worker-derived image with pinned authoring tools, separate credentials, existing confinement and time/credit limits. Disabled by default. |

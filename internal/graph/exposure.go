@@ -1,8 +1,11 @@
 package graph
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
+
+	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
 // Exposure is one repository's shortest path to an advisory-affected action.
@@ -36,38 +39,71 @@ func (b *Builder) BuildExposure() error {
 	if err != nil {
 		return err
 	}
+	_, err = b.writeExposure(m, targets)
+	return err
+}
 
+// writeExposure rewrites all exposure from m, unmarked for the reason writeBlastRadius is.
+func (b *Builder) writeExposure(m *model, targets []affected) (Derivation, error) {
+	var d Derivation
 	tx, err := b.Store.DB().Begin()
 	if err != nil {
-		return fmt.Errorf("beginning transaction: %w", err)
+		return d, fmt.Errorf("beginning transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(`DELETE FROM abom_exposure`); err != nil {
-		return fmt.Errorf("clearing exposure: %w", err)
+	if err := store.ClearReachMark(tx); err != nil {
+		return d, err
 	}
+	res, err := tx.Exec(`DELETE FROM abom_exposure`)
+	if err != nil {
+		return d, fmt.Errorf("clearing exposure: %w", err)
+	}
+	d.Rows += affectedRows(res)
+	w, err := prepareExposureWriter(tx)
+	if err != nil {
+		return d, err
+	}
+	defer w.Close()
+
+	for _, t := range targets {
+		n, err := writeExposureOf(w, t.nodeID, t.ghsaID, m.exposureOf(t.nodeID, b.MaxDepth))
+		if err != nil {
+			return d, err
+		}
+		d.Walked, d.Rows = d.Walked+1, d.Rows+n
+	}
+	return d, tx.Commit()
+}
+
+func prepareExposureWriter(tx *sql.Tx) (*sql.Stmt, error) {
 	stmt, err := tx.Prepare(`
 		INSERT INTO abom_exposure (repository_row_id, node_row_id, ghsa_id, hops, path)
 		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(repository_row_id, node_row_id, ghsa_id) DO UPDATE SET
 			hops = excluded.hops, path = excluded.path`)
 	if err != nil {
-		return fmt.Errorf("preparing exposure insert: %w", err)
+		return nil, fmt.Errorf("preparing exposure insert: %w", err)
 	}
-	defer stmt.Close()
+	return stmt, nil
+}
 
-	for _, t := range targets {
-		for repo, e := range m.exposureOf(t.nodeID, b.MaxDepth) {
-			path, err := json.Marshal(e.path)
-			if err != nil {
-				return fmt.Errorf("encoding path: %w", err)
-			}
-			if _, err := stmt.Exec(repo, t.nodeID, t.ghsaID, e.hops, string(path)); err != nil {
-				return fmt.Errorf("recording exposure of %d to %s: %w", repo, t.ghsaID, err)
-			}
+// writeExposureOf stores one advisory's exposure through one node, reporting how many rows.
+func writeExposureOf(
+	stmt *sql.Stmt, node int64, ghsa string, exposed map[int64]reachPath,
+) (int, error) {
+	rows := 0
+	for repo, e := range exposed {
+		path, err := json.Marshal(e.path)
+		if err != nil {
+			return rows, fmt.Errorf("encoding path: %w", err)
 		}
+		if _, err := stmt.Exec(repo, node, ghsa, e.hops, string(path)); err != nil {
+			return rows, fmt.Errorf("recording exposure of %d to %s: %w", repo, ghsa, err)
+		}
+		rows++
 	}
-	return tx.Commit()
+	return rows, nil
 }
 
 // affectedNodes lists the graph nodes covered by a live advisory.

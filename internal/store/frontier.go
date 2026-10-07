@@ -72,7 +72,8 @@ type FrontierItem struct {
 const usedBySample = 5
 
 // usedByRollup counts and samples, per (node_key, ref), the repositories naming that exact
-// version — once for the whole query instead of three times per queue row.
+// version — once for the whole query instead of three times per queue row — from table, the same
+// declared_edge `usersPerRef` counts.
 //
 // Matched on the edge's ref rather than the node, because one action at two references is two
 // different things to everyone downstream and sharing users between them would undo that.
@@ -84,7 +85,8 @@ const usedBySample = 5
 // *distinct* names, and two edges from one repository would otherwise spend two of the five
 // places on the same name. GROUP_CONCAT does not promise an order, so the caller sorts what it
 // splits — which lands on the same list the ORDER BY produced before.
-var usedByRollup = `WITH users AS (
+func usedByRollup(table string) string {
+	return `WITH users AS (
 	SELECT nk, rf,
 	       COUNT(DISTINCT repo_id) AS cnt,
 	       COUNT(DISTINCT CASE WHEN owned THEN repo_id END) AS owned_cnt,
@@ -96,11 +98,12 @@ var usedByRollup = `WITH users AS (
 	               ` + ownedFullName("r.repository_full_name") + ` AS owned,
 	               DENSE_RANK() OVER (PARTITION BY n.node_key, COALESCE(e.ref_value, '')
 	                                  ORDER BY r.repository_full_name) AS rank
-	          FROM abom_edge_regular e
+	          FROM ` + table + ` e
 	          JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 	          LEFT JOIN repository r ON r.row_id = e.repository_row_id)
 	 GROUP BY nk, rf)
 `
+}
 
 // selectUsedBy reads the rollup rather than recomputing it. A queue row nothing names yet has no
 // rollup row, and zero users is the right answer for it.
@@ -251,10 +254,21 @@ func frontierWhere(status string) (string, []any) {
 	}
 }
 
+// FrontierClaimOrder is the objective's stages as the order the crawl claims in: what somebody
+// asked for, then what was never analyzed by depth with commits being re-observed ahead of it,
+// then references that moved since they were analyzed, the stalest first. Among moved references,
+// one whose direct Actions dependencies dependency review saw move goes first.
+const FrontierClaimOrder = `expedited_at IS NULL,
+	requeued_for IS 'moved',
+	CASE WHEN requeued_for IS 'moved' THEN dependencies_moved IS NOT 1 END,
+	CASE WHEN requeued_for IS 'moved' THEN COALESCE(analyzed_at, '') END,
+	CASE WHEN requeued_for IS 'reobserve' THEN -1 ELSE depth END,
+	score DESC, enqueued_at ASC`
+
 // frontierSnapshotQuery is separate from the read so its plan can be asserted: whether this walks
 // the edge table once per queue row is a structural property, not something a stopwatch decides.
-func frontierSnapshotQuery(status string, limit int) (string, []any) {
-	query := usedByRollup + `
+func frontierSnapshotQuery(table, status string, limit int) (string, []any) {
+	query := usedByRollup(table) + `
 		SELECT node_key, COALESCE(owner,''), COALESCE(repo,''), status, depth, score,
 		       attempts, analysis_count, COALESCE(resolved_sha,''),
 		       COALESCE(discovered_from,''), COALESCE(reason,''),
@@ -268,7 +282,7 @@ func frontierSnapshotQuery(status string, limit int) (string, []any) {
 	// Same order Claim takes, so the queue reads as what happens next rather than as a ranking
 	// the crawl is about to ignore. `ref` closes the order: a dependency queued at several
 	// references ties on everything before it, and a tie under LIMIT returns an arbitrary subset.
-	query += ` ORDER BY expedited_at IS NULL, score DESC, depth ASC, node_key, ref`
+	query += ` ORDER BY ` + FrontierClaimOrder + `, node_key, ref`
 	if limit > 0 {
 		query += ` LIMIT ?`
 		args = append(args, limit)
@@ -281,7 +295,11 @@ func frontierSnapshotQuery(status string, limit int) (string, []any) {
 // Passing an empty status returns every state, because the Discovery view is about the shape of
 // what is known against what is not: showing only pending work would hide the progress.
 func (s *Store) FrontierSnapshot(status string, limit int) ([]FrontierItem, error) {
-	query, args := frontierSnapshotQuery(status, limit)
+	table, err := s.declaredEdgeTable(AnalysisModeRegular)
+	if err != nil {
+		return nil, err
+	}
+	query, args := frontierSnapshotQuery(table, status, limit)
 
 	items, err := queryAll(s, "reading frontier", func(r *sql.Rows) (FrontierItem, error) {
 		var it FrontierItem
@@ -367,7 +385,7 @@ func (s *Store) FrontierCounts() (map[string]int, error) {
 	out := map[string]int{
 		FrontierQueued: 0, FrontierRetrying: 0, FrontierAdvisories: 0, FrontierUpstreamOnly: 0,
 		FrontierBuildTime: 0,
-		"running":         0, "done": 0, "unavailable": 0,
+		"running":         0, "done": 0, "unavailable": 0, "nothing": 0,
 	}
 	for rows.Next() {
 		var status string

@@ -137,6 +137,31 @@ public class AnalysisIdentityTests : AbomTestContext
         Assert.Contains("actions-queries", cut.Markup);
     }
 
+    // Three versions of one pack read as three packs, and the cell ran off the edge of the page.
+    [Fact]
+    public void EachPackIsNamedOnceWhateverVersionsOfItRan()
+    {
+        Serve("""
+            {"available":[],"tiers":{"direct":[],"transitive":[]},"counts":{}}
+            """,
+            """
+            [{"nodeKey":"actions/checkout","owner":"actions","repo":"checkout","status":"done",
+              "depth":1,"score":9,"attempts":0,"analysisCount":1,"resolvedSha":"abcdef123456",
+              "discoveredFrom":"octo/app","reason":"","claimedAt":"","nextAttemptAt":"",
+              "supplyChain":"runtime","analyzedAt":"2026-01-01T00:00:00Z","tier":"direct",
+              "suites":["octo/graph-src@2.26.4","octo/graph-src@2.27.1",
+                        "codeql/actions-queries octo/findings-src@?","codeql/actions-queries@0.6.34"],
+              "suitesKnown":true,"cliVersion":"2.26.4"}]
+            """);
+
+        var cut = Coverage();
+
+        cut.WaitForAssertion(() => Assert.Contains("Analyzed with", cut.Markup));
+        var named = cut.Find("[data-abom-coverage-suites]").TextContent.Trim();
+        Assert.Equal("graph-src, actions-queries, findings-src", named);
+        Assert.DoesNotContain(">Hops<", cut.Markup);
+    }
+
     // 1,555 of 1,707 runs on the real corpus predate pack identity, so most analyzed rows can
     // name nothing. Blank would read as "no suites ran", which is the claim this cannot make.
     [Fact]

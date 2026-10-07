@@ -221,6 +221,34 @@ func TestAFailedQueueIsReportedWithoutLosingTheEnumeration(t *testing.T) {
 	}
 }
 
+// The button and the loop read an account through one path, protected branches included, so what a
+// person pressing it records is what the loop records on its period.
+func TestEnumeratingFromTheInterfaceAsksWhatEachRepositoryProtects(t *testing.T) {
+	srv, st := newServer(t)
+	declare(t, st, "advanced-security")
+	srv.Enumerate = fakeEnumerator(map[string][]string{
+		"advanced-security": {"advanced-security/one"},
+	})
+	var asked []string
+	srv.EnumerateBranches = func(_ context.Context, repository string) ([]string, error) {
+		asked = append(asked, repository)
+		return []string{"main"}, nil
+	}
+
+	var report EnumerationReport
+	postJSON(t, srv, "/api/owned-scope/enumerate", &report)
+
+	if !slices.Equal(asked, []string{"advanced-security/one"}) {
+		t.Errorf("asked about %v, want the repository the listing named", asked)
+	}
+	if _, known, err := st.ProtectedBranches("advanced-security/one"); err != nil || !known {
+		t.Errorf("ProtectedBranches known=%v err=%v, want the answer recorded", known, err)
+	}
+	if report.Accounts[0].BranchesRead != 1 {
+		t.Errorf("BranchesRead = %d, want 1", report.Accounts[0].BranchesRead)
+	}
+}
+
 func fakeEnumerator(byAccount map[string][]string) enumerate.Read {
 	return func(_ context.Context, account string, _ catalog.Marks) (catalog.Listing, error) {
 		repos, ok := byAccount[account]

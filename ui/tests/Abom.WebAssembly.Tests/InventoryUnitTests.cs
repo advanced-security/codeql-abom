@@ -119,6 +119,39 @@ public class InventoryUnitTests : AbomTestContext
         Assert.Empty(page.FindAll("[data-abom-finding-detail]"));
     }
 
+    // A result code scanning's analysis produced names that analysis and the CodeQL and pack that ran
+    // it; claiming ABOM's own would put another release's result under ABOM's name.
+    [Fact]
+    public void AFindingCodeScanningAnsweredSaysWhichAnalysisAndCodeQLProducedIt()
+    {
+        Answer("api/findings", """
+            {"items":[{"id":7,"ruleId":"actions/unpinned-tag",
+              "repository":"has-ghas/test-repo-3","filePath":".github/workflows/ci.yml",
+              "startLine":11,"message":"Unpinned 3rd party Action","severity":"warning",
+              "provider":"CodeQL","queryRunId":12,"commit":"085d022","linked":true}],"total":1}
+            """);
+        Answer("api/findings/7/review", """
+            {"finding":{"id":7,"ruleId":"actions/unpinned-tag","repository":"has-ghas/test-repo-3",
+                "filePath":".github/workflows/ci.yml","startLine":11,"message":"Unpinned 3rd party Action",
+                "commit":"085d022","queryRunId":12},
+             "evaluations":[{"queryRunId":12,"commit":"085d022","mode":"regular","cliVersion":"2.23.1",
+                "pack":"codeql/actions-queries","packVersion":"0.6.9+6e9f9e38",
+                "takenFrom":"github-code-scanning:1895743852"}],
+             "selectedEvaluationId":12,"assets":[],"references":[]}
+            """);
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+            .NavigateTo("/inventory?unit=findings&repositories=has-ghas%2Ftest-repo-3");
+
+        var page = Render<Pages.Inventory>();
+        page.WaitForAssertion(() => Assert.Contains(".github/workflows/ci.yml:11", page.Markup));
+        page.Find("[data-abom-review-finding='7']").Click();
+        var details = page.WaitForElement("[data-abom-finding-detail]");
+
+        Assert.Contains("code scanning analysis 1895743852", details.TextContent);
+        Assert.Contains("2.23.1", details.TextContent);
+        Assert.Contains("codeql/actions-queries 0.6.9+6e9f9e38", details.TextContent);
+    }
+
     [Theory]
     [InlineData("dependencies", "actions/checkout", "node")]
     [InlineData("workflows", "octo-org/app/.github/workflows/ci.yml", "node")]
@@ -189,6 +222,111 @@ public class InventoryUnitTests : AbomTestContext
     }
 
     /// <summary>
+    /// Whether Actions code is scanned is read, never inferred: a repository the server classified
+    /// says what the reading said and when, and one it did not says "not read", never "off".
+    /// </summary>
+    [Fact]
+    public void TheRepositoriesUnitSaysWhatTheSetupReadingSaidAndNeverGuesses()
+    {
+        Answer("api/repositories", """
+            {"items":[
+              {"fullName":"octo-org/billing","origin":"seed","workflows":4,"dependencies":37,"findings":0,
+               "severity":{"critical":0,"high":0,"medium":0,"low":0,"unknown":0},"properties":[],
+               "exposures":0,"directExposures":0,
+               "codeScanning":{"known":true,"class":"add","actionsScanning":"off","setup":"default",
+                 "actionsDatabase":"absent","evidence":"default setup analyzes python without actions",
+                 "readAt":"2026-10-05T12:00:00Z","languages":["python"]}},
+              {"fullName":"octo-org/legacy","origin":"seed","workflows":1,"dependencies":2,"findings":0,
+               "severity":{"critical":0,"high":0,"medium":0,"low":0,"unknown":0},"properties":[],
+               "exposures":0,"directExposures":0}],"total":2}
+            """);
+        var page = RenderInventory();
+        page.Find("[data-abom-unit='repositories']").Click();
+
+        page.WaitForAssertion(() =>
+        {
+            var scanning = page.Find("[data-abom-setup='octo-org/billing:actionsScanning']");
+            var title = scanning.GetAttribute("title") ?? "";
+            Assert.Contains("Off", scanning.TextContent);
+            Assert.StartsWith("No code scanning analysis of this repository's Actions code is on record.", title);
+            Assert.Contains("Default setup analyzes python without actions", title);
+            Assert.Contains(TimeText.DayAndTime("2026-10-05T12:00:00Z"), title);
+            Assert.DoesNotContain("2026-10-05T12", title);
+            var setup = page.Find("[data-abom-setup='octo-org/billing:setup']");
+            Assert.StartsWith("Default setup is on.", setup.GetAttribute("title"));
+            Assert.Equal("default setup", setup.TextContent.Trim());
+            Assert.Equal("no Actions database",
+                page.Find("[data-abom-setup='octo-org/billing:actionsDatabase']").TextContent.Trim());
+            Assert.Contains("Not read", page.Find("[data-abom-setup='octo-org/legacy:actionsScanning']").TextContent);
+            Assert.Empty(page.FindAll("[data-abom-setup='octo-org/legacy:setup'], [data-abom-setup='octo-org/legacy:actionsDatabase']"));
+        });
+    }
+
+    /// <summary>
+    /// The three facts share one column. As three, they put the two advisory route columns 158px
+    /// past the right-hand edge of a 1280px window, and every header in this grid stays on one line.
+    /// </summary>
+    [Fact]
+    public void ScanningSetupAndDatabaseShareOneColumn()
+    {
+        Answer("api/repositories", """
+            {"items":[
+              {"fullName":"octo-org/billing","origin":"seed","workflows":4,"dependencies":37,"findings":0,
+               "severity":{"critical":0,"high":0,"medium":0,"low":0,"unknown":0},"properties":[],
+               "exposures":0,"directExposures":0,
+               "codeScanning":{"known":true,"class":"covered","actionsScanning":"default","setup":"default",
+                 "actionsDatabase":"present","evidence":"default setup analyzes actions",
+                 "readAt":"2026-10-05T12:00:00Z","languages":["actions"],"databaseCommit":"abc123"}}],"total":1}
+            """);
+        var page = RenderInventory();
+        page.Find("[data-abom-unit='repositories']").Click();
+
+        page.WaitForAssertion(() =>
+        {
+            var headers = page.FindAll("thead th").Select(h => h.TextContent.Trim()).ToList();
+            Assert.Contains("Actions scanning", headers);
+            Assert.DoesNotContain("Setup", headers);
+            Assert.DoesNotContain("Actions database", headers);
+            var cell = page.Find("[data-abom-setup='octo-org/billing:actionsScanning']").Closest("td")!;
+            Assert.Contains("Default setup", cell.TextContent);
+            Assert.Contains("Actions database", cell.TextContent);
+            Assert.NotNull(cell.QuerySelector("[data-abom-setup='octo-org/billing:actionsDatabase']"));
+            // Default setup scanning Actions already says which setup it is; saying it twice says nothing.
+            Assert.Null(cell.QuerySelector("[data-abom-setup='octo-org/billing:setup']"));
+        });
+    }
+
+    /// <summary>
+    /// A repository outside the declared scope is never read, so its cells say that and nothing
+    /// more: a tip that went on to say "not read yet" promised a reading ABOM will never take.
+    /// </summary>
+    [Fact]
+    public void ARepositoryNobodyOwnsIsNeverPromisedAReading()
+    {
+        Answer("api/repositories", """
+            {"items":[
+              {"fullName":"pytorch/pytorch","origin":"seed","workflows":0,"dependencies":0,"findings":0,
+               "severity":{"critical":0,"high":0,"medium":0,"low":0,"unknown":0},"properties":[],
+               "exposures":0,"directExposures":0,
+               "codeScanning":{"known":true,"class":"not-owned","actionsScanning":"not-owned",
+                 "setup":"not-owned","actionsDatabase":"not-owned",
+                 "evidence":"outside the declared scope, so ABOM does not read it","languages":[]}}],"total":1}
+            """);
+        var page = RenderInventory();
+        page.Find("[data-abom-unit='repositories']").Click();
+
+        page.WaitForAssertion(() =>
+        {
+            var cell = page.Find("[data-abom-setup='pytorch/pytorch:actionsScanning']");
+            Assert.Contains("Not owned", cell.TextContent);
+            Assert.Contains("mud-text-secondary", cell.ClassList);
+            Assert.Equal("Not owned: outside the declared scope, so ABOM never reads its code scanning.",
+                cell.GetAttribute("title"));
+            Assert.Empty(page.FindAll("[data-abom-setup='pytorch/pytorch:setup'], [data-abom-setup='pytorch/pytorch:actionsDatabase']"));
+        });
+    }
+
+    /// <summary>
     /// A relationship is a line in a file, not a thing in the corpus. Its columns are the
     /// reference as written and what was reported against the line itself — neither of which any
     /// unit of nodes carries, which is why it had to become a unit rather than a filter.
@@ -207,7 +345,92 @@ public class InventoryUnitTests : AbomTestContext
             Assert.Contains("actions/unpinned-tag", page.Markup);
             // Ordering is not use, so the list must not present either as the other.
             Assert.Contains("step uses", page.Markup);
+            Assert.Contains("Another account", page.Markup);
+            Assert.DoesNotContain(">cross-owner<", page.Markup.Replace(" ", "").Replace("\n", ""));
         });
+    }
+
+    // A line whose commits in use declared two things is two rows, and each says which commits
+    // declared it. Without that, two rows from one line read as a duplicate or as a disagreement.
+    [Fact]
+    public void TheRelationshipsUnitNamesTheCommitsEachDeclarationWasReadAt()
+    {
+        Answer("api/relationships", """
+            {"items":[
+              {"edgeKey":"vendor/comp:action.yml:15:11","kind":"composite-step-uses-action",
+               "source":"vendor/comp","target":"actions/cache","ref":"v3","repository":"vendor/comp",
+               "filePath":"action.yml","startLine":15,
+               "commits":["1111111111111111111111111111111111111111"]},
+              {"edgeKey":"vendor/comp:action.yml:15:11","kind":"composite-step-uses-action",
+               "source":"vendor/comp","target":"actions/cache","ref":"v4","repository":"vendor/comp",
+               "filePath":"action.yml","startLine":15,
+               "commits":["2222222222222222222222222222222222222222",
+                          "3333333333333333333333333333333333333333"]},
+              {"edgeKey":"octo/app:ci.yml:3:1","kind":"step-uses-action","source":"octo/app/ci.yml",
+               "target":"actions/checkout","ref":"v4","commits":[]}],
+             "total":3,"lines":2,"withoutDeclaration":5}
+            """);
+        var page = RenderInventory();
+        page.Find("[data-abom-unit='relationships']").Click();
+
+        page.WaitForAssertion(() =>
+        {
+            var declared = page.FindAll("[data-abom-relationship-commits]");
+            Assert.Equal(3, declared.Count);
+
+            Assert.Equal("at 111111111111", declared[0].TextContent.Trim());
+            Assert.Equal("Declared at commit 1111111111111111111111111111111111111111, which a " +
+                "reference in use resolves to.", declared[0].GetAttribute("title"));
+
+            Assert.Equal("at 222222222222 and 1 more", declared[1].TextContent.Trim());
+            Assert.Equal("Declared at the 2 commits 2222222222222222222222222222222222222222 and " +
+                "3333333333333333333333333333333333333333, which references in use resolve to.",
+                declared[1].GetAttribute("title"));
+
+            Assert.Equal("no commit recorded", declared[2].TextContent.Trim());
+            Assert.EndsWith(".", declared[2].GetAttribute("title"));
+
+            var lines = page.Find("[data-abom-relationship-lines]").TextContent;
+            Assert.Contains("3 declarations", lines);
+            Assert.Contains("2 lines", lines);
+            Assert.Contains("5 more lines", page.Find("[data-abom-relationship-undeclared]").TextContent);
+        });
+    }
+
+    // Unscoped, these units list what ABOM has read, and most of it is nobody's here to own.
+    [Theory]
+    [InlineData("workflows")]
+    [InlineData("repositories")]
+    public void AnUnscopedUnitDoesNotCallWhatItListsYours(string unit)
+    {
+        Answer("api/workflows", """{"items":[],"total":0}""");
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+                .NavigateTo($"/inventory?unit={unit}");
+        var page = Render<Pages.Inventory>();
+
+        var caption = page.Find("[data-abom-unit-description]").TextContent;
+        Assert.DoesNotContain("you own", caption);
+        Assert.DoesNotContain("your repositories", caption);
+    }
+
+    // "Showing 0 of 0 matching" before an answer arrives is a measurement of nothing.
+    [Fact]
+    public void NothingIsCountedBeforeTheUnitHasAnswered()
+    {
+        var release = Withhold("api/jobs");
+        Answer("api/jobs", """
+            {"items":[{"nodeKey":"job:octo-org/app:ci.yml:build","jobId":"build",
+              "workflow":"octo-org/app/.github/workflows/ci.yml","findings":2}],"total":1}
+            """);
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+                .NavigateTo("/inventory?unit=jobs");
+        var page = Render<Pages.Inventory>();
+
+        page.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("api/jobs")));
+        Assert.DoesNotContain("Showing 0", page.Markup);
+
+        release();
+        page.WaitForAssertion(() => Assert.Contains("Showing 1 of 1 matching", page.Markup));
     }
 
     /// <summary>

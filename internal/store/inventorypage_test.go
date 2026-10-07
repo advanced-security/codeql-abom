@@ -17,6 +17,13 @@ func inventoryCorpus(t *testing.T, s *Store, n int) {
 		SELECT row_id, 100 - row_id, 1, 1, 1 FROM abom_node WHERE is_external = 1`); err != nil {
 		t.Fatalf("seeding blast radius: %v", err)
 	}
+	// And the breakdown a bounded scope counts: the one repository that names each of them.
+	if _, err := s.DB().Exec(`
+		INSERT INTO abom_node_reach (node_row_id, repository_row_id, hops, steps, jobs, workflows)
+		SELECT n.row_id, r.row_id, 1, 1, 1, 1 FROM abom_node n, repository r
+		 WHERE n.is_external = 1 AND r.repository_full_name = 'octo-org/app'`); err != nil {
+		t.Fatalf("seeding the reach breakdown: %v", err)
+	}
 }
 
 // A page that does not say what it left out reads as the whole answer, and the grid above it

@@ -527,3 +527,16 @@ func TestRunReturnsCleanlyWhenCanceled(t *testing.T) {
 		t.Errorf("state = %q after stopping, want %q", got, StateStopped)
 	}
 }
+
+// A database or an analysis taken from code scanning is a build or an evaluation the cycle did not
+// pay for, and a refusal says why it paid; the line says both, and nothing when nothing was asked.
+func TestACycleLineSaysWhatCodeScanningSupplied(t *testing.T) {
+	took := cycleLine(3, expand.Stats{Processed: 2, CodeScanning: expand.ReuseCounts{
+		Databases: 1, Refused: map[string]int{"analysis: another configuration": 1}}})
+	if !strings.Contains(took, "code scanning took 1 database and 0 analyses; refused analysis: another configuration") {
+		t.Errorf("line %q does not say what code scanning supplied", took)
+	}
+	if quiet := cycleLine(3, expand.Stats{Processed: 2}); strings.Contains(quiet, "code scanning") {
+		t.Errorf("line %q mentions code scanning, which nothing asked", quiet)
+	}
+}

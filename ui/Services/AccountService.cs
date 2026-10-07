@@ -34,7 +34,33 @@ public sealed class AccountService(AbomApi api)
     public async Task RefreshAsync(CancellationToken ct = default)
     {
         _loaded = true;
+        CheckAttempted = true;
         Adopt(await api.RefreshAccountsAsync(ct));
+    }
+
+    /// <summary>
+    /// Whether gh has been asked during this visit to the application. The Settings page asks on
+    /// its own only when nothing is on record and this is false, so a broken gh is asked once
+    /// rather than on every arrival.
+    /// </summary>
+    public bool CheckAttempted { get; private set; }
+
+    /// <summary>True when no verification has ever been recorded, as opposed to one that failed.</summary>
+    public bool NothingOnRecord => Identity.VerifiedAt is null && !Identity.Authenticated;
+
+    private readonly Dictionary<string, AccountRepositories> _repositories =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// An account's repositories, read once per visit and only when asked for. A listing that
+    /// failed is not kept, so asking again after fixing gh asks GitHub again.
+    /// </summary>
+    public async Task<AccountRepositories> RepositoriesAsync(string owner, CancellationToken ct = default)
+    {
+        if (_repositories.TryGetValue(owner, out var known)) return known;
+        var listed = await api.ListAccountRepositoriesAsync(owner, ct);
+        if (listed.Problem is null) _repositories[owner] = listed;
+        return listed;
     }
 
     public async Task ReloadScopeAsync(CancellationToken ct = default) =>
@@ -61,11 +87,21 @@ public sealed class AccountService(AbomApi api)
         Changed?.Invoke();
     }
 
-    /// <summary>Scope keys start with the account owner.</summary>
-    public bool IsOwned(string? scopeKey)
+    /// <summary>
+    /// Whether an enabled declaration names the account, whole or in part. An account-level
+    /// question: a repository is yours only where the declaration covers it, which only the server
+    /// decides. Scope keys start with the account owner.
+    /// </summary>
+    public bool IsDeclared(string? scopeKey)
     {
         if (string.IsNullOrEmpty(scopeKey)) return false;
         var slash = scopeKey.IndexOf('/');
         return _owned.Contains(slash < 0 ? scopeKey : scopeKey[..slash]);
     }
+
+    /// <summary>Whether the account is declared only in part: named repositories or property
+    /// scopes rather than everything it holds.</summary>
+    public bool IsDeclaredInPart(string owner) =>
+        Declared?.FirstOrDefault(a => string.Equals(a.Owner, owner, StringComparison.OrdinalIgnoreCase))
+            is { IncludesOnly: true };
 }

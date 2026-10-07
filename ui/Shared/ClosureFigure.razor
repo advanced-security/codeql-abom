@@ -1,0 +1,193 @@
+@* What runs a node and what it runs, drawn by the server. The server draws it so the page, the
+   download and the print are one drawing; this section shows it, says what it holds in one
+   sentence even when collapsed, and maps the page's palette onto the drawing's variables. *@
+@implements IDisposable
+@inject AbomApi Api
+@inject ThemeService Theme
+
+@if (Side && !Expanded)
+{
+    @* Beside the tables a figure folds sideways, into a rail that gives them its width and still
+       says what it holds; folded upward it left its whole column standing empty. Its text reads
+       across: turned on its side, nobody read it. *@
+    <section class="abom-figure abom-figure-side abom-figure-rail"
+             aria-label="What runs it, and what it runs" data-abom-figure data-abom-figure-rail>
+        <button type="button" class="abom-figure-rail-button" aria-expanded="false"
+                title="@($"Show the figure beside the tables. {Summary}.")"
+                @onclick="Toggle" data-abom-figure-toggle>
+            <MudIcon Icon="@Icons.Material.Outlined.ChevronLeft" Size="Size.Small" />
+            <MudIcon Icon="@Icons.Material.Outlined.AccountTree" Size="Size.Small" Class="abom-figure-rail-mark" />
+            <span class="abom-figure-stats" aria-hidden="true">
+                @foreach (var (label, value) in Stats)
+                {
+                    <span class="abom-figure-stat" data-abom-figure-stat>
+                        <span class="abom-figure-stat-label">@label</span>
+                        <span class="abom-figure-stat-value">@value</span>
+                    </span>
+                }
+            </span>
+            <span class="abom-visually-hidden" data-abom-figure-summary>Show the figure beside the tables. @Summary</span>
+        </button>
+    </section>
+    return;
+}
+@* Only what the theme lets a reader change arrives here; app.css maps the rest to the palette. *@
+<section class="abom-figure @(Side ? "abom-figure-side" : "abom-figure-top") @(Expanded ? null : "abom-figure-collapsed")"
+         style="--abom-fig-focus:@P.Focus;--abom-fig-owned:@P.Seed;--abom-fig-advisory:@P.Upstream;--abom-fig-kind-workflow:@Kind("workflow");--abom-fig-kind-reusable_workflow:@Kind("reusable_workflow");--abom-fig-kind-composite_action:@Kind("composite_action");--abom-fig-kind-action:@Kind("action");--abom-fig-kind-docker_image:@Kind("docker_image");--abom-fig-critical:@Band("critical");--abom-fig-high:@Band("high");--abom-fig-medium:@Band("medium");--abom-fig-low:@Band("low");--abom-fig-unknown:@Band("unknown")"
+         aria-labelledby="@HeadingId" data-abom-figure>
+    <div class="abom-figure-head">
+        <MudIconButton Size="Size.Small" Icon="@ToggleIcon"
+                       aria-expanded="@(Expanded ? "true" : "false")" aria-controls="@(Expanded ? BodyId : null)"
+                       aria-label="@ToggleLabel" title="@ToggleTitle"
+                       OnClick="Toggle" data-abom-figure-toggle />
+        <div class="abom-figure-title">
+            <MudText Typo="Typo.subtitle2" HtmlTag="h2" id="@HeadingId">What runs it, and what it runs</MudText>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-figure-summary>@Summary</MudText>
+        </div>
+        <div class="abom-figure-actions">
+            @if (_figure is not null)
+            {
+                <MudLink Href="@DownloadHref" download="@($"abom-{Key.Replace('/', '_')}.svg")" Typo="Typo.caption"
+                         Class="abom-icon-link" title="Download this drawing as an SVG file, in the light palette."
+                         data-abom-figure-download>
+                    <MudIcon Icon="@Icons.Material.Outlined.Download" Size="Size.Small" />Download SVG
+                </MudLink>
+            }
+            @if (SideChanged.HasDelegate)
+            {
+                <MudIconButton Size="Size.Small"
+                               Icon="@(Side ? Icons.Material.Outlined.ViewAgenda : Icons.Material.Outlined.VerticalSplit)"
+                               aria-label="@(Side ? "Show the figure above the tables" : "Show the figure beside the tables")"
+                               title="@(Side ? "Show the figure above the tables, at full width." : "Show the figure beside the tables, where it stays in view as they scroll.")"
+                               OnClick="@(() => SideChanged.InvokeAsync(!Side))" data-abom-figure-placement />
+            }
+        </div>
+    </div>
+    @if (Expanded)
+    {
+        <div id="@BodyId" class="abom-figure-body">
+            @if (_loading)
+            {
+                <div class="abom-figure-loading" data-abom-figure-loading>
+                    <MudProgressLinear Indeterminate="true" />
+                </div>
+            }
+            else if (_problem is { Length: > 0 } problem)
+            {
+                <MudAlert Dense="true" Variant="Variant.Outlined"
+                          Severity="@(_fault ? MudBlazor.Severity.Error : MudBlazor.Severity.Warning)"
+                          data-abom-figure-problem="@(_fault ? "fault" : "refused")">@problem</MudAlert>
+            }
+            else if (_figure is { Svg.Length: > 0 } figure)
+            {
+                <div class="abom-figure-canvas" data-abom-figure-canvas>@((MarkupString)figure.Svg)</div>
+            }
+        </div>
+    }
+</section>
+
+@code {
+    /// <summary>The node the page is for.</summary>
+    [Parameter, EditorRequired] public string Key { get; set; } = string.Empty;
+
+    /// <summary>The page's terms as the uses surface applies them, which the figure is cut under.</summary>
+    [Parameter] public string Predicate { get; set; } = string.Empty;
+
+    /// <summary>Whether the figure sits beside the tables rather than above them.</summary>
+    [Parameter] public bool Side { get; set; }
+
+    /// <summary>Raised when the reader moves the figure; without it the figure stays where it is.</summary>
+    [Parameter] public EventCallback<bool> SideChanged { get; set; }
+
+    /// <summary>Whether the drawing is open. Bound by the page, which gives a folded rail its column.</summary>
+    [Parameter] public bool Expanded { get; set; } = true;
+
+    [Parameter] public EventCallback<bool> ExpandedChanged { get; set; }
+
+    private NodeFigure? _figure;
+    private string? _problem;
+    private bool _fault;
+    private bool _loading = true;
+    private (string Key, string Predicate)? _loaded;
+
+    protected override void OnInitialized() => Theme.Changed += Repaint;
+
+    public void Dispose() => Theme.Changed -= Repaint;
+
+    private void Repaint() => InvokeAsync(StateHasChanged);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loaded == (Key, Predicate)) return;
+        _loaded = (Key, Predicate);
+        _loading = true;
+        (_figure, _problem, _fault) = await Api.GetNodeFigureAsync(Key, Predicate);
+        _loading = false;
+    }
+
+    private async Task Toggle()
+    {
+        Expanded = !Expanded;
+        await ExpandedChanged.InvokeAsync(Expanded);
+    }
+
+    // Folding follows where the figure sits: upward above the tables, sideways beside them.
+    private string ToggleIcon => (Side, Expanded) switch
+    {
+        (true, _) => Icons.Material.Outlined.ChevronRight,
+        (false, true) => Icons.Material.Outlined.ExpandLess,
+        (false, false) => Icons.Material.Outlined.ExpandMore,
+    };
+
+    private string ToggleLabel => Side ? "Fold the figure to the side"
+        : Expanded ? "Collapse the figure" : "Expand the figure";
+
+    private string ToggleTitle => Side
+        ? "Fold the figure into a rail beside the tables, giving them its width; the rail still says what it holds."
+        : Expanded ? "Collapse the figure; the sentence beside it still says what it holds." : "Expand the figure.";
+
+    private string HeadingId => $"abom-figure-heading-{Key.GetHashCode():x}";
+
+    private string BodyId => $"abom-figure-body-{Key.GetHashCode():x}";
+
+    private string DownloadHref => AbomApi.FigurePath(Key, Predicate, svg: true);
+
+    /// <summary>What the figure holds, in one sentence, whether or not it is open.</summary>
+    private string Summary
+    {
+        get
+        {
+            if (_figure is not { } f) return _loading ? "Drawing…" : "";
+            var c = f.Counts;
+            var parts = new List<string>
+            {
+                c.Callers == 0 ? "nothing runs it" : $"{c.Callers:N0} run it",
+                c.Dependencies == 0 ? "it runs nothing" : $"it runs {c.Dependencies:N0}",
+                $"{c.Drawn:N0} of {c.InClosure:N0} drawn",
+            };
+            if (c.Versions > 1) parts.Add($"{c.VersionsDrawn:N0} of {c.Versions:N0} versions");
+            return string.Join(" · ", parts);
+        }
+    }
+
+    /// <summary>The same counts as the sentence, each a number under a word or two, for the rail.</summary>
+    private IEnumerable<(string Label, string Value)> Stats
+    {
+        get
+        {
+            if (_figure is not { } f) yield break;
+            var c = f.Counts;
+            yield return ("Run by", c.Callers.ToString("N0"));
+            yield return ("Runs", c.Dependencies.ToString("N0"));
+            yield return ("Drawn", $"{c.Drawn:N0} of {c.InClosure:N0}");
+            if (c.Versions > 1) yield return ("Versions", $"{c.VersionsDrawn:N0} of {c.Versions:N0}");
+        }
+    }
+
+    private GraphPalette P => Theme.Palette;
+
+    // A kind's color as the reader set it, which the Explorer legend draws too.
+    private string Kind(string kind) => P.Kinds.TryGetValue(kind, out var color) ? color : P.Muted;
+
+    private string Band(string band) => Theme.SeverityColor(band);
+}

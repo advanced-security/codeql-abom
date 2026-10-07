@@ -132,6 +132,24 @@ public sealed class ExplorerNodePanelTests : AbomTestContext
     }
 
     /// <summary>
+    /// Whose a node is comes from the declaration. "Starting point" is how its repository arrived,
+    /// and reading it as yours claims a repository nobody declared.
+    /// </summary>
+    [Fact]
+    public async Task TheOriginSaysOwnedOnlyWhereTheDeclarationCoversTheRepository()
+    {
+        StubGraphModule();
+        var page = Render<Explorer>();
+
+        await page.InvokeAsync(() => page.Instance.OnNodeHovered(
+            Brief("octo/app/.github/workflows/ci.yml") with { Owned = true }));
+        Assert.Equal("owned", page.Find("[data-abom-node-fact='origin']").TextContent.Trim());
+
+        await page.InvokeAsync(() => page.Instance.OnNodeHovered(Brief("other/tool/.github/workflows/ci.yml")));
+        Assert.Equal("starting point", page.Find("[data-abom-node-fact='origin']").TextContent.Trim());
+    }
+
+    /// <summary>
     /// Dismissing is the reader's, not the pointer's. The panel stays put when the pointer leaves
     /// the node, so there has to be a way to put it away deliberately.
     /// </summary>

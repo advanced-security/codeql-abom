@@ -26,6 +26,7 @@
         new Segment[]
         {
             new("done", "analyzed", State.Count("done")),
+            new("nothing", "with nothing to analyze", State.Count("nothing")),
             new("running", "being analyzed", State.Count("running")),
             new("retrying", "retrying", State.Count("retrying")),
             new("queued", "queued", State.Count("queued")),

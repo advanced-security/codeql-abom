@@ -26,6 +26,10 @@ type Version struct {
 	// Findings were reported in the dependency's own code at Commit. Nil where no findings run
 	// reached that commit, which is not analyzed rather than clean.
 	Findings *store.VersionFindings `json:"findings"`
+	// LineFindings are what any rule reported on those lines, each matched at the commit its run
+	// analyzed by what the line declared there. Nil where no findings run reached a commit at which
+	// one of them named this version, which is not analyzed rather than clean.
+	LineFindings *store.LineFindings `json:"lineFindings"`
 }
 
 // LockedCommit is one commit locks select behind a reference, and how many repositories' locks.
@@ -117,14 +121,26 @@ func (b *Builder) fillVersions(
 	}
 	listed := q
 	listed.Reached, listed.Origins, listed.Repositories = nil, nil, nil
+	shown, lined := []string{}, map[string][]string{}
 	for _, ref := range refs {
-		if !listed.keeps(Use{Reference: ref, Origin: store.OriginSeed}) {
-			continue
+		if listed.keeps(Use{Reference: ref, Origin: store.OriginSeed}) {
+			shown = append(shown, ref)
+			// The repositories a row counts as naming it directly are the ones whose lines it counts.
+			lined[ref] = slices.Sorted(maps.Keys(byRef[ref].direct))
 		}
+	}
+	onLines, err := b.Store.FindingsOnLines(key, lined, m.live)
+	if err != nil {
+		return err
+	}
+	for _, ref := range shown {
 		v := byRef[ref].version(ref)
 		v.Commit, v.Queue = m.resolved[key+"\x00"+ref], queue[ref]
 		if f, ok := findings[v.Commit]; ok {
 			v.Findings = &f
+		}
+		if f, ok := onLines[ref]; ok {
+			v.LineFindings = &f
 		}
 		page.Items = append(page.Items, v)
 	}

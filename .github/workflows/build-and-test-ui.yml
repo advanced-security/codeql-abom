@@ -236,6 +236,11 @@ jobs:
         working-directory: ui/tests/e2e
         run: npx playwright install --with-deps chromium
 
+      # Graphviz is a requirement: serve refuses to start without it, and the layout and figure
+      # tests fail rather than skip.
+      - name: Browser suite - Install Graphviz
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends graphviz
+
       # `-run` rather than `make e2e`: the binary, the interface and the data set were built once
       # and unpacked above, and rebuilding them here would be the whole saving spent again.
       - name: Browser suite - Against an empty database

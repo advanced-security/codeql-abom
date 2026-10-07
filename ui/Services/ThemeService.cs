@@ -271,6 +271,9 @@ public sealed class ThemeService(IJSRuntime js)
     // construction, so a category drawn in grey reads as chrome; it is now a yellow, and the
     // warning orange beside it moved to keep the pair apart.
     //
+    // Nothing to analyze is settled and is neither a success nor a failure, so it takes violet,
+    // the one hue the legend leaves free.
+    //
     // There is still no colour for a node that was never queued, because that is a fact rather
     // than a stage.
     private static readonly Dictionary<string, string> DarkDiscovery = new()
@@ -280,6 +283,7 @@ public sealed class ThemeService(IJSRuntime js)
         ["running"] = InfoDark,
         ["done"] = SuccessDark,
         ["unavailable"] = ErrorDark,
+        ["nothing"] = "#B197FC",
     };
 
     // A yellow bright enough to read as yellow cannot clear 3:1 against white — `#F5D90A` manages
@@ -293,6 +297,7 @@ public sealed class ThemeService(IJSRuntime js)
         ["running"] = InfoLight,
         ["done"] = SuccessLight,
         ["unavailable"] = ErrorLight,
+        ["nothing"] = "#7048E8",
     };
 
     /// <summary>Human-readable names for the discovery states, used by the frontier legend.</summary>
@@ -303,6 +308,7 @@ public sealed class ThemeService(IJSRuntime js)
         ["running"] = "Discovering",
         ["done"] = "Analyzed",
         ["unavailable"] = "Unavailable",
+        ["nothing"] = "Nothing to analyze",
     };
 
     /// <summary>Human-readable names for the node kinds, used by the legend and filters.</summary>

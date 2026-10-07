@@ -19,7 +19,7 @@
 {
     <RunDraftPanel Predicate="@DraftPredicate" Closed="CloseDraft">
         <Scope>
-            <MudText Typo="Typo.body2" data-abom-run-scope>
+            <MudText Typo="Typo.body2" title="@_view?.Description" data-abom-run-scope>
                 on @(_view is null ? "a named scope, chosen below" : _view.Label)
             </MudText>
         </Scope>

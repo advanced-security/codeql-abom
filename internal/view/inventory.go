@@ -53,8 +53,9 @@ var partialMembers = map[string]map[string][]string{
 	SurfaceJobs:         {paramFlags: {FlagFindings}},
 	SurfaceRepositories: {paramFlags: {FlagFindings}},
 	// Who uses a dependency is a set of repositories: owned names one, an advisory route does not,
-	// and a repository entered the record as a starting point or upstream, never as external.
-	SurfaceUses: {paramScope: {ScopeOwned}, paramOrigins: {"seed", "upstream"}},
+	// and a repository is yours by the declaration or entered the record as a starting point or
+	// upstream, never as external.
+	SurfaceUses: {paramScope: {ScopeOwned}, paramOrigins: {"owned", "seed", "upstream"}},
 }
 
 // UnenforceableAsWorkflows names the terms the workflows unit cannot apply.
@@ -77,6 +78,7 @@ var repositoryTerms = map[string]bool{
 	paramFlags:         true,
 	paramProperties:    true,
 	paramNotProperties: true,
+	paramCodeScanning:  true,
 }
 
 // runRepositoryTerms choose a run's repositories; list-only findings flags are not a run population.
@@ -155,6 +157,12 @@ var usesTerms = map[string]bool{
 // UnenforceableAsUses names the terms a dependency's details page cannot apply.
 func (s Spec) UnenforceableAsUses() []string {
 	return append(s.carried(func(t string) bool { return usesTerms[t] }), s.unanswered(SurfaceUses)...)
+}
+
+// UnenforceableAsNode names the terms one node's own details cannot apply. What it holds and what it
+// uses are read at a reference, and nothing else narrows them.
+func (s Spec) UnenforceableAsNode() []string {
+	return s.carried(func(t string) bool { return t == paramAt })
 }
 
 // UnenforceableAsRelationships names the terms the relationships unit cannot apply.

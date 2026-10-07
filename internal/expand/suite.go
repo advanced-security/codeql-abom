@@ -55,6 +55,8 @@ type tierPlan struct {
 	// findingsRules are the rules that lane runs and the query behind each, which is what traces a
 	// finding to its own query's version and source when one invocation ran many.
 	findingsRules []store.QueryRunRule
+	// findingsPaths is the query behind each of findingsRules, which names what code scanning left to evaluate.
+	findingsPaths []string
 	// metadata is everything each resolved query declared, against the version resolved.
 	metadata []store.QueryMetadata
 }
@@ -70,6 +72,7 @@ func (p *tierPlan) absorb(from tierPlan) {
 	p.contents = append(p.contents, from.contents...)
 	p.findingsVersions = append(p.findingsVersions, from.findingsVersions...)
 	p.findingsRules = append(p.findingsRules, from.findingsRules...)
+	p.findingsPaths = append(p.findingsPaths, from.findingsPaths...)
 	p.metadata = append(p.metadata, from.metadata...)
 	for _, pk := range from.findingsPacks {
 		p.notePack(pk.Pack, pk.PackVersion, pk.PackDigest)
@@ -244,7 +247,7 @@ type plannedQuery struct {
 // a repository reached both directly and through an intermediary is one a repository under review
 // names itself, and the broader pass is the one it has earned.
 func tierOf(b batch, owned map[string]bool) string {
-	if owned[strings.ToLower(b.owner)] {
+	if owned[strings.ToLower(b.owner+"/"+b.repo)] {
 		return store.TierOwned
 	}
 	if b.depth <= 1 {
@@ -403,6 +406,7 @@ func (e *Expander) plan(ctx context.Context, opts Options) (tierPlan, error) {
 			planned.findingsRules = append(planned.findingsRules, store.QueryRunRule{
 				RuleID: md.ID, QueryVersion: version, Pack: pack, PackVersion: packVersion, PackDigest: digest,
 			})
+			planned.findingsPaths = append(planned.findingsPaths, path)
 			planned.notePack(pack, packVersion, digest)
 			continue
 		}
@@ -508,25 +512,45 @@ func (e *Expander) ingestExtra(
 	return err
 }
 
-// ingestFindings records the findings lane's SARIF against the repository just analyzed.
+// ingestFindings records the findings lane against the repository just analyzed: ABOM's evaluation,
+// and code scanning's results for the rules its analysis answered, each rule under what produced it.
 //
 // The run is named after what was invoked, because `database analyze` is one invocation over
 // many queries. Which query made which claim is already on each result, as its rule id.
-func (e *Expander) ingestFindings(
-	path string, at revision, planned tierPlan,
-) error {
-	runID, err := e.Store.RecordQueryRun(planned.findingsRun(at))
+func (e *Expander) ingestFindings(p work.Prepared, at revision, planned tierPlan) error {
+	run := planned.findingsRun(at)
+	if p.TakenSarifPath != "" {
+		answered, reason := answeredRules(p.TakenSarifPath, planned)
+		if reason != "" {
+			return fmt.Errorf("code scanning's document for %s: %s", at.repository, reason)
+		}
+		// Recorded with the run, so no finding is ever on record under it without what produced it.
+		run.Rules = takenRules(run.Rules, answered, p.TakenFrom)
+	}
+	runID, err := e.Store.RecordQueryRun(run)
 	if err != nil {
 		return err
 	}
+	// Code scanning's rules record their own CodeQL, so its document is not held to the ledger's.
+	for _, doc := range []struct{ path, cli string }{{p.SarifPath, planned.cliVersion}, {p.TakenSarifPath, ""}} {
+		if doc.path == "" {
+			continue
+		}
+		if err := e.ingestSARIF(doc.path, runID, at, doc.cli); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *Expander) ingestSARIF(path string, runID int64, at revision, cli string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("opening sarif: %w", err)
 	}
 	defer f.Close()
-
 	_, err = e.Ingester.FindingsFromSARIF(f, ingest.Options{
-		Repository: at.repository, QueryRunID: runID, CLIVersion: planned.cliVersion,
+		Repository: at.repository, QueryRunID: runID, CLIVersion: cli,
 	})
 	return err
 }

@@ -16,6 +16,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // graphQLEndpoint derives the GraphQL address from the REST base URL.
@@ -43,9 +44,10 @@ type graphQLEnvelope struct {
 // graphQLCost is the price of the query, asked for alongside the data rather than predicted.
 type graphQLCost struct {
 	RateLimit struct {
-		Cost      int `json:"cost"`
-		Remaining int `json:"remaining"`
-		Limit     int `json:"limit"`
+		Cost      int    `json:"cost"`
+		Remaining int    `json:"remaining"`
+		Limit     int    `json:"limit"`
+		ResetAt   string `json:"resetAt"`
 	} `json:"rateLimit"`
 }
 
@@ -74,10 +76,15 @@ func (c *Client) graphQL(ctx context.Context, query string, vars map[string]any,
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	// Every query reads an account, named by $login, which only its own installation sees whole.
+	login, _ := vars["login"].(string)
+	if _, err := c.authorize(ctx, req, login, true); err != nil {
+		return err
 	}
 
+	if err := c.GraphQL.Wait(ctx); err != nil {
+		return err
+	}
 	if err := c.Pace.Wait(ctx); err != nil {
 		return err
 	}
@@ -90,6 +97,7 @@ func (c *Client) graphQL(ctx context.Context, query string, vars map[string]any,
 	c.observeBudget(resp)
 
 	if resp.StatusCode != http.StatusOK {
+		c.GraphQL.Spend(1, 0)
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("%s returned %d: %s",
 			redact(endpoint), resp.StatusCode, strings.TrimSpace(string(body)))
@@ -97,20 +105,16 @@ func (c *Client) graphQL(ctx context.Context, query string, vars map[string]any,
 
 	var envelope graphQLEnvelope
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxGraphQLBody)).Decode(&envelope); err != nil {
+		c.GraphQL.Spend(1, 0)
 		return fmt.Errorf("decoding the answer from %s: %w", redact(endpoint), err)
 	}
+	c.chargeGraphQL(envelope.Data)
 	if len(envelope.Errors) > 0 {
 		first := envelope.Errors[0]
 		return fmt.Errorf("%s refused the query: %s%s",
 			redact(endpoint), first.Message, moreErrors(len(envelope.Errors)))
 	}
 
-	var cost graphQLCost
-	// A query that did not ask for rateLimit leaves this zero, which is "not asked", not "free".
-	if err := json.Unmarshal(envelope.Data, &cost); err == nil && cost.RateLimit.Limit > 0 {
-		c.points.Add(int64(cost.RateLimit.Cost))
-		c.recordGraphQLBudget(cost.RateLimit.Remaining, cost.RateLimit.Limit)
-	}
 	if out == nil {
 		return nil
 	}
@@ -128,12 +132,33 @@ func moreErrors(n int) string {
 	return fmt.Sprintf(" (and %d more)", n-1)
 }
 
-// recordGraphQLBudget keeps what the answer body said, without disturbing the reset time the
-// headers carry.
-func (c *Client) recordGraphQLBudget(remaining, limit int) {
+// chargeGraphQL spends what GitHub said the query cost, read before any error so a refused query
+// that was still priced is still charged.
+func (c *Client) chargeGraphQL(data json.RawMessage) {
+	var cost graphQLCost
+	// A query that did not ask for rateLimit leaves this zero, which is "not asked", not "free":
+	// the request is counted and no charge is put on record.
+	if err := json.Unmarshal(data, &cost); err != nil || cost.RateLimit.Limit <= 0 {
+		c.GraphQL.Spend(1, 0)
+		return
+	}
+	resetAt, _ := time.Parse(time.RFC3339, cost.RateLimit.ResetAt)
+	c.points.Add(int64(cost.RateLimit.Cost))
+	seen := c.recordGraphQLBudget(cost.RateLimit.Remaining, cost.RateLimit.Limit, resetAt)
+	c.GraphQL.Spend(1, cost.RateLimit.Cost)
+	c.GraphQL.Observe(seen.reading())
+}
+
+// recordGraphQLBudget keeps what the answer body said, keeping the reset time the headers carry
+// where the body named none.
+func (c *Client) recordGraphQLBudget(remaining, limit int, resetAt time.Time) RateLimit {
 	c.budgetMu.Lock()
 	defer c.budgetMu.Unlock()
 	c.graphqlBudget.Known = true
 	c.graphqlBudget.Remaining = remaining
 	c.graphqlBudget.Limit = limit
+	if !resetAt.IsZero() {
+		c.graphqlBudget.ResetAt = resetAt
+	}
+	return c.graphqlBudget
 }

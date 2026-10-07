@@ -143,3 +143,26 @@ func queueOne(t *testing.T, sup *Supervisor, key string, depth int) {
 func runOneCycle(sup *Supervisor) {
 	sup.cycle(context.Background())
 }
+
+// A tree read is API budget spent in place of a clone, so a cycle that saved clones that way says
+// what it paid, and the totals carry it.
+func TestACycleRecordsTheTreeReadsItSpent(t *testing.T) {
+	sup, s := newSupervisor(t)
+
+	sup.recordSpend(expand.Stats{TreeReads: 4, Fetched: 1}, nil, sup.now())
+
+	cycles, err := s.RecentCycles(1)
+	if err != nil {
+		t.Fatalf("RecentCycles: %v", err)
+	}
+	if len(cycles) != 1 || cycles[0].TreeReads != 4 {
+		t.Fatalf("recorded %+v, want 4 tree reads", cycles)
+	}
+	total, err := s.CycleTotals()
+	if err != nil {
+		t.Fatalf("CycleTotals: %v", err)
+	}
+	if total.TreeReads != 4 {
+		t.Errorf("totals carry %d tree reads, want 4", total.TreeReads)
+	}
+}

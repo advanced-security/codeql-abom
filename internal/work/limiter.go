@@ -27,6 +27,8 @@ type Limiter struct {
 	// interval is guarded because the rate follows a budget that is only known once an answer
 	// has come back.
 	interval time.Duration
+	// burst is how many requests may go at once before the spacing applies; one is even spacing.
+	burst int
 	// next is the earliest time the following request may be issued.
 	next time.Time
 }
@@ -58,7 +60,7 @@ func (l *Limiter) Wait(ctx context.Context) error {
 	if l.next.Before(now) {
 		l.next = now
 	}
-	wait := l.next.Sub(now)
+	wait := l.next.Sub(now) - time.Duration(max(l.burst-1, 0))*l.interval
 	l.next = l.next.Add(l.interval)
 	l.mu.Unlock()
 
@@ -86,6 +88,32 @@ func (l *Limiter) SetPerHour(perHour int) {
 		return
 	}
 	l.interval = 0
+}
+
+// Configure sets the rate and how many requests may go at once. A rate of zero or less is
+// unlimited, and a burst below one is one.
+func (l *Limiter) Configure(perHour, burst int) {
+	l.SetPerHour(perHour)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.burst = max(burst, 1)
+}
+
+// Charge adds n units to what the following requests owe, for a request that cost more than the
+// one unit its wait reserved.
+func (l *Limiter) Charge(n int) {
+	if l == nil || n <= 0 {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.interval <= 0 {
+		return
+	}
+	if now := l.now(); l.next.Before(now) {
+		l.next = now
+	}
+	l.next = l.next.Add(time.Duration(n) * l.interval)
 }
 
 // Interval reports the current spacing between requests. Zero is unlimited.

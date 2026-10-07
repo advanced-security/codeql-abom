@@ -350,3 +350,57 @@ func TestTheDataSetHoldsRepositoriesWithNoSecurityFindingAtAll(t *testing.T) {
 	}
 	t.Logf("%d repositories clean, %d carrying at least one security finding", clean, flagged)
 }
+
+// The browser gate can draw a property scope only if the corpus declares one: an organization
+// restricted to the repositories carrying chosen values, one scope naming the value every
+// repository nobody set carries, and one held because repository administrators can set it.
+func TestTheCorpusDeclaresAnOrganizationByProperty(t *testing.T) {
+	s := builtCorpus(t)
+	declared, err := s.OwnedScope()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var acme *store.DeclaredAccount
+	for i := range declared {
+		if declared[i].Owner == "acme-corp" {
+			acme = &declared[i]
+		}
+	}
+	if acme == nil || !acme.IncludesOnly || len(acme.Properties) != 3 {
+		t.Fatalf("acme-corp declared as %+v, want three property scopes", acme)
+	}
+	var held, defaults, honored int
+	for _, c := range acme.Properties {
+		switch {
+		case c.Held:
+			held++
+			if !strings.Contains(c.HeldReason, "repository administrators") {
+				t.Errorf("held for %q", c.HeldReason)
+			}
+		case len(c.Defaults) > 0:
+			defaults++
+		default:
+			honored++
+		}
+	}
+	if held != 1 || defaults != 1 || honored != 1 {
+		t.Errorf("%d held, %d naming a default, %d otherwise; want one of each", held, defaults, honored)
+	}
+	// The scopes cover every acme-corp repository between them, so no owned figure moves.
+	for _, repo := range []string{"acme-corp/payments", "acme-corp/shared-ci", "acme-corp/storefront"} {
+		if owned, err := s.RepositoryIsOwned(repo); err != nil || !owned {
+			t.Errorf("%s owned %v (%v), want owned", repo, owned, err)
+		}
+	}
+	for terms, want := range map[store.PropertyTerm]int{
+		{Name: "team", Value: "payments"}: 1, {Name: "review-tier", Value: "standard"}: 2,
+	} {
+		if got, err := s.PropertyScopeMatches("acme-corp", []store.PropertyTerm{terms}); err != nil || got != want {
+			t.Errorf("%s = %s matches %d (%v), want %d", terms.Name, terms.Value, got, err, want)
+		}
+	}
+	if got := count(t, s, `SELECT COUNT(*) FROM abom_enumeration_state
+		WHERE owner = 'acme-corp' AND properties_judged_at IS NOT NULL`); got != 1 {
+		t.Error("the scopes carry no judgement, so the interface would say they were never judged")
+	}
+}

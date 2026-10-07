@@ -201,6 +201,7 @@ func TestTheCanonicalTextIsExactlyThis(t *testing.T) {
 			Spec{Repositories: []string{"octo-org/tool", "octo-org/app"}},
 			"repositories=octo-org%2Fapp%2Cocto-org%2Ftool",
 		},
+		{Spec{CodeScanning: []string{"enable", "add"}}, "codeScanning=add%2Cenable"},
 	} {
 		if got := c.spec.String(); got != c.canonical {
 			t.Errorf("String() = %q, want %q", got, c.canonical)
@@ -357,10 +358,10 @@ func TestTheUsesSurfaceRefusesWhatOnlyChoseTheListedDependencies(t *testing.T) {
 }
 
 // The uses surface answers who uses a dependency, so of the scopes only `owned` names a set of
-// repositories, and of the origins only the two a repository can have. The rest are refused by
-// member rather than dropped.
+// repositories, and of the origins only what a repository can be: yours by the declaration, or a
+// starting point or upstream by how it arrived. The rest are refused by member rather than dropped.
 func TestTheUsesSurfaceRefusesTheMembersItCannotAnswer(t *testing.T) {
-	spec, err := Parse("origins=external,seed&scope=exposure")
+	spec, err := Parse("origins=external,owned,seed&scope=exposure")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,7 +369,7 @@ func TestTheUsesSurfaceRefusesTheMembersItCannotAnswer(t *testing.T) {
 		t.Errorf("UnenforceableAsUses() = %v, want %v", got, want)
 	}
 	for _, term := range Catalog() {
-		if term.Name == "origins" && !slices.Equal(term.SurfaceValues[SurfaceUses], []string{"seed", "upstream"}) {
+		if term.Name == "origins" && !slices.Equal(term.SurfaceValues[SurfaceUses], []string{"owned", "seed", "upstream"}) {
 			t.Errorf("the origins control on the uses surface offers %v", term.SurfaceValues[SurfaceUses])
 		}
 	}

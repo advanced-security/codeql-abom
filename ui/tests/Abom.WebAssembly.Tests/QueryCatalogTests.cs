@@ -576,6 +576,7 @@ public class QueryCatalogTests : AbomTestContext
 
     private const string RunViews = """
         [{"name":"owned","title":"What you own","predicate":"scope=owned","builtin":true,
+          "description":"Only what the repositories you declared hold.",
           "refuses":{"inventory":[],"repositories":[],"graph":[],"run":[]}},
          {"name":"unpinned","title":"Floating references","predicate":"ref=tag","builtin":true,
           "refuses":{"inventory":[],"repositories":["ref"],"graph":[],"run":["ref"]}},
@@ -645,6 +646,18 @@ public class QueryCatalogTests : AbomTestContext
 
         page.WaitForAssertion(() =>
             Assert.Contains(Sent, r => r.Method == "POST" && r.Url.EndsWith("api/runs?view=owned")));
+    }
+
+    /// The draft names the scope it is over, and says what that scope holds on hover as the chip did.
+    [Fact]
+    public void TheDraftSaysWhatItsScopeHolds()
+    {
+        var page = Drafting();
+
+        page.Find("[data-abom-view='owned']").Click();
+
+        page.WaitForAssertion(() => Assert.Equal("Only what the repositories you declared hold.",
+            page.Find("[data-abom-run-scope]").GetAttribute("title")));
     }
 
     /// <summary>

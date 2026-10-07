@@ -33,6 +33,9 @@ func runOwned(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	fs.Var(&orgs, "org", "organization you own (repeatable)")
 	fs.Var(&users, "user", "your own user account (repeatable; opt-in, never assumed)")
 	fs.Var(&includes, "include", "owner/repo to restrict an account to (repeatable)")
+	var properties repeated
+	fs.Var(&properties, "property",
+		`a property scope as JSON, {"org": "...", "match": [{"name": "...", "value": "..."}]} (repeatable; terms in one all hold)`)
 	clear := fs.Bool("clear", false, "discard the declaration, which stops discovery")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -57,15 +60,23 @@ func runOwned(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 			return fmt.Errorf("own: %w", err)
 		}
 	case len(orgs) > 0 || len(users) > 0:
-		accounts, err := declare.Accounts(orgs, users, includes)
+		scopes := make([]declare.PropertyScope, 0, len(properties))
+		for _, body := range properties {
+			p, err := declare.ParsePropertyScope(body)
+			if err != nil {
+				return fmt.Errorf("own: %w", err)
+			}
+			scopes = append(scopes, p)
+		}
+		accounts, err := declare.Accounts(orgs, users, includes, scopes)
 		if err != nil {
 			return fmt.Errorf("own: %w", err)
 		}
 		if err := s.SetOwnedScope(accounts, store.DeclaredByCLI); err != nil {
 			return fmt.Errorf("own: %w", err)
 		}
-	case len(includes) > 0:
-		return errors.New("own: --include needs the account it belongs to, given with --org or --user")
+	case len(includes) > 0 || len(properties) > 0:
+		return errors.New("own: --include and --property need the account they belong to, given with --org or --user")
 	}
 
 	declared, err := s.OwnedScope()
@@ -74,6 +85,34 @@ func runOwned(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	writeDeclaredScope(stdout, declared)
 	return nil
+}
+
+// restrictedScope says what a restricted account covers: its named repositories, or the ones
+// carrying each property scope's terms, and why a held scope counts nothing.
+func restrictedScope(a store.DeclaredAccount) string {
+	var parts []string
+	if len(a.Includes) > 0 {
+		parts = append(parts, "only "+strings.Join(a.Includes, ", "))
+	}
+	for _, c := range a.Properties {
+		terms := make([]string, 0, len(c.Terms))
+		for _, t := range c.Terms {
+			terms = append(terms, t.Name+" = "+t.Value)
+		}
+		part := "carrying " + strings.Join(terms, " and ")
+		if c.Held {
+			part += " (held: " + c.HeldReason + ")"
+		}
+		if len(c.Defaults) > 0 {
+			part += " (the default of " + strings.Join(c.Defaults, ", ") +
+				": every repository that never chose a value is covered, and every new one)"
+		}
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
+		return "nothing (no repositories or property scopes named)"
+	}
+	return strings.Join(parts, "; or ")
 }
 
 func writeDeclaredScope(w io.Writer, accounts []store.DeclaredAccount) {
@@ -90,10 +129,7 @@ func writeDeclaredScope(w io.Writer, accounts []store.DeclaredAccount) {
 		}
 		scope := "every repository"
 		if a.IncludesOnly {
-			scope = "only " + strings.Join(a.Includes, ", ")
-			if len(a.Includes) == 0 {
-				scope = "nothing (no includes named)"
-			}
+			scope = restrictedScope(a)
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", a.Owner, a.Kind, state, scope)
 	}

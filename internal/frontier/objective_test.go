@@ -131,6 +131,29 @@ func TestCompletenessIsReportedPerDepth(t *testing.T) {
 	}
 }
 
+// A starting point with nothing to analyze is settled, so it does not hold its depth open, and it
+// is counted apart from what was analyzed: an analysis ran on one and nothing ran on the other.
+func TestNothingToAnalyzeSettlesItsDepthWithoutCountingAsAnalyzed(t *testing.T) {
+	q, _ := newQueue(t)
+	if _, err := q.Enqueue([]Item{item("octo/docs", 0), item("octo/app", 0)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Nothing(Key{NodeKey: "octo/docs"}, "", "cafe", "no workflows"); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Complete(Key{NodeKey: "octo/app"}, Resolution{SHA: "beef"}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := q.Completeness()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Done != 1 || got[0].Nothing != 1 || got[0].Settled != 2 || !got[0].Complete() {
+		t.Errorf("depth 0 = %+v, want 1 analyzed and 1 with nothing to analyze, settled", got)
+	}
+}
+
 // A closure that is complete everywhere has no shallowest incomplete depth. Reporting 0 would
 // read as "depth 0 is outstanding", which is a different and wrong statement.
 func TestACompleteClosureHasNoOutstandingDepth(t *testing.T) {
@@ -182,5 +205,142 @@ func TestUnavailableWorkDoesNotMakeADepthPermanentlyIncomplete(t *testing.T) {
 	}
 	if _, ok := ShallowestIncomplete(got); ok {
 		t.Error("a depth holding only settled and unavailable work reported as incomplete")
+	}
+}
+
+// pastCeiling queues key at depth with attempts failed attempts and a retry not yet due.
+func pastCeiling(t *testing.T, q *Queue, key string, depth, attempts int) {
+	t.Helper()
+	it := item(key, depth)
+	it.Ref = "v1"
+	if _, err := q.Enqueue([]Item{it}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if _, err := q.Store.DB().Exec(`
+		UPDATE abom_frontier
+		   SET attempts = ?, reason = 'exit status 32', next_attempt_at = '2999-01-01T00:00:00Z'
+		 WHERE node_key = ?`, attempts, key); err != nil {
+		t.Fatalf("failing %s: %v", key, err)
+	}
+}
+
+// Three rows failing forever kept depth 0 open for 179 cycles, and the sweep never probed once.
+func TestARowPastTheAttemptCeilingDoesNotHoldItsDepthOpen(t *testing.T) {
+	q, _ := newQueue(t)
+	analyzed := item("a/fine", 0)
+	analyzed.Ref = "v1"
+	if _, err := q.Enqueue([]Item{analyzed}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if err := q.Complete(analyzed.Key(), Resolution{Ref: "v1", SHA: "sha"}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	pastCeiling(t, q, "b/stuck", 0, DefaultStuckAfter)
+
+	got, err := q.Completeness()
+	if err != nil {
+		t.Fatalf("Completeness: %v", err)
+	}
+	if d, ok := ShallowestIncomplete(got); ok {
+		t.Errorf("depth %d reported incomplete while it holds only a row past the ceiling", d)
+	}
+}
+
+// Never read, and nothing said it cannot be: counting it either way is the coverage lie.
+func TestARowPastTheCeilingIsNeitherAnalyzedNorUnavailable(t *testing.T) {
+	q, _ := newQueue(t)
+	pastCeiling(t, q, "b/stuck", 0, DefaultStuckAfter+2)
+
+	got, err := q.Completeness()
+	if err != nil {
+		t.Fatalf("Completeness: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d depths, want 1", len(got))
+	}
+	d := got[0]
+	if d.Stuck != 1 {
+		t.Errorf("stuck = %d, want 1", d.Stuck)
+	}
+	if d.Done != 0 || d.Settled != 0 {
+		t.Errorf("done = %d, settled = %d; a row nobody analyzed was counted as finished",
+			d.Done, d.Settled)
+	}
+	if d.Available != 1 || d.Pending != 1 {
+		t.Errorf("available = %d, pending = %d, want the row still pending and retryable",
+			d.Available, d.Pending)
+	}
+}
+
+// Below the ceiling a failure is still a retry the crawl expects to win, so the depth stays open.
+func TestARowBelowTheCeilingStillHoldsItsDepthOpen(t *testing.T) {
+	q, _ := newQueue(t)
+	pastCeiling(t, q, "b/retrying", 0, DefaultStuckAfter-1)
+
+	got, err := q.Completeness()
+	if err != nil {
+		t.Fatalf("Completeness: %v", err)
+	}
+	if _, ok := ShallowestIncomplete(got); !ok {
+		t.Error("a row one failure short of the ceiling was treated as settled")
+	}
+	if got[0].Stuck != 0 {
+		t.Errorf("stuck = %d, want 0 below the ceiling", got[0].Stuck)
+	}
+}
+
+// The ceiling is a policy about the crawl, so it follows the queue it is set on.
+func TestTheAttemptCeilingFollowsTheQueue(t *testing.T) {
+	q, _ := newQueue(t)
+	q.StuckAfter = 3
+	pastCeiling(t, q, "b/stuck", 0, 3)
+
+	got, err := q.Completeness()
+	if err != nil {
+		t.Fatalf("Completeness: %v", err)
+	}
+	if got[0].Stuck != 1 {
+		t.Errorf("stuck = %d with a ceiling of 3 and 3 attempts, want 1", got[0].Stuck)
+	}
+}
+
+// Staying retryable is the point: a stuck row that succeeds is analyzed like any other.
+func TestAStuckRowThatLaterSucceedsReturnsToNormalAccounting(t *testing.T) {
+	q, _ := newQueue(t)
+	pastCeiling(t, q, "b/stuck", 0, DefaultStuckAfter)
+	if err := q.Complete(Key{NodeKey: "b/stuck", Ref: "v1"},
+		Resolution{Ref: "v1", SHA: "sha"}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	got, err := q.Completeness()
+	if err != nil {
+		t.Fatalf("Completeness: %v", err)
+	}
+	if d := got[0]; d.Stuck != 0 || d.Done != 1 || d.Settled != 1 {
+		t.Errorf("depth = %+v, want the row analyzed and nothing stuck", d)
+	}
+}
+
+// One pending row that can never succeed meant the drained-queue passes never ran.
+func TestOnlyStuckWorkLeavesTheQueueDrained(t *testing.T) {
+	q, _ := newQueue(t)
+	pastCeiling(t, q, "b/stuck", 0, DefaultStuckAfter)
+
+	drained, err := q.Drained()
+	if err != nil {
+		t.Fatalf("Drained: %v", err)
+	}
+	if !drained {
+		t.Error("a queue holding only a row past the ceiling is not drained")
+	}
+
+	untried := item("c/untried", 2)
+	untried.Ref = "v1"
+	if _, err := q.Enqueue([]Item{untried}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if drained, err = q.Drained(); err != nil || drained {
+		t.Errorf("drained = %t (%v) with untried work queued, want false", drained, err)
 	}
 }

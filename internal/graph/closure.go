@@ -67,6 +67,18 @@ func (b *Builder) OwnedClosure() (*Closure, error) {
 	return b.ClosureFrom(roots)
 }
 
+// OwnedClosureNames is the owned closure as the discovery queue reads it, walked afresh on every
+// call so a declaration or an analysis moves the bound at once.
+func OwnedClosureNames(s *store.Store) func() ([]string, error) {
+	return func() ([]string, error) {
+		c, err := (&Builder{Store: s}).OwnedClosure()
+		if err != nil {
+			return nil, err
+		}
+		return c.Repositories(), nil
+	}
+}
+
 // KeepList names corpus repositories the declared scope reaches, and the closure behind them.
 func (b *Builder) KeepList() ([]string, *Closure, error) {
 	closure, err := b.OwnedClosure()

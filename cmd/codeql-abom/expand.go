@@ -12,6 +12,7 @@ import (
 
 	"github.com/advanced-security/codeql-abom/internal/expand"
 	"github.com/advanced-security/codeql-abom/internal/frontier"
+	"github.com/advanced-security/codeql-abom/internal/ghapp"
 	"github.com/advanced-security/codeql-abom/internal/graph"
 	"github.com/advanced-security/codeql-abom/internal/ingest"
 	"github.com/advanced-security/codeql-abom/internal/lockfile"
@@ -105,6 +106,8 @@ type expandAllConfig struct {
 	keepArtifacts      bool
 	requeueStale       bool
 	requeueRepo        string
+	// tokens is the App's token source for git, or nil for the machine's own credentials.
+	tokens ghapp.TokenSource
 }
 
 // runExpandAll follows dependencies out from the seed repositories until the frontier is empty,
@@ -127,7 +130,10 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	}
 	defer s.Close()
 
-	queue := &frontier.Queue{Store: s, MaxDepth: cfg.maxDepth}
+	if cfg.tokens, err = dbReaderTokens(cfg.dbPath); err != nil {
+		return fmt.Errorf("expand-all: %w", err)
+	}
+	queue := crawlQueue(s, cfg.maxDepth)
 	if err := prepareExpandAllQueue(s, queue, stdout); err != nil {
 		return err
 	}
@@ -286,10 +292,8 @@ func prepareExpandAllQueue(s *store.Store, queue *frontier.Queue, stdout io.Writ
 func newExpander(
 	s *store.Store, queue *frontier.Queue, cfg expandAllConfig, stdout io.Writer,
 ) (*expand.Expander, *expand.CheckoutCache, func(), error) {
-	var pace *work.Limiter
-	if cfg.rateLimitPerHour > 0 {
-		pace = work.NewLimiter(cfg.rateLimitPerHour)
-	}
+	pace := processPools.Pool(work.PoolFetching, work.UnitGit)
+	pace.Configure(cfg.rateLimitPerHour, 1)
 
 	w := store.NewWriter(s, 0)
 	server := &runner.CLIServer{CodeQLPath: cfg.codeqlPath}
@@ -302,7 +306,7 @@ func newExpander(
 		CodeQLPath: cfg.codeqlPath, Lock: runner.SharedLock(),
 		Server: server, Evaluator: evaluator,
 	}
-	checkout := &expand.Checkout{}
+	checkout := &expand.Checkout{Tokens: cfg.tokens}
 	cache, err := checkoutCache(cfg.cacheDir, cfg.cacheMaxMB)
 	if err != nil {
 		cleanup()

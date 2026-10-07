@@ -3,6 +3,7 @@
 @inject AbomApi Api
 @inject NavigationManager Nav
 @inject ScopeService Scope
+@inject IJSRuntime Js
 
 <PageTitle>@(Key ?? "Node") — ABOM</PageTitle>
 
@@ -41,25 +42,29 @@ else if (_detail is null)
 }
 else
 {
-    <div class="d-flex flex-wrap align-center gap-3 mb-1">
+    <div class="abom-node-head d-flex flex-wrap align-center gap-3 mb-1">
         <MudText Typo="Typo.h5" HtmlTag="h1" Class="abom-title-mono abom-page-title">@_detail.Key</MudText>
         <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@KindLabel</MudChip>
-        @if (!string.IsNullOrEmpty(_detail.Origin))
+        @if (_detail.Owned || !string.IsNullOrEmpty(_detail.Origin))
         {
-            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
-                @(_detail.Origin == "seed" ? "starting point" : _detail.Origin)
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                     title="Whose this is: owned where your declaration covers its repository, otherwise how its repository arrived."
+                     data-abom-node-origin>
+                @OriginText.Of(_detail.Origin, _detail.Owned)
             </MudChip>
         }
         @* The pivot to the graph is a deliberate click, never where a name lands you. Each carries
            the terms its own surface applies; the rest would be refused there. *@
-        <MudLink Href="@ExplorerHref" title="Open this in the Explorer, with the filters the Explorer can apply."
+        <MudLink Href="@ExplorerHref" Class="abom-icon-link"
+                 title="Open this in the Explorer, with the filters the Explorer can apply."
                  data-abom-node-explorer>
-            <MudIcon Icon="@Icons.Material.Outlined.Hub" Size="Size.Small" Class="mr-1" />
+            <MudIcon Icon="@Icons.Material.Outlined.Hub" Size="Size.Small" />
             Open in Explorer
         </MudLink>
-        <MudLink Href="@InventoryHref" title="Return to the Inventory, keeping the filters it can apply."
+        <MudLink Href="@InventoryHref" Class="abom-icon-link"
+                 title="Return to the Inventory, keeping the filters it can apply."
                  data-abom-node-inventory>
-            <MudIcon Icon="@Icons.Material.Outlined.ListAlt" Size="Size.Small" Class="mr-1" />
+            <MudIcon Icon="@Icons.Material.Outlined.ListAlt" Size="Size.Small" />
             Back to Inventory
         </MudLink>
     </div>
@@ -68,6 +73,30 @@ else
         <FilterPicker Surface="uses" Changed="OnPickerChanged" />
     </div>
 
+    <div id="abom-node-layout"
+         class="abom-node-layout @(FigureBeside ? "abom-node-layout-side" : null) @(FigureBeside && !_figureExpanded ? "abom-node-layout-rail" : null)"
+         data-abom-node-layout="@(FigureBeside ? "side" : "top")">
+    <div class="abom-node-main">
+    @if (DrawsFigure && !FigureBeside)
+    {
+        <ClosureFigure Key="@_detail.Key" Predicate="@UsesPredicate" Side="false" SideChanged="SetFigureBeside"
+                       @bind-Expanded="_figureExpanded" />
+    }
+    else if (_detail.Kind == "repo")
+    {
+        <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3" data-abom-figure-repository>
+            A repository runs nothing itself: each of its workflows draws what runs it and what it runs.
+        </MudText>
+    }
+
+    @if (OnlyTriggered)
+    {
+        <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3" data-abom-node-triggered>
+            Its triggers run this workflow; no <code>uses:</code> line names it, so it has no versions in use and nothing here runs it.
+        </MudText>
+    }
+    else
+    {
     <MudPaper Elevation="0" Outlined="true" Class="pa-3 mb-3" data-abom-node-versions>
         <MudText Typo="Typo.subtitle2" HtmlTag="h2">Versions in use</MudText>
         <ActionVersions Key="@_detail.Key" Predicate="@UsesPredicate" ReferenceHref="ReferenceHref" />
@@ -278,6 +307,7 @@ else
                 @UsesSummary()
                 @if (_uses is { HiddenUpstream: > 0 } u)
                 {
+                    @(" ")
                     <span data-abom-uses-hidden-upstream>
                         @CountText.Of(u.HiddenUpstream, "upstream repository also runs it and is", "upstream repositories also run it and are")
                         not listed, because nobody here changes them.
@@ -287,6 +317,7 @@ else
                 }
                 @if (_uses is { Unanalyzed: > 0 } p)
                 {
+                    @(" ")
                     <span>
                         @CountText.Of(p.Unanalyzed, "queued dependency has", "queued dependencies have") not been
                         analyzed; a route that runs only through one cannot appear here.
@@ -300,24 +331,36 @@ else
             </MudText>
         }
     </MudPaper>
+    }
 
     <MudGrid Spacing="3">
         <MudItem xs="12" md="6">
             <MudPaper Elevation="0" Outlined="true" Class="pa-3">
                 <MudText Typo="Typo.subtitle2" HtmlTag="h2" GutterBottom="true">Findings by rule</MudText>
+                @if (_detail.RulesUnread.Count > 0)
+                {
+                    <MudText Typo="Typo.caption" Class="abom-coverage-unknown d-block mb-1" data-abom-rules-unread>
+                        No findings run has analyzed the commit @string.Join(" and ", _detail.RulesUnread.Select(CommitText.Reference))
+                        resolves to, so nothing is known about its code there.
+                    </MudText>
+                }
                 @if (_detail.Rules.Count == 0)
                 {
-                    <MudText Typo="Typo.body2" Class="mud-text-secondary">
-                        No rule fired against this node.
-                    </MudText>
+                    @if (_detail.RulesUnread.Count < Scope.Spec.At.Count || Scope.Spec.At.Count == 0)
+                    {
+                        <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                            No rule fired against this node@(Scope.Spec.At.Count > 0 ? $" at {AtText}" : "").
+                        </MudText>
+                    }
                 }
                 else
                 {
                     <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-1"
                              data-abom-node-severity>@SeverityText.Summary(NodeSeverity())</MudText>
                     <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-1">
-                        In its own code, at every version analyzed. Versions in use says what each
-                        reference's commit carries.
+                        @(Scope.Spec.At.Count > 0
+                            ? $"In its own code, at the commit {AtText} resolves to."
+                            : "In its own code, at every version analyzed. Versions in use says what each reference's commit carries.")
                     </MudText>
                     @foreach (var r in _detail.Rules)
                     {
@@ -344,14 +387,23 @@ else
             </MudPaper>
         </MudItem>
 
-        @if (_detail.Uses.Count > 0)
+        @if (_detail.Uses.Count > 0 || _detail.UsesUnread.Count > 0)
         {
             <MudItem xs="12" md="6">
                 <MudPaper Elevation="0" Outlined="true" Class="pa-3">
-                    <MudText Typo="Typo.subtitle2" HtmlTag="h2">Uses @_detail.Uses.Count dependencies</MudText>
-                    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2">
-                        What this pulls in, as its most recent analysis declared it, and how many times.
+                    <MudText Typo="Typo.subtitle2" HtmlTag="h2">Uses @CountText.Of(_detail.Uses.Count, "dependency", "dependencies")</MudText>
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2" data-abom-uses-at>
+                        @(Scope.Spec.At.Count > 0
+                            ? $"What this pulls in at {AtText}, as that commit declared it, and how many times."
+                            : "What this pulls in, as its most recent analysis declared it, and how many times.")
                     </MudText>
+                    @if (_detail.UsesUnread.Count > 0)
+                    {
+                        <MudText Typo="Typo.caption" Class="abom-coverage-unknown d-block mb-2">
+                            Nothing recorded what the commit @string.Join(" and ", _detail.UsesUnread.Select(CommitText.Reference))
+                            resolves to uses.
+                        </MudText>
+                    }
                     <MudSimpleTable Dense="true" Hover="true" Striped="false" FixedHeader="true"
                                     Class="abom-grid abom-table abom-grid-windowed">
                         <thead>
@@ -387,10 +439,43 @@ else
             </MudItem>
         }
     </MudGrid>
+    </div>
+    @if (DrawsFigure && FigureBeside)
+    {
+        <aside class="abom-node-aside" data-abom-node-aside>
+            <ClosureFigure Key="@_detail.Key" Predicate="@UsesPredicate" Side="true" SideChanged="SetFigureBeside"
+                           @bind-Expanded="_figureExpanded" />
+        </aside>
+    }
+    </div>
 }
 
 @code {
     [Parameter] public string? Key { get; set; }
+
+    /// <summary>Where the reader last put the figure, kept across pages.</summary>
+    private const string FigurePlacementKey = "abom.figurePlacement";
+
+    private bool FigureBeside { get; set; }
+
+    /// <summary>
+    /// A workflow no uses: line names: only its triggers run it, so it has no versions and no
+    /// callers. Decided by the count, never the kind; a workflow can be called by a local path.
+    /// </summary>
+    private bool OnlyTriggered => _detail is { Kind: "workflow", NamedBy: 0 };
+
+    // Open on arrival, and kept wherever the reader moves the figure.
+    private bool _figureExpanded = true;
+
+    /// <summary>Every kind that runs something or is run draws one; owned or not decides the order.</summary>
+    private bool DrawsFigure => _detail?.Kind is "workflow" or "reusable_workflow" or "action"
+        or "composite_action" or "docker_image";
+
+    private async Task SetFigureBeside(bool beside)
+    {
+        FigureBeside = beside;
+        await Js.InvokeVoidAsync("abomTheme.save", FigurePlacementKey, beside ? "side" : "top");
+    }
 
     private NodeDetail? _detail;
     private bool _loading = true;
@@ -399,8 +484,36 @@ else
     private NodeUsesPage? _uses;
     private string? _usesRefusal;
     private string? _loadedKey;
+    private string? _loadedAt;
 
     protected override void OnInitialized() => Nav.LocationChanged += OnLocationChanged;
+
+    /// <summary>
+    /// How wide the page must be, in px, for the tables and the figure to share it: narrower, the
+    /// figure shrank to text a reader cannot read and the tables lost columns to scrolling.
+    /// </summary>
+    private const int SideBySideWidth = 1700;
+
+    private bool _placementRead;
+
+    // Read once the page has a body to measure: the reader's choice, or else the room there is.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_placementRead || _detail is null) return;
+        _placementRead = true;
+        var saved = await Js.InvokeAsync<string?>("abomTheme.load", FigurePlacementKey);
+        var beside = saved switch
+        {
+            "side" => true,
+            "top" => false,
+            _ => (await Js.InvokeAsync<BoxSize?>("abomTheme.measure", "abom-node-layout"))?.Width >= SideBySideWidth,
+        };
+        if (beside != FigureBeside)
+        {
+            FigureBeside = beside;
+            StateHasChanged();
+        }
+    }
 
     public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
 
@@ -412,14 +525,26 @@ else
         {
             _terms = await Api.GetFilterTermsAsync();
         }
-        if (Key == _loadedKey) return;
+        if (Key == _loadedKey && At == _loadedAt) return;
         _loading = true;
         _uses = null;
         _usesRefusal = null;
-        _detail = string.IsNullOrEmpty(Key) ? null : await Api.GetNodeAsync(Key);
-        _loadedKey = Key;
+        await LoadDetail();
         _loading = false;
     }
+
+    // What the node holds and uses is read at the references asked for, so a new one reloads it.
+    private async Task LoadDetail()
+    {
+        _detail = string.IsNullOrEmpty(Key) ? null : await Api.GetNodeAsync(Key, At);
+        (_loadedKey, _loadedAt) = (Key, At);
+    }
+
+    /// <summary>The scope's references alone, the one term the node's own details apply.</summary>
+    private string At => new ViewSpec { At = Scope.Spec.At }.ToQueryString();
+
+    // "v4" or "v4 and v5", for saying which versions a section was read at.
+    private string AtText => string.Join(" and ", Scope.Spec.At.Select(CommitText.Reference));
 
     // A reference chosen in the versions table, or a term set or removed in the bar, is a new
     // address; reading it here is what keeps the page and the address one answer.
@@ -430,6 +555,7 @@ else
         if (Scope.ToQueryString() == before) return;
         await InvokeAsync(async () =>
         {
+            if (At != _loadedAt) await LoadDetail();
             StateHasChanged();
             if (_usesGrid is not null) await _usesGrid.ReloadServerData();
         });

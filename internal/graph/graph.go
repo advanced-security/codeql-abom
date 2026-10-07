@@ -18,6 +18,9 @@ type Builder struct {
 	// MaxDepth bounds traversal. Zero means unlimited; cycles terminate regardless because
 	// nodes are visited once.
 	MaxDepth int
+	// Models lets the uses and versions walks share one loaded graph across builders. Nil loads
+	// it on every call.
+	Models *Models
 }
 
 // inEdge is one reference into a node: what a declaring location said at the commits it said it
@@ -79,6 +82,11 @@ type model struct {
 	// locks holds, by edge row, what the current locks select for it. Empty for every edge of an
 	// unlocked corpus.
 	locks map[int64][]edgeLock
+	// live is the commits the walk may stand at, per repository, as store.LiveCommits says.
+	live map[string]map[string][]string
+	// starts holds, by repository under review, the commits at which its own declarations are a
+	// starting point's, as store.StartingCommits says. Absent where no reference resolves it.
+	starts map[int64]map[string]bool
 	// referenceable are the nodes that can appear as an edge target.
 	referenceable []int64
 }
@@ -114,6 +122,7 @@ func newModel() *model {
 		isExternal:  make(map[int64]bool),
 		resolved:    make(map[string]string),
 		seedRepo:    make(map[int64]bool),
+		starts:      make(map[int64]map[string]bool),
 		conditionOf: make(map[int64]string),
 		locks:       make(map[int64][]edgeLock),
 	}
@@ -176,7 +185,19 @@ func (m *model) addNode(n loadedNode) {
 
 // loadEdges reads what each declaring location said, at the commits a walk may stand at.
 func (m *model) loadEdges(s *store.Store) error {
-	edges, err := s.EdgeDeclarations()
+	live, err := s.LiveCommits()
+	if err != nil {
+		return err
+	}
+	m.live = live
+	starting, err := s.StartingCommits(live)
+	if err != nil {
+		return err
+	}
+	if err := m.loadStarts(s, starting); err != nil {
+		return err
+	}
+	edges, err := s.EdgeDeclarations(live, starting)
 	if err != nil {
 		return err
 	}
@@ -190,6 +211,33 @@ func (m *model) loadEdges(s *store.Store) error {
 		}
 	}
 	return nil
+}
+
+// loadStarts records, for each repository under review, the commits it stands at as a starting
+// point: starting, as store.StartingCommits says.
+func (m *model) loadStarts(s *store.Store, starting map[string]map[string][]string) error {
+	rows, err := s.DB().Query(`SELECT row_id, LOWER(repository_full_name) FROM repository
+		WHERE origin = ?`, store.OriginSeed)
+	if err != nil {
+		return fmt.Errorf("loading repositories under review: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return fmt.Errorf("scanning a repository under review: %w", err)
+		}
+		commits, ok := starting[name]
+		if !ok {
+			continue
+		}
+		m.starts[id] = make(map[string]bool, len(commits))
+		for commit := range commits {
+			m.starts[id][commit] = true
+		}
+	}
+	return rows.Err()
 }
 
 // loadLocks records what the current locks select for each edge they govern, with whose lock.
@@ -360,31 +408,55 @@ func (b *Builder) BuildBlastRadius() error {
 	if err != nil {
 		return err
 	}
+	_, err = b.writeBlastRadius(m)
+	return err
+}
 
+// writeBlastRadius rewrites all reach from m, unmarked until exposure and its edge fact agree.
+func (b *Builder) writeBlastRadius(m *model) (Derivation, error) {
+	var d Derivation
 	tx, err := b.Store.DB().Begin()
 	if err != nil {
-		return fmt.Errorf("beginning transaction: %w", err)
+		return d, fmt.Errorf("beginning transaction: %w", err)
 	}
 	defer tx.Rollback()
 
+	if err := store.ClearReachMark(tx); err != nil {
+		return d, err
+	}
 	// One walk writes all three, so they are cleared together. Names are constants, never input.
-	for _, table := range []string{"abom_blast_radius", "abom_node_reach", "abom_node_version_reach"} {
-		if _, err := tx.Exec(`DELETE FROM ` + table); err != nil {
-			return fmt.Errorf("clearing %s: %w", table, err)
+	for _, table := range reachTables {
+		res, err := tx.Exec(`DELETE FROM ` + table)
+		if err != nil {
+			return d, fmt.Errorf("clearing %s: %w", table, err)
 		}
+		d.Rows += affectedRows(res)
 	}
 	w, err := prepareReachWriter(tx)
 	if err != nil {
-		return err
+		return d, err
 	}
 	defer w.close()
 
 	for _, target := range m.referenceable {
-		if err := w.write(target, m.reachOf(target, b.MaxDepth)); err != nil {
-			return err
+		n, err := w.write(target, m.reachOf(target, b.MaxDepth))
+		if err != nil {
+			return d, err
 		}
+		d.Walked, d.Rows = d.Walked+1, d.Rows+n
 	}
-	return tx.Commit()
+	return d, tx.Commit()
+}
+
+// reachTables are what one reach walk writes.
+var reachTables = []string{"abom_blast_radius", "abom_node_reach", "abom_node_version_reach"}
+
+func affectedRows(res sql.Result) int {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0
+	}
+	return int(n)
 }
 
 // reachWriter writes one node's reach. The walk already knows which repositories it found and at
@@ -424,29 +496,33 @@ func (w *reachWriter) close() {
 	}
 }
 
-// write stores one node's reach. Each repository's members are its own, so the totals are the sums.
-func (w *reachWriter) write(target int64, r Reach) error {
+// write stores one node's reach and counts rows. A repository's members are its own; totals sum.
+func (w *reachWriter) write(target int64, r Reach) (int, error) {
 	var steps, jobs, workflows int
+	rows := 0
 	for repo, hops := range r.Repositories {
 		d := r.Dependents[repo]
 		steps, jobs, workflows = steps+len(d.Steps), jobs+len(d.Jobs), workflows+len(d.Workflows)
 		if _, err := w.repositories.Exec(target, repo, hops,
 			len(d.Steps), len(d.Jobs), len(d.Workflows)); err != nil {
-			return fmt.Errorf("writing reach for node %d: %w", target, err)
+			return rows, fmt.Errorf("writing reach for node %d: %w", target, err)
 		}
+		rows++
 	}
 	if _, err := w.rollup.Exec(target, len(r.Repositories), steps, jobs, workflows,
 		r.MaxDepth, len(r.References)); err != nil {
-		return fmt.Errorf("writing blast radius for node %d: %w", target, err)
+		return rows, fmt.Errorf("writing blast radius for node %d: %w", target, err)
 	}
+	rows++
 	for commit, repos := range r.Versions {
 		for repo, hops := range repos {
 			if _, err := w.versions.Exec(target, commit, repo, hops); err != nil {
-				return fmt.Errorf("writing reach for node %d at %q: %w", target, commit, err)
+				return rows, fmt.Errorf("writing reach for node %d at %q: %w", target, commit, err)
 			}
+			rows++
 		}
 	}
-	return nil
+	return rows, nil
 }
 
 // Dependents returns the repositories that would be affected by a change to a node.
@@ -494,29 +570,7 @@ func (b *Builder) Dependents(nodeKey string) ([]string, error) {
 // RebuildAggregates recomputes the passes that clear their table and derive it again. Their
 // cost tracks corpus size rather than how much changed, so callers schedule them deliberately.
 func (b *Builder) RebuildAggregates() error {
-	// Classifying first: it only ever fills edges that have none, so it costs nothing once the
-	// graph and the classification agree, and the aggregates below can read it.
-	if _, err := b.Store.ClassifyEdgeBoundaries(); err != nil {
-		return err
-	}
-	// Same shape: the queue already resolved these tags, and recording them is what lets a
-	// commit-pinned reference be named as the version GitHub can match an advisory against.
-	if _, err := b.Store.BackfillRefResolutions(); err != nil {
-		return err
-	}
-	// From nodes alone, so it owes nothing to the walks below and they read none of it.
-	if _, err := b.Store.DeriveContainment(); err != nil {
-		return err
-	}
-	if err := b.BuildBlastRadius(); err != nil {
-		return err
-	}
-	if err := b.BuildExposure(); err != nil {
-		return err
-	}
-	// Last, because the advisory fact reads the routes exposure just stored. Deriving it before
-	// would leave every edge naming the previous cycle's exposure.
-	_, err := b.Store.DeriveEdgeFacts()
+	_, err := b.Rebuild()
 	return err
 }
 

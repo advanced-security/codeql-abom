@@ -33,6 +33,42 @@ public sealed class AbomApi(HttpClient http)
                ?? new AccountIdentity();
     }
 
+    /// <summary>
+    /// Asks GitHub, through the operator's own gh token, which repositories an account holds.
+    /// A guarded POST because it runs a subprocess on that token and names private repositories.
+    /// </summary>
+    public async Task<AccountRepositories> ListAccountRepositoriesAsync(
+        string owner, CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post, $"api/accounts/{Uri.EscapeDataString(owner)}/repositories");
+        request.Headers.Add("X-Abom-Control", "1");
+        using var response = await http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<AccountRepositories>(Json, ct)
+               ?? new AccountRepositories { Owner = owner };
+    }
+
+    /// <summary>
+    /// Reads an organization's custom properties for a property scope through the operator's gh
+    /// token, with how many repositories carry each of <paramref name="clauses"/> now. Guarded like
+    /// the repository listing, for the same reasons.
+    /// </summary>
+    public async Task<AccountProperties> ReadAccountPropertiesAsync(
+        string owner, IReadOnlyList<IReadOnlyList<PropertyTerm>> clauses, CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post, $"api/accounts/{Uri.EscapeDataString(owner)}/properties")
+        {
+            Content = JsonContent.Create(new { clauses }),
+        };
+        request.Headers.Add("X-Abom-Control", "1");
+        using var response = await http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<AccountProperties>(Json, ct)
+               ?? new AccountProperties { Owner = owner };
+    }
+
     public async Task<IReadOnlyList<OwnerCandidate>> GetOwnerCandidatesAsync(
         CancellationToken ct = default) =>
         await GetListAsync<OwnerCandidate>("api/owner-candidates", ct);
@@ -160,6 +196,88 @@ public sealed class AbomApi(HttpClient http)
         using var response = await http.SendAsync(request, ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<SuiteBinding>(Json, ct);
+    }
+
+    /// <summary>How many repositories each Actions code scanning class holds, without their rows.</summary>
+    public async Task<CodeScanningReadings?> GetCodeScanningReadingsAsync(CancellationToken ct = default) =>
+        await GetAsync<CodeScanningReadings>("api/code-scanning/readings?summary=true", ct);
+
+    /// <summary>Whether this server writes default setup, and to what.</summary>
+    public async Task<CodeScanningWriteMode?> GetCodeScanningWriteModeAsync(CancellationToken ct = default) =>
+        await GetAsync<CodeScanningWriteMode>("api/code-scanning/writes", ct);
+
+    public async Task<IReadOnlyList<SetupPreview>?> GetSetupPreviewsAsync(CancellationToken ct = default) =>
+        await GetAsync<List<SetupPreview>>("api/code-scanning/previews", ct);
+
+    public async Task<IReadOnlyList<SetupBatch>?> GetSetupBatchesAsync(CancellationToken ct = default) =>
+        await GetAsync<List<SetupBatch>>("api/code-scanning/batches", ct);
+
+    /// <summary>The ledger's newest steps, newest first, and how many there are in all.</summary>
+    public async Task<SetupLedgerPage?> GetSetupLedgerAsync(int top, CancellationToken ct = default) =>
+        await GetAsync<SetupLedgerPage>($"api/code-scanning/ledger?top={top}", ct);
+
+    /// <summary>
+    /// Sends one guarded write to the default setup endpoints — a preview, an approval, a batch or
+    /// an action on one — and answers the server's refusal as a reason rather than an exception.
+    /// </summary>
+    public async Task<(T? Answer, string? Refusal)> SendCodeScanningAsync<T>(
+        string path, object? body, CancellationToken ct = default) where T : class
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Content = JsonContent.Create(body ?? new { }),
+        };
+        request.Headers.Add("X-Abom-Control", "1");
+        try
+        {
+            using var response = await http.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
+                return (null, refusal?.Error ?? $"the server refused it ({(int)response.StatusCode})");
+            }
+            LastError = null;
+            return (await response.Content.ReadFromJsonAsync<T>(Json, ct), null);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
+        {
+            LastError = $"{path}: {ex.Message}";
+            return (null, LastError);
+        }
+    }
+
+    /// <summary>What each kind of work may spend, what it spent, and the freshness its rate buys.</summary>
+    public async Task<PoolsReport?> GetPoolsAsync(CancellationToken ct = default) =>
+        await GetAsync<PoolsReport>("api/pools", ct);
+
+    /// <summary>
+    /// Sets one pool's rate, or clears it with a null rate. Guarded like every write, and the
+    /// server's refusal comes back as the reason rather than an exception.
+    /// </summary>
+    public async Task<(PoolsReport? Report, string? Refusal)> SetPoolRateAsync(
+        string pool, string unit, int? perHour, int burst, CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Put, "api/pools")
+        {
+            Content = JsonContent.Create(new { pool, unit, perHour, burst }),
+        };
+        request.Headers.Add("X-Abom-Control", "1");
+        try
+        {
+            using var response = await http.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
+                return (null, refusal?.Error ?? $"the server refused it ({(int)response.StatusCode})");
+            }
+            LastError = null;
+            return (await response.Content.ReadFromJsonAsync<PoolsReport>(Json, ct), null);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
+        {
+            LastError = $"api/pools: {ex.Message}";
+            return (null, LastError);
+        }
     }
 
     /// <summary>
@@ -692,15 +810,47 @@ public sealed class AbomApi(HttpClient http)
         }
     }
 
-    // The key contains slashes of its own, so it is appended as a path rather than escaped.
-    public async Task<NodeDetail?> GetNodeAsync(string key, CancellationToken ct = default) =>
-        await GetAsync<NodeDetail>($"api/node/{key}", ct);
+    // The key contains slashes of its own, so it is appended as a path rather than escaped. `at`
+    // is the predicate's references alone, the one term a node's own details apply.
+    public async Task<NodeDetail?> GetNodeAsync(string key, string at = "", CancellationToken ct = default) =>
+        await GetAsync<NodeDetail>($"api/node/{key}" + (at.Length > 0 ? "?" + at : ""), ct);
 
     /// <summary>One page of who uses a node under a scope, ordered across the whole match.</summary>
     public async Task<(NodeUsesPage? Page, string? Refusal)> GetNodeUsesAsync(
         string key, string predicate, int top, int offset, string? sort, bool desc,
         CancellationToken ct = default) =>
         await GetPageAsync<NodeUsesPage>($"api/node/{key}/-/uses", predicate, top, offset, sort, desc, ct);
+
+    /// <summary>
+    /// A node's figure under the page's terms. A refusal is the server's own sentence; a fault is a
+    /// server that cannot draw, which is not the reader's to fix.
+    /// </summary>
+    public async Task<(NodeFigure? Figure, string? Problem, bool Fault)> GetNodeFigureAsync(
+        string key, string predicate, CancellationToken ct = default)
+    {
+        var url = FigurePath(key, predicate, svg: false);
+        try
+        {
+            using var response = await http.GetAsync(url, ct);
+            if (response.IsSuccessStatusCode)
+            {
+                LastError = null;
+                return (await response.Content.ReadFromJsonAsync<NodeFigure>(Json, ct), null, false);
+            }
+            var error = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
+            var fault = (int)response.StatusCode >= 500;
+            return (null, error?.Error ?? $"the figure could not be drawn ({(int)response.StatusCode})", fault);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
+        {
+            LastError = $"{url}: {ex.Message}";
+            return (null, $"the figure could not be read: {ex.Message}", true);
+        }
+    }
+
+    /// <summary>Where a node's figure is, as data or as the file to download.</summary>
+    public static string FigurePath(string key, string predicate, bool svg) =>
+        $"api/node/{key}/-/closure{(svg ? ".svg" : "")}" + (predicate.Length > 0 ? "?" + predicate : "");
 
     /// <summary>Every reference a node is used at, counted under a scope.</summary>
     public async Task<(NodeVersionsPage? Page, string? Refusal)> GetNodeVersionsAsync(
@@ -711,7 +861,18 @@ public sealed class AbomApi(HttpClient http)
         CancellationToken ct = default) =>
         await GetListAsync<DeclaredAccount>("api/owned-scope", ct);
 
-    /// <summary>Replaces the declaration wholesale with the intended final scope.</summary>
+    /// <summary>
+    /// The declaration, or null when it could not be read. <see cref="GetOwnedScopeAsync"/> answers
+    /// a failed read with an empty list, which a page would report as nothing declared.
+    /// </summary>
+    public async Task<IReadOnlyList<DeclaredAccount>?> ReadOwnedScopeAsync(
+        CancellationToken ct = default) =>
+        await GetAsync<List<DeclaredAccount>>("api/owned-scope", ct);
+
+    /// <summary>
+    /// Replaces the declaration wholesale with the intended final scope. A refusal throws with the
+    /// server's reason, which names what to change; a status code alone would not.
+    /// </summary>
     public async Task<IReadOnlyList<DeclaredAccount>> SetOwnedScopeAsync(
         IReadOnlyList<DeclaredAccount> accounts, CancellationToken ct = default)
     {
@@ -721,9 +882,28 @@ public sealed class AbomApi(HttpClient http)
         };
         request.Headers.Add("X-Abom-Control", "1");
         using var response = await http.SendAsync(request, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+        {
+            throw new HttpRequestException(await RefusalReasonAsync(response, ct), null, response.StatusCode);
+        }
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<IReadOnlyList<DeclaredAccount>>(Json, ct)
                ?? [];
+    }
+
+    // The server's sentence for a refusal, or the status where the body carries none.
+    private static async Task<string> RefusalReasonAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        var fallback = $"the server refused it ({(int)response.StatusCode})";
+        var body = await response.Content.ReadAsStringAsync(ct);
+        try
+        {
+            return JsonSerializer.Deserialize<ApiError>(body, Json)?.Error is { Length: > 0 } reason ? reason : fallback;
+        }
+        catch (JsonException)
+        {
+            return fallback;
+        }
     }
 
     /// <summary>Turns the declared account scope into repositories.</summary>

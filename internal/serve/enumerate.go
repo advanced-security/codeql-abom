@@ -34,6 +34,9 @@ func (s *Server) enumerate(w http.ResponseWriter, r *http.Request) {
 		Store:            s.Store,
 		Read:             s.Enumerate,
 		Schema:           s.EnumerateSchema,
+		Branches:         s.EnumerateBranches,
+		Setup:            s.EnumerateSetup,
+		Configurations:   s.EnumerateConfigurations,
 		QueueOwned:       s.QueueOwned,
 		FullListingEvery: s.FullListingEvery,
 	})

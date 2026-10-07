@@ -124,6 +124,8 @@ func noAnalysis(repository string, err error) error {
 
 // Analysis is one code scanning analysis GitHub holds.
 type Analysis struct {
+	// ID is what fetches the analysis's SARIF document.
+	ID          int64
 	CommitSHA   string
 	Ref         string
 	Category    string
@@ -134,16 +136,42 @@ type Analysis struct {
 
 // ActionsAnalysis finds the newest CodeQL analysis of a repository's Actions at ref among the
 // newest page of its analyses, which is the commit its Actions alerts describe.
+func (c *Client) ActionsAnalysis(ctx context.Context, repository, ref string) (Analysis, bool, error) {
+	analyses, err := c.ActionsAnalyses(ctx, repository, ref)
+	if err != nil || len(analyses) == 0 {
+		return Analysis{}, false, err
+	}
+	return analyses[0], true, nil
+}
+
+// ActionsAnalyses lists the CodeQL analyses of a repository's Actions at ref on the newest page, newest first.
 //
 // Recognized by a category naming `language:actions`, which is how Default Setup and the CodeQL
 // Action name one. An analysis under a category of somebody's own choosing is not recognized, and
 // not found is then what is said, never "none runs". Ref is the default branch the alerts were
 // read at; empty reads every ref, and a pull request's analysis is still passed over, since its
 // merge commit is not what any default-branch alert describes.
-func (c *Client) ActionsAnalysis(ctx context.Context, repository, ref string) (Analysis, bool, error) {
+func (c *Client) ActionsAnalyses(ctx context.Context, repository, ref string) ([]Analysis, error) {
+	page, err := c.analysesPage(ctx, repository, ref)
+	if err != nil {
+		return nil, err
+	}
+	analyses := []Analysis{}
+	for _, a := range page {
+		if !strings.Contains(a.Category, "language:actions") || strings.HasPrefix(a.Ref, "refs/pull/") {
+			continue
+		}
+		analyses = append(analyses, a)
+	}
+	return analyses, nil
+}
+
+// analysesPage reads the newest page of a repository's CodeQL analyses at ref, or at every ref when
+// ref is empty, in GitHub's order.
+func (c *Client) analysesPage(ctx context.Context, repository, ref string) ([]Analysis, error) {
 	owner, name, err := splitRepository(repository)
 	if err != nil {
-		return Analysis{}, false, err
+		return nil, err
 	}
 	target := fmt.Sprintf("%s/repos/%s/%s/code-scanning/analyses?tool_name=CodeQL&per_page=%d",
 		c.baseURL, url.PathEscape(owner), url.PathEscape(name), reposPerPage)
@@ -152,11 +180,12 @@ func (c *Client) ActionsAnalysis(ctx context.Context, repository, ref string) (A
 	}
 	resp, err := c.do(ctx, target, jsonAccept)
 	if err != nil {
-		return Analysis{}, false, noAnalysis(repository, err)
+		return nil, noAnalysis(repository, err)
 	}
 	defer resp.Body.Close()
 
 	var page []struct {
+		ID          int64  `json:"id"`
 		Ref         string `json:"ref"`
 		CommitSHA   string `json:"commit_sha"`
 		Category    string `json:"category"`
@@ -167,19 +196,31 @@ func (c *Client) ActionsAnalysis(ctx context.Context, repository, ref string) (A
 		} `json:"tool"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
-		return Analysis{}, false, fmt.Errorf("decoding the analyses of %s: %w", repository, err)
+		return nil, fmt.Errorf("decoding the analyses of %s: %w", repository, err)
 	}
-	// Newest first is GitHub's order; the page is read in it rather than re-sorted.
+	analyses := make([]Analysis, 0, len(page))
 	for _, p := range page {
-		if !strings.Contains(p.Category, "language:actions") || strings.HasPrefix(p.Ref, "refs/pull/") {
-			continue
-		}
-		return Analysis{
-			CommitSHA: p.CommitSHA, Ref: p.Ref, Category: p.Category, AnalysisKey: p.AnalysisKey,
+		analyses = append(analyses, Analysis{
+			ID: p.ID, CommitSHA: p.CommitSHA, Ref: p.Ref, Category: p.Category, AnalysisKey: p.AnalysisKey,
 			CreatedAt: p.CreatedAt, ToolVersion: p.Tool.Version,
-		}, true, nil
+		})
 	}
-	return Analysis{}, false, nil
+	return analyses, nil
+}
+
+// DownloadAnalysis writes one analysis's SARIF document to destPath, as GitHub serves it.
+func (c *Client) DownloadAnalysis(ctx context.Context, repository string, id int64, destPath string) error {
+	owner, name, err := splitRepository(repository)
+	if err != nil {
+		return err
+	}
+	resp, err := c.do(ctx, fmt.Sprintf("%s/repos/%s/%s/code-scanning/analyses/%d",
+		c.baseURL, url.PathEscape(owner), url.PathEscape(name), id), "application/sarif+json")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return save(resp.Body, destPath, fmt.Sprintf("analysis %d of %s", id, repository))
 }
 
 // Moved is how two commits of one repository relate, as GitHub counts it.

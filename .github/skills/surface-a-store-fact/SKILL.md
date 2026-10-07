@@ -39,6 +39,11 @@ so the `json:` tag *is* the API contract. Tags are camelCase.
 - A scalar subquery returns an arbitrary row once the underlying key has multiplicity. Aggregate.
 - New join on a read path: check `EXPLAIN QUERY PLAN`. `SCAN` on the inner side means an index,
   and it belongs in `Migrate()` because `serve` never calls `CreateIndexes()`.
+- A "yours" figure filters through the one ownership predicate (`ownedFullName` and its siblings
+  in `ownedscope.go`), never a join of its own. Pass it a *qualified* column such as
+  `r.repository_full_name`: SQLite binds an unqualified name to the innermost table that has it,
+  and the predicate's property test reads a table with that very column, so a bare name matched
+  every repository to itself. `TestTheOwnershipPredicateIsGivenAQualifiedColumn` scans for it.
 
 **3 Model.** Property name must match the JSON tag case-insensitively; a mismatch is silent and
 renders the default.

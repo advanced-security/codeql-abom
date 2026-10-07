@@ -97,6 +97,22 @@ To restrict the organization to explicitly named base repositories, repeat `--in
   --include YOUR_ORG/REPOSITORY
 ```
 
+To cover the repositories that carry custom property values, repeat `--property`, each a JSON
+object naming one property scope:
+
+```bash
+./bin/codeql-abom own --db .abom/db/abom.db --org YOUR_ORG \
+  --property '{"org": "YOUR_ORG", "match": [{"name": "team", "value": "payments"}]}'
+```
+
+A repository is covered when it carries every term in one scope; separate scopes, and any
+`--include`, each cover on their own. A value is compared exactly and may hold any character, which
+is why a scope is JSON rather than a delimited string. Only a property that organization owners and
+admins alone can set may scope ownership, so one repository administrators can set is refused. A
+scope is held, counting nothing, until the organization's schema has been read, which the next
+listing does. A scope naming the organization's default covers every repository that never chose a
+value, including repositories created later; `own` and Settings say so beside it.
+
 This replaces the declaration; it does not append to the previous one. Includes select owned
 roots, not a prohibition on following their dependencies. Personal accounts require an explicit
 `--user` declaration; they are never assumed. Use the interface for changes while serving rather
@@ -108,12 +124,16 @@ An optional untracked `abom.local.json` in the working directory can seed an emp
 {
   "own": {
     "orgs": ["YOUR_ORG"],
-    "includes": ["YOUR_ORG/REPOSITORY"]
+    "includes": ["YOUR_ORG/REPOSITORY"],
+    "properties": [
+      {"org": "YOUR_ORG", "match": [{"name": "team", "value": "payments"}]}
+    ]
   }
 }
 ```
 
-Only include the `includes` property when you intend that restriction. `--declare-file` selects
+Only include the `includes` or `properties` property when you intend that restriction; each
+`properties` entry is the object `--property` takes. `--declare-file` selects
 another file. This is a declaration channel, not a general application configuration file. It is
 read at startup, missing files are allowed, and malformed files are refused. A valid file does not
 replace an existing declaration. Clearing the declaration while leaving a seed file configured

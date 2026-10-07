@@ -94,7 +94,9 @@
         </MudTooltip>
         @* Nothing else on the page distinguishes a layout that will be identical tomorrow from one
            that is reshuffled on every load, and a partial answer has to carry its own share. *@
-        <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-layout-state>
+        <MudText Typo="Typo.caption" Class="@(_layout?.Fault == true ? null : "mud-text-secondary")"
+                 Color="@(_layout?.Fault == true ? Color.Warning : Color.Default)"
+                 data-abom-layout-state data-abom-layout-fault="@(_layout?.Fault == true ? "true" : null)">
             @LayoutStateText
         </MudText>
 
@@ -215,7 +217,7 @@
                     }
                 </div>
             }
-            else if (!HasScope)
+            else if (!HasScope && _declarationRead)
             {
                 @* The third empty frame, and the one that is not a failure. A reader has to be
                    able to tell "choose something" from "you chose too much" and from "there is
@@ -1029,7 +1031,9 @@
     private static readonly ScopeChoice[] Scopes =
     [
         new("owned", "What you own",
-            "The accounts you declared and everything they reach. Empty until you declare one."),
+            "Only what the repositories you declared hold. Empty until you declare one."),
+        new("supply-chain", "Yours and what it runs",
+            "What the repositories you declared hold and everything they run. Empty until you declare one."),
         new("exposure", "Advisory routes",
             "Only the routes by which analyzed repositories reach an action an advisory names."),
     ];
@@ -1132,7 +1136,10 @@
             var d = _detail;
 
             if (Kinds.TryGetValue(d.Kind, out var kind)) yield return new Fact("Kind", kind);
-            if (!string.IsNullOrEmpty(d.Origin)) yield return new Fact("Origin", OriginLabel(d.Origin));
+            if (d.Owned || !string.IsNullOrEmpty(d.Origin))
+            {
+                yield return new Fact("Origin", OriginText.Of(d.Origin, d.Owned), "origin");
+            }
             if (!string.IsNullOrEmpty(d.Repository) && d.Repository != d.Key)
             {
                 yield return new Fact("Repository", d.Repository);
@@ -1180,14 +1187,6 @@
             }
         }
     }
-
-    private static string OriginLabel(string origin) => origin switch
-    {
-        "seed" => "starting point",
-        "upstream" => "upstream",
-        "external" => "dependency",
-        _ => origin,
-    };
 
     private string SelectionLabel => _selected.Count switch
     {
@@ -1263,29 +1262,23 @@
         if (!string.IsNullOrEmpty(_isolated)) _hops = 1;
 
         // A hand-off from Discovery names a node and nothing else, and a node still has to be
-        // drawn inside something. Ownership is the one closure that is not a guess about size:
-        // it is what the operator declared. If it draws more than the ceiling renders, the
-        // refusal says so rather than this page picking a smaller scope on their behalf.
-        if (_scope.Length == 0 && _isolated.Length > 0) _scope = "owned";
+        // drawn inside something. The declared closure is the one that is not a guess about size:
+        // it is what the operator declared and what that runs, so a dependency named here is in
+        // it. If it draws more than the ceiling renders, the refusal says so rather than this page
+        // picking a smaller scope on their behalf.
+        if (_scope.Length == 0 && _isolated.Length > 0) _scope = "supply-chain";
     }
 
     protected override async Task OnInitializedAsync()
     {
-        // Read before the first frame is drawn, so the page never shows the wrong stage and then
-        // corrects itself.
-        try
-        {
-            _declared = await Api.GetOwnedScopeAsync();
-        }
-        catch (HttpRequestException)
-        {
-            // Swallowed on purpose: _declared stays null, which draws no frame at all. Reporting
-            // a transport failure here would put an error over the first-run stages, before the
-            // reader has done anything that could have caused one.
-        }
+        // Blazor renders at this await, so every stage, the chooser included, waits on _declarationRead.
+        _declared = await Api.ReadOwnedScopeAsync();
+        _declarationRead = true;
     }
 
+    // Null when the read failed: no stage frame then, where an empty list would claim nothing is declared.
     private IReadOnlyList<DeclaredAccount>? _declared;
+    private bool _declarationRead;
 
     /// <summary>
     /// Draws a named scope in place of whatever is on screen: its question whole, and its picture
@@ -1892,7 +1885,7 @@
     }
 
     /// <summary>Where positions come from: server layout engine or simulation.</summary>
-    public sealed record LayoutState(bool Stable, string Text, int Pinned, int Free);
+    public sealed record LayoutState(bool Stable, string Text, int Pinned, int Free, bool Fault = false);
 
     private bool _stableLayout;
     private LayoutState? _layout;
@@ -1951,6 +1944,7 @@
     private string ScopeBusyMessage => _scope switch
     {
         "owned" => "Loading what you own…",
+        "supply-chain" => "Loading what you own and what it runs…",
         "exposure" => "Loading what reaches an advisory…",
         _ => "Loading…",
     };

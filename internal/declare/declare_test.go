@@ -170,3 +170,34 @@ func TestAFileDeclarationIsStillSubjectToVerification(t *testing.T) {
 		t.Error("a contradicted declaration roots nothing, however it arrived")
 	}
 }
+
+// A property scope in the file is the same object `own --property` takes, so the two channels
+// cannot describe different scopes; a value is kept whole, whatever characters it holds.
+func TestTheFileDeclaresAPropertyScopeAsTheFlagDoes(t *testing.T) {
+	accounts, err := Load(write(t, `{"own": {"orgs": ["has-ghas"], "properties": [
+	  {"org": "has-ghas", "match": [{"name": "github-codeql-config-file",
+	    "value": "remote=has-ghas/x@main:codeql-config-np.yml,b"}]}]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accounts) != 1 || !accounts[0].IncludesOnly || len(accounts[0].Properties) != 1 {
+		t.Fatalf("declared %+v, want has-ghas restricted to one property scope", accounts)
+	}
+	term := accounts[0].Properties[0].Terms[0]
+	if term.Name != "github-codeql-config-file" || term.Value != "remote=has-ghas/x@main:codeql-config-np.yml,b" {
+		t.Errorf("term %+v, want the value whole", term)
+	}
+}
+
+// A scope for an account nobody declared, or for a person's own account, restricts nothing and
+// would read as accepted.
+func TestAPropertyScopeMustNameADeclaredOrganization(t *testing.T) {
+	for _, body := range []string{
+		`{"own": {"orgs": ["has-ghas"], "properties": [{"org": "other", "match": [{"name": "t", "value": "a"}]}]}}`,
+		`{"own": {"users": ["me"], "properties": [{"org": "me", "match": [{"name": "t", "value": "a"}]}]}}`,
+	} {
+		if _, err := Load(write(t, body)); err == nil {
+			t.Errorf("accepted %s", body)
+		}
+	}
+}

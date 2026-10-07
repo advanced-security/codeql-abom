@@ -25,11 +25,11 @@ test('the graph and the Explorer select the same nodes for every term both apply
         test.skip(!summary.nodes, 'nothing to select');
 
         for (const term of BOTH_SIDES) {
-            const res = await request.get(`${baseURL}/api/graph/full?scope=owned&${term}`);
+            const res = await request.get(`${baseURL}/api/graph/full?scope=supply-chain&${term}`);
             expect(res.ok(), `the graph answered ${term}`).toBeTruthy();
             const server = (await res.json()).nodes.map((n) => n.key).sort();
 
-            await page.goto(`/explore?scope=owned&${term}`);
+            await page.goto(`/explore?scope=supply-chain&${term}`);
             await ready(page);
             await expect.poll(() => browserAnswers(page), { timeout: 30_000, message: term })
                 .not.toBeNull();
@@ -52,14 +52,14 @@ test('the Explorer keeps what the set path keeps for a band', on('/explore'),
         const summary = await corpusSize(request, baseURL);
         test.skip(!summary.nodes, 'nothing to select');
 
-        const full = await (await request.get(`${baseURL}/api/graph/full?scope=owned`)).json();
+        const full = await (await request.get(`${baseURL}/api/graph/full?scope=supply-chain`)).json();
         const drawn = new Map(full.nodes.map((n) => [n.key, n]));
         for (const term of BANDS) {
             const bands = decodeURIComponent(term.split('=')[1]).split(',');
             const match = await (await request.get(`${baseURL}/api/match?${term}`)).json();
             const named = match.nodes.map((n) => n.key).filter((k) => drawn.has(k));
 
-            await page.goto(`/explore?scope=owned&${term}`);
+            await page.goto(`/explore?scope=supply-chain&${term}`);
             await ready(page);
             await expect.poll(() => browserAnswers(page), { timeout: 30_000, message: term })
                 .not.toBeNull();

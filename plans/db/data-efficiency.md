@@ -1,7 +1,7 @@
 # Data efficiency: measured cost of the graph, and what breaks first
 
 **Status:** The correlated-subquery family is closed, and the indexes a read needs now exist on
-every database rather than only on one built by the seed. Four items are open, one of them a
+every database rather than only on one built by the seed. Six items are open, one of them a
 disagreement between a passing unit test and the stored data.
 
 ## Why this exists
@@ -32,6 +32,14 @@ standing record for the review described in
    `TestARepositoryCarriesTheAnalysisStateOfItsOwnQueueRow` passes, because it enqueues at depth
    0. Either the fixture is not a shape the crawl produces, or the arm is keyed on the wrong
    thing. Re-measure against a declared organization, then settle which before either is changed.
+5. **Two edge facts are derived only by a rebuild.** The finding-route and owned-depth closures cost
+   0.67 s on the crawled organization now that `idx_node_unit` lets their recursive steps reach a
+   unit's nodes by index — 23.1 s before, when every step read every edge — so the incremental
+   derivation could run them each cycle. Until it does, a new edge's two facts stay NULL, unknown
+   rather than clean, until the next rebuild, which now follows every drain after a change.
+6. **`/api/jobs?top=0` takes 29 s** on a copy of the crawled organization, the same before and
+   after the one-version views read live declarations, so it is not theirs. Measure where it goes
+   before changing anything.
 
 ## The constraints that must not be broken
 

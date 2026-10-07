@@ -10,12 +10,13 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
-// runBranches records which branches the declared repositories protect.
+// runBranches records which branches the declared repositories protect, all of them now.
 //
-// A subcommand rather than part of a crawl, deliberately. This is one paginated request per
-// repository and, until the live set reads protected branches (`plans/db/commit-aware-graph.md`),
-// buys nothing the graph needs, so it is spend an operator chooses; see
-// `plans/api/change-ingestion.md`. Nothing calls it on a schedule.
+// Enumeration records the same answer for each owned repository a listing names, so a full listing
+// refreshes every one once a period. This asks every declared repository at once instead: one
+// paginated request each, which is why the count is stated before it is spent. Recording an answer
+// queues each protected branch, which is what puts its commit in every walk, and removes the row of
+// a branch that lost protection.
 func runBranches(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("branches", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -47,12 +48,16 @@ func runBranches(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		repos = repos[:*limit]
 	}
 
-	// The cost is stated before it is spent, because the whole reason this is not automatic is
-	// that a reader should decide whether the corpus is worth this many requests.
+	// The cost is stated before it is spent, so a reader can stop a run over a large estate before
+	// it has made every request.
 	fmt.Fprintf(stdout, "Asking about %d repositories, one request each.\n", len(repos))
 
-	client := githubClient(ctx, *apiURL, s)
-	var asked, protected, branchCount int
+	tokens, err := dbReaderTokens(*dbPath)
+	if err != nil {
+		return fmt.Errorf("branches: %w", err)
+	}
+	client := githubClient(ctx, *apiURL, s, tokens)
+	var asked, protected, branchCount, queued, removed int
 	for _, repository := range repos {
 		branches, err := client.ProtectedBranches(ctx, repository)
 		if err != nil {
@@ -61,7 +66,8 @@ func runBranches(ctx context.Context, args []string, stdout, stderr io.Writer) e
 			fmt.Fprintf(stderr, "%s: %v\n", repository, err)
 			continue
 		}
-		if err := s.SetProtectedBranches(repository, branches); err != nil {
+		queue, err := s.SetProtectedBranches(repository, branches)
+		if err != nil {
 			return fmt.Errorf("branches: %w", err)
 		}
 		asked++
@@ -69,12 +75,17 @@ func runBranches(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		if len(branches) > 0 {
 			protected++
 		}
+		queued += queue.Queued
+		removed += queue.Removed
 	}
 
 	// Branch count matters: one repository can have many protected branches.
 	fmt.Fprintf(stdout,
 		"Asked %d of %d; %d protect at least one branch, %d branches in total.\n",
 		asked, len(repos), protected, branchCount)
+	fmt.Fprintf(stdout,
+		"Queued %d protected branches for analysis; removed %d that lost protection.\n",
+		queued, removed)
 	fmt.Fprintln(stdout,
 		"The rest were not asked, which is not the same as unprotected.")
 	return nil

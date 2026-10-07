@@ -62,8 +62,11 @@ func (s *Store) RequeueRepository(fullName string) (int, error) {
 	if fullName == "" {
 		return 0, fmt.Errorf("store: RequeueRepository needs a repository")
 	}
-	res, err := s.db.Exec(
-		requeueDone+` AND LOWER(owner || '/' || repo) = LOWER(?)`, fullName)
+	// Named by the operator, so read again whatever it last held; nothing to analyze included.
+	res, err := s.db.Exec(`
+		UPDATE abom_frontier
+		SET status = 'pending', attempts = 0, next_attempt_at = NULL, claimed_at = NULL
+		WHERE status IN ('done', 'nothing') AND LOWER(owner || '/' || repo) = LOWER(?)`, fullName)
 	if err != nil {
 		return 0, fmt.Errorf("requeueing %s: %w", fullName, err)
 	}

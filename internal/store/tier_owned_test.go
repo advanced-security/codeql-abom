@@ -21,9 +21,9 @@ func TestTheOwnedTierSeparatesRepositoriesFromDependencies(t *testing.T) {
 		t.Errorf("repositories = %d of %d, want 1 of 2",
 			owned.RepositoriesAnalyzed, owned.Repositories)
 	}
-	if owned.Dependencies() != 1 || owned.DependenciesAnalyzed() != 0 {
+	if owned.Dependencies != 1 || owned.DependenciesAnalyzed != 0 {
 		t.Errorf("dependencies = %d of %d, want 0 of 1",
-			owned.DependenciesAnalyzed(), owned.Dependencies())
+			owned.DependenciesAnalyzed, owned.Dependencies)
 	}
 }
 
@@ -43,13 +43,13 @@ func TestTheOwnedSplitReconcilesToTheTierTotal(t *testing.T) {
 	}
 	owned := counts[TierOwned]
 
-	if owned.Repositories+owned.Dependencies() != owned.Total {
+	if owned.Repositories+owned.Dependencies != owned.Total {
 		t.Errorf("%d repositories + %d dependencies != %d total",
-			owned.Repositories, owned.Dependencies(), owned.Total)
+			owned.Repositories, owned.Dependencies, owned.Total)
 	}
-	if owned.RepositoriesAnalyzed+owned.DependenciesAnalyzed() != owned.Analyzed {
+	if owned.RepositoriesAnalyzed+owned.DependenciesAnalyzed != owned.Analyzed {
 		t.Errorf("%d + %d analyzed != %d",
-			owned.RepositoriesAnalyzed, owned.DependenciesAnalyzed(), owned.Analyzed)
+			owned.RepositoriesAnalyzed, owned.DependenciesAnalyzed, owned.Analyzed)
 	}
 }
 
@@ -95,4 +95,44 @@ func enqueueRoot(t *testing.T, s *Store, fullName, status string) {
 func enqueueDependency(t *testing.T, s *Store, nodeKey, ref, status string) {
 	t.Helper()
 	enqueueRef(t, s, nodeKey, ref, 1, status)
+}
+
+// A repository read in full with nothing to analyze is not analyzed, and it is not outstanding
+// either: the tier states it apart, so "22 of 31 analyzed" is not read as nine left to do.
+func TestTheOwnedTierStatesWhatHasNothingToAnalyze(t *testing.T) {
+	s := newTestStore(t)
+	declareOwner(t, s, "acme")
+	enqueueRoot(t, s, "acme/service", "done")
+	enqueueRoot(t, s, "acme/docs", "nothing")
+	enqueueRoot(t, s, "acme/waiting", "pending")
+
+	counts, err := s.TierCounts()
+	if err != nil {
+		t.Fatalf("TierCounts: %v", err)
+	}
+	owned := counts[TierOwned]
+	if owned.Repositories != 3 || owned.RepositoriesAnalyzed != 1 || owned.RepositoriesNothingToAnalyze != 1 ||
+		owned.NothingToAnalyze != 1 {
+		t.Errorf("owned tier %+v, want 3 repositories: 1 analyzed, 1 with nothing to analyze", owned)
+	}
+
+	frontier, err := s.FrontierCounts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, ok := frontier["nothing"]; !ok || n != 1 {
+		t.Errorf("frontier counts %v, want nothing to analyze counted", frontier)
+	}
+}
+
+// Every state is present in the counts, so "none" is a stated answer rather than a missing key.
+func TestFrontierCountsStateNothingToAnalyzeEvenWhenThereIsNone(t *testing.T) {
+	s := newTestStore(t)
+	frontier, err := s.FrontierCounts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, ok := frontier["nothing"]; !ok || n != 0 {
+		t.Errorf("frontier counts %v, want nothing to analyze stated as 0", frontier)
+	}
 }

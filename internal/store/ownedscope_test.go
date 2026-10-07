@@ -158,12 +158,12 @@ func TestVerifiedMembershipAloneMakesNothingOwned(t *testing.T) {
 			t.Errorf("%s belongs to an account the operator merely belongs to", name)
 		}
 	}
-	owned, err := s.OwnedSet()
+	owned, err := s.DeclaredOwners()
 	if err != nil {
-		t.Fatalf("OwnedSet: %v", err)
+		t.Fatalf("DeclaredOwners: %v", err)
 	}
 	if len(owned) != 0 {
-		t.Errorf("OwnedSet = %v with nothing declared, want empty", owned)
+		t.Errorf("DeclaredOwners = %v with nothing declared, want empty", owned)
 	}
 }
 
@@ -221,7 +221,7 @@ func TestCoveredByAgreesWithTheStoredScopePredicate(t *testing.T) {
 		if !ok {
 			t.Fatalf("splitRepository(%q) failed", full)
 		}
-		if got := CoveredBy(scope, owner, repo); got != owned[full] {
+		if got := CoveredBy(scope, owner, repo, nil); got != owned[full] {
 			t.Errorf("%s: CoveredBy = %v, the stored predicate says %v", full, got, owned[full])
 		}
 	}
@@ -278,5 +278,32 @@ func TestAnInventedDeclarationSourceIsRefused(t *testing.T) {
 
 	if err := s.SetOwnedScope([]DeclaredAccount{acct}, "webhook"); err == nil {
 		t.Error("a source the store does not define must be refused")
+	}
+}
+
+// The owned tier and every per-repository mark ask this, so it must honor an include list where
+// the account-level set cannot.
+func TestOwnershipIsAnsweredPerRepository(t *testing.T) {
+	s := newTestStore(t)
+	declare(t, s, DeclaredAccount{Owner: "octo-org", Kind: AccountOrganization, Enabled: true,
+		IncludesOnly: true, Includes: []string{"tool"}})
+
+	got, err := s.OwnedAmong([]string{"octo-org/tool", "Octo-Org/APP", "elsewhere/tool"})
+	if err != nil {
+		t.Fatalf("OwnedAmong: %v", err)
+	}
+	if !got["octo-org/tool"] {
+		t.Error("octo-org/tool is declared and not reported owned")
+	}
+	if got["octo-org/app"] || got["elsewhere/tool"] {
+		t.Errorf("owned %v, want only octo-org/tool", got)
+	}
+
+	accounts, err := s.DeclaredOwners()
+	if err != nil {
+		t.Fatalf("DeclaredOwners: %v", err)
+	}
+	if !accounts["octo-org"] {
+		t.Error("an account restricted to one repository is still a declared account")
 	}
 }

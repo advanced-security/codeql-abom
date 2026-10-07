@@ -205,3 +205,49 @@ func asString(v any) string {
 	}
 	return ""
 }
+
+// A starting point that declares nothing is settled at a commit, and a branch that moved from it
+// is a change the sweep has to find when no event arrives; the time it was read is its second
+// clock, so it is not probed moments after it was read either.
+func TestAStartingPointWithNothingToAnalyzeIsProbedForAMove(t *testing.T) {
+	q := probeQueue(t)
+	it := item("octo/docs", 0)
+	if _, err := q.Enqueue([]Item{it}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Nothing(Key{NodeKey: "octo/docs"}, "", "cafe1234", "octo/docs has no workflows"); err != nil {
+		t.Fatalf("Nothing: %v", err)
+	}
+
+	q.Now = func() time.Time { return time.Date(2026, 9, 7, 0, 0, 1, 0, time.UTC) }
+	if due, err := q.DueForRecheck(24*time.Hour, 10); err != nil || len(due) != 0 {
+		t.Fatalf("due %v (%v) a second after it was read", due, err)
+	}
+	q.Now = func() time.Time { return time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC) }
+	due, err := q.DueForRecheck(24*time.Hour, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 1 || due[0].NodeKey != "octo/docs" || due[0].SHA != "cafe1234" || due[0].Ref != HeadRef {
+		t.Errorf("due %+v, want octo/docs probed against cafe1234", due)
+	}
+	if analyzed, checked := freshness(t, q, "octo/docs", ""); analyzed != "" || checked != "" {
+		t.Errorf("analyzed_at %q, checked_at %q: settling it was neither an analysis nor a probe", analyzed, checked)
+	}
+}
+
+// A repository with no commit has nothing to compare against; probing it would read a missing
+// reference as gone, so only an event or a listing brings it back.
+func TestAStartingPointWithNoCommitIsNotProbed(t *testing.T) {
+	q := probeQueue(t)
+	if _, err := q.Enqueue([]Item{item("octo/empty", 0)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Nothing(Key{NodeKey: "octo/empty"}, "", "", "octo/empty has no commit"); err != nil {
+		t.Fatal(err)
+	}
+	q.Now = func() time.Time { return time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC) }
+	if due, err := q.DueForRecheck(24*time.Hour, 10); err != nil || len(due) != 0 {
+		t.Errorf("due %v (%v), want nothing to probe", due, err)
+	}
+}

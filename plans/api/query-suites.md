@@ -40,6 +40,16 @@ calling the API by hand.
    pack-qualified suite references. The recorded corpus does not reproduce it, so
    `geometry.spec.mjs`'s catalog test passes in CI and fails only against a snapshot of a real
    crawl, naming this. Fix it in the cells, not by loosening that test.
+7. **Declarations of versions no disk holds.** A version is read where the file whose content is
+   that version is found, and runs now record what they declared as they run; **5 of 53** catalog
+   rows on the crawled organization predate that and match no file on disk, so they say why rather
+   than what. Three are `abom/*` versions whose files changed in `be3ec7a`: a version hashes the
+   query and every in-pack library it imports, so hashing those at each commit that touched the
+   pack finds the content in git history, where a development checkout can read it — a deployed
+   binary has no history, and says so. One is a custom query outside the server's search path. The
+   fifth, a `codeql/actions-queries 0.6.35` version no file of that pack on disk hashes to, is a
+   question before it is work: find what that version was computed over before reading anything
+   for it.
 
 ## The constraints that must not be broken
 

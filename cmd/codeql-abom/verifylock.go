@@ -9,14 +9,15 @@ import (
 	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/expand"
+	"github.com/advanced-security/codeql-abom/internal/ghapp"
 	"github.com/advanced-security/codeql-abom/internal/lockverify"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
 // lockVerifier runs GitHub's lock verification against a repository's current commit, fetched
 // fresh: the same path for the command and the server.
-func lockVerifier(s *store.Store) *lockverify.Service {
-	checkout := &expand.Checkout{Timeout: 5 * time.Minute}
+func lockVerifier(s *store.Store, tokens ghapp.TokenSource) *lockverify.Service {
+	checkout := &expand.Checkout{Timeout: 5 * time.Minute, Tokens: tokens}
 	return &lockverify.Service{
 		Store: s,
 		Fetch: func(ctx context.Context, dest, owner, repo, commit string) error {
@@ -54,7 +55,11 @@ func runVerifyLock(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if *network {
 		mode = lockverify.ModeNetwork
 	}
-	got, err := lockVerifier(s).Request(ctx, *repository, mode, "cli")
+	tokens, err := dbReaderTokens(*dbPath)
+	if err != nil {
+		return fmt.Errorf("verify-lock: %w", err)
+	}
+	got, err := lockVerifier(s, tokens).Request(ctx, *repository, mode, "cli")
 	if err != nil {
 		return fmt.Errorf("verify-lock: %w", err)
 	}

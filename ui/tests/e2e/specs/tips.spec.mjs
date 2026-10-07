@@ -16,13 +16,15 @@ async function untipped(page) {
     return page.evaluate((framework) => {
         const drawn = (e) => { const b = e.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
         const label = (e) => (e.getAttribute('aria-label') || e.textContent || e.className).trim().slice(0, 60);
+        // Inside SVG the hover tip is a `<title>` child; a browser draws no tip from a title attribute there.
+        const svgTip = (e) => e instanceof SVGElement && !!e.querySelector(':scope > title')?.textContent.trim();
         // A grid draws its empty-state message in a body cell shaped like a header; only thead names columns.
         const headers = [...document.querySelectorAll('thead th')]
             .filter((th) => drawn(th) && th.textContent.trim() && !th.querySelector('[data-abom-header-tip]'))
             .map(label);
         const actions = [...document.querySelectorAll('a[href], button, [role="button"]')]
             .filter((e) => drawn(e) && !framework.some((s) => e.closest(s))
-                && !e.closest('[title]') && !e.closest('.mud-tooltip-root'))
+                && !e.closest('[title]') && !e.closest('.mud-tooltip-root') && !svgTip(e))
             .map(label);
         return { headers, actions };
     }, FRAMEWORK);

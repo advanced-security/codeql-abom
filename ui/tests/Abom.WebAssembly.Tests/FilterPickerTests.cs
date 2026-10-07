@@ -153,6 +153,31 @@ public sealed class FilterPickerTests : AbomTestContext
             () => Assert.Equal(["0", "3"], Attributes(popover, "data-abom-value")));
     }
 
+    /// <summary>
+    /// A server newer than the page can offer a term the page cannot write: a tab left open across
+    /// a restart runs the build it loaded. Choosing it is refused by name, and the scope stays as it
+    /// was. Unrefused, the parse threw and took the whole interface down.
+    /// </summary>
+    [Fact]
+    public void ATermThisPageCannotWriteIsRefusedByNameRatherThanBreakingThePage()
+    {
+        Answer("api/filters", Catalog.Replace(
+            """{"name":"q",""",
+            """{"name":"futureTerm","label":"Future","help":"Asked of a newer server.","arity":"list","values":["sooner","later"],"surfaces":["graph"]},{"name":"q","""));
+        var before = Scope.Spec.ToQueryString();
+
+        var (popover, page) = Picker();
+        page.WaitForAssertion(() => page.Find("[data-abom-add-filter]").Click());
+        popover.WaitForElement("[data-abom-term='futureTerm']").Click();
+        popover.WaitForElement("[data-abom-value='sooner']").Click();
+
+        page.WaitForAssertion(() =>
+        {
+            Assert.Contains("futureTerm", page.Find("[data-abom-picker-refusal]").TextContent);
+            Assert.Equal(before, Scope.Spec.ToQueryString());
+        });
+    }
+
     /// A property is written as one key-and-value pair, and several may be asked for at once.
     [Fact]
     public void ChoosingAPropertyValueWritesThePair()

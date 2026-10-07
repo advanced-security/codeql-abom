@@ -93,6 +93,15 @@
     </span>
 </div>
 
+@* Refused whole and said by name: rows under a term dropped in silence answer a wider question
+   than the address asked. *@
+@if (Scope.LastError is { Length: > 0 } scopeRefusal)
+{
+    <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true" Class="mb-2" data-abom-scope-refusal>
+        @scopeRefusal — the address was not applied, so these rows are not narrowed by it.
+    </MudAlert>
+}
+
 @if (_choosing && UnitRunsQueries(_unit))
 {
     <RunDraftPanel Predicate="@RunPredicate" Closed="StopChoosing">
@@ -227,15 +236,10 @@
         </PropertyColumn>
 
         <PropertyColumn Property="x => x.Origin" Title="Origin">
-            <HeaderTemplate><HeaderTip Tip="Whether this lives in a starting point, in an upstream repository, or outside both.">Origin</HeaderTip></HeaderTemplate>
+            <HeaderTemplate><HeaderTip Tip="Whether this is yours by your declaration, lives in a starting point nobody declared, lives in an upstream repository, or is external to all of them.">Origin</HeaderTip></HeaderTemplate>
             <CellTemplate>
-                <MudText Typo="Typo.caption">
-                    @(context.Item.Origin switch
-                    {
-                        "seed" => "starting point",
-                        "upstream" => "upstream",
-                        _ => "external",
-                    })
+                <MudText Typo="Typo.caption" data-abom-origin="@context.Item.NodeKey">
+                    @OriginText.Of(context.Item.Origin, context.Item.Owned)
                 </MudText>
             </CellTemplate>
         </PropertyColumn>
@@ -575,6 +579,13 @@
                                    Asset="@context.Item.FullName" Review="@(() => OpenRepositoryFindings(context.Item.FullName))" />
                 </CellTemplate>
             </PropertyColumn>
+            @* What the last reading said, never an inference: a repository nobody read says so rather
+               than reading as off. One column, not three: as three they put the advisory routes past
+               the edge of a 1280px window, and a header here never takes a second line. *@
+            <PropertyColumn Property="x => x.ActionsScanning" Title="Actions scanning">
+                <HeaderTemplate><HeaderTip Tip="Whether code scanning analyzes this repository's Actions code and through which setup, the setup the repository uses, and whether code scanning holds an Actions CodeQL database ABOM can pull, as last read.">Actions scanning</HeaderTip></HeaderTemplate>
+                <CellTemplate>@SetupCell(context.Item)</CellTemplate>
+            </PropertyColumn>
             <TemplateColumn Title="Repository Properties" Sortable="false">
                 <HeaderTemplate><HeaderTip Tip="The custom repository property values ABOM read for this repository.">Repository Properties</HeaderTip></HeaderTemplate>
                 <CellTemplate>
@@ -688,8 +699,9 @@
                         <IdentityCell Reference="@context.Item.Source" />
                         @if (context.Item.FilePath.Length > 0)
                         {
-                            <MudText Typo="Typo.caption" Class="mud-text-secondary d-block abom-trunc">
-                                @($"{context.Item.FilePath}:{context.Item.StartLine}")
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary d-block abom-trunc abom-one-line"
+                                     title="@($"{context.Item.FilePath}:{context.Item.StartLine}")">
+                                @($"{KeyText.WorkflowFile(context.Item.FilePath)}:{context.Item.StartLine}")
                             </MudText>
                         }
                     </div>
@@ -703,7 +715,7 @@
                         @* Absent is not a fourth class: an edge whose ends nobody could name has no
                            boundary, which is different from staying inside one repository. *@
                         <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
-                            @(context.Item.Boundary.Length > 0 ? context.Item.Boundary : "not known")
+                            @KeyText.Boundary(context.Item.Boundary)
                         </MudText>
                     </div>
                 </CellTemplate>
@@ -716,7 +728,7 @@
             </PropertyColumn>
             @* The reference verbatim, because that is the text a reader has to go and edit. *@
             <PropertyColumn Property="x => x.Ref" Title="Reference">
-                <HeaderTemplate><HeaderTip Tip="The reference text as it was written, plus any lock-selected commit.">Reference</HeaderTip></HeaderTemplate>
+                <HeaderTemplate><HeaderTip Tip="The reference text as it was written, the commits in use that declare it, and any commit a lock selects.">Reference</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     <div class="abom-cell-stack">
                     @if (context.Item.Ref.Length > 0)
@@ -729,6 +741,12 @@
                             </MudText>
                         }
                     }
+                    @* Which commits said this. A line whose commits in use declared different
+                       things is a row for each, and this is what tells those rows apart. *@
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block"
+                             data-abom-relationship-commits title="@DeclaredAtTip(context.Item.Commits)">
+                        @DeclaredAtText(context.Item.Commits)
+                    </MudText>
                     @* What runs, beside what is written: each commit a current lock selects for
                        this very line, and whose lock. *@
                     @foreach (var l in context.Item.Locked)
@@ -835,9 +853,6 @@
                         </MudText>
                     </CellTemplate>
                 </PropertyColumn>
-                <PropertyColumn Property="x => x.Depth" Title="Hops">
-                    <HeaderTemplate><HeaderTip Tip="How many dependency steps separate this row from a starting point.">Hops</HeaderTip></HeaderTemplate>
-                </PropertyColumn>
                 <PropertyColumn Property="x => x.Attempts" Title="Attempts">
                     <HeaderTemplate><HeaderTip Tip="How many times ABOM has tried to analyze this dependency.">Attempts</HeaderTip></HeaderTemplate>
                     <CellTemplate>
@@ -888,7 +903,9 @@
                         @if (context.Item.SuitesKnown)
                         {
                             <MudTooltip Text="@string.Join("\n", context.Item.Suites)">
-                                <span class="abom-rule">@CoverageSuites(context.Item)</span>
+                                @* Wraps between packs, never inside one. *@
+                                <span data-abom-coverage-suites>@foreach (var (pack, i) in CoverageSuites(context.Item).Select((p, i) => (p, i)))
+                                {@(i > 0 ? ", " : "")<span class="abom-rule">@pack</span>}</span>
                             </MudTooltip>
                         }
                         else
@@ -910,15 +927,34 @@
 
 @* Stated rather than implied by a pager: the grid used to hold 500 of 1,585 with nothing saying
    so, and a column sorted inside that page answered about the page rather than about the estate. *@
-@if (_unit == UnitCoverage)
+@if (_unit == UnitCoverage && _countedUnit == _unit && !_coverageLoading)
 {
     <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2">
         Showing @_shown.ToString("N0")@(_shown >= CoverageCap
-            ? $" — the first {CoverageCap:N0} the crawl will claim, not the whole queue"
-            : ", which is all of them"), ordered by what the crawl will claim next.
+            ? $" — the first {CoverageCap:N0} the crawl will analyze, not the whole queue"
+            : ", which is all of them"), ordered by what the crawl will analyze next.
     </MudText>
 }
-else if (_unit != UnitFindings)
+else if (_unit == UnitRelationships && _countedUnit == _unit)
+{
+    @* A row is a declaration rather than a line, so the count names both. *@
+    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2" data-abom-relationship-lines>
+        Showing @_shown.ToString("N0") of @CountText.Of(_total, "declaration", "declarations") on
+        @CountText.Of(_lines, "line", "lines"), ordered by
+        @(_sort is { Length: > 0 } s ? ColumnLabel(s) : DefaultOrder(_unit)) across everything that
+        matched.
+    </MudText>
+    @if (_withoutDeclaration > 0)
+    {
+        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1" data-abom-relationship-undeclared
+                 title="Either only a commit nothing resolves to any more declared these lines, or the commit in use was read before ABOM kept what each commit declared.">
+            @CountText.Of(_withoutDeclaration, "more line", "more lines") in this scope
+            @(_withoutDeclaration == 1 ? "is" : "are") not listed: no commit in use has a recorded
+            declaration there.
+        </MudText>
+    }
+}
+else if (_unit != UnitFindings && _countedUnit == _unit)
 {
     <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2">
         Showing @_shown.ToString("N0") of @_total.ToString("N0") matching, ordered by
@@ -1074,11 +1110,15 @@ else if (_unit != UnitFindings)
     private string? _refusal;
     private int _total;
     private int _shown;
+    // Which unit _total and _shown answer for; until its first answer they count nothing.
+    private string? _countedUnit;
     private int _unreached;
     private IReadOnlyList<KindCount> _elsewhere = [];
     private int _unsourced;
     private int _unlisted;
     private int _unprovided;
+    private int _lines;
+    private int _withoutDeclaration;
 
     private static readonly Dictionary<string, string> SortLabels = new()
     {
@@ -1122,6 +1162,7 @@ else if (_unit != UnitFindings)
         ["Findings"] = "findings",
         ["Exposures"] = "exposures",
         ["DirectExposures"] = "directExposures",
+        ["ActionsScanning"] = "actionsScanning",
     };
 
     private static readonly Dictionary<string, string> WorkflowSortTerms = new()
@@ -1167,14 +1208,14 @@ else if (_unit != UnitFindings)
     {
         UnitFindings => "Findings reported in this scope, attributed to their generating rule and source location.",
         UnitRepositories =>
-            "The repositories you own, most findings first. Advisory routes are split because only " +
+            "The starting points ABOM reads, most findings first. Advisory routes are split because only " +
             "the direct ones are this repository's own to close — the rest wait on an intermediary.",
         UnitAdvisories =>
             "Published advisories that reach something you own, ranked by severity, then by how " +
             "many repositories reach them. The rank is a scheduling aid, not a judgement: both inputs " +
             "stay on screen so you can disagree with it.",
         UnitWorkflows =>
-            "The workflows and reusable workflows in your repositories, most findings first. These " +
+            "The workflows and reusable workflows ABOM has read, most findings first. These " +
             "are what runs, so they are measured by what they contain and what they reach out to — " +
             "nothing depends on a workflow, which is why reach is not a column here.",
         UnitJobs =>
@@ -1182,10 +1223,11 @@ else if (_unit != UnitFindings)
             "triggering events are decided, so these are recorded against the job rather than " +
             "inferred from the workflow around it.",
         UnitRelationships =>
-            "Every line that declares a dependency, ordered by what declares it: the reference as " +
-            "written, the boundary it crosses, and what was reported against that line.",
+            "Every thing a line declares at the commits in use, a row for each, ordered by what " +
+            "declares it: the reference as written, the commits that declare it, the boundary it " +
+            "crosses, and what was reported against that line.",
         UnitCoverage =>
-            "What the crawl has reached and what it has not, in the order it will claim them. A " +
+            "What the crawl has reached and what it has not, in the order it will analyze them. A " +
             "dependency nothing has analyzed contributes nothing downstream until it is.",
         _ =>
             "Every action, composite action and image your starting points run or hold, widest " +
@@ -1212,7 +1254,7 @@ else if (_unit != UnitFindings)
         UnitWorkflows => "findings",
         UnitJobs => "whether the job is privileged",
         UnitRelationships => "what declares it",
-        UnitCoverage => "what the crawl will claim next",
+        UnitCoverage => "what the crawl will analyze next",
         _ => "reach",
     };
     private static string TypeLabel(string kind) =>
@@ -1408,6 +1450,7 @@ else if (_unit != UnitFindings)
         ("running", "Discovering"),
         ("retrying", "Retrying"),
         ("unavailable", "Unavailable"),
+        ("nothing", "Nothing to analyze"),
     ];
 
     private async Task LoadCoverage()
@@ -1418,6 +1461,7 @@ else if (_unit != UnitFindings)
         _coverage = await Api.GetFrontierAsync(_coverageState, top: CoverageCap);
         _shown = _coverage.Count;
         _total = _coverage.Count;
+        _countedUnit = UnitCoverage;
         _coverageLoading = false;
     }
 
@@ -1436,6 +1480,143 @@ else if (_unit != UnitFindings)
 
     private string CoverageColor(string state) =>
         Theme.Palette.Discovery.TryGetValue(state, out var c) ? c : Theme.Palette.Muted;
+
+    // What the scanning reading is called, and the discovery color it borrows: done for default
+    // setup, running for advanced, unavailable for both at once, retrying for a gap, queued for not
+    // read yet, and muted for what was never ABOM's to read.
+    private static readonly Dictionary<string, (string Label, string Color)> ScanningStates = new()
+    {
+        ["default"] = ("Default setup", "done"),
+        ["advanced"] = ("Advanced setup", "running"),
+        ["both"] = ("Both setups", "unavailable"),
+        ["off"] = ("Off", "retrying"),
+        ["no-actions-code"] = ("No Actions code", ""),
+    };
+
+    // The setup and the database, in words under the scanning state.
+    private static readonly Dictionary<string, string> SetupWords = new()
+    {
+        ["default"] = "default setup", ["advanced"] = "advanced setup", ["conflict"] = "setups in conflict",
+        ["none"] = "no setup", ["unreadable"] = "setup unreadable", ["not-read"] = "setup not read",
+    };
+
+    private static readonly Dictionary<string, string> DatabaseWords = new()
+    {
+        ["present"] = "Actions database", ["absent"] = "no Actions database", ["not-read"] = "database not read",
+    };
+
+    private RenderFragment SetupCell(RepositorySummary r) => builder =>
+    {
+        var cs = r.CodeScanning;
+        var (label, state) = cs.ActionsScanning switch
+        {
+            "not-owned" => ("Not owned", ""),
+            _ when !cs.Known => ("Not read", "queued"),
+            var v => ScanningStates.TryGetValue(v, out var known) ? known : ("Not read", "queued"),
+        };
+        builder.OpenElement(0, "span");
+        builder.AddAttribute(1, "class", "abom-setup-cell");
+        builder.OpenElement(2, "span");
+        builder.AddAttribute(3, "class", cs.ActionsScanning == "not-owned" ? "abom-status-cell mud-text-secondary" : "abom-status-cell");
+        builder.AddAttribute(4, "title", SetupTitle(cs, "actionsScanning"));
+        builder.AddAttribute(5, "data-abom-setup", $"{r.FullName}:actionsScanning");
+        builder.OpenElement(6, "span");
+        builder.AddAttribute(7, "class", "abom-state-dot mr-1");
+        builder.AddAttribute(8, "style", $"--abom-state-color:{(state.Length == 0 ? Theme.Palette.Muted : CoverageColor(state))}");
+        builder.CloseElement();
+        builder.AddContent(9, label);
+        builder.CloseElement();
+        if (cs.Known && cs.ActionsScanning != "not-owned")
+        {
+            // Default or advanced setup scanning Actions already names the setup; saying it twice says nothing.
+            var named = cs.ActionsScanning == cs.Setup && cs.Setup is "default" or "advanced";
+            if (!named)
+            {
+                Detail(builder, 10, r, "setup", SetupWords.GetValueOrDefault(cs.Setup, "setup not known"));
+            }
+            Detail(builder, 20, r, "actionsDatabase", DatabaseWords.GetValueOrDefault(cs.ActionsDatabase, "database not read"));
+        }
+        builder.CloseElement();
+    };
+
+    private static void Detail(Microsoft.AspNetCore.Components.Rendering.RenderTreeBuilder builder, int seq, RepositorySummary r, string column, string words)
+    {
+        builder.OpenElement(seq, "span");
+        builder.AddAttribute(seq + 1, "class", "abom-setup-detail mud-text-secondary");
+        builder.AddAttribute(seq + 2, "title", SetupTitle(r.CodeScanning, column));
+        builder.AddAttribute(seq + 3, "data-abom-setup", $"{r.FullName}:{column}");
+        builder.AddContent(seq + 4, words);
+        builder.CloseElement();
+    }
+
+    // What each column's value says, before the evidence that put the repository there: one tip
+    // repeated across all three explained the class and left "Off" beside it unexplained.
+    private static readonly Dictionary<string, string> SetupMeanings = new()
+    {
+        ["actionsScanning:default"] = "Default setup analyzes this repository's Actions code.",
+        ["actionsScanning:advanced"] = "An advanced setup analysis of this repository's Actions code is on record.",
+        ["actionsScanning:both"] = "Default setup and an advanced setup analysis both cover this repository's Actions code.",
+        ["actionsScanning:off"] = "No code scanning analysis of this repository's Actions code is on record.",
+        ["actionsScanning:no-actions-code"] = "No Actions code was found here, so there is nothing for code scanning to analyze.",
+        ["actionsScanning:unknown"] = "Not known: the default setup reading or the list of analyses is missing.",
+        ["setup:default"] = "Default setup is on.",
+        ["setup:advanced"] = "Advanced setup: a CodeQL workflow runs here, or analyses arrive that default setup did not make.",
+        ["setup:conflict"] = "Default setup is on while advanced setup also runs here.",
+        ["setup:none"] = "Neither default setup nor advanced setup is on.",
+        ["setup:unreadable"] = "GitHub would not show this repository's default setup.",
+        ["setup:not-read"] = "Default setup has not been read yet.",
+        ["setup:unknown"] = "Not known.",
+        ["actionsDatabase:present"] = "Code scanning holds an Actions CodeQL database ABOM can pull.",
+        ["actionsDatabase:absent"] = "Code scanning holds no Actions CodeQL database for this repository.",
+        ["actionsDatabase:not-read"] = "Not read yet whether code scanning holds an Actions CodeQL database.",
+    };
+
+    private static string SetupTitle(RepositoryCodeScanning cs, string column)
+    {
+        if (!cs.Known)
+        {
+            return "Not read: no code scanning reading has been recorded for this repository.";
+        }
+        var value = column switch
+        {
+            "actionsScanning" => cs.ActionsScanning,
+            "setup" => cs.Setup,
+            _ => cs.ActionsDatabase,
+        };
+        if (value == "not-owned")
+        {
+            return "Not owned: outside the declared scope, so ABOM never reads its code scanning.";
+        }
+        var parts = new List<string>
+        {
+            SetupMeanings.TryGetValue($"{column}:{value}", out var meaning) ? meaning.TrimEnd('.') : "",
+            cs.Evidence.Length > 0 ? char.ToUpperInvariant(cs.Evidence[0]) + cs.Evidence[1..] : "",
+        };
+        if (column == "actionsDatabase")
+        {
+            if (cs.DatabaseCommit.Length > 0)
+            {
+                parts.Add($"Built at {CommitText.Short(cs.DatabaseCommit)}" +
+                          (cs.DatabaseUpdatedAt.Length > 0 ? $", updated {TimeText.DayAndTime(cs.DatabaseUpdatedAt)}" : ""));
+            }
+        }
+        else
+        {
+            if (cs.ConfigurationName.Length > 0)
+            {
+                parts.Add($"Configuration: {cs.ConfigurationName} ({cs.AttachmentStatus})");
+            }
+            if (cs.ConfigFile.Length > 0)
+            {
+                parts.Add($"Configuration file: {cs.ConfigFile}");
+            }
+            if (cs.ReadAt.Length > 0)
+            {
+                parts.Add($"Default setup read {TimeText.DayAndTime(cs.ReadAt)}");
+            }
+        }
+        return string.Join(". ", parts.Where(p => p.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase)) + ".";
+    }
 
     private static string RelationshipLockText(RelationshipLock l)
     {
@@ -1462,12 +1643,16 @@ else if (_unit != UnitFindings)
         return more > 0 ? $"locked by {first} and {more:N0} more" : $"locked by {first}";
     }
 
-    private static string CoverageSuites(FrontierItem item) =>
-        string.Join(", ", item.Suites.Select(s =>
-        {
-            var name = s.Split('@')[0].Split('/').LastOrDefault() ?? s;
-            return name.EndsWith(".qls", StringComparison.Ordinal) ? name[..^4] : name;
-        }));
+    // Each pack once: its versions are in the tooltip, and one pack at three versions read as three.
+    private static IEnumerable<string> CoverageSuites(FrontierItem item) =>
+        item.Suites
+            .SelectMany(s => s.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            .Select(s =>
+            {
+                var name = s.Split('@')[0].Split('/').LastOrDefault() ?? s;
+                return name.EndsWith(".qls", StringComparison.Ordinal) ? name[..^4] : name;
+            })
+            .Distinct();
 
     /// <summary>
     /// Loads a named view's predicate into the scope.
@@ -1611,7 +1796,27 @@ else if (_unit != UnitFindings)
             page => _unreached = page?.Unreached ?? 0);
 
     private Task<GridData<RelationshipSummary>> LoadRelationships(GridState<RelationshipSummary> state) =>
-        LoadUnit<RelationshipSummary, RelationshipsPage>(state, "api/relationships", null);
+        LoadUnit<RelationshipSummary, RelationshipsPage>(state, "api/relationships", null, page =>
+        {
+            _lines = page?.Lines ?? 0;
+            _withoutDeclaration = page?.WithoutDeclaration ?? 0;
+        });
+
+    // The first commit, and how many more: a row is narrow, and the whole list is in the tooltip.
+    private static string DeclaredAtText(IReadOnlyList<string> commits) => commits.Count switch
+    {
+        0 => "no commit recorded",
+        1 => $"at {CommitText.Short(commits[0])}",
+        _ => $"at {CommitText.Short(commits[0])} and {commits.Count - 1} more",
+    };
+
+    private static string DeclaredAtTip(IReadOnlyList<string> commits) => commits.Count switch
+    {
+        0 => "No analysis recorded which commit declared this line, so it is not tied to one.",
+        1 => $"Declared at commit {commits[0]}, which a reference in use resolves to.",
+        _ => $"Declared at the {commits.Count} commits {string.Join(", ", commits.Take(commits.Count - 1))} " +
+             $"and {commits[^1]}, which references in use resolve to.",
+    };
 
     /// <summary>
     /// One page of a unit from its own endpoint, ordered across the whole match by the server. What
@@ -1621,6 +1826,7 @@ else if (_unit != UnitFindings)
         IReadOnlyDictionary<string, string>? sorts, Action<TPage?>? also = null)
         where TPage : class, IPage<TRow>
     {
+        var unit = _unit;
         var sort = state.SortDefinitions.FirstOrDefault();
         _sort = sort is not null && sorts is not null && sorts.TryGetValue(sort.SortBy, out var term)
             ? term : null;
@@ -1630,8 +1836,9 @@ else if (_unit != UnitFindings)
         _refusal = refusal;
         _total = page?.Total ?? 0;
         _shown = page?.Items.Count ?? 0;
+        _countedUnit = unit;
         _elsewhere = [];
-        _unsourced = _unprovided = _unlisted = _unreached = 0;
+        _unsourced = _unprovided = _unlisted = _unreached = _lines = _withoutDeclaration = 0;
         also?.Invoke(page);
         // The lines stating what was left out sit outside the grid, and the grid re-renders only
         // itself, so without this they keep reporting the page before last.

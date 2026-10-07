@@ -40,6 +40,97 @@ public class ObjectivePanelTests : AbomTestContext
         Answer("api/discovery/status", DiscoveryStateBuilder.Drained().ToJson());
     }
 
+    // Settled counts what is finished, and nothing to analyze is finished without being analyzed or
+    // having failed to fetch: folded into "could not be fetched" it read as access to fix.
+    [Fact]
+    public void NothingToAnalyzeIsNotCountedAsCouldNotBeFetched()
+    {
+        Serve("""
+            {"progress":[
+               {"depth":0,"total":31,"done":22,"settled":29,"nothing":6,"pending":2,"running":0,"available":2}],
+             "working":0,"hasOutstanding":true,"maxDepth":5,"recent":[],
+             "totals":{"cycles":0,"millis":0,"fetches":0,"builds":0,"evaluations":0,"probes":0,
+                       "analyzed":0,"discovered":0}}
+            """);
+
+        var cut = Render<Shared.DiscoveryControls>();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-abom-objective-settled]")));
+        var settled = cut.Find("[data-abom-objective-settled]").TextContent;
+        Assert.Contains("6 with nothing to analyze", settled);
+        Assert.Contains("1 that could not be fetched", settled);
+        var chip = cut.Find(".abom-objective-depths .mud-chip").GetAttribute("title") ?? "";
+        Assert.Contains("22 analyzed, 6 with nothing to analyze, 1 unavailable", chip);
+    }
+
+    private static string Staged(bool outstanding, string stages) => $$$"""
+        {"progress":[
+           {"depth":1,"total":10,"done":9,"settled":9,"pending":1,"running":0,"available":1,"refresh":1}],
+         "working":1,"hasOutstanding":{{{(outstanding ? "true" : "false")}}},"maxDepth":5,
+         "stages":{{{stages}}},"recent":[],
+         "totals":{"cycles":0,"millis":0,"fetches":0,"builds":0,"evaluations":0,"probes":0,
+                   "analyzed":0,"discovered":0}}
+        """;
+
+    // Work for a repository nothing owned reaches is never claimed. Counted among the queued without
+    // a word, it reads as work the crawl is about to do.
+    [Fact]
+    public void WorkTheClosureNoLongerReachesIsSaidToBeUnclaimed()
+    {
+        Serve(Staged(true, """{"next":"current","current":3,"unreached":15}"""));
+
+        var cut = Render<Shared.DiscoveryControls>();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-abom-objective-unreached]")));
+        var unreached = cut.Find("[data-abom-objective-unreached]").TextContent;
+        Assert.Contains("15 queued", unreached);
+        Assert.Contains("nothing you own reaches are not claimed", unreached);
+        Assert.Contains("Pruning", unreached);
+    }
+
+    // A moved reference waits for every depth, so a reader is told it is waiting rather than
+    // left to wonder why a known change has not been analyzed.
+    [Fact]
+    public void MovedReferencesAreSaidToWaitBehindWorkNeverAnalyzed()
+    {
+        Serve(Staged(true, """{"next":"current","current":3,"refresh":4}"""));
+
+        var cut = Render<Shared.DiscoveryControls>();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-abom-objective-stage]")));
+        var stage = cut.Find("[data-abom-objective-stage]").TextContent;
+        Assert.Contains("4 that moved since they were analyzed wait", stage);
+    }
+
+    // Once nothing is left unanalyzed, the refresh is the work, and the panel says which goes first.
+    [Fact]
+    public void TheRefreshIsNamedOnceEveryDepthIsExplored()
+    {
+        Serve(Staged(false, """{"next":"refresh","refresh":4}"""));
+
+        var cut = Render<Shared.DiscoveryControls>();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-abom-objective-stage]")));
+        var stage = cut.Find("[data-abom-objective-stage]").TextContent;
+        Assert.Contains("Analyzing again 4 that moved since they were analyzed", stage);
+        Assert.Contains("longest since analyzed first", stage);
+        var chip = cut.Find(".abom-objective-depths .mud-chip").GetAttribute("title") ?? "";
+        Assert.Contains("1 being analyzed again after its reference moved", chip);
+    }
+
+    // Asked for by name, or moved by an owned push, is a stage of its own, ahead of the rest.
+    [Fact]
+    public void WorkAskedForByNameOrPushedIsCounted()
+    {
+        Serve(Staged(true, """{"next":"expedited","expedited":2,"current":3}"""));
+
+        var cut = Render<Shared.DiscoveryControls>();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-abom-objective-stage]")));
+        Assert.Contains("2 asked for by name, or moved by a push to a repository you own, go first",
+            cut.Find("[data-abom-objective-stage]").TextContent);
+    }
+
     // "Complete at depth 1, working depth 2" is the claim the whole objective exists to make.
     [Fact]
     public void ThePageNamesTheDepthBeingWorked()
@@ -102,6 +193,29 @@ public class ObjectivePanelTests : AbomTestContext
         Assert.Contains("probe", cut.Markup);
     }
 
+    // A tree read is API budget spent in place of a clone. A round that settled moved references
+    // that way says what it paid; one that read none says nothing about trees at all.
+    [Fact]
+    public void ARoundThatReadTreesSaysWhatItSpentOnThem()
+    {
+        Serve(Working.Replace("\"probes\":0,\"analyzed\":3", "\"probes\":0,\"treeReads\":6,\"analyzed\":3"));
+
+        var cut = Render<Shared.DiscoveryControls>();
+
+        cut.WaitForAssertion(() => Assert.Contains("6 tree reads", cut.Markup));
+    }
+
+    [Fact]
+    public void ARoundThatReadNoTreesDoesNotMentionThem()
+    {
+        Serve(Working);
+
+        var cut = Render<Shared.DiscoveryControls>();
+
+        cut.WaitForAssertion(() => Assert.Contains("15.3", cut.Markup));
+        Assert.DoesNotContain("tree read", cut.Markup);
+    }
+
     // A database that has never run a cycle is not one that ran and cost nothing.
     [Fact]
     public void ADatabaseWithNoRecordedCyclesSaysSoRatherThanShowingZeroSpend()
@@ -114,7 +228,7 @@ public class ObjectivePanelTests : AbomTestContext
 
         var cut = Render<Shared.DiscoveryControls>();
 
-        cut.WaitForAssertion(() => Assert.Contains("No cycle has run yet", cut.Markup));
+        cut.WaitForAssertion(() => Assert.Contains("No round has run yet", cut.Markup));
     }
 
     // A depth chip counts settled work, which is analyzed plus what could not be fetched. The
@@ -167,6 +281,73 @@ public class ObjectivePanelTests : AbomTestContext
     // Normalizing is what keeps the assertion about the figure rather than about the template.
     private static string Flat(string markup) =>
         System.Text.RegularExpressions.Regex.Replace(markup, @"\s+", " ");
+
+    // Three owned repositories at depth 0 failing every attempt: settled for now, never analyzed.
+    private const string WithStuck = """
+        {"progress":[
+           {"depth":0,"total":28,"done":19,"settled":25,"pending":3,"running":0,"available":3,"stuck":3},
+           {"depth":1,"total":10,"done":4,"settled":4,"pending":6,"running":0,"available":6,"stuck":0}],
+         "working":1,"hasOutstanding":true,"maxDepth":5,"stuckAfter":8,
+         "recent":[],
+         "totals":{"cycles":3,"millis":9000,"fetches":6,"builds":6,"evaluations":6,
+                   "probes":0,"analyzed":6,"discovered":12}}
+        """;
+
+    private const string OnlyStuckLeft = """
+        {"progress":[
+           {"depth":0,"total":28,"done":19,"settled":25,"pending":3,"running":0,"available":3,"stuck":3},
+           {"depth":1,"total":10,"done":10,"settled":10,"pending":0,"running":0,"available":0,"stuck":0}],
+         "working":0,"hasOutstanding":false,"maxDepth":5,"stuckAfter":8,
+         "recent":[],
+         "totals":{"cycles":3,"millis":9000,"fetches":6,"builds":6,"evaluations":6,
+                   "probes":0,"analyzed":6,"discovered":12}}
+        """;
+
+    // A depth no longer held open by failing rows must still say they were not analyzed.
+    [Fact]
+    public void ADepthChipSaysHowManyAreStuckAfterRepeatedFailures()
+    {
+        Serve(WithStuck);
+
+        var cut = Render<Shared.DiscoveryControls>();
+
+        cut.WaitForAssertion(() =>
+            Assert.Contains("depth 0: 25 of 28, 3 stuck after repeated failures", Flat(cut.Markup)));
+        var chip = cut.FindAll(".abom-objective-depths [title]")[0];
+        var title = chip.GetAttribute("title") ?? "";
+        Assert.Contains("8 or more", title);
+        Assert.Contains("retried", title);
+        Assert.DoesNotContain("mud-chip-color-success", chip.OuterHtml);
+    }
+
+    // Only stuck rows left is not "every reference reached has been analyzed".
+    [Fact]
+    public void NothingOutstandingDoesNotClaimStuckWorkWasAnalyzed()
+    {
+        Serve(OnlyStuckLeft);
+
+        var cut = Render<Shared.DiscoveryControls>();
+
+        cut.WaitForAssertion(() => Assert.Contains("Nothing outstanding", cut.Markup));
+        var said = Flat(cut.Find(".abom-objective").TextContent);
+        Assert.DoesNotContain("Every reference reached has been analyzed", said);
+        Assert.Contains("3 stuck after repeated failures", said);
+        Assert.Contains("retried on their own schedule", said);
+    }
+
+    // "Nothing deeper is started until it is done" was false whenever the shallow depth waited.
+    [Fact]
+    public void TheWorkingSentenceSaysDeeperWorkFillsTheRound()
+    {
+        Serve(Working);
+
+        var cut = Render<Shared.DiscoveryControls>();
+
+        cut.WaitForAssertion(() => Assert.Contains("depth 2", cut.Markup));
+        var said = Flat(cut.Find(".abom-objective").TextContent);
+        Assert.DoesNotContain("nothing deeper is started", said);
+        Assert.Contains("deeper work fills the rest of each round", said);
+    }
 
     private static string WithUnobserved(int count) =>
         Working.Replace("\"maxDepth\":5,", $"\"maxDepth\":5,\"unobserved\":{count},");

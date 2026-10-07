@@ -54,7 +54,7 @@ func TestARepositoryThatProtectsNothingIsDistinguishableFromOneNobodyAsked(t *te
 	s := newTestStore(t)
 	seedOwnedRepo(t, s, "acme/service")
 
-	if err := s.SetProtectedBranches("acme/service", nil); err != nil {
+	if _, err := s.SetProtectedBranches("acme/service", nil); err != nil {
 		t.Fatalf("SetProtectedBranches: %v", err)
 	}
 
@@ -76,10 +76,10 @@ func TestUnprotectingABranchRemovesIt(t *testing.T) {
 	s := newTestStore(t)
 	seedOwnedRepo(t, s, "acme/service")
 
-	if err := s.SetProtectedBranches("acme/service", []string{"main", "release"}); err != nil {
+	if _, err := s.SetProtectedBranches("acme/service", []string{"main", "release"}); err != nil {
 		t.Fatalf("SetProtectedBranches: %v", err)
 	}
-	if err := s.SetProtectedBranches("acme/service", []string{"main"}); err != nil {
+	if _, err := s.SetProtectedBranches("acme/service", []string{"main"}); err != nil {
 		t.Fatalf("SetProtectedBranches (second): %v", err)
 	}
 

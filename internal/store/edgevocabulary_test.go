@@ -19,6 +19,7 @@ func TestTheStoreSpellsEveryValueTheLanguageAccepts(t *testing.T) {
 		{BoundarySameOwner, viewspec.BoundarySameOwner},
 		{BoundaryCrossOwner, viewspec.BoundaryCrossOwner},
 		{ScopeOwned, viewspec.ScopeOwned},
+		{ScopeSupplyChain, viewspec.ScopeSupplyChain},
 		{ScopeExposure, viewspec.ScopeExposure},
 		{RefStyleSHA, viewspec.RefStyleSHA},
 		{RefStyleTag, viewspec.RefStyleTag},

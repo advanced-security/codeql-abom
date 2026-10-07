@@ -70,9 +70,13 @@ func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return nil
 	}
 
+	tokens, err := dbReaderTokens(*dbPath)
+	if err != nil {
+		return fmt.Errorf("build: %w", err)
+	}
 	w := store.NewWriter(s, 0)
 	p := &pipeline.Pipeline{
-		Source:   githubClient(ctx, *apiURL, s),
+		Source:   githubClient(ctx, *apiURL, s, tokens),
 		Runner:   &runner.Runner{CodeQLPath: *codeqlPath, Lock: runner.SharedLock()},
 		Decode:   pipeline.DefaultDecoder(*codeqlPath),
 		Store:    s,

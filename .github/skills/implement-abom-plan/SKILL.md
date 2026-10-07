@@ -238,7 +238,8 @@ partial one removed two correct dependencies from a live repository. The "repair
 added a fabricated dependency which then stayed live for a day, because snapshots do not expire and
 GitHub reports them as fact. So:
 
-- Write only to `advanced-security/codeql-abom-test1` or `-test2`, which exist for this.
+- Write only to the targets that exist for this: `advanced-security/codeql-abom-test1` or `-test2`
+  for dependency snapshots, `has-ghas/test-repo-1`..`3` for default setup.
 - **Ask before the first write to any new target.** Being told to run a plan is not authorization
   for an irreversible action against a third party's system — that inference is exactly what went
   wrong, and "the user re-invoked the skill" is not consent.
@@ -249,6 +250,11 @@ GitHub reports them as fact. So:
 - **Record every write**, including ones made by hand. GitHub offers no way to ask what has been
   submitted to a repository, so a submission nobody wrote down is one nobody can find. A `gh`
   one-liner bypasses ABOM's ledger and recreates exactly the problem the ledger exists to solve.
+- **Measure a new write endpoint by hand before a writer ships against it**, on an approved target,
+  starting with a write that changes nothing. A test's fake encodes what you expected GitHub to do.
+  Default setup's `PATCH` refused any `If-Match` with a 400, which would have failed every write
+  ABOM made, while every test passed. It also answered 202 and applied only after a setup run, and
+  refused `rust`, a language it configures itself.
 - To undo one: same `job.correlator` and `detector.name`, empty `manifests` object. Supersession
   keys on the detector **name**, not its version — verified across three snapshots declaring
   `0.0.1`, `0.0.2` and `0.0.3`. An empty `resolved` inside a manifest is *not* the same thing: it
@@ -295,6 +301,21 @@ status theatre.
   a private repository a token happens to see.
 - GitHub's verification runs only on request, no-fix, on a repository copy, and a category this
   build does not know is inconclusive. Never call it from a read.
+
+## Event-driven checks
+
+- Watch a real delivery on a copy, not on the live instance. A smee channel sends every delivery
+  to every subscriber, so `serve` on a backup with the same `--events-relay` receives exactly what
+  the live one does, and its declaration can change without touching the operator's.
+- A delivery only asks for a read. The read runs in the next cycle of a running loop, so with
+  discovery stopped it stays *read requested*. To run the loop without crawling, start the copy
+  with `--expand-limit 0` (claims nothing), `--recheck-ttl 100000h` (probes nothing) and
+  `--advisory-max-age 0`; its work directory must stay empty.
+- The trigger is a GitHub write, so the write rules above apply. A `repo`-scoped token sets a
+  property value only through `PATCH repos/{owner}/{repo}/properties/values`. The organization
+  endpoint answered 404, and creating a property definition needs `admin:org`.
+- Measured on `has-ghas` (2026-10-07): a value change was read about 4 s after the write, and two
+  deliveries a second apart were read in consecutive cycles, not coalesced.
 
 ## Related
 

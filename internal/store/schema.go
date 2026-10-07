@@ -103,6 +103,8 @@ CREATE TABLE IF NOT EXISTS abom_query_run_rule (
   pack_digest   TEXT,
   source        TEXT,
   documentation_json TEXT,
+  cli_version   TEXT,
+  taken_from    TEXT,
   PRIMARY KEY (query_run_id, rule_id)
 );
 
@@ -702,7 +704,9 @@ CREATE TABLE IF NOT EXISTS abom_graph_generation (
   reach_rebuilt  INTEGER NOT NULL DEFAULT 0,
   rebuild_ms     INTEGER,
   rebuilt_nodes  INTEGER,
-  rebuilt_edges  INTEGER
+  rebuilt_edges  INTEGER,
+  -- Derived from what changed rather than rebuilt; only a rebuild resets the rebuild's schedule.
+  reach_incremental INTEGER NOT NULL DEFAULT 0
 );
 
 -- Every snapshot ABOM has written to GitHub. Append-only, because superseding a submission is a
@@ -751,6 +755,8 @@ var droppedColumns = []struct{ table, column string }{
 }
 
 var addedColumns = []struct{ table, column, decl string }{
+	// Zero for older rows is true: no build before this one read a tree.
+	{"abom_cycle_spend", "tree_reads", "INTEGER NOT NULL DEFAULT 0"},
 	{"abom_query_run_rule", "documentation_json", "TEXT"},
 	{"abom_blast_radius", "refs_in_use", "INTEGER"},
 	{"abom_blast_radius", "dependent_steps", "INTEGER"},
@@ -760,6 +766,8 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_node_reach", "workflows", "INTEGER"},
 	{"abom_finding_sighting", "evidence_json", "TEXT"},
 	{"abom_saved_view", "presentation", "TEXT"},
+	// NULL for a view kept before revisions were recorded, which upgradeSavedViews reads.
+	{"abom_saved_view", "vocabulary", "INTEGER"},
 	// A run recorded before results were retained keeps an empty path, which reads as "nothing was
 	// written" rather than as a file nobody can find.
 	{"abom_analysis_member", "result_path", "TEXT NOT NULL DEFAULT ''"},
@@ -776,6 +784,10 @@ var addedColumns = []struct{ table, column, decl string }{
 	// Existing rows predate the distinction and were all enqueued under a rule that required an
 	// external reference, so runtime is the right answer for them rather than a guess.
 	{"abom_frontier", "supply_chain", "TEXT NOT NULL DEFAULT 'runtime'"},
+	// NULL on a row requeued before the stages were named, which then orders by depth as it did.
+	{"abom_frontier", "requeued_for", "TEXT"},
+	// NULL, not read, on every row queued before pushes were compared.
+	{"abom_frontier", "dependencies_moved", "INTEGER"},
 	{"repository", "origin", "TEXT NOT NULL DEFAULT 'seed'"},
 	// Nullable on purpose. NULL is "nobody enumerated this repository", which a gate has to be
 	// able to tell apart from a branch it knows the name of.
@@ -811,6 +823,11 @@ var addedColumns = []struct{ table, column, decl string }{
 	// Nullable, and rows written before it stay NULL. Defaulting them to a source would invent the
 	// provenance the column exists to establish.
 	{"abom_owned_scope", "declared_by", "TEXT"},
+	{"abom_property_schema", "value_type", "TEXT"},
+	{"abom_enumeration_state", "properties_judged_at", "TEXT"},
+	{"abom_enumeration_state", "properties_unjudged", "INTEGER"},
+	{"abom_property_schema", "values_editable_by", "TEXT"},
+	{"abom_property_schema", "default_values", "TEXT"},
 	// What the token could see when the accounts were read. NULL means nobody asked, which must
 	// not be read as "carried none": one is an unanswered question, the other an answer.
 	{"abom_account", "scopes", "TEXT"},
@@ -839,6 +856,8 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_submission", "package_digest", "TEXT"},
 	// Bumped by compaction, which deletes rows and so ends the meaning of every row-id cursor.
 	{"abom_graph_generation", "epoch", "INTEGER NOT NULL DEFAULT 0"},
+	// Every generation before this was a rebuild, which is what 0 says.
+	{"abom_graph_generation", "reach_incremental", "INTEGER NOT NULL DEFAULT 0"},
 	// Derivable from rows already stored, so existing edges are filled by
 	// ClassifyEdgeBoundaries rather than by re-analysis.
 	{"abom_edge", "boundary", "TEXT"},
@@ -888,6 +907,9 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_query_run", "closure_digest", "TEXT"},
 	// 0 on every run recorded before sightings kept what each commit declared.
 	{"abom_query_run", "sighted_content", "INTEGER NOT NULL DEFAULT 0"},
+	// NULL on every rule recorded before code scanning's analyses could answer for one.
+	{"abom_query_run_rule", "cli_version", "TEXT"},
+	{"abom_query_run_rule", "taken_from", "TEXT"},
 	{"abom_edge_sighting", "dst_node_row_id", "INTEGER REFERENCES abom_node(row_id)"},
 	{"abom_edge_sighting", "ref_raw", "TEXT"},
 	{"abom_edge_sighting", "ref_value", "TEXT"},
@@ -916,6 +938,8 @@ CREATE INDEX IF NOT EXISTS idx_node_kind       ON abom_node(node_kind);
 CREATE INDEX IF NOT EXISTS idx_node_external   ON abom_node(is_external);
 CREATE INDEX IF NOT EXISTS idx_node_repo       ON abom_node(repository_row_id);
 CREATE INDEX IF NOT EXISTS idx_node_container  ON abom_node(container_node_row_id);
+-- A unit is how edgeUnits names a node's container; the edge-fact closures step through one by it.
+CREATE INDEX IF NOT EXISTS idx_node_unit       ON abom_node(COALESCE(container_node_row_id, row_id));
 CREATE INDEX IF NOT EXISTS idx_ledger_status   ON abom_ingest_ledger(status);
 ` + queryRunIndexDDL + `
 ` + observationIndexDDL + `

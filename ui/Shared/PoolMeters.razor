@@ -1,0 +1,261 @@
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@implements IDisposable
+@inject AbomApi Api
+@inject FollowService Follow
+
+@* Beside the discovery controls, because this is what discovery spends. A rate is the operator's,
+   GitHub's figure is a ceiling shared with everything else on the token, and the freshness column
+   is arithmetic on the rate rather than anything promised. *@
+<MudText Typo="Typo.subtitle2" Class="mt-8 mb-1">What each kind of work may spend</MudText>
+<MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
+    Each kind of work draws on a pool, counted in the unit its provider charges. A rate is the most
+    it may spend in an hour. With none set the work is left alone, and only GitHub's own allowance
+    holds it: once nothing is left, requests wait for the reset.
+</MudText>
+
+@if (_report is null)
+{
+    <MudText Typo="Typo.body2" Class="mud-text-secondary" data-abom-pools-loading>
+        @(_error is { Length: > 0 } failed ? "Could not read the pools: " + failed : "Reading the pools\u2026")
+    </MudText>
+}
+else
+{
+    <div data-abom-pools>
+        <MudSimpleTable Dense="true" Hover="true" Striped="false"
+                        Class="abom-grid abom-table abom-config-grid abom-pools">
+            <thead>
+                <tr>
+                    <th><HeaderTip Tip="The kind of work, and what it spends its pool on.">Work</HeaderTip></th>
+                    <th><HeaderTip Tip="The unit the provider charges this work in.">Unit</HeaderTip></th>
+                    <th><HeaderTip Tip="The most this work may spend in an hour, which you set; empty leaves the work alone.">Rate an hour</HeaderTip></th>
+                    <th><HeaderTip Tip="How many may go at once before the rate spaces the rest out.">Burst</HeaderTip></th>
+                    <th><HeaderTip Tip="What the provider charged this work in the last hour, against its rate; a read GitHub answered unchanged is a request it charges nothing for.">Spent, last hour</HeaderTip></th>
+                    <th><HeaderTip Tip="What GitHub reported left on the last answer this work received. Everything on the same token spends it, and GitHub keeps more than one such count, so two kinds of work can see different figures.">GitHub reported</HeaderTip></th>
+                    <th><HeaderTip Tip="How long the work queued behind this pool takes at its rate: an estimate, never a promise.">Freshness at this rate</HeaderTip></th>
+                    <th><HeaderTip Tip="Save the rate and burst typed for this work.">Change</HeaderTip></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var p in _report.Pools)
+                {
+                    var key = Key(p);
+                    <tr data-abom-pool="@key">
+                        <td class="abom-pool-work">
+                            <span>@p.Pool</span>
+                            <MudText Typo="Typo.caption" Class="d-block mud-text-secondary">@p.Work</MudText>
+                        </td>
+                        <td class="abom-pool-unit">@p.Unit</td>
+                        @if (p.Unmetered.Length > 0)
+                        {
+                            <td colspan="5" class="mud-text-secondary" data-abom-unmetered>@p.Unmetered</td>
+                            <td>
+                                @* The reason sits on the span too: a disabled button takes no pointer events. *@
+                                <span title="Nothing in this build draws on this pool, so a rate here would limit nothing.">
+                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Class="abom-requeue"
+                                               Disabled="true"
+                                               title="Nothing in this build draws on this pool, so a rate here would limit nothing.">
+                                        Save
+                                    </MudButton>
+                                </span>
+                            </td>
+                        }
+                        else
+                        {
+                            <td>
+                                <div data-abom-pool-rate class="abom-pool-field">
+                                    <MudTextField T="string" Value="@RateText(p)" ValueChanged="@(v => _rates[key] = v)"
+                                                  Variant="Variant.Outlined" Margin="Margin.Dense" Placeholder="none"
+                                                  aria-label="@($"Rate an hour for {p.Pool}, in {p.Unit}")" />
+                                </div>
+                            </td>
+                            <td>
+                                <div data-abom-pool-burst class="abom-pool-field">
+                                    <MudTextField T="string" Value="@BurstText(p)" ValueChanged="@(v => _bursts[key] = v)"
+                                                  Variant="Variant.Outlined" Margin="Margin.Dense"
+                                                  aria-label="@($"Burst for {p.Pool}, in {p.Unit}")" />
+                                </div>
+                            </td>
+                            <td data-abom-pool-spent>
+                                @if (p.Spend is { } spend)
+                                {
+                                    <span>@spend.LastHour.Charged.ToString("N0")@(p.PerHour is { } rate ? $" of {rate:N0}" : "")</span>
+                                    @if (spend.LastHour.Requests != spend.LastHour.Charged)
+                                    {
+                                        <MudText Typo="Typo.caption" Class="d-block mud-text-secondary">
+                                            for @CountText.Of(spend.LastHour.Requests, "request", "requests")
+                                        </MudText>
+                                    }
+                                    <MudText Typo="Typo.caption" Class="d-block mud-text-secondary">
+                                        @spend.Total.Charged.ToString("N0") in all since @spend.Since.ToUniversalTime().ToString("d MMM HH:mm") UTC
+                                    </MudText>
+                                }
+                                else
+                                {
+                                    <span>None recorded</span>
+                                    <MudText Typo="Typo.caption" Class="d-block mud-text-secondary">
+                                        None is kept: this work has not spent, or not within the history this database keeps.
+                                    </MudText>
+                                }
+                            </td>
+                            <td data-abom-pool-reported>
+                                @if (p.Resource.Length == 0)
+                                {
+                                    <span class="mud-text-secondary">Nothing reports an allowance in @p.Unit.</span>
+                                }
+                                else if (p.Spend?.Reported is { } seen)
+                                {
+                                    <span>@seen.Remaining.ToString("N0")@(seen.Limit is { } limit ? $" of {limit:N0}" : "") left</span>
+                                    <MudText Typo="Typo.caption" Class="d-block mud-text-secondary">
+                                        @(seen.ResetAt is { } reset ? $"resets {reset.ToUniversalTime():HH:mm} UTC, " : "")as of @seen.At.ToUniversalTime().ToString("HH:mm") UTC
+                                    </MudText>
+                                    @if (seen.Remaining == 0)
+                                    {
+                                        <MudText Typo="Typo.caption" Class="d-block abom-unconfirmed">Requests wait for the reset.</MudText>
+                                    }
+                                }
+                                else
+                                {
+                                    <span class="mud-text-secondary">Nothing reported yet.</span>
+                                }
+                            </td>
+                            <td class="abom-pool-estimate" data-abom-pool-estimate>
+                                @if (p.Estimate is { } estimate)
+                                {
+                                    <span>@estimate.Text</span>
+                                    <MudText Typo="Typo.caption" Class="d-block mud-text-secondary">@estimate.Checked</MudText>
+                                }
+                                else
+                                {
+                                    <span class="mud-text-secondary">@p.NoEstimate</span>
+                                }
+                            </td>
+                            <td>
+                                <MudButton Size="Size.Small" Variant="Variant.Outlined" Class="abom-requeue"
+                                           Disabled="_busy" OnClick="@(() => Save(p))"
+                                           title="Save this rate and burst; an empty rate removes the limit and leaves the work to GitHub's own allowance.">
+                                    Save
+                                </MudButton>
+                            </td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+        @if (_outcome is { Length: > 0 } outcome)
+        {
+            <MudText Typo="Typo.body2" Class="@(_refused ? "mt-2 abom-unconfirmed" : "mt-2")" data-abom-pools-outcome>@outcome</MudText>
+        }
+    </div>
+}
+
+@code {
+    private PoolsReport? _report;
+    private string? _error;
+    private string? _outcome;
+    private bool _refused;
+    private bool _busy;
+    private readonly Dictionary<string, string?> _rates = [];
+    private readonly Dictionary<string, string?> _bursts = [];
+    private Timer? _timer;
+    private TimeSpan _beat;
+
+    private static string Key(PoolState p) => $"{p.Pool}/{p.Unit}";
+
+    // What was typed outlives a refresh, so a poll cannot undo an edit in progress.
+    private string? RateText(PoolState p) =>
+        _rates.TryGetValue(Key(p), out var typed) ? typed : p.PerHour?.ToString();
+
+    private string? BurstText(PoolState p) =>
+        _bursts.TryGetValue(Key(p), out var typed) ? typed : p.Burst.ToString();
+
+    protected override async Task OnInitializedAsync()
+    {
+        Follow.Changed += OnFollowChanged;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        var report = await Api.GetPoolsAsync();
+        _report = report ?? _report;
+        _error = report is null ? Api.LastError ?? "the pools endpoint did not answer" : null;
+        ApplyFollow();
+    }
+
+    private async Task Save(PoolState p)
+    {
+        var key = Key(p);
+        int? perHour = null;
+        if (!string.IsNullOrWhiteSpace(RateText(p)))
+        {
+            if (!int.TryParse(RateText(p)!.Trim(), out var parsed))
+            {
+                (_outcome, _refused) = ("A rate is a whole number of units an hour, or empty for none.", true);
+                return;
+            }
+            perHour = parsed;
+        }
+        if (!int.TryParse(BurstText(p)?.Trim(), out var burst))
+        {
+            (_outcome, _refused) = ("A burst is a whole number.", true);
+            return;
+        }
+        _busy = true;
+        try
+        {
+            var (report, refusal) = await Api.SetPoolRateAsync(p.Pool, p.Unit, perHour, burst);
+            if (report is null)
+            {
+                (_outcome, _refused) = ($"Nothing was saved: {refusal}", true);
+                return;
+            }
+            _report = report;
+            _rates.Remove(key);
+            _bursts.Remove(key);
+            (_outcome, _refused) = (perHour is null
+                ? $"{p.Pool} in {p.Unit} has no rate now, so only GitHub's own allowance holds it."
+                : $"{p.Pool} may now spend {perHour:N0} {p.Unit} an hour, {burst:N0} at once.", false);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void OnFollowChanged()
+    {
+        ApplyFollow();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void ApplyFollow()
+    {
+        if (_timer is not null && Follow.Interval == _beat)
+        {
+            return;
+        }
+        _timer?.Dispose();
+        _beat = Follow.Interval;
+        _timer = new Timer(async _ =>
+        {
+            // Nothing awaits a timer callback, so a failure is kept where the panel can say it.
+            try
+            {
+                await Load();
+            }
+            catch (Exception ex)
+            {
+                _error = ex.Message;
+            }
+            await InvokeAsync(StateHasChanged);
+        }, null, _beat, _beat);
+    }
+
+    public void Dispose()
+    {
+        Follow.Changed -= OnFollowChanged;
+        _timer?.Dispose();
+    }
+}

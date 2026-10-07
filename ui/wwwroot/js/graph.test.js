@@ -12,7 +12,7 @@ import {
     drawnAsRegion, nodeBrief, clampToCanvas, shortRef, isDarkBackground, settledRegions, buttonMap,
     containmentIntoRegion, hoveredRegion, fitDistance, coreBounds, gravityForce, spreadFor, seedAt,
     fitMargin, nearestTo, withDependencies, clickAction, scopeFilters, isClick, answersScope,
-    focusKeys, viewCaption, drawDecision, DRAW_CEILING,
+    focusKeys, viewCaption, drawDecision, DRAW_CEILING, answersOrigins,
 } from './graph.js';
 import { withAlpha, coverageColor } from './appearance.js';import { hullOf, inflate, containsPoint, overlapArea, groupSizes } from './regions.js';
 
@@ -1552,6 +1552,18 @@ test('coverage is colored by how much of a node has been analyzed, not by a queu
     assert.equal(coverageColor({ refsInUse: 5, refsAnalyzed: 0 }, palette), palette.discovery.queued);
 });
 
+// The legend names every queue state. A node none of whose references was analyzed carries the
+// state that says why, and painting it queued would claim it is still waiting.
+test('a node with nothing analyzed shows its own state under the coverage view', () => {
+    const palette = { muted: '#555',
+        discovery: { queued: '#fc0', done: '#0c8', unavailable: '#f00', nothing: '#80f' } };
+
+    assert.equal(coverageColor({ refsInUse: 1, refsAnalyzed: 0, discovery: 'nothing' }, palette), '#80f');
+    assert.equal(coverageColor({ refsInUse: 2, refsAnalyzed: 0, discovery: 'unavailable' }, palette), '#f00');
+    // A fold carries no single state, so one with nothing analyzed is still waiting.
+    assert.equal(coverageColor({ refsInUse: 5, refsAnalyzed: 0 }, palette), '#fc0');
+});
+
 test('a node that was never a dependency keeps saying so under the coverage view', () => {
     const palette = { muted: '#555', discovery: { queued: '#fc0', done: '#0c8' } };
 
@@ -1966,4 +1978,28 @@ test('a node with no measurement does not travel as one with zero', () => {
 
     assert.equal(brief.reachKnown, false);
     assert.equal(brief.dependentRepos, 0);
+});
+
+test('a brief says whether the declaration makes the node yours', () => {
+    const yours = nodeBrief({ key: 'octo/app/.github/workflows/ci.yml', kind: 'workflow', origin: 'seed', owned: true });
+    const seeded = nodeBrief({ key: 'other/tool/.github/workflows/ci.yml', kind: 'workflow', origin: 'seed' });
+
+    assert.equal(yours.owned, true);
+    assert.equal(seeded.owned, false, 'a starting point nobody declared travelled as yours');
+});
+
+// The server applies origins, and the browser applies them again to what it holds. Owned is the
+// declaration's answer rather than a provenance, so it is asked of its own field.
+test('origins=owned keeps what is yours, and seed still keeps every starting point', () => {
+    const yours = { key: 'octo/app', origin: 'seed', owned: true };
+    const seeded = { key: 'other/tool', origin: 'seed' };
+    const external = { key: 'actions/checkout', origin: '' };
+
+    assert.equal(answersOrigins(yours, new Set(['owned'])), true);
+    assert.equal(answersOrigins(seeded, new Set(['owned'])), false);
+    assert.equal(answersOrigins(yours, new Set(['seed'])), true);
+    assert.equal(answersOrigins(seeded, new Set(['seed'])), true);
+    assert.equal(answersOrigins(external, new Set(['external'])), true);
+    assert.equal(answersOrigins(external, new Set(['owned', 'seed'])), false);
+    assert.equal(answersOrigins(seeded, new Set()), true, 'no origin asked narrowed something');
 });

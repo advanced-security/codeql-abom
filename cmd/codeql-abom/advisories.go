@@ -7,15 +7,11 @@ import (
 	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/advisory"
+	"github.com/advanced-security/codeql-abom/internal/ghapp"
 	"github.com/advanced-security/codeql-abom/internal/ingest"
 	"github.com/advanced-security/codeql-abom/internal/store"
 	"github.com/advanced-security/codeql-abom/internal/work"
 )
-
-// advisoryRateLimitPerHour paces the advisory endpoint well under the authenticated budget of
-// 5000 an hour, because discovery is the crawl's real work and must not be starved of quota by
-// enrichment running beside it.
-const advisoryRateLimitPerHour = 600
 
 // fetcher is the shape of advisory.Client.Fetch, named so the refresh can be tested without a
 // server standing in for GitHub.
@@ -25,12 +21,15 @@ type fetcher func(ctx context.Context, packages []string) ([]advisory.Advisory, 
 //
 // Unauthenticated it would be 60 requests an hour, which an organization-sized package list
 // exhausts in one pass, so a gh login is used when the environment provides no token.
-func newAdvisor(s *store.Store, logTo io.Writer) func(context.Context) (int, error) {
+func newAdvisor(s *store.Store, tokens ghapp.TokenSource, logTo io.Writer) func(context.Context) (int, error) {
 	client := &advisory.Client{
+		Tokens: tokens,
+		Pace:   processPools.Pool(work.PoolAdvisories, work.UnitREST),
+	}
+	if tokens == nil {
 		// Background because this is startup wiring, not a request: the credential is read
 		// once, before there is a cycle to cancel.
-		Token: githubToken(context.Background()),
-		Pace:  work.NewLimiter(advisoryRateLimitPerHour),
+		client.Token = githubToken(context.Background())
 	}
 	return advisorFor(s, client.Fetch, logTo)
 }

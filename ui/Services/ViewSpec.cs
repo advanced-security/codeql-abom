@@ -43,6 +43,12 @@ public sealed record ViewSpec
     public IReadOnlyList<string> Policies { get; init; } = [];
 
     /// <summary>
+    /// The classes an Actions code scanning reading puts a repository in. Only the repositories
+    /// unit applies it: a node has no setup of its own.
+    /// </summary>
+    public IReadOnlyList<string> CodeScanning { get; init; } = [];
+
+    /// <summary>
     /// Where the query behind a finding's rule came from, as the evaluation that reported it
     /// recorded. A finding none recorded a source for matches no source.
     /// </summary>
@@ -108,6 +114,7 @@ public sealed record ViewSpec
     private const string ParamAdvisorySeverity = "advisorySeverity";
     private const string ParamReached = "reached";
     private const string ParamPolicies = "policies";
+    private const string ParamCodeScanning = "codeScanning";
     private const string ParamSources = "source";
     private const string ParamEdgeClass = "edges";
     private const string ParamEdgeKinds = "edgeKinds";
@@ -127,7 +134,7 @@ public sealed record ViewSpec
     // Fixed vocabularies mirror `internal/view`; unknown values must be refused before SQL.
     private static readonly Dictionary<string, string[]> Vocabulary = new()
     {
-        [ParamScope] = ["owned", "exposure"],
+        [ParamScope] = ["owned", "supply-chain", "exposure"],
         [ParamBoundary] = ["same-repository", "same-owner", "cross-owner"],
         [ParamRefStyle] = ["any", "sha", "tag"],
         [ParamMode] = ["regular", "extended"],
@@ -137,7 +144,7 @@ public sealed record ViewSpec
             "org", "repo", "workflow", "reusable_workflow", "composite_action", "action",
             "docker_image", "job", "step",
         ],
-        [ParamOrigins] = ["seed", "upstream", "external"],
+        [ParamOrigins] = ["owned", "seed", "upstream", "external"],
         [ParamFlags] = ["findings", "advisory", "unanalyzed"],
         [ParamSecuritySeverity] = ["critical", "high", "medium", "low", "unknown"],
         [ParamAdvisorySeverity] = ["critical", "high", "medium", "low", "unrated"],
@@ -147,6 +154,12 @@ public sealed record ViewSpec
         [
             "step-uses-action", "job-needs-job", "job-uses-reusable-workflow",
             "composite-step-uses-action",
+        ],
+        [ParamCodeScanning] =
+        [
+            "not-owned", "not-listed", "conflict", "advanced", "unreadable", "not-read", "covered",
+            "no-actions-code", "not-crawled", "not-detected", "blocked-by-configuration",
+            "actions-not-allowed", "language-not-writable", "add", "enable", "unknown",
         ],
     };
 
@@ -200,7 +213,7 @@ public sealed record ViewSpec
                      (ParamEdgeClass, EdgeClass), (ParamEdgeKinds, EdgeKinds),
                      (ParamFlags, Flags), (ParamSecuritySeverity, SecuritySeverities),
                      (ParamAdvisorySeverity, AdvisorySeverities), (ParamReached, Reached),
-                     (ParamPolicies, Policies),
+                     (ParamPolicies, Policies), (ParamCodeScanning, CodeScanning),
                  })
         {
             var normalized = Normalize(values);
@@ -239,7 +252,7 @@ public sealed record ViewSpec
             mode = "";
         IReadOnlyList<string> kinds = [], origins = [], rules = [], edges = [], edgeKinds = [],
             flags = [], notRules = [], repositories = [], sources = [], bands = [],
-            advisorySeverities = [], reached = [], policies = [];
+            advisorySeverities = [], reached = [], policies = [], codeScanning = [];
         List<PropertyMatch> properties = [], notProperties = [];
         List<string> at = [];
         var minReach = 0;
@@ -274,6 +287,7 @@ public sealed record ViewSpec
                 case ParamAdvisorySeverity: advisorySeverities = VettedList(key, raw); break;
                 case ParamReached: reached = VettedList(key, raw); break;
                 case ParamPolicies: policies = Normalize(raw.Split(',')); break;
+                case ParamCodeScanning: codeScanning = VettedList(key, raw); break;
                 case ParamSources: sources = VettedList(key, raw); break;
                 case ParamEdgeClass: edges = VettedList(key, raw); break;
                 case ParamEdgeKinds: edgeKinds = VettedList(key, raw); break;
@@ -307,6 +321,7 @@ public sealed record ViewSpec
             Provider = provider, Severity = severity, Mode = mode, Sources = sources,
             SecuritySeverities = bands,
             AdvisorySeverities = advisorySeverities, Reached = reached, Policies = policies,
+            CodeScanning = codeScanning,
             Kinds = kinds, Origins = origins, Rules = rules, NotRules = notRules,
             Repositories = repositories,
             Properties = properties, NotProperties = notProperties,

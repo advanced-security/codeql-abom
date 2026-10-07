@@ -1,6 +1,8 @@
 # Check the graph against the world, continuously
 
-**Status:** not built. The source-extraction comparison it generalizes is planned, and not built, in
+**Status:** the internal checks 7 to 9 run as `codeql-abom check`, filing results, a per-build trend
+and a disagreement queue behind `/api/checks`; every check that spends API budget or CodeQL is not
+built, and says so. The source-extraction comparison check 1 generalizes is planned in
 [`api/dependency-graph-crosscheck.md`](../api/dependency-graph-crosscheck.md).
 
 ## Why this exists
@@ -20,7 +22,7 @@ correctness, running beside ABOM, feeding development until the project is ready
 ## Decisions
 
 - **A separate process inside the same binary**, with its own mode, its own token pool and meter
-  ([`api/change-ingestion.md`](../api/change-ingestion.md)), reading the store — a replica, on
+  ([pools](../../docs/architecture.md#the-pipeline)), reading the store — a replica, on
   PostgreSQL — and writing only its own tables. It never writes anything the graph reads.
 - **Report only.** Per-build fidelity trends and a disagreement queue; no release gate.
 - **Run logs are transitive ground truth**, sampled under the checker's pool, once it has been
@@ -47,11 +49,12 @@ be matched is skipped and counted rather than compared.
 | 6 | An owned repository's reach | A CodeQL walk over its closure database, sharing no code with the Go walk ([`ql/reachability-crosscheck.md`](../ql/reachability-crosscheck.md)) | derivation, coverage |
 | 7 | Incrementally maintained reach, exposure, closure | The wholesale recompute | derivation |
 | 8 | Exposure, closure and reach | Each other, on every owned repository | derivation |
-| 9 | Graph-wide invariants | — | derivation: a walk reading unknown content, a live commit with no evidence unreported, units that do not reconcile |
+| 9 | Graph-wide invariants | — | derivation: a walk reading unknown content, a live commit with no evidence unreported, units that do not reconcile, a location a starting point reaches whose target changed kind between commits |
 | 10 | The freshness each pool's estimate shows | The lag checks 3 and 4 measured | an estimate that is not one |
+| 11 | Work put back is done when claimed | The ledger after the cycle that claimed it | two definitions of done that disagree: a loop |
 
-Checks 1–5 spend API budget and check 6 spends CodeQL capacity, so all six are sampled; 7–9 spend
-neither and run exhaustively where affordable.
+Checks 1–5 spend API budget and check 6 spends CodeQL capacity, so all six are sampled; 7–9 and 11
+spend neither and run exhaustively where affordable.
 Samples take **what changed most recently first**, so a regression shows within hours of the build
 that caused it, and a **stratified random baseline** whose bound is stated: zero disagreements in 300
 samples bounds the rate below 1% at 95% confidence, and is reported as that, not as "correct".
@@ -61,26 +64,41 @@ versions. It is classified by rule, never by the agent.
 
 ## Pending
 
-1. **Results and the queue in the store**, keyed by ABOM build, check and sample, with the per-build
-   trend and the queue behind an endpoint. Nothing else depends on, so this is first.
-2. **The internal checks, 7 to 9.** No API spend, so they can run on the crawled organization now,
-   and they are what will catch an incremental derivation the day it diverges. Depends on 1.
-3. **The checker's pool and meter.** Depends on 1, and on token pools in
-   [`api/change-ingestion.md`](../api/change-ingestion.md).
-4. **The external checks, 1 to 4.** Check 1 is the comparison
+1. **The checker's pool and meter.** The token pools are built, with a `consistency checker`
+   pool in worker-seconds that nothing draws from yet; the checker's reads and evaluations draw from
+   it.
+2. **The external checks, 1 to 4.** Check 1 is the comparison
    [`api/dependency-graph-crosscheck.md`](../api/dependency-graph-crosscheck.md) plans as a one-off,
-   run continuously; check 2 carries its rules about producers and default branches. Depends on 3.
-5. **Measure what run logs record, then check 5.** Before any run log is compared, find out which
+   run continuously; check 2 carries its rules about producers and default branches. Depends on
+   the checker's pool and meter.
+3. **Measure what run logs record, then check 5.** Before any run log is compared, find out which
    downloads job setup logs — nested composite steps, reusable workflows, Docker actions, actions a
    self-hosted runner already holds, steps whose `if:` was false — on consented repositories.
    Whatever it does not log is excluded from the check and named, not treated as absent. Depends
-   on 3.
-6. **Check 6 as a sample, once the reachability crosscheck reports its comparison.** It is that
-   plan's walk, run continuously over sampled owned repositories rather than once. Depends on 1.
-7. **The agent.** A session from a queue entry, under the authoring sessions' confinement, its own
-   credit pool, and a workspace holding the reproduction and a draft failing fixture. Depends on 1.
-8. **The interface.** The queue, the per-build trends and the meters, beside the pools the operator
+   on the checker's pool and meter. Run logs read with repository Actions read, which the App holds
+   for this item. Each completed `workflow_run` is already kept in `abom_workflow_run` with the
+   reusable workflows it called at their commits, and `/api/checks` shows that frame on check 5:
+   which runs exist to sample, and since when.
+4. **Check 6 as a sample, once the reachability crosscheck reports its comparison.** It is that
+   plan's walk, run continuously over sampled owned repositories rather than once.
+5. **The agent.** A session from a queue entry, under the authoring sessions' confinement, its own
+   credit pool, and a workspace holding the reproduction and a draft failing fixture.
+6. **The interface.** The queue, the per-build trends and the meters, beside the pools the operator
    sets.
+7. **Check 11, from the queue and the ledger alone.** A row put back for a reason and settled
+   without a new run, twice, is a loop: two definitions of done that disagree, with the crawl's
+   claims spent on them. Re-observation and the skip disagreed about **97 commits for 3.7 hours** on
+   the crawled organization — every claim spent on them, nothing ingested, and every cycle logged
+   as progress because it settled something. The disagreement is the finding; which definition is
+   right is the agent's to investigate, never the check's to repair.
+
+**What the built checks cost**, on a copy of the crawled organization: a run takes about 36 s and
+half a gigabyte. Check 7 is one wholesale rebuild on a snapshot (about 21 s) beside the incremental
+derivation on another; check 8 is about 14 s, nearly all of it two submission closures per owned
+repository at about 245 ms each, so it grows with what is owned and its closures should share one
+read of the live commits before an organization of thousands; check 9 is under a second. Checks 7
+and 8 read snapshots taken with `VACUUM INTO`, so the checker never writes a graph table and never
+migrates the database it reads.
 
 ## The constraints that must not be broken
 
@@ -105,5 +123,9 @@ classification is a suggestion beside the rule's; its fixture is a draft until s
   the `pre-commit/action` divergence found by hand, without being pointed at it.
 - A mutant build that drops one kind of declaration is caught by the next sample of recently changed
   commits, and the per-build trend shows when it started.
-- Checks 7 to 9 agree on the crawled organization, or each disagreement is named and explained.
 - With the checker stopped, every other pool's meter is unchanged.
+- With events disabled, check 4 measures the lag the 24-hour sweep leaves on owned branches. The
+  sweep runs only once nothing reached is unanalyzed, and a copy of the crawled organization queued
+  98 dependencies never queued before on its first drained cycle, which held it off.
+- Check 10 agrees with checks 3 and 4 per pool on the crawled organization, or names the pool whose
+  estimate differs from the lag measured.

@@ -31,6 +31,10 @@ type QueryRunRule struct {
 	Pack         string
 	PackVersion  string
 	PackDigest   string
+	// CLIVersion is the CodeQL that evaluated the rule, where it is not the run's.
+	CLIVersion string
+	// TakenFrom names the code scanning analysis whose results stand for the rule; empty where ABOM evaluated it.
+	TakenFrom string
 }
 
 // ErrNoFinding is a finding the store does not hold.
@@ -62,7 +66,9 @@ type FindingEvaluation struct {
 	PackDigest  string   `json:"packDigest"`
 	Source      string   `json:"source"`
 	CLIVersion  string   `json:"cliVersion"`
-	Mode        string   `json:"mode"`
+	// TakenFrom names the code scanning analysis whose result this is; empty where ABOM evaluated the rule.
+	TakenFrom string `json:"takenFrom"`
+	Mode      string `json:"mode"`
 	// Repository is what the evaluation analyzed: the finding's own repository for one checkout,
 	// and the owned repository whose closure reached the finding for a closure.
 	Repository string       `json:"repository"`
@@ -129,19 +135,22 @@ func (s *Store) recordRunRules(runID int64, rules []QueryRunRule) error {
 	defer func() { _ = tx.Rollback() }()
 	stmt, err := tx.Prepare(`
 		INSERT INTO abom_query_run_rule
-			(query_run_id, rule_id, query_version, pack, pack_version, pack_digest, source)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+			(query_run_id, rule_id, query_version, pack, pack_version, pack_digest, source, cli_version, taken_from)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(query_run_id, rule_id) DO UPDATE SET
 			query_version = COALESCE(abom_query_run_rule.query_version, excluded.query_version),
 			pack_version  = COALESCE(abom_query_run_rule.pack_version, excluded.pack_version),
-			pack_digest   = COALESCE(abom_query_run_rule.pack_digest, excluded.pack_digest)`)
+			pack_digest   = COALESCE(abom_query_run_rule.pack_digest, excluded.pack_digest),
+			cli_version   = COALESCE(abom_query_run_rule.cli_version, excluded.cli_version),
+			taken_from    = COALESCE(abom_query_run_rule.taken_from, excluded.taken_from)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 	for _, r := range merged {
 		if _, err := stmt.Exec(runID, r.RuleID, nullable(r.QueryVersion), nullable(r.Pack),
-			nullable(r.PackVersion), nullable(r.PackDigest), nullable(sourceOfPack(r.Pack))); err != nil {
+			nullable(r.PackVersion), nullable(r.PackDigest), nullable(sourceOfPack(r.Pack)),
+			nullable(r.CLIVersion), nullable(r.TakenFrom)); err != nil {
 			return fmt.Errorf("recording rule %s: %w", r.RuleID, err)
 		}
 	}
@@ -274,8 +283,8 @@ func (s *Store) findingTrace(id int64, mode, ordering string, orderArgs []any) (
 	query := `
 		SELECT q.row_id, q.query_id, COALESCE(q.pack, ''), COALESCE(qr.query_version, ''),
 		       COALESCE(qr.pack, ''), COALESCE(qr.pack_version, ''), COALESCE(qr.pack_digest, ''),
-		       COALESCE(qr.source, ''), COALESCE(q.cli_version, ''), q.analysis_mode, q.repository,
-		       COALESCE(q.db_commit, ''), q.ran_at, COALESCE(q.recorded_by, '')
+		       COALESCE(qr.source, ''), COALESCE(qr.cli_version, q.cli_version, ''), COALESCE(qr.taken_from, ''),
+		       q.analysis_mode, q.repository, COALESCE(q.db_commit, ''), q.ran_at, COALESCE(q.recorded_by, '')
 		FROM abom_finding_sighting sg
 		JOIN abom_query_run q ON q.row_id = sg.query_run_id
 		LEFT JOIN abom_query_run_rule qr ON qr.query_run_id = q.row_id AND qr.rule_id = ?
@@ -295,7 +304,7 @@ func (s *Store) findingTrace(id int64, mode, ordering string, orderArgs []any) (
 		e := FindingEvaluation{Runs: []FindingRun{}}
 		var packs string
 		if err := rows.Scan(&e.QueryRunID, &e.Invoked, &packs, &e.RuleVersion, &e.Pack, &e.PackVersion,
-			&e.PackDigest, &e.Source, &e.CLIVersion, &e.Mode, &e.Repository, &e.Commit, &e.RanAt,
+			&e.PackDigest, &e.Source, &e.CLIVersion, &e.TakenFrom, &e.Mode, &e.Repository, &e.Commit, &e.RanAt,
 			&e.RecordedBy); err != nil {
 			rows.Close()
 			return out, err

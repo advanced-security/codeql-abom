@@ -54,42 +54,73 @@ func (s *Store) FindingsAtCommits(key string, commits []string) (map[string]Vers
 
 func (s *Store) findingsAtCommit(key, repository, commit string) (VersionFindings, bool, error) {
 	var out VersionFindings
-	const runs = `
+	ids, reached, err := s.findingIDsAtCommit(key, repository, commit)
+	if err != nil || !reached {
+		return out, false, err
+	}
+	list, args := idList(ids)
+	if err := s.db.QueryRow(`SELECT COUNT(*), `+bandSums("security_severity")+`
+		  FROM abom_finding_regular WHERE row_id IN `+list, args...).
+		Scan(append([]any{&out.Count}, out.Severity.targets()...)...); err != nil {
+		return out, false, fmt.Errorf("counting findings of %q at %s: %w", key, commit, err)
+	}
+	return out, true, nil
+}
+
+// findingIDsAtCommit lists the findings runs at a commit reported in one dependency's own code, and
+// whether any findings run reached that commit at all.
+func (s *Store) findingIDsAtCommit(key, repository, commit string) ([]int64, bool, error) {
+	runs, err := s.runsAtCommit(repository, commit, `q.ran_at >= (SELECT MIN(fq.ran_at)
+		FROM abom_finding_sighting fs JOIN abom_query_run fq ON fq.row_id = fs.query_run_id)
+		AND `+findingsRun("q"))
+	if err != nil || len(runs) == 0 {
+		return nil, false, err
+	}
+	list, args := idList(runs)
+	ids, err := queryAll(s, "reading findings at a commit", scanID, `
+		SELECT DISTINCT f.row_id FROM abom_finding_regular f
+		  JOIN abom_finding_node fn ON fn.finding_row_id = f.row_id
+		  JOIN abom_node_live n ON n.row_id = fn.node_row_id AND n.node_key = ?
+		  JOIN abom_finding_sighting sg ON sg.finding_row_id = f.row_id
+		 WHERE sg.query_run_id IN `+list, append([]any{key}, args...)...)
+	return ids, true, err
+}
+
+// runsAtCommit lists the regular runs `also` admits of a repository at a commit, or at one whose
+// indexed content is identical, which the crawl settled without analyzing again.
+//
+// A findings run older than the first sighting on record is no evidence either way: its
+// sightings, had it made any, were never written. That is the findings caller's `also`.
+func (s *Store) runsAtCommit(repository, commit, also string) ([]int64, error) {
+	return queryAll(s, "reading runs at a commit", scanID, `
 		WITH answering(commit_sha) AS (
-			SELECT ?3
+			SELECT ?2
 			UNION
 			SELECT LOWER(b.commit_sha) FROM abom_commit_content a
 			  JOIN abom_commit_content b
 			    ON b.repository = a.repository AND b.indexed_digest = a.indexed_digest
-			 WHERE LOWER(a.repository) = ?2 AND LOWER(a.commit_sha) = ?3
-		),
-		runs AS (
-			SELECT q.row_id FROM abom_query_run q
-			 WHERE q.analysis_mode = 'regular' AND LOWER(q.repository) = ?2
-			   AND LOWER(q.db_commit) IN (SELECT commit_sha FROM answering)
-			   AND q.ran_at >= (SELECT MIN(fq.ran_at) FROM abom_finding_sighting fs
-			                      JOIN abom_query_run fq ON fq.row_id = fs.query_run_id)
-			   AND `
-	var reached bool
-	if err := s.db.QueryRow(runs+findingsRun("q")+`)
-		SELECT EXISTS (SELECT 1 FROM runs)`, key, repository, commit).Scan(&reached); err != nil {
-		return out, false, fmt.Errorf("reading findings runs of %q at %s: %w", key, commit, err)
+			 WHERE LOWER(a.repository) = ?1 AND LOWER(a.commit_sha) = ?2)
+		SELECT q.row_id FROM abom_query_run q
+		 WHERE q.analysis_mode = 'regular' AND LOWER(q.repository) = ?1
+		   AND LOWER(q.db_commit) IN (SELECT commit_sha FROM answering) AND `+also,
+		repository, commit)
+}
+
+func scanID(r *sql.Rows) (int64, error) {
+	var id int64
+	return id, r.Scan(&id)
+}
+
+// idList renders row ids as an IN list; an empty one matches nothing.
+func idList(ids []int64) (string, []any) {
+	if len(ids) == 0 {
+		return "(NULL)", nil
 	}
-	if !reached {
-		return out, false, nil
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
 	}
-	if err := s.db.QueryRow(runs+findingsRun("q")+`)
-		SELECT COUNT(*), `+bandSums("score")+`
-		  FROM (SELECT DISTINCT f.row_id, f.security_severity AS score
-		          FROM abom_finding_regular f
-		          JOIN abom_finding_node fn ON fn.finding_row_id = f.row_id
-		          JOIN abom_node_live n ON n.row_id = fn.node_row_id AND n.node_key = ?1
-		          JOIN abom_finding_sighting sg ON sg.finding_row_id = f.row_id
-		         WHERE sg.query_run_id IN (SELECT row_id FROM runs))`,
-		key, repository, commit).Scan(append([]any{&out.Count}, out.Severity.targets()...)...); err != nil {
-		return out, false, fmt.Errorf("counting findings of %q at %s: %w", key, commit, err)
-	}
-	return out, true, nil
+	return "(" + placeholders(len(ids)) + ")", args
 }
 
 // Queue states as a reader reads them, for one dependency's references.

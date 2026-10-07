@@ -85,7 +85,7 @@ func TestAClosureRunMovesNoReaderOfTheRegularLedger(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		node, err := s.NodeDetailOf("octo/app/.github/workflows/ci.yml")
+		node, err := s.NodeDetailOf("octo/app/.github/workflows/ci.yml", nil)
 		if err != nil {
 			t.Fatal(err)
 		}

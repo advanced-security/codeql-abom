@@ -7,8 +7,11 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
+	"github.com/advanced-security/codeql-abom/internal/ghapp"
 	"github.com/advanced-security/codeql-abom/internal/work"
 )
 
@@ -27,9 +30,12 @@ type Client struct {
 	BaseURL string
 	// Token authenticates requests. Without one the API allows 60 requests an hour, which is
 	// too few for an organization-sized package list.
-	Token     string
+	Token string
+	// Tokens, when set, reads with the App's designated installation instead of Token.
+	Tokens    ghapp.TokenSource
 	BatchSize int
-	Pace      *work.Limiter
+	// Pace is the pool advisory reads draw on. Nil asks without limit and records nothing.
+	Pace *work.TokenPool
 	// OnBatch reports progress; batches is the total, done the number completed.
 	OnBatch func(done, batches, advisories int)
 }
@@ -104,8 +110,15 @@ func (c *Client) get(ctx context.Context, endpoint string) ([]Advisory, string, 
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
+	token := c.Token
+	if c.Tokens != nil {
+		// Advisories belong to no account, so the designated installation reads them.
+		if token, _, err = c.Tokens.Token(ctx, ""); err != nil {
+			return nil, "", fmt.Errorf("choosing a credential for advisories: %w", err)
+		}
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	resp, err := c.httpClient().Do(req)
@@ -113,6 +126,7 @@ func (c *Client) get(ctx context.Context, endpoint string) ([]Advisory, string, 
 		return nil, "", fmt.Errorf("querying advisories: %w", err)
 	}
 	defer resp.Body.Close()
+	c.account(resp)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
@@ -130,6 +144,31 @@ func (c *Client) get(ctx context.Context, endpoint string) ([]Advisory, string, 
 		return nil, "", err
 	}
 	return page, nextLink(resp.Header.Get("Link")), nil
+}
+
+// account records what GitHub charged the answer and what it reported left. A refusal for want of
+// budget charged nothing; nothing here reads conditionally, so every other answer cost one.
+func (c *Client) account(resp *http.Response) {
+	refused := resp.StatusCode == http.StatusTooManyRequests ||
+		(resp.StatusCode == http.StatusForbidden && resp.Header.Get("X-RateLimit-Remaining") == "0")
+	charged := 1
+	if refused {
+		charged = 0
+	}
+	c.Pace.Spend(1, charged)
+	if resource := resp.Header.Get("X-RateLimit-Resource"); resource != "" && !strings.EqualFold(resource, work.ResourceCore) {
+		return
+	}
+	remaining, err := strconv.Atoi(resp.Header.Get("X-RateLimit-Remaining"))
+	if err != nil {
+		return
+	}
+	seen := work.Reading{Known: true, Remaining: remaining}
+	seen.Limit, _ = strconv.Atoi(resp.Header.Get("X-RateLimit-Limit"))
+	if reset, err := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64); err == nil {
+		seen.ResetAt = time.Unix(reset, 0)
+	}
+	c.Pace.Observe(seen)
 }
 
 // nextRel matches the cursor-paginated next link; the API paginates by cursor, so the URL

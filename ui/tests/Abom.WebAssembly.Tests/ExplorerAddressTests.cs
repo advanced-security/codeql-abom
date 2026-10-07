@@ -178,9 +178,9 @@ public class ExplorerAddressTests : AbomTestContext
         var kinds = (string[])filter.GetType().GetProperty("kinds")!.GetValue(filter)!;
         Assert.Equal(7, kinds.Length);
         Assert.DoesNotContain("flags=", query);
-        // A node still has to be drawn inside something, and ownership is the one closure that is
-        // not a guess about size — it is what the operator declared.
-        Assert.Contains("scope=owned", query);
+        // A node still has to be drawn inside something, and the declared closure is the one that
+        // is not a guess about size. What you own alone would not hold the dependency handed off.
+        Assert.Contains("scope=supply-chain", query);
     }
 
     /// <summary>

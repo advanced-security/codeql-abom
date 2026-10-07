@@ -33,9 +33,13 @@ var corpusDerivedValues = map[string]struct{ column, from string }{
 // the key is the first of its two choices, and what a control ranks is what it opens onto.
 var countedElsewhere = map[string]struct{ column, from string }{
 	"repositories":  {"repository_full_name", "repository"},
-	"properties":    {"property_name", "abom_repository_property"},
-	"notProperties": {"property_name", "abom_repository_property"},
+	"properties":    {"property_name", ownedPropertyRows},
+	"notProperties": {"property_name", ownedPropertyRows},
 }
+
+// ownedPropertyRows are the property values of owned repositories, the only ones a filter may name.
+var ownedPropertyRows = `(SELECT p.property_name FROM abom_repository_property p WHERE ` +
+	ownedFullName("p.repository_full_name") + `)`
 
 // FilterValueCounts reports how many values each corpus-derived term has.
 //

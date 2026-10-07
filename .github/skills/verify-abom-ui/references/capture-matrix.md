@@ -14,7 +14,7 @@ Capture at 1440×900 unless a check says otherwise.
 | 5 | Inventory — findings review | open a finding | Recorded query help, locations and code flows fit without horizontal overflow |
 | 5 | Inventory — advisories unit | switch unit | Direct/transitive split; the line naming advisories that reach nothing |
 | 6 | Inventory — a named view | click a tab | The tab reads as selected and the scope in the address matches its predicate |
-| 7 | Inventory — property scope | narrow by a property value | The count of repositories carrying no value is stated beside the filtered total |
+| 7 | Inventory — narrowed by a property | narrow by a property value | The count of repositories carrying no value is stated beside the filtered total |
 | 8 | Inventory — a refused scope | arrive with `?severity=high` | The refusal names the term rather than showing an empty grid |
 | 9 | Explorer — neighborhood, repository granularity | focus `actions/checkout`, hops 1 | Hub occlusion, label collision at ~200 nodes |
 | 10 | Explorer — workflow granularity | same focus | Hairball threshold; whether truncation is disclosed |
@@ -32,6 +32,7 @@ Capture at 1440×900 unless a check says otherwise.
 | 22 | Empty state | point at a database with no advisories | That "nothing found" is distinct from "not yet analyzed" |
 | 23 | Server unreachable | stop the server with a page open and following | The page says it lost the server rather than freezing on stale data |
 | 24 | Narrow viewport | 900×700 | Reflow, truncation, whether the graph becomes unusable; whether tabs and units wrap readably |
+| 25 | Settings — property scopes | declare an organization by property, then press Add property scope | Each scope is one line with its count; a held one says why and shows no count; a value as long as a config path wraps beside its remove button; naming the default is warned on the line and in the editor |
 
 ## Notes
 

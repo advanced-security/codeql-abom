@@ -323,6 +323,8 @@ func unitScopeFilter(scope string) string {
 		return ` AND EXISTS (SELECT 1 FROM abom_exposure x
 		                      WHERE x.repository_row_id = n.repository_row_id)`
 	case ScopeOwned:
+		return ` AND n.row_id IN (` + ownedNodes + `)`
+	case ScopeSupplyChain:
 		return ` AND n.row_id IN (` + scopeNodes(declaredRoots, AnalysisModeRegular) + `)`
 	}
 	return ""

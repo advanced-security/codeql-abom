@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -284,6 +285,43 @@ func (s *Store) nextGeneration(bumpEpoch bool) (int64, error) {
 		return 0, fmt.Errorf("recording a generation: %w", err)
 	}
 	return res.LastInsertId()
+}
+
+// reviveNamedBy brings back every removed node that one of the given live edges names, or that any
+// live edge names when keys is nil, and reports how many came back. A live edge under a removed
+// node says something exists that the graph says does not.
+func reviveNamedBy(db interface {
+	Exec(string, ...any) (sql.Result, error)
+}, keys []string) (int64, error) {
+	scope, args := "", []any{}
+	if keys != nil {
+		list, err := json.Marshal(keys)
+		if err != nil {
+			return 0, err
+		}
+		scope, args = ` AND edge_key IN (SELECT value FROM json_each(?))`, []any{string(list), string(list)}
+	}
+	res, err := db.Exec(`
+		UPDATE abom_node SET removed_at = NULL, removed_generation = NULL
+		 WHERE removed_at IS NOT NULL AND row_id IN (
+		       SELECT src_node_row_id FROM abom_edge WHERE removed_at IS NULL`+scope+`
+		       UNION
+		       SELECT dst_node_row_id FROM abom_edge WHERE removed_at IS NULL`+scope+`)`, args...)
+	if err != nil {
+		return 0, fmt.Errorf("bringing back what live edges name: %w", err)
+	}
+	return res.RowsAffected()
+}
+
+// reviveWhatLiveEdgesName repairs a database written before a run naming a pruned node brought it
+// back, and tells open cursors to reload if anything did.
+func (s *Store) reviveWhatLiveEdgesName() error {
+	n, err := reviveNamedBy(s.db, nil)
+	if err != nil || n == 0 {
+		return err
+	}
+	_, err = s.nextGeneration(true)
+	return err
 }
 
 // removedSince names what was tombstoned after a generation, so a client hears about a removal

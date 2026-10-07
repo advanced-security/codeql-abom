@@ -27,6 +27,8 @@ type Use struct {
 	Repository string `json:"repository"`
 	// Origin is how the repository entered the record, `seed` or `upstream`; never ownership.
 	Origin string `json:"origin"`
+	// Owned is whether the declaration covers the repository, which is what makes it yours.
+	Owned bool `json:"owned"`
 	// Reference is what the hop into the node wrote, verbatim: the repository's own for a direct
 	// use, an intermediary's for a transitive one.
 	Reference string `json:"reference"`
@@ -150,7 +152,7 @@ func (b *Builder) UsesOf(key string, q UsesQuery) (UsesPage, error) {
 // usesRows walks one node and returns every row, of every origin, before any narrowing. A nil
 // model means the graph holds no such node, which is a fair question with an empty answer.
 func (b *Builder) usesRows(key string) (*model, []Use, error) {
-	m, err := b.load()
+	m, err := b.walkable()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -212,12 +214,13 @@ func defaultUseOrder(a, b Use) int {
 }
 
 // keeps applies every narrowing a row is subject to. With no origin asked it keeps starting points.
+// Owned is the declaration's answer about the repository, so it is asked of its own field.
 func (q UsesQuery) keeps(u Use) bool {
 	origins := q.Origins
 	if len(origins) == 0 {
 		origins = []string{store.OriginSeed}
 	}
-	return slices.Contains(origins, u.Origin) &&
+	return (slices.Contains(origins, u.Origin) || u.Owned && slices.Contains(origins, store.OwnedOrigin)) &&
 		(q.Repositories == nil || q.Repositories[strings.ToLower(u.Repository)]) &&
 		(len(q.At) == 0 || slices.Contains(q.At, u.Reference)) &&
 		styleKeeps(q.RefStyle, u.Reference) && reachedKeeps(q.Reached, u.Hops)
@@ -283,10 +286,14 @@ func (m *model) tagChange(key string, at []string, rows []Use) *TagChange {
 }
 
 // repository is a repository's name and how it entered the record.
-type repository struct{ name, origin string }
+type repository struct {
+	name, origin string
+	owned        bool
+}
 
 func repositoryNames(s *store.Store) (map[int64]repository, error) {
-	rows, err := s.DB().Query(`SELECT row_id, repository_full_name, COALESCE(origin, '') FROM repository`)
+	rows, err := s.DB().Query(`SELECT r.row_id, r.repository_full_name, COALESCE(r.origin, ''), ` +
+		store.OwnedRepositoryFilter + ` FROM repository r`)
 	if err != nil {
 		return nil, fmt.Errorf("naming repositories: %w", err)
 	}
@@ -295,7 +302,7 @@ func repositoryNames(s *store.Store) (map[int64]repository, error) {
 	for rows.Next() {
 		var id int64
 		var r repository
-		if err := rows.Scan(&id, &r.name, &r.origin); err != nil {
+		if err := rows.Scan(&id, &r.name, &r.origin, &r.owned); err != nil {
 			return nil, fmt.Errorf("scanning a repository: %w", err)
 		}
 		out[id] = r
@@ -332,7 +339,8 @@ func (m *model) usesOf(node int64, maxDepth int, names map[int64]repository) []U
 	}
 	if repo, ok := m.repoOf[node]; ok {
 		c.add(useKey{repo: repo}, &Use{Repository: names[repo].name, Origin: names[repo].origin,
-			Path: []string{m.keyOf[node]}, Conditions: []StepCondition{}, Workflows: []string{}})
+			Owned: names[repo].owned, Path: []string{m.keyOf[node]}, Conditions: []StepCondition{},
+			Workflows: []string{}})
 	}
 	m.walk(c.target, maxDepth, c.visit)
 	return c.list()
@@ -388,7 +396,7 @@ func (c *useCollector) visit(s step) {
 func (c *useCollector) first(s step, repo int64) *Use {
 	path, conditions := c.m.routeOf(s.via, c.from, c.enteredBy)
 	u := &Use{
-		Repository: c.names[repo].name, Origin: c.names[repo].origin,
+		Repository: c.names[repo].name, Origin: c.names[repo].origin, Owned: c.names[repo].owned,
 		Reference: s.at.entry, Commit: s.at.version, Hops: s.depth,
 		Locked: c.m.lockedFor(c.target, repo, s.at.entry, s.at.version),
 		Path:   path, Conditions: conditions, Workflows: []string{},

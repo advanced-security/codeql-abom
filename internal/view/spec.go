@@ -47,6 +47,9 @@ type Spec struct {
 	Reached []string
 	// Policies names other policies, and a policy carrying it refuses what any of them refuses.
 	Policies []string
+	// CodeScanning narrows repositories to the classes their Actions code scanning reading puts
+	// them in. Only the repositories unit applies it: a node has no setup of its own.
+	CodeScanning []string
 	// Repositories narrows to what a caller is asking about — a pull request's repository, for the
 	// gate. Compared case-insensitively wherever it is applied.
 	Repositories []string
@@ -127,6 +130,7 @@ const (
 	paramAdvisorySeverity = "advisorySeverity"
 	paramReached          = "reached"
 	paramPolicies         = "policies"
+	paramCodeScanning     = "codeScanning"
 	paramMode             = "mode"
 	paramEdgeClass        = "edges"
 	paramEdgeKinds        = "edgeKinds"
@@ -176,6 +180,7 @@ func (s Spec) String() string {
 		{paramAdvisorySeverity, s.AdvisorySeverities},
 		{paramReached, s.Reached},
 		{paramPolicies, s.Policies},
+		{paramCodeScanning, s.CodeScanning},
 	} {
 		if v := normalize(f.values); len(v) > 0 {
 			q.Set(f.key, strings.Join(v, ","))
@@ -262,6 +267,7 @@ func specTargetsFor(s *Spec) specTargets {
 			paramAdvisorySeverity: &s.AdvisorySeverities,
 			paramReached:          &s.Reached,
 			paramPolicies:         &s.Policies,
+			paramCodeScanning:     &s.CodeScanning,
 		},
 		matches: map[string]*[]PropertyMatch{
 			paramProperties:    &s.Properties,
@@ -359,8 +365,9 @@ func IsTerm(name string) bool { return termNames[name] }
 // Data-backed terms accept values the corpus happens to contain; fixed terms refuse unknown
 // values here.
 const (
-	ScopeOwned    = "owned"
-	ScopeExposure = "exposure"
+	ScopeOwned       = "owned"
+	ScopeSupplyChain = "supply-chain"
+	ScopeExposure    = "exposure"
 
 	BoundarySameRepository = "same-repository"
 	BoundarySameOwner      = "same-owner"
@@ -387,6 +394,17 @@ const (
 	EdgeKindCompositeStepUsesAction = "composite-step-uses-action"
 )
 
+// SetupClasses is the vocabulary of `codeScanning`: every class the Actions code scanning
+// classification gives, in the order it tries them. The store holds the same list and a test holds
+// the two together.
+func SetupClasses() []string {
+	return []string{
+		"not-owned", "not-listed", "conflict", "advanced", "unreadable", "not-read", "covered",
+		"no-actions-code", "not-crawled", "not-detected", "blocked-by-configuration",
+		"actions-not-allowed", "language-not-writable", "add", "enable", "unknown",
+	}
+}
+
 // EdgeKinds is the vocabulary of `edgeKinds`, in the order a reader should be offered it: what a
 // workflow does, then what it orders, then the two indirections.
 //
@@ -399,7 +417,7 @@ func EdgeKinds() []string {
 }
 
 var vocabulary = map[string][]string{
-	paramScope:    {ScopeOwned, ScopeExposure},
+	paramScope:    {ScopeOwned, ScopeSupplyChain, ScopeExposure},
 	paramBoundary: {BoundarySameRepository, BoundarySameOwner, BoundaryCrossOwner},
 	paramRefStyle: {RefStyleAny, RefStyleSHA, RefStyleTag},
 	paramMode:     {ModeRegular, ModeExtended},
@@ -412,16 +430,18 @@ var vocabulary = map[string][]string{
 		"org", "repo", "workflow", "reusable_workflow", "composite_action", "action",
 		"docker_image", "job", "step",
 	},
-	// How a node entered the corpus. `external` is a node belonging to no repository, which is
-	// what the graph and the browser both call one.
-	paramOrigins:          {"seed", "upstream", "external"},
+	// How a node entered the corpus, after whether it is yours. `owned` is the declaration's
+	// answer rather than a provenance, so a node you own is a `seed` too. `external` is a node
+	// belonging to no repository, which is what the graph and the browser both call one.
+	paramOrigins:          {"owned", "seed", "upstream", "external"},
 	paramFlags:            {FlagFindings, FlagAdvisory, FlagUnanalyzed},
 	paramSecuritySeverity: Bands(),
 	paramAdvisorySeverity: AdvisorySeverities(),
 	paramReached:          {ReachedDirect, ReachedTransitive},
 	// The browser's relationship-crossing spelling; `boundary` uses the store vocabulary.
-	paramEdgeClass: {"sameRepo", "sameOwner", "crossOwner"},
-	paramEdgeKinds: EdgeKinds(),
+	paramEdgeClass:    {"sameRepo", "sameOwner", "crossOwner"},
+	paramEdgeKinds:    EdgeKinds(),
+	paramCodeScanning: SetupClasses(),
 }
 
 // Vocabulary reports the values a term allows, or nothing if the corpus decides them.
@@ -451,7 +471,7 @@ var termNames = map[string]bool{
 	paramRefStyle: true, paramBoundary: true, paramMinReach: true, paramFlags: true,
 	paramSteps: true, paramEdgeKinds: true, paramMode: true, paramSource: true,
 	paramSecuritySeverity: true, paramAdvisorySeverity: true, paramReached: true, paramPolicies: true,
-	paramAt: true,
+	paramAt: true, paramCodeScanning: true,
 }
 
 // setTerms are the terms the set path applies — `/api/match`, and a policy, which are one

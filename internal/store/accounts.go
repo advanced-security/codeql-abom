@@ -145,12 +145,12 @@ func (s *Store) ForgetAccounts() error {
 	return nil
 }
 
-// OwnedSet is the declared accounts, lower-cased because GitHub treats account names
+// DeclaredOwners is the declared accounts, lower-cased because GitHub treats account names
 // case-insensitively and so must membership.
 //
-// Owner granularity: an account restricted by an include list is still the operator's account,
-// and callers judging a whole *repository* use `RepositoryIsOwned`, which honors the list.
-func (s *Store) OwnedSet() (map[string]bool, error) {
+// An account, not ownership: one restricted to some of its repositories is still declared, so
+// anything judging a repository asks `OwnedAmong` or `RepositoryIsOwned`, which honor the scope.
+func (s *Store) DeclaredOwners() (map[string]bool, error) {
 	owners, err := queryAll(s, "reading declared accounts", func(r *sql.Rows) (string, error) {
 		var owner string
 		return owner, r.Scan(&owner)
@@ -187,7 +187,7 @@ type OwnerCandidate struct {
 func (s *Store) OwnerCandidates() ([]OwnerCandidate, error) {
 	// Read before opening the cursor below: one connection serves this store, so a query issued
 	// while another's rows are still open waits for a connection that only closing them frees.
-	owned, err := s.OwnedSet()
+	owned, err := s.DeclaredOwners()
 	if err != nil {
 		return nil, err
 	}

@@ -41,7 +41,7 @@ export function coverageColor(node, palette) {
     const states = palette.discovery || {};
     const done = node.refsAnalyzed || 0;
     if (done >= inUse) return states.done || palette.muted;
-    if (done <= 0) return states.queued || palette.muted;
+    if (done <= 0) return states[node.discovery] || states.queued || palette.muted;
     // Partly covered is its own answer, not a rounding of either end.
     return mix(states.queued || palette.muted, states.done || palette.muted, done / inUse);
 }

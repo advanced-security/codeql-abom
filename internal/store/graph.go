@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -127,8 +128,18 @@ func (w *Writer) flushNodes() error {
 	}
 	pending := w.nodes
 	w.nodes = nil
+	keys := make([]string, len(pending))
+	for i, n := range pending {
+		keys[i] = n.Key
+	}
+	revived := false
 
-	return w.inTx(func(tx *sql.Tx) error {
+	if err := w.inTx(func(tx *sql.Tx) error {
+		var err error
+		if revived, err = anyRemoved(tx, "abom_node", "node_key", keys); err != nil {
+			return err
+		}
+		// A run naming a pruned node is the world saying it exists, so it comes back.
 		insert, err := tx.Prepare(`
 			INSERT INTO abom_node
 				(node_key, node_kind, owner, repo, path, job_id, step_index,
@@ -136,7 +147,8 @@ func (w *Writer) flushNodes() error {
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(node_key) DO UPDATE SET
 				container_node_row_id = COALESCE(excluded.container_node_row_id,
-				                                 abom_node.container_node_row_id)`)
+				                                 abom_node.container_node_row_id),
+				removed_at = NULL, removed_generation = NULL`)
 		if err != nil {
 			return fmt.Errorf("preparing node insert: %w", err)
 		}
@@ -167,7 +179,36 @@ func (w *Writer) flushNodes() error {
 			w.nodeIDs[n.Key] = id
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	return w.reloadAfterRevival(revived)
+}
+
+// reloadAfterRevival tells every open cursor to load the graph again when something removed came
+// back: its row id is below their watermark, so no delta would ever carry it to a page that saw it go.
+func (w *Writer) reloadAfterRevival(revived bool) error {
+	if !revived {
+		return nil
+	}
+	_, err := w.store.nextGeneration(true)
+	return err
+}
+
+// anyRemoved reports whether any of keys names a tombstoned row of table.
+//
+// table and column are constants at every call site, never input.
+func anyRemoved(tx *sql.Tx, table, column string, keys []string) (bool, error) {
+	list, err := json.Marshal(keys)
+	if err != nil {
+		return false, err
+	}
+	var removed bool
+	if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM `+table+` WHERE removed_at IS NOT NULL
+		AND `+column+` IN (SELECT value FROM json_each(?)))`, string(list)).Scan(&removed); err != nil {
+		return false, fmt.Errorf("reading what %s would bring back: %w", table, err)
+	}
+	return removed, nil
 }
 
 func (w *Writer) flushEdges() error {
@@ -176,9 +217,17 @@ func (w *Writer) flushEdges() error {
 	}
 	pending := w.edges
 	w.edges = nil
-	broadened := false
+	broadened, revived := false, false
+	keys := make([]string, len(pending))
+	for i, e := range pending {
+		keys[i] = e.Key
+	}
 
 	if err := w.inTx(func(tx *sql.Tx) error {
+		var err error
+		if revived, err = anyRemoved(tx, "abom_edge", "edge_key", keys); err != nil {
+			return err
+		}
 		stmt, err := tx.Prepare(`
 			INSERT INTO abom_edge
 				(edge_key, query_run_id, src_node_row_id, dst_node_row_id, edge_kind,
@@ -213,7 +262,9 @@ func (w *Writer) flushEdges() error {
 				advisory_route  = CASE WHEN abom_edge.dst_node_row_id = excluded.dst_node_row_id
 				                       THEN abom_edge.advisory_route END,
 				finding_route   = CASE WHEN abom_edge.dst_node_row_id = excluded.dst_node_row_id
-				                       THEN abom_edge.finding_route END`)
+				                       THEN abom_edge.finding_route END,
+				removed_at      = NULL,
+				removed_generation = NULL`)
 		if err != nil {
 			return fmt.Errorf("preparing edge insert: %w", err)
 		}
@@ -234,9 +285,16 @@ func (w *Writer) flushEdges() error {
 			}
 			broadened = broadened || gained
 		}
-		return nil
+		// Endpoints too: a node the writer already knew skips its upsert, and a live edge under a
+		// removed node is the inconsistency this exists to prevent.
+		named, err := reviveNamedBy(tx, keys)
+		revived = revived || named > 0
+		return err
 	}); err != nil {
 		return err
+	}
+	if revived && !broadened {
+		return w.reloadAfterRevival(true)
 	}
 	// A shared observation changes no row id, so the delta cannot describe it and every open
 	// cursor is told to load the graph again. Only on a broadening: an ordinary crawl re-observes
@@ -285,6 +343,10 @@ const (
 	// OriginUpstream marks a repository fetched only to resolve what the seeds depend on.
 	OriginUpstream = "upstream"
 )
+
+// OwnedOrigin is what the origins term calls the declaration's answer. No repository holds it as its
+// origin: how a repository arrived never says whose it is.
+const OwnedOrigin = "owned"
 
 // UpsertRepository returns the row id for a repository, inserting it when absent.
 func (s *Store) UpsertRepository(fullName, url string) (int64, error) {

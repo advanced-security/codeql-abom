@@ -1,11 +1,11 @@
 @inject AbomApi Api
 
 @* One row per reference a dependency is used at: what it resolves to, who runs it by that
-   reference, what was found in it there, and what the rule that matches versions reported on the
-   lines naming it. The advisories naming the dependency follow once, verbatim, for a reader to
-   compare with the references — whether one falls inside a range is a rule's call, never this
-   table's. Every row is loaded and the grid pages them itself, so a column sorts the whole answer
-   rather than a page of it. *@
+   reference, what was found in it there, and what any rule reported on the lines naming it at the
+   commit each line was analyzed. The advisories naming the dependency follow once, verbatim, for a
+   reader to compare with the references — whether one falls inside a range is a rule's call, never
+   this table's. Every row is loaded and the grid pages them itself, so a column sorts the whole
+   answer rather than a page of it. *@
 
 <div class="@(Compact ? "abom-versions abom-versions-compact" : "abom-versions")" data-abom-versions="@Key">
     <div class="abom-versions-head">
@@ -105,6 +105,35 @@
                 <PropertyColumn Property="v => v.Lines" Title="uses: lines" CellClass="abom-num" Hidden="@Compact">
                     <HeaderTemplate><HeaderTip Tip="How many uses: lines name this version, counting only the starting points in this view.">uses: lines</HeaderTip></HeaderTemplate>
                 </PropertyColumn>
+                <TemplateColumn T="NodeVersion" Title="Findings on lines" Sortable="true" SortBy="LineFindingsOrder" Hidden="@Compact">
+                    <HeaderTemplate><HeaderTip Tip="How many findings any rule reported on the uses: lines naming this version, at the commit each line was analyzed.">Findings on lines</HeaderTip></HeaderTemplate>
+                    <CellTemplate>
+                        @if (context.Item.LineFindings is { } onLines)
+                        {
+                            <span data-abom-version-line-findings="@context.Item.Reference" title="@LineFindingsTitle(onLines)">
+                                <FindingsCount Count="@onLines.Count" Severity="@onLines.Severity" />
+                                @if (onLines.Analyzed < onLines.Commits)
+                                {
+                                    <span class="abom-coverage-unknown ms-2">@onLines.Analyzed.ToString("N0") of @CountText.Of(onLines.Commits, "commit", "commits")</span>
+                                }
+                                @if (onLines.Unknown > 0)
+                                {
+                                    <span class="abom-coverage-unknown ms-2">@onLines.Unknown.ToString("N0") unknown</span>
+                                }
+                            </span>
+                        }
+                        else if (context.Item.Lines == 0)
+                        {
+                            <span class="mud-text-secondary" data-abom-version-line-findings="@context.Item.Reference"
+                                  title="No starting point in this view names this version on a uses: line of its own.">no lines</span>
+                        }
+                        else
+                        {
+                            <span class="abom-coverage-unknown" data-abom-version-line-findings="@context.Item.Reference"
+                                  title="No findings run reached a commit at which these lines name this version.">not analyzed</span>
+                        }
+                    </CellTemplate>
+                </TemplateColumn>
                 <TemplateColumn T="NodeVersion" Title="Findings" Sortable="true" SortBy="FindingsOrder">
                     <HeaderTemplate><HeaderTip Tip="How many findings CodeQL rules reported in this action's own code at the commit this version runs. Not analyzed means no rule has run there yet.">Findings</HeaderTip></HeaderTemplate>
                     <CellTemplate>
@@ -241,6 +270,20 @@
     private static object FindingsOrder(NodeVersion v) => v.Findings is not { } f ? -1L
         : f.Severity.Critical * 1_000_000_000L + f.Severity.High * 1_000_000L
           + f.Severity.Medium * 1_000L + f.Severity.Low + (f.Count > 0 ? 1 : 0);
+
+    // The same order for what was reported on the lines naming each version.
+    private static object LineFindingsOrder(NodeVersion v) => v.LineFindings is not { } f ? -1L
+        : f.Severity.Critical * 1_000_000_000L + f.Severity.High * 1_000_000L
+          + f.Severity.Medium * 1_000L + f.Severity.Low + (f.Count > 0 ? 1 : 0);
+
+    private static string LineFindingsTitle(VersionLineFindings f)
+    {
+        var reached = f.Analyzed == f.Commits
+            ? $"Reported at the {CountText.Of(f.Commits, "commit", "commits")} where these lines name this version."
+            : $"Reported at {f.Analyzed:N0} of the {CountText.Of(f.Commits, "commit", "commits")} where these lines name this version; no findings run reached the rest.";
+        return f.Unknown == 0 ? reached
+            : $"{reached} {CountText.Of(f.Unknown, "more finding was", "more findings were")} reported on these lines at commits where what the line named was never recorded, so they are not counted.";
+    }
 
     // Why nothing is listed: nobody here uses a version, or only by a local path, or the scope's
     // reference terms matched none of those in use.

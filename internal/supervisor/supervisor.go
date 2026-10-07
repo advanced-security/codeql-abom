@@ -2,8 +2,12 @@ package supervisor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -64,12 +68,13 @@ type Supervisor struct {
 	// re-fetch a set collected minutes ago.
 	LastAdvisoryAt time.Time
 
-	// Enumerate re-reads the declared accounts, reporting how many repositories it queued.
+	// Enumerate reads what an Ask names, every declared account for the zero Ask, reporting how
+	// many repositories it queued.
 	//
 	// Without it the loop can only work on what something else already recorded, so a repository
 	// created after the last enumeration is invisible to it however long it runs. Nil keeps that
 	// behavior, which is what every build before this one did.
-	Enumerate func(context.Context) (int, error)
+	Enumerate func(ctx context.Context, ask Ask) (int, error)
 	// EnumerateEvery bounds how often the organization is re-read. Zero uses the default.
 	//
 	// A full listing is cheap against an unchanged account — its pages are conditional, so they
@@ -79,6 +84,8 @@ type Supervisor struct {
 	// LastEnumeratedAt is when the accounts were last read, successfully or not. A failed attempt
 	// counts, or an unreachable account is retried on every cycle forever.
 	LastEnumeratedAt time.Time
+	// asked holds what events asked the next cycle to read before a period would.
+	asked asked
 
 	Now func() time.Time
 	// Log receives one line per event worth a human's attention. Nil discards them.
@@ -145,6 +152,21 @@ func cycleProgressed(s expand.Stats) bool {
 	return s.Edges > 0 || s.Processed > 0 || s.Skipped > 0
 }
 
+// cycleLine is the log line for a cycle that did something.
+func cycleLine(cycle int, stats expand.Stats) string {
+	line := fmt.Sprintf("cycle %d analyzed %d repositories, skipped %d already on record, settled %d "+
+		"dependencies, discovered %d, ingested %d edges (%d fetched, %d reused, %d failed, %d unavailable)",
+		cycle, stats.Processed, stats.Skipped, stats.Items, stats.Discovered,
+		stats.Edges, stats.Fetched, stats.Reused, stats.Failed, stats.Unavailable)
+	if stats.Nothing > 0 {
+		line += fmt.Sprintf("; %d with nothing to analyze", stats.Nothing)
+	}
+	if stats.CodeScanning.Asked() {
+		line += "; code scanning " + stats.CodeScanning.String()
+	}
+	return line
+}
+
 // cycleIngested reports whether a cycle produced new graph data. Skipping produces none, so the
 // work that follows ingestion has nothing to chew on.
 func cycleIngested(s expand.Stats) bool {
@@ -160,23 +182,87 @@ func recordCycle(st *Status, s expand.Stats) {
 	st.Settled += s.Items
 	st.Failed += s.Failed
 	st.Unavailable += s.Unavailable
+	st.Nothing += s.Nothing
 	st.Discovered += s.Discovered
 	st.Edges += s.Edges
 }
 
-// readOrganization re-reads the declared accounts when the period has elapsed.
+// Ask names what one enumeration reads. The zero Ask lists every declared account.
+type Ask struct {
+	// Owners are listed as their marks allow.
+	Owners []string
+	// Full are listed whole, which alone records what is gone.
+	Full []string
+	// Repositories are read one at a time.
+	Repositories []string
+}
+
+func (a Ask) empty() bool { return len(a.Owners)+len(a.Full)+len(a.Repositories) == 0 }
+
+func (a Ask) String() string {
+	var parts []string
+	if len(a.Owners) > 0 {
+		parts = append(parts, "listed "+strings.Join(a.Owners, ", "))
+	}
+	if len(a.Full) > 0 {
+		parts = append(parts, "listed "+strings.Join(a.Full, ", ")+" whole")
+	}
+	if len(a.Repositories) > 0 {
+		parts = append(parts, "read "+strings.Join(a.Repositories, ", "))
+	}
+	return strings.Join(parts, "; ")
+}
+
+// names is a set of names compared case-insensitively that keeps the spelling first asked for.
+type names map[string]string
+
+func (n *names) add(name string) {
+	if *n == nil {
+		*n = names{}
+	}
+	if _, ok := (*n)[strings.ToLower(name)]; !ok {
+		(*n)[strings.ToLower(name)] = name
+	}
+}
+
+func (n names) sorted() []string {
+	var out []string
+	for _, key := range slices.Sorted(maps.Keys(n)) {
+		out = append(out, n[key])
+	}
+	return out
+}
+
+type asked struct {
+	owners, full, repositories names
+	advisories                 bool
+}
+
+// readOrganization re-reads the declared accounts when the period has elapsed, and reads what
+// events asked for on the next cycle whatever the period says.
 //
 // A failure is recorded and the cycle continues: an account that could not be reached is a
 // coverage gap, and stopping the analysis already queued would turn one unreachable account into
 // no progress at all.
 func (s *Supervisor) readOrganization(ctx context.Context) {
-	if s.Enumerate == nil || !s.enumerationDue() {
+	if s.Enumerate == nil {
 		return
 	}
-	// Recorded before the attempt, so an account that fails is not retried every thirty seconds.
-	s.LastEnumeratedAt = s.now()
+	ask := s.takeAsk()
+	if s.enumerationDue() {
+		// Recorded before the attempt, so an account that fails is not retried every thirty seconds.
+		s.LastEnumeratedAt = s.now()
+		s.enumerate(ctx, Ask{})
+		// Listed as their marks allow by the due read; whole listings and repositories are not.
+		ask.Owners = nil
+	}
+	if !ask.empty() {
+		s.enumerate(ctx, ask)
+	}
+}
 
-	queued, err := s.Enumerate(ctx)
+func (s *Supervisor) enumerate(ctx context.Context, ask Ask) {
+	queued, err := s.Enumerate(ctx, ask)
 	if err != nil {
 		if ctx.Err() != nil {
 			return
@@ -188,9 +274,51 @@ func (s *Supervisor) readOrganization(ctx context.Context) {
 		s.logf("could not read the organization: %v", err)
 		return
 	}
-	if queued > 0 {
+	switch {
+	case !ask.empty():
+		s.logf("%s as events asked, and queued %d repositories", ask, queued)
+	case queued > 0:
 		s.logf("read the organization and queued %d repositories", queued)
 	}
+}
+
+// ListSoon has an account listed on the next cycle rather than when the period elapses.
+func (s *Supervisor) ListSoon(owner string) { s.ask(func(a *asked) { a.owners.add(owner) }) }
+
+// ListFullySoon has an account listed whole on the next cycle, which alone records what is gone.
+func (s *Supervisor) ListFullySoon(owner string) { s.ask(func(a *asked) { a.full.add(owner) }) }
+
+// ReadSoon has one repository read on the next cycle, which no sweep of its account would name.
+func (s *Supervisor) ReadSoon(fullName string) {
+	s.ask(func(a *asked) { a.repositories.add(fullName) })
+}
+
+// RefreshAdvisoriesSoon has the advisory set refreshed once the floor allows, however fresh it is.
+func (s *Supervisor) RefreshAdvisoriesSoon() { s.ask(func(a *asked) { a.advisories = true }) }
+
+func (s *Supervisor) ask(add func(*asked)) {
+	s.mu.Lock()
+	add(&s.asked)
+	s.mu.Unlock()
+	s.Wake()
+}
+
+// takeAsk takes what events asked to have read since the last cycle.
+func (s *Supervisor) takeAsk() Ask {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.asked
+	s.asked.owners, s.asked.full, s.asked.repositories = nil, nil, nil
+	return Ask{Owners: a.owners.sorted(), Full: a.full.sorted(), Repositories: a.repositories.sorted()}
+}
+
+// takeAdvisoryAsk reports whether an event asked for an advisory refresh, and clears the ask.
+func (s *Supervisor) takeAdvisoryAsk() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	asked := s.asked.advisories
+	s.asked.advisories = false
+	return asked
 }
 
 // enumerationDue reports whether the organization is worth re-reading.
@@ -423,11 +551,7 @@ func (s *Supervisor) cycle(ctx context.Context) time.Duration {
 	if cycleProgressed(stats) {
 		// Only when something happened: a loop waiting on a queue whose next retry is hours
 		// away would otherwise write two lines a minute all night.
-		s.logf("cycle %d analyzed %d repositories, skipped %d already on record, settled %d "+
-			"dependencies, discovered %d, ingested %d edges (%d fetched, %d reused, %d failed, "+
-			"%d unavailable)",
-			s.Status().Cycle, stats.Processed, stats.Skipped, stats.Items, stats.Discovered,
-			stats.Edges, stats.Fetched, stats.Reused, stats.Failed, stats.Unavailable)
+		s.logf("%s", cycleLine(s.Status().Cycle, stats))
 	}
 	if ingested {
 		if _, err := s.Store.LinkFindingsToNodes(); err != nil {
@@ -442,7 +566,11 @@ func (s *Supervisor) cycle(ctx context.Context) time.Duration {
 	if err != nil {
 		return s.fail("reading the queue", err)
 	}
-	drained := !pending
+	// Not !pending: a stuck row is pending forever and would hold every drained-queue pass off.
+	drained, err := s.Queue.Drained()
+	if err != nil {
+		return s.fail("reading the queue", err)
+	}
 
 	// Classification is a whole-graph judgement, so it is re-derived here rather than from
 	// whatever this cycle happened to analyze. It runs before the sweep because anything the
@@ -459,19 +587,9 @@ func (s *Supervisor) cycle(ctx context.Context) time.Duration {
 
 	// A drained queue is the moment to check the rule against everything already known, rather
 	// than only against whatever happened to be analyzed this cycle.
-	if drained && s.Sweeper != nil {
-		n, err := s.Sweeper()
-		if err != nil {
+	if drained {
+		if next, pending, drained, err = s.sweepUnqueued(next, pending); err != nil {
 			return s.fail("re-checking what should be queued", err)
-		}
-		if n > 0 {
-			s.record(func(st *Status) { st.Discovered += n })
-			s.logf("queue drained: %d dependencies were reachable but had never been queued", n)
-			next, pending, err = s.Queue.NextAttemptAt()
-			if err != nil {
-				return s.fail("reading the queue", err)
-			}
-			drained = !pending
 		}
 	}
 
@@ -515,6 +633,7 @@ func (s *Supervisor) recordSpend(stats expand.Stats, progress []frontier.DepthPr
 		Builds:      stats.Processed,
 		Evaluations: stats.Processed,
 		Probes:      st.Rechecked - s.lastRechecked,
+		TreeReads:   stats.TreeReads,
 		Analyzed:    stats.Processed,
 		Skipped:     stats.Skipped,
 		Settled:     stats.Items,
@@ -529,8 +648,27 @@ func (s *Supervisor) recordSpend(stats expand.Stats, progress []frontier.DepthPr
 	}
 }
 
-// refreshAggregates recomputes reach when the policy says it is worth the cost, and records a
-// generation whenever the graph moved so the interface can tell.
+// sweepUnqueued queues what the seed repositories reach and nothing queued, and reads the queue
+// again when it found any, since the one the cycle read is then out of date.
+func (s *Supervisor) sweepUnqueued(next time.Time, pending bool) (time.Time, bool, bool, error) {
+	if s.Sweeper == nil {
+		return next, pending, true, nil
+	}
+	n, err := s.Sweeper()
+	if err != nil || n == 0 {
+		return next, pending, true, err
+	}
+	s.record(func(st *Status) { st.Discovered += n })
+	s.logf("queue drained: %d dependencies were reachable but had never been queued", n)
+	if next, pending, err = s.Queue.NextAttemptAt(); err != nil {
+		return next, pending, false, err
+	}
+	drained, err := s.Queue.Drained()
+	return next, pending, drained, err
+}
+
+// refreshAggregates derives reach from what changed, rebuilding when the policy or a missing mark
+// says to, and records a generation whenever the graph or its reach moved, so clients can tell.
 func (s *Supervisor) refreshAggregates(drained, ingested bool) error {
 	staleness, err := s.Store.ReachStaleness()
 	if err != nil {
@@ -538,17 +676,20 @@ func (s *Supervisor) refreshAggregates(drained, ingested bool) error {
 	}
 	due, why := s.Aggregates.due(staleness, drained, s.now())
 	if !due {
-		if ingested {
-			if _, err := s.Store.RecordGraphGeneration(store.GraphRebuild{}); err != nil {
-				return err
-			}
+		started := time.Now()
+		derived, err := s.Builder.Derive()
+		switch {
+		case errors.Is(err, graph.ErrNoMark):
+			why = "reach carries no mark of what it was derived from"
+		case err != nil:
+			return err
+		default:
+			return s.derived(derived, time.Since(started), ingested)
 		}
-		s.record(func(st *Status) { st.ReachPending = staleness.NewEdges })
-		return nil
 	}
 
 	started := time.Now()
-	if err := s.Builder.RebuildAggregates(); err != nil {
+	if _, err := s.Builder.Rebuild(); err != nil {
 		return err
 	}
 	elapsed := time.Since(started)
@@ -572,8 +713,30 @@ func (s *Supervisor) refreshAggregates(drained, ingested bool) error {
 	return nil
 }
 
-// advisoryRefreshDue reports whether the advisory question has changed: either new packages
-// arrived, or the existing answer has aged past the ceiling. The floor outranks both.
+// derived records a generation where the derivation wrote or the graph grew, and logs only writes.
+func (s *Supervisor) derived(d graph.Derivation, elapsed time.Duration, ingested bool) error {
+	if d.Rows > 0 || ingested {
+		version, err := s.Store.GraphVersion()
+		if err != nil {
+			return err
+		}
+		if _, err := s.Store.RecordGraphGeneration(store.GraphRebuild{
+			ReachRebuilt: true, Incremental: true, Duration: elapsed,
+			Nodes: version.Nodes, Edges: version.Edges,
+		}); err != nil {
+			return err
+		}
+	}
+	s.record(func(st *Status) { st.ReachPending = 0 })
+	if d.Rows > 0 {
+		s.logf("derived reach in %dms from %d changed nodes: %d walked, %d rows written",
+			elapsed.Milliseconds(), d.Changed, d.Walked, d.Rows)
+	}
+	return nil
+}
+
+// advisoryRefreshDue reports whether the advisory question has changed: new packages arrived, an
+// event announced an advisory, or the answer has aged past the ceiling. The floor outranks all three.
 func (s *Supervisor) advisoryRefreshDue(ingested bool) bool {
 	if s.Advisor == nil {
 		return false
@@ -582,7 +745,7 @@ func (s *Supervisor) advisoryRefreshDue(ingested bool) bool {
 	if s.AdvisoryMinInterval > 0 && since < s.AdvisoryMinInterval {
 		return false
 	}
-	if ingested {
+	if asked := s.takeAdvisoryAsk(); ingested || asked {
 		return true
 	}
 	if s.AdvisoryMaxAge <= 0 {
@@ -623,7 +786,11 @@ func (s *Supervisor) refreshAdvisories(ctx context.Context) {
 // route it declares and a submission reading it is refused. That is a gap in what is known, and
 // freshness waits on every gap being closed.
 func (s *Supervisor) reobserve() error {
-	got, err := s.Store.Reobserve(s.Options.Limit)
+	inside, err := s.Queue.Inside()
+	if err != nil {
+		return err
+	}
+	got, err := s.Store.ReobserveInside(s.Options.Limit, inside)
 	if err != nil {
 		return err
 	}
@@ -657,6 +824,7 @@ func (s *Supervisor) recheck(ctx context.Context, progress []frontier.DepthProgr
 // Gated on completeness rather than on a momentarily empty queue: `drained` means nothing is
 // claimable *right now*, which is transiently true while work waits on a retry, and freshness
 // must not spend a probe while anything at any depth has never been analyzed.
+// A row stuck past the attempt ceiling is settled for now, so it cannot hold freshness off.
 func freshnessDue(progress []frontier.DepthProgress) bool {
 	_, outstanding := frontier.ShallowestIncomplete(progress)
 	return !outstanding

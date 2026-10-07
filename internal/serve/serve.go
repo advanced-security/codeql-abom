@@ -22,10 +22,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/advanced-security/codeql-abom/internal/catalog"
 	"github.com/advanced-security/codeql-abom/internal/enumerate"
 	"github.com/advanced-security/codeql-abom/internal/ghauth"
 	"github.com/advanced-security/codeql-abom/internal/graph"
+	"github.com/advanced-security/codeql-abom/internal/setup"
 	"github.com/advanced-security/codeql-abom/internal/store"
+	"github.com/advanced-security/codeql-abom/internal/work"
 
 	// Aliased because this package already has a `view` of its own, for accounts.
 	viewspec "github.com/advanced-security/codeql-abom/internal/view"
@@ -34,10 +37,19 @@ import (
 // Server answers interface queries from an ABOM database.
 type Server struct {
 	Store *store.Store
+	// Graphviz is the version that places every layout and figure, which a figure's bytes and its
+	// caption depend on. Empty in a server nobody started through serve, which reads it itself.
+	Graphviz string
 	// UI serves the interface assets. Nil disables it, leaving only the API.
 	UI fs.FS
 	// Verify establishes which accounts are the operator's. Nil asks the gh CLI.
 	Verify func(context.Context) (ghauth.Identity, error)
+	// ListRepositories reads an account's repositories with the operator's token, for the
+	// declaration picker. Nil asks the gh CLI.
+	ListRepositories func(ctx context.Context, owner string, own bool) ([]ghauth.Repository, error)
+	// ReadProperties reads an organization's property schema and current values with the
+	// operator's token, for the property scope picker. Nil asks the gh CLI.
+	ReadProperties func(ctx context.Context, owner string) ([]ghauth.PropertyDefinition, []ghauth.RepositoryProperties, error)
 	// Discovery is the expansion loop. Nil answers that discovery is unavailable here.
 	Discovery Discovery
 	// Enumerate reads one declared account, bounded by what a previous read established. Nil
@@ -47,6 +59,20 @@ type Server struct {
 	// EnumerateSchema reads what an account declares its custom properties to be. Nil leaves the
 	// organization's defaults unknown, so no bucket is labeled as the one nobody chose.
 	EnumerateSchema enumerate.ReadSchema
+	// EnumerateBranches reads which branches a repository protects. Nil leaves what was recorded
+	// as it was, which is not the same answer as a repository protecting nothing.
+	EnumerateBranches enumerate.ReadBranches
+	// EnumerateRepository reads one repository an event named. Nil leaves it to the next listing.
+	EnumerateRepository enumerate.ReadRepository
+	// EnumerateSetup reads each owned repository's code scanning setup as listings name it, and
+	// EnumerateConfigurations an account's code security configurations on a full listing.
+	EnumerateSetup          enumerate.ReadSetup
+	EnumerateConfigurations enumerate.ReadConfigurations
+	// CodeScanningWrites previews, approves and runs the writes that add actions to default setup.
+	// Nil offers none; one with no targets previews and writes nothing.
+	CodeScanningWrites *setup.Service
+	// FindDatabase asks code scanning for a repository's database. Nil leaves the catalog to discover.
+	FindDatabase func(ctx context.Context, repository, language string) (catalog.Database, error)
 	// FullListingEvery is how often every page of an account is read rather than a prefix of it.
 	// Zero takes enumerate.DefaultFullListingEvery.
 	FullListingEvery time.Duration
@@ -57,6 +83,9 @@ type Server struct {
 	// QueueOwned puts the operator's own repositories in the analysis queue. Nil leaves them
 	// recorded and never analyzed, which is the state enumeration exists to end.
 	QueueOwned func() (int, error)
+	// QueueClosure is the bound the crawl claims inside, so the objective measures the work the
+	// crawl will do. Nil measures the whole queue.
+	QueueClosure func() ([]string, error)
 	// VerifyLock runs GitHub's lock verification of a repository's current commit, within its
 	// budget. Nil leaves the action unavailable.
 	VerifyLock func(ctx context.Context, repository, mode string) (store.LockVerification, error)
@@ -80,6 +109,12 @@ type Server struct {
 	// and heap contents. One flag for both, because two invites the answer "metrics are the safe
 	// half" and the safe half is the one left running.
 	Diagnostics bool
+
+	// Pools are the token pools this process's work draws on. Nil reports the rates and spend the
+	// database records and enforces nothing, which is what a server running no work can offer.
+	Pools *work.TokenPools
+	// RecheckFloor is the shortest time between two probes of one reference. Zero leaves it unstated.
+	RecheckFloor time.Duration
 
 	// WorkDir is where checkouts are fetched, so a prune can take the working copies of what it
 	// removed. Empty means nothing is known about the disk, which is not the same as nothing
@@ -112,6 +147,9 @@ type Server struct {
 	// them, and answers why for each it could not. Nil says nothing here can read one.
 	ReadDeclarations func(ctx context.Context, unread []store.CatalogQuery) (map[string]string, error)
 
+	// Events receives GitHub webhook deliveries. Nil, or one without a secret, refuses every one.
+	Events *EventReceiver
+
 	// declarations is what reading them has learned, written off the request path.
 	declarations declarationState
 
@@ -132,6 +170,12 @@ type Server struct {
 	// request path. Guarded because startup writes it from a goroutine while requests read it.
 	staleMu sync.RWMutex
 	stale   Staleness
+
+	// figures holds drawn figures until the graph or the Graphviz that drew them changes.
+	figures figureCache
+	// models is the graph the node page's uses and versions walks share until the database
+	// changes. Its zero value is ready, so a Server built without it still shares one.
+	models graph.Models
 }
 
 // Handler builds the routing tree.
@@ -177,6 +221,21 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/locks/verifications", s.lockVerifications)
 	mux.HandleFunc("GET /api/discovery/suites", s.tierSuites)
 	mux.HandleFunc("GET /api/discovery/objective", s.objective)
+	mux.HandleFunc("GET /api/checks", reading(s.checks, "offset", "top"))
+	mux.HandleFunc("GET /api/code-scanning/readings", reading(s.codeScanningReadings, "class", "summary"))
+	mux.HandleFunc("GET /api/code-scanning/writes", s.codeScanningWrites)
+	mux.HandleFunc("GET /api/code-scanning/previews", s.previews)
+	mux.HandleFunc("POST /api/code-scanning/previews", s.createPreview)
+	mux.HandleFunc("GET /api/code-scanning/previews/{id}", s.preview)
+	mux.HandleFunc("GET /api/code-scanning/previews/{id}/rows", reading(s.previewRows, "top", "offset"))
+	mux.HandleFunc("POST /api/code-scanning/previews/{id}/approve", s.approvePreview)
+	mux.HandleFunc("GET /api/code-scanning/batches", s.batches)
+	mux.HandleFunc("POST /api/code-scanning/batches", s.startBatch)
+	mux.HandleFunc("GET /api/code-scanning/batches/{id}", s.batch)
+	mux.HandleFunc("POST /api/code-scanning/batches/{id}/{action}", s.actOnBatch)
+	mux.HandleFunc("GET /api/code-scanning/ledger", reading(s.ledger, "repository", "batch", "top"))
+	mux.HandleFunc("GET /api/pools", reading(s.poolsReport))
+	mux.HandleFunc("PUT /api/pools", s.setPoolRate)
 	mux.HandleFunc("PUT /api/discovery/suites/{tier}", s.setTierSuites)
 	mux.HandleFunc("GET /api/nodes", reading(s.nodes, "q", "top", "properties", "notProperties"))
 	mux.HandleFunc("GET /api/node/{key...}", s.node)
@@ -241,6 +300,8 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/prune/apply", s.pruneApply)
 	mux.HandleFunc("POST /api/prune/compact", s.pruneCompact)
 	mux.HandleFunc("POST /api/accounts/refresh", s.refreshAccounts)
+	mux.HandleFunc("POST /api/accounts/{owner}/repositories", s.accountRepositories)
+	mux.HandleFunc("POST /api/accounts/{owner}/properties", s.accountProperties)
 	mux.HandleFunc("GET /api/owner-candidates", s.ownerCandidates)
 	mux.HandleFunc("GET /api/frontier", reading(s.frontier, "status", "top"))
 	mux.HandleFunc("GET /api/findings", reading(s.findings, findingReviewParameters...))
@@ -263,12 +324,14 @@ func (s *Server) routes() *http.ServeMux {
 		"properties", "notProperties"))
 	mux.HandleFunc("GET /api/repositories",
 		reading(s.repositories, "q", "top", "offset", "sort", "desc", "view",
-			"scope", "flags", "properties", "notProperties"))
+			"scope", "flags", "properties", "notProperties", "codeScanning"))
 	mux.HandleFunc("GET /api/repositories/{owner}/{name}", s.repository)
 	mux.HandleFunc("POST /api/repositories/{owner}/{name}/snapshot/preview", s.snapshotPreview)
 	mux.HandleFunc("POST /api/repositories/{owner}/{name}/snapshot/submit", s.snapshotSubmit)
 	mux.HandleFunc("GET /api/submissions", s.submissions)
 	mux.HandleFunc("POST /api/submissions/renew", s.renew)
+	mux.HandleFunc("POST /api/events/github", s.receiveGitHubEvent)
+	mux.HandleFunc("GET /api/events/github", s.gitHubEventStatus)
 
 	if s.UI != nil {
 		// Registered for every method rather than GET alone: a method-restricted catch-all
@@ -613,6 +676,15 @@ func (s *Server) node(w http.ResponseWriter, r *http.Request) {
 		s.nodeVersions(w, r, rest)
 		return
 	}
+	// What runs it and what it runs, drawn; as a file of its own for the download.
+	if rest, ok := strings.CutSuffix(key, "/-/closure"); ok {
+		s.nodeFigure(w, r, rest, false)
+		return
+	}
+	if rest, ok := strings.CutSuffix(key, "/-/closure.svg"); ok {
+		s.nodeFigure(w, r, rest, true)
+		return
+	}
 	// Everything any query has said about this node, each answer naming the query that made it.
 	if rest, ok := strings.CutSuffix(key, "/-/observations"); ok {
 		obs, err := s.Store.ObservationsOf(store.SubjectNode, rest)
@@ -628,7 +700,16 @@ func (s *Server) node(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	detail, err := s.Store.NodeDetailOf(key)
+	spec, err := s.graphPredicate(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if refused := spec.UnenforceableAsNode(); len(refused) > 0 {
+		writeError(w, http.StatusBadRequest, unlistable(refused))
+		return
+	}
+	detail, err := s.Store.NodeDetailOf(key, spec.At)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -648,10 +729,24 @@ func (s *Server) usesQuery(w http.ResponseWriter, r *http.Request) (graph.UsesQu
 		writeError(w, http.StatusBadRequest, unlistable(refused))
 		return graph.UsesQuery{}, false
 	}
-	repositories, err := s.Store.RepositoriesInScope(spec.Scope == store.ScopeOwned, scopeFromSpec(spec))
+	q, err := s.usesNarrowing(spec)
 	if err != nil {
 		writeJSON(w, nil, err)
 		return graph.UsesQuery{}, false
+	}
+	q.Sort = r.URL.Query().Get("sort")
+	q.Desc = r.URL.Query().Get("desc") == "true"
+	q.Offset = intParam(r, "offset", 0)
+	q.Limit = intParam(r, "top", 50)
+	return q, true
+}
+
+// usesNarrowing is what the uses surface's terms keep, for the table and the figure alike, so
+// the two cannot disagree about who runs a node.
+func (s *Server) usesNarrowing(spec viewspec.Spec) (graph.UsesQuery, error) {
+	repositories, err := s.Store.RepositoriesInScope(spec.Scope == store.ScopeOwned, scopeFromSpec(spec))
+	if err != nil {
+		return graph.UsesQuery{}, err
 	}
 	style := spec.RefStyle
 	if style == viewspec.RefStyleAny {
@@ -660,11 +755,7 @@ func (s *Server) usesQuery(w http.ResponseWriter, r *http.Request) (graph.UsesQu
 	return graph.UsesQuery{
 		At: spec.At, RefStyle: style, Reached: spec.Reached, Origins: spec.Origins,
 		Repositories: repositories,
-		Sort:         r.URL.Query().Get("sort"),
-		Desc:         r.URL.Query().Get("desc") == "true",
-		Offset:       intParam(r, "offset", 0),
-		Limit:        intParam(r, "top", 50),
-	}, true
+	}, nil
 }
 
 // nodeUses answers the details page's table from the walk reach and exposure take.
@@ -679,7 +770,7 @@ func (s *Server) nodeUses(w http.ResponseWriter, r *http.Request, key string) {
 			"cannot sort uses by %q; it sorts by one of %v", q.Sort, graph.UsesSortNames()))
 		return
 	}
-	page, err := (&graph.Builder{Store: s.Store}).UsesOf(key, q)
+	page, err := (&graph.Builder{Store: s.Store, Models: &s.models}).UsesOf(key, q)
 	writeJSON(w, page, err)
 }
 
@@ -689,7 +780,7 @@ func (s *Server) nodeVersions(w http.ResponseWriter, r *http.Request, key string
 	if !ok {
 		return
 	}
-	page, err := (&graph.Builder{Store: s.Store}).VersionsOf(key, q)
+	page, err := (&graph.Builder{Store: s.Store, Models: &s.models}).VersionsOf(key, q)
 	writeJSON(w, page, err)
 }
 
@@ -763,6 +854,8 @@ type declaredAccountView struct {
 	// after the last full listing is still reported until the next one, which is only defensible
 	// if a reader can see how long ago that was.
 	Enumeration store.EnumerationMarks `json:"enumeration"`
+	// Installation is evidence beside the declaration, never a reason to change it; null when unread.
+	Installation *store.InstallationEvidence `json:"installation"`
 }
 
 // ownedScope serves what the operator has declared is theirs, which is what discovery is bounded
@@ -776,13 +869,34 @@ func (s *Server) ownedScope(w http.ResponseWriter, r *http.Request) {
 	// A failure to read the verification leaves every state unknown, which is the honest answer:
 	// it is exactly the case where nothing has been established either way.
 	verified, _ := s.Store.Accounts()
+	owners := make([]string, 0, len(declared))
+	for _, a := range declared {
+		owners = append(owners, a.Owner)
+	}
+	installations, installationsErr := s.Store.InstallationEvidence(owners)
 
 	out := make([]declaredAccountView, 0, len(declared))
 	for _, a := range declared {
 		// Marks that cannot be read leave the account unread rather than undeclared: what the
 		// operator said is theirs does not depend on whether anything has looked at it yet.
 		marks, _, _ := s.Store.EnumerationState(a.Owner)
-		out = append(out, declaredAccountView{a, store.DeclarationState(a, verified), marks})
+		installation := installations[strings.ToLower(a.Owner)]
+		if installationsErr != nil {
+			installation = &store.InstallationEvidence{State: store.InstallationUnknown,
+				Reason: store.InstallationEvidenceNotReadable, Detail: installationsErr.Error()}
+		}
+		for j := range a.Properties {
+			if a.Properties[j].Held {
+				continue
+			}
+			n, err := s.Store.PropertyScopeMatches(a.Owner, a.Properties[j].Terms)
+			if err != nil {
+				writeJSON(w, nil, err)
+				return
+			}
+			a.Properties[j].Matching = n
+		}
+		out = append(out, declaredAccountView{a, store.DeclarationState(a, verified), marks, installation})
 	}
 	writeJSON(w, out, nil)
 }
@@ -799,7 +913,12 @@ func (s *Server) setOwnedScope(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Store.SetOwnedScope(accounts, store.DeclaredByInterface); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		var refused *store.DeclarationRefused
+		if errors.As(err, &refused) {
+			writeError(w, http.StatusBadRequest, refused.Reason)
+			return
+		}
+		writeJSON(w, nil, err)
 		return
 	}
 	s.ownedScope(w, r)
@@ -834,6 +953,21 @@ type ScopePreview struct {
 	// reading only repository counts could not tell.
 	QueuedNow  int `json:"queuedNow"`
 	QueuedNext int `json:"queuedNext"`
+
+	// NotJudged counts repositories on record a candidate property scope could not judge, because
+	// no values are on record for them. They neither enter nor stay until a listing reads them.
+	NotJudged int `json:"notJudged"`
+
+	// Held names each candidate property scope the recorded schema cannot honor, which counts
+	// nothing here; without it, a scope saving would take effect for reads as one that drops all.
+	Held []PreviewHold `json:"held"`
+}
+
+// PreviewHold is one candidate property scope that counts nothing, and why.
+type PreviewHold struct {
+	Owner  string               `json:"owner"`
+	Terms  []store.PropertyTerm `json:"terms"`
+	Reason string               `json:"reason"`
 }
 
 // previewOwnedScope answers what a candidate declaration would admit and drop.
@@ -854,9 +988,18 @@ func (s *Server) previewOwnedScope(w http.ResponseWriter, r *http.Request) {
 func (s *Server) scopePreview(candidate []store.DeclaredAccount) (ScopePreview, error) {
 	var out ScopePreview
 
-	nextRoots, err := s.previewRoots(candidate)
+	nextRoots, notJudged, err := s.previewRoots(candidate)
 	if err != nil {
 		return out, err
+	}
+	out.NotJudged = notJudged
+	out.Held = []PreviewHold{}
+	for _, a := range candidate {
+		for _, c := range a.Properties {
+			if c.Held {
+				out.Held = append(out.Held, PreviewHold{Owner: a.Owner, Terms: c.Terms, Reason: c.HeldReason})
+			}
+		}
 	}
 	builder := &graph.Builder{Store: s.Store}
 	now, err := builder.OwnedClosure()
@@ -880,25 +1023,44 @@ func (s *Server) scopePreview(candidate []store.DeclaredAccount) (ScopePreview, 
 	return out, nil
 }
 
-func (s *Server) previewRoots(candidate []store.DeclaredAccount) ([]string, error) {
+func (s *Server) previewRoots(candidate []store.DeclaredAccount) ([]string, int, error) {
 	repositories, err := s.Store.AllRepositories()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	// A repository a full listing no longer names left the scope with the listing, and declaring
 	// its account again does not bring it back; the store's roots skip it the same way.
 	missing, err := s.Store.MissingRepositories()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	// Judged against the recorded schema exactly as a stored declaration would be.
+	if err := s.Store.JudgePropertyScopes(candidate); err != nil {
+		return nil, 0, err
+	}
+	values, err := s.Store.PropertyValuesByRepository()
+	if err != nil {
+		return nil, 0, err
 	}
 	nextRoots := make([]string, 0, len(repositories))
+	notJudged := 0
 	for _, full := range repositories {
 		owner, repo, ok := strings.Cut(full, "/")
-		if ok && !missing[strings.ToLower(full)] && store.CoveredBy(candidate, owner, repo) {
+		if !ok || missing[strings.ToLower(full)] {
+			continue
+		}
+		held := values[strings.ToLower(full)]
+		if store.CoveredBy(candidate, owner, repo, held) {
 			nextRoots = append(nextRoots, full)
+			continue
+		}
+		if held == nil && slices.ContainsFunc(candidate, func(a store.DeclaredAccount) bool {
+			return strings.EqualFold(a.Owner, owner) && a.HasProperties()
+		}) {
+			notJudged++
 		}
 	}
-	return nextRoots, nil
+	return nextRoots, notJudged, nil
 }
 
 func (out *ScopePreview) collectScopeChanges(now, next *graph.Closure) {

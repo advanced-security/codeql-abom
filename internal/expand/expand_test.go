@@ -847,7 +847,8 @@ func TestExpandPacesCheckouts(t *testing.T) {
 	h.enqueue(item("a", "one", "", 1), item("b", "two", "", 1), item("c", "three", "", 1))
 
 	const perHour = 360000 // a 10ms interval, so three checkouts cannot finish instantly
-	h.expander.Pace = work.NewLimiter(perHour)
+	h.expander.Pace = work.NewTokenPools().Pool(work.PoolFetching, work.UnitGit)
+	h.expander.Pace.Configure(perHour, 1)
 
 	start := time.Now()
 	h.run(10)

@@ -12,13 +12,10 @@ import (
 
 // GraphLayout is where an engine placed a scope, and what it could not place.
 type GraphLayout struct {
-	// ProducedBy is what drew this: "graphviz", or "none" when the layout could not be computed
-	// and whoever asked has to fall back. A caller that could not tell them apart would present a
-	// force simulation's picture as a stable one.
+	// ProducedBy is what drew this, always "graphviz": a server that cannot run it answers 503.
 	ProducedBy string `json:"producedBy"`
 	Engine     string `json:"engine"`
-	// Reason says why nothing was produced, so the interface can report the cause rather than
-	// silently drawing something else.
+	// Reason says why a grouping that was asked for draws no boundary.
 	Reason    string            `json:"reason,omitempty"`
 	Width     float64           `json:"width"`
 	Height    float64           `json:"height"`
@@ -86,17 +83,7 @@ func (s *Server) graphLayout(w http.ResponseWriter, r *http.Request) {
 
 	result, err := layout.Compute(r.Context(), document, layout.Options{Engine: engine})
 	if layout.ErrUnavailable(err) {
-		// Not a fault. Graphviz is optional, and the honest answer is that nothing placed this
-		// -- said out loud, so the interface reports which layout a reader is looking at.
-		writeJSON(w, GraphLayout{
-			ProducedBy: "none",
-			Engine:     string(engine),
-			Reason:     err.Error(),
-			Nodes:      len(g.Nodes),
-			Positions:  []layout.Position{},
-			Clusters:   []layout.Cluster{},
-			Unplaced:   len(g.Nodes),
-		}, nil)
+		writeGraphvizMissing(w, err)
 		return
 	}
 	if err != nil {
@@ -151,4 +138,11 @@ func placed[T any](in []T) []T {
 		return []T{}
 	}
 	return in
+}
+
+// writeGraphvizMissing answers for a server that has lost Graphviz, which is a broken installation:
+// 503 and the remedy, never a placement nobody made.
+func writeGraphvizMissing(w http.ResponseWriter, err error) {
+	writeError(w, http.StatusServiceUnavailable,
+		fmt.Sprintf("this server cannot run Graphviz (%v); %s", err, layout.Remedy))
 }

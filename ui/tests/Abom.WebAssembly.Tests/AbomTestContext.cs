@@ -36,6 +36,7 @@ public abstract class AbomTestContext : BunitContext
         Services.AddSingleton<FollowService>();
         Services.AddSingleton<RunDraft>();
         Services.AddSingleton<RequestDraft>();
+        Services.AddSingleton<PromptMemory>();
 
         _handler.Fallbacks.Add(("api/filters", DefaultFilters));
     }
@@ -48,8 +49,8 @@ public abstract class AbomTestContext : BunitContext
     /// about something else fails for a reason that has nothing to do with it.
     private const string DefaultFilters = """
         [
-          {"name":"scope","label":"Scope","help":"Owned accounts, or advisory routes",
-           "arity":"scalar","values":["owned","exposure"],
+          {"name":"scope","label":"Scope","help":"What you own, also what it runs, or advisory routes",
+           "arity":"scalar","values":["owned","supply-chain","exposure"],
            "surfaces":["graph","inventory","workflows","jobs","repositories","relationships","uses"],
            "surfaceValues":{"uses":["owned"]}},
           {"name":"q","label":"Name contains","help":"Repository, workflow or action",
@@ -83,6 +84,12 @@ public abstract class AbomTestContext : BunitContext
     protected void Answer(string path, string json) => _handler.Answer(path, json);
 
     /// <summary>
+    /// Answers writes to <paramref name="path"/>, which a read of the same path never receives:
+    /// one endpoint lists on GET and creates on POST, and the two answers have different shapes.
+    /// </summary>
+    protected void AnswerWrite(string path, string json) => _handler.AnswerWrite(path, json);
+
+    /// <summary>
     /// Puts a scope in the address, which the Explorer requires before it draws anything. A test
     /// about what a drawn graph does is not a test about how a reader came to choose it, and
     /// without this every one of them would be measuring the chooser instead.
@@ -107,6 +114,17 @@ public abstract class AbomTestContext : BunitContext
     /// the call actually fail.
     /// </summary>
     protected void Fail(string path, HttpStatusCode status) => _handler.Fail(path, status);
+
+    /// <summary>Refuses a path with the server's own error message.</summary>
+    protected void Refuse(string path, HttpStatusCode status, string message) =>
+        _handler.Fail(path, status, message);
+
+    /// <summary>
+    /// Refuses only writes to exactly <paramref name="path"/>, with the server's message. A page
+    /// that reads and writes one endpoint has to be able to load before its write can be refused.
+    /// </summary>
+    protected void RefuseWrite(string path, HttpStatusCode status, string message) =>
+        _handler.WriteFailures.Add((path, status, message));
 
     /// <summary>
     /// Every request the component made, in order.
@@ -137,15 +155,29 @@ public abstract class AbomTestContext : BunitContext
         // Ordered, because which stub answers an overlapping path is a decision tests make by
         // registering the specific one first. A dictionary left that to its own ordering.
         private readonly List<(string Path, string Json)> _answers = [];
-        private readonly List<(string Path, HttpStatusCode Status)> _failures = [];
+        private readonly List<(string Path, string Json)> _writes = [];
+        private readonly List<(string Path, HttpStatusCode Status, string? Message)> _failures = [];
 
         public Dictionary<string, TaskCompletionSource> Gates { get; } = [];
+        public List<(string Path, HttpStatusCode Status, string Message)> WriteFailures { get; } = [];
         public List<SentRequest> Sent { get; } = [];
 
-        public void Fail(string path, HttpStatusCode status) => _failures.Add((path, status));
+        public void Fail(string path, HttpStatusCode status, string? message = null) =>
+            _failures.Add((path, status, message));
 
         /// <summary>Answers used only when no test registered one, so a default cannot win.</summary>
         public List<(string Path, string Json)> Fallbacks { get; } = [];
+
+        public void AnswerWrite(string path, string json)
+        {
+            var at = _writes.FindIndex(a => a.Path == path);
+            if (at >= 0)
+            {
+                _writes[at] = (path, json);
+                return;
+            }
+            _writes.Add((path, json));
+        }
 
         public void Answer(string path, string json)
         {
@@ -174,18 +206,32 @@ public abstract class AbomTestContext : BunitContext
                     await gate.Task.WaitAsync(cancellationToken);
                 }
             }
-            foreach (var (path, status) in _failures)
+            foreach (var (path, status, message) in WriteFailures)
+            {
+                if (request.Method != HttpMethod.Get && Matches(url, path))
+                {
+                    return new HttpResponseMessage(status)
+                    {
+                        Content = new StringContent(
+                            System.Text.Json.JsonSerializer.Serialize(new { error = message }),
+                            Encoding.UTF8, "application/json"),
+                    };
+                }
+            }
+            foreach (var (path, status, message) in _failures)
             {
                 if (url.Contains(path, StringComparison.Ordinal))
                 {
                     return new HttpResponseMessage(status)
                     {
-                        Content = new StringContent($"{{\"error\":\"refused {path}\"}}",
+                        Content = new StringContent(
+                            System.Text.Json.JsonSerializer.Serialize(new { error = message ?? $"refused {path}" }),
                             Encoding.UTF8, "application/json"),
                     };
                 }
             }
-            foreach (var (path, json) in _answers.Concat(Fallbacks))
+            var answers = request.Method == HttpMethod.Get ? _answers : _writes.Concat(_answers);
+            foreach (var (path, json) in answers.Concat(Fallbacks))
             {
                 if (Matches(url, path))
                 {

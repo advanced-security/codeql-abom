@@ -175,17 +175,17 @@ export function releaseAll(nodes) {
 //
 // A reader looking at a stable layout and a reader looking at a force simulation are looking at
 // two different kinds of claim, and nothing else on the canvas distinguishes them.
+//
+// A placement that was asked for and failed carries its reason, and is a fault: Graphviz is a
+// requirement, so worded as the force layout it would read as a choice the reader made.
 export function layoutSummary(layout, { pinned = 0, free = 0 } = {}) {
     if (!layout || layout.producedBy !== 'graphviz') {
-        return {
-            stable: false,
-            text: layout?.reason
-                ? `Force layout — ${layout.reason}`
-                : 'Force layout — positions change on every reload',
-        };
+        return layout?.reason
+            ? { stable: false, fault: true, text: `Stable layout failed — ${layout.reason}` }
+            : { stable: false, fault: false, text: 'Force layout — positions change on every reload' };
     }
     const parts = [`${layout.engine} layout`];
     if (free > 0) parts.push(`${free} of ${pinned + free} placed by the simulation`);
     if (layout.groupingDrawn === false && layout.reason) parts.push(layout.reason);
-    return { stable: true, text: parts.join(' — ') };
+    return { stable: true, fault: false, text: parts.join(' — ') };
 }

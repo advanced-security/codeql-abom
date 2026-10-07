@@ -217,8 +217,21 @@ public class ViewSpecTests
     [InlineData("repositories=octo-org%2Fapp%2Cocto-org%2Ftool")]
     [InlineData("mode=extended")]
     [InlineData("mode=regular&rules=actions%2F%2A")]
+    [InlineData("codeScanning=add%2Cenable")]
     public void TheCanonicalTextIsIdenticalToTheOneGoWrites(string canonical) =>
         Assert.Equal(canonical, ViewSpec.Parse(canonical).ToQueryString());
+
+    /// <summary>
+    /// The text Go writes for a spec carrying every term, read from the file Go's own test pins.
+    /// Two hand-kept lists let <c>codeScanning</c> into the filter picker while this class could not
+    /// parse it, and choosing it took the whole interface down with an unhandled exception.
+    /// </summary>
+    [Fact]
+    public void EveryTermGoWritesIsOneThisReadsAndWritesBackIdentically()
+    {
+        var text = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "testdata", "every-term.txt")).Trim();
+        Assert.Equal(text, ViewSpec.Parse(text).ToQueryString());
+    }
 
     /// <summary>
     /// A shape outside the vocabulary is refused rather than dropped. `mixed` is the one that
@@ -262,16 +275,28 @@ public class ViewSpecTests
     [Theory]
     [InlineData("kinds=banana")]
     [InlineData("kinds=action%2Cbanana")]
-    [InlineData("origins=owned")]
+    [InlineData("origins=yours")]
     [InlineData("flags=pinned")]
     [InlineData("edges=cross-owner")]
     [InlineData("edgeKinds=uses")]
+    [InlineData("codeScanning=covered%2Cbogus")]
     public void AListMemberOutsideItsVocabularyIsRefused(string text) =>
         Assert.Throws<FormatException>(() => ViewSpec.Parse(text));
 
+    /// <summary>
+    /// What you own and what it runs are two scopes with two spellings, read the way Go reads them,
+    /// or a link to the supply chain opens here refused.
+    /// </summary>
+    [Theory]
+    [InlineData("scope=owned")]
+    [InlineData("scope=supply-chain")]
+    [InlineData("scope=exposure")]
+    public void EveryScopeTheLanguageDeclaresIsReadBack(string canonical) =>
+        Assert.Equal(canonical, ViewSpec.Parse(canonical).ToQueryString());
+
     [Theory]
     [InlineData("kinds=action%2Ccomposite_action%2Cdocker_image%2Cjob%2Corg%2Crepo%2Creusable_workflow%2Cstep%2Cworkflow")]
-    [InlineData("origins=external%2Cseed%2Cupstream")]
+    [InlineData("origins=external%2Cowned%2Cseed%2Cupstream")]
     [InlineData("flags=advisory%2Cfindings%2Cunanalyzed")]
     [InlineData("edges=crossOwner%2CsameOwner%2CsameRepo")]
     [InlineData("edgeKinds=composite-step-uses-action%2Cjob-needs-job%2Cjob-uses-reusable-workflow%2Cstep-uses-action")]

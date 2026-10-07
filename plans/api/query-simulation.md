@@ -75,9 +75,9 @@ flowchart LR
    now names both CodeQL versions and reads as an inference, which is honest and does not say which
    results are which. The fork: run the repository's own configured suite at the server's CodeQL
    beside the query and subtract it, which doubles the analysis cost and needs the configuration
-   Default Setup generates; or read the alerts' own tool version and refuse to count a repository
-   whose last analysis ran another CodeQL, which is cheap and would have left this repository
-   uncounted. Depends on nothing.
+   Default Setup generates, readable with the repository Administration read the App holds; or read
+   the alerts' own tool version and refuse to count a repository whose last analysis ran another
+   CodeQL, which is cheap and would have left this repository uncounted. Depends on nothing.
 3. **Read enablement from the audit, not from the newest page of analyses.** A comparison names a
    repository whose code scanning holds no Actions analysis it can recognize, by a category naming
    `language:actions` among the newest hundred analyses, or an Actions alert. That is evidence an
