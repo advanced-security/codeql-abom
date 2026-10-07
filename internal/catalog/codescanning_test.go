@@ -233,17 +233,17 @@ func TestEveryActionsAnalysisIsListedNewestFirstWithTheIDThatFetchesIt(t *testin
 	}
 }
 
-// codeScanningFixture is GitHub's own output for an operator's test repository (regen-codescanning-fixture.sh).
-const codeScanningFixture = "../../testdata/codescanning/has-ghas__test-repo-3/"
+// codeScanningFixture is generated from the controlled workflow (regen-codescanning-fixture.sh).
+const codeScanningFixture = "../../testdata/codescanning/synthetic/"
 
-// The document is GitHub's byte for byte, asked for in the media type that returns SARIF, not a summary.
+// The generated document is passed byte for byte in the media type that returns SARIF, not a summary.
 func TestAnAnalysisIsDownloadedAsItsSarifDocument(t *testing.T) {
 	want, err := os.ReadFile(codeScanningFixture + "analysis.sarif")
 	if err != nil {
 		t.Fatal(err)
 	}
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if got, want := r.URL.Path, "/repos/has-ghas/test-repo-3/code-scanning/analyses/1894557161"; got != want {
+		if got, want := r.URL.Path, "/repos/has-ghas/test-repo-3/code-scanning/analyses/1"; got != want {
 			t.Errorf("path = %q, want %q", got, want)
 		}
 		if got := r.Header.Get("Accept"); got != "application/sarif+json" {
@@ -253,7 +253,7 @@ func TestAnAnalysisIsDownloadedAsItsSarifDocument(t *testing.T) {
 	})
 
 	dest := filepath.Join(t.TempDir(), "analysis.sarif")
-	if err := c.DownloadAnalysis(context.Background(), "has-ghas/test-repo-3", 1894557161, dest); err != nil {
+	if err := c.DownloadAnalysis(context.Background(), "has-ghas/test-repo-3", 1, dest); err != nil {
 		t.Fatalf("DownloadAnalysis: %v", err)
 	}
 	got, err := os.ReadFile(dest)
@@ -261,7 +261,7 @@ func TestAnAnalysisIsDownloadedAsItsSarifDocument(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(got, want) {
-		t.Errorf("downloaded %d bytes, want GitHub's %d unchanged", len(got), len(want))
+		t.Errorf("downloaded %d bytes, want %d unchanged", len(got), len(want))
 	}
 }
 
@@ -273,7 +273,7 @@ func TestAFailedAnalysisDownloadLeavesNoDocument(t *testing.T) {
 	})
 
 	dest := filepath.Join(t.TempDir(), "analysis.sarif")
-	err := c.DownloadAnalysis(context.Background(), "has-ghas/test-repo-3", 1894557161, dest)
+	err := c.DownloadAnalysis(context.Background(), "has-ghas/test-repo-3", 1, dest)
 	var status *StatusError
 	if !errors.As(err, &status) || status.Code != http.StatusForbidden {
 		t.Fatalf("got %v, want the 403", err)

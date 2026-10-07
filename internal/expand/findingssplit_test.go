@@ -164,7 +164,7 @@ func tookFromTheFixture(t *testing.T, h *harness, taken ...string) {
 			}
 			continue
 		}
-		if r.takenFrom.String != "github-code-scanning:1894557161" || r.cli.String != codeScanningCLI ||
+		if r.takenFrom.String != "github-code-scanning:1" || r.cli.String != codeScanningCLI ||
 			r.pack.String != "codeql/actions-queries" || r.packVersion.String != codeScanningRelease || r.queryVersion.Valid {
 			t.Errorf("%s, taken from code scanning, is recorded as %+v", rule, r)
 		}
@@ -300,7 +300,7 @@ func TestAnAnalysisAnswersForItsCommitWhateverCodeQLABOMRuns(t *testing.T) {
 		t.Errorf("findings by rule = %v, want code scanning's one, read under its own CodeQL", got)
 	}
 	for _, rule := range []string{ruleUnpinned, ruleInjection} {
-		if r := recordOf(t, h, rule); r.takenFrom.String != "github-code-scanning:1894557161" || r.cli.String != codeScanningCLI {
+		if r := recordOf(t, h, rule); r.takenFrom.String != "github-code-scanning:1" || r.cli.String != codeScanningCLI {
 			t.Errorf("%s is recorded as %+v, want code scanning's analysis under CodeQL %s", rule, r, codeScanningCLI)
 		}
 	}
