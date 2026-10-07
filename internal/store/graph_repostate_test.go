@@ -60,6 +60,47 @@ func TestAQueuedRepositorySaysItIsQueued(t *testing.T) {
 	}
 }
 
+// Read in full and found empty is settled. A branch that could not be fetched is not, and the
+// least settled reference is the one a repository reports, whichever query draws it.
+func TestABranchThatCouldNotBeFetchedOutranksNothingToAnalyze(t *testing.T) {
+	for _, drawn := range []string{"attached", "drawn"} {
+		t.Run(drawn, func(t *testing.T) {
+			s := newTestStore(t)
+			id := seedOwnedRepo(t, s, "acme/docs")
+			if drawn == "drawn" {
+				writeNode(t, s, Node{Key: normalize.RepoKey("acme/docs"), Kind: "repo", RepositoryID: id})
+			}
+			enqueueWithStatus(t, s, "acme/docs", "nothing")
+
+			if node := repoNode(t, s, "acme/docs"); node.Discovery != "nothing" || node.Analyzed {
+				t.Errorf("Discovery = %q, analyzed = %v, want nothing to analyze and not analyzed",
+					node.Discovery, node.Analyzed)
+			}
+
+			enqueueRef(t, s, "acme/docs", "release", 0, "unavailable")
+			if got := repoNode(t, s, "acme/docs").Discovery; got != "unavailable" {
+				t.Errorf("Discovery = %q, want unavailable", got)
+			}
+			if drawn != "drawn" {
+				return
+			}
+			generation, err := s.RecordGraphGeneration(GraphRebuild{})
+			if err != nil {
+				t.Fatalf("RecordGraphGeneration: %v", err)
+			}
+			delta, err := s.GraphDelta(generation, FullGraphOptions{})
+			if err != nil {
+				t.Fatalf("GraphDelta: %v", err)
+			}
+			for _, m := range delta.Metrics {
+				if m.Key == normalize.RepoKey("acme/docs") && m.Discovery != "unavailable" {
+					t.Errorf("delta Discovery = %q, want unavailable", m.Discovery)
+				}
+			}
+		})
+	}
+}
+
 // The prefixed key must not start matching dependencies. `repo:actions/checkout` and the queue row
 // for `actions/checkout` are the same project, and conflating a repository node with the
 // dependency row would report an action's analysis as its repository's.

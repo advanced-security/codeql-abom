@@ -78,6 +78,10 @@ structurally blind to, and ABOM is what closes it.
 ABOM's coverage story and never becomes an ABOM verdict. ABOM does not re-implement what the audit
 already measures, and does not silently adopt its conclusions as its own.
 
+**One exception, by the operator's decision: `actions`.** GitHub cannot set default setup's
+languages organization-wide, so ABOM reads each owned repository's default setup and adds `actions`
+where an approved preview listed it, never over advanced setup and never removing a language.
+
 ## A business unit is discovered, never configured by hand
 
 An organization of ten thousand repositories has no single person who can act on a finding in it.
@@ -305,7 +309,8 @@ get an exemption from them.
   and under the same rule.
 - **An absent measurement is not a measurement of zero.**
 - **A person chooses every alert.** Nothing writes to another repository's security surface on a
-  timer or by inference — and now nothing writes to it at all.
+  timer or by inference; ABOM's one write there, adding `actions` to default setup, needs an
+  approved preview.
 - **Say what was excluded.** A scoped view states what it left out.
 
 Four the vision adds:
@@ -318,7 +323,7 @@ Four the vision adds:
 ## Deliberately not the vision
 
 - **Re-implementing what `gh-ghas-audit` measures.** Enablement is a solved problem with an owner.
-  ABOM consumes the answer and contributes the one gap that tool cannot see.
+  ABOM consumes the answer and closes the one gap that tool cannot see: `actions`.
 - **Evaluating an `if:` condition.** Conditions are reported verbatim. Whether one holds at a given
   moment is not something static analysis settles.
 - **Deriving vulnerability from an advisory.**

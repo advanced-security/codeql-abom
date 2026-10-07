@@ -106,23 +106,27 @@ func lockedCorpus(t *testing.T) *Store {
 		}
 	}
 
-	for _, f := range []struct{ node, ref, owner, repo, resolved string }{
-		{"octo/cleave", "", "octo", "cleave", "c-cleave"},
-		{"octo/bitfuckit", "", "octo", "bitfuckit", "c-bit"},
-		{"octo/plain", "", "octo", "plain", "c-plain"},
-		{"octo/unlocked", "", "octo", "unlocked", "c-unlocked"},
-		{"octo/broken", "", "octo", "broken", "c-broken"},
-		{"octo/tool", "v1", "octo", "tool", "c-tool"},
-		{"dtolnay/rust-toolchain", "v1", "dtolnay", "rust-toolchain", liveV1},
-		{"dtolnay/rust-toolchain", cleaveLocked, "dtolnay", "rust-toolchain", cleaveLocked},
-		{"dtolnay/rust-toolchain", bitLocked, "dtolnay", "rust-toolchain", bitLocked},
-		{"actions/setup-python", pythonLocked, "actions", "setup-python", pythonLocked},
+	// A starting point's own default branch is queued at depth 0, as the crawl roots it.
+	for _, f := range []struct {
+		node, ref, owner, repo, resolved string
+		depth                            int
+	}{
+		{"octo/cleave", "", "octo", "cleave", "c-cleave", 0},
+		{"octo/bitfuckit", "", "octo", "bitfuckit", "c-bit", 0},
+		{"octo/plain", "", "octo", "plain", "c-plain", 0},
+		{"octo/unlocked", "", "octo", "unlocked", "c-unlocked", 0},
+		{"octo/broken", "", "octo", "broken", "c-broken", 0},
+		{"octo/tool", "v1", "octo", "tool", "c-tool", 1},
+		{"dtolnay/rust-toolchain", "v1", "dtolnay", "rust-toolchain", liveV1, 1},
+		{"dtolnay/rust-toolchain", cleaveLocked, "dtolnay", "rust-toolchain", cleaveLocked, 1},
+		{"dtolnay/rust-toolchain", bitLocked, "dtolnay", "rust-toolchain", bitLocked, 1},
+		{"actions/setup-python", pythonLocked, "actions", "setup-python", pythonLocked, 1},
 	} {
 		if _, err := s.DB().Exec(`
 			INSERT INTO abom_frontier (node_key, ref, owner, repo, depth, status, enqueued_at,
 			                           resolved_sha, analyzed_ref)
-			VALUES (?, ?, ?, ?, 1, 'done', '2026-09-27T00:00:00Z', ?, ?)`,
-			f.node, f.ref, f.owner, f.repo, f.resolved, f.ref); err != nil {
+			VALUES (?, ?, ?, ?, ?, 'done', '2026-09-27T00:00:00Z', ?, ?)`,
+			f.node, f.ref, f.owner, f.repo, f.depth, f.resolved, f.ref); err != nil {
 			t.Fatalf("queueing %s@%s: %v", f.node, f.ref, err)
 		}
 	}

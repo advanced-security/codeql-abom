@@ -10,7 +10,7 @@ import (
 // Otherwise LIMIT selects an arbitrary subset when multiple references of one action tie. Assert
 // the ORDER BY itself rather than an observed sequence, which can be stable by accident.
 func TestTheQueueSortIsATotalOrder(t *testing.T) {
-	query, _ := frontierSnapshotQuery("", 500)
+	query, _ := frontierSnapshotQuery("temp.declared_edge_regular", "", 500)
 
 	// The last ORDER BY, not the first: the rollup CTE contains one inside a window function, and
 	// cutting at the first match tested that instead and passed for the wrong reason.

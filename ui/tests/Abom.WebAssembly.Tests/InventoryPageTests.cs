@@ -89,4 +89,38 @@ public class InventoryPageTests : AbomTestContext
             Assert.DoesNotContain("top=500", LastActionsRequest);
         });
     }
+
+    /// <summary>
+    /// The Actions code scanning term travels from the address to the repositories listing. The
+    /// browser could not read it, so the address was refused whole and every repository listed.
+    /// </summary>
+    [Fact]
+    public void ACodeScanningClassInTheAddressReachesTheRepositoriesRequest()
+    {
+        Answer("api/repositories", """{"items":[],"total":0}""");
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+                .NavigateTo("/inventory?unit=repositories&codeScanning=enable");
+
+        var page = Render<Pages.Inventory>();
+
+        page.WaitForAssertion(() => Assert.Contains("codeScanning=enable",
+            Sent.Last(r => r.Url.Contains("api/repositories")).Url));
+    }
+
+    /// <summary>
+    /// An address term this page cannot read is refused by name, never dropped: the rows under a
+    /// silent refusal answer a wider question than the address asked, and nothing says so.
+    /// </summary>
+    [Fact]
+    public void ATermTheAddressCarriesAndThisPageCannotReadIsRefusedByName()
+    {
+        Answer("api/actions", Page);
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+                .NavigateTo("/inventory?kindz=action");
+
+        var page = Render<Pages.Inventory>();
+
+        page.WaitForAssertion(() =>
+            Assert.Contains("kindz", page.Find("[data-abom-scope-refusal]").TextContent));
+    }
 }

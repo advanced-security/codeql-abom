@@ -1,13 +1,15 @@
 package store
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/advanced-security/codeql-abom/internal/normalize"
 )
 
-// ownedRunsFixture is a declared repository running another starting point's composite action,
-// which runs a third action, beside that starting point's own CI, which nothing declared runs.
+// ownedRunsFixture is a declared repository holding a composite action and running another
+// starting point's, which runs a third action, beside that starting point's own CI, which nothing
+// declared runs.
 func ownedRunsFixture(t *testing.T) *Store {
 	t.Helper()
 	s := newTestStore(t)
@@ -43,6 +45,8 @@ func ownedRunsFixture(t *testing.T) *Store {
 	add(Node{Key: "vendor/tool/ci.yml", Kind: "workflow", RepositoryID: vendor})
 	add(Node{Key: "vendor/tool/setup", Kind: "composite_action", RepositoryID: vendor,
 		Owner: "vendor", Repo: "tool", Path: "setup/action.yml"})
+	add(Node{Key: "octo/app/lint", Kind: "composite_action", RepositoryID: app,
+		Owner: "octo", Repo: "app", Path: "lint/action.yml"})
 	add(Node{Key: "actions/cache", Kind: "action", Owner: "actions", Repo: "cache", IsExternal: true})
 	add(Node{Key: "third/lint", Kind: "action", Owner: "third", Repo: "lint", IsExternal: true})
 	flush()
@@ -86,98 +90,137 @@ func ownedRunsFixture(t *testing.T) *Store {
 	return s
 }
 
-// "What you own" is what the declared repositories hold and what they run, at the node: the
-// repository of something they run also holds its own CI, which nothing declared runs, and
-// admitting the repository whole made that CI, and everything it uses, read as yours in every unit.
-func TestWhatYouOwnIsWhatDeclaredRepositoriesHoldAndRunNotAnotherRepositorysCI(t *testing.T) {
-	s := ownedRunsFixture(t)
-	check := func(unit string, got []string, in, out []string) {
-		t.Helper()
-		have := map[string]bool{}
-		for _, g := range got {
-			have[g] = true
-		}
-		for _, k := range in {
-			if !have[k] {
-				t.Errorf("%s: %s is missing; a declared repository holds or runs it", unit, k)
-			}
-		}
-		for _, k := range out {
-			if have[k] {
-				t.Errorf("%s: %s is listed; only another repository's own CI uses it", unit, k)
-			}
-		}
-	}
-
-	actions, err := s.ActionsInventoryPage(InventoryQuery{Scope: ScopeOwned})
+// unitKeys reads, unit by unit, what a scope keeps, by the key each unit names a row by.
+func unitKeys(t *testing.T, s *Store, scope string) map[string][]string {
+	t.Helper()
+	out := map[string][]string{}
+	actions, err := s.ActionsInventoryPage(InventoryQuery{Scope: scope})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var keys []string
 	for _, a := range actions.Items {
-		keys = append(keys, a.NodeKey)
+		out["actions"] = append(out["actions"], a.NodeKey)
 	}
-	check("actions", keys, []string{"vendor/tool/setup", "actions/cache"}, []string{"third/lint"})
-
-	workflows, err := s.WorkflowsPage(WorkflowsQuery{Scope: ScopeOwned})
+	workflows, err := s.WorkflowsPage(WorkflowsQuery{Scope: scope})
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys = nil
 	for _, w := range workflows.Items {
-		keys = append(keys, w.NodeKey)
+		out["workflows"] = append(out["workflows"], w.NodeKey)
 	}
-	check("workflows", keys, []string{"octo/app/ci.yml"}, []string{"vendor/tool/ci.yml"})
-
-	jobs, err := s.JobsPage(JobsQuery{Scope: ScopeOwned})
+	jobs, err := s.JobsPage(JobsQuery{Scope: scope})
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys = nil
 	for _, j := range jobs.Items {
-		keys = append(keys, j.NodeKey)
+		out["jobs"] = append(out["jobs"], j.NodeKey)
 	}
-	check("jobs", keys, []string{"app-build"}, []string{"tool-test"})
-
-	relationships, err := s.RelationshipsPage(RelationshipsQuery{Scope: ScopeOwned})
+	relationships, err := s.RelationshipsPage(RelationshipsQuery{Scope: scope})
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys = nil
 	for _, r := range relationships.Items {
-		keys = append(keys, r.EdgeKey)
+		out["relationships"] = append(out["relationships"], r.EdgeKey)
 	}
-	check("relationships", keys, []string{"app>setup", "setup>cache"}, []string{"ci>lint"})
-
-	repositories, err := s.RepositoriesPage(RepositoriesQuery{Scope: ScopeOwned})
+	repositories, err := s.RepositoriesPage(RepositoriesQuery{Scope: scope})
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys = nil
 	for _, r := range repositories.Items {
-		keys = append(keys, r.FullName)
+		out["repositories"] = append(out["repositories"], r.FullName)
 	}
-	check("repositories", keys, []string{"octo/app", "vendor/tool"}, []string{"third/lint"})
-
-	findings, err := s.InventoryFindingsPage(FindingReviewQuery{InventoryQuery: InventoryQuery{Scope: ScopeOwned}})
+	findings, err := s.InventoryFindingsPage(FindingReviewQuery{InventoryQuery: InventoryQuery{Scope: scope}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys = nil
 	for _, f := range findings.Items {
-		keys = append(keys, f.FilePath)
+		out["findings"] = append(out["findings"], f.FilePath)
 	}
-	check("findings", keys, []string{"app-step", "setup-step"}, []string{"tool-ci-step"})
-
-	g, err := s.FullGraph(FullGraphOptions{Scope: ScopeOwned})
+	g, err := s.FullGraph(FullGraphOptions{Scope: scope})
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys = nil
 	for _, n := range g.Nodes {
-		keys = append(keys, n.Key)
+		out["explorer"] = append(out["explorer"], n.Key)
 	}
-	check("explorer", keys,
-		[]string{"octo/app/ci.yml", "vendor/tool/setup", "actions/cache", normalize.RepoKey("vendor/tool")},
-		[]string{"vendor/tool/ci.yml", "third/lint", normalize.RepoKey("third/lint")})
+	return out
+}
+
+// checkUnits holds every unit to what it must list and what it must not.
+func checkUnits(t *testing.T, got map[string][]string, in, out map[string][]string, why string) {
+	t.Helper()
+	for unit, keys := range in {
+		for _, k := range keys {
+			if !slices.Contains(got[unit], k) {
+				t.Errorf("%s: %s is missing", unit, k)
+			}
+		}
+	}
+	for unit, keys := range out {
+		for _, k := range keys {
+			if slices.Contains(got[unit], k) {
+				t.Errorf("%s: %s is listed; %s", unit, k, why)
+			}
+		}
+	}
+}
+
+// "Yours and what it runs" is what the declared repositories hold and what they run, at the node:
+// the repository of something they run also holds its own CI, which nothing declared runs, and
+// admitting the repository whole made that CI, and everything it uses, read as yours in every unit.
+func TestYoursAndWhatItRunsIsWhatDeclaredRepositoriesHoldAndRunNotAnotherRepositorysCI(t *testing.T) {
+	got := unitKeys(t, ownedRunsFixture(t), ScopeSupplyChain)
+	checkUnits(t, got, map[string][]string{
+		"actions":       {"octo/app/lint", "vendor/tool/setup", "actions/cache"},
+		"workflows":     {"octo/app/ci.yml"},
+		"jobs":          {"app-build"},
+		"relationships": {"app>setup", "setup>cache"},
+		"repositories":  {"octo/app", "vendor/tool"},
+		"findings":      {"app-step", "setup-step"},
+		"explorer": {"octo/app/ci.yml", "octo/app/lint", "vendor/tool/setup", "actions/cache",
+			normalize.RepoKey("vendor/tool")},
+	}, map[string][]string{
+		"actions":       {"third/lint"},
+		"workflows":     {"vendor/tool/ci.yml"},
+		"jobs":          {"tool-test"},
+		"relationships": {"ci>lint"},
+		"repositories":  {"third/lint"},
+		"findings":      {"tool-ci-step"},
+		"explorer":      {"vendor/tool/ci.yml", "third/lint", normalize.RepoKey("third/lint")},
+	}, "only another repository's own CI uses it")
+}
+
+// "What you own" is what the declared repositories hold and nothing else, in every unit. What they
+// run belongs to whoever holds it: listed here, a vendor's composite action read as yours.
+func TestWhatYouOwnIsOnlyWhatDeclaredRepositoriesHold(t *testing.T) {
+	s := ownedRunsFixture(t)
+	got := unitKeys(t, s, ScopeOwned)
+	checkUnits(t, got, map[string][]string{
+		"actions":       {"octo/app/lint"},
+		"workflows":     {"octo/app/ci.yml"},
+		"jobs":          {"app-build"},
+		"relationships": {"app>setup"},
+		"repositories":  {"octo/app"},
+		"findings":      {"app-step"},
+		"explorer":      {"octo/app/ci.yml", "octo/app/lint", normalize.RepoKey("octo/app")},
+	}, map[string][]string{
+		"actions":       {"vendor/tool/setup", "actions/cache", "third/lint"},
+		"workflows":     {"vendor/tool/ci.yml"},
+		"jobs":          {"tool-test"},
+		"relationships": {"setup>cache", "ci>lint"},
+		"repositories":  {"vendor/tool", "third/lint"},
+		"findings":      {"setup-step", "tool-ci-step"},
+		"explorer": {"vendor/tool/setup", "actions/cache", "third/lint", "vendor/tool/ci.yml",
+			normalize.RepoKey("vendor/tool"), normalize.RepoKey("third/lint")},
+	}, "the declared repositories run it and do not hold it")
+
+	// A repository's own findings page asks the same question of the repository.
+	vendor, err := s.InventoryFindingsPage(FindingReviewQuery{AssetKind: "repository", AssetKey: "vendor/tool",
+		InventoryQuery: InventoryQuery{Scope: ScopeOwned}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vendor.Total != 0 {
+		t.Errorf("vendor/tool's findings page lists %d findings under what you own", vendor.Total)
+	}
 }

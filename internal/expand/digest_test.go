@@ -80,9 +80,9 @@ func tree(t *testing.T, files map[string]string) string {
 
 func digestOf(t *testing.T, dir string) string {
 	t.Helper()
-	got, err := IndexedDigest(dir)
+	got, err := CheckoutDigest(dir, sparsePatterns)
 	if err != nil {
-		t.Fatalf("IndexedDigest: %v", err)
+		t.Fatalf("CheckoutDigest: %v", err)
 	}
 	return got
 }

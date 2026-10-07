@@ -292,7 +292,7 @@ func (e *Expander) buildDatabase(
 	built.identity = store.DatabaseIdentity{
 		Repository: want.Repository, Commit: tree.SHA, SourceFilter: e.sourceFilter(), Mode: want.Mode,
 	}
-	db, staged, reused, err := e.databaseFor(ctx, built.identity, filepath.Join(dir, "db"), tree, cliVersion)
+	db, staged, source, err := e.databaseFor(ctx, built.identity, filepath.Join(dir, "db"), tree, cliVersion)
 	discardTree(Options{}, tree, retained)
 	if err != nil {
 		return fail(err)
@@ -301,7 +301,7 @@ func (e *Expander) buildDatabase(
 	switch {
 	case e.Databases == nil:
 		return built, nil
-	case reused:
+	case source == dbHeld:
 		if _, err := e.Store.UseDatabase(built.identity); err != nil {
 			return fail(err)
 		}
@@ -551,6 +551,7 @@ func (e *Executor) resolve(ctx context.Context, want []store.AnalysisQuery) (tie
 		planned.findingsRules = append(planned.findingsRules, store.QueryRunRule{
 			RuleID: q.QueryID, QueryVersion: version, Pack: pack, PackVersion: packVersion, PackDigest: digest,
 		})
+		planned.findingsPaths = append(planned.findingsPaths, path)
 		planned.notePack(pack, packVersion, digest)
 		planned.metadata = append(planned.metadata, store.QueryMetadata{
 			QueryID: q.QueryID, QueryVersion: version, Pairs: declared[q.QueryID],

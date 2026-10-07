@@ -175,7 +175,7 @@ func TestEveryListedFindingsCountSaysAtWhatSeverity(t *testing.T) {
 func TestANodesRulesSayAtWhatSeverityMostSevereFirst(t *testing.T) {
 	s := bandedInventory(t)
 	scoredOn(t, s, "vendor/action-a", "actions/unpinned-tag", "warning", score(5.0))
-	d, err := s.NodeDetailOf("vendor/action-a")
+	d, err := s.NodeDetailOf("vendor/action-a", nil)
 	if err != nil {
 		t.Fatalf("NodeDetailOf: %v", err)
 	}

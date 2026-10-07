@@ -32,6 +32,8 @@ test.describe('nothing declared yet', () => {
     test('the Explorer says what it is waiting for and names the action', on('/explore'), async ({ page }) => {
         await page.goto('/explore');
         await ready(page);
+        // Every stage waits for the declaration, so the first one drawn is the claim the page makes.
+        await page.locator('[data-abom-explorer-frame], [data-abom-no-scope]').first().waitFor();
 
         const body = (await page.locator('body').innerText()).toLowerCase();
         // An empty state is a stage, not an apology: "no results" is indistinguishable from a
@@ -48,6 +50,18 @@ test.describe('nothing declared yet', () => {
         const body = (await page.locator('body').innerText()).toLowerCase();
         expect(body, 'the crawl states that nothing has started').toMatch(/not started|never started|idle|stopped/);
         expect(body, 'a crawl that never ran is not described as paused').not.toMatch(/pausing/);
+    });
+
+    // A fresh install opened on a name field; it now asks gh first. The suite's gh is logged in to
+    // nothing, so what arrives is the remedy, through the real control path a browser takes.
+    test('Settings asks gh before asking the reader', on('/settings'), async ({ page }) => {
+        const checked = page.waitForResponse(
+            r => r.url().endsWith('/api/accounts/refresh') && r.request().method() === 'POST');
+        await page.goto('/settings');
+        await ready(page);
+
+        expect((await checked).status(), 'the check is answered, not refused').toBe(200);
+        await expect(page.locator('[data-abom-identity]')).toContainText('gh auth login');
     });
 
     test('no page claims coverage over a corpus that does not exist', on(...ROUTES), async ({ page }) => {

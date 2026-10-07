@@ -62,6 +62,19 @@ defect seen both ways is one finding" testable rather than assumed.
 Read the diff before accepting it. A fixture change is a change to what every test using it
 means.
 
+### The code scanning fixtures
+
+```bash
+.github/skills/regenerate-abom-fixtures/scripts/regen-codescanning-fixture.sh
+```
+
+`testdata/codescanning/source/` is a synthetic workflow used to generate the test database and
+analysis with CodeQL CLI 2.27.1. The script makes a deterministic test-only Git commit, builds an
+Actions database, runs the `actions-security-extended` suite, and packages the database as
+`testdata/codescanning/synthetic/database.fixture`. It makes no GitHub API requests and includes
+no repository's real database or analysis. Because it invokes CodeQL, do not run it while discovery
+is going; pause with `make stop` first. Tests name the generated commit and synthetic analysis id.
+
 ### The corpus query pack
 
 `testdata/corpus/authoring.json` is what CodeQL said over the operator's pack `make corpus` lays

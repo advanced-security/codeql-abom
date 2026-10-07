@@ -106,16 +106,20 @@ func lockedVendorFixture(t *testing.T) *store.Store {
 	edge("vendor/action:newer", newerStep, newer, repo["vendor/action"],
 		run("vendor/action", vendorLive), "composite-step-uses-action", "action.yml", "v2")
 
-	for _, f := range []struct{ key, ref, owner, name, resolved string }{
-		{"octo/locked", "", "octo", "locked", lockedRoot},
-		{"octo/unlocked", "", "octo", "unlocked", unlockedRoot},
-		{"vendor/action", "v1", "vendor", "action", vendorLive},
-		{"vendor/action", vendorLocked, "vendor", "action", vendorLocked},
+	// A starting point's own default branch is queued at depth 0, as the crawl roots it.
+	for _, f := range []struct {
+		key, ref, owner, name, resolved string
+		depth                           int
+	}{
+		{"octo/locked", "", "octo", "locked", lockedRoot, 0},
+		{"octo/unlocked", "", "octo", "unlocked", unlockedRoot, 0},
+		{"vendor/action", "v1", "vendor", "action", vendorLive, 1},
+		{"vendor/action", vendorLocked, "vendor", "action", vendorLocked, 1},
 	} {
 		exec(`INSERT INTO abom_frontier (node_key, ref, owner, repo, depth, status, enqueued_at,
 		                                 resolved_sha, analyzed_ref)
-		      VALUES (?, ?, ?, ?, 1, 'done', '2026-09-27T00:00:00Z', ?, ?)`,
-			f.key, f.ref, f.owner, f.name, f.resolved, f.ref)
+		      VALUES (?, ?, ?, ?, ?, 'done', '2026-09-27T00:00:00Z', ?, ?)`,
+			f.key, f.ref, f.owner, f.name, f.depth, f.resolved, f.ref)
 	}
 
 	if err := s.RecordLockReading("octo/locked", lockedRoot, "test-reader",
@@ -287,15 +291,18 @@ func deepenLockedVendor(t *testing.T, s *store.Store) {
 	edge("octo/pinned:ci:1", step, vendor, pinnedRepo, run("octo/pinned", "8888888888888888888888888888888888888888"),
 		"step-uses-action", ".github/workflows/ci.yml", vendorLocked)
 
-	for _, f := range []struct{ key, ref, owner, name, resolved string }{
-		{"octo/pinned", "", "octo", "pinned", "8888888888888888888888888888888888888888"},
-		{"mid/composite", "v1", "mid", "composite", midLive},
-		{"mid/composite", midLocked, "mid", "composite", midLocked},
+	for _, f := range []struct {
+		key, ref, owner, name, resolved string
+		depth                           int
+	}{
+		{"octo/pinned", "", "octo", "pinned", "8888888888888888888888888888888888888888", 0},
+		{"mid/composite", "v1", "mid", "composite", midLive, 2},
+		{"mid/composite", midLocked, "mid", "composite", midLocked, 2},
 	} {
 		exec(`INSERT INTO abom_frontier (node_key, ref, owner, repo, depth, status, enqueued_at,
 		                                 resolved_sha, analyzed_ref)
-		      VALUES (?, ?, ?, ?, 2, 'done', '2026-09-27T00:00:00Z', ?, ?)`,
-			f.key, f.ref, f.owner, f.name, f.resolved, f.ref)
+		      VALUES (?, ?, ?, ?, ?, 'done', '2026-09-27T00:00:00Z', ?, ?)`,
+			f.key, f.ref, f.owner, f.name, f.depth, f.resolved, f.ref)
 	}
 
 	graph, err := s.LockGraphAt("octo/locked", lockedRoot)

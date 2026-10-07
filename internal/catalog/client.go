@@ -15,12 +15,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/advanced-security/codeql-abom/internal/ghapp"
 	"github.com/advanced-security/codeql-abom/internal/work"
 )
 
@@ -59,6 +61,12 @@ type Client struct {
 	// Pace spaces requests, and follows the budget GitHub reports rather than a number anybody
 	// guessed. Nil asks as fast as the caller can.
 	Pace *work.Limiter
+	// REST and GraphQL are the pools this client's requests draw on, in the unit each charges.
+	// Nil asks without limit and records nothing.
+	REST    *work.TokenPool
+	GraphQL *work.TokenPool
+	// Tokens chooses each request's credential by the account it reads. Nil sends New's token, as before an App.
+	Tokens ghapp.TokenSource
 	// Route pins which API reads an account: RouteGraphQL, RouteREST, or empty for the default,
 	// which prefers GraphQL and falls back to REST. Selection is the operator's and detection is
 	// at most a default, so a pinned route is never second-guessed.
@@ -148,16 +156,35 @@ func (c *Client) observeBudget(resp *http.Response) {
 	// GitHub names which allowance the answer drew on. A points budget running low is no reason
 	// to slow the per-repository probes, which spend requests from a different one, so the pace
 	// follows REST and GraphQL's figure is recorded for the reader.
-	if strings.EqualFold(resp.Header.Get("x-ratelimit-resource"), "graphql") {
+	resource := resp.Header.Get("x-ratelimit-resource")
+	if strings.EqualFold(resource, work.ResourceGraphQL) {
 		c.budgetMu.Lock()
 		c.graphqlBudget = seen
 		c.budgetMu.Unlock()
+		c.GraphQL.Observe(seen.reading())
 		return
 	}
 	c.budgetMu.Lock()
 	c.budget = seen
 	c.budgetMu.Unlock()
+	// Search and the other REST allowances are separate budgets the pools do not spend.
+	if resource == "" || strings.EqualFold(resource, work.ResourceCore) {
+		c.REST.Observe(seen.reading())
+	}
 	c.followBudget(seen)
+}
+
+func (r RateLimit) reading() work.Reading {
+	return work.Reading{Known: r.Known, Remaining: r.Remaining, Limit: r.Limit, ResetAt: r.ResetAt}
+}
+
+// restCharge is what GitHub charged one REST answer: nothing for one it answered unchanged, or for
+// one it refused because nothing was left.
+func restCharge(resp *http.Response) int {
+	if resp.StatusCode == http.StatusNotModified || isRateLimited(resp) {
+		return 0
+	}
+	return 1
 }
 
 // paceBelow is the share of the budget that must remain before requests are spaced out.
@@ -216,6 +243,8 @@ type answerState struct {
 	cacheable bool
 	attempt   int
 	retries   int
+	// lent names the owner a lent token read for, so a refusal can say its installation is missing.
+	lent string
 }
 
 // DefaultMaxRetries and DefaultMaxBackoff bound rate-limit handling.
@@ -317,7 +346,11 @@ func (c *Client) DownloadDatabase(ctx context.Context, repository, language, des
 		return err
 	}
 	defer resp.Body.Close()
+	return save(resp.Body, destPath, repository+" "+language+" database")
+}
 
+// save writes a download to destPath through a temporary file renamed only once it is complete.
+func save(body io.Reader, destPath, what string) error {
 	tmp, err := os.CreateTemp(filepath.Dir(destPath), ".abom-download-*")
 	if err != nil {
 		return fmt.Errorf("creating temporary file: %w", err)
@@ -325,9 +358,9 @@ func (c *Client) DownloadDatabase(ctx context.Context, repository, language, des
 	tmpName := tmp.Name()
 	defer func() { _ = os.Remove(tmpName) }()
 
-	if _, err := io.Copy(tmp, resp.Body); err != nil {
+	if _, err := io.Copy(tmp, body); err != nil {
 		tmp.Close()
-		return fmt.Errorf("downloading %s %s database: %w", repository, language, err)
+		return fmt.Errorf("downloading %s: %w", what, err)
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("closing temporary file: %w", err)
@@ -338,8 +371,18 @@ func (c *Client) DownloadDatabase(ctx context.Context, repository, language, des
 	return nil
 }
 
-// do issues a request, retrying while GitHub reports rate limiting.
+// do issues a request, retrying while GitHub reports rate limiting. A JSON read is conditional on
+// what the cache holds for its URL.
 func (c *Client) do(ctx context.Context, url, accept string) (*http.Response, error) {
+	return c.get(ctx, url, accept, c.Cache != nil && accept == jsonAccept)
+}
+
+// doUncached is do for an answer asked for once, which a cache would keep forever and never read.
+func (c *Client) doUncached(ctx context.Context, url, accept string) (*http.Response, error) {
+	return c.get(ctx, url, accept, false)
+}
+
+func (c *Client) get(ctx context.Context, url, accept string, cacheable bool) (*http.Response, error) {
 	retries := c.retries()
 
 	for attempt := 0; ; attempt++ {
@@ -347,11 +390,20 @@ func (c *Client) do(ctx context.Context, url, accept string) (*http.Response, er
 			return nil, err
 		}
 
-		req, held, cacheable, err := c.request(ctx, url, accept)
+		req, held, lent, err := c.request(ctx, url, accept, cacheable)
 		if err != nil {
 			return nil, err
 		}
 
+		// A client that never retries has a cheaper fallback than waiting for the reset.
+		if retries == 0 {
+			if reset, spent := c.REST.Exhausted(); spent {
+				return nil, fmt.Errorf("rate limited by %s until %s", redact(url), reset.UTC().Format(time.RFC3339))
+			}
+		}
+		if err := c.REST.Wait(ctx); err != nil {
+			return nil, err
+		}
 		if err := c.Pace.Wait(ctx); err != nil {
 			return nil, err
 		}
@@ -361,8 +413,9 @@ func (c *Client) do(ctx context.Context, url, accept string) (*http.Response, er
 		}
 		c.requests.Add(1)
 		c.observeBudget(resp)
+		c.REST.Spend(1, restCharge(resp))
 		answer, retry, err := c.answer(answerState{
-			url: url, resp: resp, held: held, cacheable: cacheable, attempt: attempt, retries: retries,
+			url: url, resp: resp, held: held, cacheable: cacheable, attempt: attempt, retries: retries, lent: lent,
 		})
 		if !retry {
 			return answer, err
@@ -378,27 +431,54 @@ func (c *Client) retries() int {
 }
 
 func (c *Client) request(
-	ctx context.Context, url, accept string,
-) (*http.Request, []byte, bool, error) {
+	ctx context.Context, url, accept string, cacheable bool,
+) (*http.Request, []byte, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, nil, false, fmt.Errorf("building request: %w", err)
+		return nil, nil, "", fmt.Errorf("building request: %w", err)
 	}
 	req.Header.Set("Accept", accept)
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	owner, account := ghapp.Subject(url)
+	lent, err := c.authorize(ctx, req, owner, account)
+	if err != nil {
+		return nil, nil, "", err
 	}
 
 	var held []byte
-	cacheable := c.Cache != nil && accept == jsonAccept
 	if cacheable {
 		if etag, body, ok := c.Cache.Lookup(url); ok && etag != "" {
 			req.Header.Set("If-None-Match", etag)
 			held = body
 		}
 	}
-	return req, held, cacheable, nil
+	return req, held, lent, nil
+}
+
+// authorize sets a request's credential, and names the owner a lent token stood in for.
+func (c *Client) authorize(ctx context.Context, req *http.Request, owner string, account bool) (string, error) {
+	if c.Tokens == nil {
+		if c.token != "" {
+			req.Header.Set("Authorization", "Bearer "+c.token)
+		}
+		return "", nil
+	}
+	var token string
+	var lent bool
+	var err error
+	if account {
+		token, err = c.Tokens.AccountToken(ctx, owner)
+	} else {
+		token, lent, err = c.Tokens.Token(ctx, owner)
+	}
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	if lent {
+		return owner, nil
+	}
+	return "", nil
 }
 
 func (c *Client) answer(state answerState) (*http.Response, bool, error) {
@@ -426,10 +506,14 @@ func (c *Client) answer(state answerState) (*http.Response, bool, error) {
 	default:
 		body, _ := io.ReadAll(io.LimitReader(state.resp.Body, 512))
 		state.resp.Body.Close()
-		return nil, false, &StatusError{
+		status := &StatusError{
 			URL: redact(state.url), Code: state.resp.StatusCode,
 			Body: strings.TrimSpace(string(body)), Message: githubMessage(body),
 		}
+		if code := state.resp.StatusCode; code == http.StatusNotFound || code == http.StatusForbidden {
+			status.Uninstalled = state.lent
+		}
+		return nil, false, status
 	}
 }
 
@@ -455,20 +539,30 @@ type StatusError struct {
 	Body string
 	// Message is GitHub's `message` field, empty where the body carried none.
 	Message string
+	// Uninstalled names an owner read with a lent token, which cannot see its private repositories.
+	Uninstalled string
 }
 
 func (e *StatusError) Error() string {
+	text := fmt.Sprintf("%s returned %d: %s", e.URL, e.Code, e.Body)
 	if e.Code == http.StatusNotFound {
-		return fmt.Sprintf("%s: %s", e.URL, ErrNoDatabase)
+		text = fmt.Sprintf("%s: %s", e.URL, ErrNoDatabase)
 	}
-	return fmt.Sprintf("%s returned %d: %s", e.URL, e.Code, e.Body)
+	if e.Uninstalled != "" {
+		text += fmt.Sprintf("; %s: %s, so a private repository there cannot be read", ghapp.ErrNotInstalled, e.Uninstalled)
+	}
+	return text
 }
 
-func (e *StatusError) Unwrap() error {
+func (e *StatusError) Unwrap() []error {
+	var causes []error
 	if e.Code == http.StatusNotFound {
-		return ErrNoDatabase
+		causes = append(causes, ErrNoDatabase)
 	}
-	return nil
+	if e.Uninstalled != "" {
+		causes = append(causes, ghapp.ErrNotInstalled)
+	}
+	return causes
 }
 
 // githubMessage reads the `message` GitHub puts in an error body, and nothing when there is none.
@@ -550,9 +644,16 @@ func capDuration(d, max time.Duration) time.Duration {
 	return d
 }
 
+var (
+	ownerName      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$`)
+	repositoryName = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`)
+)
+
+// splitRepository reads owner/name, refusing anything GitHub could not have named: every caller
+// puts it in a URL, and some read it from a webhook payload.
 func splitRepository(repository string) (owner, name string, err error) {
 	owner, name, ok := strings.Cut(repository, "/")
-	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+	if !ok || !ownerName.MatchString(owner) || !repositoryName.MatchString(name) || name == "." || name == ".." {
 		return "", "", fmt.Errorf("repository %q is not in owner/name form", repository)
 	}
 	return owner, name, nil

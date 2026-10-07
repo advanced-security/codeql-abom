@@ -318,9 +318,8 @@ public class EnumerationTests : AbomTestContext
     // something first. The membership list is collapsed until asked for, so this opens it.
     private static void Declare(IRenderedComponent<Pages.Settings> cut)
     {
-        cut.WaitForAssertion(
-            () => Assert.NotNull(cut.Find("[data-abom-memberships] .mud-expand-panel-header")));
-        cut.Find("[data-abom-memberships] .mud-expand-panel-header").Click();
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-declarable-toggle]")));
+        cut.Find("[data-abom-declarable-toggle]").Click();
         cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-declare='advanced-security']")));
         cut.Find("[data-abom-declare='advanced-security']").Click();
     }

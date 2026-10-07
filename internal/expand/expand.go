@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -85,8 +87,10 @@ type Stats struct {
 	Items       int
 	Failed      int
 	Unavailable int
-	Discovered  int
-	Edges       int
+	// Nothing counts starting points read in full with nothing to analyze.
+	Nothing    int
+	Discovered int
+	Edges      int
 	// Reused counts trees served from the checkout cache: a clone this round did not pay for.
 	// Not a skip — every one of these was analyzed or settled on the ledger's say-so.
 	Reused int
@@ -94,6 +98,11 @@ type Stats struct {
 	// inferred from Processed, which counts neither the fetch a settled unit still made nor the
 	// one a cache hit avoided.
 	Fetched int
+	// TreeReads counts the listings this round read to recognize a commit's content without a
+	// clone, each one a request against GitHub's API whether or not it settled anything.
+	TreeReads int
+	// CodeScanning is what code scanning supplied this round, and why it did not supply the rest.
+	CodeScanning ReuseCounts
 }
 
 // Expander turns queued dependencies into graph data and queues what they reveal.
@@ -108,7 +117,10 @@ type Expander struct {
 	Fetcher  Fetcher
 	// Probe resolves a reference without fetching it, so the commit that decides whether any
 	// work is outstanding is known before a clone is paid for. Nil fetches first, as before.
-	Probe   RefProbe
+	Probe RefProbe
+	// Trees lists a commit's tree without fetching it, so a commit whose content is identical to
+	// an analyzed one settles without a clone. Nil clones, as before.
+	Trees   TreeReader
 	Builder Builder
 	CodeQL  QueryRunner
 	Decode  Decoder
@@ -118,13 +130,17 @@ type Expander struct {
 	// Databases retains the CodeQL databases this crawl builds, so a query can later be run
 	// across a corpus that already exists. Nil deletes each database after its unit, as before.
 	Databases *DatabaseCache
+	// CodeScanning stands in for builds, and an owned repository's findings lane, where it holds ABOM's own result.
+	CodeScanning CodeScanning
 	// Resolver expands Options.Suite. Only needed when a suite is used.
 	Resolver Resolver
 	// Analyzer runs the findings lane. Only needed when a suite holds findings-shaped queries.
 	Analyzer Analyzer
-	// Pace caps the rate of outbound requests across workers; nil means unlimited.
-	Pace    *work.Limiter
-	OnEvent func(work.Event)
+	// Pace is the fetching pool clones draw on; nil means unlimited.
+	Pace *work.TokenPool
+	// Capacity is the analysis pool each repository's preparation spends worker-seconds from.
+	Capacity *work.TokenPool
+	OnEvent  func(work.Event)
 	// Install installs what the operator's pack depends on wherever it has no lock, for a round
 	// over a suite drawn from it: a tier can be bound to that suite before anybody has pressed
 	// Test. Nil installs nothing.
@@ -136,6 +152,12 @@ type Expander struct {
 
 	// fetches counts clones across every worker, so a round can report what it spent.
 	fetches atomic.Int64
+	// treeReads counts tree listings the same way.
+	treeReads atomic.Int64
+	// reuse counts what code scanning supplied, and why not, the same way.
+	reuse reuseCounter
+	// configs remembers briefly what each configuration file said, shared by every repository naming it.
+	configs configMemo
 }
 
 // batch is the set of queued dependencies answered by analyzing one repository at one reference.
@@ -218,7 +240,11 @@ func (e *Expander) Run(ctx context.Context, opts Options) (Stats, error) {
 	batches := groupByRepository(claimed)
 
 	// Read once for the round: ownership decides a batch's tier and cannot change mid-round.
-	owned, err := e.Store.OwnedSet()
+	names := make([]string, 0, len(batches))
+	for _, b := range batches {
+		names = append(names, b.owner+"/"+b.repo)
+	}
+	owned, err := e.Store.OwnedAmong(names)
 	if err != nil {
 		return Stats{}, err
 	}
@@ -235,12 +261,16 @@ func (e *Expander) Run(ctx context.Context, opts Options) (Stats, error) {
 	stats.Edges = poolStats.Rows
 	stats.Reused = int(e.Cache.Hits() - before.reused)
 	stats.Fetched = int(e.fetches.Load() - before.fetched)
+	stats.TreeReads = int(e.treeReads.Load() - before.treeReads)
+	stats.CodeScanning = e.ReuseCounts().since(before.codeScanning)
 	return stats, nil
 }
 
 type expanderCounts struct {
-	reused  int64
-	fetched int64
+	reused       int64
+	fetched      int64
+	treeReads    int64
+	codeScanning ReuseCounts
 }
 
 func (e *Expander) trimBetweenRounds() {
@@ -256,7 +286,10 @@ func (e *Expander) trimBetweenRounds() {
 }
 
 func (e *Expander) roundCounts() expanderCounts {
-	return expanderCounts{reused: e.Cache.Hits(), fetched: e.fetches.Load()}
+	return expanderCounts{
+		reused: e.Cache.Hits(), fetched: e.fetches.Load(), treeReads: e.treeReads.Load(),
+		codeScanning: e.ReuseCounts(),
+	}
 }
 
 func (e *Expander) checkedPlans(ctx context.Context, opts Options) (map[string]tierPlan, error) {
@@ -291,6 +324,7 @@ func (e *Expander) pool(
 ) *work.Pool {
 	return &work.Pool{
 		Concurrency: opts.Concurrency,
+		Capacity:    e.Capacity,
 		Prepare: func(ctx context.Context, job work.Job) (work.Prepared, error) {
 			b, err := batchFor(byRepo, job.Repository)
 			if err != nil {
@@ -470,7 +504,7 @@ func (e *Expander) prepare(
 	// Resolved once and carried, because the commit decides both whether anything is
 	// outstanding and which tree answers the fetch.
 	sha, resolved := e.commitWithoutFetching(ctx, b)
-	settled, ok, err := e.settleWithoutFetching(b, planned, sha, resolved)
+	settled, ok, err := e.settleWithoutFetching(ctx, b, planned, sha, resolved)
 	if err != nil {
 		return work.Prepared{}, err
 	}
@@ -485,7 +519,7 @@ func (e *Expander) prepare(
 
 	// What the extractor would read, recorded whether or not this round goes on to analyze it:
 	// the value of knowing it is that a later commit can be recognized as the same database.
-	digest, err := IndexedDigest(tree.Dir)
+	digest, err := CheckoutDigest(tree.Dir, sparsePatternsOf(e.Fetcher))
 	if err != nil {
 		return work.Prepared{}, err
 	}
@@ -635,7 +669,7 @@ func (e *Expander) moveOutOfStaging(
 
 // fetch clones one reference, paying the rate limit that a cache hit does not.
 func (e *Expander) fetch(ctx context.Context, b batch, dest string) (Tree, error) {
-	if err := e.Pace.Wait(ctx); err != nil {
+	if err := e.Pace.Take(ctx); err != nil {
 		return Tree{}, err
 	}
 	e.fetches.Add(1)
@@ -712,13 +746,13 @@ func digestUnderFilter(recorded, filter string) string {
 // remotely for a fraction of what fetching it costs. A tier requeue puts back everything
 // including what is already current, and those are settled here without a checkout.
 func (e *Expander) settleWithoutFetching(
-	b batch, planned tierPlan, sha string, resolved bool,
+	ctx context.Context, b batch, planned tierPlan, sha string, resolved bool,
 ) (work.Prepared, bool, error) {
 	if !resolved {
 		return work.Prepared{}, false, nil
 	}
 	// A commit seen before has its content on record, so the equivalence is available here
-	// too. A commit never seen has none, and an absent digest matches nothing. Neither has one
+	// too. A commit never seen has none, and its listing may say what it holds. Neither has one
 	// recorded under a filter this round no longer uses: the files it did not fetch are exactly
 	// what settling here would decline to look at.
 	recorded, _, err := e.Store.CommitContentDigest(b.full(), sha)
@@ -726,6 +760,13 @@ func (e *Expander) settleWithoutFetching(
 		return work.Prepared{}, false, err
 	}
 	digest := digestUnderFilter(recorded, e.sourceFilter())
+	listed := false
+	if digest == "" {
+		if digest, err = e.listedDigest(ctx, b, sha); err != nil {
+			return work.Prepared{}, false, err
+		}
+		listed = digest != ""
+	}
 	outstanding, err := e.pendingWork(planned, b.full(), sha, digest)
 	if err != nil {
 		return work.Prepared{}, false, err
@@ -733,16 +774,22 @@ func (e *Expander) settleWithoutFetching(
 	if !outstanding.empty() {
 		return work.Prepared{}, false, nil
 	}
-	// Lock coverage is read from a checkout, so settling here is the one path that can skip it
-	// indefinitely: a database whose analyzed refs have no pending work never fetches again, and
-	// an upgrade or a tier requeue is exactly that case. Absence of rows means nobody looked,
-	// which is a different fact from "no lockfile", so the commit is read once to say which.
-	covered, err := e.Store.HasLockCoverage(b.full(), sha, lockfile.Reader)
+	// A database whose analyzed refs have no pending work never fetches again, and an upgrade or
+	// a tier requeue is exactly that case. Absence of rows means nobody looked, which is a
+	// different fact from "no lockfile", so the commit is read once to say which.
+	covered, err := e.lockCovered(b.full(), sha, digest)
 	if err != nil {
 		return work.Prepared{}, false, err
 	}
 	if !covered {
 		return work.Prepared{}, false, nil
+	}
+	// Recorded only once it settles: the listing is the commit's measured content, and the walks
+	// read an identical commit's sightings for it from here on.
+	if listed {
+		if err := e.Store.RecordCommitContent(b.full(), sha, digest); err != nil {
+			return work.Prepared{}, false, err
+		}
 	}
 	return work.Prepared{
 		Job:             work.Job{Repository: b.key()},
@@ -750,6 +797,53 @@ func (e *Expander) settleWithoutFetching(
 		AnalyzedRef:     analyzedRef(b.ref),
 		AlreadyRecorded: true,
 	}, true, nil
+}
+
+// listedDigest says what a never-fetched commit holds by reading its tree listing, or nothing.
+//
+// Read only where it could match: the digest is computable from a listing in one scheme alone,
+// and a repository with no commit recorded in that scheme under this filter has nothing it could
+// equal. A listing that cannot be read, or that GitHub cut short, is unknown, and unknown settles
+// nothing; the clone it would have saved goes ahead.
+func (e *Expander) listedDigest(ctx context.Context, b batch, sha string) (string, error) {
+	if e.Trees == nil {
+		return "", nil
+	}
+	filter := e.sourceFilter()
+	comparable, err := e.Store.HasCommitContentLabeled(b.full(), scopedDigest(filter, treeScheme+":"), sha)
+	if err != nil || !comparable {
+		return "", err
+	}
+	if err := e.Pace.Wait(ctx); err != nil {
+		return "", err
+	}
+	e.treeReads.Add(1)
+	listing, err := e.Trees.ReadTree(ctx, b.owner, b.repo, sha)
+	if err != nil {
+		e.report(b.key(), "listing the tree at "+sha, err)
+		return "", nil
+	}
+	return scopedDigest(filter, ListingDigest(listing, sparsePatternsOf(e.Fetcher))), nil
+}
+
+// lockCovered reports whether a commit's lock has been read, carrying the reading of an identical
+// commit where the digest vouches for everything the lock reader reads.
+//
+// Lock coverage is read from a checkout, so settling here is the one path that can skip it
+// indefinitely. A digest in the listing scheme covers links as well as files, so where its filter
+// takes the whole directory the reader reads, two identical digests are two identical readings.
+// Anywhere else the commit is read once from a checkout to say what its lock holds.
+func (e *Expander) lockCovered(repository, sha, digest string) (bool, error) {
+	covered, err := e.Store.HasLockCoverage(repository, sha, lockfile.Reader)
+	if err != nil || covered {
+		return covered, err
+	}
+	filter := e.sourceFilter()
+	if !strings.HasPrefix(digest, scopedDigest(filter, treeScheme+":")) ||
+		!parseFilter(sparsePatternsOf(e.Fetcher)).coversDirectory(lockDirectory) {
+		return false, nil
+	}
+	return e.Store.CarryLockReading(repository, sha, digest, lockfile.Reader)
 }
 
 // analyzeTree builds the database for a checkout and runs everything the tier still wants.
@@ -769,10 +863,11 @@ func (e *Expander) analyzeTree(
 		SourceFilter: e.sourceFilter(),
 		Mode:         store.AnalysisModeRegular,
 	}
-	dbDir, staged, reused, err := e.databaseFor(ctx, id, dbDir, tree, planned.cliVersion)
+	dbDir, staged, source, err := e.databaseFor(ctx, id, dbDir, tree, planned.cliVersion)
 	if err != nil {
 		return work.Prepared{}, err
 	}
+	reused := source == dbHeld
 
 	jsonPath, edgesID, extra, err := e.runQueries(ctx, dbDir, dir, outstanding.bqrs)
 	if err != nil {
@@ -781,9 +876,10 @@ func (e *Expander) analyzeTree(
 
 	// The findings lane runs against the same database, before it is removed below.
 	var sarifPath string
+	var taken takenAnalysis
 	if outstanding.findings {
-		sarifPath = filepath.Join(dir, "findings.sarif")
-		if err := e.Analyzer.AnalyzeQueries(ctx, dbDir, planned.findings, sarifPath); err != nil {
+		sarifPath, taken, err = e.evaluateFindings(ctx, b.full(), tree.SHA, dbDir, planned, filepath.Join(dir, "findings.sarif"))
+		if err != nil {
 			return work.Prepared{}, err
 		}
 	}
@@ -800,6 +896,8 @@ func (e *Expander) analyzeTree(
 		ResultPath:     jsonPath,
 		ResultQueryID:  edgesID,
 		SarifPath:      sarifPath,
+		TakenSarifPath: taken.path,
+		TakenFrom:      taken.from,
 		Extra:          extra,
 		Commit:         tree.SHA,
 		AnalyzedRef:    tree.Ref,
@@ -809,16 +907,26 @@ func (e *Expander) analyzeTree(
 	}, nil
 }
 
-// databaseFor produces the database to analyze, reusing a retained one when the cache already
-// holds this exact identity.
+// dbSource is where a round's database came from.
+type dbSource int
+
+const (
+	dbBuilt dbSource = iota
+	// dbHeld was retained by the database cache.
+	dbHeld
+	// dbDownloaded is code scanning's, admitted as the database a build would have produced.
+	dbDownloaded
+)
+
+// databaseFor produces the database to analyze: the cache's, else code scanning's where a build would match it, else a build.
 //
 // Reuse skips extraction, never analysis: whether a query still has to run is the ledger's call,
 // and a database being on disk says nothing about it.
 func (e *Expander) databaseFor(
 	ctx context.Context, id store.DatabaseIdentity, roundDB string, tree Tree, cli string,
-) (string, string, bool, error) {
+) (string, string, dbSource, error) {
 	if held, ok := e.Databases.Reuse(id, cli); ok {
-		return held, "", true, nil
+		return held, "", dbHeld, nil
 	}
 	// Built inside the cache when there is one, so promoting it is a rename rather than a copy
 	// across filesystems.
@@ -827,16 +935,19 @@ func (e *Expander) databaseFor(
 		var err error
 		staged, dbDir, err = e.Databases.Stage()
 		if err != nil {
-			return "", "", false, err
+			return "", "", dbBuilt, err
 		}
+	}
+	if e.downloadDatabase(ctx, id.Repository, tree, dbDir, cli) {
+		return dbDir, staged, dbDownloaded, nil
 	}
 	if err := e.Builder.CreateDatabase(ctx, tree.Dir, dbDir, "actions"); err != nil {
 		// A build that refused leaves a staged directory the ceiling cannot see, because the
 		// ceiling is computed from the rows naming promoted databases.
 		e.Databases.DiscardStaged(staged)
-		return "", "", false, err
+		return "", "", dbBuilt, err
 	}
-	return dbDir, staged, false, nil
+	return dbDir, staged, dbBuilt, nil
 }
 
 // keepDatabase promotes a freshly built database, or removes it when nothing retains databases.
@@ -892,8 +1003,8 @@ func (e *Expander) consume(
 		e.report(at.repository, queryID, e.ingestExtra(queryID, path, at, planned))
 	}
 
-	if p.SarifPath != "" {
-		e.report(at.repository, "findings", e.ingestFindings(p.SarifPath, at, planned))
+	if p.SarifPath != "" || p.TakenSarifPath != "" {
+		e.report(at.repository, "findings", e.ingestFindings(p, at, planned))
 	}
 
 	if err := e.Writer.Flush(); err != nil {
@@ -1204,6 +1315,18 @@ func discoveriesOf(
 // settleFailure decides whether a failed repository is worth trying again.
 func (e *Expander) settleFailure(b batch, cause error, stats *Stats) {
 	permanent := IsUnavailable(cause) || runner.IsNoSourceCode(cause)
+	var nothing *NothingToAnalyze
+	if errors.As(cause, &nothing) && slices.ContainsFunc(b.items, func(it frontier.Item) bool { return it.Depth == 0 }) {
+		for _, it := range b.items {
+			if it.Depth == 0 {
+				_ = e.Queue.Nothing(it.Key(), nothing.Tree.Ref, nothing.Tree.SHA, nothing.Why)
+				continue
+			}
+			_ = e.Queue.Unavailable(it.Key(), reasonOf(cause))
+		}
+		stats.Nothing++
+		return
+	}
 	for _, it := range b.items {
 		// Discarded deliberately. This runs from the failure path, where the caller is already
 		// being told about `cause`; returning a second error here would replace the one that

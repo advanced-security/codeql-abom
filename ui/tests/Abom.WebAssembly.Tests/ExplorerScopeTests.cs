@@ -40,6 +40,42 @@ public sealed class ExplorerScopeTests : AbomTestContext
     }
 
     /// <summary>
+    /// The chooser is a stage, and every stage waits for the declaration. Drawn while it was still
+    /// in flight, a first run read "Choose what to look at" and then corrected itself to "Nothing
+    /// is declared yet", and the browser suite caught it in the first state.
+    /// </summary>
+    [Fact]
+    public void TheChooserWaitsForTheDeclarationLikeEveryOtherStage()
+    {
+        Answer("api/owned-scope", "[]");
+        var release = Withhold("api/owned-scope");
+        StubGraphModule();
+
+        var page = Render<Explorer>();
+
+        Assert.Empty(page.FindAll("[data-abom-no-scope]"));
+        release();
+        page.WaitForAssertion(() => Assert.Equal("declare",
+            page.Find("[data-abom-explorer-frame]").GetAttribute("data-abom-explorer-frame")));
+        Assert.Empty(page.FindAll("[data-abom-no-scope]"));
+    }
+
+    /// <summary>
+    /// A declaration that could not be read is not one still arriving: the reader can still
+    /// choose, rather than face a canvas waiting for an answer that will never come.
+    /// </summary>
+    [Fact]
+    public void ADeclarationThatCouldNotBeReadStillLetsTheReaderChoose()
+    {
+        Fail("api/owned-scope", System.Net.HttpStatusCode.InternalServerError);
+        StubGraphModule();
+
+        var page = Render<Explorer>();
+
+        page.WaitForAssertion(() => Assert.NotNull(page.Find("[data-abom-no-scope]")));
+    }
+
+    /// <summary>
     /// Arriving with terms in the address is the third route in, and the one every link from
     /// Inventory and Discovery uses. It must draw at once and ask nothing.
     /// </summary>

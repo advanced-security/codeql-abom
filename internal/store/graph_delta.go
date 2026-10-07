@@ -22,9 +22,11 @@ type GraphRebuild struct {
 	// ReachRebuilt reports whether this generation recomputed blast radius, as opposed to only
 	// ingesting.
 	ReachRebuilt bool
-	Duration     time.Duration
-	Nodes        int
-	Edges        int
+	// Incremental reach is measured too, but only a rebuild resets the rebuild's own schedule.
+	Incremental bool
+	Duration    time.Duration
+	Nodes       int
+	Edges       int
 }
 
 // GraphMetric is the part of a node that changes without the node itself changing.
@@ -66,12 +68,16 @@ type GraphDelta struct {
 
 // ReachStaleness reports how far the stored blast radius has fallen behind the graph.
 type ReachStaleness struct {
-	// Never is true when reach has not been derived at all, which no amount of waiting fixes.
+	// Never is true when reach has not been rebuilt at all, which no amount of waiting fixes.
 	Never bool
-	At    time.Time
-	// NewEdges counts dependencies ingested since, and TotalEdges the corpus they joined.
+	// At is the last rebuild and NewEdges what arrived since; incremental derivations move neither.
+	At         time.Time
 	NewEdges   int
 	TotalEdges int
+	// Pending counts dependencies arrived since reach was last derived either way.
+	Pending int
+	// Generations counts the cycles that changed the graph since the last rebuild.
+	Generations int
 	// Incomplete is true when stored reach predates a figure this build counts, so a row holds
 	// NULL for it until reach is next derived.
 	Incomplete bool
@@ -91,12 +97,13 @@ func (s *Store) ReachStaleness() (ReachStaleness, error) {
 	}
 
 	var at sql.NullString
-	var mark sql.NullInt64
+	var mark, rebuilt sql.NullInt64
 	err := s.db.QueryRow(`
-		SELECT created_at, edge_watermark FROM abom_graph_generation
-		WHERE reach_rebuilt = 1 ORDER BY generation DESC LIMIT 1`).Scan(&at, &mark)
+		SELECT created_at, edge_watermark, generation FROM abom_graph_generation
+		 WHERE reach_rebuilt = 1 AND reach_incremental = 0
+		 ORDER BY generation DESC LIMIT 1`).Scan(&at, &mark, &rebuilt)
 	if err == sql.ErrNoRows {
-		out.NewEdges = out.TotalEdges
+		out.NewEdges, out.Pending = out.TotalEdges, out.TotalEdges
 		return out, nil
 	}
 	if err != nil {
@@ -111,6 +118,15 @@ func (s *Store) ReachStaleness() (ReachStaleness, error) {
 	if err := s.db.QueryRow(
 		`SELECT COUNT(*) FROM abom_edge_regular WHERE row_id > ?`, mark.Int64).Scan(&out.NewEdges); err != nil {
 		return out, fmt.Errorf("counting edges since the last rebuild: %w", err)
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM abom_graph_generation WHERE generation > ?`,
+		rebuilt.Int64).Scan(&out.Generations); err != nil {
+		return out, fmt.Errorf("counting the cycles that changed the graph since the last rebuild: %w", err)
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM abom_edge_regular WHERE row_id > (
+		SELECT edge_watermark FROM abom_graph_generation
+		 WHERE reach_rebuilt = 1 ORDER BY generation DESC LIMIT 1)`).Scan(&out.Pending); err != nil {
+		return out, fmt.Errorf("counting edges since reach was last derived: %w", err)
 	}
 	return out, nil
 }
@@ -172,10 +188,10 @@ func (s *Store) RecordGraphGeneration(r GraphRebuild) (int64, error) {
 	res, err := s.db.Exec(`
 		INSERT INTO abom_graph_generation
 			(node_watermark, edge_watermark, containment_watermark, created_at, reach_rebuilt,
-			 rebuild_ms, rebuilt_nodes, rebuilt_edges, epoch)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 rebuild_ms, rebuilt_nodes, rebuilt_edges, epoch, reach_incremental)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		nodeMark.Int64, edgeMark.Int64, containMark.Int64, now(), r.ReachRebuilt,
-		ms, r.Nodes, r.Edges, epoch)
+		ms, r.Nodes, r.Edges, epoch, r.ReachRebuilt && r.Incremental)
 	if err != nil {
 		return 0, fmt.Errorf("recording graph generation: %w", err)
 	}
@@ -319,8 +335,8 @@ func (s *Store) graphDeltaArrivals(
 	return nodes, edges, nil
 }
 
-// graphMetrics carries the counts that change for nodes the client already holds. Reach is
-// recomputed wholesale, so there is no cheaper way to know which of them moved.
+// graphMetrics carries the counts that change for nodes the client already holds. Nothing records
+// which nodes' reach moved, so there is no cheaper way to know which of them did.
 func (s *Store) graphMetrics(display, mode string) ([]GraphMetric, error) {
 	rows, err := s.db.Query(`WITH ` + display + `
 		SELECT n.node_key, COALESCE(b.dependent_repos, 0), ` + reachKnown + `,

@@ -22,4 +22,10 @@
     <ProjectReference Include="../../Abom.WebAssembly.csproj" />
   </ItemGroup>
 
+  <!-- Go writes this and pins it; ViewSpecTests parses it, so a term Go offers is one this reads. -->
+  <ItemGroup>
+    <None Include="../../../internal/view/testdata/every-term.txt" Link="testdata/every-term.txt"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

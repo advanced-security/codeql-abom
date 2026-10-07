@@ -2,8 +2,6 @@ package graph
 
 import (
 	"maps"
-	"slices"
-	"strings"
 	"testing"
 
 	"github.com/advanced-security/codeql-abom/internal/store"
@@ -51,57 +49,23 @@ func assertReachIsTheExposureWalk(t *testing.T, s *store.Store) {
 	if err := b.BuildBlastRadius(); err != nil {
 		t.Fatalf("BuildBlastRadius: %v", err)
 	}
-	m, err := b.load()
+	parts, err := b.ExposureWalkAgreement()
 	if err != nil {
-		t.Fatalf("load: %v", err)
+		t.Fatalf("ExposureWalkAgreement: %v", err)
 	}
-	stored := map[int64]map[int64]int{}
-	versions := map[int64]map[int64]int{}
-	read := func(query string, into map[int64]map[int64]int) {
-		t.Helper()
-		rows, err := s.DB().Query(query)
-		if err != nil {
-			t.Fatalf("%s: %v", query, err)
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var node, repo int64
-			var hops int
-			if err := rows.Scan(&node, &repo, &hops); err != nil {
-				t.Fatal(err)
-			}
-			if into[node] == nil {
-				into[node] = map[int64]int{}
-			}
-			into[node][repo] = hops
-		}
-		if err := rows.Err(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	read(`SELECT node_row_id, repository_row_id, hops FROM abom_node_reach`, stored)
-	read(`SELECT node_row_id, repository_row_id, MIN(hops) FROM abom_node_version_reach
-	       GROUP BY 1, 2`, versions)
+	assertAgreement(t, parts)
+}
 
-	reaching := 0
-	for _, node := range m.referenceable {
-		walked := map[int64]int{}
-		for repo, p := range m.exposureOf(node, 0) {
-			walked[repo] = p.hops
+// assertAgreement fails on every disagreement a comparison found, and when one compared nothing.
+func assertAgreement(t *testing.T, parts []store.CheckPart) {
+	t.Helper()
+	for _, p := range parts {
+		if p.Compared == 0 {
+			t.Fatalf("%s compared nothing, so the agreement is vacuous", p.Part)
 		}
-		if len(walked) > 0 {
-			reaching++
+		for _, d := range p.Disagreements {
+			t.Errorf("%s: %s: %s, against %s", p.Part, d.Subject, d.Claim, d.Independent)
 		}
-		if got := stored[node]; !maps.Equal(got, walked) && len(got)+len(walked) > 0 {
-			t.Errorf("%s: reach stores %v, the exposure walk reaches %v", m.keyOf[node], got, walked)
-		}
-		if got := versions[node]; !maps.Equal(got, walked) && len(got)+len(walked) > 0 {
-			t.Errorf("%s: the per-version breakdown unites to %v, the exposure walk reaches %v",
-				m.keyOf[node], got, walked)
-		}
-	}
-	if reaching == 0 {
-		t.Fatal("no node reaches a repository, so the comparison is vacuous")
 	}
 }
 
@@ -134,48 +98,29 @@ func TestReachCountsOnlyTheRepositoriesRunningAReleaseThatDeclaresIt(t *testing.
 // this is the comparison that can catch the walk itself admitting too much or too little.
 func assertReachCarriesWhatTheClosureCarries(t *testing.T, s *store.Store) {
 	t.Helper()
-	rows, err := s.DB().Query(`
-		SELECT r.repository_full_name, COALESCE(group_concat(n.node_key, ','), '')
-		  FROM repository r
-		  LEFT JOIN abom_node_reach x ON x.repository_row_id = r.row_id
-		  LEFT JOIN abom_node n ON n.row_id = x.node_row_id AND n.is_external = 1
-		 WHERE r.origin = 'seed'
-		 GROUP BY r.row_id`)
+	seeds, err := s.DB().Query(`SELECT repository_full_name FROM repository WHERE origin = 'seed'`)
 	if err != nil {
-		t.Fatalf("reading reach by repository: %v", err)
+		t.Fatalf("reading repositories under review: %v", err)
 	}
-	reached := map[string]map[string]bool{}
-	for rows.Next() {
-		var repository, keys string
-		if err := rows.Scan(&repository, &keys); err != nil {
+	var repositories []string
+	for seeds.Next() {
+		var name string
+		if err := seeds.Scan(&name); err != nil {
 			t.Fatal(err)
 		}
-		reached[repository] = map[string]bool{}
-		for _, key := range strings.Split(keys, ",") {
-			if key != "" {
-				reached[repository][key] = true
-			}
-		}
+		repositories = append(repositories, name)
 	}
-	if err := rows.Err(); err != nil {
+	if err := seeds.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if err := rows.Close(); err != nil {
-		t.Fatal(err)
+	seeds.Close()
+	parts, err := ClosureAgreement(s, repositories)
+	if err != nil {
+		t.Fatalf("ClosureAgreement: %v", err)
 	}
-	carrying := 0
-	for repository, keys := range reached {
-		carried := submittedFrom(t, s, repository)
-		if len(carried) > 0 {
-			carrying++
-		}
-		if !maps.Equal(keys, carried) {
-			t.Errorf("%s reaches %v; its submission closure carries %v", repository,
-				slices.Sorted(maps.Keys(keys)), slices.Sorted(maps.Keys(carried)))
-		}
-	}
-	if carrying == 0 {
-		t.Fatal("no closure carries anything, so the comparison is vacuous")
+	assertAgreement(t, parts[:1])
+	for _, d := range parts[1].Disagreements {
+		t.Errorf("%s: %s: %s, against %s", parts[1].Part, d.Subject, d.Claim, d.Independent)
 	}
 }
 
@@ -209,6 +154,8 @@ func TestReachAgreesWithTheExposureWalkForEveryNode(t *testing.T) {
 		"deep locks":                       deepLocks,
 		"unresolved under a caller's lock": unresolvedLockedMid,
 		"supply chain":                     agreementFixture,
+		"a starting point is a dependency": func(t *testing.T) *store.Store { return toolFixture(t, true).s },
+		"no default branch on record":      func(t *testing.T) *store.Store { return toolFixture(t, false).s },
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := build(t)

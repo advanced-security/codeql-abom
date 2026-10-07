@@ -21,7 +21,7 @@ flowchart LR
 | .NET SDK | The major version named by `TargetFramework` in [the UI project](../../ui/Abom.WebAssembly.csproj). `dotnet --list-sdks` shows what is installed. No extra workloads are needed. |
 | GitHub CLI | [gh](https://cli.github.com/), for authentication and ownership verification. |
 | CodeQL | The version in [.codeql-version](../../.codeql-version), on `PATH`. See [install CodeQL](#install-codeql). |
-| Graphviz (optional) | [Graphviz](https://graphviz.org/download/) lets the server place the Explorer's graph. Without it the Explorer uses its in-browser layout and says so. |
+| Graphviz | [Graphviz](https://graphviz.org/download/), with `dot` on `PATH`: `brew install graphviz` or `apt-get install graphviz`. Every details page draws its figure with it, and the Explorer's stable layout uses it. `serve` refuses to start without it and names the version it found. |
 
 These are the only requirements for serving and analyzing. Node, Playwright and golangci-lint are
 development tools. AI authoring and explicit lock verification have
@@ -129,10 +129,16 @@ UI's .NET packages, so it can be slower. Discovery does not start on its own.
 
 Open <http://127.0.0.1:8099/settings>:
 
-1. Press **Check with gh**. It should report the account you authenticated as.
-2. Declare your organization, either with its **Declare** button under **Accounts you can declare**,
-   offered where gh reports you as an owner or admin, or with **Declare an account by name**. To
-   start with a few repositories, tick **only these repositories** and name them.
+1. The page asks gh which accounts you belong to as soon as it opens, and should report the
+   account you authenticated as. If gh is not set up, it says what to run; **Check with gh** asks
+   again.
+2. Open **Accounts gh says you can declare**, which lists where gh reports you as an owner or admin,
+   and press **Declare** beside your organization. **Declare an account by name** below it is for
+   an account gh cannot see. To start with a few repositories, tick **only these repositories**,
+   press **Choose repositories** and pick them from the account's list. To cover the repositories
+   an organization marks with a custom property instead, press **Add property scope** and choose
+   the values a repository must carry; only properties organization owners and admins alone can
+   set are offered.
 3. Press **Save**. ABOM lists the repositories under the declaration and queues them, and reports
    how many it found and anything it could not read. Nothing is analyzed yet.
 

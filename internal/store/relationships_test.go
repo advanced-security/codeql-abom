@@ -202,7 +202,11 @@ func TestAPageOfRelationshipsIsCutByTheDatabase(t *testing.T) {
 	s := edgeFactsFixture(t)
 	derive(t, s)
 
-	query, args, err := s.relationshipsPageQuery(RelationshipsQuery{Limit: 50})
+	table, err := s.declaredEdgeTable("")
+	if err != nil {
+		t.Fatalf("reading what each line declared: %v", err)
+	}
+	query, args, err := s.relationshipsPageQuery(RelationshipsQuery{Limit: 50}, table)
 	if err != nil {
 		t.Fatalf("building the page statement: %v", err)
 	}

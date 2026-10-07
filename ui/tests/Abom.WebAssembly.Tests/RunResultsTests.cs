@@ -124,6 +124,99 @@ public class RunResultsTests : AbomTestContext
     private static List<string> Repositories(IRenderedComponent<Shared.RunResults> cut) =>
         cut.FindAll("[data-abom-result-repository]").Select(e => e.TextContent.Trim()).ToList();
 
+    private const int Covered = 23;
+    private const int OnePage = 10;
+
+    // A permutation of 1..23, so ordering by count and ordering by name are different orders: the
+    // first name, octo/repo-01, found 8 and sits on the second page of the default order.
+    private static int Found(int i) => i * 7 % Covered + 1;
+
+    private static string Repository(int i) => $"octo/repo-{i:00}";
+
+    private static readonly string Organization = $$"""
+        {"rowId":9,"predicate":"owner=octo","mode":"regular","requestedBy":"operator","state":"complete",
+         "createdAt":"2026-09-22T16:00:00Z","finishedAt":"2026-09-22T16:04:00Z",
+         "results":{{Enumerable.Range(1, Covered).Sum(Found)}},
+         "queries":[{"queryId":"acme/rule","queryVersion":"v1"}],"tally":{"succeeded":{{Covered}}},
+         "members":{{System.Text.Json.JsonSerializer.Serialize(Enumerable.Range(1, Covered).Select(i => new
+         {
+             repository = Repository(i), status = "succeeded", counted = true, results = Found(i),
+             byQuery = new Dictionary<string, int> { ["acme/rule"] = Found(i) },
+         }))}}}
+        """;
+
+    private IRenderedComponent<Shared.RunResults> RenderOrganization()
+    {
+        Answer("api/runs/9", Organization);
+        var cut = Render<Shared.RunResults>(p => p.Add(c => c.RunId, 9L));
+        cut.WaitForAssertion(() => Assert.NotEmpty(Repositories(cut)));
+        return cut;
+    }
+
+    private static AngleSharp.Dom.IElement SortBy(IRenderedComponent<Shared.RunResults> cut, string column) =>
+        cut.FindAll("[data-abom-results-table] .sortable-column-header")
+            .First(h => h.TextContent.Trim() == column);
+
+    /// <summary>
+    /// A run over an organization covers dozens of repositories. The run's card holds one page of
+    /// them and pages through the rest in place, rather than every repository in a window that
+    /// scrolls inside the list of runs.
+    /// </summary>
+    [Fact]
+    public void ARunsRepositoriesArePagedInPlaceRatherThanScrolledInAWindowOfTheirOwn()
+    {
+        var cut = RenderOrganization();
+
+        var seen = Repositories(cut);
+        Assert.Equal(OnePage, seen.Count);
+        cut.Find("[data-abom-results-table] button[aria-label='Next page']").Click();
+        cut.WaitForAssertion(() => Assert.DoesNotContain(seen[0], Repositories(cut)));
+        Assert.Equal(OnePage, Repositories(cut).Count);
+        seen.AddRange(Repositories(cut));
+        cut.Find("[data-abom-results-table] button[aria-label='Next page']").Click();
+        cut.WaitForAssertion(() => Assert.Equal(Covered - 2 * OnePage, Repositories(cut).Count));
+        seen.AddRange(Repositories(cut));
+
+        Assert.Equal(Enumerable.Range(1, Covered).Select(Repository).Order(), seen.Order());
+    }
+
+    /// <summary>
+    /// Picking lists every repository the query looked at, so over an organization it pages the
+    /// way the results do rather than running the length of the page.
+    /// </summary>
+    [Fact]
+    public void PickingAcrossAnOrganizationPagesItsRepositories()
+    {
+        var cut = RenderOrganization();
+        cut.Find("[data-abom-results-pick]").Click();
+
+        var pickable = () => cut.FindAll("[data-abom-results-pickable] [data-abom-pick-repository]");
+        cut.WaitForAssertion(() => Assert.Equal(OnePage, pickable().Count));
+        cut.Find("[data-abom-results-pickable] button[aria-label='Next page']").Click();
+        cut.WaitForAssertion(() => Assert.Equal(OnePage, pickable().Count));
+    }
+
+    /// <summary>
+    /// A column sorts every repository the run covered, not the page on screen: sorted by name the
+    /// first page starts at the first name, which the default order put on the second page, and
+    /// sorted by count it starts at the fewest results anywhere in the run.
+    /// </summary>
+    [Fact]
+    public void SortingARunsRepositoriesReordersEveryPageRatherThanTheOneShown()
+    {
+        var cut = RenderOrganization();
+        Assert.DoesNotContain(Repository(1), Repositories(cut).Take(OnePage));
+
+        SortBy(cut, "Repository").Click();
+        cut.WaitForAssertion(() =>
+            Assert.Equal(Enumerable.Range(1, OnePage).Select(Repository), Repositories(cut)));
+
+        SortBy(cut, "Results").Click();
+        cut.WaitForAssertion(() =>
+            Assert.Equal(Enumerable.Range(1, Covered).OrderBy(Found).Take(OnePage).Select(Repository),
+                Repositories(cut)));
+    }
+
     [Fact]
     public void OnlyRepositoriesWithResultsAreListedAndTheRestAreCounted()
     {
@@ -225,6 +318,11 @@ public class RunResultsTests : AbomTestContext
         Assert.Equal(["octo/app"], Repositories(cut));
         Assert.NotNull(cut.Find("[data-abom-member-uncounted]"));
         Assert.Equal("51", cut.Find("[data-abom-member-total]").TextContent.Trim());
+
+        // Nothing can be picked, so picking says why rather than drawing an empty table.
+        cut.Find("[data-abom-results-pick]").Click();
+        Assert.NotNull(cut.Find("[data-abom-results-unpickable]"));
+        Assert.Empty(cut.FindAll("[data-abom-results-pickable]"));
     }
 
     private const string AppFindings = """

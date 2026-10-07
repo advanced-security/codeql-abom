@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS abom_cycle_spend (
   builds       INTEGER NOT NULL DEFAULT 0,
   evaluations  INTEGER NOT NULL DEFAULT 0,
   probes       INTEGER NOT NULL DEFAULT 0,
+  tree_reads   INTEGER NOT NULL DEFAULT 0,
   -- What it bought.
   analyzed     INTEGER NOT NULL DEFAULT 0,
   skipped      INTEGER NOT NULL DEFAULT 0,
@@ -47,6 +48,8 @@ type CycleSpend struct {
 	Builds      int `json:"builds"`
 	Evaluations int `json:"evaluations"`
 	Probes      int `json:"probes"`
+	// TreeReads are API requests that recognized a commit's content in place of a clone.
+	TreeReads int `json:"treeReads"`
 
 	Analyzed   int `json:"analyzed"`
 	Skipped    int `json:"skipped"`
@@ -68,6 +71,7 @@ type CycleTotal struct {
 	Builds      int   `json:"builds"`
 	Evaluations int   `json:"evaluations"`
 	Probes      int   `json:"probes"`
+	TreeReads   int   `json:"treeReads"`
 	Analyzed    int   `json:"analyzed"`
 	Discovered  int   `json:"discovered"`
 }
@@ -80,11 +84,11 @@ func (s *Store) RecordCycle(c CycleSpend) error {
 	}
 	_, err := s.db.Exec(`
 		INSERT INTO abom_cycle_spend
-			(cycle, started_at, recorded_at, millis, fetches, builds, evaluations, probes,
+			(cycle, started_at, recorded_at, millis, fetches, builds, evaluations, probes, tree_reads,
 			 analyzed, skipped, settled, discovered, drifted, shallowest_incomplete)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.Cycle, c.StartedAt, now(), c.Millis, c.Fetches, c.Builds, c.Evaluations, c.Probes,
-		c.Analyzed, c.Skipped, c.Settled, c.Discovered, c.Drifted, shallowest)
+		c.TreeReads, c.Analyzed, c.Skipped, c.Settled, c.Discovered, c.Drifted, shallowest)
 	if err != nil {
 		return fmt.Errorf("recording cycle %d: %w", c.Cycle, err)
 	}
@@ -97,7 +101,7 @@ func (s *Store) RecentCycles(limit int) ([]CycleSpend, error) {
 		limit = 20
 	}
 	rows, err := s.db.Query(`
-		SELECT cycle, started_at, millis, fetches, builds, evaluations, probes,
+		SELECT cycle, started_at, millis, fetches, builds, evaluations, probes, tree_reads,
 		       analyzed, skipped, settled, discovered, drifted, shallowest_incomplete
 		FROM abom_cycle_spend
 		ORDER BY row_id DESC
@@ -112,7 +116,7 @@ func (s *Store) RecentCycles(limit int) ([]CycleSpend, error) {
 		var c CycleSpend
 		var shallowest *int
 		if err := rows.Scan(&c.Cycle, &c.StartedAt, &c.Millis, &c.Fetches, &c.Builds,
-			&c.Evaluations, &c.Probes, &c.Analyzed, &c.Skipped, &c.Settled, &c.Discovered,
+			&c.Evaluations, &c.Probes, &c.TreeReads, &c.Analyzed, &c.Skipped, &c.Settled, &c.Discovered,
 			&c.Drifted, &shallowest); err != nil {
 			return nil, fmt.Errorf("scanning a cycle: %w", err)
 		}
@@ -133,9 +137,9 @@ func (s *Store) CycleTotals() (CycleTotal, error) {
 	err := s.db.QueryRow(`
 		SELECT COUNT(*), COALESCE(SUM(millis), 0), COALESCE(SUM(fetches), 0),
 		       COALESCE(SUM(builds), 0), COALESCE(SUM(evaluations), 0), COALESCE(SUM(probes), 0),
-		       COALESCE(SUM(analyzed), 0), COALESCE(SUM(discovered), 0)
+		       COALESCE(SUM(tree_reads), 0), COALESCE(SUM(analyzed), 0), COALESCE(SUM(discovered), 0)
 		FROM abom_cycle_spend`).Scan(&t.Cycles, &t.Millis, &t.Fetches, &t.Builds, &t.Evaluations,
-		&t.Probes, &t.Analyzed, &t.Discovered)
+		&t.Probes, &t.TreeReads, &t.Analyzed, &t.Discovered)
 	if err != nil {
 		return t, fmt.Errorf("totalling cycle spend: %w", err)
 	}

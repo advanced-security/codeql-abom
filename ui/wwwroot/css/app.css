@@ -419,6 +419,10 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 .mud-simple-table.abom-declared-grid table tbody tr > td.abom-listing-cell {
     min-width: 17rem;
 }
+/* The scope cell carries the repositories and property scopes the declaration covers. */
+.mud-simple-table.abom-declared-grid table tbody tr > td.abom-scope-cell {
+    min-width: 24rem;
+}
 
 .mud-simple-table.abom-declared-grid table tbody tr > td {
     vertical-align: top;
@@ -447,6 +451,9 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 .abom-grid-nested {
     --abom-under-grid: 160px;
 }
+
+/* The pager's page size shrank to "3.." beside a five-digit total; the widest size is "100". */
+.mud-table-pagination-select .mud-input > input.mud-input-root { min-width: 3.5ch; }
 
 /* A wrapped column name doubles the height of every pinned header row. */
 .abom-grid .mud-table-root .mud-table-head .mud-table-cell,
@@ -672,6 +679,30 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 .abom-config-grid {
     width: fit-content;
     max-width: 100%;
+}
+
+/* A pool's description and estimate wrap inside their column, so the meters stay on one screen.
+   MudBlazor's own cell rule outranks a single class, hence the longer selector. */
+.abom-pools.mud-simple-table table tbody tr td {
+    vertical-align: top;
+}
+
+.abom-pools .abom-pool-work {
+    min-width: 12rem;
+    max-width: 17rem;
+}
+
+.abom-pools .abom-pool-unit {
+    white-space: nowrap;
+}
+
+.abom-pools .abom-pool-estimate {
+    min-width: 20rem;
+    max-width: 26rem;
+}
+
+.abom-pool-field {
+    width: 6rem;
 }
 
 /* A tier's path, reason and count read as one line each. */
@@ -921,6 +952,96 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
    wrong org and cannot see that they did. */
 .abom-owner-field { min-width: 16rem; }
 
+/* An include list is chosen names as chips, and the chooser offers GitHub's list below the row in
+   columns, so fifty names fit without a scroll inside a table cell. */
+.abom-includes {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    max-width: 28rem;
+}
+.abom-repo-options {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+    column-gap: 16px;
+}
+/* A long name wraps inside its column and its tags follow it; neither may run into the next. */
+.abom-repo-option {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 6px;
+    min-width: 0;
+    overflow: hidden;
+}
+.abom-repo-option > :first-child {
+    min-width: 0;
+    flex: 0 1 auto;
+}
+.abom-repo-option .mud-checkbox .mud-typography {
+    font-size: var(--abom-text-sm);
+    overflow-wrap: anywhere;
+}
+.abom-repo-tags {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+.mud-simple-table.abom-declared-grid table tbody tr.abom-include-chooser-row > td {
+    background: var(--mud-palette-background-gray);
+}
+/* Each property scope is a line under the named repositories, read as "or carrying ...". */
+.abom-property-scopes {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    row-gap: 2px;
+    max-width: 36rem;
+    margin-top: 4px;
+}
+/* A long value wraps inside the terms, so the remove button stays beside them, never below. */
+.abom-property-scope-line {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: flex-start;
+    column-gap: 4px;
+    font-size: var(--abom-text-sm);
+}
+.abom-property-scope-terms {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding-top: 6px;
+}
+.abom-property-scope-line > .mud-icon-button {
+    flex-shrink: 0;
+}
+/* What a scope counts, or why it counts nothing, sits under its terms rather than after them. */
+.abom-property-scope-notes {
+    padding-left: 1rem;
+}
+/* A value is matched exactly, so it is shown whole and wraps anywhere rather than truncating. */
+.abom-property-term code {
+    overflow-wrap: anywhere;
+}
+.abom-property-choices {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr));
+    gap: 8px 16px;
+}
+.abom-property-choice {
+    min-width: 0;
+}
+
+/* Four short columns: at page width the button drifts a screen away from the name it declares. */
+.mud-simple-table.abom-membership-grid {
+    max-width: 52rem;
+}
+/* The folded members table has no header, so both tables fix the same widths to stay in columns. */
+.mud-simple-table.abom-membership-grid table { table-layout: fixed; width: 100%; }
+.mud-simple-table.abom-membership-grid table tr > :nth-child(1) { width: 40%; }
+.mud-simple-table.abom-membership-grid table tr > :nth-child(2) { width: 22%; }
+.mud-simple-table.abom-membership-grid table tr > :nth-child(3) { width: 14%; }
+
 /* Simple tables carry the grid's metrics, so a page that uses one does not look like a
    different application from the page beside it. */
 .abom-table .mud-table-cell {
@@ -982,6 +1103,10 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 /* The dot keys the state to the filter above it, so it has to sit beside the word rather than
    wrap onto its own line and double the row height. */
 .abom-status-cell { white-space: nowrap; display: inline-flex; align-items: center; }
+
+/* Scanning, setup and database share a column: the two facts under the state line up past its dot. */
+.abom-setup-cell { display: inline-flex; flex-direction: column; line-height: 1.3; }
+.abom-setup-detail { font-size: var(--abom-text-xs); white-space: nowrap; padding-left: 14px; }
 
 /* The hue is a queue state from the live palette, so it arrives as a property rather than a rule. */
 .abom-state-dot {
@@ -1227,11 +1352,10 @@ code {
 .abom-query-metadata dt { opacity: 0.65; white-space: nowrap; }
 .abom-query-metadata dd { margin: 0; word-break: break-word; }
 
-/* Sized to its few columns; MudSimpleTable's own rules are two classes and two elements deep. */
-.mud-simple-table.abom-results table { width: auto; }
-.mud-simple-table.abom-results table * tr > td.abom-cell-right,
-.mud-simple-table.abom-results table * tr > th.abom-cell-right { text-align: right; }
-.mud-simple-table.abom-results table * tr th { white-space: nowrap; }
+/* Sized to its few columns, its pager under them. One page tall inside the windowed list of runs,
+   whose window is not its own: the list scrolls, never a second window inside a run's row. */
+.abom-grid.abom-results { width: fit-content; max-width: 100%; }
+.abom-grid.abom-results .mud-table-container { max-height: none; }
 
 /* A request's two examples side by side, because the point is the difference between them. */
 .abom-request-examples {
@@ -1650,3 +1774,263 @@ code {
 }
 .abom-versions-compact .mud-table-pagination-actions .mud-icon-button { padding: 6px; }
 .abom-versions-lead { color: var(--mud-palette-text-primary); font-weight: 600; }
+
+/* A details page's figure: above the tables at full width, or beside them and in view while they
+   scroll. The drawing is the server's; only its frame is styled here. */
+.abom-figure {
+    /* The drawing's own styles read these; each falls back to the light palette in the file. */
+    --abom-fig-bg: transparent;
+    --abom-fig-fg: var(--mud-palette-text-primary);
+    --abom-fig-muted: var(--mud-palette-text-secondary);
+    --abom-fig-node-bg: var(--mud-palette-surface);
+    --abom-fig-node-line: var(--mud-palette-lines-inputs);
+    --abom-fig-edge: var(--mud-palette-lines-inputs);
+    --abom-fig-route: var(--mud-palette-warning);
+    --abom-fig-root-bg: color-mix(in srgb, var(--abom-fig-focus) 14%, var(--mud-palette-surface));
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: var(--mud-default-borderradius);
+    background: var(--mud-palette-surface);
+    padding: 6px 12px 12px;
+    margin-bottom: 12px;
+}
+
+.abom-figure-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.abom-figure-title {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.abom-figure-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+.abom-figure-body {
+    margin-top: 8px;
+}
+
+/* Reserved, so the tables under a figure still drawing do not jump when it arrives. */
+.abom-figure-loading {
+    min-height: 240px;
+}
+
+.abom-figure-canvas {
+    overflow: auto;
+}
+
+.abom-figure-canvas svg {
+    display: block;
+}
+
+.abom-figure-top .abom-figure-canvas {
+    max-height: 70vh;
+}
+
+/* Beside the tables the drawing fits the column, so a wide one shrinks rather than scrolls. */
+.abom-figure-side .abom-figure-canvas svg {
+    max-width: 100%;
+    height: auto;
+}
+
+.abom-node-layout-side {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) clamp(420px, 46%, 1100px);
+    gap: 12px;
+    align-items: start;
+    transition: grid-template-columns 220ms ease;
+}
+
+/* Folded beside the tables, the figure is a rail and the tables take the width. */
+.abom-node-layout-side.abom-node-layout-rail {
+    grid-template-columns: minmax(0, 1fr) 88px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .abom-node-layout-side {
+        transition: none;
+    }
+}
+
+.abom-figure-rail {
+    padding: 0;
+}
+
+.abom-figure-rail-button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 6px 14px;
+    border: 0;
+    border-radius: inherit;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: center;
+    cursor: pointer;
+}
+
+.abom-figure-rail-button:hover {
+    background: var(--mud-palette-action-default-hover);
+}
+
+.abom-figure-rail-button:focus-visible {
+    outline: 2px solid var(--mud-palette-primary);
+    outline-offset: -2px;
+}
+
+.abom-figure-rail-mark {
+    color: var(--mud-palette-text-secondary);
+}
+
+.abom-figure-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* A small label over its number, the way a dashboard tile reads. */
+.abom-figure-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: 1.25;
+}
+
+.abom-figure-stat-label {
+    font-size: var(--abom-text-xs);
+    color: var(--mud-palette-text-secondary);
+}
+
+.abom-figure-stat-value {
+    font-size: var(--abom-text-sm);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+/* Read by assistive technology, not drawn. */
+.abom-visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.abom-node-aside {
+    position: sticky;
+    top: 72px;
+    max-height: calc(100vh - 88px);
+    overflow: auto;
+}
+
+.abom-node-aside .abom-figure {
+    margin-bottom: 0;
+}
+
+
+/* Printed, a details page is its figure and its tables: what navigates the page is left out, and
+   the figure takes the light palette its own drawing falls back to, as the downloaded file does. */
+@media print {
+    .mud-appbar,
+    .mud-drawer,
+    .abom-scopebar,
+    .mud-table-pagination,
+    .abom-figure-actions,
+    [data-abom-figure-toggle] {
+        display: none !important;
+    }
+
+    .mud-main-content {
+        padding-top: 0 !important;
+    }
+
+    .abom-node-layout-side {
+        display: block;
+    }
+
+    .abom-node-aside {
+        position: static;
+        max-height: none;
+        overflow: visible;
+    }
+
+    /* style-check: off — printed, the figure takes the light palette the downloaded file
+       carries, whatever theme the screen is in, so these name it rather than the theme. */
+    .abom-figure {
+        break-inside: avoid;
+        background: #ffffff;
+        border-color: #ced4da;
+        --abom-fig-bg: initial !important;
+        --abom-fig-fg: initial !important;
+        --abom-fig-muted: initial !important;
+        --abom-fig-node-bg: initial !important;
+        --abom-fig-node-line: initial !important;
+        --abom-fig-edge: initial !important;
+        --abom-fig-route: initial !important;
+        --abom-fig-focus: initial !important;
+        --abom-fig-root-bg: initial !important;
+        --abom-fig-owned: initial !important;
+        --abom-fig-advisory: initial !important;
+        --abom-fig-critical: initial !important;
+        --abom-fig-high: initial !important;
+        --abom-fig-medium: initial !important;
+        --abom-fig-low: initial !important;
+        --abom-fig-unknown: initial !important;
+        --abom-fig-kind-workflow: initial !important;
+        --abom-fig-kind-reusable_workflow: initial !important;
+        --abom-fig-kind-composite_action: initial !important;
+        --abom-fig-kind-action: initial !important;
+        --abom-fig-kind-docker_image: initial !important;
+    }
+
+    .abom-figure .mud-typography {
+        color: #212529 !important;
+    }
+    /* style-check: on */
+
+    .abom-figure-canvas,
+    .abom-figure-top .abom-figure-canvas {
+        overflow: visible;
+        max-height: none;
+    }
+
+    .abom-figure-canvas svg {
+        max-width: 100%;
+        height: auto;
+    }
+}
+
+/* An icon beside its words: centered on them, rather than sitting on the text's baseline above
+   them, which also pushed the words below the row they sit in. */
+.abom-icon-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* One row: the title, its chips and its links share a center line. MudChip's own margin and the
+   title's bottom margin each moved theirs off it. */
+.abom-node-head .abom-page-title {
+    margin: 0;
+    line-height: 1.25;
+}
+
+.abom-node-head .mud-chip {
+    margin: 0;
+}

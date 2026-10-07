@@ -37,6 +37,14 @@ still never open the store: that half of the deployment design stands.
 | Booleans and times | `INTEGER` flags, RFC 3339 `TEXT` | either the same representation or a mapping, decided once |
 | Single writer | `MaxOpenConns(1)`, serialized `Consume` | concurrent sessions — see below |
 
+**RFC 3339 text orders correctly only at a fixed width.** `time.RFC3339Nano` trims trailing zeros
+from the fraction, so `…00.12Z` sorts after `…00.1234Z`. `ReclaimStale` compares
+`claimed_at <= cutoff` that way, and `TestReclaimOrphanedTakesBackEvenAClaimMadeMomentsAgo`, whose
+claim is microseconds old, failed 5 of 300 runs on 2026-10-07 with `internal/frontier` unchanged.
+A reclaim at process start compares claims seconds old, which order correctly, so the cost is a
+flaky `make verify` rather than a stuck queue. A fixed-width fraction everywhere, or comparing
+through `julianday()`, closes it; whichever this plan decides for times decides it.
+
 ## Pending
 
 1. **Extract the interface without changing an answer.** SQLite only, every endpoint captured on the

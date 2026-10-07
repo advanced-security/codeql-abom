@@ -34,14 +34,20 @@ public sealed class ActionDrilldownTests : AbomTestContext
            {"reference":"v4","commit":"{{{V4Commit}}}","queue":"analyzed",
             "lockedTo":[{"commit":"2222222222222222222222222222222222222222","repositories":1}],
             "direct":12,"transitive":3,"lines":1706,
-            "findings":{"count":2,"severity":{"critical":1,"high":1,"medium":0,"low":0,"unknown":0}}
+            "findings":{"count":2,"severity":{"critical":1,"high":1,"medium":0,"low":0,"unknown":0}},
+            "lineFindings":{"count":3,"severity":{"critical":0,"high":1,"medium":2,"low":0,"unknown":0},
+                            "commits":2,"analyzed":2,"unknown":0}
            },
            {"reference":"v1","commit":"","queue":"","lockedTo":[],"direct":1,"transitive":0,
-            "lines":2,"findings":null},
+            "lines":2,"findings":null,"lineFindings":null},
            {"reference":"{{{V4Commit}}}","commit":"{{{V4Commit}}}","queue":"analyzed","lockedTo":[],
-            "direct":1,"transitive":0,"lines":1,"findings":null},
+            "direct":1,"transitive":0,"lines":1,"findings":null,
+            "lineFindings":{"count":0,"severity":{"critical":0,"high":0,"medium":0,"low":0,"unknown":0},
+                            "commits":1,"analyzed":1,"unknown":0}},
            {"reference":"release/2024-hotfix-branch","commit":"","queue":"","lockedTo":[],
-            "direct":1,"transitive":0,"lines":1,"findings":null}],
+            "direct":1,"transitive":0,"lines":1,"findings":null,
+            "lineFindings":{"count":1,"severity":{"critical":0,"high":1,"medium":0,"low":0,"unknown":0},
+                            "commits":3,"analyzed":1,"unknown":2}}],
          "advisories":[
            {"ghsaId":"GHSA-checkout","severity":"high","summary":"A token leaks","url":"https://github.com/advisories/GHSA-checkout",
             "packageName":"actions/checkout","ranges":[{"vulnerableRange":">= 4.0.0, < 4.1.3","firstPatched":"4.1.3"}],
@@ -147,10 +153,11 @@ public sealed class ActionDrilldownTests : AbomTestContext
         Assert.Contains("Reference", headers);
         Assert.Contains("Resolves to", headers);
         Assert.Contains("Findings", headers);
-        foreach (var elsewhere in new[] { "Locked to", "uses: lines", "Analysis" })
+        foreach (var elsewhere in new[] { "Locked to", "uses: lines", "Findings on lines", "Analysis" })
         {
             Assert.DoesNotContain(elsewhere, headers);
         }
+        Assert.Empty(page.FindAll("[data-abom-version-line-findings]"));
         // What the analysis column said survives where it matters: on a version nothing analyzed.
         Assert.Contains("never queued", page.Find("[data-abom-version-findings='v1']").GetAttribute("title"));
     }
@@ -359,6 +366,35 @@ public sealed class ActionDrilldownTests : AbomTestContext
         var page = Render<Pages.NodePage>(p => p.Add(c => c.Key, Checkout));
         page.WaitForAssertion(() => Assert.NotEmpty(page.FindAll("[data-abom-use-repository]")));
         return page;
+    }
+
+    // What any rule reported on the lines naming a version is counted at the commit each line was
+    // analyzed. Lines no findings run reached are not analyzed rather than clean, a version no
+    // starting point names on a line of its own has nothing there to count, and commits a findings
+    // run did not reach or whose declaration was never recorded are said beside the count.
+    [Fact]
+    public void TheFindingsOnAVersionsLinesSayWhatWasReportedThereAndWhatIsNotKnown()
+    {
+        var page = Node();
+        page.WaitForAssertion(() => Assert.NotEmpty(page.FindAll("[data-abom-version-line-findings='v4']")));
+
+        Assert.Equal("3", page.Find("[data-abom-version-line-findings='v4'] .abom-num").TextContent.Trim());
+        Assert.Equal("0", page.Find($"[data-abom-version-line-findings='{V4Commit}'] .abom-num").TextContent.Trim());
+        Assert.Contains("not analyzed", page.Find("[data-abom-version-line-findings='v1']").TextContent);
+        var partial = page.Find("[data-abom-version-line-findings='release/2024-hotfix-branch']").TextContent;
+        Assert.Contains("1 of 3 commits", partial);
+        Assert.Contains("2 unknown", partial);
+        Assert.DoesNotContain("commits", page.Find("[data-abom-version-line-findings='v4']").TextContent);
+
+        var transitive = Node(versions: """
+            {"key":"actions/checkout","total":1,"advisories":[],"items":[
+              {"reference":"v5","commit":"","queue":"","lockedTo":[],"direct":0,"transitive":2,
+               "lines":0,"findings":null,"lineFindings":null}]}
+            """);
+        transitive.WaitForAssertion(() => Assert.NotEmpty(transitive.FindAll("[data-abom-version-line-findings='v5']")));
+        var cell = transitive.Find("[data-abom-version-line-findings='v5']").TextContent;
+        Assert.Contains("no lines", cell);
+        Assert.DoesNotContain("not analyzed", cell);
     }
 
     // A use writing no reference is a local path, which runs at its caller's own commit. It was drawn

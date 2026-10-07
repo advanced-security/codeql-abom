@@ -91,9 +91,10 @@ func TestAScopeARunCannotCoverIsRefusedNamingItsTerms(t *testing.T) {
 	srv, _ := scopedServer(t)
 
 	for view, terms := range map[string][]string{
-		"owned-findings": {"flags"},
-		"unpinned":       {"ref"},
-		"coverage-gaps":  {"flags", "ref"},
+		"owned-findings":        {"flags"},
+		"supply-chain-findings": {"flags"},
+		"unpinned":              {"ref"},
+		"coverage-gaps":         {"flags", "ref"},
 	} {
 		code, body := startRefusal(t, srv, "view="+view)
 		if code != http.StatusBadRequest {

@@ -130,6 +130,48 @@ func TestDiscoveryPutsBackADependencyWhoseCommitsDeclarationsAreNotKnown(t *test
 	}
 }
 
+// What is put back says why, because the crawl claims it with the first stage rather than as a
+// refresh: what the commit declared is not known at all.
+func TestAPutBackCommitIsMarkedForTheFirstStage(t *testing.T) {
+	s := newTestStore(t)
+	analyzedBeforeContent(t, s, "vendor/comp", 1, 1, "c1", "c2")
+
+	reobserve(t, s, 10)
+
+	var why sql.NullString
+	if err := s.DB().QueryRow(`SELECT requeued_for FROM abom_frontier
+		WHERE node_key = 'vendor/comp' AND ref = 'v1'`).Scan(&why); err != nil {
+		t.Fatal(err)
+	}
+	if why.String != "reobserve" {
+		t.Errorf("requeued_for = %q, want reobserve", why.String)
+	}
+}
+
+// A row outside the owned closure is never claimed, so it can neither take a place in the window
+// for good nor be put back, and a commit only it stands at is not the crawl's to observe.
+func TestReobservingKeepsToTheOwnedClosure(t *testing.T) {
+	s := newTestStore(t)
+	analyzedBeforeContent(t, s, "vendor/in", 1, 1, "c1", "c2")
+	analyzedBeforeContent(t, s, "vendor/out", 1, 1, "d1", "d2")
+	if _, err := s.DB().Exec(`UPDATE abom_frontier SET status = 'pending'
+		WHERE node_key = 'vendor/out' AND ref = 'v1'`); err != nil {
+		t.Fatal(err)
+	}
+	inside := func(repository string) bool { return strings.EqualFold(repository, "Vendor/In") }
+
+	got, err := s.ReobserveInside(1, inside)
+	if err != nil {
+		t.Fatalf("ReobserveInside: %v", err)
+	}
+	if got.Unobserved != 2 || got.Outstanding != 0 || got.Requeued != 1 {
+		t.Errorf("ReobserveInside = %+v, want vendor/in's 2 commits, nothing outstanding, 1 put back", got)
+	}
+	if row := reobservedRow(t, s, "vendor/out", "v2"); row.status != "done" {
+		t.Errorf("vendor/out@v2 is %s, want left alone outside the closure", row.status)
+	}
+}
+
 // Once an edges run of a commit is marked, what that commit declared is known, and analyzing it
 // again would buy nothing. Knowledge is per commit, so the other commit of the same repository is
 // still put back.
@@ -160,6 +202,33 @@ func TestOnlyCommitsStillUnobservedArePutBack(t *testing.T) {
 	}
 	if got := reobserve(t, s, 10); got.Unobserved != 0 || got.Requeued != 0 {
 		t.Errorf("with every commit observed Reobserve = %+v, want nothing", got)
+	}
+}
+
+// Identical indexed content declares identical things, so a twin whose run kept sighting content
+// says what a commit declared even when the commit's own run predates that. The crawl settles such
+// a commit on its twin, so putting it back would loop: 97 commits, every cycle, on the live crawl.
+func TestACommitIsObservedThroughATwinWithIdenticalContent(t *testing.T) {
+	s := newTestStore(t)
+	runs := analyzedBeforeContent(t, s, "vendor/comp", 1, 1, "c1", "c2")
+	if err := s.MarkSightedContent(runs["c1"]); err != nil {
+		t.Fatal(err)
+	}
+	for _, commit := range []string{"c1", "c2"} {
+		if err := s.RecordCommitContent("vendor/comp", commit, "filter:same"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := reobserve(t, s, 10); got.Unobserved != 0 || got.Requeued != 0 {
+		t.Errorf("Reobserve = %+v, want c2 known through c1 and nothing put back", got)
+	}
+	live, err := s.LiveCommits()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := live["vendor/comp"]["c2"]; len(got) != 1 || got[0] != "c1" {
+		t.Errorf("a walk at c2 reads the sightings of %v, want its observed twin c1", got)
 	}
 }
 

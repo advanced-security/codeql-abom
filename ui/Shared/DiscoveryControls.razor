@@ -16,9 +16,12 @@
         <MudText Typo="Typo.body2" Class="mt-1">
             @if (objective.HasOutstanding)
             {
+                @* Rows waiting on a retry are not ready, so deeper work runs beside them. *@
                 <span>
-                    Completing <b>depth @objective.Working</b>, and nothing deeper is started
-                    until it is done.
+                    Working on <b>depth @objective.Working</b> first: what can be tried there now
+                    is taken ahead of anything deeper, and deeper work fills the rest of each
+                    round. A repository asked for by name, or one of yours a push moved, goes ahead
+                    of both.
                 </span>
             }
             else if (objective.Progress.Count == 0)
@@ -29,6 +32,17 @@
                 <span>
                     <b>Nothing has been enumerated yet</b>, so there is nothing to be outstanding.
                     This is not a statement about coverage.
+                </span>
+            }
+            else if (StuckAcrossDepths > 0)
+            {
+                @* Stuck rows no longer hold a depth open, and were never analyzed. *@
+                <span>
+                    <b>Nothing outstanding</b> that the crawl can finish now. Every other reference
+                    reached has been settled &mdash; as far as depth @objective.MaxDepth, which is
+                    the cap exploration may not pass &mdash; except
+                    <b>@StuckAcrossDepths.ToString("N0") stuck after repeated failures</b>, which
+                    are retried on their own schedule.
                 </span>
             }
             else
@@ -42,6 +56,17 @@
                 </span>
             }
         </MudText>
+        @if (StageSentence(objective) is { } stage)
+        {
+            <MudText Typo="Typo.body2" Class="mt-1" data-abom-objective-stage>@stage</MudText>
+        }
+        @if (objective.Stages.Unreached > 0)
+        {
+            @* Never claimed, so counted among the queued without a word it reads as work about to run. *@
+            <MudText Typo="Typo.body2" Class="mt-1" data-abom-objective-unreached>
+                @UnreachedSentence(objective.Stages.Unreached)
+            </MudText>
+        }
 
         @if (objective.Progress.Count > 0)
         {
@@ -50,22 +75,30 @@
                 {
                     <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
                              Color="@(depth.Available == 0 ? Color.Success : Color.Default)"
-                             title="@DepthSplit(depth)">
+                             title="@DepthSplit(depth, objective.StuckAfter)">
                         depth @depth.Depth: @depth.Settled.ToString("N0") of
-                        @depth.Total.ToString("N0")
+                        @depth.Total.ToString("N0")@(depth.Stuck > 0
+                            ? $", {depth.Stuck:N0} stuck after repeated failures" : "")
                     </MudChip>
                 }
             </div>
             @* These count settled work and the tier chips count analyzed, so on a corpus with
                anything unavailable the two decompositions of one queue do not sum alike. Stating
                the rule once is what lets a reader reconcile them. *@
-            @if (UnavailableAcrossDepths > 0)
+            @if (UnavailableAcrossDepths > 0 || NothingAcrossDepths > 0)
+            {
+                <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-objective-settled>
+                    Settled counts what is finished: analyzed, plus @SettledParts. Tier figures
+                    elsewhere count analyzed only.
+                </MudText>
+            }
+            @if (StuckAcrossDepths > 0)
             {
                 <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                    Settled counts what is finished: analyzed, plus
-                    <b>@UnavailableAcrossDepths.ToString("N0")</b> that could not be fetched and
-                    are not tried again until retried from Re-analyze. Tier figures elsewhere
-                    count analyzed only.
+                    Stuck counts <b>@StuckAcrossDepths.ToString("N0")</b> that failed
+                    @objective.StuckAfter.ToString("N0") or more times for a reason ABOM does not
+                    recognize. They are not analyzed and not settled, they keep being retried, and
+                    they no longer keep their depth open.
                 </MudText>
             }
         }
@@ -82,9 +115,11 @@
         @if (LastCycle is { } last)
         {
             <MudText Typo="Typo.body2" Class="mud-text-secondary mt-2">
-                Last cycle took <b>@Seconds(last.Millis)s</b>: @last.Fetches.ToString("N0")
+                Last round took <b>@Seconds(last.Millis)s</b>: @last.Fetches.ToString("N0")
                 fetches, @last.Builds.ToString("N0") database builds,
-                @last.Probes.ToString("N0") reference probes. It analyzed
+                @last.Probes.ToString("N0") reference probes@(last.TreeReads > 0
+                    ? $", {CountText.Of(last.TreeReads, "tree read", "tree reads")}" : "").
+                It analyzed
                 @last.Analyzed.ToString("N0"), skipped @last.Skipped.ToString("N0") already on
                 record and discovered @last.Discovered.ToString("N0").
                 @if (last.Drifted > 0)
@@ -93,7 +128,7 @@
                 }
             </MudText>
             <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                @objective.Totals.Cycles.ToString("N0") cycles recorded, totalling
+                @CountText.Of(objective.Totals.Cycles, "round", "rounds") recorded, totalling
                 @Seconds(objective.Totals.Millis)s across
                 @objective.Totals.Fetches.ToString("N0") fetches and
                 @objective.Totals.Probes.ToString("N0") probes.
@@ -103,7 +138,7 @@
         {
             @* Nothing recorded is not zero spend. *@
             <MudText Typo="Typo.body2" Class="mud-text-secondary mt-2">
-                No cycle has run yet, so there is nothing to say about what discovery costs here.
+                No round has run yet, so there is nothing to say about what discovery costs here.
             </MudText>
         }
     </MudPaper>
@@ -359,18 +394,75 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
     private CycleSpend? LastCycle =>
         _objective is { Recent.Count: > 0 } ? _objective.Recent[0] : null;
 
-    // Settled is analyzed plus what could not be fetched, so a depth chip and a tier chip count
-    // different things and only agree when nothing is unavailable.
+    // Settled is analyzed plus what could not be fetched and what held nothing to analyze, so a
+    // depth chip and a tier chip count different things and only agree when neither is present.
     private int UnavailableAcrossDepths =>
-        _objective is { } o ? o.Progress.Sum(d => d.Settled - d.Done) : 0;
+        _objective is { } o ? o.Progress.Sum(d => d.Unavailable) : 0;
 
-    private static string DepthSplit(DepthProgress d)
+    private int NothingAcrossDepths => _objective is { } o ? o.Progress.Sum(d => d.Nothing) : 0;
+
+    private string SettledParts => string.Join(" and ", new[]
     {
-        var unavailable = d.Settled - d.Done;
-        return unavailable > 0
-            ? $"{d.Done:N0} analyzed, {unavailable:N0} unavailable — {d.Settled:N0} settled of {d.Total:N0}."
+        NothingAcrossDepths > 0 ? $"{NothingAcrossDepths:N0} with nothing to analyze, read in full and holding no workflow or action manifest" : null,
+        UnavailableAcrossDepths > 0 ? $"{UnavailableAcrossDepths:N0} that could not be fetched and are not tried again until retried from Re-analyze" : null,
+    }.OfType<string>());
+
+    private int StuckAcrossDepths => _objective is { } o ? o.Progress.Sum(d => d.Stuck) : 0;
+
+    private static string DepthSplit(DepthProgress d, int stuckAfter)
+    {
+        var parts = new List<string> { $"{d.Done:N0} analyzed" };
+        if (d.Nothing > 0) parts.Add($"{d.Nothing:N0} with nothing to analyze");
+        if (d.Unavailable > 0) parts.Add($"{d.Unavailable:N0} unavailable");
+        var split = parts.Count > 1
+            ? $"{string.Join(", ", parts)} — {d.Settled:N0} settled of {d.Total:N0}."
             : $"{d.Done:N0} analyzed of {d.Total:N0}.";
+        if (d.Refresh > 0)
+        {
+            split += d.Refresh == 1
+                ? " 1 being analyzed again after its reference moved."
+                : $" {d.Refresh:N0} being analyzed again after their references moved.";
+        }
+        if (d.Stuck == 0)
+        {
+            return split;
+        }
+        var (subject, verb) = d.Stuck == 1 ? ("1", "is") : ($"{d.Stuck:N0}", "are");
+        return $"{split} {subject} failed {stuckAfter:N0} or more times and {verb} still retried, "
+            + "neither analyzed nor settled.";
     }
+
+    // The stages beside the depth being worked: what jumps the order, and what waits behind it.
+    private static string? StageSentence(Objective o)
+    {
+        var parts = new List<string>();
+        if (o.Stages.Expedited > 0)
+        {
+            parts.Add($"{o.Stages.Expedited:N0} asked for by name, or moved by a push to a repository you own, "
+                + $"{(o.Stages.Expedited == 1 ? "goes" : "go")} first.");
+        }
+        if (o.Stages.Refresh == 1)
+        {
+            parts.Add(o.HasOutstanding
+                ? "1 that moved since it was analyzed waits until nothing reached is left unanalyzed."
+                : "Analyzing again 1 that moved since it was analyzed.");
+        }
+        else if (o.Stages.Refresh > 1)
+        {
+            parts.Add(o.HasOutstanding
+                ? $"{o.Stages.Refresh:N0} that moved since they were analyzed wait until nothing reached "
+                  + "is left unanalyzed, then go the longest since analyzed first."
+                : $"Analyzing again {o.Stages.Refresh:N0} that moved since they were analyzed, the longest "
+                  + "since analyzed first.");
+        }
+        return parts.Count == 0 ? null : string.Join(" ", parts);
+    }
+
+    private static string UnreachedSentence(int unreached) => unreached == 1
+        ? "1 queued for a repository nothing you own reaches is not claimed: the crawl does not "
+          + "analyze it, and it keeps no depth open. Pruning, in Settings, removes it."
+        : $"{unreached:N0} queued for repositories nothing you own reaches are not claimed: the crawl "
+          + "does not analyze them, and they keep no depth open. Pruning, in Settings, removes them.";
 
     private static string Seconds(long millis) => (millis / 1000.0).ToString("N1");
 
@@ -426,7 +518,7 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
     private string RequeueHint(string tier) => tier switch
     {
         "owned" => TierOf(tier).HoldsRepositories
-            ? $"Re-analyze the {TierOf(tier).Repositories:N0} repositories you own ({TierOf(tier).RepositoriesAnalyzed:N0} analyzed) and the {TierOf(tier).Dependencies:N0} dependencies in those same accounts ({TierOf(tier).DependenciesAnalyzed:N0} analyzed). These are the ones you can change yourself."
+            ? $"Re-analyze the {TierOf(tier).Repositories:N0} repositories you own ({TierOf(tier).RepositoriesAnalyzed:N0} analyzed{(TierOf(tier).RepositoriesNothingToAnalyze > 0 ? $", {TierOf(tier).RepositoriesNothingToAnalyze:N0} with nothing to analyze, which a re-analysis leaves alone" : "")}) and the {TierOf(tier).Dependencies:N0} dependencies in those same accounts ({TierOf(tier).DependenciesAnalyzed:N0} analyzed). These are the ones you can change yourself."
             : $"Re-analyze the {TierOf(tier).Analyzed:N0} analyzed of {TierOf(tier).Total:N0} dependencies belonging to accounts you are verified against. These are the ones you can change yourself, whatever depth they were reached at.",
         "direct" => $"Re-analyze the {TierOf(tier).Analyzed:N0} analyzed of {TierOf(tier).Total:N0} dependencies your repositories name directly, with the query suite currently configured. Nothing already known is cleared while it runs.",
         _ => $"Re-analyze the {TierOf(tier).Analyzed:N0} analyzed of {TierOf(tier).Total:N0} dependencies reached through an intermediary. This is the larger tier and takes correspondingly longer.",

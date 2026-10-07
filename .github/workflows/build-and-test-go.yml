@@ -57,6 +57,11 @@ jobs:
       - name: Build and Test - Vet
         run: make vet
 
+      # Graphviz is a requirement: serve refuses to start without it, and the layout and figure
+      # tests fail rather than skip.
+      - name: Build and Test - Install Graphviz
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends graphviz
+
       - name: Build and Test - Run tests
         run: make test
 

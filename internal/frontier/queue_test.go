@@ -400,9 +400,10 @@ func TestTouchDefersWithoutReanalyzing(t *testing.T) {
 	}
 }
 
-// A moved ref returns to the queue and competes on commonality like anything else, so a stale
-// dependency thousands of workflows use is re-analyzed before an obscure unanalyzed one.
-func TestStaleRefRequeuesAndOutranksLowValueWork(t *testing.T) {
+// A moved ref returns to the queue behind everything never analyzed, however much of the
+// organization uses it: an obscure dependency nobody has looked at is a gap in what is known, and
+// the moved one was analyzed once. Commonality orders work within a stage, never across them.
+func TestStaleRefRequeuesBehindUnanalyzedWorkHoweverCommon(t *testing.T) {
 	q, s := newQueue(t)
 
 	if _, err := q.Enqueue([]Item{item("actions/checkout", 1), item("obscure/action", 1)}); err != nil {
@@ -425,8 +426,8 @@ func TestStaleRefRequeuesAndOutranksLowValueWork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if len(claimed) != 2 || claimed[0].NodeKey != "actions/checkout" {
-		t.Fatalf("claim order = %+v, want the stale high-commonality item first", claimed)
+	if len(claimed) != 2 || claimed[0].NodeKey != "obscure/action" || claimed[1].NodeKey != "actions/checkout" {
+		t.Fatalf("claim order = %+v, want the unanalyzed item first and the stale one after it", claimed)
 	}
 }
 

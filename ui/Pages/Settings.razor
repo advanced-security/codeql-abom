@@ -4,6 +4,7 @@
 @using System.Text.Json
 @inject AbomApi Api
 @inject AccountService Accounts
+@inject PromptMemory Prompts
 
 <PageTitle>Settings — ABOM</PageTitle>
 
@@ -22,6 +23,51 @@
 else
 {
     <MudText Typo="Typo.subtitle2" Class="mb-1">Accounts you own</MudText>
+    @* gh is asked before the reader is: the first screen lists what could be declared rather than
+       asking for a name the page could have looked up. *@
+    <div class="d-flex flex-wrap align-center gap-3 mb-3" data-abom-identity>
+        @if (_checking)
+        {
+            <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+            <MudText Typo="Typo.body2" data-abom-checking>Asking gh which accounts you belong to&hellip;</MudText>
+        }
+        else if (_checkError is not null)
+        {
+            <MudText Typo="Typo.body2" Class="abom-unconfirmed" data-abom-check-failed>
+                ABOM could not ask gh: @_checkError
+            </MudText>
+        }
+        else if (_problem is not null)
+        {
+            <MudAlert Dense="true" Severity="Severity.Warning" Variant="Variant.Outlined">
+                <MudText Typo="Typo.body2">@_problem.Reason</MudText>
+                <MudText Typo="Typo.body2" Class="mt-2">@_problem.Remedy</MudText>
+                <MudText Typo="Typo.caption" Class="mt-2 mud-text-secondary">
+                    Until this is fixed nothing counts as yours and every figure is reported undivided.
+                    That is not a claim that you own nothing. Declaring by name still works.
+                </MudText>
+            </MudAlert>
+        }
+        else if (Accounts.Identity.Authenticated)
+        {
+            <MudText Typo="Typo.body2">
+                Verified as <b>@Accounts.Identity.Login</b> on @Accounts.Identity.Host@(Accounts.Identity.VerifiedAt is { } at
+                    ? $", checked {at.ToLocalTime():yyyy-MM-dd HH:mm}" : string.Empty).
+            </MudText>
+        }
+        else
+        {
+            <MudText Typo="Typo.body2">
+                No accounts verified yet, so every figure is reported undivided.
+            </MudText>
+        }
+        <MudTooltip Text="Ask gh which accounts you belong to. It never decides what is yours; it only confirms the access you claim.">
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_checking"
+                       StartIcon="@Icons.Material.Filled.Refresh" OnClick="Refresh" data-abom-check>
+                @(Accounts.Identity.Authenticated ? "Check with gh again" : "Check with gh")
+            </MudButton>
+        </MudTooltip>
+    </div>
     @if (_draft.Count == 0)
     {
         <MudAlert Dense="true" Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-4">
@@ -100,32 +146,145 @@ else
                                          aria-label="@($"Crawl {a.Owner}")"
                                          data-abom-enabled="@a.Owner" />
                         </td>
-                        <td>
+                        <td class="abom-scope-cell">
                             <div class="d-flex flex-wrap align-center gap-2">
                                 <MudCheckBox T="bool" Dense="true" Size="Size.Small"
                                              Value="a.IncludesOnly"
                                              ValueChanged="@(v => SetIncludesOnly(a, v))"
                                              Label="only these repositories"
                                              data-abom-restrict="@a.Owner" />
-                                @if (a.IncludesOnly)
-                                {
-                                    <div data-abom-includes="@a.Owner">
-                                        <MudTextField T="string" Value="a.Includes"
-                                                      ValueChanged="@(v => SetIncludes(a, v))"
-                                                      Variant="Variant.Outlined"
-                                                      Margin="Margin.Dense"
-                                                      Placeholder="repo, other-repo" />
-                                    </div>
-                                }
                             </div>
+                            @if (a.IncludesOnly)
+                            {
+                                <div class="abom-includes" data-abom-includes="@a.Owner">
+                                    @foreach (var name in a.Names())
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                                 OnClose="@(_ => Choose(a, name, false))"
+                                                 data-abom-include="@name">
+                                            @name
+                                            @if (Unlisted(a, name))
+                                            {
+                                                <MudTooltip Text="@($"GitHub did not list {name} under {a.Owner}. It stays declared until you remove it.")">
+                                                    <span class="abom-unconfirmed" data-abom-include-unlisted="@name">&nbsp;not listed</span>
+                                                </MudTooltip>
+                                            }
+                                        </MudChip>
+                                    }
+                                    @if (ListingOf(a.Owner) is null)
+                                    {
+                                        <MudTooltip Text="@($"Ask GitHub, with your gh token, which repositories {a.Owner} holds. Nothing is chosen for you.")">
+                                            <MudButton Size="Size.Small" Variant="Variant.Text"
+                                                       StartIcon="@Icons.Material.Filled.Checklist"
+                                                       OnClick="@(() => OpenChooser(a))"
+                                                       data-abom-choose-repos="@a.Owner">
+                                                Choose repositories
+                                            </MudButton>
+                                        </MudTooltip>
+                                    }
+                                </div>
+                                <div class="abom-property-scopes" data-abom-property-scopes="@a.Owner">
+                                    @for (var i = 0; i < a.Clauses.Count; i++)
+                                    {
+                                        var clause = a.Clauses[i];
+                                        var saved = SavedClause(a.Owner, clause);
+                                        var defaults = DefaultTerms(a.Owner, clause, saved);
+                                        <div class="abom-property-scope" data-abom-property-scope>
+                                            <div class="abom-property-scope-line">
+                                                <span class="abom-property-scope-terms">
+                                                    <span class="mud-text-secondary">@(i > 0 || a.Names().Length > 0 ? "or carrying " : "carrying ")</span>@TermsMarkup(clause)
+                                                </span>
+                                                <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small"
+                                                               aria-label="Remove this property scope"
+                                                               title="Remove this property scope from the draft. Nothing changes until you save."
+                                                               OnClick="@(() => RemoveScope(a, clause))"
+                                                               data-abom-remove-scope />
+                                            </div>
+                                            <div class="abom-property-scope-notes mud-typography-caption">
+                                                @if (saved is { Held: true })
+                                                {
+                                                    <div class="abom-unconfirmed" data-abom-scope-held>Held, counting nothing: @saved.HeldReason.</div>
+                                                }
+                                                else if (LiveCount(a.Owner, clause) is { } live)
+                                                {
+                                                    <div class="mud-text-secondary" data-abom-scope-count
+                                                         title="Counted against what GitHub reported through your gh token. Archived repositories are left out, because no listing records them.">
+                                                        @CountText.Of(live, "carries", "carry") it on GitHub now
+                                                    </div>
+                                                }
+                                                else if (saved is not null)
+                                                {
+                                                    <div class="mud-text-secondary" data-abom-scope-count
+                                                         title="Repositories recorded under this account whose values, as last read, carry every term.">
+                                                        @CountText.Of(saved.Matching, "repository carries", "repositories carry") it
+                                                    </div>
+                                                }
+                                                else if (PropertyReadOf(a.Owner) is { Loading: true })
+                                                {
+                                                    <div class="mud-text-secondary">counting&hellip;</div>
+                                                }
+                                                else
+                                                {
+                                                    <div class="abom-unconfirmed">not counted until saved</div>
+                                                }
+                                                @if (defaults.Count > 0)
+                                                {
+                                                    <div class="abom-unconfirmed" data-abom-scope-default>
+                                                        @DefaultSentence(defaults) This scope takes in every repository nobody set,
+                                                        and every one created later, without anyone deciding.
+                                                    </div>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+                                    @* A person's account has no custom properties, so only an organization offers a scope by one. *@
+                                    @if (a.Kind != "user" && ScopeEditorOf(a.Owner) is null)
+                                    {
+                                        <MudButton Size="Size.Small" Variant="Variant.Text"
+                                                   StartIcon="@Icons.Material.Filled.Sell"
+                                                   OnClick="@(() => OpenScopeEditor(a))"
+                                                   title="@($"Ask GitHub, with your gh token, which custom properties {a.Owner} defines, to cover the repositories carrying the values you choose.")"
+                                                   data-abom-add-scope="@a.Owner">
+                                            Add property scope
+                                        </MudButton>
+                                    }
+                                    @if (!a.IsNew && a.Clauses.Count > 0)
+                                    {
+                                        var judged = ListingFor(a.Owner);
+                                        <MudText Typo="Typo.caption" Class="d-block mud-text-secondary" data-abom-scopes-judged="@a.Owner">
+                                            @if (judged.PropertiesJudgedAt.Length > 0)
+                                            {
+                                                <span>Values judged</span>
+                                                <time datetime="@judged.PropertiesJudgedAt" title="@judged.PropertiesJudgedAt">@TimeText.DayAndTime(judged.PropertiesJudgedAt)</time>
+                                                @if (judged.PropertiesUnjudged > 0)
+                                                {
+                                                    <span class="abom-unconfirmed">; @CountText.Of(judged.PropertiesUnjudged, "repository", "repositories") not judged, because
+                                                        @(judged.PropertiesUnjudged == 1 ? "its values" : "their values") did not arrive whole. Unknown is not a mismatch.</span>
+                                                }
+                                            }
+                                            else
+                                            {
+                                                <span class="abom-unconfirmed">Values not judged yet: no full listing has read them.</span>
+                                            }
+                                        </MudText>
+                                    }
+                                </div>
+                            }
                             @if (a.IncludesOnly && a.NamesNothing)
                             {
                                 <MudText Typo="Typo.caption" Class="abom-unconfirmed">
-                                    names no repository, so it covers nothing
+                                    names no repository and no property scope, so it covers nothing
                                 </MudText>
                             }
                         </td>
                         <td data-abom-access="@a.Owner">
+                            @* A row not yet saved has no stored declaration for gh to have answered about. *@
+                            @if (a.IsNew)
+                            {
+                                <span class="mud-text-secondary">checked by gh once saved</span>
+                            }
+                            else
+                            {
                             @switch (a.State)
                             {
                                 case "confirmed":
@@ -151,6 +310,7 @@ else
                                     }
                                     break;
                             }
+                            }
                             @if (a.Unaccounted)
                             {
                                 <MudTooltip Text="This row predates the record of how a declaration arrives, so nobody can say who wrote it. Save the declaration to account for it.">
@@ -159,7 +319,13 @@ else
                             }
                         </td>
                         <td class="abom-listing-cell" data-abom-listing="@a.Owner">
-                            @{ var listing = ListingFor(a.Owner); }
+                            @if (a.IsNew)
+                            {
+                                <MudText Typo="Typo.caption" Class="d-block mud-text-secondary">Listed from GitHub once saved.</MudText>
+                            }
+                            else
+                            {
+                            var listing = ListingFor(a.Owner);
                             <MudText Typo="Typo.caption" Class="d-block">
                                 Route: @(listing.Route switch { "graphql" => "GraphQL", "rest" => "REST", "" => "not recorded", _ => listing.Route })
                             </MudText>
@@ -244,6 +410,7 @@ else
                                     </div>
                                 </details>
                             }
+                            }
                         </td>
                         <td>
                             <MudTooltip Text="@($"Stop treating {a.Owner} as yours. Nothing already analyzed is deleted.")">
@@ -255,9 +422,322 @@ else
                             </MudTooltip>
                         </td>
                     </tr>
+                    @if (ListingOf(a.Owner) is { } chooser)
+                    {
+                        <tr class="abom-include-chooser-row">
+                            <td colspan="8" data-abom-chooser="@a.Owner">
+                                @if (chooser.Loading)
+                                {
+                                    <MudText Typo="Typo.body2">Asking GitHub which repositories @a.Owner holds&hellip;</MudText>
+                                }
+                                else if (chooser.Error is not null || chooser.Answer?.Problem is not null)
+                                {
+                                    @if (chooser.Answer?.Problem is { } p)
+                                    {
+                                        <MudText Typo="Typo.body2" Class="abom-unconfirmed">@p.Reason</MudText>
+                                        <MudText Typo="Typo.body2">@p.Remedy</MudText>
+                                    }
+                                    else
+                                    {
+                                        <MudText Typo="Typo.body2" Class="abom-unconfirmed">GitHub could not be asked: @chooser.Error</MudText>
+                                    }
+                                    <div class="abom-owner-field mt-2" data-abom-includes-typed="@a.Owner">
+                                        <MudTextField T="string" Value="@string.Join(", ", a.Names())"
+                                                      ValueChanged="@(v => SetIncludesTyped(a, v))"
+                                                      Variant="Variant.Outlined" Margin="Margin.Dense"
+                                                      Label="Name them instead" Placeholder="repo, other-repo" />
+                                    </div>
+                                }
+                                else if (chooser.Answer is { } answer)
+                                {
+                                    var matching = Matching(chooser).ToList();
+                                    <div class="d-flex flex-wrap align-center gap-3 mb-1">
+                                        <div data-abom-repo-filter="@a.Owner">
+                                            <SearchField Value="@chooser.Filter" ValueChanged="@(v => chooser.Filter = v ?? string.Empty)"
+                                                         Placeholder="@($"Filter {answer.Repositories.Count:N0} repositories")" />
+                                        </div>
+                                        <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                            @CountText.Of(answer.Repositories.Count, "repository", "repositories") in @a.Owner, as your gh token sees them.
+                                        </MudText>
+                                        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => CloseChooser(a))"
+                                                   title="Close this list. What you chose stays in the draft until you save or discard it."
+                                                   data-abom-chooser-done="@a.Owner">Done</MudButton>
+                                    </div>
+                                    <div class="abom-repo-options">
+                                        @foreach (var r in matching.Take(OfferedAtOnce))
+                                        {
+                                            <div class="abom-repo-option" data-abom-repo-option="@r.Name">
+                                                <MudCheckBox T="bool" Dense="true" Size="Size.Small"
+                                                             Value="@a.Has(r.Name)"
+                                                             ValueChanged="@(v => Choose(a, r.Name, v))"
+                                                             Label="@r.Name" />
+                                                @if (Tags(r) is { Length: > 0 } tags)
+                                                {
+                                                    <span class="abom-repo-tags mud-text-secondary mud-typography-caption">@tags</span>
+                                                }
+                                            </div>
+                                        }
+                                    </div>
+                                    @if (matching.Count > OfferedAtOnce)
+                                    {
+                                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block" data-abom-repo-more="@a.Owner">
+                                            @(matching.Count - OfferedAtOnce) more match; narrow the filter to see them.
+                                        </MudText>
+                                    }
+                                    else if (matching.Count == 0)
+                                    {
+                                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
+                                            @(answer.Repositories.Count == 0 ? $"GitHub lists no repository in {a.Owner}." : "No repository matches the filter.")
+                                        </MudText>
+                                    }
+                                }
+                            </td>
+                        </tr>
+                    }
+                    @if (ScopeEditorOf(a.Owner) is { } editor)
+                    {
+                        var read = PropertyReadOf(a.Owner);
+                        <tr class="abom-include-chooser-row">
+                            <td colspan="8" data-abom-scope-editor="@a.Owner">
+                                @if (read is null || read.Answer is null && read.Error is null)
+                                {
+                                    <MudText Typo="Typo.body2">Asking GitHub which custom properties @a.Owner defines&hellip;</MudText>
+                                }
+                                else if (read.Error is not null || read.Answer?.Problem is not null)
+                                {
+                                    <div class="d-flex flex-wrap align-center gap-3">
+                                        @if (read.Answer?.Problem is { } p)
+                                        {
+                                            <div>
+                                                <MudText Typo="Typo.body2" Class="abom-unconfirmed">@p.Reason</MudText>
+                                                <MudText Typo="Typo.body2">@p.Remedy</MudText>
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <MudText Typo="Typo.body2" Class="abom-unconfirmed">GitHub could not be asked: @read.Error</MudText>
+                                        }
+                                        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => CloseScopeEditor(a))"
+                                                   title="Close this panel. Nothing in the draft changes."
+                                                   data-abom-scope-editor-done="@a.Owner">Close</MudButton>
+                                    </div>
+                                }
+                                else if (read.Answer is { } answer)
+                                {
+                                    <div class="d-flex flex-wrap align-center gap-3 mb-1">
+                                        <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                            Custom properties @a.Owner defines, as your gh token sees them, counted over
+                                            @CountText.Of(answer.Repositories, "repository", "repositories"). Archived repositories are left
+                                            out, because no listing records them. A repository must carry every value you choose.
+                                        </MudText>
+                                        <div data-abom-value-filter="@a.Owner">
+                                            <SearchField Value="@editor.Filter" ValueChanged="@(v => editor.Filter = v ?? string.Empty)"
+                                                         Placeholder="Filter values" />
+                                        </div>
+                                        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => CloseScopeEditor(a))"
+                                                   title="Close this panel. Scopes already added stay in the draft until you save or discard it."
+                                                   data-abom-scope-editor-done="@a.Owner">Done</MudButton>
+                                    </div>
+                                    @if (answer.Definitions.Count == 0)
+                                    {
+                                        <MudText Typo="Typo.body2" Class="mud-text-secondary">@a.Owner defines no custom property.</MudText>
+                                    }
+                                    <div class="abom-property-choices">
+                                        @foreach (var d in answer.Definitions)
+                                        {
+                                            <div class="abom-property-choice" data-abom-property-choice="@d.Name">
+                                                <div>
+                                                    <code>@d.Name</code>
+                                                    <span class="mud-text-secondary mud-typography-caption">&nbsp;@TypeText(d.ValueType)</span>
+                                                </div>
+                                                @if (!d.Declarable)
+                                                {
+                                                    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block" data-abom-property-refused>@d.Reason</MudText>
+                                                }
+                                                else
+                                                {
+                                                    @if (d.Description.Length > 0)
+                                                    {
+                                                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">@d.Description</MudText>
+                                                    }
+                                                    var values = d.Values.Where(v => string.IsNullOrWhiteSpace(editor.Filter)
+                                                        || v.Value.Contains(editor.Filter.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+                                                    @foreach (var v in values.Take(OfferedAtOnce))
+                                                    {
+                                                        <div class="abom-repo-option" data-abom-property-value="@v.Value">
+                                                            <MudCheckBox T="bool" Dense="true" Size="Size.Small"
+                                                                         Value="@editor.Has(d.Name, v.Value)"
+                                                                         ValueChanged="@(on => Compose(editor, d, v.Value, on))"
+                                                                         Label="@v.Value" />
+                                                            <span class="abom-repo-tags mud-text-secondary mud-typography-caption">@CountText.Of(v.Repositories, "repository", "repositories")</span>
+                                                            @if (v.IsDefault)
+                                                            {
+                                                                <span class="abom-repo-tags abom-unconfirmed mud-typography-caption" data-abom-value-default>given to every repository nobody set</span>
+                                                            }
+                                                        </div>
+                                                    }
+                                                    @if (values.Count > OfferedAtOnce)
+                                                    {
+                                                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
+                                                            @(values.Count - OfferedAtOnce) more values; narrow the filter to see them.
+                                                        </MudText>
+                                                    }
+                                                    else if (values.Count == 0)
+                                                    {
+                                                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
+                                                            @(d.Values.Count == 0 ? "No repository carries a value for it." : "No value matches the filter.")
+                                                        </MudText>
+                                                    }
+                                                }
+                                            </div>
+                                        }
+                                    </div>
+                                    <div class="d-flex flex-wrap align-center gap-3 mt-2" data-abom-scope-draft>
+                                        @if (editor.Composing.Count == 0)
+                                        {
+                                            <MudText Typo="Typo.body2" Class="mud-text-secondary">Choose the values a repository must carry.</MudText>
+                                        }
+                                        else
+                                        {
+                                            <MudText Typo="Typo.body2">
+                                                <span>New scope: repositories carrying </span>@TermsMarkup(editor.Composing)
+                                                @if (editor.Composing.Count == 1 && OfferedValue(answer, editor.Composing[0]) is { } only)
+                                                {
+                                                    <span class="mud-text-secondary">, @CountText.Of(only.Repositories, "repository", "repositories") now</span>
+                                                }
+                                            </MudText>
+                                        }
+                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                                                   Disabled="@(!CanAddScope(a, editor))" OnClick="@(() => AddScope(a, editor))"
+                                                   title="Add this scope to the draft, beside the others. Nothing changes until you save."
+                                                   data-abom-scope-add>Add this scope</MudButton>
+                                        @if (editor.Composing.Count > 0 && !CanAddScope(a, editor))
+                                        {
+                                            <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-scope-duplicate>
+                                                This scope is already in the declaration.
+                                            </MudText>
+                                        }
+                                    </div>
+                                    @if (ChosenDefaults(answer, editor.Composing) is { Count: > 0 } chosen)
+                                    {
+                                        <MudText Typo="Typo.caption" Class="abom-unconfirmed d-block mt-1" data-abom-draft-default>
+                                            @foreach (var (term, count) in chosen)
+                                            {
+                                                <span>@term.Name = @term.Value is what @a.Owner gives every repository nobody set otherwise, and @CountText.Of(count, "repository carries", "repositories carry") it now. </span>
+                                            }
+                                            A scope naming it takes in each of them, and every repository created later, without anyone deciding.
+                                        </MudText>
+                                    }
+                                }
+                            </td>
+                        </tr>
+                    }
                 }
             </tbody>
         </MudSimpleTable>
+    }
+
+    @if (Accounts.Identity.Accounts.Count > 0)
+    {
+        @* Both folds start closed: a list of every declarable account buries the one row a reader came for. *@
+        <div data-abom-memberships class="mb-4">
+            <MudText Typo="Typo.subtitle2" Class="mt-4">Accounts gh says you can declare</MudText>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-1">
+                You are an owner or admin of these. Nothing is declared until you choose one and save.
+            </MudText>
+            @if (Declarable.Any())
+            {
+                <div>
+                    <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => _declarableOpen = !_declarableOpen)"
+                               EndIcon="@(_declarableOpen ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
+                               aria-expanded="@(_declarableOpen ? "true" : "false")"
+                               title="Show or hide the accounts gh reports where you are an owner or admin."
+                               data-abom-declarable-toggle>
+                        @(_declarableOpen ? "Hide" : "Show") the @CountText.Of(Declarable.Count(), "account", "accounts") you can declare
+                    </MudButton>
+                </div>
+            }
+            @* Rendered only once open, so folded means absent rather than present but invisible. *@
+            @if (_declarableOpen && Declarable.Any())
+            {
+                <MudSimpleTable Dense="true" Hover="true" Striped="false"
+                                Class="abom-grid abom-table abom-membership-grid mt-1 mb-2">
+                    <thead>
+                        <tr>
+                            <th><HeaderTip Tip="The user or organization gh reports you belong to.">Account</HeaderTip></th>
+                            <th><HeaderTip Tip="Whether gh reports this as your user account or an organization.">Kind</HeaderTip></th>
+                            <th><HeaderTip Tip="The role gh reports for you in that account.">Role</HeaderTip></th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var m in Declarable)
+                        {
+                            <tr>
+                                <td>@m.Owner</td>
+                                <td>@(m.Kind == "user" ? "Your account" : "Organization")</td>
+                                <td>@m.Role</td>
+                                <td>
+                                    <span data-abom-membership="@m.Owner">
+                                        @if (InDraft(m.Owner))
+                                        {
+                                            <MudText Typo="Typo.caption" Class="mud-text-secondary">declared</MudText>
+                                        }
+                                        else
+                                        {
+                                            <MudTooltip Text="@($"State that {m.Owner} is yours. Nothing is written until you save.")">
+                                                <MudButton Size="Size.Small" Variant="Variant.Outlined"
+                                                           OnClick="@(() => Declare(m.Owner, m.Kind))"
+                                                           data-abom-declare="@m.Owner">
+                                                    Declare
+                                                </MudButton>
+                                            </MudTooltip>
+                                        }
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+            }
+            else if (!Declarable.Any())
+            {
+                <MudText Typo="Typo.body2" Class="mb-2">
+                    gh reports no account where you are an owner or admin.
+                </MudText>
+            }
+            @if (Members.Any())
+            {
+                <div>
+                    <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => _membersOpen = !_membersOpen)"
+                               EndIcon="@(_membersOpen ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
+                               aria-expanded="@(_membersOpen ? "true" : "false")"
+                               title="Show or hide the accounts gh reports where your role cannot declare them."
+                               data-abom-members-toggle>
+                        @(_membersOpen ? "Hide" : "Show") @Members.Count() more you belong to without a role that can declare
+                    </MudButton>
+                </div>
+                @if (_membersOpen)
+                {
+                    <MudSimpleTable Dense="true" Hover="true" Striped="false"
+                                    Class="abom-grid abom-table abom-membership-grid mt-1">
+                        <tbody>
+                            @foreach (var m in Members)
+                            {
+                                <tr>
+                                    <td>@m.Owner</td>
+                                    <td>@(m.Kind == "user" ? "Your account" : "Organization")</td>
+                                    <td>@m.Role</td>
+                                    <td>
+                                        <MudTooltip Text="@($"You are a {m.Role} here, which cannot change anything in this account.")"><span data-abom-membership="@m.Owner" class="mud-text-secondary mud-typography-caption">not yours to declare</span></MudTooltip>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                }
+            }
+        </div>
     }
 
     <div class="d-flex flex-wrap align-center gap-3 mb-2">
@@ -298,7 +778,30 @@ else
                     Entering (@p.EnteringCount): @string.Join(", ", p.Entering)@(p.Truncated ? ", …" : "")
                 </MudText>
             }
-            @if (p.ReachesNothing && _draft.Count > 0)
+            @if (p.NotJudged > 0)
+            {
+                <MudText Typo="Typo.body2" Class="mt-1" data-abom-preview-unjudged>
+                    @CountText.Of(p.NotJudged, "repository", "repositories") on record could not be judged
+                    by a property scope, because no values have been read for
+                    @(p.NotJudged == 1 ? "it" : "them"). They neither enter nor stay until a listing of the account reads them.
+                </MudText>
+            }
+            @foreach (var held in p.Held)
+            {
+                <MudText Typo="Typo.body2" Class="mt-1 abom-unconfirmed" data-abom-preview-held>
+                    <span>@held.Owner's scope carrying </span>@TermsMarkup(held.Terms)<span> counts nothing in these
+                    figures: @held.Reason.</span>
+                </MudText>
+            }
+            @if (p.Held.Count > 0)
+            {
+                <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
+                    Saving reads each organization's custom properties before judging its scopes, and one
+                    a property's own settings rule out is refused rather than saved.
+                </MudText>
+            }
+            @* A held scope already says why it counts nothing; this sentence would call that intent. *@
+            @if (p.ReachesNothing && _draft.Count > 0 && p.Held.Count == 0)
             {
                 <MudText Typo="Typo.body2" Class="mt-1">
                     This declaration reaches nothing discovery has found yet. That is a statement of
@@ -374,8 +877,10 @@ else
                     </MudText>
                     @foreach (var account in _enumeration.Accounts)
                     {
-                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
-                            @account.Owner: @CountText.Of(account.Found, "repository", "repositories")
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block" data-abom-enumerated="@account.Owner">
+                            @account.Owner: @CountText.Of(account.Found, "repository", "repositories")@(account.Left > 0
+                                ? $", {account.Left:N0} left your property scopes" : "")@(account.PropertiesUnjudged > 0
+                                ? $", {account.PropertiesUnjudged:N0} not judged because their property values did not arrive whole" : "")
                         </MudText>
                     }
                     @foreach (var failure in _enumeration.Failed)
@@ -403,128 +908,6 @@ else
     }
 }
 
-@if (_problem is not null)
-{
-    <MudAlert Dense="true" Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-4">
-        <MudText Typo="Typo.body2">@_problem.Reason</MudText>
-        <MudText Typo="Typo.body2" Class="mt-2">@_problem.Remedy</MudText>
-        <MudText Typo="Typo.caption" Class="mt-2 mud-text-secondary">
-            Until this is fixed nothing counts as yours and every figure is reported undivided.
-            That is not a claim that you own nothing.
-        </MudText>
-    </MudAlert>
-}
-else if (Accounts.Identity.Authenticated)
-{
-    <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Dense="true" Class="mb-4">
-        <MudText Typo="Typo.body2">
-            Verified as <b>@Accounts.Identity.Login</b> on @Accounts.Identity.Host@(Accounts.Identity.VerifiedAt is { } at
-                ? $", checked {at.ToLocalTime():yyyy-MM-dd HH:mm}" : string.Empty).
-        </MudText>
-    </MudAlert>
-}
-else
-{
-    <MudAlert Dense="true" Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-4">
-        <MudText Typo="Typo.body2">
-            No accounts verified yet, so every figure is reported undivided.
-        </MudText>
-        <MudText Typo="Typo.caption" Class="mud-text-secondary">
-            Check now, or run <code>codeql-abom accounts --refresh</code>.
-        </MudText>
-    </MudAlert>
-}
-
-<div class="d-flex flex-wrap align-center gap-3 mb-4">
-    <MudTooltip Text="Re-ask gh which accounts you belong to. It never decides what is yours; it only confirms the access you claim.">
-        <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_checking"
-                   StartIcon="@Icons.Material.Filled.Refresh" OnClick="Refresh">
-            @(_checking ? "Checking…" : "Check with gh")
-        </MudButton>
-    </MudTooltip>
-</div>
-
-@if (Accounts.Identity.Accounts.Count > 0)
-{
-    @* Collapsed by default. Thirty-three memberships of which thirteen are declarable is a list
-       that buries its own answer, and this is a page people come to for one row at a time. *@
-    <div data-abom-memberships class="mb-6">
-        <MudExpansionPanels Elevation="0" Dense="true">
-            <MudExpansionPanel @bind-Expanded="_membershipsOpen">
-                <TitleContent>
-                    <div class="d-flex flex-wrap align-center gap-3">
-                        <MudText Typo="Typo.subtitle2">Accounts you can declare</MudText>
-                        <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                            @Accounts.Identity.Accounts.Count(a => a.CanDeclare) of
-                            @Accounts.Identity.Accounts.Count gh reports are yours to change
-                        </MudText>
-                    </div>
-                </TitleContent>
-                <ChildContent>
-                    @* Rendered only once open. A panel that merely hides thirty-three rows with
-                       CSS still builds them, and "collapsed" then means present but invisible. *@
-                    @if (_membershipsOpen)
-                    {
-                        <MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
-                            gh reports every account you belong to. Only owner and admin roles can
-                            change anything in one, so the rest are listed without a button rather
-                            than left out &mdash; an absent name reads as gh not reporting the
-                            account at all.
-                        </MudText>
-                        <MudDataGrid T="OwnedAccount" Items="Memberships" Dense="true" Hover="true"
-                                     Bordered="false" Filterable="false" SortMode="SortMode.Multiple"
-                                     RowsPerPage="10" FixedHeader="true" Class="abom-grid abom-grid-windowed">
-                        <Columns>
-                            <PropertyColumn Property="x => x.Owner" Title="Account">
-                                <HeaderTemplate><HeaderTip Tip="The user or organization gh reports you belong to.">Account</HeaderTip></HeaderTemplate>
-                            </PropertyColumn>
-                            <TemplateColumn Title="Kind" Sortable="true" SortBy="x => x.Kind">
-                                <HeaderTemplate><HeaderTip Tip="Whether gh reports this as your user account or an organization.">Kind</HeaderTip></HeaderTemplate>
-                                <CellTemplate>
-                                    @(context.Item.Kind == "user" ? "Your account" : "Organization")
-                                </CellTemplate>
-                            </TemplateColumn>
-                            <PropertyColumn Property="x => x.Role" Title="Role">
-                                <HeaderTemplate><HeaderTip Tip="The role gh reports for you in that account.">Role</HeaderTip></HeaderTemplate>
-                            </PropertyColumn>
-                            <TemplateColumn Title="" Sortable="false">
-                                <CellTemplate>
-                                    <span data-abom-membership="@context.Item.Owner">
-                                        @if (InDraft(context.Item.Owner))
-                                        {
-                                            <MudText Typo="Typo.caption" Class="mud-text-secondary">declared</MudText>
-                                        }
-                                        else if (!context.Item.CanDeclare)
-                                        {
-                                            <MudTooltip Text="@($"You are a {context.Item.Role} here, which cannot change anything in this account.")">
-                                                <MudText Typo="Typo.caption" Class="mud-text-secondary">not yours to declare</MudText>
-                                            </MudTooltip>
-                                        }
-                                        else
-                                        {
-                                            <MudTooltip Text="@($"State that {context.Item.Owner} is yours. Nothing is written until you save.")">
-                                                <MudButton Size="Size.Small" Variant="Variant.Outlined"
-                                                           OnClick="@(() => Declare(context.Item.Owner, context.Item.Kind))"
-                                                           data-abom-declare="@context.Item.Owner">
-                                                    Declare
-                                                </MudButton>
-                                            </MudTooltip>
-                                        }
-                                    </span>
-                                </CellTemplate>
-                            </TemplateColumn>
-                        </Columns>
-                        <PagerContent>
-                            <MudDataGridPager T="OwnedAccount" />
-                        </PagerContent>
-                    </MudDataGrid>
-                    }
-                </ChildContent>
-            </MudExpansionPanel>
-        </MudExpansionPanels>
-    </div>
-}
-
 <MudText Typo="Typo.subtitle2" Class="mt-8 mb-1">How discovery runs</MudText>
 <MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
     Analysis starts here; what each tier is analyzed with is chosen on the
@@ -539,6 +922,10 @@ else
 </MudText>
 
 <DiscoveryControls LinkToSettings="false" Changed="@(() => Accounts.ReloadScopeAsync())" />
+
+<PoolMeters />
+
+<CodeScanningWrites />
 
 @* Raised rather than waited for. The check runs at startup off the request path, and what it
    found is a decision somebody has to make rather than a section they have to go and find.
@@ -557,17 +944,11 @@ else
             <MudText Typo="Typo.body2" Class="mb-2" data-abom-stale-summary>
                 Checked at startup: your @_staleness.View.Declared declared
                 @(_staleness.View.Declared == 1 ? "repository reaches" : "repositories reach")
-                @_staleness.View.Reachable. Outside that sit
-                <b>@_staleness.View.Removed.Nodes.ToString("N0")</b>
-                @(_staleness.View.Removed.Nodes == 1 ? "node" : "nodes") and
-                <b>@_staleness.View.Removed.Edges.ToString("N0")</b>
-                @(_staleness.View.Removed.Edges == 1 ? "edge" : "edges") across
-                <b>@_staleness.View.Removed.Repositories.ToString("N0")</b>
-                @(_staleness.View.Removed.Repositories == 1 ? "repository" : "repositories").
+                @_staleness.View.Reachable. Outside that sit @StaleText(_staleness.View.Removed).
             </MudText>
             <MudText Typo="Typo.body2" Class="mud-text-secondary">
-                Removing takes them out of every view. Nothing is deleted, and re-analysis brings
-                back anything you declare again.
+                Removing takes them out of every view and out of the crawl's queue. No analysis is
+                deleted, and anything a later analysis finds again comes back.
             </MudText>
         </DialogContent>
         <DialogActions>
@@ -576,7 +957,7 @@ else
                        data-abom-stale-dismiss>Not now</MudButton>
             <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="_stalePruning"
                        OnClick="AcceptStale"
-                       title="Remove the no-longer-reachable nodes and edges from every view without deleting stored analysis."
+                       title="Take what is no longer reachable out of every view and out of the queue, without deleting any analysis."
                        data-abom-stale-accept>
                 @(_stalePruning ? "Working\u2026" : "Remove from view")
             </MudButton>
@@ -608,13 +989,24 @@ else
                  Class="abom-grid abom-grid-windowed" RowsPerPage="25">
         <Columns>
             <TemplateColumn Title="Yours" Sortable="false">
-                <HeaderTemplate><HeaderTip Tip="Whether you have declared this account as yours.">Yours</HeaderTip></HeaderTemplate>
+                <HeaderTemplate><HeaderTip Tip="Whether you have declared this account as yours, whole or only some of its repositories.">Yours</HeaderTip></HeaderTemplate>
                 <CellTemplate>
-                    @if (Accounts.IsOwned(context.Item.Owner))
+                    @if (Accounts.IsDeclared(context.Item.Owner) && Accounts.IsDeclaredInPart(context.Item.Owner))
+                    {
+                        <MudTooltip Text="Declared in part: only the repositories you named, or that carry a property scope's values, are yours.">
+                            <span data-abom-candidate-declared="@context.Item.Owner" data-abom-extent="part">
+                                <MudIcon Icon="@Icons.Material.Outlined.Person" Size="Size.Small"
+                                         Color="Color.Primary" Class="abom-owned-mark" />
+                            </span>
+                        </MudTooltip>
+                    }
+                    else if (Accounts.IsDeclared(context.Item.Owner))
                     {
                         <MudTooltip Text="Declared: you have stated this account is yours.">
-                            <MudIcon Icon="@Icons.Material.Filled.Person" Size="Size.Small"
-                                     Color="Color.Primary" Class="abom-owned-mark" />
+                            <span data-abom-candidate-declared="@context.Item.Owner" data-abom-extent="whole">
+                                <MudIcon Icon="@Icons.Material.Filled.Person" Size="Size.Small"
+                                         Color="Color.Primary" Class="abom-owned-mark" />
+                            </span>
                         </MudTooltip>
                     }
                 </CellTemplate>
@@ -647,7 +1039,9 @@ else
 
     private readonly List<Draft> _draft = [];
     private string _typedOwner = string.Empty;
-    private bool _membershipsOpen;
+    private bool _declarableOpen;
+    private bool _membersOpen;
+    private string? _checkError;
     private ScopePreview? _preview;
     private bool _saving;
     private bool _saved;
@@ -664,7 +1058,10 @@ else
         public string Kind { get; init; } = "organization";
         public bool Enabled { get; set; } = true;
         public bool IncludesOnly { get; set; }
-        public string Includes { get; set; } = string.Empty;
+
+        /// <summary>The repositories named, in the order chosen. Kept even when GitHub does not
+        /// list one: the declaration is the reader's statement, not the listing's.</summary>
+        public List<string> Chosen { get; set; } = [];
 
         /// <summary>What gh said about the stored row. Server-decided; a row not yet written has
         /// none, because gh has not been asked about a declaration that does not exist.</summary>
@@ -680,10 +1077,17 @@ else
         // An unsaved row is not unaccounted for; it is about to be accounted for by the save.
         public bool Unaccounted => !IsNew && string.IsNullOrEmpty(DeclaredBy);
 
-        public bool NamesNothing => Names().Length == 0;
+        /// <summary>Property scopes, each the terms a repository must all carry. Edited whole:
+        /// a scope is added or removed, never changed in place.</summary>
+        public List<List<PropertyTerm>> Clauses { get; set; } = [];
 
-        public string[] Names() => Includes.Split(
-            ',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        public bool NamesNothing => Names().Length == 0 && Clauses.Count == 0;
+
+        public bool Has(string repo) => Chosen.Contains(repo, StringComparer.OrdinalIgnoreCase);
+
+        public string[] Names() => Chosen
+            .Select(n => n.Trim()).Where(n => n.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 
         // IncludesOnly travels as it was set rather than being derived from Names() being empty:
         // deriving it is exactly how clearing the last include would widen an account to all of
@@ -695,6 +1099,7 @@ else
             Enabled = Enabled,
             IncludesOnly = IncludesOnly,
             Includes = Names(),
+            Properties = Clauses.Select(c => new PropertyClause { Terms = [.. c] }).ToList(),
         };
     }
 
@@ -708,17 +1113,27 @@ else
             .OrderBy(a => a.Owner, StringComparer.OrdinalIgnoreCase)
             .Select(a => string.Join("|",
                 a.Owner.ToLowerInvariant(), a.Kind, a.Enabled, a.IncludesOnly,
-                string.Join(",", a.Includes.OrderBy(i => i, StringComparer.OrdinalIgnoreCase)))));
+                string.Join(",", a.Includes.OrderBy(i => i, StringComparer.OrdinalIgnoreCase)),
+                string.Join("+", a.Properties.Select(c => ClauseKey(c.Terms)).Order(StringComparer.Ordinal)))));
+
+    // A value may hold any character, so a scope is keyed by its JSON rather than by a delimiter.
+    private static string ClauseKey(IEnumerable<PropertyTerm> terms) =>
+        JsonSerializer.Serialize(terms
+            .Select(t => new[] { t.Name.ToLowerInvariant(), t.Value })
+            .OrderBy(t => t[0], StringComparer.Ordinal).ThenBy(t => t[1], StringComparer.Ordinal));
 
     private bool InDraft(string owner) =>
         _draft.Any(d => string.Equals(d.Owner, owner, StringComparison.OrdinalIgnoreCase));
 
-    // Declarable first, then by name: the rest are listed so that the absence of a button beside a
-    // name is the answer, but they are not what anybody opened this to do.
-    private IEnumerable<OwnedAccount> Memberships =>
-        Accounts.Identity.Accounts
-            .OrderByDescending(a => a.CanDeclare)
+    // Your own account first, then by name. Eligibility is the server's answer, never the role read here.
+    private IEnumerable<OwnedAccount> Declarable =>
+        Accounts.Identity.Accounts.Where(a => a.CanDeclare)
+            .OrderByDescending(a => a.Kind == "user")
             .ThenBy(a => a.Owner, StringComparer.OrdinalIgnoreCase);
+
+    private IEnumerable<OwnedAccount> Members =>
+        Accounts.Identity.Accounts.Where(a => !a.CanDeclare)
+            .OrderBy(a => a.Owner, StringComparer.OrdinalIgnoreCase);
 
     private OwnedAccount? Membership(string owner) =>
         Accounts.Identity.Accounts.FirstOrDefault(
@@ -744,17 +1159,41 @@ else
         await Accounts.EnsureLoadedAsync();
         _problem = Accounts.Identity.Problem;
         SeedDraft();
+        // The page's first action, not a GET's side effect: nothing on record means the reader has
+        // never been asked about, and asking once per visit keeps a broken gh from re-running.
+        if (Accounts.NothingOnRecord && !Accounts.CheckAttempted)
+        {
+            _ = CheckOnArrival();
+        }
         _candidates = await Api.GetOwnerCandidatesAsync();
         _staleness = await Api.GetStalenessAsync();
         // Only a finished check that could measure and found something opens this. A check still
         // running, or one that had no closure to measure against, says nothing at all.
-        _stalePrompt = _staleness?.HasSomethingToRemove ?? false;
+        _stalePrompt = (_staleness?.HasSomethingToRemove ?? false) && !Prompts.Dismissed(_staleness!.CheckedAt);
+    }
+
+    // Only what it removes: a prompt reading "0 nodes and 0 edges" left the 4 it did remove unsaid.
+    private static string StaleText(PruneRemoval r)
+    {
+        static string Count(int n, string one, string many) => $"{n:N0} {(n == 1 ? one : many)}";
+        var graph = new List<string>();
+        if (r.Nodes > 0) graph.Add(Count(r.Nodes, "node", "nodes"));
+        if (r.Edges > 0) graph.Add(Count(r.Edges, "edge", "edges"));
+        var parts = new List<string>();
+        if (graph.Count > 0)
+        {
+            parts.Add(string.Join(" and ", graph) + (r.Repositories > 0
+                ? $" across {Count(r.Repositories, "repository", "repositories")}" : ""));
+        }
+        if (r.Queued > 0) parts.Add(Count(r.Queued, "queued dependency", "queued dependencies"));
+        return string.Join(", and ", parts);
     }
 
     private async Task DismissStale()
     {
         if (_staleDialog is not null) await _staleDialog.CloseAsync();
         _stalePrompt = false;
+        if (_staleness is not null) Prompts.Dismiss(_staleness.CheckedAt);
     }
 
     private async Task AcceptStale()
@@ -785,7 +1224,8 @@ else
                 Kind = a.Kind,
                 Enabled = a.Enabled,
                 IncludesOnly = a.IncludesOnly,
-                Includes = string.Join(", ", a.Includes),
+                Chosen = [.. a.Includes],
+                Clauses = a.Properties.Select(c => c.Terms.ToList()).ToList(),
                 State = a.State,
                 DeclaredBy = a.DeclaredBy,
             });
@@ -838,9 +1278,229 @@ else
         await Changed();
     }
 
-    private async Task SetIncludes(Draft account, string value)
+    private async Task SetIncludesTyped(Draft account, string value)
     {
-        account.Includes = value ?? string.Empty;
+        account.Chosen = [.. (value ?? string.Empty).Split(
+            ',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
+        await Changed();
+    }
+
+    private async Task Choose(Draft account, string repo, bool chosen)
+    {
+        account.Chosen.RemoveAll(n => string.Equals(n, repo, StringComparison.OrdinalIgnoreCase));
+        if (chosen) account.Chosen.Add(repo);
+        await Changed();
+    }
+
+    private sealed class Listing
+    {
+        public bool Loading { get; set; }
+        public AccountRepositories? Answer { get; set; }
+        public string? Error { get; set; }
+        public string Filter { get; set; } = string.Empty;
+    }
+
+    // Owners whose picker is open, and what GitHub answered for each. Read only once opened.
+    private readonly Dictionary<string, Listing> _listings = new(StringComparer.OrdinalIgnoreCase);
+
+    // Enough to recognize what is wanted; a filter narrows the rest rather than a scroll of thousands.
+    private const int OfferedAtOnce = 50;
+
+    private Listing? ListingOf(string owner) => _listings.GetValueOrDefault(owner);
+
+    private bool Listed(Draft account, string repo) =>
+        ListingOf(account.Owner)?.Answer is { Problem: null } answer
+        && answer.Repositories.Any(r => string.Equals(r.Name, repo, StringComparison.OrdinalIgnoreCase));
+
+    private bool Unlisted(Draft account, string repo) =>
+        ListingOf(account.Owner)?.Answer is { Problem: null } && !Listed(account, repo);
+
+    private static string Tags(AccountRepository r) => string.Join(" \u00b7 ", new[]
+    {
+        r.Private ? "private" : null, r.Archived ? "archived" : null, r.Fork ? "fork" : null,
+    }.OfType<string>());
+
+    private static IEnumerable<AccountRepository> Matching(Listing listing) =>
+        (listing.Answer?.Repositories ?? []).Where(r =>
+            string.IsNullOrWhiteSpace(listing.Filter) ||
+            r.Name.Contains(listing.Filter.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    private async Task OpenChooser(Draft account)
+    {
+        var listing = new Listing { Loading = true };
+        _listings[account.Owner] = listing;
+        try
+        {
+            listing.Answer = await Accounts.RepositoriesAsync(account.Owner);
+        }
+        catch (HttpRequestException e)
+        {
+            listing.Error = e.Message;
+        }
+        catch (JsonException)
+        {
+            listing.Error = "the answer could not be read";
+        }
+        finally
+        {
+            listing.Loading = false;
+        }
+    }
+
+    private void CloseChooser(Draft account) => _listings.Remove(account.Owner);
+
+    private sealed class PropertyRead
+    {
+        public bool Loading { get; set; }
+        public AccountProperties? Answer { get; set; }
+        public string? Error { get; set; }
+
+        /// <summary>How many repositories carry each scope now, by <see cref="ClauseKey"/>.</summary>
+        public Dictionary<string, int> Counts { get; } = new(StringComparer.Ordinal);
+    }
+
+    private sealed class ScopeEditor
+    {
+        public string Filter { get; set; } = string.Empty;
+
+        /// <summary>The scope being built, in the order its values were chosen.</summary>
+        public List<PropertyTerm> Composing { get; } = [];
+
+        public bool Has(string name, string value) => Composing.Any(t =>
+            string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase) && t.Value == value);
+    }
+
+    // What GitHub last said each organization defines and carries; kept after the panel closes,
+    // because the counts it gave are still what the lines show.
+    private readonly Dictionary<string, PropertyRead> _propertyReads = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, ScopeEditor> _scopeEditors = new(StringComparer.OrdinalIgnoreCase);
+
+    private PropertyRead? PropertyReadOf(string owner) => _propertyReads.GetValueOrDefault(owner);
+
+    private ScopeEditor? ScopeEditorOf(string owner) => _scopeEditors.GetValueOrDefault(owner);
+
+    // Read from the stored declaration rather than copied into the draft, so a judgement made after
+    // the draft was seeded, such as enumeration reading the schema, is what the line shows.
+    private PropertyClause? SavedClause(string owner, IReadOnlyList<PropertyTerm> clause) =>
+        Accounts.Declared?.FirstOrDefault(a => string.Equals(a.Owner, owner, StringComparison.OrdinalIgnoreCase))
+            ?.Properties.FirstOrDefault(c => ClauseKey(c.Terms) == ClauseKey(clause));
+
+    private int? LiveCount(string owner, IReadOnlyList<PropertyTerm> clause) =>
+        PropertyReadOf(owner) is { Answer.Problem: null } read && read.Counts.TryGetValue(ClauseKey(clause), out var n)
+            ? n : null;
+
+    private static PropertyValueCount? OfferedValue(AccountProperties answer, PropertyTerm term) =>
+        answer.Definitions.FirstOrDefault(d => string.Equals(d.Name, term.Name, StringComparison.OrdinalIgnoreCase))
+            ?.Values.FirstOrDefault(v => v.Value == term.Value);
+
+    // Either source suffices: the schema recorded when the scope was judged, or what GitHub says
+    // now. Warning once too often costs a sentence; once too few hides a scope that grows itself.
+    private List<PropertyTerm> DefaultTerms(string owner, IReadOnlyList<PropertyTerm> clause, PropertyClause? saved)
+    {
+        var recorded = saved?.Defaults ?? [];
+        var answer = PropertyReadOf(owner)?.Answer;
+        return clause.Where(t =>
+            recorded.Contains(t.Name, StringComparer.OrdinalIgnoreCase) ||
+            answer is { Problem: null } && OfferedValue(answer, t) is { IsDefault: true }).ToList();
+    }
+
+    private static List<(PropertyTerm Term, int Count)> ChosenDefaults(AccountProperties answer, IEnumerable<PropertyTerm> terms) =>
+        terms.Select(t => (Term: t, Offered: OfferedValue(answer, t)))
+            .Where(x => x.Offered is { IsDefault: true })
+            .Select(x => (x.Term, x.Offered!.Repositories)).ToList();
+
+    // The line above already shows the value, which can run to a path; the property is enough.
+    private static string DefaultSentence(IReadOnlyList<PropertyTerm> terms) =>
+        $"The value of {string.Join(" and ", terms.Select(t => t.Name).Distinct(StringComparer.OrdinalIgnoreCase))} "
+        + "here is the organization's default.";
+
+    private static string TypeText(string valueType) => valueType switch
+    {
+        "single_select" => "one of a list",
+        "multi_select" => "any of a list",
+        "true_false" => "true or false",
+        "string" => "text",
+        "url" => "a URL",
+        "" => "type not reported",
+        _ => valueType,
+    };
+
+    private static RenderFragment TermsMarkup(IReadOnlyList<PropertyTerm> terms) => __builder =>
+    {
+        for (var j = 0; j < terms.Count; j++)
+        {
+            if (j > 0)
+            {
+                <span class="mud-text-secondary"> and </span>
+            }
+            <span class="abom-property-term"><code>@terms[j].Name</code> = <code>@terms[j].Value</code></span>
+        }
+    };
+
+    private async Task OpenScopeEditor(Draft account)
+    {
+        _scopeEditors[account.Owner] = new ScopeEditor();
+        await CountScopes(account);
+    }
+
+    private void CloseScopeEditor(Draft account) => _scopeEditors.Remove(account.Owner);
+
+    // Asks GitHub what the organization defines, and how many repositories carry each drafted scope.
+    private async Task CountScopes(Draft account)
+    {
+        var read = PropertyReadOf(account.Owner) ?? new PropertyRead();
+        _propertyReads[account.Owner] = read;
+        read.Loading = true;
+        read.Error = null;
+        var clauses = account.Clauses.Select(c => (IReadOnlyList<PropertyTerm>)c.ToList()).ToList();
+        try
+        {
+            var answer = await Api.ReadAccountPropertiesAsync(account.Owner, clauses);
+            read.Answer = answer;
+            read.Counts.Clear();
+            for (var i = 0; i < clauses.Count && i < answer.ClauseCounts.Count; i++)
+            {
+                read.Counts[ClauseKey(clauses[i])] = answer.ClauseCounts[i];
+            }
+        }
+        catch (HttpRequestException e)
+        {
+            read.Error = e.Message;
+        }
+        catch (JsonException)
+        {
+            read.Error = "the answer could not be read";
+        }
+        finally
+        {
+            read.Loading = false;
+        }
+    }
+
+    // One value per property, unless the property holds several: no repository can carry two
+    // values of one that holds one, so choosing another replaces the first.
+    private static void Compose(ScopeEditor editor, PropertyChoice property, string value, bool chosen)
+    {
+        editor.Composing.RemoveAll(t => string.Equals(t.Name, property.Name, StringComparison.OrdinalIgnoreCase)
+                                        && (t.Value == value || !property.MultiSelect));
+        if (chosen) editor.Composing.Add(new PropertyTerm { Name = property.Name, Value = value });
+    }
+
+    private static bool CanAddScope(Draft account, ScopeEditor editor) =>
+        editor.Composing.Count > 0 && account.Clauses.All(c => ClauseKey(c) != ClauseKey(editor.Composing));
+
+    private async Task AddScope(Draft account, ScopeEditor editor)
+    {
+        if (!CanAddScope(account, editor)) return;
+        account.Clauses.Add([.. editor.Composing]);
+        editor.Composing.Clear();
+        await Changed();
+        await CountScopes(account);
+    }
+
+    private async Task RemoveScope(Draft account, List<PropertyTerm> clause)
+    {
+        account.Clauses.Remove(clause);
         await Changed();
     }
 
@@ -937,15 +1597,31 @@ else
         await Task.CompletedTask;
     }
 
+    private async Task CheckOnArrival()
+    {
+        await Refresh();
+        await InvokeAsync(StateHasChanged);
+    }
+
     private async Task Refresh()
     {
         _checking = true;
+        _checkError = null;
         try
         {
             await Accounts.RefreshAsync();
             _problem = Accounts.Identity.Problem;
             // Membership decides the marks, so the list has to be re-read alongside it.
             _candidates = await Api.GetOwnerCandidatesAsync();
+        }
+        catch (HttpRequestException e)
+        {
+            // Not gh answering no: the server could not be asked, which the page says as such.
+            _checkError = e.Message;
+        }
+        catch (JsonException)
+        {
+            _checkError = "the answer could not be read";
         }
         finally
         {

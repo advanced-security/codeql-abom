@@ -1,8 +1,11 @@
 # An address the enterprise can reach, an identity it granted, and readers GitHub authorizes
 
-**Status:** not built, blocked on ingress this workstation does not have. Identity, address and who
-may read; the events the address receives are read by
-[`change-ingestion.md`](change-ingestion.md).
+**Status:** ABOM runs as a read-only GitHub App it creates through the manifest flow — private, so
+installable only on the account that owns it — minting an installation token per account and
+recording installations as evidence beside the declaration, re-read whenever an installation event
+arrives; deliveries reach a workstation through a relay, and a production address, readers signing
+in through the App, and workflow callers are not built. What the events the address receives do is
+in [`docs/architecture.md`](../../docs/architecture.md#the-pipeline).
 
 ## Why this exists
 
@@ -30,40 +33,45 @@ operation.
 
 ## Pending
 
-1. **Enterprise App identity.** App id, private key, and an installation token per organization,
-   minted and refreshed — they expire in an hour, so this is a lifecycle rather than a value in a
-   config file.
-2. **The installations as evidence.** `abom_account` records what `gh` says about membership; an
-   installation is a stronger statement from the same source, and belongs beside it rather than
-   replacing the declaration. See [`../db/owned-scope.md`](../db/owned-scope.md). Depends on 1.
-3. **Least permission that answers the questions.** Each endpoint ABOM calls names the permission it
-   needs, and anything the list does not justify is not requested — including the events
-   [`change-ingestion.md`](change-ingestion.md) subscribes to, and the Actions and dependency-graph
-   reads the [consistency checker](../tools/graph-consistency-checker.md) samples. Depends on 1.
-4. **The address.** TLS and a name that does not change when the process restarts, for the
+1. **The address.** TLS and a name that does not change when the process restarts, for the
    interface and for the App's webhook deliveries. **The fork is how deliveries arrive:** an
    endpoint GitHub can reach, verifying every signature before parsing; or a relay the instance
    pulls from, which keeps the instance unreachable and adds a component that can lose events.
-   Decide with [`../tools/deployment.md`](../tools/deployment.md).
-5. **Readers authorized by GitHub.** Readers sign in through the App. Every read is filtered to the
+   Decide with [`../tools/deployment.md`](../tools/deployment.md). The workstation path is a relay:
+   `ABOM_EVENTS_RELAY` reads a smee.io channel and hands each delivery, headers and body as
+   received, to the same receiver. It loses whatever arrives while ABOM is down, and smee re-encodes
+   JSON — a body with `\u` escapes, `\/` or extra whitespace no longer matches its signature and is
+   refused — so it is for testing, with the sweep behind it.
+2. **Readers authorized by GitHub.** Readers sign in through the App. Every read is filtered to the
    organizations and repositories GitHub says that reader can read, with the visibility held for a
-   bounded time and read again, never assumed from the last answer forever. Depends on 1 and 4.
-6. **The private key.** The most dangerous thing this project would ever hold, and the plan for it
-   is written before it exists rather than after. Depends on 1.
-7. **Authenticate workflow callers and authorize individual operations.** Define short-lived,
+   bounded time and read again, never assumed from the last answer forever. Depends on 1.
+3. **Authenticate workflow callers and authorize individual operations.** Define short-lived,
    repository-scoped verdict-read grants for [abom-check.md](abom-check.md). Verify repository,
    workflow/event, base/head commits and expiry, and return evidence for those exact lock contexts.
    Separate evidence reads from any justified check-run permission. Refuse expired/revoked grants
    and cross-repository access, including misuse of fork-PR identity. The workflow client receives
-   no submission or discovery authority. Depends on 1, 3, 4 and 5, not on new publication grants;
-   those are deferred in [dependency-submission.md](dependency-submission.md).
+   no submission or discovery authority. Depends on 1 and 2, not on new publication grants; those
+   are deferred in [dependency-submission.md](dependency-submission.md).
+4. **A declared account the App cannot be installed on.** `app create` makes a private App, which
+   GitHub lets only its owner install, and a declared account with no installation is listed by
+   nobody: `advanced-security`, declared beside `has-ghas`, fails its listing every hour as not
+   installed and reads as unknown in Settings — the constraint below working, not a fault. Choose
+   before a second account is installed: make the App public in GitHub's settings for it (ABOM
+   still reads only what is declared, but anyone may then install it, so the installation lending
+   public reads must be named with `--app-public-reads` rather than be the earliest); hold one App
+   per account, several App directories chosen by owner; or an App the enterprise owns, where the
+   host offers one. The first is a setting; the second is the shape an enterprise whose
+   organizations have different owners needs.
+5. **A narrower installation than the declaration.** An account declared in full with an
+   installation on some repositories names the rest "missing" at enumeration, and the prune offer
+   would list them. Nothing guards it yet; install on every repository of an account declared whole.
 
 ## Authentication decision
 
 Choose between a verified GitHub OIDC exchange and a short-lived repository-scoped App-backed
-caller grant before implementing item 7. For either, document the trusted issuer and audience,
-repository/installation binding, workflow/event/ref restrictions, expiry, revocation and replay
-handling. Do not replace missing issuer support on a host with an unscoped shared secret. The
+caller grant before authenticating workflow callers. For either, document the trusted issuer and
+audience, repository/installation binding, workflow/event/ref restrictions, expiry, revocation and
+replay handling. Do not replace missing issuer support on a host with an unscoped shared secret. The
 workflow action receives no App private key or GitHub contents-write credential.
 
 `X-Abom-Control` currently guards cross-site requests and local control; it is not an authenticated
@@ -72,6 +80,19 @@ caller identity. Enabling remote control alone cannot authorize a workflow clien
 this plan owns service identity, reader authorization, caller grants and deployment.
 
 ## The constraints that must not be broken
+
+**The App asks for what ABOM's features read, built or planned, and only to read.** Audited against
+GitHub's permission tables: repository Metadata, Contents, Code scanning alerts, Administration and
+Actions, and organization Custom properties and Administration, all read, and no account permission.
+Every installation must approve each new permission, so the operator grants the whole set once
+rather than one feature at a time. Actions read is for check 5's run logs and `workflow_run`.
+Organization Administration read is only for `repository_ruleset` events about organization
+rulesets; ABOM never calls `GET /orgs/{org}/rulesets`, which GitHub documents at write, and re-reads
+each repository's protected branches instead. Refused: organization Members, because ownership is
+declared and never read from membership; repository Custom properties, whose one endpoint writes;
+and every write. The manifest requests exactly this set, and its trace test fails on a grant that
+neither a call nor an event handler needs, on an event no processor method handles, and on a path
+the reader builds that no grant covers.
 
 **An installation is evidence, never a declaration.** Being installed somewhere does not make its
 supply chain anyone's remediation work, for exactly the reason membership does not — see
@@ -110,3 +131,8 @@ for `gh`, and it is drawn here for the same reason.
   repositories or change ownership; returned lock contexts match the requested commits.
 - Test the permitted workflow operation and denied operations against an approved dedicated
   repository. Tokens and private keys appear in neither logs, summaries nor error responses.
+- Change ingestion is measured on a real enterprise organization once one is available, and each
+  figure is stated for the organization it came from: an organization ruleset's targeted re-read
+  against the whole listing it replaced (115 REST requests and 19.5 s for 31 repositories on the
+  crawled organization, where the narrowest ruleset read 2), the owned-closure walk behind every
+  claim and objective read (14.7 ms for 246 repositories there), and each pool's spend.

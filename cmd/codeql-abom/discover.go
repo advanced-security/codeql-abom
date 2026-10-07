@@ -12,6 +12,7 @@ import (
 
 	"github.com/advanced-security/codeql-abom/internal/catalog"
 	"github.com/advanced-security/codeql-abom/internal/discover"
+	"github.com/advanced-security/codeql-abom/internal/ghapp"
 	"github.com/advanced-security/codeql-abom/internal/ghauth"
 	"github.com/advanced-security/codeql-abom/internal/store"
 	"github.com/advanced-security/codeql-abom/internal/work"
@@ -44,7 +45,11 @@ func runDiscover(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		return fmt.Errorf("migrating %s: %w", *dbPath, err)
 	}
 
-	client := githubClient(ctx, *apiURL, s)
+	tokens, err := dbReaderTokens(*dbPath)
+	if err != nil {
+		return fmt.Errorf("discover: %w", err)
+	}
+	client := githubClient(ctx, *apiURL, s, tokens)
 	d := &discover.Discoverer{
 		Source:      client,
 		Store:       s,
@@ -138,10 +143,23 @@ var githubPace = work.NewLimiter(0)
 
 // githubClient reads GitHub on this database's behalf, remembering validators in it so that asking
 // again about something unchanged costs a round trip and no primary quota.
-func githubClient(ctx context.Context, apiURL string, s *store.Store) *catalog.Client {
-	c := catalog.New(apiURL, githubToken(ctx), nil)
+func githubClient(ctx context.Context, apiURL string, s *store.Store, tokens ghapp.TokenSource) *catalog.Client {
+	c := newReader(ctx, apiURL, tokens)
 	c.Cache = s.ResponseCache()
 	c.Pace = githubPace
+	c.REST = processPools.Pool(work.PoolEnumeration, work.UnitREST)
+	c.GraphQL = processPools.Pool(work.PoolEnumeration, work.UnitGraphQL)
+	return c
+}
+
+// eventsClient reads GitHub for the event processor. Following up an event is work of its own, so
+// what it reads — all of it REST — is charged to the event follow-up pool, not enumeration's.
+func eventsClient(ctx context.Context, apiURL string, s *store.Store, tokens ghapp.TokenSource,
+	pools *work.TokenPools) *catalog.Client {
+	c := newReader(ctx, apiURL, tokens)
+	c.Cache = s.ResponseCache()
+	c.Pace = githubPace
+	c.REST = pools.Pool(work.PoolEvents, work.UnitREST)
 	return c
 }
 
@@ -149,14 +167,16 @@ func githubClient(ctx context.Context, apiURL string, s *store.Store) *catalog.C
 //
 // Refused rather than ignored: a misspelled route that silently fell back to the default would put
 // the reader on a route they did not choose while the flag says otherwise.
-func readClient(ctx context.Context, apiURL string, s *store.Store, route string) (*catalog.Client, error) {
+func readClient(
+	ctx context.Context, apiURL string, s *store.Store, route string, tokens ghapp.TokenSource,
+) (*catalog.Client, error) {
 	switch route {
 	case "", catalog.RouteGraphQL, catalog.RouteREST:
 	default:
 		return nil, fmt.Errorf("read route %q is not %s, %s, or empty",
 			route, catalog.RouteGraphQL, catalog.RouteREST)
 	}
-	c := githubClient(ctx, apiURL, s)
+	c := githubClient(ctx, apiURL, s, tokens)
 	c.Route = route
 	return c, nil
 }

@@ -1,7 +1,8 @@
 # What no longer belongs is removed, provably
 
 **Status:** Built. Removal is a tombstone the delta reports, reads go through views that cannot be
-opted out of, and a separate compaction reclaims the space behind an epoch that reloads clients.
+opted out of, a run that names something removed brings it back, and a separate compaction reclaims
+the space behind an epoch that reloads clients.
 
 ## Why this exists
 
@@ -20,9 +21,6 @@ cleanup script.
 1. **Whether tombstones ever expire on their own.** A `removed_at` that nothing compacts is the
    ever-growing graph under another name. Compaction is operator-run today; a retention policy
    needs evidence about how often prunes happen before it can name a number.
-2. **Say that a pruned node may come back.** It can — the boundary is recomputed, not remembered —
-   but the row id will be new, so a client's history of it is not continuous. Acceptable, and worth
-   stating in the delta contract rather than being discovered by a client that kept a row id.
 
 ## The constraints that must not be broken
 
@@ -32,7 +30,8 @@ did not occur, and it would mean a re-declared account is re-analyzed from scrat
 recognized as already on record. The ledger is evidence; the graph is a projection of what is
 currently in scope.
 
-**Only the compaction may delete, and it bumps the epoch in the same breath.** A `DELETE` anywhere
+**Only the compaction may delete, and it bumps the epoch in the same breath.** A revival bumps it
+too, for the reason a delete does: a row id below the client's watermark changed meaning. A `DELETE` anywhere
 else hands a client a delta that skips row ids.
 `TestGraphTablesAreDeletedOnlyByTheCompaction` allows exactly one file and fails anywhere else.
 

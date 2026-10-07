@@ -36,6 +36,20 @@ public class CoverageReasonTests : AbomTestContext
         return page;
     }
 
+    // Nothing to analyze is a state of its own, so a reader can list the repositories that were read
+    // and hold nothing apart from the ones that could not be fetched.
+    [Fact]
+    public void NothingToAnalyzeCanBeListedOnItsOwn()
+    {
+        var page = Coverage();
+
+        var chip = page.Find("[data-abom-coverage-state='nothing']");
+        Assert.Contains("Nothing to analyze", chip.TextContent);
+        chip.Click();
+
+        page.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("api/frontier") && r.Url.Contains("status=nothing")));
+    }
+
     [Fact]
     public void UnavailableWorkSaysWhyItCouldNotBeFetched()
     {

@@ -1,25 +1,28 @@
 import { test, expect, ready, on } from '../harness.mjs';
 
+// What you own and what it runs are two populations, and an asset's findings must total the same
+// in place under either.
+for (const scope of ['owned', 'supply-chain'])
 for (const [unit, endpoint, identity, kind] of [
     ['dependencies', 'actions', 'nodeKey', 'node'],
     ['workflows', 'workflows', 'nodeKey', 'node'],
     ['jobs', 'jobs', 'nodeKey', 'node'],
     ['repositories', 'repositories', 'fullName', 'repository'],
 ]) {
-    test(`${unit} findings open in place with a matching total`, on(`/inventory?unit=${unit}`), async ({ page, request }) => {
-        const response = await request.get(`/api/${endpoint}?top=200&scope=owned`);
+    test(`${unit} findings open in place with a matching total under scope=${scope}`, on(`/inventory?unit=${unit}`), async ({ page, request }) => {
+        const response = await request.get(`/api/${endpoint}?top=200&scope=${scope}`);
         expect(response.ok()).toBeTruthy();
         const asset = (await response.json()).items.find(item => item.findings > 0);
         test.skip(!asset, 'no asset in this unit has attributed findings');
         const key = asset[identity];
-        await page.goto(`/inventory?unit=${unit}&scope=owned`);
+        await page.goto(`/inventory?unit=${unit}&scope=${scope}`);
         await ready(page);
         const control = page.locator(`[data-abom-review-asset=${JSON.stringify(key)}]`);
         test.skip(await control.count() === 0, 'the selected asset is beyond the first page');
         await control.click();
         const drawer = page.locator('[data-abom-asset-review]');
         await expect(drawer).toBeVisible();
-        const query = new URLSearchParams({ asset: key, assetKind: kind, scope: 'owned' });
+        const query = new URLSearchParams({ asset: key, assetKind: kind, scope });
         const review = await (await request.get(`/api/findings?${query}`)).json();
         expect(review.total).toBe(asset.findings);
         await expect(drawer.locator('[data-abom-findings-total]')).toContainText(`${review.total.toLocaleString('en-US')} matching findings`);

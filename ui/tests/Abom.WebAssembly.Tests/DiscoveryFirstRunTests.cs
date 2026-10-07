@@ -71,6 +71,64 @@ public class DiscoveryFirstRunTests : AbomTestContext
             cut.Markup));
     }
 
+    // Measured on the live corpus: the check found only 4 queued dependencies outside the closure,
+    // and the prompt said "0 nodes and 0 edges across 0 repositories" — what it would remove, unsaid.
+    [Fact]
+    public void ThePromptToRemoveNamesWhatItRemovesAndNothingElse()
+    {
+        Serve(NothingEnumerated, "[]");
+        Answer("api/prune/staleness", """
+            {"checked":true,"checkedAt":"2026-01-01T00:00:00Z","unavailable":"",
+             "view":{"declared":3,"reachable":10,"removed":{"repositories":0,"nodes":0,"edges":0,"queued":4},
+                     "tombstoned":0,"applied":false,"unavailable":""}}
+            """);
+
+        var dialogs = Render<MudBlazor.MudDialogProvider>();
+        Render<Pages.Settings>();
+
+        var summary = dialogs.WaitForElement("[data-abom-stale-summary]").TextContent;
+        Assert.Contains("4 queued dependencies", summary);
+        Assert.DoesNotContain(" 0 ", summary);
+    }
+
+    // "Not now" is a complete answer to the check that asked; Settings asked again on every visit.
+    [Fact]
+    public void NotNowIsRememberedForTheCheckThatAsked()
+    {
+        Serve(NothingEnumerated, "[]");
+        Answer("api/prune/staleness", """
+            {"checked":true,"checkedAt":"2026-01-01T00:00:00Z","unavailable":"",
+             "view":{"declared":3,"reachable":10,"removed":{"repositories":0,"nodes":0,"edges":0,"queued":4},
+                     "tombstoned":0,"applied":false,"unavailable":""}}
+            """);
+        var dialogs = Render<MudBlazor.MudDialogProvider>();
+        Render<Pages.Settings>();
+        dialogs.WaitForElement("[data-abom-stale-dismiss]").Click();
+        dialogs.WaitForAssertion(() => Assert.Empty(dialogs.FindAll("[data-abom-stale-summary]")));
+
+        var again = Render<Pages.Settings>();
+        again.WaitForAssertion(() => Assert.Contains("What the crawl is working on", again.Markup));
+
+        Assert.Empty(dialogs.FindAll("[data-abom-stale-summary]"));
+    }
+
+    // Measured on the live corpus: "63 nodes and 34 edges across 1 repositories".
+    [Fact]
+    public void ThePruneSummaryCountsOneOfAnythingInTheSingular()
+    {
+        Serve(NothingEnumerated, """[{"owner":"octo-org","kind":"organization","enabled":true}]""", """
+            {"declared":1,"reachable":10,"removed":{"repositories":1,"nodes":1,"edges":1,"queued":1},
+             "tombstoned":0,"applied":false,"unavailable":""}
+            """);
+
+        var cut = Render<Pages.Settings>();
+
+        var summary = cut.WaitForElement("[data-abom-prune-summary]").TextContent;
+        var text = string.Join(" ", summary.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        Assert.Contains("1 node and 1 edge across 1 repository", text);
+        Assert.Contains("1 queued dependency that", text);
+    }
+
     /// <summary>
     /// The server refuses to prune against an empty closure, which is a state and not a fault.
     /// Reporting it as an unreachable server puts a raw transport error at the top of a first

@@ -88,6 +88,9 @@ func build(dbPath, fixtures, queries string, without map[string]bool) error {
 	if err := ingestFixtureRepositories(s, fixtures, repos, without); err != nil {
 		return err
 	}
+	if err := recordPropertyScopeFacts(s); err != nil {
+		return fmt.Errorf("recording what the property scopes judge: %w", err)
+	}
 	if err := recordCorpusAdvisories(s, fixtures, without); err != nil {
 		return err
 	}
@@ -177,11 +180,50 @@ func declaredAccounts(repos []string) []store.DeclaredAccount {
 
 	out := make([]store.DeclaredAccount, 0, len(owners))
 	for _, owner := range owners {
-		out = append(out, store.DeclaredAccount{
-			Owner: owner, Kind: "organization", Enabled: true,
-		})
+		a := store.DeclaredAccount{Owner: owner, Kind: "organization", Enabled: true}
+		if owner == propertyScopedAccount {
+			a.IncludesOnly, a.Properties = true, propertyScopes
+		}
+		out = append(out, a)
 	}
 	return out
+}
+
+// propertyScopedAccount is declared by property rather than whole. Its scopes cover every one of
+// its repositories between them, so no owned figure differs from declaring it whole.
+const propertyScopedAccount = "acme-corp"
+
+// The value acme-corp gives every repository nobody set otherwise.
+const corpusDefaultTier = "standard"
+
+var propertyScopes = []store.PropertyClause{
+	{Terms: []store.PropertyTerm{{Name: "team", Value: "payments"}}},
+	{Terms: []store.PropertyTerm{{Name: "review-tier", Value: corpusDefaultTier}}},
+	// Declared before the schema said repository administrators can set it, so it is held.
+	{Terms: []store.PropertyTerm{{Name: "cost-center", Value: "7"}}},
+}
+
+// recordPropertyScopeFacts writes what a listing and a schema read would have, after the
+// declaration, which is the order they arrive in.
+func recordPropertyScopeFacts(s *store.Store) error {
+	if err := s.ReplacePropertySchema(propertyScopedAccount, []store.PropertyDefinition{
+		{Name: "team", ValueType: "single_select", ValuesEditableBy: store.PropertyEditableByOrganization},
+		{Name: "review-tier", ValueType: "single_select", ValuesEditableBy: store.PropertyEditableByOrganization,
+			HasDefault: true, DefaultValue: corpusDefaultTier},
+		{Name: "cost-center", ValueType: "string", ValuesEditableBy: "org_and_repo_actors"},
+	}); err != nil {
+		return err
+	}
+	for repo, values := range map[string][]store.PropertyValue{
+		"acme-corp/payments":   {{Name: "team", Value: "payments"}, {Name: "review-tier", Value: "elevated"}, {Name: "cost-center", Value: "7"}},
+		"acme-corp/storefront": {{Name: "team", Value: "storefront"}, {Name: "review-tier", Value: corpusDefaultTier}, {Name: "cost-center", Value: "7"}},
+		"acme-corp/shared-ci":  {{Name: "review-tier", Value: corpusDefaultTier}},
+	} {
+		if err := s.ReplacePropertyValues(repo, values); err != nil {
+			return err
+		}
+	}
+	return s.RecordPropertyJudgement(propertyScopedAccount, 0)
 }
 
 func ingestRepository(s *store.Store, fixtures, full string, without map[string]bool) error {

@@ -24,13 +24,14 @@
             @* The reason sits on a span outside the chip: a disabled chip takes no pointer events,
                so a title on it never shows, and that is the title a reader needs most. Forget
                shares the span so a wrapping row cannot part it from the scope it forgets. *@
-            <span class="abom-view" title="@reason" data-abom-view-reason="@view.Name">
+            <span class="abom-view" title="@(reason.Length > 0 ? Tooltip(view, reason) : null)"
+                  data-abom-view-reason="@view.Name">
                 <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
                          Color="@(IsSelected(view) ? Color.Primary : Color.Default)"
                          Class="@(IsSelected(view) ? "abom-view-selected" : null)"
                          Disabled="@(reason.Length > 0)"
                          OnClick="@(() => Chosen.InvokeAsync(view))"
-                         title="@ViewTitle(view, reason)"
+                         title="@Tooltip(view, reason)"
                          data-abom-view="@view.Name">@view.Label</MudChip>
                 @* A built-in is code: the server refuses to delete it, so offering the control
                    would be an affordance that cannot work. *@
@@ -96,8 +97,12 @@
     // canonical rather than however it was typed.
     private bool IsSelected(NamedView view) => Scope.Spec.ToQueryString() == view.Predicate;
 
-    private static string ViewTitle(NamedView view, string reason) =>
-        reason.Length > 0 ? reason : $"Open {view.Label} on this page.";
+    // What the scope holds, then why this page cannot open it, if it cannot.
+    private static string Tooltip(NamedView view, string reason)
+    {
+        var holds = view.Description.Length > 0 ? view.Description : $"Open {view.Label} on this page.";
+        return reason.Length > 0 ? $"{holds} {reason}" : holds;
+    }
 
     /// <summary>Why this page cannot open a scope, or empty when it can.</summary>
     private string Refusal(NamedView view)
@@ -108,7 +113,7 @@
         }
         if (refused.Count == 0) return string.Empty;
 
-        var terms = refused.Select(t => RefusalText.Quoted(Label(t), Values(view.Predicate, t))).ToList();
+        var terms = refused.Select(t => Quote(view, t)).ToList();
         var opens = RefusalText.Pages
             .Where(p => p.Surface != Surface)
             .Where(p => view.Refuses.TryGetValue(p.Surface, out var r) && r.Count == 0)
@@ -119,6 +124,12 @@
             ? sentence
             : $"{sentence} {RefusalText.Capitalized(RefusalText.Join(opens, "and"))} can.";
     }
+
+    // A surface answering part of a list term refuses the rest one member at a time, as `term=member`.
+    private string Quote(NamedView view, string refused) =>
+        refused.Split('=', 2) is [var term, var member]
+            ? RefusalText.Quoted(Label(term), member)
+            : RefusalText.Quoted(Label(refused), Values(view.Predicate, refused));
 
     private string Label(string term) => _labels.TryGetValue(term, out var label) ? label : term;
 

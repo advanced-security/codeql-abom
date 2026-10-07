@@ -3,7 +3,9 @@
 **Status:** Not started, and no longer fully blocked. A deterministic layout exists on the server —
 [`ui/graph-layout.md`](graph-layout.md) built the DOT export and the Graphviz seam, and Graphviz
 renders SVG directly — so the figure no longer waits on the browser drawing the same picture twice.
-What still waits on that plan is the Explorer itself.
+What still waits on that plan is the Explorer itself. The server-side SVG writer exists for one
+node's closure (`internal/figure`, drawn on every details page and printed with it); a scope-sized
+figure reuses it.
 
 ## Why this exists
 
@@ -32,6 +34,9 @@ matters at all, and a table of hops is not how anybody reads a supply chain.
    this needs no browser. What it does need is a shape that fits a page — `dot` returns a 9.2:1
    ribbon on the corpus projection, which a pannable canvas absorbs and paper does not, and that
    is [`graph-layout`](graph-layout.md)'s open aspect-ratio question rather than a second one.
+   The writer is `internal/figure`'s, and a details page already prints its own figure in the light
+   palette without the application around it. What this plan adds is the scope-sized figure, which
+   waits on graph-layout's shape decision.
 3. **Print styling that is a rendering, not a media query bolted onto the application.** Page
    breaks that do not split a table row from its header, a figure sized to a page rather than to a
    viewport, and no interactive chrome. Depends on 1.

@@ -188,7 +188,7 @@ type AdvisoryReach struct {
 // ranges and the observed references are reported side by side so that decision stays with the
 // reader, or with a query written to make it.
 func (s *Store) AdvisoriesByReach(limit int, sc RepositoryScope) ([]AdvisoryReach, error) {
-	in, err := s.reachInScope(sc)
+	in, err := s.reachInScope(sc, false)
 	if err != nil {
 		return nil, err
 	}

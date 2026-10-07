@@ -36,6 +36,11 @@
         <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-unapplied>Not applied here</MudText>
     }
 
+    @if (_refused is { Length: > 0 } refused)
+    {
+        <MudText Typo="Typo.caption" Color="Color.Error" data-abom-picker-refusal>@refused</MudText>
+    }
+
     <MudMenu Dense="true" ActivationEvent="@MouseEvent.LeftClick"
              AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft"
              PopoverClass="abom-picker-menu" ListClass="abom-picker-list">
@@ -261,6 +266,7 @@
 
     private IReadOnlyList<FilterTerm> _terms = [];
     private FilterTerm? _term;
+    private string? _refused;
     private string _termQuery = string.Empty;
     private string _valueQuery = string.Empty;
     private IReadOnlyList<string> _propertyKeys = [];
@@ -493,7 +499,19 @@
         _propertyKey = null;
         _propertyValues = [];
         _breakdown = null;
-        Scope.Set(ViewSpec.Parse(Recompose(terms)));
+        ViewSpec spec;
+        try
+        {
+            spec = ViewSpec.Parse(Recompose(terms));
+        }
+        catch (FormatException ex)
+        {
+            // A server newer than this page can offer a term the page cannot write.
+            _refused = $"{ex.Message}. Reload the page to ask it; the scope is unchanged.";
+            return;
+        }
+        _refused = null;
+        Scope.Set(spec);
         await Changed.InvokeAsync();
     }
 

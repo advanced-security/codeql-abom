@@ -1,6 +1,9 @@
 package store
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // A required property with a default has no unset state: every repository carries a value whether
 // anybody chose one or not. Reporting that bucket like any other tells a reader teams picked the
@@ -36,6 +39,42 @@ func TestTheBucketNobodyChoseIsLabelledAsTheDefault(t *testing.T) {
 	if units.DefaultValue != "0" {
 		t.Errorf("DefaultValue = %q, want the value a repository gets for doing nothing",
 			units.DefaultValue)
+	}
+}
+
+// A multi-select's default is a list, and a repository that chose nothing carries every value in
+// it, so each of those buckets is labeled; a value nobody gets for free is not.
+func TestAMultiSelectsDefaultBucketsAreLabeledAsTheDefault(t *testing.T) {
+	s := ownedStore(t, "has-ghas/a", "has-ghas/b")
+	if err := s.ReplacePropertySchema("has-ghas", []PropertyDefinition{
+		{Name: "tags", ValueType: "multi_select", DefaultValues: []string{"x", "z"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for repo, tags := range map[string][]string{"has-ghas/a": {"x", "z"}, "has-ghas/b": {"y"}} {
+		var values []PropertyValue
+		for _, tag := range tags {
+			values = append(values, PropertyValue{Name: "tags", Value: tag})
+		}
+		if err := s.ReplacePropertyValues(repo, values); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tags, err := s.PropertyBreakdown("tags")
+	if err != nil {
+		t.Fatal(err)
+	}
+	labeled := map[string]bool{}
+	for _, v := range tags.Values {
+		labeled[v.Value] = v.IsDefault
+	}
+	if !labeled["x"] || !labeled["z"] || labeled["y"] {
+		t.Errorf("labeled %v, want x and z as the default and y as chosen", labeled)
+	}
+	if tags.HasDefault || strings.Join(tags.DefaultValues, ",") != "x,z" {
+		t.Errorf("HasDefault %v, DefaultValues %v; want no single default and the list x, z",
+			tags.HasDefault, tags.DefaultValues)
 	}
 }
 
@@ -87,5 +126,44 @@ func TestASchemaNobodyReadLabelsNothingEitherWay(t *testing.T) {
 		if v.IsDefault {
 			t.Error("a value was labeled the default on the strength of no schema at all")
 		}
+	}
+}
+
+// Who may edit a property is what a property scope is held against, so it is stored with the
+// schema, and an older read that never asked stays unknown rather than reading as permissive.
+func TestASchemaRecordsWhoMayEditEachPropertyAndWhenItWasRead(t *testing.T) {
+	s := newTestStore(t)
+	if _, known, err := s.PropertySchemaReadAt("has-ghas"); err != nil || known {
+		t.Fatalf("PropertySchemaReadAt before any read = known %v, err %v; want unknown", known, err)
+	}
+	if err := s.ReplacePropertySchema("has-ghas", []PropertyDefinition{
+		{Name: "business_id", HasDefault: true, DefaultValue: "0", ValueType: "string",
+			ValuesEditableBy: "org_and_repo_actors"},
+		{Name: "team", ValueType: "multi_select", ValuesEditableBy: "org_actors", DefaultValues: []string{"a", "b"}},
+		{Name: "legacy", ValueType: "string"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	defs, err := s.PropertySchema("has-ghas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]PropertyDefinition{}
+	for _, d := range defs {
+		byName[d.Name] = d
+	}
+	if team := byName["team"]; team.ValuesEditableBy != "org_actors" || team.ValueType != "multi_select" ||
+		team.HasDefault || strings.Join(team.DefaultValues, ",") != "a,b" {
+		t.Errorf("team read back as %+v", byName["team"])
+	}
+	if byName["business_id"].ValuesEditableBy != "org_and_repo_actors" || !byName["business_id"].HasDefault {
+		t.Errorf("business_id read back as %+v", byName["business_id"])
+	}
+	if byName["legacy"].ValuesEditableBy != "" || byName["legacy"].DefaultValues != nil {
+		t.Errorf("legacy says %q may edit it; GitHub said nothing", byName["legacy"].ValuesEditableBy)
+	}
+	if _, known, err := s.PropertySchemaReadAt("HAS-GHAS"); err != nil || !known {
+		t.Errorf("PropertySchemaReadAt after a read = known %v, err %v; want the read on record", known, err)
 	}
 }

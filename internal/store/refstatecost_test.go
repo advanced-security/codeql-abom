@@ -12,8 +12,12 @@ import (
 // small. The cost is structural, so the plan is where it can be seen.
 func TestTheReferenceStateQueryDoesNotWalkTheEdgeTablePerQueueRow(t *testing.T) {
 	s := newTestStore(t)
+	table, err := s.declaredEdgeTable(AnalysisModeRegular)
+	if err != nil {
+		t.Fatalf("building the declarations the graph counts users from: %v", err)
+	}
 
-	rows, err := s.db.Query("EXPLAIN QUERY PLAN " + refStatesQuery)
+	rows, err := s.db.Query("EXPLAIN QUERY PLAN " + refStatesQuery(table))
 	if err != nil {
 		t.Fatalf("explaining the reference state query: %v", err)
 	}
@@ -42,10 +46,10 @@ func TestTheReferenceStateQueryDoesNotWalkTheEdgeTablePerQueueRow(t *testing.T) 
 
 // The queue view and the graph must not disagree about how many repositories name a version.
 //
-// Both answer "who runs this exact version" from the same edges, and they now do it through
-// separate SQL. `ownedFullName` exists because the tier, the queue view and the node users had
-// drifted into three answers to one question; this is the guard that stops the same happening to
-// the count, and it is why both read `usersPerRefRollup` rather than each carrying a copy.
+// Both answer "who runs this exact version", the graph in `usersPerRef` and the queue view in
+// `usedByRollup` beside its sample, over the same declared_edge. `ownedFullName` exists because
+// the tier, the queue view and the node users had drifted into three answers to one question; this
+// is the guard that stops the same happening to the count.
 func TestTheQueueAndTheGraphAgreeOnHowManyRepositoriesNameAVersion(t *testing.T) {
 	s := newTestStore(t)
 	seedDependency(t, s, "octo-org/app", "actions/checkout", "v4", 3)

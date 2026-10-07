@@ -130,7 +130,7 @@
     private int Outstanding =>
         _state.Count("queued") + _state.Count("running") + _state.Count("retrying");
 
-    private int Total => Analyzed + Outstanding + _state.Count("unavailable");
+    private int Total => Analyzed + Outstanding + _state.Count("unavailable") + _state.Count("nothing");
 
     // A problem the operator has to fix outranks one the crawl carried on past, because only the
     // first is still costing coverage.

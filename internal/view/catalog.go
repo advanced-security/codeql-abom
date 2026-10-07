@@ -94,7 +94,7 @@ type catalogEntry struct {
 var catalogWords = map[string]catalogEntry{
 	paramScope: {
 		label: "Scope", arity: ArityScalar,
-		help: "Owned accounts, or advisory routes",
+		help: "What you own, also what it runs, or advisory routes",
 	},
 	paramSearch: {
 		label: "Name contains", arity: ArityScalar,
@@ -104,10 +104,11 @@ var catalogWords = map[string]catalogEntry{
 		label: "Kind", arity: ArityList,
 		help: "Workflow, job, step, action, image",
 	},
-	// Origin is how something entered the corpus, which is not the same question as who owns it.
+	// Origin is how something entered the corpus, which is not the same question as who owns it,
+	// so owned is the declaration's answer and a starting point you declared is both.
 	paramOrigins: {
 		label: "Origin", arity: ArityList,
-		help: "Starting point, upstream or dependency",
+		help: "Owned, starting point, upstream or external; what you own is a starting point too",
 	},
 	paramRules: {
 		label: "CodeQL rule", arity: ArityList, valuesFrom: "api/filters/rules/values",
@@ -163,6 +164,11 @@ var catalogWords = map[string]catalogEntry{
 	paramPolicies: {
 		label: "Any of these policies", arity: ArityList,
 		help: "Refuses what any of them refuses",
+	},
+	// A reading's class, never a verdict about the code: covered says default setup analyzes it.
+	paramCodeScanning: {
+		label: "Actions code scanning", arity: ArityList,
+		help: "What the setup reading says, from advanced to enable",
 	},
 	// Absent is not a third shape: everything on record reads regular.
 	paramMode: {
@@ -284,5 +290,5 @@ var catalogOrder = []string{
 	paramFlags, paramRules, paramNotRules, paramSource, paramSecuritySeverity, paramSeverity,
 	paramAdvisorySeverity, paramReached, paramProvider, paramRepos,
 	paramAt, paramRefStyle, paramMinReach, paramBoundary, paramEdgeClass, paramEdgeKinds,
-	paramProperties, paramNotProperties, paramMode, paramSteps, paramPolicies,
+	paramProperties, paramNotProperties, paramMode, paramSteps, paramPolicies, paramCodeScanning,
 }

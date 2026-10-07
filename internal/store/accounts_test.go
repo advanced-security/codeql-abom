@@ -23,9 +23,9 @@ func verification(owners ...string) Verification {
 func TestInScopeOwnerIsNotOwnedUntilVerified(t *testing.T) {
 	s := subgraphFixture(t)
 
-	owned, err := s.OwnedSet()
+	owned, err := s.DeclaredOwners()
 	if err != nil {
-		t.Fatalf("OwnedSet: %v", err)
+		t.Fatalf("DeclaredOwners: %v", err)
 	}
 	if len(owned) != 0 {
 		t.Fatalf("nothing was verified, yet %d accounts report as owned", len(owned))
@@ -122,7 +122,7 @@ func originCounts(t *testing.T, s *Store) map[string]int {
 
 // GitHub does not distinguish account names by case, so neither may the stored verification.
 //
-// Asserted against what was stored rather than against OwnedSet, which since 2026-09-07 reads the
+// Asserted against what was stored rather than against DeclaredOwners, which since 2026-09-07 reads the
 // declared scope: verification records what access exists and no longer decides ownership. The
 // case rule is what this test is for and it still holds.
 func TestOwnedAccountsIgnoreCaseAndDuplicates(t *testing.T) {
@@ -241,9 +241,9 @@ func TestDeclarationsFromAnOlderDatabaseAreNotCarriedForward(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	owned, err := s.OwnedSet()
+	owned, err := s.DeclaredOwners()
 	if err != nil {
-		t.Fatalf("OwnedSet: %v", err)
+		t.Fatalf("DeclaredOwners: %v", err)
 	}
 	if owned["microsoft"] {
 		t.Error("an unverifiable declaration survived the migration as ownership")

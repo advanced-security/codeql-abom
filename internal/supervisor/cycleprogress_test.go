@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/advanced-security/codeql-abom/internal/expand"
@@ -68,5 +69,20 @@ func TestCheckoutReuseReachesTheStatus(t *testing.T) {
 	}
 	if st.Skipped != 0 {
 		t.Errorf("Skipped = %d, want 0: a reused tree was still analyzed", st.Skipped)
+	}
+}
+
+// A starting point read with nothing to analyze is neither a failure nor unavailable, so the status
+// and the cycle log count it apart: folded into unavailable it read as access to fix.
+func TestNothingToAnalyzeIsCountedApartFromUnavailable(t *testing.T) {
+	var st Status
+
+	recordCycle(&st, expand.Stats{Items: 3, Unavailable: 1, Nothing: 2})
+
+	if st.Nothing != 2 || st.Unavailable != 1 {
+		t.Errorf("nothing = %d, unavailable = %d, want 2 and 1", st.Nothing, st.Unavailable)
+	}
+	if line := cycleLine(4, expand.Stats{Items: 3, Unavailable: 1, Nothing: 2}); !strings.Contains(line, "2 with nothing to analyze") {
+		t.Errorf("cycle line %q does not say what had nothing to analyze", line)
 	}
 }

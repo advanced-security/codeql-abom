@@ -26,6 +26,9 @@ const (
 	StatusRunning     = "running"
 	StatusDone        = "done"
 	StatusUnavailable = "unavailable"
+	// StatusNothing is a starting point read in full with no workflow and no action manifest:
+	// settled at the commit it was read at, and never an analysis, because none ran.
+	StatusNothing = "nothing"
 )
 
 // DefaultMaxDepth bounds how far from the seed repositories exploration may run.
@@ -79,8 +82,13 @@ type Queue struct {
 	MaxDepth int
 	// ContainerWeight scales dependencies known to hold steps. One disables the preference.
 	ContainerWeight float64
+	// StuckAfter is the failed-attempt ceiling for completeness; zero means DefaultStuckAfter.
+	StuckAfter int
 	// Now is overridable in tests.
 	Now func() time.Time
+	// Closure names the repositories the owned closure holds. The queue claims, probes and
+	// measures completeness inside it only; nil leaves it unbounded.
+	Closure func() ([]string, error)
 }
 
 func (q *Queue) containerWeight() float64 {
@@ -218,12 +226,15 @@ func (q *Queue) Rescore() error {
 	return nil
 }
 
-// Claim takes up to limit of the highest-value pending items and marks them running.
+// Claim takes up to limit of the highest-value pending items inside the closure and marks them
+// running, in the order store.FrontierClaimOrder states.
 //
 // Depth outranks score, which is the objective: finish the depth already being worked before
 // spending anything deeper. Ordering by score first meant the crawl did whatever looked cheapest
 // and could start depth 3 while depth 1 was still incomplete — "complete at depth 1" is a claim
-// the queue can prove, and "worked on the cheapest thing available" never was.
+// the queue can prove, and "worked on the cheapest thing available" never was. A reference that
+// moved since it was analyzed waits behind all of it: re-analyzing what moved matters less than
+// analyzing what was never seen.
 //
 // `expedited_at` still outranks all of it: an operator asking for one repository is stating an
 // objective the crawl cannot infer.
@@ -233,13 +244,18 @@ func (q *Queue) Claim(limit int) ([]Item, error) {
 	}
 	now := q.now().Format(time.RFC3339Nano)
 
+	inside, bound, err := q.bound()
+	if err != nil {
+		return nil, err
+	}
 	rows, err := q.Store.DB().Query(`
 		SELECT node_key, ref, owner, repo, subpath, depth, cost_estimate, discovered_from
 		FROM abom_frontier
 		WHERE status = ?
 		  AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
-		ORDER BY expedited_at IS NULL, depth ASC, score DESC, enqueued_at ASC
-		LIMIT ?`, StatusPending, now, limit)
+		  AND `+inside+`
+		ORDER BY `+store.FrontierClaimOrder+`
+		LIMIT ?`, append(append([]any{StatusPending, now}, bound...), limit)...)
 	if err != nil {
 		return nil, fmt.Errorf("claiming frontier items: %w", err)
 	}
@@ -312,9 +328,14 @@ func (q *Queue) NextAttemptAt() (time.Time, bool, error) {
 	var at sql.NullString
 	// MIN over an empty set still yields one row, holding NULL, so a drained queue is not
 	// ErrNoRows and must be told apart by the null.
+	inside, bound, err := q.bound()
+	if err != nil {
+		return time.Time{}, false, err
+	}
 	if err := q.Store.DB().QueryRow(`
 		SELECT MIN(COALESCE(next_attempt_at, enqueued_at))
-		FROM abom_frontier WHERE status = ?`, StatusPending).Scan(&at); err != nil {
+		FROM abom_frontier WHERE status = ? AND `+inside, append([]any{StatusPending}, bound...)...).
+		Scan(&at); err != nil {
 		return time.Time{}, false, fmt.Errorf("reading next attempt time: %w", err)
 	}
 	if !at.Valid {
@@ -390,7 +411,7 @@ func (q *Queue) Complete(k Key, res Resolution) error {
 	_, err := q.Store.DB().Exec(`
 		UPDATE abom_frontier
 		SET status = ?, completed_at = ?, next_attempt_at = NULL, reason = NULL,
-		    claimed_at = NULL, expedited_at = NULL,
+		    claimed_at = NULL, expedited_at = NULL, requeued_for = NULL, dependencies_moved = NULL,
 		    analyzed_ref = ?, resolved_sha = ?, analyzed_at = ?,
 		    analysis_count = analysis_count + 1
 		WHERE node_key = ? AND ref = ?`,
@@ -419,19 +440,24 @@ func (q *Queue) DueForRecheck(ttl time.Duration, limit int) ([]Recheck, error) {
 		return nil, nil
 	}
 	cutoff := q.now().Add(-ttl).Format(time.RFC3339Nano)
+	inside, bound, err := q.bound()
+	if err != nil {
+		return nil, err
+	}
 
 	rows, err := q.Store.DB().Query(`
 		SELECT node_key, owner, repo, subpath,
 		       COALESCE(analyzed_ref, ''), COALESCE(resolved_sha, ''), score, ref
 		FROM abom_frontier
-		WHERE status = ?
+		WHERE status IN (?, ?)
 		  AND resolved_sha IS NOT NULL AND resolved_sha <> ''
 		  AND (analyzed_ref IS NULL OR analyzed_ref <> resolved_sha)
 		  AND NOT (length(ref) = 40 AND ref NOT GLOB '*[^0-9a-fA-F]*')
 		  AND (checked_at IS NULL OR checked_at <= ?)
-		  AND (analyzed_at IS NULL OR analyzed_at <= ?)
+		  AND COALESCE(analyzed_at, completed_at, '') <= ?
+		  AND `+inside+`
 		ORDER BY checked_at IS NOT NULL, score DESC, checked_at ASC
-		LIMIT ?`, StatusDone, cutoff, cutoff, limit)
+		LIMIT ?`, append(append([]any{StatusDone, StatusNothing, cutoff, cutoff}, bound...), limit)...)
 	if err != nil {
 		return nil, fmt.Errorf("finding recheck candidates: %w", err)
 	}
@@ -465,17 +491,31 @@ func (q *Queue) Touch(k Key) error {
 // MarkStale requeues a dependency whose ref has moved.
 //
 // resolved_sha is deliberately left alone: it names the commit the stored graph came from, and
-// stays accurate until re-analysis actually replaces that data.
+// stays accurate until re-analysis actually replaces that data. Only a row read at a commit is a
+// refresh; one never read is still the first stage's work.
 func (q *Queue) MarkStale(k Key, newSHA string) error {
 	_, err := q.Store.DB().Exec(`
 		UPDATE abom_frontier
 		SET status = ?, reason = ?, checked_at = ?,
+		    requeued_for = CASE WHEN COALESCE(resolved_sha, '') <> '' THEN 'moved' END,
 		    completed_at = NULL, next_attempt_at = NULL, attempts = 0
 		WHERE node_key = ? AND ref = ?`,
 		StatusPending, fmt.Sprintf("ref moved to %s", newSHA),
 		q.now().Format(time.RFC3339Nano), k.NodeKey, k.Ref)
 	if err != nil {
 		return fmt.Errorf("marking %q stale: %w", k.NodeKey, err)
+	}
+	return nil
+}
+
+// ReviewDependencies records what dependency review said of a moved row's direct Actions
+// dependencies, which orders it among pushes. A row that settled meanwhile takes nothing: the
+// reading was about the spell that ended.
+func (q *Queue) ReviewDependencies(k Key, moved bool) error {
+	if _, err := q.Store.DB().Exec(`
+		UPDATE abom_frontier SET dependencies_moved = ?
+		WHERE node_key = ? AND ref = ? AND status = ?`, moved, k.NodeKey, k.Ref, StatusPending); err != nil {
+		return fmt.Errorf("recording the dependency review of %q: %w", k.NodeKey, err)
 	}
 	return nil
 }
@@ -513,6 +553,26 @@ func (q *Queue) Unavailable(k Key, reason string) error {
 	return q.setStatus(k, StatusUnavailable, reason, q.now().Format(time.RFC3339Nano))
 }
 
+// Nothing settles a starting point read in full that declares nothing, at the commit it was read
+// at, which a moved branch is compared against. It writes no analysis and no probe: neither ran.
+func (q *Queue) Nothing(k Key, ref, sha, reason string) error {
+	if ref == "" {
+		ref = HeadRef
+	}
+	_, err := q.Store.DB().Exec(`
+		UPDATE abom_frontier
+		SET status = ?, reason = ?, completed_at = ?, next_attempt_at = NULL, claimed_at = NULL,
+		    expedited_at = NULL, requeued_for = NULL, dependencies_moved = NULL, analyzed_ref = ?,
+		    resolved_sha = ?
+		WHERE node_key = ? AND ref = ?`,
+		StatusNothing, nullable(reason), q.now().Format(time.RFC3339Nano), ref, nullable(sha),
+		k.NodeKey, k.Ref)
+	if err != nil {
+		return fmt.Errorf("settling %q with nothing to analyze: %w", k.NodeKey, err)
+	}
+	return nil
+}
+
 func (q *Queue) setStatus(k Key, status, reason, completedAt string) error {
 	var completed any
 	if completedAt != "" {
@@ -521,9 +581,11 @@ func (q *Queue) setStatus(k Key, status, reason, completedAt string) error {
 	_, err := q.Store.DB().Exec(`
 		UPDATE abom_frontier
 		SET status = ?, reason = COALESCE(?, reason), completed_at = ?, next_attempt_at = NULL,
-		    claimed_at = NULL
+		    claimed_at = NULL,
+		    requeued_for = CASE WHEN ? = 'pending' THEN requeued_for END,
+		    dependencies_moved = CASE WHEN ? = 'pending' THEN dependencies_moved END
 		WHERE node_key = ? AND ref = ?`,
-		status, nullable(reason), completed, k.NodeKey, k.Ref)
+		status, nullable(reason), completed, status, status, k.NodeKey, k.Ref)
 	if err != nil {
 		return fmt.Errorf("setting %q to %s: %w", k.NodeKey, status, err)
 	}

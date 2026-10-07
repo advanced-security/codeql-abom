@@ -1,0 +1,13 @@
+name: Synthetic Actions database fixture
+on: pull_request_target
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Use a synthetic external action
+        id: fixture-action
+        uses: test-owner/fixture-action@v1
+      - name: Print the pull request title
+        run: echo synthetic

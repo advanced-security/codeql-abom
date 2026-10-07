@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -8,11 +9,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/customql"
 	"github.com/advanced-security/codeql-abom/internal/expand"
 	"github.com/advanced-security/codeql-abom/internal/frontier"
+	"github.com/advanced-security/codeql-abom/internal/ghapp"
 	"github.com/advanced-security/codeql-abom/internal/graph"
 	"github.com/advanced-security/codeql-abom/internal/ingest"
 	"github.com/advanced-security/codeql-abom/internal/runner"
@@ -105,11 +108,18 @@ func runnableSuites() []string {
 	return suites
 }
 
+// crawlQueue is the discovery queue a crawl claims from, kept inside the owned closure.
+func crawlQueue(s *store.Store, maxDepth int) *frontier.Queue {
+	return &frontier.Queue{Store: s, MaxDepth: maxDepth, Closure: graph.OwnedClosureNames(s)}
+}
+
 // newSupervisor wires the expansion loop serve hosts.
 //
 // It is built whether or not it will autostart, because the interface can start it later and a
 // button that has nothing behind it is worse than no button.
-func newSupervisor(s *store.Store, opts discoveryOptions, logTo io.Writer) (*supervisor.Supervisor, error) {
+func newSupervisor(
+	s *store.Store, opts discoveryOptions, tokens ghapp.TokenSource, logTo io.Writer,
+) (*supervisor.Supervisor, error) {
 	dir := opts.workDir
 	if dir == "" {
 		tmp, err := os.MkdirTemp("", "abom-serve-*")
@@ -121,12 +131,11 @@ func newSupervisor(s *store.Store, opts discoveryOptions, logTo io.Writer) (*sup
 		return nil, fmt.Errorf("creating %s: %w", dir, err)
 	}
 
-	queue := &frontier.Queue{Store: s, MaxDepth: opts.maxDepth}
-
-	var pace *work.Limiter
-	if opts.rateLimitPerHour > 0 {
-		pace = work.NewLimiter(opts.rateLimitPerHour)
+	queue := crawlQueue(s, opts.maxDepth)
+	if err := configurePools(processPools, s, opts.rateLimitPerHour); err != nil {
+		return nil, err
 	}
+	fetching := processPools.Pool(work.PoolFetching, work.UnitGit)
 
 	w := store.NewWriter(s, 0)
 	// The crawl runs for hours, so both the small commands and the BQRS lane are worth a JVM that
@@ -140,7 +149,7 @@ func newSupervisor(s *store.Store, opts discoveryOptions, logTo io.Writer) (*sup
 			CodeQLPath: opts.codeqlPath, Threads: opts.codeqlThreads(), RAMMB: opts.ramMB,
 		},
 	}
-	checkout := &expand.Checkout{}
+	checkout := &expand.Checkout{Tokens: tokens}
 	cache, err := checkoutCache(opts.cacheDir, opts.cacheMaxMB)
 	if err != nil {
 		return nil, fmt.Errorf("preparing the checkout cache: %w", err)
@@ -165,13 +174,14 @@ func newSupervisor(s *store.Store, opts discoveryOptions, logTo io.Writer) (*sup
 			Ingester:  ingest.New(s, w),
 			Writer:    w,
 			Fetcher:   checkout,
-			Probe:     checkout,
+			Probe:     pacedProbe{RefProbe: checkout, pool: fetching},
 			Builder:   r,
 			CodeQL:    r,
 			Resolver:  r,
 			Analyzer:  r,
 			Decode:    expand.Decoder(r.Decode),
-			Pace:      pace,
+			Pace:      fetching,
+			Capacity:  processPools.Pool(work.PoolAnalysis, work.UnitWorkerSeconds),
 			Cache:     cache,
 			Databases: databases,
 			Install:   r.InstallPack,
@@ -179,8 +189,10 @@ func newSupervisor(s *store.Store, opts discoveryOptions, logTo io.Writer) (*sup
 			// and nothing says which one, or why.
 			OnEvent: logDiscoveryFailures(logTo),
 		},
-		Rechecker: &expand.Rechecker{Queue: queue, Probe: checkout, Pace: pace},
-		Builder:   &graph.Builder{Store: s},
+		Rechecker: &expand.Rechecker{
+			Queue: queue, Probe: checkout, Pace: processPools.Pool(work.PoolProbing, work.UnitGit),
+		},
+		Builder: &graph.Builder{Store: s},
 		Options: expand.Options{
 			QueryPath:   opts.queryPath,
 			QueryID:     opts.queryID,
@@ -202,7 +214,7 @@ func newSupervisor(s *store.Store, opts discoveryOptions, logTo io.Writer) (*sup
 		Reclassifier: func() (int, error) {
 			return expand.ReclassifySupplyChain(s, queue)
 		},
-		Advisor: newAdvisor(s, logTo),
+		Advisor: newAdvisor(s, tokens, logTo),
 
 		AdvisoryMaxAge:      opts.advisoryMaxAge,
 		AdvisoryMinInterval: opts.advisoryMinPeriod,
@@ -212,17 +224,71 @@ func newSupervisor(s *store.Store, opts discoveryOptions, logTo io.Writer) (*sup
 	}, nil
 }
 
+// processPools are the token pools every kind of work this process does draws on. One set per
+// process, because GitHub's allowance belongs to the token and two sets would each think they had
+// all of it.
+var processPools = work.NewTokenPools()
+
+// configurePools applies the rates the operator saved, and the flag's rate to fetching and probing
+// where none was saved. A pool with neither has no rate, which leaves its work alone.
+func configurePools(pools *work.TokenPools, s *store.Store, gitPerHour int) error {
+	rates, err := s.PoolRates()
+	if err != nil {
+		return fmt.Errorf("reading the pools' rates: %w", err)
+	}
+	saved := map[string]bool{}
+	for _, r := range rates {
+		pools.Pool(r.Pool, r.Unit).Configure(r.PerHour, r.Burst)
+		saved[r.Pool] = saved[r.Pool] || r.Unit == work.UnitGit
+	}
+	for _, pool := range []string{work.PoolFetching, work.PoolProbing} {
+		if gitPerHour > 0 && !saved[pool] {
+			pools.Pool(pool, work.UnitGit).Configure(gitPerHour, 1)
+		}
+	}
+	// One write a minute until the operator says otherwise: each starts a setup run on their runners.
+	if !slices.ContainsFunc(rates, func(r store.PoolRate) bool { return r.Pool == work.PoolDefaultSetup }) {
+		pools.Pool(work.PoolDefaultSetup, work.UnitREST).Configure(defaultSetupWritesPerHour, 1)
+	}
+	return nil
+}
+
+// defaultSetupWritesPerHour is the default setup pool's rate where the operator saved none.
+const defaultSetupWritesPerHour = 60
+
+// pacedProbe draws a reference lookup from the fetching pool: it is a git request, like the clone
+// it may save.
+type pacedProbe struct {
+	expand.RefProbe
+	pool *work.TokenPool
+}
+
+func (p pacedProbe) Resolve(ctx context.Context, owner, repo, ref string) (string, error) {
+	if err := p.pool.Take(ctx); err != nil {
+		return "", err
+	}
+	return p.RefProbe.Resolve(ctx, owner, repo, ref)
+}
+
 // logDiscoveryFailures names the repository behind each failed analysis.
 //
 // It carries a timestamp because these land in a server log that runs for hours, unlike
 // logFailures' output, which sits under the run that produced it.
+//
+// A tree read in full that declares nothing is not a failure, whichever way it settles, so it is
+// logged as the reading it was.
 func logDiscoveryFailures(w io.Writer) func(work.Event) {
 	return func(ev work.Event) {
 		if ev.Kind != work.EventFailed || w == nil {
 			return
 		}
-		fmt.Fprintf(w, "%s discovery: FAILED %s: %v\n",
-			time.Now().UTC().Format(time.RFC3339), ev.Job.Repository, ev.Err)
+		at := time.Now().UTC().Format(time.RFC3339)
+		var nothing *expand.NothingToAnalyze
+		if errors.As(ev.Err, &nothing) {
+			fmt.Fprintf(w, "%s discovery: read %s: %s\n", at, ev.Job.Repository, nothing.Why)
+			return
+		}
+		fmt.Fprintf(w, "%s discovery: FAILED %s: %v\n", at, ev.Job.Repository, ev.Err)
 	}
 }
 

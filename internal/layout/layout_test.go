@@ -36,10 +36,12 @@ func fixtureDOT(t *testing.T, groupBy string) []byte {
 	return dot
 }
 
+// requireGraphviz fails rather than skips: Graphviz is a requirement, and a test that skipped
+// without it would pass on exactly the machine that cannot serve.
 func requireGraphviz(t *testing.T, e Engine) {
 	t.Helper()
 	if !Available(e) {
-		t.Skipf("%s is not installed; layout is optional and the interface degrades without it", e)
+		t.Fatalf("%s is not installed: %s", e, Remedy)
 	}
 }
 
@@ -174,9 +176,7 @@ func TestEveryNodeComesBackWithAPosition(t *testing.T) {
 func TestOnlySomeEnginesDrawAClusterBoundary(t *testing.T) {
 	dot := fixtureDOT(t, "owner")
 	for _, e := range Engines() {
-		if !Available(e) {
-			t.Skipf("%s is not installed", e)
-		}
+		requireGraphviz(t, e)
 		result, err := Compute(context.Background(), dot, Options{Engine: e})
 		if err != nil {
 			t.Fatalf("%s: %v", e, err)
@@ -262,4 +262,82 @@ func Available(e Engine) bool {
 	}
 	_, err := exec.LookPath(program)
 	return err == nil
+}
+
+// The version is read from the installed Graphviz, and it is what a cached figure and its caption
+// are keyed on: a drawing is byte-identical only within one version.
+func TestTheInstalledVersionIsReadFromGraphviz(t *testing.T) {
+	requireGraphviz(t, Dot)
+	version, err := Version(context.Background())
+	if err != nil {
+		t.Fatalf("Version: %v", err)
+	}
+	if version == "" || strings.ContainsAny(version, " \n") || !strings.Contains(version, ".") {
+		t.Errorf("Version() = %q, want a bare dotted version", version)
+	}
+}
+
+func TestAVersionLineIsReadWhateverPrecedesIt(t *testing.T) {
+	for line, want := range map[string]string{
+		"dot - graphviz version 16.1.0 (20260904.0139)\n": "16.1.0",
+		"dot - graphviz version 2.43.0 (0)\n":             "2.43.0",
+		"dot - Graphviz version 9.0.0 (20230911.1827)":    "9.0.0",
+	} {
+		got, err := parseVersion(line)
+		if err != nil || got != want {
+			t.Errorf("parseVersion(%q) = %q, %v; want %q", line, got, err, want)
+		}
+	}
+	if _, err := parseVersion("dot: command not found"); err == nil {
+		t.Error("a line naming no version was read as one")
+	}
+}
+
+// A server without Graphviz is a broken installation, and the error says how to fix it.
+func TestAMissingGraphvizNamesTheRemedy(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	_, err := Require(context.Background())
+	if err == nil {
+		t.Fatal("Require succeeded with no dot on the PATH")
+	}
+	if !ErrUnavailable(err) || !strings.Contains(err.Error(), "install Graphviz") {
+		t.Errorf("Require() = %v, want ErrUnavailable naming the remedy", err)
+	}
+}
+
+// A drawing needs each box's size and each edge's route, not only where the centers went.
+func TestBoxesAndRoutesComeBackForEveryNodeAndEdge(t *testing.T) {
+	requireGraphviz(t, Dot)
+	doc := []byte(`digraph g { newrank=true; rankdir=LR;
+	  node [shape=box, fixedsize=true, label=""];
+	  "a" [width=1.5, height=0.5]; "b@v1" [width=2, height=0.75];
+	  "a" -> "b@v1"; }`)
+	result, err := Compute(context.Background(), doc, Options{Engine: Dot})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	boxes := map[string]Box{}
+	for _, b := range result.Boxes {
+		boxes[b.Key] = b
+	}
+	if a := boxes["a"]; a.W != 108 || a.H != 36 {
+		t.Errorf("a came back %v x %v points, want the 108 x 36 it was given", a.W, a.H)
+	}
+	if b := boxes["b@v1"]; b.W != 144 || b.H != 54 {
+		t.Errorf("b@v1 came back %v x %v points, want 144 x 54", b.W, b.H)
+	}
+	if len(result.Splines) != 1 {
+		t.Fatalf("%d routes for one edge", len(result.Splines))
+	}
+	route := result.Splines[0]
+	if route.Tail != "a" || route.Head != "b@v1" {
+		t.Errorf("the route runs %s -> %s, want a -> b@v1", route.Tail, route.Head)
+	}
+	if len(route.Points) < 4 || (len(route.Points)-1)%3 != 0 || route.Arrow == nil {
+		t.Errorf("the route has %d points and arrow %v; want a cubic B-spline and its arrow tip",
+			len(route.Points), route.Arrow)
+	}
+	if boxes["b@v1"].X <= boxes["a"].X {
+		t.Error("left to right put the head of the edge left of its tail")
+	}
 }

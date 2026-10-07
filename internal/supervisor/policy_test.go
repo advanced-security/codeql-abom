@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -77,6 +78,28 @@ func TestQueueDrainingForcesARebuild(t *testing.T) {
 
 	if due, _ := (AggregatePolicy{}).due(st, true, now); !due {
 		t.Error("finished a run without measuring what it had just built")
+	}
+}
+
+// An idle crawl drains every cycle. Rebuilding each time the floor passed was 59 of 65 rebuilds with
+// nothing new on the crawled organization, 21 s each on the store's one connection.
+func TestADrainedQueueIsNotRebuiltWhenNothingChangedSinceTheLastRebuild(t *testing.T) {
+	now := time.Now()
+	st := store.ReachStaleness{At: now.Add(-time.Hour), TotalEdges: 15000}
+
+	if due, why := (AggregatePolicy{}).due(st, true, now); due {
+		t.Errorf("rebuilt reach on a drain with nothing changed since the last rebuild: %q", why)
+	}
+}
+
+// A cycle can change the graph without adding an edge: a finding, a commit that moved, a prune.
+func TestADrainedQueueIsRebuiltWhenCyclesChangedTheGraphAndSaysHowMany(t *testing.T) {
+	now := time.Now()
+	st := store.ReachStaleness{At: now.Add(-time.Hour), Generations: 3, TotalEdges: 15000}
+
+	due, why := AggregatePolicy{}.due(st, true, now)
+	if !due || !strings.Contains(why, "3") {
+		t.Errorf("due %v because %q; want a rebuild naming the 3 cycles that changed the graph", due, why)
 	}
 }
 

@@ -28,6 +28,23 @@ flowchart LR
 `repository.origin` records how a row entered the corpus. It is provenance of the data, and is
 never rendered as an ownership claim.
 
+**Origin** says whose a node is, in four words. The declaration decides first; where it does not
+cover the node's repository, provenance does. The `origins` filter takes the same values, and a
+starting point you declared answers both `owned` and `seed`.
+
+| Word | Value | Means |
+| --- | --- | --- |
+| **owned** | `owned` | Your declaration covers the repository it lives in |
+| **starting point** | `seed` | Seeded, and nobody declared its repository |
+| **upstream** | `upstream` | In a repository fetched only to resolve what the starting points run |
+| **external** | `external` | Belongs to no repository: what a reference names, rather than what a repository holds |
+
+**What you own** is the `owned` scope: only what your declared repositories hold, so every row and
+node it lists reads *owned*. **Yours and what it runs** is the `supply-chain` scope: that, and
+everything it runs at any depth, so it lists external actions because yours run them. Each named
+scope carries a description, shown wherever it is offered; a kept scope is described by what its
+filter asks.
+
 **Retired, and not to be reintroduced:** *in scope* and *under review*. Both read as a claim of
 responsibility that nobody made. There is no state in which a repository is under review by nobody
 — nothing happens until an operator claims an account.
@@ -84,11 +101,34 @@ file paths. Reporting build-time work as though this organization ran it would o
 | **Analyzed** | A query ran against it and the result was ingested |
 | **Unanalyzed** | Known to exist, nothing has looked |
 | **Nothing to analyze** | Looked, and there was no database or no workflow |
+| **Not claimed** (queued) | Queued for a repository nothing owned reaches any more. The crawl does not analyze it and it holds no depth open, until a prune removes it |
 | **Missing** (from a full listing) | A declared repository the last full listing of its account did not name. No longer yours, and nothing removed for it; what only it reached is what the prune offers. Only a full listing can say it, and only one can say nothing is missing |
 
 A reader must be able to tell "we have not looked" from "there was nothing to look at", because
 only one of them is work somebody can do. Partial coverage is its own state, not a rounding of
 `analyzed` in either direction.
+
+## Actions code scanning
+
+| Word | Means |
+| --- | --- |
+| **Actions scanning** | Whether code scanning analyzes the repository's Actions code: through **default setup**, **advanced setup**, **both setups**, or **off**. **No Actions code** where the listing and GitHub found none; **not read** where nothing has looked. The setup and the database are written under it, in the same column |
+| **Setup** | Which code scanning setup GitHub reports: **default setup**, **advanced setup** (a CodeQL workflow it reaches, or a CodeQL analysis default setup did not make), **setups in conflict**, **no setup**, or **setup unreadable** where GitHub refused the read. Left out where the scanning state already names it |
+| **Actions database** | Whether code scanning holds an Actions CodeQL database ABOM can pull: **Actions database**, **no Actions database**, or **database not read** |
+| **Covered** | Default setup already analyzes `actions` |
+| **Add** / **Enable** | The only classes ABOM writes: add `actions` to default setup, or turn it on for `actions` alone |
+| **Blocked by an enforced configuration** | An enforced configuration turns default setup off; GitHub refuses changes there |
+| **A language the write refuses** | Default setup analyzes a language GitHub's write rejects, such as `rust`, so `actions` cannot be added without removing it |
+| **Not crawled yet** | Holds Actions code ABOM has not analyzed, so advanced setup cannot be ruled out |
+| **Preview** | What a batch would write, from what was last read; it asks GitHub nothing |
+| **Approved by** | The write token's owner, whom GitHub records for every write |
+| **Batch** | An approved preview's writes, one repository at a time, each read back |
+| **Write targets** | What `--enable-targets` and `--enable-accounts` let a server write; without them it only previews |
+| **Not a write target** / **Left out by name** | A preview row outside the write targets, or excluded by name; never written from that preview |
+| **Ledger** | Every step a write took: refused, skipped, deferred, sent, verified or failed |
+
+A class is what the last reading said, never a verdict on the code: **covered** says default setup
+analyzes `actions`, not that what it found was safe.
 
 ## Locks
 
@@ -134,6 +174,7 @@ evidence. Neither a lock context nor a query's source substitutes for this datab
 | **Unknown** (security severity) | A finding whose rule declares no security score. Counted beside the bands, never as low or as zero |
 | **Declared metadata** | Every pair a query version states about itself, as `codeql resolve metadata` reads it. *Not read yet* means nothing has resolved that version, not that it declares nothing, and lasts only until the server reads it. *Cannot be read* means no file on disk is that version; *cannot be known* means no version was recorded for the runs |
 | **What reported it** | A finding's evaluations: what ran, in which shape, under which CodeQL, the rule's own version, and who ran it — the crawl, run *N*, the closure of an owned repository, or a replayed recording |
+| **Evaluated by** | Who produced an evaluation's result for the rule: ABOM, or *code scanning analysis N* where the repository's own code scanning analysis of the same commit ran the rule. A rule id names one query whatever pack or suite ran it, so the CodeQL version and pack shown are then that analysis's, and no query version is recorded |
 | **Lane** | What ran that is not one query: a whole suite invoked in one call, or several queries in one evaluation |
 | **Stage** | How far a version has been taken: `dev`, `test`, `extended-test`, `review`, `deploy` |
 | **Step** | One of seven marks inside `dev` and `test`: target, help, expected results, test database, AST, compiles, tests. Pending, failed, warning or passing. Pending is grey and is never a failure: nothing has been shown yet |
@@ -211,6 +252,8 @@ over.
 | --- | --- | --- |
 | **Repository grouping** | A repository custom property GitHub holds | A distinct value of a configured key, used to group and filter the estate. ABOM names the key the operator chose rather than what it might mean: `business_id` yields business units, `team` yields teams, and asserting either from the other would be a meaning read from nowhere |
 | **No value** | The absence of that property | Its own state, reported as such |
+| **Property scope** | A declaration's terms on custom properties | The repositories of a restricted organization carrying every listed value, kept current as GitHub's values change. Several on one account each count. **Held** while the organization's schema is unread or lets repository administrators set the property: kept, counting nothing. **Not judged** where a repository's values did not arrive whole, which is never a mismatch |
+| **The organization's default** | A property's default in the schema | What every repository that never chose a value carries. A property scope naming it takes in each of them, and every repository created later |
 
 The key or keys are configured by the operator — `business_unit`, `app_name`, whatever the
 organization already administers. The *values* are discovered, never listed by hand.

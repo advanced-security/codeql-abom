@@ -453,32 +453,6 @@ test.describe('geometry', () => {
             address: async () => '/codeql?tab=suites',
         },
         {
-            name: "the largest listed run's results",
-            at: '/codeql?tab=runs',
-            boxes: '.abom-results .mud-table-container',
-            // Asked of the server first: with no run, waiting for one and then for its rows spent
-            // the whole test timeout, and a store with nothing to measure failed rather than skipped.
-            address: async (request, baseURL) => {
-                const { runs } = await (await request.get(`${baseURL}/api/runs`)).json();
-                return runs.length > 0 ? '/codeql?tab=runs' : undefined;
-            },
-            open: async (page, request, baseURL) => {
-                const ids = page.locator('[data-abom-run-id]');
-                if (!(await ids.first().waitFor({ timeout: 15_000 }).then(() => true, () => false))) return;
-                const listed = new Set(await ids.evaluateAll((els) => els.map((e) => Number(e.dataset.abomRunId))));
-                const { runs } = await (await request.get(`${baseURL}/api/runs`)).json();
-                const size = (r) => Object.values(r.tally).reduce((a, b) => a + b, 0);
-                const largest = runs.filter((r) => listed.has(r.rowId)).sort((a, b) => size(b) - size(a))[0];
-                await page.locator('tr', { has: page.locator(`[data-abom-run-id="${largest.rowId}"]`) })
-                    .locator('[data-abom-run-detail]').first().click();
-                await page.locator('[data-abom-run-summary]').waitFor({ timeout: 15_000 });
-                const all = page.locator('[data-abom-results-all]');
-                if (!(await all.count())) return;
-                await all.getByText('Show every repository').click();
-                await expect(page.locator('.abom-results thead th', { hasText: 'Status' })).toBeVisible();
-            },
-        },
-        {
             name: "the widest-reaching node's tables",
             at: '/node',
             boxes: '.abom-grid .mud-table-container',

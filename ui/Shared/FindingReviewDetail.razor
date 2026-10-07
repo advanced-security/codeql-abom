@@ -109,6 +109,7 @@
         <dl class="abom-review-facts">
             <dt>Revision</dt><dd class="abom-ref">@Recorded(Evaluation?.Commit)</dd>
             <dt>Provider</dt><dd>@Recorded(Details.Finding.Provider)</dd>
+            <dt>Evaluated by</dt><dd data-abom-review-evaluated-by>@EvaluatedBy</dd>
             <dt>CodeQL version</dt><dd>@Recorded(Evaluation?.CliVersion)</dd>
             <dt>Pack</dt><dd>@Recorded(Evaluation?.Pack) @Evaluation?.PackVersion</dd>
             <dt>Query version</dt><dd class="abom-ref">@Recorded(Evaluation?.RuleVersion)</dd>
@@ -143,6 +144,15 @@
         }}];
 
     private static string Recorded(string? value) => string.IsNullOrEmpty(value) ? "Not recorded" : value;
+
+    private const string CodeScanning = "github-code-scanning:";
+    private string EvaluatedBy => Evaluation?.TakenFrom switch
+    {
+        null => "Not recorded",
+        "" => "ABOM",
+        var from when from.StartsWith(CodeScanning, StringComparison.Ordinal) => $"code scanning analysis {from[CodeScanning.Length..]}",
+        var from => from,
+    };
     private static string EvaluationLabel(FindingEvaluation evaluation) =>
         $"{TimeText.DayAndTime(evaluation.RanAt)} - {(evaluation.Commit.Length > 12 ? evaluation.Commit[..12] : Recorded(evaluation.Commit))}";
 

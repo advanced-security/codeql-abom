@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
-	"strings"
 )
 
 // Traversal directions for a scoped view.
@@ -144,6 +143,9 @@ func (s *Store) walk(opts SubgraphOptions) (Subgraph, error) {
 		edges:    map[[2]int64]*SubgraphEdge{},
 		budgeted: map[int64]bool{focusID: true},
 	}
+	if v.links, err = s.declaredLinks(opts.Mode); err != nil {
+		return out, err
+	}
 
 	frontier := []int64{focusID}
 	for hop := 1; hop <= opts.hops() && len(frontier) > 0; hop++ {
@@ -163,6 +165,8 @@ func (s *Store) walk(opts SubgraphOptions) (Subgraph, error) {
 type subgraphWalk struct {
 	store *Store
 	opts  SubgraphOptions
+	// links is every line the walk may cross, read once.
+	links declaredLinks
 	// display maps a node to the node that stands for it once collapsing is applied.
 	display  map[int64]int64
 	hops     map[int64]int
@@ -170,6 +174,45 @@ type subgraphWalk struct {
 	budgeted map[int64]bool
 	reach    int
 	full     bool
+}
+
+// declaredLink is what one line declared at the commits in use, between two node rows.
+type declaredLink struct {
+	src, dst int64
+	kind     string
+	ref      string
+}
+
+// declaredLinks indexes the declarations by each end.
+type declaredLinks struct {
+	bySrc, byDst map[int64][]declaredLink
+}
+
+// declaredLinks reads, once, every line of a mode as what it declared at the commits in use: a
+// walk asking per node would pay for reading the declarations once per node it reached.
+func (s *Store) declaredLinks(mode string) (declaredLinks, error) {
+	out := declaredLinks{bySrc: map[int64][]declaredLink{}, byDst: map[int64][]declaredLink{}}
+	table, err := s.declaredEdgeTable(mode)
+	if err != nil {
+		return out, err
+	}
+	rows, err := s.db.Query(`
+		SELECT row_id, src_node_row_id, dst_node_row_id, edge_kind, COALESCE(ref_value, '')
+		  FROM ` + table + ` ORDER BY 1, 3, 5`)
+	if err != nil {
+		return out, fmt.Errorf("reading what each line declared: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var row int64
+		var l declaredLink
+		if err := rows.Scan(&row, &l.src, &l.dst, &l.kind, &l.ref); err != nil {
+			return out, fmt.Errorf("scanning a declaration: %w", err)
+		}
+		out.bySrc[l.src] = append(out.bySrc[l.src], l)
+		out.byDst[l.dst] = append(out.byDst[l.dst], l)
+	}
+	return out, rows.Err()
 }
 
 func (v *subgraphWalk) step(frontier []int64, hop int) ([]int64, error) {
@@ -222,41 +265,41 @@ func (v *subgraphWalk) neighbors(node int64) ([]neighbor, error) {
 		           WHERE repository_row_id = (
 		                 SELECT repository_row_id FROM abom_node_live WHERE row_id = ?)`
 	}
-
-	var parts []string
-	var args []any
-	add := func(side, other string, outgoing int) {
-		parts = append(parts, fmt.Sprintf(`
-			SELECT e.%s, e.edge_kind, COALESCE(e.ref_value, ''), %d
-			FROM %s e
-			WHERE e.%s IN (%s)`, other, outgoing, edgeSource(v.opts.Mode), side, members))
-		args = append(args, node, node)
-	}
-	switch v.opts.Direction {
-	case DirectionDependencies:
-		add("src_node_row_id", "dst_node_row_id", 1)
-	case DirectionBoth:
-		add("dst_node_row_id", "src_node_row_id", 0)
-		add("src_node_row_id", "dst_node_row_id", 1)
-	default:
-		add("dst_node_row_id", "src_node_row_id", 0)
-	}
-
-	rows, err := v.store.db.Query(strings.Join(parts, " UNION ALL "), args...)
+	rows, err := v.store.db.Query(members+` ORDER BY 1`, node, node)
 	if err != nil {
-		return nil, fmt.Errorf("reading neighbors of %d: %w", node, err)
+		return nil, fmt.Errorf("reading members of %d: %w", node, err)
 	}
 	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scanning a member: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
 	var out []neighbor
-	for rows.Next() {
-		var n neighbor
-		if err := rows.Scan(&n.other, &n.kind, &n.ref, &n.outgoing); err != nil {
-			return nil, fmt.Errorf("scanning neighbor: %w", err)
+	incoming := v.opts.Direction != DirectionDependencies
+	outgoing := v.opts.Direction == DirectionDependencies || v.opts.Direction == DirectionBoth
+	if incoming {
+		for _, id := range ids {
+			for _, l := range v.links.byDst[id] {
+				out = append(out, neighbor{other: l.src, kind: l.kind, ref: l.ref})
+			}
 		}
-		out = append(out, n)
 	}
-	return out, rows.Err()
+	if outgoing {
+		for _, id := range ids {
+			for _, l := range v.links.bySrc[id] {
+				out = append(out, neighbor{other: l.dst, kind: l.kind, ref: l.ref, outgoing: true})
+			}
+		}
+	}
+	return out, nil
 }
 
 // record merges an edge, keeping every observed reference.

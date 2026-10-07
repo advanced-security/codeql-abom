@@ -38,6 +38,35 @@ public class KeyTextTests
         Assert.Equal("ci.yml", id.Name);
     }
 
+    // A job's key is `job:repository:path:job`; shown whole it is a prefix every row repeats.
+    [Fact]
+    public void AJobSplitsIntoItsRepositoryAndItsWorkflowAndName()
+    {
+        var id = KeyText.Split("job:octo-org/app:.github/workflows/ci.yml:build");
+
+        Assert.Equal("octo-org/app", id.Repository);
+        Assert.Equal("ci.yml › build", id.Name);
+    }
+
+    [Fact]
+    public void AStepIsNamedByItsJobAndItsPlaceCountingFromOne()
+    {
+        var id = KeyText.Split("step:octo-org/app:.github/workflows/ci.yml:build:0");
+
+        Assert.Equal("octo-org/app", id.Repository);
+        Assert.Equal("ci.yml › build › step 1", id.Name);
+    }
+
+    [Theory]
+    [InlineData("same-repository", "Same repository")]
+    [InlineData("same-owner", "Same account")]
+    [InlineData("cross-owner", "Another account")]
+    [InlineData("", "not known")]
+    public void ABoundaryIsShownInTheWordsTheVocabularyChose(string stored, string shown)
+    {
+        Assert.Equal(shown, KeyText.Boundary(stored));
+    }
+
     [Fact]
     public void ACompositeActionSplitsTheSameWay()
     {
@@ -57,6 +86,17 @@ public class KeyTextTests
 
         Assert.Equal("", id.Repository);
         Assert.Equal("actions/checkout", id.Name);
+    }
+
+    // Cut to one column, github/codeql-action/init, /analyze and /upload-sarif were three rows
+    // reading "github/codeql-action/…".
+    [Fact]
+    public void AnActionInsideARepositorySplitsIntoTheRepositoryAndItsPath()
+    {
+        var id = KeyText.Split("github/codeql-action/upload-sarif");
+
+        Assert.Equal("github/codeql-action", id.Repository);
+        Assert.Equal("upload-sarif", id.Name);
     }
 
     [Fact]

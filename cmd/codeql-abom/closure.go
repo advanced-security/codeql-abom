@@ -53,8 +53,12 @@ func runClosure(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		return errors.New("closure: nothing is owned, and a closure is rooted at an owned repository")
 	}
 
+	tokens, err := dbReaderTokens(cfg.dbPath)
+	if err != nil {
+		return fmt.Errorf("closure: %w", err)
+	}
 	e, cache, release, err := newExpander(s, nil, expandAllConfig{
-		codeqlPath: cfg.codeqlPath, cacheDir: cfg.cacheDir, cacheMaxMB: cfg.cacheMaxMB,
+		codeqlPath: cfg.codeqlPath, cacheDir: cfg.cacheDir, cacheMaxMB: cfg.cacheMaxMB, tokens: tokens,
 	}, stdout)
 	if err != nil {
 		return fmt.Errorf("closure: %w", err)

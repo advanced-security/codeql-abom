@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -16,23 +18,40 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/compare"
 	"github.com/advanced-security/codeql-abom/internal/declare"
 	"github.com/advanced-security/codeql-abom/internal/enumerate"
+	"github.com/advanced-security/codeql-abom/internal/events"
 	"github.com/advanced-security/codeql-abom/internal/expand"
 	"github.com/advanced-security/codeql-abom/internal/frontier"
+	"github.com/advanced-security/codeql-abom/internal/ghapp"
+	"github.com/advanced-security/codeql-abom/internal/layout"
 	"github.com/advanced-security/codeql-abom/internal/lockfile"
 	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/serve"
+	"github.com/advanced-security/codeql-abom/internal/setup"
 	"github.com/advanced-security/codeql-abom/internal/store"
 	"github.com/advanced-security/codeql-abom/internal/supervisor"
+	"github.com/advanced-security/codeql-abom/internal/work"
 )
 
 // shutdownGrace bounds how long serve waits for in-flight requests once asked to stop.
 const shutdownGrace = 5 * time.Second
+
+// poolFlushEvery is how often what the pools spent is written, and so how stale a meter can be.
+const poolFlushEvery = 30 * time.Second
 
 var _ serve.QueryTester = (*runner.Runner)(nil)
 
 var _ serve.ASTPrinter = (*runner.Runner)(nil)
 
 // wireEnumeration lets the loop re-read declared accounts on a period.
+// wireTrees lets the crawl recognize a commit's content from one tree read instead of a clone.
+// A read is not retried after rate limiting: the clone it falls back to costs less than the wait.
+func wireTrees(ctx context.Context, loop *supervisor.Supervisor, apiURL string, tokens ghapp.TokenSource) {
+	client := newReader(ctx, apiURL, tokens)
+	client.MaxRetries = 0
+	client.REST = processPools.Pool(work.PoolFetching, work.UnitREST)
+	loop.Expander.Trees = expand.GitHubTrees{Client: client}
+}
+
 func wireEnumeration(
 	loop *supervisor.Supervisor, srv *serve.Server, s *store.Store, every time.Duration,
 ) {
@@ -40,13 +59,20 @@ func wireEnumeration(
 		return
 	}
 	loop.EnumerateEvery = every
-	loop.Enumerate = func(ctx context.Context) (int, error) {
+	loop.Enumerate = func(ctx context.Context, ask supervisor.Ask) (int, error) {
 		report, err := enumerate.Run(ctx, enumerate.Options{
 			Store:            s,
 			Read:             srv.Enumerate,
 			Schema:           srv.EnumerateSchema,
+			Branches:         srv.EnumerateBranches,
+			Setup:            srv.EnumerateSetup,
+			Configurations:   srv.EnumerateConfigurations,
 			QueueOwned:       srv.QueueOwned,
 			FullListingEvery: srv.FullListingEvery,
+			Owners:           ask.Owners,
+			Full:             ask.Full,
+			Repositories:     ask.Repositories,
+			ReadRepository:   srv.EnumerateRepository,
 		})
 		if err != nil {
 			return 0, err
@@ -184,8 +210,77 @@ func seedDeclaration(s *store.Store, path string, stderr io.Writer) error {
 	return nil
 }
 
+// webhookSecretEnv supplies the secret when no file does; never a flag, since make status prints argv.
+const webhookSecretEnv = "ABOM_WEBHOOK_SECRET"
+
+// eventRetryEvery is how often deliveries waiting on an analysis are looked at again.
+const eventRetryEvery = 30 * time.Second
+
+func webhookSecret(path string) ([]byte, error) {
+	if path == "" {
+		return []byte(os.Getenv(webhookSecretEnv)), nil
+	}
+	secret, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("serve: reading the webhook secret: %w", err)
+	}
+	return bytes.TrimRight(secret, "\r\n"), nil
+}
+
+// receiveEvents turns on the receiver and its processor when a secret is set; the sweep is untouched.
+func receiveEvents(
+	ctx context.Context, srv *serve.Server, s *store.Store, loop *supervisor.Supervisor,
+	reader *catalog.Client, secret []byte, installations func(), stdout io.Writer,
+) {
+	if len(secret) == 0 {
+		return
+	}
+	wake := make(chan struct{}, 1)
+	srv.Events = &serve.EventReceiver{Secret: secret, Arrived: nudge(wake)}
+	go newProcessor(s, loop, reader, installations, stdout).Run(ctx, wake, eventRetryEvery)
+	fmt.Fprintln(stdout, "serve: receiving signed GitHub webhook deliveries at POST /api/events/github")
+}
+
+// newProcessor hands the processor only the asks this loop can answer, and reads GitHub through
+// the event follow-up reader.
+func newProcessor(
+	s *store.Store, loop *supervisor.Supervisor, reader *catalog.Client, installations func(), stdout io.Writer,
+) *events.Processor {
+	processor := &events.Processor{
+		Store: s, Queue: loop.Queue, Log: stdout, Installations: installations, Wake: loop.Wake,
+		Pace: processPools.Pool(work.PoolEvents, work.UnitGit),
+	}
+	if reader != nil {
+		processor.Branches, processor.Databases = reader.ProtectedBranches, reader.FindDatabase
+		processor.Setup = setup.Reader{Store: s, Catalog: reader}.Read
+		processor.Dependencies = reader.CompareDependencies
+	}
+	if loop.Enumerate != nil {
+		processor.List, processor.ListFully, processor.Read = loop.ListSoon, loop.ListFullySoon, loop.ReadSoon
+	}
+	if loop.Advisor != nil {
+		processor.Advisories = loop.RefreshAdvisoriesSoon
+	}
+	if loop.Rechecker != nil {
+		processor.Probe = loop.Rechecker.Probe
+	}
+	return processor
+}
+
+// nudge wakes whoever reads ch without blocking; one pending wake is as good as several.
+func nudge(ch chan<- struct{}) func() {
+	return func() {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+}
+
 type serveConfig struct {
-	dbPath         string
+	dbPath string
+	// graphviz is the version every figure is drawn with, read once at startup.
+	graphviz       string
 	declareFile    string
 	addr           string
 	uiDir          string
@@ -197,8 +292,16 @@ type serveConfig struct {
 	route          string
 	groupProperty  string
 	submitTargets  string
-	discovery      discoveryOptions
-	authoring      authoringOptions
+	enableTargets  string
+	enableAccounts string
+	webhookSecret  []byte
+	appDir         string
+	appPublicReads string
+	eventsRelay    string
+	// tokens is the App's token source once loaded, nil while reading as the operator.
+	tokens    ghapp.TokenSource
+	discovery discoveryOptions
+	authoring authoringOptions
 }
 
 // runServe answers interface queries over HTTP until the context is canceled.
@@ -207,6 +310,14 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	if err != nil {
 		return err
 	}
+	// Every details page draws with Graphviz, so without it this is a broken installation. Asked
+	// apart from ctx, which a caller may cancel before serving to run only the open-time work.
+	graphviz, err := layout.Require(context.WithoutCancel(ctx))
+	if err != nil {
+		return fmt.Errorf("serve: %w", err)
+	}
+	fmt.Fprintf(stdout, "serve: drawing with Graphviz %s\n", graphviz)
+	cfg.graphviz = graphviz
 	if reason := volatileDatabase(cfg.dbPath); reason != "" {
 		fmt.Fprintf(stderr, "serve: %s\n", reason)
 	}
@@ -217,22 +328,47 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	defer s.Close()
 
-	openCustomQueries(cfg.discovery.customQLDir, cfg.discovery.codeqlPath, stdout, stderr)
-
-	loop, err := newSupervisor(s, cfg.discovery, stderr)
+	app, err := readerApp(cfg.appDir, cfg.appPublicReads, cfg.apiURL)
 	if err != nil {
 		return fmt.Errorf("serve: %w", err)
 	}
+	tokens := readerTokens(app)
+	cfg.tokens = tokens
+	if cfg.webhookSecret, err = eventSecret(app, cfg.appDir, cfg.webhookSecret); err != nil {
+		return err
+	}
+
+	openCustomQueries(cfg.discovery.customQLDir, cfg.discovery.codeqlPath, stdout, stderr)
+
+	loop, err := newSupervisor(s, cfg.discovery, tokens, stderr)
+	if err != nil {
+		return fmt.Errorf("serve: %w", err)
+	}
+	wireTrees(ctx, loop, cfg.apiURL, tokens)
+	wireCodeScanning(ctx, loop, s, cfg.apiURL, tokens)
 	primeServedStore(s, loop.Queue, stdout, stderr)
 
-	srv, err := newConfiguredServer(ctx, cfg, s, loop, stderr)
+	srv, err := newConfiguredServer(ctx, cfg, s, loop, tokens, stderr)
 	if err != nil {
 		return err
+	}
+	resync := make(chan struct{}, 1)
+	receiveEvents(ctx, srv, s, loop, eventsClient(ctx, cfg.apiURL, s, tokens, processPools),
+		cfg.webhookSecret, nudge(resync), stdout)
+	if err := startRelay(ctx, cfg, stdout); err != nil {
+		return err
+	}
+	if app != nil {
+		fmt.Fprintln(stdout, describeApp(app))
+		go syncInstallations(ctx, app, s, installationSyncEvery, resync, stderr)
 	}
 	writeIdentityBanner(stdout, s)
 
 	go srv.CheckStaleness()
 	go srv.ReadUnreadDeclarations(ctx)
+	go srv.MeterPools(ctx, poolFlushEvery)
+	go pruneHistory(ctx, s, time.Hour, time.Now, stdout)
+	pollExternalReferences(ctx, cfg, s, loop, stdout)
 
 	loopCtx, stopLoop := context.WithCancel(ctx)
 	defer stopLoop()
@@ -276,6 +412,19 @@ func parseServeArgs(args []string, stderr io.Writer) (serveConfig, error) {
 		"repository custom property to group by on screen, for example business_id")
 	submitTargets := fs.String("submit-targets", "",
 		"comma-separated repositories that may receive dependency snapshots")
+	enableTargets := fs.String("enable-targets", "",
+		"comma-separated repositories whose default setup may gain actions, once an approved preview lists them")
+	enableAccounts := fs.String("enable-accounts", "",
+		"comma-separated accounts whose declared repositories' default setup may gain actions, once approved")
+	webhookSecretFile := fs.String("webhook-secret-file", "",
+		"file holding the secret GitHub signs webhook deliveries with "+
+			"(default: $"+webhookSecretEnv+"; neither refuses every delivery; an App's own is used when one is configured)")
+	appDir := fs.String("app-dir", "",
+		"directory holding the GitHub App ABOM reads as (default: github-app beside --db; none there reads as you)")
+	eventsRelay := fs.String("events-relay", "",
+		"relay channel to read deliveries from, such as https://smee.io/<channel> (default: $"+eventsRelayEnv+")")
+	appPublicReads := fs.String("app-public-reads", "",
+		"account whose installation reads owners the App is not installed on (default: the earliest installation)")
 	var d discoveryOptions
 	fs.BoolVar(&d.autostart, "expand", false, "start discovery as soon as the server is up")
 	fs.StringVar(&d.queryPath, "query", "", "single edges query to run instead of the stored per-tier suites")
@@ -300,7 +449,8 @@ func parseServeArgs(args []string, stderr io.Writer) (serveConfig, error) {
 		"longest the advisory set may go unrefreshed once the queue has drained (0: only on arrival)")
 	fs.DurationVar(&d.advisoryMinPeriod, "advisory-min-interval", supervisor.DefaultAdvisoryMinInterval,
 		"shortest gap between two advisory refreshes, however much arrives")
-	fs.IntVar(&d.rateLimitPerHour, "rate-limit-per-hour", 0, "cap checkouts per hour (0: unlimited)")
+	fs.IntVar(&d.rateLimitPerHour, "rate-limit-per-hour", 0,
+		"git requests an hour for fetching and probing, where Settings saved no rate (0: none)")
 	fs.StringVar(&d.cacheDir, "cache-dir", "",
 		"retain fetched checkouts here and reuse each commit across references (default: off)")
 	fs.Int64Var(&d.cacheMaxMB, "cache-max-mb", defaultCacheMaxMB,
@@ -326,6 +476,10 @@ func parseServeArgs(args []string, stderr io.Writer) (serveConfig, error) {
 		fs.Usage()
 		return serveConfig{}, errors.New("serve: --db is required")
 	}
+	secret, err := webhookSecret(*webhookSecretFile)
+	if err != nil {
+		return serveConfig{}, err
+	}
 	return serveConfig{
 		dbPath:         *dbPath,
 		declareFile:    *declareFile,
@@ -339,6 +493,12 @@ func parseServeArgs(args []string, stderr io.Writer) (serveConfig, error) {
 		route:          *route,
 		groupProperty:  *groupProperty,
 		submitTargets:  *submitTargets,
+		enableTargets:  *enableTargets,
+		enableAccounts: *enableAccounts,
+		webhookSecret:  secret,
+		appDir:         cmp.Or(*appDir, ghapp.DefaultDir(*dbPath)),
+		appPublicReads: *appPublicReads,
+		eventsRelay:    cmp.Or(*eventsRelay, os.Getenv(eventsRelayEnv)),
 		discovery:      d,
 		authoring:      authoring,
 	}, nil
@@ -373,12 +533,16 @@ func primeServedStore(s *store.Store, queue *frontier.Queue, stdout, stderr io.W
 }
 
 func newConfiguredServer(
-	ctx context.Context, cfg serveConfig, s *store.Store, loop *supervisor.Supervisor, stderr io.Writer,
+	ctx context.Context, cfg serveConfig, s *store.Store, loop *supervisor.Supervisor,
+	tokens ghapp.TokenSource, stderr io.Writer,
 ) (*serve.Server, error) {
 	srv := &serve.Server{
 		Store: s, Discovery: loop, AllowRemoteControl: cfg.allowRemote, Log: stderr,
-		Diagnostics: cfg.diagnostics,
-		WorkDir:     loop.Options.WorkDir,
+		Graphviz:     cfg.graphviz,
+		Diagnostics:  cfg.diagnostics,
+		WorkDir:      loop.Options.WorkDir,
+		Pools:        processPools,
+		RecheckFloor: cmp.Or(loop.RecheckTTL, supervisor.DefaultRecheckTTL),
 	}
 	srv.Executor = newRunExecutor(s, loop, stderr)
 	if tester, ok := loop.Expander.Resolver.(serve.QueryTester); ok {
@@ -393,17 +557,32 @@ func newConfiguredServer(
 		}
 	}
 	srv.Authoring = newAuthoring(s, cfg.authoring, loop, stderr)
-	reader, err := readClient(ctx, cfg.apiURL, s, cfg.route)
+	reader, err := readClient(ctx, cfg.apiURL, s, cfg.route, tokens)
 	if err != nil {
 		return nil, fmt.Errorf("serve: %w", err)
 	}
 	srv.Enumerate = reader.Sweep
 	srv.EnumerateSchema = reader.PropertySchema
+	srv.EnumerateBranches = reader.ProtectedBranches
+	srv.EnumerateRepository = reader.ReadRepository
+	setupReader := setup.Reader{Store: s, Catalog: reader}
+	srv.EnumerateSetup = setupReader.Read
+	srv.EnumerateConfigurations = setupReader.ReadConfigurations
+	srv.CodeScanningWrites = codeScanningWrites(ctx, cfg, s, setupReader)
+	srv.FindDatabase = reader.FindDatabase
 	srv.Comparer = &compare.Comparer{Store: s, Read: reader}
 	srv.FullListingEvery = cfg.listEvery
 	srv.GroupProperty = cfg.groupProperty
 	srv.QueueOwned = func() (int, error) { return expand.SeedOwnedRepositories(s, loop.Queue) }
-	verifier := lockVerifier(s)
+	srv.QueueClosure = loop.Queue.Closure
+	verifier := lockVerifier(s, tokens)
+	fetchTree, locks := verifier.Fetch, processPools.Pool(work.PoolLocks, work.UnitGit)
+	verifier.Fetch = func(ctx context.Context, dest, owner, repo, commit string) error {
+		if err := locks.Take(ctx); err != nil {
+			return err
+		}
+		return fetchTree(ctx, dest, owner, repo, commit)
+	}
 	srv.VerifyLock = func(ctx context.Context, repository, mode string) (store.LockVerification, error) {
 		return verifier.Request(ctx, repository, mode, "interface")
 	}

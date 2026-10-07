@@ -1,6 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { detect } from './browser.mjs';
 import { grepFor } from './pages.mjs';
+
+const stubs = path.join(path.dirname(fileURLToPath(import.meta.url)), 'stubs');
 
 // Paths come from the Makefile so `make e2e` and a bare `npx playwright test` agree. Defaults
 // exist only so the second one works at all; the Makefile always passes them explicitly.
@@ -70,6 +74,9 @@ export default defineConfig({
     webServer: {
         command: `${bin} serve --db ${db} --addr 127.0.0.1:${port} --ui-dir ${ui}` +
             (ql ? ` --custom-ql-dir ${ql}` : ''),
+        // The stub gh answers as an unauthenticated one on every machine, so a page that asks gh
+        // on its own can never write the person running the suite into the store under test.
+        env: { ...process.env, PATH: `${stubs}${path.delimiter}${process.env.PATH ?? ''}` },
         url: `http://127.0.0.1:${port}/api/summary`,
         // Never reuse: a server already on this port is somebody else's, pointed at a database
         // this suite did not prepare, and its answers would be reported as ours.

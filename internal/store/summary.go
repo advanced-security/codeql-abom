@@ -13,9 +13,9 @@ type Summary struct {
 	OwnedRepos    int `json:"ownedRepos"`
 	UpstreamRepos int `json:"upstreamRepos"`
 	Nodes         int `json:"nodes"`
-	// Dependencies are the nodes that are something depended on rather than part of the thing
-	// doing the depending. Nodes counts steps, jobs and workflows too, and they outnumber the
-	// dependencies fifty to one, so the two must never be printed under the same word.
+	// Dependencies are the actions, composite actions and images starting points run or hold, as
+	// the Actions unit lists them. Nodes counts steps, jobs and workflows too, and they outnumber
+	// the dependencies fifty to one, so the two must never be printed under the same word.
 	Dependencies int `json:"dependencies"`
 	Edges        int `json:"edges"`
 	Findings     int `json:"findings"`
@@ -59,14 +59,16 @@ func (s *Store) Summary() (Summary, error) {
 		args  []any
 	}{
 		{`SELECT COUNT(*) FROM repository WHERE origin = ?`, &out.SeedRepos, []any{OriginSeed}},
-		{`SELECT COUNT(*) FROM repository WHERE ` + ownedFullName("repository_full_name"),
+		{`SELECT COUNT(*) FROM repository sr WHERE ` + ownedFullName("sr.repository_full_name"),
 			&out.OwnedRepos, nil},
 		{`SELECT COUNT(*) FROM repository WHERE origin = ?`, &out.UpstreamRepos, []any{OriginUpstream}},
 		{`SELECT COUNT(*) FROM abom_node_live`, &out.Nodes, nil},
-		// The Inventory's kinds, spelled the same way, because the Dashboard card counting this
-		// links straight to that unit and two definitions would disagree on arrival.
-		{`SELECT COUNT(*) FROM abom_node_live
-		   WHERE node_kind IN ('action', 'composite_action', 'docker_image')`,
+		// What the Actions unit lists, spelled the same way, because the Dashboard card counting
+		// this links straight to that unit and two definitions would disagree on arrival.
+		{`SELECT COUNT(*) FROM abom_node_live n
+		    LEFT JOIN repository r ON r.row_id = n.repository_row_id
+		    LEFT JOIN abom_blast_radius b ON b.node_row_id = n.row_id
+		   WHERE n.node_kind IN ('action', 'composite_action', 'docker_image') AND ` + runsOrHolds,
 			&out.Dependencies, nil},
 		{`SELECT COUNT(*) FROM abom_edge_regular`, &out.Edges, nil},
 		{`SELECT COUNT(*) FROM abom_finding_regular`, &out.Findings, nil},

@@ -2,7 +2,11 @@ package view
 
 import (
 	"net/url"
+	"os"
+	"path/filepath"
+	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -62,27 +66,59 @@ func everyTerm(t *testing.T) []string {
 	for key := range held {
 		out = append(out, key)
 	}
-	if len(out) != 25 {
-		t.Fatalf("the spec wrote %d terms, want all 25; a field was added and not set here", len(out))
+	if fields := reflect.TypeOf(Spec{}).NumField(); len(out) != fields {
+		t.Fatalf("the spec wrote %d terms, want all %d; a field was added and not set here", len(out), fields)
 	}
 	return out
 }
 
+// Every value is one both parsers accept, and a list term with a fixed vocabulary carries all of it,
+// so the text this writes holds the browser to every term and every value the picker can offer.
 func specCarryingEveryTerm() Spec {
 	return Spec{
-		Scope: "owned", Search: "x", Kinds: []string{"action"}, Origins: []string{"external"},
+		Scope: "owned", Search: "x", Kinds: Vocabulary(paramKinds), Origins: Vocabulary(paramOrigins),
 		Rules: []string{"r"}, NotRules: []string{"r"}, Repositories: []string{"o/r"},
 		Properties:    []PropertyMatch{{Name: "k", Value: "v"}},
 		NotProperties: []PropertyMatch{{Name: "k", Value: "v"}},
-		Provider:      "p", Severity: "high", EdgeClass: []string{"e"},
-		SecuritySeverities: []string{BandCritical},
-		AdvisorySeverities: []string{BandHigh},
-		Reached:            []string{ReachedDirect},
+		Provider:      "p", Severity: "high", EdgeClass: Vocabulary(paramEdgeClass),
+		SecuritySeverities: Vocabulary(paramSecuritySeverity),
+		AdvisorySeverities: Vocabulary(paramAdvisorySeverity),
+		Reached:            Vocabulary(paramReached),
 		Policies:           []string{"p"},
-		Sources:            []string{SourceAbom},
-		EdgeKinds:          []string{EdgeKindJobNeedsJob},
+		CodeScanning:       Vocabulary(paramCodeScanning),
+		Sources:            Vocabulary(paramSource),
+		EdgeKinds:          Vocabulary(paramEdgeKinds),
 		RefStyle:           "tag", Boundary: "cross-owner", MinReach: 1,
-		Flags: []string{"findings"}, Steps: true, Mode: ModeRegular,
+		Flags: Vocabulary(paramFlags), Steps: true, Mode: ModeRegular,
 		At: []string{"v4"},
+	}
+}
+
+// The browser reads the very text Go writes for a spec carrying every term, from the file both
+// suites open. Two hand-kept lists let a term reach the filter picker that the browser could not
+// parse, and choosing it took the whole interface down.
+func TestTheBrowserReadsTheTextCarryingEveryTerm(t *testing.T) {
+	spec := specCarryingEveryTerm()
+	fields := reflect.ValueOf(spec)
+	for i := range fields.NumField() {
+		if fields.Field(i).IsZero() {
+			t.Errorf("specCarryingEveryTerm leaves %s unset, so nothing carries that term to the browser",
+				fields.Type().Field(i).Name)
+		}
+	}
+	text := spec.String()
+	parsed, err := Parse(text)
+	if err != nil {
+		t.Fatalf("Go refuses the text it wrote, %q: %v", text, err)
+	}
+	if again := parsed.String(); again != text {
+		t.Errorf("the text does not survive a round trip:\n wrote %s\n reads %s", text, again)
+	}
+	raw, err := os.ReadFile(filepath.Join("testdata", "every-term.txt"))
+	if err != nil {
+		t.Fatalf("reading the text the browser's ViewSpecTests parse: %v", err)
+	}
+	if got := strings.TrimSpace(string(raw)); got != text {
+		t.Errorf("testdata/every-term.txt is not what Go writes; make it exactly\n%s\nso the browser is held to it", text)
 	}
 }

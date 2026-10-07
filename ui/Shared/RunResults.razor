@@ -169,102 +169,106 @@ else
     }
     else
     {
-        <MudSimpleTable Dense="true" Hover="true" FixedHeader="true"
-                        Class="abom-grid abom-table abom-results abom-grid-windowed abom-grid-nested">
-            <thead>
-                <tr>
-                    <th><HeaderTip Tip="Which repository this run analyzed or still has to analyze.">Repository</HeaderTip></th>
-                    @foreach (var query in Columns)
-                    {
-                        <th class="abom-cell-right" data-abom-result-query="@query">
-                            <HeaderTip Tip="@(Columns.Count == 1
-                                                ? $"How many results {query} reported in each repository."
-                                                : $"How many results the {query} query reported in each repository.")">
-                                @(Columns.Count == 1 ? "Results" : query)
-                            </HeaderTip>
-                        </th>
-                    }
-                    @if (ShowsTotals)
-                    {
-                        <th class="abom-cell-right"><HeaderTip Tip="How many total results this run recorded for the repository, including results not split by query.">All queries</HeaderTip></th>
-                    }
-                    @if (_all)
-                    {
-                        <th><HeaderTip Tip="Whether this repository has been analyzed, is still waiting, failed, or could not be analyzed.">Status</HeaderTip></th>
-                    }
-                    @if (_run.Held)
-                    {
-                        <th></th>
-                    }
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var member in Listed)
+        @* Every row is loaded and the grid pages them itself, so a column sorts the whole run rather
+           than a page of it. A query column added later would be appended after the last column, so
+           a different set of them is a different grid. *@
+        <MudDataGrid T="AnalysisMember" Items="Listed" @key="@string.Join('\n', Columns)"
+                     Dense="true" Hover="true" Bordered="false"
+                     SortMode="SortMode.Single" Filterable="false" ShowColumnOptions="false"
+                     RowsPerPage="@Rows" Class="abom-grid abom-results" data-abom-results-table>
+            <Columns>
+                <PropertyColumn Property="m => m.Repository" Title="Repository" CellClass="abom-path abom-nowrap">
+                    <HeaderTemplate><HeaderTip Tip="Which repository this run analyzed or still has to analyze.">Repository</HeaderTip></HeaderTemplate>
+                    <CellTemplate>
+                        <span data-abom-result-repository>@context.Item.Repository</span>
+                    </CellTemplate>
+                </PropertyColumn>
+                @foreach (var query in Columns)
                 {
-                    <tr>
-                        <td class="abom-path abom-nowrap" data-abom-result-repository>@member.Repository</td>
-                        @foreach (var query in Columns)
-                        {
-                            <td class="abom-cell-right">
-                                @if (member.ByQuery.TryGetValue(query, out var n))
-                                {
-                                    <span class="abom-num" data-abom-member-results>@n</span>
-                                }
-                                else
-                                {
-                                    @* Not zero: nothing counted this query here. *@
-                                    <MudText Typo="Typo.caption" Class="abom-faint"
-                                             data-abom-member-uncounted>—</MudText>
-                                }
-                            </td>
-                        }
-                        @if (ShowsTotals)
-                        {
-                            <td class="abom-cell-right">
-                                @if (member.Counted)
-                                {
-                                    <span class="abom-num" data-abom-member-total>@member.Results</span>
-                                }
-                                else
-                                {
-                                    <MudText Typo="Typo.caption" Class="abom-faint">—</MudText>
-                                }
-                            </td>
-                        }
-                        @if (_all)
-                        {
-                            <td>
-                                <MudText Typo="Typo.caption">@StatusText(member)</MudText>
-                            </td>
-                        }
-                        @if (_run.Held)
-                        {
-                            <td>
-                                @if (Count(member) > 0)
-                                {
-                                    <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
-                                               Class="abom-plain-button" OnClick="@(() => ToggleHeld(member.Repository))"
-                                               title="@(_held.ContainsKey(member.Repository)
-                                                          ? $"Hide the held results for {member.Repository}."
-                                                          : $"Show the held results for {member.Repository}.")"
-                                               data-abom-held-toggle="@member.Repository">
-                                        @(_held.ContainsKey(member.Repository) ? "Hide what it held" : "What it held")
-                                    </MudButton>
-                                }
-                            </td>
-                        }
-                    </tr>
-                    @if (_run.Held && _held.TryGetValue(member.Repository, out var listed))
-                    {
-                        <tr>
-                            <td colspan="@ColumnCount">
-                                @HeldFor(member.Repository, listed)
-                            </td>
-                        </tr>
-                    }
+                    <TemplateColumn T="AnalysisMember" Title="@(Columns.Count == 1 ? "Results" : query)"
+                                    Sortable="true" SortBy="@(m => m.ByQuery.TryGetValue(query, out var n) ? n : -1)"
+                                    HeaderClass="abom-cell-right" CellClass="abom-cell-right">
+                        <HeaderTemplate>
+                            <span data-abom-result-query="@query">
+                                <HeaderTip Tip="@(Columns.Count == 1
+                                                    ? $"How many results {query} reported in each repository."
+                                                    : $"How many results the {query} query reported in each repository.")">
+                                    @(Columns.Count == 1 ? "Results" : query)
+                                </HeaderTip>
+                            </span>
+                        </HeaderTemplate>
+                        <CellTemplate>
+                            @if (context.Item.ByQuery.TryGetValue(query, out var n))
+                            {
+                                <span class="abom-num" data-abom-member-results>@n</span>
+                            }
+                            else
+                            {
+                                @* Not zero: nothing counted this query here. *@
+                                <MudText Typo="Typo.caption" Class="abom-faint"
+                                         data-abom-member-uncounted>—</MudText>
+                            }
+                        </CellTemplate>
+                    </TemplateColumn>
                 }
-            </tbody>
-        </MudSimpleTable>
+                <TemplateColumn T="AnalysisMember" Title="All queries" Hidden="@(!ShowsTotals)"
+                                Sortable="true" SortBy="@(m => m.Counted ? m.Results : -1)"
+                                HeaderClass="abom-cell-right" CellClass="abom-cell-right">
+                    <HeaderTemplate><HeaderTip Tip="How many total results this run recorded for the repository, including results not split by query.">All queries</HeaderTip></HeaderTemplate>
+                    <CellTemplate>
+                        @if (context.Item.Counted)
+                        {
+                            <span class="abom-num" data-abom-member-total>@context.Item.Results</span>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.caption" Class="abom-faint">—</MudText>
+                        }
+                    </CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="m => m.Status" Title="Status" Hidden="@(!_all)">
+                    <HeaderTemplate><HeaderTip Tip="Whether this repository has been analyzed, is still waiting, failed, or could not be analyzed.">Status</HeaderTip></HeaderTemplate>
+                    <CellTemplate>
+                        <MudText Typo="Typo.caption">@StatusText(context.Item)</MudText>
+                    </CellTemplate>
+                </PropertyColumn>
+                <TemplateColumn T="AnalysisMember" Title="" Hidden="@(!_run.Held)">
+                    <CellTemplate>
+                        @if (Count(context.Item) > 0)
+                        {
+                            var repository = context.Item.Repository;
+                            <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
+                                       Class="abom-plain-button" OnClick="@(() => ToggleHeld(repository))"
+                                       title="@(_held.ContainsKey(repository)
+                                                  ? $"Hide the held results for {repository}."
+                                                  : $"Show the held results for {repository}.")"
+                                       data-abom-held-toggle="@repository">
+                                @(_held.ContainsKey(repository) ? "Hide what it held" : "What it held")
+                            </MudButton>
+                        }
+                    </CellTemplate>
+                </TemplateColumn>
+            </Columns>
+            @* Opened by repository rather than by the grid's own row state, which holds row objects and
+               would close on every re-read of a run under way. *@
+            <ChildRowRenderer>
+                @if (_run?.Held == true && _held.TryGetValue(context.Item.Repository, out var listed))
+                {
+                    <tr class="mud-table-row">
+                        <td class="mud-table-cell mud-table-child-content" colspan="@ColumnCount">
+                            <div class="abom-row-detail">@HeldFor(context.Item.Repository, listed)</div>
+                        </td>
+                    </tr>
+                }
+            </ChildRowRenderer>
+            <PagerContent>
+                @* Paging applies whenever this content is set, so only the control is withheld. *@
+                @if (Listed.Count > Rows)
+                {
+                    <MudDataGridPager T="AnalysisMember" PageSizeOptions="@(new[] { 10, 25, 100 })" />
+                }
+            </PagerContent>
+        </MudDataGrid>
     }
 }
 
@@ -425,6 +429,9 @@ else
     }
 
     private int ColumnCount => 1 + Columns.Count + (ShowsTotals ? 1 : 0) + (_all ? 1 : 0) + 1;
+
+    /// <summary>How many repositories the run's card lists at once, so the runs under it stay in view.</summary>
+    private const int Rows = 10;
 
     private RenderFragment HeldFor(string repository, MemberFindings? listed) => __builder =>
     {
@@ -608,41 +615,56 @@ else
             }
             @if (PickQuery is { } query)
             {
-                <MudSimpleTable Dense="true" Class="abom-grid abom-table abom-grid-nested" data-abom-results-pickable>
-                    <thead>
-                    <tr>
-                        <th><HeaderTip Tip="Which repository this query analyzed in this run.">Repository</HeaderTip></th>
-                        <th class="abom-cell-right"><HeaderTip Tip="How many results this query reported in this repository.">Results</HeaderTip></th>
-                        <th><HeaderTip Tip="Whether to ask for a false alarm or missed result change for this repository.">Pick</HeaderTip></th>
-                    </tr>
-                </thead>
-                    <tbody>
-                        @* Only where the query looked: a repository nothing ran against shows nothing to pick. *@
-                        @foreach (var member in _run!.Members.Where(m => m.Counted && m.ByQuery.ContainsKey(query)))
+                @* Only where the query looked: a repository nothing ran against shows nothing to pick.
+                   Paged as the results are; what is picked is kept apart from the page shown. *@
+                var pickable = _run!.Members.Where(m => m.Counted && m.ByQuery.ContainsKey(query)).ToList();
+                @if (pickable.Count > 0)
+                {
+                <MudDataGrid T="AnalysisMember" Items="pickable" @key="query" Dense="true" Hover="true"
+                             Bordered="false" SortMode="SortMode.None" Filterable="false"
+                             ShowColumnOptions="false" RowsPerPage="@Rows"
+                             Class="abom-grid abom-results" data-abom-results-pickable>
+                    <Columns>
+                        <PropertyColumn Property="m => m.Repository" Title="Repository" CellClass="abom-path abom-nowrap">
+                            <HeaderTemplate><HeaderTip Tip="Which repository this query analyzed in this run.">Repository</HeaderTip></HeaderTemplate>
+                            <CellTemplate>
+                                <span data-abom-pick-repository>@context.Item.Repository</span>
+                            </CellTemplate>
+                        </PropertyColumn>
+                        <TemplateColumn T="AnalysisMember" Title="Results" HeaderClass="abom-cell-right" CellClass="abom-cell-right">
+                            <HeaderTemplate><HeaderTip Tip="How many results this query reported in this repository.">Results</HeaderTip></HeaderTemplate>
+                            <CellTemplate>
+                                <span class="abom-num">@context.Item.ByQuery[query]</span>
+                            </CellTemplate>
+                        </TemplateColumn>
+                        <TemplateColumn T="AnalysisMember" Title="Pick">
+                            <HeaderTemplate><HeaderTip Tip="Whether to ask for a false alarm or missed result change for this repository.">Pick</HeaderTip></HeaderTemplate>
+                            <CellTemplate>
+                                @if (context.Item.ByQuery[query] > 0)
+                                {
+                                    @FindingsFor(context.Item.Repository)
+                                }
+                                else
+                                {
+                                    var repository = context.Item.Repository;
+                                    <span data-abom-pick-missed="@repository">
+                                        <MudCheckBox T="bool" Size="Size.Small" Dense="true"
+                                                     Value="@_missed.Contains(repository)"
+                                                     ValueChanged="@((bool v) => PickMissed(repository, v))"
+                                                     Label="Should have found something here" />
+                                    </span>
+                                }
+                            </CellTemplate>
+                        </TemplateColumn>
+                    </Columns>
+                    <PagerContent>
+                        @if (pickable.Count > Rows)
                         {
-                            var found = member.ByQuery[query];
-                            <tr>
-                                <td class="abom-path abom-nowrap">@member.Repository</td>
-                                <td class="abom-cell-right"><span class="abom-num">@found</span></td>
-                                <td>
-                                    @if (found > 0)
-                                    {
-                                        @FindingsFor(member.Repository)
-                                    }
-                                    else
-                                    {
-                                        <span data-abom-pick-missed="@member.Repository">
-                                            <MudCheckBox T="bool" Size="Size.Small" Dense="true"
-                                                         Value="@_missed.Contains(member.Repository)"
-                                                         ValueChanged="@((bool v) => PickMissed(member.Repository, v))"
-                                                         Label="Should have found something here" />
-                                        </span>
-                                    }
-                                </td>
-                            </tr>
+                            <MudDataGridPager T="AnalysisMember" PageSizeOptions="@(new[] { 10, 25, 100 })" />
                         }
-                    </tbody>
-                </MudSimpleTable>
+                    </PagerContent>
+                </MudDataGrid>
+                }
                 @if (UnsplitCount is > 0 and var unsplit)
                 {
                     <MudText Typo="Typo.caption" Class="d-block mud-text-secondary mt-1" data-abom-results-unpickable>

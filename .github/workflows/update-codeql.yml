@@ -145,6 +145,11 @@ jobs:
           ./scripts/bump-pack-versions.sh --upgrade-deps
           ./scripts/bump-pack-versions.sh --repin
 
+      # Graphviz is a requirement: serve refuses to start without it, and the layout and figure
+      # tests fail rather than skip.
+      - name: Upgrade - Install Graphviz
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends graphviz
+
       - name: Upgrade - Verify
         run: make verify
 

@@ -116,3 +116,19 @@ func TestACycleReobservesCommitsWhoseDeclarationsAreNotKnownAClaimAtATime(t *tes
 		t.Errorf("with the window held by two failed attempts the rows are %v, want v3 left done", got)
 	}
 }
+
+// A commit only rows outside the owned closure stand at is not the crawl's to observe: putting
+// one back queues work that is never claimed, and it would hold the window shut for good.
+func TestACycleReobservesOnlyInsideTheOwnedClosure(t *testing.T) {
+	sup, s := newSupervisor(t)
+	analyzedBeforeContent(t, sup, s, "c1", "c2")
+	sup.Options.Limit = 2
+	sup.Expander.Fetcher = refusingFetcher{}
+	sup.Queue.Closure = func() ([]string, error) { return []string{"octo/mine"}, nil }
+
+	sup.cycle(context.Background())
+
+	if got := attemptsByRef(t, s); got["v1"] != "done/0" || got["v2"] != "done/0" {
+		t.Errorf("rows are %v, want both left done outside the closure", got)
+	}
+}

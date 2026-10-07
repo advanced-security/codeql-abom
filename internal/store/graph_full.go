@@ -19,7 +19,10 @@ type GraphNode struct {
 	Kind       string `json:"kind"`
 	Repository string `json:"repository"`
 	// Origin distinguishes repositories under review from those fetched as dependencies.
-	Origin    string `json:"origin"`
+	Origin string `json:"origin"`
+	// Owned is whether the declaration covers the repository this node lives in, which is the
+	// only thing that makes it yours. Origin is how the data arrived and never says so.
+	Owned     bool   `json:"owned,omitempty"`
 	Path      string `json:"path"`
 	Container string `json:"container,omitempty"`
 	// Owner is the account a dependency lives under, which is the coarsest grouping available.
@@ -105,7 +108,8 @@ type GraphEdge struct {
 	parts []edgePart
 }
 
-// edgePart is one stored relationship drawn as part of an edge.
+// edgePart is one stored relationship drawn as part of an edge: what one line declared at the
+// commits in use.
 type edgePart struct {
 	key      string
 	locked   []string
@@ -116,6 +120,9 @@ type edgePart struct {
 	advisory sql.NullBool
 	finding  sql.NullBool
 	depth    sql.NullInt64
+	// commits are the commits in use that declared this, which decide the version of a split
+	// dependency an edge out of it hangs from.
+	commits []string
 }
 
 // The facts a merged edge reports, named as the payload names them.
@@ -215,8 +222,9 @@ func (e *GraphEdge) applySharedFacts(facts graphEdgeFacts) {
 
 func (e *GraphEdge) collectKeys() {
 	for _, p := range e.parts {
-		// Containment carries no key, and a merged edge never mixes it with a declared one.
-		if p.key != "" {
+		// Containment carries no key, and a merged edge never mixes it with a declared one. A
+		// line that declared two references of one target is two parts and one key.
+		if p.key != "" && !slices.Contains(e.Keys, p.key) {
 			e.Keys = append(e.Keys, p.key)
 		}
 	}
@@ -402,7 +410,9 @@ func (p nodePredicate) keepNodes(nodes []GraphNode) ([]GraphNode, map[string]boo
 }
 
 func (p nodePredicate) keepNode(n GraphNode) bool {
-	if len(p.wanted) > 0 && !p.wanted[originTierOf(n)] {
+	// Owned is asked of the declaration's answer: no origin is "owned", and seed keeps every
+	// starting point whether or not anyone declared it.
+	if len(p.wanted) > 0 && !p.wanted[originTierOf(n)] && !(n.Owned && p.wanted[OwnedOrigin]) {
 		return false
 	}
 	// An unmeasured reach meets no floor: the alternative claims a reach nothing established.
@@ -441,15 +451,27 @@ const ScopeExposure = "exposure"
 // means the last rebuild found nothing, not that nothing was looked at.
 const onExposureRoute = `(SELECT j.value FROM abom_exposure ex, json_each(ex.path) j)`
 
-// ScopeOwned keeps what the declared repositories hold and what they run.
+// ScopeOwned keeps what the declared repositories hold, and nothing they only run: what they run
+// belongs to whoever holds it, and the scope named for ownership must not claim it.
+const ScopeOwned = "owned"
+
+// ScopeSupplyChain keeps what the declared repositories hold and what they run.
 //
 // Decided at the node, not the repository: a dependency's repository also holds that project's own
 // CI and everything it uses, which nothing declared runs. Admitted whole, that CI was 1,874 of the
-// 1,991 workflows the crawled organization's owned scope listed.
-const ScopeOwned = "owned"
+// 1,991 workflows the crawled organization's closure listed.
+const ScopeSupplyChain = "supply-chain"
 
-// declaredRoots selects the declared repositories, which the owned scope starts from.
-var declaredRoots = `SELECT row_id FROM repository WHERE ` + ownedFullName("repository_full_name")
+// declaresScope reports whether a scope is rooted on the declaration, so its reach is counted over
+// the declared repositories alone.
+func declaresScope(scope string) bool { return scope == ScopeOwned || scope == ScopeSupplyChain }
+
+// declaredRoots selects the declared repositories, which both declared scopes start from.
+var declaredRoots = `SELECT dr.row_id FROM repository dr WHERE ` + ownedFullName("dr.repository_full_name")
+
+// ownedNodes selects the nodes the declared repositories hold: the owned scope, and every node
+// that reads owned.
+var ownedNodes = `SELECT n.row_id FROM abom_node_live n WHERE ` + heldByRoots("n", declaredRoots)
 
 // scopeSets names a scope's parts as CTEs over the repositories roots selects. `run` is what their
 // own lines name, in the mode asked for, and what the reach walk found them running through another
@@ -474,12 +496,24 @@ func scopeSets(roots, mode string) string {
 // jobs inside what they run, and the repository nodes of whatever holds any of it.
 func scopeNodes(roots, mode string) string {
 	return scopeSets(roots, mode) + `SELECT n.row_id FROM abom_node_live n
-	 WHERE n.repository_row_id IN (SELECT row_id FROM roots)
-	    OR LOWER(n.owner || '/' || n.repo) IN (
-	         SELECT LOWER(repository_full_name) FROM repository WHERE row_id IN (SELECT row_id FROM roots))
+	 WHERE ` + heldByRoots("n", "SELECT row_id FROM roots") + `
 	    OR n.row_id IN (SELECT row_id FROM run)
 	    OR n.container_node_row_id IN (SELECT row_id FROM run)
 	    OR (n.node_kind = 'repo' AND n.repository_row_id IN (SELECT row_id FROM held))`
+}
+
+// heldByRoots is whether node n lives in one of the repositories roots selects: by its row, or by the
+// name it was referenced under before that repository was read.
+func heldByRoots(n, roots string) string {
+	return `(` + n + `.repository_row_id IN (` + roots + `)
+	    OR LOWER(` + n + `.owner || '/' || ` + n + `.repo) IN (
+	         SELECT LOWER(repository_full_name) FROM repository WHERE row_id IN (` + roots + `)))`
+}
+
+// ownedNode is 1 where the declaration covers the repository node n lives in, and 0 elsewhere,
+// never NULL: the predicate ownedNodes selects by, so "yours" and the owned scope cannot disagree.
+func ownedNode(n string) string {
+	return `(CASE WHEN ` + heldByRoots(n, declaredRoots) + ` THEN 1 ELSE 0 END)`
 }
 
 // scopeRepositories selects the repositories a scope covers.
@@ -487,13 +521,16 @@ func scopeRepositories(roots, mode string) string {
 	return scopeSets(roots, mode) + `SELECT row_id FROM held`
 }
 
-// scopeParts is the CTEs a query needs and the arguments that bind them. Named, because the owned
+// scopeParts is the CTEs a query needs and the arguments that bind them. Named, because a declared
 // scope and a property filter each bring their own and a graph asked for both must intersect them
 // rather than let one silently win.
 func scopeParts(opts FullGraphOptions) (string, []any) {
 	cte, args := "", []any{}
-	if opts.Scope == ScopeOwned {
-		cte += `, owned AS (SELECT node_key FROM abom_node_live WHERE row_id IN (` +
+	switch opts.Scope {
+	case ScopeOwned:
+		cte += `, in_scope AS (SELECT node_key FROM abom_node_live WHERE row_id IN (` + ownedNodes + `))`
+	case ScopeSupplyChain:
+		cte += `, in_scope AS (SELECT node_key FROM abom_node_live WHERE row_id IN (` +
 			scopeNodes(declaredRoots, opts.Mode) + `))`
 	}
 	if len(opts.GroupSources) > 0 {
@@ -514,8 +551,8 @@ func scopeFilter(opts FullGraphOptions, column string) string {
 	switch opts.Scope {
 	case ScopeExposure:
 		out += " AND " + column + " IN " + onExposureRoute
-	case ScopeOwned:
-		out += " AND " + column + " IN (SELECT node_key FROM owned)"
+	case ScopeOwned, ScopeSupplyChain:
+		out += " AND " + column + " IN (SELECT node_key FROM in_scope)"
 	}
 	switch {
 	case len(opts.GroupSources) > 0:
@@ -561,6 +598,7 @@ const frontierState = `(SELECT CASE
 				 WHEN SUM(f.status = 'pending' AND f.attempts > 0) > 0 THEN 'retrying'
 				 WHEN SUM(f.status = 'pending') > 0 THEN 'queued'
 				 WHEN SUM(f.status = 'done') > 0 THEN 'done'
+				 WHEN SUM(f.status = 'unavailable') > 0 THEN 'unavailable'
 				 ELSE MIN(f.status)
 			   END FROM abom_frontier f WHERE ` + frontierMatch + `)`
 
@@ -640,6 +678,7 @@ const frontierRollup = `, fstate AS (
 	       SUM(status = 'pending' AND attempts > 0) AS retrying,
 	       SUM(status = 'pending') AS pending,
 	       SUM(status = 'done') AS done,
+	       SUM(status = 'unavailable') AS unavailable,
 	       MIN(status) AS min_status,
 	       MIN(depth) AS min_depth,
 	       MAX(score) AS max_score,
@@ -679,6 +718,7 @@ const rolledFrontierState = `(CASE
 		 WHEN fs.retrying > 0 THEN 'retrying'
 		 WHEN fs.pending > 0 THEN 'queued'
 		 WHEN fs.done > 0 THEN 'done'
+		 WHEN fs.unavailable > 0 THEN 'unavailable'
 		 ELSE fs.min_status
 	   END)`
 
@@ -688,7 +728,7 @@ func graphNodesQuery(display string, since int64, opts FullGraphOptions) (string
 	cte, args := scopeParts(opts)
 	return `WITH ` + display + cte + frontierRollup + advisoryRollup + groupingRollup + `
 		SELECT n.node_key, n.node_kind, COALESCE(r.repository_full_name, ''),
-		       COALESCE(r.origin, ''), COALESCE(n.path, ''), COALESCE(c.node_key, ''),
+		       COALESCE(r.origin, ''), ` + ownedNode("n") + `, COALESCE(n.path, ''), COALESCE(c.node_key, ''),
 		       COALESCE(n.owner, ''),
 		       n.is_external, COALESCE(b.dependent_repos, 0), ` + reachKnown + `,
 		       COALESCE(adv.advisories, 0),
@@ -723,7 +763,7 @@ func (s *Store) graphNodes(display string, since int64, opts FullGraphOptions) (
 	nodes := []GraphNode{}
 	for rows.Next() {
 		var n GraphNode
-		if err := rows.Scan(&n.Key, &n.Kind, &n.Repository, &n.Origin, &n.Path, &n.Container,
+		if err := rows.Scan(&n.Key, &n.Kind, &n.Repository, &n.Origin, &n.Owned, &n.Path, &n.Container,
 			&n.Owner, &n.IsExternal, &n.DependentRepos, &n.ReachKnown, &n.Advisories,
 			&n.Analyzed, &n.Discovery, &n.Depth, &n.QueueScore,
 			&n.RefsInUse, &n.RefsAnalyzed, &n.Grouping); err != nil {
@@ -801,12 +841,16 @@ func (s *Store) graphEdges(display string, since int64, opts FullGraphOptions) (
 	if err != nil {
 		return nil, err
 	}
+	table, err := s.declaredEdgeTable(opts.Mode)
+	if err != nil {
+		return nil, err
+	}
 	cte, args := scopeParts(opts)
 	rows, err := s.db.Query(`WITH `+display+cte+`
 		SELECT sn.node_key, dn.node_key, e.edge_kind, COALESCE(e.ref_value, ''),
 		       COALESCE(e.boundary, ''), e.edge_key, COALESCE(e.ref_style, ''),
-		       e.advisory_route, e.finding_route, e.owned_depth
-		FROM `+edgeSource(opts.Mode)+` e
+		       e.advisory_route, e.finding_route, e.owned_depth, COALESCE(e.commits, '')
+		FROM `+table+` e
 		JOIN disp ds ON ds.row_id = e.src_node_row_id
 		JOIN disp dd ON dd.row_id = e.dst_node_row_id
 		JOIN abom_node_live sn ON sn.row_id = ds.shown
@@ -823,13 +867,14 @@ func (s *Store) graphEdges(display string, since int64, opts FullGraphOptions) (
 	merged := map[[2]string]*GraphEdge{}
 	order := [][2]string{}
 	for rows.Next() {
-		var src, dst string
+		var src, dst, commits string
 		var p edgePart
 		if err := rows.Scan(&src, &dst, &p.kind, &p.ref, &p.boundary, &p.key, &p.refStyle,
-			&p.advisory, &p.finding, &p.depth); err != nil {
+			&p.advisory, &p.finding, &p.depth, &commits); err != nil {
 			return nil, fmt.Errorf("scanning graph edge: %w", err)
 		}
 		p.locked = locked[p.key]
+		p.commits = declaredCommits(commits)
 		key := [2]string{src, dst}
 		e, ok := merged[key]
 		if !ok {

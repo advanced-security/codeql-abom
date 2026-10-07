@@ -133,6 +133,11 @@ jobs:
           npm ci --no-fund --no-audit
           npx playwright install --with-deps chromium
 
+      # Graphviz is a requirement: serve refuses to start without it, and the layout and figure
+      # tests fail rather than skip.
+      - name: Copilot Setup - Install Graphviz
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends graphviz
+
       - name: Copilot Setup - Verify the toolchain
         run: |
           echo "go:            $(go version)"
@@ -140,6 +145,7 @@ jobs:
           echo "dotnet:        $(dotnet --version)"
           echo "codeql:        $(codeql version --format=terse)"
           echo "golangci-lint: $(golangci-lint --version)"
+          echo "graphviz:      $(dot -V 2>&1)"
           echo "actions-lock:  $(gh extension list | awk '/actions-lock/ {print $4}')"
 
       # Proving the caches are warm, not just that the tools exist. Each of these is something

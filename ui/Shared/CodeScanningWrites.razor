@@ -1,0 +1,406 @@
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@implements IDisposable
+@inject AbomApi Api
+@inject FollowService Follow
+
+@* Beside the pools, because each write spends the default setup pool. What was read comes first, so
+   "nothing to add" is never mistaken for "nothing read". A preview asks GitHub nothing and is offered
+   everywhere; approving and running a batch only where the server was started to write. *@
+<MudText Typo="Typo.subtitle2" Class="mt-8 mb-1">Actions code scanning</MudText>
+<MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
+    GitHub has no organization-wide way to choose default setup's languages, so ABOM reads each
+    declared repository's setup and adds <code>actions</code> only where a preview somebody approved
+    listed it. It never writes where advanced setup runs, never removes a language, never changes any
+    other setting, and reads every write back before counting it.
+</MudText>
+
+<MudText Typo="Typo.body2" Class="mb-2" data-abom-setup-readings>@ReadingsText()</MudText>
+<MudText Typo="Typo.body2" Class="mb-3" data-abom-setup-mode>@ModeText()</MudText>
+
+<div class="d-flex align-center gap-3 mb-2 abom-setup-preview-form">
+    <MudSelect T="string" Label="Repositories" Dense="true" Value="@_view" ValueChanged="@(v => _view = v)"
+               title="Which repositories the preview covers: every declared one, or a named view's.">
+        <MudSelectItem T="string" Value="@string.Empty">Every declared repository</MudSelectItem>
+        @foreach (var v in _views)
+        {
+            <MudSelectItem T="string" Value="@v.Name" title="@v.Description">@v.Label</MudSelectItem>
+        }
+    </MudSelect>
+    <MudTextField T="string" Label="Leave out (owner/name, comma-separated)" Margin="Margin.Dense"
+                  Value="@_exclude" ValueChanged="@(v => _exclude = v)"
+                  title="Repositories the preview leaves out by name; it never writes them." />
+    <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="_busy" OnClick="PreviewAsync"
+               title="Show what a batch would write to these repositories, from what was last read. Asks GitHub nothing and changes nothing."
+               data-abom-setup-preview-button>Preview</MudButton>
+</div>
+@if (_refusal is { Length: > 0 })
+{
+    <MudText Typo="Typo.body2" Color="Color.Error" Class="mb-2" data-abom-setup-refusal>@_refusal</MudText>
+}
+
+@if (_preview is { } p)
+{
+    <div data-abom-setup-preview class="mb-4">
+        <MudText Typo="Typo.body2" Class="mb-1">
+            Preview @p.Id of @(p.ViewName.Length > 0 ? $"the view {p.ViewName}" : "every declared repository"):
+            @CountsText(p.Counts)@(p.ApprovedBy.Length > 0 ? $", approved by {p.ApprovedBy}" : "").
+        </MudText>
+        @* Paged by the server, what a batch would write first: a preview of an organization is a row
+           for every repository it declares. *@
+        <MudDataGrid T="SetupPreviewRow" ServerData="LoadRows" @key="p.Id" Dense="true" Hover="true"
+                     Bordered="false" Filterable="false" SortMode="SortMode.None" RowsPerPage="30"
+                     ShowColumnOptions="false" Class="abom-grid abom-table">
+            <Columns>
+                <TemplateColumn T="SetupPreviewRow" Title="Repository">
+                    <HeaderTemplate><HeaderTip Tip="The repository, by owner and name.">Repository</HeaderTip></HeaderTemplate>
+                    <CellTemplate><span data-abom-setup-row="@context.Item.Repository">@context.Item.Repository</span></CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn T="SetupPreviewRow" Title="Class">
+                    <HeaderTemplate><HeaderTip Tip="What its last reading puts it in: only adding actions and enabling with actions are ever written.">Class</HeaderTip></HeaderTemplate>
+                    <CellTemplate><span data-abom-setup-row-class="@context.Item.Repository">@RowClassText(context.Item.Class)</span></CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn T="SetupPreviewRow" Title="Why">
+                    <HeaderTemplate><HeaderTip Tip="What put it in that class, from what was read and when.">Why</HeaderTip></HeaderTemplate>
+                    <CellTemplate><span class="mud-text-secondary">@context.Item.Evidence</span></CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn T="SetupPreviewRow" Title="Would send">
+                    <HeaderTemplate><HeaderTip Tip="The body a batch would send, if it still reads the same when its turn comes.">Would send</HeaderTip></HeaderTemplate>
+                    <CellTemplate><code>@(context.Item.Intended.Length > 0 ? context.Item.Intended : "nothing")</code></CellTemplate>
+                </TemplateColumn>
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="SetupPreviewRow" PageSizeOptions="@(new[] { 30, 100, 300 })" />
+            </PagerContent>
+        </MudDataGrid>
+        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1" data-abom-setup-preview-said>@RowsSaid()</MudText>
+        @if (_mode?.Writes == true && p.ApprovedBy.Length == 0 && Writable(p) > 0)
+        {
+            <MudButton Class="mt-2" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" Disabled="_busy"
+                       OnClick="@(() => ApproveAsync(p.Id))"
+                       title="Record your write token's owner as approving exactly the writes this preview lists."
+                       data-abom-setup-approve>Approve @Writable(p) @(Writable(p) == 1 ? "write" : "writes")</MudButton>
+        }
+        else if (_mode?.Writes == true && p.ApprovedBy.Length > 0 && p.BatchId == 0)
+        {
+            <MudButton Class="mt-2" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" Disabled="_busy"
+                       OnClick="@(() => StartAsync(p.Id))"
+                       title="Write each approved repository in turn, reading each one again first and back afterwards."
+                       data-abom-setup-start>Start the batch</MudButton>
+        }
+    </div>
+}
+
+@if (_batches.Count > 0)
+{
+    <MudText Typo="Typo.body2" Class="mt-3 mb-1">Batches</MudText>
+    @foreach (var b in _batches)
+    {
+        <div class="d-flex align-center gap-2 mb-1" data-abom-setup-batch="@b.Id">
+            <MudText Typo="Typo.body2">
+                Batch @b.Id of preview @b.PreviewId: @b.State@(b.Reason.Length > 0 ? $", {b.Reason}" : "").
+                @StepsText(b) @b.Remaining left.
+            </MudText>
+            @foreach (var action in Actions(b.State))
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_busy"
+                           OnClick="@(() => ActAsync(b.Id, action))"
+                           title="@ActionTitle(action)" data-abom-setup-act="@action">@action</MudButton>
+            }
+        </div>
+    }
+}
+
+@if (_ledger is { Items.Count: > 0 } ledger)
+{
+    <MudText Typo="Typo.body2" Class="mt-3 mb-1" data-abom-setup-ledger-said>@LedgerSaid(ledger)</MudText>
+    <MudSimpleTable Dense="true" Hover="true" Class="abom-grid abom-table" data-abom-setup-ledger>
+        <thead>
+            <tr>
+                <th><HeaderTip Tip="When the step was recorded.">At</HeaderTip></th>
+                <th><HeaderTip Tip="The repository written, or refused.">Repository</HeaderTip></th>
+                <th><HeaderTip Tip="Refused, skipped, deferred, sent, verified or failed.">Step</HeaderTip></th>
+                <th><HeaderTip Tip="What GitHub answered, or why the step went the way it did.">Detail</HeaderTip></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var w in ledger.Items)
+            {
+                <tr>
+                    <td><time datetime="@w.At" title="@w.At">@TimeText.DayAndTime(w.At, "HH:mm:ss")</time></td>
+                    <td>@w.Repository</td>
+                    <td>@w.Step</td>
+                    <td class="mud-text-secondary">@LedgerDetail(w)</td>
+                </tr>
+            }
+        </tbody>
+    </MudSimpleTable>
+}
+
+@code {
+    private const int LedgerShown = 50;
+    private CodeScanningReadings? _readings;
+    private CodeScanningWriteMode? _mode;
+    private IReadOnlyList<NamedView> _views = [];
+    private IReadOnlyList<SetupBatch> _batches = [];
+    private SetupLedgerPage? _ledger;
+    private int _rowsOffset;
+    private int _rowsShown;
+    private int _rowsTotal;
+    private SetupPreview? _preview;
+    private string _view = string.Empty;
+    private string _exclude = string.Empty;
+    private string? _refusal;
+    private bool _busy;
+    private Timer? _timer;
+    private TimeSpan _beat;
+
+    // In the order a reader acts on them: what can be written, what is held, what is settled.
+    private static readonly (string Class, string Words)[] ClassWords =
+    [
+        ("add", "to add actions to"), ("enable", "to enable"),
+        ("covered", "covered by default setup"), ("advanced", "on advanced setup"), ("conflict", "on both setups at once"),
+        ("not-crawled", "not crawled yet"), ("not-read", "not read yet"), ("unreadable", "GitHub would not show"),
+        ("not-detected", "where GitHub detects no Actions code"), ("blocked-by-configuration", "blocked by an enforced configuration"),
+        ("actions-not-allowed", "where Actions cannot run CodeQL"), ("language-not-writable", "analyzing a language GitHub's write refuses"), ("no-actions-code", "with no Actions code"),
+        ("not-listed", "no longer listed"), ("unknown", "in a state ABOM does not know"),
+        ("excluded", "left out by name"), ("not-a-target", "outside the write targets"), ("held", "held"),
+    ];
+
+    protected override async Task OnInitializedAsync()
+    {
+        Follow.Changed += OnFollowChanged;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        _readings = await Api.GetCodeScanningReadingsAsync() ?? _readings;
+        _mode = await Api.GetCodeScanningWriteModeAsync() ?? _mode;
+        _views = await Api.GetViewsAsync();
+        _batches = await Api.GetSetupBatchesAsync() ?? _batches;
+        _ledger = await Api.GetSetupLedgerAsync(LedgerShown) ?? _ledger;
+        ApplyFollow();
+    }
+
+    private string ReadingsText()
+    {
+        if (_readings is not { } r)
+        {
+            return "Reading what was recorded\u2026";
+        }
+        if (r.Read == 0)
+        {
+            return $"None of the {r.Declared:N0} declared repositories has had its default setup read yet; " +
+                   "a full listing of their accounts reads it.";
+        }
+        var oldest = r.OldestRead.Length > 0 ? $", the oldest reading from {TimeText.DayAndTime(r.OldestRead)}" : "";
+        return $"Read {r.Read:N0} of {r.Declared:N0} declared repositories{oldest}: {CountsText(r.Counts)}.";
+    }
+
+    private static string CountsText(Dictionary<string, int> counts)
+    {
+        var parts = ClassWords.Where(c => counts.GetValueOrDefault(c.Class) > 0)
+            .Select(c => $"{counts[c.Class]:N0} {c.Words}").ToList();
+        return parts.Count == 0 ? "nothing in any class" : string.Join(", ", parts);
+    }
+
+    private string ModeText()
+    {
+        if (_mode is not { } m)
+        {
+            return "Reading whether this server writes\u2026";
+        }
+        if (!m.Writes)
+        {
+            return "This server writes nothing: previews show what a batch would do. Start it with " +
+                   "--enable-targets or --enable-accounts to write, with your own token.";
+        }
+        var to = new[]
+        {
+            m.Targets.Count > 0 ? string.Join(", ", m.Targets) : "",
+            m.Accounts.Count > 0 ? "the declared repositories of " + string.Join(", ", m.Accounts) : "",
+        }.Where(s => s.Length > 0);
+        return $"This server writes default setup, with your own token, to {string.Join(" and ", to)}, " +
+               "once a preview listing them is approved.";
+    }
+
+    // Each class in words, for a reader who never learned the store's: the sentence above counts them
+    // in the same terms.
+    private static readonly Dictionary<string, string> RowClassWords = new()
+    {
+        ["add"] = "Add actions", ["enable"] = "Enable, with actions alone",
+        ["held"] = "Held",
+        ["excluded"] = "Left out by name", ["not-a-target"] = "Not a write target",
+        ["conflict"] = "On both setups", ["blocked-by-configuration"] = "Blocked by an enforced configuration",
+        ["actions-not-allowed"] = "Actions cannot run CodeQL", ["language-not-writable"] = "A language GitHub's write refuses", ["unreadable"] = "GitHub would not show it",
+        ["not-read"] = "Not read yet", ["not-crawled"] = "Not crawled yet",
+        ["not-detected"] = "GitHub detects no Actions code", ["not-listed"] = "No longer listed",
+        ["unknown"] = "In a state ABOM does not know", ["covered"] = "Covered by default setup",
+        ["advanced"] = "On advanced setup", ["no-actions-code"] = "No Actions code",
+    };
+
+    private static string RowClassText(string cls) => RowClassWords.GetValueOrDefault(cls, cls);
+
+    private async Task<GridData<SetupPreviewRow>> LoadRows(GridState<SetupPreviewRow> state)
+    {
+        if (_preview is not { } p)
+        {
+            return new GridData<SetupPreviewRow> { Items = [], TotalItems = 0 };
+        }
+        var (page, refusal) = await Api.GetPageAsync<SetupPreviewRows>($"api/code-scanning/previews/{p.Id}/rows", "",
+            state.PageSize, state.Page * state.PageSize, null, false);
+        _refusal = refusal ?? _refusal;
+        var items = page?.Items ?? [];
+        (_rowsOffset, _rowsShown, _rowsTotal) = (state.Page * state.PageSize, items.Count, page?.Total ?? 0);
+        // The caption sits outside the grid, which re-renders only itself.
+        StateHasChanged();
+        return new GridData<SetupPreviewRow> { Items = items, TotalItems = _rowsTotal };
+    }
+
+    private string RowsSaid() => _rowsShown == 0
+        ? $"{CountText.Of(_rowsTotal, "repository", "repositories")} in this preview."
+        : $"Showing {CountText.Number(_rowsOffset + 1)}–{CountText.Number(_rowsOffset + _rowsShown)} of " +
+          $"{CountText.Number(_rowsTotal)}, what a batch would write first.";
+
+    private static string LedgerSaid(SetupLedgerPage ledger) => ledger.Total > ledger.Items.Count
+        ? $"The newest {CountText.Number(ledger.Items.Count)} of {CountText.Number(ledger.Total)} steps writes took"
+        : "Every step a write took, newest first";
+
+    private static int Writable(SetupPreview p) => p.Counts.GetValueOrDefault("add") + p.Counts.GetValueOrDefault("enable");
+
+    private static string StepsText(SetupBatch b) =>
+        b.Steps.Count == 0 ? "Nothing written yet," : string.Join(", ", b.Steps.Select(s => $"{s.Value} {s.Key}")) + ";";
+
+    private static string[] Actions(string state) => state switch
+    {
+        "running" => ["pause", "stop"],
+        "paused" => ["resume", "stop"],
+        _ => [],
+    };
+
+    private static string ActionTitle(string action) => action switch
+    {
+        "pause" => "Stop writing after the current write; the batch can be resumed.",
+        "resume" => "Carry on writing where the batch stopped.",
+        _ => "End the batch for good; what it wrote stays written, and preview again to write again.",
+    };
+
+    private static string LedgerDetail(SetupWrite w)
+    {
+        var parts = new List<string>();
+        if (w.Status > 0)
+        {
+            parts.Add($"GitHub answered {w.Status}");
+        }
+        if (w.Detail.Length > 0)
+        {
+            parts.Add(w.Detail);
+        }
+        if (w.After.Count > 0)
+        {
+            parts.Add("now " + string.Join(", ", w.After));
+        }
+        return string.Join("; ", parts);
+    }
+
+    private async Task PreviewAsync()
+    {
+        _busy = true;
+        try
+        {
+            var exclude = _exclude.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var (preview, refusal) = await Api.SendCodeScanningAsync<SetupPreview>(
+                "api/code-scanning/previews", new { view = _view, exclude });
+            (_preview, _refusal) = (preview ?? _preview, refusal);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ApproveAsync(long id)
+    {
+        _busy = true;
+        try
+        {
+            var (preview, refusal) = await Api.SendCodeScanningAsync<SetupPreview>(
+                $"api/code-scanning/previews/{id}/approve", null);
+            (_preview, _refusal) = (preview ?? _preview, refusal);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task StartAsync(long id)
+    {
+        _busy = true;
+        try
+        {
+            var (batch, refusal) = await Api.SendCodeScanningAsync<SetupBatch>("api/code-scanning/batches", new { preview = id });
+            _refusal = refusal;
+            if (batch is not null && _preview is { } p)
+            {
+                _preview = p with { BatchId = batch.Id };
+            }
+            await Load();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ActAsync(long batch, string action)
+    {
+        _busy = true;
+        try
+        {
+            var (_, refusal) = await Api.SendCodeScanningAsync<SetupBatch>($"api/code-scanning/batches/{batch}/{action}", null);
+            _refusal = refusal;
+            await Load();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void OnFollowChanged()
+    {
+        ApplyFollow();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void ApplyFollow()
+    {
+        if (_timer is not null && Follow.Interval == _beat)
+        {
+            return;
+        }
+        _timer?.Dispose();
+        _beat = Follow.Interval;
+        _timer = new Timer(async _ =>
+        {
+            // Nothing awaits a timer callback, so a failure is kept where the panel can say it.
+            try
+            {
+                await Load();
+            }
+            catch (Exception ex)
+            {
+                _refusal = ex.Message;
+            }
+            await InvokeAsync(StateHasChanged);
+        }, null, _beat, _beat);
+    }
+
+    public void Dispose()
+    {
+        Follow.Changed -= OnFollowChanged;
+        _timer?.Dispose();
+    }
+}

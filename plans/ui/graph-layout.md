@@ -7,7 +7,8 @@ scope at all — a reader picks a named view, builds one, or arrives with terms 
 is left is the canvas shape, and the measurement now exists: every view places **4 ranks deep**, so
 height is constant and width grows with the population. The question is no longer which proportion
 to ask for but whether a ranked layout suits a graph this shallow. Separately, an address carrying
-any grouping but Owner never finishes drawing.
+any grouping but Owner never finishes drawing, and a neighborhood drawn with Stable layout on is
+placed as part of its whole scope, so it collapses into a line.
 
 ## Why this exists
 
@@ -91,6 +92,28 @@ flowchart LR
    proof and the guard. The other half is that choosing a grouping does not reach the address until
    something else syncs it: switching Owner to Repository leaves `groupBy=owner` there, so the link
    a reader shares draws a different picture from the one on screen. Depends on nothing.
+3. **A neighborhood is placed as part of everything else, and draws as a line.**
+   `ApplyStableLayout` sends the scope's terms and the grouping, never the selection, the hops or
+   the direction. So `/api/graph/layout` places the whole scope, and the browser draws the
+   neighborhood at those positions.
+
+   Measured on the live store, for `advanced-security/codeql-abom-test1/.github/workflows/ci.yml` at
+   one hop under `scope=supply-chain`, the closure `scope=owned` named when this was measured:
+   - the scope places 409 nodes on 109,980 × 434;
+   - the five drawn span 26,887 × 233 of it, about 115:1;
+   - fitting turns that into one horizontal line.
+
+   Place what is drawn: the browser sends the drawn keys, and the server lays out that induced
+   subgraph from the same projection, as `figure.Place` lays out a details page's closure alone.
+   The proof is a browser test that arrives at that address with Stable layout on and asserts the
+   drawn frame is no flatter than the subset's own placement. Depends on nothing now.
+4. **A key ending in a backslash is not placed.** `graphexport.DOT` writes keys into the document,
+   and quotes a trailing backslash as `\\`, which Graphviz 16.1.0 keeps as two characters: the
+   position comes back under another name, so that node is counted unplaced. DOT has no quoted
+   form for such a key. The details page's figure writes synthetic identities (`n0`, `n1`…) and
+   maps them back; the layout endpoint should do the same, and keep the key only in the
+   `abom_*` attributes the export carries. The proof is the export round-tripping a key ending in
+   a backslash through `dot -Tjson`. Depends on nothing.
 
 ## What placing the real corpus measured
 
@@ -160,7 +183,10 @@ themselves otherwise, and the whole reason for this plan evaporates without it.
 - A repository whose name contains a quote round-trips through the encoder.
 - Two `uses:` lines to one target survive as two edges.
 - A node with no reach row exports as unknown and is not drawn at the smallest size.
-- With Graphviz removed from `PATH` the Explorer still draws, and says the force layout drew it.
+- With Graphviz removed from `PATH`, `serve` refuses to start and names the remedy. Removed while
+  it runs, the layout endpoint answers 503, and the Explorer says the server could not place the
+  graph rather than presenting the force layout as a choice. Graphviz is required: every details
+  page draws its figure with it.
 - Nothing in this plan moves node, edge, reach, exposure or bill-of-materials totals.
 - A boundary from an engine box is refused on the same terms as a hull: `dot` separates the
   clusters of the graph it was *handed*, and a browser filter draws a subset of that graph, so a

@@ -18,19 +18,26 @@ public sealed class NamedScopesTests : AbomTestContext
 {
     private const string Views = """
         [{"name":"owned","title":"What you own","predicate":"scope=owned","builtin":true,
+          "description":"Only what the repositories you declared hold.",
           "refuses":{"inventory":[],"repositories":[],"advisories":["scope"],"graph":[],"run":[]}},
          {"name":"unpinned","title":"Floating references","predicate":"ref=tag","builtin":true,
+          "description":"What a workflow references by a tag or branch rather than a commit SHA.",
           "refuses":{"inventory":[],"workflows":["ref"],"repositories":["ref"],
                      "relationships":[],"coverage":["ref"],"graph":[],"run":["ref"]}},
          {"name":"upstream-rules","predicate":"source=upstream","builtin":false,
+          "description":"Keeps Source: upstream.",
           "refuses":{"inventory":[],"graph":["source"],"run":[]}},
-         {"name":"unreadable","predicate":"ref=pinned","builtin":false}]
+         {"name":"unreadable","predicate":"ref=pinned","builtin":false},
+         {"name":"coverage-gaps","title":"Coverage gaps","predicate":"flags=unanalyzed&ref=tag","builtin":true,
+          "description":"Referenced by a tag and never analyzed.",
+          "refuses":{"inventory":[],"workflows":["ref","flags=unanalyzed"],"graph":[],"run":["ref"]}}]
         """;
 
     private const string Terms = """
         [{"name":"scope","label":"Scope","help":"h","arity":"scalar","surfaces":["inventory"]},
          {"name":"ref","label":"Reference style","help":"h","arity":"scalar","surfaces":["inventory"]},
-         {"name":"source","label":"Source","help":"h","arity":"list","surfaces":["inventory"]}]
+         {"name":"source","label":"Source","help":"h","arity":"list","surfaces":["inventory"]},
+         {"name":"flags","label":"Has","help":"h","arity":"list","surfaces":["inventory","workflows"]}]
         """;
 
     public NamedScopesTests()
@@ -78,6 +85,49 @@ public sealed class NamedScopesTests : AbomTestContext
 
         control.WaitForAssertion(() => Assert.False(Disabled(control, "unpinned")));
         Assert.Equal("", Reason(control, "unpinned"));
+    }
+
+    /// <summary>
+    /// A scope says what it holds on hover, built-in or kept. "Open Floating references on this
+    /// page." said nothing the chip did not.
+    /// </summary>
+    [Fact]
+    public void AScopeSaysWhatItHoldsOnHover()
+    {
+        var control = Control("inventory");
+
+        control.WaitForAssertion(() => Assert.False(Disabled(control, "unpinned")));
+        Assert.Equal("What a workflow references by a tag or branch rather than a commit SHA.",
+            control.Find("[data-abom-view='unpinned']").GetAttribute("title"));
+        Assert.Equal("Keeps Source: upstream.",
+            control.Find("[data-abom-view='upstream-rules']").GetAttribute("title"));
+    }
+
+    /// And a scope this page cannot open still says what it holds, before why it is disabled.
+    [Fact]
+    public void ADisabledScopeSaysWhatItHoldsAndWhyItIsDisabled()
+    {
+        var control = Control("repositories");
+
+        control.WaitForAssertion(() => Assert.True(Disabled(control, "unpinned")));
+        var reason = Reason(control, "unpinned");
+        Assert.StartsWith("What a workflow references by a tag or branch rather than a commit SHA.", reason);
+        Assert.Contains("Repositories cannot narrow by", reason);
+    }
+
+    /// <summary>
+    /// A page answering part of a list term refuses the rest member by member, and the member is
+    /// named under its term's label: “flags=unanalyzed: ” named neither.
+    /// </summary>
+    [Fact]
+    public void AMemberThisPageRefusesIsNamedUnderItsTermsLabel()
+    {
+        var control = Control("workflows");
+
+        control.WaitForAssertion(() => Assert.True(Disabled(control, "coverage-gaps")));
+        var reason = Reason(control, "coverage-gaps");
+        Assert.Contains("“Has: unanalyzed”", reason);
+        Assert.DoesNotContain("flags=", reason);
     }
 
     /// <summary>

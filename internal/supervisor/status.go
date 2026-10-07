@@ -46,10 +46,12 @@ type Status struct {
 	Settled     int `json:"settled"`
 	Failed      int `json:"failed"`
 	Unavailable int `json:"unavailable"`
-	Discovered  int `json:"discovered"`
-	Edges       int `json:"edges"`
-	Rechecked   int `json:"rechecked"`
-	Drifted     int `json:"drifted"`
+	// Nothing counts starting points read in full with nothing to analyze.
+	Nothing    int `json:"nothing"`
+	Discovered int `json:"discovered"`
+	Edges      int `json:"edges"`
+	Rechecked  int `json:"rechecked"`
+	Drifted    int `json:"drifted"`
 
 	// ReachPending counts dependencies ingested since reach was last measured. Non-zero means
 	// what is on screen is behind the graph, which is worth saying rather than hiding.
@@ -75,6 +77,8 @@ type Status struct {
 	// MaxDepth is the cap exploration may not pass, so "complete" can be told apart from
 	// "complete as far as we are allowed to look".
 	MaxDepth int `json:"maxDepth"`
+	// StuckAfter is the loop's attempt ceiling, so the objective counts stuck work by its rule.
+	StuckAfter int `json:"stuckAfter"`
 }
 
 // Status returns a copy of the current state.
@@ -96,6 +100,7 @@ func (s *Supervisor) Status() Status {
 	out.ReachThreshold = s.Aggregates.afterEdges()
 	if s.Queue != nil {
 		out.MaxDepth = s.Queue.MaxDepth
+		out.StuckAfter = s.Queue.StuckAfterAttempts()
 	}
 	return out
 }

@@ -12,8 +12,12 @@ import (
 // checks specifically for correlated edge-table reads.
 func TestTheFrontierQueryDoesNotWalkTheEdgeTablePerQueueRow(t *testing.T) {
 	s := newTestStore(t)
+	table, err := s.declaredEdgeTable(AnalysisModeRegular)
+	if err != nil {
+		t.Fatalf("building the declarations the queue counts users from: %v", err)
+	}
 
-	query, args := frontierSnapshotQuery("", 500)
+	query, args := frontierSnapshotQuery(table, "", 500)
 
 	rows, err := s.db.Query("EXPLAIN QUERY PLAN "+query, args...)
 	if err != nil {

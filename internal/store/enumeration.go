@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -30,7 +31,11 @@ CREATE TABLE IF NOT EXISTS abom_enumeration_state (
   -- How many pages the last full listing took. A sweep is two ordered walks, so an account that
   -- fits on one page costs 2 to sweep and 1 to read whole: the incremental read is only a saving
   -- above two pages, and below that it also gives up seeing deletions.
-  listed_pages INTEGER
+  listed_pages INTEGER,
+  -- When a full listing last judged the account's property scopes, and how many repositories it
+  -- named that it could not judge. NULL until one has, which is not the same as none unjudged.
+  properties_judged_at TEXT,
+  properties_unjudged  INTEGER
 );
 -- A declared repository a full listing of its account did not name, and when. Only a full listing
 -- writes a row, and seeing the repository in any listing removes it: a prefix cannot establish
@@ -103,6 +108,23 @@ type EnumerationMarks struct {
 	// Missing names the declared repositories a full listing of this account did not, which are
 	// no longer the operator's. Empty says nothing is missing only where ListedAt is set.
 	Missing []RepositoryAbsence `json:"missing"`
+	// PropertiesJudgedAt is when a full listing last judged the account's property scopes, and
+	// PropertiesUnjudged how many repositories it named whose values it could not read. The count
+	// means nothing while the time is zero.
+	PropertiesJudgedAt time.Time `json:"propertiesJudgedAt,omitzero"`
+	PropertiesUnjudged int       `json:"propertiesUnjudged"`
+}
+
+// RecordPropertyJudgement notes a full listing's verdict on an account's property scopes.
+func (s *Store) RecordPropertyJudgement(owner string, unjudged int) error {
+	_, err := s.db.Exec(`
+INSERT INTO abom_enumeration_state (owner, properties_judged_at, properties_unjudged) VALUES (?, ?, ?)
+ON CONFLICT(owner) DO UPDATE SET properties_judged_at = excluded.properties_judged_at,
+  properties_unjudged = excluded.properties_unjudged`, owner, now(), unjudged)
+	if err != nil {
+		return fmt.Errorf("recording how %s's property scopes were judged: %w", owner, err)
+	}
+	return nil
 }
 
 // RepositoryAbsence is a declared repository a full listing did not name, and since when.
@@ -118,11 +140,14 @@ func (s *Store) EnumerationState(owner string) (EnumerationMarks, bool, error) {
 		route                                      sql.NullString
 		listedAt, sweptAt, highCreated, highPushed sql.NullString
 		pages                                      sql.NullInt64
+		judgedAt                                   sql.NullString
+		unjudged                                   sql.NullInt64
 	)
 	err := s.db.QueryRow(`
-SELECT route, listed_at, swept_at, high_created, high_pushed, listed_pages
+SELECT route, listed_at, swept_at, high_created, high_pushed, listed_pages,
+       properties_judged_at, properties_unjudged
   FROM abom_enumeration_state WHERE owner = ?`, owner).
-		Scan(&route, &listedAt, &sweptAt, &highCreated, &highPushed, &pages)
+		Scan(&route, &listedAt, &sweptAt, &highCreated, &highPushed, &pages, &judgedAt, &unjudged)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		missing, err := s.missingFrom(owner)
@@ -140,6 +165,8 @@ SELECT route, listed_at, swept_at, high_created, high_pushed, listed_pages
 	marks.HighCreated = parseMark(highCreated)
 	marks.HighPushed = parseMark(highPushed)
 	marks.ListedPages = int(pages.Int64)
+	marks.PropertiesJudgedAt = parseMark(judgedAt)
+	marks.PropertiesUnjudged = int(unjudged.Int64)
 	// Into a local, so a read that fails leaves the empty list rather than a nil one.
 	missing, err := s.missingFrom(owner)
 	if err != nil {

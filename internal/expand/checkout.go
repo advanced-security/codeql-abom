@@ -11,11 +11,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/advanced-security/codeql-abom/internal/ghapp"
 )
 
 // ErrUnavailable reports a permanent answer for a dependency: the repository cannot be read, or
@@ -24,6 +28,25 @@ var ErrUnavailable = errors.New("dependency unavailable")
 
 // IsUnavailable reports whether err is a permanent answer.
 func IsUnavailable(err error) bool { return errors.Is(err, ErrUnavailable) }
+
+// NothingToAnalyze is a tree read in full that holds no workflow and no action manifest, with the
+// commit it was read at, empty when the repository has no commit. Unavailable for a dependency,
+// which cannot run; for a repository somebody owns it is a reading, settled at that commit.
+type NothingToAnalyze struct {
+	Tree Tree
+	Why  string
+}
+
+func (e *NothingToAnalyze) Error() string { return ErrUnavailable.Error() + ": " + e.Why }
+
+func (e *NothingToAnalyze) Unwrap() error { return ErrUnavailable }
+
+// ErrReferenceMissing is a repository answering that it holds no such reference, which a command
+// that failed cannot say. It always comes with ErrUnavailable.
+var ErrReferenceMissing = errors.New("reference missing")
+
+// IsReferenceMissing reports whether err is a repository answering that a reference does not exist.
+func IsReferenceMissing(err error) bool { return errors.Is(err, ErrReferenceMissing) }
 
 // sparsePatterns are the only paths an actions database is built from.
 //
@@ -46,6 +69,53 @@ type Checkout struct {
 	// BaseURL is the host to clone from; empty means github.com. Overridable for testing.
 	BaseURL string
 	Timeout time.Duration
+	// Tokens authenticates every git call as the owner's installation, or the lent one. Nil runs git as before an App.
+	Tokens ghapp.TokenSource
+}
+
+// gitIdentity is the credential every git call under one fetch or probe carries, and the owner it was lent for.
+type gitIdentity struct {
+	auth ghapp.GitAuth
+	lent string
+}
+
+type gitIdentityKey struct{}
+
+// as carries owner's credential to git calls under ctx; one that cannot be had is retryable, never "unavailable".
+func (c *Checkout) as(ctx context.Context, owner string) (context.Context, error) {
+	if c.Tokens == nil {
+		return ctx, nil
+	}
+	token, lent, err := c.Tokens.Token(ctx, owner)
+	if err != nil {
+		return ctx, fmt.Errorf("choosing a credential to read %s: %w", owner, err)
+	}
+	id := gitIdentity{auth: ghapp.GitCredentials(c.host(), token)}
+	if lent {
+		id.lent = owner
+	}
+	return context.WithValue(ctx, gitIdentityKey{}, id), nil
+}
+
+// host is the scheme and authority the credential is scoped to, so it reaches no other host.
+func (c *Checkout) host() string {
+	base := c.BaseURL
+	if base == "" {
+		base = "https://github.com"
+	}
+	if u, err := url.Parse(base); err == nil && u.Scheme != "" && u.Host != "" {
+		return u.Scheme + "://" + u.Host
+	}
+	return strings.TrimSuffix(base, "/")
+}
+
+// unavailable is ErrUnavailable, and ErrNotInstalled where a lent token was refused: a private repository needs the App.
+func unavailable(ctx context.Context, format string, args ...any) error {
+	err := fmt.Errorf("%w: "+format, append([]any{ErrUnavailable}, args...)...)
+	if id, _ := ctx.Value(gitIdentityKey{}).(gitIdentity); id.lent != "" {
+		return fmt.Errorf("%w; %w: %s, so a private repository there cannot be read", err, ghapp.ErrNotInstalled, id.lent)
+	}
+	return err
 }
 
 func (c *Checkout) git() string {
@@ -83,13 +153,17 @@ func (c *Checkout) Fetch(ctx context.Context, dest, owner, repo, ref string) (Tr
 		ctx, cancel = context.WithTimeout(ctx, c.Timeout)
 		defer cancel()
 	}
+	ctx, err := c.as(ctx, owner)
+	if err != nil {
+		return Tree{}, err
+	}
 	if err := prepareCheckoutDir(dest); err != nil {
 		return Tree{}, err
 	}
 
 	url := c.cloneURL(owner, repo)
 	if out, err := c.clone(ctx, dest, url, ref); err != nil {
-		return Tree{}, fmt.Errorf("%w: cloning %s at %q: %s", ErrUnavailable, url, ref, out)
+		return Tree{}, unavailable(ctx, "cloning %s at %q: %s", url, ref, out)
 	}
 	if out, err := c.sparseCheckout(ctx, dest); err != nil {
 		return Tree{}, fmt.Errorf("selecting actions content in %s: %s", repo, out)
@@ -107,7 +181,8 @@ func (c *Checkout) Fetch(ctx context.Context, dest, owner, repo, ref string) (Tr
 	// never be told apart from one analyzed at the default branch.
 	tree := Tree{Dir: dest, Ref: analyzedRef(ref), SHA: strings.TrimSpace(sha)}
 	if !hasActionsContent(dest) {
-		return Tree{}, fmt.Errorf("%w: %s has no workflows or action manifest", ErrUnavailable, repo)
+		return Tree{}, &NothingToAnalyze{Tree: Tree{Ref: tree.Ref, SHA: tree.SHA},
+			Why: repo + " has no workflows or action manifest"}
 	}
 	return tree, nil
 }
@@ -143,7 +218,7 @@ func (c *Checkout) sparseCheckout(ctx context.Context, dest string) (string, err
 func (c *Checkout) checkout(ctx context.Context, dest, repo, ref string) error {
 	if ref != "" && isCommit(ref) {
 		if out, err := c.run(ctx, dest, "fetch", "--depth=1", "origin", ref); err != nil {
-			return fmt.Errorf("%w: fetching %s of %s: %s", ErrUnavailable, ref, repo, out)
+			return unavailable(ctx, "fetching %s of %s: %s", ref, repo, out)
 		}
 		if out, err := c.run(ctx, dest, "checkout", ref); err != nil {
 			return fmt.Errorf("%w: checking out %s of %s: %s",
@@ -152,9 +227,19 @@ func (c *Checkout) checkout(ctx context.Context, dest, repo, ref string) error {
 		return nil
 	}
 	if out, err := c.run(ctx, dest, "checkout"); err != nil {
+		if unbornBranch(out) {
+			return &NothingToAnalyze{Tree: Tree{Ref: analyzedRef(ref)},
+				Why: fmt.Sprintf("%s has no commit on its default branch: %s", repo, out)}
+		}
 		return fmt.Errorf("checking out %s: %s", repo, out)
 	}
 	return nil
+}
+
+// unbornBranch reports git saying the default branch has no commit: an empty repository's clone.
+func unbornBranch(out string) bool {
+	return strings.Contains(out, "yet to be born") ||
+		strings.Contains(out, "does not have any commits yet")
 }
 
 // hasActionsContent reports whether anything survived the sparse filter.
@@ -189,11 +274,13 @@ func hasActionsContent(dir string) bool {
 }
 
 func (c *Checkout) run(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, c.git(), args...)
+	id, _ := ctx.Value(gitIdentityKey{}).(gitIdentity)
+	cmd := exec.CommandContext(ctx, c.git(), append(slices.Clip(id.auth.Args), args...)...)
 	cmd.Dir = dir
 	// Nothing here may prompt: expansion runs unattended and a credential prompt would hang it.
 	// An empty GIT_ASKPASS also overrides core.askPass and SSH_ASKPASS for git's own prompts.
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never", "GIT_ASKPASS=")
+	cmd.Env = append(cmd.Env, id.auth.Env...)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

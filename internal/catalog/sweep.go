@@ -212,13 +212,16 @@ func mergeByName(first, second []Repository) []Repository {
 // figure rather than ours.
 const repositoriesQuery = `
 query($login:String!,$after:String,$field:RepositoryOrderField!,$first:Int!,$properties:Int!){
-  rateLimit{cost remaining limit}
+  rateLimit{cost remaining limit resetAt}
   repositoryOwner(login:$login){
     repositories(first:$first,after:$after,orderBy:{field:$field,direction:DESC}){
       pageInfo{hasNextPage endCursor}
       nodes{
-        nameWithOwner isArchived createdAt pushedAt defaultBranchRef{name}
+        nameWithOwner isArchived isFork visibility createdAt pushedAt defaultBranchRef{name}
 				workflowTree:object(expression:"HEAD:.github/workflows"){__typename ... on Tree{entries{name type}}}
+        actionsDir:object(expression:"HEAD:.github/actions"){__typename}
+        actionYml:object(expression:"HEAD:action.yml"){__typename}
+        actionYaml:object(expression:"HEAD:action.yaml"){__typename}
         repositoryCustomPropertyValues(first:$properties){totalCount nodes{propertyName value}}
       }
     }
@@ -246,9 +249,14 @@ func (c *Client) walkGraphQL(
 					Nodes []struct {
 						NameWithOwner    string          `json:"nameWithOwner"`
 						IsArchived       bool            `json:"isArchived"`
+						IsFork           *bool           `json:"isFork"`
+						Visibility       string          `json:"visibility"`
 						CreatedAt        string          `json:"createdAt"`
 						PushedAt         string          `json:"pushedAt"`
 						WorkflowTree     json.RawMessage `json:"workflowTree"`
+						ActionsDir       json.RawMessage `json:"actionsDir"`
+						ActionYml        json.RawMessage `json:"actionYml"`
+						ActionYaml       json.RawMessage `json:"actionYaml"`
 						DefaultBranchRef *struct {
 							Name string `json:"name"`
 						} `json:"defaultBranchRef"`
@@ -277,14 +285,18 @@ func (c *Client) walkGraphQL(
 
 		for _, node := range page.RepositoryOwner.Repositories.Nodes {
 			repo := Repository{
-				FullName:  node.NameWithOwner,
-				CreatedAt: parseTimestamp(node.CreatedAt),
-				PushedAt:  parseTimestamp(node.PushedAt),
+				FullName:   node.NameWithOwner,
+				CreatedAt:  parseTimestamp(node.CreatedAt),
+				PushedAt:   parseTimestamp(node.PushedAt),
+				Fork:       node.IsFork,
+				Visibility: node.Visibility,
 			}
 			if node.DefaultBranchRef != nil {
 				repo.DefaultBranch = node.DefaultBranchRef.Name
 			}
 			repo.HasWorkflows = workflowFiles(node.WorkflowTree)
+			repo.HasActionsDir = pathPresent(node.ActionsDir)
+			repo.HasRootAction = anyPresent(pathPresent(node.ActionYml), pathPresent(node.ActionYaml))
 			// Kept whole or not at all. Half the values would read as a deliberate placement in
 			// a unit the organization did not choose.
 			if node.Properties.TotalCount > len(node.Properties.Nodes) {
@@ -350,6 +362,8 @@ func (c *Client) walkRESTFrom(
 			DefaultBranch string `json:"default_branch"`
 			CreatedAt     string `json:"created_at"`
 			PushedAt      string `json:"pushed_at"`
+			Fork          *bool  `json:"fork"`
+			Visibility    string `json:"visibility"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
 			resp.Body.Close()
@@ -364,6 +378,8 @@ func (c *Client) walkRESTFrom(
 				DefaultBranch: r.DefaultBranch,
 				CreatedAt:     parseTimestamp(r.CreatedAt),
 				PushedAt:      parseTimestamp(r.PushedAt),
+				Fork:          r.Fork,
+				Visibility:    r.Visibility,
 			}
 			if stop := absorb(&repos, &marks, repo, r.Archived, field, bound); stop {
 				return repos, marks, pages, nil

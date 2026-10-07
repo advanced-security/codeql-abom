@@ -11,7 +11,7 @@ func TestAListMemberOutsideItsVocabularyRefusesTheWholeTerm(t *testing.T) {
 	for text, allowed := range map[string]string{
 		"kinds=banana":                  "composite_action",
 		"kinds=action,banana":           "docker_image",
-		"origins=owned":                 "upstream",
+		"origins=yours":                 "owned", // the reader's word, where the term asks the declaration's
 		"flags=banana":                  "unanalyzed",
 		"flags=findings,pinned":         "advisory",
 		"edges=cross-owner":             "crossOwner", // the store's spelling, where the browser's is asked
@@ -35,7 +35,7 @@ func TestAListMemberOutsideItsVocabularyRefusesTheWholeTerm(t *testing.T) {
 func TestEveryListMemberTheCorpusProducesIsStillAccepted(t *testing.T) {
 	for _, text := range []string{
 		"kinds=org,repo,workflow,reusable_workflow,composite_action,action,docker_image,job,step",
-		"origins=seed,upstream,external",
+		"origins=owned,seed,upstream,external",
 		"flags=findings,advisory,unanalyzed",
 		"edges=sameRepo,sameOwner,crossOwner",
 		"edgeKinds=step-uses-action,job-needs-job,job-uses-reusable-workflow,composite-step-uses-action",

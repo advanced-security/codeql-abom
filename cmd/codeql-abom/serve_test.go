@@ -7,8 +7,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/advanced-security/codeql-abom/internal/expand"
+	"github.com/advanced-security/codeql-abom/internal/layout"
 	"github.com/advanced-security/codeql-abom/internal/store"
+	"github.com/advanced-security/codeql-abom/internal/supervisor"
 )
 
 // A database migrated in place and never crawled carries no boundary on any edge, because the
@@ -158,4 +162,56 @@ func unclassifiedEdgeCount(t *testing.T, db string) int {
 		t.Fatalf("counting unclassified edges: %v", err)
 	}
 	return n
+}
+
+// The crawl recognizes a moved reference's content from one tree read, and a read that would wait
+// out a rate limit is refused rather than retried: the clone it falls back to costs less.
+func TestTheCrawlReadsTreesWithoutWaitingOutARateLimit(t *testing.T) {
+	loop := &supervisor.Supervisor{Expander: &expand.Expander{}}
+
+	wireTrees(context.Background(), loop, "https://api.example.test", nil)
+
+	trees, ok := loop.Expander.Trees.(expand.GitHubTrees)
+	if !ok || trees.Client == nil {
+		t.Fatalf("the crawl reads no trees: %#v", loop.Expander.Trees)
+	}
+	if trees.Client.MaxRetries != 0 {
+		t.Errorf("a tree read retries %d times; it should fall back to the clone", trees.Client.MaxRetries)
+	}
+}
+
+// Every details page draws with Graphviz, so a server without it is a broken installation: it
+// refuses to start and names the remedy rather than serving pages that cannot draw.
+func TestServeRefusesToStartWithoutGraphviz(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "abom.db")
+	t.Setenv("PATH", t.TempDir())
+	// Bounded, so a server that wrongly starts stops and fails the test rather than hanging it.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out := &lockedWriter{}
+	err := runServe(ctx, []string{"--db", db, "--addr", "127.0.0.1:0"}, out, out)
+	if err == nil {
+		t.Fatalf("serve started without Graphviz: %s", out.String())
+	}
+	if !strings.Contains(err.Error(), "install Graphviz") {
+		t.Errorf("serve refused without naming the remedy: %v", err)
+	}
+}
+
+// The banner names the Graphviz it draws with, which is what a figure's bytes depend on.
+func TestServeNamesTheGraphvizItDrawsWith(t *testing.T) {
+	version, err := layout.Version(context.Background())
+	if err != nil {
+		t.Fatalf("Graphviz is required to run these tests: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	out := &lockedWriter{}
+	db := filepath.Join(t.TempDir(), "abom.db")
+	if err := runServe(ctx, []string{"--db", db, "--addr", "127.0.0.1:0"}, out, out); err != nil {
+		t.Fatalf("serve: %v (%s)", err, out.String())
+	}
+	if !strings.Contains(out.String(), "Graphviz "+version) {
+		t.Errorf("the banner does not name Graphviz %s:\n%s", version, out.String())
+	}
 }

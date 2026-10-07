@@ -74,5 +74,6 @@ func (s *Server) runSet(ctx context.Context, spec viewspec.Spec) (store.Database
 func repositoriesQuery(spec viewspec.Spec) store.RepositoriesQuery {
 	return store.RepositoriesQuery{
 		Search: spec.Search, Scope: spec.Scope, Flags: spec.Flags, Grouping: scopeFromSpec(spec),
+		CodeScanning: spec.CodeScanning,
 	}
 }

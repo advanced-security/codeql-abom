@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -66,8 +67,9 @@ const observedEdges = `observed(edge_row_id, src_node_row_id, dst_node_row_id, r
 // ref resolved to; a commit settled as identical to an analyzed one reads that one's (?3, which
 // analyzed commits answer for each resolved commit). What it declared is read per sighting, never
 // from the row: a location is one row however many commits declare it, and the row holds the last
-// writer's target. The repository's own declarations are read at the commits its references
-// resolve to, so a step it has since deleted is not submitted as a dependency it still has.
+// writer's target. The repository's own declarations are read at its default branch (?4, the
+// commits answering for it, NULL where no reference resolves the repository), so neither a step it
+// has since deleted nor what a release only a consumer pins declared is submitted as its own.
 const submissionClosureQuery = `
 WITH RECURSIVE lock_choice(edge_row_id, commit_sha) AS (
 	SELECT CAST(json_extract(j.value, '$.e') AS INTEGER), LOWER(json_extract(j.value, '$.c'))
@@ -82,9 +84,7 @@ own AS (
 	SELECT o.* FROM observed o
 	  JOIN repository r ON r.row_id = o.repository_row_id
 	 WHERE r.repository_full_name = ?1
-	   AND (o.commit_sha = ''
-	        OR NOT EXISTS (SELECT 1 FROM live_answer la WHERE la.repository = LOWER(?1))
-	        OR o.commit_sha IN (SELECT la.answer FROM live_answer la WHERE la.repository = LOWER(?1)))
+	   AND (?4 IS NULL OR o.commit_sha IN (SELECT j.value FROM json_each(?4) j))
 ),
 closure(manifest, node_row, node_key, owner, repo, subpath, ref, locked, pin, depth, parent_key) AS (
 	SELECT o.file_path, n.row_id, n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''),
@@ -158,23 +158,65 @@ const resolvedVersionForRef = `
 // rather than as an empty supply chain: submitting an empty closure replaces GitHub's own reading
 // of the workflow with nothing.
 func (s *Store) SubmissionClosure(fullName string) ([]ClosureEntry, error) {
+	return s.closureAt(fullName, false)
+}
+
+// StartingPointClosure is SubmissionClosure at every commit reach counts, protected branches included.
+func (s *Store) StartingPointClosure(fullName string) ([]ClosureEntry, error) {
+	return s.closureAt(fullName, true)
+}
+
+func (s *Store) closureAt(fullName string, branches bool) ([]ClosureEntry, error) {
 	live, err := s.LiveCommits()
 	if err != nil {
 		return nil, err
 	}
-	return s.submissionClosure(fullName, live)
+	own, governed, err := s.snapshotCommits(fullName, live, branches)
+	if err != nil {
+		return nil, err
+	}
+	return s.submissionClosure(fullName, live, own, governed)
 }
 
-func (s *Store) submissionClosure(fullName string, live map[string]map[string][]string) ([]ClosureEntry, error) {
+// snapshotCommits are the commits a snapshot reads a repository's own declarations at:
+// StartingCommits' for its default branch, which is what a snapshot is filed under. What only a
+// protected branch declares is not a dependency of that commit. governed is false where no
+// reference resolves the repository, which keeps every commit it was analyzed at.
+func (s *Store) snapshotCommits(
+	fullName string, live map[string]map[string][]string, branches bool,
+) (own map[string][]string, governed bool, err error) {
+	rows, err := s.liveRows()
+	if err != nil {
+		return nil, false, err
+	}
+	own, governed = startingCommits(rows, live, branches)[strings.ToLower(fullName)]
+	return own, governed, nil
+}
+
+func (s *Store) submissionClosure(
+	fullName string, live map[string]map[string][]string, own map[string][]string, governed bool,
+) ([]ClosureEntry, error) {
 	choices, err := s.lockChoicesOf(fullName)
 	if err != nil {
 		return nil, err
 	}
-	answers, err := liveAnswers(live)
+	answers, err := liveAnswers(live, nil)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.DB().Query(submissionClosureQuery, fullName, choices, answers)
+	var ownAnswers sql.NullString
+	if governed {
+		read := []string{}
+		for _, by := range own {
+			read = append(read, by...)
+		}
+		body, err := json.Marshal(read)
+		if err != nil {
+			return nil, fmt.Errorf("encoding the commits %s is read at: %w", fullName, err)
+		}
+		ownAnswers = sql.NullString{String: string(body), Valid: true}
+	}
+	rows, err := s.DB().Query(submissionClosureQuery, fullName, choices, answers, ownAnswers)
 	if err != nil {
 		return nil, err
 	}
@@ -197,22 +239,26 @@ func (s *Store) submissionClosure(fullName string, live map[string]map[string][]
 	return out, rows.Err()
 }
 
-// liveAnswers is LiveCommits as the JSON array the closure query reads. A commit nothing answers
-// for is listed with an empty answer, so its repository still reads as one a reference resolves.
-func liveAnswers(live map[string]map[string][]string) (string, error) {
+// liveAnswers is LiveCommits as the JSON array the closure query and liveDeclared read, each commit
+// flagged `s` where it is one of StartingCommits'. A commit nothing answers for is listed with an
+// empty answer, so its repository still reads as one a reference resolves. The closure reads its
+// own repository's starting commits separately and no flag, so it passes no starting commits.
+func liveAnswers(live, starting map[string]map[string][]string) (string, error) {
 	type answer struct {
 		Repository string `json:"r"`
 		Commit     string `json:"c"`
 		Answer     string `json:"a"`
+		Starting   bool   `json:"s,omitempty"`
 	}
 	out := []answer{}
 	for repository, commits := range live {
 		for commit, by := range commits {
+			_, start := starting[repository][commit]
 			if len(by) == 0 {
-				out = append(out, answer{repository, commit, ""})
+				out = append(out, answer{repository, commit, "", start})
 			}
 			for _, a := range by {
-				out = append(out, answer{repository, commit, a})
+				out = append(out, answer{repository, commit, a, start})
 			}
 		}
 	}

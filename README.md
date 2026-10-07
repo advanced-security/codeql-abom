@@ -14,8 +14,8 @@ downloads and Helm deployment are not available.
 1. Follow [source setup](docs/deployment/source.md) to install the prerequisites, CodeQL and its
    query packs, and to confirm GitHub and Git access to your organization.
 2. From the checkout, run `make start` and open <http://127.0.0.1:8099>.
-3. In **Settings**, press **Check with gh**, declare your organization and **Save**. ABOM lists and
-   queues its repositories; nothing is analyzed yet.
+3. In **Settings**, which asks gh for your accounts as it opens, declare your organization and
+   **Save**. ABOM lists and queues its repositories; nothing is analyzed yet.
 4. Review what was listed, then press **Start analysis**. `make stop` stops the server.
 
 [Deployment options](docs/deployment/index.md) · [Configuration](docs/deployment/configuration.md) ·

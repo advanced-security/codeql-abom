@@ -55,11 +55,13 @@ func (s *Store) attachOwnedRepositories(nodes []GraphNode, opts FullGraphOptions
 			Kind:       "repo",
 			Repository: fullName,
 			Origin:     origin,
-			Path:       fullName,
-			Rules:      []string{},
-			Facets:     []FindingFacet{},
-			Discovery:  discovery,
-			Analyzed:   analyzed,
+			// Selected by the declaration's own predicate, so it is yours by construction.
+			Owned:     true,
+			Path:      fullName,
+			Rules:     []string{},
+			Facets:    []FindingFacet{},
+			Discovery: discovery,
+			Analyzed:  analyzed,
 			// Reach is unknown; zero would assert that nothing depends on this repository.
 			ReachKnown: false,
 		})
@@ -74,6 +76,7 @@ const frontierRepoState = `(SELECT CASE
 			 WHEN SUM(f.status = 'pending' AND f.attempts > 0) > 0 THEN 'retrying'
 			 WHEN SUM(f.status = 'pending') > 0 THEN 'queued'
 			 WHEN SUM(f.status = 'done') > 0 THEN 'done'
+			 WHEN SUM(f.status = 'unavailable') > 0 THEN 'unavailable'
 			 ELSE MIN(f.status)
 		   END FROM abom_frontier f
 		  WHERE LOWER(f.node_key) = LOWER(r.repository_full_name))`

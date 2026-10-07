@@ -112,6 +112,23 @@ test('the interface can tell a stable layout from a simulated one', () => {
     assert.match(bare.text, /change on every reload/);
 });
 
+// Graphviz is required, so a stable layout that could not be computed is a fault and reads as one:
+// "Force layout — …" read as a layout the reader had chosen.
+test('a placement that failed reads as a fault, never as the force layout', () => {
+    const failed = layoutSummary({
+        producedBy: 'none',
+        reason: "this server cannot run Graphviz (layout engine is not installed: dot); install Graphviz so that dot is on the server's PATH",
+    });
+    assert.equal(failed.stable, false);
+    assert.equal(failed.fault, true);
+    assert.match(failed.text, /^Stable layout failed — /);
+    assert.match(failed.text, /install Graphviz/);
+
+    const unasked = layoutSummary(null);
+    assert.equal(unasked.fault, false);
+    assert.match(unasked.text, /^Force layout — positions change on every reload/);
+});
+
 // A partial layout is still a partial answer, and a reader deciding whether to trust the picture
 // needs the number rather than a boolean.
 test('a partly placed layout says how much the simulation drew', () => {

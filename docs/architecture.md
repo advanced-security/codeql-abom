@@ -33,23 +33,113 @@ navigation bar of every page, because it is the one thing here that runs with no
 **Reads are conditional, and paced by the budget rather than a guess.** Requests carry
 `If-None-Match` against stored validators, so an unchanged answer costs a round trip and no quota.
 The rate limit is read from every response — not only from the 403 that means it has already run
-out — and requests are spaced only once the budget is genuinely running low.
+out — and requests are spaced only once the budget is genuinely running low. Each kind of work —
+enumeration, event follow-up, reference polling, fetching, the recheck sweep, advisory reads, lock
+verification, analysis — draws from a pool of its own, in the unit its provider charges, at a rate
+and burst the operator sets in Settings. A pool records what the provider charged (GraphQL's
+`cost`, a REST answer except a 304, a git request, a worker-second), never a difference of a shared
+counter; with no rate set and no exhaustion reported it holds nothing back. Beside each meter is a
+freshness estimate derived from the rate and the work queued behind it, worded as that.
+
+**ABOM can be a GitHub App, reading with the least it needs.** `codeql-abom app create` opens a
+local page that posts a manifest to GitHub; the operator creates the App there, and ABOM keeps its
+key and webhook secret as 0600 files beside the database, never in it. The App is created private,
+installable only on the account that owns it; letting other accounts install it is decided in
+GitHub's settings for the App, not by ABOM. The App asks only to read, and asks once for
+everything it uses: metadata, contents, code-scanning results, administration, actions, and the
+organization's custom properties and administration. Administration and actions are read because
+GitHub delivers protection, ruleset, security-and-analysis and workflow-run events only to an App
+holding them, and the organization's administration for its rulesets' events — each traced in code
+to the call or the event handler that needs it. An installed account is read with its installation's token; another
+account's public repositories with a designated installation's, never the person's; and writes,
+such as dependency snapshots, keep the person's credential. Installations are evidence recorded
+beside the declaration, never one, and an installation that cannot be read leaves its account
+unknown rather than empty. With no App configured, ABOM reads as the `gh` session does.
+
+**Change arrives as events and polls, and the sweep stays behind both.** A signed webhook — from
+the App, or a repository or organization webhook — is verified before it is parsed, written to a
+durable log before it is acknowledged, kept 30 days, and processed in order. The payload's commit
+decides nothing:
+
+- **A push re-resolves the pushed branch or tag, once, for every queue row standing at it** — the
+  owner's default or protected branch, and each reference another workflow makes to it, which
+  polling leaves to events — and requeues each, expedited, only if the probe finds it moved, waking
+  discovery so the analysis starts at once. Before the wake, dependency review compares the commit
+  each moved row was analyzed at with the one the probe found, once per push on the event follow-up
+  pool, and a push whose workflows' `uses:` it names moving is claimed ahead of the other pushes
+  waiting. The comparison orders; it never skips an analysis and never writes an edge. It only
+  promotes, too: GitHub's dependency graph reads workflows and not a composite action's
+  `action.yml`, so a comparison that names nothing, or that GitHub refused, left incomplete or did
+  not answer within ten seconds, leaves a push where it was. A deleted branch or tag marks the
+  references to it gone, as the sweep would a day later, but only once the repository answers that
+  it holds no such reference; a probe that could not ask marks nothing. Re-creating it reads them
+  again, even at the commit already analyzed. A branch protection or ruleset change refreshes which
+  branches are live. An organization's ruleset names no repository, so its conditions decide which
+  owned repositories have their protected branches read again, one request each: those its name
+  patterns admit, or whose recorded property values may carry what it targets. Where the event
+  cannot say — repository ids, which ABOM does not record, or an edit to the conditions — every
+  owned repository of the organization is read the same way, and a tag, push or disabled ruleset
+  protects no branch and reads nothing.
+- **An event names one repository, so that repository is read.** A sweep of a large account names
+  only what was pushed or created since its marks, so a repository created, unarchived, made
+  public or private, edited, given new custom property values, or pushed to before any listing
+  named it is read on the next discovery cycle. In an account holding a property scope it is read
+  whatever its ownership was, since gaining a value is how a repository enters one. Only a full listing records what is gone, so a
+  deletion, archive, rename or transfer lists each declared account it touched whole, as does a
+  changed property definition, which moves repositories no event names.
+- **A rename is reported, never followed.** An account renamed under an installation is named with
+  its old and new login and its installations re-read; the declaration keeps the login the operator
+  wrote, because whoever takes the old one next would otherwise inherit it.
+- **The rest record what only an event says.** A new, changed or withdrawn Actions advisory has
+  advisories refreshed once their floor allows; every other ecosystem's is ignored. A completed
+  workflow run is kept with the reusable workflows it called, at their commits. Code scanning
+  switched on or off, or a code scanning run finishing, re-asks whether GitHub holds the
+  repository's actions database. The App's deletion is recorded as the fact it is.
+
+External references that can move are polled in batches, ordered by how many starting points run
+the version that would move, under their own pool; a commit pin is never asked. A reference is
+resolved by its exact name, branch before tag as `git clone` reads it. GitHub sends no event for
+tags pushed more than three at once. The 24-hour recheck sweep is the fallback for all of it, and a
+row that has failed eight times counts as stuck rather than holding a depth incomplete, so the sweep
+cannot be held off for good.
 
 **Ownership is declared, never inferred.** Nothing happens until an operator claims an account.
 Membership comes from an authenticated `gh` session and decides nothing on its own: holding an
 analyzed repository proves nothing about who can change it.
+
+**A declaration covers an account whole, or only what it names.** A restricted organization covers
+its named repositories and, beside them, any repository carrying every term of one of its property
+scopes: terms in one scope all hold, and each scope counts on its own. A term matches as the
+Inventory's property filter does, the name in any case and the value exactly. Ownership is decided
+per repository by one predicate (`ownedFullName` and its siblings in `internal/store/ownedscope.go`,
+`DeclaredAccount.Covers` in Go), so a scope matching two repositories of an organization makes those
+two the owned tier, the pinning mark and every owned figure, never the account. Only a property
+organization owners and admins alone can set (`values_editable_by` of `org_actors`) may decide what
+is yours: the store refuses a new scope on one repository administrators can set, and a view derived
+from the recorded schema holds a scope, kept and counting nothing, while that schema is unread or no
+longer allows it. Saving the declaration again keeps a held scope until the operator removes it. A scope naming the organization's default covers every repository that never chose a
+value, including later ones, and says so wherever it is shown.
+
+**Property values are kept for owned repositories only.** A listing reads every repository's
+values, keeps those of the repositories some scope covers and forgets those of one that left; a
+read whose values did not arrive whole changes nothing and counts the repository as not judged,
+since unknown is not a mismatch. A sweep walks by creation and push time and cannot see a property
+change, so a scope newer than the account's last full listing forces one. The schema is read before the values it judges, so a scope saved
+before its organization was ever read takes effect on that first read.
 
 **Discovery is a closure, not a crawl of everything.** Nothing enters the graph that the owned set
 does not reach. The walk is inductive — owned roots, plus what they reach — so the boundary is a
 consequence of the declaration rather than a separate configuration.
 
 **What you own is decided at the node.** Discovery and the prune bound the corpus by repository,
-because a repository is what is fetched. The `owned` scope every unit and the Explorer read is
-narrower: what the declared repositories hold, what their own lines name, what the reach walk finds
-them running through another action, the steps and jobs inside what they run, and the repositories
-holding any of it. A dependency's repository also holds that project's own CI, which is fetched and
-is never yours; admitted whole, it was 1,874 of the 1,991 workflows the crawled organization's
-owned scope listed. A property filter on the Explorer draws its group's repositories the same way.
+because a repository is what is fetched. The two scopes every unit and the Explorer read are
+narrower, and both root on the declared repositories: `owned` is what they hold, and `supply-chain`
+adds what they run, directly or through another action. A dependency's repository also holds that
+project's own CI, which is fetched and is never yours; admitted whole, it was 1,874 of the 1,991
+workflows the crawled organization's closure listed. A property filter on the Explorer draws its
+group's repositories the way `supply-chain` does. What depends on a listed action is counted over
+the declared repositories reaching it, never every starting point, since a seed another account
+holds is not yours to count.
 
 **Analysis is queued per dependency *and* reference.** `actions/checkout@v4` and
 `actions/checkout@v5` are different work, because they are different commits.
@@ -62,7 +152,10 @@ because the same commit under two filters is two different sets of files, and it
 because a run against the narrow tree has not answered for the wide one. Reuse says only that the
 bytes are already here: whether the analysis runs is still the ledger's decision, so a hit is never
 a skip. Retention is off until a directory is named, bounded by a ceiling that evicts the least
-recently used first, readable only by its owner, and claimed by one process at a time.
+recently used first, readable only by its owner, and claimed by one process at a time. A held tree
+is reused only while it still holds what was fetched: its content is recorded when it is retained
+and read again on reuse, so one edited in place since, or retained before trees were verified, is
+fetched again rather than analyzed as a commit it no longer is.
 
 **An analysis runs again only when its identity changed.** A unit of work is one query against one
 database, and both are content-addressed: the repository, the resolved commit, the checkout filter,
@@ -72,6 +165,14 @@ CodeQL is deterministic, so nothing needs to run. This is a separate decision fr
 came from, which is why a cache hit is not a skip. It is also only half of an incremental crawl:
 recognizing an unchanged pair is done, and putting back the work that a change *did* touch selects
 on fewer of those dimensions than the identity holds.
+
+**A commit's content is known from its tree, without fetching it.** Content identity is a digest of
+git's own blob ids for the paths the sparse filter takes, so a checkout and GitHub's tree listing of
+the same commit compute the same value; the scheme is versioned, and a digest under another scheme or
+filter matches nothing. A moved reference whose listing matches an analyzed commit of the same
+repository settles with one read and no clone, carrying lock coverage only where the digest covers
+the workflows that hold the locks. A truncated or failed listing, or an empty tree, settles nothing,
+and each cycle records the tree reads it spent.
 
 **A result names the CodeQL that produced it, extraction included, and nothing recorded under one
 CodeQL answers for another.** Test results are kept per CLI, a printed tree and a run name theirs,
@@ -285,6 +386,46 @@ tuple a run is keyed on, so the cache and the ledger cannot disagree about which
 Retention is opt-in until its occupancy over a full crawl is measured. Reuse skips the extraction
 and never the analysis: whether a query needs to run again stays a ledger decision.
 
+**What code scanning already computed is taken, and recorded as what produced it.** Before
+building, the crawl asks code scanning for the repository's actions database. It stands in for the
+build only when it records the commit being analyzed and ABOM's CodeQL, and its source archive holds
+exactly the checkout's files under the extractor's default filters, so it carries the identity
+ABOM's own build would have had and is retained like one, because ABOM's own queries then run on it.
+
+An owned repository's code scanning analysis of the same commit answers for every rule of the
+findings lane it ran, whether ABOM took the database or built its own. **A rule id names one query
+whatever pack, suite or release brought it** — a pack importing another's queries does not change
+their ids — so the analysis need not have run ABOM's packs or ABOM's CodeQL; code scanning almost
+never does. What it must establish is what the document cannot say, which files it read: default
+setup made it, as its analysis key says, and default setup reads the extractor's default files,
+where a repository's own workflow may narrow them, as may a `github-codeql-config-file` with `paths`
+or `paths-ignore`: ABOM reads that file and takes nothing where it narrows paths or cannot be read.
+Its threat model is not compared, since
+`remote_and_local` only adds local sources to the `remote` ABOM evaluates under: it reports what
+`remote` reports, and perhaps more. ABOM evaluates the rest of the lane. The lane stays one evaluation, and
+each rule records what produced it: ABOM's rules their query version and pack, code scanning's the
+analysis, the pack release and the CodeQL it ran, and no query version. A result taken from an older
+release is that release's result, and says so. Anything that cannot be established is evaluated as
+before, and each cycle's log line says what code scanning supplied and why it refused the rest.
+
+**Every owned repository's code scanning setup is read and classified.** A listing reads each owned
+repository's default setup and CodeQL databases, and where it can matter its newest CodeQL analyses,
+whose keys say which setup made them; a full listing also reads the account's code security
+configurations. One view, `abom_setup_class`, gives each repository one class with its evidence:
+advanced, conflict, covered, add, enable, blocked by an enforced configuration, a language the write
+refuses, no Actions code, or a state saying it was not read or crawled. The Inventory, the API and
+`codeql-abom code-scanning status` all read it.
+
+**ABOM's one write to code scanning adds `actions` to default setup, from an approved preview.** A
+preview asks GitHub nothing and records the body each write would send; an approval names the write
+token's owner. A batch writes one repository at a time in the `default setup` pool, reading each
+again first and skipping any whose setup changed. The body repeats every setting read and adds
+`actions`; a fresh enablement is `actions` alone. An enforced configuration does not stop a write,
+since adding a language keeps it enforced. Each write is read back: a lost language or a moved
+configuration stops the batch, and repeated failures pause it. Nothing is written where advanced
+setup runs, or outside `--enable-targets` and `--enable-accounts`, a guard the `Patcher` holds. Every
+step lands in the append-only `abom_setup_write` ledger.
+
 An account is read over **GraphQL where it answers, REST where it does not**, and both routes answer
 the same three questions — what is new, what changed, what is gone. GraphQL is preferred because one
 call returns a hundred repositories with their marks, their custom properties and their default
@@ -347,6 +488,8 @@ Everything is one SQLite file. `internal/store` is the only package that writes 
 | Table | |
 | --- | --- |
 | `abom_owned_org`, `abom_owned_scope`, `abom_owned_include` | What the operator declared, and how it arrived |
+| `abom_owned_property_clause`, `abom_owned_property_term` | Property scopes on a restricted organization, each the terms a repository must all carry; `abom_owned_property_clause_honored` is the view, derived from the recorded schema, of the ones that count |
+| `abom_property_schema`, `abom_property_schema_read` | Each organization's custom properties as last read whole — type, default, who may set the values — and when |
 | `abom_enumeration_state`, `abom_repository_absence` | When each account was last listed whole and read for changes, by which route and to which marks, and the declared repositories a full listing no longer names, since when |
 | `abom_account` | What `gh` reports about membership, with the token scopes that made the answer possible |
 | `repository` | Every repository seen, with `origin` recording how it entered |
@@ -364,6 +507,24 @@ A dependency Git could not fetch is `unavailable` and stays so: Git reports a mi
 and a missing repository alike, so nothing retries it on its own. An operator's retry, for all of
 them or for one named repository, puts it back with a fresh attempt budget. A reference that names
 no repository, such as one built from an expression, is never put back.
+
+An owned repository whose tree holds no workflow and no action manifest, or that has no commit, is
+`nothing`: read in full, recorded at the commit it was read at, settled, and never counted as
+analyzed. No run is recorded for it, because CodeQL builds no database from no Actions source, and
+a push to it is compared with that commit like any other. A dependency in the same state stays
+`unavailable`, since what a workflow names there cannot run.
+
+**The crawl claims in stages, inside the owned closure.** What somebody asked for by name, or an
+owned push moved, goes first, a push whose `uses:` moved first among the pushes. Then what was never
+analyzed, shallowest depth first and the most used within a depth, with a commit being re-observed
+ahead of it; then references that moved since they were analyzed, the longest since analyzed first.
+A moved reference does not reopen its depth, so freshness never waits on itself. Only repositories
+the owned closure reaches are claimed, probed, polled, re-observed or counted toward completeness
+and the pools' estimates: a row the closure no longer reaches stays queued and unclaimed until a
+prune removes it, and Settings says how many there are. A row keeps two clocks: `analyzed_at` when
+an analysis settled it, and `checked_at` when a probe last asked where its reference is. Nothing
+else writes either, so "probed since it was analyzed" is a measurement rather than a coincidence of
+one write.
 
 **A commit whose declarations are not known is met again, a cycle's claim at a time.** Before it
 claims, each cycle puts back analyzed dependencies standing at a commit [recorded before sightings
@@ -421,7 +582,23 @@ row; any other says its commit declared something there and not what, and adds n
 borrowing the row's. Walks stand only at live commits — those a reference resolves to; every
 analyzed commit of a repository nothing resolves — and a commit settled as identical to an analyzed
 one reads that commit's sightings. Blast radius takes the same walk, so a repository counts toward a
-dependency only through the releases it runs; the owned closure stays component-level by design.
+dependency only through the releases it runs; both declared scopes stay component-level by design.
+
+**A starting point's own CI runs at its branches, not at its releases.** A repository's own triggered
+workflows count as a starting point's only at its starting commits: the default branch, and each
+protected branch, which enumeration records for owned repositories and queues at depth 0 beside the
+default branch, and which leaves the queue when it stops being protected. A consumer pinning a
+release runs that release's `action.yml` or called workflow, never its CI, so a repository known
+only as somebody's dependency contributes nothing as a starting point. The walk, the submission
+closure and its refusal read one definition of these commits, and a snapshot is filed under the
+default branch alone.
+
+**What a view lists is what live commits declared.** Relationships, the `at=` and reference-style
+filters, the Explorer, pinning, the bill of materials and the count of repositories naming each
+version read the same declarations the walks do, never the row: a line whose live commits declared
+different things is one entry per thing declared, naming those commits, and a line nothing live
+declares is counted beside the list rather than shown. The reading is cached per database state, so
+a write is visible on the next request.
 
 **A snapshot is never built from what is not known.** A submission is refused, before anything is
 sent and with the refusal recorded, while its closure reads a commit analyzed only before sightings
@@ -461,7 +638,7 @@ tooling plan in `plans/tools/actions-lock.md` owns it.
 | Table | |
 | --- | --- |
 | `abom_query_run`, `abom_query_run_ref` | One row per evaluation: the resolved commit, checkout filter, analysis mode, pack digest and CLI version that produced it, and what recorded it — the crawl, a run, a closure, or a replayed recording |
-| `abom_query_run_rule` | The rules one evaluation ran, each with its own query version, pack and source. A lane runs a whole suite in one invocation, so this, not the evaluation, says where a finding's rule came from |
+| `abom_query_run_rule` | The rules one evaluation ran, each with its own query version, pack and source. A lane runs a whole suite in one invocation, so this, not the evaluation, says where a finding's rule came from. A rule code scanning's analysis answered names that analysis and the CodeQL that ran it |
 | `abom_closure`, `abom_closure_member` | What one closure database was built from, keyed by the digest its run carries: the owned repository at its commit, whether it was anchored, and each callee staged with its commit, its own path and where the closure put it |
 | `abom_ingest_ledger` | What has already been read, so it is not read twice |
 | `abom_ref_resolution` | Which commit a tag or branch pointed at, when it was measured |
@@ -574,6 +751,8 @@ workflow is never an edge source; edges leave its steps and its jobs.
 what it invoked, in which shape, over which commit, under which CodeQL and what recorded it, and
 `abom_query_run_rule` gives the version, pack and **source** of the rule's own query in that
 evaluation: `upstream`, `abom`, `custom`, or `mixed` where two packs supplied one rule id at once.
+Where code scanning's analysis answered the rule, the trace names that analysis, and its pack
+release and CodeQL stand in place of the evaluation's.
 One defect reported through two copies of a rule answers to both. An evaluation recorded before its
 rules were kept is named only where that is exact — one pack supplied everything it ran, so every
 rule it reported is that pack's, and the version is known only when it ran that one query. A lane
@@ -674,11 +853,20 @@ flowchart LR
 
 | Table | |
 | --- | --- |
-| `abom_blast_radius`, `abom_node_reach`, `abom_node_version_reach`, `abom_exposure` | Reach — counted, by repository, by the version each repository runs, and by route — recomputed wholesale rather than incrementally |
+| `abom_blast_radius`, `abom_node_reach`, `abom_node_version_reach`, `abom_exposure` | Reach — counted, by repository, by the version each repository runs, and by route. Each cycle derives only what changed; the wholesale rebuild runs on its own schedule — when the queue drains after a cycle changed the graph, when enough dependencies arrive, or after a day — and is the oracle the derivation must equal |
+| `abom_reach_mark`, `abom_reach_input` | Which build's walk stored reach answers for, and a digest of what each node's walk read. A node whose digest changed is walked again, with everything it leads to; a missing or foreign mark means a full rebuild, never a guess |
 | `abom_advisory`, `abom_advisory_package` | GHSA records, stored as attributed external statements |
 | `abom_submission` | What was sent to GitHub, because GitHub offers no way to ask |
 | `abom_saved_view` | Named predicates, read by the API and the CLI |
 | `abom_http_cache` | Validators GitHub gave for a URL, so an unchanged answer costs no quota |
+| `abom_event_delivery` | Every webhook delivery as it arrived, written before it was acknowledged, and how it settled and why. Kept 30 days; one still pending is kept until it settles |
+| `abom_workflow_run` | A completed workflow run attempt and the reusable workflows it called, at their commits. Kept 30 days |
+| `abom_listed_repository` | Fork, visibility and where a repository keeps Actions code, as a listing said. NULL is a listing that could not look |
+| `abom_setup_reading`, `abom_setup_analyses` | Each repository's latest default setup reading or refusal, and which setup made its CodeQL analyses |
+| `abom_security_configuration`, `abom_configuration_attachment`, `abom_configuration_read` | Code security configurations and where each applies |
+| `abom_setup_class` (view) | Each repository's Actions code scanning class |
+| `abom_setup_preview`, `abom_setup_preview_row`, `abom_setup_batch`, `abom_setup_write` | Previews, approvals, batches and the append-only ledger of every write step |
+| `abom_pool_rate`, `abom_pool_spend` | The rate the operator set for each pool, and what each pool spent per active minute in its provider's unit. Spend is kept 30 days |
 | `abom_discovery_state` | Whether the operator wants discovery running, so a restart does not decide |
 | `abom_discovery_startup` | Whether a restart may act on that. Its own row because "running" has no value meaning nobody has said |
 
@@ -690,6 +878,11 @@ a removed node can legitimately come back.
 
 **The graph tables are append-only.** Removal is a tombstone (`removed_at`), and only compaction
 deletes. That keeps row ids monotonic, which is what makes a delta cursor valid at all.
+
+**A tombstone yields to the world.** A run that names a removed node or observes a removed edge
+again brings it back, row id and all, and so does opening a database that holds a live edge under a
+removed node. A page that saw the removal could never get it back through a delta, since its row id
+is below the watermark, so a revival bumps the epoch and every open cursor reloads.
 
 ## Reachability
 
@@ -719,7 +912,7 @@ assert an order between jobs that actually run in parallel.
 | Dashboard | Where to start: each entry opens the Inventory already narrowed to it |
 | CodeQL | The queries findings come from: requests, the catalog of versions and stages, runs and their results per repository and query, what those results would add to the alerts developers already see, and which suites each tier runs |
 | Inventory | Which things match, in tabs that are named views, reprojected by a unit switch. An action's row opens in place onto its versions. Repositories chosen here are what a run is asked over |
-| Details | One node, under the scope it was opened with: its versions, and what `uses:` it — one row per repository, reference and commit, from the walk reach takes |
+| Details | One node, under the scope it was opened with: a figure of what runs it and what it runs, its versions, and what `uses:` it — one row per repository, reference and commit, from the walk reach takes |
 | Explorer | A force-directed graph over a scoped closure |
 | Settings | What the operator claims, and what discovery does: analysis is started and requeued here |
 | `report` | Terminal summary |
@@ -763,6 +956,26 @@ commit, how, and what moving one tag would change — directly, through an inter
 all where a lock keeps a repository. Terms that only chose which actions a list showed travel in its
 address and are named as not applied.
 
+**A version answers for its own commit.** With `at`, the details page reads its findings by rule
+at the commits those references resolve to, and what the action uses from the sightings at those
+commits; a reference nothing analyzed there is named as not read, and any other term is refused by
+name. Each version row also counts what any rule reported on the `uses:` lines naming it: a finding
+is matched to a line at the commit its own run analyzed, by what that commit's sighting says the
+line declared, never by the edge row, which holds whichever commit wrote it last; the commits no
+findings run reached are counted beside it. What a node uses includes what its own steps use, since
+an action's steps are where its `uses:` lines are. The walk behind these answers is loaded once per
+database state, keyed by the connection's `total_changes()` and `data_version`, so any commit by any
+writer retires it — a graph generation alone would not, because resolutions, promotions, locks and
+ingested edges all land without one.
+
+**A details page draws what runs it and what it runs.** Two directed walks over `uses:`
+relationships from the page's versions, cut from the Explorer's projection; what runs it starts
+where *What `uses:` this* rows start, under the same terms. At most 25 nodes are drawn, each
+connected to the page's node — its versions, then what you own, then the rest, nearest first — and
+the figure says what it left out. Graphviz places it and the server draws the SVG, so the page, the
+download and the print are one drawing, byte-identical within a Graphviz version. `serve` requires
+Graphviz.
+
 **A run is asked over repositories somebody chose.** The selection travels as `repositories=`,
 which resolves each name to its retained database, one it could be rebuilt from, or a named gap —
 whether or not anything was ever found there, because a new query has found nothing anywhere yet.
@@ -772,7 +985,7 @@ run's population is a tab a reader can open and count; names and findings narrow
 never widen it, and a term that chooses no repository is refused by name. The size is stated
 before Run from the run's own resolution, and a run records the question a name resolved to
 rather than the name. Each member records what every query in the run found in it, so a query's
-own count is never its run's total. A run the server stopped under is `interrupted` on the next
+own count is never its run's total; a run's members page in place and sort across the whole run. A run the server stopped under is `interrupted` on the next
 start: not canceled, since nobody asked, and not `running`, since nothing is.
 
 **One draft, on two pages.** The versions a run is drafted with are one draft, held in memory, that
@@ -906,7 +1119,9 @@ is otherwise indistinguishable from "nothing is wrong".
 
 **One filter language, several consumers.** A view is a predicate — scope, kinds, findings, rules,
 origins, reach, reference style — serialized as text, and the Explorer, the API and the CLI all
-parse the same string. Predicates that cut along the graph's structure are applied in SQL;
+parse the same string. Go and the browser parse it separately, so one text, written from a spec
+carrying every term and every fixed value, is held to both: a term the server offers is one the
+page can write. Predicates that cut along the graph's structure are applied in SQL;
 predicates that cut across it are applied after the query, because a closure is edge-closed by
 construction and an arbitrary node filter is not.
 
@@ -1083,6 +1298,16 @@ markup and state, `make e2e` (Playwright) for geometry and the real API contract
 a screenshot pass for density, colour and hierarchy. A green layer says nothing about the others —
 bUnit has no CSS engine, so a grid overflowing by 288px is green everywhere until a browser lays
 it out.
+
+**ABOM checks its own graph.** `codeql-abom check` compares what ABOM stored with an independent
+reading of the same thing, and files every disagreement as a question with its reproduction, never
+as a correction. The checks that spend nothing run exhaustively: the incremental derivation against
+a wholesale rebuild, reach, exposure and the submission closure against each other on every owned
+repository, and graph-wide invariants such as each reach rollup equalling its breakdown and reach
+naming only starting points. Both recomputes run on `VACUUM INTO` snapshots, so the checker writes
+nothing but its own `abom_check_*` tables. Results are keyed by ABOM build, so a trend shows when a
+disagreement started; `/api/checks` lists every planned check, and one that does not run says so
+rather than reporting zero.
 
 **Two sets of data, two jobs, not interchangeable.** A crawled organization answers *did this
 change the real numbers*, and only exists where somebody has a token and has waited. The shared

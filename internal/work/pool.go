@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // ErrSkip marks a job that had nothing to do, such as a repository with no CodeQL database or
@@ -38,6 +39,10 @@ type Prepared struct {
 	// SarifPath is the findings lane's output. It is a field of its own rather than an Extra
 	// entry because SARIF is read by a different ingester than everything in Extra.
 	SarifPath string
+	// TakenSarifPath is code scanning's document holding only the findings lane rules its analysis of
+	// the commit answered, and TakenFrom that analysis; both are empty where ABOM evaluated every rule.
+	TakenSarifPath string
+	TakenFrom      string
 	// Commit is the database revision the result came from, for ledger bookkeeping.
 	Commit string
 	// AnalyzedRef is the reference that revision was checked out at, alongside Commit for the
@@ -101,6 +106,10 @@ type Pool struct {
 	// OnEvent, when set, is called from the serialized phase, so implementations need no
 	// locking of their own.
 	OnEvent func(Event)
+
+	// Capacity is the pool each Prepare spends its worker-seconds from. Nil spends without limit.
+	Capacity *TokenPool
+	now      func() time.Time
 }
 
 type poolOutcome struct {
@@ -153,7 +162,7 @@ func (p *Pool) start(ctx context.Context, jobs []Job, concurrency int) <-chan po
 		go func() {
 			defer wg.Done()
 			for job := range jobCh {
-				prepared, err := p.Prepare(ctx, job)
+				prepared, err := p.prepare(ctx, job)
 				select {
 				case outCh <- poolOutcome{prepared: prepared, job: job, err: err}:
 				case <-ctx.Done():
@@ -179,6 +188,21 @@ func (p *Pool) start(ctx context.Context, jobs []Job, concurrency int) <-chan po
 		close(outCh)
 	}()
 	return outCh
+}
+
+// prepare runs one job, spending the worker-seconds it held from the capacity pool.
+func (p *Pool) prepare(ctx context.Context, job Job) (Prepared, error) {
+	if err := p.Capacity.Wait(ctx); err != nil {
+		return Prepared{}, err
+	}
+	now := p.now
+	if now == nil {
+		now = time.Now
+	}
+	start := now()
+	prepared, err := p.Prepare(ctx, job)
+	p.Capacity.Spend(1, int(now().Sub(start).Round(time.Second)/time.Second))
+	return prepared, err
 }
 
 func (p *Pool) collect(

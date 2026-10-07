@@ -68,6 +68,14 @@ type PropertyDefinition struct {
 	// nobody chose, and only the schema can say which one that is.
 	HasDefault   bool
 	DefaultValue string
+	// DefaultValues is a multi-select's default, which GitHub answers as a list: a repository that
+	// chose nothing carries every one of them, so it has no single default.
+	DefaultValues []string
+	// ValueType is GitHub's `value_type`; only `multi_select` lets a repository carry two values.
+	ValueType string
+	// ValuesEditableBy is GitHub's `values_editable_by`. Empty when the answer did not say, which is
+	// unknown and never "anybody".
+	ValuesEditableBy string
 }
 
 // PropertySchema reads what an account declares its custom properties to be.
@@ -86,8 +94,10 @@ func (c *Client) PropertySchema(ctx context.Context, account string) ([]Property
 	defer resp.Body.Close()
 
 	var page []struct {
-		PropertyName string  `json:"property_name"`
-		DefaultValue *string `json:"default_value"`
+		PropertyName     string          `json:"property_name"`
+		DefaultValue     json.RawMessage `json:"default_value"`
+		ValueType        string          `json:"value_type"`
+		ValuesEditableBy string          `json:"values_editable_by"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
 		return nil, fmt.Errorf("decoding the property schema for %s: %w", account, err)
@@ -95,13 +105,28 @@ func (c *Client) PropertySchema(ctx context.Context, account string) ([]Property
 
 	out := make([]PropertyDefinition, 0, len(page))
 	for _, p := range page {
-		d := PropertyDefinition{Name: p.PropertyName}
-		if p.DefaultValue != nil {
-			d.HasDefault, d.DefaultValue = true, *p.DefaultValue
+		d := PropertyDefinition{Name: p.PropertyName, ValueType: p.ValueType,
+			ValuesEditableBy: p.ValuesEditableBy}
+		one, many := defaultOf(p.DefaultValue)
+		if one != nil {
+			d.HasDefault, d.DefaultValue = true, *one
 		}
+		d.DefaultValues = many
 		out = append(out, d)
 	}
 	return out, nil
+}
+
+// defaultOf reads GitHub's `default_value`: one value, a multi-select's list, or none at all.
+// Anything else is no default rather than a failed schema, which would leave every default unknown.
+func defaultOf(raw json.RawMessage) (one *string, many []string) {
+	if err := json.Unmarshal(raw, &many); err == nil && many != nil {
+		return nil, many
+	}
+	if err := json.Unmarshal(raw, &one); err == nil {
+		return one, nil
+	}
+	return nil, nil
 }
 
 // attachRESTProperties reads every repository's values in one walk and joins them to the listing.

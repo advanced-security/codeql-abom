@@ -1,6 +1,10 @@
 package store
 
-import "testing"
+import (
+	"maps"
+	"path/filepath"
+	"testing"
+)
 
 // A stored view has to come back as the same question it went in as.
 //
@@ -169,5 +173,60 @@ func TestDeletingASavedViewRemovesIt(t *testing.T) {
 	}
 	if _, ok, _ := s.SavedViewNamed("temporary"); ok {
 		t.Error("a deleted view is still on record")
+	}
+}
+
+// A view kept while `scope=owned` meant what the declared repositories hold and what they run asked
+// the closure, and must go on asking it now that `owned` means only what they hold. Rewritten once:
+// a view kept since asks the strict question, and rewriting it again would widen it.
+func TestAViewKeptBeforeOwnershipWasStrictKeepsAskingTheClosure(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "abom.db"), Options{BulkLoad: true})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	// The table as it stood before the vocabulary was recorded.
+	if _, err := s.DB().Exec(`CREATE TABLE abom_saved_view (name TEXT PRIMARY KEY,
+		predicate TEXT NOT NULL, presentation TEXT, created_by TEXT, created_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	for name, predicate := range map[string]string{
+		"mine":   "flags=findings&scope=owned",
+		"routes": "scope=exposure",
+		// A name a built-in has since taken, which would otherwise be listed twice and opened as the
+		// built-in.
+		"supply-chain": "ref=tag",
+	} {
+		if _, err := s.DB().Exec(`INSERT INTO abom_saved_view (name, predicate, created_at)
+			VALUES (?, ?, '2026-01-01T00:00:00Z')`, name, predicate); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Migrate(); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if err := s.SaveView(SavedView{Name: "later", Predicate: "scope=owned"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Migrate(); err != nil {
+		t.Fatalf("Migrate again: %v", err)
+	}
+
+	views, err := s.SavedViews()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, v := range views {
+		got[v.Name] = v.Predicate
+	}
+	want := map[string]string{
+		"mine":              "flags=findings&scope=supply-chain",
+		"routes":            "scope=exposure",
+		"supply-chain-kept": "ref=tag",
+		"later":             "scope=owned",
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("saved views after the upgrade = %v, want %v", got, want)
 	}
 }

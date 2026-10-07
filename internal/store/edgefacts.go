@@ -1,6 +1,9 @@
 package store
 
-import "fmt"
+import (
+	"database/sql"
+	"fmt"
+)
 
 // How a reference names the thing it points at.
 //
@@ -38,6 +41,43 @@ edge(row_id, ref_value, src_unit, dst_unit, src_unit_key, dst_unit_key, target) 
 	  JOIN abom_node_live dst ON dst.row_id = e.dst_node_row_id
 )`
 
+// advisoryRoutes pairs exposure's stored routes; materialized, or each edge re-reads every path.
+const advisoryRoutes = `
+route(src_key, dst_key) AS MATERIALIZED (
+	SELECT a.value, b.value
+	  FROM abom_exposure ex, json_each(ex.path) a, json_each(ex.path) b
+	 WHERE b.key = a.key + 1
+)`
+
+// advisoryRouteFact is the one edge fact read from exposure, shared so both derivations agree.
+const advisoryRouteFact = `CASE
+	WHEN NOT EXISTS (SELECT 1 FROM abom_advisory WHERE withdrawn_at IS NULL)
+	     THEN NULL
+	WHEN EXISTS (SELECT 1 FROM route
+	              WHERE route.src_key = e.src_unit_key
+	                AND route.dst_key = e.dst_unit_key) THEN 1
+	ELSE 0
+END`
+
+// DeriveAdvisoryRoutes is DeriveEdgeFacts' advisory fact alone, in tx; the others read no exposure.
+func DeriveAdvisoryRoutes(tx *sql.Tx) (int, error) {
+	res, err := tx.Exec(`WITH ` + edgeUnits + `, ` + advisoryRoutes + `,
+		facts(row_id, advisory_route) AS (SELECT e.row_id, ` + advisoryRouteFact + ` FROM edge e)
+		UPDATE abom_edge
+		   SET advisory_route = facts.advisory_route
+		  FROM facts
+		 WHERE facts.row_id = abom_edge.row_id
+		   AND abom_edge.advisory_route IS NOT facts.advisory_route`)
+	if err != nil {
+		return 0, fmt.Errorf("deriving advisory routes: %w", err)
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("counting edges whose advisory route changed: %w", err)
+	}
+	return int(changed), nil
+}
+
 // DeriveEdgeFacts fills the facts that are properties of an edge rather than of its endpoints,
 // and reports how many edges changed.
 //
@@ -52,15 +92,22 @@ edge(row_id, ref_value, src_unit, dst_unit, src_unit_key, dst_unit_key, target) 
 //
 // Idempotent: only rows whose stored value differs are written, so a second pass reports zero.
 func (s *Store) DeriveEdgeFacts() (int, error) {
-	res, err := s.db.Exec(`
-		WITH RECURSIVE `+edgeUnits+`,
-		-- Consecutive pairs of the routes exposure recorded, which is what "on a route to a live
-		-- advisory" means: the same walk, read rather than repeated.
-		route(src_key, dst_key) AS (
-			SELECT a.value, b.value
-			  FROM abom_exposure ex, json_each(ex.path) a, json_each(ex.path) b
-			 WHERE b.key = a.key + 1
-		),
+	query, args := edgeFactsQuery()
+	res, err := s.db.Exec(query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("deriving edge facts: %w", err)
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("counting edges whose facts changed: %w", err)
+	}
+	return int(changed), nil
+}
+
+// edgeFactsQuery is DeriveEdgeFacts' statement and arguments, apart so a test can read its plan.
+func edgeFactsQuery() (string, []any) {
+	return `
+		WITH RECURSIVE ` + edgeUnits + `,` + advisoryRoutes + `,
 		-- Units carrying a finding, and everything that reaches one through a dependency. Ordering
 		-- is not use, so a route may not be extended through a needs: edge.
 		flagged(unit_id) AS (
@@ -73,7 +120,7 @@ func (s *Store) DeriveEdgeFacts() (int, error) {
 			  FROM flagged f
 			  JOIN unit du ON du.unit_id = f.unit_id
 			  JOIN abom_edge_regular e
-			    ON e.dst_node_row_id = du.node_id AND `+DependencyEdgeFilter+`
+			    ON e.dst_node_row_id = du.node_id AND ` + DependencyEdgeFilter + `
 			  JOIN unit su ON su.node_id = e.src_node_row_id
 		),
 		-- How far each unit sits from a repository the operator declared. Zero is the declared
@@ -84,14 +131,14 @@ func (s *Store) DeriveEdgeFacts() (int, error) {
 			  FROM abom_node_live n
 			  JOIN unit u ON u.node_id = n.row_id
 			  LEFT JOIN repository r ON r.row_id = n.repository_row_id
-			 WHERE `+ownedFullName(`COALESCE(NULLIF(n.owner || '/' || n.repo, '/'),
-			                                  r.repository_full_name)`)+`
+			 WHERE ` + ownedFullName(`COALESCE(NULLIF(n.owner || '/' || n.repo, '/'),
+			                                  r.repository_full_name)`) + `
 			UNION
 			SELECT du.unit_id, o.hops + 1
 			  FROM owned o
 			  JOIN unit su ON su.unit_id = o.unit_id
 			  JOIN abom_edge_regular e
-			    ON e.src_node_row_id = su.node_id AND `+DependencyEdgeFilter+`
+			    ON e.src_node_row_id = su.node_id AND ` + DependencyEdgeFilter + `
 			  JOIN unit du ON du.node_id = e.dst_node_row_id
 			 WHERE o.hops < ?
 		),
@@ -117,14 +164,7 @@ func (s *Store) DeriveEdgeFacts() (int, error) {
 			         -- a tag or a branch and nothing on record says which.
 			         WHEN e.ref_value GLOB 'v[0-9]*' OR e.ref_value GLOB '[0-9]*' THEN ?
 			       END,
-			       CASE
-			         WHEN NOT EXISTS (SELECT 1 FROM abom_advisory WHERE withdrawn_at IS NULL)
-			              THEN NULL
-			         WHEN EXISTS (SELECT 1 FROM route
-			                       WHERE route.src_key = e.src_unit_key
-			                         AND route.dst_key = e.dst_unit_key) THEN 1
-			         ELSE 0
-			       END,
+			       ` + advisoryRouteFact + `,
 			       CASE
 			         WHEN NOT EXISTS (SELECT 1 FROM abom_finding_node fn
 			                          JOIN abom_finding_regular f ON f.row_id = fn.finding_row_id)
@@ -146,14 +186,6 @@ func (s *Store) DeriveEdgeFacts() (int, error) {
 		     OR abom_edge.advisory_route IS NOT facts.advisory_route
 		     OR abom_edge.finding_route  IS NOT facts.finding_route
 		     OR abom_edge.owned_depth    IS NOT facts.owned_depth)`,
-		maxOwnedHops, EdgeRefCommit, EdgeRefTag, EdgeRefBranch, EdgeRefTag, EdgeRefBranch,
-		EdgeRefTag)
-	if err != nil {
-		return 0, fmt.Errorf("deriving edge facts: %w", err)
-	}
-	changed, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("counting edges whose facts changed: %w", err)
-	}
-	return int(changed), nil
+		[]any{maxOwnedHops, EdgeRefCommit, EdgeRefTag, EdgeRefBranch, EdgeRefTag, EdgeRefBranch,
+			EdgeRefTag}
 }

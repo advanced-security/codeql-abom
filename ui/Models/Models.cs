@@ -335,6 +335,9 @@ public sealed record NamedView
     public string Title { get; init; } = string.Empty;
     public string Predicate { get; init; } = string.Empty;
 
+    /// <summary>What the scope holds, shown wherever it is offered. A kept scope's is its predicate in words.</summary>
+    public string Description { get; init; } = string.Empty;
+
     /// <summary>
     /// How the Explorer drew it, empty when whoever saved it had nothing to draw. Empty means
     /// "however you would anyway", never "with every default".
@@ -622,6 +625,12 @@ public sealed record RelationshipSummary
     /// workflow named, or a caller's through the pin it reached the composite by.
     /// </summary>
     public IReadOnlyList<RelationshipLock> Locked { get; init; } = [];
+
+    /// <summary>
+    /// The commits in use that declared this, sorted. A line whose commits declared different
+    /// things is one row per thing declared; empty where no analysis recorded a commit.
+    /// </summary>
+    public IReadOnlyList<string> Commits { get; init; } = [];
 }
 
 /// <summary>One commit a current lock selects for one declaring line.</summary>
@@ -637,7 +646,19 @@ public sealed record RelationshipLock
 public sealed record RelationshipsPage : IPage<RelationshipSummary>
 {
     public IReadOnlyList<RelationshipSummary> Items { get; init; } = [];
+
+    /// <summary>Declarations matched, which a line declaring two things counts twice.</summary>
     public int Total { get; init; }
+
+    /// <summary>The lines those declarations sit on.</summary>
+    public int Lines { get; init; }
+
+    /// <summary>
+    /// Lines in scope that no commit in use has a recorded declaration for, which are not listed:
+    /// only an older commit declared them, or the commit in use was read before declarations were
+    /// kept per commit.
+    /// </summary>
+    public int WithoutDeclaration { get; init; }
 }
 
 /// <summary>One page of repositories, and the size of the match it was cut from.</summary>
@@ -661,6 +682,8 @@ public sealed record ActionSummary
     public string Repo { get; init; } = string.Empty;
     /// <summary>Separates what the organization owns from what it merely depends on.</summary>
     public string Origin { get; init; } = string.Empty;
+    /// <summary>Whether the declaration covers the row's repository; Origin never says so.</summary>
+    public bool Owned { get; init; }
     /// <summary>
     /// What in the starting points depends on this, directly or through another action, at each
     /// level a reader manages. A level is null where reach has not counted it yet, which is not none.
@@ -698,6 +721,32 @@ public sealed record RepositorySummary
     public IReadOnlyList<RepositoryProperty> Properties { get; init; } = [];
     public int Exposures { get; init; }
     public int DirectExposures { get; init; }
+    public RepositoryCodeScanning CodeScanning { get; init; } = new();
+
+    // The flat name the grid sorts by; the server orders the scanning states gaps first.
+    public string ActionsScanning => CodeScanning.ActionsScanning;
+}
+
+/// <summary>
+/// Whether a repository's Actions code is scanned, by which setup, and whether code scanning holds
+/// an Actions database to pull, as last read. Known is false where the server classified nothing,
+/// which renders as not read rather than as off.
+/// </summary>
+public sealed record RepositoryCodeScanning
+{
+    public bool Known { get; init; }
+    public string Class { get; init; } = string.Empty;
+    public string ActionsScanning { get; init; } = string.Empty;
+    public string Setup { get; init; } = string.Empty;
+    public string ActionsDatabase { get; init; } = string.Empty;
+    public string Evidence { get; init; } = string.Empty;
+    public string ReadAt { get; init; } = string.Empty;
+    public IReadOnlyList<string> Languages { get; init; } = [];
+    public string DatabaseCommit { get; init; } = string.Empty;
+    public string DatabaseUpdatedAt { get; init; } = string.Empty;
+    public string ConfigurationName { get; init; } = string.Empty;
+    public string AttachmentStatus { get; init; } = string.Empty;
+    public string ConfigFile { get; init; } = string.Empty;
 }
 
 /// <summary>
@@ -814,11 +863,23 @@ public sealed record TierCount
 
     public int RepositoriesAnalyzed { get; init; }
 
-    /// <summary>The tier's work that is somebody's dependency rather than the operator's own
-    /// repository. Derived, so the halves cannot disagree with the total.</summary>
-    public int Dependencies => Total - Repositories;
+    /// <summary>The protected branches of those repositories, each queued and analyzed on its own,
+    /// and counted apart so a repository is never counted once per branch.</summary>
+    public int Branches { get; init; }
 
-    public int DependenciesAnalyzed => Analyzed - RepositoriesAnalyzed;
+    public int BranchesAnalyzed { get; init; }
+
+    /// <summary>The tier's work that is somebody's dependency rather than the operator's own code,
+    /// counted by the server from the rows rather than left to a subtraction.</summary>
+    public int Dependencies { get; init; }
+
+    public int DependenciesAnalyzed { get; init; }
+
+    /// <summary>Read in full with nothing to analyze: neither analyzed nor outstanding.
+    /// <see cref="RepositoriesNothingToAnalyze"/> counts the operator's own repositories once each.</summary>
+    public int NothingToAnalyze { get; init; }
+
+    public int RepositoriesNothingToAnalyze { get; init; }
 
     /// <summary>True when the tier holds both kinds and reporting one number would conflate
     /// them. Only the owned tier ever can.</summary>
@@ -922,6 +983,40 @@ public sealed record TagChange
     public IReadOnlyList<string> Kept { get; init; } = [];
 }
 
+/// <summary>
+/// A details page's figure: what runs its node and what it runs, drawn by the server so the page,
+/// the download and the print are one drawing.
+/// </summary>
+public sealed record NodeFigure
+{
+    public string Key { get; init; } = string.Empty;
+    public string Svg { get; init; } = string.Empty;
+    public double Width { get; init; }
+    public double Height { get; init; }
+    public FigureCounts Counts { get; init; } = new();
+    /// <summary>The page's terms it was cut under, as a reader reads them.</summary>
+    public IReadOnlyList<string> Terms { get; init; } = [];
+    public string Direction { get; init; } = "LR";
+    public string Graphviz { get; init; } = string.Empty;
+}
+
+/// <summary>An element's box on screen, as `abomTheme.measure` reports it.</summary>
+public sealed record BoxSize(int Width, int Height);
+
+/// <summary>What a figure drew of its closure, and what it left out.</summary>
+public sealed record FigureCounts
+{
+    public int Drawn { get; init; }
+    public int InClosure { get; init; }
+    public int LeftOut { get; init; }
+    public int Versions { get; init; }
+    public int VersionsDrawn { get; init; }
+    public int Callers { get; init; }
+    public int Dependencies { get; init; }
+    /// <summary>What runs it from repositories the page's terms do not list.</summary>
+    public int NotListed { get; init; }
+}
+
 /// <summary>One page of who uses a node, the size of the match, and what it left out.</summary>
 public sealed record NodeUsesPage
 {
@@ -973,6 +1068,26 @@ public sealed record NodeVersion
 
     /// <summary>Null where no findings run reached <see cref="Commit"/>: not analyzed, not clean.</summary>
     public VersionFindings? Findings { get; init; }
+
+    /// <summary>
+    /// What any rule reported on the <see cref="Lines"/>, at the commit each was analyzed. Null where
+    /// no findings run reached a commit at which one of them named this version: not analyzed.
+    /// </summary>
+    public VersionLineFindings? LineFindings { get; init; }
+}
+
+/// <summary>What any rule reported on the uses: lines naming one version.</summary>
+public sealed record VersionLineFindings
+{
+    public int Count { get; init; }
+    public SeverityCounts Severity { get; init; } = new();
+
+    /// <summary>Commits at which a counted line named the version, and those a findings run reached.</summary>
+    public int Commits { get; init; }
+    public int Analyzed { get; init; }
+
+    /// <summary>Findings on these lines at commits whose declaration was not recorded; never in <see cref="Count"/>.</summary>
+    public int Unknown { get; init; }
 }
 
 /// <summary>A node's versions, with the advisories naming it verbatim and unjudged.</summary>
@@ -1008,6 +1123,13 @@ public sealed record DeclaredAccount
     public bool IncludesOnly { get; init; }
 
     public IReadOnlyList<string> Includes { get; init; } = [];
+
+    /// <summary>
+    /// Property scopes on a restricted organization: each covers the repositories carrying every
+    /// one of its terms, beside the named <see cref="Includes"/>.
+    /// </summary>
+    public IReadOnlyList<PropertyClause> Properties { get; init; } = [];
+
     public string DeclaredAt { get; init; } = string.Empty;
     public EnumerationMarks? Enumeration { get; init; }
 
@@ -1031,6 +1153,101 @@ public sealed record DeclaredAccount
     public bool Unaccounted => string.IsNullOrEmpty(DeclaredBy);
 }
 
+/// <summary>One custom property value a property scope requires. Rendered verbatim.</summary>
+public sealed record PropertyTerm
+{
+    public string Name { get; init; } = string.Empty;
+    public string Value { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// A property scope: the repositories of its account carrying every term. Everything but
+/// <see cref="Terms"/> is the server's answer and is never sent back.
+/// </summary>
+public sealed record PropertyClause
+{
+    public IReadOnlyList<PropertyTerm> Terms { get; init; } = [];
+    public string DeclaredBy { get; init; } = string.Empty;
+    public string DeclaredAt { get; init; } = string.Empty;
+
+    /// <summary>Kept and counting nothing, for <see cref="HeldReason"/>.</summary>
+    public bool Held { get; init; }
+    public string HeldReason { get; init; } = string.Empty;
+
+    /// <summary>Repositories on record whose values, as last read, carry every term.</summary>
+    public int Matching { get; init; }
+
+    /// <summary>Properties whose named value is the one a repository carries for choosing
+    /// nothing, so the scope takes in every repository nobody set and every new one.</summary>
+    public IReadOnlyList<string>? Defaults { get; init; }
+}
+
+/// <summary>
+/// What GitHub says an organization defines and its repositories carry, read with the operator's
+/// token for a property scope. With a Problem nothing was read, which is not an empty schema.
+/// </summary>
+public sealed record AccountProperties
+{
+    public string Owner { get; init; } = string.Empty;
+    public IReadOnlyList<PropertyChoice> Definitions { get; init; } = [];
+
+    /// <summary>Repositories GitHub reported, archived ones left out because no listing records
+    /// them and so no scope can own them.</summary>
+    public int Repositories { get; init; }
+
+    /// <summary>How many repositories carry each posted scope now, in the order posted.</summary>
+    public IReadOnlyList<int> ClauseCounts { get; init; } = [];
+    public AccountProblem? Problem { get; init; }
+}
+
+/// <summary>One property the organization defines, and whether it may scope ownership.</summary>
+public sealed record PropertyChoice
+{
+    public string Name { get; init; } = string.Empty;
+    public string ValueType { get; init; } = string.Empty;
+    public string Description { get; init; } = string.Empty;
+
+    /// <summary>The server's answer: only a property organization owners and admins alone can
+    /// set may decide what is yours. Never re-derived here.</summary>
+    public bool Declarable { get; init; }
+    public string Reason { get; init; } = string.Empty;
+
+    /// <summary>What a scope could name, most carried first. Empty when it may not scope.</summary>
+    public IReadOnlyList<PropertyValueCount> Values { get; init; } = [];
+
+    public bool MultiSelect => ValueType == "multi_select";
+}
+
+/// <summary>One value a property scope could name, and how many repositories carry it now.</summary>
+public sealed record PropertyValueCount
+{
+    public string Value { get; init; } = string.Empty;
+    public int Repositories { get; init; }
+
+    /// <summary>Carried by every repository that chose nothing, the server says.</summary>
+    public bool IsDefault { get; init; }
+}
+
+/// <summary>One repository GitHub says an account holds, as the operator's token sees it.</summary>
+public sealed record AccountRepository
+{
+    public string Name { get; init; } = string.Empty;
+    public bool Private { get; init; }
+    public bool Archived { get; init; }
+    public bool Fork { get; init; }
+}
+
+/// <summary>
+/// What GitHub says an account holds, offered for an include list. With a Problem the list is
+/// empty because nothing was read, not because the account holds nothing.
+/// </summary>
+public sealed record AccountRepositories
+{
+    public string Owner { get; init; } = string.Empty;
+    public IReadOnlyList<AccountRepository> Repositories { get; init; } = [];
+    public AccountProblem? Problem { get; init; }
+}
+
 public sealed record EnumerationMarks
 {
     public string Route { get; init; } = string.Empty;
@@ -1044,6 +1261,14 @@ public sealed record EnumerationMarks
     /// operator's. Empty says nothing is missing only where <see cref="ListedAt"/> is set.
     /// </summary>
     public IReadOnlyList<RepositoryAbsence> Missing { get; init; } = [];
+
+    /// <summary>When a full listing last judged this account's property scopes. Empty when none
+    /// has, which is not the same as one that found nothing to cover.</summary>
+    public string PropertiesJudgedAt { get; init; } = string.Empty;
+
+    /// <summary>Repositories that judgement could not decide, because their values did not arrive
+    /// whole. Neither taken in nor let go.</summary>
+    public int PropertiesUnjudged { get; init; }
 }
 
 /// <summary>A declared repository a full listing did not name, and since when.</summary>
@@ -1051,6 +1276,14 @@ public sealed record RepositoryAbsence
 {
     public string Repository { get; init; } = string.Empty;
     public string MissingAt { get; init; } = string.Empty;
+}
+
+/// <summary>A candidate property scope that counts nothing in a preview, and why.</summary>
+public sealed record PreviewHold
+{
+    public string Owner { get; init; } = string.Empty;
+    public IReadOnlyList<PropertyTerm> Terms { get; init; } = [];
+    public string Reason { get; init; } = string.Empty;
 }
 
 /// <summary>
@@ -1080,6 +1313,14 @@ public sealed record ScopePreview
     /// stopping, which a repository count alone cannot show.</summary>
     public int QueuedNow { get; init; }
     public int QueuedNext { get; init; }
+
+    /// <summary>Repositories on record a candidate property scope could not judge, because no
+    /// values are on record for them. Neither entering nor staying until a listing reads them.</summary>
+    public int NotJudged { get; init; }
+
+    /// <summary>Candidate property scopes the recorded schema cannot honor, which count nothing
+    /// in these figures, each with the server's reason.</summary>
+    public IReadOnlyList<PreviewHold> Held { get; init; } = [];
 
     /// <summary>True when the candidate would reach no repository the corpus holds. Declaring
     /// such an account is legitimate; silently succeeding is what leaves every page empty.</summary>
@@ -1130,6 +1371,13 @@ public sealed record AccountEnumeration
     public int Found { get; init; }
     public int Added { get; init; }
     public int Promoted { get; init; }
+
+    /// <summary>Owned repositories this read showed a property scope no longer covers.</summary>
+    public int Left { get; init; }
+
+    /// <summary>Repositories whose values did not arrive whole, so no property scope could judge
+    /// them. Unknown is not a mismatch.</summary>
+    public int PropertiesUnjudged { get; init; }
 }
 
 /// <summary>An account that could not be enumerated, with the reason.</summary>
@@ -1215,6 +1463,9 @@ public sealed record Objective
     /// "complete as far as we are allowed to look".</summary>
     public int MaxDepth { get; init; }
 
+    /// <summary>Failed attempts after which a row is stuck: still retried, never analyzed.</summary>
+    public int StuckAfter { get; init; }
+
     public IReadOnlyList<CycleSpend> Recent { get; init; } = [];
     public CycleTotal Totals { get; init; } = new();
 
@@ -1223,6 +1474,22 @@ public sealed record Objective
     /// commit's own. Counted on every request, so zero means every one is known.
     /// </summary>
     public int Unobserved { get; init; }
+
+    public QueueStages Stages { get; init; } = new();
+}
+
+/// <summary>Pending work by the stage that claims it, and what the owned closure does not reach.</summary>
+public sealed record QueueStages
+{
+    /// <summary>The stage the next claim draws from, empty when nothing is claimable now.</summary>
+    public string Next { get; init; } = string.Empty;
+    public int Expedited { get; init; }
+    public int Current { get; init; }
+    public int Explore { get; init; }
+    public int Refresh { get; init; }
+
+    /// <summary>Queued for repositories nothing owned reaches: never claimed, holding no depth open.</summary>
+    public int Unreached { get; init; }
 }
 
 /// <summary>How much of one depth has been settled.</summary>
@@ -1235,9 +1502,23 @@ public sealed record DepthProgress
     /// <summary>Analyzed plus the rows nothing can act on, which is what completeness means.</summary>
     public int Settled { get; init; }
 
+    /// <summary>Starting points read in full with nothing to analyze: part of <see cref="Settled"/>,
+    /// never of <see cref="Done"/>.</summary>
+    public int Nothing { get; init; }
+
+    /// <summary>Settled because it could not be fetched, which retrying after fixing access can change.</summary>
+    public int Unavailable => Settled - Done - Nothing;
+
     public int Pending { get; init; }
     public int Running { get; init; }
     public int Available { get; init; }
+
+    /// <summary>Pending rows past the attempt ceiling: neither analyzed nor unavailable.</summary>
+    public int Stuck { get; init; }
+
+    /// <summary>Analyzed before and being analyzed again because the reference moved. Not settled,
+    /// and not holding the depth open.</summary>
+    public int Refresh { get; init; }
 }
 
 /// <summary>What one cycle cost and what it bought.</summary>
@@ -1251,6 +1532,9 @@ public sealed record CycleSpend
     public int Builds { get; init; }
     public int Evaluations { get; init; }
     public int Probes { get; init; }
+
+    /// <summary>API reads that recognized a commit's content in place of a clone.</summary>
+    public int TreeReads { get; init; }
 
     public int Analyzed { get; init; }
     public int Skipped { get; init; }
@@ -1271,6 +1555,7 @@ public sealed record CycleTotal
     public int Builds { get; init; }
     public int Evaluations { get; init; }
     public int Probes { get; init; }
+    public int TreeReads { get; init; }
     public int Analyzed { get; init; }
     public int Discovered { get; init; }
 }
@@ -1435,6 +1720,8 @@ public sealed record GraphNodeBrief
     public string Key { get; init; } = string.Empty;
     public string Kind { get; init; } = string.Empty;
     public string Origin { get; init; } = string.Empty;
+    /// <summary>Whether the declaration covers the node's repository; Origin never says so.</summary>
+    public bool Owned { get; init; }
     public string Repository { get; init; } = string.Empty;
     public string Owner { get; init; } = string.Empty;
     public string Path { get; init; } = string.Empty;
@@ -1484,6 +1771,8 @@ public sealed record NodeDetail
     public string Kind { get; init; } = string.Empty;
     public string Repository { get; init; } = string.Empty;
     public string Origin { get; init; } = string.Empty;
+    /// <summary>Whether the declaration covers the node's repository; Origin never says so.</summary>
+    public bool Owned { get; init; }
     public string Path { get; init; } = string.Empty;
     public bool IsExternal { get; init; }
     public bool Analyzed { get; init; }
@@ -1492,8 +1781,21 @@ public sealed record NodeDetail
     public int RefsInUse { get; init; }
     public int RefsAnalyzed { get; init; }
     public int DependentRepos { get; init; }
+
+    /// <summary>
+    /// How many uses: lines on record name this node. Absent is not none: a server that did not
+    /// count them has not said that only triggers run a workflow.
+    /// </summary>
+    public int? NamedBy { get; init; }
+
     public IReadOnlyList<RuleCount> Rules { get; init; } = [];
     public IReadOnlyList<NodeNeighbor> Uses { get; init; } = [];
+    /// <summary>
+    /// References asked for at whose commit nothing was read for that section: nothing resolved
+    /// them, or no run analyzed the commit. Not analyzed, which is not clean.
+    /// </summary>
+    public IReadOnlyList<string> RulesUnread { get; init; } = [];
+    public IReadOnlyList<string> UsesUnread { get; init; } = [];
 }
 
 /// <summary>
@@ -1964,6 +2266,12 @@ public sealed record FindingEvaluation
     public string PackDigest { get; init; } = string.Empty;
     public string Source { get; init; } = string.Empty;
     public string CliVersion { get; init; } = string.Empty;
+
+    /// <summary>
+    /// The code scanning analysis whose result this is, as <c>github-code-scanning:{id}</c>; empty
+    /// where ABOM evaluated the rule. Pack and CodeQL version are then that analysis's.
+    /// </summary>
+    public string TakenFrom { get; init; } = string.Empty;
     public string Mode { get; init; } = string.Empty;
 
     /// <summary>
@@ -2274,4 +2582,154 @@ public sealed record DraftSession
 public sealed record DraftSessionList
 {
     public IReadOnlyList<DraftSession> Drafts { get; init; } = [];
+}
+
+/// <summary>Every token pool, its rate, what it spent, and the freshness its rate buys.</summary>
+public sealed record PoolsReport
+{
+    public IReadOnlyList<PoolState> Pools { get; init; } = [];
+    /// <summary>Where the last hour each meter reports starts.</summary>
+    public DateTimeOffset Since { get; init; }
+}
+
+/// <summary>One kind of work, in the unit its provider charges.</summary>
+public sealed record PoolState
+{
+    public string Pool { get; init; } = string.Empty;
+    public string Unit { get; init; } = string.Empty;
+    /// <summary>The provider allowance it spends, empty where the provider reports none.</summary>
+    public string Resource { get; init; } = string.Empty;
+    public string Work { get; init; } = string.Empty;
+    /// <summary>Why nothing in this build draws on the pool; empty where something does.</summary>
+    public string Unmetered { get; init; } = string.Empty;
+    /// <summary>Null where no rate is set, which leaves the work alone.</summary>
+    public int? PerHour { get; init; }
+    public int Burst { get; init; } = 1;
+    /// <summary>Null for a pool that has never spent, which is not a spend of zero.</summary>
+    public PoolMeter? Spend { get; init; }
+    public PoolEstimate? Estimate { get; init; }
+    public string NoEstimate { get; init; } = string.Empty;
+}
+
+public sealed record PoolMeter
+{
+    public PoolAmount LastHour { get; init; } = new();
+    public PoolAmount Total { get; init; } = new();
+    public DateTimeOffset Since { get; init; }
+    /// <summary>Null where the provider has reported nothing to this pool.</summary>
+    public PoolReported? Reported { get; init; }
+}
+
+public sealed record PoolAmount
+{
+    public int Requests { get; init; }
+    public int Charged { get; init; }
+}
+
+public sealed record PoolReported
+{
+    public int Remaining { get; init; }
+    public int? Limit { get; init; }
+    public DateTimeOffset? ResetAt { get; init; }
+    public DateTimeOffset At { get; init; }
+}
+
+/// <summary>How long the work queued behind a pool takes at its rate: derived, never promised.</summary>
+public sealed record PoolEstimate
+{
+    public string Text { get; init; } = string.Empty;
+    public long Seconds { get; init; }
+    public int Work { get; init; }
+    public string Checked { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// How many repositories the Actions code scanning classification puts in each class, and how many
+/// of the declared ones were read at all.
+/// </summary>
+public sealed record CodeScanningReadings
+{
+    public Dictionary<string, int> Counts { get; init; } = [];
+    public int Declared { get; init; }
+    public int Read { get; init; }
+    public string OldestRead { get; init; } = string.Empty;
+}
+
+/// <summary>Whether this server writes default setup, and to what.</summary>
+public sealed record CodeScanningWriteMode
+{
+    public bool Writes { get; init; }
+    public IReadOnlyList<string> Targets { get; init; } = [];
+    public IReadOnlyList<string> Accounts { get; init; } = [];
+}
+
+/// <summary>What a preview showed: every repository in scope, its class and the body a write would send.</summary>
+public sealed record SetupPreview
+{
+    public long Id { get; init; }
+    public string CreatedAt { get; init; } = string.Empty;
+    public string CreatedBy { get; init; } = string.Empty;
+    public string ViewName { get; init; } = string.Empty;
+    public string Predicate { get; init; } = string.Empty;
+    public IReadOnlyList<string> Accounts { get; init; } = [];
+    public IReadOnlyList<string> Excluded { get; init; } = [];
+    public string ApprovedAt { get; init; } = string.Empty;
+    public string ApprovedBy { get; init; } = string.Empty;
+    public long BatchId { get; init; }
+    public Dictionary<string, int> Counts { get; init; } = [];
+}
+
+/// <summary>One page of a preview's rows, the ones a batch would write first, and how many it holds.</summary>
+public sealed record SetupPreviewRows : IPage<SetupPreviewRow>
+{
+    public IReadOnlyList<SetupPreviewRow> Items { get; init; } = [];
+    public int Total { get; init; }
+}
+
+public sealed record SetupPreviewRow
+{
+    public string Repository { get; init; } = string.Empty;
+    public string Class { get; init; } = string.Empty;
+    public string Evidence { get; init; } = string.Empty;
+    public IReadOnlyList<string> Languages { get; init; } = [];
+    public string ReadAt { get; init; } = string.Empty;
+    public string Intended { get; init; } = string.Empty;
+}
+
+/// <summary>One run of an approved preview, with the last step each repository reached.</summary>
+public sealed record SetupBatch
+{
+    public long Id { get; init; }
+    public long PreviewId { get; init; }
+    public string StartedAt { get; init; } = string.Empty;
+    public string StartedBy { get; init; } = string.Empty;
+    public string State { get; init; } = string.Empty;
+    public string Reason { get; init; } = string.Empty;
+    public string FinishedAt { get; init; } = string.Empty;
+    public Dictionary<string, int> Steps { get; init; } = [];
+    public int Remaining { get; init; }
+}
+
+/// <summary>One step one write took, as the ledger keeps it.</summary>
+public sealed record SetupWrite
+{
+    public long Id { get; init; }
+    public long BatchId { get; init; }
+    public string Repository { get; init; } = string.Empty;
+    public string At { get; init; } = string.Empty;
+    public string Step { get; init; } = string.Empty;
+    public string Detail { get; init; } = string.Empty;
+    public IReadOnlyList<string> Before { get; init; } = [];
+    public string Sent { get; init; } = string.Empty;
+    public int Status { get; init; }
+    public long RunId { get; init; }
+    public string RunUrl { get; init; } = string.Empty;
+    public IReadOnlyList<string> After { get; init; } = [];
+}
+
+/// <summary>The ledger's newest steps and how many steps it holds.</summary>
+public sealed record SetupLedgerPage : IPage<SetupWrite>
+{
+    public IReadOnlyList<SetupWrite> Items { get; init; } = [];
+    public int Total { get; init; }
 }

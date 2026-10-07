@@ -246,6 +246,24 @@ func TestNodeUsesRefusesWhatItCannotApplyByName(t *testing.T) {
 	}
 }
 
+// A node's own details are read at a reference and narrowed by nothing else, so `at` is applied
+// and every other term is refused by name rather than ignored.
+func TestNodeDetailAppliesAtAndRefusesTheRest(t *testing.T) {
+	srv, s := newServer(t)
+	seedGraph(t, s)
+
+	for _, query := range []string{"scope=owned", "kinds=action"} {
+		rec := get(t, srv, "/api/node/actions/checkout?"+query)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), strings.Split(query, "=")[0]) {
+			t.Errorf("?%s answered %d %s, want a refusal naming it", query, rec.Code, rec.Body.String())
+		}
+	}
+	detail := decode[store.NodeDetail](t, get(t, srv, "/api/node/actions/checkout?at=v3"))
+	if detail.Key != "actions/checkout" || len(detail.RulesUnread) != 1 || detail.RulesUnread[0] != "v3" {
+		t.Errorf("at=v3 answered %+v; want the node read at v3, which nothing analyzed", detail)
+	}
+}
+
 // Every observation names the query that made it, so a reader can always ask why a fact is
 // there. Serving them unattributed would break the rule the whole store is built on.
 func TestNodeObservationsCarryTheirQuery(t *testing.T) {

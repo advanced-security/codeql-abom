@@ -138,16 +138,25 @@ func TestABatchIsPlannedByTheShallowestDepthItHolds(t *testing.T) {
 // Owning a dependency is a different answer to "what can you do about this" than naming it, and
 // the graph places an owned action at whatever depth it happens to be reached.
 func TestAnOwnedBatchIsPlannedAsOwnedAtAnyDepth(t *testing.T) {
-	owned := map[string]bool{"octo-org": true}
+	owned := map[string]bool{"octo-org/app": true}
 	for _, depth := range []int{1, 4} {
-		got := tierOf(batch{owner: "Octo-Org", depth: depth}, owned)
+		got := tierOf(batch{owner: "Octo-Org", repo: "App", depth: depth}, owned)
 		if got != store.TierOwned {
 			t.Errorf("an owned batch at depth %d is the %q tier, got %q",
 				depth, store.TierOwned, got)
 		}
 	}
-	if got := tierOf(batch{owner: "someone-else", depth: 1}, owned); got != store.TierDirect {
+	if got := tierOf(batch{owner: "someone-else", repo: "app", depth: 1}, owned); got != store.TierDirect {
 		t.Errorf("an unowned batch is the %q tier, got %q", store.TierDirect, got)
+	}
+}
+
+// Ownership is per repository: an account restricted to one repository leaves its others to be
+// planned by depth, or a dependency nobody declared is analyzed as the operator's own.
+func TestAnUndeclaredRepositoryOfADeclaredAccountIsPlannedByDepth(t *testing.T) {
+	owned := map[string]bool{"octo-org/app": true}
+	if got := tierOf(batch{owner: "octo-org", repo: "other", depth: 2}, owned); got != store.TierTransitive {
+		t.Errorf("octo-org/other is the %q tier, got %q", store.TierTransitive, got)
 	}
 }
 

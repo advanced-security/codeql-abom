@@ -159,6 +159,26 @@ public class CrawlStatusTests : AbomTestContext
     }
 
     /// <summary>
+    /// A starting point read with nothing to analyze is settled, and the bar says which part of the
+    /// queue that is rather than leaving it out or calling it unavailable.
+    /// </summary>
+    [Fact]
+    public void TheBarNamesWhatHadNothingToAnalyze()
+    {
+        var bar = Bar("""
+            {"available":true,"resumeOnStart":false,
+             "status":{"state":"paused","concurrency":4},
+             "frontier":{"done":22,"nothing":6,"unavailable":1},
+             "tiers":{},"version":{}}
+            """);
+
+        var name = bar.Find("[data-abom-crawl-queue] .abom-queue-bar").GetAttribute("aria-label") ?? "";
+        Assert.Contains("6 with nothing to analyze", name);
+        Assert.Contains("1 unavailable", name);
+        Assert.Equal(3, bar.FindAll("[data-abom-crawl-queue] .abom-queue-seg").Count);
+    }
+
+    /// <summary>
     /// An empty queue has nothing to draw. A full-width bar of one color on an installation that
     /// has never crawled states a measurement nobody took.
     /// </summary>

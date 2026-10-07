@@ -287,7 +287,7 @@ func TestASourceIsLookedUpThroughTheFindingsOwnSightings(t *testing.T) {
 // for, so a reader is not left to infer the source from a rule id.
 func TestARulesCountSaysWhereItsFindingsCameFrom(t *testing.T) {
 	s := sourcedStore(t)
-	node, err := s.NodeDetailOf("octo-org/tool/.github/workflows/ci.yml")
+	node, err := s.NodeDetailOf("octo-org/tool/.github/workflows/ci.yml", nil)
 	if err != nil {
 		t.Fatalf("NodeDetailOf: %v", err)
 	}

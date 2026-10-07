@@ -91,3 +91,34 @@ func TestAMovedRefIsNotSettledAgainstAnEdgesRunWithoutSightingContent(t *testing
 		t.Error("a moved ref was settled against an edges run whose sightings carry no content")
 	}
 }
+
+// Re-observation and a round's skip each decide whether a commit's declarations are known. When
+// they disagreed, discovery put back and settled the same 97 commits every few seconds, observing
+// none of them: whatever re-observation puts back, the round that claims it has to observe.
+func TestARoundObservesWhatReobservationPutsBack(t *testing.T) {
+	h := newHarness(t)
+	pinned := item("vendor", "twin", "", 1)
+	pinned.Ref = "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1"
+	h.enqueue(pinned)
+	h.drain()
+	h.forgetSightingContent()
+	// The default branch holds identical content at another commit, analyzed once sightings kept it.
+	h.enqueue(item("vendor", "twin", "sub", 1))
+	h.drain()
+	if total, marked := h.edgesRuns("vendor/twin"); total != 2 || marked != 1 {
+		t.Fatalf("vendor/twin has %d edges runs, %d carrying sighting content; want one of each", total, marked)
+	}
+
+	if _, err := h.store.Reobserve(10); err != nil {
+		t.Fatal(err)
+	}
+	h.run(100)
+	got, err := h.store.Reobserve(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Unobserved != 0 || got.Requeued != 0 {
+		t.Errorf("after a round, %d commits are still unobserved and %d were put back again",
+			got.Unobserved, got.Requeued)
+	}
+}

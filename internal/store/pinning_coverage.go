@@ -49,7 +49,9 @@ type PinningRow struct {
 	// Ref and Kind are carried only by a leaf, which is one target at one reference.
 	Ref  string `json:"ref,omitempty"`
 	Kind string `json:"kind,omitempty"`
-	// Pinnable counts references that carry a ref and could therefore name a commit.
+	// Pinnable counts references that carry a ref and could therefore name a commit: one per
+	// thing a line declares at the commits in use, so a line whose commits declared two
+	// references counts two.
 	Pinnable int `json:"pinnable"`
 	Commit   int `json:"commit"`
 	Floating int `json:"floating"`
@@ -59,9 +61,8 @@ type PinningRow struct {
 	// GitHub-owned. Naming it keeps the gap between the two measures visible.
 	FloatingUnflagged int  `json:"floatingUnflagged"`
 	HasChildren       bool `json:"hasChildren"`
-	// Owned marks a row in an account the operator is verified to belong to. A mark, never a
-	// filter: the row is
-	// present either way.
+	// Owned marks a row whose every reference is in a repository the declared scope covers. A
+	// mark, never a filter: the row is present either way.
 	Owned bool `json:"owned"`
 	// Yours and FlaggedSplit divide the totals. Both halves are always reported, so the
 	// actionable figure is stated without the corpus figure disappearing.
@@ -69,12 +70,15 @@ type PinningRow struct {
 	FlaggedSplit OwnedSplit `json:"flaggedSplit"`
 }
 
-// pinnableReferences is the one reference set every level groups.
+// pinnableReferences is the one reference set every level groups: what each line declared at the
+// commits in use, read from a declaredEdgeTable, so a line whose commits declared two references
+// counts both and a reference only a history commit declared counts nothing. Binds the origin.
 //
 // A reference is pinnable when it carries a ref at all; local `./` uses cannot be pinned and
 // counting them would understate every scope. Upstream repositories are excluded: they were
 // fetched only to resolve what the corpus depends on, and their pinning is not its to answer for.
-const pinnableReferences = `ref AS (
+func pinnableReferences(table string) string {
+	return `ref AS (
 	SELECT SUBSTR(rep.repository_full_name, 1,
 	              INSTR(rep.repository_full_name, '/') - 1) AS owner_key,
 	       rep.repository_full_name AS repo_key,
@@ -85,8 +89,9 @@ const pinnableReferences = `ref AS (
 	       e.ref_value AS ref_value,
 	       CASE WHEN LENGTH(e.ref_value) = 40
 	             AND e.ref_value GLOB '[0-9a-f]*' THEN 1 ELSE 0 END AS is_commit,
-	       CASE WHEN f.row_id IS NULL THEN 0 ELSE 1 END AS flagged
-	FROM abom_edge_regular e
+	       CASE WHEN f.row_id IS NULL THEN 0 ELSE 1 END AS flagged,
+	       CASE WHEN ` + ownedFullName("rep.repository_full_name") + ` THEN 1 ELSE 0 END AS owned
+	FROM ` + table + ` e
 	JOIN abom_node_live dn ON dn.row_id = e.dst_node_row_id
 	JOIN repository rep ON rep.row_id = e.repository_row_id
 	LEFT JOIN abom_finding_regular f
@@ -97,6 +102,7 @@ const pinnableReferences = `ref AS (
 	WHERE e.ref_value IS NOT NULL AND e.ref_value <> ''
 	  AND dn.is_external = 1
 	  AND rep.origin = ?)`
+}
 
 // measures are the same five columns at every level, so a parent and its children are directly
 // comparable.
@@ -104,7 +110,17 @@ const pinningMeasures = `COUNT(*),
 	COALESCE(SUM(is_commit), 0),
 	COALESCE(SUM(1 - is_commit), 0),
 	COALESCE(SUM(flagged), 0),
-	COALESCE(SUM(CASE WHEN flagged = 0 AND is_commit = 0 THEN 1 ELSE 0 END), 0)`
+	COALESCE(SUM(CASE WHEN flagged = 0 AND is_commit = 0 THEN 1 ELSE 0 END), 0),
+	COALESCE(SUM(owned), 0),
+	COALESCE(SUM(owned * flagged), 0)`
+
+// splitOwned divides a row's measures by the owned count read with them, so the halves are taken
+// from the same references as the whole and cannot drift from it.
+func (p *PinningRow) splitOwned(yours, yoursFlagged int) {
+	p.Yours = OwnedSplit{Yours: yours, Elsewhere: p.Pinnable - yours}
+	p.FlaggedSplit = OwnedSplit{Yours: yoursFlagged, Elsewhere: p.Flagged - yoursFlagged}
+	p.Owned = p.Pinnable > 0 && yours == p.Pinnable
+}
 
 // where builds the filter clause shared by every level.
 //
@@ -149,11 +165,6 @@ func (f PinningFilter) where(parentColumn, parent, bound string, boundArgs []any
 
 // PinningLevel returns one level of the pinning tree, widest gap first.
 func (s *Store) PinningLevel(scope, parent string, f PinningFilter, limit int) ([]PinningRow, error) {
-	// Read before the cursor opens: one connection serves this store.
-	owned, err := s.OwnedSet()
-	if err != nil {
-		return nil, err
-	}
 	bound, boundArgs, err := s.restrictClause(f.Scope, "repo_key")
 	if err != nil {
 		return nil, err
@@ -180,8 +191,12 @@ func (s *Store) PinningLevel(scope, parent string, f PinningFilter, limit int) (
 		selected += ", '', ''"
 	}
 
+	table, err := s.declaredEdgeTable(AnalysisModeRegular)
+	if err != nil {
+		return nil, err
+	}
 	where, args := f.where(parentColumn, parent, bound, boundArgs)
-	query := `WITH ` + pinnableReferences + `
+	query := `WITH ` + pinnableReferences(table) + `
 		SELECT ` + selected + `, ` + pinningMeasures + `
 		FROM ref` + where + `
 		GROUP BY ` + group + `
@@ -194,19 +209,14 @@ func (s *Store) PinningLevel(scope, parent string, f PinningFilter, limit int) (
 
 	return queryAll(s, "reading pinning level "+scope, func(r *sql.Rows) (PinningRow, error) {
 		p := PinningRow{Scope: scope, HasChildren: !leaf}
+		var yours, yoursFlagged int
 		if err := r.Scan(&p.ScopeKey, &p.Label, &p.Ref, &p.Kind, &p.Pinnable, &p.Commit,
-			&p.Floating, &p.Flagged, &p.FloatingUnflagged); err != nil {
+			&p.Floating, &p.Flagged, &p.FloatingUnflagged, &yours, &yoursFlagged); err != nil {
 			return p, err
 		}
-		p.Owned = owned[strings.ToLower(ownerOfKey(p.ScopeKey))]
+		p.splitOwned(yours, yoursFlagged)
 		return p, nil
 	}, query, args...)
-}
-
-// ownerOfKey takes the account from any scope key, all of which start with it.
-func ownerOfKey(key string) string {
-	owner, _, _ := strings.Cut(key, "/")
-	return owner
 }
 
 // PinningTotals is the same measurement across everything the filter admits.
@@ -215,32 +225,22 @@ func (s *Store) PinningTotals(f PinningFilter) (PinningRow, error) {
 	if err != nil {
 		return PinningRow{}, err
 	}
-	where, args := f.where("", "", bound, boundArgs)
-	args = append([]any{OriginSeed}, args...)
-
-	row := s.db.QueryRow(`WITH `+pinnableReferences+`
-		SELECT `+pinningMeasures+` FROM ref`+where, args...)
-
-	total := PinningRow{Scope: "all"}
-	if err := row.Scan(&total.Pinnable, &total.Commit, &total.Floating, &total.Flagged,
-		&total.FloatingUnflagged); err != nil {
-		return PinningRow{}, fmt.Errorf("reading pinning totals: %w", err)
-	}
-
-	// Split by summing the owner level rather than by a second aggregate, so the halves cannot
-	// drift from the whole they are meant to divide.
-	owners, err := s.PinningLevel(PinningByOwner, "", f, 0)
+	table, err := s.declaredEdgeTable(AnalysisModeRegular)
 	if err != nil {
 		return PinningRow{}, err
 	}
-	for _, o := range owners {
-		if o.Owned {
-			total.Yours.Yours += o.Pinnable
-			total.FlaggedSplit.Yours += o.Flagged
-			continue
-		}
-		total.Yours.Elsewhere += o.Pinnable
-		total.FlaggedSplit.Elsewhere += o.Flagged
+	where, args := f.where("", "", bound, boundArgs)
+	args = append([]any{OriginSeed}, args...)
+
+	row := s.db.QueryRow(`WITH `+pinnableReferences(table)+`
+		SELECT `+pinningMeasures+` FROM ref`+where, args...)
+
+	total := PinningRow{Scope: "all"}
+	var yours, yoursFlagged int
+	if err := row.Scan(&total.Pinnable, &total.Commit, &total.Floating, &total.Flagged,
+		&total.FloatingUnflagged, &yours, &yoursFlagged); err != nil {
+		return PinningRow{}, fmt.Errorf("reading pinning totals: %w", err)
 	}
+	total.splitOwned(yours, yoursFlagged)
 	return total, nil
 }

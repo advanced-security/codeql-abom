@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -52,6 +53,8 @@ type PropertyBreakdown struct {
 	// WithoutValue is zero and the largest bucket may be the one nobody picked.
 	HasDefault   bool   `json:"hasDefault"`
 	DefaultValue string `json:"defaultValue,omitempty"`
+	// DefaultValues is a multi-select's default: a repository that chose nothing carries each.
+	DefaultValues []string `json:"defaultValues,omitempty"`
 }
 
 // PropertyCount is one distinct value and how many repositories carry it.
@@ -98,6 +101,47 @@ VALUES (?, ?, ?) ON CONFLICT DO NOTHING`, repository, v.Name, v.Value); err != n
 	return tx.Commit()
 }
 
+// ForgetPropertyValues drops what was recorded for repositories a read showed no declaration
+// covers: their values were kept only to decide ownership, and describe nothing else.
+func (s *Store) ForgetPropertyValues(repositories []string) error {
+	if len(repositories) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, r := range repositories {
+		if _, err := tx.Exec(
+			`DELETE FROM abom_repository_property WHERE repository_full_name = ?`, r); err != nil {
+			return fmt.Errorf("forgetting the property values of %s: %w", r, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// PropertyValuesByRepository is every value on record, keyed by lower-cased repository name, so a
+// declaration not yet stored can be judged against all of them in one read.
+func (s *Store) PropertyValuesByRepository() (map[string][]PropertyValue, error) {
+	rows, err := s.db.Query(`SELECT repository_full_name, property_name, value FROM abom_repository_property`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]PropertyValue{}
+	for rows.Next() {
+		var repo string
+		var v PropertyValue
+		if err := rows.Scan(&repo, &v.Name, &v.Value); err != nil {
+			return nil, err
+		}
+		key := strings.ToLower(repo)
+		out[key] = append(out[key], v)
+	}
+	return out, rows.Err()
+}
+
 // PropertyValues reports what the organization sets for one repository.
 func (s *Store) PropertyValues(repository string) ([]PropertyValue, error) {
 	rows, err := s.db.Query(`
@@ -121,7 +165,7 @@ SELECT property_name, value FROM abom_repository_property
 
 // PropertyBreakdown reports how one key divides the operator's repositories.
 //
-// Counted against `abom_owned_repository` rather than against the property table, so that the parts
+// Counted against the owned repositories rather than against the property table, so that the parts
 // can be reconciled with a whole that exists independently of them. A breakdown that only counts
 // what it found cannot tell a reader what it missed.
 func (s *Store) PropertyBreakdown(name string) (PropertyBreakdown, error) {
@@ -143,14 +187,15 @@ SELECT COUNT(DISTINCT r.repository_full_name)
 	out.WithoutValue = out.Repositories - out.WithValue
 
 	// Analyzed is counted from the frontier rather than from a column of its own, so a unit and a
-	// tier cannot come to different conclusions about the same repository.
+	// tier cannot come to different conclusions about the same repository: both read the default
+	// branch's row, and a protected branch analyzed first does not make the repository analyzed.
 	rows, err := s.db.Query(`
 SELECT p.value, COUNT(DISTINCT r.repository_full_name) AS n,
        COUNT(DISTINCT CASE WHEN f.status = 'done' THEN r.repository_full_name END) AS analyzed
   FROM repository r
   JOIN abom_repository_property p ON p.repository_full_name = r.repository_full_name
   LEFT JOIN abom_frontier f
-         ON f.depth = 0 AND f.owner || '/' || f.repo = r.repository_full_name
+         ON f.depth = 0 AND f.ref = '' AND f.owner || '/' || f.repo = r.repository_full_name
  WHERE p.property_name = ?
    AND `+ownedFullName("r.repository_full_name")+`
  GROUP BY p.value
@@ -171,14 +216,14 @@ SELECT p.value, COUNT(DISTINCT r.repository_full_name) AS n,
 		return out, err
 	}
 
-	out.DefaultValue, out.HasDefault, err = s.propertyDefault(name)
-	if err != nil {
+	value, values, known, err := s.propertyDefault(name)
+	if err != nil || !known {
 		return out, err
 	}
-	if out.HasDefault {
-		for i := range out.Values {
-			out.Values[i].IsDefault = out.Values[i].Value == out.DefaultValue
-		}
+	schema := PropertyDefinition{HasDefault: values == nil, DefaultValue: value, DefaultValues: values}
+	out.HasDefault, out.DefaultValue, out.DefaultValues = schema.HasDefault, schema.DefaultValue, schema.DefaultValues
+	for i := range out.Values {
+		out.Values[i].IsDefault = schema.IsDefault(out.Values[i].Value)
 	}
 	return out, nil
 }
@@ -186,8 +231,8 @@ SELECT p.value, COUNT(DISTINCT r.repository_full_name) AS n,
 // SourceRepositoriesFor names the owned repositories a property filter selects as its sources.
 //
 // Only what the operator owns can be named. A grouping is read from the organization's custom
-// properties, which are collected for owned repositories and nowhere else, so a dependency is
-// never a source — it enters an answer by being reached from one.
+// properties, which are kept for owned repositories and read here only through them, so a
+// dependency is never a source — it enters an answer by being reached from one.
 //
 // Exclusion is taken here, over the sources, and not over every node the walk later reaches: a
 // repository one group owns and another group depends on is still that second group's dependency,
@@ -223,8 +268,8 @@ func (s *Store) SourceRepositoriesFor(include, exclude []viewspec.PropertyMatch)
 // PropertyKeys names every key the corpus has seen a value for, so an operator configuring one can
 // be shown what the organization actually administers rather than asked to remember it.
 func (s *Store) PropertyKeys() ([]string, error) {
-	rows, err := s.db.Query(
-		`SELECT DISTINCT property_name FROM abom_repository_property ORDER BY property_name`)
+	rows, err := s.db.Query(`SELECT DISTINCT p.property_name FROM abom_repository_property p
+		WHERE ` + ownedFullName("p.repository_full_name") + ` ORDER BY p.property_name`)
 	if err != nil {
 		return nil, err
 	}
@@ -239,4 +284,26 @@ func (s *Store) PropertyKeys() ([]string, error) {
 		out = append(out, name)
 	}
 	return out, rows.Err()
+}
+
+// CodeQLConfigFile is the github-codeql-config-file value default setup applies to a repository:
+// its own, or else its organization's default. Empty means none applies, which holds only where the
+// organization declares no default: the values a listing reads are what GitHub applies.
+func (s *Store) CodeQLConfigFile(repository string) (string, error) {
+	var value sql.NullString
+	err := s.db.QueryRow(`SELECT MIN(value) FROM abom_repository_property
+		WHERE repository_full_name = ? AND property_name = 'github-codeql-config-file'`, repository).Scan(&value)
+	if err != nil {
+		return "", fmt.Errorf("reading the configuration file of %s: %w", repository, err)
+	}
+	if value.String != "" {
+		return value.String, nil
+	}
+	owner, _, _ := strings.Cut(repository, "/")
+	err = s.db.QueryRow(`SELECT MIN(default_value) FROM abom_property_schema
+		WHERE owner = ? AND property_name = 'github-codeql-config-file'`, owner).Scan(&value)
+	if err != nil {
+		return "", fmt.Errorf("reading the default configuration file of %s: %w", owner, err)
+	}
+	return value.String, nil
 }

@@ -48,12 +48,16 @@ findings close it off:
 - The database is needed regardless, because `abom/surface`, `abom/step-conditions` and the findings
   suites all read it.
 - The SBOM flow is `generate-report` plus polling, against a sparse checkout of `.github`. It is not
-  obviously the cheaper of the two.
+  obviously the cheaper of the two. Both report endpoints, the plain SBOM and the dependency-review
+  comparison read with repository Contents, which the App holds.
 
 **It orders work; it never replaces it.** For an owned repository's push, the dependency-review
-comparison between base and head is a cheap hint that direct Actions dependencies moved, which
-[`change-ingestion.md`](change-ingestion.md) uses to analyze that push first. The analysis still
-runs, and nothing GitHub's graph says is written as an edge.
+comparison between the analyzed commit and the live one
+[claims that push ahead of the others](../../docs/architecture.md#the-pipeline) when it names a
+`uses:` that moved. The analysis still runs, and nothing GitHub's graph says is written as an edge.
+It reads workflows only: adding `uses: actions/github-script@v7` to `has-ghas/test-repo-1`'s root
+`action.yml` left the comparison empty, so a comparison naming nothing is no evidence that nothing
+moved, and it never moves a push back.
 
 **A default-branch report is not a pinned revision.** A repository-level SBOM cannot seed a
 consumer's effective graph unless its source revision and semantics match that consumer. Native

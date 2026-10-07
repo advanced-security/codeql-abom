@@ -176,12 +176,17 @@ func TestEveryExposureNamesSomethingTheSubmissionWouldAlsoCarry(t *testing.T) {
 	if len(exposed) == 0 {
 		t.Fatal("the exposure walk found nothing, so agreement below would be vacuous")
 	}
-	for pkg, hops := range exposed {
-		if !submitted[pkg] {
-			t.Errorf("octo-org/app is reported exposed to %s at %d hops and the submission "+
-				"closure does not carry it: the two walks disagree about one supply chain",
-				pkg, hops)
-		}
+	parts, err := ClosureAgreement(s, []string{"octo-org/app"})
+	if err != nil {
+		t.Fatalf("ClosureAgreement: %v", err)
+	}
+	if got := partNamed(t, parts, closureExposurePart); got.Compared != len(exposed) {
+		t.Errorf("check 8 compared %d exposures of octo-org/app, want all %d", got.Compared,
+			len(exposed))
+	}
+	for _, d := range partNamed(t, parts, closureExposurePart).Disagreements {
+		t.Errorf("%s is reported exposed and the submission closure does not carry it: the two "+
+			"walks disagree about one supply chain (%s)", d.Subject, d.Independent)
 	}
 }
 

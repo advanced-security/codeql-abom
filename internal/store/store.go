@@ -109,6 +109,14 @@ var createTables = []struct {
 	{"the property schema table", propertySchemaDDL},
 	{"the policy tables", policyDDL},
 	{"the comparison tables", comparisonDDL},
+	{"the reach mark tables", reachMarkDDL},
+	{"the consistency check tables", checkDDL},
+	{"the event delivery log", eventLogDDL},
+	{"the token pool tables", poolDDL},
+	{"the App installation tables", appInstallationDDL},
+	{"the workflow run table", workflowRunDDL},
+	{"the code scanning setup tables", setupDDL},
+	{"the default setup write tables", setupWriteDDL},
 }
 
 // Migrate creates all tables and adds any columns introduced since the database was created.
@@ -171,6 +179,12 @@ func (s *Store) Migrate() error {
 	if err := s.migrateEvidenceKey(); err != nil {
 		return err
 	}
+	if err := s.reviveWhatLiveEdgesName(); err != nil {
+		return err
+	}
+	if err := s.upgradeSavedViews(); err != nil {
+		return err
+	}
 	// The one index a read-only server cannot wait for CreateIndexes to build.
 	if _, err := s.db.Exec(queryRunIndexDDL); err != nil {
 		return fmt.Errorf("indexing run identity: %w", err)
@@ -195,16 +209,8 @@ func (s *Store) Migrate() error {
 		}
 	}
 	// After the columns, which the views select on.
-	if _, err := s.db.Exec(liveViewDDL); err != nil {
-		return fmt.Errorf("creating the live views: %w", err)
-	}
-	// Selects on abom_account.scopes, which the column pass above may have just added.
-	if _, err := s.db.Exec(honoredScopeDDL); err != nil {
-		return fmt.Errorf("creating the honored scope view: %w", err)
-	}
-	// After both: the edge views read the live ones, and all of them read analysis_mode.
-	if _, err := s.db.Exec(analysisModeViewDDL); err != nil {
-		return fmt.Errorf("creating the analysis mode views: %w", err)
+	if err := s.createViews(); err != nil {
+		return err
 	}
 	// After the views, which back-fill the sightings this reads.
 	if err := s.backfillRunRules(); err != nil {
@@ -218,11 +224,39 @@ func (s *Store) Migrate() error {
 	return s.seedTierSuites()
 }
 
+// createViews builds every view, in the order each reads the one before it.
+func (s *Store) createViews() error {
+	for _, v := range []struct{ what, ddl string }{
+		{"the live views", liveViewDDL},
+		// Selects on abom_account.scopes, which the column pass may have just added.
+		{"the honored scope view", honoredScopeDDL},
+		// Reads the property schema columns the column pass may have just added; before the setup
+		// view, whose ownership test names it.
+		{"the honored property scope view", propertyClauseViewDDL},
+		// After both: the edge views read the live ones, and all of them read analysis_mode.
+		{"the analysis mode views", analysisModeViewDDL},
+		// Reads the live and honored-scope views.
+		{"the code scanning setup view", setupClassViewDDL},
+	} {
+		if _, err := s.db.Exec(v.ddl); err != nil {
+			return fmt.Errorf("creating %s: %w", v.what, err)
+		}
+	}
+	return nil
+}
+
 // dropStaleDerivedTables removes derived tables that no longer have a consumer.
 //
 // Columns are normally only added, because dropping one loses data. This table held nothing
 // that is not recomputed from the findings themselves, so it is discarded rather than migrated.
 func (s *Store) dropStaleDerivedTables() error {
+	// Recreated last; until then a table rebuild would refuse a view naming what it renames.
+	if _, err := s.db.Exec(`DROP VIEW IF EXISTS abom_setup_class`); err != nil {
+		return fmt.Errorf("setting the code scanning setup view aside: %w", err)
+	}
+	if _, err := s.db.Exec(`DROP VIEW IF EXISTS abom_owned_property_clause_honored`); err != nil {
+		return fmt.Errorf("setting the property scope view aside: %w", err)
+	}
 	// abom_pinning cached findings per rule alongside a denominator, and both were a liability:
 	// the denominator related two unconnected quantities, and the cache could fall behind the
 	// findings it summarized. Callers now count from abom_finding directly.

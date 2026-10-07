@@ -33,9 +33,28 @@ type File struct {
 // Own mirrors the flags `codeql-abom own` takes, so a file and a command line cannot describe
 // different things.
 type Own struct {
-	Orgs     []string `json:"orgs"`
-	Users    []string `json:"users"`
-	Includes []string `json:"includes"`
+	Orgs       []string        `json:"orgs"`
+	Users      []string        `json:"users"`
+	Includes   []string        `json:"includes"`
+	Properties []PropertyScope `json:"properties"`
+}
+
+// PropertyScope is one property scope on a declared organization: the repositories carrying every
+// term. The same object `own --property` takes, as JSON, so no value is split on a delimiter.
+type PropertyScope struct {
+	Org   string               `json:"org"`
+	Match []store.PropertyTerm `json:"match"`
+}
+
+// ParsePropertyScope reads one `own --property` object, refusing keys it does not define.
+func ParsePropertyScope(body string) (PropertyScope, error) {
+	dec := json.NewDecoder(strings.NewReader(body))
+	dec.DisallowUnknownFields()
+	var p PropertyScope
+	if err := dec.Decode(&p); err != nil {
+		return p, fmt.Errorf("%q is not a property scope: %w", body, err)
+	}
+	return p, nil
 }
 
 // Load reads the declaration at path.
@@ -60,19 +79,19 @@ func Load(path string) ([]store.DeclaredAccount, error) {
 		return nil, fmt.Errorf("declare: %s: %w", path, err)
 	}
 
-	accounts, err := Accounts(f.Own.Orgs, f.Own.Users, f.Own.Includes)
+	accounts, err := Accounts(f.Own.Orgs, f.Own.Users, f.Own.Includes, f.Own.Properties)
 	if err != nil {
 		return nil, fmt.Errorf("declare: %s: %w", path, err)
 	}
 	return accounts, nil
 }
 
-// Accounts folds the three lists into declarations, refusing an include that belongs to none of
-// them.
+// Accounts folds the lists into declarations, refusing an include or a property scope that belongs
+// to none of them.
 //
 // Shared with `codeql-abom own` so that the file and the command line cannot drift into two
 // different rules about what an include means.
-func Accounts(orgs, users, includes []string) ([]store.DeclaredAccount, error) {
+func Accounts(orgs, users, includes []string, properties []PropertyScope) ([]store.DeclaredAccount, error) {
 	byOwner := map[string]*store.DeclaredAccount{}
 	order := []string{}
 	add := func(owner, kind string) {
@@ -102,6 +121,14 @@ func Accounts(orgs, users, includes []string) ([]store.DeclaredAccount, error) {
 		}
 		a.IncludesOnly = true
 		a.Includes = append(a.Includes, repo)
+	}
+	for _, p := range properties {
+		a, ok := byOwner[strings.ToLower(p.Org)]
+		if !ok || a.Kind != store.AccountOrganization {
+			return nil, fmt.Errorf("a property scope names %s, which was not declared as an organization", p.Org)
+		}
+		a.IncludesOnly = true
+		a.Properties = append(a.Properties, store.PropertyClause{Terms: p.Match})
 	}
 
 	out := make([]store.DeclaredAccount, 0, len(order))

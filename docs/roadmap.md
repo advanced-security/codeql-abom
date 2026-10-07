@@ -102,6 +102,9 @@ configuration, execution, freshness or language coverage — an enablement task 
 exchange runs both ways: GitHub's language statistics do not report `actions`, so ABOM supplies the
 one gap that audit cannot see. `plans/api/ghas-enablement.md`
 
+ABOM now closes that gap itself: it shows whether each owned repository's Actions code is scanned,
+and adds `actions` to default setup from an approved preview. `docs/architecture.md`
+
 ## Two shapes of database, answering two different questions
 
 Every database ABOM builds is one repository's own sparse checkout — the shape GitHub's Default
@@ -225,17 +228,16 @@ and an action's locked repository commit does not inventory its container images
 
 ## Staying current without being told
 
-The crawl is resumable and budgeted, and it can already detect that a reference has moved. What is
-missing is being told: an enterprise App's events for every repository the enterprise owns, and
-polling for the dependencies it does not, each process drawing on a budget the operator sets and
-can watch being spent, with the freshness that budget buys stated beside it. GitHub's limits are
-shared with everything else the enterprise runs, so ABOM never assumes they are its own. Until the
-events arrive a periodic sweep is the floor. `plans/api/change-ingestion.md`,
+The crawl is resumable and budgeted, and it is told: an App's events for every repository the
+operator owns, polling for the dependencies they do not, and a periodic sweep behind both, each
+drawing on a budget the operator sets and can watch being spent, with the freshness that budget buys
+stated beside it. GitHub's limits are shared with everything else the enterprise runs, so ABOM never
+assumes they are its own. What is missing is an enterprise's own App at an address it can reach.
 `plans/api/enterprise-server.md`
 
-The graph those changes land in is being made commit-aware: each commit's declarations are its own,
-every walk stands at the commits a reference actually resolves to, and reach is counted per version.
-`plans/db/commit-aware-graph.md`
+The graph those changes land in is commit-aware: each commit's declarations are its own, every walk
+and view stands at the commits that are live, reach is counted per version, and a change re-derives
+only what depends on it. `plans/db/commit-aware-graph.md`
 
 ## Knowing the graph is right
 
@@ -266,16 +268,16 @@ it, and a screen that refuses to write either without a reason.
 
 The interface is legible at the sizes an operator actually arrives at, and the endpoints behind it
 answer in well under a second at the sizes measured so far. The known ceilings are the browser's
-node count, the fact that reach is recomputed wholesale, and that boundaries and relationships
+node count, the edge facts recomputed wholesale with each rebuild, and that boundaries and relationships
 cannot yet be drawn at once — the layout does not separate accounts well enough, so the reader
 chooses between them and the canvas says which it is showing. None is urgent; all are measured
 rather than guessed, and all have to be re-measured against a real organization rather than carried
 forward as remembered numbers. `plans/db/data-efficiency.md`
 
-An enterprise adds two ceilings that are architectural rather than measured: every derivation is
-recomputed over the whole graph, and one embedded database owned by one process is the only writer
-and the only reader. Derivations become incremental, with the wholesale recompute kept as the
-oracle that checks them, and the enterprise deployment runs PostgreSQL behind the same store
+An enterprise adds two ceilings that are architectural rather than measured: every derivation still
+reads the whole graph to find what changed, and one embedded database owned by one process is the
+only writer and the only reader. Reach and exposure are derived for what changed, with the wholesale
+recompute kept as the oracle that checks them, and the enterprise deployment runs PostgreSQL behind the same store
 interface, so coordinators can be replicated and readers scaled out while the single binary keeps
 SQLite. Efficiency at that scale is measured on real organizations as they become available, never
 extrapolated from this one. `plans/db/commit-aware-graph.md`, `plans/db/store-backends.md`
@@ -288,7 +290,7 @@ extrapolated from this one. `plans/db/commit-aware-graph.md`, `plans/db/store-ba
   organization's own consent mechanism, and writing nothing is a stronger guarantee than writing
   carefully.
 - **Re-implementing what `gh-ghas-audit` measures.** Enablement has an owner; ABOM consumes the
-  answer and contributes the one gap that tool cannot see.
+  answer and closes the one gap that tool cannot see: `actions`.
 - **A competing Actions lock generator, verifier or updater.** Consume GitHub's supported tooling
   and versioned evidence. Publication expansion waits for a measured native gap, not a prediction
   that GitHub will or will not build one.

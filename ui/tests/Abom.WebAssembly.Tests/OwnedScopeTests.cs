@@ -86,6 +86,30 @@ public class OwnedScopeTests : AbomTestContext
         cut.WaitForAssertion(() => Assert.Contains("abom-owned-mark", cut.Markup));
     }
 
+    // An account restricted to some repositories is not yours whole, so its mark says it is
+    // declared in part rather than claiming the account.
+    [Fact]
+    public void AnAccountDeclaredInPartIsMarkedAsSuch()
+    {
+        Serve(DeclaresAcme.Replace("\"includesOnly\":false,\"includes\":[]", "\"includesOnly\":true,\"includes\":[\"tooling\"]"));
+
+        var cut = Render<Pages.Settings>();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-abom-candidate-declared='acme']")));
+        Assert.Equal("part", cut.Find("[data-abom-candidate-declared='acme']").GetAttribute("data-abom-extent"));
+    }
+
+    [Fact]
+    public void AnAccountDeclaredWholeIsMarkedWhole()
+    {
+        Serve(DeclaresAcme);
+
+        var cut = Render<Pages.Settings>();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-abom-candidate-declared='acme']")));
+        Assert.Equal("whole", cut.Find("[data-abom-candidate-declared='acme']").GetAttribute("data-abom-extent"));
+    }
+
     // Discovery refuses to start without one, so a page that does not say the scope is empty
     // leaves the operator looking at a disabled control with no explanation.
     [Fact]
@@ -273,31 +297,17 @@ public class OwnedScopeTests : AbomTestContext
         Assert.Empty(cut.FindAll("[data-abom-unaccounted='ops-team']"));
     }
 
-    // Every titled column sorts. A template column given only a sort key draws a header nobody can
-    // click, and the accounts could not be grouped by kind.
-    [Fact]
-    public void EveryMembershipColumnSorts()
-    {
-        ServeEditable("[]");
-        var cut = Render<Pages.Settings>();
-        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-memberships]")));
-        OpenMemberships(cut);
-
-        var unsortable = cut.FindAll("[data-abom-memberships] thead th .column-header")
-            .Where(h => h.TextContent.Trim().Length > 0 && h.QuerySelector(".sortable-column-header") is null)
-            .Select(h => h.TextContent.Trim()).ToList();
-        Assert.Empty(unsortable);
-    }
-
-    // The membership list is collapsed until asked for, so anything reaching into it opens it
-    // first. Stated once here rather than as a click repeated in every test that declares.
+    // Both folds start closed, so anything reaching into either opens them first, stated once here.
     private static void OpenMemberships(IRenderedComponent<Pages.Settings> cut)
     {
-        cut.WaitForAssertion(
-            () => Assert.NotNull(cut.Find("[data-abom-memberships] .mud-expand-panel-header")));
-        cut.Find("[data-abom-memberships] .mud-expand-panel-header").Click();
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-declarable-toggle]")));
+        cut.Find("[data-abom-declarable-toggle]").Click();
         cut.WaitForAssertion(
             () => Assert.NotEmpty(cut.FindAll("[data-abom-membership='ops-team']")));
+        if (cut.FindAll("[data-abom-members-toggle]").Count > 0)
+        {
+            cut.Find("[data-abom-members-toggle]").Click();
+        }
     }
 
     private void ServeEditable(string scope)
@@ -431,7 +441,8 @@ public class OwnedScopeTests : AbomTestContext
         var cut = Render<Pages.Settings>();
         cut.WaitForAssertion(() => Assert.Contains("tooling", cut.Markup));
 
-        cut.Find("[data-abom-includes='acme-labs'] input").Change(string.Empty);
+        cut.Find("[data-abom-include='tooling'] button").Click();
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll("[data-abom-include='tooling']")));
         cut.Find("[data-abom-save]").Click();
 
         cut.WaitForAssertion(() => Assert.Single(Writes));

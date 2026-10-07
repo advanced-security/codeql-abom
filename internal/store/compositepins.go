@@ -21,12 +21,17 @@ type CompositePin struct {
 // analyzed at the ref the consumer pinned, so an unanalyzed pin is coverage ABOM must name.
 //
 // Restricted to composite actions because nothing else can have children, and queueing the rest
-// would spend the crawl on work that cannot produce a transitive edge.
+// would spend the crawl on work that cannot produce a transitive edge. A pin is what a workflow
+// declares at a commit in use, so one only a history commit made is not queued.
 func (s *Store) UnanalyzedCompositePins() ([]CompositePin, error) {
+	table, err := s.declaredEdgeTable(AnalysisModeRegular)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.DB().Query(`
 		SELECT n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''), COALESCE(n.path,''),
 		       COALESCE(e.ref_value,''), COUNT(*) AS pins, MIN(r.repository_full_name)
-		  FROM abom_edge_regular e
+		  FROM ` + table + ` e
 		  JOIN repository r ON r.row_id = e.repository_row_id AND r.origin = 'seed'
 		  JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 		 WHERE n.is_external = 1

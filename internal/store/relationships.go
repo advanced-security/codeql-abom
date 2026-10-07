@@ -41,6 +41,10 @@ type RelationshipSummary struct {
 	// Locked are the commits current locks select for this line: the repository's own lock
 	// through the workflow named, or a caller's through the pin it reached the composite by.
 	Locked []RelationshipLock `json:"locked"`
+
+	// Commits are the commits in use that declared this, sorted. A line whose commits declared
+	// different things is one row per thing declared. Empty where no run recorded a commit.
+	Commits []string `json:"commits"`
 }
 
 // RelationshipLock is one commit a current lock selects for one declaring line.
@@ -76,7 +80,13 @@ type RelationshipsQuery struct {
 // RelationshipsPage is one page of relationships and the size of the match it was cut from.
 type RelationshipsPage struct {
 	Items []RelationshipSummary `json:"items"`
-	Total int                   `json:"total"`
+	// Total counts declarations, and Lines the lines they were declared on.
+	Total int `json:"total"`
+	Lines int `json:"lines"`
+	// WithoutDeclaration counts the lines in scope no commit in use has a recorded declaration
+	// for, which are not listed: only a history commit declared them, or the commit in use was
+	// read before sightings kept what each commit declared.
+	WithoutDeclaration int `json:"withoutDeclaration"`
 }
 
 // relationshipSorts is the whitelist, for the reason inventorySorts is one: a column name arriving
@@ -139,40 +149,40 @@ func relationshipRefFilter(style string) (string, []any) {
 }
 
 // relationshipScopeFilter narrows the listing the way the node listing is narrowed, so one word
-// means one thing across units.
-func relationshipScopeFilter(q RelationshipsQuery) (string, []any) {
+// means one thing across units. target says whether the declaration's target may place it there,
+// which a line with no declaration on record cannot.
+func relationshipScopeFilter(q RelationshipsQuery, target bool) (string, []any) {
 	switch q.Scope {
 	case ScopeExposure:
+		if !target {
+			return ` AND src.node_key IN ` + onExposureRoute, nil
+		}
 		return ` AND (src.node_key IN ` + onExposureRoute +
 			` OR dst.node_key IN ` + onExposureRoute + `)`, nil
 	case ScopeOwned:
+		// A line is yours when it is written in what you hold, whatever it names.
+		return ` AND src.row_id IN (` + ownedNodes + `)`, nil
+	case ScopeSupplyChain:
 		// The line belongs to the scope when what declares it runs there.
 		return ` AND src.row_id IN (` + scopeNodes(declaredRoots, q.Mode) + `)`, nil
 	}
 	return "", nil
 }
 
-// relationshipsWhere is the predicate, shared by the count and the page so the total cannot
-// describe a different match from the rows.
-func (s *Store) relationshipsWhere(q RelationshipsQuery) (string, []any, error) {
+// relationshipLineWhere is the part of the predicate a line answers by itself, whatever it
+// declared: its kind, what fired on it, and the scope and repositories it sits in. Without a
+// target, a search is tested against what declares the line, the one end it still has.
+func (s *Store) relationshipLineWhere(q RelationshipsQuery, target bool) (string, []any, error) {
 	where, args := "WHERE 1 = 1", []any{}
 	where += edgeKindFilter(q.EdgeKinds)
-	if clause := boundaryFilter(q.Boundary); clause != "" {
-		where += clause
-	}
-	style, styleArgs := relationshipRefFilter(q.RefStyle)
-	where, args = where+style, append(args, styleArgs...)
 	fired, firedArgs := relationshipRuleFilter(q.Rules, q.NotRules, q.Mode)
 	where, args = where+fired, append(args, firedArgs...)
-	if q.Search != "" {
-		// Either end, because a reader searching `checkout` wants the relationships that use it
-		// as readily as the ones declared inside it.
-		where += ` AND (src.node_key LIKE ? ESCAPE '\' OR dst.node_key LIKE ? ESCAPE '\')`
-		like := "%" + escapeLike(q.Search) + "%"
-		args = append(args, like, like)
-	}
-	scoped, scopeArgs := relationshipScopeFilter(q)
+	scoped, scopeArgs := relationshipScopeFilter(q, target)
 	where, args = where+scoped, append(args, scopeArgs...)
+	if !target && q.Search != "" {
+		where += ` AND src.node_key LIKE ? ESCAPE '\'`
+		args = append(args, "%"+escapeLike(q.Search)+"%")
+	}
 	// The repository grouping, read the same way every other unit reads it.
 	bound, bindings, err := s.restrict(q.Grouping, "r.repository_full_name")
 	if err != nil {
@@ -181,35 +191,58 @@ func (s *Store) relationshipsWhere(q RelationshipsQuery) (string, []any, error) 
 	return where + bound, append(args, bindings...), nil
 }
 
-// relationshipRows is the one join both statements read. The mode view excludes what pruning
-// removed as well as what another analysis shape observed, and the endpoints are looked up by row
-// id rather than by scanning the node table.
-func relationshipRows(mode string) string {
+// relationshipsWhere is the predicate, shared by the count and the page so the total cannot
+// describe a different match from the rows.
+func (s *Store) relationshipsWhere(q RelationshipsQuery) (string, []any, error) {
+	where, args, err := s.relationshipLineWhere(q, true)
+	if err != nil {
+		return "", nil, err
+	}
+	if clause := boundaryFilter(q.Boundary); clause != "" {
+		where += clause
+	}
+	style, styleArgs := relationshipRefFilter(q.RefStyle)
+	where, args = where+style, append(args, styleArgs...)
+	if q.Search != "" {
+		// Either end, because a reader searching `checkout` wants the relationships that use it
+		// as readily as the ones declared inside it.
+		where += ` AND (src.node_key LIKE ? ESCAPE '\' OR dst.node_key LIKE ? ESCAPE '\')`
+		like := "%" + escapeLike(q.Search) + "%"
+		args = append(args, like, like)
+	}
+	return where, args, nil
+}
+
+// relationshipRows is the one join both statements read: each line as what it declared at the
+// commits in use, from declaredEdgeTable. The endpoints are looked up by row id rather than by
+// scanning the node table.
+func relationshipRows(table string) string {
 	return `
-	FROM ` + edgeSource(mode) + ` e
+	FROM ` + table + ` e
 	JOIN abom_node_live src ON src.row_id = e.src_node_row_id
 	JOIN abom_node_live dst ON dst.row_id = e.dst_node_row_id
 	LEFT JOIN repository r ON r.row_id = e.repository_row_id
 	`
 }
 
-// relationshipsPageQuery builds the page statement, exposed to the cost test so the plan can be
-// asserted rather than the clock.
-func (s *Store) relationshipsPageQuery(q RelationshipsQuery) (string, []any, error) {
+// relationshipsPageQuery builds the page statement over a declaredEdgeTable, exposed to the cost
+// test so the plan can be asserted rather than the clock.
+func (s *Store) relationshipsPageQuery(q RelationshipsQuery, table string) (string, []any, error) {
 	where, args, err := s.relationshipsWhere(q)
 	if err != nil {
 		return "", nil, err
 	}
 
-	ordering := ` ORDER BY src.node_key, dst.node_key, e.file_path, e.start_line, e.edge_key`
+	// The identity breaks every tie, or two pages of an unstable order repeat a row and skip
+	// another; a line declaring two things is two rows, so its identity is what it declared too.
+	identity := `e.edge_key, dst.node_key, e.ref_value`
+	ordering := ` ORDER BY src.node_key, dst.node_key, e.file_path, e.start_line, ` + identity
 	if column, ok := relationshipSorts[q.Sort]; ok {
 		direction := " ASC"
 		if q.Desc {
 			direction = " DESC"
 		}
-		// The identity breaks every tie, or two pages of an unstable order repeat a row and
-		// skip another.
-		ordering = ` ORDER BY ` + column + direction + `, e.edge_key`
+		ordering = ` ORDER BY ` + column + direction + `, ` + identity
 	}
 
 	query := `
@@ -218,13 +251,40 @@ func (s *Store) relationshipsPageQuery(q RelationshipsQuery) (string, []any, err
 		       COALESCE(r.repository_full_name, ''), COALESCE(e.file_path, ''),
 		       COALESCE(e.start_line, 0), ` + nodeFindingCount(q.Mode, "e.src_node_row_id") +
 		` AS findings, ` + rulesOnLine(q.Mode) + `,
-		       e.advisory_route, e.finding_route, e.owned_depth` +
-		relationshipRows(q.Mode) + where + ordering
+		       e.advisory_route, e.finding_route, e.owned_depth, COALESCE(e.commits, '')` +
+		relationshipRows(table) + where + ordering
 	if q.Limit > 0 {
 		query += ` LIMIT ? OFFSET ?`
 		args = append(args, q.Limit, q.Offset)
 	}
 	return query, args, nil
+}
+
+// relationshipsCount sizes the match: the declarations, the lines they sit on, and the lines in
+// scope that are not listed because no commit in use has a recorded declaration for them.
+func (s *Store) relationshipsCount(q RelationshipsQuery, table string) (RelationshipsPage, error) {
+	where, args, err := s.relationshipsWhere(q)
+	if err != nil {
+		return RelationshipsPage{}, err
+	}
+	lines, lineArgs, err := s.relationshipLineWhere(q, false)
+	if err != nil {
+		return RelationshipsPage{}, err
+	}
+	var out RelationshipsPage
+	err = s.DB().QueryRow(`
+		SELECT COUNT(*), COUNT(DISTINCT e.row_id),
+		       (SELECT COUNT(*) FROM `+edgeSource(q.Mode)+` e
+		          JOIN abom_node_live src ON src.row_id = e.src_node_row_id
+		          LEFT JOIN repository r ON r.row_id = e.repository_row_id
+		        `+lines+` AND e.row_id NOT IN (SELECT row_id FROM `+table+`))`+
+		relationshipRows(table)+where,
+		append(lineArgs, args...)...).Scan(
+		&out.Total, &out.Lines, &out.WithoutDeclaration)
+	if err != nil {
+		return RelationshipsPage{}, fmt.Errorf("counting relationships: %w", err)
+	}
+	return out, nil
 }
 
 // RelationshipsPage lists one page of declared relationships, ordered across the whole match.
@@ -233,6 +293,9 @@ func (s *Store) relationshipsPageQuery(q RelationshipsQuery) (string, []any, err
 // facts are about a route rather than about either end, and a grid of nodes has nowhere to put
 // either. Containment is absent by construction — it is drawn rather than declared, so there is no
 // row here for it to occupy and no total for it to inflate.
+//
+// A row is what a line declared at the commits in use, never what the row holds: that is the last
+// commit analyzed, which may be one nothing runs any more.
 func (s *Store) RelationshipsPage(q RelationshipsQuery) (RelationshipsPage, error) {
 	if q.Sort != "" {
 		if _, ok := relationshipSorts[q.Sort]; !ok {
@@ -241,18 +304,16 @@ func (s *Store) RelationshipsPage(q RelationshipsQuery) (RelationshipsPage, erro
 				q.Sort, sortNames(relationshipSorts))
 		}
 	}
-	where, args, err := s.relationshipsWhere(q)
+	table, err := s.declaredEdgeTable(q.Mode)
+	if err != nil {
+		return RelationshipsPage{}, err
+	}
+	page, err := s.relationshipsCount(q, table)
 	if err != nil {
 		return RelationshipsPage{}, err
 	}
 
-	var total int
-	if err := s.DB().QueryRow(
-		`SELECT COUNT(*)`+relationshipRows(q.Mode)+where, args...).Scan(&total); err != nil {
-		return RelationshipsPage{}, fmt.Errorf("counting relationships: %w", err)
-	}
-
-	query, pageArgs, err := s.relationshipsPageQuery(q)
+	query, pageArgs, err := s.relationshipsPageQuery(q, table)
 	if err != nil {
 		return RelationshipsPage{}, err
 	}
@@ -261,9 +322,10 @@ func (s *Store) RelationshipsPage(q RelationshipsQuery) (RelationshipsPage, erro
 		func(row *sql.Rows) (RelationshipSummary, error) {
 			var r RelationshipSummary
 			var rules sql.NullString
+			var commits string
 			if err := row.Scan(&r.EdgeKey, &r.Kind, &r.Source, &r.Target, &r.Ref, &r.RefStyle,
 				&r.Boundary, &r.Repository, &r.FilePath, &r.StartLine, &r.Findings, &rules,
-				&r.AdvisoryRoute, &r.FindingRoute, &r.OwnedDepth); err != nil {
+				&r.AdvisoryRoute, &r.FindingRoute, &r.OwnedDepth, &commits); err != nil {
 				return r, err
 			}
 			// An empty slice rather than null: the interface reads it as a set, and null is not one.
@@ -271,6 +333,7 @@ func (s *Store) RelationshipsPage(q RelationshipsQuery) (RelationshipsPage, erro
 			if rules.String != "" {
 				r.Rules = strings.Split(rules.String, ",")
 			}
+			r.Commits = declaredCommits(commits)
 			return r, nil
 		}, query, pageArgs...)
 	if err != nil {
@@ -290,5 +353,6 @@ func (s *Store) RelationshipsPage(q RelationshipsQuery) (RelationshipsPage, erro
 	if err := s.attachRelationshipLocks(items); err != nil {
 		return RelationshipsPage{}, err
 	}
-	return RelationshipsPage{Items: items, Total: total}, nil
+	page.Items = items
+	return page, nil
 }

@@ -57,6 +57,10 @@ func attachOwners(nodes []GraphNode) []GraphNode {
 			org.IsExternal = false
 			org.Origin = OriginSeed
 		}
+		// An account holding a repository the declaration covers holds something of yours.
+		if n.Kind == "repo" && n.Owned {
+			org.Owned = true
+		}
 
 		// Findings sit on workflows and steps, never on the repository node itself, so rolling
 		// up only what hangs directly beneath an account would report every account as clean.

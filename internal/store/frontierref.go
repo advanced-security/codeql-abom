@@ -45,6 +45,14 @@ CREATE TABLE IF NOT EXISTS abom_frontier (
   -- CI. Both are followed, because a compromised release pipeline is how consumers receive a
   -- malicious version, but they are different claims and must not be reported as one.
   supply_chain    TEXT NOT NULL DEFAULT 'runtime',
+  -- Why a row analyzed before is pending again, which decides its stage: 'moved' waits behind
+  -- everything never analyzed, 'reobserve' is a gap in what is known and goes with the first
+  -- stage. NULL for anything else, and cleared when the row settles.
+  requeued_for    TEXT,
+  -- What dependency review said of a moved row's direct Actions dependencies between the commit it
+  -- was analyzed at and the live one: 1 moved, 0 saw none, NULL not read. It orders pushes and
+  -- describes one pending spell, so it is cleared when the row settles.
+  dependencies_moved INTEGER,
   PRIMARY KEY (node_key, ref)
 );
 `
@@ -61,7 +69,7 @@ CREATE INDEX IF NOT EXISTS idx_frontier_check  ON abom_frontier(status, checked_
 const frontierColumns = `node_key, ref, owner, repo, subpath, depth, status, attempts, score,
 	cost_estimate, reason, discovered_from, enqueued_at, next_attempt_at, completed_at,
 	claimed_at, expedited_at, analyzed_ref, resolved_sha, analyzed_at, checked_at,
-	analysis_count, supply_chain`
+	analysis_count, supply_chain, requeued_for, dependencies_moved`
 
 // migrateFrontierRefKey re-keys the queue from the dependency to the dependency at a reference.
 //

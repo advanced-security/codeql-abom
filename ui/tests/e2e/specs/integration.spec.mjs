@@ -99,7 +99,7 @@ test.describe('analysis modes', () => {
             // Without it there is no graph to request a shape for.
             await page.goto(
                 surface.route === '/explore'
-                    ? `${surface.route}?scope=owned&flags=findings`
+                    ? `${surface.route}?scope=supply-chain&flags=findings`
                     : surface.route,
             );
             await ready(page);
