@@ -147,6 +147,9 @@ public sealed record DiscoveryStatus
     public string WorkDir { get; init; } = string.Empty;
     public int ClaimsPerCycle { get; init; }
 
+    /// <summary>Why the crawl asks code scanning for nothing; empty when it asks.</summary>
+    public string CodeScanningUnasked { get; init; } = string.Empty;
+
     /// <summary>Alive and claiming, or about to: an idle loop still picks up expiring retries.</summary>
     public bool IsRunning => State is "working" or "idle" or "pausing";
 
@@ -204,8 +207,8 @@ public sealed record DiscoveryState
 
     public int Count(string state) => Frontier.TryGetValue(state, out var n) ? n : 0;
 
-    /// <summary>Queued, retrying, or running dependencies.</summary>
-    public int Unresolved => Count("queued") + Count("retrying") + Running;
+    /// <summary>Queued, retrying, waiting for code scanning, or running dependencies.</summary>
+    public int Unresolved => Count("queued") + Count("retrying") + Count("waiting") + Running;
 }
 
 public sealed record FrontierItem
@@ -227,6 +230,9 @@ public sealed record FrontierItem
     public string Reason { get; init; } = string.Empty;
     public string ClaimedAt { get; init; } = string.Empty;
     public string NextAttemptAt { get; init; } = string.Empty;
+
+    /// <summary>The pushed commit this row waits for code scanning to analyze; empty when not held.</summary>
+    public string AwaitingCodeScanning { get; init; } = string.Empty;
 
     /// <summary>Empty when nothing has ever analyzed this.</summary>
     public string AnalyzedAt { get; init; } = string.Empty;
@@ -264,6 +270,7 @@ public sealed record FrontierItem
     /// <summary>UI state that distinguishes fresh queued work from retries.</summary>
     public string State => Status switch
     {
+        "pending" when AwaitingCodeScanning.Length > 0 => "waiting",
         "pending" when Attempts > 0 => "retrying",
         "pending" => "queued",
         _ => Status,
@@ -1488,6 +1495,9 @@ public sealed record QueueStages
     public int Explore { get; init; }
     public int Refresh { get; init; }
 
+    /// <summary>Pushes held for code scanning's own analysis of them, claimed once it is reported.</summary>
+    public int Waiting { get; init; }
+
     /// <summary>Queued for repositories nothing owned reaches: never claimed, holding no depth open.</summary>
     public int Unreached { get; init; }
 }
@@ -1544,6 +1554,18 @@ public sealed record CycleSpend
 
     public int ShallowestIncomplete { get; init; }
     public bool HasOutstanding { get; init; }
+
+    /// <summary>What code scanning supplied in the cycle; null for a cycle recorded before ABOM kept
+    /// it, which is not a cycle it supplied nothing in.</summary>
+    public CycleCodeScanning? CodeScanning { get; init; }
+}
+
+/// <summary>What code scanning supplied, and why each refusal was made, in the cycle log's words.</summary>
+public sealed record CycleCodeScanning
+{
+    public int Databases { get; init; }
+    public int Analyses { get; init; }
+    public IReadOnlyDictionary<string, int> Refused { get; init; } = new Dictionary<string, int>();
 }
 
 /// <summary>Every recorded cycle summed, so "under budget" has something to check against.</summary>
@@ -1558,6 +1580,10 @@ public sealed record CycleTotal
     public int TreeReads { get; init; }
     public int Analyzed { get; init; }
     public int Discovered { get; init; }
+
+    /// <summary>What code scanning supplied across the <see cref="CodeScanningCycles"/> that kept it.</summary>
+    public CycleCodeScanning CodeScanning { get; init; } = new();
+    public int CodeScanningCycles { get; init; }
 }
 
 /// <summary>

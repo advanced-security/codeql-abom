@@ -25,6 +25,9 @@ type RefAnswer struct {
 	Commit string
 	// Unread says why there is no commit. It is never evidence the reference stayed put.
 	Unread string
+	// Missing says GitHub read the repository and holds no such reference, which is evidence that
+	// it is gone; every other unread answer is evidence of nothing.
+	Missing bool
 }
 
 // RefBatch is one query's answers, in the order asked, and what GitHub charged and reported.
@@ -158,9 +161,9 @@ func answerFor(q RefQuestion, a refAlias, data map[string]json.RawMessage, errs 
 		return RefAnswer{Commit: strings.ToLower(obj.OID)}
 	}
 	if q.Ref == "" {
-		return RefAnswer{Unread: name + " has no default branch"}
+		return RefAnswer{Unread: name + " has no default branch", Missing: true}
 	}
-	return RefAnswer{Unread: fmt.Sprintf("%s has no branch or tag named %s", name, q.Ref)}
+	return RefAnswer{Unread: fmt.Sprintf("%s has no branch or tag named %s", name, q.Ref), Missing: true}
 }
 
 // reasonAt is what GitHub said went wrong at a repository alias, or at one field beneath it.

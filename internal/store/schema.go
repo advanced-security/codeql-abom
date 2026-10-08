@@ -757,6 +757,10 @@ var droppedColumns = []struct{ table, column string }{
 var addedColumns = []struct{ table, column, decl string }{
 	// Zero for older rows is true: no build before this one read a tree.
 	{"abom_cycle_spend", "tree_reads", "INTEGER NOT NULL DEFAULT 0"},
+	// NULL on a cycle recorded before what code scanning supplied was kept.
+	{"abom_cycle_spend", "databases_taken", "INTEGER"},
+	{"abom_cycle_spend", "analyses_taken", "INTEGER"},
+	{"abom_cycle_spend", "code_scanning_refused", "TEXT"},
 	{"abom_query_run_rule", "documentation_json", "TEXT"},
 	{"abom_blast_radius", "refs_in_use", "INTEGER"},
 	{"abom_blast_radius", "dependent_steps", "INTEGER"},
@@ -788,6 +792,8 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_frontier", "requeued_for", "TEXT"},
 	// NULL, not read, on every row queued before pushes were compared.
 	{"abom_frontier", "dependencies_moved", "INTEGER"},
+	// NULL on every row queued before a push could wait for code scanning: nothing held them.
+	{"abom_frontier", "awaiting_code_scanning", "TEXT"},
 	{"repository", "origin", "TEXT NOT NULL DEFAULT 'seed'"},
 	// Nullable on purpose. NULL is "nobody enumerated this repository", which a gate has to be
 	// able to tell apart from a branch it knows the name of.
@@ -856,6 +862,12 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_submission", "package_digest", "TEXT"},
 	// Bumped by compaction, which deletes rows and so ends the meaning of every row-id cursor.
 	{"abom_graph_generation", "epoch", "INTEGER NOT NULL DEFAULT 0"},
+	// NULL on parts recorded before sampling: every built check read everything it could.
+	{"abom_check_part", "population", "INTEGER"},
+	{"abom_check_part", "bound", "REAL"},
+	// Zero on rows filed before sampling, which exhaustive checks filed and close by their part.
+	{"abom_check_disagreement", "sampled", "INTEGER NOT NULL DEFAULT 0"},
+	{"abom_check_disagreement", "settled_run_row_id", "INTEGER"},
 	// Every generation before this was a rebuild, which is what 0 says.
 	{"abom_graph_generation", "reach_incremental", "INTEGER NOT NULL DEFAULT 0"},
 	// Derivable from rows already stored, so existing edges are filled by

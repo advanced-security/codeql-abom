@@ -37,8 +37,11 @@ type FrontierItem struct {
 	// ClaimedAt dates the analysis in flight, so a worker stuck on one dependency shows up as
 	// one that has been on it far too long.
 	ClaimedAt string `json:"claimedAt"`
-	// NextAttemptAt is when a failed dependency becomes claimable again.
+	// NextAttemptAt is when a failed dependency becomes claimable again, or a held one's ceiling.
 	NextAttemptAt string `json:"nextAttemptAt"`
+	// AwaitingCodeScanning is the pushed commit this row waits for code scanning to analyze, empty
+	// when nothing holds it.
+	AwaitingCodeScanning string `json:"awaitingCodeScanning"`
 	// SupplyChain is "runtime" when something under review executes this, "build_time" when it
 	// only runs in an upstream project's own CI.
 	SupplyChain string `json:"supplyChain"`
@@ -153,6 +156,8 @@ const selectSuites = `
 const (
 	FrontierQueued   = "queued"
 	FrontierRetrying = "retrying"
+	// FrontierWaiting is pending work held for code scanning's own analysis of a push.
+	FrontierWaiting = "waiting"
 )
 
 // FrontierAdvisories asks a different question from the rest: not where a dependency sits in the
@@ -242,9 +247,11 @@ func frontierWhere(status string) (string, []any) {
 	case "":
 		return "", nil
 	case FrontierQueued:
-		return ` WHERE status = 'pending' AND attempts = 0`, nil
+		return ` WHERE status = 'pending' AND attempts = 0 AND awaiting_code_scanning IS NULL`, nil
 	case FrontierRetrying:
-		return ` WHERE status = 'pending' AND attempts > 0`, nil
+		return ` WHERE status = 'pending' AND attempts > 0 AND awaiting_code_scanning IS NULL`, nil
+	case FrontierWaiting:
+		return ` WHERE status = 'pending' AND awaiting_code_scanning IS NOT NULL`, nil
 	case FrontierAdvisories:
 		return ` WHERE ` + namedByAdvisory, nil
 	case FrontierBuildTime:
@@ -274,7 +281,7 @@ func frontierSnapshotQuery(table, status string, limit int) (string, []any) {
 		       COALESCE(discovered_from,''), COALESCE(reason,''),
 		       COALESCE(claimed_at,''), COALESCE(next_attempt_at,''), supply_chain,
 		       COALESCE(analyzed_at,''), ` + tierOfRow + `, ref,` + selectSuites + `,` +
-		selectUsedBy + `
+		selectUsedBy + `, COALESCE(awaiting_code_scanning, '')
 		FROM abom_frontier
 		LEFT JOIN users u ON u.nk = abom_frontier.node_key AND u.rf = abom_frontier.ref`
 	where, args := frontierWhere(status)
@@ -309,7 +316,7 @@ func (s *Store) FrontierSnapshot(status string, limit int) ([]FrontierItem, erro
 			&it.Score, &it.Attempts, &it.AnalysisCount, &it.ResolvedSHA,
 			&it.DiscoveredFrom, &it.Reason, &it.ClaimedAt, &it.NextAttemptAt, &it.SupplyChain,
 			&it.AnalyzedAt, &it.Tier, &it.Ref, &suites, &cli,
-			&it.UsedByCount, &it.UsedByOwned, &users); err != nil {
+			&it.UsedByCount, &it.UsedByOwned, &users, &it.AwaitingCodeScanning); err != nil {
 			return it, err
 		}
 		it.UsedBy = []string{}
@@ -369,6 +376,7 @@ func (s *Store) FrontierRepositoryCounts() (map[string]int, error) {
 func (s *Store) FrontierCounts() (map[string]int, error) {
 	rows, err := s.db.Query(`
 		SELECT CASE
+		         WHEN status = 'pending' AND awaiting_code_scanning IS NOT NULL THEN 'waiting'
 		         WHEN status = 'pending' AND attempts > 0 THEN 'retrying'
 		         WHEN status = 'pending' THEN 'queued'
 		         ELSE status
@@ -383,9 +391,9 @@ func (s *Store) FrontierCounts() (map[string]int, error) {
 	// Every state is present, so a caller can say "none" rather than leaving a gap that reads
 	// as an unanswered question.
 	out := map[string]int{
-		FrontierQueued: 0, FrontierRetrying: 0, FrontierAdvisories: 0, FrontierUpstreamOnly: 0,
-		FrontierBuildTime: 0,
-		"running":         0, "done": 0, "unavailable": 0, "nothing": 0,
+		FrontierQueued: 0, FrontierRetrying: 0, FrontierWaiting: 0, FrontierAdvisories: 0,
+		FrontierUpstreamOnly: 0, FrontierBuildTime: 0,
+		"running": 0, "done": 0, "unavailable": 0, "nothing": 0,
 	}
 	for rows.Next() {
 		var status string

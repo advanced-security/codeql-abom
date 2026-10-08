@@ -230,25 +230,31 @@ func webhookSecret(path string) ([]byte, error) {
 // receiveEvents turns on the receiver and its processor when a secret is set; the sweep is untouched.
 func receiveEvents(
 	ctx context.Context, srv *serve.Server, s *store.Store, loop *supervisor.Supervisor,
-	reader *catalog.Client, secret []byte, installations func(), stdout io.Writer,
+	reader *catalog.Client, secret []byte, installations func(), codeScanningWait time.Duration,
+	stdout io.Writer,
 ) {
 	if len(secret) == 0 {
 		return
 	}
 	wake := make(chan struct{}, 1)
 	srv.Events = &serve.EventReceiver{Secret: secret, Arrived: nudge(wake)}
-	go newProcessor(s, loop, reader, installations, stdout).Run(ctx, wake, eventRetryEvery)
+	go newProcessor(s, loop, reader, installations, codeScanningWait, stdout).Run(ctx, wake, eventRetryEvery)
 	fmt.Fprintln(stdout, "serve: receiving signed GitHub webhook deliveries at POST /api/events/github")
 }
 
 // newProcessor hands the processor only the asks this loop can answer, and reads GitHub through
 // the event follow-up reader.
 func newProcessor(
-	s *store.Store, loop *supervisor.Supervisor, reader *catalog.Client, installations func(), stdout io.Writer,
+	s *store.Store, loop *supervisor.Supervisor, reader *catalog.Client, installations func(),
+	codeScanningWait time.Duration, stdout io.Writer,
 ) *events.Processor {
 	processor := &events.Processor{
 		Store: s, Queue: loop.Queue, Log: stdout, Installations: installations, Wake: loop.Wake,
 		Pace: processPools.Pool(work.PoolEvents, work.UnitGit),
+	}
+	// Waiting for code scanning buys something only where the crawl takes what it supplies.
+	if loop.Expander != nil && loop.Expander.CodeScanning != nil {
+		processor.CodeScanningWait = codeScanningWait
 	}
 	if reader != nil {
 		processor.Branches, processor.Databases = reader.ProtectedBranches, reader.FindDatabase
@@ -345,7 +351,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return fmt.Errorf("serve: %w", err)
 	}
 	wireTrees(ctx, loop, cfg.apiURL, tokens)
-	wireCodeScanning(ctx, loop, s, cfg.apiURL, tokens)
+	wireCodeScanning(ctx, loop, s, cfg)
 	primeServedStore(s, loop.Queue, stdout, stderr)
 
 	srv, err := newConfiguredServer(ctx, cfg, s, loop, tokens, stderr)
@@ -354,7 +360,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	resync := make(chan struct{}, 1)
 	receiveEvents(ctx, srv, s, loop, eventsClient(ctx, cfg.apiURL, s, tokens, processPools),
-		cfg.webhookSecret, nudge(resync), stdout)
+		cfg.webhookSecret, nudge(resync), cfg.discovery.codeScanningWait, stdout)
 	if err := startRelay(ctx, cfg, stdout); err != nil {
 		return err
 	}
@@ -467,6 +473,12 @@ func parseServeArgs(args []string, stderr io.Writer) (serveConfig, error) {
 		"longest reach may go unmeasured, however little arrives")
 	fs.DurationVar(&d.aggregateMinPeriod, "aggregate-min-interval", supervisor.DefaultMinInterval,
 		"shortest gap between two reach rebuilds")
+	fs.BoolVar(&d.codeScanningReuse, "code-scanning-reuse", true,
+		"take code scanning's database and default setup's analysis where each is what ABOM would "+
+			"produce; false builds and evaluates everything")
+	fs.DurationVar(&d.codeScanningWait, "code-scanning-wait", 10*time.Minute,
+		"longest a push to an owned default branch whose default setup reads Actions waits for code "+
+			"scanning's own analysis of it before ABOM builds anyway (0: never waits)")
 	var authoring authoringOptions
 	authoring.register(fs)
 	if err := fs.Parse(args); err != nil {

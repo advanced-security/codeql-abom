@@ -3,6 +3,7 @@ package serve
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +18,9 @@ type checkState struct {
 	LastRun *struct {
 		Build string `json:"build"`
 		Parts []struct {
-			Disagreed *int `json:"disagreed"`
+			Disagreed  *int     `json:"disagreed"`
+			Population *int     `json:"population"`
+			Bound      *float64 `json:"bound"`
 		} `json:"parts"`
 	} `json:"lastRun"`
 }
@@ -42,7 +45,7 @@ func assertCheckSaysIfItRuns(t *testing.T, want int, c checkState) {
 	if c.Number != want {
 		t.Errorf("check %d is listed as %d; the plan's order is the reader's", want, c.Number)
 	}
-	built := c.Number >= 7 && c.Number <= 9
+	built := slices.Contains([]int{3, 4, 7, 8, 9}, c.Number)
 	switch {
 	case built && (c.State != "built" || c.BuiltBy != ""):
 		t.Errorf("check %d reads %q built by %q, want built", c.Number, c.State, c.BuiltBy)
@@ -51,6 +54,26 @@ func assertCheckSaysIfItRuns(t *testing.T, want int, c checkState) {
 			c.Number, c.State, c.BuiltBy)
 	case !built && c.LastRun != nil:
 		t.Errorf("check %d is not built and reports a run", c.Number)
+	}
+}
+
+// A sampled check is read as what it was drawn from and what its sample rules out, never as a total.
+func TestASampledChecksPartCarriesItsPopulationAndBound(t *testing.T) {
+	srv, s := newServer(t)
+	population, bound := 1200, 0.0099
+	if _, err := s.RecordCheckRun(store.CheckRun{Check: 3, Build: "b1", StartedAt: "2026-10-03",
+		Parts: []store.CheckPart{{Part: "3d external references, sampled at random", Compared: 300,
+			Population: &population, Bound: &bound}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := decode[checksBody](t, get(t, srv, "/api/checks"))
+
+	run := body.Checks[2].LastRun
+	if run == nil || len(run.Parts) != 1 || run.Parts[0].Population == nil ||
+		*run.Parts[0].Population != population || run.Parts[0].Bound == nil || *run.Parts[0].Bound != bound {
+		t.Errorf("check 3's last run reads %+v, want its part drawn from %d with a bound of %v", run,
+			population, bound)
 	}
 }
 

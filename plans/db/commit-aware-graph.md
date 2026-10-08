@@ -68,6 +68,17 @@ them.
    a composite action naming three actions, gets a document of **1,000 components and 2,260
    relationships, 775 of them other repositories' CI workflows, a dozen hops deep**, where about six
    actions are what runs. Follow what a component contains, not what its repository holds.
+3. **An owned repository used as an action is never read at the reference that uses it.**
+   `has-ghas/test-repo-2` runs `has-ghas/test-repo-1@main` and `test-repo-3` runs `@v1`, but the
+   target node is stored `is_external = 0` with no owner, and discovery queues only external
+   targets, so neither reference is ever queued or resolved. The model says a dependency is live at
+   what its reference resolves to; instead reach walks into `test-repo-1`'s `action.yml` at its own
+   default branch, and the submission closure, which reads a dependency at the commit its reference
+   resolved to, has no commit and stops. The consistency checker finds it twice on the crawled
+   organization: check 8 reports reach carrying `actions/cache`, `actions/github-script` and
+   `actions/setup-node` for both repositories where no closure does, and check 3's owned-reference
+   stratum is empty. Two edges in the crawl are such references. Queue an owned target like any
+   other dependency, so both readers stand at what `@v1` names; a tag need not be the default branch.
 
 ## The constraints that must not be broken
 

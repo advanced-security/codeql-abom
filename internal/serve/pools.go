@@ -107,7 +107,16 @@ func (s *Server) FlushPools() {
 	if s.Pools == nil {
 		return
 	}
-	drained := s.Pools.Drain()
+	if err := RecordPoolSpend(s.Store, s.Pools); err != nil && s.Log != nil {
+		fmt.Fprintf(s.Log, "%s serve: recording what the pools spent: %v\n",
+			time.Now().UTC().Format(time.RFC3339), err)
+	}
+}
+
+// RecordPoolSpend writes what a process's pools spent since they were last drained, where every
+// meter is read, putting back what could not be written.
+func RecordPoolSpend(s *store.Store, pools *work.TokenPools) error {
+	drained := pools.Drain()
 	rows := make([]store.PoolSpend, 0, len(drained))
 	for _, d := range drained {
 		rows = append(rows, store.PoolSpend{
@@ -116,13 +125,11 @@ func (s *Server) FlushPools() {
 			ResetAt: d.Reading.ResetAt,
 		})
 	}
-	if err := s.Store.AddPoolSpend(rows); err != nil {
-		s.Pools.Restore(drained)
-		if s.Log != nil {
-			fmt.Fprintf(s.Log, "%s serve: recording what the pools spent: %v\n",
-				time.Now().UTC().Format(time.RFC3339), err)
-		}
+	if err := s.AddPoolSpend(rows); err != nil {
+		pools.Restore(drained)
+		return err
 	}
+	return nil
 }
 
 // MeterPools flushes the pools on a period until the context ends, then once more.
@@ -258,6 +265,9 @@ func (e estimator) estimate(k work.PoolKind, perHour *int) (*Estimate, string) {
 		return nil, "No estimate: a listing is read only where it could replace a clone, which is not known before the reference is looked up."
 	case k.Pool == work.PoolLocks:
 		return nil, "No estimate: a verification runs only when somebody asks for one."
+	case k.Pool == work.PoolConsistency:
+		return nil, "No estimate: the checker reads a sample each run rather than draining a queue, so its rate " +
+			"sets how often a run can go, not when anything finishes."
 	default:
 		return nil, "No estimate: what a dependency costs to analyze is not known before it is built."
 	}

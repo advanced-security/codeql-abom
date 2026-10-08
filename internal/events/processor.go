@@ -94,6 +94,9 @@ type Processor struct {
 	Dependencies func(ctx context.Context, repository, base, head string) (catalog.DependencyComparison, error)
 	// ReviewTimeout bounds how long a push waits for its comparison; zero is DefaultReviewTimeout.
 	ReviewTimeout time.Duration
+	// CodeScanningWait is the longest a push to an owned default branch whose default setup reads
+	// Actions waits for code scanning's own analysis of it; zero never waits.
+	CodeScanningWait time.Duration
 	// Log receives one line per settled delivery. Nil discards them.
 	Log io.Writer
 }
@@ -551,21 +554,38 @@ func (p *Processor) securityAndAnalysis(ctx context.Context, d store.EventDelive
 		return o, err
 	}
 	checked, err := p.recheckDatabase(ctx, repo, "security and analysis changed on "+repo)
-	return p.rereadSetup(ctx, repo, checked), err
+	if err != nil {
+		return checked, err
+	}
+	o, reread := p.rereadSetup(ctx, repo, checked)
+	if !reread {
+		return o, nil
+	}
+	// A setup that no longer reads Actions reports no analysis, so nothing is left to wait for.
+	if reads, known, err := p.Store.DefaultSetupReadsActions(repo); err != nil || !known || reads {
+		return o, err
+	}
+	released, err := p.Queue.ReleaseCodeScanningHolds(repo)
+	if err != nil {
+		return outcome{}, err
+	}
+	o.detail += p.releaseCodeScanningHolds(released, "whose default setup no longer reads Actions")
+	return o, nil
 }
 
 // rereadSetup reads a repository's default setup again after something that changes it, saying
-// in the outcome whether that worked: a failed read leaves the last reading, not the event, wrong.
-func (p *Processor) rereadSetup(ctx context.Context, repo string, o outcome) outcome {
+// in the outcome whether that worked, and reporting it: a failed read leaves the last reading, not
+// the event, wrong.
+func (p *Processor) rereadSetup(ctx context.Context, repo string, o outcome) (outcome, bool) {
 	if p.Setup == nil || o.status != store.EventDone {
-		return o
+		return o, false
 	}
 	if err := p.Setup(ctx, repo); err != nil {
 		o.detail += "; default setup could not be re-read: " + err.Error()
-		return o
+		return o, false
 	}
 	o.detail += "; default setup re-read"
-	return o
+	return o, true
 }
 
 // recheckDatabase asks code scanning whether it holds the repository's actions database and records
@@ -644,9 +664,20 @@ func (p *Processor) workflowRun(ctx context.Context, d store.EventDelivery) (out
 	if !strings.HasPrefix(run.Path, codeScanningRuns) {
 		return recorded, nil
 	}
+	// Released whatever its conclusion: a failed analysis is still the last that will arrive, and
+	// the claim builds where nothing matches.
+	released := ""
+	if run.Path == store.DefaultSetupRun {
+		keys, err := p.Queue.CodeScanningAnalyzed(repo, run.HeadSHA)
+		if err != nil {
+			return outcome{}, err
+		}
+		released = p.releaseCodeScanningHolds(keys, "which this run analyzed")
+	}
 	checked, err := p.recheckDatabase(ctx, repo, what)
-	checked.detail = recorded.detail + "; " + checked.detail
-	return p.rereadSetup(ctx, repo, checked), err
+	checked.detail = recorded.detail + "; " + checked.detail + released
+	o, _ := p.rereadSetup(ctx, repo, checked)
+	return o, err
 }
 
 // appDeleted records that the App is gone: its hook and installations went with it, so no event
@@ -708,7 +739,7 @@ func (p *Processor) push(ctx context.Context, d store.EventDelivery) (outcome, e
 	if len(rows) == 0 {
 		return o, nil
 	}
-	return p.probeRows(ctx, rows, e.After)
+	return p.probeRows(ctx, rows, e.After, true)
 }
 
 // precedence orders what an event did to the rows it reached; the delivery reports the weightiest.
@@ -726,12 +757,14 @@ func weightier(a, b outcome) outcome {
 }
 
 // probeRows probes every row standing at a reference, asking once per reference and comparing once
-// per commit the rows were analyzed at.
-func (p *Processor) probeRows(ctx context.Context, rows []store.QueueRow, claimed string) (outcome, error) {
+// per commit the rows were analyzed at. A pushed default branch may wait for code scanning.
+func (p *Processor) probeRows(
+	ctx context.Context, rows []store.QueueRow, claimed string, pushed bool,
+) (outcome, error) {
 	var out outcome
 	resolved, reviewed := map[string]probed{}, map[string]review{}
 	for i, row := range rows {
-		o, err := p.probe(ctx, row, claimed, resolved, reviewed)
+		o, err := p.probe(ctx, row, claimed, resolved, reviewed, pushed)
 		if err != nil || o.status == "" {
 			return o, err
 		}
@@ -758,7 +791,7 @@ func (p *Processor) probeReferences(
 		return settle(store.EventIgnored, ReasonNotReferenced, "%s: nothing queued stands at %s of %s",
 			what, ref, repo), nil
 	}
-	return p.probeRows(ctx, rows, claimed)
+	return p.probeRows(ctx, rows, claimed, false)
 }
 
 // liveRow finds the depth-0 row a branch is live at: the default branch's, or a protected branch's.
@@ -802,7 +835,7 @@ type probed struct {
 // probe acts on where the reference points now; the payload's claim is recorded and decides nothing.
 func (p *Processor) probe(
 	ctx context.Context, row store.QueueRow, claimed string, resolved map[string]probed,
-	reviewed map[string]review,
+	reviewed map[string]review, pushed bool,
 ) (outcome, error) {
 	where := row.NodeKey + "@" + row.Ref
 	if row.Ref == "" {
@@ -884,8 +917,48 @@ func (p *Processor) probe(
 	if _, err := p.Queue.ExpediteRefs([]frontier.NodeRef{{NodeKey: row.NodeKey, Ref: row.Ref}}); err != nil {
 		return outcome{}, err
 	}
+	held := ""
+	if pushed && row.Depth == 0 && row.Ref == "" {
+		if held, err = p.holdForCodeScanning(owner+"/"+repo, key, sha); err != nil {
+			return outcome{}, err
+		}
+	}
 	p.wake()
-	return settle(store.EventDone, reason, "%s%s", said, r.detail), nil
+	return settle(store.EventDone, reason, "%s%s%s", said, r.detail, held), nil
+}
+
+// holdForCodeScanning has a pushed default branch wait for code scanning's own analysis of it,
+// where default setup reads Actions and has not analyzed the commit already, and says so. Code
+// scanning's database follows the default branch, so no other branch has anything to wait for.
+func (p *Processor) holdForCodeScanning(repository string, k frontier.Key, sha string) (string, error) {
+	if p.CodeScanningWait <= 0 {
+		return "", nil
+	}
+	reads, known, err := p.Store.DefaultSetupReadsActions(repository)
+	if err != nil || !known || !reads {
+		return "", err
+	}
+	ran, err := p.Store.DefaultSetupRanAt(repository, sha)
+	if err != nil || ran {
+		return "", err
+	}
+	until := time.Now().Add(p.CodeScanningWait)
+	held, err := p.Queue.AwaitCodeScanning(k, sha, until)
+	if err != nil || !held {
+		return "", err
+	}
+	return fmt.Sprintf("; held for code scanning's analysis of %s until %s", sha,
+		until.UTC().Format(time.RFC3339)), nil
+}
+
+// releaseCodeScanningHolds frees what waited on code scanning in a repository, waking the crawl
+// for it, and says how many it freed.
+func (p *Processor) releaseCodeScanningHolds(released []frontier.Key, why string) string {
+	if len(released) == 0 {
+		return ""
+	}
+	p.wake()
+	return fmt.Sprintf("; released %d held for code scanning, %s", len(released), why)
 }
 
 // wake starts a cycle for work an event queued; wakes coalesce, so one per row costs nothing.

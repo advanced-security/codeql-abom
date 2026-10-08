@@ -1,8 +1,9 @@
 # Check the graph against the world, continuously
 
-**Status:** the internal checks 7 to 9 run as `codeql-abom check`, filing results, a per-build trend
-and a disagreement queue behind `/api/checks`; every check that spends API budget or CodeQL is not
-built, and says so. The source-extraction comparison check 1 generalizes is planned in
+**Status:** checks 3, 4 and 7 to 9 run as `codeql-abom check` on the checker's own pools — 3 and 4
+sampled against GitHub with a stated bound, 7 to 9 exhaustively — filing results, a per-build trend
+and a disagreement queue behind `/api/checks`; checks 1, 2, 5, 6, 10 and 11 are not built, and say
+so. The source-extraction comparison check 1 generalizes is planned in
 [`api/dependency-graph-crosscheck.md`](../api/dependency-graph-crosscheck.md).
 
 ## Why this exists
@@ -64,23 +65,27 @@ versions. It is classified by rule, never by the agent.
 
 ## Pending
 
-1. **The checker's pool and meter.** The token pools are built, with a `consistency checker`
-   pool in worker-seconds that nothing draws from yet; the checker's reads and evaluations draw from
-   it.
-2. **The external checks, 1 to 4.** Check 1 is the comparison
+1. **The external checks, 1 and 2.** Check 1 is the comparison
    [`api/dependency-graph-crosscheck.md`](../api/dependency-graph-crosscheck.md) plans as a one-off,
-   run continuously; check 2 carries its rules about producers and default branches. Depends on
-   the checker's pool and meter.
-3. **Measure what run logs record, then check 5.** Before any run log is compared, find out which
+   run continuously; check 2 carries its rules about producers and default branches. Both sample as
+   checks 3 and 4 do — the open disagreements again, then what changed most recently, then a random
+   baseline per stratum with its bound — and draw on the checker's REST and GraphQL pools.
+2. **Measure what run logs record, then check 5.** Before any run log is compared, find out which
    downloads job setup logs — nested composite steps, reusable workflows, Docker actions, actions a
    self-hosted runner already holds, steps whose `if:` was false — on consented repositories.
-   Whatever it does not log is excluded from the check and named, not treated as absent. Depends
-   on the checker's pool and meter. Run logs read with repository Actions read, which the App holds
-   for this item. Each completed `workflow_run` is already kept in `abom_workflow_run` with the
-   reusable workflows it called at their commits, and `/api/checks` shows that frame on check 5:
-   which runs exist to sample, and since when.
-4. **Check 6 as a sample, once the reachability crosscheck reports its comparison.** It is that
+   Whatever it does not log is excluded from the check and named, not treated as absent. Run logs
+   read with repository Actions read, which the App holds for this item. Each completed
+   `workflow_run` is already kept in `abom_workflow_run` with the reusable workflows it called at
+   their commits, and `/api/checks` shows that frame on check 5: which runs exist to sample, and
+   since when.
+3. **Check 6 as a sample, once the reachability crosscheck reports its comparison.** It is that
    plan's walk, run continuously over sampled owned repositories rather than once.
+4. **Check 10, from how long checks 3 and 4 stay open.** A sampled disagreement records the run that
+   first saw it and the run that read it again and agreed, so the time between is how long ABOM took
+   to catch up with a move, measured rather than estimated, and bounded by how often the checker
+   runs. Check 3's external references are the probing and polling pools' lag, its owned references
+   and check 4 the event and sweep lag. Compare each with the freshness estimate its pool shows, and
+   name the pool whose estimate is not one.
 5. **The agent.** A session from a queue entry, under the authoring sessions' confinement, its own
    credit pool, and a workspace holding the reproduction and a draft failing fixture.
 6. **The interface.** The queue, the per-build trends and the meters, beside the pools the operator
@@ -92,13 +97,14 @@ versions. It is classified by rule, never by the agent.
    as progress because it settled something. The disagreement is the finding; which definition is
    right is the agent's to investigate, never the check's to repair.
 
-**What the built checks cost**, on a copy of the crawled organization: a run takes about 36 s and
-half a gigabyte. Check 7 is one wholesale rebuild on a snapshot (about 21 s) beside the incremental
-derivation on another; check 8 is about 14 s, nearly all of it two submission closures per owned
-repository at about 245 ms each, so it grows with what is owned and its closures should share one
-read of the live commits before an organization of thousands; check 9 is under a second. Checks 7
-and 8 read snapshots taken with `VACUUM INTO`, so the checker never writes a graph table and never
-migrates the database it reads.
+**What the built checks cost**, on a copy of the crawled organization at 11,516 nodes, 14,463 edges
+and 1,040 queue rows: a run takes about 34 s and 190 MB. Checks 7 to 9 are about 9 s; check 8 is
+nearly all of it, two submission closures per owned repository, so it grows with what is owned and
+its closures should share one read of the live commits before an organization of thousands. Check 3
+asks about some 350 references in 4 GraphQL queries, 4 points and about 17 s; check 4 lists the
+protected branches of 22 owned repositories in 22 REST requests and asks for their heads in one
+query, about 8 s. Checks 7 and 8 read snapshots taken with `VACUUM INTO`, and 3 and 4 read the queue
+from one, so the checker never writes a graph table and never migrates the database it reads.
 
 ## The constraints that must not be broken
 
@@ -123,7 +129,6 @@ classification is a suggestion beside the rule's; its fixture is a draft until s
   the `pre-commit/action` divergence found by hand, without being pointed at it.
 - A mutant build that drops one kind of declaration is caught by the next sample of recently changed
   commits, and the per-build trend shows when it started.
-- With the checker stopped, every other pool's meter is unchanged.
 - With events disabled, check 4 measures the lag the 24-hour sweep leaves on owned branches. The
   sweep runs only once nothing reached is unanalyzed, and a copy of the crawled organization queued
   98 dependencies never queued before on its first drained cycle, which held it off.

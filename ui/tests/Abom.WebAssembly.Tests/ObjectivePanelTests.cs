@@ -40,6 +40,105 @@ public class ObjectivePanelTests : AbomTestContext
         Answer("api/discovery/status", DiscoveryStateBuilder.Drained().ToJson());
     }
 
+    private const string TookFromCodeScanning = """
+        {"progress":[
+           {"depth":0,"total":3,"done":3,"settled":3,"pending":0,"running":0,"available":0}],
+         "working":0,"hasOutstanding":false,"maxDepth":5,
+         "recent":[
+           {"cycle":4,"startedAt":"2026-10-07T00:00:00Z","millis":9000,"fetches":3,"builds":1,
+            "evaluations":3,"probes":0,"analyzed":3,"skipped":0,"settled":3,"discovered":0,
+            "drifted":0,"shallowestIncomplete":0,"hasOutstanding":false,
+            "codeScanning":{"databases":2,"analyses":1,
+                            "refused":{"database: another commit":1,"analysis: no analysis":2}}}],
+         "totals":{"cycles":7,"millis":30000,"fetches":9,"builds":5,"evaluations":9,"probes":0,
+                   "analyzed":9,"discovered":0,"codeScanningCycles":4,
+                   "codeScanning":{"databases":3,"analyses":1,
+                                   "refused":{"database: another commit":4,"analysis: no analysis":2}}}}
+        """;
+
+    // What code scanning supplied is what saved a build, so the round says it beside the builds it
+    // ran, with what was refused grouped by what was asked for.
+    [Fact]
+    public void TheLastRoundSaysWhatCodeScanningSuppliedAndWhatWasRefused()
+    {
+        Serve(TookFromCodeScanning);
+
+        var cut = Render<Shared.DiscoveryControls>();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-abom-code-scanning-round]")));
+        var round = Flat(cut.Find("[data-abom-code-scanning-round]").TextContent);
+        Assert.Contains("Code scanning supplied 2 databases and 1 analysis.", round);
+        Assert.Contains("Databases refused: another commit.", round);
+        Assert.Contains("Analyses refused: no analysis ×2.", round);
+        Assert.DoesNotContain("database: ", round);
+        Assert.Contains("1 database build,", Flat(cut.Markup));
+    }
+
+    // Twenty refusals read as one list of keys; grouped by what was refused, largest first, the
+    // reason that cost the most builds is the first one read. A key the page has never heard of
+    // is still shown as said.
+    [Fact]
+    public void RefusalsAreGroupedByWhatWasRefusedLargestFirst()
+    {
+        Serve(TookFromCodeScanning.Replace(
+            "\"refused\":{\"database: another commit\":1,\"analysis: no analysis\":2}",
+            "\"refused\":{\"analysis: another configuration\":1,\"database: another CodeQL\":2,"
+            + "\"database: no database\":16,\"analysis: no analysis\":14,\"something new\":3}"));
+
+        var cut = Render<Shared.DiscoveryControls>();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-abom-code-scanning-round]")));
+        var round = Flat(cut.Find("[data-abom-code-scanning-round]").TextContent);
+        Assert.Contains("Databases refused: no database ×16, another CodeQL ×2. "
+            + "Analyses refused: no analysis ×14, another configuration. "
+            + "Also refused: something new ×3.", round);
+    }
+
+    // A round recorded before ABOM kept what code scanning supplied says nothing about it, which is
+    // not the same as a round code scanning supplied nothing in.
+    [Fact]
+    public void ARoundThatDidNotRecordCodeScanningDoesNotClaimItSuppliedNothing()
+    {
+        Serve(Working);
+
+        var cut = Render<Shared.DiscoveryControls>();
+
+        cut.WaitForAssertion(() => Assert.Contains("15.3", cut.Markup));
+        Assert.Empty(cut.FindAll("[data-abom-code-scanning-round]"));
+        Assert.DoesNotContain("Code scanning supplied", cut.Markup);
+    }
+
+    // The totals count only the rounds that kept what code scanning supplied, and say how many.
+    [Fact]
+    public void TheTotalsSayWhatCodeScanningSuppliedAcrossTheRoundsThatKeptIt()
+    {
+        Serve(TookFromCodeScanning);
+
+        var cut = Render<Shared.DiscoveryControls>();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-abom-code-scanning-totals]")));
+        var totals = Flat(cut.Find("[data-abom-code-scanning-totals]").TextContent);
+        Assert.Contains("Across the 4 of 7 rounds that kept it, code scanning supplied 3 databases and 1 analysis.",
+            totals);
+        Assert.Contains("Databases refused: another commit ×4. Analyses refused: no analysis ×2.", totals);
+    }
+
+    // A crawl that never asks code scanning takes nothing, which reads as refusal unless the page says why.
+    [Fact]
+    public void ACrawlThatAsksCodeScanningNothingSaysWhy()
+    {
+        Answer("api/discovery/objective", Working);
+        Answer("api/discovery/status", DiscoveryStateBuilder.Drained()
+            .WithCodeScanningUnasked("this server was started with --code-scanning-reuse=false").ToJson());
+
+        var cut = Render<Shared.DiscoveryControls>();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-abom-code-scanning-unasked]")));
+        var said = Flat(cut.Find("[data-abom-code-scanning-unasked]").TextContent);
+        Assert.Contains("Code scanning is not asked", said);
+        Assert.Contains("--code-scanning-reuse=false", said);
+    }
+
     // Settled counts what is finished, and nothing to analyze is finished without being analyzed or
     // having failed to fetch: folded into "could not be fetched" it read as access to fix.
     [Fact]

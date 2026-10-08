@@ -127,8 +127,7 @@
 
     private int Analyzed => _state.Count("done");
 
-    private int Outstanding =>
-        _state.Count("queued") + _state.Count("running") + _state.Count("retrying");
+    private int Outstanding => _state.Unresolved;
 
     private int Total => Analyzed + Outstanding + _state.Count("unavailable") + _state.Count("nothing");
 

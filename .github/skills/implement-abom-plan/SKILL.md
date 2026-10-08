@@ -175,6 +175,9 @@ intermittently prepends a duplicate `package` clause when writing a Go file.
 CI also runs `self-audit.yml`, which `make quality` reproduces and `make verify` does not include.
 Run it when a change builds a path, command or URL from anything the store, a checkout or a
 response hands back: closure databases passed `make verify` with 16 Go findings they introduced.
+It runs on Apple silicon without Rosetta, because no database is traced, except for C#: CodeQL's
+macOS C# extractor is an x86-64 binary, so there the C# check is CI's. Before blaming an
+architecture, run `file` on the binary that failed and read the database's `log/build-tracer.log`.
 
 Never pipe build, test or lint output through `tail`, `head` or `grep`; read it whole.
 
@@ -316,6 +319,26 @@ status theatre.
   endpoint answered 404, and creating a property definition needs `admin:org`.
 - Measured on `has-ghas` (2026-10-07): a value change was read about 4 s after the write, and two
   deliveries a second apart were read in consecutive cycles, not coalesced.
+
+## Code scanning reuse checks
+
+- Count builds by invocation, never by time: point `--codeql` at a wrapper that logs each call and
+  runs the real CLI. `database create` invocations are the recorded builds plus the creates that
+  failed; two `has-ghas` seeds exit 32 on every attempt, and count as failed, not built.
+- `--max-depth 0` is not "the seeds only": it falls back to the default of 5. To bound a run to the
+  seeds, claim more than there are (`--expand-limit 40` for 31) and pause once cycle 1 has claimed.
+  The loop reads a pause only between cycles, and one sent before the first claim means the cycle
+  never starts.
+- Reuse on and off each need a fresh database. The ledger settles a commit whose indexed content is
+  already on record without building or asking code scanning, so a second run on one database
+  measures nothing, and an empty-commit push never reaches a take.
+- A push is probed as it arrives, with discovery stopped or not; only its analysis waits for the
+  loop. Replay a recorded delivery under a new `X-GitHub-Delivery`, since deliveries deduplicate on
+  it, signed with the App's webhook secret. A push replayed after its code scanning run completed
+  is rightly not held: to see the wait as it happened live, remove that run from the copy's
+  `abom_workflow_run`, and label it a mutation.
+- Attribute every findings difference between on and off to a rule's `taken_from` and the release
+  it names. A rule taken from ABOM's own release must differ by nothing.
 
 ## Related
 

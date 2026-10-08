@@ -403,3 +403,32 @@ func (s *Store) LinesInScope() (int, error) {
 	}
 	return n, nil
 }
+
+// QueueClaim is what one queue row claims about where its reference points, and how the queue holds
+// it, which is what the checks that read GitHub compare.
+type QueueClaim struct {
+	NodeKey, Ref, Owner, Repo string
+	Depth                     int
+	// Commit is the commit the stored graph was read at, lowercased; empty where nothing resolved it.
+	Commit string
+	Status string
+	// Changed is when the row's commit was last analyzed and Confirmed when its reference was last
+	// found unmoved; each is empty where that never happened.
+	Changed, Confirmed string
+	// Owned is the reference's repository being one the operator declared.
+	Owned bool
+}
+
+// QueueClaims reads every queue row naming a repository, each a reference a walk can stand on.
+func (s *Store) QueueClaims() ([]QueueClaim, error) {
+	return queryAll(s, "reading what the queue claims", func(r *sql.Rows) (QueueClaim, error) {
+		var q QueueClaim
+		return q, r.Scan(&q.NodeKey, &q.Ref, &q.Owner, &q.Repo, &q.Depth, &q.Commit, &q.Status,
+			&q.Changed, &q.Confirmed, &q.Owned)
+	}, `SELECT f.node_key, f.ref, f.owner, f.repo, f.depth, LOWER(COALESCE(f.resolved_sha, '')),
+	           f.status, COALESCE(f.analyzed_at, ''), COALESCE(f.checked_at, ''),
+	           `+ownedFullName("(f.owner || '/' || f.repo)")+`
+	      FROM abom_frontier f
+	     WHERE COALESCE(f.owner, '') <> '' AND COALESCE(f.repo, '') <> ''
+	     ORDER BY f.node_key, f.ref`)
+}

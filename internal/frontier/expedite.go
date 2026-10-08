@@ -14,7 +14,8 @@ import (
 // decides, because expediting everything is expediting nothing.
 //
 // Only queued items can be marked. Reporting how many were is the difference between "it is
-// scheduled" and "nothing by that name is waiting".
+// scheduled" and "nothing by that name is waiting". A push held for code scanning is no longer
+// held: whoever asks by name wants the answer now, and a retry's backoff stays as it was.
 func (q *Queue) Expedite(nodeKeys ...string) (int, error) {
 	if len(nodeKeys) == 0 {
 		return 0, nil
@@ -26,7 +27,8 @@ func (q *Queue) Expedite(nodeKeys ...string) (int, error) {
 	}
 
 	res, err := q.Store.DB().Exec(`
-		UPDATE abom_frontier SET expedited_at = ?
+		UPDATE abom_frontier SET expedited_at = ?, awaiting_code_scanning = NULL,
+		       next_attempt_at = CASE WHEN awaiting_code_scanning IS NULL THEN next_attempt_at END
 		WHERE status = '`+StatusPending+`' AND node_key IN (`+
 		strings.TrimSuffix(strings.Repeat("?,", len(nodeKeys)), ",")+`)`, args...)
 	if err != nil {

@@ -280,7 +280,8 @@ func (q *Queue) Claim(limit int) ([]Item, error) {
 
 	for _, it := range claimed {
 		if _, err := q.Store.DB().Exec(
-			`UPDATE abom_frontier SET status = ?, claimed_at = ? WHERE node_key = ? AND ref = ?`,
+			`UPDATE abom_frontier SET status = ?, claimed_at = ?, awaiting_code_scanning = NULL
+			 WHERE node_key = ? AND ref = ?`,
 			StatusRunning, now, it.NodeKey, it.Ref); err != nil {
 			return nil, fmt.Errorf("marking %q running: %w", it.NodeKey, err)
 		}
@@ -412,7 +413,7 @@ func (q *Queue) Complete(k Key, res Resolution) error {
 		UPDATE abom_frontier
 		SET status = ?, completed_at = ?, next_attempt_at = NULL, reason = NULL,
 		    claimed_at = NULL, expedited_at = NULL, requeued_for = NULL, dependencies_moved = NULL,
-		    analyzed_ref = ?, resolved_sha = ?, analyzed_at = ?,
+		    awaiting_code_scanning = NULL, analyzed_ref = ?, resolved_sha = ?, analyzed_at = ?,
 		    analysis_count = analysis_count + 1
 		WHERE node_key = ? AND ref = ?`,
 		StatusDone, now, res.Ref, nullable(res.SHA), now, k.NodeKey, k.Ref)
@@ -538,7 +539,8 @@ func (q *Queue) Fail(k Key, reason string) error {
 	retryAt := q.now().Add(backoff(attempts)).Format(time.RFC3339Nano)
 	_, err := q.Store.DB().Exec(`
 		UPDATE abom_frontier
-		SET status = ?, attempts = ?, reason = ?, next_attempt_at = ?, claimed_at = NULL
+		SET status = ?, attempts = ?, reason = ?, next_attempt_at = ?, claimed_at = NULL,
+		    awaiting_code_scanning = NULL
 		WHERE node_key = ? AND ref = ?`,
 		StatusPending, attempts, nullable(reason), retryAt, k.NodeKey, k.Ref)
 	if err != nil {
@@ -562,8 +564,8 @@ func (q *Queue) Nothing(k Key, ref, sha, reason string) error {
 	_, err := q.Store.DB().Exec(`
 		UPDATE abom_frontier
 		SET status = ?, reason = ?, completed_at = ?, next_attempt_at = NULL, claimed_at = NULL,
-		    expedited_at = NULL, requeued_for = NULL, dependencies_moved = NULL, analyzed_ref = ?,
-		    resolved_sha = ?
+		    expedited_at = NULL, requeued_for = NULL, dependencies_moved = NULL,
+		    awaiting_code_scanning = NULL, analyzed_ref = ?, resolved_sha = ?
 		WHERE node_key = ? AND ref = ?`,
 		StatusNothing, nullable(reason), q.now().Format(time.RFC3339Nano), ref, nullable(sha),
 		k.NodeKey, k.Ref)
@@ -581,7 +583,7 @@ func (q *Queue) setStatus(k Key, status, reason, completedAt string) error {
 	_, err := q.Store.DB().Exec(`
 		UPDATE abom_frontier
 		SET status = ?, reason = COALESCE(?, reason), completed_at = ?, next_attempt_at = NULL,
-		    claimed_at = NULL,
+		    claimed_at = NULL, awaiting_code_scanning = NULL,
 		    requeued_for = CASE WHEN ? = 'pending' THEN requeued_for END,
 		    dependencies_moved = CASE WHEN ? = 'pending' THEN dependencies_moved END
 		WHERE node_key = ? AND ref = ?`,

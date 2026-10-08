@@ -292,7 +292,7 @@ func (e *Expander) buildDatabase(
 	built.identity = store.DatabaseIdentity{
 		Repository: want.Repository, Commit: tree.SHA, SourceFilter: e.sourceFilter(), Mode: want.Mode,
 	}
-	db, staged, source, err := e.databaseFor(ctx, built.identity, filepath.Join(dir, "db"), tree, cliVersion)
+	db, staged, source, err := e.databaseFor(ctx, built.identity, filepath.Join(dir, "db"), tree, cliVersion, nil)
 	discardTree(Options{}, tree, retained)
 	if err != nil {
 		return fail(err)

@@ -80,7 +80,8 @@ func TestFrontierCountsNameEveryState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FrontierCounts: %v", err)
 	}
-	for _, state := range []string{FrontierQueued, FrontierRetrying, "running", "done", "unavailable"} {
+	for _, state := range []string{FrontierQueued, FrontierRetrying, FrontierWaiting, "running", "done",
+		"unavailable"} {
 		if _, ok := counts[state]; !ok {
 			t.Errorf("counts omit %q, so a view cannot tell none from unknown", state)
 		}
@@ -172,5 +173,45 @@ func TestAWithdrawnAdvisoryStopsFlaggingItsDependency(t *testing.T) {
 	}
 	if len(named) != 0 {
 		t.Errorf("named = %+v, want nothing flagged by a retracted advisory", named)
+	}
+}
+
+// A row held for code scanning is queued and will not be claimed until code scanning reports, or
+// its ceiling passes; counted as queued it reads as work about to run, and as a retry it reads as
+// a failure. It is neither, whatever it failed before.
+func TestTheQueueSeparatesWorkHeldForCodeScanning(t *testing.T) {
+	s := newTestStore(t)
+	queueRow(t, s, "fresh", "pending", 0)
+	queueRow(t, s, "held", "pending", 0)
+	queueRow(t, s, "held-after-a-failure", "pending", 2)
+	if _, err := s.DB().Exec(`UPDATE abom_frontier SET awaiting_code_scanning = 'c2',
+		next_attempt_at = '2026-10-07T12:10:00Z' WHERE node_key LIKE 'held%'`); err != nil {
+		t.Fatal(err)
+	}
+
+	counts, err := s.FrontierCounts()
+	if err != nil {
+		t.Fatalf("FrontierCounts: %v", err)
+	}
+	if counts[FrontierQueued] != 1 || counts[FrontierRetrying] != 0 || counts[FrontierWaiting] != 2 {
+		t.Errorf("counts = %v, want one queued, none retrying and two waiting", counts)
+	}
+	waiting, err := s.FrontierSnapshot(FrontierWaiting, 100)
+	if err != nil {
+		t.Fatalf("FrontierSnapshot(waiting): %v", err)
+	}
+	if len(waiting) != 2 || waiting[0].AwaitingCodeScanning != "c2" || waiting[0].NextAttemptAt == "" {
+		t.Errorf("waiting = %+v, want both held rows with the commit and the ceiling they wait on", waiting)
+	}
+	for _, state := range []string{FrontierQueued, FrontierRetrying} {
+		items, err := s.FrontierSnapshot(state, 100)
+		if err != nil {
+			t.Fatalf("FrontierSnapshot(%s): %v", state, err)
+		}
+		for _, it := range items {
+			if it.AwaitingCodeScanning != "" {
+				t.Errorf("%s lists %s, which is held for code scanning", state, it.NodeKey)
+			}
+		}
 	}
 }

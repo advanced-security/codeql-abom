@@ -66,12 +66,13 @@ public class PaletteContrastTests : AbomTestContext
     public void EveryQueueStateHasAColourAndAName(bool dark)
     {
         var p = Palette(dark);
-        foreach (var state in new[] { "queued", "retrying", "running", "done", "unavailable", "nothing" })
+        foreach (var state in new[] { "queued", "retrying", "waiting", "running", "done", "unavailable", "nothing" })
         {
             Assert.True(p.Discovery.ContainsKey(state), $"no {(dark ? "dark" : "light")} colour for {state}");
             Assert.True(ThemeService.DiscoveryNames.ContainsKey(state), $"no legend name for {state}");
         }
         Assert.Equal("Nothing to analyze", ThemeService.DiscoveryNames["nothing"]);
+        Assert.Equal("Waiting for code scanning", ThemeService.DiscoveryNames["waiting"]);
     }
 
     [Theory]

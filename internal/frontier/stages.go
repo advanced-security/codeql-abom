@@ -22,6 +22,8 @@ const (
 	StageExplore = "explore"
 	// StageRefresh is references that moved since they were analyzed, the stalest first.
 	StageRefresh = "refresh"
+	// StageWaiting is a push held for code scanning's own analysis of it, until that is reported.
+	StageWaiting = "waiting"
 )
 
 // Stages is the pending work split by the stage that claims it.
@@ -32,6 +34,8 @@ type Stages struct {
 	Current   int    `json:"current"`
 	Explore   int    `json:"explore"`
 	Refresh   int    `json:"refresh"`
+	// Waiting counts rows held for code scanning's analysis of a push, claimed once it is reported.
+	Waiting int `json:"waiting"`
 	// Unreached counts pending rows for repositories the owned closure does not reach, which are
 	// never claimed.
 	Unreached int `json:"unreached"`
@@ -39,6 +43,7 @@ type Stages struct {
 
 // stageOfRow names a pending row's stage, given the depth being worked as its one argument.
 const stageOfRow = `CASE
+	WHEN awaiting_code_scanning IS NOT NULL THEN '` + StageWaiting + `'
 	WHEN expedited_at IS NOT NULL THEN '` + StageExpedited + `'
 	WHEN requeued_for IS 'moved' THEN '` + StageRefresh + `'
 	WHEN requeued_for IS 'reobserve' OR depth <= ? THEN '` + StageCurrent + `'
@@ -84,6 +89,8 @@ func (q *Queue) Stages() (Stages, error) {
 			out.Explore = n
 		case StageRefresh:
 			out.Refresh = n
+		case StageWaiting:
+			out.Waiting = n
 		}
 	}
 	if err := rows.Err(); err != nil {

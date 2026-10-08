@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -154,6 +155,90 @@ func TestCreateDatabaseReportsNoSourceCode(t *testing.T) {
 	if !IsNoSourceCode(err) {
 		t.Errorf("IsNoSourceCode(%v) = false, want true", err)
 	}
+}
+
+// Tracing a build relaunches it through a copy of a system shell, which an arm64 Mac without
+// Rosetta cannot start ("Bad CPU type in executable"), so every extractor that can read source
+// alone is asked to, and no database ABOM creates waits on a build it does not need.
+func TestADatabaseIsCreatedFromSourceAloneWhereTheExtractorCanBe(t *testing.T) {
+	for _, language := range []string{"actions", "csharp", "javascript", "python"} {
+		t.Run(language, func(t *testing.T) {
+			stub, argsFile := stubCodeQL(t, "exit 0\n")
+			r := &Runner{CodeQLPath: stub}
+
+			db := filepath.Join(t.TempDir(), "db")
+			if err := r.CreateDatabase(context.Background(), "/src", db, language); err != nil {
+				t.Fatalf("CreateDatabase: %v", err)
+			}
+
+			args := strings.Fields(string(mustRead(t, argsFile)))
+			if !slices.Contains(args, "--build-mode=none") {
+				t.Errorf("args %q build a %s database some other way than from source alone", args, language)
+			}
+		})
+	}
+}
+
+// Go's extractor has no build mode none, but its autobuilder extracts the packages itself and the
+// tracer is told to leave it alone, so it runs untraced and the database is the same.
+func TestAGoDatabaseIsExtractedByItsAutobuilderWithoutTheTracer(t *testing.T) {
+	stub, callsFile := stubCodeQLCalls(t, "exit 0\n")
+	r := &Runner{CodeQLPath: stub, Threads: 3, RAMMB: 2048, CodeScanningConfig: "cfg.yml"}
+
+	db := filepath.Join(t.TempDir(), "db")
+	if err := r.CreateDatabase(context.Background(), "/src", db, "go"); err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+
+	want := []string{
+		"database init --language=go --source-root=/src --build-mode=autobuild --overwrite " +
+			"--codescanning-config=cfg.yml " + db,
+		"database trace-command --no-tracing --use-build-mode --threads=3 --ram=2048 " + db,
+		"database finalize --threads=3 --ram=2048 " + db,
+	}
+	if got := recordedCalls(t, callsFile); !slices.Equal(got, want) {
+		t.Errorf("calls =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// A Go tree with nothing to extract is refused when the database is finalized, and that is the
+// same permanent answer a single `database create` gives.
+func TestAGoTreeWithNothingToExtractIsReportedAsNoSourceCode(t *testing.T) {
+	stub, _ := stubCodeQLCalls(t,
+		"case \"$2\" in finalize) echo 'No source code was seen during the build' >&2; exit 32;; esac\nexit 0\n")
+	r := &Runner{CodeQLPath: stub}
+
+	err := r.CreateDatabase(context.Background(), "/src", filepath.Join(t.TempDir(), "db"), "go")
+	if !IsNoSourceCode(err) {
+		t.Errorf("IsNoSourceCode(%v) = false, want true", err)
+	}
+}
+
+// A step that fails leaves nothing for the next to work on, so it stops there and says why.
+func TestAGoDatabaseStopsAtTheStepThatFailed(t *testing.T) {
+	stub, callsFile := stubCodeQLCalls(t,
+		"case \"$2\" in init) echo 'disk full' >&2; exit 1;; esac\nexit 0\n")
+	r := &Runner{CodeQLPath: stub}
+
+	err := r.CreateDatabase(context.Background(), "/src", filepath.Join(t.TempDir(), "db"), "go")
+	if err == nil || !strings.Contains(err.Error(), "disk full") || IsNoSourceCode(err) {
+		t.Fatalf("CreateDatabase = %v, want the init failure and its message", err)
+	}
+	if got := recordedCalls(t, callsFile); len(got) != 1 || !strings.HasPrefix(got[0], "database init ") {
+		t.Errorf("calls = %q, want only the init that failed", got)
+	}
+}
+
+// stubCodeQLCalls records every invocation, one line each, where stubCodeQL keeps only the last.
+func stubCodeQLCalls(t *testing.T, script string) (path, callsFile string) {
+	t.Helper()
+	path, _ = stubCodeQL(t, "echo \"$@\" >> \"$(dirname \"$0\")/calls.txt\"\n"+script)
+	return path, filepath.Join(filepath.Dir(path), "calls.txt")
+}
+
+func recordedCalls(t *testing.T, callsFile string) []string {
+	t.Helper()
+	return strings.Split(strings.TrimSpace(string(mustRead(t, callsFile))), "\n")
 }
 
 func TestCreateDatabasePropagatesFailure(t *testing.T) {

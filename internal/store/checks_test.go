@@ -1,6 +1,8 @@
 package store
 
 import (
+	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -114,5 +116,144 @@ func TestAnUnreadCheckIsSkippedWithItsReasonNotZeroDisagreements(t *testing.T) {
 	if page, err := s.OpenDisagreements(0, 50); err != nil || page.Total != 0 || len(page.Items) != 0 {
 		t.Errorf("after a run that compared and agreed the queue holds %+v (%v), want it closed",
 			page, err)
+	}
+}
+
+func openCount(t *testing.T, s *Store) int {
+	t.Helper()
+	page, err := s.OpenDisagreements(0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return page.Total
+}
+
+// A sampled run reads only some subjects, so one it did not read again is unknown rather than
+// resolved, and one it could not read is unread: only a later reading that agrees closes it.
+func TestASampledDisagreementClosesOnlyWhenALaterRunReadsItAndAgrees(t *testing.T) {
+	s := newTestStore(t)
+	population, one := 40, 1
+	stale := Disagreement{Subject: "actions/checkout@v4", Reading: "3 where the reference points",
+		Class: "unnoticed", Claim: "ABOM stands at c1", Independent: "it points at c2 now"}
+	random := "3c external references sampled at random"
+	sampled := func(at string, p CheckPart) {
+		recordCheck(t, s, CheckRun{Check: 3, Build: "b", StartedAt: at, Parts: []CheckPart{p}})
+	}
+
+	sampled("2026-10-01", CheckPart{Part: random, Population: &population, Compared: 10,
+		Disagreements: []Disagreement{stale}})
+	if got := openCount(t, s); got != 1 {
+		t.Fatalf("the queue holds %d after the run that saw it, want 1", got)
+	}
+	sampled("2026-10-02", CheckPart{Part: random, Population: &population, Compared: 10})
+	if got := openCount(t, s); got != 1 {
+		t.Errorf("a run that read ten other references left %d open, want the one it never read again", got)
+	}
+	sampled("2026-10-03", CheckPart{Part: "3a open disagreements read again", Population: &one,
+		Skipped: []CheckSkip{{Reason: "unread: GitHub did not say where it points", Count: 1}}})
+	if got := openCount(t, s); got != 1 {
+		t.Errorf("a run that could not read it left %d open; a skip closes nothing", got)
+	}
+	sampled("2026-10-04", CheckPart{Part: "3a open disagreements read again", Population: &one,
+		Compared: 1, Agreed: []CheckSubject{{Subject: stale.Subject, Reading: stale.Reading}}})
+	if got := openCount(t, s); got != 0 {
+		t.Errorf("a run that read it again and agreed left %d open, want it closed", got)
+	}
+	sampled("2026-10-05", CheckPart{Part: random, Population: &population, Compared: 10,
+		Disagreements: []Disagreement{stale}})
+	if got := openCount(t, s); got != 1 {
+		t.Errorf("seen again after it closed, the queue holds %d, want it open again", got)
+	}
+}
+
+// A sampled part says what it was drawn from and what its sample bounds; an exhaustive part read
+// everything it could, so it states neither.
+func TestASampledPartReportsItsPopulationAndBoundAndAnExhaustiveOneNeither(t *testing.T) {
+	s := newTestStore(t)
+	population, bound := 1200, 0.0099
+	recordCheck(t, s, CheckRun{Check: 3, Build: "b", StartedAt: "2026-10-01", Parts: []CheckPart{
+		{Part: "3c external references sampled at random", Population: &population, Bound: &bound,
+			Compared: 300}}})
+	recordCheck(t, s, CheckRun{Check: 9, Build: "b", StartedAt: "2026-10-01", Parts: []CheckPart{
+		{Part: "9a the Dashboard's dependency count is the Actions unit's total", Compared: 1}}})
+
+	latest, err := s.LatestCheckRuns()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := latest[3].Parts[0]; p.Population == nil || *p.Population != population || p.Bound == nil ||
+		*p.Bound != bound {
+		t.Errorf("the sampled part reads back as %+v, want drawn from %d with a bound of %v", p, population, bound)
+	}
+	if p := latest[9].Parts[0]; p.Population != nil || p.Bound != nil {
+		t.Errorf("the exhaustive part reads back as %+v, want no population and no bound", p)
+	}
+}
+
+// The checker migrates only its own tables on the database it reads, so a column added to them has
+// to reach tables an older build created there without the migration a serving process runs.
+func TestMigrateChecksAddsNewColumnsToCheckTablesAnOlderBuildCreated(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "abom.db"), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	if _, err := s.DB().Exec(`
+		CREATE TABLE abom_check_run (row_id INTEGER PRIMARY KEY, check_no INTEGER NOT NULL,
+		  build TEXT NOT NULL, started_at TEXT NOT NULL, wall_ms INTEGER NOT NULL DEFAULT 0);
+		CREATE TABLE abom_check_part (run_row_id INTEGER NOT NULL REFERENCES abom_check_run(row_id),
+		  check_no INTEGER NOT NULL, part TEXT NOT NULL, compared INTEGER NOT NULL, disagreed INTEGER,
+		  PRIMARY KEY (run_row_id, part));
+		CREATE TABLE abom_check_skip (run_row_id INTEGER NOT NULL REFERENCES abom_check_run(row_id),
+		  part TEXT NOT NULL, reason TEXT NOT NULL, count INTEGER NOT NULL,
+		  PRIMARY KEY (run_row_id, part, reason)) WITHOUT ROWID;
+		CREATE TABLE abom_check_disagreement (row_id INTEGER PRIMARY KEY, check_no INTEGER NOT NULL,
+		  part TEXT NOT NULL, subject TEXT NOT NULL, reading TEXT NOT NULL, class TEXT NOT NULL,
+		  claim TEXT NOT NULL DEFAULT '', independent TEXT NOT NULL DEFAULT '', first_build TEXT NOT NULL,
+		  first_seen_at TEXT NOT NULL, first_run_row_id INTEGER NOT NULL, last_build TEXT NOT NULL,
+		  last_seen_at TEXT NOT NULL, last_run_row_id INTEGER NOT NULL,
+		  UNIQUE (check_no, subject, reading));`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.MigrateChecks(); err != nil {
+		t.Fatalf("MigrateChecks: %v", err)
+	}
+	population := 3
+	recordCheck(t, s, CheckRun{Check: 4, Build: "b", StartedAt: "2026-10-01", Parts: []CheckPart{
+		{Part: "4c owned repositories sampled at random", Population: &population, Compared: 3,
+			Disagreements: []Disagreement{{Subject: "octo/app", Reading: "4 default branch head",
+				Class: "unnoticed"}}}}})
+	if got := openCount(t, s); got != 1 {
+		t.Errorf("the queue holds %d after a sampled run on migrated tables, want its one disagreement", got)
+	}
+}
+
+// A sampled check reads its open disagreements again before drawing anything new, so it asks for
+// exactly the open ones that are its own.
+func TestOpenSubjectsAreTheOpenDisagreementsOfOneCheckAlone(t *testing.T) {
+	s := newTestStore(t)
+	population := 10
+	file := func(check int, at string, p CheckPart) {
+		recordCheck(t, s, CheckRun{Check: check, Build: "b", StartedAt: at, Parts: []CheckPart{p}})
+	}
+	file(3, "2026-10-01", CheckPart{Part: "3c", Population: &population, Compared: 5,
+		Disagreements: []Disagreement{
+			{Subject: "vendor/act@v1", Reading: "3 where the reference points", Class: "unnoticed"},
+			{Subject: "vendor/tool@v2", Reading: "3 where the reference points", Class: "staleness"}}})
+	file(3, "2026-10-02", CheckPart{Part: "3a", Population: &population, Compared: 1,
+		Agreed: []CheckSubject{{Subject: "vendor/tool@v2", Reading: "3 where the reference points"}}})
+	file(4, "2026-10-02", CheckPart{Part: "4c", Population: &population, Compared: 1,
+		Disagreements: []Disagreement{{Subject: "octo/app", Reading: "4 default branch head",
+			Class: "unnoticed"}}})
+
+	got, err := s.OpenSubjects(3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []CheckSubject{{Subject: "vendor/act@v1", Reading: "3 where the reference points"}}
+	if !slices.Equal(got, want) {
+		t.Errorf("check 3's open subjects are %+v, want %+v: the settled one and check 4's are not its own",
+			got, want)
 	}
 }

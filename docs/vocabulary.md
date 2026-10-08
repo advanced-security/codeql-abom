@@ -102,6 +102,7 @@ file paths. Reporting build-time work as though this organization ran it would o
 | **Unanalyzed** | Known to exist, nothing has looked |
 | **Nothing to analyze** | Looked, and there was no database or no workflow |
 | **Not claimed** (queued) | Queued for a repository nothing owned reaches any more. The crawl does not analyze it and it holds no depth open, until a prune removes it |
+| **Waiting for code scanning** | A push to a repository you own, held until code scanning's own analysis of that commit is reported or its wait runs out, so its database and findings can be taken rather than built. Still unanalyzed, and counted as outstanding |
 | **Missing** (from a full listing) | A declared repository the last full listing of its account did not name. No longer yours, and nothing removed for it; what only it reached is what the prune offers. Only a full listing can say it, and only one can say nothing is missing |
 
 A reader must be able to tell "we have not looked" from "there was nothing to look at", because

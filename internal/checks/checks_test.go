@@ -1,6 +1,7 @@
 package checks
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -120,7 +121,7 @@ func derivedFixture(t *testing.T) *store.Store {
 
 func run(t *testing.T, s *store.Store) []store.CheckRun {
 	t.Helper()
-	runs, err := Run(s, "test-build", t.TempDir())
+	runs, err := (&Checker{Store: s, Build: "test-build", Dir: t.TempDir()}).Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

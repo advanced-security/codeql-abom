@@ -333,3 +333,26 @@ func repoNode(t *testing.T, s *Store, fullName string) GraphNode {
 	}
 	return n
 }
+
+// A push held for code scanning's own analysis is queued and deliberately not claimed yet, which
+// is neither work about to run nor a retry, whichever query draws the repository.
+func TestARepositoryHeldForCodeScanningSaysItIsWaiting(t *testing.T) {
+	for _, drawn := range []string{"attached", "drawn"} {
+		t.Run(drawn, func(t *testing.T) {
+			s := newTestStore(t)
+			id := seedOwnedRepo(t, s, "acme/service")
+			if drawn == "drawn" {
+				writeNode(t, s, Node{Key: normalize.RepoKey("acme/service"), Kind: "repo", RepositoryID: id})
+			}
+			enqueueWithStatus(t, s, "acme/service", "pending")
+			if _, err := s.db.Exec(`UPDATE abom_frontier SET attempts = 1, awaiting_code_scanning = 'c2'
+				WHERE node_key = 'acme/service'`); err != nil {
+				t.Fatal(err)
+			}
+
+			if node := repoNode(t, s, "acme/service"); node.Discovery != "waiting" || node.Analyzed {
+				t.Errorf("Discovery = %q, analyzed = %v, want waiting and not analyzed", node.Discovery, node.Analyzed)
+			}
+		})
+	}
+}

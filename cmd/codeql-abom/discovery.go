@@ -51,6 +51,8 @@ type discoveryOptions struct {
 	aggregateAfter     int
 	aggregateMaxAge    time.Duration
 	aggregateMinPeriod time.Duration
+	codeScanningReuse  bool
+	codeScanningWait   time.Duration
 }
 
 // codeqlThreads divides the machine between concurrent analyses instead of letting each claim

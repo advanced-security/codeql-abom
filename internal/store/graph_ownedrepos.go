@@ -73,7 +73,9 @@ func (s *Store) attachOwnedRepositories(nodes []GraphNode, opts FullGraphOptions
 // node to key off.
 const frontierRepoState = `(SELECT CASE
 			 WHEN SUM(f.status = 'running') > 0 THEN 'running'
-			 WHEN SUM(f.status = 'pending' AND f.attempts > 0) > 0 THEN 'retrying'
+			 WHEN SUM(f.status = 'pending' AND f.attempts > 0
+			          AND f.awaiting_code_scanning IS NULL) > 0 THEN 'retrying'
+			 WHEN SUM(f.status = 'pending' AND f.awaiting_code_scanning IS NOT NULL) > 0 THEN 'waiting'
 			 WHEN SUM(f.status = 'pending') > 0 THEN 'queued'
 			 WHEN SUM(f.status = 'done') > 0 THEN 'done'
 			 WHEN SUM(f.status = 'unavailable') > 0 THEN 'unavailable'

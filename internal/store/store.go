@@ -136,18 +136,8 @@ func (s *Store) Migrate() error {
 			return fmt.Errorf("creating %s: %w", t.what, err)
 		}
 	}
-	for _, c := range addedColumns {
-		has, err := s.hasColumn(c.table, c.column)
-		if err != nil {
-			return err
-		}
-		if has {
-			continue
-		}
-		stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", c.table, c.column, c.decl)
-		if _, err := s.db.Exec(stmt); err != nil {
-			return fmt.Errorf("adding %s.%s: %w", c.table, c.column, err)
-		}
+	if err := s.addColumns(func(string) bool { return true }); err != nil {
+		return err
 	}
 	// After the additive pass, so a column this drops can never be one that pass just added.
 	for _, c := range droppedColumns {
@@ -269,6 +259,27 @@ func (s *Store) dropStaleDerivedTables() error {
 	// way to verify them retroactively.
 	if _, err := s.db.Exec(`DROP TABLE IF EXISTS abom_owned_org`); err != nil {
 		return fmt.Errorf("dropping abom_owned_org: %w", err)
+	}
+	return nil
+}
+
+// addColumns adds each column in addedColumns whose table keep names and which the table lacks.
+func (s *Store) addColumns(keep func(table string) bool) error {
+	for _, c := range addedColumns {
+		if !keep(c.table) {
+			continue
+		}
+		has, err := s.hasColumn(c.table, c.column)
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", c.table, c.column, c.decl)
+		if _, err := s.db.Exec(stmt); err != nil {
+			return fmt.Errorf("adding %s.%s: %w", c.table, c.column, err)
+		}
 	}
 	return nil
 }

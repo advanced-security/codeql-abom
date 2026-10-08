@@ -79,6 +79,8 @@ type Status struct {
 	MaxDepth int `json:"maxDepth"`
 	// StuckAfter is the loop's attempt ceiling, so the objective counts stuck work by its rule.
 	StuckAfter int `json:"stuckAfter"`
+	// CodeScanningUnasked says why the crawl asks code scanning for nothing, and is empty when it asks.
+	CodeScanningUnasked string `json:"codeScanningUnasked"`
 }
 
 // Status returns a copy of the current state.
@@ -98,6 +100,9 @@ func (s *Supervisor) Status() Status {
 	out.WorkDir = s.Options.WorkDir
 	out.ClaimsPerCycle = s.Options.Limit
 	out.ReachThreshold = s.Aggregates.afterEdges()
+	if s.Expander != nil {
+		out.CodeScanningUnasked = s.Expander.CodeScanningUnasked()
+	}
 	if s.Queue != nil {
 		out.MaxDepth = s.Queue.MaxDepth
 		out.StuckAfter = s.Queue.StuckAfterAttempts()

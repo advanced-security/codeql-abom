@@ -416,9 +416,10 @@ organization-wide crawl merely to validate the instructions.
    start the server from the archive root.
 3. **Qualify the platform floors.** Linux archives are built on Ubuntu 22.04 images and record
    their newest glibc symbol; macOS archives target 12.0, Go's own floor. Run each archive on its
-   recorded floor with the pinned CodeQL, including the Rosetta and Xcode requirements on Apple
-   silicon, before any floor appears in release documentation. The candidates' archives are
-   enough to start on.
+   recorded floor with the pinned CodeQL, including the Xcode requirements on Apple silicon, before
+   any floor appears in release documentation. Serving and analyzing need no Rosetta there, since
+   ABOM traces no build and the Actions extractor is native; the floor run is what confirms it. The
+   candidates' archives are enough to start on.
 4. **Exercise the actual download path.** Document download, provenance/checksum verification,
    extraction into a versioned user-writable prefix, PATH setup, configuration and startup.
    Use appropriate Linux/macOS verification commands and an expected repository/workflow with

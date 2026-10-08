@@ -102,8 +102,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # The C# extractor builds the project to read it, so the SDK has to be present before the
-      # database is created. Every other language here extracts from source alone.
+      # Most languages are extracted from source using build-mode none (BMN), just as
+      # Default Setup reads this repository, with Go by its own autobuilder without a
+      # traced build. C#'s extractor still restores the project's packages through the
+      # .NET SDK to resolve what it references, and fetches an SDK itself when none is
+      # installed.
       - name: Self Audit - Setup .NET
         if: matrix.dotnet
         uses: actions/setup-dotnet@v6.0.0

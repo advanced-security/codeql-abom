@@ -276,10 +276,14 @@ public sealed class ThemeService(IJSRuntime js)
     //
     // There is still no colour for a node that was never queued, because that is a fact rather
     // than a stage.
+    //
+    // A push waiting for code scanning is held, not failing and not about to run, so it takes teal,
+    // in the arc between analyzed green and running blue and about 30 degrees from each.
     private static readonly Dictionary<string, string> DarkDiscovery = new()
     {
         ["queued"] = "#F5D90A",
         ["retrying"] = WarningDark,
+        ["waiting"] = "#38D9A9",
         ["running"] = InfoDark,
         ["done"] = SuccessDark,
         ["unavailable"] = ErrorDark,
@@ -294,6 +298,7 @@ public sealed class ThemeService(IJSRuntime js)
     {
         ["queued"] = "#9A7B00",
         ["retrying"] = WarningLight,
+        ["waiting"] = "#087F5B",
         ["running"] = InfoLight,
         ["done"] = SuccessLight,
         ["unavailable"] = ErrorLight,
@@ -305,6 +310,7 @@ public sealed class ThemeService(IJSRuntime js)
     {
         ["queued"] = "Queued",
         ["retrying"] = "Retrying",
+        ["waiting"] = "Waiting for code scanning",
         ["running"] = "Discovering",
         ["done"] = "Analyzed",
         ["unavailable"] = "Unavailable",

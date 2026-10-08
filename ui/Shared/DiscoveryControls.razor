@@ -116,7 +116,7 @@
         {
             <MudText Typo="Typo.body2" Class="mud-text-secondary mt-2">
                 Last round took <b>@Seconds(last.Millis)s</b>: @last.Fetches.ToString("N0")
-                fetches, @last.Builds.ToString("N0") database builds,
+                fetches, @CountText.Of(last.Builds, "database build", "database builds"),
                 @last.Probes.ToString("N0") reference probes@(last.TreeReads > 0
                     ? $", {CountText.Of(last.TreeReads, "tree read", "tree reads")}" : "").
                 It analyzed
@@ -127,18 +127,39 @@
                     <span>@last.Drifted.ToString("N0") had moved since they were analyzed.</span>
                 }
             </MudText>
+            @* Null on a round recorded before this was kept, which is not one code scanning supplied
+               nothing in; a round that asked nothing has nothing to say. *@
+            @if (last.CodeScanning is { } took && Asked(took))
+            {
+                <MudText Typo="Typo.body2" Class="mud-text-secondary" data-abom-code-scanning-round>
+                    @RoundSentence(took)
+                </MudText>
+            }
             <MudText Typo="Typo.caption" Class="mud-text-secondary">
                 @CountText.Of(objective.Totals.Cycles, "round", "rounds") recorded, totalling
                 @Seconds(objective.Totals.Millis)s across
                 @objective.Totals.Fetches.ToString("N0") fetches and
                 @objective.Totals.Probes.ToString("N0") probes.
             </MudText>
+            @if (objective.Totals.CodeScanningCycles > 0 && Asked(objective.Totals.CodeScanning))
+            {
+                <MudText Typo="Typo.caption" Class="mud-text-secondary d-block" data-abom-code-scanning-totals>
+                    @TotalsSentence(objective.Totals)
+                </MudText>
+            }
         }
         else
         {
             @* Nothing recorded is not zero spend. *@
             <MudText Typo="Typo.body2" Class="mud-text-secondary mt-2">
                 No round has run yet, so there is nothing to say about what discovery costs here.
+            </MudText>
+        }
+        @if (_state.Status.CodeScanningUnasked.Length > 0)
+        {
+            @* Asked nothing, it supplies nothing, which reads as refusal unless the reason is here. *@
+            <MudText Typo="Typo.body2" Class="mud-text-secondary mt-1" data-abom-code-scanning-unasked>
+                Code scanning is not asked: @_state.Status.CodeScanningUnasked.
             </MudText>
         }
     </MudPaper>
@@ -436,6 +457,14 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
     private static string? StageSentence(Objective o)
     {
         var parts = new List<string>();
+        if (o.Stages.Waiting > 0)
+        {
+            parts.Add(o.Stages.Waiting == 1
+                ? "1 push waits for code scanning's own analysis of it, and is analyzed once that is "
+                  + "reported or its wait runs out."
+                : $"{o.Stages.Waiting:N0} pushes wait for code scanning's own analysis of them, and each "
+                  + "is analyzed once that is reported or its wait runs out.");
+        }
         if (o.Stages.Expedited > 0)
         {
             parts.Add($"{o.Stages.Expedited:N0} asked for by name, or moved by a push to a repository you own, "
@@ -465,6 +494,38 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
           + "does not analyze them, and they keep no depth open. Pruning, in Settings, removes them.";
 
     private static string Seconds(long millis) => (millis / 1000.0).ToString("N1");
+
+    private static bool Asked(CycleCodeScanning cs) => cs.Databases + cs.Analyses + cs.Refused.Count > 0;
+
+    private static string Supplied(CycleCodeScanning cs) =>
+        $"{CountText.Of(cs.Databases, "database", "databases")} and {CountText.Of(cs.Analyses, "analysis", "analyses")}";
+
+    // Grouped by what was asked for and largest first, so the reason that cost the most builds is
+    // read first; a key in neither group is still shown as the cycle log said it.
+    private static string Refusals(CycleCodeScanning cs) => string.Join(" ", cs.Refused
+        .Select(r => r.Key.StartsWith("database: ", StringComparison.Ordinal)
+            ? (Order: 0, Label: "Databases refused", Reason: r.Key["database: ".Length..], Count: r.Value)
+            : r.Key.StartsWith("analysis: ", StringComparison.Ordinal)
+                ? (Order: 1, Label: "Analyses refused", Reason: r.Key["analysis: ".Length..], Count: r.Value)
+                : (Order: 2, Label: "Also refused", Reason: r.Key, Count: r.Value))
+        .GroupBy(r => (r.Order, r.Label))
+        .OrderBy(g => g.Key.Order)
+        .Select(g => $"{g.Key.Label}: " + string.Join(", ", g
+            .OrderByDescending(r => r.Count).ThenBy(r => r.Reason, StringComparer.Ordinal)
+            .Select(r => r.Count == 1 ? r.Reason : $"{r.Reason} ×{r.Count:N0}")) + "."));
+
+    private static string RoundSentence(CycleCodeScanning cs) => cs.Refused.Count == 0
+        ? $"Code scanning supplied {Supplied(cs)}."
+        : $"Code scanning supplied {Supplied(cs)}. {Refusals(cs)}";
+
+    private static string TotalsSentence(CycleTotal t)
+    {
+        var rounds = t.CodeScanningCycles == t.Cycles
+            ? $"Across the {CountText.Of(t.CodeScanningCycles, "round", "rounds")} that kept it"
+            : $"Across the {t.CodeScanningCycles:N0} of {CountText.Of(t.Cycles, "round", "rounds")} that kept it";
+        var refused = t.CodeScanning.Refused.Count == 0 ? "" : $" {Refusals(t.CodeScanning)}";
+        return $"{rounds}, code scanning supplied {Supplied(t.CodeScanning)}.{refused}";
+    }
 
     private string UnobservedSentence(int count)
     {
