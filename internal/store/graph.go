@@ -235,12 +235,14 @@ func (w *Writer) flushEdges() error {
 				 end_line, end_column, repository_row_id, provenance)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(edge_key) DO UPDATE SET
-				query_run_id    = CASE
-					WHEN (SELECT analysis_mode FROM abom_query_run
-					      WHERE row_id = excluded.query_run_id) = 'extended'
-					 AND COALESCE((SELECT analysis_mode FROM abom_query_run
-					               WHERE row_id = abom_edge.query_run_id), 'regular') = 'regular'
+				query_run_id    = CASE WHEN ` + keepsRegularWriter + `
 					THEN abom_edge.query_run_id ELSE excluded.query_run_id END,
+				-- The row is its writer's declaration whole: a target beside another commit's
+				-- kind or declaring node is a row no reader can take at its word.
+				edge_kind       = CASE WHEN ` + keepsRegularWriter + `
+					THEN abom_edge.edge_kind ELSE excluded.edge_kind END,
+				src_node_row_id = CASE WHEN ` + keepsRegularWriter + `
+					THEN abom_edge.src_node_row_id ELSE excluded.src_node_row_id END,
 				ref_raw         = excluded.ref_raw,
 				ref_value       = excluded.ref_value,
 				pin_comment     = excluded.pin_comment,
@@ -251,8 +253,8 @@ func (w *Writer) flushEdges() error {
 				                       THEN abom_edge.boundary END,
 				-- The same for every fact derived from where the edge points. They return as
 				-- unknown rather than as a guess, and the next aggregate pass fills them again.
-				-- owned_depth is not here: it measures the source side, which a repoint leaves
-				-- alone.
+				-- owned_depth is not here: it measures the source's container, which is the
+				-- location's own file however the source moves within it.
 				-- ref_style reads the reference as well as the target, so a line rewritten from
 				-- @v4 to a commit on the same action has to forget it: keeping the old answer
 				-- would report a tag until some later aggregate rebuild.
@@ -321,7 +323,72 @@ func writeEdge(tx *sql.Tx, statement *sql.Stmt, edge Edge, sourceID, targetID in
 		nullableID(edge.RepositoryID), nullable(edge.Provenance)); err != nil {
 		return false, fmt.Errorf("inserting edge %q: %w", edge.Key, err)
 	}
-	return broadens, recordEdgeSighting(tx, edge, targetID)
+	return broadens, recordEdgeSighting(tx, edge, sourceID, targetID)
+}
+
+// keepsRegularWriter holds, in the edge upsert, where an extended run re-observes a row a regular run
+// wrote: the row stays that run's, and the guard has already refused a target that differs.
+const keepsRegularWriter = `(SELECT analysis_mode FROM abom_query_run
+					      WHERE row_id = excluded.query_run_id) = 'extended'
+					 AND COALESCE((SELECT analysis_mode FROM abom_query_run
+					               WHERE row_id = abom_edge.query_run_id), 'regular') = 'regular'`
+
+// impliedEdgeKind is the kind of a declaration recorded without one, from its target, aliased n, and
+// its location's row, aliased e. A `needs:` names a job and nothing else does, and only a job's
+// `uses:` calls a workflow. Whether a step is an action manifest's is a fact about the location's
+// file, which the extraction stated in the row's kind, so it is not guessed from the path.
+const impliedEdgeKind = `CASE
+	WHEN n.node_kind = 'job' THEN '` + EdgeKindJobNeedsJob + `'
+	WHEN n.node_kind IN ('workflow', 'reusable_workflow') THEN '` + EdgeKindJobUsesReusableWorkflow + `'
+	WHEN e.edge_kind = '` + EdgeKindCompositeStepUsesAction + `' THEN '` + EdgeKindCompositeStepUsesAction + `'
+	ELSE '` + EdgeKindStepUsesAction + `' END`
+
+// fillDeclarationKinds completes what was written before sightings kept their declaration's kind and
+// source. Each such sighting takes the kind its target implies and its row's source, the only one on
+// record. Each row whose kind contradicts its own target, which the upsert left by taking its last
+// writer's target and keeping its first writer's kind, takes the kind its target implies. Both change
+// what a page drew under row ids it holds, so every page is told to load the graph again. Live rows
+// of every shape are filled; a removed one is filled at the first open after a run brings it back.
+func (s *Store) fillDeclarationKinds() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("beginning to fill what sightings declared: %w", err)
+	}
+	defer tx.Rollback()
+	sightings, err := tx.Exec(`UPDATE abom_edge_sighting
+		   SET edge_kind = ` + impliedEdgeKind + `, src_node_row_id = e.src_node_row_id
+		  FROM abom_edge_any_mode e, abom_node_live n
+		 WHERE e.row_id = abom_edge_sighting.edge_row_id
+		   AND n.row_id = abom_edge_sighting.dst_node_row_id
+		   AND abom_edge_sighting.edge_kind IS NULL`)
+	if err != nil {
+		return fmt.Errorf("filling the kind each sighting declared: %w", err)
+	}
+	rows, err := tx.Exec(`UPDATE abom_edge
+		   SET edge_kind = repaired.kind
+		  FROM (SELECT e.row_id, ` + impliedEdgeKind + ` AS kind
+		          FROM abom_edge_any_mode e JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
+		         WHERE (e.edge_kind = '` + EdgeKindJobNeedsJob + `') <> (n.node_kind = 'job')) repaired
+		 WHERE repaired.row_id = abom_edge.row_id`)
+	if err != nil {
+		return fmt.Errorf("repairing rows whose kind contradicts their target: %w", err)
+	}
+	filled, err := sightings.RowsAffected()
+	if err != nil {
+		return err
+	}
+	repaired, err := rows.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("filling what sightings declared: %w", err)
+	}
+	if filled+repaired == 0 {
+		return nil
+	}
+	_, err = s.nextGeneration(true)
+	return err
 }
 
 func (w *Writer) inTx(fn func(*sql.Tx) error) error {

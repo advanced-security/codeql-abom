@@ -91,6 +91,13 @@ picking one is the decision. Everything else here follows from it.
    lists exactly the rules it ran. Recording them there is exact rather than inferred. A `done`
    frontier row is never met again, so this reaches only what a requeue or a new reference brings
    back; depends on nothing, and 1 is what brings back the rest.
+8. **Check 11, from the queue and the ledger alone.** A row put back for a reason and settled
+   without a new run, twice, is a loop: two definitions of done that disagree, with the crawl's
+   claims spent on them. Re-observation and the skip disagreed about **97 commits for 3.7 hours** on
+   the crawled organization — every claim spent on them, nothing ingested, and every cycle logged as
+   progress because it settled something. Run it as the consistency checker's check 11, which
+   spends nothing and so runs exhaustively. The disagreement is the finding; which definition is
+   right is a person's to investigate, never the check's to repair.
 
 ## The constraint that must not be broken
 

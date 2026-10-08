@@ -1003,6 +1003,9 @@ public sealed record NodeFigure
     public FigureCounts Counts { get; init; } = new();
     /// <summary>The page's terms it was cut under, as a reader reads them.</summary>
     public IReadOnlyList<string> Terms { get; init; } = [];
+
+    /// <summary>What the page says under the heading. The drawing describes it and does not paint it.</summary>
+    public IReadOnlyList<string> Caption { get; init; } = [];
     public string Direction { get; init; } = "LR";
     public string Graphviz { get; init; } = string.Empty;
 }

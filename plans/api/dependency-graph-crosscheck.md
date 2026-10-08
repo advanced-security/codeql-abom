@@ -1,6 +1,8 @@
 # Measure native Actions coverage before filling a gap
 
-**Status:** comparison is not built; native lockfiles and product ingestion need separate measurements.
+**Status:** CodeQL's extraction is compared continuously with GitHub's own parsers, as check 1 of the
+consistency checker; the reference action's parser, native lockfiles and product ingestion need
+separate measurements.
 
 ## Why this exists
 
@@ -72,8 +74,10 @@ data for a dependency selected by an older workflow lock.
   content. Disable writes and invoke parsing components, never a submission entrypoint or default
   native fix mode. Generate QL results with the CLI. This needs no live test target and can start
   independently of the product comparisons below. Run continuously over sampled commits, it is
-  check 1 of [the graph consistency checker](../tools/graph-consistency-checker.md), and the rules
-  below govern it there.
+  check 1 of [the consistency checker](../../docs/architecture.md#how-it-is-tested), and the rules
+  below govern it there. Check 1 reads with a YAML walk of its own and the native package's
+  `ParseActionRef`, `ParseReusableWorkflowRef` and `ParseActionMeta`; the reference action's parser
+  and the native CLI's JSON are still to compare, over the same trees.
 2. **Establish an uncontaminated native baseline.** With explicit consent, choose a clean test
   repository containing a benign nested dependency. Confirm no ABOM or third-party snapshot owns
   its manifests; historical test1/test2 data cannot be assumed clean. If repair is needed, use the
@@ -100,6 +104,23 @@ data for a dependency selected by an older workflow lock.
 6. **Choose the reporting surface from the results.** Report matched, native-only, ABOM-only and
   unread/unverified sets with source and revision. A per-repository API/UI field is useful only if
   the measurement warrants it; a report may suffice. Depends on 5.
+7. **Check 2, at a commit both name.** Run continuously as the consistency checker's check 2: an
+  owned repository's direct dependencies against GitHub's dependency graph at the same commit,
+  sampled as checks 1, 3 and 4 are — the open disagreements again, then what changed most recently,
+  then a random baseline per stratum with its bound — on the checker's REST and GraphQL pools, under
+  the producer rules below. GitHub's SBOM cannot be that reading: it names no commit, only when it
+  was generated. The dependency-review comparison names both of its commits, so a comparison from a
+  commit that declares nothing to the analyzed one reads what the graph holds at that commit; measure
+  where such a base exists before building. Until a commit is named, the repository is skipped and
+  counted, never compared with the analyzed one.
+8. **Measure what run logs record, then check 5.** Before any run log is compared, find out which
+  downloads job setup logs — nested composite steps, reusable workflows, Docker actions, actions a
+  self-hosted runner already holds, steps whose `if:` was false — on consented repositories.
+  Whatever it does not log is excluded from the check and named, not treated as absent. Then run it
+  as the consistency checker's check 5: a workflow's closure at a commit against the actions that
+  commit's run downloaded, with their SHAs, sampled on the checker's pools. Run logs read with
+  repository Actions read, which the App holds for this item. Each completed `workflow_run` is
+  already kept in `abom_workflow_run` with the reusable workflows it called at their commits.
 
 ## The constraints that must not be broken
 

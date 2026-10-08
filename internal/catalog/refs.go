@@ -122,7 +122,7 @@ func (c *Client) ResolveRefs(ctx context.Context, qs []RefQuestion) (RefBatch, e
 		return out, nil
 	}
 	query, vars, asked := refQuery(qs)
-	data, errs, err := c.postRefs(ctx, query, vars, &out)
+	data, errs, err := c.postRefs(ctx, query, vars, "", &out)
 	if err != nil {
 		return out, err
 	}
@@ -179,8 +179,9 @@ func reasonAt(errs []refError, repo, field string) string {
 	return ""
 }
 
-// postRefs fails the whole query only on an error naming no path; one naming a path is that alias's alone.
-func (c *Client) postRefs(ctx context.Context, query string, vars map[string]any,
+// postRefs fails the whole query only on an error naming no path; one naming a path is that alias's
+// alone. owner is whose credential reads it; "" is the designated installation.
+func (c *Client) postRefs(ctx context.Context, query string, vars map[string]any, owner string,
 	batch *RefBatch) (map[string]json.RawMessage, []refError, error) {
 	payload, err := json.Marshal(struct {
 		Query     string         `json:"query"`
@@ -196,8 +197,9 @@ func (c *Client) postRefs(ctx context.Context, query string, vars map[string]any
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	// A batch spans owners, so with an App the designated installation reads it; private repositories answer unread.
-	if _, err := c.authorize(ctx, req, "", false); err != nil {
+	// A batch spanning owners is read by the designated installation, where private repositories
+	// answer unread; a query of one repository is read as its owner.
+	if _, err := c.authorize(ctx, req, owner, false); err != nil {
 		return nil, nil, err
 	}
 	if err := c.Pace.Wait(ctx); err != nil {

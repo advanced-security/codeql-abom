@@ -202,6 +202,10 @@ func (s *Store) Migrate() error {
 	if err := s.createViews(); err != nil {
 		return err
 	}
+	// After the views, whose back-fill gives a row's own run a sighting that names no kind.
+	if err := s.fillDeclarationKinds(); err != nil {
+		return err
+	}
 	// After the views, which back-fill the sightings this reads.
 	if err := s.backfillRunRules(); err != nil {
 		return err

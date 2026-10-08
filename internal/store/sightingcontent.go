@@ -242,7 +242,8 @@ func startingCommits(
 }
 
 // EdgeDeclaration is what one declaring location said, at the live commits that said it. A location whose
-// commits declared different things is one EdgeDeclaration per thing declared.
+// commits declared different things, or had different jobs or steps declare them, is one
+// EdgeDeclaration per thing declared.
 type EdgeDeclaration struct {
 	Row, Src, Dst int64
 	Ref           string
@@ -255,8 +256,9 @@ type EdgeDeclaration struct {
 // may stand at, in a stable order.
 //
 // Per sighting rather than per row: a location is one row however many commits declare it, and the
-// row holds the last writer's target. A commit no reference resolves to any more is history and
-// adds nothing, and a live commit settled as identical to an analyzed one reads that one's.
+// row holds the last writer's declaration. Whether a commit's is a dependency at all is its own kind.
+// A commit no reference resolves to any more is history and adds nothing, and a live commit settled
+// as identical to an analyzed one reads that one's.
 //
 // live is LiveCommits and starting StartingCommits of it, passed in because a reader that keeps the
 // walk keeps the commits it stood at.
@@ -271,15 +273,15 @@ func (s *Store) EdgeDeclarations(
 		SELECT e.edge_row_id, e.src_node_row_id, e.dst_node_row_id, e.ref, e.commit_sha
 		  FROM declared e
 		 WHERE `+DependencyEdgeFilter+`
-		 ORDER BY 1, 3, 4, e.analyzed, 5`, answers)
+		 ORDER BY 1, 3, 4, 2, e.analyzed, 5`, answers)
 	if err != nil {
 		return nil, fmt.Errorf("loading edges: %w", err)
 	}
 	defer rows.Close()
 	out := []EdgeDeclaration{}
 	type declared struct {
-		row, dst int64
-		ref      string
+		row, src, dst int64
+		ref           string
 	}
 	index := map[declared]int{}
 	for rows.Next() {
@@ -288,7 +290,7 @@ func (s *Store) EdgeDeclarations(
 		if err := rows.Scan(&e.Row, &e.Src, &e.Dst, &e.Ref, &commit); err != nil {
 			return nil, fmt.Errorf("scanning edge: %w", err)
 		}
-		at := declared{e.Row, e.Dst, e.Ref}
+		at := declared{e.Row, e.Src, e.Dst, e.Ref}
 		i, seen := index[at]
 		if !seen {
 			i, index[at] = len(out), len(out)
@@ -318,6 +320,10 @@ func analysisModesIn(mode string) string {
 // wrote it, which is "" for a row no run recorded. A sighting whose content was never recorded
 // says nothing, so it is not here at all. observedEdges is the regular case of the same reading.
 //
+// A sighting's kind and declaring node are its own commit's, as its target is; one recorded before
+// sightings kept them reads its row's, which Migrate makes the kind its target implies. Both are
+// cast, since a COALESCE has no type and a column without one is one no index can search.
+//
 // The run states the mode, so the live rows are read directly rather than through the mode view,
 // whose test per row cost more than the rest of the reading. A row its own run sighted with
 // content is that sighting already. Duplicates remain; every reader groups or deduplicates.
@@ -325,8 +331,9 @@ func observedIn(mode string) string {
 	modes := analysisModesIn(mode)
 	return `observed(edge_row_id, src_node_row_id, dst_node_row_id, ref, commit_sha,
          repository_row_id, file_path, edge_kind, ref_raw) AS (
-	SELECT sg.edge_row_id, e.src_node_row_id, sg.dst_node_row_id, COALESCE(sg.ref_value, ''),
-	       LOWER(COALESCE(q.db_commit, '')), e.repository_row_id, e.file_path, e.edge_kind,
+	SELECT sg.edge_row_id, CAST(COALESCE(sg.src_node_row_id, e.src_node_row_id) AS INTEGER),
+	       sg.dst_node_row_id, COALESCE(sg.ref_value, ''), LOWER(COALESCE(q.db_commit, '')),
+	       e.repository_row_id, e.file_path, CAST(COALESCE(sg.edge_kind, e.edge_kind) AS TEXT),
 	       COALESCE(sg.ref_raw, '')
 	  FROM abom_edge_sighting sg
 	  JOIN abom_query_run q ON q.row_id = sg.query_run_id AND q.analysis_mode IN (` + modes + `)
@@ -394,11 +401,12 @@ declared(edge_row_id, src_node_row_id, dst_node_row_id, ref, ref_raw, edge_kind,
 // shaped like abom_edge, so a reader of the row reads what was declared at the commits in use by
 // naming it instead. `commits` lists those commits, comma-joined, NULL where no run recorded one.
 //
-// The location's own columns come from the row, because a sighting does not carry them. The facts
-// derived from a target are read from a row declaring the same thing, since each is a function of
-// what it is derived from: a reference style of the reference and its target, a boundary of the
-// target and the declaring repository, and a route of the line and its target. Where no row
-// declares the same thing nothing derived it, so it is absent. Depth is the line's own.
+// What was declared, its kind and declaring node as well as its target and reference, is each
+// commit's; the location's own columns come from the row. The facts derived from a target are read
+// from a row declaring the same thing, since each is a function of what it is derived from: a
+// reference style of the reference and its target, a boundary of the target and the declaring
+// repository, and a route of the line and its target. Where no row declares the same thing nothing
+// derived it, so it is absent. Depth is the line's own.
 func declaredEdges(mode string) string {
 	return liveDeclared(mode) + `,
 declared_style(dst_node_row_id, ref_value, ref_style) AS (
@@ -412,15 +420,16 @@ declared_boundary(repository_row_id, dst_node_row_id, boundary) AS (
 declared_edge(row_id, edge_key, edge_kind, src_node_row_id, dst_node_row_id, ref_value,
               repository_row_id, file_path, start_line, boundary, ref_style,
               advisory_route, finding_route, owned_depth, commits) AS (
-	SELECT x.row_id, x.edge_key, x.edge_kind, x.src_node_row_id, d.dst_node_row_id,
+	SELECT x.row_id, x.edge_key, d.edge_kind, d.src_node_row_id, d.dst_node_row_id,
 	       NULLIF(d.ref, ''), x.repository_row_id, x.file_path, x.start_line, b.boundary,
 	       st.ref_style,
 	       CASE WHEN d.dst_node_row_id = x.dst_node_row_id THEN x.advisory_route END,
 	       CASE WHEN d.dst_node_row_id = x.dst_node_row_id THEN x.finding_route END,
 	       x.owned_depth, d.commits
-	  FROM (SELECT edge_row_id, dst_node_row_id, ref,
+	  FROM (SELECT edge_row_id, edge_kind, src_node_row_id, dst_node_row_id, ref,
 	               GROUP_CONCAT(DISTINCT NULLIF(commit_sha, '')) AS commits
-	          FROM declared GROUP BY edge_row_id, dst_node_row_id, ref) d
+	          FROM declared
+	         GROUP BY edge_row_id, edge_kind, src_node_row_id, dst_node_row_id, ref) d
 	  JOIN abom_edge_any_mode x ON x.row_id = d.edge_row_id
 	  LEFT JOIN declared_style st
 	    ON st.dst_node_row_id = d.dst_node_row_id AND st.ref_value = d.ref

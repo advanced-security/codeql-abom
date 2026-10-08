@@ -75,18 +75,20 @@ func TestTheClosureIsDirectedBothWaysAndNeverUndirected(t *testing.T) {
 	}
 }
 
-// A figure never holds more than the limit, and says how much it left out.
+// A figure never holds more than the limit, and says how much it left out. The closure is built
+// past the cap, so raising the cap cannot make this pass by drawing everything.
 func TestNoFigureHoldsMoreThanTheLimitAndSaysWhatItLeftOut(t *testing.T) {
+	const extra = 20
 	var uses []string
-	for i := range 100 {
-		uses = append(uses, fmt.Sprintf("c/w%03d.yml>r/act", i))
+	for i := range DefaultLimit + extra - 1 {
+		uses = append(uses, fmt.Sprintf("c/w%04d.yml>r/act", i))
 	}
 	c := Cut(graphOf(nil, uses...), "r/act", CutOptions{})
 	if len(c.Nodes) != DefaultLimit || c.Counts.Drawn != DefaultLimit {
 		t.Fatalf("drew %d nodes, want the limit of %d", len(c.Nodes), DefaultLimit)
 	}
-	if c.Counts.InClosure != 101 || c.Counts.LeftOut != 101-DefaultLimit {
-		t.Errorf("counts %+v, want 101 in the closure and %d left out", c.Counts, 101-DefaultLimit)
+	if c.Counts.InClosure != DefaultLimit+extra || c.Counts.LeftOut != extra {
+		t.Errorf("counts %+v, want %d in the closure and %d left out", c.Counts, DefaultLimit+extra, extra)
 	}
 }
 

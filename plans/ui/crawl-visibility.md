@@ -45,6 +45,19 @@ flowchart LR
    run](../../docs/architecture.md#reading-the-data-out) also spends CodeQL on every core, competes
    for the same lock, and is visible only on the CodeQL page's Runs tab. A reader who sees the crawl
    paused and the machine busy has no way to find out why. Depends on nothing.
+3. **The consistency checker beside the pools.** `/api/checks` serves the checker's disagreement
+   queue, its per-build trend and the last run of every check, and nothing draws them. They belong
+   in Settings beside the pools the operator sets, with each check that does not run saying where it
+   is planned rather than reading as clean. Depends on nothing.
+4. **Check 10, from how long checks 3 and 4 stay open.** Settings shows each pool's freshness at
+   its rate, an estimate nothing checks. A sampled disagreement records the run that first saw it
+   and the run that read it again and agreed, so the time between is how long ABOM took to catch up
+   with a move, measured rather than estimated, and bounded by how often the checker runs. Check 3's
+   external references are the probing and polling pools' lag, its owned references and check 4 the
+   event and sweep lag. Run it as the consistency checker's check 10: compare each with the estimate
+   its pool shows, and name the pool whose estimate is not one. It needs the checker run often
+   enough for disagreements to open and settle; with events disabled, check 4 then measures the lag
+   the 24-hour sweep alone leaves on owned branches.
 
 ## The constraints that must not be broken
 

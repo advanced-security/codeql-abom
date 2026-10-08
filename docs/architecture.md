@@ -612,15 +612,25 @@ as written, never in its place:
   reference resolved to, and a caller's lock binds the route to that caller.
 
 **Each commit's declarations are its own.** An edge is keyed by the location that declares it, so
-two analyzed commits declaring different things there share one row, which holds the last writer's.
-Every regular run's sighting keeps what its own commit declared — target, reference, pin comment —
-and both walks read a dependency's children from the sightings at the commit they stand at, never
-from the row. A sighting recorded before content was kept is known only for the run that wrote the
+two analyzed commits declaring different things there share one row, which holds the last writer's
+declaration whole — target, kind and declaring step together. A use written as a YAML alias is
+declared at the alias, not at the anchor it names, so each expanded use is its own edge. Every regular run's sighting keeps
+what its own commit declared — target, reference, pin comment, what kind of declaration it is and
+which job or step declares it — and every reader takes all of them from the sightings at the commit
+it stands at, never from the row: a line that was a `needs:` at one commit and a `uses:` at another
+is each at its own commit. A sighting written before it kept its kind reads the kind its target
+implies — a `needs:` names a job — filled once when the database is opened. A sighting recorded
+before content was kept is known only for the run that wrote the
 row; any other says its commit declared something there and not what, and adds no route rather than
 borrowing the row's. Walks stand only at live commits — those a reference resolves to; every
 analyzed commit of a repository nothing resolves — and a commit settled as identical to an analyzed
 one reads that commit's sightings. Blast radius takes the same walk, so a repository counts toward a
 dependency only through the releases it runs; both declared scopes stay component-level by design.
+
+**An owned repository used as an action is a dependency at the reference that uses it.** Its node
+is the owned repository's own — internal, never styled as somebody else's — but a reference with a
+ref to it from a workflow is queued at that ref like any dependency, and the submission closure
+roots at it, so reach and the closure stand at the same commit.
 
 **A starting point's own CI runs at its branches, not at its releases.** A repository's own triggered
 workflows count as a starting point's only at its starting commits: the default branch, and each
@@ -1010,11 +1020,11 @@ ingested edges all land without one.
 
 **A details page draws what runs it and what it runs.** Two directed walks over `uses:`
 relationships from the page's versions, cut from the Explorer's projection; what runs it starts
-where *What `uses:` this* rows start, under the same terms. At most 25 nodes are drawn, each
+where *What `uses:` this* rows start, under the same terms. At most 300 nodes are drawn, each
 connected to the page's node — its versions, then what you own, then the rest, nearest first — and
-the figure says what it left out. Graphviz places it and the server draws the SVG, so the page, the
-download and the print are one drawing, byte-identical within a Graphviz version. `serve` requires
-Graphviz.
+the page says what it left out. The drawing does not paint that, and it does not name Graphviz or
+which side is which. Graphviz places it and the server draws the SVG, so the page, the download
+and the print are one drawing, byte-identical within a Graphviz version. `serve` requires Graphviz.
 
 **A run is asked over repositories somebody chose.** The selection travels as `repositories=`,
 which resolves each name to its retained database, one it could be rebuilt from, or a named gap —
@@ -1346,14 +1356,22 @@ a wholesale rebuild, reach, exposure and the submission closure against each oth
 repository, and graph-wide invariants such as each reach rollup equalling its breakdown and reach
 naming only starting points. Both recomputes run on `VACUUM INTO` snapshots, so the checker writes
 nothing but its own `abom_check_*` tables and its own pools' meter. The checks that read GitHub are
-sampled and spend only the checker's pools: where each reference the queue resolved points now, and
-each owned repository's default and protected branch heads against the commits it stands at. Each
-run reads the open disagreements again, then what changed most recently, then a random baseline per
-stratum whose 95% bound is stated rather than reported as correct, and a sampled disagreement closes
-only when a later run reads it and agrees; a move the queue already holds for work is classed
-staleness, and one it holds settled is classed unnoticed. Results are keyed by ABOM build, so a
-trend shows when a disagreement started; `/api/checks` lists every planned check, and one that does
-not run says so rather than reporting zero.
+sampled and spend only the checker's pools: what each commit the queue stands at declared, as the
+graph reads it, against that commit's own indexed files read with a YAML walk of the checker's own
+and GitHub's parsers of a `uses:` and of an action's metadata; where each reference the queue
+resolved points now; and each owned repository's default and protected branch heads against the
+commits it stands at. A commit whose declarations were recorded before sightings kept content is
+counted as not known, never compared, and so is anything GitHub would not answer — a tree it would
+not list whole, a file it would not give, a reference it would not resolve: unread is never
+agreement on zero. Each run reads the open disagreements again, then what
+changed most recently, then a random baseline per stratum whose 95% bound is stated rather than
+reported as correct, and a sampled disagreement closes only when a later run reads it and agrees; a
+move the queue already holds for work is classed staleness, and one it holds settled is classed
+unnoticed; a declaration either reading lacks is classed extraction, and the same value read as
+another target normalization. Results are keyed by ABOM build, so a trend shows when a disagreement
+started. It reports and never gates: no disagreement blocks a build or a release, and none is
+written into a table the graph reads. `/api/checks` lists every check, and one that does not run
+names the plan that builds it rather than reporting zero.
 
 **Two sets of data, two jobs, not interchangeable.** A crawled organization answers *did this
 change the real numbers*, and only exists where somebody has a token and has waited. The shared

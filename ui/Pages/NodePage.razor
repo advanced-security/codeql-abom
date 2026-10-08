@@ -43,8 +43,18 @@ else if (_detail is null)
 else
 {
     <div class="abom-node-head d-flex flex-wrap align-center gap-3 mb-1">
-        <MudText Typo="Typo.h5" HtmlTag="h1" Class="abom-title-mono abom-page-title">@_detail.Key</MudText>
-        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@KindLabel</MudChip>
+        <nav class="abom-crumb" aria-label="Where this is listed" data-abom-node-crumb>
+            <MudLink Href="@InventoryHref" data-abom-node-inventory
+                     title="Open Inventory, keeping the filters it can apply.">Inventory</MudLink>
+            @if (ListedIn is { } listed)
+            {
+                <span class="abom-crumb-sep mud-text-secondary" aria-hidden="true">/</span>
+                <MudLink Href="@listed.Href" data-abom-node-unit="@listed.Unit"
+                         title="@($"Open the {listed.Label} list, keeping the filters it can apply.")">@listed.Label</MudLink>
+            }
+            <span class="abom-crumb-sep mud-text-secondary" aria-hidden="true">/</span>
+            <MudText Typo="Typo.h5" HtmlTag="h1" Class="abom-title-mono abom-page-title" title="@KindLabel">@_detail.Key</MudText>
+        </nav>
         @if (_detail.Owned || !string.IsNullOrEmpty(_detail.Origin))
         {
             <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
@@ -60,12 +70,6 @@ else
                  data-abom-node-explorer>
             <MudIcon Icon="@Icons.Material.Outlined.Hub" Size="Size.Small" />
             Open in Explorer
-        </MudLink>
-        <MudLink Href="@InventoryHref" Class="abom-icon-link"
-                 title="Return to the Inventory, keeping the filters it can apply."
-                 data-abom-node-inventory>
-            <MudIcon Icon="@Icons.Material.Outlined.ListAlt" Size="Size.Small" />
-            Back to Inventory
         </MudLink>
     </div>
 
@@ -596,6 +600,26 @@ else
         {
             var scope = Scope.PredicateFor(_terms, "inventory");
             return "/inventory" + (scope.Length > 0 ? "?" + scope : "");
+        }
+    }
+
+    // The list that contains this kind. A kind with no unit has no middle crumb.
+    private (string Unit, string Label, string Href)? ListedIn
+    {
+        get
+        {
+            var (unit, label) = _detail?.Kind switch
+            {
+                "workflow" or "reusable_workflow" => ("workflows", "Workflows"),
+                "action" or "composite_action" or "docker_image" => ("dependencies", "Actions"),
+                "job" => ("jobs", "Jobs"),
+                "repo" => ("repositories", "Repositories"),
+                _ => ("", ""),
+            };
+            if (unit.Length == 0) return null;
+            var scope = Scope.PredicateFor(_terms, "inventory");
+            var query = "unit=" + unit + (scope.Length > 0 ? "&" + scope : "");
+            return (unit, label, "/inventory?" + query);
         }
     }
 

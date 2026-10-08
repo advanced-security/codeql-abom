@@ -23,6 +23,11 @@ type fakeGitHub struct {
 	cost      int
 	queries   [][]catalog.RefQuestion
 	listed    []string
+	// trees and files are commits' contents by owner/repo@commit; read and fileQueries what was asked.
+	trees       map[string]catalog.Tree
+	files       map[string]map[string]string
+	read        []string
+	fileQueries int
 }
 
 func (f *fakeGitHub) ResolveRefs(_ context.Context, qs []catalog.RefQuestion) (catalog.RefBatch, error) {

@@ -42,8 +42,8 @@ func TestCheckReportsEachBuiltCheckAndNamesTheOnesNotRunning(t *testing.T) {
 	if n := asked.Load(); n != 0 {
 		t.Errorf("a database with nothing to sample asked GitHub %d times", n)
 	}
-	for _, want := range []string{"check 7", "check 8", "check 9", "disagreed unread",
-		"the incremental path refused", "not built: check 1 ", "not built: check 10 "} {
+	for _, want := range []string{"check 1 (", "check 7", "check 8", "check 9", "disagreed unread",
+		"the incremental path refused", "not built: check 2 ", "not built: check 10 "} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("the summary does not say %q:\n%s", want, out.String())
 		}

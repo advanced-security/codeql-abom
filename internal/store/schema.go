@@ -230,6 +230,11 @@ CREATE TABLE IF NOT EXISTS abom_edge_sighting (
   ref_raw         TEXT,
   ref_value       TEXT,
   pin_comment     TEXT,
+  -- The declaration's kind and the job or step declaring it, which are each commit's as the target
+  -- is: one location is a needs: at one commit and a uses: at another, and code moves between
+  -- jobs without moving its line.
+  edge_kind       TEXT,
+  src_node_row_id INTEGER REFERENCES abom_node(row_id),
   PRIMARY KEY (edge_row_id, query_run_id)
 );
 
@@ -926,6 +931,10 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_edge_sighting", "ref_raw", "TEXT"},
 	{"abom_edge_sighting", "ref_value", "TEXT"},
 	{"abom_edge_sighting", "pin_comment", "TEXT"},
+	// NULL on every sighting written before they kept their declaration's kind and source, until
+	// Migrate fills them.
+	{"abom_edge_sighting", "edge_kind", "TEXT"},
+	{"abom_edge_sighting", "src_node_row_id", "INTEGER REFERENCES abom_node(row_id)"},
 	{"abom_held_result", "provider", "TEXT NOT NULL DEFAULT ''"},
 	{"abom_held_result", "security_severity", "REAL"},
 	{"abom_policy_simulation", "advisories", "INTEGER"},

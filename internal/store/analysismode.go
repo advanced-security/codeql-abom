@@ -244,16 +244,19 @@ func edgeModeBroadens(tx *sql.Tx, edge Edge) (bool, error) {
 	return broadens, nil
 }
 
-// recordEdgeSighting records that this run saw the edge, and what its commit declared there. Run
-// again for the same run, it refreshes the content rather than keeping a stale reading.
-func recordEdgeSighting(tx *sql.Tx, edge Edge, targetID int64) error {
+// recordEdgeSighting records that this run saw the edge, and what its commit declared there: the
+// declaration's kind, the job or step declaring it, its target and its reference. Run again for the
+// same run, it refreshes the content rather than keeping a stale reading.
+func recordEdgeSighting(tx *sql.Tx, edge Edge, sourceID, targetID int64) error {
 	_, err := tx.Exec(`INSERT INTO abom_edge_sighting
-		  (edge_row_id, query_run_id, dst_node_row_id, ref_raw, ref_value, pin_comment)
-		SELECT row_id, ?, ?, ?, ?, ? FROM abom_edge_live WHERE edge_key = ? AND ? > 0
+		  (edge_row_id, query_run_id, edge_kind, src_node_row_id, dst_node_row_id, ref_raw, ref_value,
+		   pin_comment)
+		SELECT row_id, ?, ?, ?, ?, ?, ?, ? FROM abom_edge_live WHERE edge_key = ? AND ? > 0
 		ON CONFLICT(edge_row_id, query_run_id) DO UPDATE SET
+		  edge_kind = excluded.edge_kind, src_node_row_id = excluded.src_node_row_id,
 		  dst_node_row_id = excluded.dst_node_row_id, ref_raw = excluded.ref_raw,
 		  ref_value = excluded.ref_value, pin_comment = excluded.pin_comment`,
-		edge.QueryRunID, targetID, nullable(edge.RefRaw), nullable(edge.RefValue),
+		edge.QueryRunID, edge.Kind, sourceID, targetID, nullable(edge.RefRaw), nullable(edge.RefValue),
 		nullable(edge.PinComment), edge.Key, edge.QueryRunID)
 	if err != nil {
 		return fmt.Errorf("recording edge sighting: %w", err)

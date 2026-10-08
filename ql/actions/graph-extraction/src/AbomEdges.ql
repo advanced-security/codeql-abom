@@ -17,11 +17,8 @@ from
   string srcStepId, string usesRaw, string pinComment, int startLine, int startColumn,
   int endLine, int endColumn
 where
-  exists(ScalarValue usesNode |
-    abomEdge(usesNode, edgeKind, srcKind, srcPath, srcJobId, srcStepIndex, srcStepId, usesRaw) and
-    pinComment = pinCommentOf(usesNode) and
-    usesNode.getLocation().hasLocationInfo(_, startLine, startColumn, endLine, endColumn)
-  )
+  abomUseEdge(edgeKind, srcKind, srcPath, srcJobId, srcStepIndex, srcStepId, usesRaw, pinComment,
+    startLine, startColumn, endLine, endColumn)
   or
   abomNeedsEdge(edgeKind, srcKind, srcPath, srcJobId, srcStepIndex, srcStepId, usesRaw, pinComment,
     startLine, startColumn, endLine, endColumn)

@@ -30,7 +30,7 @@ func runCheck(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	dbPath := fs.String("db", "", "path to the ABOM SQLite database (required)")
 	every := fs.Duration("every", 0, "run the checks again at this interval until interrupted; "+
 		"0 runs them once")
-	external := fs.Bool("external", true, "run the checks that read GitHub, 3 and 4; false leaves them "+
+	external := fs.Bool("external", true, "run the checks that read GitHub, 1, 3 and 4; false leaves them "+
 		"off, and the summary says so")
 	recent := fs.Int("recent", 50, "how many subjects that changed most recently each sampled check reads first")
 	sample := fs.Int("sample", 300, "how many subjects each sampled check draws at random from each stratum; "+
@@ -117,6 +117,14 @@ func (l *lazyGitHub) ResolveRefs(ctx context.Context, qs []catalog.RefQuestion) 
 
 func (l *lazyGitHub) ProtectedBranches(ctx context.Context, repository string) ([]string, error) {
 	return l.get().ProtectedBranches(ctx, repository)
+}
+
+func (l *lazyGitHub) Tree(ctx context.Context, repository, commit string) (catalog.Tree, error) {
+	return l.get().Tree(ctx, repository, commit)
+}
+
+func (l *lazyGitHub) CommitFiles(ctx context.Context, repository, commit string, paths []string) (catalog.FileBatch, error) {
+	return l.get().CommitFiles(ctx, repository, commit, paths)
 }
 
 // checkBuild includes the reach walk's version, which a change to the walk bumps whatever the revision.

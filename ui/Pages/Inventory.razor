@@ -356,8 +356,8 @@
 </MudDataGrid>
 }
 
-@* A workflow's columns are about what it contains and what it reaches out to, never about being
-   reached: nothing depends on a workflow, which is why it left the actions grid. *@
+@* A workflow's columns are about what it contains, what it calls, and — for one that is called —
+   how many workflows call it. Reach stays on the actions grid: that is repositories, not callers. *@
 @if (_unit == UnitWorkflows)
 {
     <MudDataGrid T="WorkflowRow" ServerData="LoadWorkflows" @ref="_workflowGrid" Dense="true"
@@ -403,10 +403,14 @@
             <PropertyColumn Property="x => x.Dependencies" Title="Dependencies">
                 <HeaderTemplate><HeaderTip Tip="How many actions or reusable workflows this workflow calls.">Dependencies</HeaderTip></HeaderTemplate>
             </PropertyColumn>
+            <PropertyColumn Property="x => x.DependedOnBy" Title="Dependents">
+                <HeaderTemplate><HeaderTip Tip="How many workflows call this one. Two jobs in one workflow count once.">Dependents</HeaderTip></HeaderTemplate>
+                <CellTemplate><span class="abom-num">@context.Item.DependedOnBy</span></CellTemplate>
+            </PropertyColumn>
             @* A count, not a flag: two of nine privileged jobs is a different situation from nine
                of nine, and a yes/no reports them alike. *@
-            <PropertyColumn Property="x => x.PrivilegedJobs" Title="Privileged jobs">
-                <HeaderTemplate><HeaderTip Tip="How many jobs in this workflow can write to the repository or read secrets.">Privileged jobs</HeaderTip></HeaderTemplate>
+            <PropertyColumn Property="x => x.PrivilegedJobs" Title="Privileged Jobs">
+                <HeaderTemplate><HeaderTip Tip="How many jobs in this workflow can write to the repository or read secrets.">Privileged Jobs</HeaderTip></HeaderTemplate>
                 <CellTemplate>
                     @if (context.Item.PrivilegedJobs > 0)
                     {
@@ -1173,6 +1177,7 @@ else if (_unit != UnitFindings && _countedUnit == _unit)
         ["Jobs"] = "jobs",
         ["Steps"] = "steps",
         ["Dependencies"] = "dependencies",
+        ["DependedOnBy"] = "dependedOnBy",
         ["PrivilegedJobs"] = "privileged",
         ["Findings"] = "findings",
     };
@@ -1216,8 +1221,9 @@ else if (_unit != UnitFindings && _countedUnit == _unit)
             "stay on screen so you can disagree with it.",
         UnitWorkflows =>
             "The workflows and reusable workflows ABOM has read, most findings first. These " +
-            "are what runs, so they are measured by what they contain and what they reach out to — " +
-            "nothing depends on a workflow, which is why reach is not a column here.",
+            "are what runs, so they are measured by what they contain and what they call. A " +
+            "reusable workflow can also be called; Dependents counts the workflows that call it. " +
+            "Reach is not a column here, because that is a property of an action.",
         UnitJobs =>
             "Every job, privileged ones first. A job is where permissions, the runner and the " +
             "triggering events are decided, so these are recorded against the job rather than " +

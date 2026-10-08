@@ -10,9 +10,7 @@ it does.
 A details page answered in tables, and the reader assembled the picture in their head. The Explorer
 draws it, but not in a way anyone can keep: with Stable layout off it moves on every reload, and on,
 a neighborhood collapses into a line ([graph-layout](graph-layout.md)). Around one node a ranked
-layout means something — what runs it on one side, what it runs on the other — and nearly every
-figure for what you own is drawn whole: of 147, five reach the 25-node limit, all of them actions
-many workflows run.
+layout means something — what runs it on one side, what it runs on the other.
 
 ## Pending
 
@@ -37,9 +35,11 @@ many workflows run.
 **What runs it is what the page lists.** Routes start where *What `uses:` this* rows start, under
 the same terms, so the figure and the table cannot disagree about who runs a node.
 
-**The figure never holds more than 25 nodes, and says what it left out.** That means the versions,
-the nodes beyond the limit, and what runs it from repositories the terms leave out. Nothing is
-refused for size, and nothing is cut silently.
+**The figure holds at most 300 nodes, and the page says what it left out.** That means the
+versions, the nodes beyond the cap, and what runs it from repositories the terms leave out.
+Nothing is refused for size, and nothing is cut silently. Those sentences stay off the drawing,
+with the Graphviz version and which side is which: the heading already says the picture, and the
+version is what the cache key reads.
 
 **A drawn node is connected to the page's node.** A node floating without its path asserts a
 relationship the figure does not show.
@@ -62,8 +62,9 @@ Explorer legend's glyph.
 **The figure speaks the reader's words.** "Folded", "hops", "reach", "frontier", "corpus" and
 "generation" stay off it, and no text is turned on its side.
 
-**Byte-identical within one Graphviz version, structurally identical across versions.** The caption
-names the version. A golden SVG compared across machines would fail on the first Graphviz upgrade.
+**Byte-identical within one Graphviz version, structurally identical across versions.** A golden
+SVG compared across machines would fail on the first Graphviz upgrade. The version is what the
+cache key reads. It is not painted.
 
 **No key enters the DOT document.** DOT has no quoted form for a key ending in a backslash, so
 nodes are written as synthetic identities and mapped back. Everything a key reaches in the SVG is

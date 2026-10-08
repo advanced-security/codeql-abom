@@ -1280,7 +1280,7 @@ func discoveriesOf(
 		JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 		JOIN repository r ON r.row_id = e.repository_row_id
 		WHERE r.repository_full_name = ?
-		  AND n.is_external = 1 AND n.owner IS NOT NULL AND n.repo IS NOT NULL
+		  AND `+dependencyTarget+`
 		GROUP BY n.node_key, COALESCE(e.ref_value, '')`, full)
 	if err != nil {
 		return nil, fmt.Errorf("reading discoveries for %s: %w", full, err)
@@ -1293,6 +1293,7 @@ func discoveriesOf(
 		if err := rows.Scan(&it.NodeKey, &it.Owner, &it.Repo, &it.Subpath, &it.Ref); err != nil {
 			return nil, err
 		}
+		fromKey(&it)
 		it.Depth = depth + 1
 		it.DiscoveredFrom = full
 		it.SupplyChain = frontier.SupplyChainBuild

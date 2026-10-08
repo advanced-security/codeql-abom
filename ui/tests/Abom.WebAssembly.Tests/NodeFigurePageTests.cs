@@ -36,6 +36,34 @@ public sealed class NodeFigurePageTests : AbomTestContext
     private IRenderedComponent<Pages.NodePage> RenderNode(string key) =>
         Render<Pages.NodePage>(p => p.Add(c => c.Key, key));
 
+    /// The trail is the list that contains this kind. A step has no such list, so it has no middle crumb.
+    [Theory]
+    [InlineData("workflow", "workflows", "Workflows")]
+    [InlineData("reusable_workflow", "workflows", "Workflows")]
+    [InlineData("action", "dependencies", "Actions")]
+    [InlineData("composite_action", "dependencies", "Actions")]
+    [InlineData("docker_image", "dependencies", "Actions")]
+    [InlineData("job", "jobs", "Jobs")]
+    [InlineData("repo", "repositories", "Repositories")]
+    [InlineData("step", "", "")]
+    public void TheTrailNamesTheListThatContainsThisKind(string kind, string unit, string label)
+    {
+        Serve("octo/app/x", kind);
+        var cut = RenderNode("octo/app/x");
+
+        cut.WaitForAssertion(() => Assert.Equal("octo/app/x", cut.Find("h1").TextContent.Trim()));
+        Assert.DoesNotContain("Back to Inventory", cut.Markup);
+        if (unit.Length == 0)
+        {
+            Assert.Empty(cut.FindAll("[data-abom-node-unit]"));
+            return;
+        }
+        var link = cut.Find("[data-abom-node-unit]");
+        Assert.Equal(unit, link.GetAttribute("data-abom-node-unit"));
+        Assert.Equal(label, link.TextContent.Trim());
+        Assert.Equal($"/inventory?unit={unit}", link.GetAttribute("href"));
+    }
+
     /// Every kind that runs something or is run draws a figure, above the tables by default.
     [Theory]
     [InlineData("workflow")]

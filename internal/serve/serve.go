@@ -37,8 +37,8 @@ import (
 // Server answers interface queries from an ABOM database.
 type Server struct {
 	Store *store.Store
-	// Graphviz is the version that places every layout and figure, which a figure's bytes and its
-	// caption depend on. Empty in a server nobody started through serve, which reads it itself.
+	// Graphviz is the version that places every layout and figure, which a figure's bytes depend on.
+	// Empty in a server nobody started through serve, which reads it itself.
 	Graphviz string
 	// UI serves the interface assets. Nil disables it, leaving only the API.
 	UI fs.FS

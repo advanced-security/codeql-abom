@@ -25,7 +25,10 @@ type NodeFigure struct {
 	Height float64       `json:"height"`
 	Counts figure.Counts `json:"counts"`
 	// Terms are the page's terms the figure was cut under, as a reader reads them.
-	Terms     []string `json:"terms"`
+	Terms []string `json:"terms"`
+	// Caption is what the page says under the heading. The drawing's description repeats it;
+	// the drawing does not paint it.
+	Caption   []string `json:"caption"`
 	Direction string   `json:"direction"`
 	Graphviz  string   `json:"graphviz"`
 }
@@ -126,15 +129,18 @@ func (s *Server) drawFigure(ctx context.Context, key, predicate string, directio
 	if err != nil {
 		return NodeFigure{}, err
 	}
-	f, err := figure.Draw(ctx, c, figure.Options{Direction: direction},
-		figure.Meta{Terms: terms, AsOf: asOf(version.UpdatedAt), Graphviz: graphviz})
+	meta := figure.Meta{Terms: terms, AsOf: asOf(version.UpdatedAt), Graphviz: graphviz}
+	f, err := figure.Draw(ctx, c, figure.Options{Direction: direction}, meta)
 	if err != nil {
 		return NodeFigure{}, err
 	}
 	answer := NodeFigure{Key: key, SVG: string(f.SVG), Width: f.Width, Height: f.Height, Counts: c.Counts,
-		Terms: terms, Direction: string(direction), Graphviz: graphviz}
+		Terms: terms, Caption: figure.Caption(c, meta), Direction: string(direction), Graphviz: graphviz}
 	if answer.Terms == nil {
 		answer.Terms = []string{}
+	}
+	if answer.Caption == nil {
+		answer.Caption = []string{}
 	}
 	s.figures.put(cacheKey, answer)
 	return answer, nil

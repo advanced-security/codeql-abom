@@ -241,12 +241,15 @@ only what depends on it. `plans/db/commit-aware-graph.md`
 
 ## Knowing the graph is right
 
-Whether ABOM's graph is right has been learned late, by somebody noticing. A checker running beside
-it compares each claim with an independent reading at the same commit — the files themselves,
-GitHub's dependency graph, where a reference points now, and what a workflow's run actually
-downloaded — and recomputes every derivation from scratch to compare with what is maintained. It
-reports fidelity per build and queues every disagreement with what it takes to reproduce it; it
-never corrects either reading. `plans/tools/graph-consistency-checker.md`
+Whether ABOM's graph is right has been learned late, by somebody noticing. A checker now runs beside
+it (`codeql-abom check`, [how](architecture.md#how-it-is-tested)): it compares what each commit
+declared with the commit's own files, where each reference points now and which commits of each
+owned repository are live, and recomputes every derivation from scratch to compare with what is
+maintained. It reports fidelity per build and queues every disagreement with what it takes to
+reproduce it; it never corrects either reading, and what it finds ranks the work. The readings
+still to come are GitHub's dependency graph at a commit both name and what a workflow's run actually
+downloaded, `plans/api/dependency-graph-crosscheck.md`, and a CodeQL walk over each closure,
+`plans/ql/reachability-crosscheck.md`.
 
 Separately, a finding that stops being reported is currently never removed. The sighting record
 exists and the sweep is written; it waits on a crawl to make its report believable.

@@ -110,6 +110,77 @@ func TestWorkflowsPageReadsTriggersFromItsJobsAndPrivilegeFromAny(t *testing.T) 
 	}
 }
 
+// Dependents are distinct workflows that call this one. Two jobs in one caller are one
+// dependent, an edge that is not a call does not count, and a workflow nothing calls is 0.
+func TestWorkflowsPageCountsDistinctCallerWorkflows(t *testing.T) {
+	s := advisoryStore(t)
+	inventoryCorpus(t, s, 2)
+	workflowWithJobs(t, s, "octo-org/app", ".github/workflows/release.yml", "build", 1)
+	sharedRepo, err := s.UpsertRepository("octo-org/shared", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := upsertNode(t, s, nodeRow{
+		Key: "octo-org/shared/.github/workflows/build.yml", Kind: "reusable_workflow",
+		Repo: sharedRepo, Path: ".github/workflows/build.yml", StepIndex: -1,
+	})
+	caller := upsertNode(t, s, nodeRow{
+		Key: "octo-org/app/.github/workflows/caller.yml", Kind: "workflow",
+		Repo: sharedRepo, Path: ".github/workflows/caller.yml", StepIndex: -1,
+	})
+	for _, jobID := range []string{"one", "two"} {
+		job := upsertNode(t, s, nodeRow{
+			Key: "job:octo-org/app:.github/workflows/caller.yml:" + jobID, Kind: "job",
+			Repo: sharedRepo, Path: ".github/workflows/caller.yml", JobID: jobID, StepIndex: -1,
+			Container: caller,
+		})
+		if _, err := s.DB().Exec(`
+			INSERT INTO abom_edge (edge_key, src_node_row_id, dst_node_row_id, edge_kind, repository_row_id)
+			VALUES (?, ?, ?, 'job-uses-reusable-workflow', ?)`,
+			"call-"+jobID, job, shared, sharedRepo); err != nil {
+			t.Fatal(err)
+		}
+	}
+	otherRepo, err := s.UpsertRepository("octo-org/other", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := upsertNode(t, s, nodeRow{
+		Key: "octo-org/other/.github/workflows/ci.yml", Kind: "workflow",
+		Repo: otherRepo, Path: ".github/workflows/ci.yml", StepIndex: -1,
+	})
+	otherJob := upsertNode(t, s, nodeRow{
+		Key: "job:octo-org/other:.github/workflows/ci.yml:build", Kind: "job",
+		Repo: otherRepo, Path: ".github/workflows/ci.yml", JobID: "build", StepIndex: -1,
+		Container: other,
+	})
+	if _, err := s.DB().Exec(`
+		INSERT INTO abom_edge (edge_key, src_node_row_id, dst_node_row_id, edge_kind, repository_row_id)
+		VALUES ('call-other', ?, ?, 'job-uses-reusable-workflow', ?)`,
+		otherJob, shared, otherRepo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`
+		INSERT INTO abom_edge (edge_key, src_node_row_id, dst_node_row_id, edge_kind, repository_row_id)
+		VALUES ('not-a-call', ?, ?, 'step-uses-action', ?)`,
+		otherJob, shared, otherRepo); err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := s.WorkflowsPage(WorkflowsQuery{})
+	if err != nil {
+		t.Fatalf("WorkflowsPage: %v", err)
+	}
+	got := findWorkflow(t, page.Items, "octo-org/shared/.github/workflows/build.yml")
+	if got.DependedOnBy != 2 {
+		t.Errorf("counted %d dependents, want the 2 caller workflows, not their jobs or edges", got.DependedOnBy)
+	}
+	idle := findWorkflow(t, page.Items, "octo-org/app/.github/workflows/release.yml")
+	if idle.DependedOnBy != 0 {
+		t.Errorf("a workflow nothing calls counted %d dependents, want 0", idle.DependedOnBy)
+	}
+}
+
 func TestJobsPageListsJobsWithTheirOwnFacts(t *testing.T) {
 	s := advisoryStore(t)
 	inventoryCorpus(t, s, 2)

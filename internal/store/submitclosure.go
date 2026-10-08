@@ -32,11 +32,13 @@ type ClosureEntry struct {
 // observedEdges is what each regular run's commit declared at each location, as a CTE named
 // `observed`: every sighting whose content was recorded, and the row itself at the commit of the
 // run that wrote it, which is "" for a row no run recorded. A sighting whose content was never
-// recorded says nothing, so it is not here at all.
+// recorded says nothing, so it is not here at all. Kind and declaring node are a sighting's own,
+// cast for the reason observedIn's are: the closure's every step finds declarations by their node.
 const observedEdges = `observed(edge_row_id, src_node_row_id, dst_node_row_id, ref, commit_sha,
          repository_row_id, file_path, edge_kind) AS (
-	SELECT sg.edge_row_id, e.src_node_row_id, sg.dst_node_row_id, COALESCE(sg.ref_value, ''),
-	       LOWER(COALESCE(q.db_commit, '')), e.repository_row_id, e.file_path, e.edge_kind
+	SELECT sg.edge_row_id, CAST(COALESCE(sg.src_node_row_id, e.src_node_row_id) AS INTEGER),
+	       sg.dst_node_row_id, COALESCE(sg.ref_value, ''), LOWER(COALESCE(q.db_commit, '')),
+	       e.repository_row_id, e.file_path, CAST(COALESCE(sg.edge_kind, e.edge_kind) AS TEXT)
 	  FROM abom_edge_sighting sg
 	  JOIN abom_query_run q ON q.row_id = sg.query_run_id AND q.analysis_mode = 'regular'
 	  JOIN abom_edge_regular e ON e.row_id = sg.edge_row_id
@@ -70,6 +72,24 @@ const observedEdges = `observed(edge_row_id, src_node_row_id, dst_node_row_id, r
 // writer's target. The repository's own declarations are read at its default branch (?4, the
 // commits answering for it, NULL where no reference resolves the repository), so neither a step it
 // has since deleted nor what a release only a consumer pins declared is submitted as its own.
+// ownedByReference is an owned repository's own action or workflow, named by a reference that
+// carries a ref: what runs is that ref's commit, so it is in the supply chain like any dependency.
+// Its node is the repository's own, internal and without an owner, so owner, repository and path
+// are split from its key, `owner/repo[/path]`.
+const (
+	ownedByReference = `(n.is_external = 0 AND o.ref <> ''
+	    AND n.node_kind IN ('action', 'composite_action', 'reusable_workflow', 'workflow'))`
+	keyRest   = `SUBSTR(n.node_key, INSTR(n.node_key, '/') + 1)`
+	rootOwner = `CASE WHEN n.is_external = 1 THEN COALESCE(n.owner, '')
+	                  ELSE SUBSTR(n.node_key, 1, INSTR(n.node_key, '/') - 1) END`
+	rootRepo = `CASE WHEN n.is_external = 1 THEN COALESCE(n.repo, '')
+	                 WHEN INSTR(` + keyRest + `, '/') > 0 THEN SUBSTR(` + keyRest + `, 1, INSTR(` + keyRest + `, '/') - 1)
+	                 ELSE ` + keyRest + ` END`
+	rootPath = `CASE WHEN n.is_external = 1 THEN COALESCE(n.path, '')
+	                 WHEN INSTR(` + keyRest + `, '/') > 0 THEN SUBSTR(` + keyRest + `, INSTR(` + keyRest + `, '/') + 1)
+	                 ELSE '' END`
+)
+
 const submissionClosureQuery = `
 WITH RECURSIVE lock_choice(edge_row_id, commit_sha) AS (
 	SELECT CAST(json_extract(j.value, '$.e') AS INTEGER), LOWER(json_extract(j.value, '$.c'))
@@ -87,29 +107,29 @@ own AS (
 	   AND (?4 IS NULL OR o.commit_sha IN (SELECT j.value FROM json_each(?4) j))
 ),
 closure(manifest, node_row, node_key, owner, repo, subpath, ref, locked, pin, depth, parent_key) AS (
-	SELECT o.file_path, n.row_id, n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''),
-	       COALESCE(n.path,''), o.ref, COALESCE(lc.commit_sha, ''),
+	SELECT o.file_path, n.row_id, n.node_key, ` + rootOwner + `, ` + rootRepo + `,
+	       ` + rootPath + `, o.ref, COALESCE(lc.commit_sha, ''),
 	       COALESCE(lc.commit_sha, (SELECT LOWER(f.resolved_sha) FROM abom_frontier f
 	                                 WHERE f.node_key = n.node_key AND f.ref = o.ref)),
 	       0, ''
 	  FROM own o
 	  JOIN abom_node_live n ON n.row_id = o.dst_node_row_id
 	  LEFT JOIN lock_choice lc ON lc.edge_row_id = o.edge_row_id
-	 WHERE n.is_external = 1
+	 WHERE (n.is_external = 1 OR ` + ownedByReference + `)
 	   AND o.file_path LIKE '.github/workflows/%'
 	UNION
 	-- The repository's own composite actions. These edges never leave the repository, so nothing
 	-- reaches them by walking outward from a dependency, and they are the commonest invisible
 	-- dependency there is: an action.yml is not a manifest to GitHub.
-	SELECT o.file_path, n.row_id, n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''),
-	       COALESCE(n.path,''), o.ref, COALESCE(lc.commit_sha, ''),
+	SELECT o.file_path, n.row_id, n.node_key, ` + rootOwner + `, ` + rootRepo + `,
+	       ` + rootPath + `, o.ref, COALESCE(lc.commit_sha, ''),
 	       COALESCE(lc.commit_sha, (SELECT LOWER(f.resolved_sha) FROM abom_frontier f
 	                                 WHERE f.node_key = n.node_key AND f.ref = o.ref)),
 	       1, ''
 	  FROM own o
 	  JOIN abom_node_live n ON n.row_id = o.dst_node_row_id
 	  LEFT JOIN lock_choice lc ON lc.edge_row_id = o.edge_row_id
-	 WHERE n.is_external = 1
+	 WHERE (n.is_external = 1 OR ` + ownedByReference + `)
 	   AND o.edge_kind = 'composite-step-uses-action'
 	UNION
 	-- A route a lock governs stays governed: the root lock selects every commit under it. One it

@@ -1836,10 +1836,30 @@ code {
     max-height: 70vh;
 }
 
-/* Beside the tables the drawing fits the column, so a wide one shrinks rather than scrolls. */
-.abom-figure-side .abom-figure-canvas svg {
-    max-width: 100%;
-    height: auto;
+/* Beside the tables the drawing keeps its own label size and scrolls. Shrinking a figure at the
+   cap into the column made the labels unreadable. */
+.abom-figure-side .abom-figure-canvas {
+    overflow: auto;
+    max-height: 70vh;
+}
+
+.abom-figure-caption {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    margin-top: 0.15rem;
+}
+
+.abom-crumb {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.35rem;
+    min-width: 0;
+}
+
+.abom-crumb h1 {
+    margin: 0;
 }
 
 .abom-node-layout-side {
@@ -2005,7 +2025,8 @@ code {
     /* style-check: on */
 
     .abom-figure-canvas,
-    .abom-figure-top .abom-figure-canvas {
+    .abom-figure-top .abom-figure-canvas,
+    .abom-figure-side .abom-figure-canvas {
         overflow: visible;
         max-height: none;
     }

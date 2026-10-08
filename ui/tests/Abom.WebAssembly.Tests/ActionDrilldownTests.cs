@@ -538,5 +538,10 @@ public sealed class ActionDrilldownTests : AbomTestContext
             page.Find("[data-abom-version-ref='v4']").GetAttribute("href"));
         Assert.Equal("/inventory?properties=team%3Acore",
             page.Find("[data-abom-node-inventory]").GetAttribute("href"));
+        Assert.Equal("dependencies", page.Find("[data-abom-node-unit]").GetAttribute("data-abom-node-unit"));
+        Assert.Equal("/inventory?unit=dependencies&properties=team%3Acore",
+            page.Find("[data-abom-node-unit]").GetAttribute("href"));
+        Assert.Equal(Checkout, page.Find("h1").TextContent.Trim());
+        Assert.DoesNotContain("Back to Inventory", page.Markup);
     }
 }

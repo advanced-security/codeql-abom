@@ -13,7 +13,7 @@
     <section class="abom-figure abom-figure-side abom-figure-rail"
              aria-label="What runs it, and what it runs" data-abom-figure data-abom-figure-rail>
         <button type="button" class="abom-figure-rail-button" aria-expanded="false"
-                title="@($"Show the figure beside the tables. {Summary}.")"
+                title="@($"Show the figure beside the tables. {Spoken}.")"
                 @onclick="Toggle" data-abom-figure-toggle>
             <MudIcon Icon="@Icons.Material.Outlined.ChevronLeft" Size="Size.Small" />
             <MudIcon Icon="@Icons.Material.Outlined.AccountTree" Size="Size.Small" Class="abom-figure-rail-mark" />
@@ -26,7 +26,7 @@
                     </span>
                 }
             </span>
-            <span class="abom-visually-hidden" data-abom-figure-summary>Show the figure beside the tables. @Summary</span>
+            <span class="abom-visually-hidden" data-abom-figure-summary>Show the figure beside the tables. @Spoken</span>
         </button>
     </section>
     return;
@@ -43,6 +43,15 @@
         <div class="abom-figure-title">
             <MudText Typo="Typo.subtitle2" HtmlTag="h2" id="@HeadingId">What runs it, and what it runs</MudText>
             <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-figure-summary>@Summary</MudText>
+            @if (_figure?.Caption is { Count: > 0 } caption)
+            {
+                <div class="abom-figure-caption" data-abom-figure-caption>
+                    @foreach (var line in caption)
+                    {
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">@line</MudText>
+                    }
+                </div>
+            }
         </div>
         <div class="abom-figure-actions">
             @if (_figure is not null)
@@ -151,6 +160,11 @@
     private string BodyId => $"abom-figure-body-{Key.GetHashCode():x}";
 
     private string DownloadHref => AbomApi.FigurePath(Key, Predicate, svg: true);
+
+    /// <summary>The summary plus what the drawing left unsaid, for a reader who cannot see the heading.</summary>
+    private string Spoken => string.IsNullOrEmpty(CaptionText) ? Summary : Summary + " " + CaptionText;
+
+    private string CaptionText => _figure is { Caption.Count: > 0 } f ? string.Join(" ", f.Caption) : "";
 
     /// <summary>What the figure holds, in one sentence, whether or not it is open.</summary>
     private string Summary

@@ -19,7 +19,9 @@ public sealed class ClosureFigureTests : AbomTestContext
          "width":400,"height":200,
          "counts":{"drawn":25,"inClosure":186,"leftOut":161,"versions":9,"versionsDrawn":9,
                    "callers":120,"dependencies":0,"notListed":1057},
-         "terms":["Scope: what you own"],"direction":"LR","graphviz":"16.1.0"}
+         "terms":["Scope: what you own"],
+         "caption":["161 left out, yours and the nearest kept first; the Explorer draws all of it.","Terms: Scope: what you own.","Recorded 2026-10-06 13:30 UTC."],
+         "direction":"LR","graphviz":"16.1.0"}
         """;
 
     private IRenderedComponent<ClosureFigure> RenderFigure(string predicate = "scope=owned") =>
@@ -39,6 +41,12 @@ public sealed class ClosureFigureTests : AbomTestContext
 
         cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-figure-canvas] svg")));
         Assert.Equal("true", cut.Find("[data-abom-figure-toggle]").GetAttribute("aria-expanded"));
+        var caption = cut.Find("[data-abom-figure-caption]");
+        Assert.Contains("161 left out", caption.TextContent);
+        Assert.Contains("Recorded 2026-10-06 13:30 UTC.", caption.TextContent);
+        Assert.Empty(cut.FindAll("[data-abom-figure-canvas] [data-abom-figure-caption]"));
+        Assert.DoesNotContain("Graphviz", cut.Find("[data-abom-figure]").TextContent);
+        Assert.DoesNotContain("on the left", cut.Find("[data-abom-figure]").TextContent);
         var asked = Sent.Single(r => r.Url.Contains("/-/closure"));
         Assert.Contains("scope=owned", asked.Url);
     }

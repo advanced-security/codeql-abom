@@ -45,7 +45,7 @@ func assertCheckSaysIfItRuns(t *testing.T, want int, c checkState) {
 	if c.Number != want {
 		t.Errorf("check %d is listed as %d; the plan's order is the reader's", want, c.Number)
 	}
-	built := slices.Contains([]int{3, 4, 7, 8, 9}, c.Number)
+	built := slices.Contains([]int{1, 3, 4, 7, 8, 9}, c.Number)
 	switch {
 	case built && (c.State != "built" || c.BuiltBy != ""):
 		t.Errorf("check %d reads %q built by %q, want built", c.Number, c.State, c.BuiltBy)

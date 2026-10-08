@@ -35,7 +35,8 @@ func (o Options) direction() Direction {
 	return LeftToRight
 }
 
-// placeTimeout bounds one placement: a figure holds at most 25 nodes, so a slow one is a fault.
+// placeTimeout bounds one placement. A figure at DefaultLimit placed in about 50ms, so a run
+// that is still going after 5s is a fault, not a reason to draw less.
 const placeTimeout = 5 * time.Second
 
 // Document is the closure as a Graphviz document: sorted, so one closure is one document, never

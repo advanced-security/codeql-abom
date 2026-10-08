@@ -172,6 +172,11 @@ That is the only definition of verified, and CI runs the same target. Do not ass
 equivalent by hand — `check-corrupt` runs first and is not optional, because this environment
 intermittently prepends a duplicate `package` clause when writing a Go file.
 
+**Run it once, when the batch of work is done** — not after every stage. It takes 10 to 25 minutes,
+and the operator has said running it per stage is overkill. Between stages, run the tests of the
+packages you changed (`go test ./internal/<pkg>/ -count=1`) and `make lint`; the full target is the
+last step before handing back, after every fix in the batch has landed.
+
 CI also runs `self-audit.yml`, which `make quality` reproduces and `make verify` does not include.
 Run it when a change builds a path, command or URL from anything the store, a checkout or a
 response hands back: closure databases passed `make verify` with 16 Go findings they introduced.
@@ -206,6 +211,16 @@ Zero results usually means a coverage gap, not a broken traversal. Check whether
 supports the result at all before touching traversal code. And never "fix" data that contradicts
 an assumption: `actions/download-artifact@v8` looked like corruption until `git ls-remote --tags`
 confirmed v1–v8 all exist. Verify the world first.
+
+**Run the consistency checker on both copies.** `codeql-abom check --db <copy> --app-dir
+.abom/db/github-app` compares the graph with independent readings of GitHub and with itself; add
+`--recent 0 --sample 1000` where the population is small enough to read whole. A disagreement the
+change opens is a defect. To see one it should settle, run the old binary on a copy first, migrate
+that copy with the new one (`codeql-abom own --db <copy>`), and run again: part `a` of each check
+reads the open disagreements again, and an agreement there closes them. Its first runs found three
+defects unit tests had passed through — a location's kind read from one commit for every commit, a
+step reused through a YAML alias recorded once, an owned action never queued at the reference that
+uses it — so a change to extraction, ingestion or a walk is not measured until it has run.
 
 ## 7. Record what happened
 
@@ -339,6 +354,29 @@ status theatre.
   `abom_workflow_run`, and label it a mutation.
 - Attribute every findings difference between on and off to a rule's `taken_from` and the release
   it names. A rule taken from ABOM's own release must differ by nothing.
+
+## Adding a consistency check
+
+Checks 2, 5, 6, 10 and 11 are planned in the plans that own what they depend on, and
+`checks.Catalog` names each one's plan and item title, never an item number. Building one:
+
+- **A disagreement is a question, never a correction.** Neither reading overwrites the other, and
+  nothing the checker finds is written into a table the graph reads.
+- **The checker cannot change what it measures.** It spends only its own pools and reads copies
+  taken with `VACUUM INTO`, so a busy checker cannot starve discovery and make freshness look worse.
+- **Compare at the same commit, or skip and count.** A mismatch caused by comparing two trees looks
+  exactly like an extraction defect.
+- **Unread is never agreement.** Name why a subject went unread, without naming the subject, so a
+  run's skips stay countable; a source that refused is unknown, not empty.
+- **Sample with the shared draw**: the open disagreements again, then what changed most recently,
+  then a random baseline per stratum whose bound is stated. Zero in 300 bounds the rate below 1% at
+  95%, and is reported as that, not as "correct".
+- **Class by rule.** A disagreement's class is decided by the check, never by whoever reads it.
+- **Prove it with a mutant.** A build that drops one kind of declaration, or one class of whatever
+  the check reads, must be caught by the next sample of what changed most recently, and the
+  per-build trend must show when it started.
+- Measure a new reading on the crawl before trusting it: a `ref_raw` of `$/` looked like an
+  expression ABOM had rewritten until the file showed a repository really writes `uses: $/`.
 
 ## Related
 
