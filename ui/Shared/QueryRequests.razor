@@ -153,47 +153,51 @@
                         }
                     </CellTemplate>
                 </PropertyColumn>
-                <TemplateColumn Title="Progress" CellClass="abom-nowrap">
+                <TemplateColumn Title="Progress">
                     <HeaderTemplate><HeaderTip Tip="Where the request stands, then each authoring step it was read from.">Progress</HeaderTip></HeaderTemplate>
                     <CellTemplate>
-                        @if (context.Item.Outcome is { } outcome)
-                        {
-                            <Tip Text="@OutcomeTip(outcome)">
-                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
-                                         Color="@AuthoringSteps.OutcomeColor(outcome.State)"
-                                         data-abom-request-outcome="@outcome.State">
-                                    @if (outcome.State == "working")
-                                    {
-                                        <MudProgressCircular Indeterminate="true" Size="Size.Small" Class="abom-request-working mr-1"
-                                                             aria-label="An agent is working" data-abom-request-working />
-                                    }
-                                    @outcome.Headline
-                                </MudChip>
-                            </Tip>
-                            @if (outcome.Total > 0)
+                        <div class="abom-request-progress">
+                            @if (context.Item.Outcome is { } outcome)
                             {
-                                <MudText Typo="Typo.caption" Class="mud-text-secondary mr-1" data-abom-request-passed>@outcome.Passed of @outcome.Total</MudText>
+                                <span class="abom-request-outcome">
+                                    <Tip Text="@OutcomeTip(outcome)">
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                                 Color="@AuthoringSteps.OutcomeColor(outcome.State)"
+                                                 data-abom-request-outcome="@outcome.State">
+                                            @if (outcome.State == "working")
+                                            {
+                                                <MudProgressCircular Indeterminate="true" Size="Size.Small" Class="abom-request-working mr-1"
+                                                                     aria-label="An agent is working" data-abom-request-working />
+                                            }
+                                            @outcome.Headline
+                                        </MudChip>
+                                    </Tip>
+                                    @if (outcome.Total > 0)
+                                    {
+                                        <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-request-passed>@outcome.Passed of @outcome.Total</MudText>
+                                    }
+                                </span>
                             }
-                        }
-                        <AuthoringSteps Steps="@context.Item.Steps" QueryId="@context.Item.QueryId" />
+                            <AuthoringSteps Steps="@context.Item.Steps" QueryId="@context.Item.QueryId" />
+                        </div>
                     </CellTemplate>
                 </TemplateColumn>
-                <PropertyColumn Property="x => x.Kind" Title="Kind" CellClass="abom-nowrap">
+                <PropertyColumn Property="x => x.Kind" Title="Kind">
                     <HeaderTemplate><HeaderTip Tip="Whether the request is about a missed detection, a false alarm, or both.">Kind</HeaderTip></HeaderTemplate>
                     <CellTemplate><MudText Typo="Typo.caption">@KindText(context.Item.Kind)</MudText></CellTemplate>
                 </PropertyColumn>
-                <PropertyColumn Property="x => x.QueryId" Title="Query" CellClass="abom-nowrap">
+                <PropertyColumn Property="x => x.QueryId" Title="Query">
                     <HeaderTemplate><HeaderTip Tip="The query the request is about, or a note that it needs a new query.">Query</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         @if (context.Item.QueryId.Length == 0)
                         {
-                            <MudText Typo="Typo.caption" Class="mud-text-secondary">a new query</MudText>
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary abom-nowrap">a new query</MudText>
                         }
                         else
                         {
                             <Tip Text="Open this query in the catalog.">
                                 <MudLink Href="@CatalogHref(context.Item.QueryId)" Typo="Typo.body2"
-                                         Class="abom-path" data-abom-request-query-link>@context.Item.QueryId</MudLink>
+                                         Class="abom-path" data-abom-request-query-link>@foreach (var part in Slashed(context.Item.QueryId)){<span class="abom-nowrap">@part</span><wbr />}</MudLink>
                             </Tip>
                         }
                     </CellTemplate>
@@ -209,10 +213,11 @@
                 <PropertyColumn Property="x => x.RequestedBy" Title="Asked by" CellClass="abom-nowrap">
                     <HeaderTemplate><HeaderTip Tip="The account that filed the request.">Asked by</HeaderTip></HeaderTemplate>
                 </PropertyColumn>
-                <PropertyColumn Property="x => x.UpdatedAt" Title="Updated" CellClass="abom-nowrap">
+                <PropertyColumn Property="x => x.UpdatedAt" Title="Updated">
                     <HeaderTemplate><HeaderTip Tip="When the request was last changed.">Updated</HeaderTip></HeaderTemplate>
                     <CellTemplate>
-                        <MudText Typo="Typo.caption">@TimeText.DayAndTime(context.Item.UpdatedAt)</MudText>
+                        @{ var (day, time) = DayOverTime(context.Item.UpdatedAt); }
+                        <MudText Typo="Typo.caption"><span class="abom-nowrap">@day</span> <span class="abom-nowrap">@time</span></MudText>
                     </CellTemplate>
                 </PropertyColumn>
             </Columns>
@@ -496,6 +501,21 @@
         $"/codeql?tab=catalog&query={Uri.EscapeDataString(queryId)}";
 
     private static string KindText(string kind) => QueryRequestForm.KindText(kind);
+
+    // A query id breaks only after a slash, so a long one takes two lines rather than the table's width.
+    private static IEnumerable<string> Slashed(string id)
+    {
+        var parts = id.Split('/');
+        return parts.Select((part, i) => i < parts.Length - 1 ? part + "/" : part);
+    }
+
+    // Likewise a time breaks only before "at": a narrow column puts the day over the time.
+    private static (string Day, string Time) DayOverTime(string timestamp)
+    {
+        var when = TimeText.DayAndTime(timestamp);
+        var at = when.LastIndexOf(" at ", StringComparison.Ordinal);
+        return at < 0 ? (when, "") : (when[..at], when[(at + 1)..]);
+    }
 
     private static IEnumerable<RequestExample> ExamplesOf(QueryRequest request, string side) =>
         request.Examples.Count > 0

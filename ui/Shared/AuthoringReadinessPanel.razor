@@ -48,7 +48,7 @@ else if (_readiness is { Known: true } r && Editable)
                             <span class="abom-path">@(c.Path.Length > 0 ? c.Path : "none")</span>
                             @if (c.Source.Length > 0)
                             {
-                                <MudText Typo="Typo.caption" Class="mud-text-secondary">from @c.Source</MudText>
+                                <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">from @c.Source</MudText>
                             }
                             @if (!c.IsReady)
                             {
@@ -70,7 +70,7 @@ else if (_readiness is { Known: true } r && Editable)
                                 <div class="d-flex align-center gap-2 mt-2" data-abom-tool-path="@c.Key">
                                     <MudTextField T="string" Value="@EditOf(c)" ValueChanged="@(v => _edits[c.Key] = v)"
                                                   Immediate="true" Variant="Variant.Outlined" Margin="Margin.Dense"
-                                                  Label="@($"Path to the {c.Name}")" Placeholder="/absolute/path/to/executable"
+                                                  Label="@($"Path to the {c.Name}")" Placeholder="@($"/absolute/path/to/{c.Key}")"
                                                   Disabled="_saving" />
                                     <Tip Text="@($"Check this executable on the server and, if it runs, use it for the {c.Name} ahead of any flag or variable.")">
                                         <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"

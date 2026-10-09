@@ -10,8 +10,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/store"
@@ -40,6 +42,13 @@ const DefaultTimeout = 15 * time.Second
 
 // ErrUnusable refuses a path no session could run.
 var ErrUnusable = errors.New("not a usable executable")
+
+// toolFile is the one file name Settings may point each tool at, in an absolute path. Settings
+// chooses which copy of a tool the server runs as itself, never which program.
+var toolFile = map[string]*regexp.Regexp{
+	store.ToolCodeQL:  regexp.MustCompile(`^(?:/[^/]+)*/codeql$`),
+	store.ToolCopilot: regexp.MustCompile(`^(?:/[^/]+)*/copilot$`),
+}
 
 // Check is one thing a session needs, and whether this server has it.
 type Check struct {
@@ -161,8 +170,8 @@ func (t *Toolchain) packCheck() Check {
 		return c.problem("a session cannot write in "+t.Pack+": "+err.Error(),
 			"make the directory writable by the user running the server")
 	}
-	probe.Close()
-	os.Remove(probe.Name())
+	_ = probe.Close()
+	_ = os.Remove(probe.Name())
 	return c.ready()
 }
 
@@ -249,6 +258,13 @@ func (t *Toolchain) SetTool(ctx context.Context, tool, path, by string) error {
 	fallback := t.defaults[tool]
 	t.mu.Unlock()
 	if path != "" {
+		if !toolFile[tool].MatchString(path) {
+			return fmt.Errorf("%w: %s is not an absolute path to a file named %s; name any other program "+
+				"with the server's flag or environment variable instead", ErrUnusable, path, tool)
+		}
+		if clean := filepath.Clean(path); clean != path {
+			return fmt.Errorf("%w: name %s as %s", ErrUnusable, path, clean)
+		}
 		if err := t.usable(ctx, tool, path); err != nil {
 			return err
 		}
@@ -271,9 +287,6 @@ func (t *Toolchain) SetTool(ctx context.Context, tool, path, by string) error {
 }
 
 func (t *Toolchain) usable(ctx context.Context, tool, path string) error {
-	if !filepath.IsAbs(path) {
-		return fmt.Errorf("%w: %s is not an absolute path", ErrUnusable, path)
-	}
 	info, err := os.Stat(path)
 	switch {
 	case err != nil:
@@ -283,12 +296,38 @@ func (t *Toolchain) usable(ctx context.Context, tool, path string) error {
 	case info.Mode()&0o111 == 0:
 		return fmt.Errorf("%w: %s is not executable", ErrUnusable, path)
 	}
+	if err := ownedHere(path); err != nil {
+		return err
+	}
 	args, parse := []string{"--version"}, firstLine
 	if tool == store.ToolCodeQL {
 		args, parse = []string{"version", "--format=json"}, codeqlVersion
 	}
 	if _, err := t.version(ctx, path, args, parse, true); err != nil {
 		return fmt.Errorf("%w: %v", ErrUnusable, err)
+	}
+	return nil
+}
+
+// ownedHere refuses an executable another account could change after it is checked, since the
+// server runs it as itself: the file a link leads to, and the directories both are named in.
+func ownedHere(path string) error {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return fmt.Errorf("%w: %s cannot be followed: %v", ErrUnusable, path, err)
+	}
+	for _, p := range []string{filepath.Dir(path), filepath.Dir(resolved), resolved} {
+		info, err := os.Stat(p)
+		if err != nil {
+			return fmt.Errorf("%w: %s cannot be read: %v", ErrUnusable, p, err)
+		}
+		if info.Mode().Perm()&0o002 != 0 {
+			return fmt.Errorf("%w: anyone can write %s, so anyone could change what the server runs", ErrUnusable, p)
+		}
+		if st, ok := info.Sys().(*syscall.Stat_t); !ok || (int(st.Uid) != os.Getuid() && st.Uid != 0) {
+			return fmt.Errorf("%w: %s belongs to another account, which could change what the server runs",
+				ErrUnusable, p)
+		}
 	}
 	return nil
 }
@@ -374,17 +413,23 @@ func firstLine(out []byte) (string, error) {
 	return "", errors.New("printed no version")
 }
 
-// vscodeCopilot is where the Copilot Chat extension installs the CLI, if it did.
+// vscodeCopilot is where the Copilot Chat extension installs the CLI, if it did. It is read through a
+// root at the configuration directory, which the environment names, so a link cannot lead out of it.
 func vscodeCopilot() string {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return ""
 	}
-	path := filepath.Join(dir, "Code", "User", "globalStorage", "github.copilot-chat", "copilotCli", "copilot")
-	if info, err := os.Stat(path); err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
 		return ""
 	}
-	return path
+	defer func() { _ = root.Close() }()
+	rel := filepath.Join("Code", "User", "globalStorage", "github.copilot-chat", "copilotCli", "copilot")
+	if info, err := root.Stat(rel); err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
+		return ""
+	}
+	return filepath.Join(dir, rel)
 }
 
 func exists(path string) bool {

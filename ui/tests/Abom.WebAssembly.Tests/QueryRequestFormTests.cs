@@ -272,6 +272,22 @@ public class QueryRequestFormTests : AbomTestContext
         Assert.Contains("\"securitySeverity\":8.8", body);
     }
 
+    /// <summary>A query declares a tag once, however often it was typed.</summary>
+    [Fact]
+    public void ATagTypedTwiceIsDeclaredOnce()
+    {
+        var cut = Open();
+        FillTheMinimum(cut);
+        cut.Find("[data-abom-request-metadata-toggle]").Click();
+        Type(cut, "[data-abom-metadata-tags] input", "actions security actions");
+        cut.Find("[data-abom-metadata-tag-add]").Click();
+        Type(cut, "[data-abom-metadata-tags] input", "security");
+        cut.Find("[data-abom-metadata-tag-add]").Click();
+
+        Assert.Equal(["actions", "security"],
+            cut.FindAll("[data-abom-metadata-tag]").Select(c => c.TextContent.Trim()));
+    }
+
     /// <summary>
     /// Code scanning reads @security-severity only on a query tagged security, so proposing one tags
     /// the query security where the requester can see it, and taking that tag away says why it is

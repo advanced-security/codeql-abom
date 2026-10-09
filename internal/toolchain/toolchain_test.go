@@ -34,11 +34,21 @@ func newPlace(t *testing.T) place {
 // script writes an executable that prints out, or one that never answers when out is "".
 func (p place) script(t *testing.T, name, out string) string {
 	t.Helper()
+	return p.at(t, ".", name, out)
+}
+
+// at writes the script into its own directory, so several can carry a tool's own name.
+func (p place) at(t *testing.T, sub, name, out string) string {
+	t.Helper()
 	body := "#!/bin/sh\nprintf '%s\\n' '" + out + "'\n"
 	if out == "" {
 		body = "#!/bin/sh\nsleep 5\n"
 	}
-	path := filepath.Join(p.dir, name)
+	dir := filepath.Join(p.dir, sub)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -141,16 +151,23 @@ func TestACopilotPathSetWhileServingIsCheckedKeptAndApplied(t *testing.T) {
 	tc.ApplyCopilot = func(path string) { applied = append(applied, path) }
 	ctx := context.Background()
 
-	notExecutable := filepath.Join(p.dir, "plain")
+	notExecutable := filepath.Join(p.dir, "plain", "copilot")
+	if err := os.MkdirAll(filepath.Dir(notExecutable), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(notExecutable, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(p.dir, "folder", "copilot")
+	if err := os.MkdirAll(directory, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	for name, path := range map[string]string{
 		"relative":       "bin/copilot",
-		"missing":        filepath.Join(p.dir, "absent"),
-		"directory":      p.dir,
+		"missing":        filepath.Join(p.dir, "absent", "copilot"),
+		"directory":      directory,
 		"not executable": notExecutable,
-		"never answers":  p.script(t, "shim", ""),
+		"never answers":  p.at(t, "shim", "copilot", ""),
 	} {
 		if err := tc.SetTool(ctx, store.ToolCopilot, path, "alice"); !errors.Is(err, ErrUnusable) {
 			t.Errorf("%s path %s: %v, want ErrUnusable", name, path, err)
@@ -160,7 +177,7 @@ func TestACopilotPathSetWhileServingIsCheckedKeptAndApplied(t *testing.T) {
 		t.Fatalf("a refused path was kept %v or applied %v", saved, applied)
 	}
 
-	chosen := p.script(t, "copilot-2", "2.0.0")
+	chosen := p.at(t, "v2", "copilot", "2.0.0")
 	if err := tc.SetTool(ctx, store.ToolCopilot, chosen, "alice"); err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +202,7 @@ func TestACodeQLPathSetWhileServingWaitsForTheNextStart(t *testing.T) {
 	p := newPlace(t)
 	tc := p.chain(t)
 	inUse := tc.CodeQL.Path
-	chosen := p.script(t, "codeql-next", `{"semanticVersion":"2.28.0"}`)
+	chosen := p.at(t, "next", "codeql", `{"semanticVersion":"2.28.0"}`)
 	if err := tc.SetTool(context.Background(), store.ToolCodeQL, chosen, "alice"); err != nil {
 		t.Fatal(err)
 	}
@@ -193,8 +210,76 @@ func TestACodeQLPathSetWhileServingWaitsForTheNextStart(t *testing.T) {
 	if c.Path != inUse || c.Saved != chosen || !strings.Contains(c.Remedy, "restart") {
 		t.Errorf("a CodeQL set while serving reads %+v", c)
 	}
-	if err := tc.SetTool(context.Background(), store.ToolCodeQL, p.script(t, "liar", "not json"), "alice"); !errors.Is(err, ErrUnusable) {
+	if err := tc.SetTool(context.Background(), store.ToolCodeQL, p.at(t, "liar", "codeql", "not json"), "alice"); !errors.Is(err, ErrUnusable) {
 		t.Errorf("a program that is not CodeQL was accepted: %v", err)
+	}
+}
+
+// Settings is a page anyone who reaches the server can submit. A path it names is run by the server
+// as itself, so the page may only choose which copy of the tool runs, never what program runs.
+func TestSettingsCanNameOnlyAFileCalledAfterItsTool(t *testing.T) {
+	p := newPlace(t)
+	tc := p.chain(t)
+	var applied []string
+	tc.ApplyCopilot = func(path string) { applied = append(applied, path) }
+	ctx := context.Background()
+
+	// Each of these answers --version as a Copilot CLI would, so only the rule can refuse it.
+	another := p.at(t, "other", "helper", "1.0.0")
+	p.at(t, "v3", "copilot", "1.0.0")
+	p.at(t, "v2", "copilot", "1.0.0")
+	for name, path := range map[string]string{
+		"another program":         another,
+		"a name that ends in it":  p.at(t, "suffix", "not-copilot", "1.0.0"),
+		"the other tool's name":   p.at(t, "swapped", "codeql", "1.0.0"),
+		"a path through a parent": p.dir + "/v2/../v3/copilot",
+	} {
+		if err := tc.SetTool(ctx, store.ToolCopilot, path, "alice"); !errors.Is(err, ErrUnusable) {
+			t.Errorf("%s (%s): %v, want ErrUnusable", name, path, err)
+		}
+	}
+	if saved, _ := p.store.ToolPaths(); len(saved) != 0 || len(applied) != 0 {
+		t.Fatalf("a refused path was kept %v or applied %v", saved, applied)
+	}
+	if err := tc.SetTool(ctx, store.ToolCodeQL, another, "alice"); !errors.Is(err, ErrUnusable) {
+		t.Errorf("CodeQL pointed at another program: %v, want ErrUnusable", err)
+	}
+}
+
+// Another account that can change the file, or the directory it is named in, could change what the
+// server runs as itself, after it was checked.
+func TestSettingsRefusesAToolAnotherAccountCouldReplace(t *testing.T) {
+	p := newPlace(t)
+	tc := p.chain(t)
+	ctx := context.Background()
+
+	openDir := p.at(t, "shared", "copilot", "1.0.0")
+	if err := os.Chmod(filepath.Dir(openDir), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	openFile := p.at(t, "loose", "copilot", "1.0.0")
+	if err := os.Chmod(openFile, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(p.dir, "linked", "copilot")
+	if err := os.MkdirAll(filepath.Dir(linked), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(openFile, linked); err != nil {
+		t.Fatal(err)
+	}
+	for name, path := range map[string]string{
+		"in a directory anyone can write":   openDir,
+		"a file anyone can write":           openFile,
+		"a link to a file anyone can write": linked,
+	} {
+		err := tc.SetTool(ctx, store.ToolCopilot, path, "alice")
+		if !errors.Is(err, ErrUnusable) || !strings.Contains(err.Error(), "anyone can write") {
+			t.Errorf("%s: %v, want it refused because anyone can write it", name, err)
+		}
+	}
+	if saved, _ := p.store.ToolPaths(); len(saved) != 0 {
+		t.Fatalf("a path another account could replace was kept: %v", saved)
 	}
 }
 

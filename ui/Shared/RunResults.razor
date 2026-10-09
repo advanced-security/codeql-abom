@@ -485,7 +485,9 @@ else
                     <li class="abom-held-item" data-abom-run-finding="@f.FindingRowId">
                         <SeverityChip Severity="@f.Band" />
                         <div class="abom-held-text">
-                            <a class="abom-path" href="@FindingHref(repository, f)">@($"{f.FilePath}:{f.StartLine}")</a>
+                            <Tip Text="Open this finding's review.">
+                                <a class="abom-path" href="@FindingHref(repository, f)">@($"{f.FilePath}:{f.StartLine}")</a>
+                            </Tip>
                             <span class="abom-held-message">@message</span>
                         </div>
                     </li>
@@ -497,9 +499,11 @@ else
                     Only the first @listed.Findings.Count are listed.
                 </MudText>
             }
-            <MudLink Href="@ReviewHref(repository)" Typo="Typo.caption" data-abom-run-findings-review="@repository">
-                Review @repository's findings from @(Columns.Count == 1 ? "this query" : "these queries")
-            </MudLink>
+            <Tip Text="Open the findings review in Inventory, narrowed to this repository and this run's queries.">
+                <MudLink Href="@ReviewHref(repository)" Typo="Typo.caption" data-abom-run-findings-review="@repository">
+                    Review @repository's findings from @(Columns.Count == 1 ? "this query" : "these queries")
+                </MudLink>
+            </Tip>
         }
     };
 

@@ -136,7 +136,7 @@ func propertyServer(t *testing.T) (*Server, *[]string) {
 		if owner == "codeql" {
 			return nil, nil, &ghauth.Problem{Reason: "codeql requires single sign-on.", Remedy: "authorize it"}
 		}
-		return []ghauth.PropertyDefinition{
+		definitions := []ghauth.PropertyDefinition{
 			{Name: "team", ValueType: "single_select", ValuesEditableBy: "org_actors",
 				AllowedValues: []string{"a", "b", "c"}, HasDefault: true, DefaultValue: "a"},
 			{Name: "business_id", ValueType: "string", ValuesEditableBy: "org_and_repo_actors"},
@@ -145,13 +145,15 @@ func propertyServer(t *testing.T) (*Server, *[]string) {
 			{Name: "tags", ValueType: "multi_select", ValuesEditableBy: "org_actors",
 				AllowedValues: []string{"x", "y"}, DefaultValues: []string{"x"}},
 			{Name: "region", ValueType: "string", ValuesEditableBy: "org_actors"},
-		}, []ghauth.RepositoryProperties{
+		}
+		values := []ghauth.RepositoryProperties{
 			{Repository: "acme/alpha", Values: []ghauth.PropertyValue{{Name: "team", Value: "a"},
 				{Name: "business_id", Value: "7"}, {Name: "flag", Value: "true"}, {Name: "region", Value: "emea"}}},
 			{Repository: "acme/beta", Values: []ghauth.PropertyValue{{Name: "team", Value: "a"}, {Name: "REGION", Value: "emea"}}},
 			{Repository: "acme/gamma", Values: []ghauth.PropertyValue{{Name: "team", Value: "b"}}},
 			{Repository: "acme/delta", Values: []ghauth.PropertyValue{{Name: "team", Value: "retired"}}},
-		}, nil
+		}
+		return definitions, values, nil
 	}
 	return srv, &asked
 }

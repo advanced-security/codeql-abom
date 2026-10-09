@@ -340,7 +340,9 @@ digests the fixtures alone, so a corrected `.expected` leaves the AST step curre
 Copilot CLI, ql-mcp, a GitHub token and CodeQL free of a crawl are each ready or named with a
 remedy, and starting is held back with the first problem. Settings can name the CodeQL and Copilot
 executables; a saved path is run before it is kept, and is used ahead of the flag or environment
-variable that names the default.
+variable that names the default. It must be an absolute path to a file of the tool's own name, which
+no other account can change: the server runs it as itself, so a page that anyone reaching the
+server can submit chooses which copy of a tool runs, never which program.
 
 **ABOM prints a query's tree itself, so a query written by hand can earn every step.** A custom
 catalog row's AST mark runs `PrintAST` from `advanced-security/ql-mcp-actions-tools-src` 2.27.1,

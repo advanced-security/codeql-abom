@@ -25,7 +25,13 @@ test('what you own and what it runs are both offered, each describing itself', o
     ]) {
         const chip = page.locator(`[data-abom-views] [data-abom-view='${name}']`);
         await expect(chip).toHaveText(title);
-        await expect(chip).toHaveAttribute('title', holds);
+        // Its tip, which a reader sees on hover; a title attribute as well would draw a second.
+        const tip = page.locator('[data-abom-views] [data-abom-tip]', {
+            has: page.locator(`[data-abom-view='${name}']`),
+        });
+        await expect(tip).toHaveAttribute('data-abom-tip', holds);
+        await tip.hover();
+        await expect(page.locator('.mud-tooltip', { hasText: holds })).toBeVisible();
     }
 });
 

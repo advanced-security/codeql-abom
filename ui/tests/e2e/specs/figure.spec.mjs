@@ -69,8 +69,8 @@ test.describe('the figure on a details page', () => {
         await expect(page.locator('[data-abom-figure-summary]')).toContainText('drawn');
     });
 
-    // The title, its chips, and each link's icon and words share one center line: the icons sat
-    // 4.9 px above their words, and the words 4.7 px below the title.
+    // The title, its chips, and the Explorer link's icon and words share one center line: the icons
+    // sat 4.9 px above their words, and the words 4.7 px below the title.
     test('lines its header up on one center', on('/node'), async ({ page, request, baseURL }) => {
         const key = await firstAction(request, baseURL);
         test.skip(!key, 'no action on this corpus');
@@ -94,7 +94,8 @@ test.describe('the figure on a details page', () => {
             });
             return out;
         });
-        expect(centers.length).toBeGreaterThanOrEqual(5);
+        // The title and the Explorer link's icon and words at least; the origin chip where there is one.
+        expect(centers.length).toBeGreaterThanOrEqual(3);
         expect(Math.max(...centers) - Math.min(...centers)).toBeLessThanOrEqual(1.5);
     });
 

@@ -127,12 +127,17 @@ jobs:
           LANGUAGE: ${{ matrix.language }}
           SOURCE_ROOT: ${{ matrix.source-root }}
           SUITE: ${{ matrix.suite }}
+        # The memory code scanning's own action gives CodeQL: all of it but 1 GB, less 5% of what is
+        # above 8 GB. CodeQL's default is a fraction of the machine, and the C# suite ran out of heap
+        # inside it.
         run: |
+          total=$(awk '/^MemTotal:/ { printf "%d", $2 / 1024 }' /proc/meminfo)
+          ram=$(( total - 1024 - (total > 8192 ? (total - 8192) / 20 : 0) ))
           if [ -n "$SUITE" ]; then
-            go run ./cmd/codeql-abom selfcheck \
+            go run ./cmd/codeql-abom selfcheck --ram="$ram" \
               --language="$LANGUAGE" --source-root="$SOURCE_ROOT" --suite "$SUITE"
           else
-            go run ./cmd/codeql-abom selfcheck --source-root="$SOURCE_ROOT"
+            go run ./cmd/codeql-abom selfcheck --ram="$ram" --source-root="$SOURCE_ROOT"
           fi
 
       - name: Self Audit - Summary

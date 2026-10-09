@@ -77,13 +77,26 @@ test.describe('nothing declared yet', () => {
 });
 
 test.describe('vocabulary', () => {
+    // What the interface itself says. A verbatim path, repository or rule is somebody else's name for
+    // their own thing, and this suite's query pack sits at .abom/corpus/ql.
+    async function wording(page) {
+        return (await page.evaluate(() => {
+            const verbatim = document.createElement('style');
+            verbatim.textContent = '.abom-path, .abom-ref, .abom-rule { display: none !important; }';
+            document.head.append(verbatim);
+            const text = document.body.innerText;
+            verbatim.remove();
+            return text;
+        })).toLowerCase();
+    }
+
     test('the retired ownership wording appears nowhere a reader can see it', on(...ROUTES), async ({ page }) => {
         // checkVocabulary guards the source. This guards what actually rendered, including
         // strings the server supplied rather than the Razor.
         for (const route of ROUTES) {
             await page.goto(route);
             await ready(page);
-            const body = (await page.locator('body').innerText()).toLowerCase();
+            const body = await wording(page);
             expect(body, `${route} uses retired wording "in scope"`).not.toContain('in scope');
             expect(body, `${route} uses retired wording "under review"`).not.toContain('under review');
             expect(body, `${route} uses a retired boundary spelling`).not.toContain('cross org');
