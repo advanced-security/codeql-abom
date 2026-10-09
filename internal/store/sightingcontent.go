@@ -269,7 +269,7 @@ func (s *Store) EdgeDeclarations(
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(`WITH `+liveDeclared(AnalysisModeRegular)+`
+	rows, err := s.db.Query(`WITH `+declarationsAtCommits(AnalysisModeRegular, true)+`
 		SELECT e.edge_row_id, e.src_node_row_id, e.dst_node_row_id, e.ref, e.commit_sha
 		  FROM declared e
 		 WHERE `+DependencyEdgeFilter+`
@@ -352,30 +352,51 @@ func observedIn(mode string) string {
 )`
 }
 
-// liveDeclared is EdgeDeclarations' reading in SQL, for readers that filter, page and count: CTEs
+const triggeredWorkflows = `
+	SELECT c.row_id FROM abom_node_live c
+	 WHERE c.node_kind = 'workflow'
+	   AND NOT EXISTS (SELECT 1 FROM abom_edge_any_mode x
+	                    WHERE x.dst_node_row_id = c.row_id
+	                      AND x.repository_row_id IS NOT c.repository_row_id)`
+
+// Upstream CI is retained as evidence, not listed as something the operator runs.
+var visibleWorkflowNode = ` AND COALESCE(n.container_node_row_id, n.row_id) NOT IN (
+	SELECT c.row_id FROM abom_node_live c
+	  JOIN repository r ON r.row_id = c.repository_row_id
+	 WHERE r.origin = '` + OriginUpstream + `' AND c.row_id IN (` + triggeredWorkflows + `))`
+
+// liveDeclared is the reading for views that filter, page and count: CTEs
 // ending in one named `declared`, a row per observation and per live commit it answers for, with
 // `analyzed` the commit it was observed at and `commit_sha` the one a walk may stand at.
 //
 // A sighting without recorded content adds nothing; a commit nothing resolves to any more is
 // history and adds nothing; a repository no reference resolves keeps every commit it was analyzed
-// at; a row no run recorded binds to no commit. A line of a repository under review in a workflow
+// at; a row no run recorded binds to no commit. A line in a workflow
 // that something triggers is live only at its starting commits: nobody runs a repository's own CI
 // at a release a consumer pins. A composite action, and a workflow another repository calls, stay
 // live wherever consumers resolve them.
 // Binds one argument where it sits in the statement: liveAnswers of LiveCommits and StartingCommits.
 func liveDeclared(mode string) string {
+	return declarationsAtCommits(mode, false)
+}
+
+// The walk retains upstream CI as explicit, hidden-by-default context, never as a dependent.
+func declarationsAtCommits(mode string, upstreamCI bool) string {
+	ci := ""
+	if upstreamCI {
+		ci = `COALESCE(r.origin, '') <> '` + OriginSeed + `' OR `
+	}
 	// Materialized, or each observation re-reads the JSON rather than an index built on it once.
 	return `live_answer(repository, commit_sha, answer, starting) AS MATERIALIZED (
 	SELECT json_extract(j.value, '$.r'), json_extract(j.value, '$.c'), json_extract(j.value, '$.a'),
 	       COALESCE(json_extract(j.value, '$.s'), 0)
 	  FROM json_each(?) j
 ),
+triggered_workflow(row_id) AS (` + triggeredWorkflows + `),
 triggered_line(row_id) AS (
 	SELECT s.row_id FROM abom_node_live s
-	  JOIN abom_node_live c ON c.row_id = s.container_node_row_id AND c.node_kind = 'workflow'
-	 WHERE NOT EXISTS (SELECT 1 FROM abom_edge_any_mode x
-	                    WHERE x.dst_node_row_id = c.row_id
-	                      AND x.repository_row_id IS NOT c.repository_row_id)
+	 WHERE s.container_node_row_id IN (SELECT row_id FROM triggered_workflow)
+	UNION SELECT row_id FROM triggered_workflow
 ),
 ` + observedIn(mode) + `,
 declared(edge_row_id, src_node_row_id, dst_node_row_id, ref, ref_raw, edge_kind,
@@ -389,8 +410,9 @@ declared(edge_row_id, src_node_row_id, dst_node_row_id, ref, ref_raw, edge_kind,
 	   AND la.repository = LOWER(r.repository_full_name)
 	 WHERE (la.commit_sha IS NOT NULL OR o.commit_sha = ''
 	        OR LOWER(COALESCE(r.repository_full_name, '')) NOT IN (SELECT repository FROM live_answer))
-	   AND (COALESCE(r.origin, '') <> '` + OriginSeed + `' OR la.starting = 1
-	        OR LOWER(r.repository_full_name) NOT IN (SELECT repository FROM live_answer)
+	   AND (` + ci + `la.starting = 1
+	        OR (COALESCE(r.origin, '') <> '` + OriginUpstream + `'
+	            AND LOWER(r.repository_full_name) NOT IN (SELECT repository FROM live_answer))
 	        OR (o.commit_sha = '' AND LOWER(r.repository_full_name) IN
 	              (SELECT repository FROM live_answer WHERE starting = 1))
 	        OR o.src_node_row_id NOT IN (SELECT row_id FROM triggered_line))

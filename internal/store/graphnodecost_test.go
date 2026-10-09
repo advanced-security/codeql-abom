@@ -35,6 +35,9 @@ func TestTheGraphNodeQueryDoesNotRereadTheFrontierPerNode(t *testing.T) {
 func assertNoPerNodeCorrelation(t *testing.T, opts FullGraphOptions) {
 	t.Helper()
 	s := newTestStore(t)
+	if _, err := s.declaredEdgeTable(opts.Mode); err != nil {
+		t.Fatal(err)
+	}
 
 	query, args := graphNodesQuery(collapsedDisplay, 0, opts)
 

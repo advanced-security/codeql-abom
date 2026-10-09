@@ -409,18 +409,6 @@ func walkOutward(edges []bomEdge, roots []string) map[string]int {
 			out[e.target] = out[from] + 1
 			frontier = append(frontier, e.target)
 		}
-		// A node inside a component's own repository continues the walk at the same distance:
-		// reaching `octo-org/shared` means reaching the workflows it holds, and without this the
-		// walk stops at the first external name and every document is one hop deep.
-		for _, e := range edges {
-			if _, seen := out[e.source]; seen {
-				continue
-			}
-			if e.sourceRepository != "" && strings.EqualFold(e.sourceRepository, from) {
-				out[e.source] = out[from]
-				frontier = append(frontier, e.source)
-			}
-		}
 	}
 	return out
 }

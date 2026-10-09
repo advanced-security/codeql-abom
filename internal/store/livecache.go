@@ -92,19 +92,32 @@ func (s *Store) liveAnswersNow() (string, error) {
 	return c.liveAnswers(s)
 }
 
-// declaredEdgeTable names a table holding declaredEdges' `declared_edge` for a mode as the
-// database stands, building it if this state has not. It reserves the store's one connection, so
-// call it before opening rows.
-func (s *Store) declaredEdgeTable(mode string) (string, error) {
+func declarationTableName(mode string) string {
 	name := "declared_edge_regular"
 	switch mode {
 	case AnalysisModeExtended:
 		name = "declared_edge_extended"
 	case AnalysisModeAnyShape:
 		name = "declared_edge_mixed"
-	default:
-		mode = AnalysisModeRegular
 	}
+	return name
+}
+
+func startingNodeTable(mode string) string {
+	return "temp." + declarationTableName(mode) + "_starting"
+}
+
+func (s *Store) prepareScope(scope, mode string) error {
+	if scope != ScopeSupplyChain {
+		return nil
+	}
+	_, err := s.declaredEdgeTable(mode)
+	return err
+}
+
+// declaredEdgeTable caches a mode's visible declarations and its starting-point membership together.
+func (s *Store) declaredEdgeTable(mode string) (string, error) {
+	name := declarationTableName(mode)
 	table := "temp." + name
 	c := s.declarationCache()
 	c.mu.Lock()
@@ -112,7 +125,7 @@ func (s *Store) declaredEdgeTable(mode string) (string, error) {
 	if err := c.current(s); err != nil {
 		return "", err
 	}
-	if c.tables[mode] {
+	if c.tables[name] {
 		return table, nil
 	}
 	answers, err := c.liveAnswers(s)
@@ -129,12 +142,22 @@ func (s *Store) declaredEdgeTable(mode string) (string, error) {
 		{`CREATE INDEX ` + table + `_row ON ` + name + `(row_id)`, nil},
 		{`CREATE INDEX ` + table + `_src ON ` + name + `(src_node_row_id)`, nil},
 		{`CREATE INDEX ` + table + `_dst ON ` + name + `(dst_node_row_id, ref_value)`, nil},
+		{`DROP TABLE IF EXISTS ` + startingNodeTable(mode), nil},
+		{`CREATE TEMP TABLE ` + name + `_starting AS WITH ` + liveDeclared(mode) + `
+		 SELECT DISTINCT d.repository_row_id, d.dst_node_row_id
+		   FROM declared d JOIN repository r ON r.row_id = d.repository_row_id
+		  WHERE LOWER(r.repository_full_name) NOT IN (SELECT repository FROM live_answer)
+		     OR EXISTS (SELECT 1 FROM live_answer a
+		                 WHERE a.repository = LOWER(r.repository_full_name) AND a.starting = 1
+		                   AND (d.commit_sha = '' OR a.commit_sha = d.commit_sha))`, []any{answers}},
+		{`CREATE INDEX ` + startingNodeTable(mode) + `_repo ON ` + name +
+			`_starting(repository_row_id, dst_node_row_id)`, nil},
 	} {
 		if _, err := s.db.Exec(statement.sql, statement.args...); err != nil {
 			return "", fmt.Errorf("reading what each line declared at the commits in use: %w", err)
 		}
 	}
-	c.tables[mode] = true
+	c.tables[name] = true
 	return table, nil
 }
 

@@ -355,6 +355,19 @@ status theatre.
 - Attribute every findings difference between on and off to a rule's `taken_from` and the release
   it names. A rule taken from ABOM's own release must differ by nothing.
 
+## Component-bound views
+
+- A component contains its steps; it does not contain every node in its repository. BOM edges
+  already fold steps into their containers, so a repository-wide continuation imports unrelated
+  CI. Test nested actions, reusable workflows and cycles, not a fixture calling CI a dependency.
+- Keep upstream CI as explicit inspection context, never as a starting point or an execution
+  view. Check both the visible nodes and the relationships: removing only the lines leaves the
+  workflows drawn through containment.
+- Starting-point membership can share the declaration cache. Exercise every scoped reader cold
+  and after a write; creating its temporary tables must not move the database-state cache key.
+- A version's displayed user count is not the component's stored blast radius. Removing upstream
+  CI can change the former while the latter and scope membership stay identical; measure both.
+
 ## Adding a consistency check
 
 Checks 2, 5, 6, 10 and 11 are planned in the plans that own what they depend on, and

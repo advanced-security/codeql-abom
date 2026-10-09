@@ -481,7 +481,7 @@ var ownedNodes = `SELECT n.row_id FROM abom_node_live n WHERE ` + heldByRoots("n
 // its scope exactly as it decides what is counted.
 func scopeSets(roots, mode string) string {
 	return `WITH roots AS (` + roots + `),
-	run AS (SELECT e.dst_node_row_id AS row_id FROM ` + edgeSource(mode) + ` e
+	run AS (SELECT e.dst_node_row_id AS row_id FROM ` + startingNodeTable(mode) + ` e
 	         WHERE e.repository_row_id IN (SELECT row_id FROM roots)
 	        UNION SELECT node_row_id FROM abom_node_reach
 	         WHERE repository_row_id IN (SELECT row_id FROM roots)),
@@ -751,13 +751,18 @@ func graphNodesQuery(display string, since int64, opts FullGraphOptions) (string
 		LEFT JOIN fstate fs ON fs.mk = n.node_key
 		LEFT JOIN adv ON adv.pkg = n.owner || '/' || n.repo
 		LEFT JOIN grouping u ON u.repo = r.repository_full_name
-		WHERE n.row_id IN (SELECT shown FROM disp WHERE row_id > ?)` +
+		WHERE n.row_id IN (SELECT shown FROM disp WHERE row_id > ?)` + visibleWorkflowNode +
 		scopeFilter(opts, "n.node_key") + nodeModeFilter(opts.Mode), append(args, opts.GroupProperty, since)
 }
 
 // graphNodes reads the displayed nodes. A non-zero since restricts them to those a node added
 // after that row id displays as, which is how a delta is derived.
 func (s *Store) graphNodes(display string, since int64, opts FullGraphOptions) ([]GraphNode, map[string]*GraphNode, error) {
+	if opts.Scope == ScopeSupplyChain || len(opts.GroupSources) > 0 {
+		if _, err := s.declaredEdgeTable(opts.Mode); err != nil {
+			return nil, nil, err
+		}
+	}
 	query, args := graphNodesQuery(display, since, opts)
 	rows, err := s.db.Query(query, args...)
 	if err != nil {

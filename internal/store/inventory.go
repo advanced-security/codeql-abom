@@ -367,6 +367,9 @@ type inventoryWhere struct {
 }
 
 func (s *Store) inventoryPageQuery(q InventoryQuery) (inventoryPageQuery, error) {
+	if err := s.prepareScope(q.Scope, q.Mode); err != nil {
+		return inventoryPageQuery{}, err
+	}
 	order, ok := inventorySorts[q.Sort]
 	if q.Sort != "" && !ok {
 		return inventoryPageQuery{}, fmt.Errorf(
@@ -412,7 +415,7 @@ func buildInventoryWhere(
 	if len(q.Kinds) > 0 {
 		where = `WHERE n.node_kind IN (` + placeholders(len(q.Kinds)) + `)`
 	}
-	where += keep + nodeModeFilter(q.Mode)
+	where += keep + nodeModeFilter(q.Mode) + visibleWorkflowNode
 	// Tracked apart from the select-list arguments, because the count runs the same WHERE without
 	// the select list and the two argument orders would otherwise have to be kept in step by hand.
 	var whereArgs []any
@@ -972,6 +975,9 @@ func (s *Store) propertiesByRepository(names []string) (map[string][]PropertyVal
 // repositoriesWhere is the unit's population as a WHERE clause over `repository r`, shared by the
 // page and by a run so the two cannot come to list different repositories.
 func (s *Store) repositoriesWhere(q RepositoriesQuery) (string, []any, error) {
+	if err := s.prepareScope(q.Scope, AnalysisModeRegular); err != nil {
+		return "", nil, err
+	}
 	// Upstream repositories are not the organization's to remediate, and listing them alongside
 	// would imply otherwise.
 	where := `WHERE r.origin = ?`

@@ -32,7 +32,7 @@ func TestDirectAndIndirectAreRelativeToTheRoot(t *testing.T) {
 		t.Error("actions/checkout is named by the root's own workflow, so it is direct")
 	}
 	if c := componentOf(whole, "actions/setup-go"); c == nil || c.Direct {
-		t.Error("actions/setup-go is reached through octo-org/shared, so it is indirect")
+		t.Error("actions/setup-go is reached through actions/checkout, so it is indirect")
 	}
 
 	// Rooted at the intermediary instead, the same component is now direct.
@@ -149,9 +149,9 @@ func TestProvenanceIsStatedPerFindingAndAbsenceIsNamed(t *testing.T) {
 func TestAFindingWithNoRunIsReportedAsUntracedRatherThanDropped(t *testing.T) {
 	doc := build(t, bomFixture(t), BOMOptions{})
 
-	c := componentOf(doc, "actions/checkout/.github/workflows/test.yml")
+	c := componentOf(doc, "actions/checkout")
 	if c == nil {
-		t.Fatal("the intermediary's own workflow is inside the closure and must be a component")
+		t.Fatal("the intermediary's composite action is inside the closure and must be a component")
 	}
 	var untraced *BOMFinding
 	for i := range c.Findings {
@@ -194,7 +194,7 @@ func TestACodeQLFindingNamesItsProviderAndSaysItIsReproducible(t *testing.T) {
 func TestAFindingNobodyAttributedSaysSoRatherThanClaimingItCannotBeReproduced(t *testing.T) {
 	doc := build(t, bomFixture(t), BOMOptions{})
 
-	c := componentOf(doc, "actions/checkout/.github/workflows/test.yml")
+	c := componentOf(doc, "actions/checkout")
 	if c == nil || len(c.Findings) == 0 {
 		t.Fatal("the unattributed finding is missing")
 	}

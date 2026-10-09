@@ -237,7 +237,7 @@ assumes they are its own. What is missing is an enterprise's own App at an addre
 
 The graph those changes land in is commit-aware: each commit's declarations are its own, every walk
 and view stands at the commits that are live, reach is counted per version, and a change re-derives
-only what depends on it. `plans/db/commit-aware-graph.md`
+only what depends on it. See [how it works](architecture.md#locks).
 
 ## Knowing the graph is right
 
@@ -283,7 +283,7 @@ only writer and the only reader. Reach and exposure are derived for what changed
 recompute kept as the oracle that checks them, and the enterprise deployment runs PostgreSQL behind the same store
 interface, so coordinators can be replicated and readers scaled out while the single binary keeps
 SQLite. Efficiency at that scale is measured on real organizations as they become available, never
-extrapolated from this one. `plans/db/commit-aware-graph.md`, `plans/db/store-backends.md`
+extrapolated from this one. `plans/db/store-backends.md`
 
 ## Deliberately not on the roadmap
 
