@@ -73,6 +73,9 @@ type Server struct {
 	CodeScanningWrites *setup.Service
 	// FindDatabase asks code scanning for a repository's database. Nil leaves the catalog to discover.
 	FindDatabase func(ctx context.Context, repository, language string) (catalog.Database, error)
+	// Files reads the lines a request's linked example names. Nil refuses a link and takes only
+	// pasted examples.
+	Files ExampleFiles
 	// FullListingEvery is how often every page of an account is read rather than a prefix of it.
 	// Zero takes enumerate.DefaultFullListingEvery.
 	FullListingEvery time.Duration
@@ -134,6 +137,10 @@ type Server struct {
 	// untestable.
 	Tester   QueryTester
 	QueryDir string
+
+	// Toolchain checks what an authoring session needs. Nil answers that nothing is known, which is
+	// not the same as everything being ready.
+	Toolchain Toolchain
 
 	// Printer prints a query's tree over its test database, as a session's PrintAST does. Nil when
 	// there is no pack to print from.
@@ -259,16 +266,19 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/queries/test", s.testQuery)
 	mux.HandleFunc("POST /api/queries/ast", s.printQueryAST)
 	mux.HandleFunc("GET /api/queries/asts", reading(s.queryASTs, "query"))
+	mux.HandleFunc("GET /api/queries/step", reading(s.queryStep, "query", "step"))
 	mux.HandleFunc("GET /api/query-requests", s.queryRequests)
 	mux.HandleFunc("POST /api/query-requests", s.saveQueryRequest)
 	mux.HandleFunc("PUT /api/query-requests/{id}", s.editQueryRequest)
+	mux.HandleFunc("DELETE /api/query-requests/{id}", s.deleteQueryRequest)
+	mux.HandleFunc("GET /api/authoring/readiness", reading(s.authoringReadiness, "fresh"))
+	mux.HandleFunc("PUT /api/authoring/tools/{tool}", s.setTool)
+	mux.HandleFunc("POST /api/query-requests/example", s.readRequestExample)
 	mux.HandleFunc("GET /api/query-requests/{id}/sessions", s.requestSessions)
 	mux.HandleFunc("POST /api/query-requests/{id}/sessions", s.startSession)
 	mux.HandleFunc("POST /api/query-requests/{id}/sessions/stop", s.stopSession)
 	mux.HandleFunc("GET /api/authoring-sessions/{id}/events", reading(s.sessionEvents, "after", "limit"))
 	mux.HandleFunc("GET /api/query-requests/{id}/asts", s.requestASTs)
-	mux.HandleFunc("GET /api/query-requests/{id}/review", s.requestReview)
-	mux.HandleFunc("POST /api/query-requests/{id}/review", s.reviewReport)
 	mux.HandleFunc("GET /api/runs/{id}/drafts", s.runDrafts)
 	mux.HandleFunc("POST /api/runs/{id}/drafts", s.startDraft)
 	mux.HandleFunc("POST /api/runs/{id}/drafts/stop", s.stopDraft)
@@ -310,7 +320,8 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/actions", reading(s.actions,
 		"q", "top", "offset", "sort", "desc", "view",
 		"kinds", "origins", "minReach", "scope", "flags", "ref", "at",
-		"rules", "notRules", "provider", "severity", "securitySeverity", "source", "repositories", "mode",
+		"rules", "notRules", "tags", "notTags", "provider", "severity", "securitySeverity", "source",
+		"repositories", "mode",
 		"properties", "notProperties"))
 	mux.HandleFunc("GET /api/workflows", reading(s.workflows,
 		"q", "top", "offset", "sort", "desc", "view",
@@ -1247,6 +1258,8 @@ func (s *Server) inventoryQuery(w http.ResponseWriter, r *http.Request, cursors 
 		At:       spec.At,
 		Rules:    spec.Rules,
 		NotRules: spec.NotRules,
+		Tags:     spec.Tags,
+		NotTags:  spec.NotTags,
 		Provider: spec.Provider,
 		Severity: spec.Severity,
 		Sources:  spec.Sources,

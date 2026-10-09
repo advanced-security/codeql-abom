@@ -29,6 +29,11 @@ type Spec struct {
 	// NotRules drops a node carrying any of these at all, rather than dropping the finding and
 	// keeping the node: "A but not C" describes the action or workflow, not the result set.
 	NotRules []string
+	// Tags narrows to findings whose rule declared one of these tags in the SARIF that reported it,
+	// matched exactly: a CWE report cannot let `cwe-82` answer for `cwe-829`.
+	Tags []string
+	// NotTags drops a node carrying any finding whose rule declared one of these, as NotRules does.
+	NotTags []string
 	// Provider is the SARIF tool driver name, verbatim. It never matches a finding nobody
 	// attributed.
 	Provider string
@@ -120,6 +125,8 @@ const (
 	paramOrigins          = "origins"
 	paramRules            = "rules"
 	paramNotRules         = "notRules"
+	paramTags             = "tags"
+	paramNotTags          = "notTags"
 	paramRepos            = "repositories"
 	paramProperties       = "properties"
 	paramNotProperties    = "notProperties"
@@ -171,6 +178,8 @@ func (s Spec) String() string {
 		{paramOrigins, s.Origins},
 		{paramRules, s.Rules},
 		{paramNotRules, s.NotRules},
+		{paramTags, s.Tags},
+		{paramNotTags, s.NotTags},
 		{paramRepos, s.Repositories},
 		{paramEdgeClass, s.EdgeClass},
 		{paramEdgeKinds, s.EdgeKinds},
@@ -258,6 +267,8 @@ func specTargetsFor(s *Spec) specTargets {
 			paramOrigins:          &s.Origins,
 			paramRules:            &s.Rules,
 			paramNotRules:         &s.NotRules,
+			paramTags:             &s.Tags,
+			paramNotTags:          &s.NotTags,
 			paramRepos:            &s.Repositories,
 			paramEdgeClass:        &s.EdgeClass,
 			paramEdgeKinds:        &s.EdgeKinds,
@@ -466,7 +477,8 @@ func AppliedByExplorer(name string) bool { return graphTerms[name] || clientTerm
 
 var termNames = map[string]bool{
 	paramScope: true, paramSearch: true, paramKinds: true, paramOrigins: true,
-	paramRules: true, paramNotRules: true, paramRepos: true, paramProperties: true,
+	paramRules: true, paramNotRules: true, paramTags: true, paramNotTags: true, paramRepos: true,
+	paramProperties:    true,
 	paramNotProperties: true, paramProvider: true, paramSeverity: true, paramEdgeClass: true,
 	paramRefStyle: true, paramBoundary: true, paramMinReach: true, paramFlags: true,
 	paramSteps: true, paramEdgeKinds: true, paramMode: true, paramSource: true,
@@ -484,6 +496,8 @@ var termNames = map[string]bool{
 var setTerms = map[string]bool{
 	paramRules:            true,
 	paramNotRules:         true,
+	paramTags:             true,
+	paramNotTags:          true,
 	paramProvider:         true,
 	paramSource:           true,
 	paramSeverity:         true,

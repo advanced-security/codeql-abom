@@ -9,6 +9,10 @@ ABOM_LOG  ?= $(ABOM_TMP)/logs/serve.log
 ABOM_PID  ?= $(ABOM_TMP)/serve.pid
 ABOM_UI   ?= $(ABOM_TMP)/ui
 ABOM_WORK ?= $(ABOM_TMP)/work
+# The operator's query pack; without one no request can be authored and the catalog shows no progress.
+ABOM_QL   ?= $(ABOM_TMP)/ql/custom
+# Built CodeQL databases are kept here, so a run queries them again rather than extracting anew.
+ABOM_DATABASES ?= $(ABOM_TMP)/databases
 
 # Extra server flags; `ABOM_SERVE_FLAGS=--expand` starts discovery.
 ABOM_SERVE_FLAGS ?=
@@ -241,7 +245,8 @@ selfcheck:
 serve: build publish
 	@mkdir -p "$(ABOM_WORK)" "$(dir $(ABOM_DB))" "$(dir $(ABOM_LOG))"
 	@$(BIN) serve --db "$(ABOM_DB)" --addr "$(ABOM_ADDR)" \
-		--ui-dir "$(ABOM_UI)/wwwroot" --work-dir "$(ABOM_WORK)" $(ABOM_SERVE_FLAGS)
+		--ui-dir "$(ABOM_UI)/wwwroot" --work-dir "$(ABOM_WORK)" --custom-ql-dir "$(ABOM_QL)" \
+		--database-cache-dir "$(ABOM_DATABASES)" $(ABOM_SERVE_FLAGS)
 
 ## start: serve in the background, rebuilding both halves first.
 start: build publish
@@ -256,7 +261,8 @@ start: build publish
 	fi
 	@mkdir -p "$(ABOM_WORK)" "$(dir $(ABOM_DB))" "$(dir $(ABOM_LOG))"
 	@$(BIN) serve --db "$(ABOM_DB)" --addr "$(ABOM_ADDR)" \
-		--ui-dir "$(ABOM_UI)/wwwroot" --work-dir "$(ABOM_WORK)" $(ABOM_SERVE_FLAGS) \
+		--ui-dir "$(ABOM_UI)/wwwroot" --work-dir "$(ABOM_WORK)" --custom-ql-dir "$(ABOM_QL)" \
+		--database-cache-dir "$(ABOM_DATABASES)" $(ABOM_SERVE_FLAGS) \
 		>> "$(ABOM_LOG)" 2>&1 & echo $$! > "$(ABOM_PID)"
 	@for i in 1 2 3 4 5 6 7 8 9 10; do \
 		if ! kill -0 "$$(cat $(ABOM_PID))" 2>/dev/null; then \

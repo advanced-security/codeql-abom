@@ -262,7 +262,7 @@ func (w queryStep) expectedPath() string {
 }
 
 func scaffoldCorpusQuery(dir string, q corpusQuery, request int64) (string, error) {
-	_, tests, err := customql.ScaffoldQuery(dir, q.name, q.id, request)
+	_, tests, err := customql.ScaffoldQuery(dir, q.name, q.id, request, customql.Requested{})
 	if err != nil {
 		return "", err
 	}

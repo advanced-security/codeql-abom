@@ -380,6 +380,13 @@ func spell(n int, unit string) string {
 	return strconv.Itoa(n) + " " + plural(int64(n), unit, unit+"s")
 }
 
+func plural(n int64, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
 // grouped writes a count with thousands separators, as the interface writes every other count.
 func grouped(n int) string {
 	s := strconv.Itoa(n)

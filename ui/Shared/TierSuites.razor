@@ -88,29 +88,30 @@
                 {
                     <tr>
                         <td>
-                            <button type="button" class="abom-suite-toggle"
-                                    title="@(IsSuiteOpen(suite) ? "Hide the packs and queries this suite selects." : "Show the packs and queries this suite selects.")"
-                                    @onclick="@(() => ToggleSuiteDetail(suite))"
-                                    aria-expanded="@(IsSuiteOpen(suite) ? "true" : "false")">
-                                <MudIcon Size="Size.Small" Icon="@(IsSuiteOpen(suite)
-                                    ? Icons.Material.Filled.ExpandMore
-                                    : Icons.Material.Filled.ChevronRight)" />
-                                <span class="abom-fold-text">
-                                    <span class="abom-path">@SuiteBindingText.Label(suite)</span>
-                                    <span class="abom-fold-summary">@SuiteSummary(suite)</span>
-                                </span>
-                            </button>
+                            <Tip Text="@(IsSuiteOpen(suite) ? "Fold this suite's packs and queries away." : "List the packs and queries this suite selects.")">
+                                <button type="button" class="abom-suite-toggle"
+                                        @onclick="@(() => ToggleSuiteDetail(suite))"
+                                        aria-expanded="@(IsSuiteOpen(suite) ? "true" : "false")">
+                                    <MudIcon Size="Size.Small" Icon="@(IsSuiteOpen(suite)
+                                        ? Icons.Material.Filled.ExpandMore
+                                        : Icons.Material.Filled.ChevronRight)" />
+                                    <span class="abom-fold-text">
+                                        <span class="abom-path">@SuiteBindingText.Label(suite)</span>
+                                        <span class="abom-fold-summary">@SuiteSummary(suite)</span>
+                                    </span>
+                                </button>
+                            </Tip>
                         </td>
                         @foreach (var tier in Tiers)
                         {
                             <td>
-                                <MudTooltip Text="@BindHint(tier, suite)">
+                                <Tip Text="@BindHint(tier, suite)">
                                     <MudCheckBox T="bool" Dense="true" Size="Size.Small"
                                                  Color="Color.Primary" Disabled="@_busy"
                                                  Value="@IsBound(tier, suite)"
-                                                 aria-label="@BindHint(tier, suite)"
+                                                 aria-label="@($"{SuiteBindingText.Label(suite)} on the {tier} tier")"
                                                  ValueChanged="@(_ => ToggleSuite(tier, suite))" />
-                                </MudTooltip>
+                                </Tip>
                             </td>
                         }
                     </tr>

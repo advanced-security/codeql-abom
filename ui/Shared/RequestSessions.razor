@@ -14,22 +14,27 @@
         <MudSpacer />
         @if (Live is not null)
         {
-            <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
-                       StartIcon="@Icons.Material.Outlined.StopCircle" Disabled="@_busy" OnClick="Stop"
-                       title="Stop the authoring agent session for this request."
-                       data-abom-session-stop>Stop the session</MudButton>
+            <Tip Text="End the agent's work on this request. What it wrote stays.">
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                           StartIcon="@Icons.Material.Outlined.StopCircle" Disabled="@_busy" OnClick="Stop"
+                           data-abom-session-stop>Stop the session</MudButton>
+            </Tip>
         }
         else
         {
-            @* The reason is on a span outside the button: a disabled button swallows the pointer. *@
-            <span title="@(CanStart ? "Start an authoring agent session for this request inside your query pack." : "Sign in with gh to record who started it.")">
+            <Tip Text="@StartTip">
                 <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
-                           StartIcon="@Icons.Material.Outlined.SmartToy" Disabled="@(!CanStart || _busy)"
-                           title="@(CanStart ? "Start an authoring agent session for this request inside your query pack." : "Sign in with gh to record who started it.")"
+                           StartIcon="@Icons.Material.Outlined.SmartToy" Disabled="@(!CanStart || Blocking is not null || _busy)"
                            OnClick="Start" data-abom-session-start>Work it with an agent</MudButton>
-            </span>
+            </Tip>
         }
     </div>
+    @if (Live is null && Blocking is { } blocking)
+    {
+        <MudText Typo="Typo.caption" Class="abom-unconfirmed d-block mt-1" data-abom-session-blocked>
+            Cannot start: @blocking.Name: @blocking.Reason. What every check found is listed above.
+        </MudText>
+    }
     @if (_refusal is { Length: > 0 } refused)
     {
         <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2" data-abom-session-refusal>@refused</MudAlert>
@@ -43,7 +48,7 @@
     {
         <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1" data-abom-sessions-empty>
             No agent has worked this request. A session writes only the query this request is about,
-            in your pack, and stops before its output is accepted as the expected result.
+            and its help, fixtures and expected results, in your pack.
         </MudText>
     }
     else
@@ -73,15 +78,25 @@
                         @CountText.Of(session.Events, "call", "calls"), @session.Refused refused;
                         <span data-abom-session-spend>@SpendText(session)</span>
                     </MudText>
-                    <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button"
-                               title="@(_open == session.RowId ? $"Hide the calls and decisions for session #{session.RowId}." : $"Show the calls and decisions for session #{session.RowId}.")"
-                               OnClick="@(() => Toggle(session))" data-abom-session-timeline>
-                        @(_open == session.RowId ? "Hide what it did" : "What it did")
-                    </MudButton>
+                    <Tip Text="@(_open == session.RowId ? "Fold this session's timeline away." : "Show every call this session made and what ABOM decided.")">
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button"
+                                   OnClick="@(() => Toggle(session))" data-abom-session-timeline>
+                            @(_open == session.RowId ? "Hide what it did" : "What it did")
+                        </MudButton>
+                    </Tip>
+                    @if (session.Detail.Length > 0)
+                    {
+                        <Tip Text="@(_said.Contains(session.RowId) ? "Fold the agent's last message away." : "Show the agent's last message, in its own words.")">
+                            <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button"
+                                       OnClick="@(() => ToggleSaid(session))" data-abom-session-said>
+                                @(_said.Contains(session.RowId) ? "Hide what the agent said" : "What the agent said")
+                            </MudButton>
+                        </Tip>
+                    }
                 </div>
-                @if (session.Detail.Length > 0)
+                @if (session.Detail.Length > 0 && _said.Contains(session.RowId))
                 {
-                    <pre class="abom-session-detail">@session.Detail</pre>
+                    <pre class="abom-session-detail" data-abom-session-detail>@session.Detail</pre>
                 }
                 @if (_open == session.RowId)
                 {
@@ -122,88 +137,22 @@
             <PrintedTrees Trees="@_asts" />
         </div>
     }
-
-    @* ABOM accepts a report only as a person read it, and then runs the tests itself. *@
-    @if (_review is { } review && (review.Reviews.Count > 0 || review.Tests.Any(t => t.Actual is not null)))
-    {
-        <div class="abom-review mt-2" data-abom-review>
-            <MudText Typo="Typo.subtitle2">What the query reported</MudText>
-            @if (review.Tests.Any(t => t.Actual is not null))
-            {
-                <div class="abom-review-sides">
-                    <div class="abom-review-side">
-                        <MudText Typo="Typo.caption" Class="mud-text-secondary">Should be reported (NON_COMPLIANT)</MudText>
-                        <pre class="abom-code" data-abom-review-noncompliant>@Request.NonCompliant</pre>
-                        <MudText Typo="Typo.caption" Class="mud-text-secondary">Should not be reported (COMPLIANT)</MudText>
-                        <pre class="abom-code" data-abom-review-compliant>@Request.Compliant</pre>
-                    </div>
-                    <div class="abom-review-side">
-                        @foreach (var test in review.Tests.Where(t => t.Actual is not null))
-                        {
-                            <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                                What @review.QueryId reported, in <span class="abom-path">@test.Test</span>
-                            </MudText>
-                            <pre class="abom-code" data-abom-review-actual>@test.Actual</pre>
-                            @if (test.Expected is { } expected)
-                            {
-                                <MudText Typo="Typo.caption" Class="mud-text-secondary">Expected until now</MudText>
-                                <pre class="abom-code" data-abom-review-expected>@expected</pre>
-                            }
-                        }
-                    </div>
-                </div>
-                @if (!review.Reviewable)
-                {
-                    <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-1" data-abom-review-stale>@review.Reason</MudAlert>
-                }
-                else
-                {
-                    @if (review.CannotAccept.Length > 0)
-                    {
-                        <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-1"
-                                  data-abom-review-unacceptable>@review.CannotAccept</MudAlert>
-                    }
-                    <div data-abom-review-reason>
-                        <MudTextField T="string" @bind-Value="_reason" Label="Why, if you reject it" Immediate="true"
-                                      Variant="Variant.Outlined" Margin="Margin.Dense" Class="mt-1" />
-                    </div>
-                    <div class="d-flex flex-wrap gap-2 mt-1">
-                        <span title="@AcceptTitle(review)">
-                            <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
-                                       StartIcon="@Icons.Material.Outlined.FactCheck"
-                                       Disabled="@(!CanStart || _busy || review.CannotAccept.Length > 0)"
-                                       title="@AcceptTitle(review)"
-                                       OnClick="@(() => Decide(review, "approved"))" data-abom-review-accept>Accept as the expected result</MudButton>
-                        </span>
-                        <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
-                                   StartIcon="@Icons.Material.Outlined.Undo"
-                                   Disabled="@(!CanStart || _busy || string.IsNullOrWhiteSpace(_reason))"
-                                   title="@(!CanStart ? "Sign in with gh to record who decided." : string.IsNullOrWhiteSpace(_reason) ? "Enter a rejection reason before rejecting this report." : "Record this report as rejected with the reason you entered.")"
-                                   OnClick="@(() => Decide(review, "rejected"))" data-abom-review-reject>Reject it</MudButton>
-                    </div>
-                }
-            }
-            @if (_reviewRefusal is { Length: > 0 } refusedReview)
-            {
-                <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-1" data-abom-review-refusal>@refusedReview</MudAlert>
-            }
-            @if (_tested is { Length: > 0 } tested)
-            {
-                <MudText Typo="Typo.caption" Class="d-block mt-1" data-abom-review-tested>@tested</MudText>
-            }
-            @foreach (var past in review.Reviews)
-            {
-                <MudText Typo="Typo.caption" Class="d-block mud-text-secondary" data-abom-review-record="@past.RowId">
-                    @(past.Verdict == "approved" ? "Accepted" : "Rejected") by @past.ReviewedBy
-                    @TimeText.DayAndTime(past.ReviewedAt)@(past.Reason.Length > 0 ? $": {past.Reason}" : "")
-                </MudText>
-            }
-        </div>
-    }
 </div>
 
 @code {
     [Parameter, EditorRequired] public QueryRequest Request { get; set; } = new();
+
+    /// <summary>What the server last said a session needs; null or unknown leaves it to the server's refusal.</summary>
+    [Parameter] public AuthoringReadiness? Readiness { get; set; }
+
+    /// <summary>Counts sessions started from elsewhere, such as the request's row; a change reloads.</summary>
+    [Parameter] public int Started { get; set; }
+
+    /// <summary>Raised when a session starts or ends, which changes where the request stands.</summary>
+    [Parameter] public EventCallback Changed { get; set; }
+
+    private int _started;
+    private string? _states;
 
     private AuthoringSessionList? _sessions;
     private IReadOnlyList<AuthoringAst> _asts = [];
@@ -214,10 +163,7 @@
     private bool _busy;
     private Timer? _timer;
     private TimeSpan _beat;
-    private ReviewState? _review;
-    private string _reason = string.Empty;
-    private string? _reviewRefusal;
-    private string? _tested;
+    private readonly HashSet<long> _said = [];
 
     private static readonly TimeSpan WhileRunning = TimeSpan.FromSeconds(3);
 
@@ -225,23 +171,40 @@
 
     private bool CanStart => Accounts.Identity.Login.Length > 0;
 
-    private string AcceptTitle(ReviewState review) =>
-        review.CannotAccept.Length > 0 ? "A report with failed expectations can be rejected, not accepted."
-        : CanStart ? "ABOM makes this report the expected result, then runs the tests itself."
-        : "Sign in with gh to record who decided.";
+    private ReadinessCheck? Blocking => Readiness?.FirstProblem;
+
+    private string StartTip =>
+        !CanStart ? "Sign in with gh to record who started it."
+        : Blocking is { } b ? $"No session can start until this is fixed: {b.Name}: {b.Reason}."
+        : "Have an agent write and test this query in your pack.";
 
     protected override async Task OnInitializedAsync()
     {
         Follow.Changed += Arm;
+        _started = Started;
         await Accounts.EnsureLoadedAsync();
         await Load();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Started != _started)
+        {
+            _started = Started;
+            await Load();
+        }
     }
 
     private async Task Load()
     {
         _sessions = await Api.GetAuthoringSessionsAsync(Request.RowId) ?? new AuthoringSessionList();
         _asts = await Api.GetAuthoringAstsAsync(Request.RowId);
-        _review = await Api.GetReviewAsync(Request.RowId);
+        var was = _states;
+        _states = string.Join(",", _sessions.Sessions.Select(s => $"{s.RowId}:{s.State}"));
+        if (was is not null && was != _states)
+        {
+            await InvokeAsync(() => Changed.InvokeAsync());
+        }
         if (_open != 0)
         {
             await ReadOn();
@@ -301,26 +264,11 @@
         }
     }
 
-    // The digest sent back is the report as read, so a report that changed since is refused.
-    private async Task Decide(ReviewState review, string verdict)
+    private void ToggleSaid(AuthoringSession session)
     {
-        _busy = true;
-        try
+        if (!_said.Remove(session.RowId))
         {
-            var reason = verdict == "rejected" ? _reason.Trim() : string.Empty;
-            var (state, refusal) = await Api.ReviewAsync(Request.RowId, verdict, reason,
-                Accounts.Identity.Login, review.Digest);
-            _reviewRefusal = refusal;
-            _tested = state?.Tested;
-            if (state is not null)
-            {
-                _review = state;
-                _reason = string.Empty;
-            }
-        }
-        finally
-        {
-            _busy = false;
+            _said.Add(session.RowId);
         }
     }
 

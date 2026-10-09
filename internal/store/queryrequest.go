@@ -24,11 +24,58 @@ CREATE TABLE IF NOT EXISTS abom_query_request (
   updated_at    TEXT NOT NULL,
   target_source TEXT,
   source_run_id INTEGER REFERENCES abom_analysis_run(row_id),
-  target_detail TEXT
+  target_detail TEXT,
+  title         TEXT NOT NULL DEFAULT '',
+  slug          TEXT NOT NULL DEFAULT '',
+  recommendation TEXT NOT NULL DEFAULT '',
+  target_decision TEXT,
+  meta_description TEXT NOT NULL DEFAULT '',
+  meta_precision   TEXT NOT NULL DEFAULT '',
+  meta_problem_severity TEXT NOT NULL DEFAULT '',
+  meta_security_severity REAL,
+  closed_steps  TEXT
 );
 
 -- What was picked from the run a request was asked from.
-CREATE TABLE IF NOT EXISTS abom_query_request_evidence ` + evidenceTable
+CREATE TABLE IF NOT EXISTS abom_query_request_evidence ` + evidenceTable + `
+
+-- Every example a request gives, in the order given. A linked one keeps the commit it was read at.
+CREATE TABLE IF NOT EXISTS abom_query_request_example (
+  request_id INTEGER NOT NULL REFERENCES abom_query_request(row_id),
+  ordinal    INTEGER NOT NULL,
+  side       TEXT NOT NULL,
+  body       TEXT NOT NULL,
+  url        TEXT,
+  repository TEXT,
+  path       TEXT,
+  ref        TEXT,
+  commit_sha TEXT,
+  start_line INTEGER,
+  end_line   INTEGER,
+  PRIMARY KEY (request_id, ordinal)
+);
+
+CREATE TABLE IF NOT EXISTS abom_query_request_reference (
+  request_id INTEGER NOT NULL REFERENCES abom_query_request(row_id),
+  ordinal    INTEGER NOT NULL,
+  kind       TEXT NOT NULL,
+  value      TEXT NOT NULL,
+  PRIMARY KEY (request_id, ordinal)
+);
+
+-- The @tags a request asks its query to declare.
+CREATE TABLE IF NOT EXISTS abom_query_request_tag (
+  request_id INTEGER NOT NULL REFERENCES abom_query_request(row_id),
+  ordinal    INTEGER NOT NULL,
+  tag        TEXT NOT NULL,
+  PRIMARY KEY (request_id, ordinal)
+);`
+
+// requestSlugIndexDDL names a request by its slug alone. Requests from before slugs share the empty
+// one, so it is left out.
+const requestSlugIndexDDL = `
+CREATE UNIQUE INDEX IF NOT EXISTS idx_query_request_slug
+  ON abom_query_request(slug) WHERE slug <> '';`
 
 // evidenceTable is the evidence table's body, shared with the rebuild that gave it held results.
 // A false alarm names a finding a run stored or a result a held run kept; zero stands for neither,
@@ -50,7 +97,8 @@ const (
 	RequestBoth       = "both"
 )
 
-// Where a request stands. Declined rather than deleted, so an ask nobody took up stays listable.
+// Where a request stands. Declined keeps an ask nobody took up listable; deleting is for one filed
+// wrongly.
 const (
 	RequestOpen       = "open"
 	RequestInProgress = "in-progress"
@@ -75,10 +123,24 @@ var ErrNoQueryRequest = errors.New("there is no such query request")
 
 // QueryRequest is one ask for a query customization.
 type QueryRequest struct {
-	RowID        int64  `json:"rowId"`
-	Description  string `json:"description"`
-	Compliant    string `json:"compliant"`
-	NonCompliant string `json:"nonCompliant"`
+	RowID int64 `json:"rowId"`
+	// Title is the query's @name. Slug names the request itself and never changes once kept.
+	Title       string `json:"title"`
+	Slug        string `json:"slug"`
+	Description string `json:"description"`
+	// Compliant and NonCompliant are the first example on each side, for readers from before
+	// Examples.
+	Compliant      string             `json:"compliant"`
+	NonCompliant   string             `json:"nonCompliant"`
+	Examples       []RequestExample   `json:"examples"`
+	Recommendation string             `json:"recommendation"`
+	References     []RequestReference `json:"references"`
+	// ReferenceTags are the tags References imply, derived on every read.
+	ReferenceTags []string          `json:"referenceTags"`
+	Metadata      RequestedMetadata `json:"metadata"`
+	// TargetDecision is whether the operator asked to improve QueryID or to create it; empty
+	// when the agent chose, or nobody has.
+	TargetDecision string `json:"targetDecision"`
 	// QueryID names the query the request is about, and is empty for one that does not exist yet.
 	QueryID string `json:"queryId"`
 	// TargetSource says who chose QueryID. Empty with a target is a request kept before that was
@@ -96,6 +158,13 @@ type QueryRequest struct {
 	// Evidence is what was picked from that run. Kept as filed: an edit changes what is asked
 	// for, never what it was asked from.
 	Evidence []RequestEvidence `json:"evidence"`
+	// ClosedSteps is the progress, as JSON, a done or declined request was first closed on; empty
+	// while it is open, or when it was closed before progress was kept.
+	ClosedSteps string `json:"-"`
+}
+
+func (r QueryRequest) closed() bool {
+	return r.Status == RequestDone || r.Status == RequestDeclined
 }
 
 // RequestEvidence is one result picked from a run: a finding that should not have fired, a result a
@@ -128,13 +197,20 @@ func (s *Store) fileQueryRequest(r QueryRequest, now string) (int64, error) {
 	if err := evidenceShown(tx, r); err != nil {
 		return 0, err
 	}
+	if err := slugFree(tx, r.Slug, 0); err != nil {
+		return 0, err
+	}
 	res, err := tx.Exec(`
 INSERT INTO abom_query_request
   (description, compliant, non_compliant, query_id, kind, status, requested_by, created_at, updated_at,
-   target_source, source_run_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+   target_source, source_run_id, title, slug, recommendation, target_decision, meta_description,
+   meta_precision, meta_problem_severity, meta_security_severity, closed_steps)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? THEN ? END)`,
 		r.Description, r.Compliant, r.NonCompliant, r.QueryID, r.Kind, r.Status,
-		r.RequestedBy, now, now, nullable(r.TargetSource), nullableID(r.SourceRunID))
+		r.RequestedBy, now, now, nullable(r.TargetSource), nullableID(r.SourceRunID),
+		r.Title, r.Slug, r.Recommendation, nullable(r.TargetDecision), r.Metadata.Description,
+		r.Metadata.Precision, r.Metadata.ProblemSeverity, r.Metadata.SecuritySeverity,
+		r.closed(), nullable(r.ClosedSteps))
 	if err != nil {
 		return 0, fmt.Errorf("keeping a query request: %w", err)
 	}
@@ -150,6 +226,9 @@ INSERT OR IGNORE INTO abom_query_request_evidence
 VALUES (?, ?, ?, ?, ?, ?)`, id, e.RunID, e.Repository, e.FindingRowID, e.HeldResultID, e.Kind); err != nil {
 			return 0, fmt.Errorf("keeping what request %d was asked from: %w", id, err)
 		}
+	}
+	if err := keepRequestDetails(tx, id, r); err != nil {
+		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("committing a query request: %w", err)
@@ -286,6 +365,9 @@ func (s *Store) SaveQueryRequest(r QueryRequest) (int64, error) {
 	if r.Status == "" {
 		r.Status = RequestOpen
 	}
+	if err := r.normalize(); err != nil {
+		return 0, err
+	}
 	if err := r.check(); err != nil {
 		return 0, err
 	}
@@ -297,32 +379,113 @@ func (s *Store) SaveQueryRequest(r QueryRequest) (int64, error) {
 		}
 		return s.fileQueryRequest(r, now)
 	}
+	return s.editQueryRequest(r, now)
+}
 
+// editQueryRequest replaces what a request asks for, keeping who asked, when, from what, and the
+// slug it is named by.
+func (s *Store) editQueryRequest(r QueryRequest, now string) (int64, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var slug string
+	switch err := tx.QueryRow(`SELECT slug FROM abom_query_request WHERE row_id = ?`,
+		r.RowID).Scan(&slug); {
+	case errors.Is(err, sql.ErrNoRows):
+		return 0, fmt.Errorf("editing query request %d: %w", r.RowID, ErrNoQueryRequest)
+	case err != nil:
+		return 0, fmt.Errorf("reading query request %d: %w", r.RowID, err)
+	}
+	switch {
+	case r.Slug == "":
+		r.Slug = slug
+	case slug != "" && r.Slug != slug:
+		return 0, fmt.Errorf("request %d is named %s, and a request's slug never changes", r.RowID, slug)
+	}
+	if err := slugFree(tx, r.Slug, r.RowID); err != nil {
+		return 0, err
+	}
 	// An edit is the operator's act, so reasoning the agent gave no longer describes the target.
-	res, err := s.db.Exec(`
+	// Steps a request closed on are kept through later edits and forgotten when it reopens.
+	if _, err := tx.Exec(`
 UPDATE abom_query_request SET description = ?, compliant = ?, non_compliant = ?, query_id = ?,
-  kind = ?, status = ?, updated_at = ?, target_source = ?, target_detail = NULL
+  kind = ?, status = ?, updated_at = ?, target_source = ?, target_detail = NULL, title = ?, slug = ?,
+  recommendation = ?, target_decision = ?, meta_description = ?, meta_precision = ?,
+  meta_problem_severity = ?, meta_security_severity = ?,
+  closed_steps = CASE WHEN ? THEN COALESCE(closed_steps, ?) END
 WHERE row_id = ?`,
 		r.Description, r.Compliant, r.NonCompliant, r.QueryID, r.Kind, r.Status, now,
-		nullable(r.TargetSource), r.RowID)
-	if err != nil {
+		nullable(r.TargetSource), r.Title, r.Slug, r.Recommendation, nullable(r.TargetDecision),
+		r.Metadata.Description, r.Metadata.Precision, r.Metadata.ProblemSeverity,
+		r.Metadata.SecuritySeverity, r.closed(), nullable(r.ClosedSteps), r.RowID); err != nil {
 		return 0, fmt.Errorf("editing query request %d: %w", r.RowID, err)
 	}
-	if n, err := res.RowsAffected(); err != nil || n == 0 {
-		return 0, fmt.Errorf("editing query request %d: %w", r.RowID, ErrNoQueryRequest)
+	if err := keepRequestDetails(tx, r.RowID, r); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("committing query request %d: %w", r.RowID, err)
 	}
 	return r.RowID, nil
 }
 
-func (r QueryRequest) check() error {
-	for name, value := range map[string]string{
-		"a description of what to detect": r.Description,
-		"a compliant example":             r.Compliant,
-		"a non-compliant example":         r.NonCompliant,
-	} {
-		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("a request needs %s", name)
+// requestDependents are deleted with a request, each keyed by the request's id. An agent's timeline
+// is not among them: a request with one is never deleted.
+var requestDependents = []string{
+	`DELETE FROM abom_query_request_evidence WHERE request_id = ?`,
+	`DELETE FROM abom_query_request_example WHERE request_id = ?`,
+	`DELETE FROM abom_query_request_reference WHERE request_id = ?`,
+	`DELETE FROM abom_query_request_tag WHERE request_id = ?`,
+}
+
+// ErrRequestWorked refuses to delete a request whose agent sessions are on record.
+var ErrRequestWorked = errors.New("an agent has worked this request, and what it did is kept")
+
+// DeleteQueryRequest removes a request no agent has worked, with what was written in it.
+func (s *Store) DeleteQueryRequest(id int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var exists, running, worked int
+	if err := tx.QueryRow(`
+		SELECT (SELECT COUNT(*) FROM abom_query_request WHERE row_id = ?),
+		       (SELECT COUNT(*) FROM abom_authoring_session WHERE request_id = ? AND state = ?),
+		       (SELECT COUNT(*) FROM abom_authoring_session WHERE request_id = ?)
+		     + (SELECT COUNT(*) FROM abom_authoring_review WHERE request_id = ?)`,
+		id, id, SessionRunning, id, id).Scan(&exists, &running, &worked); err != nil {
+		return fmt.Errorf("reading request %d: %w", id, err)
+	}
+	switch {
+	case exists == 0:
+		return fmt.Errorf("deleting query request %d: %w", id, ErrNoQueryRequest)
+	case running > 0:
+		return fmt.Errorf("request %d: %w; stop it first", id, ErrSessionUnderWay)
+	case worked > 0:
+		return fmt.Errorf("request %d: %w; resubmit it as a new request and mark this one declined", id, ErrRequestWorked)
+	}
+	for _, stmt := range slices.Concat(requestDependents, []string{`DELETE FROM abom_query_request WHERE row_id = ?`}) {
+		if _, err := tx.Exec(stmt, id); err != nil {
+			return fmt.Errorf("deleting query request %d: %w", id, err)
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing the deletion of query request %d: %w", id, err)
+	}
+	return nil
+}
+
+func (r QueryRequest) check() error {
+	if strings.TrimSpace(r.Description) == "" {
+		return errors.New("a request needs a description of what to detect")
+	}
+	if err := r.checkDetails(); err != nil {
+		return err
 	}
 	if !slices.Contains(requestKinds, r.Kind) {
 		return fmt.Errorf("a request's kind is %s, not %q", strings.Join(requestKinds[1:], ", "), r.Kind)
@@ -348,11 +511,17 @@ func (s *Store) QueryRequests() ([]QueryRequest, error) {
 	if err != nil {
 		return nil, err
 	}
+	details, err := s.requestDetails()
+	if err != nil {
+		return nil, err
+	}
 	out := []QueryRequest{}
 	rows, err := s.db.Query(`
 		SELECT row_id, description, compliant, non_compliant, query_id, kind, status,
 		       requested_by, created_at, updated_at, COALESCE(target_source, ''),
-		       COALESCE(source_run_id, 0), COALESCE(target_detail, '')
+		       COALESCE(source_run_id, 0), COALESCE(target_detail, ''), title, slug, recommendation,
+		       COALESCE(target_decision, ''), meta_description, meta_precision,
+		       meta_problem_severity, meta_security_severity, COALESCE(closed_steps, '')
 		FROM abom_query_request ORDER BY row_id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("reading query requests: %w", err)
@@ -361,12 +530,19 @@ func (s *Store) QueryRequests() ([]QueryRequest, error) {
 
 	for rows.Next() {
 		var r QueryRequest
+		var severity sql.NullFloat64
 		if err := rows.Scan(&r.RowID, &r.Description, &r.Compliant, &r.NonCompliant, &r.QueryID,
 			&r.Kind, &r.Status, &r.RequestedBy, &r.CreatedAt, &r.UpdatedAt,
-			&r.TargetSource, &r.SourceRunID, &r.TargetDetail); err != nil {
+			&r.TargetSource, &r.SourceRunID, &r.TargetDetail, &r.Title, &r.Slug, &r.Recommendation,
+			&r.TargetDecision, &r.Metadata.Description, &r.Metadata.Precision,
+			&r.Metadata.ProblemSeverity, &severity, &r.ClosedSteps); err != nil {
 			return nil, fmt.Errorf("scanning a query request: %w", err)
 		}
+		if severity.Valid {
+			r.Metadata.SecuritySeverity = &severity.Float64
+		}
 		r.Evidence = append([]RequestEvidence{}, evidence[r.RowID]...)
+		details.fill(&r)
 		out = append(out, r)
 	}
 	return out, rows.Err()

@@ -6,12 +6,14 @@
 package customql
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 // Pack is the name the operator's pack carries.
@@ -130,11 +132,49 @@ var queryID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*(/[a-z0-9][a-z0-9-]*)+$`)
 // ValidQueryID reports whether id can be declared by a query ABOM lays out.
 func ValidQueryID(id string) bool { return queryID.MatchString(id) }
 
-// ScaffoldQuery lays out a new query declaring id, which reports nothing until somebody writes
-// it, and its test. It refuses a query file that is already there rather than overwrite it.
-func ScaffoldQuery(dir, name, id string, request int64) (string, string, error) {
+// Requested is what a request asks a new query to declare, and the help written beside it. An empty
+// field asks for nothing, and the stub says what to write there instead.
+type Requested struct {
+	Title            string
+	Description      string
+	Precision        string
+	ProblemSeverity  string
+	SecuritySeverity *float64
+	Tags             []string
+	Recommendation   string
+	References       []string
+}
+
+// qldocTag is a tag a QLDoc can list: no space, which would split it in two.
+var qldocTag = regexp.MustCompile(`^[a-z0-9][a-z0-9._/+-]*$`)
+
+// check refuses a value that would close the QLDoc, or begin a line that is not its own.
+func (r Requested) check() error {
+	for _, v := range []string{r.Title, r.Precision, r.ProblemSeverity} {
+		if strings.Contains(v, "*/") || strings.ContainsAny(v, "\r\n") {
+			return fmt.Errorf("custom queries: %q cannot be one line of a QLDoc", v)
+		}
+	}
+	if strings.Contains(r.Description, "*/") {
+		return errors.New("custom queries: a @description cannot hold */")
+	}
+	for _, tag := range r.Tags {
+		if !qldocTag.MatchString(tag) {
+			return fmt.Errorf("custom queries: %q is not a tag", tag)
+		}
+	}
+	return nil
+}
+
+// ScaffoldQuery lays out a new query declaring id and what want asks of it, which reports nothing
+// until somebody writes it, its help and its test. It refuses a query file that is already there
+// rather than overwrite it.
+func ScaffoldQuery(dir, name, id string, request int64, want Requested) (string, string, error) {
 	if !ValidQueryID(id) {
 		return "", "", fmt.Errorf("custom queries: %q is not a query id such as acme/checkout-tag-pin", id)
+	}
+	if err := want.check(); err != nil {
+		return "", "", err
 	}
 	tests, err := ScaffoldTest(dir, name)
 	if err != nil {
@@ -145,27 +185,59 @@ func ScaffoldQuery(dir, name, id string, request int64) (string, string, error) 
 	if err != nil {
 		return "", "", fmt.Errorf("custom queries: laying out src/%s.ql: %w", name, err)
 	}
-	if _, err := fmt.Fprintf(f, stubQuery, name, request, id); err != nil {
+	if _, err := f.WriteString(stubQuery(name, id, request, want)); err != nil {
 		return "", "", fmt.Errorf("custom queries: laying out src/%s.ql: %w", name, errors.Join(err, f.Close()))
 	}
-	return query, tests, f.Close()
+	if err := f.Close(); err != nil {
+		return "", "", err
+	}
+	if err := createOnce(filepath.Join(dir, "src", name+".md"), stubHelp(name, want)); err != nil {
+		return "", "", fmt.Errorf("custom queries: laying out src/%s.md: %w", name, err)
+	}
+	return query, tests, nil
 }
 
 // stubQuery compiles and reports nothing, which is a failing test until the query is written.
-const stubQuery = `/**
- * @name %s
- * @description Asked for in ABOM request %d; say here what this query reports and why it matters.
- * @kind problem
- * @problem.severity warning
- * @id %s
- */
+func stubQuery(name, id string, request int64, want Requested) string {
+	title := cmp.Or(want.Title, name)
+	description := cmp.Or(want.Description, fmt.Sprintf("Asked for in ABOM request %d; say here what "+
+		"this query reports and why it matters.", request))
+	var out strings.Builder
+	fmt.Fprintf(&out, "/**\n * @name %s\n * @description %s\n * @kind problem\n", title,
+		strings.Join(strings.Split(strings.TrimSpace(description), "\n"), "\n *              "))
+	fmt.Fprintf(&out, " * @problem.severity %s\n", cmp.Or(want.ProblemSeverity, "warning"))
+	if s := want.SecuritySeverity; s != nil {
+		fmt.Fprintf(&out, " * @security-severity %.1f\n", *s)
+	}
+	if want.Precision != "" {
+		fmt.Fprintf(&out, " * @precision %s\n", want.Precision)
+	}
+	fmt.Fprintf(&out, " * @id %s\n", id)
+	if len(want.Tags) > 0 {
+		fmt.Fprintf(&out, " * @tags %s\n", strings.Join(want.Tags, "\n *       "))
+	}
+	out.WriteString(" */\n\nimport actions\n\nfrom Step step\nwhere none()\nselect step, \"Not written yet.\"\n")
+	return out.String()
+}
 
-import actions
+// HelpUnwritten marks a section of laid-out help that nobody has written, so help holding it is not
+// read as written.
+const HelpUnwritten = "<!-- ABOM: not written yet -->"
 
-from Step step
-where none()
-select step, "Not written yet."
-`
+// stubHelp is the help a request already says, with its sections in the order CodeQL's own read.
+func stubHelp(name string, want Requested) string {
+	section := func(text string) string { return cmp.Or(strings.TrimSpace(text), HelpUnwritten) }
+	var out strings.Builder
+	fmt.Fprintf(&out, "# %s\n\n## Overview\n\n%s\n\n## Recommendation\n\n%s\n\n## Example\n\n%s\n",
+		cmp.Or(want.Title, name), section(want.Description), section(want.Recommendation), HelpUnwritten)
+	if len(want.References) > 0 {
+		out.WriteString("\n## References\n\n")
+		for _, ref := range want.References {
+			fmt.Fprintf(&out, "- %s\n", ref)
+		}
+	}
+	return out.String()
+}
 
 // manifestFor pins the pack to the CodeQL the rest of ABOM runs, and to its actions library.
 //
@@ -274,12 +346,13 @@ reads the marks: a marked line the query does not report, or an unmarked one it 
 the ` + "`.expected`" + ` shows under ` + "`testFailures`" + `. The mark goes on the line the result's location
 ends on, so report the value on that line rather than the step or job around it.
 
+Write the ` + "`.expected`" + ` before the query: one row per marked line, with the location, the
+element and the message the query's help says it reports. It states what the query must produce,
+so it never comes from the query's own output, and one that lists ` + "`testFailures`" + ` passes
+without the query doing what its marks say.
+
 Run the tests before the query does anything. They fail because the marked results are missing,
 and ABOM records that failure as the evidence the test was written first.
-
-The fixture comes from the CLI at every step: build the tree, run the query, check in what the CLI
-printed. A hand-written ` + "`.expected`" + ` agrees with whatever its author expected and proves
-nothing, and one that lists ` + "`testFailures`" + ` passes without the query doing what its marks say.
 
 ABOM runs ` + "`codeql test run`" + ` over this directory to decide whether a version may leave the
 ` + "`dev`" + ` stage.

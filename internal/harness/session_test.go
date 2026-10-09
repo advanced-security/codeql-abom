@@ -141,6 +141,26 @@ func TestASessionIsRefusedWhereNoCopilotCLIIsConfigured(t *testing.T) {
 	}
 }
 
+func TestACopilotCLINamedWhileServingIsUsedByTheNextSession(t *testing.T) {
+	b := newBench(t, nil)
+	b.sessions.Agent = nil
+	ran := make(chan struct{}, 1)
+	b.sessions.SetAgent(stand(func(context.Context, Setup) (string, error) {
+		ran <- struct{}{}
+		return "", nil
+	}))
+	b.finish(t, b.request(t, ""), "operator")
+	select {
+	case <-ran:
+	default:
+		t.Fatal("the session did not run on the agent set after start-up")
+	}
+	b.sessions.SetAgent(nil)
+	if _, err := b.sessions.Start(b.request(t, ""), "operator"); !errors.Is(err, ErrNoAgent) {
+		t.Errorf("after the agent was taken away a start answered %v, want ErrNoAgent", err)
+	}
+}
+
 // The agent writes only into the operator's pack, so a request about a query that lives anywhere
 // else is one it cannot work, and saying so beats a session that fails at its first write.
 func TestASessionWorksOnlyAQueryInThePack(t *testing.T) {
@@ -200,6 +220,142 @@ func TestAQueryWithNoTestHasOneLaidOutBeforeTheAgentStarts(t *testing.T) {
 	}
 }
 
+const linkedCommit = "692973e3d937129bcbf40652eb9f2f61becf3332"
+
+// asked is a request naming everything the form asks for: a title, examples on both sides, one of
+// them read from a repository, a recommendation, references and the metadata its query declares.
+func asked() store.QueryRequest {
+	severity := 8.1
+	return store.QueryRequest{
+		Title:       "Checkout pinned to a tag",
+		Description: "report actions/checkout pinned to a tag",
+		Examples: []store.RequestExample{
+			{Side: store.ExampleCompliant, Text: "- uses: actions/checkout@" + linkedCommit},
+			{Side: store.ExampleCompliant, Text: "- uses: ./local-action"},
+			{Side: store.ExampleNonCompliant, Text: "    steps:\n      - uses: actions/checkout@v4",
+				URL:        "https://github.com/acme/app/blob/main/.github/workflows/ci.yml#L9-L10",
+				Repository: "acme/app", Path: ".github/workflows/ci.yml", Ref: "main", Commit: linkedCommit,
+				StartLine: 9, EndLine: 10},
+		},
+		Recommendation: "Pin actions/checkout to a full commit SHA.",
+		References:     []store.RequestReference{{Value: "CWE-829"}},
+		Metadata: store.RequestedMetadata{Precision: "high", ProblemSeverity: "error",
+			SecuritySeverity: &severity, Tags: []string{"security"}},
+		Kind:        store.RequestMissed,
+		RequestedBy: "operator",
+	}
+}
+
+func (b bench) save(t *testing.T, r store.QueryRequest) int64 {
+	t.Helper()
+	id, err := b.store.SaveQueryRequest(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// The operator asked for a new query by id, so it is laid out from the request, declaring what the
+// request asks, before the agent starts; the next session finds it where the first left it.
+func TestAnOperatorsNewQueryIsLaidOutFromTheRequestBeforeTheAgentStarts(t *testing.T) {
+	var seen Setup
+	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
+		seen = s
+		return "done", nil
+	}))
+	r := asked()
+	r.QueryID, r.TargetSource, r.TargetDecision = "acme/checkout-tag-pin", store.TargetOperator, store.DecisionCreate
+	request := b.save(t, r)
+	b.finish(t, request, "operator")
+
+	if got := seen.Gate.Bounds().rel(seen.Gate.Bounds().Query()); got != "src/CheckoutTagPin.ql" {
+		t.Errorf("bound to %s", got)
+	}
+	query, err := os.ReadFile(filepath.Join(b.place.ws, "src", "CheckoutTagPin.ql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"@id acme/checkout-tag-pin", "@name Checkout pinned to a tag",
+		"@precision high", "@problem.severity error", "@security-severity 8.1", "security",
+		"external/cwe/cwe-829"} {
+		if !strings.Contains(string(query), want) {
+			t.Errorf("the laid-out query does not declare %q:\n%s", want, query)
+		}
+	}
+	help, err := os.ReadFile(filepath.Join(b.place.ws, "src", "CheckoutTagPin.md"))
+	if err != nil || !strings.Contains(string(help), "Pin actions/checkout to a full commit SHA.") ||
+		!strings.Contains(string(help), "CWE-829") {
+		t.Errorf("help %q %v", help, err)
+	}
+	if !strings.Contains(seen.Rules, "src/CheckoutTagPin.ql") {
+		t.Errorf("the rules do not name the laid-out query:\n%s", seen.Rules)
+	}
+
+	b.finish(t, request, "operator")
+	if got := seen.Gate.Bounds().rel(seen.Gate.Bounds().Query()); got != "src/CheckoutTagPin.ql" {
+		t.Errorf("the next session is bound to %s", got)
+	}
+}
+
+// A new id whose file name would be taken, or could not be a file name, is refused before a session
+// starts rather than laid over somebody's query.
+func TestAnOperatorsNewQueryIsRefusedWhereItCannotBeLaidOut(t *testing.T) {
+	b := newBench(t, stand(func(context.Context, Setup) (string, error) { return "done", nil }))
+	b.query(t, "CheckoutTagPin", "acme/other", true)
+	for _, id := range []string{"acme/checkout-tag-pin", "acme/2fa"} {
+		r := asked()
+		r.QueryID, r.TargetSource, r.TargetDecision = id, store.TargetOperator, store.DecisionCreate
+		request := b.save(t, r)
+		if _, err := b.sessions.Start(request, "operator"); err == nil {
+			t.Errorf("started a session laying out %s", id)
+		}
+		if got, _ := b.store.AuthoringSessions(request); len(got) != 0 {
+			t.Errorf("a refused start left sessions %+v", got)
+		}
+	}
+}
+
+// A query the agent decides to create declares what the request asks, as one the operator named.
+func TestTheAgentsNewQueryDeclaresWhatTheRequestAsks(t *testing.T) {
+	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
+		if _, err := call(t, tool(t, s, ToolTarget), map[string]any{"decision": "create",
+			"queryId": "acme/checkout-tag-pin", "name": "CheckoutTagPin", "rationale": "nothing reports it"}); err != nil {
+			t.Error(err)
+		}
+		return "done", nil
+	}))
+	b.finish(t, b.save(t, asked()), "operator")
+	query, err := os.ReadFile(filepath.Join(b.place.ws, "src", "CheckoutTagPin.ql"))
+	if err != nil || !strings.Contains(string(query), "external/cwe/cwe-829") ||
+		!strings.Contains(string(query), "@precision high") {
+		t.Errorf("laid out %q %v", query, err)
+	}
+}
+
+// The agent writes a fixture per example, so it is shown every one, the linked ones with the
+// permalink of the commit they were read at, and what else the request asks.
+func TestThePromptCarriesEveryExampleWithItsPermalink(t *testing.T) {
+	var seen Setup
+	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
+		seen = s
+		return "done", nil
+	}))
+	b.finish(t, b.save(t, asked()), "operator")
+	for _, want := range []string{"Checkout pinned to a tag", "actions/checkout@" + linkedCommit,
+		"./local-action", "actions/checkout@v4",
+		"https://github.com/acme/app/blob/" + linkedCommit + "/.github/workflows/ci.yml#L9-L10",
+		"Compliant example 2 of 2", "Non-compliant example 1 of 1",
+		"Pin actions/checkout to a full commit SHA.", "CWE-829", "@precision high",
+		"@security-severity 8.1", "external/cwe/cwe-829"} {
+		if !strings.Contains(seen.Prompt, want) {
+			t.Errorf("the prompt does not carry %q:\n%s", want, seen.Prompt)
+		}
+	}
+	if !strings.Contains(seen.Rules, "one fixture per example") {
+		t.Errorf("the rules do not ask for one fixture per example:\n%s", seen.Rules)
+	}
+}
+
 // What was refused is the security record, and what the agent said is how a reader follows it.
 func TestWhatTheAgentTriesIsOnTheTimelineAndTheSessionEndsWithItsWords(t *testing.T) {
 	var home string
@@ -212,12 +368,12 @@ func TestWhatTheAgentTriesIsOnTheTimelineAndTheSessionEndsWithItsWords(t *testin
 			ToolArgs: map[string]any{"command": "rm -rf ~"}}, copilot.HookInvocation{})
 		s.Gate.PreToolUse(copilot.PreToolUseHookInput{ToolName: "view",
 			ToolArgs: map[string]any{"path": filepath.Join(s.Workspace, "src")}}, copilot.HookInvocation{})
-		return "Stopped at the review of the expected output.", nil
+		return "Stopped once the tests passed.", nil
 	}))
 	request := b.request(t, "")
 	session := b.finish(t, request, "operator")
 
-	if session.State != store.SessionFinished || session.Detail != "Stopped at the review of the expected output." ||
+	if session.State != store.SessionFinished || session.Detail != "Stopped once the tests passed." ||
 		session.StartedBy != "operator" || session.Model == "" {
 		t.Errorf("session %+v", session)
 	}
@@ -518,72 +674,168 @@ func TestTheCatalogToolListsThePacksQueriesWithTheirFiles(t *testing.T) {
 	}
 }
 
-// The rules ride in the system message, where a request's own text cannot countermand them.
-func TestTheRulesStateTheBoundsAndTheReviewGate(t *testing.T) {
+// The rules ride in the system message, where a request's own text cannot countermand them, and
+// put everything the query is judged by before the query: help, fixtures, .expected, a failing
+// run, and the tree.
+func TestTheRulesStateTheBoundsAndTheOrderTheQueryComesLastIn(t *testing.T) {
 	var seen Setup
 	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
 		seen = s
 		return "done", nil
 	}))
 	b.finish(t, b.request(t, ""), "operator")
-	for _, want := range []string{"no shell", "codeql_test_accept", "sourceFiles", ToolTarget, ToolCatalog,
-		ToolTest, "# $ Alert"} {
+	for _, want := range []string{"no shell", "sourceFiles", ToolTarget, ToolCatalog, ToolTest, "# $ Alert",
+		".expected"} {
 		if !strings.Contains(seen.Rules, want) {
 			t.Errorf("the rules do not say %q:\n%s", want, seen.Rules)
 		}
+	}
+	if strings.Contains(seen.Rules, "codeql_test_accept") || strings.Contains(seen.Rules, "operator reads") {
+		t.Errorf("the rules still offer accepting the query's output:\n%s", seen.Rules)
+	}
+	at := -1
+	for _, step := range []string{"1. Write the help", "2. Write one fixture", "3. Write the .expected",
+		"4. Call " + ToolTest, "5. Run codeql_query_run with queryName PrintAST", "6. Write the query"} {
+		i := strings.Index(seen.Rules, step)
+		if i <= at {
+			t.Errorf("%q is not the next step in the rules:\n%s", step, seen.Rules)
+		}
+		at = i
 	}
 	if strings.Contains(seen.Rules, "actions/checkout@v4") {
 		t.Error("the request's text is in the rules")
 	}
 }
 
-// The query stays as it is until ABOM itself has seen its tests fail on a result the fixtures mark;
-// a failure for any other reason does not count.
-func TestTheQuerysFirstChangeWaitsForItsTestsToFailOnAMarkedResult(t *testing.T) {
-	var before, afterWrongReason, afterMarked, afterChange string
+// What the agent learns while it writes the query belongs in the help, in the help's own
+// sections, and never as a reason to report less than the request asks for.
+func TestTheRulesKeepTheHelpOpenInItsOwnSections(t *testing.T) {
+	var seen Setup
+	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
+		seen = s
+		return "done", nil
+	}))
+	b.finish(t, b.request(t, ""), "operator")
+	for _, want := range []string{"## Overview", "## Recommendation", "## Example", "## References",
+		"Keep the help current", "never to narrow what the request asks"} {
+		if !strings.Contains(seen.Rules, want) {
+			t.Errorf("the rules do not say %q:\n%s", want, seen.Rules)
+		}
+	}
+	if i, j := strings.Index(seen.Rules, "6. Write the query"), strings.Index(seen.Rules, "Keep the help current"); j < i {
+		t.Errorf("the rules close the help before the query is written:\n%s", seen.Rules)
+	}
+}
+
+// The request's examples are the least a test holds: every case the query detects needs both a
+// result and a near miss, and an example earns its place by testing something the others do not.
+func TestTheRulesAskForBothSidesOfEveryCaseTheQueryDetects(t *testing.T) {
+	var seen Setup
+	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
+		seen = s
+		return "done", nil
+	}))
+	b.finish(t, b.request(t, ""), "operator")
+	fixtures := seen.Rules[strings.Index(seen.Rules, "2. Write one fixture"):strings.Index(seen.Rules, "3. Write the .expected")]
+	for _, want := range []string{"every case and edge case the query detects",
+		"at least one non-compliant fixture and at least one compliant fixture",
+		"something the others do not"} {
+		if !strings.Contains(fixtures, want) {
+			t.Errorf("step 2 does not say %q:\n%s", want, fixtures)
+		}
+	}
+}
+
+// chain writes, one link at a time, what the query is judged by before it may change.
+type chain struct {
+	t  *testing.T
+	s  Setup
+	ws string
+}
+
+func (c chain) help() {
+	c.write(filepath.Join(c.ws, "src", "SelfHostedRunner.md"), "# Self-hosted runner\n\nReports a job on a self-hosted runner.\n")
+}
+
+func (c chain) fixture() {
+	c.write(filepath.Join(c.ws, "test", "SelfHostedRunner", ".github", "workflows", "runners.yml"),
+		"on: push\njobs:\n  a:\n    runs-on: self-hosted # $ Alert\n    steps:\n      - run: true\n")
+}
+
+func (c chain) expected() {
+	c.write(filepath.Join(c.ws, "test", "SelfHostedRunner", "SelfHostedRunner.expected"),
+		"| .github/workflows/runners.yml:4:14:4:24 | self-hosted | runs on a self-hosted runner |\n")
+}
+
+func (c chain) print() {
+	c.s.Gate.PostToolUse(copilot.PostToolUseHookInput{ToolName: Server + "-codeql_query_run",
+		ToolArgs: map[string]any{"queryName": "PrintAST", "queryLanguage": "actions",
+			"database": c.s.Gate.Bounds().database(), "sourceFiles": ".github/workflows/runners.yml"},
+		ToolResult: map[string]any{"textResultForLlm": printout(c.t, c.s.Scratch, "#1 Job a\n")}},
+		copilot.HookInvocation{})
+}
+
+func (c chain) write(path, body string) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		c.t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		c.t.Fatal(err)
+	}
+}
+
+// The query stays as it is until the help, the .expected, a run failing on a marked result and a
+// tree printed from these fixtures are all on record; each refusal names the next missing link.
+func TestTheQuerysFirstChangeWaitsForEverythingItIsJudgedBy(t *testing.T) {
+	var refusals []string
 	var answers []string
 	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
+		c := chain{t: t, s: s, ws: s.Workspace}
 		query := s.Gate.Bounds().Query()
-		edit := func() string {
+		edit := func() {
 			v := s.Gate.Bounds().Call("edit", map[string]any{"path": query, "old_str": "x", "new_str": "y"})
-			if v.Allowed {
-				return ""
-			}
-			return v.Reason
+			refusals = append(refusals, v.Reason)
 		}
-		test := tool(t, s, ToolTest)
-		before = edit()
-		for range 2 {
-			res, err := call(t, test, map[string]any{})
+		test := func() {
+			res, err := call(t, tool(t, s, ToolTest), map[string]any{})
 			if err != nil {
 				t.Error(err)
 			}
 			answers = append(answers, res.TextResultForLLM)
-			if len(answers) == 1 {
-				afterWrongReason = edit()
-			}
 		}
-		afterMarked = edit()
+		edit()
+		c.help()
+		edit()
+		c.fixture()
+		c.expected()
+		edit()
+		test()
+		edit()
+		test()
+		edit()
+		c.print()
+		edit()
 		if err := os.WriteFile(query, []byte("/**\n * @kind problem\n * @id acme/self-hosted-runner\n */\n"+
 			"import actions\n\nfrom Job j select j, \"changed\"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		afterChange = edit()
+		edit()
 		return "done", nil
 	}))
 	b.query(t, "SelfHostedRunner", "acme/self-hosted-runner", true)
 	*b.next = []runner.TestResult{failing(0, 0), failing(1, 0)}
 	b.finish(t, b.request(t, "acme/self-hosted-runner"), "operator")
 
-	if !strings.Contains(before, ToolTest) {
-		t.Errorf("the first change before any run was refused with %q, want it to name %s", before, ToolTest)
+	if len(refusals) != 7 {
+		t.Fatalf("%d edits tried, want 7: %q", len(refusals), refusals)
 	}
-	if afterWrongReason == "" {
-		t.Error("a failure on no marked result released the query")
-	}
-	if afterMarked != "" || afterChange != "" {
-		t.Errorf("after a failure on a marked result the change was refused: %q, then %q", afterMarked,
-			afterChange)
+	for i, want := range []string{"help", ".expected", ToolTest, ToolTest, "PrintAST", "", ""} {
+		switch got := refusals[i]; {
+		case want == "" && got != "":
+			t.Errorf("edit %d refused with %q, want it allowed", i+1, got)
+		case want != "" && !strings.Contains(got, want):
+			t.Errorf("edit %d refused with %q, want it to name %s", i+1, got, want)
+		}
 	}
 	if len(answers) != 2 || !strings.Contains(answers[0], "not a failure on a marked result") ||
 		!strings.Contains(answers[1], "recorded this failure") {
@@ -593,6 +845,92 @@ func TestTheQuerysFirstChangeWaitsForItsTestsToFailOnAMarkedResult(t *testing.T)
 	if err != nil || len(tests) != 1 || tests[0].CLIVersion != benchCLI || tests[0].FixturesDigest == "" ||
 		tests[0].Missing == nil || *tests[0].Missing != 1 {
 		t.Errorf("recorded %+v %v, want the last run under %s with its fixtures", tests, err, benchCLI)
+	}
+}
+
+// An agent that goes idle before the work is done is told the next thing to do, and the session
+// ends when nothing is left or when it would be told the same thing about the same files again.
+func TestAnIdleAgentIsToldWhatIsLeftUntilNothingIsOrItStopsMoving(t *testing.T) {
+	var nudges []string
+	b := newBench(t, stand(func(ctx context.Context, s Setup) (string, error) {
+		c := chain{t: t, s: s, ws: s.Workspace}
+		next := func() { nudges = append(nudges, s.Next(ctx)) }
+		next()
+		c.help()
+		next()
+		c.fixture()
+		c.expected()
+		next()
+		if _, err := call(t, tool(t, s, ToolTest), map[string]any{}); err != nil {
+			t.Error(err)
+		}
+		next()
+		c.print()
+		next()
+		next()
+		return "done", nil
+	}))
+	b.query(t, "SelfHostedRunner", "acme/self-hosted-runner", true)
+	*b.next = []runner.TestResult{failing(1, 0)}
+	request := b.request(t, "acme/self-hosted-runner")
+	session := b.finish(t, request, "operator")
+
+	if len(nudges) != 6 {
+		t.Fatalf("%d nudges, want 6: %q", len(nudges), nudges)
+	}
+	for i, want := range []string{"help", ".expected", ToolTest, "PrintAST", "Write the query"} {
+		if !strings.Contains(nudges[i], want) {
+			t.Errorf("nudge %d is %q, want it to name %s", i+1, nudges[i], want)
+		}
+	}
+	if nudges[5] != "" {
+		t.Errorf("the same nudge about the same files was sent again: %q", nudges[5])
+	}
+	events, err := b.store.AuthoringEvents(session.RowID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	said := 0
+	for _, e := range events {
+		if e.Hook == HookMessage && e.Tool == "abom" {
+			said++
+		}
+	}
+	if said != 5 {
+		t.Errorf("%d nudges on the timeline, want 5: %+v", said, events)
+	}
+}
+
+// Once every step has passed there is nothing to tell the agent, so the session can end.
+func TestAnAgentWithNothingLeftIsNotToldAnything(t *testing.T) {
+	var last string
+	b := newBench(t, stand(func(ctx context.Context, s Setup) (string, error) {
+		c := chain{t: t, s: s, ws: s.Workspace}
+		c.help()
+		c.fixture()
+		c.expected()
+		test := tool(t, s, ToolTest)
+		if _, err := call(t, test, map[string]any{}); err != nil {
+			t.Error(err)
+		}
+		c.print()
+		query := s.Gate.Bounds().Query()
+		if v := s.Gate.Bounds().Call("edit", map[string]any{"path": query, "old_str": "x", "new_str": "y"}); !v.Allowed {
+			t.Fatalf("the query's first change refused with everything on record: %s", v.Reason)
+		}
+		c.write(query, "/**\n * @kind problem\n * @id acme/self-hosted-runner\n */\n"+
+			"import actions\n\nfrom Job j select j, \"runs on a self-hosted runner\"\n")
+		if _, err := call(t, test, map[string]any{}); err != nil {
+			t.Error(err)
+		}
+		last = s.Next(ctx)
+		return "done", nil
+	}))
+	b.query(t, "SelfHostedRunner", "acme/self-hosted-runner", true)
+	*b.next = []runner.TestResult{failing(1, 0), {Total: 1, Passed: true, Detail: "1 of 1 passed"}}
+	b.finish(t, b.request(t, "acme/self-hosted-runner"), "operator")
+	if last != "" {
+		t.Errorf("with every step passed the agent was told %q", last)
 	}
 }
 
@@ -669,42 +1007,5 @@ func TestAPrintedTreeOutlivesTheSessionOnTheRequest(t *testing.T) {
 	if got.Body != tree || got.QueryID != "acme/self-hosted-runner" || got.TestDigest == "" ||
 		got.Database != "test/SelfHostedRunner/SelfHostedRunner.testproj" || got.CLIVersion != benchCLI {
 		t.Errorf("kept %+v", got)
-	}
-}
-
-// A rejection is the operator's answer to an earlier session, so the next one starts from it; an
-// approval since then leaves nothing to answer.
-func TestTheNextSessionIsToldWhatAnOperatorRejectedAndWhy(t *testing.T) {
-	var prompts []string
-	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
-		prompts = append(prompts, s.Prompt)
-		return "done", nil
-	}))
-	b.query(t, "Pin", "acme/pin", true)
-	request := b.request(t, "acme/pin")
-	review := store.AuthoringReview{RequestID: request, QueryID: "acme/pin", QueryVersion: "v1",
-		Actual: "| ci.yml:3:9 | pinned to 692973e |\n", Verdict: store.ReviewRejected,
-		Reason: "a short SHA is not a pin, so it must be reported", ReviewedBy: "operator"}
-	if _, err := b.store.RecordAuthoringReview(review); err != nil {
-		t.Fatal(err)
-	}
-	b.finish(t, request, "operator")
-	review.Verdict, review.Reason = store.ReviewApproved, ""
-	if _, err := b.store.RecordAuthoringReview(review); err != nil {
-		t.Fatal(err)
-	}
-	b.finish(t, request, "operator")
-
-	if len(prompts) != 2 {
-		t.Fatalf("%d sessions ran, want 2", len(prompts))
-	}
-	for _, want := range []string{"rejected", "a short SHA is not a pin, so it must be reported",
-		"| ci.yml:3:9 | pinned to 692973e |"} {
-		if !strings.Contains(prompts[0], want) {
-			t.Errorf("the session after a rejection is not told %q:\n%s", want, prompts[0])
-		}
-	}
-	if strings.Contains(prompts[1], "rejected") {
-		t.Errorf("the session after an approval is told of the rejection before it:\n%s", prompts[1])
 	}
 }

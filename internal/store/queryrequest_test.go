@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -89,6 +90,44 @@ func TestEditingAQueryRequestKeepsWhoAskedAndWhen(t *testing.T) {
 	}
 	if r.Status != RequestInProgress || r.Kind != RequestMissed || r.QueryID != "acme/self-hosted-runner" {
 		t.Errorf("the edit was not kept: %+v", r)
+	}
+}
+
+// A request keeps the steps it was first closed on through later edits, and forgets them when it
+// is reopened; one that is not closed, or was closed before steps were kept, has none.
+func TestAClosedRequestKeepsTheStepsItFirstClosedOn(t *testing.T) {
+	s := newTestStore(t)
+	r := aRequest()
+	r.ClosedSteps = `["open"]`
+	id, err := s.SaveQueryRequest(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.RowID = id
+	read := func() string {
+		t.Helper()
+		got, err := s.QueryRequests()
+		if err != nil || len(got) != 1 {
+			t.Fatalf("read %v, %v", got, err)
+		}
+		return got[0].ClosedSteps
+	}
+	for _, c := range []struct{ status, steps, want string }{
+		{RequestOpen, `["open"]`, ""},
+		{RequestDeclined, "", ""},
+		{RequestOpen, "", ""},
+		{RequestDeclined, `["first"]`, `["first"]`},
+		{RequestDone, `["second"]`, `["first"]`},
+		{RequestInProgress, `["third"]`, ""},
+		{RequestDone, `["fourth"]`, `["fourth"]`},
+	} {
+		r.Status, r.ClosedSteps = c.status, c.steps
+		if _, err := s.SaveQueryRequest(r); err != nil {
+			t.Fatal(err)
+		}
+		if got := read(); got != c.want {
+			t.Errorf("marked %s offering %q, it keeps %q, want %q", c.status, c.steps, got, c.want)
+		}
 	}
 }
 
@@ -381,5 +420,58 @@ func TestARequestWithNoEvidenceListsNoneRatherThanNull(t *testing.T) {
 	if got[0].Evidence == nil || got[0].SourceRunID != 0 {
 		t.Errorf("a request filed from nothing reads run %d with evidence %#v",
 			got[0].SourceRunID, got[0].Evidence)
+	}
+}
+
+// A request no agent has worked is deleted with what was written in it, leaves every other request
+// as it was, and frees its slug to file again.
+func TestDeletingARequestNobodyWorkedFreesItsSlug(t *testing.T) {
+	s := newTestStore(t)
+	doomed := aRequest()
+	doomed.Slug = "self-hosted-pr-runner"
+	doomed.References = []RequestReference{{Value: "CWE-284"}}
+	doomed.Metadata.Tags = []string{"supply-chain"}
+	gone, err := s.SaveQueryRequest(doomed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, err := s.SaveQueryRequest(aRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.DeleteQueryRequest(gone); err != nil {
+		t.Fatal(err)
+	}
+	left, err := s.QueryRequests()
+	if err != nil || len(left) != 1 || left[0].RowID != kept {
+		t.Fatalf("after deleting %d, requests are %+v (err %v)", gone, left, err)
+	}
+	if err := s.DeleteQueryRequest(gone); !errors.Is(err, ErrNoQueryRequest) {
+		t.Errorf("deleting it twice: %v, want ErrNoQueryRequest", err)
+	}
+	if _, err := s.SaveQueryRequest(doomed); err != nil {
+		t.Errorf("the deleted request's slug was not freed: %v", err)
+	}
+}
+
+// An agent's timeline is never rewritten, so a request it worked keeps it and is not deleted.
+func TestARequestAnAgentWorkedIsNotDeleted(t *testing.T) {
+	s := newTestStore(t)
+	request, session := aSessionOn(t, s)
+	if err := s.DeleteQueryRequest(request); !errors.Is(err, ErrSessionUnderWay) {
+		t.Fatalf("deleting a request being worked: %v, want ErrSessionUnderWay", err)
+	}
+	if err := s.EndAuthoringSession(session, SessionStopped, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteQueryRequest(request); !errors.Is(err, ErrRequestWorked) {
+		t.Fatalf("deleting a request an agent worked: %v, want ErrRequestWorked", err)
+	}
+	if got, _ := s.QueryRequests(); len(got) != 1 {
+		t.Fatalf("a refused delete left %d requests", len(got))
+	}
+	if sessions, _ := s.AuthoringSessions(request); len(sessions) != 1 {
+		t.Errorf("a refused delete left sessions %+v", sessions)
 	}
 }

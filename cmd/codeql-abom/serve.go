@@ -29,6 +29,7 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/setup"
 	"github.com/advanced-security/codeql-abom/internal/store"
 	"github.com/advanced-security/codeql-abom/internal/supervisor"
+	"github.com/advanced-security/codeql-abom/internal/toolchain"
 	"github.com/advanced-security/codeql-abom/internal/work"
 )
 
@@ -308,6 +309,8 @@ type serveConfig struct {
 	tokens    ghapp.TokenSource
 	discovery discoveryOptions
 	authoring authoringOptions
+	// toolchain is what sessions need, nil where nothing checks it.
+	toolchain *toolchain.Toolchain
 }
 
 // runServe answers interface queries over HTTP until the context is canceled.
@@ -344,6 +347,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return err
 	}
 
+	cfg.toolchain = newToolchain(s, &cfg, stderr)
 	openCustomQueries(cfg.discovery.customQLDir, cfg.discovery.codeqlPath, stdout, stderr)
 
 	loop, err := newSupervisor(s, cfg.discovery, tokens, stderr)
@@ -568,7 +572,15 @@ func newConfiguredServer(
 			return expand.ReadDeclarations(ctx, s, resolver, unread)
 		}
 	}
-	srv.Authoring = newAuthoring(s, cfg.authoring, loop, stderr)
+	if sessions, agentFor := newAuthoring(s, cfg.authoring, loop, stderr); sessions != nil {
+		srv.Authoring = sessions
+		if cfg.toolchain != nil {
+			cfg.toolchain.ApplyCopilot = func(cli string) { sessions.SetAgent(agentFor(cli)) }
+		}
+	}
+	if cfg.toolchain != nil {
+		srv.Toolchain = cfg.toolchain
+	}
 	reader, err := readClient(ctx, cfg.apiURL, s, cfg.route, tokens)
 	if err != nil {
 		return nil, fmt.Errorf("serve: %w", err)
@@ -582,6 +594,7 @@ func newConfiguredServer(
 	srv.EnumerateConfigurations = setupReader.ReadConfigurations
 	srv.CodeScanningWrites = codeScanningWrites(ctx, cfg, s, setupReader)
 	srv.FindDatabase = reader.FindDatabase
+	srv.Files = reader
 	srv.Comparer = &compare.Comparer{Store: s, Read: reader}
 	srv.FullListingEvery = cfg.listEvery
 	srv.GroupProperty = cfg.groupProperty

@@ -234,6 +234,8 @@ type InventoryQuery struct {
 	// *finding* sits in, as it is there — "which dependencies does this repository use" is `scope`.
 	Rules              []string
 	NotRules           []string
+	Tags               []string
+	NotTags            []string
 	Provider           string
 	Severity           string
 	SecuritySeverities []string
@@ -666,6 +668,10 @@ func inventoryFindingFilter(q InventoryQuery) (string, []any) {
 		clause, a := ruleClause("f.rule_id", q.Rules)
 		where, whereArgs = append(where, clause), append(whereArgs, a...)
 	}
+	if len(q.Tags) > 0 {
+		clause, a := tagClause("f", q.Tags)
+		where, whereArgs = append(where, clause), append(whereArgs, a...)
+	}
 	if q.Provider != "" {
 		// Not `IS NOT DISTINCT FROM`: a NULL provider is unknown, and unknown is not a match.
 		where, whereArgs = append(where, "f.provider = ?"), append(whereArgs, q.Provider)
@@ -705,12 +711,19 @@ func inventoryFindingFilter(q InventoryQuery) (string, []any) {
 			strings.Join(where, " AND ") + `)`
 		args = append(args, whereArgs...)
 	}
-	if len(q.NotRules) > 0 {
-		clause, a := ruleClause("x.rule_id", q.NotRules)
+	if len(q.NotRules) > 0 || len(q.NotTags) > 0 {
+		var terms []string
+		if len(q.NotRules) > 0 {
+			clause, a := ruleClause("x.rule_id", q.NotRules)
+			terms, args = append(terms, clause), append(args, a...)
+		}
+		if len(q.NotTags) > 0 {
+			clause, a := tagClause("x", q.NotTags)
+			terms, args = append(terms, clause), append(args, a...)
+		}
 		out += ` AND NOT EXISTS (SELECT 1 FROM ` + findingSource(q.Mode) + ` x
 		                          JOIN abom_finding_node xn ON xn.finding_row_id = x.row_id
-		                         WHERE xn.node_row_id = n.row_id AND ` + clause + `)`
-		args = append(args, a...)
+		                         WHERE xn.node_row_id = n.row_id AND (` + strings.Join(terms, " OR ") + `))`
 	}
 	return out, args
 }

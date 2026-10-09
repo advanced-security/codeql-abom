@@ -20,6 +20,11 @@ type FindingSelector struct {
 	// Exclude drops a node that carries any of these at all, rather than dropping the finding and
 	// keeping the node. "A but not C" describes the action or workflow, not the result set.
 	Exclude []string
+	// Tags match a finding whose rule declared any of them in the SARIF that reported it, exactly:
+	// a CWE report cannot let cwe-82 answer for cwe-829.
+	Tags []string
+	// NotTags drops a node carrying any finding whose rule declared one of them, as Exclude does.
+	NotTags []string
 	// Provider is the SARIF tool driver name, verbatim. It never matches a finding nobody
 	// attributed: relabeling those would invent the provenance the column exists to hold.
 	Provider string
@@ -99,7 +104,8 @@ const (
 
 // asked reports whether the selector names anything at all.
 func (f FindingSelector) asked() bool {
-	return len(f.Rules) > 0 || len(f.Exclude) > 0 || f.Provider != "" || f.Severity != "" ||
+	return len(f.Rules) > 0 || len(f.Exclude) > 0 || len(f.Tags) > 0 || len(f.NotTags) > 0 ||
+		f.Provider != "" || f.Severity != "" ||
 		len(f.SecuritySeverities) > 0 ||
 		len(f.Sources) > 0 || len(f.Properties) > 0 || len(f.ExcludeProperties) > 0 || f.Mode != "" ||
 		len(f.AdvisorySeverities) > 0 || len(f.Reached) > 0
@@ -107,7 +113,8 @@ func (f FindingSelector) asked() bool {
 
 // asksFindings reports whether the selector names anything only a finding has.
 func (f FindingSelector) asksFindings() bool {
-	return len(f.Rules) > 0 || len(f.Exclude) > 0 || f.Provider != "" || f.Severity != "" ||
+	return len(f.Rules) > 0 || len(f.Exclude) > 0 || len(f.Tags) > 0 || len(f.NotTags) > 0 ||
+		f.Provider != "" || f.Severity != "" ||
 		len(f.SecuritySeverities) > 0 || len(f.Sources) > 0 || f.Mode != ""
 }
 
@@ -207,6 +214,7 @@ type findingMatchQuery struct {
 func buildFindingMatchQuery(sel FindingSelector) findingMatchQuery {
 	query := newFindingMatchQuery(sel)
 	query.applyRules(sel.Rules)
+	query.applyTags(sel.Tags)
 	query.applyProvider(sel.Provider)
 	query.applySeverity(sel.Severity)
 	query.applySecuritySeverities(sel.SecuritySeverities)
@@ -252,6 +260,13 @@ func (q *findingMatchQuery) both(clause string, args ...any) {
 func (q *findingMatchQuery) applyRules(rules []string) {
 	if len(rules) > 0 {
 		clause, args := ruleClause("f.rule_id", rules)
+		q.both(clause, args...)
+	}
+}
+
+func (q *findingMatchQuery) applyTags(tags []string) {
+	if len(tags) > 0 {
+		clause, args := tagClause("f", tags)
 		q.both(clause, args...)
 	}
 }
@@ -306,14 +321,23 @@ func (q *findingMatchQuery) applyExcludedProperties(properties []viewspec.Proper
 }
 
 func (q *findingMatchQuery) applyExclusions(sel FindingSelector) {
-	if len(sel.Exclude) == 0 {
+	var terms []string
+	var args []any
+	if len(sel.Exclude) > 0 {
+		clause, a := ruleClause("x.rule_id", sel.Exclude)
+		terms, args = append(terms, clause), append(args, a...)
+	}
+	if len(sel.NotTags) > 0 {
+		clause, a := tagClause("x", sel.NotTags)
+		terms, args = append(terms, clause), append(args, a...)
+	}
+	if len(terms) == 0 {
 		return
 	}
-	clause, args := ruleClause("x.rule_id", sel.Exclude)
 	q.exclusion = `
 		  AND NOT EXISTS (SELECT 1 FROM ` + findingSource(sel.Mode) + ` x
 		                    JOIN abom_finding_node xn ON xn.finding_row_id = x.row_id
-		                   WHERE xn.node_row_id = n.row_id AND ` + clause + `)`
+		                   WHERE xn.node_row_id = n.row_id AND (` + strings.Join(terms, " OR ") + `))`
 	q.exclusionArgs = args
 }
 

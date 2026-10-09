@@ -60,7 +60,7 @@ type draftRun struct {
 }
 
 func (s *Sessions) draft(run int64, queryID string, picked []Picked, by string) (store.AuthoringSession, <-chan struct{}, error) {
-	if s.Agent == nil {
+	if s.agent() == nil {
 		return store.AuthoringSession{}, nil, ErrNoAgent
 	}
 	if len(picked) == 0 {

@@ -23,10 +23,17 @@ type FilterValue struct {
 var corpusDerivedValues = map[string]struct{ column, from string }{
 	"rules":    {"rule_id", "abom_finding"},
 	"notRules": {"rule_id", "abom_finding"},
+	"tags":     {"tag", findingTagRows},
+	"notTags":  {"tag", findingTagRows},
 	"severity": {"severity", "abom_finding"},
 	"provider": {"provider", "abom_finding"},
 	"kinds":    {"node_kind", "abom_node"},
 }
+
+// findingTagRows is one row per finding and tag its rule declared, and one empty row for a finding
+// whose rule declared none, so those are counted as uncovered rather than vanishing.
+var findingTagRows = `(SELECT t.tag AS tag FROM abom_finding_any_mode f
+	LEFT JOIN abom_query_run_rule_tag t ON t.query_run_id = f.query_run_id AND t.rule_id = f.rule_id)`
 
 // countedElsewhere are terms a control reads values for from an endpoint of its own, counted here
 // so nothing that offers values goes unranked. A property term counts keys rather than values:

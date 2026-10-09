@@ -53,6 +53,12 @@ CLI, runner, store, queue and existing UI states. Agree those interfaces with th
 workstreams and integrate in small tested changes; do not serialize the entire deployment effort
 behind them or mistake parallel development for permission to skip its acceptance gates.
 
+**[A query request says enough to write the query](ui/codeql-requests.md) also starts alongside the
+ranked work, by the operator's call.** What is left: tag terms in the Explorer, a decision on how
+wide the catalog may be before tag chips go in, re-recording the fixture corpus without the removed
+acceptance, and the real-corpus check with screenshots. It touches the view language, the catalog
+and `cmd/abom-corpus`, not the graph.
+
 ## Ranked next
 
 **Closure databases are built, and inert.** Every reader that says what runs follows the commit a
@@ -249,7 +255,8 @@ everything else. Below them, exclusions lead because hiding something is the nex
 organization makes about its own data, and nothing records who made it. The interface
 entries follow because each is a claim a reader can already see and misread. The
 [checkout cache](db/checkout-cache.md) and [database cache](db/database-cache.md) are built and
-reused, each keeping its retention default as a measured refinement. Disagreeing with that is the
+reused, each keeping its retention default as a measured refinement; the database cache also holds
+848 directories no row records, which its plan leaves to the operator. Disagreeing with that is the
 point of writing it down.
 
 **A query version's `deploy` rung is still set by hand.** `test`, `extended-test` and `review`

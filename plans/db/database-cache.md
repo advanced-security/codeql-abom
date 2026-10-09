@@ -75,6 +75,20 @@ flowchart LR
    which then evicts what the run built first, and a second run over the same scope rebuilds all of
    them. Nothing currently notices. Either the run pins what it resolved for its duration, or the
    resolution states that the scope exceeds what can be held. Depends on 2.
+4. **A directory under the cache root with no row is invisible to the ceiling.** On the operator's
+   store the root holds **869 database directories (5.4 GB)** and `abom_local_database` **21 rows
+   (70 MiB)**: 848 directories, across 270 repositories, have no row, so `EvictDatabasesOver` cannot
+   count or remove them and the inventory asks for a build that exists. 140 of those repositories
+   are in `repository` when compared case-insensitively. A sample of 400 was **395 built by
+   2.27.0**, which the 2.27.1 server refuses to reuse anyway. A reuse now records a directory it
+   finds with no row (`Expander.useHeld`), so this only grows from older stores. The decision is a
+   fork:
+   - *adopt* each directory whose path parses as an identity and whose CodeQL is the running one,
+     which here is a handful;
+   - *report* the unrecorded bytes in Settings beside the ceiling, and leave them where they are;
+   - *remove* them, inside the root only, behind the same confirm the prune uses.
+   Report is the floor of every choice; removal is irreversible and needs the operator's call.
+   Depends on nothing.
 
 ## What this does not cover
 

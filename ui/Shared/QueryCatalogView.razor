@@ -19,18 +19,25 @@
 {
     <RunDraftPanel Predicate="@DraftPredicate" Closed="CloseDraft">
         <Scope>
-            <MudText Typo="Typo.body2" title="@_view?.Description" data-abom-run-scope>
-                on @(_view is null ? "a named scope, chosen below" : _view.Label)
-            </MudText>
+            @if (_view is null)
+            {
+                <MudText Typo="Typo.body2" Class="mud-text-secondary" data-abom-run-scope>None chosen yet</MudText>
+            }
+            else
+            {
+                <MudText Typo="Typo.body2" title="@_view.Description" data-abom-run-scope><strong>@_view.Label</strong></MudText>
+            }
         </Scope>
         <ChildContent>
-            <div class="d-flex flex-wrap align-center gap-2 mt-2">
+            <div class="d-flex flex-wrap align-center gap-2">
                 <NamedScopes Surface="run" Chosen="ChooseScope" />
-                <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
-                           title="Go to the Inventory to choose repositories for this run draft."
-                           OnClick="ChooseInInventory" data-abom-run-in-inventory>
-                    Choose repositories in the Inventory
-                </MudButton>
+                <Tip Text="Pick repositories one by one in the Inventory instead of a named scope.">
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                               StartIcon="@Icons.Material.Outlined.Checklist"
+                               OnClick="ChooseInInventory" data-abom-run-in-inventory>
+                        Pick repositories
+                    </MudButton>
+                </Tip>
             </div>
         </ChildContent>
     </RunDraftPanel>
@@ -49,9 +56,10 @@ else if (_catalog.Queries.Count == 0)
             A version appears here once a run is on record for it. Start discovery, or run a
             query on repositories chosen in the Inventory, and each version is catalogued as it runs.
         </MudText>
-        <MudButton Href="/settings" Variant="Variant.Outlined" Class="mt-4"
-                   title="Open Settings to configure discovery."
-                   StartIcon="@Icons.Material.Outlined.Settings">Discovery</MudButton>
+        <Tip Text="Set up the crawl that runs queries as it finds repositories.">
+            <MudButton Href="/settings" Variant="Variant.Outlined" Class="mt-4"
+                       StartIcon="@Icons.Material.Outlined.Settings">Discovery</MudButton>
+        </Tip>
     </MudPaper>
 }
 else
@@ -75,11 +83,13 @@ else
         @if (Hidden > 0)
         {
             @* On a wrapper: MudBlazor splats the attribute onto a hidden input. *@
-            <span class="ml-4" data-abom-queries-discovery-toggle>
-                <MudSwitch T="bool" Value="_showDiscovery" ValueChanged="@((bool v) => { _showDiscovery = v; })"
-                           Color="Color.Primary" Size="Size.Small"
-                           Label="Show everything that ran" />
-            </span>
+            <Tip Text="Include graph-building queries and whole suites, not just single queries." Class="ml-4">
+                <span data-abom-queries-discovery-toggle>
+                    <MudSwitch T="bool" Value="_showDiscovery" ValueChanged="@((bool v) => { _showDiscovery = v; })"
+                               Color="Color.Primary" Size="Size.Small"
+                               Label="Show everything that ran" />
+                </span>
+            </Tip>
         }
     </div>
 
@@ -100,13 +110,14 @@ else
         <Columns>
             <HierarchyColumn T="CatalogQuery" InitiallyExpandedFunc="@Focused">
                 <CellTemplate>
-                    <MudIconButton Size="Size.Small"
-                                   Icon="@(context.Open ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)"
-                                   aria-label="@($"Show where {context.Item.QueryId} ran")"
-                                   aria-expanded="@(context.Open ? "true" : "false")"
-                                   title="@(context.Open ? $"Hide where {context.Item.QueryId} ran and what is recorded for it." : $"Show where {context.Item.QueryId} ran and what is recorded for it.")"
-                                   OnClick="@(() => context.Actions.ToggleHierarchyVisibilityForItemAsync())"
-                                   data-abom-query-detail />
+                    <Tip Text="@(context.Open ? "Hide where this version ran." : "Show where this version ran and what is recorded for it.")">
+                        <MudIconButton Size="Size.Small"
+                                       Icon="@(context.Open ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)"
+                                       aria-label="@($"Show where {context.Item.QueryId} ran")"
+                                       aria-expanded="@(context.Open ? "true" : "false")"
+                                       OnClick="@(() => context.Actions.ToggleHierarchyVisibilityForItemAsync())"
+                                       data-abom-query-detail />
+                    </Tip>
                 </CellTemplate>
             </HierarchyColumn>
 
@@ -120,7 +131,8 @@ else
                     @* Under the id rather than in the action column, which would widen every row for one. *@
                     @if (context.Item.Working && context.Item.Steps.Count > 0)
                     {
-                        <AuthoringSteps Steps="@context.Item.Steps" CanTest="@CanTest(context.Item)"
+                        <AuthoringSteps Steps="@context.Item.Steps" QueryId="@context.Item.QueryId"
+                                        CanTest="@CanTest(context.Item)"
                                         TestRefusal="@TestRefusal(context.Item)"
                                         OnTest="@(() => Test(context.Item))"
                                         CanPrint="@CanTest(context.Item)"
@@ -137,26 +149,22 @@ else
                         @if (context.Item.Source == "custom" && !(context.Item.Working && context.Item.Steps.Count > 0))
                         {
                             @* What an older version's tests said is history, and cannot be re-run. *@
-                            <MudTooltip Text="@SupersededTooltip(context.Item)">
-                                <span>
-                                    <MudIconButton Icon="@Icons.Material.Outlined.Science"
-                                                   Size="Size.Small" Color="@TestColor(context.Item)"
-                                                   Disabled="true"
-                                                   aria-label="@SupersededTooltip(context.Item)"
-                                                   data-abom-query-superseded-test />
-                                </span>
-                            </MudTooltip>
+                            <Tip Text="@SupersededTooltip(context.Item)">
+                                <MudIconButton Icon="@Icons.Material.Outlined.Science"
+                                               Size="Size.Small" Color="@TestColor(context.Item)"
+                                               Disabled="true"
+                                               aria-label="Tests of an older version"
+                                               data-abom-query-superseded-test />
+                            </Tip>
                         }
-                        <MudTooltip Text="@RunTooltip(context.Item)">
-                            <span>
-                                <MudIconButton Icon="@Icons.Material.Outlined.PlayArrow"
-                                               Size="Size.Small" Color="Color.Primary"
-                                               Disabled="@(!CanRun(context.Item))"
-                                               OnClick="@(() => AddToRun(context.Item))"
-                                               aria-label="Add this version to a run"
-                                               data-abom-query-run />
-                            </span>
-                        </MudTooltip>
+                        <Tip Text="@RunTooltip(context.Item)">
+                            <MudIconButton Icon="@Icons.Material.Outlined.PlayArrow"
+                                           Size="Size.Small" Color="Color.Primary"
+                                           Disabled="@(!CanRun(context.Item))"
+                                           OnClick="@(() => AddToRun(context.Item))"
+                                           aria-label="Add this version to a run"
+                                           data-abom-query-run />
+                        </Tip>
                     </div>
                 </CellTemplate>
             </TemplateColumn>
@@ -177,9 +185,10 @@ else
                     }
                     else if (context.Item.Band.Length > 0)
                     {
-                        <div class="d-flex align-center gap-1" data-abom-query-band="@context.Item.QueryId">
+                        @* Stacked, each part on one line: side by side they wrapped a narrow column onto four. *@
+                        <div class="d-flex flex-column align-start" data-abom-query-band="@context.Item.QueryId">
                             <SeverityChip Severity="@context.Item.Band" />
-                            <MudText Typo="Typo.caption" Class="mud-text-secondary">@DeclaredLevel(context.Item)</MudText>
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary abom-nowrap">@DeclaredLevel(context.Item)</MudText>
                         </div>
                     }
                 </CellTemplate>
@@ -254,26 +263,28 @@ else
                 <CellTemplate>
                     @if (context.Item.Stage.Length == 0)
                     {
-                        <span class="abom-stage" title="Nobody has put this version in a stage."
-                              data-abom-query-unstaged>
-                            <MudMenu Label="not staged" EndIcon="@Icons.Material.Filled.ArrowDropDown"
-                                     Size="Size.Small" Variant="Variant.Text" Dense="true"
-                                     Disabled="@(!CanAdvance)" Class="abom-stage-menu"
-                                     data-abom-query-advance>
-                                @StageItems(context.Item)
-                            </MudMenu>
+                        <span class="abom-stage" data-abom-query-unstaged>
+                            <Tip Text="Put this version in a stage. Nobody has yet.">
+                                <MudMenu Label="not staged" EndIcon="@Icons.Material.Filled.ArrowDropDown"
+                                         Size="Size.Small" Variant="Variant.Text" Dense="true"
+                                         Disabled="@(!CanAdvance)" Class="abom-stage-menu"
+                                         data-abom-query-advance>
+                                    @StageItems(context.Item)
+                                </MudMenu>
+                            </Tip>
                         </span>
                     }
                     else
                     {
-                        <span class="abom-stage" title="@StagedTitle(context.Item)"
-                              data-abom-query-stage="@context.Item.Stage">
-                            <MudMenu Label="@context.Item.Stage" EndIcon="@Icons.Material.Filled.ArrowDropDown"
-                                     Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
-                                     Dense="true" Disabled="@(!CanAdvance)" Class="abom-stage-menu"
-                                     data-abom-query-advance>
-                                @StageItems(context.Item)
-                            </MudMenu>
+                        <span class="abom-stage" data-abom-query-stage="@context.Item.Stage">
+                            <Tip Text="@StagedTitle(context.Item)">
+                                <MudMenu Label="@context.Item.Stage" EndIcon="@Icons.Material.Filled.ArrowDropDown"
+                                         Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                                         Dense="true" Disabled="@(!CanAdvance)" Class="abom-stage-menu"
+                                         data-abom-query-advance>
+                                    @StageItems(context.Item)
+                                </MudMenu>
+                            </Tip>
                         </span>
                     }
                 </CellTemplate>
@@ -298,9 +309,10 @@ else
                         @foreach (var (id, at) in context.Item.Requests.Select((id, at) => (id, at)))
                         {
                             @(at == 0 ? "" : ", ")
-                            <MudLink Href="@($"/codeql?tab=requests&request={id}")" Typo="Typo.caption"
-                                     title="@($"Open request #{id} that asked for this query.")"
-                                     data-abom-query-request="@id">request #@id</MudLink>
+                            <Tip Text="Open the request that asked for this query.">
+                                <MudLink Href="@($"/codeql?tab=requests&request={id}")" Typo="Typo.caption"
+                                         data-abom-query-request="@id">request #@id</MudLink>
+                            </Tip>
                         }
                     </MudText>
                 }
@@ -458,9 +470,9 @@ else
     /// <summary>The stage the server refuses until a run of the version is compared with the alerts.</summary>
     private const string Review = "review";
 
-    private static string StagedTitle(CatalogQuery q) => q.StagedBy.Length == 0
-        ? $"This version is in the {q.Stage} stage."
-        : $"Put in the {q.Stage} stage by {q.StagedBy}, {TimeText.DayAndTime(q.StagedAt)}.";
+    private static string StagedTitle(CatalogQuery q) => "Move this version to another stage. " + (q.StagedBy.Length == 0
+        ? $"It is in the {q.Stage} stage."
+        : $"Put in the {q.Stage} stage by {q.StagedBy}, {TimeText.DayAndTime(q.StagedAt)}.");
 
     private async Task Advance(CatalogQuery query, string stage)
     {

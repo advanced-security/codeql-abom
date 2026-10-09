@@ -1,0 +1,16 @@
+@* What a control is for, in one short sentence, shown at once and styled: a native title shows
+   late, unstyled, and in an embedded browser not at all. The span takes the pointer, so a
+   disabled control, which receives none, still says why. *@
+<MudTooltip Text="@Text" Placement="@Placement" RootClass="@Class">
+    <span class="abom-tip" data-abom-tip="@Text">@ChildContent</span>
+</MudTooltip>
+
+@code {
+    [Parameter, EditorRequired] public string Text { get; set; } = string.Empty;
+    [Parameter] public Placement Placement { get; set; } = Placement.Top;
+
+    /// <summary>On the tooltip's root, which is what a flex row lays out.</summary>
+    [Parameter] public string? Class { get; set; }
+
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

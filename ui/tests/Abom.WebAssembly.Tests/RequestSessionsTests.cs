@@ -24,7 +24,7 @@ public class RequestSessionsTests : AbomTestContext
     private const string Finished = """
         {"sessions":[{"rowId":1,"requestId":7,"state":"finished","startedBy":"operator",
           "model":"claude-opus-5","startedAt":"2026-09-24T02:20:25Z","endedAt":"2026-09-24T02:22:31Z",
-          "detail":"Acceptance is the operator's call; nothing was accepted here.","events":84,"refused":4}],
+          "detail":"Stopped once the tests passed.","events":84,"refused":4}],
          "inFlight":[]}
         """;
 
@@ -63,12 +63,14 @@ public class RequestSessionsTests : AbomTestContext
         """;
 
     private IRenderedComponent<Shared.RequestSessions> Render(string sessions, string trees = NoTrees,
-        string identity = SignedIn)
+        string identity = SignedIn, Models.AuthoringReadiness? readiness = null)
     {
         Answer("api/query-requests/7/sessions", sessions);
         Answer("api/query-requests/7/asts", trees);
         Answer("api/accounts", identity);
-        var cut = Render<Shared.RequestSessions>(p => p.Add(c => c.Request, Request));
+        var cut = Render<Shared.RequestSessions>(p => p
+            .Add(c => c.Request, Request)
+            .Add(c => c.Readiness, readiness));
         cut.WaitForAssertion(() => cut.Find("[data-abom-request-sessions]"));
         return cut;
     }
@@ -85,7 +87,8 @@ public class RequestSessionsTests : AbomTestContext
         cut.WaitForAssertion(() => Assert.False(cut.Find("[data-abom-session-start]").HasAttribute("disabled")));
         var empty = cut.Find("[data-abom-sessions-empty]").TextContent;
         Assert.Contains("only the query", empty);
-        Assert.Contains("accepted", empty);
+        Assert.Contains("expected results", empty);
+        Assert.DoesNotContain("accepted", empty);
     }
 
     /// <summary>A session records who started it, so nobody signed out can start one.</summary>
@@ -95,6 +98,42 @@ public class RequestSessionsTests : AbomTestContext
         var cut = Render(NoSessions, identity: SignedOut);
 
         cut.WaitForAssertion(() => Assert.True(cut.Find("[data-abom-session-start]").HasAttribute("disabled")));
+    }
+
+    /// <summary>
+    /// A session the server would refuse is not offered: the button says what is missing rather
+    /// than failing after it is pressed.
+    /// </summary>
+    [Fact]
+    public void ASessionIsNotOfferedWhileSomethingItNeedsIsMissing()
+    {
+        var cut = Render(NoSessions, readiness: new Models.AuthoringReadiness
+        {
+            Known = true, Ready = false,
+            Checks =
+            [
+                new Models.ReadinessCheck { Key = "codeql", Name = "CodeQL CLI", State = "ready" },
+                new Models.ReadinessCheck
+                {
+                    Key = "copilot", Name = "Copilot CLI", State = "problem", Reason = "copilot is not on PATH",
+                },
+            ],
+        });
+
+        cut.WaitForAssertion(() => Assert.True(cut.Find("[data-abom-session-start]").HasAttribute("disabled")));
+        var blocked = cut.Find("[data-abom-session-blocked]").TextContent;
+        Assert.Contains("Copilot CLI", blocked);
+        Assert.Contains("copilot is not on PATH", blocked);
+    }
+
+    /// <summary>A server that cannot say what a session needs leaves the decision to its refusal.</summary>
+    [Fact]
+    public void AnUnknownReadinessDoesNotHoldASessionBack()
+    {
+        var cut = Render(NoSessions, readiness: new Models.AuthoringReadiness { Known = false });
+
+        cut.WaitForAssertion(() => Assert.False(cut.Find("[data-abom-session-start]").HasAttribute("disabled")));
+        Assert.Empty(cut.FindAll("[data-abom-session-blocked]"));
     }
 
     [Fact]
@@ -142,7 +181,6 @@ public class RequestSessionsTests : AbomTestContext
         cut.WaitForAssertion(() => cut.Find("[data-abom-session='1']"));
         var row = cut.Find("[data-abom-session='1']").TextContent;
         Assert.Contains("4 refused", row);
-        Assert.Contains("nothing was accepted here", row);
 
         cut.Find("[data-abom-session-timeline]").Click();
 
@@ -223,104 +261,33 @@ public class RequestSessionsTests : AbomTestContext
         Assert.DoesNotContain("0 AI units", text);
     }
 
-    private const string Report = """
-        {"queryId":"acme/checkout-tag-pin","queryVersion":"v1","digest":"d1","reviewable":true,"reason":"",
-         "tests":[{"test":"test/CheckoutTagPin/CheckoutTagPin.qlref",
-           "actual":"| checkout.yml:9:7 | actions/checkout is pinned to v4 |\n","expected":null,"stale":""}],
-         "reviews":[]}
-        """;
-
-    private IRenderedComponent<Shared.RequestSessions> RenderReview(string review)
+    /// <summary>
+    /// The agent's own words are what a reader asked for least: they stay folded until asked for.
+    /// </summary>
+    [Fact]
+    public void WhatTheAgentSaidIsFoldedUntilAskedFor()
     {
-        Answer("api/query-requests/7/review", review);
         var cut = Render(Finished);
-        cut.WaitForAssertion(() => cut.Find("[data-abom-review]"));
-        return cut;
+        cut.WaitForAssertion(() => cut.Find("[data-abom-session-said]"));
+        Assert.Empty(cut.FindAll("[data-abom-session-detail]"));
+
+        cut.Find("[data-abom-session-said]").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("Stopped once the tests passed.",
+            cut.Find("[data-abom-session-detail]").TextContent));
     }
 
     /// <summary>
-    /// Somebody who does not read QL can still read whether the NON_COMPLIANT case was reported and
-    /// the COMPLIANT one was not, so the report sits beside both before anything is accepted.
+    /// The expected results are the agent's to write before the query, so nothing here makes the
+    /// query's own output the expected result, and nothing asks the server to.
     /// </summary>
     [Fact]
-    public void AReportIsReadBesideTheExamplesAndAcceptedAsWhatWasRead()
+    public void NothingOffersToAcceptTheQuerysOutput()
     {
-        var cut = RenderReview(Report);
+        var cut = Render(Finished);
+        cut.WaitForAssertion(() => cut.Find("[data-abom-session='1']"));
 
-        Assert.Contains("pinned to v4", cut.Find("[data-abom-review-actual]").TextContent);
-        Assert.Contains("n", cut.Find("[data-abom-review-noncompliant]").TextContent);
-        Assert.Contains("c", cut.Find("[data-abom-review-compliant]").TextContent);
-        cut.WaitForAssertion(() => Assert.False(cut.Find("[data-abom-review-accept]").HasAttribute("disabled")));
-
-        cut.Find("[data-abom-review-accept]").Click();
-
-        cut.WaitForAssertion(() => Assert.Contains(Sent, r => r.Method == "POST"
-            && r.Url.EndsWith("api/query-requests/7/review", StringComparison.Ordinal)
-            && r.Body.Contains("\"verdict\":\"approved\"", StringComparison.Ordinal)
-            && r.Body.Contains("\"digest\":\"d1\"", StringComparison.Ordinal)
-            && r.Body.Contains("\"by\":\"operator\"", StringComparison.Ordinal)));
-    }
-
-    /// <summary>The next session is told why its predecessor's report was turned down.</summary>
-    [Fact]
-    public void ARejectionIsSentOnlyWithItsReason()
-    {
-        var cut = RenderReview(Report);
-        cut.WaitForAssertion(() => Assert.True(cut.Find("[data-abom-review-reject]").HasAttribute("disabled")));
-
-        cut.Find("[data-abom-review-reason] input").Input("the compliant pin is reported too");
-        cut.WaitForAssertion(() => Assert.False(cut.Find("[data-abom-review-reject]").HasAttribute("disabled")));
-        cut.Find("[data-abom-review-reject]").Click();
-
-        cut.WaitForAssertion(() => Assert.Contains(Sent, r => r.Method == "POST"
-            && r.Url.EndsWith("api/query-requests/7/review", StringComparison.Ordinal)
-            && r.Body.Contains("\"verdict\":\"rejected\"", StringComparison.Ordinal)
-            && r.Body.Contains("the compliant pin is reported too", StringComparison.Ordinal)));
-    }
-
-    /// <summary>
-    /// A report listing failed expectations passes once accepted, because the CLI compares text, so
-    /// it can be read and rejected but not accepted, and the row says why.
-    /// </summary>
-    [Fact]
-    public void AReportWhoseExpectationsFailedCanBeRejectedButNotAccepted()
-    {
-        var cut = RenderReview("""
-            {"queryId":"acme/checkout-tag-pin","queryVersion":"v1","digest":"d1","reviewable":true,"reason":"",
-             "cannotAccept":"test/CheckoutTagPin/CheckoutTagPin.qlref misses 1 marked result, and accepting it would make the test pass without the query doing what its fixtures mark; reject it, saying what should change",
-             "tests":[{"test":"test/CheckoutTagPin/CheckoutTagPin.qlref",
-               "actual":"#select\ntestFailures\n| ci.yml:6:35:6:43 | # $ Alert | Missing result: Alert |\n",
-               "expected":null,"stale":""}],
-             "reviews":[]}
-            """);
-
-        Assert.Contains("misses 1 marked result", cut.Find("[data-abom-review-unacceptable]").TextContent);
-        cut.WaitForAssertion(() => Assert.True(cut.Find("[data-abom-review-accept]").HasAttribute("disabled")));
-        cut.Find("[data-abom-review-reason] input").Input("line 6 is not reported");
-        cut.WaitForAssertion(() => Assert.False(cut.Find("[data-abom-review-reject]").HasAttribute("disabled")));
-    }
-
-    /// <summary>
-    /// A report older than the query describes a version that is gone, so it is shown with why and
-    /// cannot be accepted; what was decided before stays on the row with who decided it.
-    /// </summary>
-    [Fact]
-    public void AStaleReportCannotBeAcceptedAndPastDecisionsSayWhoMadeThem()
-    {
-        var cut = RenderReview("""
-            {"queryId":"acme/checkout-tag-pin","queryVersion":"v2","digest":"d2","reviewable":false,
-             "reason":"test/CheckoutTagPin/CheckoutTagPin.qlref: the query changed after this was reported; run its tests again",
-             "tests":[{"test":"test/CheckoutTagPin/CheckoutTagPin.qlref","actual":"| old |\n","expected":null,
-               "stale":"the query changed after this was reported; run its tests again"}],
-             "reviews":[{"rowId":4,"requestId":7,"queryId":"acme/checkout-tag-pin","queryVersion":"v1",
-               "testDigest":"t1","actual":"| old |\n","verdict":"rejected","reason":"a short SHA is not a pin",
-               "reviewedBy":"operator","reviewedAt":"2026-09-24T02:30:00Z"}]}
-            """);
-
-        Assert.Contains("query changed", cut.Find("[data-abom-review-stale]").TextContent);
-        Assert.Empty(cut.FindAll("[data-abom-review-accept]"));
-        var past = cut.Find("[data-abom-review-record='4']").TextContent;
-        Assert.Contains("Rejected by operator", past);
-        Assert.Contains("a short SHA is not a pin", past);
+        Assert.DoesNotContain("Accept", cut.Markup, StringComparison.Ordinal);
+        Assert.DoesNotContain(Sent, r => r.Url.Contains("/review", StringComparison.Ordinal));
     }
 }

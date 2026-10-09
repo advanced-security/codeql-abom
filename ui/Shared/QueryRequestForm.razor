@@ -1,0 +1,762 @@
+@using System.Globalization
+@using System.Text.RegularExpressions
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@inject AbomApi Api
+
+<MudPaper Outlined="true" Class="pa-4 mb-4" data-abom-request-form>
+    <MudText Typo="Typo.h6" data-abom-request-heading>@Heading</MudText>
+    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3" data-abom-request-standfirst>
+        A request asks for a new or improved CodeQL query that finds a pattern in GitHub Actions
+        workflows and actions. Its examples become the query's tests.
+    </MudText>
+    @if (Request.RowId == 0 && Request.Evidence.Count > 0)
+    {
+        <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3" data-abom-request-evidence>
+            @EvidenceText(Request), filed with the request when it is saved.
+        </MudAlert>
+        <RequestAgentDraft Asked="@Request" QueryId="@_queryId" OnUse="UseDraft" />
+    }
+
+    <MudText Typo="Typo.subtitle2" Class="abom-request-section">Identify</MudText>
+    <div class="d-flex flex-wrap align-start gap-3">
+        <div class="abom-request-field abom-request-wide" data-abom-request-title>
+            <MudTextField T="string" Value="_title" ValueChanged="Retitle" Immediate="true"
+                          Variant="Variant.Outlined" Margin="Margin.Dense" Label="Title"
+                          HelperText="One line naming what the query finds" />
+        </div>
+        <div class="abom-request-field" data-abom-request-slug>
+            <MudTextField T="string" Value="_slug" ValueChanged="Reslug" Immediate="true"
+                          Variant="Variant.Outlined" Margin="Margin.Dense" Label="Request ID"
+                          Disabled="@SlugKept" Error="@(!SlugValid)"
+                          HelperText="@(SlugKept ? "Kept for good once saved" : SlugValid ? "Lower-case words and hyphens; cannot change once saved" : "Use lower-case words joined by single hyphens")" />
+        </div>
+    </div>
+    <div class="d-flex flex-wrap align-start gap-3 mt-2">
+        <div class="abom-request-field abom-request-wide d-flex align-start gap-1" data-abom-request-query>
+            <MudTextField T="string" @bind-Value="_queryId" Immediate="true" Variant="Variant.Outlined"
+                          Margin="Margin.Dense" Label="Query ID" Placeholder="acme/self-hosted-pr-runner"
+                          HelperText="@TargetHelp" Error="@(Target == "invalid" || Target == "not-in-pack")" />
+            <Tip Text="Pick a query from your pack to improve.">
+                <MudMenu Icon="@Icons.Material.Outlined.List" Size="Size.Small" Class="mt-2"
+                         Disabled="@(Choices(Catalog).Count == 0)" AriaLabel="Pick a query from your pack"
+                         data-abom-request-query-pick>
+                    @foreach (var (id, _) in Choices(Catalog))
+                    {
+                        <MudMenuItem OnClick="@(() => _queryId = id)">@id</MudMenuItem>
+                    }
+                </MudMenu>
+            </Tip>
+        </div>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="mt-3"
+                 Color="@TargetColor" data-abom-request-target="@Target">@TargetText</MudChip>
+        <div class="abom-request-field" data-abom-request-kind>
+            <Tip Text="Whether a query misses this, reports it wrongly, or both." Class="abom-tip-fill">
+                <MudSelect T="string" @bind-Value="_kind" Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Label="Asks for">
+                    @foreach (var kind in List?.Kinds ?? [])
+                    {
+                        <MudSelectItem T="string" Value="@kind">@KindText(kind)</MudSelectItem>
+                    }
+                </MudSelect>
+            </Tip>
+        </div>
+        @if (Request.RowId != 0)
+        {
+            <div class="abom-request-field" data-abom-request-status>
+                <Tip Text="Where this request stands, from open to done or declined." Class="abom-tip-fill">
+                    <MudSelect T="string" @bind-Value="_status" Variant="Variant.Outlined"
+                               Margin="Margin.Dense" Label="Status">
+                        @foreach (var status in List?.Statuses ?? [])
+                        {
+                            <MudSelectItem T="string" Value="@status">@status</MudSelectItem>
+                        }
+                    </MudSelect>
+                </Tip>
+            </div>
+        }
+    </div>
+
+    <MudText Typo="Typo.subtitle2" Class="abom-request-section">What to detect</MudText>
+    <div data-abom-request-description>
+        <MudTextField T="string" @bind-Value="_description" Immediate="true" Lines="3"
+                      Variant="Variant.Outlined" Margin="Margin.Dense"
+                      Label="What should be detected, or stop being detected" />
+    </div>
+
+    <MudText Typo="Typo.subtitle2" Class="abom-request-section">Examples</MudText>
+    <div class="abom-request-examples">
+        @foreach (var (side, attr, label, help) in Sides)
+        {
+            <div @attributes="@(new Dictionary<string, object> { [attr] = true })">
+                <MudText Typo="Typo.caption" Class="d-block">
+                    <b>@label</b> · @help · @CountText.Of(Filled(side), "example", "examples")
+                </MudText>
+                @foreach (var example in _examples.Where(e => e.Side == side).ToList())
+                {
+                    <div class="abom-request-example" data-abom-request-example>
+                        <div class="abom-request-example-body">
+                            @if (example.Linked)
+                            {
+                                <div class="d-flex align-start gap-1">
+                                    <div class="flex-grow-1" data-abom-example-url>
+                                        <MudTextField T="string" Value="example.Url" Immediate="true"
+                                                      ValueChanged="@(url => Relink(example, url))"
+                                                      Variant="Variant.Outlined" Margin="Margin.Dense"
+                                                      Label="GitHub link to a file"
+                                                      HelperText="End it with #L10-L20 to keep to those lines"
+                                                      Placeholder="https://github.com/owner/repo/blob/main/.github/workflows/ci.yml" />
+                                    </div>
+                                    <Tip Text="Fetch these lines from GitHub and resolve to a commit reference.">
+                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                                                   Class="mt-2" Disabled="@(example.Url.Trim().Length == 0 || example.Reading)"
+                                                   OnClick="@(() => ReadLink(example))" data-abom-example-read>Read</MudButton>
+                                    </Tip>
+                                </div>
+                                @if (example.Read is { } read)
+                                {
+                                    <MudText Typo="Typo.caption" Class="d-block">
+                                        Read at
+                                        <Tip Text="Open these lines on GitHub at the commit they were read at.">
+                                            <MudLink Href="@Permalink(read)" Target="_blank" Typo="Typo.caption"
+                                                     Class="abom-path" data-abom-example-pinned>@Pinned(read)</MudLink>
+                                        </Tip>
+                                    </MudText>
+                                    <pre class="abom-code">@read.Text</pre>
+                                }
+                                @if (example.Refused is { Length: > 0 } why)
+                                {
+                                    <MudText Typo="Typo.caption" Color="Color.Error" Class="d-block"
+                                             data-abom-example-refused>@why</MudText>
+                                }
+                            }
+                            else
+                            {
+                                <MudTextField T="string" @bind-Value="example.Text" Immediate="true" Lines="6"
+                                              Variant="Variant.Outlined" Margin="Margin.Dense" Class="abom-code-input"
+                                              Label="@label" />
+                            }
+                        </div>
+                        <Tip Text="Take this example out of the request.">
+                            <MudIconButton Icon="@Icons.Material.Outlined.Close" Size="Size.Small"
+                                           OnClick="@(() => _examples.Remove(example))"
+                                           aria-label="@($"Remove this {label} example")" data-abom-example-remove />
+                        </Tip>
+                    </div>
+                }
+                <div class="d-flex gap-2 mt-1">
+                    <Tip Text="@($"Add a {label} example by pasting its code.")">
+                        <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Outlined.Add"
+                                   OnClick="@(() => _examples.Add(new ExampleDraft(side, false)))"
+                                   data-abom-example-add>Paste</MudButton>
+                    </Tip>
+                    <Tip Text="@($"Add a {label} example from lines of a file on GitHub.")">
+                        <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Outlined.Link"
+                                   OnClick="@(() => _examples.Add(new ExampleDraft(side, true)))"
+                                   data-abom-example-add-link>Link</MudButton>
+                    </Tip>
+                </div>
+            </div>
+        }
+    </div>
+
+    <MudText Typo="Typo.subtitle2" Class="abom-request-section">Guidance</MudText>
+    <div data-abom-request-recommendation>
+        <MudTextField T="string" @bind-Value="_recommendation" Immediate="true" Lines="3"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Label="How to fix it"
+                      HelperText="What a developer should do instead; it goes in the query's help" />
+    </div>
+    <div class="d-flex align-start gap-1 mt-2">
+        <div class="abom-request-wide" data-abom-request-references>
+            <MudTextField T="string" @bind-Value="_reference" Immediate="true" Variant="Variant.Outlined"
+                          Margin="Margin.Dense" Label="References"
+                          Placeholder="CVE-2025-30066, CWE-829, GHSA-…, https://…"
+                          HelperText="@(_referenceRefusal ?? "CVE, CWE and GHSA ids, and links to documentation")"
+                          Error="@(_referenceRefusal is not null)" OnKeyDown="@(k => OnEnter(k, AddReferences))" />
+        </div>
+        <Tip Text="Add what is typed to the request's references.">
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false" Class="mt-2"
+                       Disabled="@(_reference.Trim().Length == 0)" OnClick="AddReferences"
+                       data-abom-reference-add>Add</MudButton>
+        </Tip>
+    </div>
+    @if (_references.Count > 0)
+    {
+        <div class="abom-request-chips">
+            @foreach (var reference in _references.ToList())
+            {
+                <Tip Text="A source the request cites; the cross removes it.">
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                             OnClose="@(_ => _references.Remove(reference))" data-abom-reference>@reference</MudChip>
+                </Tip>
+            }
+        </div>
+        @if (ImpliedTags(_references) is { Count: > 0 } implied)
+        {
+            <MudText Typo="Typo.caption" Class="d-block mud-text-secondary">
+                Tags the query's findings get, so they can be filtered by CVE and CWE:
+                @foreach (var tag in implied)
+                {
+                    <code class="abom-request-tag" data-abom-reference-tag>@tag</code>
+                }
+            </MudText>
+        }
+    }
+
+    <div class="abom-request-section">
+        <Tip Text="@(_metadataOpen ? "Hide the query metadata." : "Show the metadata the query declares or should declare.")">
+            <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button"
+                       StartIcon="@(_metadataOpen ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)"
+                       OnClick="@(() => _metadataOpen = !_metadataOpen)" aria-expanded="@(_metadataOpen ? "true" : "false")"
+                       data-abom-request-metadata-toggle>Query metadata</MudButton>
+        </Tip>
+        <MudText Typo="Typo.caption" Class="mud-text-secondary">@MetadataSummary</MudText>
+    </div>
+    @if (_metadataOpen)
+    {
+        <div data-abom-request-metadata>
+            @if (Target == "improve")
+            {
+                <MudText Typo="Typo.caption" Class="d-block mb-1">
+                    @_queryId.Trim() keeps the metadata it declares; ask for what it should find instead.
+                </MudText>
+                @if (Declared is { } declared)
+                {
+                    <dl class="abom-query-metadata" data-abom-metadata-declared>
+                        @foreach (var (name, value) in declared)
+                        {
+                            <dt>@@@name</dt>
+                            <dd>@value</dd>
+                        }
+                    </dl>
+                }
+                else
+                {
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-metadata-declared>
+                        Its metadata is not read: @DeclaredUnread
+                    </MudText>
+                }
+            }
+            else if (Target == "not-in-pack")
+            {
+                <MudText Typo="Typo.caption">This query is not in your pack, so it has no metadata to propose.</MudText>
+            }
+            else
+            {
+                <div data-abom-metadata-description>
+                    <MudTextField T="string" @bind-Value="_meta.Description" Immediate="true" Lines="2"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense" Label="@@description"
+                                  HelperText="One or two sentences on what the query finds" />
+                </div>
+                <div class="d-flex flex-wrap align-start gap-3 mt-2">
+                    <div class="abom-request-field" data-abom-metadata-precision>
+                        <Tip Text="How often a result is a real problem; empty lets the agent choose." Class="abom-tip-fill">
+                            <MudSelect T="string" @bind-Value="_meta.Precision" Variant="Variant.Outlined"
+                                       Margin="Margin.Dense" Label="@@precision">
+                                @foreach (var value in List?.Precisions ?? [])
+                                {
+                                    <MudSelectItem T="string" Value="@value">@(value.Length == 0 ? "not proposed" : value)</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </Tip>
+                    </div>
+                    <div class="abom-request-field" data-abom-metadata-problem-severity>
+                        <Tip Text="How a result is shown in code scanning; empty lets the agent choose." Class="abom-tip-fill">
+                            <MudSelect T="string" @bind-Value="_meta.ProblemSeverity" Variant="Variant.Outlined"
+                                       Margin="Margin.Dense" Label="@@problem.severity">
+                                @foreach (var value in List?.Severities ?? [])
+                                {
+                                    <MudSelectItem T="string" Value="@value">@(value.Length == 0 ? "not proposed" : value)</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </Tip>
+                    </div>
+                    <div class="abom-request-field" data-abom-metadata-security-severity>
+                        <MudTextField T="string" Value="_meta.SecuritySeverity" ValueChanged="SetSecuritySeverity" Immediate="true"
+                                      Variant="Variant.Outlined" Margin="Margin.Dense" Label="@@security-severity"
+                                      Error="@((SecuritySeverity is null && _meta.SecuritySeverity.Trim().Length > 0) || UntaggedSeverity)"
+                                      ErrorText="@(UntaggedSeverity ? "Read only with the security tag" : "0.0 to 10.0")"
+                                      HelperText="0.0 to 10.0; adds the security tag" />
+                    </div>
+                </div>
+                <div class="d-flex align-start gap-1 mt-2">
+                    <div class="abom-request-wide" data-abom-metadata-tags>
+                        <MudTextField T="string" @bind-Value="_tag" Immediate="true" Variant="Variant.Outlined"
+                                      Margin="Margin.Dense" Label="@@tags"
+                                      HelperText="Lower-case, no spaces; the references add their CVE and CWE tags"
+                                      OnKeyDown="@(k => OnEnter(k, AddTags))" />
+                    </div>
+                    <Tip Text="Add what is typed to the tags the query should declare.">
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false" Class="mt-2"
+                                   Disabled="@(_tag.Trim().Length == 0)" OnClick="AddTags"
+                                   data-abom-metadata-tag-add>Add</MudButton>
+                    </Tip>
+                </div>
+                <div class="abom-request-chips">
+                    @foreach (var tag in _meta.Tags.ToList())
+                    {
+                        <Tip Text="A tag the query should declare; the cross removes it.">
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                     OnClose="@(_ => _meta.Tags.Remove(tag))" data-abom-metadata-tag>@tag</MudChip>
+                        </Tip>
+                    }
+                </div>
+            }
+        </div>
+    }
+
+    @if (_refusal is { Length: > 0 } refused)
+    {
+        <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-3">@refused</MudAlert>
+    }
+    <div class="d-flex gap-2 mt-3">
+        <Tip Text="File this request so an agent or a person can work it.">
+            <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" DropShadow="false"
+                       Disabled="@(!Complete || _saving)" OnClick="Save" data-abom-request-save>Save</MudButton>
+        </Tip>
+        <Tip Text="Close the form without saving.">
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                       OnClick="OnDiscard" data-abom-request-discard>Discard</MudButton>
+        </Tip>
+    </div>
+</MudPaper>
+
+@code {
+    [Parameter, EditorRequired] public QueryRequest Request { get; set; } = new();
+    [Parameter] public QueryRequestList? List { get; set; }
+    [Parameter] public QueryCatalog? Catalog { get; set; }
+
+    /// <summary>Who files a new request; an edit keeps who filed it.</summary>
+    [Parameter] public string Login { get; set; } = string.Empty;
+    [Parameter] public EventCallback<QueryRequestList> OnSaved { get; set; }
+    [Parameter] public EventCallback OnDiscard { get; set; }
+
+    private sealed class ExampleDraft(string side, bool linked)
+    {
+        public string Side { get; } = side;
+        public bool Linked { get; } = linked;
+        public string Text { get; set; } = "";
+        public string Url { get; set; } = "";
+
+        /// <summary>What the server read the link as; cleared when the link changes.</summary>
+        public RequestExample? Read { get; set; }
+        public string? Refused { get; set; }
+        public bool Reading { get; set; }
+    }
+
+    private sealed class MetadataDraft
+    {
+        public string Description { get; set; } = "";
+        public string Precision { get; set; } = "";
+        public string ProblemSeverity { get; set; } = "";
+        public string SecuritySeverity { get; set; } = "";
+        public List<string> Tags { get; set; } = [];
+    }
+
+    private static readonly (string Side, string Attr, string Label, string Help)[] Sides =
+    [
+        ("compliant", "data-abom-request-compliant", "COMPLIANT", "code the query must leave alone"),
+        ("non-compliant", "data-abom-request-noncompliant", "NON_COMPLIANT", "code the query must report"),
+    ];
+
+    private static readonly Regex SlugPattern = new("^[a-z0-9]+(-[a-z0-9]+)*$");
+    private static readonly Regex QueryIdPattern = new("^[a-z0-9][a-z0-9-]*(/[a-z0-9][a-z0-9-]*)+$");
+    private static readonly Regex CvePattern = new(@"^CVE-\d{4}-\d{4,}$");
+    private static readonly Regex CwePattern = new(@"^CWE-(\d+)$");
+    private static readonly Regex GhsaPattern = new("^GHSA(-[23456789CFGHJMPQRVWX]{4}){3}$");
+
+    private QueryRequest? _openFor;
+    private string _title = "";
+    private string _slug = "";
+    private bool _slugWritten;
+    private string _queryId = "";
+    private string _kind = "";
+    private string _status = "open";
+    private string _description = "";
+    private List<ExampleDraft> _examples = [];
+    private string _recommendation = "";
+    private string _reference = "";
+    private string? _referenceRefusal;
+    private List<string> _references = [];
+    private bool _metadataOpen;
+    private MetadataDraft _meta = new();
+    private string _tag = "";
+    private string? _refusal;
+    private bool _saving;
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(_openFor, Request))
+        {
+            return;
+        }
+        _openFor = Request;
+        _title = Request.Title;
+        _slug = Request.Slug;
+        _slugWritten = Request.Slug.Length > 0;
+        if (Request.RowId == 0 && !_slugWritten)
+        {
+            _slug = Slugify(Request.Title);
+        }
+        _queryId = Request.QueryId;
+        _kind = Request.Kind;
+        _status = Request.Status.Length == 0 ? "open" : Request.Status;
+        _description = Request.Description;
+        _recommendation = Request.Recommendation;
+        _references = Request.References.Select(r => r.Value).ToList();
+        _examples = Request.Examples.Select(e => new ExampleDraft(e.Side, e.Url.Length > 0)
+        {
+            Text = e.Text, Url = e.Url, Read = e.Url.Length > 0 ? e : null,
+        }).ToList();
+        if (Request.Examples.Count == 0)
+        {
+            _examples = [];
+            Replace("compliant", Request.Compliant);
+            Replace("non-compliant", Request.NonCompliant);
+        }
+        var m = Request.Metadata;
+        _meta = new MetadataDraft
+        {
+            Description = m.Description, Precision = m.Precision, ProblemSeverity = m.ProblemSeverity,
+            SecuritySeverity = m.SecuritySeverity?.ToString(CultureInfo.InvariantCulture) ?? "",
+            Tags = m.Tags.ToList(),
+        };
+        _refusal = null;
+    }
+
+    private string Heading =>
+        Request.RowId != 0 ? $"CodeQL Query Request #{Request.RowId}{(Request.Title.Length > 0 ? " · " + Request.Title : "")}"
+        : Request.SourceRunId != 0 ? $"New CodeQL Query Request, asked from run #{Request.SourceRunId}"
+        : "New CodeQL Query Request";
+
+    private bool SlugKept => Request.RowId != 0 && Request.Slug.Length > 0;
+    private bool SlugValid => _slug.Length == 0 || (_slug.Length <= 64 && SlugPattern.IsMatch(_slug));
+
+    private void Retitle(string title)
+    {
+        _title = title;
+        if (!_slugWritten && !SlugKept)
+        {
+            _slug = Slugify(title);
+        }
+    }
+
+    private void Reslug(string slug)
+    {
+        _slug = slug;
+        _slugWritten = slug.Length > 0;
+    }
+
+    /// <summary>A title as a request id: lower-case words joined by single hyphens, at most 64.</summary>
+    public static string Slugify(string title)
+    {
+        var words = Regex.Replace(title.ToLowerInvariant(), "[^a-z0-9]+", "-").Trim('-');
+        if (words.Length <= 64)
+        {
+            return words;
+        }
+        var end = words[..65].LastIndexOf('-');
+        return end > 0 ? words[..end] : words[..64];
+    }
+
+    /// <summary>
+    /// What naming the query id asks for, as the server will decide it: <c>agent</c> for none,
+    /// <c>improve</c> for one in the operator's pack, <c>create</c> for a valid id nothing holds,
+    /// <c>not-in-pack</c> for one only something else holds, and <c>invalid</c>.
+    /// </summary>
+    public static string TargetOf(string id, QueryCatalog? catalog)
+    {
+        id = id.Trim();
+        if (id.Length == 0) return "agent";
+        var held = catalog?.Queries.Where(q => q.QueryId == id).ToList() ?? [];
+        if (held.Any(q => q.Working && !q.Discovery && !q.Lane)) return "improve";
+        if (held.Count > 0) return "not-in-pack";
+        return QueryIdPattern.IsMatch(id) ? "create" : "invalid";
+    }
+
+    private string Target => TargetOf(_queryId, Catalog);
+
+    private string TargetText => Target switch
+    {
+        "improve" => "Improves your query",
+        "create" => "A new query",
+        "not-in-pack" => "Not in your pack",
+        "invalid" => "Not a query id",
+        _ => "The agent decides",
+    };
+
+    private string TargetHelp => Target switch
+    {
+        "improve" => "In your pack: the request improves it",
+        "create" => "Nothing holds this id: the request asks for a new query",
+        "not-in-pack" => "Only your pack can change; name a new id of your own",
+        "invalid" => "Write it as scope/name, such as acme/self-hosted-pr-runner",
+        _ => "Empty lets the agent find or write the query",
+    };
+
+    private Color TargetColor => Target switch
+    {
+        "improve" => Color.Primary,
+        "create" => Color.Success,
+        "not-in-pack" or "invalid" => Color.Warning,
+        _ => Color.Default,
+    };
+
+    /// <summary>The queries a request may improve: the working copies in the operator's pack, once each.</summary>
+    public static IReadOnlyList<(string Id, string Source)> Choices(QueryCatalog? catalog) =>
+        catalog is null
+            ? []
+            : catalog.Queries
+                .Where(q => q.Working && !q.Discovery && !q.Lane && q.QueryId.Length > 0)
+                .GroupBy(q => q.QueryId, StringComparer.Ordinal)
+                .Select(g => (g.Key, QueryCatalogView.SourceText(g.First().Source)))
+                .OrderBy(c => c.Key, StringComparer.Ordinal)
+                .ToList();
+
+    private CatalogQuery? Working =>
+        Catalog?.Queries.FirstOrDefault(q => q.Working && q.QueryId == _queryId.Trim());
+
+    private static readonly string[] MetadataOrder =
+        ["description", "precision", "problem.severity", "security-severity", "tags"];
+
+    private IReadOnlyList<(string Name, string Value)>? Declared =>
+        Working?.Metadata is { } m
+            ? MetadataOrder.Where(m.ContainsKey).Select(k => (k, m[k])).ToList()
+            : null;
+
+    private string DeclaredUnread => Working?.MetadataUnread is { Length: > 0 } why ? why : "the catalog has not read it";
+
+    private string MetadataSummary => Target switch
+    {
+        "improve" => $"Kept from {_queryId.Trim()}.",
+        "not-in-pack" => "None: the query is not in your pack.",
+        _ => Proposed() is { Count: > 0 } parts ? "Proposes " + string.Join(", ", parts) + "." : "None proposed; the agent chooses.",
+    };
+
+    private List<string> Proposed()
+    {
+        var parts = new List<string>();
+        if (_meta.Description.Trim().Length > 0) parts.Add("a description");
+        if (_meta.Precision.Length > 0) parts.Add("@precision " + _meta.Precision);
+        if (_meta.ProblemSeverity.Length > 0) parts.Add("@problem.severity " + _meta.ProblemSeverity);
+        if (SecuritySeverity is { } s) parts.Add("@security-severity " + s.ToString(CultureInfo.InvariantCulture));
+        if (_meta.Tags.Count > 0) parts.Add(CountText.Of(_meta.Tags.Count, "tag", "tags"));
+        return parts;
+    }
+
+    private double? SecuritySeverity =>
+        double.TryParse(_meta.SecuritySeverity.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var s)
+            ? s : null;
+
+    private bool UntaggedSeverity => SecuritySeverity is not null && !_meta.Tags.Contains("security");
+
+    private void SetSecuritySeverity(string value)
+    {
+        _meta.SecuritySeverity = value;
+        if (UntaggedSeverity)
+        {
+            _meta.Tags.Insert(0, "security");
+        }
+    }
+
+    private int Filled(string side) => _examples.Count(e => e.Side == side && Filled(e));
+
+    private static bool Filled(ExampleDraft e) => e.Linked ? e.Url.Trim().Length > 0 : e.Text.Trim().Length > 0;
+
+    private bool Complete =>
+        (Request.RowId != 0 || _title.Trim().Length > 0) && SlugValid && Target is not ("invalid" or "not-in-pack")
+        && !string.IsNullOrWhiteSpace(_description) && Filled("compliant") > 0 && Filled("non-compliant") > 0
+        && (_meta.SecuritySeverity.Trim().Length == 0 || SecuritySeverity is not null) && !UntaggedSeverity;
+
+    private void Relink(ExampleDraft example, string url)
+    {
+        example.Url = url;
+        example.Read = null;
+        example.Refused = null;
+    }
+
+    private async Task ReadLink(ExampleDraft example)
+    {
+        example.Reading = true;
+        example.Refused = null;
+        try
+        {
+            var (read, refusal) = await Api.ReadRequestExampleAsync(
+                new RequestExample { Side = example.Side, Url = example.Url.Trim() });
+            example.Read = read;
+            example.Refused = refusal;
+        }
+        finally
+        {
+            example.Reading = false;
+        }
+    }
+
+    /// <summary>Where a linked example was read: repository, path, short commit and lines.</summary>
+    public static string Pinned(RequestExample e) =>
+        $"{e.Repository}/{e.Path}@{e.Commit[..Math.Min(7, e.Commit.Length)]} L{e.StartLine}–L{e.EndLine}";
+
+    /// <summary>The lines a linked example was read from, at its commit, so the link never moves.</summary>
+    public static string Permalink(RequestExample e) =>
+        $"https://github.com/{e.Repository}/blob/{e.Commit}/{e.Path}#L{e.StartLine}-L{e.EndLine}";
+
+    private static IEnumerable<string> Words(string text) =>
+        text.Split([' ', ',', '\n', '\t', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private void AddReferences()
+    {
+        var refused = new List<string>();
+        foreach (var word in Words(_reference))
+        {
+            if (Canonical(word) is not { } reference)
+            {
+                refused.Add(word);
+            }
+            else if (!_references.Contains(reference))
+            {
+                _references.Add(reference);
+            }
+        }
+        _referenceRefusal = refused.Count > 0
+            ? $"{string.Join(", ", refused)}: not a CVE, CWE or GHSA id, or an https link"
+            : null;
+        _reference = string.Join(" ", refused);
+    }
+
+    /// <summary>A reference spelled the way the server keeps it, or null for one it would refuse.</summary>
+    private static string? Canonical(string reference)
+    {
+        var upper = reference.ToUpperInvariant();
+        if (CvePattern.IsMatch(upper)) return upper;
+        if (CwePattern.Match(upper) is { Success: true } cwe && int.TryParse(cwe.Groups[1].Value, out var n) && n > 0)
+            return $"CWE-{n}";
+        if (GhsaPattern.IsMatch(upper)) return "GHSA" + upper[4..].ToLowerInvariant();
+        return Uri.TryCreate(reference, UriKind.Absolute, out var uri) && uri.Scheme == "https"
+               && uri.UserInfo.Length == 0 ? reference : null;
+    }
+
+    /// <summary>The tag CodeQL's style gives a CVE or a CWE, the CWE padded to three digits.</summary>
+    public static string? ImpliedTag(string reference) => Canonical(reference) switch
+    {
+        { } cve when CvePattern.IsMatch(cve) => "external/cve/" + cve.ToLowerInvariant(),
+        { } cwe when CwePattern.Match(cwe) is { Success: true } m => $"external/cwe/cwe-{int.Parse(m.Groups[1].Value):D3}",
+        _ => null,
+    };
+
+    private static IReadOnlyList<string> ImpliedTags(IEnumerable<string> references) =>
+        references.Select(ImpliedTag).OfType<string>().Distinct().Order(StringComparer.Ordinal).ToList();
+
+    private void AddTags()
+    {
+        foreach (var tag in Words(_tag))
+        {
+            if (!_meta.Tags.Contains(tag))
+            {
+                _meta.Tags.Add(tag);
+            }
+        }
+        _tag = "";
+    }
+
+    private static void OnEnter(KeyboardEventArgs key, Action add)
+    {
+        if (key.Key == "Enter")
+        {
+            add();
+        }
+    }
+
+    private void UseDraft(AgentDraft draft)
+    {
+        _description = draft.Description;
+        Replace("compliant", draft.Compliant);
+        Replace("non-compliant", draft.NonCompliant);
+    }
+
+    private void Replace(string side, string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+        var at = _examples.FindIndex(e => e.Side == side && !e.Linked);
+        if (at < 0)
+        {
+            _examples.Add(new ExampleDraft(side, false) { Text = text });
+            return;
+        }
+        _examples[at].Text = text;
+    }
+
+    private IReadOnlyList<RequestExample> Examples() =>
+        _examples.Where(Filled).OrderBy(e => e.Side == "compliant" ? 0 : 1).Select(e => e.Linked
+            ? e.Read ?? new RequestExample { Side = e.Side, Url = e.Url.Trim() }
+            : new RequestExample { Side = e.Side, Text = e.Text }).ToList();
+
+    private RequestedMetadata Metadata() =>
+        Target is "improve" or "not-in-pack"
+            ? new RequestedMetadata()
+            : new RequestedMetadata
+            {
+                Description = _meta.Description.Trim(), Precision = _meta.Precision,
+                ProblemSeverity = _meta.ProblemSeverity, SecuritySeverity = SecuritySeverity,
+                Tags = _meta.Tags.ToList(),
+            };
+
+    private async Task Save()
+    {
+        if (!Complete)
+        {
+            return;
+        }
+        _saving = true;
+        try
+        {
+            var examples = Examples();
+            var (list, refusal) = await Api.SaveQueryRequestAsync(Request with
+            {
+                Title = _title.Trim(),
+                Slug = _slug.Trim(),
+                Description = _description,
+                Compliant = examples.FirstOrDefault(e => e.Side == "compliant")?.Text ?? "",
+                NonCompliant = examples.FirstOrDefault(e => e.Side == "non-compliant")?.Text ?? "",
+                Examples = examples,
+                Recommendation = _recommendation.Trim(),
+                References = _references.Select(r => new RequestReference { Value = r }).ToList(),
+                Metadata = Metadata(),
+                QueryId = _queryId.Trim(),
+                Kind = _kind,
+                Status = _status,
+                RequestedBy = Request.RowId == 0 ? Login : Request.RequestedBy,
+            });
+            _refusal = refusal ?? (list is null ? Api.LastError : null);
+            if (list is not null)
+            {
+                await OnSaved.InvokeAsync(list);
+            }
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private static string EvidenceText(QueryRequest request)
+    {
+        var alarms = request.Evidence.Count(e => e.Kind == "false-alarm");
+        var misses = request.Evidence.Count(e => e.Kind == "missed");
+        var parts = new List<string>();
+        if (alarms > 0) parts.Add(CountText.Of(alarms, "result", "results"));
+        if (misses > 0) parts.Add(CountText.Of(misses, "repository where nothing fired", "repositories where nothing fired"));
+        return $"{string.Join(" and ", parts)} picked from run #{request.SourceRunId}";
+    }
+
+    /// <summary>What a request's kind reads as.</summary>
+    public static string KindText(string kind) => kind switch
+    {
+        "missed" => "missed detection",
+        "false-alarm" => "false alarm",
+        "both" => "both",
+        _ => "not said",
+    };
+}

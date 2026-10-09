@@ -23,13 +23,14 @@
                     @HeadingText
                 </MudText>
                 <MudSpacer />
-                @* The reason sits on the span: a disabled button fires no tooltip. *@
-                <span data-abom-comparison-start title="@StartReason">
-                    <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
-                               StartIcon="@Icons.Material.Outlined.CompareArrows"
-                               Disabled="@(!CanCompare)" OnClick="Start" title="@StartReason">
-                        @(_comparison is null ? "Compare with code scanning alerts" : "Compare again")
-                    </MudButton>
+                <span data-abom-comparison-start>
+                    <Tip Text="@StartReason">
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                                   StartIcon="@Icons.Material.Outlined.CompareArrows"
+                                   Disabled="@(!CanCompare)" OnClick="Start">
+                            @(_comparison is null ? "Compare with code scanning alerts" : "Compare again")
+                        </MudButton>
+                    </Tip>
                 </span>
             </div>
             @if (_refusal is { Length: > 0 } refusal)

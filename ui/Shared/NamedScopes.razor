@@ -21,27 +21,26 @@
         @foreach (var view in _views)
         {
             var reason = Refusal(view);
-            @* The reason sits on a span outside the chip: a disabled chip takes no pointer events,
-               so a title on it never shows, and that is the title a reader needs most. Forget
-               shares the span so a wrapping row cannot part it from the scope it forgets. *@
-            <span class="abom-view" title="@(reason.Length > 0 ? Tooltip(view, reason) : null)"
-                  data-abom-view-reason="@view.Name">
-                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
-                         Color="@(IsSelected(view) ? Color.Primary : Color.Default)"
-                         Class="@(IsSelected(view) ? "abom-view-selected" : null)"
-                         Disabled="@(reason.Length > 0)"
-                         OnClick="@(() => Chosen.InvokeAsync(view))"
-                         title="@Tooltip(view, reason)"
-                         data-abom-view="@view.Name">@view.Label</MudChip>
+            @* Forget shares the span so a wrapping row cannot part it from the scope it forgets. *@
+            <span class="abom-view" data-abom-view-reason="@view.Name">
+                <Tip Text="@Tooltip(view, reason)">
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                             Color="@(IsSelected(view) ? Color.Primary : Color.Default)"
+                             Class="@(IsSelected(view) ? "abom-view-selected" : null)"
+                             Disabled="@(reason.Length > 0)"
+                             OnClick="@(() => Chosen.InvokeAsync(view))"
+                             data-abom-view="@view.Name">@view.Label</MudChip>
+                </Tip>
                 @* A built-in is code: the server refuses to delete it, so offering the control
                    would be an affordance that cannot work. *@
                 @if (!view.Builtin)
                 {
-                    <MudIconButton Size="Size.Small" Icon="@Icons.Material.Outlined.Close"
-                                   aria-label="@($"Forget {view.Label}")"
-                                   title="@($"Forget the saved scope {view.Label}. The filters on this page stay as they are.")"
-                                   OnClick="@(() => Forget(view))"
-                                   data-abom-forget-view="@view.Name" />
+                    <Tip Text="Delete this saved scope. The filters on this page stay as they are.">
+                        <MudIconButton Size="Size.Small" Icon="@Icons.Material.Outlined.Close"
+                                       aria-label="@($"Forget {view.Label}")"
+                                       OnClick="@(() => Forget(view))"
+                                       data-abom-forget-view="@view.Name" />
+                    </Tip>
                 }
             </span>
         }
@@ -49,11 +48,12 @@
     <MudTextField T="string" @bind-Value="_name" Placeholder="Name this scope"
                   Immediate="true" Margin="Margin.Dense" Variant="Variant.Outlined"
                   Class="abom-scope-name" data-abom-scope-name="1" />
-    <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
-               StartIcon="@Icons.Material.Outlined.BookmarkAdd" OnClick="Keep"
-               Disabled="@(_name.Trim().Length == 0 || Scope.Spec.ToQueryString().Length == 0)"
-               title="Save the current filters under this name for reuse on pages that can open them."
-               data-abom-save-scope="1">Keep</MudButton>
+    <Tip Text="Save the current filters under this name, to open again later.">
+        <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
+                   StartIcon="@Icons.Material.Outlined.BookmarkAdd" OnClick="Keep"
+                   Disabled="@(_name.Trim().Length == 0 || Scope.Spec.ToQueryString().Length == 0)"
+                   data-abom-save-scope="1">Keep</MudButton>
+    </Tip>
     @if (_refused is { Length: > 0 } refused)
     {
         <MudText Typo="Typo.caption" Color="Color.Warning" data-abom-scope-refused>@refused</MudText>

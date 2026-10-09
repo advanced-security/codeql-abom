@@ -255,18 +255,18 @@ through the inline-expectations postprocess, so `# $ Alert` on a fixture line is
 marked line the query does not report is a missing result, and an unmarked one it reports is
 unexpected. The stub ABOM scaffolds reports nothing, so its first run fails on the marks. The tests
 step passes only once an earlier version failed on a marked result over the same fixtures, and a
-session's first edit to its query waits for that run. Accepting a report that lists failed
-expectations would make the test pass, because the CLI compares text, so such an `.expected` fails
-its step and the review refuses to accept one.
+session's first edit to its query waits for that run. An `.expected` that lists failed expectations
+fails its step: the CLI compares text, so it would make the test pass.
 
 ```mermaid
 flowchart LR
-    FIX["fixture<br/># $ Alert"] --> STUB["stub query<br/>reports nothing"]
+    FIX["fixture<br/># $ Alert"] --> EXP[".expected written<br/>from the help and the marks"]
+    EXP --> STUB["stub query<br/>reports nothing"]
     STUB -->|"codeql test run"| MISS["1 expected result missing<br/>kept per version and CLI"]
     MISS -->|"the query may now change"| REAL["the query written"]
-    REAL -->|"report accepted by a person"| PASS["passes: version X failed first"]
-    ACC["a report listing<br/>failed expectations"] -. "accepting it would pass" .-> PASS
-    style ACC fill:#3d2d1d
+    REAL -->|"codeql test run"| PASS["passes: version X failed first"]
+    ACC["the query's own output<br/>made the .expected"] -. "never" .-> PASS
+    style ACC fill:#3d1d1d
 ```
 
 **One `codeql/actions-all` answers for authoring and execution.** ABOM's packs, the operator's
@@ -278,7 +278,7 @@ dependencies were never installed, even when the package cache holds every one. 
 compiles in the operator's pack, ABOM runs `codeql pack install` in it and then in its test pack,
 wherever either has no `codeql-pack.lock.yml`:
 
-- before a Test, and before an approval's test run;
+- before a Test;
 - before a run or a crawl round digests one of the pack's queries, because the lock is part of what
   a pack digest covers;
 - when a session starts, before the agent has control, since a session cannot install packs.
@@ -292,7 +292,7 @@ session ends failed with it before its agent starts.
 
 ```mermaid
 flowchart LR
-    ACT["Test, approval,<br/>run, round, session"] --> Q{"a lock in the pack<br/>and its test pack?"}
+    ACT["Test, run,<br/>round, session"] --> Q{"a lock in the pack<br/>and its test pack?"}
     Q -->|"both"| GO["compile"]
     Q -->|"either missing"| INS["codeql pack install<br/>under the CodeQL lock"]
     INS -->|"installed"| GO
@@ -305,6 +305,13 @@ flowchart LR
 *decided by the agent*. A request asked from a run carries the picked results as evidence — a
 finding that should not have fired, or a repository where nothing fired that should have — each
 checked against the run and the query when it is filed.
+
+**A linked example is read once, at save, at a commit.** Only a GitHub blob URL is accepted,
+optionally naming lines; ABOM never fetches any other address. Its ref resolves to a commit, the
+file is read at that commit, and the text a client sends for a link is never trusted. A request
+that any session names is never deleted, because the timeline is not rewritten; it is resubmitted
+as a copy and declined. A closed request keeps the progress it was closed on, so a later request
+for the same query does not repaint it.
 
 **An agent can write the query a request asks for, inside bounds ABOM sets.** A person starts a
 session from the request. ABOM drives the Copilot CLI through the Copilot SDK, with ql-mcp as the
@@ -320,16 +327,20 @@ crawls. Its timeline, what it spent and every tree `PrintAST` printed are kept, 
 shown on the request. What the agent says it did is never a mark. Every step is re-derived from the
 files and from ABOM's own records.
 
-**No session writes `.expected`; an operator's approval does, through ABOM.** The request shows what
-the query reported beside its two examples. Approving it:
+**Nothing makes the query's own output its expected result.** `codeql test accept` is refused at
+both hooks, and no person accepts a report either. The agent writes, in order, the help, a marked
+fixture for each example, and the `.expected` those marks call for. The query stays as it is until a
+test run has failed on the marks and `PrintAST` has printed the fixtures. Only the query is held
+back: the help is edited whenever the work teaches something a reader needs, but never to narrow
+what the request asks. A session continues past an idle turn while a step is not passing, told
+which and why, and ends when nothing is left or nothing changed since it was last told. A tree
+digests the fixtures alone, so a corrected `.expected` leaves the AST step current.
 
-1. records who approved which report, before anything changes;
-2. runs `codeql test accept` for the tests that reported it;
-3. runs the version's own tests, so compiling and passing come from ABOM's run and never the agent's.
-
-The approval names the report as it was read, so a report that changed since is refused. A
-rejection keeps its reason, and the next session starts from it. A tree digests the fixtures alone,
-so accepting a report leaves the AST step current.
+**What a session needs is checked before it is offered.** The query pack, the CodeQL CLI, the
+Copilot CLI, ql-mcp, a GitHub token and CodeQL free of a crawl are each ready or named with a
+remedy, and starting is held back with the first problem. Settings can name the CodeQL and Copilot
+executables; a saved path is run before it is kept, and is used ahead of the flag or environment
+variable that names the default.
 
 **ABOM prints a query's tree itself, so a query written by hand can earn every step.** A custom
 catalog row's AST mark runs `PrintAST` from `advanced-security/ql-mcp-actions-tools-src` 2.27.1,
@@ -359,6 +370,8 @@ every reader taught about a second source. A member with no database gets one bu
 crawl builds one, at the commit on record or, where nothing names one, at the default branch, and is
 recorded at the database it was analyzed against. Only what the crawl would build is built: a
 regular database, for a repository ABOM tracks, since ingesting any other would enter it as a seed.
+A member whose commit holds no workflow or action manifest, or that has no commit, has *nothing to
+analyze*, which is neither a failure nor a result; a member that could not be read is failed.
 A member whose evaluation is already stored under the same run key is skipped and carries that
 answer, naming the run that produced it; editing a query changes its version, so tuning is never
 skipped, and a pack is digested afresh for every run, every round and every requeue, so one edited
@@ -884,12 +897,15 @@ flowchart LR
 | `abom_suite_query` | What a round's resolution found in each suite: query id, version, kind and the pack that supplied it |
 | `abom_query_stage` | How far somebody has taken a query version, and who advanced it |
 | `abom_query_test` | What that version's own tests made of it under one CodeQL, the stage they reached, how many marked results were missed or unexpected, and digests of the test files and of the fixtures alone, which is what the `test` stage reads |
-| `abom_query_request` | What somebody asked a query to catch or stop catching, with a `COMPLIANT` and a `NON_COMPLIANT` example, the target and who chose it |
+| `abom_query_request` | What somebody asked a query to catch or stop catching: a title and unique slug, the target and who chose it, a recommendation, the metadata asked for, and the progress it was closed on |
+| `abom_query_request_example`, `abom_query_request_reference`, `abom_query_request_tag` | A request's examples in order, each pasted or linked — a link keeps the commit, lines and text read at save — its references (CVE, CWE, GHSA, URL), and the `@tags` it asks for |
 | `abom_query_request_evidence` | The run results a request was asked from: a false alarm names a finding or a result a held run kept, a missed detection a repository |
 | `abom_authoring_session` | An agent session somebody started on a request, or on a run's picked results to draft one. Whether it finished, was stopped, failed or was interrupted by a restart, and what it spent as the CLI reported it |
 | `abom_authoring_event` | Every tool call a session made or was refused, recorded before it ran, with the decision and the reason. Append-only |
 | `abom_authoring_ast` | What `PrintAST` printed over a query's test database, by a session or by ABOM at somebody's asking, with a digest of the fixtures it was printed from and the CodeQL that printed it. Append-only |
-| `abom_authoring_review` | An operator's approval or rejection of what a query reported, with the report as they read it. Append-only |
+| `abom_authoring_review` | An operator's approval or rejection of what a query reported, recorded while a person accepted reports; the server no longer writes it. Append-only |
+| `abom_query_run_rule_tag` | The tags each rule declared in one evaluation, so a finding matches the tags of the run that reported it |
+| `abom_tool_path` | The CodeQL or Copilot executable somebody chose in Settings, and who |
 | `abom_request_draft` | A request a drafting session proposed, which nobody has filed. Append-only |
 | `abom_analysis_run`, `abom_analysis_member`, `abom_analysis_query` | A run somebody asked for: which versions, which scope and the named scope it was chosen by, the CodeQL it ran under, when each start began, why it could not start when it could not, and what became of every repository in it. A member names the evaluation that reported its findings, so they can be listed one at a time |
 | `abom_held_result` | What a run with findings off kept in each repository, one row per result, carrying every column a finding does and apart from `abom_finding` |

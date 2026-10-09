@@ -55,6 +55,8 @@ func SelectorFor(spec viewspec.Spec) FindingSelector {
 	return FindingSelector{
 		Rules:              spec.Rules,
 		Exclude:            spec.NotRules,
+		Tags:               spec.Tags,
+		NotTags:            spec.NotTags,
 		Provider:           spec.Provider,
 		Severity:           spec.Severity,
 		SecuritySeverities: spec.SecuritySeverities,

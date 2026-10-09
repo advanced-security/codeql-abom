@@ -11,7 +11,8 @@ import (
 
 var findingReviewParameters = []string{
 	"q", "top", "offset", "view", "kinds", "origins", "minReach", "scope", "flags", "ref",
-	"rules", "notRules", "provider", "severity", "securitySeverity", "source", "repositories", "mode",
+	"rules", "notRules", "tags", "notTags", "provider", "severity", "securitySeverity", "source",
+	"repositories", "mode",
 	"properties", "notProperties", "asset", "assetKind", "text",
 }
 

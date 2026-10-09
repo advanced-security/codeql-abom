@@ -118,6 +118,14 @@ var catalogWords = map[string]catalogEntry{
 		label: "Not CodeQL rule", arity: ArityList, valuesFrom: "api/filters/notRules/values",
 		help: "Drop what a rule reported",
 	},
+	paramTags: {
+		label: "Rule tag", arity: ArityList, valuesFrom: "api/filters/tags/values",
+		help: "Keep what a rule declaring this exact tag reported, such as a CWE",
+	},
+	paramNotTags: {
+		label: "Not rule tag", arity: ArityList, valuesFrom: "api/filters/notTags/values",
+		help: "Drop what a rule declaring this exact tag reported",
+	},
 	// The repository a finding sits in, never which repositories use a dependency — that is what
 	// Scope and the graph answer, and conflating them reads as reach.
 	paramRepos: {
@@ -287,7 +295,8 @@ func Catalog() []Term {
 // then how it is referenced, then the shapes of the question itself.
 var catalogOrder = []string{
 	paramScope, paramSearch, paramKinds, paramOrigins,
-	paramFlags, paramRules, paramNotRules, paramSource, paramSecuritySeverity, paramSeverity,
+	paramFlags, paramRules, paramNotRules, paramTags, paramNotTags, paramSource, paramSecuritySeverity,
+	paramSeverity,
 	paramAdvisorySeverity, paramReached, paramProvider, paramRepos,
 	paramAt, paramRefStyle, paramMinReach, paramBoundary, paramEdgeClass, paramEdgeKinds,
 	paramProperties, paramNotProperties, paramMode, paramSteps, paramPolicies, paramCodeScanning,

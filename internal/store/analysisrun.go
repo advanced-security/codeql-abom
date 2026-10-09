@@ -20,6 +20,8 @@ const (
 	AnalysisTimedOut   = "timeout"
 	AnalysisNoDatabase = "no_database"
 	AnalysisEvicted    = "evicted"
+	// AnalysisNothing is a repository read in full that holds no workflow and no action manifest.
+	AnalysisNothing = "nothing"
 	// AnalysisSkipped carries the answer of an evaluation already stored under the same run key.
 	AnalysisSkipped = "skipped"
 )

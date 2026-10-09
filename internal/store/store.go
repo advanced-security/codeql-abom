@@ -104,6 +104,7 @@ var createTables = []struct {
 	{"the printed tree table", authoringASTDDL},
 	{"the review table", authoringReviewDDL},
 	{"the request draft table", requestDraftDDL},
+	{"the tool path table", toolPathDDL},
 	{"the enumeration state table", enumerationStateDDL},
 	{"the repository property table", repositoryPropertyDDL},
 	{"the property schema table", propertySchemaDDL},
@@ -189,6 +190,10 @@ func (s *Store) Migrate() error {
 	if _, err := s.db.Exec(draftSessionIndexDDL); err != nil {
 		return fmt.Errorf("indexing drafting sessions: %w", err)
 	}
+	// After the column pass, which gives a request table from before slugs the column.
+	if _, err := s.db.Exec(requestSlugIndexDDL); err != nil {
+		return fmt.Errorf("indexing request slugs: %w", err)
+	}
 	// And the rest of them, for the same reason, once there is no bulk load to slow down.
 	// `CreateIndexes` is called by the seed build alone, so every other database — one being
 	// served, expanded or read by the CLI — otherwise carries only the indexes it was built with.
@@ -208,6 +213,9 @@ func (s *Store) Migrate() error {
 	}
 	// After the views, which back-fill the sightings this reads.
 	if err := s.backfillRunRules(); err != nil {
+		return err
+	}
+	if err := s.backfillRuleTags(); err != nil {
 		return err
 	}
 	// Before seeding, so a binding that only needs renaming still counts as configured and the

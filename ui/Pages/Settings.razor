@@ -927,6 +927,15 @@ else
 
 <CodeScanningWrites />
 
+<MudText Typo="Typo.subtitle2" Class="mt-8 mb-1" id="agent-tools">What agent sessions run on</MudText>
+<MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
+    Each check is the server's own, run when this page asked. A path saved here is used ahead of
+    <code>--codeql</code>, <code>--copilot-cli</code> and <code>COPILOT_CLI_PATH</code>, and only
+    after the server has run it. A Copilot CLI is used from the next session; a CodeQL CLI from the
+    next start. <b>Use default</b> forgets the saved path.
+</MudText>
+<AuthoringReadinessPanel Editable="true" />
+
 @* Raised rather than waited for. The check runs at startup off the request path, and what it
    found is a decision somebody has to make rather than a section they have to go and find.
    Removal is never automatic: this asks, and "Not now" is a complete answer.

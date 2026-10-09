@@ -272,36 +272,34 @@ func TestARefusedArgumentIsAnsweredWithTheArgumentsATakes(t *testing.T) {
 	}
 }
 
-func TestAcceptingExpectedOutputWaitsForAnOperator(t *testing.T) {
+// Accepting makes the query's own output its expectation, so a test could never fail; the .expected
+// is written from the help and the fixtures before the query exists.
+func TestAcceptingTheQuerysOutputIsRefused(t *testing.T) {
 	p := newPlace(t)
 	b := p.bound(t)
 	args := map[string]any{"tests": []any{
 		filepath.Join(p.ws, "test", "CheckoutTagPin", "CheckoutTagPin.qlref")}}
 
-	if v := b.Call("ql-mcp-codeql_test_accept", args); !v.Review || v.Allowed {
-		t.Errorf("test accept: %+v, want it held for review", v)
+	if v := b.Call("ql-mcp-codeql_test_accept", args); v.Allowed || !strings.Contains(v.Reason, ".expected") {
+		t.Errorf("test accept: %+v, want it refused saying to write the .expected", v)
 	}
 	raw := fmt.Sprintf(`{"kind":"hook","toolName":"ql-mcp-codeql_test_accept","toolArgs":{"tests":[%q]}}`,
 		args["tests"].([]any)[0])
-	if v := b.Request(request(t, json.RawMessage(raw))); !v.Review || v.Allowed {
-		t.Errorf("hook request for test accept: %+v, want it held for review", v)
-	}
-	// A review is for this query's output; accepting another test's is not something to ask about.
-	other := map[string]any{"tests": []any{filepath.Join(p.ws, "test", "SelfHostedRunner")}}
-	if v := b.Call("ql-mcp-codeql_test_accept", other); v.Review || v.Allowed {
-		t.Errorf("accepting another query's test: %+v, want it refused", v)
+	if v := b.Request(request(t, json.RawMessage(raw))); v.Allowed {
+		t.Errorf("hook request for test accept: %+v, want it refused", v)
 	}
 }
 
-// The CLI and ABOM own these: an .expected written by hand is acceptance without review, a .qlref
-// can point the test at another query, and a .ql under test/ is itself a test query.
+// The CLI and ABOM own these: a .qlref can point the test at another query, a .ql under test/ is
+// itself a test query, and another test's .expected is not this request's to decide.
 func TestTheFilesThatDecideWhatATestMeansAreNotWritable(t *testing.T) {
 	p := newPlace(t)
 	b := p.bound(t)
 	dir := filepath.Join(p.ws, "test", "CheckoutTagPin")
 
 	for _, name := range []string{
-		"CheckoutTagPin.expected", "CheckoutTagPin.actual", "CheckoutTagPin.qlref", "Other.qlref",
+		"Other.expected", "CheckoutTagPin.actual", "CheckoutTagPin.qlref", "Other.qlref",
+		".github/workflows/CheckoutTagPin.expected",
 		".github/workflows/src/Scaffold/Scaffold.ql", "Helper.qll", "qlpack.yml",
 		"codeql-pack.yml", "codeql-pack.lock.yml", "codeql-workspace.yml",
 		"CheckoutTagPin.testproj/codeql-database.yml", "checkout.yml.tmp",
@@ -316,6 +314,10 @@ func TestTheFilesThatDecideWhatATestMeansAreNotWritable(t *testing.T) {
 		if v := b.Request(&rpc.PermissionRequestWrite{FileName: path}); !v.Allowed {
 			t.Errorf("write of fixture test/CheckoutTagPin/%s refused: %s", name, v.Reason)
 		}
+	}
+	if v := b.Request(&rpc.PermissionRequestWrite{FileName: filepath.Join(dir, "CheckoutTagPin.expected")}); !v.Allowed ||
+		v.Step != StepExpected {
+		t.Errorf("write of the target's .expected: %+v, want allowed toward %s", v, StepExpected)
 	}
 	for _, name := range []string{"CheckoutTagPin.md", "CheckoutTagPin.qhelp"} {
 		path := filepath.Join(p.ws, "src", name)
@@ -392,7 +394,7 @@ func TestOnlyTheLoopsToolsAreOffered(t *testing.T) {
 	b := newPlace(t).bound(t)
 	for _, tool := range []string{"bash", "read_bash", "sql", "web_fetch", "task", "powershell",
 		"github-mcp-server-create_pull_request", "ql-mcp-codeql_database_create", "anything"} {
-		if v := b.Call(tool, map[string]any{}); v.Allowed || v.Review {
+		if v := b.Call(tool, map[string]any{}); v.Allowed {
 			t.Errorf("%s: %+v, want refused", tool, v)
 		}
 	}
@@ -466,7 +468,7 @@ func TestAMalformedCallIsRefusedRatherThanCrashingTheGate(t *testing.T) {
 		{"ql-mcp-codeql_lsp_diagnostics", map[string]any{"ql_code": "x", "workspace_uri": "http://x"}},
 		{"ql-mcp-codeql_test_run", map[string]any{"tests": []any{"\x00"}}},
 	} {
-		if v := b.Call(tc.tool, tc.args); v.Allowed || v.Review {
+		if v := b.Call(tc.tool, tc.args); v.Allowed {
 			t.Errorf("%s %v: %+v, want refused", tc.tool, tc.args, v)
 		}
 	}

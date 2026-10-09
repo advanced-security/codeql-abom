@@ -44,6 +44,47 @@ func TestFindingReviewCarriesAssetSelectionAndRefusesScopeEscapes(t *testing.T) 
 	}
 }
 
+// A CWE report is asked of every surface that answers findings, and each narrows by the same tag.
+func TestEveryFindingSurfaceNarrowsByAnExactTag(t *testing.T) {
+	server, database := newServer(t)
+	repositoryID, err := database.UpsertRepository("octo/app", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := database.RecordQueryRun(store.QueryRun{QueryID: "fixture", Repository: "octo/app",
+		AnalysisMode: store.AnalysisModeRegular})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, rule := range []struct{ id, tags string }{
+		{"actions/unpinned-tag", `["external/cwe/cwe-829"]`},
+		{"actions/code-injection", `["external/cwe/cwe-094"]`},
+	} {
+		if _, err := database.AddFindings([]store.Finding{{RepositoryID: repositoryID, QueryRunID: run,
+			RuleID: rule.id, FilePath: "action.yml", StartLine: i + 1,
+			RuleDocumentation: []byte(`{"tags":` + rule.tags + `}`)}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page := decode[store.FindingsPage](t, get(t, server, "/api/findings?tags=external%2Fcwe%2Fcwe-829"))
+	if page.Total != 1 || page.Items[0].RuleID != "actions/unpinned-tag" {
+		t.Fatalf("the review by tag = %+v, want the one unpinned-tag finding", page.Items)
+	}
+	values := decode[store.FilterValueSet](t, get(t, server, "/api/filters/tags/values"))
+	if len(values.Values) != 2 {
+		t.Fatalf("tags on offer = %+v, want both CWEs", values.Values)
+	}
+	for _, path := range []string{
+		"/api/match?tags=external%2Fcwe%2Fcwe-829",
+		"/api/match?rules=actions%2F*&notTags=external%2Fcwe%2Fcwe-094",
+		"/api/actions?tags=external%2Fcwe%2Fcwe-829",
+	} {
+		if response := get(t, server, path); response.Code != 200 {
+			t.Errorf("%s returned %d: %s", path, response.Code, response.Body.String())
+		}
+	}
+}
+
 // The endpoint answers a set, and a set has no edges. It must refuse the predicates that shape a
 // graph rather than accept and ignore them.
 //

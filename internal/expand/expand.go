@@ -1076,14 +1076,30 @@ func (e *Expander) recordDatabase(p work.Prepared, at revision, planned tierPlan
 	}
 	id := at.database()
 	if p.DatabaseReused {
-		_, err := e.Store.UseDatabase(id)
-		return err
+		return e.useHeld(id, p.DatabasePath, planned.cliVersion)
 	}
 	_, err := e.Store.RetainDatabase(store.RetainedDatabase{
 		DatabaseIdentity: id,
 		Path:             p.DatabasePath,
 		Bytes:            p.DatabaseBytes,
 		CLIVersion:       planned.cliVersion,
+	})
+	return err
+}
+
+// useHeld moves a held database's recency, and records one found on disk with no row: unrecorded,
+// the ceiling cannot count it and the inventory keeps asking for a build.
+func (e *Expander) useHeld(id store.DatabaseIdentity, path, cli string) error {
+	recorded, err := e.Store.UseDatabase(id)
+	if err != nil || recorded {
+		return err
+	}
+	size, err := treeBytes(path)
+	if err != nil {
+		return err
+	}
+	_, err = e.Store.RetainDatabase(store.RetainedDatabase{
+		DatabaseIdentity: id, Path: path, Bytes: size, CLIVersion: cli,
 	})
 	return err
 }

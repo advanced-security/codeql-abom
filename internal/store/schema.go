@@ -108,6 +108,16 @@ CREATE TABLE IF NOT EXISTS abom_query_run_rule (
   PRIMARY KEY (query_run_id, rule_id)
 );
 
+-- The tags a rule declared in the SARIF of one evaluation, one row each, read out of
+-- documentation_json so a CWE is matched exactly rather than as a substring of the JSON. Keyed by
+-- run because a rule's tags belong to the version that reported the finding.
+CREATE TABLE IF NOT EXISTS abom_query_run_rule_tag (
+  query_run_id INTEGER NOT NULL,
+  rule_id      TEXT NOT NULL,
+  tag          TEXT NOT NULL,
+  PRIMARY KEY (query_run_id, rule_id, tag)
+) WITHOUT ROWID;
+
 -- What one closure database was built from, keyed by the digest its runs carry: an owned
 -- repository at the commit its regular analysis describes, and each callee staged beside it at
 -- the commit the closure selected. The digest hashes these inputs, never the database, which is
@@ -899,6 +909,19 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_query_request", "target_source", "TEXT"},
 	{"abom_query_request", "source_run_id", "INTEGER"},
 	{"abom_query_request", "target_detail", "TEXT"},
+	// A request kept before these asked for no title, slug, guidance or metadata, and the empty
+	// value says so; target_decision and the security severity are nullable because nobody
+	// deciding, and asking for no severity, are not values.
+	{"abom_query_request", "title", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_query_request", "slug", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_query_request", "recommendation", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_query_request", "target_decision", "TEXT"},
+	{"abom_query_request", "meta_description", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_query_request", "meta_precision", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_query_request", "meta_problem_severity", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_query_request", "meta_security_severity", "REAL"},
+	// Nullable: a request closed before this kept no steps, which is not having closed on none.
+	{"abom_query_request", "closed_steps", "TEXT"},
 	// A member recorded before this has no way back to its findings, which reads as not evaluated
 	// rather than as having found none.
 	{"abom_analysis_member", "query_run_id", "INTEGER"},

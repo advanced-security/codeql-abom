@@ -1304,6 +1304,14 @@ code {
     flex: 1 0 100%;
 }
 
+/* A Tip around a field: its root and span are inline by default and would shrink the field to
+   its content. */
+.mud-tooltip-root.abom-tip-fill,
+.abom-tip-fill > .abom-tip {
+    display: block;
+    width: 100%;
+}
+
 .abom-crawl-refresh {
     width: 78px;
 }
@@ -1376,6 +1384,13 @@ code {
     border-radius: 4px;
 }
 .abom-request-field { min-width: 16rem; }
+.abom-request-wide { flex: 1 1 24rem; min-width: 16rem; }
+.abom-request-section { display: block; margin: 16px 0 6px; }
+/* An example and its remove button on one line, the button beside the field it removes. */
+.abom-request-example { display: flex; align-items: flex-start; gap: 4px; margin-top: 6px; }
+.abom-request-example-body { flex: 1 1 auto; min-width: 0; }
+.abom-request-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+.abom-request-tag { font-family: var(--abom-mono); font-size: var(--abom-text-sm); margin-left: 6px; }
 .abom-request-description { white-space: pre-wrap; }
 .abom-request-summary { display: block; min-width: 20rem; }
 
@@ -1386,9 +1401,15 @@ code {
     padding: 0;
     font-size: var(--abom-text-sm);
 }
-.abom-request-steps li { display: flex; align-items: baseline; gap: 6px; }
-.abom-request-steps .mud-icon-root { align-self: center; flex-shrink: 0; }
+.abom-request-steps li { display: flex; align-items: baseline; gap: 6px; padding: 3px 0; }
+.abom-request-steps .mud-tooltip-root { align-self: center; flex-shrink: 0; }
+.abom-request-steps .abom-step { display: inline-flex; padding: 2px; }
+.abom-request-steps .mud-icon-button { padding: 2px; }
 .abom-request-step-name { font-weight: 500; white-space: nowrap; }
+.abom-step-body { max-height: 60vh; overflow: auto; }
+
+/* MudBlazor's smallest spinner is 24px, taller than a small chip. */
+.mud-progress-circular.abom-request-working { width: 14px; height: 14px; }
 
 /* A refused stage keeps its name and says why beneath it, in the menu's width. */
 .abom-stage-refused { max-width: 22rem; white-space: normal; }
@@ -1403,6 +1424,13 @@ code {
 /* One entry per evaluation that reported a result, under the result it traces. */
 .abom-trace { list-style: none; padding-left: 0; margin: 2px 0 6px; }
 .abom-trace li + li { margin-top: 4px; }
+/* The detail cell is contained, so the grid widens itself while a repository's results are open:
+   a min-width on the list only overflowed the fit-content grid and was clipped under its header. */
+.abom-grid.abom-results:has(.abom-held-list) { width: min(100%, 56rem); }
+.abom-held-item { display: flex; align-items: flex-start; gap: 6px; }
+.abom-held-item .mud-checkbox { margin: -4px 0; }
+.abom-held-text { display: flex; flex-direction: column; min-width: 0; padding-top: 2px; }
+.abom-held-message { font-size: 0.8125rem; color: var(--mud-palette-text-secondary); }
 /* What a run has left: every name, wrapped, and scrolled rather than pushing its results away. */
 .abom-left {
     list-style: none;
@@ -1449,14 +1477,6 @@ code {
     overflow: auto;
     white-space: pre;
 }
-.abom-review-sides {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-}
-/* min-width 0 so a long line scrolls inside its pre instead of widening the row. */
-.abom-review-side { flex: 1 1 20rem; min-width: 0; }
-.abom-review-side pre { max-height: 16rem; overflow: auto; white-space: pre; }
 
 /* break-word, not anywhere: anywhere shrank both columns to a few letters a line. */
 .abom-grid .mud-table-root .mud-table-cell.abom-run-text {
@@ -1465,6 +1485,44 @@ code {
     overflow-wrap: break-word;
 }
 .abom-run-add { min-width: 16rem; }
+
+/* Label column fixed, so every section's controls start on the same line. */
+.abom-run-section {
+    display: grid;
+    grid-template-columns: 5.5rem minmax(0, 1fr);
+    column-gap: 12px;
+    align-items: baseline;
+    padding: 8px 0;
+}
+.abom-run-section + .abom-run-section { border-top: 1px solid var(--mud-palette-lines-default); }
+.abom-run-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--mud-palette-text-secondary);
+}
+.abom-run-field {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    min-height: 32px;
+}
+.abom-run-field-stack { flex-direction: column; align-items: stretch; }
+.abom-run-scope-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 12px;
+}
+.abom-run-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding-top: 10px;
+    border-top: 1px solid var(--mud-palette-lines-default);
+}
 
 /* A refusal can be the CLI's whole answer, so the row shows how it begins; the title holds all of it.
    No wider than the CodeQL line above it, or the column grows and pushes the grid off its edge. */
@@ -1498,7 +1556,7 @@ code {
 .abom-query-actions { display: flex; align-items: center; gap: 2px; flex-wrap: nowrap; }
 
 /* The authoring marks are read left to right as one strip, so they never wrap onto a second line. */
-.abom-step-strip { display: inline-flex; align-items: center; flex-wrap: nowrap; flex-shrink: 0; }
+.abom-step-strip { display: inline-flex; align-items: center; flex-wrap: nowrap; flex-shrink: 0; gap: 2px; }
 .abom-step-strip .abom-step { display: inline-flex; padding: 2px; }
 .abom-step-strip .mud-icon-button { padding: 2px; }
 /* Under a query id, the first mark lines up with the id's first letter. */

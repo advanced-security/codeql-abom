@@ -118,9 +118,9 @@
                 </span>
             }
             <MudText Typo="Typo.body2" data-abom-run-chosen>
-                on @(_all
+                <strong>@(_all
                     ? CountText.Of(_total, "repository in this scope", "repositories in this scope")
-                    : CountText.Of(_chosen.Count, "chosen repository", "chosen repositories"))
+                    : CountText.Of(_chosen.Count, "chosen repository", "chosen repositories"))</strong>
             </MudText>
         </Scope>
     </RunDraftPanel>
@@ -367,10 +367,9 @@
             <PropertyColumn Property="x => x.NodeKey" Title="Workflow">
                 <HeaderTemplate><HeaderTip Tip="The workflow or reusable workflow file this row describes.">Workflow</HeaderTip></HeaderTemplate>
                 <CellTemplate>
-                    <MudTooltip Text="@context.Item.Path">
+                    <MudTooltip Text="@($"Open the details page for {context.Item.Path}.")">
                         <MudLink Href="@($"/node/{Uri.EscapeDataString(context.Item.NodeKey)}")"
-                                 Class="abom-rule abom-trunc"
-                                 title="@($"Open the details page for {WorkflowLabel(context.Item)}.")">@WorkflowLabel(context.Item)</MudLink>
+                                 Class="abom-rule abom-trunc">@WorkflowLabel(context.Item)</MudLink>
                     </MudTooltip>
                 </CellTemplate>
             </PropertyColumn>

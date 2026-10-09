@@ -232,6 +232,12 @@ func (e *Executor) unbuilt(
 	if ctx.Err() != nil {
 		return e.interrupted(runID, id, ctx.Err())
 	}
+	var nothing *NothingToAnalyze
+	if errors.As(cause, &nothing) {
+		return e.Store.RecordAnalysisMemberResult(runID, id, store.MemberResult{
+			Status: store.AnalysisNothing, Detail: nothing.Why,
+		})
+	}
 	return e.Store.RecordAnalysisMemberResult(runID, id, store.MemberResult{
 		Status: store.AnalysisFailed, Detail: "building its database: " + cause.Error(),
 	})
@@ -302,7 +308,7 @@ func (e *Expander) buildDatabase(
 	case e.Databases == nil:
 		return built, nil
 	case source == dbHeld:
-		if _, err := e.Store.UseDatabase(built.identity); err != nil {
+		if err := e.useHeld(built.identity, db, cliVersion); err != nil {
 			return fail(err)
 		}
 		built.kept = db

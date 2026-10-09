@@ -10,15 +10,16 @@
 
 @* Four parts, told apart the way Inventory's units are: one strip, one part in view. *@
 <div class="abom-units d-flex flex-wrap align-center gap-1 mb-3" role="tablist" data-abom-tabs>
-    @foreach (var (key, label) in Tabs)
+    @foreach (var (key, label, tip) in Tabs)
     {
-        <MudButton Size="Size.Small" DropShadow="false"
-                   Variant="@(_tab == key ? Variant.Filled : Variant.Text)"
-                   Color="@(_tab == key ? Color.Primary : Color.Default)"
-                   Class="@(_tab == key ? "abom-unit-selected" : null)"
-                   role="tab" aria-selected="@(_tab == key ? "true" : "false")"
-                   title="@($"Switch to the {label} tab on the CodeQL page.")"
-                   OnClick="@(() => Choose(key))" data-abom-tab="@key">@label</MudButton>
+        <Tip Text="@tip" Placement="Placement.Bottom">
+            <MudButton Size="Size.Small" DropShadow="false"
+                       Variant="@(_tab == key ? Variant.Filled : Variant.Text)"
+                       Color="@(_tab == key ? Color.Primary : Color.Default)"
+                       Class="@(_tab == key ? "abom-unit-selected" : null)"
+                       role="tab" aria-selected="@(_tab == key ? "true" : "false")"
+                       OnClick="@(() => Choose(key))" data-abom-tab="@key">@label</MudButton>
+        </Tip>
     }
 </div>
 
@@ -45,12 +46,12 @@
     private const string TabSuites = "suites";
 
     // In the order the work happens: asked for, written, run, then made part of the crawl.
-    private static readonly (string Key, string Label)[] Tabs =
+    private static readonly (string Key, string Label, string Tip)[] Tabs =
     [
-        (TabRequests, "Requests"),
-        (TabCatalog, "Query catalog"),
-        (TabRuns, "Runs"),
-        (TabSuites, "Suites"),
+        (TabRequests, "Requests", "Ask for a new CodeQL query, or a fix to one, from examples."),
+        (TabCatalog, "Query catalog", "Every query version ABOM holds, its stage, and where it ran."),
+        (TabRuns, "Runs", "Query runs over a scope, and what each found."),
+        (TabSuites, "Suites", "Choose which query suites each crawl tier runs."),
     ];
 
     [SupplyParameterFromQuery(Name = "tab")] public string? TabParam { get; set; }

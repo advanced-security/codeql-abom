@@ -15,11 +15,12 @@
                 @TimeText.DayAndTime(ast.PrintedAt), @SizeText(ast.Size)@(ast.Truncated ? ", cut short" : ""),
                 @Who(ast), @(ast.CliVersion.Length > 0 ? $"CodeQL {ast.CliVersion}" : "CodeQL not recorded")
             </MudText>
-            <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button"
-                       title="@(_shown?.RowId == ast.RowId ? "Hide this printed CodeQL tree." : "Load and show this printed CodeQL tree.")"
-                       OnClick="@(() => Show(ast))" data-abom-ast-show>
-                @(_shown?.RowId == ast.RowId ? "Hide the tree" : "Show the tree")
-            </MudButton>
+            <Tip Text="@(_shown?.RowId == ast.RowId ? "Fold this printed syntax tree away." : "Load the syntax tree CodeQL printed for this database.")">
+                <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button"
+                           OnClick="@(() => Show(ast))" data-abom-ast-show>
+                    @(_shown?.RowId == ast.RowId ? "Hide the tree" : "Show the tree")
+                </MudButton>
+            </Tip>
         </div>
         @if (_shown?.RowId == ast.RowId)
         {

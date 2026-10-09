@@ -51,6 +51,32 @@ test('an action or a link needs a title or an enclosing tooltip', () => {
     ]);
 });
 
+test('a Tip describes what it encloses, and its text is a sentence', () => {
+    const text = [
+        '<Tip Text="Ask for a new CodeQL query.">',
+        '    <MudButton OnClick="New">New</MudButton>',
+        '</Tip>',
+        '<Tip Text="new query">',
+        '    <MudIconButton OnClick="Go" aria-label="Go" />',
+        '</Tip>',
+    ].join('\n');
+
+    assert.deepEqual(messages(text), ['4: tip "new query" is not a sentence']);
+});
+
+test('an action inside a tooltip carries no title as well, or two tips show at once', () => {
+    const text = [
+        '<Tip Text="Ask for a new CodeQL query.">',
+        '    <MudButton title="Open a blank form." OnClick="New">New</MudButton>',
+        '</Tip>',
+        '<MudTooltip Text="Stop this run.">',
+        '    <MudIconButton aria-label="Stop" OnClick="Stop" />',
+        '</MudTooltip>',
+    ].join('\n');
+
+    assert.deepEqual(messages(text), ['2: MudButton has a title inside a tooltip, so two tips show']);
+});
+
 test('an opening tag is read past arrows and quotes nested in an expression', () => {
     const text = [
         '<MudIconButton OnClick="@(() => Toggle(item))" aria-label="@($"Show the versions of {key}")"',

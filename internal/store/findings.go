@@ -316,6 +316,7 @@ func addFindings(tx *sql.Tx, findings []Finding) ([]int64, error) {
 		return nil, fmt.Errorf("preparing rule documentation insert: %w", err)
 	}
 	defer documentation.Close()
+	docs := ruleDocs{tx: tx, stmt: documentation, tagged: map[runRule]string{}}
 
 	written := make([]int64, 0, len(findings))
 	for _, f := range findings {
@@ -335,15 +336,44 @@ func addFindings(tx *sql.Tx, findings []Finding) ([]int64, error) {
 			if _, err := sighting.Exec(rowID, f.QueryRunID, nullable(string(f.Evidence))); err != nil {
 				return written, fmt.Errorf("recording a sighting for %s: %w", f.RuleID, err)
 			}
-			if len(f.RuleDocumentation) > 0 {
-				if _, err := documentation.Exec(f.QueryRunID, f.RuleID, string(f.RuleDocumentation)); err != nil {
-					return written, fmt.Errorf("recording rule documentation for %s: %w", f.RuleID, err)
-				}
+			if err := docs.record(f.QueryRunID, f.RuleID, string(f.RuleDocumentation)); err != nil {
+				return written, err
 			}
 		}
 		written = append(written, rowID)
 	}
 	return written, nil
+}
+
+type runRule struct {
+	run  int64
+	rule string
+}
+
+// ruleDocs records a rule's documentation for a run, and re-reads its tags only when the
+// documentation differs from what this batch last recorded.
+type ruleDocs struct {
+	tx     *sql.Tx
+	stmt   *sql.Stmt
+	tagged map[runRule]string
+}
+
+func (d ruleDocs) record(run int64, rule, documentation string) error {
+	if documentation == "" {
+		return nil
+	}
+	if _, err := d.stmt.Exec(run, rule, documentation); err != nil {
+		return fmt.Errorf("recording rule documentation for %s: %w", rule, err)
+	}
+	key := runRule{run, rule}
+	if d.tagged[key] == documentation {
+		return nil
+	}
+	if err := refreshRuleTags(d.tx, run, rule); err != nil {
+		return err
+	}
+	d.tagged[key] = documentation
+	return nil
 }
 
 // LinkFindingsToNodes attributes findings to graph nodes by source location.

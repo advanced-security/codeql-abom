@@ -22,8 +22,7 @@
             <MudText Typo="Typo.h6">No run has been asked for yet</MudText>
             <MudText Typo="Typo.body2" Class="mt-2 mud-text-secondary">
                 A run is a set of query versions over repositories somebody chose. Choose them in
-                the <MudLink Href="/inventory?unit=repositories"
-                             title="Open the Inventory page so you can choose repositories for a run.">Inventory</MudLink>, or press Run
+                the <Tip Text="Choose the repositories a run analyzes."><MudLink Href="/inventory?unit=repositories">Inventory</MudLink></Tip>, or press Run
                 on a query in the catalog.
             </MudText>
         </MudPaper>
@@ -37,13 +36,14 @@
             <Columns>
                 <HierarchyColumn T="AnalysisRun" InitiallyExpandedFunc="@(r => r.RowId == FocusRun)">
                     <CellTemplate>
-                        <MudIconButton Size="Size.Small"
-                                       Icon="@(context.Open ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)"
-                                       title="@($"Show or hide the results for run #{context.Item.RowId}.")"
-                                       aria-label="@($"Show what run #{context.Item.RowId} found")"
-                                       aria-expanded="@(context.Open ? "true" : "false")"
-                                       OnClick="@(() => context.Actions.ToggleHierarchyVisibilityForItemAsync())"
-                                       data-abom-run-detail />
+                        <Tip Text="@(context.Open ? "Hide what this run found." : "Show what this run found, repository by repository.")">
+                            <MudIconButton Size="Size.Small"
+                                           Icon="@(context.Open ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)"
+                                           aria-label="@($"Show what run #{context.Item.RowId} found")"
+                                           aria-expanded="@(context.Open ? "true" : "false")"
+                                           OnClick="@(() => context.Actions.ToggleHierarchyVisibilityForItemAsync())"
+                                           data-abom-run-detail />
+                        </Tip>
                     </CellTemplate>
                 </HierarchyColumn>
 
@@ -66,29 +66,29 @@
                             @switch (context.Item.State)
                             {
                                 case "running":
-                                    <MudTooltip Text="Stop this run. What it has already analyzed is kept.">
+                                    <Tip Text="Stop this run. What it has already analyzed is kept.">
                                         <MudIconButton Icon="@Icons.Material.Outlined.Stop" Size="Size.Small"
                                                        Color="Color.Warning" OnClick="@(() => Cancel(context.Item))"
                                                        aria-label="@($"Stop run #{context.Item.RowId}")"
                                                        data-abom-run-cancel />
-                                    </MudTooltip>
+                                    </Tip>
                                     break;
                                 case "pending":
-                                    <MudTooltip Text="@StartText(context.Item)">
+                                    <Tip Text="@StartText(context.Item)">
                                         <MudIconButton Icon="@Icons.Material.Outlined.PlayArrow" Size="Size.Small"
                                                        Color="Color.Primary" OnClick="@(() => Execute(context.Item))"
                                                        aria-label="@($"Start run #{context.Item.RowId}")"
                                                        data-abom-run-start />
-                                    </MudTooltip>
+                                    </Tip>
                                     break;
                                 default:
                                     @* Not a start: it re-analyzes every repository and replaces its counts. *@
-                                    <MudTooltip Text="@AgainText(context.Item)">
+                                    <Tip Text="@AgainText(context.Item)">
                                         <MudIconButton Icon="@Icons.Material.Outlined.Replay" Size="Size.Small"
                                                        OnClick="@(() => Execute(context.Item))"
                                                        aria-label="@($"Run #{context.Item.RowId} again")"
                                                        data-abom-run-again />
-                                    </MudTooltip>
+                                    </Tip>
                                     break;
                             }
                         </div>
@@ -117,10 +117,11 @@
                         @foreach (var q in context.Item.Queries)
                         {
                             <div>
-                                <MudLink Href="@($"/codeql?tab=catalog&query={Uri.EscapeDataString(q.QueryId)}")"
-                                         Typo="Typo.body2" Class="abom-path"
-                                         title="@($"Open the catalog entry for {q.QueryId} at version {q.QueryVersion}.")"
-                                         data-abom-run-query-link>@q.QueryId</MudLink>
+                                <Tip Text="@($"Open version {q.QueryVersion} of this query in the catalog.")">
+                                    <MudLink Href="@($"/codeql?tab=catalog&query={Uri.EscapeDataString(q.QueryId)}")"
+                                             Typo="Typo.body2" Class="abom-path"
+                                             data-abom-run-query-link>@q.QueryId</MudLink>
+                                </Tip>
                             </div>
                         }
                     </CellTemplate>
@@ -140,7 +141,8 @@
                     </CellTemplate>
                 </TemplateColumn>
 
-                <TemplateColumn Title="Progress" CellClass="abom-nowrap">
+                @* Wraps: unbroken, a running tally pushed Results and Asked off a laptop screen. *@
+                <TemplateColumn Title="Progress">
                     <HeaderTemplate><HeaderTip Tip="How much of this run is still waiting, running, analyzed or stopped.">Progress</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         <MudText Typo="Typo.caption" data-abom-run-tally>@TallyText(context.Item)</MudText>
@@ -329,9 +331,10 @@
         if (Of("running") > 0) parts.Add($"{Of("running"):N0} running");
         if (Of("pending") > 0) parts.Add($"{Of("pending"):N0} waiting");
         if (Of("failed") > 0) parts.Add($"{Of("failed"):N0} failed");
+        if (Of("nothing") > 0) parts.Add($"{Of("nothing"):N0} with nothing to analyze");
         if (Of("no_database") > 0) parts.Add($"{Of("no_database"):N0} with no database");
         foreach (var (status, n) in run.Tally.Where(t =>
-                     t.Key is not ("succeeded" or "running" or "pending" or "failed" or "no_database")))
+                     t.Key is not ("succeeded" or "running" or "pending" or "failed" or "nothing" or "no_database")))
         {
             parts.Add($"{n:N0} {status}");
         }

@@ -31,6 +31,18 @@ public class AnalysisRunsTests : AbomTestContext
         Assert.Equal("4", cut.Find("[data-abom-run-results]").TextContent.Trim());
     }
 
+    /// <summary>A repository with nothing to analyze is a reading, counted apart from what failed.</summary>
+    [Fact]
+    public void NothingToAnalyzeIsNotCountedAsFailed()
+    {
+        var cut = Render(RunJson(1, "complete").Replace("\"no_database\":1", "\"failed\":2,\"nothing\":7"));
+
+        var tally = cut.Find("[data-abom-run-tally]").TextContent.Trim();
+        Assert.Contains("2 failed", tally);
+        Assert.Contains("7 with nothing to analyze", tally);
+        Assert.DoesNotContain("7 nothing", tally);
+    }
+
     /// <summary>
     /// While a run is under way, what it has still to do comes first, and a time remaining is the
     /// server's, taken from what this start finished.
