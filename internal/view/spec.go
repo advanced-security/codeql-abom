@@ -154,59 +154,23 @@ const (
 // it be a storage key and a thing two of can be compared.
 func (s Spec) String() string {
 	q := url.Values{}
-	for _, f := range []struct {
-		key   string
-		value string
-	}{
-		{paramScope, s.Scope},
-		{paramSearch, s.Search},
-		{paramRefStyle, s.RefStyle},
-		{paramBoundary, s.Boundary},
-		{paramProvider, s.Provider},
-		{paramSeverity, s.Severity},
-		{paramMode, s.Mode},
-	} {
-		if f.value != "" {
-			q.Set(f.key, f.value)
+	targets := specTargetsFor(&s)
+	for key, value := range targets.scalars {
+		if *value != "" {
+			q.Set(key, *value)
 		}
 	}
-	for _, f := range []struct {
-		key    string
-		values []string
-	}{
-		{paramKinds, s.Kinds},
-		{paramOrigins, s.Origins},
-		{paramRules, s.Rules},
-		{paramNotRules, s.NotRules},
-		{paramTags, s.Tags},
-		{paramNotTags, s.NotTags},
-		{paramRepos, s.Repositories},
-		{paramEdgeClass, s.EdgeClass},
-		{paramEdgeKinds, s.EdgeKinds},
-		{paramFlags, s.Flags},
-		{paramSource, s.Sources},
-		{paramSecuritySeverity, s.SecuritySeverities},
-		{paramAdvisorySeverity, s.AdvisorySeverities},
-		{paramReached, s.Reached},
-		{paramPolicies, s.Policies},
-		{paramCodeScanning, s.CodeScanning},
-	} {
-		if v := normalize(f.values); len(v) > 0 {
-			q.Set(f.key, strings.Join(v, ","))
+	for key, values := range targets.lists {
+		if v := normalize(*values); len(v) > 0 {
+			q.Set(key, strings.Join(v, ","))
 		}
 	}
 	// One parameter per match rather than a comma-joined list: a property value is operator text,
 	// and a value containing a comma must not become two values. The store refuses to reproduce
 	// that limitation in its schema, so the text does not reintroduce it.
-	for _, f := range []struct {
-		key     string
-		matches []PropertyMatch
-	}{
-		{paramProperties, s.Properties},
-		{paramNotProperties, s.NotProperties},
-	} {
-		for _, m := range normalizeMatches(f.matches) {
-			q.Add(f.key, m.String())
+	for key, matches := range targets.matches {
+		for _, m := range normalizeMatches(*matches) {
+			q.Add(key, m.String())
 		}
 	}
 	if s.MinReach > 0 {

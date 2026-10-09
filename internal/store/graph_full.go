@@ -481,7 +481,7 @@ var ownedNodes = `SELECT n.row_id FROM abom_node_live n WHERE ` + heldByRoots("n
 // its scope exactly as it decides what is counted.
 func scopeSets(roots, mode string) string {
 	return `WITH roots AS (` + roots + `),
-	run AS (SELECT e.dst_node_row_id AS row_id FROM ` + edgeSource(mode) + ` e
+	run AS (SELECT e.dst_node_row_id AS row_id FROM ` + startingNodeTable(mode) + ` e
 	         WHERE e.repository_row_id IN (SELECT row_id FROM roots)
 	        UNION SELECT node_row_id FROM abom_node_reach
 	         WHERE repository_row_id IN (SELECT row_id FROM roots)),
@@ -512,9 +512,7 @@ func heldByRoots(n, roots string) string {
 
 // ownedNode is 1 where the declaration covers the repository node n lives in, and 0 elsewhere,
 // never NULL: the predicate ownedNodes selects by, so "yours" and the owned scope cannot disagree.
-func ownedNode(n string) string {
-	return `(CASE WHEN ` + heldByRoots(n, declaredRoots) + ` THEN 1 ELSE 0 END)`
-}
+var ownedNode = `(CASE WHEN ` + heldByRoots("n", declaredRoots) + ` THEN 1 ELSE 0 END)`
 
 // scopeRepositories selects the repositories a scope covers.
 func scopeRepositories(roots, mode string) string {
@@ -733,7 +731,7 @@ func graphNodesQuery(display string, since int64, opts FullGraphOptions) (string
 	cte, args := scopeParts(opts)
 	return `WITH ` + display + cte + frontierRollup + advisoryRollup + groupingRollup + `
 		SELECT n.node_key, n.node_kind, COALESCE(r.repository_full_name, ''),
-		       COALESCE(r.origin, ''), ` + ownedNode("n") + `, COALESCE(n.path, ''), COALESCE(c.node_key, ''),
+		       COALESCE(r.origin, ''), ` + ownedNode + `, COALESCE(n.path, ''), COALESCE(c.node_key, ''),
 		       COALESCE(n.owner, ''),
 		       n.is_external, COALESCE(b.dependent_repos, 0), ` + reachKnown + `,
 		       COALESCE(adv.advisories, 0),
@@ -751,13 +749,18 @@ func graphNodesQuery(display string, since int64, opts FullGraphOptions) (string
 		LEFT JOIN fstate fs ON fs.mk = n.node_key
 		LEFT JOIN adv ON adv.pkg = n.owner || '/' || n.repo
 		LEFT JOIN grouping u ON u.repo = r.repository_full_name
-		WHERE n.row_id IN (SELECT shown FROM disp WHERE row_id > ?)` +
+		WHERE n.row_id IN (SELECT shown FROM disp WHERE row_id > ?)` + visibleWorkflowNode +
 		scopeFilter(opts, "n.node_key") + nodeModeFilter(opts.Mode), append(args, opts.GroupProperty, since)
 }
 
 // graphNodes reads the displayed nodes. A non-zero since restricts them to those a node added
 // after that row id displays as, which is how a delta is derived.
 func (s *Store) graphNodes(display string, since int64, opts FullGraphOptions) ([]GraphNode, map[string]*GraphNode, error) {
+	if opts.Scope == ScopeSupplyChain || len(opts.GroupSources) > 0 {
+		if _, err := s.declaredEdgeTable(opts.Mode); err != nil {
+			return nil, nil, err
+		}
+	}
 	query, args := graphNodesQuery(display, since, opts)
 	rows, err := s.db.Query(query, args...)
 	if err != nil {

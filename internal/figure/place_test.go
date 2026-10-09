@@ -6,7 +6,6 @@ import (
 	"math"
 	"math/rand/v2"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/advanced-security/codeql-abom/internal/layout"
@@ -50,7 +49,7 @@ func ciClosure(t *testing.T) Closure {
 // would miss and a figure would move.
 func TestTheDocumentIsTheSameWhateverOrderTheClosureArrivedIn(t *testing.T) {
 	c := ciClosure(t)
-	want := Document(c, Options{})
+	want, _ := document(c, Options{})
 	if got := bytes.Count(want, []byte("[width=")); got != len(c.Nodes) {
 		t.Fatalf("the document sizes %d boxes for %d nodes:\n%s", got, len(c.Nodes), want)
 	}
@@ -61,7 +60,7 @@ func TestTheDocumentIsTheSameWhateverOrderTheClosureArrivedIn(t *testing.T) {
 		r := rand.New(rand.NewPCG(uint64(i), 7))
 		r.Shuffle(len(shuffled.Nodes), func(a, b int) { shuffled.Nodes[a], shuffled.Nodes[b] = shuffled.Nodes[b], shuffled.Nodes[a] })
 		r.Shuffle(len(shuffled.Edges), func(a, b int) { shuffled.Edges[a], shuffled.Edges[b] = shuffled.Edges[b], shuffled.Edges[a] })
-		if got := Document(shuffled, Options{}); !bytes.Equal(got, want) {
+		if got, _ := document(shuffled, Options{}); !bytes.Equal(got, want) {
 			t.Fatalf("shuffle %d wrote a different document:\n%s\nwant\n%s", i, got, want)
 		}
 	}
@@ -75,8 +74,8 @@ func TestEveryBoxIsTheSizeItsLabelNeeds(t *testing.T) {
 	if long.width <= short.width {
 		t.Errorf("a longer name got a box %v wide against %v", long.width, short.width)
 	}
-	doc := string(Document(ciClosure(t), Options{}))
-	if !strings.Contains(doc, "fixedsize=true") {
+	doc, _ := document(ciClosure(t), Options{})
+	if !bytes.Contains(doc, []byte("fixedsize=true")) {
 		t.Error("the document lets Graphviz size the boxes")
 	}
 }
@@ -95,7 +94,7 @@ func TestHostileKeysSurviveGraphvizUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Place: %v", err)
 	}
-	doc := Document(c, Options{})
+	doc, _ := document(c, Options{})
 	for _, k := range hostile {
 		if _, ok := placed.boxes[k]; !ok {
 			t.Errorf("%q did not come back from Graphviz", k)
@@ -240,7 +239,7 @@ func TestALabelSaysWhereItLivesWithoutAnAccountBox(t *testing.T) {
 			t.Errorf("%s reads %q / %q, want %q / %q", tc.n.Key, name, context, tc.name, tc.context)
 		}
 	}
-	if doc := Document(ciClosure(t), Options{}); bytes.Contains(doc, []byte("cluster")) {
+	if doc, _ := document(ciClosure(t), Options{}); bytes.Contains(doc, []byte("cluster")) {
 		t.Errorf("the document draws account boxes:\n%s", doc)
 	}
 }

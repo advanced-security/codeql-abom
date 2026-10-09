@@ -18,8 +18,7 @@ linters:
     - unconvert
     - copyloopvar
     - misspell
-    # A ratchet at their defaults (the worst production function is 29). Tighten gocyclo's
-    # min-complexity toward 10 as plans/tools/code-quality.md lands; never raise it to pass.
+    # A ratchet at their defaults. Tighten gocyclo's min-complexity toward 10; never raise it.
     - gocyclo
     - nestif
     - dupl

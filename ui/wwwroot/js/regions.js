@@ -94,14 +94,10 @@ export function boxHull(box) {
     return [{ x: x1, y: y1 }, { x: x2, y: y1 }, { x: x2, y: y2 }, { x: x1, y: y2 }];
 }
 
-/** Twice the signed area, which is all the ordering and degeneracy checks need. */export function hullArea(hull) {
+/** The unsigned area used to compare boundaries and detect degenerate hulls. */
+export function hullArea(hull) {
     if (!hull || hull.length < 3) return 0;
-    let sum = 0;
-    for (let i = 0; i < hull.length; i++) {
-        const a = hull[i], b = hull[(i + 1) % hull.length];
-        sum += a.x * b.y - b.x * a.y;
-    }
-    return Math.abs(sum) / 2;
+    return Math.abs(signedArea(hull));
 }
 
 /**
@@ -214,42 +210,4 @@ function intersect(p, q, a, b) {
     if (!d) return { x: q.x, y: q.y };
     const t = ((a.x - p.x) * (b.y - a.y) - (a.y - p.y) * (b.x - a.x)) / d;
     return { x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t };
-}
-
-/**
- * Members split into as few boundaries as enclose none of `foreign`.
- *
- * A region asserts containment, so it may not enclose a node that belongs to somebody else — and a
- * convex hull over a C-shaped cluster does exactly that to whatever sits in the mouth of the C.
- * Splitting at the widest gap along the cluster's longest axis separates the arms of the C, which
- * is the shape the force layout actually produces.
- *
- * A single member is the floor. Two nodes drawn within a padding of each other cannot be separated
- * by any boundary, so the rule gives up there rather than recursing forever.
- */
-export function containedClusters(members, foreign, padding) {
-    if (members.length < 2) return [members];
-    const hull = inflate(hullOf(members), padding);
-    if (!foreign.some(f => containsPoint(hull, { x: f.sx, y: f.sy }))) return [members];
-
-    const [a, b] = splitAtWidestGap(members);
-    if (!a.length || !b.length) return [members];
-    return containedClusters(a, foreign, padding).concat(containedClusters(b, foreign, padding));
-}
-
-// Along the longer extent, because that is the axis the gap that made a C is on.
-function splitAtWidestGap(members) {
-    const xs = members.map(m => m.sx), ys = members.map(m => m.sy);
-    const horizontal = Math.max(...xs) - Math.min(...xs) >= Math.max(...ys) - Math.min(...ys);
-    const sorted = [...members].sort((p, q) => (horizontal ? p.sx - q.sx : p.sy - q.sy));
-
-    let at = 1, widest = -1;
-    for (let i = 1; i < sorted.length; i++) {
-        const gap = horizontal ? sorted[i].sx - sorted[i - 1].sx : sorted[i].sy - sorted[i - 1].sy;
-        if (gap > widest) {
-            widest = gap;
-            at = i;
-        }
-    }
-    return [sorted.slice(0, at), sorted.slice(at)];
 }

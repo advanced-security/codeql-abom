@@ -151,22 +151,22 @@ func relationshipRefFilter(style string) (string, []any) {
 // relationshipScopeFilter narrows the listing the way the node listing is narrowed, so one word
 // means one thing across units. target says whether the declaration's target may place it there,
 // which a line with no declaration on record cannot.
-func relationshipScopeFilter(q RelationshipsQuery, target bool) (string, []any) {
+func relationshipScopeFilter(q RelationshipsQuery, target bool) string {
 	switch q.Scope {
 	case ScopeExposure:
 		if !target {
-			return ` AND src.node_key IN ` + onExposureRoute, nil
+			return ` AND src.node_key IN ` + onExposureRoute
 		}
 		return ` AND (src.node_key IN ` + onExposureRoute +
-			` OR dst.node_key IN ` + onExposureRoute + `)`, nil
+			` OR dst.node_key IN ` + onExposureRoute + `)`
 	case ScopeOwned:
 		// A line is yours when it is written in what you hold, whatever it names.
-		return ` AND src.row_id IN (` + ownedNodes + `)`, nil
+		return ` AND src.row_id IN (` + ownedNodes + `)`
 	case ScopeSupplyChain:
 		// The line belongs to the scope when what declares it runs there.
-		return ` AND src.row_id IN (` + scopeNodes(declaredRoots, q.Mode) + `)`, nil
+		return ` AND src.row_id IN (` + scopeNodes(declaredRoots, q.Mode) + `)`
 	}
-	return "", nil
+	return ""
 }
 
 // relationshipLineWhere is the part of the predicate a line answers by itself, whatever it
@@ -177,8 +177,7 @@ func (s *Store) relationshipLineWhere(q RelationshipsQuery, target bool) (string
 	where += edgeKindFilter(q.EdgeKinds)
 	fired, firedArgs := relationshipRuleFilter(q.Rules, q.NotRules, q.Mode)
 	where, args = where+fired, append(args, firedArgs...)
-	scoped, scopeArgs := relationshipScopeFilter(q, target)
-	where, args = where+scoped, append(args, scopeArgs...)
+	where += relationshipScopeFilter(q, target)
 	if !target && q.Search != "" {
 		where += ` AND src.node_key LIKE ? ESCAPE '\'`
 		args = append(args, "%"+escapeLike(q.Search)+"%")

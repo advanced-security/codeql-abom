@@ -133,17 +133,13 @@ func (s *Store) QueryTestsOf(queryID string) ([]QueryTest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading the tests of %s: %w", queryID, err)
 	}
-	defer rows.Close()
-
-	out := []QueryTest{}
-	for rows.Next() {
+	return collectRows(rows, func(rows *sql.Rows) (QueryTest, error) {
 		t, err := scanQueryTest(rows)
 		if err != nil {
-			return nil, fmt.Errorf("scanning a test of %s: %w", queryID, err)
+			return QueryTest{}, fmt.Errorf("scanning a test of %s: %w", queryID, err)
 		}
-		out = append(out, t)
-	}
-	return out, rows.Err()
+		return t, nil
+	})
 }
 
 // queryTests reads the newest outcome of each version, keyed the way the catalog joins.

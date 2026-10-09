@@ -423,12 +423,7 @@ func (s *Store) UpsertRepository(fullName, url string) (int64, error) {
 		fullName, nullable(url)); err != nil {
 		return 0, fmt.Errorf("upserting repository %q: %w", fullName, err)
 	}
-	var id int64
-	if err := s.db.QueryRow(
-		`SELECT row_id FROM repository WHERE repository_full_name = ?`, fullName).Scan(&id); err != nil {
-		return 0, fmt.Errorf("resolving repository %q: %w", fullName, err)
-	}
-	return id, nil
+	return s.repositoryID(fullName)
 }
 
 // InsertUpstreamRepository adds a repository that is not under review.
@@ -442,12 +437,7 @@ func (s *Store) InsertUpstreamRepository(fullName string) (int64, error) {
 		fullName, OriginUpstream); err != nil {
 		return 0, fmt.Errorf("inserting upstream repository %q: %w", fullName, err)
 	}
-	var id int64
-	if err := s.db.QueryRow(
-		`SELECT row_id FROM repository WHERE repository_full_name = ?`, fullName).Scan(&id); err != nil {
-		return 0, fmt.Errorf("resolving repository %q: %w", fullName, err)
-	}
-	return id, nil
+	return s.repositoryID(fullName)
 }
 
 // InsertOwnedRepository records a repository the operator owns.
@@ -464,6 +454,11 @@ func (s *Store) InsertOwnedRepository(fullName string) (int64, error) {
 		fullName, OriginSeed); err != nil {
 		return 0, fmt.Errorf("inserting owned repository %q: %w", fullName, err)
 	}
+	return s.repositoryID(fullName)
+}
+
+// Upserts can update a row, so LastInsertId cannot identify the repository they wrote.
+func (s *Store) repositoryID(fullName string) (int64, error) {
 	var id int64
 	if err := s.db.QueryRow(
 		`SELECT row_id FROM repository WHERE repository_full_name = ?`, fullName).Scan(&id); err != nil {

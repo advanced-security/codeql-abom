@@ -155,12 +155,6 @@ func TestAnAccountWithoutItsOwnInstallationIsNotReadAsAnAccount(t *testing.T) {
 	}
 
 	var _ TokenSource = app
-	tok, borrowed, err := Person("operator-token").Token(ctx, "anyone")
-	account, accountErr := Person("operator-token").AccountToken(ctx, "anyone")
-	if tok != "operator-token" || borrowed || err != nil || account != "operator-token" || accountErr != nil {
-		t.Errorf("with no App, the person's token must answer every owner as before; got %q %v %v, %q %v",
-			tok, borrowed, err, account, accountErr)
-	}
 }
 
 // Owners that will never install the App are read through the designated installation, never as the person or anonymously.

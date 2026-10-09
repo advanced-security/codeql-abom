@@ -39,17 +39,7 @@ func (o Options) direction() Direction {
 // that is still going after 5s is a fault, not a reason to draw less.
 const placeTimeout = 5 * time.Second
 
-// Document is the closure as a Graphviz document: sorted, so one closure is one document, never
-// `strict`, and every box at the size its label needs.
-//
-// No account boxes: one box per account pinned every action of an account into one block spanning
-// the ranks, and swift.yml's edges swept across the whole figure to reach it.
-func Document(c Closure, opts Options) []byte {
-	doc, _ := document(c, opts)
-	return doc
-}
-
-// document also returns the key each node ID stands for. Keys come from files ABOM did not write,
+// document returns the graph and the key each node ID stands for. Keys come from files ABOM did not write,
 // and DOT cannot quote every one of them: `\\` stays two characters, so a key ending in a backslash
 // has no quoted form. Nothing from a key is written, so nothing needs one.
 func document(c Closure, opts Options) ([]byte, []string) {

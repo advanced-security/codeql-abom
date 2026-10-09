@@ -128,16 +128,9 @@ func (s *Store) LockVerifications(repository string, limit int) ([]LockVerificat
 	if err != nil {
 		return nil, fmt.Errorf("reading lock verifications of %s: %w", repository, err)
 	}
-	defer rows.Close()
-	out := []LockVerification{}
-	for rows.Next() {
-		v, err := scanLockVerification(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
+	return collectRows(rows, func(rows *sql.Rows) (LockVerification, error) {
+		return scanLockVerification(rows)
+	})
 }
 
 // LastLockVerification is the newest run of one mode at one commit, if there is one.

@@ -136,18 +136,15 @@ func (s *Store) PendingDeliveries(after int64, limit int) ([]EventDelivery, erro
 	if err != nil {
 		return nil, fmt.Errorf("reading pending deliveries: %w", err)
 	}
-	defer rows.Close()
-	out := []EventDelivery{}
-	for rows.Next() {
+	return collectRows(rows, func(rows *sql.Rows) (EventDelivery, error) {
 		var payload []byte
 		d, err := scanDelivery(rows, &payload)
 		if err != nil {
-			return nil, fmt.Errorf("scanning a pending delivery: %w", err)
+			return EventDelivery{}, fmt.Errorf("scanning a pending delivery: %w", err)
 		}
 		d.Payload = payload
-		out = append(out, d)
-	}
-	return out, rows.Err()
+		return d, nil
+	})
 }
 
 // SettleDelivery records a pending delivery's outcome once, and reports whether it did.

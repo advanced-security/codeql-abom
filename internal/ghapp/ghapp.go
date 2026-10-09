@@ -19,12 +19,3 @@ var ErrNotInstalled = errors.New("the GitHub App is not installed on this accoun
 
 // ErrNoInstallation reports an App installed nowhere, which has nothing to read with at all.
 var ErrNoInstallation = errors.New("the GitHub App has no installation to read with")
-
-// Person is the operator's token for every owner: the behavior when no App is configured.
-type Person string
-
-// Token returns the operator's token whatever the owner.
-func (p Person) Token(context.Context, string) (string, bool, error) { return string(p), false, nil }
-
-// AccountToken returns the operator's token whatever the owner.
-func (p Person) AccountToken(context.Context, string) (string, error) { return string(p), nil }

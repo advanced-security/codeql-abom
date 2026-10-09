@@ -641,6 +641,9 @@ borrowing the row's. Walks stand only at live commits — those a reference reso
 analyzed commit of a repository nothing resolves — and a commit settled as identical to an analyzed
 one reads that commit's sightings. Blast radius takes the same walk, so a repository counts toward a
 dependency only through the releases it runs; both declared scopes stay component-level by design.
+Supply-chain membership takes the roots' own targets from their starting commits, cached with the
+declarations once per database state, and unions them with measured transitive reach. A later
+analysis of a historical commit cannot replace what the roots name.
 
 **An owned repository used as an action is a dependency at the reference that uses it.** Its node
 is the owned repository's own — internal, never styled as somebody else's — but a reference with a
@@ -662,6 +665,11 @@ version read the same declarations the walks do, never the row: a line whose liv
 different things is one entry per thing declared, naming those commits, and a line nothing live
 declares is counted beside the list rather than shown. The reading is cached per database state, so
 a write is visible on the next request.
+Upstream projects' uncalled CI workflows, jobs and steps stay in the evidence but leave these
+execution views; a called reusable workflow stays. Explicit upstream context on a dependency's
+uses and versions remains available, hidden and counted by default, and never counts as a starting
+point. A bill of materials continues through the reached component's own contents, not every node
+in its repository, so reaching an action never imports that project's CI or unrelated actions.
 
 **A snapshot is never built from what is not known.** A submission is refused, before anything is
 sent and with the refusal recorded, while its closure reads a commit analyzed only before sightings

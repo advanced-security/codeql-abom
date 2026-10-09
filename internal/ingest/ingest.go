@@ -272,7 +272,7 @@ func (i *Ingester) sourceChain(
 		}
 		return stepKey, nil
 
-	case edgeJobUsesReusableWF:
+	case edgeJobUsesReusableWF, edgeJobNeedsJob, edgeStepUsesAction:
 		workflowKey := normalize.WorkflowKey(repository, srcPath)
 		if err := addOnce(store.Node{
 			Key: workflowKey, Kind: nodeWorkflow, Repo: repository, Path: srcPath,
@@ -288,41 +288,8 @@ func (i *Ingester) sourceChain(
 		}); err != nil {
 			return "", err
 		}
-		return jobKey, nil
-
-	case edgeJobNeedsJob:
-		workflowKey := normalize.WorkflowKey(repository, srcPath)
-		if err := addOnce(store.Node{
-			Key: workflowKey, Kind: nodeWorkflow, Repo: repository, Path: srcPath,
-			DisplayName: srcPath, RepositoryID: repoID,
-		}); err != nil {
-			return "", err
-		}
-		jobKey := normalize.JobKey(repository, srcPath, srcJobID)
-		if err := addOnce(store.Node{
-			Key: jobKey, Kind: nodeJob, Repo: repository, Path: srcPath, JobID: srcJobID,
-			DisplayName: srcJobID, StepIndex: -1, RepositoryID: repoID,
-			ContainerKey: workflowKey,
-		}); err != nil {
-			return "", err
-		}
-		return jobKey, nil
-
-	case edgeStepUsesAction:
-		workflowKey := normalize.WorkflowKey(repository, srcPath)
-		if err := addOnce(store.Node{
-			Key: workflowKey, Kind: nodeWorkflow, Repo: repository, Path: srcPath,
-			DisplayName: srcPath, RepositoryID: repoID,
-		}); err != nil {
-			return "", err
-		}
-		jobKey := normalize.JobKey(repository, srcPath, srcJobID)
-		if err := addOnce(store.Node{
-			Key: jobKey, Kind: nodeJob, Repo: repository, Path: srcPath, JobID: srcJobID,
-			DisplayName: srcJobID, StepIndex: -1, RepositoryID: repoID,
-			ContainerKey: workflowKey,
-		}); err != nil {
-			return "", err
+		if edgeKind != edgeStepUsesAction {
+			return jobKey, nil
 		}
 		stepKey := normalize.StepKey(repository, srcPath, srcJobID, stepIndex)
 		if err := addOnce(store.Node{

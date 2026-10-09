@@ -65,7 +65,7 @@ func (s *Store) NodeDetailOf(key string, at []string) (NodeDetail, error) {
 	var d NodeDetail
 	var repo, origin, path sql.NullString
 	err := s.db.QueryRow(`
-		SELECT n.node_key, n.node_kind, r.repository_full_name, r.origin, `+ownedNode("n")+`, n.path,
+		SELECT n.node_key, n.node_kind, r.repository_full_name, r.origin, `+ownedNode+`, n.path,
 		       n.is_external,
 		       COALESCE(b.dependent_repos, 0),
 		       EXISTS (SELECT 1 FROM abom_frontier f
@@ -151,7 +151,7 @@ func (s *Store) readAt(d *NodeDetail, at []string) ([]int64, []string, error) {
 		}
 		var declared []int64
 		if commit != "" {
-			if declared, err = s.runsAtCommit(repository, commit, edgesRun("q")); err != nil {
+			if declared, err = s.runsAtCommit(repository, commit, edgesRun); err != nil {
 				return nil, nil, err
 			}
 		}

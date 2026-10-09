@@ -57,7 +57,7 @@ func (s *Store) DeclaredCommits() ([]DeclaredCommit, error) {
 		return at, r.Scan(&at[0], &at[1])
 	}, `SELECT LOWER(q.repository) || '@' || LOWER(q.db_commit), MAX(q.ran_at)
 	      FROM abom_query_run q
-	     WHERE q.analysis_mode = 'regular' AND COALESCE(q.db_commit, '') <> '' AND `+edgesRun("q")+`
+	     WHERE q.analysis_mode = 'regular' AND COALESCE(q.db_commit, '') <> '' AND `+edgesRun+`
 	     GROUP BY 1`)
 	if err != nil {
 		return nil, err

@@ -363,6 +363,13 @@ func TestTheBillOfMaterialsListsWhatLiveCommitsDeclared(t *testing.T) {
 	})
 }
 
+func (s *Store) liveAnswerLoads() int {
+	c := s.declarationCache()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.loads
+}
+
 // A newly ingested edge is read by the next request, and LiveCommits is read once per database
 // state rather than once per request.
 func TestDeclarationsAreReadOncePerDatabaseStateAndNeverLag(t *testing.T) {

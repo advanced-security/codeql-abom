@@ -123,17 +123,13 @@ func (s *Store) listASTs(where string, arg any) ([]AuthoringAST, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading printed trees: %w", err)
 	}
-	defer rows.Close()
-
-	out := []AuthoringAST{}
-	for rows.Next() {
+	return collectRows(rows, func(rows *sql.Rows) (AuthoringAST, error) {
 		a, err := scanAST(rows, nil)
 		if err != nil {
-			return nil, fmt.Errorf("scanning a printed tree: %w", err)
+			return AuthoringAST{}, fmt.Errorf("scanning a printed tree: %w", err)
 		}
-		out = append(out, a)
-	}
-	return out, rows.Err()
+		return a, nil
+	})
 }
 
 // AuthoringAST reads one printed tree with its body.

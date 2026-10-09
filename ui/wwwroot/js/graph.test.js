@@ -7,7 +7,7 @@ import {
     nodeRadius, isSelected, particleSpeed, needsRender, collapseGroups, ungroupedName,
     mergeInto, placeArrivals, neighborhood, discoveryColor, escapesGraph,
     simulationSet, visibleSignature, restLevel, REST_DELAY, REST_FPS, fullyAnalyzed, labelFor,
-    graphHeight, visibilityGate, zoomTarget, refitNeeded, labelTiers, nodeDetail, leafLabel,
+    graphHeight, visibilityGate, zoomTarget, refitNeeded, labelTiers, leafLabel,
     haloAlpha, nodeContext, regionLabelParts, regionLabelSpot, regionShapes, regionCaption,
     drawnAsRegion, nodeBrief, clampToCanvas, shortRef, isDarkBackground, settledRegions, buttonMap,
     containmentIntoRegion, hoveredRegion, fitDistance, coreBounds, gravityForce, spreadFor, seedAt,
@@ -431,10 +431,6 @@ test('a label names the node and its reach in one string', () => {
 test('a count of one takes a singular noun', () => {
     assert.equal(labelFor({ key: 'actions/checkout@v4', dependentRepos: 1 }),
         'actions/checkout@v4 \u00b7 1 repository');
-    assert.deepEqual(
-        nodeDetail({ kind: 'action', owner: 'actions', reachKnown: true, dependentRepos: 1,
-            findings: 1 }),
-        ['action', 'actions', '1 repository reaches it', '1 finding']);
 });
 
 // A version labels itself, because the key is already `name@ref` once the queue analyzes per
@@ -986,18 +982,18 @@ test('the node under the pointer and the selection get their details, not just a
 // Naming a node is half of it. A reader also has to know which repository and workflow it belongs
 // to, which is the question this view exists to answer.
 test('a node says where it lives, without inventing a measurement it does not have', () => {
-    const workflow = nodeDetail({
+    const workflow = nodeBrief({
         kind: 'workflow', repository: 'octo/app', path: '.github/workflows/ci.yml',
         dependentRepos: 4, reachKnown: true,
     });
-    assert.ok(workflow.includes('octo/app'), workflow.join(' | '));
-    assert.ok(workflow.some(l => /4 repositories/.test(l)), workflow.join(' | '));
+    assert.equal(workflow.repository, 'octo/app');
+    assert.equal(workflow.dependentRepos, 4);
+    assert.equal(workflow.reachKnown, true);
 
     // Absent is not zero: a node ingested since the last reach rebuild has no measurement, and
     // printing "0 repositories" would assert one nobody made.
-    const fresh = nodeDetail({ kind: 'action', owner: 'actions', reachKnown: false, dependentRepos: 0 });
-    assert.ok(fresh.some(l => /not measured/.test(l)), fresh.join(' | '));
-    assert.ok(!fresh.some(l => /^0 repositories/.test(l)), fresh.join(' | '));
+    const fresh = nodeBrief({ kind: 'action', owner: 'actions', reachKnown: false, dependentRepos: 0 });
+    assert.equal(fresh.reachKnown, false);
 });
 
 // The halo names everything near the pointer, which is how a dense patch becomes readable. It is
@@ -1166,7 +1162,8 @@ test('the canvas keeps one context line and leaves the rest to the panel', () =>
     assert.ok(/reusable workflow/.test(line), line);
     assert.ok(line.includes('octo/app'), line);
     // The panel is where the rest lives, and it has to hold strictly more than the canvas does.
-    assert.ok(nodeDetail(n).length > 1);
+    assert.equal(nodeBrief(n).path, '.github/workflows/ci.yml');
+    assert.equal(nodeBrief(n).findings, 3);
 });
 
 test('a node whose repository is its own name does not say it twice', () => {

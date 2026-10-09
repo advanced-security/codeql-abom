@@ -2,13 +2,11 @@ package runner
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -37,13 +35,9 @@ type QueryServer struct {
 
 	// One evaluation at a time: responses arrive on one stream, so a second request in flight
 	// would race for the first one's answer.
-	mu      sync.Mutex
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	stdout  *bufio.Reader
-	stderr  *bytes.Buffer
-	started bool
-	nextID  int
+	mu sync.Mutex
+	serverProcess
+	nextID int
 
 	// transport replaces the process for tests.
 	transport func(method string, params any) (json.RawMessage, error)
@@ -211,13 +205,6 @@ func (q *QueryServer) call(method string, params any) (json.RawMessage, error) {
 }
 
 func (q *QueryServer) start(ctx context.Context) error {
-	if q.started {
-		return nil
-	}
-	path := q.CodeQLPath
-	if path == "" {
-		path = "codeql"
-	}
 	args := []string{"execute", "query-server2"}
 	if q.Threads > 0 {
 		args = append(args, fmt.Sprintf("--threads=%d", q.Threads))
@@ -226,38 +213,7 @@ func (q *QueryServer) start(ctx context.Context) error {
 		args = append(args, fmt.Sprintf("--ram=%d", q.RAMMB))
 	}
 
-	cmd := exec.CommandContext(ctx, path, args...)
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return fmt.Errorf("%w: piping to it: %w", ErrServerUnavailable, err)
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("%w: piping from it: %w", ErrServerUnavailable, err)
-	}
-	var diagnostic bytes.Buffer
-	cmd.Stderr = &diagnostic
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("%w: starting it: %w", ErrServerUnavailable, err)
-	}
-	q.cmd, q.stdin, q.stdout, q.stderr, q.started = cmd, stdin, bufio.NewReader(stdout), &diagnostic, true
-	return nil
-}
-
-func (q *QueryServer) stop() string {
-	if !q.started {
-		return ""
-	}
-	q.stdin.Close()
-	_ = q.cmd.Wait()
-
-	diagnostic := strings.TrimSpace(q.stderr.String())
-	if diagnostic != "" {
-		diagnostic = ": " + lastLine(diagnostic)
-	}
-	q.cmd, q.stdin, q.stdout, q.stderr, q.started = nil, nil, nil, nil, false
-	return diagnostic
+	return q.startProcess(ctx, q.CodeQLPath, args...)
 }
 
 // writeMessage frames one JSON-RPC message the way the query server expects: an LSP header, a

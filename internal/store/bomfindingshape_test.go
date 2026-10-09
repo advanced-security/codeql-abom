@@ -39,7 +39,7 @@ func TestAFindingReportsTheShapeItWasSeenIn(t *testing.T) {
 func TestAFindingWithNoRunStatesNoShape(t *testing.T) {
 	s := bomFixture(t)
 
-	const untraced = "actions/checkout/.github/workflows/test.yml"
+	const untraced = "actions/checkout"
 	findings, err := s.componentFindings(map[string]int{untraced: 1})
 	if err != nil {
 		t.Fatalf("componentFindings: %v", err)

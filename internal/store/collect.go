@@ -16,18 +16,24 @@ func queryAll[T any](s *Store, what string, scan func(*sql.Rows) (T, error),
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", what, err)
 	}
+	out, err := collectRows(rows, scan)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", what, err)
+	}
+	return out, nil
+}
+
+// collectRows releases the cursor before a caller can issue another query on the single connection.
+func collectRows[T any](rows *sql.Rows, scan func(*sql.Rows) (T, error)) ([]T, error) {
 	defer rows.Close()
 
 	out := []T{}
 	for rows.Next() {
 		item, err := scan(rows)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", what, err)
+			return nil, err
 		}
 		out = append(out, item)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("%s: %w", what, err)
-	}
-	return out, nil
+	return out, rows.Err()
 }

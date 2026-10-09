@@ -185,7 +185,8 @@ func TestAVersionsUsersAreReadWhereTheirLinesRun(t *testing.T) {
 // A workflow file is somebody's dependency once another repository calls it, and then it runs
 // wherever that caller's reference resolves, release or not. Only CI nobody else calls is a
 // starting point's alone.
-func TestAWorkflowAnotherRepositoryCallsRunsWhereItsCallerResolvesIt(t *testing.T) {
+func calledWorkflowFixture(t *testing.T) *Store {
+	t.Helper()
 	s := startingViewsFixture(t)
 	declaredAt(t, s, "acme/tool", "r1", ".github/workflows/shared.yml", 3,
 		"actions/upload-artifact", "v4")
@@ -224,15 +225,42 @@ func TestAWorkflowAnotherRepositoryCallsRunsWhereItsCallerResolvesIt(t *testing.
 	if err := w.Flush(); err != nil {
 		t.Fatal(err)
 	}
+	return s
+}
 
-	page, err := s.RelationshipsPage(RelationshipsQuery{Limit: 100})
-	if err != nil {
-		t.Fatalf("RelationshipsPage: %v", err)
-	}
-	if !slices.ContainsFunc(page.Items, func(r RelationshipSummary) bool {
-		return r.Repository == "acme/tool" && r.Target == "actions/upload-artifact"
-	}) {
-		t.Errorf("acme/tool's shared.yml, which acme/app calls at v1, lists nothing at r1: %+v",
-			page.Items)
+func TestAWorkflowAnotherRepositoryCallsRunsWhereItsCallerResolvesIt(t *testing.T) {
+	for _, origin := range []string{OriginSeed, OriginUpstream} {
+		t.Run(origin, func(t *testing.T) {
+			s := calledWorkflowFixture(t)
+			if origin == OriginUpstream {
+				if _, err := s.db.Exec(`UPDATE repository SET origin = 'upstream'
+					WHERE repository_full_name = 'acme/tool';
+					DELETE FROM abom_frontier WHERE node_key = 'acme/tool' AND depth = 0`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			page, err := s.RelationshipsPage(RelationshipsQuery{Limit: 100})
+			if err != nil {
+				t.Fatalf("RelationshipsPage: %v", err)
+			}
+			if !slices.ContainsFunc(page.Items, func(r RelationshipSummary) bool {
+				return r.Repository == "acme/tool" && r.Target == "actions/upload-artifact"
+			}) {
+				t.Errorf("the called shared.yml lists nothing at r1: %+v", page.Items)
+			}
+			doc := build(t, s, BOMOptions{Roots: []string{"acme/app"}})
+			if componentOf(doc, "actions/upload-artifact") == nil {
+				t.Error("the called workflow's action is missing from the BOM")
+			}
+			g, err := s.FullGraph(FullGraphOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.ContainsFunc(g.Nodes, func(n GraphNode) bool {
+				return n.Key == "acme/tool/.github/workflows/shared.yml"
+			}) {
+				t.Error("the called workflow is missing from the Explorer")
+			}
+		})
 	}
 }

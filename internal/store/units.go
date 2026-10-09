@@ -102,13 +102,16 @@ const workflowColumns = `
 
 // WorkflowsPage lists the workflows the scope matches, ordered across the whole match.
 func (s *Store) WorkflowsPage(q WorkflowsQuery) (WorkflowsPage, error) {
+	if err := s.prepareScope(q.Scope, AnalysisModeRegular); err != nil {
+		return WorkflowsPage{}, err
+	}
 	order, sorted := workflowSorts[q.Sort]
 	if q.Sort != "" && !sorted {
 		return WorkflowsPage{}, fmt.Errorf("store: cannot order workflows by %q; try one of %v",
 			q.Sort, sortNames(workflowSorts))
 	}
 
-	where := `WHERE n.node_kind IN ('workflow', 'reusable_workflow')`
+	where := `WHERE n.node_kind IN ('workflow', 'reusable_workflow')` + visibleWorkflowNode
 	var args []any
 	if q.Search != "" {
 		where += ` AND n.node_key LIKE ? ESCAPE '\'`
@@ -235,13 +238,16 @@ const jobStepsPredicate = `s.node_kind = 'step' AND s.job_id = n.job_id
 
 // JobsPage lists the jobs the scope matches, ordered across the whole match.
 func (s *Store) JobsPage(q JobsQuery) (JobsPage, error) {
+	if err := s.prepareScope(q.Scope, AnalysisModeRegular); err != nil {
+		return JobsPage{}, err
+	}
 	order, sorted := jobSorts[q.Sort]
 	if q.Sort != "" && !sorted {
 		return JobsPage{}, fmt.Errorf("store: cannot order jobs by %q; try one of %v",
 			q.Sort, sortNames(jobSorts))
 	}
 
-	where := `WHERE n.node_kind = 'job'`
+	where := `WHERE n.node_kind = 'job'` + visibleWorkflowNode
 	var args []any
 	if q.Search != "" {
 		where += ` AND n.node_key LIKE ? ESCAPE '\'`

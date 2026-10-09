@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"sort"
 	"strings"
@@ -590,23 +591,19 @@ func (s *Store) AdvanceQueryStage(queryID, version, stage, by, cli string) error
 // what is on disk when the round resolves. Deploying says *this query* should run from now on,
 // and the version that answers is whatever the pack holds then.
 func (s *Store) DeployedQueryIDs() ([]string, error) {
-	out := []string{}
 	rows, err := s.db.Query(
 		`SELECT DISTINCT query_id FROM abom_query_stage WHERE stage = ? ORDER BY query_id`,
 		StageDeploy)
 	if err != nil {
 		return nil, fmt.Errorf("reading deployed queries: %w", err)
 	}
-	defer rows.Close()
-
-	for rows.Next() {
+	return collectRows(rows, func(rows *sql.Rows) (string, error) {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scanning a deployed query: %w", err)
+			return "", fmt.Errorf("scanning a deployed query: %w", err)
 		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
+		return id, nil
+	})
 }
 
 // sourceOfPack reads where a query came from out of the pack that supplied it.

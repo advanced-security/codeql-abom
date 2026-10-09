@@ -12,7 +12,7 @@ import (
 //
 //	octo-org/app     ci.yml ------> actions/checkout@v4   direct, cross-owner, analyzed
 //	                       \------> octo-org/shared@v1    direct, same-owner, analyzed
-//	actions/checkout test.yml ----> actions/setup-go@v5   INDIRECT, never analyzed
+//	actions/checkout action.yml --> actions/setup-go@v5   INDIRECT, never analyzed
 //	stranger/repo    ci.yml ------> stranger/thing        unreachable from the root
 //
 // `actions/checkout` is the intermediary rather than `octo-org/shared`, because everything under
@@ -50,12 +50,12 @@ func bomFixture(t *testing.T) *Store {
 	add := adder(t, w)
 	add(Node{Key: "octo-org/app/.github/workflows/ci.yml", Kind: "workflow", RepositoryID: app,
 		Path: ".github/workflows/ci.yml"})
-	add(Node{Key: "actions/checkout/.github/workflows/test.yml", Kind: "workflow",
-		RepositoryID: checkout, Path: ".github/workflows/test.yml"})
 	add(Node{Key: "stranger/repo/.github/workflows/ci.yml", Kind: "workflow",
 		RepositoryID: stranger, Path: ".github/workflows/ci.yml"})
-	add(Node{Key: "actions/checkout", Kind: "action", Owner: "actions", Repo: "checkout",
-		IsExternal: true})
+	add(Node{Key: "actions/checkout", Kind: "composite_action", Owner: "actions", Repo: "checkout",
+		RepositoryID: checkout, Path: "action.yml", IsExternal: true})
+	add(Node{Key: "actions/checkout:step:1", Kind: "step",
+		RepositoryID: checkout, Path: "action.yml", ContainerKey: "actions/checkout"})
 	add(Node{Key: "octo-org/shared", Kind: "action", Owner: "octo-org", Repo: "shared",
 		IsExternal: true})
 	add(Node{Key: "actions/setup-go", Kind: "action", Owner: "actions", Repo: "setup-go",
@@ -72,10 +72,10 @@ func bomFixture(t *testing.T) *Store {
 			DstKey: "octo-org/shared", Kind: "step-uses-action", RepositoryID: app,
 			RefRaw: "octo-org/shared@v1", RefValue: "v1",
 			FilePath: ".github/workflows/ci.yml", StartLine: 2},
-		{Key: "checkout-setupgo", SrcKey: "actions/checkout/.github/workflows/test.yml",
-			DstKey: "actions/setup-go", Kind: "step-uses-action", RepositoryID: checkout,
+		{Key: "checkout-setupgo", SrcKey: "actions/checkout:step:1",
+			DstKey: "actions/setup-go", Kind: "composite-step-uses-action", RepositoryID: checkout,
 			RefRaw: "actions/setup-go@v5", RefValue: "v5",
-			FilePath: ".github/workflows/test.yml", StartLine: 1},
+			FilePath: "action.yml", StartLine: 1},
 		{Key: "stranger-thing", SrcKey: "stranger/repo/.github/workflows/ci.yml",
 			DstKey: "stranger/thing", Kind: "step-uses-action", RepositoryID: stranger,
 			RefRaw: "stranger/thing@v1", RefValue: "v1",
@@ -110,7 +110,7 @@ func bomFixture(t *testing.T) *Store {
 
 		// No run at all: analyzed but untraceable.
 		{RuleID: "actions/unpinned-tag", RepositoryID: checkout,
-			FilePath: ".github/workflows/test.yml", StartLine: 1, Severity: "warning",
+			FilePath: "action.yml", StartLine: 1, Severity: "warning",
 			Fingerprint: "f2"},
 		// Somebody else's repository, so it must not appear in a document rooted at octo-org.
 		{QueryRunID: traced, RuleID: "actions/unpinned-tag", RepositoryID: stranger,

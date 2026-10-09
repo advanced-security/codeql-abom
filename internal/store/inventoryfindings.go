@@ -157,6 +157,9 @@ func (p *findingReviewPlan) add(clause string, args ...any) {
 }
 
 func (s *Store) reviewRepositoryScope(plan *findingReviewPlan, q FindingReviewQuery) error {
+	if err := s.prepareScope(q.Scope, q.Mode); err != nil {
+		return err
+	}
 	if q.Search != "" {
 		plan.add(`fr.repository_full_name LIKE ? ESCAPE '\'`, "%"+escapeLike(q.Search)+"%")
 	}

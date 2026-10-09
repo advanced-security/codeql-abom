@@ -206,6 +206,11 @@ func TestEachCommitReadsTheKindAndSourceItDeclaredAtALocation(t *testing.T) {
 // or step that declared it there, never with another commit's.
 func TestTheRelationshipsUnitListsEachCommitsKindAndSourceAtALocation(t *testing.T) {
 	eachFirstWriter(t, []toolDeclaration{toolNeeds, toolUses}, func(t *testing.T, f *toolFixture) {
+		// CI belongs in this listing only at a starting point's branches, not a dependency's releases.
+		if _, err := f.DB().Exec(`UPDATE repository SET origin = 'seed';
+			UPDATE abom_frontier SET depth = 0`); err != nil {
+			t.Fatal(err)
+		}
 		page, err := f.RelationshipsPage(RelationshipsQuery{Limit: 50})
 		if err != nil {
 			t.Fatal(err)
