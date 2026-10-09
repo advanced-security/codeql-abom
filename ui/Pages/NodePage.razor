@@ -78,13 +78,13 @@ else
     </div>
 
     <div id="abom-node-layout"
-         class="abom-node-layout @(FigureBeside ? "abom-node-layout-side" : null) @(FigureBeside && !_figureExpanded ? "abom-node-layout-rail" : null)"
+         class="abom-node-layout @(FigureBeside ? "abom-node-layout-side" : null) @(FigureBeside && !FigureExpanded ? "abom-node-layout-rail" : null)"
          data-abom-node-layout="@(FigureBeside ? "side" : "top")">
     <div class="abom-node-main">
     @if (DrawsFigure && !FigureBeside)
     {
         <ClosureFigure Key="@_detail.Key" Predicate="@UsesPredicate" Side="false" SideChanged="SetFigureBeside"
-                       @bind-Expanded="_figureExpanded" />
+                       @bind-Expanded="FigureExpanded" />
     }
     else if (_detail.Kind == "repo")
     {
@@ -448,7 +448,7 @@ else
     {
         <aside class="abom-node-aside" data-abom-node-aside>
             <ClosureFigure Key="@_detail.Key" Predicate="@UsesPredicate" Side="true" SideChanged="SetFigureBeside"
-                           @bind-Expanded="_figureExpanded" />
+                           @bind-Expanded="FigureExpanded" />
         </aside>
     }
     </div>
@@ -469,7 +469,7 @@ else
     private bool OnlyTriggered => _detail is { Kind: "workflow", NamedBy: 0 };
 
     // Open on arrival, and kept wherever the reader moves the figure.
-    private bool _figureExpanded = true;
+    private bool FigureExpanded { get; set; } = true;
 
     /// <summary>Every kind that runs something or is run draws one; owned or not decides the order.</summary>
     private bool DrawsFigure => _detail?.Kind is "workflow" or "reusable_workflow" or "action"

@@ -438,9 +438,9 @@ public sealed class ActionDrilldownTests : AbomTestContext
         var page = Node("?at=v4&kinds=action");
 
         page.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("/-/uses")));
-        foreach (var route in new[] { "/-/uses", "/-/versions" })
+        var routes = new[] { "/-/uses", "/-/versions" };
+        foreach (var sent in routes.Select(route => Sent.Last(r => r.Url.Contains(route)).Url))
         {
-            var sent = Sent.Last(r => r.Url.Contains(route)).Url;
             Assert.Contains("at=v4", sent);
             Assert.DoesNotContain("kinds", sent);
         }

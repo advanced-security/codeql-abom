@@ -21,10 +21,11 @@ public sealed class ApiTimingTests
     [Fact]
     public async Task AFetchRecordsHowLongItTook()
     {
-        var api = new AbomApi(new HttpClient(new SlowHandler(TimeSpan.FromMilliseconds(30)))
+        using var http = new HttpClient(new SlowHandler(TimeSpan.FromMilliseconds(30)))
         {
             BaseAddress = new Uri("http://localhost/"),
-        });
+        };
+        var api = new AbomApi(http);
 
         await api.GetSummaryAsync(TestContext.Current.CancellationToken);
 
@@ -45,10 +46,11 @@ public sealed class ApiTimingTests
     [Fact]
     public async Task AFailedFetchIsTimedToo()
     {
-        var api = new AbomApi(new HttpClient(new FailingHandler())
+        using var http = new HttpClient(new FailingHandler())
         {
             BaseAddress = new Uri("http://localhost/"),
-        });
+        };
+        var api = new AbomApi(http);
 
         await api.GetSummaryAsync(TestContext.Current.CancellationToken);
 
@@ -63,10 +65,11 @@ public sealed class ApiTimingTests
     [Fact]
     public async Task TheFetchRingIsBounded()
     {
-        var api = new AbomApi(new HttpClient(new SlowHandler(TimeSpan.Zero))
+        using var http = new HttpClient(new SlowHandler(TimeSpan.Zero))
         {
             BaseAddress = new Uri("http://localhost/"),
-        });
+        };
+        var api = new AbomApi(http);
 
         for (var i = 0; i < AbomApi.RecentFetchLimit + 20; i++)
         {

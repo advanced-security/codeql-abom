@@ -161,7 +161,7 @@ public class PaletteContrastTests : AbomTestContext
         double max = Math.Max(R, Math.Max(G, B)), min = Math.Min(R, Math.Min(G, B));
         var d = max - min;
         if (d < 1e-9) return 0;
-        double h = max == R ? ((G - B) / d) % 6 : max == G ? ((B - R) / d) + 2 : ((R - G) / d) + 4;
+        double h = R >= G && R >= B ? ((G - B) / d) % 6 : G >= B ? ((B - R) / d) + 2 : ((R - G) / d) + 4;
         h *= 60;
         return h < 0 ? h + 360 : h;
     }
