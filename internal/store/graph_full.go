@@ -512,9 +512,7 @@ func heldByRoots(n, roots string) string {
 
 // ownedNode is 1 where the declaration covers the repository node n lives in, and 0 elsewhere,
 // never NULL: the predicate ownedNodes selects by, so "yours" and the owned scope cannot disagree.
-func ownedNode(n string) string {
-	return `(CASE WHEN ` + heldByRoots(n, declaredRoots) + ` THEN 1 ELSE 0 END)`
-}
+var ownedNode = `(CASE WHEN ` + heldByRoots("n", declaredRoots) + ` THEN 1 ELSE 0 END)`
 
 // scopeRepositories selects the repositories a scope covers.
 func scopeRepositories(roots, mode string) string {
@@ -733,7 +731,7 @@ func graphNodesQuery(display string, since int64, opts FullGraphOptions) (string
 	cte, args := scopeParts(opts)
 	return `WITH ` + display + cte + frontierRollup + advisoryRollup + groupingRollup + `
 		SELECT n.node_key, n.node_kind, COALESCE(r.repository_full_name, ''),
-		       COALESCE(r.origin, ''), ` + ownedNode("n") + `, COALESCE(n.path, ''), COALESCE(c.node_key, ''),
+		       COALESCE(r.origin, ''), ` + ownedNode + `, COALESCE(n.path, ''), COALESCE(c.node_key, ''),
 		       COALESCE(n.owner, ''),
 		       n.is_external, COALESCE(b.dependent_repos, 0), ` + reachKnown + `,
 		       COALESCE(adv.advisories, 0),

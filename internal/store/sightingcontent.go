@@ -39,12 +39,10 @@ func (s *Store) MarkSightedContent(runID int64) error {
 // edgesRun is the condition that a run's results are edges: a run of its query sighted an edge,
 // or it wrote one. The store never learns a result's shape, and a run attributed an edge before
 // sightings existed sighted nothing.
-func edgesRun(run string) string {
-	return `(` + run + `.query_id IN (SELECT DISTINCT sq.query_id FROM abom_edge_sighting ss
+const edgesRun = `(q.query_id IN (SELECT DISTINCT sq.query_id FROM abom_edge_sighting ss
 	           JOIN abom_query_run sq ON sq.row_id = ss.query_run_id)
-	     OR ` + run + `.row_id IN (SELECT query_run_id FROM abom_edge_regular
+	     OR q.row_id IN (SELECT query_run_id FROM abom_edge_regular
 	                        WHERE query_run_id IS NOT NULL))`
-}
 
 // commitEvidence is what the ledger says about each analyzed commit's edges, read once per answer.
 type commitEvidence struct {
@@ -59,7 +57,7 @@ func (s *Store) commitEvidence() (commitEvidence, error) {
 	rows, err := s.db.Query(`
 		SELECT LOWER(q.repository), LOWER(q.db_commit), MAX(q.sighted_content)
 		  FROM abom_query_run q
-		 WHERE q.analysis_mode = 'regular' AND COALESCE(q.db_commit, '') <> '' AND ` + edgesRun("q") + `
+		 WHERE q.analysis_mode = 'regular' AND COALESCE(q.db_commit, '') <> '' AND ` + edgesRun + `
 		 GROUP BY 1, 2`)
 	if err != nil {
 		return ev, fmt.Errorf("reading which commits an edges run analyzed: %w", err)

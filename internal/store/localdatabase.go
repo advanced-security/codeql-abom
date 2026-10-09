@@ -160,23 +160,19 @@ func (s *Store) UseDatabase(id DatabaseIdentity) (bool, error) {
 
 // RetainedDatabases lists everything the cache holds.
 func (s *Store) RetainedDatabases() ([]RetainedDatabase, error) {
-	out := []RetainedDatabase{}
 	rows, err := s.db.Query(`
 		SELECT ` + retainedDatabaseColumns + ` FROM abom_local_database
 		ORDER BY repository, db_commit, analysis_mode`)
 	if err != nil {
 		return nil, fmt.Errorf("listing retained databases: %w", err)
 	}
-	defer rows.Close()
-
-	for rows.Next() {
+	return collectRows(rows, func(rows *sql.Rows) (RetainedDatabase, error) {
 		d, err := scanRetainedDatabase(rows)
 		if err != nil {
-			return nil, fmt.Errorf("scanning a retained database: %w", err)
+			return RetainedDatabase{}, fmt.Errorf("scanning a retained database: %w", err)
 		}
-		out = append(out, d)
-	}
-	return out, rows.Err()
+		return d, nil
+	})
 }
 
 // RetainedDatabaseBytes is what the cache currently occupies.

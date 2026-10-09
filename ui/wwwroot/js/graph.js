@@ -1278,36 +1278,9 @@ export function leafLabel(node, container) {
     return leaf || rest;
 }
 
-/**
- * Where a node lives, as lines under its name.
- *
- * A key alone answers "what is this" and not "whose is it", which is the question a dependency
- * graph exists to answer.
- */
-export function nodeDetail(n) {
-    const lines = [];
-    const kind = (n.kind || '').replace(/_/g, ' ');
-    if (kind) lines.push(kind);
-    if (n.repository) lines.push(n.repository);
-    else if (n.owner) lines.push(n.owner);
-    if (n.path && n.path !== n.key) lines.push(n.path);
-    if (n.container && n.container !== n.repository) lines.push(`in ${shortKey(n.container)}`);
-    if (n.grouping) lines.push(`grouping ${n.grouping}`);
-    // Absent is not zero, so an unmeasured node says so rather than reporting none.
-    lines.push(n.reachKnown
-        ? `${counted(n.dependentRepos, 'repository reaches', 'repositories reach')} it`
-        : 'reach not measured');
-    if (n.findings) lines.push(counted(n.findings, 'finding', 'findings'));
-    return lines;
-}
-
 /** A count and the noun it counts, agreeing. "1 repos" is a number the interface did not read. */
 export function counted(n, singular, plural) {
     return `${n} ${n === 1 ? singular : plural}`;
-}
-
-function shortKey(key) {
-    return key.length > 48 ? `\u2026${key.slice(-47)}` : key;
 }
 
 /**
@@ -2531,34 +2504,6 @@ export function setMode(elementId, use3d, spec) {
         next.seeded = false;
         applyFilters(elementId, spec);
     }
-}
-
-export function focusOn(elementId, key) {
-    const it = instances.get(elementId);
-    if (!it) return;
-    const node = it.graph.graphData().nodes.find(n => n.key === key);
-    if (node) focusNode(it, node);
-}
-
-/**
- * Moves the camera to a node.
- *
- * In 2D the scene is the z=0 plane, so the camera has to stay on the +z axis and only pan. The
- * 3D path aims along the node's own vector, which in 2D would put the camera *in* the plane and
- * collapse the whole graph to a line.
- */
-function focusNode(it, node) {
-    const x = node.x || 0, y = node.y || 0, z = node.z || 0;
-
-    if (!it.use3d) {
-        const current = it.graph.cameraPosition();
-        const distance = Math.max(120, Math.abs(current.z) * 0.45);
-        it.graph.cameraPosition({ x, y, z: distance }, { x, y, z: 0 }, 700);
-        return;
-    }
-
-    const ratio = 1 + 260 / (Math.hypot(x, y, z) || 1);
-    it.graph.cameraPosition({ x: x * ratio, y: y * ratio, z: z * ratio }, node, 700);
 }
 
 /** Marks nodes as selected without changing what the view contains. */

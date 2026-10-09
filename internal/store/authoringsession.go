@@ -209,21 +209,17 @@ func (s *Store) AuthoringSessions(request int64) ([]AuthoringSession, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading the sessions on request %d: %w", request, err)
 	}
-	defer rows.Close()
-
-	out := []AuthoringSession{}
-	for rows.Next() {
+	return collectRows(rows, func(rows *sql.Rows) (AuthoringSession, error) {
 		var a AuthoringSession
 		var calls, input, output, nano sql.NullInt64
 		if err := rows.Scan(&a.RowID, &a.RequestID, &a.State, &a.StartedBy, &a.Model, &a.StartedAt,
 			&a.EndedAt, &a.Detail, &a.Events, &a.Refused, &calls, &input, &output, &nano); err != nil {
-			return nil, fmt.Errorf("scanning a session: %w", err)
+			return AuthoringSession{}, fmt.Errorf("scanning a session: %w", err)
 		}
 		a.ModelCalls, a.InputTokens = reported(calls), reported(input)
 		a.OutputTokens, a.NanoAIU = reported(output), reported(nano)
-		out = append(out, a)
-	}
-	return out, rows.Err()
+		return a, nil
+	})
 }
 
 // RunningAuthoringSessions maps each request an agent is working on to its running session.
@@ -306,22 +302,18 @@ func (s *Store) AuthoringEvents(session, after int64, limit int) ([]AuthoringEve
 	if err != nil {
 		return nil, fmt.Errorf("reading session %d: %w", session, err)
 	}
-	defer rows.Close()
-
-	out := []AuthoringEvent{}
-	for rows.Next() {
+	return collectRows(rows, func(rows *sql.Rows) (AuthoringEvent, error) {
 		var e AuthoringEvent
 		var took sql.NullInt64
 		if err := rows.Scan(&e.RowID, &e.SessionID, &e.At, &e.Hook, &e.Tool, &e.Subject,
 			&e.Decision, &e.Step, &e.Reason, &e.Detail, &took); err != nil {
-			return nil, fmt.Errorf("scanning an event: %w", err)
+			return AuthoringEvent{}, fmt.Errorf("scanning an event: %w", err)
 		}
 		if took.Valid {
 			e.TookMs = &took.Int64
 		}
-		out = append(out, e)
-	}
-	return out, rows.Err()
+		return e, nil
+	})
 }
 
 // authoringEventsLimit bounds one read of a timeline; a reader pages on from the last row it got.

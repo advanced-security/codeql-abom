@@ -38,12 +38,8 @@ type CLIServer struct {
 
 	// One command at a time: the protocol is a single stream of NUL-delimited answers, so a
 	// second command in flight would read the first one's response.
-	mu      sync.Mutex
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	stdout  *bufio.Reader
-	stderr  *bytes.Buffer
-	started bool
+	mu sync.Mutex
+	serverProcess
 
 	// transport replaces the process for tests.
 	transport func(args []string) ([]byte, error)
@@ -85,14 +81,26 @@ func (c *CLIServer) Close() error {
 }
 
 func (c *CLIServer) start(ctx context.Context) error {
-	if c.started {
+	return c.startProcess(ctx, c.CodeQLPath, "execute", "cli-server")
+}
+
+// serverProcess owns the common lifecycle; each protocol holds its lock across a whole exchange.
+type serverProcess struct {
+	cmd     *exec.Cmd
+	stdin   io.WriteCloser
+	stdout  *bufio.Reader
+	stderr  *bytes.Buffer
+	started bool
+}
+
+func (p *serverProcess) startProcess(ctx context.Context, path string, args ...string) error {
+	if p.started {
 		return nil
 	}
-	path := c.CodeQLPath
 	if path == "" {
 		path = "codeql"
 	}
-	cmd := exec.CommandContext(ctx, path, "execute", "cli-server")
+	cmd := exec.CommandContext(ctx, path, args...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("%w: piping to it: %w", ErrServerUnavailable, err)
@@ -110,23 +118,23 @@ func (c *CLIServer) start(ctx context.Context) error {
 		return fmt.Errorf("%w: starting it: %w", ErrServerUnavailable, err)
 	}
 
-	c.cmd, c.stdin, c.stdout, c.stderr, c.started = cmd, stdin, bufio.NewReader(stdout), &diagnostic, true
+	p.cmd, p.stdin, p.stdout, p.stderr, p.started = cmd, stdin, bufio.NewReader(stdout), &diagnostic, true
 	return nil
 }
 
 // stop ends the server and returns whatever it said on the way out.
-func (c *CLIServer) stop() string {
-	if !c.started {
+func (p *serverProcess) stop() string {
+	if !p.started {
 		return ""
 	}
-	c.stdin.Close()
-	_ = c.cmd.Wait()
+	p.stdin.Close()
+	_ = p.cmd.Wait()
 
-	diagnostic := strings.TrimSpace(c.stderr.String())
+	diagnostic := strings.TrimSpace(p.stderr.String())
 	if diagnostic != "" {
 		diagnostic = ": " + lastLine(diagnostic)
 	}
-	c.cmd, c.stdin, c.stdout, c.stderr, c.started = nil, nil, nil, nil, false
+	*p = serverProcess{}
 	return diagnostic
 }
 

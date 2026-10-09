@@ -8,7 +8,7 @@ namespace Abom.WebAssembly.Services;
 /// <summary>
 /// Reads the ABOM over the API served by `abom serve`.
 ///
-/// Nothing is cached beyond the summary: the database changes while an expansion runs, and a
+/// Responses are not cached: the database changes while an expansion runs, and a
 /// stale coverage figure would misreport how much is known.
 /// </summary>
 public sealed class AbomApi(HttpClient http)
@@ -38,16 +38,10 @@ public sealed class AbomApi(HttpClient http)
     /// A guarded POST because it runs a subprocess on that token and names private repositories.
     /// </summary>
     public async Task<AccountRepositories> ListAccountRepositoriesAsync(
-        string owner, CancellationToken ct = default)
-    {
-        using var request = new HttpRequestMessage(
-            HttpMethod.Post, $"api/accounts/{Uri.EscapeDataString(owner)}/repositories");
-        request.Headers.Add("X-Abom-Control", "1");
-        using var response = await http.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<AccountRepositories>(Json, ct)
-               ?? new AccountRepositories { Owner = owner };
-    }
+        string owner, CancellationToken ct = default) =>
+        await SendControlAsync<AccountRepositories>(HttpMethod.Post,
+            $"api/accounts/{Uri.EscapeDataString(owner)}/repositories", null, ct)
+        ?? new AccountRepositories { Owner = owner };
 
     /// <summary>
     /// Reads an organization's custom properties for a property scope through the operator's gh
@@ -55,19 +49,10 @@ public sealed class AbomApi(HttpClient http)
     /// the repository listing, for the same reasons.
     /// </summary>
     public async Task<AccountProperties> ReadAccountPropertiesAsync(
-        string owner, IReadOnlyList<IReadOnlyList<PropertyTerm>> clauses, CancellationToken ct = default)
-    {
-        using var request = new HttpRequestMessage(
-            HttpMethod.Post, $"api/accounts/{Uri.EscapeDataString(owner)}/properties")
-        {
-            Content = JsonContent.Create(new { clauses }),
-        };
-        request.Headers.Add("X-Abom-Control", "1");
-        using var response = await http.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<AccountProperties>(Json, ct)
-               ?? new AccountProperties { Owner = owner };
-    }
+        string owner, IReadOnlyList<IReadOnlyList<PropertyTerm>> clauses, CancellationToken ct = default) =>
+        await SendControlAsync<AccountProperties>(HttpMethod.Post,
+            $"api/accounts/{Uri.EscapeDataString(owner)}/properties", new { clauses }, ct)
+        ?? new AccountProperties { Owner = owner };
 
     public async Task<IReadOnlyList<OwnerCandidate>> GetOwnerCandidatesAsync(
         CancellationToken ct = default) =>
@@ -87,94 +72,35 @@ public sealed class AbomApi(HttpClient http)
     /// Starts or pauses expansion. A POST because it makes the server clone repositories and
     /// run CodeQL, and the header is what keeps a cross-site form from doing the same.
     /// </summary>
-    public async Task<DiscoveryState> SetDiscoveryAsync(bool running, CancellationToken ct = default)
-    {
-        using var request = new HttpRequestMessage(
-            HttpMethod.Post, running ? "api/discovery/start" : "api/discovery/pause");
-        request.Headers.Add("X-Abom-Control", "1");
-        using var response = await http.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<DiscoveryState>(Json, ct)
-               ?? new DiscoveryState();
-    }
+    public async Task<DiscoveryState> SetDiscoveryAsync(bool running, CancellationToken ct = default) =>
+        await SendControlAsync<DiscoveryState>(HttpMethod.Post,
+            running ? "api/discovery/start" : "api/discovery/pause", null, ct) ?? new DiscoveryState();
 
     /// <summary>
     /// Records whether a server start may resume a crawl that was running. Guarded like the
     /// start control, because it decides what a future start spends with nobody present.
     /// </summary>
     public async Task<DiscoveryState> SetResumeOnStartAsync(
-        bool resume, CancellationToken ct = default)
-    {
-        using var request = new HttpRequestMessage(
-            HttpMethod.Post, "api/discovery/resume-on-start")
-        {
-            Content = JsonContent.Create(new { resume }),
-        };
-        request.Headers.Add("X-Abom-Control", "1");
-        using var response = await http.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<DiscoveryState>(Json, ct)
-               ?? new DiscoveryState();
-    }
+        bool resume, CancellationToken ct = default) =>
+        await SendControlAsync<DiscoveryState>(HttpMethod.Post,
+            "api/discovery/resume-on-start", new { resume }, ct) ?? new DiscoveryState();
 
     /// <summary>
     /// Runs a version's tests and records the verdict. ABOM never forms the opinion itself:
     /// `codeql test run` compares the query's output to the checked-in `.expected`.
     /// </summary>
-    public async Task<(QueryCatalog? Catalog, string? Refusal)> TestQueryAsync(
-        string queryId, string version, CancellationToken ct = default)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "api/queries/test")
-        {
-            Content = JsonContent.Create(new { queryId, queryVersion = version }),
-        };
-        request.Headers.Add("X-Abom-Control", "1");
-        try
-        {
-            using var response = await http.SendAsync(request, ct);
-            if (response.IsSuccessStatusCode)
-            {
-                LastError = null;
-                return (await response.Content.ReadFromJsonAsync<QueryCatalog>(Json, ct), null);
-            }
-            var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
-            return (null, refusal?.Error
-                ?? $"the server refused this test run ({(int)response.StatusCode})");
-        }
-        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
-        {
-            LastError = $"api/queries/test: {ex.Message}";
-            return (null, ex.Message);
-        }
-    }
+    public Task<(QueryCatalog? Catalog, string? Refusal)> TestQueryAsync(
+        string queryId, string version, CancellationToken ct = default) =>
+        ControlAsync<QueryCatalog>(HttpMethod.Post, "api/queries/test",
+            new { queryId, queryVersion = version }, ct, "this test run");
 
     /// <summary>
     /// Stops a run that is under way. What has already been analyzed is kept: the executor
     /// observes cancellation between members rather than discarding the work behind it.
     /// </summary>
-    public async Task<(AnalysisRun? Run, string? Refusal)> CancelAnalysisRunAsync(
-        long id, CancellationToken ct = default)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"api/runs/{id}/cancel");
-        request.Headers.Add("X-Abom-Control", "1");
-        try
-        {
-            using var response = await http.SendAsync(request, ct);
-            if (response.IsSuccessStatusCode)
-            {
-                LastError = null;
-                return (await response.Content.ReadFromJsonAsync<AnalysisRun>(Json, ct), null);
-            }
-            var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
-            return (null, refusal?.Error
-                ?? $"the server refused to stop this run ({(int)response.StatusCode})");
-        }
-        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
-        {
-            LastError = $"api/runs/{id}/cancel: {ex.Message}";
-            return (null, ex.Message);
-        }
-    }
+    public Task<(AnalysisRun? Run, string? Refusal)> CancelAnalysisRunAsync(
+        long id, CancellationToken ct = default) =>
+        ControlAsync<AnalysisRun>(HttpMethod.Post, $"api/runs/{id}/cancel", null, ct, "to stop this run");
 
     /// <summary>What each dependency tier runs, and every suite it could be bound to.</summary>
     public async Task<SuiteBinding?> GetTierSuitesAsync(CancellationToken ct = default) =>
@@ -184,19 +110,10 @@ public sealed class AbomApi(HttpClient http)
     /// Rewrites what one tier runs. Takes effect on the next round rather than the current one,
     /// because a round's queries are resolved once before any repository is claimed.
     /// </summary>
-    public async Task<SuiteBinding?> SetTierSuitesAsync(
-        string tier, IReadOnlyList<string> suites, CancellationToken ct = default)
-    {
-        using var request = new HttpRequestMessage(
-            HttpMethod.Put, $"api/discovery/suites/{Uri.EscapeDataString(tier)}")
-        {
-            Content = JsonContent.Create(suites),
-        };
-        request.Headers.Add("X-Abom-Control", "1");
-        using var response = await http.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<SuiteBinding>(Json, ct);
-    }
+    public Task<SuiteBinding?> SetTierSuitesAsync(
+        string tier, IReadOnlyList<string> suites, CancellationToken ct = default) =>
+        SendControlAsync<SuiteBinding>(HttpMethod.Put,
+            $"api/discovery/suites/{Uri.EscapeDataString(tier)}", suites, ct);
 
     /// <summary>How many repositories each Actions code scanning class holds, without their rows.</summary>
     public async Task<CodeScanningReadings?> GetCodeScanningReadingsAsync(CancellationToken ct = default) =>
@@ -205,9 +122,6 @@ public sealed class AbomApi(HttpClient http)
     /// <summary>Whether this server writes default setup, and to what.</summary>
     public async Task<CodeScanningWriteMode?> GetCodeScanningWriteModeAsync(CancellationToken ct = default) =>
         await GetAsync<CodeScanningWriteMode>("api/code-scanning/writes", ct);
-
-    public async Task<IReadOnlyList<SetupPreview>?> GetSetupPreviewsAsync(CancellationToken ct = default) =>
-        await GetAsync<List<SetupPreview>>("api/code-scanning/previews", ct);
 
     public async Task<IReadOnlyList<SetupBatch>?> GetSetupBatchesAsync(CancellationToken ct = default) =>
         await GetAsync<List<SetupBatch>>("api/code-scanning/batches", ct);
@@ -220,31 +134,9 @@ public sealed class AbomApi(HttpClient http)
     /// Sends one guarded write to the default setup endpoints — a preview, an approval, a batch or
     /// an action on one — and answers the server's refusal as a reason rather than an exception.
     /// </summary>
-    public async Task<(T? Answer, string? Refusal)> SendCodeScanningAsync<T>(
-        string path, object? body, CancellationToken ct = default) where T : class
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Post, path)
-        {
-            Content = JsonContent.Create(body ?? new { }),
-        };
-        request.Headers.Add("X-Abom-Control", "1");
-        try
-        {
-            using var response = await http.SendAsync(request, ct);
-            if (!response.IsSuccessStatusCode)
-            {
-                var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
-                return (null, refusal?.Error ?? $"the server refused it ({(int)response.StatusCode})");
-            }
-            LastError = null;
-            return (await response.Content.ReadFromJsonAsync<T>(Json, ct), null);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
-        {
-            LastError = $"{path}: {ex.Message}";
-            return (null, LastError);
-        }
-    }
+    public Task<(T? Answer, string? Refusal)> SendCodeScanningAsync<T>(
+        string path, object? body, CancellationToken ct = default) where T : class =>
+        ControlAsync<T>(HttpMethod.Post, path, body ?? new { }, ct, contextualFailure: true);
 
     /// <summary>What each kind of work may spend, what it spent, and the freshness its rate buys.</summary>
     public async Task<PoolsReport?> GetPoolsAsync(CancellationToken ct = default) =>
@@ -254,46 +146,18 @@ public sealed class AbomApi(HttpClient http)
     /// Sets one pool's rate, or clears it with a null rate. Guarded like every write, and the
     /// server's refusal comes back as the reason rather than an exception.
     /// </summary>
-    public async Task<(PoolsReport? Report, string? Refusal)> SetPoolRateAsync(
-        string pool, string unit, int? perHour, int burst, CancellationToken ct = default)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Put, "api/pools")
-        {
-            Content = JsonContent.Create(new { pool, unit, perHour, burst }),
-        };
-        request.Headers.Add("X-Abom-Control", "1");
-        try
-        {
-            using var response = await http.SendAsync(request, ct);
-            if (!response.IsSuccessStatusCode)
-            {
-                var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
-                return (null, refusal?.Error ?? $"the server refused it ({(int)response.StatusCode})");
-            }
-            LastError = null;
-            return (await response.Content.ReadFromJsonAsync<PoolsReport>(Json, ct), null);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
-        {
-            LastError = $"api/pools: {ex.Message}";
-            return (null, LastError);
-        }
-    }
+    public Task<(PoolsReport? Report, string? Refusal)> SetPoolRateAsync(
+        string pool, string unit, int? perHour, int burst, CancellationToken ct = default) =>
+        ControlAsync<PoolsReport>(HttpMethod.Put, "api/pools",
+            new { pool, unit, perHour, burst }, ct, contextualFailure: true);
 
     /// <summary>
     /// Puts a whole dependency tier back in the queue, so a changed or extended query suite can
     /// be run over work already analyzed. Nothing already known is cleared.
     /// </summary>
-    public async Task<DiscoveryState> RequeueTierAsync(string tier, CancellationToken ct = default)
-    {
-        using var request = new HttpRequestMessage(
-            HttpMethod.Post, $"api/discovery/requeue/{Uri.EscapeDataString(tier)}");
-        request.Headers.Add("X-Abom-Control", "1");
-        using var response = await http.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<DiscoveryState>(Json, ct)
-               ?? new DiscoveryState();
-    }
+    public async Task<DiscoveryState> RequeueTierAsync(string tier, CancellationToken ct = default) =>
+        await SendControlAsync<DiscoveryState>(HttpMethod.Post,
+            $"api/discovery/requeue/{Uri.EscapeDataString(tier)}", null, ct) ?? new DiscoveryState();
 
     /// <summary>
     /// Puts back only what has not been analyzed at the identity the bound suites resolve to
@@ -337,19 +201,8 @@ public sealed class AbomApi(HttpClient http)
         return (await response.Content.ReadFromJsonAsync<LockVerification>(Json, ct), "");
     }
 
-    private async Task<RequeueResult> RequeueAsync(string path, object? body, CancellationToken ct)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Post, path);
-        request.Headers.Add("X-Abom-Control", "1");
-        if (body is not null)
-        {
-            request.Content = JsonContent.Create(body);
-        }
-        using var response = await http.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<RequeueResult>(Json, ct)
-               ?? new RequeueResult();
-    }
+    private async Task<RequeueResult> RequeueAsync(string path, object? body, CancellationToken ct) =>
+        await SendControlAsync<RequeueResult>(HttpMethod.Post, path, body, ct) ?? new RequeueResult();
 
     public async Task<GraphVersion> GetGraphVersionAsync(CancellationToken ct = default) =>
         await GetAsync<GraphVersion>("api/graph/version", ct) ?? new GraphVersion();
@@ -365,15 +218,9 @@ public sealed class AbomApi(HttpClient http)
     /// Tombstones what the declaration does not reach, or deletes what is already tombstoned.
     /// Both carry the control header: they remove work that only re-analysis can rebuild.
     /// </summary>
-    public async Task<PruneView?> PruneAsync(bool compact, CancellationToken ct = default)
-    {
-        using var request = new HttpRequestMessage(
-            HttpMethod.Post, compact ? "api/prune/compact" : "api/prune/apply");
-        request.Headers.Add("X-Abom-Control", "1");
-        using var response = await http.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<PruneView>(Json, ct);
-    }
+    public Task<PruneView?> PruneAsync(bool compact, CancellationToken ct = default) =>
+        SendControlAsync<PruneView>(HttpMethod.Post,
+            compact ? "api/prune/compact" : "api/prune/apply", null, ct);
 
     public async Task<IReadOnlyList<RemediationItem>> GetRemediationAsync(
         int top = 50, CancellationToken ct = default) =>
@@ -413,29 +260,12 @@ public sealed class AbomApi(HttpClient http)
     /// The predicate travels in the query string so the server reads it with the same code the
     /// graph and the gate read it with; a second way to express a scope is a second policy engine.
     /// </summary>
-    public async Task<(AnalysisRun? Run, string? Refusal)> StartAnalysisRunAsync(
+    public Task<(AnalysisRun? Run, string? Refusal)> StartAnalysisRunAsync(
         string predicate, IReadOnlyList<AnalysisQueryRef> queries, string by,
-        bool held, CancellationToken ct = default)
-    {
-        try
-        {
-            using var response = await http.PostAsJsonAsync("api/runs?" + predicate,
-                new { queries, by, held }, ct);
-            if (response.IsSuccessStatusCode)
-            {
-                LastError = null;
-                return (await response.Content.ReadFromJsonAsync<AnalysisRun>(Json, ct), null);
-            }
-            var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
-            return (null, refusal?.Error
-                ?? $"the server refused this run ({(int)response.StatusCode})");
-        }
-        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
-        {
-            LastError = $"api/runs: {ex.Message}";
-            return (null, null);
-        }
-    }
+        bool held, CancellationToken ct = default) =>
+        ReadRefusableAsync<AnalysisRun>("api/runs",
+            () => http.PostAsJsonAsync("api/runs?" + predicate, new { queries, by, held }, ct),
+            "this run", ct);
 
     /// <summary>What has been asked for, newest first.</summary>
     public async Task<IReadOnlyList<AnalysisRun>> GetAnalysisRunsAsync(
@@ -446,27 +276,11 @@ public sealed class AbomApi(HttpClient http)
     /// What a run over <paramref name="predicate"/> would cover, before anything runs. The server's
     /// refusal comes back verbatim, since it names the term a run cannot apply.
     /// </summary>
-    public async Task<(DatabaseSet? Set, string? Refusal)> GetDatabasesAsync(
+    public Task<(DatabaseSet? Set, string? Refusal)> GetDatabasesAsync(
         string predicate, CancellationToken ct = default)
     {
         var url = "api/databases?" + predicate;
-        try
-        {
-            using var response = await http.GetAsync(url, ct);
-            if (response.IsSuccessStatusCode)
-            {
-                LastError = null;
-                return (await response.Content.ReadFromJsonAsync<DatabaseSet>(Json, ct), null);
-            }
-            var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
-            return (null, refusal?.Error
-                ?? $"the server refused this scope ({(int)response.StatusCode})");
-        }
-        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
-        {
-            LastError = $"{url}: {ex.Message}";
-            return (null, null);
-        }
+        return ReadRefusableAsync<DatabaseSet>(url, () => http.GetAsync(url, ct), "this scope", ct);
     }
 
     /// <summary>Every query request, newest first, with the vocabularies a form offers.</summary>
@@ -474,29 +288,13 @@ public sealed class AbomApi(HttpClient http)
         await GetAsync<QueryRequestList>("api/query-requests", ct) ?? new QueryRequestList();
 
     /// <summary>A refusal is the reader leaving something out, so it is returned, not thrown.</summary>
-    public async Task<(QueryRequestList? List, string? Refusal)> SaveQueryRequestAsync(
+    public Task<(QueryRequestList? List, string? Refusal)> SaveQueryRequestAsync(
         QueryRequest request, CancellationToken ct = default)
     {
         var path = request.RowId == 0 ? "api/query-requests" : $"api/query-requests/{request.RowId}";
-        try
-        {
-            using var response = request.RowId == 0
-                ? await http.PostAsJsonAsync(path, request, ct)
-                : await http.PutAsJsonAsync(path, request, ct);
-            if (response.IsSuccessStatusCode)
-            {
-                LastError = null;
-                return (await response.Content.ReadFromJsonAsync<QueryRequestList>(Json, ct), null);
-            }
-            var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
-            return (null, refusal?.Error
-                ?? $"the server refused this request ({(int)response.StatusCode})");
-        }
-        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
-        {
-            LastError = $"{path}: {ex.Message}";
-            return (null, null);
-        }
+        return ReadRefusableAsync<QueryRequestList>(path, () => request.RowId == 0
+                ? http.PostAsJsonAsync(path, request, ct)
+                : http.PutAsJsonAsync(path, request, ct), "this request", ct);
     }
 
     /// <summary>
@@ -600,14 +398,10 @@ public sealed class AbomApi(HttpClient http)
         ControlAsync<T>(HttpMethod.Post, path, body, ct);
 
     private async Task<(T? Answer, string? Refusal)> ControlAsync<T>(
-        HttpMethod method, string path, object? body, CancellationToken ct)
+        HttpMethod method, string path, object? body, CancellationToken ct,
+        string refused = "it", bool contextualFailure = false)
     {
-        using var request = new HttpRequestMessage(method, path);
-        request.Headers.Add("X-Abom-Control", "1");
-        if (body is not null)
-        {
-            request.Content = JsonContent.Create(body);
-        }
+        using var request = ControlRequest(method, path, body);
         try
         {
             using var response = await http.SendAsync(request, ct);
@@ -617,13 +411,30 @@ public sealed class AbomApi(HttpClient http)
                 return (await response.Content.ReadFromJsonAsync<T>(Json, ct), null);
             }
             var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
-            return (default, refusal?.Error ?? $"the server refused it ({(int)response.StatusCode})");
+            return (default, refusal?.Error ?? $"the server refused {refused} ({(int)response.StatusCode})");
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
         {
             LastError = $"{path}: {ex.Message}";
-            return (default, ex.Message);
+            return (default, contextualFailure ? LastError : ex.Message);
         }
+    }
+
+    private static HttpRequestMessage ControlRequest(HttpMethod method, string path, object? body)
+    {
+        var request = new HttpRequestMessage(method, path);
+        request.Headers.Add("X-Abom-Control", "1");
+        if (body is not null) request.Content = JsonContent.Create(body);
+        return request;
+    }
+
+    private async Task<T?> SendControlAsync<T>(
+        HttpMethod method, string path, object? body, CancellationToken ct)
+    {
+        using var request = ControlRequest(method, path, body);
+        using var response = await http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<T>(Json, ct);
     }
 
     /// <summary>What one member of a run reported for one query, so results can be picked by name.</summary>
@@ -666,27 +477,10 @@ public sealed class AbomApi(HttpClient http)
         await GetAsync<FindingTrace>($"api/findings/{id}", ct);
 
     /// <summary>Carries out a recorded run, answering as soon as it has started.</summary>
-    public async Task<(AnalysisRun? Run, string? Refusal)> ExecuteAnalysisRunAsync(
-        long id, CancellationToken ct = default)
-    {
-        try
-        {
-            using var response = await http.PostAsync($"api/runs/{id}/start", content: null, ct);
-            if (response.IsSuccessStatusCode)
-            {
-                LastError = null;
-                return (await response.Content.ReadFromJsonAsync<AnalysisRun>(Json, ct), null);
-            }
-            var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
-            return (null, refusal?.Error
-                ?? $"the server refused to start this run ({(int)response.StatusCode})");
-        }
-        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
-        {
-            LastError = $"api/runs/{id}/start: {ex.Message}";
-            return (null, null);
-        }
-    }
+    public Task<(AnalysisRun? Run, string? Refusal)> ExecuteAnalysisRunAsync(
+        long id, CancellationToken ct = default) =>
+        ReadRefusableAsync<AnalysisRun>($"api/runs/{id}/start",
+            () => http.PostAsync($"api/runs/{id}/start", content: null, ct), "to start this run", ct);
 
     /// <summary>
     /// Records that somebody moved a version to a stage, answering the catalog the move produced.
@@ -694,28 +488,11 @@ public sealed class AbomApi(HttpClient http)
     /// The refusal text is returned rather than thrown: a stage the server will not accept is the
     /// reader having asked for something, not ABOM being broken.
     /// </summary>
-    public async Task<(QueryCatalog? Catalog, string? Refusal)> AdvanceQueryStageAsync(
-        string queryId, string version, string stage, string by, CancellationToken ct = default)
-    {
-        try
-        {
-            using var response = await http.PostAsJsonAsync("api/queries/stage",
-                new { queryId, queryVersion = version, stage, by }, ct);
-            if (response.IsSuccessStatusCode)
-            {
-                LastError = null;
-                return (await response.Content.ReadFromJsonAsync<QueryCatalog>(Json, ct), null);
-            }
-            var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
-            return (null, refusal?.Error
-                ?? $"the server refused this advance ({(int)response.StatusCode})");
-        }
-        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
-        {
-            LastError = $"api/queries/stage: {ex.Message}";
-            return (null, null);
-        }
-    }
+    public Task<(QueryCatalog? Catalog, string? Refusal)> AdvanceQueryStageAsync(
+        string queryId, string version, string stage, string by, CancellationToken ct = default) =>
+        ReadRefusableAsync<QueryCatalog>("api/queries/stage",
+            () => http.PostAsJsonAsync("api/queries/stage", new { queryId, queryVersion = version, stage, by }, ct),
+            "this advance", ct);
 
     /// <summary>
     /// The values one term can take, read from the endpoint the catalog named rather than from a
@@ -808,7 +585,7 @@ public sealed class AbomApi(HttpClient http)
     /// Sorting and paging are the server's, because ordering a page answers a different question
     /// from ordering the match.
     /// </remarks>
-    public async Task<(T? Page, string? Refusal)> GetPageAsync<T>(
+    public Task<(T? Page, string? Refusal)> GetPageAsync<T>(
         string path, string predicate, int top, int offset, string? sort, bool desc,
         CancellationToken ct = default)
     {
@@ -820,21 +597,26 @@ public sealed class AbomApi(HttpClient http)
         }
         if (predicate.Length > 0) parts.Add(predicate);
         var url = path + "?" + string.Join("&", parts);
+        return ReadRefusableAsync<T>(url, () => http.GetAsync(url, ct), "this view", ct);
+    }
 
+    private async Task<(T? Answer, string? Refusal)> ReadRefusableAsync<T>(
+        string path, Func<Task<HttpResponseMessage>> send, string refused, CancellationToken ct)
+    {
         try
         {
-            using var response = await http.GetAsync(url, ct);
+            using var response = await send();
             if (response.IsSuccessStatusCode)
             {
                 LastError = null;
                 return (await response.Content.ReadFromJsonAsync<T>(Json, ct), null);
             }
             var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
-            return (default, refusal?.Error ?? $"the server refused this view ({(int)response.StatusCode})");
+            return (default, refusal?.Error ?? $"the server refused {refused} ({(int)response.StatusCode})");
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
         {
-            LastError = $"{url}: {ex.Message}";
+            LastError = $"{path}: {ex.Message}";
             return (default, null);
         }
     }
@@ -936,14 +718,8 @@ public sealed class AbomApi(HttpClient http)
     }
 
     /// <summary>Turns the declared account scope into repositories.</summary>
-    public async Task<EnumerationReport?> EnumerateOwnedScopeAsync(CancellationToken ct = default)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "api/owned-scope/enumerate");
-        request.Headers.Add("X-Abom-Control", "1");
-        using var response = await http.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<EnumerationReport>(Json, ct);
-    }
+    public Task<EnumerationReport?> EnumerateOwnedScopeAsync(CancellationToken ct = default) =>
+        SendControlAsync<EnumerationReport>(HttpMethod.Post, "api/owned-scope/enumerate", null, ct);
 
     /// <summary>Asks what a candidate declaration would admit and drop, without writing.</summary>
     public async Task<ScopePreview?> PreviewOwnedScopeAsync(

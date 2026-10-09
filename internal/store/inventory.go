@@ -457,7 +457,7 @@ func originClause(origins []string) string {
 	arms, provenance := []string{}, 0
 	for _, o := range origins {
 		if o == OwnedOrigin {
-			arms = append(arms, ownedNode("n")+` = 1`)
+			arms = append(arms, ownedNode+` = 1`)
 			continue
 		}
 		provenance++
@@ -517,7 +517,7 @@ func inventoryOrdering(
 func (s *Store) inventoryPageItems(q InventoryQuery, plan inventoryPageQuery) ([]ActionSummary, error) {
 	query := `
 		SELECT n.node_key, n.node_kind, COALESCE(n.owner,''), COALESCE(n.repo,''),
-		       COALESCE(r.origin, '') AS origin, ` + ownedNode("n") + ` AS owned,
+		       COALESCE(r.origin, '') AS origin, ` + ownedNode + ` AS owned,
 		       ` + plan.reach + ` AS dependent_repos, ` + plan.levels + `,
 		       ` + measured("b.refs_in_use") + ` AS distinct_refs,
 		       ` + nodeFindingCount(q.Mode, "n.row_id") + ` AS findings,

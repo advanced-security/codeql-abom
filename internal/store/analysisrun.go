@@ -607,23 +607,19 @@ func (s *Store) AnalysisRuns() ([]AnalysisRun, error) {
 }
 
 func (s *Store) runQueriesOf(id int64) ([]AnalysisQuery, error) {
-	out := []AnalysisQuery{}
 	rows, err := s.db.Query(`
 		SELECT query_id, query_version FROM abom_analysis_query
 		WHERE run_id = ? ORDER BY query_id, query_version`, id)
 	if err != nil {
 		return nil, fmt.Errorf("reading the queries of run %d: %w", id, err)
 	}
-	defer rows.Close()
-
-	for rows.Next() {
+	return collectRows(rows, func(rows *sql.Rows) (AnalysisQuery, error) {
 		var q AnalysisQuery
 		if err := rows.Scan(&q.QueryID, &q.QueryVersion); err != nil {
-			return nil, fmt.Errorf("scanning a run query: %w", err)
+			return AnalysisQuery{}, fmt.Errorf("scanning a run query: %w", err)
 		}
-		out = append(out, q)
-	}
-	return out, rows.Err()
+		return q, nil
+	})
 }
 
 func (s *Store) runMembersOf(id int64) ([]AnalysisMember, error) {

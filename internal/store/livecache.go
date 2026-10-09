@@ -161,14 +161,6 @@ func (s *Store) declaredEdgeTable(mode string) (string, error) {
 	return table, nil
 }
 
-// liveAnswerLoads reports how many times the cache has read LiveCommits.
-func (s *Store) liveAnswerLoads() int {
-	c := s.declarationCache()
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.loads
-}
-
 func (s *Store) connectionState() (connectionState, error) {
 	ctx := context.Background()
 	conn, err := s.db.Conn(ctx)

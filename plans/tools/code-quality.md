@@ -10,15 +10,16 @@ A supply-chain analysis tool that does not analyze itself is making a claim it h
 the one codebase it can always reach. That gate is on, and the count it enforces is zero.
 
 What the gate cannot see is complexity: it counts problem results, and no query in those suites
-reports complexity as one. **125 production functions exceed cyclomatic complexity 10, total
-excess 362** (`gocyclo -over 10`, non-test Go) — worst `Store.Migrate` at 29, `findingReviewPlan`
-at 27, `Supervisor.cycle` at 25, `streamRun` at 18. Three complexity linters run as a ratchet and
+reports complexity as one. **207 production functions exceed cyclomatic complexity 10, total
+excess 734** (`gocyclo -over 10`, non-test Go) — worst `Processor.probe` at 30,
+`Store.Migrate` at 29, `findingReviewPlan` at 28 and `setup.Runner.Run` at 26.
+Three complexity linters run as a ratchet and
 report zero at their defaults.
 
 ## Pending
 
 1. **Reduce Go complexity**, led by excess rather than by the worst single function. The next
-   tranche is the ~100 functions between 11 and 16. **`Supervisor.cycle` is blocked:** its ordering
+   tranche is the 185 functions between 11 and 16. **`Supervisor.cycle` is blocked:** its ordering
    is load-bearing — reclassification runs before the sweep — and extracting phases reorders error
    paths no unit test exercises, so it needs a session that can run a real crawl. **`Store.Migrate`
    and the migration helpers** run against real older databases and move only with a migration
@@ -53,6 +54,10 @@ clean — as is the dead-export case, since CodeQL treats an `export` nothing im
 
 ## Verification
 
-- `make verify` green at every step, unfiltered, and `make quality` at zero.
+- Targeted suites between batches, then one unfiltered `make verify`; `make quality` at zero.
+  A C# extractor that cannot run on the workstation is an uncovered language, not zero findings.
 - Total excess re-measured either side of every change; the count over 10 may legitimately not move.
 - Byte-identical API responses for each behavior-preserving change, on a database **copy**.
+- Check production reachability from both commands with `deadcode ./...`, then distinguish test-only
+  instrumentation with `deadcode -test ./...`. Exported browser interop names and serialized fields
+  need their own caller check; a Go reachability report says nothing about them.

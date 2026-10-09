@@ -357,7 +357,7 @@ func (s *Store) LiveCommitEvidence() ([]LiveCommitEvidence, error) {
 			       MAX(q.sighted_content) AS content
 			  FROM abom_query_run q
 			 WHERE q.analysis_mode = 'regular' AND COALESCE(q.db_commit, '') <> ''
-			   AND `+edgesRun("q")+`
+			   AND `+edgesRun+`
 			 GROUP BY 1, 2
 		),
 		analyzed AS (SELECT repository, COUNT(*) AS commits FROM edges_run GROUP BY 1),

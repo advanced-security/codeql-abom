@@ -435,16 +435,13 @@ func (s *Store) PendingComparisonMembers(id int64) ([]DatabaseIdentity, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing what comparison %d has to read: %w", id, err)
 	}
-	defer rows.Close()
-	out := []DatabaseIdentity{}
-	for rows.Next() {
+	return collectRows(rows, func(rows *sql.Rows) (DatabaseIdentity, error) {
 		d := DatabaseIdentity{Mode: AnalysisModeRegular}
 		if err := rows.Scan(&d.Repository, &d.Commit, &d.SourceFilter); err != nil {
-			return nil, fmt.Errorf("scanning a comparison member: %w", err)
+			return DatabaseIdentity{}, fmt.Errorf("scanning a comparison member: %w", err)
 		}
-		out = append(out, d)
-	}
-	return out, rows.Err()
+		return d, nil
+	})
 }
 
 // MemberResults lists every result one member of a run reported, from what a held run kept or
@@ -475,16 +472,13 @@ func (s *Store) MemberResults(runID int64, id DatabaseIdentity) ([]ComparedResul
 	if err != nil {
 		return nil, fmt.Errorf("reading what %s reported in run %d: %w", id.Repository, runID, err)
 	}
-	defer rows.Close()
-	out := []ComparedResult{}
-	for rows.Next() {
+	return collectRows(rows, func(rows *sql.Rows) (ComparedResult, error) {
 		var r ComparedResult
 		if err := rows.Scan(&r.RuleID, &r.FilePath, &r.StartLine, &r.StartColumn, &r.Message); err != nil {
-			return nil, fmt.Errorf("scanning a result of %s: %w", id.Repository, err)
+			return ComparedResult{}, fmt.Errorf("scanning a result of %s: %w", id.Repository, err)
 		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
+		return r, nil
+	})
 }
 
 // RecordComparisonMember keeps what reading one member established, in one transaction so its
