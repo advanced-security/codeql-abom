@@ -81,7 +81,7 @@ func TestACompleteClosureIsRecordedAsHavingNothingOutstanding(t *testing.T) {
 func TestTheRecordedSpendCountsClonesRatherThanAnalyses(t *testing.T) {
 	sup, s := newSupervisor(t)
 
-	sup.recordSpend(expand.Stats{Processed: 12, Fetched: 3, Reused: 9}, nil, sup.now())
+	sup.recordSpend(expand.Stats{Processed: 12, Fetched: 3, Reused: 9, Built: 12}, nil, sup.now())
 
 	cycles, err := s.RecentCycles(1)
 	if err != nil {
@@ -96,6 +96,23 @@ func TestTheRecordedSpendCountsClonesRatherThanAnalyses(t *testing.T) {
 	if cycles[0].Builds != 12 {
 		t.Errorf("builds = %d, want 12: a reused tree is still built and evaluated",
 			cycles[0].Builds)
+	}
+}
+
+// Builds were the analysis count too, which billed a database code scanning supplied, or one the
+// database cache held, as a build the cycle paid for.
+func TestTheRecordedSpendCountsBuildsRatherThanAnalyses(t *testing.T) {
+	sup, s := newSupervisor(t)
+
+	sup.recordSpend(expand.Stats{Processed: 5, Built: 2, CodeScanning: expand.ReuseCounts{
+		Databases: 3, Refused: map[string]int{}}}, nil, sup.now())
+
+	cycles, err := s.RecentCycles(1)
+	if err != nil {
+		t.Fatalf("RecentCycles: %v", err)
+	}
+	if len(cycles) != 1 || cycles[0].Builds != 2 || cycles[0].Evaluations != 5 {
+		t.Errorf("recorded %+v, want the 2 databases built and the 5 evaluations", cycles)
 	}
 }
 
@@ -164,5 +181,37 @@ func TestACycleRecordsTheTreeReadsItSpent(t *testing.T) {
 	}
 	if total.TreeReads != 4 {
 		t.Errorf("totals carry %d tree reads, want 4", total.TreeReads)
+	}
+}
+
+// The cycle line printed what code scanning supplied and nothing kept it, so Settings could not
+// say why a round built what it built; a cycle now records it beside what it spent.
+func TestACycleRecordsWhatCodeScanningSuppliedAndWhy(t *testing.T) {
+	sup, s := newSupervisor(t)
+
+	sup.recordSpend(expand.Stats{Processed: 3, Built: 1, CodeScanning: expand.ReuseCounts{
+		Databases: 2, Analyses: 1, Refused: map[string]int{"database: another commit": 1}}}, nil, sup.now())
+
+	cycles, err := s.RecentCycles(1)
+	if err != nil {
+		t.Fatalf("RecentCycles: %v", err)
+	}
+	if len(cycles) != 1 || cycles[0].CodeScanning == nil {
+		t.Fatalf("recorded %+v, want what code scanning supplied kept", cycles)
+	}
+	got := *cycles[0].CodeScanning
+	if got.Databases != 2 || got.Analyses != 1 || len(got.Refused) != 1 || got.Refused["database: another commit"] != 1 {
+		t.Errorf("kept %+v, want 2 databases, 1 analysis and the one refusal", got)
+	}
+}
+
+// A crawl that asks code scanning nothing takes nothing, which reads as refusal on the page that
+// shows what each round took unless the status the page reads says why.
+func TestStatusSaysWhyCodeScanningIsNotAsked(t *testing.T) {
+	sup, _ := newSupervisor(t)
+	sup.Expander.CodeScanningOff = "this server was started with --code-scanning-reuse=false"
+
+	if got := sup.Status().CodeScanningUnasked; got != sup.Expander.CodeScanningOff {
+		t.Errorf("status says %q, want %q", got, sup.Expander.CodeScanningOff)
 	}
 }

@@ -88,7 +88,9 @@ func scanDerivedRow(r *sql.Rows) (DerivedRow, error) {
 	return DerivedRow{Subject: parts[0], Row: strings.Join(parts[1:], "|")}, nil
 }
 
-// RepositoryReach reads the external nodes each repository's reach names, and its exposure's.
+// RepositoryReach reads the nodes each repository's reach names that its submission closure can
+// list — external ones, and another owned repository's own, which a reference names — and its
+// exposure's. A repository's own local action is in its reach and never a closure entry.
 func (s *Store) RepositoryReach() (reach, exposure map[string]map[string]bool, err error) {
 	read := func(what, query string) (map[string]map[string]bool, error) {
 		pairs, err := queryAll(s, what, func(r *sql.Rows) ([2]string, error) {
@@ -109,7 +111,8 @@ func (s *Store) RepositoryReach() (reach, exposure map[string]map[string]bool, e
 	}
 	if reach, err = read("reading reach by repository", `
 		SELECT r.repository_full_name, n.node_key FROM abom_node_reach x
-		  JOIN abom_node_live n ON n.row_id = x.node_row_id AND n.is_external = 1
+		  JOIN abom_node_live n ON n.row_id = x.node_row_id
+		   AND (n.is_external = 1 OR n.repository_row_id <> x.repository_row_id)
 		  JOIN repository r ON r.row_id = x.repository_row_id`); err != nil {
 		return nil, nil, err
 	}
@@ -273,64 +276,50 @@ func (s *Store) ReachOutsideStartingPoints() (int, []ReachRow, error) {
 	return total, rows, err
 }
 
-// KindChanges counts locations sighted at several commits, by whether a starting point walks them.
-type KindChanges struct {
-	Walked, Unwalked int
-	Changes          []KindChange
+// KindAgreement is every declaration the readers read, and those whose kind their target contradicts.
+type KindAgreement struct {
+	Declarations   int
+	Contradictions []KindContradiction
 }
 
-// KindChange is a location whose sightings name a job at one commit and something else at another.
-type KindChange struct {
-	Location, Repository string
-	Walked               bool
-	// Targets lists each kind, key and commit sighted, as `kind key@commit`.
-	Targets string
+// KindContradiction is a declaration whose kind its target contradicts: a `needs:` naming something
+// other than a job, or a `uses:` naming a job.
+type KindContradiction struct {
+	Location, Commit, Repository string
+	Kind, TargetKind, Target     string
 }
 
-// KindChanges reads where a location's target changed between a job and a non-job across commits.
-func (s *Store) KindChanges() (KindChanges, error) {
-	type location struct {
-		KindChange
-		changes bool
+// KindAgreement reads every declaration of every shape as the readers read it, kind and target each
+// commit's own, and names those whose kind and target cannot both be true.
+func (s *Store) KindAgreement() (KindAgreement, error) {
+	type declaration struct {
+		KindContradiction
+		contradicts bool
 	}
-	rows, err := queryAll(s, "reading target kinds across commits",
-		func(r *sql.Rows) (location, error) {
-			var l location
-			return l, r.Scan(&l.Location, &l.Repository, &l.Walked, &l.changes, &l.Targets)
-		}, `
-		WITH s AS (
-			SELECT sg.edge_row_id, LOWER(COALESCE(q.db_commit, '')) AS commit_sha, n.node_kind,
-			       n.node_key
-			  FROM abom_edge_sighting sg
-			  JOIN abom_query_run q ON q.row_id = sg.query_run_id AND q.analysis_mode = 'regular'
-			  JOIN abom_node_live n ON n.row_id = sg.dst_node_row_id
-		),
-		multi AS (
-			SELECT edge_row_id, MAX(node_kind = 'job') AND MAX(node_kind <> 'job') AS changes,
-			       GROUP_CONCAT(DISTINCT node_kind || ' ' || node_key || '@' || commit_sha) AS targets
-			  FROM s GROUP BY edge_row_id HAVING COUNT(DISTINCT commit_sha) > 1
-		),
-		reached(row_id) AS MATERIALIZED (SELECT DISTINCT node_row_id FROM abom_node_reach)
-		SELECT e.edge_key, COALESCE(r.repository_full_name, ''),
-		       COALESCE(r.origin, '') = ? OR src.container_node_row_id IN (SELECT row_id FROM reached),
-		       m.changes, CASE WHEN m.changes THEN m.targets ELSE '' END
-		  FROM multi m
-		  JOIN abom_edge_any_mode e ON e.row_id = m.edge_row_id
-		  JOIN abom_node_live src ON src.row_id = e.src_node_row_id
-		  LEFT JOIN repository r ON r.row_id = e.repository_row_id
-		 ORDER BY 1`, OriginSeed)
+	rows, err := queryAll(s, "reading each declaration's kind against its target",
+		func(r *sql.Rows) (declaration, error) {
+			var d declaration
+			return d, r.Scan(&d.Location, &d.Commit, &d.Repository, &d.Kind, &d.TargetKind, &d.Target,
+				&d.contradicts)
+		}, `WITH `+observedIn(AnalysisModeAnyShape)+`,
+		declaration AS (
+			SELECT DISTINCT edge_row_id, commit_sha, repository_row_id, edge_kind, dst_node_row_id
+			  FROM observed
+		)
+		SELECT e.edge_key, d.commit_sha, COALESCE(r.repository_full_name, ''), d.edge_kind,
+		       n.node_kind, n.node_key, (d.edge_kind = ?) <> (n.node_kind = 'job')
+		  FROM declaration d
+		  JOIN abom_edge_any_mode e ON e.row_id = d.edge_row_id
+		  JOIN abom_node_live n ON n.row_id = d.dst_node_row_id
+		  LEFT JOIN repository r ON r.row_id = d.repository_row_id
+		 ORDER BY 1, 2, 4, 6`, EdgeKindJobNeedsJob)
 	if err != nil {
-		return KindChanges{}, err
+		return KindAgreement{}, err
 	}
-	out := KindChanges{Changes: []KindChange{}}
-	for _, l := range rows {
-		if l.Walked {
-			out.Walked++
-		} else {
-			out.Unwalked++
-		}
-		if l.changes {
-			out.Changes = append(out.Changes, l.KindChange)
+	out := KindAgreement{Declarations: len(rows), Contradictions: []KindContradiction{}}
+	for _, d := range rows {
+		if d.contradicts {
+			out.Contradictions = append(out.Contradictions, d.KindContradiction)
 		}
 	}
 	return out, nil
@@ -402,4 +391,33 @@ func (s *Store) LinesInScope() (int, error) {
 		return 0, fmt.Errorf("counting lines in scope: %w", err)
 	}
 	return n, nil
+}
+
+// QueueClaim is what one queue row claims about where its reference points, and how the queue holds
+// it, which is what the checks that read GitHub compare.
+type QueueClaim struct {
+	NodeKey, Ref, Owner, Repo string
+	Depth                     int
+	// Commit is the commit the stored graph was read at, lowercased; empty where nothing resolved it.
+	Commit string
+	Status string
+	// Changed is when the row's commit was last analyzed and Confirmed when its reference was last
+	// found unmoved; each is empty where that never happened.
+	Changed, Confirmed string
+	// Owned is the reference's repository being one the operator declared.
+	Owned bool
+}
+
+// QueueClaims reads every queue row naming a repository, each a reference a walk can stand on.
+func (s *Store) QueueClaims() ([]QueueClaim, error) {
+	return queryAll(s, "reading what the queue claims", func(r *sql.Rows) (QueueClaim, error) {
+		var q QueueClaim
+		return q, r.Scan(&q.NodeKey, &q.Ref, &q.Owner, &q.Repo, &q.Depth, &q.Commit, &q.Status,
+			&q.Changed, &q.Confirmed, &q.Owned)
+	}, `SELECT f.node_key, f.ref, f.owner, f.repo, f.depth, LOWER(COALESCE(f.resolved_sha, '')),
+	           f.status, COALESCE(f.analyzed_at, ''), COALESCE(f.checked_at, ''),
+	           `+ownedFullName("(f.owner || '/' || f.repo)")+`
+	      FROM abom_frontier f
+	     WHERE COALESCE(f.owner, '') <> '' AND COALESCE(f.repo, '') <> ''
+	     ORDER BY f.node_key, f.ref`)
 }

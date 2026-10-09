@@ -9,63 +9,85 @@
 @* One draft for every page that offers Run: the versions, whether their results are findings, the
    size of what the host's scope resolves to, and Run. The host says what the run is over; the
    rest is the same on each page because it is this, rather than a copy of it. *@
-<MudPaper Outlined="true" Class="pa-3 mb-3" data-abom-run-draft>
-    <div class="d-flex flex-wrap align-center gap-2">
-        <MudText Typo="Typo.body2">Run</MudText>
-        @foreach (var q in Draft.Queries)
-        {
-            @* A named button: MudChip's close icon cannot be named and reads as "Close". *@
-            <span class="d-inline-flex align-center" data-abom-run-picked="@q.QueryId">
-                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">
-                    @q.QueryId <code class="ml-1">@Short(q.QueryVersion)</code>
-                </MudChip>
-                <MudIconButton Icon="@Icons.Material.Outlined.Close" Size="Size.Small"
-                               title="@($"Remove {q.QueryId} at version {Short(q.QueryVersion)} from this run draft.")"
-                               OnClick="@(() => Draft.Remove(q))"
-                               aria-label="@($"Remove {q.QueryId} from the run")" />
-            </span>
-        }
-        <div class="abom-run-add">
-            <MudSelect T="string" Value="@string.Empty" ValueChanged="Pick" Dense="true"
-                       Variant="Variant.Outlined" Margin="Margin.Dense"
-                       Placeholder="@(Draft.Queries.Count == 0 ? "Choose a query" : "Add a query")"
-                       aria-label="Add a query version to the run">
-                @foreach (var q in _runnable.Where(r => !Draft.Queries.Any(p => SameVersion(p, r))))
-                {
-                    <MudSelectItem T="string" Value="@VersionKey(q)">@q.QueryId @Short(q.QueryVersion)</MudSelectItem>
-                }
-            </MudSelect>
+@* Read in the order it is filled in: what runs, on what, what becomes of its results, then Run. *@
+<MudPaper Outlined="true" Class="pa-3 mb-3 abom-run-draft" data-abom-run-draft>
+    <div class="abom-run-section" data-abom-run-section="queries">
+        <span class="abom-run-label">Queries</span>
+        <div class="abom-run-field">
+            @foreach (var q in Draft.Queries)
+            {
+                @* A named button: MudChip's close icon cannot be named and reads as "Close". *@
+                <span class="d-inline-flex align-center" data-abom-run-picked="@q.QueryId">
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">
+                        @q.QueryId <code class="ml-1">@Short(q.QueryVersion)</code>
+                    </MudChip>
+                    <Tip Text="Take this query out of the run.">
+                        <MudIconButton Icon="@Icons.Material.Outlined.Close" Size="Size.Small"
+                                       OnClick="@(() => Draft.Remove(q))"
+                                       aria-label="@($"Remove {q.QueryId} from the run")" />
+                    </Tip>
+                </span>
+            }
+            <div class="abom-run-add">
+                <Tip Text="Add another query version to this run." Class="abom-tip-fill">
+                <MudSelect T="string" Value="@string.Empty" ValueChanged="Pick" Dense="true"
+                           Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Placeholder="@(Draft.Queries.Count == 0 ? "Choose a query" : "Add a query")"
+                           aria-label="Add a query version to the run">
+                    @foreach (var q in _runnable.Where(r => !Draft.Queries.Any(p => SameVersion(p, r))))
+                    {
+                        <MudSelectItem T="string" Value="@VersionKey(q)">@q.QueryId @Short(q.QueryVersion)</MudSelectItem>
+                    }
+                </MudSelect>
+                </Tip>
+            </div>
         </div>
-        @Scope
-        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" DropShadow="false"
-                   Disabled="@(!CanStartRun)" OnClick="StartRun" data-abom-run-go
-                   title="Create this run, start it over the selected repositories, and open its results.">Run</MudButton>
-        @* One setting for the whole run, suggested from what its queries are. The reason sits on
-           the span, where a disabled switch still shows it. *@
-        <span data-abom-run-findings title="@FindingsReason">
-            <MudSwitch T="bool" Value="@_findings" ValueChanged="@((bool on) => _findings = on)"
-                       Color="Color.Primary" Size="Size.Small" Disabled="@(Draft.Queries.Count == 0)"
-                       Label="Findings" aria-label="Store what this run finds as findings" />
-        </span>
-        <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
-                   OnClick="Discard" data-abom-run-discard
-                   title="Discard this run draft without starting a run.">Cancel</MudButton>
     </div>
-    @ChildContent
-    @if (_size is { } size)
-    {
-        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1" data-abom-run-size>
-            @SizeText(size)
-        </MudText>
-    }
-    else if (_sizeRefusal is { Length: > 0 } sizeRefused)
-    {
-        <MudText Typo="Typo.caption" Class="d-block mt-1" data-abom-run-size>@sizeRefused</MudText>
-    }
+    <div class="abom-run-section" data-abom-run-section="scope">
+        <span class="abom-run-label">Scope</span>
+        <div class="abom-run-field abom-run-field-stack">
+            <div class="abom-run-scope-line">
+                @Scope
+                @if (_size is { } size)
+                {
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-run-size>@SizeText(size)</MudText>
+                }
+                else if (_sizeRefusal is { Length: > 0 } sizeRefused)
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Warning" data-abom-run-size>@sizeRefused</MudText>
+                }
+            </div>
+            @ChildContent
+        </div>
+    </div>
+    <div class="abom-run-section" data-abom-run-section="results">
+        <span class="abom-run-label">Results</span>
+        <div class="abom-run-field">
+            @* One setting for the whole run, suggested from what its queries are. *@
+            <span data-abom-run-findings>
+                <Tip Text="@FindingsReason">
+                    <MudSwitch T="bool" Value="@_findings" ValueChanged="@((bool on) => _findings = on)"
+                               Color="Color.Primary" Size="Size.Small" Disabled="@(Draft.Queries.Count == 0)"
+                               Label="Store as findings" aria-label="Store what this run finds as findings" />
+                </Tip>
+            </span>
+        </div>
+    </div>
     @if (_runRefusal is { Length: > 0 } refusedRun)
     {
         <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true" Class="mt-2">@refusedRun</MudAlert>
     }
+    <div class="abom-run-actions">
+        <Tip Text="Drop this run without starting it.">
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                       OnClick="Discard" data-abom-run-discard>Cancel</MudButton>
+        </Tip>
+        <Tip Text="@RunReason">
+            <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" DropShadow="false"
+                       StartIcon="@Icons.Material.Filled.PlayArrow"
+                       Disabled="@(!CanStartRun)" OnClick="StartRun" data-abom-run-go>Run</MudButton>
+        </Tip>
+    </div>
 </MudPaper>
 
 @code {
@@ -103,11 +125,17 @@
     private bool CanStartRun =>
         !_starting && Draft.Queries.Count > 0 && Predicate.Length > 0 && Accounts.Identity.Login.Length > 0;
 
+    private string RunReason =>
+        Draft.Queries.Count == 0 ? "Choose a query to run first."
+        : Predicate.Length == 0 ? "Choose what to run it on first."
+        : Accounts.Identity.Login.Length == 0 ? "Sign in with GitHub to start a run."
+        : "Start this run over the scope and open its results.";
+
     private string FindingsReason => _suggestion is not { } s
         ? "Choose a query to see whether what this run finds should be stored as findings."
-        : _findings == s.Findings
+        : "Whether what this run reports becomes findings. " + (_findings == s.Findings
             ? $"Suggested: {s.Reason}."
-            : $"Changed from the suggestion ({(s.Findings ? "on" : "off")}): {s.Reason}.";
+            : $"Changed from the suggestion ({(s.Findings ? "on" : "off")}): {s.Reason}.");
 
     protected override async Task OnInitializedAsync()
     {
@@ -194,15 +222,29 @@
         {
             return set.Unresolved.Length > 0 ? set.Unresolved : "This names no repository.";
         }
-        var held = set.Databases.Count(d => d.Status == "retained");
-        // Held, but the run rebuilds it: neither usable as it is nor missing.
-        var stale = set.Databases.Count(d => d.Status == "buildable" && d.Reason.Length > 0);
-        var builtElsewhere = stale > 0
-            ? $"{CountText.Number(stale)} held but not built by this CodeQL, "
-            : string.Empty;
-        return $"{CountText.Of(total, "repository", "repositories")}: " +
-               $"{CountText.Number(held)} with a database held, {builtElsewhere}" +
-               $"{CountText.Number(total - held - stale)} without one";
+        var ready = set.Databases.Count(d => d.Status == "retained");
+        // On disk but rebuilt: another CodeQL built it, so it is counted with what the run builds.
+        var rebuilt = set.Databases.Count(d => d.Status == "buildable" && d.Reason.Length > 0);
+        var builds = set.Databases.Count - ready;
+        var repositories = CountText.Of(total, "repository", "repositories");
+        if (ready == 0 && set.Gaps.Count == 0)
+        {
+            return $"{repositories}; the run builds a database for each";
+        }
+        if (ready == total)
+        {
+            return $"{repositories}, each with a database ready to query";
+        }
+        var because = rebuilt > 0 ? $" ({CountText.Number(rebuilt)} because another CodeQL built it)" : string.Empty;
+        var parts = new List<string>();
+        if (ready > 0) parts.Add($"{CountText.Of(ready, "database", "databases")} ready to query");
+        if (builds > 0) parts.Add($"{CountText.Number(builds)} the run builds first{because}");
+        // No commit on record, so whether there is anything to analyze is learned only by trying.
+        if (set.Gaps.Count > 0)
+        {
+            parts.Add($"{CountText.Number(set.Gaps.Count)} never analyzed, which it tries from the default branch");
+        }
+        return $"{repositories}: {string.Join(", ", parts)}";
     }
 
     private static string VersionKey(CatalogQuery q) => q.QueryId + "\n" + q.QueryVersion;

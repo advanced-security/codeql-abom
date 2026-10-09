@@ -2,66 +2,106 @@
 package checks
 
 import (
+	"context"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/advanced-security/codeql-abom/internal/catalog"
 	"github.com/advanced-security/codeql-abom/internal/graph"
 	"github.com/advanced-security/codeql-abom/internal/store"
+	"github.com/advanced-security/codeql-abom/internal/work"
 )
 
-// Check is one of the comparisons plans/tools/graph-consistency-checker.md names.
+// Check is one of the comparisons ABOM makes between what it stored and an independent reading.
 type Check struct {
 	Number  int    `json:"number"`
 	Claim   string `json:"claim"`
 	Reading string `json:"reading"`
-	// BuiltBy names, by its title, the plan item that builds a check this build does not run. Never
-	// by number: the plan's items are renumbered as they land.
+	// BuiltBy names where a check this build does not run is planned: the plan, under plans/, and
+	// the title of its item. Never an item number: a plan's items are renumbered as they land.
 	BuiltBy string `json:"builtBy,omitempty"`
 }
 
-const (
-	external = "the external checks, 1 to 4"
-	runLogs  = "measure what run logs record, then check 5"
-)
-
-// Catalog lists every check the plan names, so one that is not running says so.
+// Catalog lists every check there is, so one that is not running says so.
 var Catalog = []Check{
-	{1, "What a commit declared", "The same commit's files, read by an independent parser",
-		external},
-	{2, "An owned repository's direct dependencies",
-		"GitHub's dependency graph, at the default-branch head only", external},
-	{3, "What a reference resolves to", "The reference now", external},
-	{4, "Which commits of an owned repository are live", "Its default and protected branch heads now",
-		external},
+	{1, "What a commit declared", "The same commit's files, read by an independent parser", ""},
+	{2, "An owned repository's direct dependencies", "GitHub's dependency graph at the same commit",
+		"api/dependency-graph-crosscheck.md: check 2, at a commit both name"},
+	{3, "What a reference resolves to", "The reference now", ""},
+	{4, "Which commits of an owned repository are live", "Its default and protected branch heads now", ""},
 	{5, "A workflow's closure at a commit", "The actions that commit's run downloaded, with their SHAs",
-		runLogs},
+		"api/dependency-graph-crosscheck.md: measure what run logs record, then check 5"},
 	{6, "An owned repository's reach", "A CodeQL walk over its closure database",
-		"check 6 as a sample, once the reachability crosscheck reports"},
+		"ql/reachability-crosscheck.md: run it continuously, as check 6"},
 	{7, "Incrementally maintained reach, exposure and advisory routes", "The wholesale recompute", ""},
 	{8, "Exposure, closure and reach", "Each other, on every owned repository", ""},
 	{9, "Graph-wide invariants", "None: each invariant holds two readings ABOM makes to each other", ""},
 	{10, "The freshness each pool's estimate shows", "The lag checks 3 and 4 measured",
-		"nothing planned yet: it needs the checker's pool and the lag the external checks measure"},
+		"ui/crawl-visibility.md: check 10, from how long checks 3 and 4 stay open"},
 	{11, "Work put back is done when claimed", "The ledger after the cycle that claimed it",
-		"check 11, from the queue and the ledger alone"},
+		"db/analysis-ledger.md: check 11, from the queue and the ledger alone"},
 }
 
+// External names the checks that read GitHub, which a run without a reader leaves off.
+var External = []int{1, 3, 4}
+
 // class is assigned by rule: 7 to 9 compare ABOM with itself, so only derivation can be at fault.
+// The checks that read GitHub class each disagreement by how the queue holds what moved.
 var class = map[int]string{7: "derivation", 8: "derivation", 9: "derivation"}
 
-// Run runs every built check once on copies of src made under dir, and files each run into src.
-func Run(src *store.Store, build, dir string) ([]store.CheckRun, error) {
+// GitHub is what the checks that read it ask: where references point now, what a repository
+// protects, and what a commit's files say.
+type GitHub interface {
+	ResolveRefs(ctx context.Context, qs []catalog.RefQuestion) (catalog.RefBatch, error)
+	ProtectedBranches(ctx context.Context, repository string) ([]string, error)
+	Tree(ctx context.Context, repository, commit string) (catalog.Tree, error)
+	CommitFiles(ctx context.Context, repository, commit string, paths []string) (catalog.FileBatch, error)
+}
+
+// Checker runs every built check once on copies of Store, filing each run into it.
+type Checker struct {
+	Store *store.Store
+	Build string
+	// Dir is where the copies are made.
+	Dir string
+	// Capacity is the checker's pool in worker-seconds, which every check draws on before it runs.
+	Capacity *work.TokenPool
+	// GitHub answers checks 1, 3 and 4; nil leaves them off. Its REST reads are charged by the client.
+	GitHub GitHub
+	// GraphQL is the checker's pool in GraphQL points, charged for every question put to GitHub.
+	GraphQL *work.TokenPool
+	// Recent is how many subjects that changed most recently a sampled check reads first, and
+	// Sample how many it draws at random from each stratum.
+	Recent, Sample int
+	// Rand draws the random baselines; nil seeds one from the clock.
+	Rand *rand.Rand
+}
+
+func (c *Checker) rng() *rand.Rand {
+	if c.Rand == nil {
+		c.Rand = rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), rand.Uint64()))
+	}
+	return c.Rand
+}
+
+// Run runs every built check once on copies of the store made under Dir, filing each run into it.
+func (c *Checker) Run(ctx context.Context) ([]store.CheckRun, error) {
+	src := c.Store
 	if err := src.MigrateChecks(); err != nil {
 		return nil, err
 	}
-	tmp, err := os.MkdirTemp(dir, "abom-check-")
+	tmp, err := os.MkdirTemp(c.Dir, "abom-check-")
 	if err != nil {
 		return nil, fmt.Errorf("making a place for the copies: %w", err)
 	}
 	defer os.RemoveAll(tmp)
 
+	if err := c.Capacity.Wait(ctx); err != nil {
+		return nil, err
+	}
 	started := time.Now()
 	incremental, wholesale, err := copies(src, tmp)
 	if err != nil {
@@ -76,8 +116,10 @@ func Run(src *store.Store, build, dir string) ([]store.CheckRun, error) {
 			parts = []store.CheckPart{{Part: fmt.Sprintf("check %d", check),
 				Skipped: []store.CheckSkip{{Reason: "could not be read: " + err.Error(), Count: 1}}}}
 		}
-		run := store.CheckRun{Check: check, Build: build, Parts: settle(check, parts),
-			StartedAt: at.UTC().Format(time.RFC3339), WallMillis: time.Since(at).Milliseconds()}
+		took := time.Since(at)
+		c.Capacity.Spend(1, int(took.Round(time.Second)/time.Second))
+		run := store.CheckRun{Check: check, Build: c.Build, Parts: settle(check, parts),
+			StartedAt: at.UTC().Format(time.RFC3339), WallMillis: took.Milliseconds()}
 		id, err := src.RecordCheckRun(run)
 		if err != nil {
 			return err
@@ -86,29 +128,56 @@ func Run(src *store.Store, build, dir string) ([]store.CheckRun, error) {
 		runs = append(runs, run)
 		return nil
 	}
+	next := func() (time.Time, error) {
+		if err := c.Capacity.Wait(ctx); err != nil {
+			return time.Time{}, err
+		}
+		return time.Now(), nil
+	}
 
-	parts, err := derivations(incremental, wholesale)
-	if err := file(7, started, parts, err); err != nil {
+	parts, derived := derivations(incremental, wholesale)
+	if err := file(7, started, parts, derived); err != nil {
 		return runs, err
 	}
-	if err != nil {
-		// 8 and 9 read the recompute, and a partial one would confound them.
-		for _, check := range []int{8, 9} {
-			if err := file(check, time.Now(), nil, err); err != nil {
-				return runs, err
-			}
+	for _, check := range []struct {
+		number int
+		read   func() ([]store.CheckPart, error)
+	}{
+		{8, func() ([]store.CheckPart, error) { return agreement(wholesale) }},
+		{9, func() ([]store.CheckPart, error) { return invariants(wholesale) }},
+	} {
+		at, err := next()
+		if err != nil {
+			return runs, err
 		}
+		// 8 and 9 read the recompute, and a partial one would confound them.
+		parts, err := []store.CheckPart(nil), derived
+		if derived == nil {
+			parts, err = check.read()
+		}
+		if err := file(check.number, at, parts, err); err != nil {
+			return runs, err
+		}
+	}
+	if c.GitHub == nil {
 		return runs, nil
 	}
-	at := time.Now()
-	parts, err = agreement(wholesale)
-	if err := file(8, at, parts, err); err != nil {
-		return runs, err
-	}
-	at = time.Now()
-	parts, err = invariants(wholesale)
-	if err := file(9, at, parts, err); err != nil {
-		return runs, err
+	for _, check := range []struct {
+		number int
+		read   func(context.Context, *store.Store) ([]store.CheckPart, error)
+	}{{1, c.declarations}, {3, c.references}, {4, c.liveCommits}} {
+		at, err := next()
+		if err != nil {
+			return runs, err
+		}
+		// The queue is read from the copy, so the claims compared are the state the run began from.
+		parts, err := check.read(ctx, incremental)
+		if ctx.Err() != nil {
+			return runs, ctx.Err()
+		}
+		if err := file(check.number, at, parts, err); err != nil {
+			return runs, err
+		}
 	}
 	return runs, nil
 }
@@ -157,7 +226,9 @@ func settle(check int, parts []store.CheckPart) []store.CheckPart {
 		}
 		for j := range p.Disagreements {
 			p.Disagreements[j].Check, p.Disagreements[j].Part = check, p.Part
-			p.Disagreements[j].Class = class[check]
+			if c, ok := class[check]; ok {
+				p.Disagreements[j].Class = c
+			}
 		}
 	}
 	return parts

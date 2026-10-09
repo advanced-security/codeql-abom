@@ -424,14 +424,71 @@ func TestACanceledDownloadIsNotCountedAsARefusal(t *testing.T) {
 	cs.onDownload = cancel
 	cs.downloadErr = context.Canceled
 
-	built, err := h.expander.buildDatabase(ctx, ownBuildIdentity(h), t.TempDir(), codeScanningCLI)
-	if err == nil {
-		built.release()
-	}
+	_, _ = h.expander.Run(ctx, Options{WorkDir: t.TempDir(), Limit: 10})
 	if cs.downloaded() != 1 {
 		t.Fatalf("downloaded %d times, want the one that was canceled", cs.downloaded())
 	}
 	if got := h.expander.ReuseCounts(); len(got.Refused) != 0 || got.Databases != 0 {
 		t.Errorf("reuse = %+v, want a canceled download counted as nothing", got)
+	}
+}
+
+// A round's builds are counted where CodeQL builds, so a database code scanning supplied, or one an
+// analysis run took while the round was building, is never reported as the crawl's work.
+func TestARoundCountsOnlyTheDatabasesItBuiltAndTheAnswersItWasGiven(t *testing.T) {
+	h, _ := reuseHarness(t, codeScanningCLI)
+	took := runBound(t, h)
+	if took.Built != 0 || took.CodeScanning.Databases != 1 || h.databasesBuilt() != 0 {
+		t.Errorf("a round that took code scanning's database reports %d built and %+v; CodeQL built %d",
+			took.Built, took.CodeScanning, h.databasesBuilt())
+	}
+
+	h.expander.Builder = builderFunc(func(ctx context.Context, src, db, language string) error {
+		if err := h.CreateDatabase(ctx, src, db, language); err != nil {
+			return err
+		}
+		run, err := h.expander.buildDatabase(ctx, store.DatabaseIdentity{
+			Repository: codeScanningRepo, Commit: codeScanningCommit, Mode: store.AnalysisModeRegular,
+		}, filepath.Join(t.TempDir(), "member"), codeScanningCLI)
+		if err != nil {
+			return err
+		}
+		run.release()
+		return nil
+	})
+	h.probe.moveEverythingTo(otherCommit)
+	h.requeueDirect()
+	before := h.databasesBuilt()
+	built := runBound(t, h)
+	if ran := h.databasesBuilt() - before; built.Built != ran || ran == 0 {
+		t.Errorf("a round reports %d databases built; CodeQL built %d", built.Built, ran)
+	}
+	if built.CodeScanning.Databases != 0 || len(built.CodeScanning.Refused) != 1 ||
+		built.CodeScanning.Refused["database: another commit"] != built.Built {
+		t.Errorf("the round reports %+v, want one refusal of its own per build and none of the run's takes",
+			built.CodeScanning)
+	}
+}
+
+// Code scanning that is never asked supplies nothing, which reads like refusal unless the reader is
+// told why: Settings shows this beside what each round took.
+func TestTheExpanderSaysWhyItAsksCodeScanningNothing(t *testing.T) {
+	h, _ := reuseHarness(t, codeScanningCLI)
+	if got := h.expander.CodeScanningUnasked(); got != "" {
+		t.Errorf("an expander that reads code scanning says %q, want nothing", got)
+	}
+
+	t.Setenv("LGTM_INDEX_FILTERS", "include:docs/**/*.yml")
+	if got := h.expander.CodeScanningUnasked(); !strings.Contains(got, "LGTM_INDEX_FILTERS") {
+		t.Errorf("with index filters in the environment it says %q, want them named", got)
+	}
+
+	h.expander.CodeScanning = nil
+	if got := h.expander.CodeScanningUnasked(); got == "" {
+		t.Error("an expander with no code scanning reader says nothing about why it asks nothing")
+	}
+	h.expander.CodeScanningOff = "this server was started with --code-scanning-reuse=false"
+	if got := h.expander.CodeScanningUnasked(); got != h.expander.CodeScanningOff {
+		t.Errorf("an expander the operator turned off says %q, want %q", got, h.expander.CodeScanningOff)
 	}
 }

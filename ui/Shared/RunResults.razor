@@ -54,16 +54,20 @@ else
         </div>
     }
     <MudText Typo="Typo.body2" Class="mud-text-secondary mb-1" data-abom-run-summary>
+        @* Coverage first: a run over 2 of 4 repositories says something about 2. *@
+        <span data-abom-run-coverage>
+            Run #@_run.RowId covers @Analyzed of @CountText.Of(_run.Members.Count, "repository", "repositories")@(Waiting > 0 ? $", with {Waiting} still to do" : "").
+            @if (NothingToAnalyze.Count > 0)
+            {
+                <span>@CountText.Number(NothingToAnalyze.Count) had nothing to analyze: @NamesText(NothingToAnalyze).</span>
+            }
+            @if (NotCovered.Count > 0)
+            {
+                <span>Not covered: @NamesText(NotCovered) — show every repository to see why.</span>
+            }
+        </span>
         @if (_run.Held)
         {
-            @* Coverage first: a run over 2 of 4 repositories says something about 2. *@
-            <span data-abom-held-coverage>
-                Run #@_run.RowId covers @Analyzed of @CountText.Of(_run.Members.Count, "repository", "repositories")@(Waiting > 0 ? $", with {Waiting} still to do" : "").
-                @if (NotCovered.Count > 0)
-                {
-                    <span>Not covered: @NamesText(NotCovered) — show every repository to see why.</span>
-                }
-            </span>
             @if (Split > 0)
             {
                 @* Spelled out: Razor drops the whitespace between an element and a code block. *@
@@ -77,10 +81,6 @@ else
         }
         else
         {
-            <span>
-                Run #@_run.RowId covered @CountText.Of(_run.Members.Count, "repository", "repositories"):
-                @Analyzed analyzed, @(_run.Members.Count - Analyzed) not.
-            </span>
             @if (Split > 0)
             {
                 <span>
@@ -113,31 +113,35 @@ else
         @if (_run.Members.Count > WithResults.Count)
         {
             @* The attribute goes on a wrapper: MudBlazor splats it onto a hidden input. *@
-            <span data-abom-results-all>
-                <MudSwitch T="bool" Value="_all" ValueChanged="@((bool v) => { _all = v; })" Size="Size.Small"
-                           Color="Color.Primary" Label="Show every repository" />
-            </span>
+            <Tip Text="Also list repositories with no result, or not analyzed yet.">
+                <span data-abom-results-all>
+                    <MudSwitch T="bool" Value="_all" ValueChanged="@((bool v) => { _all = v; })" Size="Size.Small"
+                               Color="Color.Primary" Label="Show every repository" />
+                </span>
+            </Tip>
         }
         @if (_run.Members.Any(m => m.Counted))
         {
             <MudSpacer />
             @if (_run.Held && Found > 0)
             {
-                @* The reason sits on the span: a disabled button fires no tooltip. *@
-                <span data-abom-held-convert-all-reason title="@ConvertAllReason">
-                    <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
-                               StartIcon="@Icons.Material.Outlined.PlaylistAddCheck"
-                               Disabled="@(!CanConvert)" OnClick="@(() => Convert(string.Empty, []))"
-                               title="@ConvertAllReason" data-abom-held-convert-all>Convert all to findings</MudButton>
+                <span data-abom-held-convert-all-reason>
+                    <Tip Text="@ConvertAllReason">
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                                   StartIcon="@Icons.Material.Outlined.PlaylistAddCheck"
+                                   Disabled="@(!CanConvert)" OnClick="@(() => Convert(string.Empty, []))"
+                                   data-abom-held-convert-all>Convert all to findings</MudButton>
+                    </Tip>
                 </span>
             }
-            <MudButton Size="Size.Small" DropShadow="false"
-                       Variant="@(_picking ? Variant.Filled : Variant.Outlined)"
-                       StartIcon="@Icons.Material.Outlined.RateReview"
-                       OnClick="@(() => _picking = !_picking)" data-abom-results-pick
-                       title="Show or hide the form for asking to change what this run's query reported.">
-                Ask for a change
-            </MudButton>
+            <Tip Text="Ask for the query to be changed, using results you pick from this run.">
+                <MudButton Size="Size.Small" DropShadow="false"
+                           Variant="@(_picking ? Variant.Filled : Variant.Outlined)"
+                           StartIcon="@Icons.Material.Outlined.RateReview"
+                           OnClick="@(() => _picking = !_picking)" data-abom-results-pick>
+                    Ask for a change
+                </MudButton>
+            </Tip>
         }
     </div>
 
@@ -232,19 +236,29 @@ else
                         <MudText Typo="Typo.caption">@StatusText(context.Item)</MudText>
                     </CellTemplate>
                 </PropertyColumn>
-                <TemplateColumn T="AnalysisMember" Title="" Hidden="@(!_run.Held)">
+                <TemplateColumn T="AnalysisMember" Title="">
                     <CellTemplate>
-                        @if (Count(context.Item) > 0)
+                        @if (Count(context.Item) > 0 && !_run.Held)
                         {
                             var repository = context.Item.Repository;
-                            <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
-                                       Class="abom-plain-button" OnClick="@(() => ToggleHeld(repository))"
-                                       title="@(_held.ContainsKey(repository)
-                                                  ? $"Hide the held results for {repository}."
-                                                  : $"Show the held results for {repository}.")"
-                                       data-abom-held-toggle="@repository">
-                                @(_held.ContainsKey(repository) ? "Hide what it held" : "What it held")
-                            </MudButton>
+                            <Tip Text="@(_held.ContainsKey(repository) ? "Fold these findings away." : "List the findings this run stored here, each opening its review.")">
+                                <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
+                                           Class="abom-plain-button" OnClick="@(() => ToggleHeld(repository))"
+                                           data-abom-run-findings-toggle="@repository">
+                                    @(_held.ContainsKey(repository) ? "Hide findings" : "Findings")
+                                </MudButton>
+                            </Tip>
+                        }
+                        else if (Count(context.Item) > 0)
+                        {
+                            var repository = context.Item.Repository;
+                            <Tip Text="@(_held.ContainsKey(repository) ? "Fold these held results away." : "List the results held here, to convert some or all to findings.")">
+                                <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
+                                           Class="abom-plain-button" OnClick="@(() => ToggleHeld(repository))"
+                                           data-abom-held-toggle="@repository">
+                                    @(_held.ContainsKey(repository) ? "Hide results" : "Results")
+                                </MudButton>
+                            </Tip>
                         }
                     </CellTemplate>
                 </TemplateColumn>
@@ -252,11 +266,13 @@ else
             @* Opened by repository rather than by the grid's own row state, which holds row objects and
                would close on every re-read of a run under way. *@
             <ChildRowRenderer>
-                @if (_run?.Held == true && _held.TryGetValue(context.Item.Repository, out var listed))
+                @if (_run is not null && _held.TryGetValue(context.Item.Repository, out var listed))
                 {
                     <tr class="mud-table-row">
                         <td class="mud-table-cell mud-table-child-content" colspan="@ColumnCount">
-                            <div class="abom-row-detail">@HeldFor(context.Item.Repository, listed)</div>
+                            <div class="abom-row-detail">
+                                @(_run.Held ? HeldFor(context.Item.Repository, listed) : StoredFor(context.Item.Repository, listed))
+                            </div>
                         </td>
                     </tr>
                 }
@@ -351,7 +367,11 @@ else
     private int Waiting => _run?.Members.Count(m => !m.Counted && m.Status is "pending" or "running") ?? 0;
 
     private List<AnalysisMember> NotCovered =>
-        _run?.Members.Where(m => !m.Counted && m.Status is not ("pending" or "running")).ToList() ?? [];
+        _run?.Members.Where(m => !m.Counted && m.Status is not ("pending" or "running" or "nothing")).ToList() ?? [];
+
+    // Read in full and found empty: not a gap in the run's coverage, and not a failure.
+    private List<AnalysisMember> NothingToAnalyze =>
+        _run?.Members.Where(m => m.Status == "nothing").ToList() ?? [];
 
     // The server says which members this start has still to reach; the one running leads.
     private List<AnalysisMember> StillToDo =>
@@ -365,8 +385,8 @@ else
 
     private const int NamesShown = 10;
 
-    // What each opened member held, what is chosen in it for converting, and what the last
-    // conversion did or why it was refused.
+    // What each opened member held or stored, what is chosen in it for converting, and what the
+    // last conversion did or why it was refused.
     private readonly Dictionary<string, MemberFindings?> _held = new(StringComparer.Ordinal);
     private readonly HashSet<(string Repository, long Held)> _toConvert = [];
     private string? _converted;
@@ -433,6 +453,60 @@ else
     /// <summary>How many repositories the run's card lists at once, so the runs under it stay in view.</summary>
     private const int Rows = 10;
 
+    // Narrowed to the repository and the rule, so the review opens with the finding in its list.
+    private static string FindingHref(string repository, RunFinding f) =>
+        $"/inventory?unit=findings&finding={f.FindingRowId}&" +
+        new ViewSpec { Repositories = [repository], Rules = [f.RuleId] }.ToQueryString();
+
+    private string ReviewHref(string repository) =>
+        "/inventory?unit=findings&" + new ViewSpec { Repositories = [repository], Rules = Columns }.ToQueryString();
+
+    private RenderFragment StoredFor(string repository, MemberFindings? listed) => __builder =>
+    {
+        if (listed is null)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                The server did not say what this run stored here: @Api.LastError
+            </MudText>
+        }
+        else if (listed.Unlinked)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-run-findings="@repository">
+                This run was recorded before ABOM kept each repository's own evaluation, so what it
+                counted here cannot be listed; run it again to list its findings.
+            </MudText>
+        }
+        else
+        {
+            <ul class="abom-trace abom-held-list" data-abom-run-findings="@repository">
+                @foreach (var f in listed.Findings)
+                {
+                    var message = f.Message + (Columns.Count > 1 ? $" · {f.RuleId}" : "");
+                    <li class="abom-held-item" data-abom-run-finding="@f.FindingRowId">
+                        <SeverityChip Severity="@f.Band" />
+                        <div class="abom-held-text">
+                            <Tip Text="Open this finding's review.">
+                                <a class="abom-path" href="@FindingHref(repository, f)">@($"{f.FilePath}:{f.StartLine}")</a>
+                            </Tip>
+                            <span class="abom-held-message">@message</span>
+                        </div>
+                    </li>
+                }
+            </ul>
+            @if (listed.Truncated)
+            {
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                    Only the first @listed.Findings.Count are listed.
+                </MudText>
+            }
+            <Tip Text="Open the findings review in Inventory, narrowed to this repository and this run's queries.">
+                <MudLink Href="@ReviewHref(repository)" Typo="Typo.caption" data-abom-run-findings-review="@repository">
+                    Review @repository's findings from @(Columns.Count == 1 ? "this query" : "these queries")
+                </MudLink>
+            </Tip>
+        }
+    };
+
     private RenderFragment HeldFor(string repository, MemberFindings? listed) => __builder =>
     {
         if (listed is null)
@@ -443,27 +517,35 @@ else
         }
         else
         {
-            <ul class="abom-trace" data-abom-held="@repository">
+            <ul class="abom-trace abom-held-list" data-abom-held="@repository">
                 @foreach (var f in listed.Findings)
                 {
-                    var label = $"{f.FilePath}:{f.StartLine} — {f.Message}" + (Columns.Count > 1 ? $" · {f.RuleId}" : "");
-                    <li class="d-flex align-center gap-1">
+                    var location = $"{f.FilePath}:{f.StartLine}";
+                    var message = f.Message + (Columns.Count > 1 ? $" · {f.RuleId}" : "");
+                    <li class="abom-held-item">
                         <span data-abom-finding-band="@f.HeldResultId"><SeverityChip Severity="@f.Band" /></span>
                         @if (f.FindingRowId != 0)
                         {
-                            <MudText Typo="Typo.caption" Class="d-block" data-abom-held-result-converted="@f.HeldResultId">
-                                <span class="abom-path">@label</span>
-                                <span class="mud-text-secondary"> · a finding, converted by @f.ConvertedBy @TimeText.DayAndTime(f.ConvertedAt)</span>
-                            </MudText>
+                            <div class="abom-held-text" data-abom-held-result-converted="@f.HeldResultId">
+                                <span class="abom-path">@location</span>
+                                <span class="abom-held-message">@message</span>
+                                <span class="abom-held-message">A finding, converted by @f.ConvertedBy @TimeText.DayAndTime(f.ConvertedAt)</span>
+                            </div>
                         }
                         else
                         {
                             <span data-abom-held-result="@f.HeldResultId">
-                                <MudCheckBox T="bool" Size="Size.Small" Dense="true"
-                                             Value="@_toConvert.Contains((repository, f.HeldResultId))"
-                                             ValueChanged="@((bool v) => ChooseToConvert(repository, f.HeldResultId, v))"
-                                             Label="@label" />
+                                <Tip Text="Choose this result to convert to a finding.">
+                                    <MudCheckBox T="bool" Size="Size.Small" Dense="true"
+                                                 Value="@_toConvert.Contains((repository, f.HeldResultId))"
+                                                 ValueChanged="@((bool v) => ChooseToConvert(repository, f.HeldResultId, v))"
+                                                 aria-label="@($"Choose {location} to convert")" />
+                                </Tip>
                             </span>
+                            <div class="abom-held-text">
+                                <span class="abom-path">@location</span>
+                                <span class="abom-held-message">@message</span>
+                            </div>
                         }
                     </li>
                 }
@@ -477,22 +559,24 @@ else
             var chosen = _toConvert.Where(c => c.Repository == repository).Select(c => c.Held).ToList();
             @if (listed.Findings.Any(f => f.FindingRowId == 0))
             {
-                <div class="d-flex align-center gap-2 mt-1">
-                    <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
-                               Disabled="@(!CanConvert || chosen.Count == 0)"
-                               OnClick="@(() => Convert(repository, chosen))"
-                               title="@($"Convert the chosen held results for {repository} into findings.")"
-                               data-abom-held-convert-chosen="@repository">
-                        @(chosen.Count == 0 ? "Convert chosen" : $"Convert {CountText.Of(chosen.Count, "chosen result", "chosen results")}")
-                    </MudButton>
+                <div class="d-flex align-center gap-2 mt-2">
+                    <Tip Text="Make findings of the results ticked above.">
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                                   Disabled="@(!CanConvert || chosen.Count == 0)"
+                                   OnClick="@(() => Convert(repository, chosen))"
+                                   data-abom-held-convert-chosen="@repository">
+                            @(chosen.Count == 0 ? "Convert chosen" : $"Convert {CountText.Of(chosen.Count, "chosen result", "chosen results")}")
+                        </MudButton>
+                    </Tip>
                     @* Named where a reader hears it: button text is uppercased, and a repository's name is not. *@
-                    <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
-                               Disabled="@(!CanConvert)" OnClick="@(() => Convert(repository, []))"
-                               aria-label="@($"Convert everything {repository} held to findings")"
-                               title="@($"Convert every held result for {repository} into findings.")"
-                               data-abom-held-convert-member="@repository">
-                        Convert all in this repository
-                    </MudButton>
+                    <Tip Text="Make a finding of every result held here.">
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                                   Disabled="@(!CanConvert)" OnClick="@(() => Convert(repository, []))"
+                                   aria-label="@($"Convert everything {repository} held to findings")"
+                                   data-abom-held-convert-member="@repository">
+                            Convert all in this repository
+                        </MudButton>
+                    </Tip>
                 </div>
             }
         }
@@ -516,6 +600,7 @@ else
     {
         "no_database" => string.IsNullOrEmpty(m.Detail) ? "no database" : m.Detail,
         "failed" => $"failed — {m.Detail}",
+        "nothing" => string.IsNullOrEmpty(m.Detail) ? "nothing to analyze" : $"nothing to analyze — {m.Detail}",
         "skipped" => string.IsNullOrEmpty(m.Detail) ? "skipped" : $"skipped — {m.Detail}",
         _ => m.Status,
     };
@@ -606,10 +691,11 @@ else
                     <MudText Typo="Typo.caption" Class="mud-text-secondary">A request is about one query:</MudText>
                     @foreach (var q in _run!.Queries.Select(q => q.QueryId).Distinct())
                     {
-                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
-                                 Color="@(PickQuery == q ? Color.Primary : Color.Default)"
-                                 OnClick="@(() => ChooseQuery(q))" data-abom-pick-query="@q"
-                                 title="@($"Pick {q} as the CodeQL rule to ask about.")">@q</MudChip>
+                        <Tip Text="Make the request about this query.">
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                     Color="@(PickQuery == q ? Color.Primary : Color.Default)"
+                                     OnClick="@(() => ChooseQuery(q))" data-abom-pick-query="@q">@q</MudChip>
+                        </Tip>
                     }
                 </div>
             }
@@ -648,10 +734,12 @@ else
                                 {
                                     var repository = context.Item.Repository;
                                     <span data-abom-pick-missed="@repository">
-                                        <MudCheckBox T="bool" Size="Size.Small" Dense="true"
-                                                     Value="@_missed.Contains(repository)"
-                                                     ValueChanged="@((bool v) => PickMissed(repository, v))"
-                                                     Label="Should have found something here" />
+                                        <Tip Text="Say the query missed something it should report here.">
+                                            <MudCheckBox T="bool" Size="Size.Small" Dense="true"
+                                                         Value="@_missed.Contains(repository)"
+                                                         ValueChanged="@((bool v) => PickMissed(repository, v))"
+                                                         Label="Should have found something here" />
+                                        </Tip>
                                     </span>
                                 }
                             </CellTemplate>
@@ -678,10 +766,11 @@ else
                 <div class="d-flex align-center gap-2 mt-2">
                     <MudText Typo="Typo.caption" Class="mud-text-secondary">@PickedText</MudText>
                     <MudSpacer />
-                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" DropShadow="false"
-                               Disabled="@(_falseAlarms.Count + _missed.Count == 0)" OnClick="Ask"
-                               title="@($"Create a draft request asking to change the results for {query}.")"
-                               Class="abom-ask-change" data-abom-results-ask>Ask for a change to @query</MudButton>
+                    <Tip Text="Open a request form filled from what you picked. Nothing is filed yet.">
+                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" DropShadow="false"
+                                   Disabled="@(_falseAlarms.Count + _missed.Count == 0)" OnClick="Ask"
+                                   Class="abom-ask-change" data-abom-results-ask>Ask for a change to @query</MudButton>
+                    </Tip>
                 </div>
             }
         </MudPaper>
@@ -691,10 +780,11 @@ else
     {
         if (!_findings.TryGetValue(repository, out var listed))
         {
-            <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
-                       OnClick="@(() => ShowFindings(repository))"
-                       title="@($"Show the results reported in {repository} so you can pick false alarms.")"
-                       data-abom-member-findings="@repository">Pick results that should not have fired</MudButton>
+            <Tip Text="List what the query reported here, to pick the false alarms.">
+                <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
+                           OnClick="@(() => ShowFindings(repository))"
+                           data-abom-member-findings="@repository">Pick results that should not have fired</MudButton>
+            </Tip>
         }
         else if (listed is null)
         {
@@ -717,10 +807,12 @@ else
                 var id = listed.Held ? f.HeldResultId : f.FindingRowId;
                 <div>
                     <span data-abom-pick-finding="@id">
-                        <MudCheckBox T="bool" Size="Size.Small" Dense="true"
-                                     Value="@_falseAlarms.Contains((repository, id))"
-                                     ValueChanged="@((bool v) => PickFinding(repository, id, v))"
-                                     Label="@($"{f.FilePath}:{f.StartLine} — {f.Message}")" />
+                        <Tip Text="Mark this result as a false alarm.">
+                            <MudCheckBox T="bool" Size="Size.Small" Dense="true"
+                                         Value="@_falseAlarms.Contains((repository, id))"
+                                         ValueChanged="@((bool v) => PickFinding(repository, id, v))"
+                                         Label="@($"{f.FilePath}:{f.StartLine} — {f.Message}")" />
+                        </Tip>
                     </span>
                     @if (listed.Held && f.FindingRowId == 0)
                     {
@@ -738,14 +830,13 @@ else
                                      data-abom-finding-provenance="@f.FindingRowId">
                                 @(listed.Held ? $"a finding, converted by {f.ConvertedBy}" : ProvenanceText(f))
                             </MudText>
-                            <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
-                                       Class="abom-plain-button" OnClick="@(() => ToggleTrace(f.FindingRowId))"
-                                       title="@(_traces.ContainsKey(f.FindingRowId)
-                                                  ? "Hide the evaluation details that reported this finding."
-                                                  : "Show the evaluation details that reported this finding.")"
-                                       data-abom-finding-trace-toggle="@f.FindingRowId">
-                                @(_traces.ContainsKey(f.FindingRowId) ? "Hide what reported it" : "What reported it")
-                            </MudButton>
+                            <Tip Text="@(_traces.ContainsKey(f.FindingRowId) ? "Fold the evaluations away." : "Show which evaluations reported this, and with what.")">
+                                <MudButton Size="Size.Small" Variant="Variant.Text" DropShadow="false"
+                                           Class="abom-plain-button" OnClick="@(() => ToggleTrace(f.FindingRowId))"
+                                           data-abom-finding-trace-toggle="@f.FindingRowId">
+                                    @(_traces.ContainsKey(f.FindingRowId) ? "Hide what reported it" : "What reported it")
+                                </MudButton>
+                            </Tip>
                         </div>
                         @if (_traces.TryGetValue(f.FindingRowId, out var trace))
                         {
@@ -836,9 +927,10 @@ else
                         <MudText Typo="Typo.caption" Class="d-block mud-text-secondary">@RuleText(e)</MudText>
                         @foreach (var r in e.Runs)
                         {
-                            <MudLink Href="@($"/codeql?tab=runs&run={r.RunId}")" Typo="Typo.caption" Class="mr-2"
-                                     title="@($"Open run #{r.RunId}, which recorded this evaluation.")"
-                                     data-abom-trace-run="@r.RunId">run @r.RunId: @r.Status</MudLink>
+                            <Tip Text="Open the run that recorded this evaluation." Class="mr-2">
+                                <MudLink Href="@($"/codeql?tab=runs&run={r.RunId}")" Typo="Typo.caption"
+                                         data-abom-trace-run="@r.RunId">run @r.RunId: @r.Status</MudLink>
+                            </Tip>
                         }
                     </li>
                 }

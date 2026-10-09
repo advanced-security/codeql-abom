@@ -23,6 +23,15 @@ public sealed record ViewSpec
     /// </summary>
     public IReadOnlyList<string> NotRules { get; init; } = [];
 
+    /// <summary>
+    /// Findings whose rule declared one of these tags, matched exactly: a CWE report cannot let
+    /// <c>cwe-82</c> answer for <c>cwe-829</c>.
+    /// </summary>
+    public IReadOnlyList<string> Tags { get; init; } = [];
+
+    /// <summary>Drops a node carrying any finding whose rule declared one of these.</summary>
+    public IReadOnlyList<string> NotTags { get; init; } = [];
+
     /// <summary>The SARIF tool driver name, verbatim. Never matches a finding nobody attributed.</summary>
     public string Provider { get; init; } = "";
 
@@ -107,6 +116,8 @@ public sealed record ViewSpec
     private const string ParamOrigins = "origins";
     private const string ParamRules = "rules";
     private const string ParamNotRules = "notRules";
+    private const string ParamTags = "tags";
+    private const string ParamNotTags = "notTags";
     private const string ParamRepos = "repositories";
     private const string ParamProvider = "provider";
     private const string ParamSeverity = "severity";
@@ -208,7 +219,7 @@ public sealed record ViewSpec
         foreach (var (key, values) in new[]
                  {
                      (ParamKinds, Kinds), (ParamOrigins, Origins), (ParamRules, Rules),
-                     (ParamNotRules, NotRules),
+                     (ParamNotRules, NotRules), (ParamTags, Tags), (ParamNotTags, NotTags),
                      (ParamRepos, Repositories), (ParamSources, Sources),
                      (ParamEdgeClass, EdgeClass), (ParamEdgeKinds, EdgeKinds),
                      (ParamFlags, Flags), (ParamSecuritySeverity, SecuritySeverities),
@@ -251,7 +262,7 @@ public sealed record ViewSpec
         string scope = "", search = "", refStyle = "", boundary = "", provider = "", severity = "",
             mode = "";
         IReadOnlyList<string> kinds = [], origins = [], rules = [], edges = [], edgeKinds = [],
-            flags = [], notRules = [], repositories = [], sources = [], bands = [],
+            flags = [], notRules = [], tags = [], notTags = [], repositories = [], sources = [], bands = [],
             advisorySeverities = [], reached = [], policies = [], codeScanning = [];
         List<PropertyMatch> properties = [], notProperties = [];
         List<string> at = [];
@@ -280,6 +291,8 @@ public sealed record ViewSpec
                 case ParamOrigins: origins = VettedList(key, raw); break;
                 case ParamRules: rules = Normalize(raw.Split(',')); break;
                 case ParamNotRules: notRules = Normalize(raw.Split(',')); break;
+                case ParamTags: tags = Normalize(raw.Split(',')); break;
+                case ParamNotTags: notTags = Normalize(raw.Split(',')); break;
                 case ParamRepos: repositories = Normalize(raw.Split(',')); break;
                 case ParamProvider: provider = raw; break;
                 case ParamSeverity: severity = raw; break;
@@ -323,6 +336,7 @@ public sealed record ViewSpec
             AdvisorySeverities = advisorySeverities, Reached = reached, Policies = policies,
             CodeScanning = codeScanning,
             Kinds = kinds, Origins = origins, Rules = rules, NotRules = notRules,
+            Tags = tags, NotTags = notTags,
             Repositories = repositories,
             Properties = properties, NotProperties = notProperties,
             EdgeClass = edges, EdgeKinds = edgeKinds, Flags = flags,

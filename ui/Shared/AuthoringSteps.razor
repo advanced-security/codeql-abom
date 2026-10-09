@@ -1,46 +1,174 @@
 @using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@inject AbomApi Api
 
 @* One mark per step in the order served; every state comes from the API, never from here. *@
-<span class="abom-step-strip" data-abom-steps>
-    @foreach (var step in Steps)
+@if (Listed)
+{
+    <ul class="abom-request-steps" data-abom-request-steps>
+        @foreach (var step in Steps)
+        {
+            <li data-abom-request-step="@step.Step">
+                @Mark(step)
+                <span class="abom-request-step-name">@LabelOf(step.Step)</span>
+                <span class="mud-text-secondary">@StateText(step.Step, step.State)</span>
+                @if (step.Detail.Length > 0)
+                {
+                    <span>— @step.Detail</span>
+                }
+            </li>
+        }
+    </ul>
+}
+else
+{
+    <span class="abom-step-strip" data-abom-steps>
+        @foreach (var step in Steps)
+        {
+            @Mark(step)
+        }
+    </span>
+}
+
+@* Rendered only while open: a MudDialog that is merely invisible still renders its focus trap. *@
+@if (_viewing is { } viewing)
+{
+    <MudDialog @ref="_dialog" Visible="_open" VisibleChanged="@(async open => { if (!open) await Close(); })"
+               Options="@(new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Large, FullWidth = true })">
+        <TitleContent>
+            <MudText Typo="Typo.h6">@LabelOf(viewing.Step) of <span class="abom-path">@QueryId</span></MudText>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">@Describe(viewing)</MudText>
+        </TitleContent>
+        <DialogContent>
+            <div data-abom-step-content="@viewing.Step">
+                @if (_shown is null)
+                {
+                    @if (_failed.Length > 0)
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Error">@_failed</MudText>
+                    }
+                    else
+                    {
+                        <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+                    }
+                }
+                else if (_shown.Files.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" data-abom-step-absent>@_shown.Absent</MudText>
+                }
+                else
+                {
+                    @foreach (var file in _shown.Files)
+                    {
+                        <MudText Typo="Typo.caption" Class="abom-path d-block mt-2">
+                            @file.Path@(file.Truncated ? ", cut short" : "")
+                        </MudText>
+                        <pre class="abom-code abom-step-body" data-abom-step-file="@file.Path">@file.Body</pre>
+                    }
+                }
+            </div>
+        </DialogContent>
+        <DialogActions>
+            <Tip Text="Close this and return to the list.">
+                <MudButton OnClick="Close" data-abom-step-close>Close</MudButton>
+            </Tip>
+        </DialogActions>
+    </MudDialog>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<AuthoringStep> Steps { get; set; } = [];
+
+    /// <summary>When given, a mark backed by a file opens it, as the query on disk holds it now.</summary>
+    [Parameter] public string QueryId { get; set; } = string.Empty;
+
+    /// <summary>One step per line with its words beside the mark, rather than a strip of marks.</summary>
+    [Parameter] public bool Listed { get; set; }
+
+    private AuthoringStep? _viewing;
+    private MudDialog? _dialog;
+    private bool _open;
+    private StepShown? _shown;
+    private string _failed = string.Empty;
+
+    private bool IsView(AuthoringStep step) => QueryId.Length > 0 && Opens(step.Step) is not null;
+
+    // What opening a mark shows; null for a step that is a decision or a database, not a file.
+    private static string? Opens(string step) => step switch
     {
-        <MudTooltip Text="@(IsAction(step) && TestRefusal.Length > 0 ? TestRefusal : Describe(step))">
+        "help" => "the help",
+        "expected" => "the .expected",
+        "ast" => "the newest printed tree",
+        "compiles" => "the query",
+        "tests" => "the .actual the tests last wrote",
+        _ => null,
+    };
+
+    private RenderFragment Mark(AuthoringStep step) =>
+        @<Tip Text="@TipOf(step)">
             @if (IsAction(step))
             {
-                <span>
-                    <MudIconButton Icon="@IconOf(step.Step)" Size="Size.Small"
-                                   Color="@ColorOf(step.State)" Disabled="@(!CanTest)"
-                                   OnClick="@(() => OnTest.InvokeAsync())"
-                                   aria-label="@($"Test this version. {Describe(step)}")"
-                                   data-abom-query-test data-abom-step="@step.Step"
-                                   data-abom-step-state="@step.State" />
-                </span>
+                <MudIconButton Icon="@IconOf(step.Step)" Size="Size.Small"
+                               Color="@ColorOf(step.Step, step.State)" Disabled="@(!CanTest)"
+                               OnClick="@(() => OnTest.InvokeAsync())"
+                               aria-label="@($"Test this version. {Describe(step)}")"
+                               data-abom-query-test data-abom-step="@step.Step"
+                               data-abom-step-state="@step.State" />
             }
             else if (IsPrint(step))
             {
-                <span>
-                    <MudIconButton Icon="@IconOf(step.Step)" Size="Size.Small"
-                                   Color="@ColorOf(step.State)" Disabled="@(!CanPrint)"
-                                   OnClick="@(() => OnPrint.InvokeAsync())"
-                                   aria-label="@($"Print the tree. {Describe(step)}")"
-                                   data-abom-query-print data-abom-step="@step.Step"
-                                   data-abom-step-state="@step.State" />
-                </span>
+                <MudIconButton Icon="@IconOf(step.Step)" Size="Size.Small"
+                               Color="@ColorOf(step.Step, step.State)" Disabled="@(!CanPrint)"
+                               OnClick="@(() => OnPrint.InvokeAsync())"
+                               aria-label="@($"Print the tree. {Describe(step)}")"
+                               data-abom-query-print data-abom-step="@step.Step"
+                               data-abom-step-state="@step.State" />
+            }
+            else if (IsView(step))
+            {
+                <MudIconButton Icon="@IconOf(step.Step)" Size="Size.Small"
+                               Color="@ColorOf(step.Step, step.State)"
+                               OnClick="@(() => View(step))"
+                               aria-label="@($"Show {Opens(step.Step)}. {Describe(step)}")"
+                               data-abom-step-view data-abom-step="@step.Step"
+                               data-abom-step-state="@step.State" />
             }
             else
             {
                 @* The name is on the wrapper: MudIcon hides its own svg from assistive technology. *@
                 <span class="abom-step" role="img" aria-label="@Describe(step)"
                       data-abom-step="@step.Step" data-abom-step-state="@step.State">
-                    <MudIcon Icon="@IconOf(step.Step)" Size="Size.Small" Color="@ColorOf(step.State)" />
+                    <MudIcon Icon="@IconOf(step.Step)" Size="Size.Small" Color="@ColorOf(step.Step, step.State)" />
                 </span>
             }
-        </MudTooltip>
-    }
-</span>
+        </Tip>;
 
-@code {
-    [Parameter, EditorRequired] public IReadOnlyList<AuthoringStep> Steps { get; set; } = [];
+    private string TipOf(AuthoringStep step) =>
+        IsAction(step) && TestRefusal.Length > 0 ? TestRefusal
+        : !IsAction(step) && !IsPrint(step) && IsView(step) ? $"{Describe(step)}. Select to show {Opens(step.Step)}."
+        : Describe(step);
+
+    private async Task View(AuthoringStep step)
+    {
+        _viewing = step;
+        _open = true;
+        _shown = null;
+        _failed = string.Empty;
+        var shown = await Api.GetQueryStepAsync(QueryId, step.Step);
+        if (_viewing != step) return;
+        _shown = shown;
+        if (shown is null) _failed = $"{Opens(step.Step)} could not be read: {Api.LastError}";
+    }
+
+    // Closed before it is removed: removing it alone leaves the provider's copy on screen.
+    private async Task Close()
+    {
+        if (!_open) return;
+        _open = false;
+        if (_dialog is not null) await _dialog.CloseAsync();
+        _viewing = null;
+        _shown = null;
+    }
 
     /// <summary>When given, the tests mark is the Test action, colored by what the tests last said.</summary>
     [Parameter] public EventCallback OnTest { get; set; }
@@ -61,7 +189,7 @@
 
     private static string Describe(AuthoringStep step)
     {
-        var text = $"{LabelOf(step.Step)}: {StateText(step.State)}";
+        var text = $"{LabelOf(step.Step)}: {StateText(step.Step, step.State)}";
         return step.Detail.Length == 0 ? text : $"{text}. {step.Detail}";
     }
 
@@ -77,13 +205,22 @@
         _ => step,
     };
 
-    /// <summary>Grey says nothing has been shown yet, which is not the same as failing.</summary>
-    internal static string StateText(string state) => state switch
+    /// <summary>A done step says what was done; grey is not yet, which is not the same as failing.</summary>
+    internal static string StateText(string step, string state) => state switch
     {
-        "passing" => "passing",
+        "passing" => step switch
+        {
+            "target" => "chosen",
+            "help" or "expected" => "written",
+            "database" => "extracted",
+            "ast" => "printed",
+            "compiles" => "compiles",
+            "tests" => "pass",
+            _ => "done",
+        },
         "failed" => "failed",
-        "warning" => "needs another look",
-        _ => "nothing to show yet",
+        "warning" => "unconfirmed",
+        _ => "not yet",
     };
 
     internal static string IconOf(string step) => step switch
@@ -98,11 +235,22 @@
         _ => Icons.Material.Outlined.HelpOutline,
     };
 
-    internal static Color ColorOf(string state) => state switch
+    // A chosen target is a decision, not a check that passed, so it never wears the tests' green.
+    internal static Color ColorOf(string step, string state) => state switch
     {
+        "passing" when step == "target" => Color.Info,
         "passing" => Color.Success,
         "failed" => Color.Error,
         "warning" => Color.Warning,
+        _ => Color.Default,
+    };
+
+    internal static Color OutcomeColor(string outcome) => outcome switch
+    {
+        "ready" => Color.Success,
+        "failed" => Color.Error,
+        "attention" => Color.Warning,
+        "working" => Color.Info,
         _ => Color.Default,
     };
 }

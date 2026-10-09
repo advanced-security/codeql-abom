@@ -43,8 +43,18 @@ else if (_detail is null)
 else
 {
     <div class="abom-node-head d-flex flex-wrap align-center gap-3 mb-1">
-        <MudText Typo="Typo.h5" HtmlTag="h1" Class="abom-title-mono abom-page-title">@_detail.Key</MudText>
-        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@KindLabel</MudChip>
+        <nav class="abom-crumb" aria-label="Where this is listed" data-abom-node-crumb>
+            <MudLink Href="@InventoryHref" data-abom-node-inventory
+                     title="Open Inventory, keeping the filters it can apply.">Inventory</MudLink>
+            @if (ListedIn is { } listed)
+            {
+                <span class="abom-crumb-sep mud-text-secondary" aria-hidden="true">/</span>
+                <MudLink Href="@listed.Href" data-abom-node-unit="@listed.Unit"
+                         title="@($"Open the {listed.Label} list, keeping the filters it can apply.")">@listed.Label</MudLink>
+            }
+            <span class="abom-crumb-sep mud-text-secondary" aria-hidden="true">/</span>
+            <MudText Typo="Typo.h5" HtmlTag="h1" Class="abom-title-mono abom-page-title" title="@KindLabel">@_detail.Key</MudText>
+        </nav>
         @if (_detail.Owned || !string.IsNullOrEmpty(_detail.Origin))
         {
             <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
@@ -61,12 +71,6 @@ else
             <MudIcon Icon="@Icons.Material.Outlined.Hub" Size="Size.Small" />
             Open in Explorer
         </MudLink>
-        <MudLink Href="@InventoryHref" Class="abom-icon-link"
-                 title="Return to the Inventory, keeping the filters it can apply."
-                 data-abom-node-inventory>
-            <MudIcon Icon="@Icons.Material.Outlined.ListAlt" Size="Size.Small" />
-            Back to Inventory
-        </MudLink>
     </div>
 
     <div class="abom-scopebar d-flex flex-wrap align-center gap-2 mb-2">
@@ -74,13 +78,13 @@ else
     </div>
 
     <div id="abom-node-layout"
-         class="abom-node-layout @(FigureBeside ? "abom-node-layout-side" : null) @(FigureBeside && !_figureExpanded ? "abom-node-layout-rail" : null)"
+         class="abom-node-layout @(FigureBeside ? "abom-node-layout-side" : null) @(FigureBeside && !FigureExpanded ? "abom-node-layout-rail" : null)"
          data-abom-node-layout="@(FigureBeside ? "side" : "top")">
     <div class="abom-node-main">
     @if (DrawsFigure && !FigureBeside)
     {
         <ClosureFigure Key="@_detail.Key" Predicate="@UsesPredicate" Side="false" SideChanged="SetFigureBeside"
-                       @bind-Expanded="_figureExpanded" />
+                       @bind-Expanded="FigureExpanded" />
     }
     else if (_detail.Kind == "repo")
     {
@@ -444,7 +448,7 @@ else
     {
         <aside class="abom-node-aside" data-abom-node-aside>
             <ClosureFigure Key="@_detail.Key" Predicate="@UsesPredicate" Side="true" SideChanged="SetFigureBeside"
-                           @bind-Expanded="_figureExpanded" />
+                           @bind-Expanded="FigureExpanded" />
         </aside>
     }
     </div>
@@ -465,7 +469,7 @@ else
     private bool OnlyTriggered => _detail is { Kind: "workflow", NamedBy: 0 };
 
     // Open on arrival, and kept wherever the reader moves the figure.
-    private bool _figureExpanded = true;
+    private bool FigureExpanded { get; set; } = true;
 
     /// <summary>Every kind that runs something or is run draws one; owned or not decides the order.</summary>
     private bool DrawsFigure => _detail?.Kind is "workflow" or "reusable_workflow" or "action"
@@ -596,6 +600,26 @@ else
         {
             var scope = Scope.PredicateFor(_terms, "inventory");
             return "/inventory" + (scope.Length > 0 ? "?" + scope : "");
+        }
+    }
+
+    // The list that contains this kind. A kind with no unit has no middle crumb.
+    private (string Unit, string Label, string Href)? ListedIn
+    {
+        get
+        {
+            var (unit, label) = _detail?.Kind switch
+            {
+                "workflow" or "reusable_workflow" => ("workflows", "Workflows"),
+                "action" or "composite_action" or "docker_image" => ("dependencies", "Actions"),
+                "job" => ("jobs", "Jobs"),
+                "repo" => ("repositories", "Repositories"),
+                _ => ("", ""),
+            };
+            if (unit.Length == 0) return null;
+            var scope = Scope.PredicateFor(_terms, "inventory");
+            var query = "unit=" + unit + (scope.Length > 0 ? "&" + scope : "");
+            return (unit, label, "/inventory?" + query);
         }
     }
 

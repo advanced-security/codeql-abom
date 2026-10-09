@@ -1,0 +1,202 @@
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@inject AbomApi Api
+@inject AccountService Accounts
+
+@* The server's own checks, shown as it states them: a page that guessed at readiness would say
+   "ready" about a CLI it never ran. *@
+@if (_loaded && Editable && _readiness is not { Known: true })
+{
+    <MudAlert Dense="true" Severity="Severity.Info" Variant="Variant.Outlined" data-abom-readiness>
+        <MudText Typo="Typo.body2" data-abom-readiness-unknown>
+            This server cannot say what an agent session runs on: it was started without a query
+            pack, or it predates these checks. That is not a statement that everything is in place.
+        </MudText>
+    </MudAlert>
+}
+else if (_readiness is { Known: true } r && Editable)
+{
+    <div data-abom-readiness>
+        @if (_refusal is not null)
+        {
+            <MudAlert Dense="true" Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-2"
+                      ShowCloseIcon="true" CloseIconClicked="@(() => _refusal = null)">
+                <MudText Typo="Typo.body2" data-abom-tool-refusal>@_refusal</MudText>
+            </MudAlert>
+        }
+        <MudSimpleTable Dense="true" Striped="false" Class="abom-grid abom-table mb-2">
+            <thead>
+                <tr>
+                    <th><HeaderTip Tip="What an agent session needs from this server.">Needs</HeaderTip></th>
+                    <th><HeaderTip Tip="Whether the server's own check of it passed when this page asked.">State</HeaderTip></th>
+                    <th><HeaderTip Tip="What the server runs or reads for it now, and the flag, variable or setting that chose that.">Runs</HeaderTip></th>
+                    <th><HeaderTip Tip="The version the server read from it, when it reports one.">Version</HeaderTip></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var c in r.Checks)
+                {
+                    <tr data-abom-tool-check="@c.Key">
+                        <td class="abom-nowrap">@c.Name</td>
+                        <td>
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                     Color="@(c.IsReady ? Color.Success : Color.Error)">
+                                @(c.IsReady ? "Ready" : "Problem")
+                            </MudChip>
+                        </td>
+                        <td>
+                            <span class="abom-path">@(c.Path.Length > 0 ? c.Path : "none")</span>
+                            @if (c.Source.Length > 0)
+                            {
+                                <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">from @c.Source</MudText>
+                            }
+                            @if (!c.IsReady)
+                            {
+                                <MudText Typo="Typo.body2" Class="mt-1">@c.Reason</MudText>
+                                @if (c.Remedy.Length > 0)
+                                {
+                                    <MudText Typo="Typo.caption" Class="mud-text-secondary">To fix: @c.Remedy</MudText>
+                                }
+                            }
+                            @if (c.Saved.Length > 0)
+                            {
+                                <MudText Typo="Typo.caption" Class="mud-text-secondary d-block" data-abom-tool-saved="@c.Key">
+                                    Saved in Settings: <span class="abom-path">@c.Saved</span>. Used once you restart the
+                                    server@(c.Key == "codeql" ? ", because discovery holds the CodeQL CLI it started with" : string.Empty).
+                                </MudText>
+                            }
+                            @if (c.Settable)
+                            {
+                                <div class="d-flex align-center gap-2 mt-2" data-abom-tool-path="@c.Key">
+                                    <MudTextField T="string" Value="@EditOf(c)" ValueChanged="@(v => _edits[c.Key] = v)"
+                                                  Immediate="true" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                                  Label="@($"Path to the {c.Name}")" Placeholder="@($"/absolute/path/to/{c.Key}")"
+                                                  Disabled="_saving" />
+                                    <Tip Text="@($"Check this executable on the server and, if it runs, use it for the {c.Name} ahead of any flag or variable.")">
+                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                                                   Disabled="@(_saving || EditOf(c).Trim().Length == 0)"
+                                                   OnClick="@(() => Save(c.Key, EditOf(c).Trim()))"
+                                                   data-abom-tool-save="@c.Key">Save</MudButton>
+                                    </Tip>
+                                    @if (c.Source == "Settings" || c.Saved.Length > 0)
+                                    {
+                                        <Tip Text="Forget the path kept in Settings and go back to what the server's flags, environment or PATH name.">
+                                            <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="_saving"
+                                                       OnClick="@(() => Save(c.Key, string.Empty))"
+                                                       data-abom-tool-default="@c.Key">Use default</MudButton>
+                                        </Tip>
+                                    }
+                                </div>
+                            }
+                        </td>
+                        <td class="abom-nowrap">@(c.Version.Length > 0 ? c.Version : "\u2014")</td>
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+        <Tip Text="Ask the server to run each CLI again now, rather than repeating what it last read.">
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh"
+                       Disabled="_checking" OnClick="Recheck" data-abom-readiness-recheck>Check again</MudButton>
+        </Tip>
+    </div>
+}
+else if (_readiness is { Known: true, Ready: false } blocked)
+{
+    <MudAlert Dense="true" Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-3" data-abom-readiness>
+        <MudText Typo="Typo.body2">
+            <b>No agent session can start on this server yet.</b>
+            @(Problems(blocked).Count() == 1 ? "One thing it needs is missing:" : $"{Problems(blocked).Count()} things it needs are missing:")
+        </MudText>
+        <ul class="abom-readiness-problems my-1">
+            @foreach (var c in Problems(blocked))
+            {
+                <li data-abom-readiness-problem="@c.Key">
+                    <MudText Typo="Typo.body2"><b>@c.Name</b>: @c.Reason</MudText>
+                    @if (c.Remedy.Length > 0)
+                    {
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">To fix: @c.Remedy</MudText>
+                    }
+                </li>
+            }
+        </ul>
+        <div class="d-flex align-center gap-3">
+            <Tip Text="Open Settings, where the CodeQL and Copilot CLI paths are set and every check is listed.">
+                <MudLink Href="/settings#agent-tools" Typo="Typo.body2" data-abom-readiness-settings>Set CLI paths in Settings</MudLink>
+            </Tip>
+            <Tip Text="Ask the server to run each CLI again now, rather than repeating what it last read.">
+                <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Refresh"
+                           Disabled="_checking" OnClick="Recheck" data-abom-readiness-recheck>Check again</MudButton>
+            </Tip>
+        </div>
+    </MudAlert>
+}
+
+@code {
+    /// <summary>Lists every check and lets the CLI paths be set; otherwise only problems are shown.</summary>
+    [Parameter] public bool Editable { get; set; }
+
+    /// <summary>Raised with each answer the server gives, so a page can hold back what it would refuse.</summary>
+    [Parameter] public EventCallback<AuthoringReadiness?> Changed { get; set; }
+
+    private AuthoringReadiness? _readiness;
+    private bool _loaded;
+    private bool _checking;
+    private bool _saving;
+    private string? _refusal;
+    private readonly Dictionary<string, string> _edits = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Accounts.EnsureLoadedAsync();
+        await Read(fresh: false);
+    }
+
+    private static IEnumerable<ReadinessCheck> Problems(AuthoringReadiness r) => r.Checks.Where(c => !c.IsReady);
+
+    private string EditOf(ReadinessCheck c) =>
+        _edits.TryGetValue(c.Key, out var v) ? v
+        : c.Saved.Length > 0 ? c.Saved
+        : c.Source == "Settings" ? c.Path
+        : string.Empty;
+
+    private Task Recheck() => Read(fresh: true);
+
+    private async Task Read(bool fresh)
+    {
+        _checking = true;
+        try
+        {
+            await Show(await Api.GetAuthoringReadinessAsync(fresh));
+        }
+        finally
+        {
+            _checking = false;
+            _loaded = true;
+        }
+    }
+
+    private async Task Save(string tool, string path)
+    {
+        _saving = true;
+        try
+        {
+            var (readiness, refusal) = await Api.SetToolPathAsync(tool, path, Accounts.Identity.Login);
+            _refusal = refusal;
+            if (readiness is not null)
+            {
+                _edits.Remove(tool);
+                await Show(readiness);
+            }
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task Show(AuthoringReadiness? readiness)
+    {
+        _readiness = readiness;
+        await Changed.InvokeAsync(readiness);
+    }
+}

@@ -207,23 +207,22 @@ func TestACallTheTimelineCannotRecordIsRefused(t *testing.T) {
 	}
 }
 
-func TestAcceptingIsAskedOfAnOperatorAndRefusedUntilOneAnswers(t *testing.T) {
+func TestAcceptingIsRefusedAtEitherHook(t *testing.T) {
 	g, j, p := newGate(t)
 	args := map[string]any{"tests": []any{filepath.Join(p.ws, "test", "CheckoutTagPin", "CheckoutTagPin.qlref")}}
 	out, err := g.PreToolUse(copilot.PreToolUseHookInput{ToolName: Server + "-codeql_test_accept",
 		ToolArgs: args}, copilot.HookInvocation{})
-	if err != nil || out == nil || out.PermissionDecision != "ask" {
-		t.Fatalf("test accept: %+v %v, want asked", out, err)
+	if err != nil || out == nil || out.PermissionDecision != "deny" {
+		t.Fatalf("test accept: %+v %v, want denied", out, err)
 	}
 	d, err := g.Permission(&rpc.PermissionRequestHook{ToolName: Server + "-codeql_test_accept",
 		ToolArgs: args}, copilot.PermissionInvocation{})
-	reject, ok := d.(*rpc.PermissionDecisionReject)
-	if !ok || err != nil || reject.Feedback == nil || !strings.Contains(*reject.Feedback, "operator") {
-		t.Fatalf("hook request: %T %v, want a rejection that says an operator decides", d, err)
+	if _, ok := d.(*rpc.PermissionDecisionReject); !ok || err != nil {
+		t.Fatalf("hook request: %T %v, want a rejection", d, err)
 	}
 	for _, e := range j.all() {
-		if e.Decision != DecisionReview {
-			t.Errorf("accept recorded as %q, want %q", e.Decision, DecisionReview)
+		if e.Decision != DecisionRefused {
+			t.Errorf("accept recorded as %q, want %q", e.Decision, DecisionRefused)
 		}
 	}
 }

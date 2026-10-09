@@ -30,6 +30,8 @@ type selfcheckConfig struct {
 	sourceRoot string
 	codeqlPath string
 	workDir    string
+	// ramMB is CodeQL's memory budget; zero leaves it to CodeQL, which sizes it from the machine.
+	ramMB int
 	// maxFindings is the most this run tolerates. Zero by default, because a threshold set where
 	// the code happens to be is one that moves whenever the build goes red.
 	maxFindings int
@@ -48,10 +50,14 @@ func parseSelfcheck(args []string, stderr io.Writer) (selfcheckConfig, error) {
 	sourceRoot := fs.String("source-root", ".", "source tree to analyze")
 	codeqlPath := fs.String("codeql", "", "codeql CLI to invoke (default: codeql on PATH)")
 	workDir := fs.String("work-dir", "", "scratch directory for the database (default: a temp dir)")
+	ramMB := fs.Int("ram", 0, "memory for CodeQL in MB (0: CodeQL decides)")
 	maxFindings := fs.Int("max-findings", 0,
 		"fail above this many findings; -1 reports without failing")
 	if err := fs.Parse(args); err != nil {
 		return selfcheckConfig{}, err
+	}
+	if *ramMB < 0 {
+		return selfcheckConfig{}, fmt.Errorf("selfcheck: --ram=%d is not a number of megabytes", *ramMB)
 	}
 
 	suiteNamed := false
@@ -72,6 +78,7 @@ func parseSelfcheck(args []string, stderr io.Writer) (selfcheckConfig, error) {
 		sourceRoot:  *sourceRoot,
 		codeqlPath:  *codeqlPath,
 		workDir:     *workDir,
+		ramMB:       *ramMB,
 		maxFindings: *maxFindings,
 	}, nil
 }
@@ -122,15 +129,7 @@ func runSelfcheck(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	dbDir := filepath.Join(dir, "db")
 	sarifPath := filepath.Join(dir, "findings.sarif")
 
-	// Vendored minified libraries need no exclusion: the JavaScript extractor skips *.min.js.
-	r := &runner.Runner{
-		CodeQLPath: cfg.codeqlPath,
-		Lock:       runner.SharedLock(),
-		// Matches this repository's Default Setup, which scans with remote *and local* sources.
-		ThreatModel: "local",
-		// And with the same exclusions, so this is neither wider nor narrower than what reports.
-		CodeScanningConfig: codeScanningConfig,
-	}
+	r := selfcheckRunner(cfg)
 	if err := r.CreateDatabase(ctx, cfg.sourceRoot, dbDir, cfg.language); err != nil {
 		return fmt.Errorf("selfcheck: creating a database: %w", err)
 	}
@@ -150,6 +149,20 @@ func runSelfcheck(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	}
 	writeSelfcheckSummary(stdout, summary)
 	return selfcheckVerdict(summary, cfg.maxFindings)
+}
+
+// selfcheckRunner is the CodeQL a run uses. Vendored minified libraries need no exclusion: the
+// JavaScript extractor skips *.min.js.
+func selfcheckRunner(cfg selfcheckConfig) *runner.Runner {
+	return &runner.Runner{
+		CodeQLPath: cfg.codeqlPath,
+		Lock:       runner.SharedLock(),
+		RAMMB:      cfg.ramMB,
+		// Matches this repository's Default Setup, which scans with remote *and local* sources.
+		ThreatModel: "local",
+		// And with the same exclusions, so this is neither wider nor narrower than what reports.
+		CodeScanningConfig: codeScanningConfig,
+	}
 }
 
 // selfcheckSummary is a pure aggregation of one SARIF document, kept separate from any I/O so

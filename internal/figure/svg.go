@@ -22,7 +22,7 @@ type Meta struct {
 	Terms []string
 	// AsOf is when the graph it was cut from was recorded.
 	AsOf string
-	// Graphviz is the version that placed it, which its bytes depend on.
+	// Graphviz is the version that placed it. The cache key reads it; the drawing does not say it.
 	Graphviz string
 }
 
@@ -54,15 +54,13 @@ func Draw(ctx context.Context, c Closure, opts Options, meta Meta) (Figure, erro
 	if err != nil {
 		return Figure{}, err
 	}
-	return render(c, p, opts, meta), nil
+	return render(c, p, meta), nil
 }
 
-func render(c Closure, p Placement, opts Options, meta Meta) Figure {
+func render(c Closure, p Placement, meta Meta) Figure {
 	width := math.Ceil(max(p.width+2*margin, minWidth))
 	legend := legendRows(legendItems(c), width-2*margin)
-	caption := wrap(captionLines(c, opts, meta), int((width-2*margin)/(legendSize*advance)))
-	height := math.Ceil(margin + p.height + legendGap + float64(len(legend))*lineHeight + 4 +
-		float64(len(caption))*lineHeight + margin)
+	height := math.Ceil(margin + p.height + legendGap + float64(len(legend))*lineHeight + margin)
 
 	id := figureID(c.Key)
 	var b strings.Builder
@@ -70,7 +68,7 @@ func render(c Closure, p Placement, opts Options, meta Meta) Figure {
 		`viewBox="0 0 %s %s" role="group" aria-labelledby="%s-title" aria-describedby="%s-desc">`+"\n",
 		num(width), num(height), num(width), num(height), id, id)
 	fmt.Fprintf(&b, "<title id=\"%s-title\">What runs %s and what it runs</title>\n", id, esc(c.Key))
-	fmt.Fprintf(&b, "<desc id=\"%s-desc\">%s</desc>\n", id, esc(strings.Join(captionLines(c, opts, meta), " ")))
+	fmt.Fprintf(&b, "<desc id=\"%s-desc\">%s</desc>\n", id, esc(strings.Join(said(c, meta), " ")))
 	b.WriteString(style)
 	fmt.Fprintf(&b, "<rect class=\"abom-fig-bg\" x=\"0\" y=\"0\" width=\"%s\" height=\"%s\"/>\n", num(width), num(height))
 	fmt.Fprintf(&b, "<g transform=\"translate(%s %s)\">\n", num(margin), num(margin))
@@ -81,11 +79,6 @@ func render(c Closure, p Placement, opts Options, meta Meta) Figure {
 	y := margin + p.height + legendGap
 	for _, row := range legend {
 		drawLegendRow(&b, row, margin, y)
-		y += lineHeight
-	}
-	y += 4
-	for _, line := range caption {
-		fmt.Fprintf(&b, "<text class=\"abom-fig-caption\" x=\"%s\" y=\"%s\">%s</text>\n", num(margin), num(y+8), esc(line))
 		y += lineHeight
 	}
 	b.WriteString("</svg>\n")
@@ -123,7 +116,7 @@ const style = `<style>
 .abom-fig-glyph-action{fill:var(--abom-fig-kind-action, #c92a2a)}
 .abom-fig-glyph-docker_image{fill:var(--abom-fig-kind-docker_image, #9c36b5)}
 .abom-fig-glyph-other{fill:var(--abom-fig-muted, #868e96)}
-.abom-fig-legend text,.abom-fig-caption{font-size:10.5px;fill:var(--abom-fig-muted, #495057)}
+.abom-fig-legend text{font-size:10.5px;fill:var(--abom-fig-muted, #495057)}
 .abom-fig-legend .abom-fig-box{fill:none}
 a.abom-fig-node:hover .abom-fig-box,a.abom-fig-node:focus .abom-fig-box{stroke:var(--abom-fig-focus, #b35c00);stroke-width:2.5}
 a.abom-fig-node:focus{outline:none}
@@ -383,15 +376,16 @@ func drawLegendRow(b *strings.Builder, row []legendItem, x, y float64) {
 	b.WriteString("</g>\n")
 }
 
-// captionLines say what was drawn and what was not, under which terms, from when, and what placed
-// it, in the reader's words.
-func captionLines(c Closure, opts Options, meta Meta) []string {
-	before, after := "on the left", "on the right"
-	if opts.direction() == TopToBottom {
-		before, after = "above", "below"
-	}
-	lines := []string{fmt.Sprintf("%d of %d drawn: what runs %s %s, what it runs %s.",
-		c.Counts.Drawn, c.Counts.InClosure, c.Key, before, after)}
+// said is the file's description: how many were drawn, then the sentences the page shows under
+// the heading. The heading already says which side is which, so the drawing does not.
+func said(c Closure, meta Meta) []string {
+	return append([]string{fmt.Sprintf("%d of %d drawn.", c.Counts.Drawn, c.Counts.InClosure)}, Caption(c, meta)...)
+}
+
+// Caption is what the page says under the heading, outside the scrolling canvas. The summary
+// already says how many were drawn, so these are what that sentence leaves unsaid.
+func Caption(c Closure, meta Meta) []string {
+	var lines []string
 	if c.Counts.LeftOut > 0 {
 		lines = append(lines, fmt.Sprintf("%d left out, yours and the nearest kept first; the Explorer draws all of it.",
 			c.Counts.LeftOut))
@@ -412,30 +406,8 @@ func captionLines(c Closure, opts Options, meta Meta) []string {
 		terms = strings.Join(meta.Terms, "; ")
 	}
 	lines = append(lines, "Terms: "+terms+".")
-	lines = append(lines, fmt.Sprintf("Recorded %s. Placed by Graphviz %s.", meta.AsOf, meta.Graphviz))
+	lines = append(lines, fmt.Sprintf("Recorded %s.", meta.AsOf))
 	return lines
-}
-
-// wrap breaks each line at spaces so none is longer than limit characters.
-func wrap(lines []string, limit int) []string {
-	var out []string
-	for _, line := range lines {
-		current := ""
-		for _, word := range strings.Fields(line) {
-			if current != "" && utf8.RuneCountInString(current)+1+utf8.RuneCountInString(word) > limit {
-				out = append(out, current)
-				current = ""
-			}
-			if current != "" {
-				current += " "
-			}
-			current += word
-		}
-		if current != "" {
-			out = append(out, current)
-		}
-	}
-	return out
 }
 
 // figureID names this figure's title and description, the same for the same key.

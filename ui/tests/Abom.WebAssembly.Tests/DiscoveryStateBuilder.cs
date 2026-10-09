@@ -11,13 +11,14 @@ namespace Abom.WebAssembly.Tests;
 public sealed class DiscoveryStateBuilder
 {
     private string _state = "stopped";
-    private int _done, _queued, _running, _unavailable, _buildTime, _advisories, _upstreamOnly;
+    private int _done, _queued, _running, _unavailable, _buildTime, _advisories, _upstreamOnly, _waiting;
     private int _reachPending;
     private int _reachThreshold = 500;
     private string _reachRecomputedAt = "";
     private int _direct, _transitive;
     private int _owned, _ownedAnalyzed;
     private int _analyzed, _skipped;
+    private string _codeScanningUnasked = "";
 
     // Defaults to "all of it analyzed", which is the steady state. A requeue is the case where the
     // two diverge, so it is set explicitly.
@@ -107,6 +108,20 @@ public sealed class DiscoveryStateBuilder
         return this;
     }
 
+    /// <summary>Pushes held for code scanning's own analysis of them.</summary>
+    public DiscoveryStateBuilder WithWaiting(int n)
+    {
+        _waiting = n;
+        return this;
+    }
+
+    /// <summary>Why the crawl asks code scanning for nothing, as its status says.</summary>
+    public DiscoveryStateBuilder WithCodeScanningUnasked(string why)
+    {
+        _codeScanningUnasked = why;
+        return this;
+    }
+
     public string ToJson() => JsonSerializer.Serialize(new
     {
         available = true,
@@ -119,12 +134,14 @@ public sealed class DiscoveryStateBuilder
             reachPending = _reachPending,
             reachThreshold = _reachThreshold,
             claimsPerCycle = 20,
+            codeScanningUnasked = _codeScanningUnasked,
         },
         frontier = new Dictionary<string, int>
         {
             ["done"] = _done,
             ["queued"] = _queued,
             ["retrying"] = 0,
+            ["waiting"] = _waiting,
             ["running"] = _running,
             ["unavailable"] = _unavailable,
             ["advisories"] = _advisories,

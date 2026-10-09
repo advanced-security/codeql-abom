@@ -21,7 +21,6 @@ import (
 // fault.
 type QueryTester interface {
 	RunTests(ctx context.Context, tests []string) (runner.TestResult, error)
-	AcceptTests(ctx context.Context, tests []string) error
 	Version(ctx context.Context) (string, error)
 	// InstallPack installs what the operator's pack depends on wherever it has no lock, and does
 	// nothing where it has one.

@@ -23,8 +23,8 @@ const (
 
 // findingOnlyTerms describe a finding and have no meaning for an advisory.
 var findingOnlyTerms = []string{
-	paramRules, paramNotRules, paramProvider, paramSource, paramSeverity, paramSecuritySeverity,
-	paramMode,
+	paramRules, paramNotRules, paramTags, paramNotTags, paramProvider, paramSource, paramSeverity,
+	paramSecuritySeverity, paramMode,
 }
 
 // policyTerms are what a policy applies: the set path's terms, and the names of other policies it

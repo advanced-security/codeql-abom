@@ -3,6 +3,8 @@
 @inject AbomApi Api
 @inject AccountService Accounts
 @inject RequestDraft Asked
+@inject FollowService Follow
+@implements IDisposable
 
 @* Both examples are required: they are what a query's test is written from. *@
 <div data-abom-requests>
@@ -15,95 +17,27 @@
             </MudText>
         }
         <MudSpacer />
-        @* The reason is on a span outside the button: a disabled button swallows the pointer. *@
-        <span title="@(!CanFile ? "Sign in with gh to record who asked." : _draft is not null ? "Finish or discard the open draft before starting another request." : "Open a blank query request form.")">
+        <Tip Text="@NewTip">
             <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
                        StartIcon="@Icons.Material.Outlined.Add" Disabled="@(!CanFile || _draft is not null)"
-                       title="@(!CanFile ? "Sign in with gh to record who asked." : _draft is not null ? "Finish or discard the open draft before starting another request." : "Open a blank query request form.")"
                        OnClick="New" data-abom-request-new>New request</MudButton>
-        </span>
+        </Tip>
     </div>
+
+    <AuthoringReadinessPanel Changed="@((AuthoringReadiness? r) => _readiness = r)" />
+
+    @if (_refusal is not null)
+    {
+        <MudAlert Dense="true" Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-3"
+                  ShowCloseIcon="true" CloseIconClicked="@(() => _refusal = null)">
+            <MudText Typo="Typo.body2" data-abom-request-refusal>@_refusal</MudText>
+        </MudAlert>
+    }
 
     @if (_draft is not null)
     {
-        <MudPaper Outlined="true" Class="pa-4 mb-4" data-abom-request-form>
-            <MudText Typo="Typo.subtitle2" Class="mb-2">
-                @(_draft.RowId != 0 ? $"Request #{_draft.RowId}"
-                  : _draft.SourceRunId != 0 ? $"New request, asked from run #{_draft.SourceRunId}"
-                  : "New request")
-            </MudText>
-            @if (_draft.RowId == 0 && _draft.Evidence.Count > 0)
-            {
-                <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3" data-abom-request-evidence>
-                    @EvidenceText(_draft), filed with the request when it is saved.
-                </MudAlert>
-                <RequestAgentDraft Asked="@_draft" QueryId="@_queryId" OnUse="UseDraft" />
-            }
-            <div data-abom-request-description>
-                <MudTextField T="string" @bind-Value="_description" Immediate="true" Lines="3"
-                              Variant="Variant.Outlined" Margin="Margin.Dense"
-                              Label="What should be detected, or stop being detected" />
-            </div>
-            <div class="abom-request-examples mt-3">
-                <div data-abom-request-compliant>
-                    <MudTextField T="string" @bind-Value="_compliant" Immediate="true" Lines="8"
-                                  Variant="Variant.Outlined" Margin="Margin.Dense" Class="abom-code-input"
-                                  Label="COMPLIANT" HelperText="Code the query must leave alone" />
-                </div>
-                <div data-abom-request-noncompliant>
-                    <MudTextField T="string" @bind-Value="_nonCompliant" Immediate="true" Lines="8"
-                                  Variant="Variant.Outlined" Margin="Margin.Dense" Class="abom-code-input"
-                                  Label="NON_COMPLIANT" HelperText="Code the query must report" />
-                </div>
-            </div>
-            <div class="d-flex flex-wrap align-start gap-3 mt-3">
-                <div class="abom-request-field abom-request-query" data-abom-request-query>
-                    @* A selection, never text: the server refuses a query nothing holds. *@
-                    <MudSelect T="string" @bind-Value="_queryId" Variant="Variant.Outlined"
-                               Margin="Margin.Dense" Label="Query it is about"
-                               HelperText="@(_queryId.Length == 0 ? "Let the agent decide" : "Selected by you")">
-                        <MudSelectItem T="string" Value="@(string.Empty)">Let the agent decide</MudSelectItem>
-                        @foreach (var (id, source) in Choices(_catalog))
-                        {
-                            <MudSelectItem T="string" Value="@id">@id · @source</MudSelectItem>
-                        }
-                    </MudSelect>
-                </div>
-                <div class="abom-request-field" data-abom-request-kind>
-                    <MudSelect T="string" @bind-Value="_kind" Variant="Variant.Outlined" Margin="Margin.Dense"
-                               Label="Kind">
-                        @foreach (var kind in _list?.Kinds ?? [])
-                        {
-                            <MudSelectItem T="string" Value="@kind">@KindText(kind)</MudSelectItem>
-                        }
-                    </MudSelect>
-                </div>
-                @if (_draft.RowId != 0)
-                {
-                    <div class="abom-request-field" data-abom-request-status>
-                        <MudSelect T="string" @bind-Value="_status" Variant="Variant.Outlined"
-                                   Margin="Margin.Dense" Label="Status">
-                            @foreach (var status in _list?.Statuses ?? [])
-                            {
-                                <MudSelectItem T="string" Value="@status">@status</MudSelectItem>
-                            }
-                        </MudSelect>
-                    </div>
-                }
-            </div>
-            @if (_refusal is { Length: > 0 } refused)
-            {
-                <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-3">@refused</MudAlert>
-            }
-            <div class="d-flex gap-2 mt-3">
-                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" DropShadow="false"
-                           title="Save this query request with its description, examples, query choice and status."
-                           Disabled="@(!Complete || _saving)" OnClick="Save" data-abom-request-save>Save</MudButton>
-                <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
-                           title="Close this form without saving changes to the request."
-                           OnClick="Discard" data-abom-request-discard>Discard</MudButton>
-            </div>
-        </MudPaper>
+        <QueryRequestForm Request="@_draft" List="@_list" Catalog="@_catalog" Login="@Accounts.Identity.Login"
+                          OnSaved="Saved" OnDiscard="Discard" />
     }
 
     @if (_list is null)
@@ -131,15 +65,16 @@
                      FixedHeader="true" RowsPerPage="20" Class="abom-grid abom-grid-windowed"
                      data-abom-requests-table>
             <Columns>
-                <HierarchyColumn T="QueryRequest" InitiallyExpandedFunc="@(r => r.RowId == FocusRequest)">
+                <HierarchyColumn T="QueryRequest" InitiallyExpandedFunc="@(r => _opened.Contains(r.RowId))">
                     <CellTemplate>
-                        <MudIconButton Size="Size.Small"
-                                       Icon="@(context.Open ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)"
-                                       aria-label="@($"Show the examples in request #{context.Item.RowId}")"
-                                       aria-expanded="@(context.Open ? "true" : "false")"
-                                       title="@(context.Open ? $"Hide the examples and agent sessions for request #{context.Item.RowId}." : $"Show the examples and agent sessions for request #{context.Item.RowId}.")"
-                                       OnClick="@(() => context.Actions.ToggleHierarchyVisibilityForItemAsync())"
-                                       data-abom-request-detail />
+                        <Tip Text="@(context.Open ? "Hide this request's examples and agent sessions." : "Show this request's examples and agent sessions.")">
+                            <MudIconButton Size="Size.Small"
+                                           Icon="@(context.Open ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)"
+                                           aria-label="@($"Show the examples in request #{context.Item.RowId}")"
+                                           aria-expanded="@(context.Open ? "true" : "false")"
+                                           OnClick="@(() => ToggleOpen(context))"
+                                           data-abom-request-detail />
+                        </Tip>
                     </CellTemplate>
                 </HierarchyColumn>
                 <PropertyColumn Property="x => x.RowId" Title="#" CellClass="abom-nowrap">
@@ -147,42 +82,123 @@
                 </PropertyColumn>
                 <TemplateColumn Title="" HeaderClass="abom-row-actions-head" CellClass="abom-row-actions">
                     <CellTemplate>
-                        <MudIconButton Icon="@Icons.Material.Outlined.Edit" Size="Size.Small"
-                                       Disabled="@(!CanFile || _draft is not null)"
-                                       title="@(!CanFile ? "Sign in with gh to record who edits requests." : _draft is not null ? "Finish or discard the open draft before editing another request." : $"Edit request #{context.Item.RowId}.")"
-                                       OnClick="@(() => Edit(context.Item))"
-                                       aria-label="@($"Edit request #{context.Item.RowId}")"
-                                       data-abom-request-edit />
+                        @if (_deleting == context.Item.RowId)
+                        {
+                            <span class="d-inline-flex align-center gap-1" data-abom-request-delete-ask>
+                                <MudText Typo="Typo.caption" Class="abom-nowrap">Delete #@context.Item.RowId?</MudText>
+                                <Tip Text="Delete it now, with what was written in it. Files in your pack are not touched.">
+                                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Error" DropShadow="false"
+                                               Disabled="_busy" OnClick="@(() => Delete(context.Item.RowId))"
+                                               data-abom-request-delete-confirm>Delete</MudButton>
+                                </Tip>
+                                <Tip Text="Keep this request as it is.">
+                                    <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="_busy"
+                                               OnClick="@(() => _deleting = 0)"
+                                               data-abom-request-delete-cancel>Keep</MudButton>
+                                </Tip>
+                            </span>
+                        }
+                        else
+                        {
+                            @if (IsWorking(context.Item))
+                            {
+                                <Tip Text="Stop the agent working this request. What it wrote stays.">
+                                    <MudIconButton Icon="@Icons.Material.Outlined.StopCircle" Size="Size.Small" Color="Color.Error"
+                                                   Disabled="_busy" OnClick="@(() => StopAgent(context.Item.RowId))"
+                                                   aria-label="@($"Stop the agent working request #{context.Item.RowId}")"
+                                                   data-abom-request-stop />
+                                </Tip>
+                            }
+                            else
+                            {
+                                <Tip Text="@AgentTip">
+                                    <MudIconButton Icon="@Icons.Material.Outlined.SmartToy" Size="Size.Small" Color="Color.Primary"
+                                                   Disabled="@(!CanFile || _readiness?.FirstProblem is not null || _busy)"
+                                                   OnClick="@(() => StartAgent(context.Item.RowId))"
+                                                   aria-label="@($"Work request #{context.Item.RowId} with an agent")"
+                                                   data-abom-request-agent />
+                                </Tip>
+                            }
+                            <Tip Text="@(!CanFile ? "Sign in with gh to record who edits requests." : _draft is not null ? "Finish or discard the open form first." : "Change this request's description, examples, query or status.")">
+                                <MudIconButton Icon="@Icons.Material.Outlined.Edit" Size="Size.Small"
+                                               Disabled="@(!CanFile || _draft is not null)"
+                                               OnClick="@(() => Edit(context.Item))"
+                                               aria-label="@($"Edit request #{context.Item.RowId}")"
+                                               data-abom-request-edit />
+                            </Tip>
+                            <Tip Text="@(!CanFile ? "Sign in with gh to record who asked." : _draft is not null ? "Finish or discard the open form first." : "Resubmit as new: open a copy of this request, with a fresh ID, to change and file. This one stays until you delete it.")">
+                                <MudIconButton Icon="@Icons.Material.Outlined.ContentCopy" Size="Size.Small"
+                                               Disabled="@(!CanFile || _draft is not null)"
+                                               OnClick="@(() => Resubmit(context.Item))"
+                                               aria-label="@($"Resubmit request #{context.Item.RowId} as a new request")"
+                                               data-abom-request-resubmit />
+                            </Tip>
+                            <Tip Text="Delete this request; asks first. One an agent has worked keeps its record and is not deleted: resubmit it as new instead.">
+                                <MudIconButton Icon="@Icons.Material.Outlined.Delete" Size="Size.Small"
+                                               Disabled="_busy"
+                                               OnClick="@(() => _deleting = context.Item.RowId)"
+                                               aria-label="@($"Delete request #{context.Item.RowId}")"
+                                               data-abom-request-delete />
+                            </Tip>
+                        }
                     </CellTemplate>
                 </TemplateColumn>
                 <PropertyColumn Property="x => x.Description" Title="What it asks for">
-                    <HeaderTemplate><HeaderTip Tip="The first line of what the requester wants detected or changed.">What it asks for</HeaderTip></HeaderTemplate>
+                    <HeaderTemplate><HeaderTip Tip="The request's title, or the first line of what it asks for.">What it asks for</HeaderTip></HeaderTemplate>
                     <CellTemplate>
-                        <span class="abom-request-summary">@FirstLine(context.Item.Description)</span>
+                        <span class="abom-request-summary" data-abom-request-title-cell>@(context.Item.Title.Length > 0 ? context.Item.Title : FirstLine(context.Item.Description))</span>
+                        @if (context.Item.Slug.Length > 0)
+                        {
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary abom-path" data-abom-request-slug-cell>@context.Item.Slug</MudText>
+                        }
                     </CellTemplate>
                 </PropertyColumn>
-                <TemplateColumn Title="Progress" CellClass="abom-nowrap">
-                    <HeaderTemplate><HeaderTip Tip="The authoring steps this request has completed so far.">Progress</HeaderTip></HeaderTemplate>
+                <TemplateColumn Title="Progress">
+                    <HeaderTemplate><HeaderTip Tip="Where the request stands, then each authoring step it was read from.">Progress</HeaderTip></HeaderTemplate>
                     <CellTemplate>
-                        <AuthoringSteps Steps="@context.Item.Steps" />
+                        <div class="abom-request-progress">
+                            @if (context.Item.Outcome is { } outcome)
+                            {
+                                <span class="abom-request-outcome">
+                                    <Tip Text="@OutcomeTip(outcome)">
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                                 Color="@AuthoringSteps.OutcomeColor(outcome.State)"
+                                                 data-abom-request-outcome="@outcome.State">
+                                            @if (outcome.State == "working")
+                                            {
+                                                <MudProgressCircular Indeterminate="true" Size="Size.Small" Class="abom-request-working mr-1"
+                                                                     aria-label="An agent is working" data-abom-request-working />
+                                            }
+                                            @outcome.Headline
+                                        </MudChip>
+                                    </Tip>
+                                    @if (outcome.Total > 0)
+                                    {
+                                        <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-request-passed>@outcome.Passed of @outcome.Total</MudText>
+                                    }
+                                </span>
+                            }
+                            <AuthoringSteps Steps="@context.Item.Steps" QueryId="@context.Item.QueryId" />
+                        </div>
                     </CellTemplate>
                 </TemplateColumn>
-                <PropertyColumn Property="x => x.Kind" Title="Kind" CellClass="abom-nowrap">
+                <PropertyColumn Property="x => x.Kind" Title="Kind">
                     <HeaderTemplate><HeaderTip Tip="Whether the request is about a missed detection, a false alarm, or both.">Kind</HeaderTip></HeaderTemplate>
                     <CellTemplate><MudText Typo="Typo.caption">@KindText(context.Item.Kind)</MudText></CellTemplate>
                 </PropertyColumn>
-                <PropertyColumn Property="x => x.QueryId" Title="Query" CellClass="abom-nowrap">
+                <PropertyColumn Property="x => x.QueryId" Title="Query">
                     <HeaderTemplate><HeaderTip Tip="The query the request is about, or a note that it needs a new query.">Query</HeaderTip></HeaderTemplate>
                     <CellTemplate>
                         @if (context.Item.QueryId.Length == 0)
                         {
-                            <MudText Typo="Typo.caption" Class="mud-text-secondary">a new query</MudText>
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary abom-nowrap">a new query</MudText>
                         }
                         else
                         {
-                            <MudLink Href="@CatalogHref(context.Item.QueryId)" Typo="Typo.body2"
-                                     Class="abom-path" title="@($"Open the catalog entry for {context.Item.QueryId}.")"
-                                     data-abom-request-query-link>@context.Item.QueryId</MudLink>
+                            <Tip Text="Open this query in the catalog.">
+                                <MudLink Href="@CatalogHref(context.Item.QueryId)" Typo="Typo.body2"
+                                         Class="abom-path" data-abom-request-query-link>@foreach (var part in Slashed(context.Item.QueryId)){<span class="abom-nowrap">@part</span><wbr />}</MudLink>
+                            </Tip>
                         }
                     </CellTemplate>
                 </PropertyColumn>
@@ -197,10 +213,11 @@
                 <PropertyColumn Property="x => x.RequestedBy" Title="Asked by" CellClass="abom-nowrap">
                     <HeaderTemplate><HeaderTip Tip="The account that filed the request.">Asked by</HeaderTip></HeaderTemplate>
                 </PropertyColumn>
-                <PropertyColumn Property="x => x.UpdatedAt" Title="Updated" CellClass="abom-nowrap">
+                <PropertyColumn Property="x => x.UpdatedAt" Title="Updated">
                     <HeaderTemplate><HeaderTip Tip="When the request was last changed.">Updated</HeaderTip></HeaderTemplate>
                     <CellTemplate>
-                        <MudText Typo="Typo.caption">@TimeText.DayAndTime(context.Item.UpdatedAt)</MudText>
+                        @{ var (day, time) = DayOverTime(context.Item.UpdatedAt); }
+                        <MudText Typo="Typo.caption"><span class="abom-nowrap">@day</span> <span class="abom-nowrap">@time</span></MudText>
                     </CellTemplate>
                 </PropertyColumn>
             </Columns>
@@ -211,40 +228,69 @@
                     {
                         <MudText Typo="Typo.caption" Class="d-block mb-2">
                             Asked from
-                            <MudLink Href="@($"/codeql?tab=runs&run={context.Item.SourceRunId}")" Typo="Typo.caption"
-                                     title="@($"Open run #{context.Item.SourceRunId} that supplied this request's evidence.")"
-                                     data-abom-request-source-run>run #@context.Item.SourceRunId</MudLink>
+                            <Tip Text="Open the run whose results this request was asked from.">
+                                <MudLink Href="@($"/codeql?tab=runs&run={context.Item.SourceRunId}")" Typo="Typo.caption"
+                                         data-abom-request-source-run>run #@context.Item.SourceRunId</MudLink>
+                            </Tip>
+                        </MudText>
+                    }
+                    @if (context.Item.Outcome is { } said)
+                    {
+                        <MudText Typo="Typo.body2" Class="mb-1" data-abom-request-outcome-detail>
+                            <strong>@said.Headline</strong>@(said.Detail.Length > 0 ? $": {said.Detail}" : "")
                         </MudText>
                     }
                     @if (context.Item.Steps.Count > 0)
                     {
-                        <ul class="abom-request-steps mb-2" data-abom-request-steps>
-                            @foreach (var step in context.Item.Steps)
-                            {
-                                <li data-abom-request-step="@step.Step">
-                                    <MudIcon Icon="@AuthoringSteps.IconOf(step.Step)" Size="Size.Small"
-                                             Color="@AuthoringSteps.ColorOf(step.State)" />
-                                    <span class="abom-request-step-name">@AuthoringSteps.LabelOf(step.Step)</span>
-                                    <span class="mud-text-secondary">@AuthoringSteps.StateText(step.State)</span>
-                                    @if (step.Detail.Length > 0)
-                                    {
-                                        <span>— @step.Detail</span>
-                                    }
-                                </li>
-                            }
-                        </ul>
+                        <div class="mb-2">
+                            <AuthoringSteps Steps="@context.Item.Steps" QueryId="@context.Item.QueryId" Listed="true" />
+                        </div>
                     }
                     <div class="abom-request-examples">
-                        <div>
-                            <MudText Typo="Typo.caption" Class="mud-text-secondary">COMPLIANT</MudText>
-                            <pre class="abom-code" data-abom-request-shown-compliant>@context.Item.Compliant</pre>
-                        </div>
-                        <div>
-                            <MudText Typo="Typo.caption" Class="mud-text-secondary">NON_COMPLIANT</MudText>
-                            <pre class="abom-code" data-abom-request-shown-noncompliant>@context.Item.NonCompliant</pre>
-                        </div>
+                        @foreach (var (side, label, attr) in new[] { ("compliant", "COMPLIANT", "data-abom-request-shown-compliant"), ("non-compliant", "NON_COMPLIANT", "data-abom-request-shown-noncompliant") })
+                        {
+                            <div>
+                                <MudText Typo="Typo.caption" Class="mud-text-secondary">@label</MudText>
+                                @foreach (var example in ExamplesOf(context.Item, side))
+                                {
+                                    @if (example.Url.Length > 0)
+                                    {
+                                        <MudText Typo="Typo.caption" Class="d-block mt-1">
+                                            <Tip Text="Open these lines on GitHub at the commit they were read at.">
+                                                <MudLink Href="@QueryRequestForm.Permalink(example)" Target="_blank" Typo="Typo.caption"
+                                                         Class="abom-path" data-abom-request-shown-link>@QueryRequestForm.Pinned(example)</MudLink>
+                                            </Tip>
+                                        </MudText>
+                                    }
+                                    <pre class="abom-code" @attributes="@(new Dictionary<string, object> { [attr] = true })">@example.Text</pre>
+                                }
+                            </div>
+                        }
                     </div>
-                    <RequestSessions Request="@context.Item" />
+                    @if (context.Item.Recommendation.Length > 0)
+                    {
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2">How to fix it</MudText>
+                        <MudText Typo="Typo.body2" Class="abom-request-description" data-abom-request-shown-recommendation>@context.Item.Recommendation</MudText>
+                    }
+                    @if (context.Item.References.Count > 0 || context.Item.ReferenceTags.Count > 0 || context.Item.Metadata.Tags.Count > 0)
+                    {
+                        <div class="abom-request-chips mt-2" data-abom-request-shown-references>
+                            @foreach (var reference in context.Item.References)
+                            {
+                                <span class="abom-path">@reference.Value</span>
+                            }
+                            @foreach (var tag in context.Item.ReferenceTags.Concat(context.Item.Metadata.Tags).Distinct())
+                            {
+                                <Tip Text="List the findings of rules that declare exactly this tag.">
+                                    <a href="@($"/inventory?unit=findings&tags={Uri.EscapeDataString(tag)}")"
+                                       class="abom-request-tag" data-abom-request-shown-tag>@tag</a>
+                                </Tip>
+                            }
+                        </div>
+                    }
+                    <RequestSessions Request="@context.Item" Readiness="@_readiness"
+                                     Started="@_started.GetValueOrDefault(context.Item.RowId)"
+                                     Changed="@Reload" />
                 </div>
             </ChildRowContent>
             <PagerContent><MudDataGridPager T="QueryRequest" /></PagerContent>
@@ -259,94 +305,190 @@
     private QueryRequestList? _list;
     private QueryCatalog? _catalog;
     private QueryRequest? _draft;
-    private string _description = "";
-    private string _compliant = "";
-    private string _nonCompliant = "";
-    private string _queryId = "";
-    private string _kind = "";
-    private string _status = "open";
+    private AuthoringReadiness? _readiness;
+    private long _deleting;
+    private bool _busy;
     private string? _refusal;
-    private bool _saving;
+    private readonly Dictionary<long, int> _started = [];
+    // The grid knows opened rows by instance, and every reload brings new ones.
+    private readonly HashSet<long> _opened = [];
+    private Timer? _timer;
+    private TimeSpan _beat;
+
+    private static readonly TimeSpan WhileWorking = TimeSpan.FromSeconds(3);
+
+    /// <summary>How often the list is read again: closely while an agent works, otherwise on the reader's beat.</summary>
+    public TimeSpan Beat => _beat;
+
+    private string AgentTip =>
+        !CanFile ? "Sign in with gh to record who started the agent."
+        : _readiness?.FirstProblem is { } p ? $"No agent session can start until this is fixed: {p.Name}: {p.Reason}."
+        : "Work it with an agent: it writes and tests this query in your pack; the row shows where it is.";
 
     private bool CanFile => Accounts.Identity.Login.Length > 0;
 
-    private bool Complete =>
-        !string.IsNullOrWhiteSpace(_description) && !string.IsNullOrWhiteSpace(_compliant)
-        && !string.IsNullOrWhiteSpace(_nonCompliant);
+    private string NewTip =>
+        !CanFile ? "Sign in with gh to record who asked."
+        : _draft is not null ? "Finish or discard the open form first."
+        : "Ask for a new or improved CodeQL query for GitHub Actions code.";
 
     protected override async Task OnInitializedAsync()
     {
+        if (FocusRequest != 0)
+        {
+            _opened.Add(FocusRequest);
+        }
+        Follow.Changed += Arm;
         await Accounts.EnsureLoadedAsync();
         var catalog = Api.GetQueryCatalogAsync();
         _list = await Api.GetQueryRequestsAsync();
         _catalog = await catalog;
+        Arm();
         if (Asked.Request is { } asked)
         {
-            Open(asked);
+            _draft = asked;
         }
     }
 
-    private void New() => Open(new QueryRequest());
+    private void New() => _draft = new QueryRequest();
 
-    private void Edit(QueryRequest request) => Open(request);
+    private void Edit(QueryRequest request) => _draft = request;
 
-    private void Open(QueryRequest request)
+    // Everything written comes along; what the server decided or recorded about the original does not.
+    private void Resubmit(QueryRequest request) => _draft = request with
     {
-        _draft = request;
-        _description = request.Description;
-        _compliant = request.Compliant;
-        _nonCompliant = request.NonCompliant;
-        _queryId = request.QueryId;
-        _kind = request.Kind;
-        _status = request.Status.Length == 0 ? "open" : request.Status;
-        _refusal = null;
+        RowId = 0, Slug = string.Empty, Status = "open", TargetDecision = string.Empty, RequestedBy = string.Empty,
+        CreatedAt = string.Empty, UpdatedAt = string.Empty, ReferenceTags = [], Steps = [], Outcome = null,
+        QueryId = request.TargetSource == "agent" ? string.Empty : request.QueryId,
+    };
+
+    private static string OutcomeTip(RequestOutcome outcome) =>
+        outcome.Detail.Length > 0 ? $"{outcome.Headline}: {outcome.Detail}." : $"{outcome.Headline}.";
+
+    private static bool IsWorking(QueryRequest request) => request.Outcome?.State == "working";
+
+    private async Task ToggleOpen(CellContext<QueryRequest> row)
+    {
+        if (row.Open)
+        {
+            _opened.Remove(row.Item.RowId);
+        }
+        else
+        {
+            _opened.Add(row.Item.RowId);
+        }
+        await row.Actions.ToggleHierarchyVisibilityForItemAsync();
+    }
+
+    private async Task Reload()
+    {
+        if (await Api.GetQueryRequestsAsync() is { } list)
+        {
+            _list = list;
+        }
+        Arm();
+    }
+
+    private void Arm()
+    {
+        var beat = _list?.Requests.Any(IsWorking) == true && Follow.Interval > WhileWorking
+            ? WhileWorking
+            : Follow.Interval;
+        if (_timer is not null && beat == _beat)
+        {
+            return;
+        }
+        _timer?.Dispose();
+        _beat = beat;
+        _timer = new Timer(async _ =>
+        {
+            try
+            {
+                await InvokeAsync(Reload);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                return;
+            }
+            await InvokeAsync(StateHasChanged);
+        }, null, beat, beat);
+    }
+
+    private async Task StartAgent(long id)
+    {
+        _busy = true;
+        try
+        {
+            var (_, refusal) = await Api.StartAuthoringSessionAsync(id, Accounts.Identity.Login);
+            _refusal = refusal;
+            if (refusal is null)
+            {
+                _started[id] = _started.GetValueOrDefault(id) + 1;
+                await Reload();
+            }
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task StopAgent(long id)
+    {
+        _busy = true;
+        try
+        {
+            var (_, refusal) = await Api.StopAuthoringSessionAsync(id);
+            _refusal = refusal;
+            _started[id] = _started.GetValueOrDefault(id) + 1;
+            await Reload();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        Follow.Changed -= Arm;
+        _timer?.Dispose();
+    }
+
+    private async Task Delete(long id)
+    {
+        _busy = true;
+        try
+        {
+            var (list, refusal) = await Api.DeleteQueryRequestAsync(id);
+            _refusal = refusal;
+            if (list is not null)
+            {
+                _list = list;
+                if (_draft?.RowId == id)
+                {
+                    _draft = null;
+                }
+            }
+        }
+        finally
+        {
+            _deleting = 0;
+            _busy = false;
+        }
     }
 
     private void Discard()
     {
         _draft = null;
-        _refusal = null;
         Asked.Clear();
     }
 
-    private void UseDraft(AgentDraft draft)
+    private void Saved(QueryRequestList list)
     {
-        _description = draft.Description;
-        _compliant = draft.Compliant;
-        _nonCompliant = draft.NonCompliant;
-    }
-
-    private async Task Save()
-    {
-        if (_draft is null || !Complete)
-        {
-            return;
-        }
-        _saving = true;
-        try
-        {
-            var (list, refusal) = await Api.SaveQueryRequestAsync(_draft with
-            {
-                Description = _description,
-                Compliant = _compliant,
-                NonCompliant = _nonCompliant,
-                QueryId = _queryId.Trim(),
-                Kind = _kind,
-                Status = _status,
-                RequestedBy = _draft.RowId == 0 ? Accounts.Identity.Login : _draft.RequestedBy,
-            });
-            _refusal = refusal ?? (list is null ? Api.LastError : null);
-            if (list is not null)
-            {
-                _list = list;
-                _draft = null;
-                Asked.Clear();
-            }
-        }
-        finally
-        {
-            _saving = false;
-        }
+        _list = list;
+        _draft = null;
+        Asked.Clear();
     }
 
     private static string FirstLine(string text)
@@ -355,40 +497,30 @@
         return line.Length > 120 ? line[..117] + "…" : line;
     }
 
-    /// <summary>
-    /// Every query a request may be about, once each: the catalog's, less what builds the graph and
-    /// what ran as a whole suite, which no request can change.
-    /// </summary>
-    public static IReadOnlyList<(string Id, string Source)> Choices(QueryCatalog? catalog) =>
-        catalog is null
-            ? []
-            : catalog.Queries
-                .Where(q => !q.Discovery && !q.Lane && q.QueryId.Length > 0)
-                .GroupBy(q => q.QueryId, StringComparer.Ordinal)
-                .Select(g => (g.Key, QueryCatalogView.SourceText(g.First().Source)))
-                .OrderBy(c => c.Key, StringComparer.Ordinal)
-                .ToList();
-
     private static string CatalogHref(string queryId) =>
         $"/codeql?tab=catalog&query={Uri.EscapeDataString(queryId)}";
 
-    private static string EvidenceText(QueryRequest request)
+    private static string KindText(string kind) => QueryRequestForm.KindText(kind);
+
+    // A query id breaks only after a slash, so a long one takes two lines rather than the table's width.
+    private static IEnumerable<string> Slashed(string id)
     {
-        var alarms = request.Evidence.Count(e => e.Kind == "false-alarm");
-        var misses = request.Evidence.Count(e => e.Kind == "missed");
-        var parts = new List<string>();
-        if (alarms > 0) parts.Add(CountText.Of(alarms, "result", "results"));
-        if (misses > 0) parts.Add(CountText.Of(misses, "repository where nothing fired", "repositories where nothing fired"));
-        return $"{string.Join(" and ", parts)} picked from run #{request.SourceRunId}";
+        var parts = id.Split('/');
+        return parts.Select((part, i) => i < parts.Length - 1 ? part + "/" : part);
     }
 
-    private static string KindText(string kind) => kind switch
+    // Likewise a time breaks only before "at": a narrow column puts the day over the time.
+    private static (string Day, string Time) DayOverTime(string timestamp)
     {
-        "missed" => "missed detection",
-        "false-alarm" => "false alarm",
-        "both" => "both",
-        _ => "not said",
-    };
+        var when = TimeText.DayAndTime(timestamp);
+        var at = when.LastIndexOf(" at ", StringComparison.Ordinal);
+        return at < 0 ? (when, "") : (when[..at], when[(at + 1)..]);
+    }
+
+    private static IEnumerable<RequestExample> ExamplesOf(QueryRequest request, string side) =>
+        request.Examples.Count > 0
+            ? request.Examples.Where(e => e.Side == side)
+            : [new RequestExample { Side = side, Text = side == "compliant" ? request.Compliant : request.NonCompliant }];
 
     private static Color StatusColor(string status) => status switch
     {

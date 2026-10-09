@@ -33,8 +33,8 @@ type WorkflowSummary struct {
 	Findings       int `json:"findings"`
 	// Severity is the same findings by band.
 	Severity SeverityCounts `json:"severity"`
-	// DependedOnBy counts references pointing at this workflow, which is only ever non-zero for a
-	// reusable one. Reported rather than assumed absent.
+	// DependedOnBy counts distinct workflows that call this one. A workflow called from two jobs
+	// of one caller is one dependent. Zero means the file was read and nothing calls it.
 	DependedOnBy int `json:"dependedOnBy"`
 }
 
@@ -93,8 +93,12 @@ const workflowColumns = `
 	       (SELECT COUNT(*) FROM abom_finding_node fn
 	         JOIN abom_finding_regular f ON f.row_id = fn.finding_row_id
 	         WHERE fn.node_row_id = n.row_id) AS findings,
-	       (SELECT COUNT(*) FROM abom_edge_regular e
-	         WHERE e.dst_node_row_id = n.row_id) AS depended_on_by`
+	       (SELECT COUNT(DISTINCT src.container_node_row_id)
+	          FROM abom_edge_regular e
+	          JOIN abom_node_live src ON src.row_id = e.src_node_row_id
+	         WHERE e.dst_node_row_id = n.row_id
+	           AND e.edge_kind = 'job-uses-reusable-workflow'
+	           AND src.container_node_row_id IS NOT NULL) AS depended_on_by`
 
 // WorkflowsPage lists the workflows the scope matches, ordered across the whole match.
 func (s *Store) WorkflowsPage(q WorkflowsQuery) (WorkflowsPage, error) {

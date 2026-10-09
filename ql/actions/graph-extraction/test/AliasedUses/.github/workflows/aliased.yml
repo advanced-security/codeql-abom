@@ -1,0 +1,28 @@
+name: Aliased uses
+on: push
+jobs:
+  anchor-job:
+    runs-on: ubuntu-latest
+    steps:
+      - &checkout_step
+        id: checkout
+        uses: actions/checkout@v7 # v7.0.0
+      - name: After anchor
+        uses: actions/setup-node@v4
+  alias-job:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo first
+      - *checkout_step
+  merge-job:
+    runs-on: ubuntu-latest
+    steps:
+      - <<: *checkout_step
+        name: Merged
+  scalar-job:
+    runs-on: ubuntu-latest
+    steps:
+      - id: anchored
+        uses: &checkout_ref actions/checkout@v4
+      - id: aliased
+        uses: *checkout_ref

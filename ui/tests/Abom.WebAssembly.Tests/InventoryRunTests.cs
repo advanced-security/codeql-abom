@@ -115,7 +115,7 @@ public class InventoryRunTests : AbomTestContext
         var page = Arrive();
 
         page.WaitForAssertion(() => Assert.Contains("still being refined",
-            page.Find("[data-abom-run-findings]").GetAttribute("title")));
+            page.Find("[data-abom-run-findings] [data-abom-tip]").GetAttribute("data-abom-tip")));
         Assert.Contains(Sent, r => r.Url.Contains("api/runs/suggestion?query=acme%2Fself-hosted-runner%409b5327ab01d7"));
         Assert.Empty(page.FindAll("[data-abom-run-predict]"));
         Assert.Contains("\"held\":true", SentBody(page));
@@ -128,8 +128,8 @@ public class InventoryRunTests : AbomTestContext
         Answer("api/runs/suggestion", Promoted);
         var page = Arrive();
 
-        page.WaitForAssertion(() => Assert.StartsWith("Suggested:",
-            page.Find("[data-abom-run-findings]").GetAttribute("title")));
+        page.WaitForAssertion(() => Assert.Contains("Suggested:",
+            page.Find("[data-abom-run-findings] [data-abom-tip]").GetAttribute("data-abom-tip")));
         Assert.Contains("\"held\":false", SentBody(page));
     }
 
@@ -139,13 +139,13 @@ public class InventoryRunTests : AbomTestContext
     {
         Answer("api/runs/suggestion", Refining);
         var page = Arrive();
-        page.WaitForAssertion(() => Assert.StartsWith("Suggested:",
-            page.Find("[data-abom-run-findings]").GetAttribute("title")));
+        page.WaitForAssertion(() => Assert.Contains("Suggested:",
+            page.Find("[data-abom-run-findings] [data-abom-tip]").GetAttribute("data-abom-tip")));
 
         page.Find("[data-abom-run-findings] input").Change(true);
 
-        Assert.StartsWith("Changed from the suggestion (off)",
-            page.Find("[data-abom-run-findings]").GetAttribute("title"));
+        Assert.Contains("Changed from the suggestion (off)",
+            page.Find("[data-abom-run-findings] [data-abom-tip]").GetAttribute("data-abom-tip"));
         Assert.Contains("\"held\":false", SentBody(page));
     }
 
@@ -261,10 +261,39 @@ public class InventoryRunTests : AbomTestContext
         {
             var size = page.Find("[data-abom-run-size]").TextContent;
             Assert.Contains("3 repositories", size);
-            Assert.Contains("1 with a database held", size);
-            Assert.Contains("2 without one", size);
+            Assert.Contains("1 database ready to query", size);
+            Assert.Contains("1 the run builds first", size);
+            Assert.Contains("1 never analyzed, which it tries from the default branch", size);
+            Assert.DoesNotContain("held", size);
         });
         Assert.Contains(Sent, r => r.Method == "GET" && r.Url.EndsWith("api/databases?scope=owned"));
+    }
+
+    /// <summary>A scope with nothing ready says the run builds each, rather than counting zero of them.</summary>
+    [Fact]
+    public void AScopeWithNothingReadySaysTheRunBuildsEach()
+    {
+        Answer("api/databases", """
+            {"databases":[
+              {"repository":"octo-org/clean","commit":"b2","sourceFilter":"f","mode":"regular",
+               "status":"buildable","path":"","bytes":0},
+              {"repository":"octo-org/other","commit":"c3","sourceFilter":"f","mode":"regular",
+               "status":"buildable","path":"","bytes":0}],
+             "gaps":[],
+             "mode":"regular","unresolved":""}
+            """);
+        var page = ArriveAt("/inventory?unit=repositories&scope=owned");
+        page.WaitForAssertion(() => page.Find("[data-abom-run-all] input"));
+
+        page.Find("[data-abom-run-all] input").Change(true);
+
+        page.WaitForAssertion(() =>
+        {
+            var size = page.Find("[data-abom-run-size]").TextContent;
+            Assert.Contains("2 repositories", size);
+            Assert.Contains("the run builds a database for each", size);
+            Assert.DoesNotContain("0 ", size);
+        });
     }
 
     /// <summary>
@@ -294,9 +323,40 @@ public class InventoryRunTests : AbomTestContext
         {
             var size = page.Find("[data-abom-run-size]").TextContent;
             Assert.Contains("3 repositories", size);
-            Assert.Contains("1 with a database held", size);
-            Assert.Contains("1 held but not built by this CodeQL", size);
-            Assert.Contains("1 without one", size);
+            Assert.Contains("1 database ready to query", size);
+            Assert.Contains("2 the run builds first", size);
+            Assert.Contains("1 because another CodeQL built it", size);
+        });
+    }
+
+    /// <summary>
+    /// A repository never analyzed has no commit to build from, so the run tries its default branch,
+    /// which may hold nothing to analyze: it is counted apart from what the run builds first.
+    /// </summary>
+    [Fact]
+    public void ARepositoryNeverAnalyzedIsCountedApartBeforeRun()
+    {
+        Answer("api/databases", """
+            {"databases":[
+              {"repository":"octo-org/clean","commit":"b2","sourceFilter":"f","mode":"regular",
+               "status":"buildable","path":"","bytes":0}],
+             "gaps":[{"repository":"octo-org/new","reason":"no regular analysis on record"},
+                     {"repository":"octo-org/docs","reason":"no regular analysis on record"}],
+             "mode":"regular","unresolved":""}
+            """);
+        var page = ArriveAt("/inventory?unit=repositories&scope=owned");
+        page.WaitForAssertion(() => page.Find("[data-abom-run-all] input"));
+
+        page.Find("[data-abom-run-all] input").Change(true);
+
+        page.WaitForAssertion(() =>
+        {
+            var size = page.Find("[data-abom-run-size]").TextContent;
+            Assert.Contains("3 repositories", size);
+            Assert.Contains("1 the run builds first", size);
+            Assert.Contains("2 never analyzed, which it tries from the default branch", size);
+            Assert.DoesNotContain("for each", size);
+            Assert.DoesNotContain("0 ", size);
         });
     }
 }

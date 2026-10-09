@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // checkDDL holds the checker's results, which nothing that walks, derives or reads the graph reads.
@@ -17,12 +18,15 @@ CREATE TABLE IF NOT EXISTS abom_check_run (
 );
 
 -- Each comparison a run made. disagreed is NULL when nothing was compared: unread is not agreement.
+-- population is NULL for a part that read everything it could, and bound unless it drew at random.
 CREATE TABLE IF NOT EXISTS abom_check_part (
   run_row_id INTEGER NOT NULL REFERENCES abom_check_run(row_id),
   check_no   INTEGER NOT NULL,
   part       TEXT NOT NULL,
   compared   INTEGER NOT NULL,
   disagreed  INTEGER,
+  population INTEGER,
+  bound      REAL,
   PRIMARY KEY (run_row_id, part)
 );
 
@@ -37,7 +41,8 @@ CREATE TABLE IF NOT EXISTS abom_check_skip (
   PRIMARY KEY (run_row_id, part, reason)
 ) WITHOUT ROWID;
 
--- The queue: one row however many runs saw it, so first_build says when it started.
+-- The queue: one row however many runs saw it, so first_build says when it started. A sampled row
+-- closes only when a later run read its subject again and agreed, recorded in settled_run_row_id.
 CREATE TABLE IF NOT EXISTS abom_check_disagreement (
   row_id           INTEGER PRIMARY KEY,
   check_no         INTEGER NOT NULL,
@@ -53,16 +58,19 @@ CREATE TABLE IF NOT EXISTS abom_check_disagreement (
   last_build       TEXT NOT NULL,
   last_seen_at     TEXT NOT NULL,
   last_run_row_id  INTEGER NOT NULL,
+  sampled          INTEGER NOT NULL DEFAULT 0,
+  settled_run_row_id INTEGER,
   UNIQUE (check_no, subject, reading)
 );
 `
 
-// MigrateChecks creates only the checker's tables: Migrate writes tables a serving process reads.
+// MigrateChecks creates only the checker's tables, and adds their newer columns: Migrate writes
+// tables a serving process reads.
 func (s *Store) MigrateChecks() error {
 	if _, err := s.db.Exec(checkDDL); err != nil {
 		return fmt.Errorf("creating the check tables: %w", err)
 	}
-	return nil
+	return s.addColumns(func(table string) bool { return strings.HasPrefix(table, "abom_check_") })
 }
 
 // CheckRun is one run of one check by one build.
@@ -82,8 +90,23 @@ type CheckPart struct {
 	// Disagreed is null when nothing was compared: unread is not agreement.
 	Disagreed *int        `json:"disagreed"`
 	Skipped   []CheckSkip `json:"skipped"`
+	// Population is how many subjects a sampled part was drawn from; null for a part that read
+	// everything it could, which is not a sample.
+	Population *int `json:"population"`
+	// Bound is the most of the population that can disagree at 95% confidence, given what the part
+	// compared; null unless the part's subjects were drawn at random.
+	Bound *float64 `json:"bound"`
 	// Disagreements go to the queue, which is where a reader finds them.
 	Disagreements []Disagreement `json:"-"`
+	// Agreed are the subjects a sampled part read and found agreeing, which is what settles one of
+	// its disagreements: a sample that did not read a subject again says nothing about it.
+	Agreed []CheckSubject `json:"-"`
+}
+
+// CheckSubject names what one disagreement is about, as the queue keys it within a check.
+type CheckSubject struct {
+	Subject string `json:"subject"`
+	Reading string `json:"reading"`
 }
 
 // CheckSkip is how many comparisons a part did not make, and why.
@@ -147,8 +170,8 @@ func (s *Store) RecordCheckRun(run CheckRun) (int64, error) {
 			disagreed = sql.NullInt64{Int64: int64(len(p.Disagreements)), Valid: true}
 		}
 		if _, err := tx.Exec(`INSERT INTO abom_check_part (run_row_id, check_no, part, compared,
-			disagreed) VALUES (?, ?, ?, ?, ?)`, id, run.Check, p.Part, p.Compared,
-			disagreed); err != nil {
+			disagreed, population, bound) VALUES (?, ?, ?, ?, ?, ?, ?)`, id, run.Check, p.Part,
+			p.Compared, disagreed, p.Population, p.Bound); err != nil {
 			return 0, fmt.Errorf("recording part %q of check %d: %w", p.Part, run.Check, err)
 		}
 		for _, k := range p.Skipped {
@@ -161,15 +184,23 @@ func (s *Store) RecordCheckRun(run CheckRun) (int64, error) {
 		for _, d := range p.Disagreements {
 			if _, err := tx.Exec(`INSERT INTO abom_check_disagreement (check_no, part, subject,
 				reading, class, claim, independent, first_build, first_seen_at, first_run_row_id,
-				last_build, last_seen_at, last_run_row_id)
-				VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?8, ?9, ?10)
+				last_build, last_seen_at, last_run_row_id, sampled)
+				VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?8, ?9, ?10, ?11)
 				ON CONFLICT (check_no, subject, reading) DO UPDATE SET
 				  part = excluded.part, class = excluded.class, claim = excluded.claim,
 				  independent = excluded.independent, last_build = excluded.last_build,
-				  last_seen_at = excluded.last_seen_at, last_run_row_id = excluded.last_run_row_id`,
+				  last_seen_at = excluded.last_seen_at, last_run_row_id = excluded.last_run_row_id,
+				  sampled = excluded.sampled`,
 				run.Check, p.Part, d.Subject, d.Reading, d.Class, d.Claim, d.Independent,
-				run.Build, run.StartedAt, id); err != nil {
+				run.Build, run.StartedAt, id, p.Population != nil); err != nil {
 				return 0, fmt.Errorf("filing a disagreement about %q: %w", d.Subject, err)
+			}
+		}
+		for _, a := range p.Agreed {
+			if _, err := tx.Exec(`UPDATE abom_check_disagreement SET settled_run_row_id = ?
+				WHERE check_no = ? AND subject = ? AND reading = ? AND sampled = 1
+				  AND last_run_row_id < ?`, id, run.Check, a.Subject, a.Reading, id); err != nil {
+				return 0, fmt.Errorf("settling the disagreement about %q: %w", a.Subject, err)
 			}
 		}
 	}
@@ -200,17 +231,25 @@ func (s *Store) LatestCheckRuns() (map[int]CheckRun, error) {
 func (s *Store) checkParts(run int64) ([]CheckPart, error) {
 	parts, err := queryAll(s, "reading a check run's parts", func(r *sql.Rows) (CheckPart, error) {
 		p := CheckPart{Skipped: []CheckSkip{}}
-		var disagreed sql.NullInt64
-		if err := r.Scan(&p.Part, &p.Compared, &disagreed); err != nil {
+		var disagreed, population sql.NullInt64
+		var bound sql.NullFloat64
+		if err := r.Scan(&p.Part, &p.Compared, &disagreed, &population, &bound); err != nil {
 			return p, err
 		}
 		if disagreed.Valid {
 			n := int(disagreed.Int64)
 			p.Disagreed = &n
 		}
+		if population.Valid {
+			n := int(population.Int64)
+			p.Population = &n
+		}
+		if bound.Valid {
+			p.Bound = &bound.Float64
+		}
 		return p, nil
-	}, `SELECT part, compared, disagreed FROM abom_check_part WHERE run_row_id = ? ORDER BY rowid`,
-		run)
+	}, `SELECT part, compared, disagreed, population, bound FROM abom_check_part
+	     WHERE run_row_id = ? ORDER BY rowid`, run)
 	if err != nil {
 		return nil, err
 	}
@@ -259,10 +298,14 @@ func (s *Store) CheckTrend() ([]CheckTrendPoint, error) {
 		 ORDER BY b.check_no, b.first_row_id`)
 }
 
-// openDisagreement: no later run comparing the part stopped seeing it; a skip closes nothing.
-const openDisagreement = `d.last_run_row_id >= (
+// openDisagreement: no later run comparing the part stopped seeing it; a skip closes nothing. A
+// sampled part reads only some of its subjects, so its disagreement stays open until a later run
+// read that subject again and agreed.
+const openDisagreement = `CASE WHEN d.sampled = 1
+	THEN COALESCE(d.settled_run_row_id, 0) < d.last_run_row_id
+	ELSE d.last_run_row_id >= (
 	SELECT MAX(p.run_row_id) FROM abom_check_part p
-	 WHERE p.check_no = d.check_no AND p.part = d.part AND p.disagreed IS NOT NULL)`
+	 WHERE p.check_no = d.check_no AND p.part = d.part AND p.disagreed IS NOT NULL) END`
 
 // OpenDisagreements lists one page of the open queue, by check and then by when each started.
 func (s *Store) OpenDisagreements(offset, limit int) (DisagreementPage, error) {
@@ -285,4 +328,14 @@ func (s *Store) OpenDisagreements(offset, limit int) (DisagreementPage, error) {
 	}
 	out.Items = items
 	return out, nil
+}
+
+// OpenSubjects lists what a check's open disagreements are about, which a sampled check reads again.
+func (s *Store) OpenSubjects(check int) ([]CheckSubject, error) {
+	return queryAll(s, "listing a check's open disagreements", func(r *sql.Rows) (CheckSubject, error) {
+		var c CheckSubject
+		return c, r.Scan(&c.Subject, &c.Reading)
+	}, `SELECT d.subject, d.reading FROM abom_check_disagreement d
+	     WHERE d.check_no = ? AND `+openDisagreement+`
+	     ORDER BY d.first_run_row_id, d.subject, d.reading`, check)
 }

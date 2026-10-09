@@ -1,6 +1,8 @@
 package store
 
 import (
+	"database/sql"
+	"encoding/json"
 	"fmt"
 )
 
@@ -34,7 +36,12 @@ CREATE TABLE IF NOT EXISTS abom_cycle_spend (
   drifted      INTEGER NOT NULL DEFAULT 0,
   -- Where the objective stood. NULL means nothing was outstanding, which is a different
   -- statement from working at depth 0.
-  shallowest_incomplete INTEGER
+  shallowest_incomplete INTEGER,
+  -- What code scanning supplied. NULL on a cycle recorded before ABOM kept it; refusals are a JSON
+  -- object of counts, NULL where there were none.
+  databases_taken       INTEGER,
+  analyses_taken        INTEGER,
+  code_scanning_refused TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_cycle_spend_time ON abom_cycle_spend(recorded_at DESC);`
 
@@ -61,6 +68,19 @@ type CycleSpend struct {
 	// closure from work at depth 0.
 	ShallowestIncomplete int  `json:"shallowestIncomplete"`
 	HasOutstanding       bool `json:"hasOutstanding"`
+
+	// CodeScanning is what code scanning supplied in the cycle; nil for a cycle recorded before
+	// ABOM kept it, which is not a cycle it supplied nothing in.
+	CodeScanning *CycleCodeScanning `json:"codeScanning"`
+}
+
+// CycleCodeScanning is what code scanning supplied, and why it did not supply the rest.
+type CycleCodeScanning struct {
+	// Databases stood in for builds, and Analyses for part of a findings lane.
+	Databases int `json:"databases"`
+	Analyses  int `json:"analyses"`
+	// Refused counts each refusal as "database: <reason>" or "analysis: <reason>".
+	Refused map[string]int `json:"refused"`
 }
 
 // CycleTotal sums recorded cycles, so "under budget" has something to check against.
@@ -74,6 +94,9 @@ type CycleTotal struct {
 	TreeReads   int   `json:"treeReads"`
 	Analyzed    int   `json:"analyzed"`
 	Discovered  int   `json:"discovered"`
+	// CodeScanning sums what the CodeScanningCycles that kept it say code scanning supplied.
+	CodeScanning       CycleCodeScanning `json:"codeScanning"`
+	CodeScanningCycles int               `json:"codeScanningCycles"`
 }
 
 // RecordCycle appends what a cycle spent.
@@ -82,13 +105,26 @@ func (s *Store) RecordCycle(c CycleSpend) error {
 	if c.HasOutstanding {
 		shallowest = c.ShallowestIncomplete
 	}
+	var databases, analyses, refused any
+	if cs := c.CodeScanning; cs != nil {
+		databases, analyses = cs.Databases, cs.Analyses
+		if len(cs.Refused) > 0 {
+			body, err := json.Marshal(cs.Refused)
+			if err != nil {
+				return fmt.Errorf("recording cycle %d's refusals: %w", c.Cycle, err)
+			}
+			refused = string(body)
+		}
+	}
 	_, err := s.db.Exec(`
 		INSERT INTO abom_cycle_spend
 			(cycle, started_at, recorded_at, millis, fetches, builds, evaluations, probes, tree_reads,
-			 analyzed, skipped, settled, discovered, drifted, shallowest_incomplete)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 analyzed, skipped, settled, discovered, drifted, shallowest_incomplete,
+			 databases_taken, analyses_taken, code_scanning_refused)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.Cycle, c.StartedAt, now(), c.Millis, c.Fetches, c.Builds, c.Evaluations, c.Probes,
-		c.TreeReads, c.Analyzed, c.Skipped, c.Settled, c.Discovered, c.Drifted, shallowest)
+		c.TreeReads, c.Analyzed, c.Skipped, c.Settled, c.Discovered, c.Drifted, shallowest,
+		databases, analyses, refused)
 	if err != nil {
 		return fmt.Errorf("recording cycle %d: %w", c.Cycle, err)
 	}
@@ -102,7 +138,8 @@ func (s *Store) RecentCycles(limit int) ([]CycleSpend, error) {
 	}
 	rows, err := s.db.Query(`
 		SELECT cycle, started_at, millis, fetches, builds, evaluations, probes, tree_reads,
-		       analyzed, skipped, settled, discovered, drifted, shallowest_incomplete
+		       analyzed, skipped, settled, discovered, drifted, shallowest_incomplete,
+		       databases_taken, analyses_taken, code_scanning_refused
 		FROM abom_cycle_spend
 		ORDER BY row_id DESC
 		LIMIT ?`, limit)
@@ -115,13 +152,25 @@ func (s *Store) RecentCycles(limit int) ([]CycleSpend, error) {
 	for rows.Next() {
 		var c CycleSpend
 		var shallowest *int
+		var databases, analyses sql.NullInt64
+		var refused sql.NullString
 		if err := rows.Scan(&c.Cycle, &c.StartedAt, &c.Millis, &c.Fetches, &c.Builds,
 			&c.Evaluations, &c.Probes, &c.TreeReads, &c.Analyzed, &c.Skipped, &c.Settled, &c.Discovered,
-			&c.Drifted, &shallowest); err != nil {
+			&c.Drifted, &shallowest, &databases, &analyses, &refused); err != nil {
 			return nil, fmt.Errorf("scanning a cycle: %w", err)
 		}
 		if shallowest != nil {
 			c.ShallowestIncomplete, c.HasOutstanding = *shallowest, true
+		}
+		if databases.Valid {
+			cs := CycleCodeScanning{Databases: int(databases.Int64), Analyses: int(analyses.Int64),
+				Refused: map[string]int{}}
+			if refused.Valid {
+				if err := json.Unmarshal([]byte(refused.String), &cs.Refused); err != nil {
+					return nil, fmt.Errorf("reading cycle %d's refusals: %w", c.Cycle, err)
+				}
+			}
+			c.CodeScanning = &cs
 		}
 		out = append(out, c)
 	}
@@ -131,17 +180,35 @@ func (s *Store) RecentCycles(limit int) ([]CycleSpend, error) {
 // CycleTotals sums every recorded cycle.
 //
 // A database that has never run one reports zero cycles, which a reader must not confuse with a
-// crawl that ran and cost nothing.
+// crawl that ran and cost nothing. What code scanning supplied is summed over the cycles that kept
+// it, and CodeScanningCycles says how many those are.
 func (s *Store) CycleTotals() (CycleTotal, error) {
-	var t CycleTotal
+	t := CycleTotal{CodeScanning: CycleCodeScanning{Refused: map[string]int{}}}
 	err := s.db.QueryRow(`
 		SELECT COUNT(*), COALESCE(SUM(millis), 0), COALESCE(SUM(fetches), 0),
 		       COALESCE(SUM(builds), 0), COALESCE(SUM(evaluations), 0), COALESCE(SUM(probes), 0),
-		       COALESCE(SUM(tree_reads), 0), COALESCE(SUM(analyzed), 0), COALESCE(SUM(discovered), 0)
+		       COALESCE(SUM(tree_reads), 0), COALESCE(SUM(analyzed), 0), COALESCE(SUM(discovered), 0),
+		       COUNT(databases_taken), COALESCE(SUM(databases_taken), 0), COALESCE(SUM(analyses_taken), 0)
 		FROM abom_cycle_spend`).Scan(&t.Cycles, &t.Millis, &t.Fetches, &t.Builds, &t.Evaluations,
-		&t.Probes, &t.TreeReads, &t.Analyzed, &t.Discovered)
+		&t.Probes, &t.TreeReads, &t.Analyzed, &t.Discovered, &t.CodeScanningCycles,
+		&t.CodeScanning.Databases, &t.CodeScanning.Analyses)
 	if err != nil {
 		return t, fmt.Errorf("totalling cycle spend: %w", err)
+	}
+	type refusal struct {
+		reason string
+		count  int
+	}
+	refusals, err := queryAll(s, "totalling code scanning's refusals", func(r *sql.Rows) (refusal, error) {
+		var k refusal
+		return k, r.Scan(&k.reason, &k.count)
+	}, `SELECT j.key, SUM(j.value) FROM abom_cycle_spend c, json_each(c.code_scanning_refused) j
+	     WHERE c.code_scanning_refused IS NOT NULL GROUP BY j.key`)
+	if err != nil {
+		return t, err
+	}
+	for _, k := range refusals {
+		t.CodeScanning.Refused[k.reason] = k.count
 	}
 	return t, nil
 }

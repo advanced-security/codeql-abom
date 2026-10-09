@@ -140,6 +140,55 @@ func TestNoTreeIsExtractedTwiceWhileItsDatabaseIsRetained(t *testing.T) {
 	}
 }
 
+// forgetRetainedDatabases drops every row while leaving the directories, which is what a database
+// built by a process whose store was replaced looks like.
+func (h *harness) forgetRetainedDatabases() []store.RetainedDatabase {
+	h.t.Helper()
+	held, err := h.store.RetainedDatabases()
+	if err != nil {
+		h.t.Fatalf("RetainedDatabases: %v", err)
+	}
+	if _, err := h.store.DB().Exec(`DELETE FROM abom_local_database`); err != nil {
+		h.t.Fatalf("forgetting retained databases: %v", err)
+	}
+	return held
+}
+
+// A database reused from disk with no row was invisible to the ceiling and to the inventory, which
+// went on calling the repository unbuilt: 867 of them, 5.8 GB, measured on the real cache.
+func TestADatabaseReusedFromDiskWithNoRecordIsRecorded(t *testing.T) {
+	h := newHarness(t)
+	h.retainCheckouts()
+	h.retainDatabases()
+	h.enqueue(item("gradle", "actions", "setup-gradle", 1))
+	h.runWith(Options{Limit: 1})
+	forgotten := h.forgetRetainedDatabases()
+	if len(forgotten) == 0 {
+		t.Fatal("the first round retained nothing, so there is nothing to reuse")
+	}
+
+	built := h.databasesBuilt()
+	if n := h.requeueDirect(); n == 0 {
+		t.Fatal("nothing was requeued, so no second round would run")
+	}
+	h.runWith(Options{Limit: 1, QueryID: "abom/edges-v2"})
+	if again := h.databasesBuilt() - built; again != 0 {
+		t.Fatalf("a second round extracted %d databases, want the one on disk reused", again)
+	}
+
+	for _, was := range forgotten {
+		now, ok, err := h.store.RetainedDatabaseAt(was.DatabaseIdentity)
+		if err != nil || !ok {
+			t.Errorf("%s was reused from disk and is still not on record (%v)", was.Repository, err)
+			continue
+		}
+		if now.Path != was.Path || now.Bytes != was.Bytes {
+			t.Errorf("%s is recorded at %s with %d bytes, want %s with the %d it occupies",
+				was.Repository, now.Path, now.Bytes, was.Path, was.Bytes)
+		}
+	}
+}
+
 // A failed build is the common case, not the rare one: 30 of them in twenty minutes of real
 // crawling. Waiting for the abandoned-staging sweep to reclaim each is hours of occupancy the
 // ceiling cannot account for, when the failure path knows exactly what to remove.

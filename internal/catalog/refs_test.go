@@ -167,6 +167,32 @@ func TestAnUnreadableReferenceIsUnreadAndLeavesTheRestOfTheBatchAnswered(t *test
 	}
 }
 
+// A reference GitHub looked for in a repository it could read and did not find is evidence that it
+// is gone; a repository GitHub could not read says nothing about the references it holds.
+func TestAReferenceGitHubLookedForAndDidNotFindIsMissingNotMerelyUnread(t *testing.T) {
+	c, _ := refServer(t, map[string]fakeRepo{
+		"vendor/tool": {head: commitC, refs: map[string]string{"refs/tags/v1": commitObject(commitA)}},
+	}, 1)
+
+	batch, err := c.ResolveRefs(context.Background(), []RefQuestion{
+		{Owner: "vendor", Repo: "deleted", Ref: "v1"},
+		{Owner: "vendor", Repo: "tool", Ref: "v9"},
+		{Owner: "vendor", Repo: "tool", Ref: "v1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := batch.Answers[0]; a.Missing {
+		t.Errorf("a repository GitHub could not read says nothing of its references; got %+v", a)
+	}
+	if a := batch.Answers[1]; !a.Missing || a.Commit != "" || a.Unread == "" {
+		t.Errorf("a tag GitHub looked for and did not find is missing, and still unread; got %+v", a)
+	}
+	if a := batch.Answers[2]; a.Missing || a.Commit != commitA {
+		t.Errorf("a reference that resolved is not missing; got %+v", a)
+	}
+}
+
 // A query GitHub refused as a whole is an error, and none of its references reads as unchanged.
 func TestARefusedQueryIsAnErrorWithItsPriceStillReported(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

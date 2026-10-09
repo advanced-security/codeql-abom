@@ -413,6 +413,25 @@ public class InventoryUnitTests : AbomTestContext
         Assert.DoesNotContain("your repositories", caption);
     }
 
+    // Dependents sits beside Dependencies, and the privilege column is named as a count of jobs.
+    [Fact]
+    public void WorkflowsListsDependentsBesideDependencies()
+    {
+        Answer("api/workflows", """
+            {"items":[{"nodeKey":"octo-org/shared/.github/workflows/build.yml","kind":"reusable_workflow",
+              "repository":"octo-org/shared","path":".github/workflows/build.yml",
+              "jobs":1,"steps":2,"dependencies":3,"dependedOnBy":2,"privilegedJobs":0,"findings":0}],"total":1}
+            """);
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+            .NavigateTo("/inventory?unit=workflows");
+        var page = Render<Pages.Inventory>();
+
+        page.WaitForAssertion(() => Assert.Contains("Dependents", page.Markup));
+        Assert.Contains("Privileged Jobs", page.Markup);
+        Assert.DoesNotContain("Privileged jobs", page.Markup);
+        Assert.Contains(">2<", page.Markup);
+    }
+
     // "Showing 0 of 0 matching" before an answer arrives is a measurement of nothing.
     [Fact]
     public void NothingIsCountedBeforeTheUnitHasAnswered()

@@ -269,6 +269,10 @@ func TargetStep(r store.QueryRequest) Step {
 	switch {
 	case r.QueryID == "":
 		step.State, step.Detail = Pending, "no query chosen yet; the agent decides"
+	case r.TargetSource == store.TargetOperator && r.TargetDecision == store.DecisionCreate:
+		step.Detail = r.QueryID + ", a new query you named"
+	case r.TargetSource == store.TargetOperator && r.TargetDecision == store.DecisionImprove:
+		step.Detail = r.QueryID + ", selected by you to improve"
 	case r.TargetSource == store.TargetOperator:
 		step.Detail = r.QueryID + ", selected by you"
 	case r.TargetSource == store.TargetAgent:
@@ -354,6 +358,9 @@ func helpStep(root string, q Query) (Step, error) {
 			return Step{}, err
 		case strings.TrimSpace(string(body)) == "":
 			return Step{Step: "help", State: Pending, Detail: relTo(root, base+ext) + " is empty"}, nil
+		case strings.Contains(string(body), customql.HelpUnwritten):
+			return Step{Step: "help", State: Pending,
+				Detail: relTo(root, base+ext) + " has sections not written yet"}, nil
 		}
 		return Step{Step: "help", State: Passing, Detail: relTo(root, base+ext)}, nil
 	}

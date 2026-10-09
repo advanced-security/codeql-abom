@@ -145,14 +145,16 @@ func TestHostileKeysAreEscapedInTheDrawing(t *testing.T) {
 	}
 }
 
-// The figure says what it is, what it drew and what it left out, the terms it was cut under, when
-// the graph was recorded and what placed it.
-func TestTheDrawingSaysWhatItHoldsAndWhatItLeftOut(t *testing.T) {
+// The drawing says what it held and what it left out, for a reader of the file and for assistive
+// tech. It does not paint that, and it does not name what placed it or which side is which: the
+// heading already says that, and a footer inside the scrolling canvas is where it was missed.
+func TestTheDrawingSaysWhatItLeftOutWithoutPaintingAFooter(t *testing.T) {
 	var uses []string
 	for i := range 40 {
 		uses = append(uses, "c/w"+string(rune('a'+i%26))+string(rune('a'+i/26))+".yml>r/act")
 	}
-	f := draw(t, Cut(graphOf(nil, uses...), "r/act", CutOptions{}), Options{})
+	// A small limit, not the product cap: this is the sentence a truncated drawing says.
+	f := draw(t, Cut(graphOf(nil, uses...), "r/act", CutOptions{Limit: 25}), Options{})
 	var title, desc string
 	for _, e := range parse(t, f.SVG) {
 		switch e.name {
@@ -163,14 +165,25 @@ func TestTheDrawingSaysWhatItHoldsAndWhatItLeftOut(t *testing.T) {
 		case "desc":
 			desc = e.text
 		}
+		if strings.Contains(e.attrs["class"], "abom-fig-caption") {
+			t.Errorf("the drawing paints a caption: %q", e.text)
+		}
 	}
 	if !strings.Contains(title, "r/act") {
 		t.Errorf("the title %q does not name the node", title)
 	}
-	for _, want := range []string{"25 of 41", "16 left out", "Scope: what you own", "2026-10-06 13:30 UTC", "Graphviz 16.1.0"} {
+	for _, want := range []string{"25 of 41 drawn", "16 left out", "Scope: what you own", "2026-10-06 13:30 UTC"} {
 		if !strings.Contains(desc, want) {
 			t.Errorf("the description leaves out %q: %s", want, desc)
 		}
+	}
+	for _, banned := range []string{"Graphviz", "on the left", "on the right", "above", "below"} {
+		if strings.Contains(desc, banned) || strings.Contains(string(f.SVG), ">"+banned) {
+			t.Errorf("the drawing says %q, which a reader does not need", banned)
+		}
+	}
+	if strings.Contains(string(f.SVG), "Placed by") {
+		t.Error("the drawing still says what placed it")
 	}
 }
 

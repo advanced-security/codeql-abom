@@ -43,8 +43,6 @@ const (
 // filled in fails closed.
 type Verdict struct {
 	Allowed bool
-	// Review holds the call for an operator, who reads what it would accept.
-	Review bool
 	// Reason is what the agent is told and what the timeline keeps.
 	Reason string
 	// Step is the authoring step the call works toward, empty when it is none.
@@ -281,6 +279,8 @@ func (b Bounds) writable(path string) (string, error) {
 		return "", nil
 	case p == filepath.Join(dir, stem+".md") || p == filepath.Join(dir, stem+".qhelp"):
 		return StepHelp, nil
+	case p == filepath.Join(b.tests, stem+".expected"):
+		return StepExpected, nil
 	case !inside(b.tests, p):
 		return "", fmt.Errorf("a session writes %s, its help beside it and fixtures under %s, not %s",
 			b.rel(b.query), b.rel(b.tests), b.rel(p))
@@ -289,11 +289,9 @@ func (b Bounds) writable(path string) (string, error) {
 	}
 	name := filepath.Base(p)
 	switch ext := filepath.Ext(name); {
-	case ext == ".expected":
-		return "", errors.New("an .expected file is accepted through codeql_test_accept, which an " +
-			"operator reviews, and is never written by hand")
-	case slices.Contains([]string{".qlref", ".ql", ".qll", ".actual"}, ext):
-		return "", fmt.Errorf("%s decides what the test runs, and only ABOM and the CLI write it", name)
+	case slices.Contains([]string{".expected", ".qlref", ".ql", ".qll", ".actual"}, ext):
+		return "", fmt.Errorf("%s decides what the test runs, and only ABOM and the CLI write it; the "+
+			"target's own is %s", name, b.rel(filepath.Join(b.tests, stem+".expected")))
 	case slices.Contains(manifests, name):
 		return "", fmt.Errorf("%s is a pack manifest, and one under a test directory changes how "+
 			"every test in it resolves", name)
@@ -376,9 +374,6 @@ var loopTools = map[string]loopTool{
 		"tests": targetTests, "show-extractor-output": boolean, "keep-databases": boolean,
 		"threads": number, "ram": number, "verbose": boolean,
 	}},
-	"codeql_test_accept": {step: StepExpected, required: []string{"tests"}, args: map[string]check{
-		"tests": targetTests, "verbose": boolean,
-	}},
 	"codeql_query_compile": {step: StepCompiles, required: []string{"query"}, args: map[string]check{
 		"query": targetQuery, "database": targetDatabase, "dump-dil": boolean, "warnings": text,
 		"verbose": boolean,
@@ -413,6 +408,8 @@ var detours = map[string]string{
 	"create_codeql_query": "ABOM lays out the target's query and test directory itself; this tool " +
 		"writes another layout, and was used to make directories anywhere",
 	"codeql_pack_install": "ABOM resolves the pack's dependencies, and an install rewrites its lock file",
+	"codeql_test_accept": "it makes the query's own output the expected result, so the test can never " +
+		"fail; write the .expected yourself, from the help and the fixtures' marks, before the query",
 }
 
 // dangerous says what an argument would have done, for a refusal a reader can audit.
@@ -494,9 +491,6 @@ func qlmcpVerdict(name string, tool loopTool, fields map[string]any) Verdict {
 		case byName:
 			v.Step = StepAST
 		}
-	case "codeql_test_accept":
-		v = Verdict{Review: true, Step: StepExpected, Reason: "an operator reads the output against " +
-			"the request's examples before it becomes the expected result"}
 	}
 	return v
 }
@@ -674,10 +668,10 @@ func (b Bounds) mcpRequest(r *rpc.PermissionRequestMCP) Verdict {
 }
 
 func (b Bounds) hookRequest(r *rpc.PermissionRequestHook) Verdict {
-	if v := b.Call(r.ToolName, r.ToolArgs); v.Review {
+	if v := b.Call(r.ToolName, r.ToolArgs); !v.Allowed {
 		return v
 	}
-	return refuse("only accepting expected output is held for an operator, not %s", r.ToolName)
+	return refuse("no call in the authoring loop asks through a hook, and %s does not", r.ToolName)
 }
 
 func (b Bounds) customToolRequest(r *rpc.PermissionRequestCustomTool) Verdict {

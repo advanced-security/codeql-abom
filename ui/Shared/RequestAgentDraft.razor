@@ -13,18 +13,18 @@
             <MudText Typo="Typo.caption" data-abom-draft-live>
                 An agent is drafting from what you picked, since @TimeText.DayAndTime(Live.StartedAt, "HH:mm:ss").
             </MudText>
-            <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button" Disabled="@_busy"
-                       title="Stop the drafting agent for this request."
-                       OnClick="Stop" data-abom-draft-stop>Stop drafting</MudButton>
+            <Tip Text="End the drafting agent. Nothing is filed.">
+                <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button" Disabled="@_busy"
+                           OnClick="Stop" data-abom-draft-stop>Stop drafting</MudButton>
+            </Tip>
         }
         else
         {
-            <span title="@(CanStart ? "Start an agent draft from the results and code you picked without filing it." : "Sign in with gh to record who asked.")">
+            <Tip Text="@(CanStart ? "Have an agent write the request from the results and code you picked." : "Sign in with gh to record who asked.")">
                 <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
                            StartIcon="@Icons.Material.Outlined.SmartToy" Disabled="@(!CanStart || _busy)"
-                           title="@(CanStart ? "Start an agent draft from the results and code you picked without filing it." : "Sign in with gh to record who asked.")"
                            OnClick="Start" data-abom-draft-start>Draft it with an agent</MudButton>
-            </span>
+            </Tip>
         }
     </div>
     @if (_refusal is { Length: > 0 } refused)
@@ -41,9 +41,10 @@
             {
                 <MudText Typo="Typo.caption" Class="d-block mud-text-secondary">@draft.Rationale</MudText>
             }
-            <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button"
-                       title="Fill the request form with this agent draft."
-                       OnClick="@(() => OnUse.InvokeAsync(draft))" data-abom-draft-use>Use this draft</MudButton>
+            <Tip Text="Fill the request form with this draft, to edit before saving.">
+                <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button"
+                           OnClick="@(() => OnUse.InvokeAsync(draft))" data-abom-draft-use>Use this draft</MudButton>
+            </Tip>
         </div>
     }
     else if (Newest is { } ended && ended.State != "running")

@@ -55,6 +55,7 @@ type nodeFigure struct {
 	Height    float64       `json:"height"`
 	Counts    figure.Counts `json:"counts"`
 	Terms     []string      `json:"terms"`
+	Caption   []string      `json:"caption"`
 	Direction string        `json:"direction"`
 }
 
@@ -89,6 +90,13 @@ func TestAFiguresCallersAreWhatTheUsesTableLists(t *testing.T) {
 	}
 	if f.Counts.NotListed != 1 || len(f.Terms) != 1 || !strings.Contains(f.Terms[0], "what you own") {
 		t.Errorf("counts %+v and terms %v, want one not listed and the scope named", f.Counts, f.Terms)
+	}
+	if !strings.Contains(f.SVG, "1 more runs it") || strings.Contains(f.SVG, "Graphviz") || strings.Contains(f.SVG, "on the left") {
+		t.Errorf("the drawing should say who it left out, and not what placed it or which side is which")
+	}
+	joined := strings.Join(f.Caption, " ")
+	if !strings.Contains(joined, "1 more runs it") || !strings.Contains(joined, "what you own") || strings.Contains(joined, "Graphviz") {
+		t.Errorf("caption %v, want who was left out and the term, and not what placed the drawing", f.Caption)
 	}
 }
 

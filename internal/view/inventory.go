@@ -12,6 +12,8 @@ var inventoryTerms = map[string]bool{
 	paramRefStyle:         true,
 	paramRules:            true,
 	paramNotRules:         true,
+	paramTags:             true,
+	paramNotTags:          true,
 	paramProvider:         true,
 	paramSource:           true,
 	paramSeverity:         true,

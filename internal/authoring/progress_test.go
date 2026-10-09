@@ -146,6 +146,16 @@ func TestHelpBesideTheQueryPassesAndAnEmptyFileDoesNot(t *testing.T) {
 	}
 }
 
+// The help laid out from a request holds what the request said and marks what nobody has written;
+// a section still marked is help not yet written.
+func TestHelpLaidOutWithSectionsUnwrittenIsNotWrittenHelp(t *testing.T) {
+	root := workspace(t, map[string]string{"A": "acme/a"})
+	write(t, root, "src/A.md", "# A\n\n## Overview\n\nFinds jobs.\n\n## Example\n\n"+customql.HelpUnwritten+"\n")
+	if got := progressOf(t, root, "acme/a")["help"]; got.State != Pending || !strings.Contains(got.Detail, "not written") {
+		t.Errorf("help with a section unwritten reads %s (%s)", got.State, got.Detail)
+	}
+}
+
 // An empty .expected claims the NON_COMPLIANT example yields nothing, which contradicts the
 // example: evidence, and wrong, rather than absent.
 func TestAnEmptyExpectedIsAWarningAndAMissingOneIsPending(t *testing.T) {
@@ -483,6 +493,12 @@ func TestTheTargetStepSaysWhoChoseTheTarget(t *testing.T) {
 		{"no target", store.QueryRequest{}, Pending, "agent"},
 		{"chosen by the operator", store.QueryRequest{QueryID: "acme/a",
 			TargetSource: store.TargetOperator}, Passing, "selected by you"},
+		{"named new by the operator", store.QueryRequest{QueryID: "acme/a",
+			TargetSource: store.TargetOperator, TargetDecision: store.DecisionCreate}, Passing,
+			"a new query you named"},
+		{"chosen to improve by the operator", store.QueryRequest{QueryID: "acme/a",
+			TargetSource: store.TargetOperator, TargetDecision: store.DecisionImprove}, Passing,
+			"selected by you to improve"},
 		{"chosen by the agent", store.QueryRequest{QueryID: "acme/a",
 			TargetSource: store.TargetAgent}, Passing, "decided by the agent"},
 		{"chosen by the agent, saying why", store.QueryRequest{QueryID: "acme/a",
@@ -545,5 +561,58 @@ func TestTheRungAfterTestWaitsForTheFirstStepThatIsNotPassing(t *testing.T) {
 	}
 	if ExtendedTestRefusal(nil) == "" {
 		t.Error("a query with no steps at all was let through")
+	}
+}
+
+// One state for the whole request, read from its steps: what a reader needs before any detail.
+func TestTheOutcomeIsTheFirstThingThatNeedsSomebody(t *testing.T) {
+	steps := func(states ...State) []Step {
+		names := []string{"target", "help", "expected", "database", "ast", "compiles", "tests"}
+		out := make([]Step, len(names))
+		for i, name := range names {
+			out[i] = Step{Step: name, State: states[i], Detail: name + " detail"}
+		}
+		return out
+	}
+	for _, c := range []struct {
+		name    string
+		steps   []Step
+		working bool
+		want    string
+		says    string
+	}{
+		{"an agent is working", steps(Passing, Pending, Pending, Pending, Pending, Pending, Pending), true,
+			OutcomeWorking, "Agent working: Query help"},
+		{"an agent is working past a failure", steps(Passing, Passing, Passing, Passing, Passing, Failed, Pending), true,
+			OutcomeWorking, "Agent working: Compiles"},
+		{"an agent is checking a finished query", steps(Passing, Passing, Passing, Passing, Passing, Passing, Passing), true,
+			OutcomeWorking, "every step has passed"},
+		{"nothing done", steps(Pending, Pending, Pending, Pending, Pending, Pending, Pending), false,
+			OutcomeUnstarted, ""},
+		{"a step failed", steps(Passing, Passing, Pending, Passing, Passing, Failed, Failed), false,
+			OutcomeFailed, "Compiles"},
+		{"a warning before anything unfinished", steps(Passing, Passing, Pending, Warning, Passing, Passing, Pending), false,
+			OutcomeAttention, "Test database"},
+		{"help unwritten", steps(Passing, Pending, Pending, Passing, Passing, Passing, Pending),
+			false, OutcomeUnfinished, "Query help"},
+		{"every step done", steps(Passing, Passing, Passing, Passing, Passing, Passing, Passing), false,
+			OutcomeReady, ""},
+	} {
+		got := Overall(c.steps, c.working)
+		if got.State != c.want || !strings.Contains(got.Headline+" "+got.Detail, c.says) {
+			t.Errorf("%s: %+v, want %s saying %q", c.name, got, c.want, c.says)
+		}
+		if got.Headline == "" {
+			t.Errorf("%s: no headline", c.name)
+		}
+		passed := 0
+		for _, s := range c.steps {
+			if s.State == Passing {
+				passed++
+			}
+		}
+		if got.Passed != passed || got.Total != len(c.steps) {
+			t.Errorf("%s: %d of %d passed, want %d of %d", c.name, got.Passed, got.Total, passed, len(c.steps))
+		}
 	}
 }

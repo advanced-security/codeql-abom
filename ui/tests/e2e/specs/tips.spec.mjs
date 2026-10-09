@@ -41,6 +41,30 @@ for (const path of PAGES) {
     });
 }
 
+// A tip present in the markup is no use unless hovering shows it, at once and in this browser.
+const CODEQL_TIPS = [
+    ['[data-abom-tab="requests"]', 'Ask for a new CodeQL query, or a fix to one, from examples.'],
+    ['[data-abom-tab="catalog"]', 'Every query version ABOM holds, its stage, and where it ran.'],
+    ['[data-abom-tab="runs"]', 'Query runs over a scope, and what each found.'],
+    ['[data-abom-tab="suites"]', 'Choose which query suites each crawl tier runs.'],
+];
+
+test('the CodeQL tabs and New request show what each is for on hover', on('/codeql'), async ({ page }) => {
+    await page.goto('/codeql?tab=requests');
+    await ready(page);
+
+    for (const [selector, text] of CODEQL_TIPS) {
+        await page.locator(selector).hover();
+        await expect(page.locator('.mud-tooltip', { hasText: text })).toBeVisible();
+    }
+    // Its words depend on whether somebody is signed in, so what is drawn is held to what is declared.
+    // The tip's span is hovered: a disabled button takes no pointer, and the span is what shows why.
+    const request = page.locator('[data-abom-tip]', { has: page.locator('[data-abom-request-new]') });
+    const declared = await request.getAttribute('data-abom-tip');
+    await request.hover();
+    await expect(page.locator('.mud-tooltip', { hasText: declared })).toBeVisible();
+});
+
 test('an action\'s details page says the same', on('/node'), async ({ page, request, baseURL }) => {
     const { items } = await (await request.get(`${baseURL}/api/actions?top=1&offset=0`)).json();
     test.skip(!items?.length, 'no action on this corpus');

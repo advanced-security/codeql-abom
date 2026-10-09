@@ -506,3 +506,19 @@ func TestAnAnalysisThatRanNoneOfTheLanesRulesStandsInForNothing(t *testing.T) {
 		t.Errorf("took %v (%q), want nothing, refused as no rules in common", rules, reason)
 	}
 }
+
+// Index filters in the server's environment widen every database ABOM builds and none of default
+// setup's, so code scanning's analysis read other files than ABOM's lane covers and answers for none of it.
+func TestIndexFiltersInTheEnvironmentMeanNoAnalysisIsAskedFor(t *testing.T) {
+	t.Setenv("LGTM_INDEX_FILTERS", "include:docs/**/*.yml")
+	h, cs, a := splitHarness(t, lanePacks(t, t.TempDir(), "0.6.36"))
+
+	runBound(t, h)
+
+	if cs.asks() != 0 {
+		t.Errorf("asked code scanning %d times about an analysis of files ABOM's builds do not match", cs.asks())
+	}
+	if got := a.asked(); len(got) != 1 || !slices.Equal(got[0], []string{"findings.qls"}) {
+		t.Errorf("analyze ran %v, want the whole lane", got)
+	}
+}

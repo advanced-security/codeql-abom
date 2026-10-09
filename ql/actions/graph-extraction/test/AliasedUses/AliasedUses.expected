@@ -1,0 +1,8 @@
+| composite-step-uses-action | composite_action | .github/actions/aliased/action.yml |  | 0 | cache | actions/cache@v4 | v4.2.0 | 8 | 13 | 8 | 28 |
+| composite-step-uses-action | composite_action | .github/actions/aliased/action.yml |  | 1 | cache | actions/cache@v4 | v4.2.0 | 9 | 7 | 9 | 17 |
+| step-uses-action | job | .github/workflows/aliased.yml | alias-job | 1 | checkout | actions/checkout@v7 | v7.0.0 | 16 | 9 | 16 | 22 |
+| step-uses-action | job | .github/workflows/aliased.yml | anchor-job | 0 | checkout | actions/checkout@v7 | v7.0.0 | 9 | 15 | 9 | 33 |
+| step-uses-action | job | .github/workflows/aliased.yml | anchor-job | 1 |  | actions/setup-node@v4 |  | 11 | 15 | 11 | 35 |
+| step-uses-action | job | .github/workflows/aliased.yml | merge-job | 0 | checkout | actions/checkout@v7 | v7.0.0 | 20 | 13 | 20 | 26 |
+| step-uses-action | job | .github/workflows/aliased.yml | scalar-job | 0 | anchored | actions/checkout@v4 |  | 26 | 15 | 26 | 47 |
+| step-uses-action | job | .github/workflows/aliased.yml | scalar-job | 1 | aliased | actions/checkout@v4 |  | 28 | 15 | 28 | 27 |

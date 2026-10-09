@@ -2,13 +2,14 @@
 //
 // A column name is not a definition, and a button's label is not a description of what pressing
 // it changes. Headers carry a HeaderTip, which keeps the grid's sort; actions and links carry a
-// title, which adds no element around them and so cannot change how they lay out. One already
-// inside a MudTooltip or HeaderTip is described by it.
+// title, which adds no element around them and so cannot change how they lay out, or a Tip, which
+// shows at once where a title shows late or never. One already inside a MudTooltip, HeaderTip or
+// Tip is described by it, and a title on it as well would show a second tip.
 
 const COLUMN = /<(PropertyColumn|TemplateColumn)(?=[\s>/])/g;
 const HEADER_CELL = /<(th|MudTh)(?=[\s>/])/g;
 const ACTION = /<(MudButton|MudIconButton|MudLink|MudMenuItem|MudChip|a|button)(?=[\s>/])/g;
-const TOOLTIP = /<(\/?)(MudTooltip|HeaderTip)(?=[\s>/])/g;
+const TOOLTIP = /<(\/?)(MudTooltip|HeaderTip|Tip)(?=[\s>/])/g;
 
 /**
  * Where the opening tag starting at `start` ends, just past its `>`. Attribute values are skipped
@@ -131,8 +132,10 @@ export function untipped(text) {
     for (const m of text.matchAll(ACTION)) {
         const tag = text.slice(m.index, tagEnd(text, m.index));
         if (m[1] === 'MudChip' && !/\s(OnClick|Href)=/.test(tag)) continue;
-        const described = /\stitle="/.test(tag) || spans.some(([s, e]) => m.index > s && m.index < e);
-        if (!described) add(m.index, `${m[1]} has no title or tooltip saying what it does`);
+        const titled = /\stitle="/.test(tag);
+        const inside = spans.some(([s, e]) => m.index > s && m.index < e);
+        if (!titled && !inside) add(m.index, `${m[1]} has no title or tooltip saying what it does`);
+        if (titled && inside) add(m.index, `${m[1]} has a title inside a tooltip, so two tips show`);
     }
 
     for (const [pattern, attribute] of [[ACTION, 'title'], [TOOLTIP, 'Text'], [TOOLTIP, 'Tip']]) {

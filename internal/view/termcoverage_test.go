@@ -77,7 +77,8 @@ func everyTerm(t *testing.T) []string {
 func specCarryingEveryTerm() Spec {
 	return Spec{
 		Scope: "owned", Search: "x", Kinds: Vocabulary(paramKinds), Origins: Vocabulary(paramOrigins),
-		Rules: []string{"r"}, NotRules: []string{"r"}, Repositories: []string{"o/r"},
+		Rules: []string{"r"}, NotRules: []string{"r"}, Tags: []string{"t"}, NotTags: []string{"t"},
+		Repositories:  []string{"o/r"},
 		Properties:    []PropertyMatch{{Name: "k", Value: "v"}},
 		NotProperties: []PropertyMatch{{Name: "k", Value: "v"}},
 		Provider:      "p", Severity: "high", EdgeClass: Vocabulary(paramEdgeClass),

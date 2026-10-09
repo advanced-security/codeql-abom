@@ -161,19 +161,43 @@ func TestEveryPoolNamesItsUnitAndAnUnmeteredOneSaysWhy(t *testing.T) {
 			t.Errorf("%s is listed but no pool is built for it", key)
 		}
 	}
-	for _, want := range []string{PoolConsistency, PoolCopilot} {
-		var found bool
-		for _, k := range PoolCatalog {
-			if k.Pool == want {
-				found = true
-				if k.Unmetered == "" {
-					t.Errorf("%s spends nothing in this build and has to say so", want)
-				}
+	var found bool
+	for _, k := range PoolCatalog {
+		if k.Pool == PoolCopilot {
+			found = true
+			if k.Unmetered == "" {
+				t.Errorf("%s spends nothing in this build and has to say so", PoolCopilot)
 			}
 		}
-		if !found {
-			t.Errorf("%s is a kind of work the plan names and is missing", want)
+	}
+	if !found {
+		t.Errorf("%s is a kind of work the plan names and is missing", PoolCopilot)
+	}
+}
+
+// A unit the checker shared with discovery would let a busy checker starve the crawl, and make the
+// freshness it measures look worse than it is.
+func TestTheCheckerHasAMeteredPoolOfItsOwnInEveryUnitItSpends(t *testing.T) {
+	want := map[string]string{UnitWorkerSeconds: "", UnitREST: ResourceCore, UnitGraphQL: ResourceGraphQL}
+	for _, k := range PoolCatalog {
+		if k.Pool != PoolConsistency {
+			continue
 		}
+		resource, ok := want[k.Unit]
+		if !ok {
+			t.Errorf("the checker has a pool in %s, which nothing it does spends", k.Unit)
+			continue
+		}
+		delete(want, k.Unit)
+		if k.Unmetered != "" {
+			t.Errorf("the checker's %s pool says %q, and the checker draws on it", k.Unit, k.Unmetered)
+		}
+		if k.Resource != resource {
+			t.Errorf("the checker's %s pool spends the %q allowance, want %q", k.Unit, k.Resource, resource)
+		}
+	}
+	for unit := range want {
+		t.Errorf("the checker spends %s and has no pool in it", unit)
 	}
 }
 

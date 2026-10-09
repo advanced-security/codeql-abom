@@ -438,9 +438,9 @@ public sealed class ActionDrilldownTests : AbomTestContext
         var page = Node("?at=v4&kinds=action");
 
         page.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("/-/uses")));
-        foreach (var route in new[] { "/-/uses", "/-/versions" })
+        var routes = new[] { "/-/uses", "/-/versions" };
+        foreach (var sent in routes.Select(route => Sent.Last(r => r.Url.Contains(route)).Url))
         {
-            var sent = Sent.Last(r => r.Url.Contains(route)).Url;
             Assert.Contains("at=v4", sent);
             Assert.DoesNotContain("kinds", sent);
         }
@@ -538,5 +538,10 @@ public sealed class ActionDrilldownTests : AbomTestContext
             page.Find("[data-abom-version-ref='v4']").GetAttribute("href"));
         Assert.Equal("/inventory?properties=team%3Acore",
             page.Find("[data-abom-node-inventory]").GetAttribute("href"));
+        Assert.Equal("dependencies", page.Find("[data-abom-node-unit]").GetAttribute("data-abom-node-unit"));
+        Assert.Equal("/inventory?unit=dependencies&properties=team%3Acore",
+            page.Find("[data-abom-node-unit]").GetAttribute("href"));
+        Assert.Equal(Checkout, page.Find("h1").TextContent.Trim());
+        Assert.DoesNotContain("Back to Inventory", page.Markup);
     }
 }

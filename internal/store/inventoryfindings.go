@@ -67,7 +67,8 @@ func (s *Store) findingReviewPlan(q FindingReviewQuery) (findingReviewPlan, erro
 		return findingReviewPlan{}, fmt.Errorf("finding review needs both an asset and its kind: node or repository")
 	}
 	query := buildFindingMatchQuery(FindingSelector{
-		Rules: q.Rules, Exclude: q.NotRules, Provider: q.Provider, Severity: q.Severity,
+		Rules: q.Rules, Exclude: q.NotRules, Tags: q.Tags, NotTags: q.NotTags,
+		Provider: q.Provider, Severity: q.Severity,
 		SecuritySeverities: q.SecuritySeverities, Sources: q.Sources,
 		Repositories: q.Repositories, Mode: q.Mode,
 	})
@@ -111,7 +112,8 @@ func (s *Store) findingReviewPlan(q FindingReviewQuery) (findingReviewPlan, erro
 		}
 	}
 	nodeFiltered := q.Scope != "" || q.Search != "" || len(q.Kinds) > 0 || len(q.Origins) > 0 ||
-		q.MinReach > 0 || q.RefStyle != "" || q.Grouping.asked() || len(q.NotRules) > 0
+		q.MinReach > 0 || q.RefStyle != "" || q.Grouping.asked() || len(q.NotRules) > 0 ||
+		len(q.NotTags) > 0
 	for _, flag := range q.Flags {
 		nodeFiltered = nodeFiltered || flag != "findings"
 	}

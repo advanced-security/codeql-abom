@@ -30,6 +30,8 @@ type Setup struct {
 	Tools []copilot.Tool
 	// Sealed offers the agent ABOM's tools and nothing else: no files, no shell and no ql-mcp.
 	Sealed bool
+	// Next is what the agent is told each time it goes idle, empty when nothing is left to tell it.
+	Next func(context.Context) string
 }
 
 // Agent runs one session to its end and returns what the agent said last.
@@ -98,23 +100,30 @@ func (c *Copilot) Run(ctx context.Context, s Setup) (string, error) {
 	defer func() { _ = session.Disconnect() }()
 	defer session.On(s.Gate.Observe)()
 
-	reply, err := session.SendAndWait(ctx, copilot.MessageOptions{Prompt: s.Prompt})
-	if ctx.Err() != nil {
-		// Waiting ends with the context; the agent's turn does not, until it is aborted.
-		abort, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = session.Abort(abort)
-		return "", ctx.Err()
-	}
-	if err != nil {
-		return "", err
-	}
-	if reply != nil {
-		if d, ok := reply.Data.(*copilot.AssistantMessageData); ok {
-			return d.Content, nil
+	var last string
+	for send := s.Prompt; send != ""; {
+		reply, err := session.SendAndWait(ctx, copilot.MessageOptions{Prompt: send})
+		if ctx.Err() != nil {
+			// Waiting ends with the context; the agent's turn does not, until it is aborted.
+			abort, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = session.Abort(abort)
+			return "", ctx.Err()
+		}
+		if err != nil {
+			return "", err
+		}
+		if reply != nil {
+			if d, ok := reply.Data.(*copilot.AssistantMessageData); ok {
+				last = d.Content
+			}
+		}
+		send = ""
+		if s.Next != nil {
+			send = s.Next(ctx)
 		}
 	}
-	return "", nil
+	return last, nil
 }
 
 // config is the session: the gate on every call, the loop's tools and nothing else, and none of

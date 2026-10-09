@@ -595,7 +595,9 @@ const frontierMatch = `(f.node_key = n.node_key
 // would hide exactly the coverage gap this split exists to show.
 const frontierState = `(SELECT CASE
 				 WHEN SUM(f.status = 'running') > 0 THEN 'running'
-				 WHEN SUM(f.status = 'pending' AND f.attempts > 0) > 0 THEN 'retrying'
+				 WHEN SUM(f.status = 'pending' AND f.attempts > 0
+				          AND f.awaiting_code_scanning IS NULL) > 0 THEN 'retrying'
+				 WHEN SUM(f.status = 'pending' AND f.awaiting_code_scanning IS NOT NULL) > 0 THEN 'waiting'
 				 WHEN SUM(f.status = 'pending') > 0 THEN 'queued'
 				 WHEN SUM(f.status = 'done') > 0 THEN 'done'
 				 WHEN SUM(f.status = 'unavailable') > 0 THEN 'unavailable'
@@ -675,7 +677,8 @@ func (s *Store) FullGraph(opts FullGraphOptions) (Graph, error) {
 const frontierRollup = `, fstate AS (
 	SELECT mk,
 	       SUM(status = 'running') AS running,
-	       SUM(status = 'pending' AND attempts > 0) AS retrying,
+	       SUM(status = 'pending' AND attempts > 0 AND awaiting_code_scanning IS NULL) AS retrying,
+	       SUM(status = 'pending' AND awaiting_code_scanning IS NOT NULL) AS waiting,
 	       SUM(status = 'pending') AS pending,
 	       SUM(status = 'done') AS done,
 	       SUM(status = 'unavailable') AS unavailable,
@@ -683,9 +686,10 @@ const frontierRollup = `, fstate AS (
 	       MIN(depth) AS min_depth,
 	       MAX(score) AS max_score,
 	       COUNT(*) AS refs
-	  FROM (SELECT node_key AS mk, status, attempts, depth, score FROM abom_frontier
+	  FROM (SELECT node_key AS mk, status, attempts, depth, score, awaiting_code_scanning
+	          FROM abom_frontier
 	        UNION ALL
-	        SELECT 'repo:' || LOWER(node_key), status, attempts, depth, score
+	        SELECT 'repo:' || LOWER(node_key), status, attempts, depth, score, awaiting_code_scanning
 	          FROM abom_frontier WHERE depth = 0)
 	 GROUP BY mk)`
 
@@ -716,6 +720,7 @@ var groupingRollup = `, grouping AS (
 const rolledFrontierState = `(CASE
 		 WHEN fs.running > 0 THEN 'running'
 		 WHEN fs.retrying > 0 THEN 'retrying'
+		 WHEN fs.waiting > 0 THEN 'waiting'
 		 WHEN fs.pending > 0 THEN 'queued'
 		 WHEN fs.done > 0 THEN 'done'
 		 WHEN fs.unavailable > 0 THEN 'unavailable'

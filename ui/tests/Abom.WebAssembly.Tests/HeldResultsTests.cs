@@ -58,7 +58,7 @@ public class HeldResultsTests : AbomTestContext
     {
         var cut = Opened();
 
-        var coverage = cut.Find("[data-abom-held-coverage]");
+        var coverage = cut.Find("[data-abom-run-coverage]");
         Assert.Contains("2 of 4 repositories", coverage.TextContent);
         Assert.Contains("octo/none", coverage.TextContent);
         Assert.Contains("octo/broken", coverage.TextContent);
@@ -72,6 +72,33 @@ public class HeldResultsTests : AbomTestContext
 
     private static string Words(string text) => System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ");
 
+    /// <summary>
+    /// A repository read in full with nothing to analyze is named apart from those the run could
+    /// not cover, and its status says what the reading found rather than that it failed.
+    /// </summary>
+    [Fact]
+    public void NothingToAnalyzeIsNamedApartFromWhatTheRunCouldNotCover()
+    {
+        Answer("api/runs/7", Held.Replace(
+            "{\"repository\":\"octo/none\",\"status\":\"no_database\",\"detail\":\"ABOM tracks no repository named octo/none\"",
+            "{\"repository\":\"octo/docs\",\"status\":\"nothing\",\"detail\":\"octo/docs has no workflows or action manifest\""));
+        var cut = Render<Shared.RunResults>(p => p.Add(c => c.RunId, 7L));
+        cut.WaitForAssertion(() => cut.Find("[data-abom-run-summary]"));
+
+        var coverage = Words(cut.Find("[data-abom-run-coverage]").TextContent);
+        Assert.Contains("1 had nothing to analyze: octo/docs.", coverage);
+        Assert.Contains("Not covered: octo/broken —", coverage);
+
+        cut.Find("[data-abom-results-all] input").Change(true);
+        cut.WaitForAssertion(() =>
+        {
+            var row = cut.FindAll("[data-abom-result-repository]")
+                .Single(r => r.TextContent.Trim() == "octo/docs").Closest("tr")!.TextContent;
+            Assert.Contains("nothing to analyze — octo/docs has no workflows", row);
+            Assert.DoesNotContain("failed", row);
+        });
+    }
+
     /// <summary>Two sentences, not one word: Razor drops the space between an element and a code block.</summary>
     [Fact]
     public void ARunsSummaryKeepsItsSentencesApart()
@@ -80,7 +107,34 @@ public class HeldResultsTests : AbomTestContext
         var cut = Render<Shared.RunResults>(p => p.Add(c => c.RunId, 7L));
         cut.WaitForAssertion(() => cut.Find("[data-abom-run-summary]"));
 
-        Assert.Contains("not. Its queries found", Words(cut.Find("[data-abom-run-summary]").TextContent));
+        Assert.Contains("see why. Its queries found", Words(cut.Find("[data-abom-run-summary]").TextContent));
+    }
+
+    /// <summary>A run that stores findings states its coverage as a held run does, in the present while it runs.</summary>
+    [Fact]
+    public void ARunThatStoresFindingsStatesItsCoverageFirst()
+    {
+        Answer("api/runs/7", Held.Replace("\"held\":true", "\"held\":false"));
+        var cut = Render<Shared.RunResults>(p => p.Add(c => c.RunId, 7L));
+        cut.WaitForAssertion(() => cut.Find("[data-abom-run-summary]"));
+
+        var coverage = cut.Find("[data-abom-run-coverage]").TextContent;
+        Assert.Contains("2 of 4 repositories", coverage);
+        Assert.Contains("octo/broken", coverage);
+        Assert.DoesNotContain("covered 4", coverage);
+    }
+
+    /// <summary>The toggle is named for what it opens: the repository's results.</summary>
+    [Fact]
+    public void TheToggleOpensAndHidesTheRepositorysResults()
+    {
+        var cut = Opened();
+        Assert.Equal("Results", cut.Find("[data-abom-held-toggle='octo/app']").TextContent.Trim());
+
+        cut.Find("[data-abom-held-toggle='octo/app']").Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.Equal("Hide results", cut.Find("[data-abom-held-toggle='octo/app']").TextContent.Trim()));
     }
 
     /// <summary>What a member held is listed under it, each result convertible, and a result somebody
@@ -185,7 +239,6 @@ public class HeldResultsTests : AbomTestContext
         var cut = Render<Shared.RunResults>(p => p.Add(c => c.RunId, 7L));
         cut.WaitForAssertion(() => cut.Find("[data-abom-run-summary]"));
 
-        Assert.Empty(cut.FindAll("[data-abom-held-coverage]"));
         Assert.Empty(cut.FindAll("[data-abom-held-toggle]"));
         Assert.Empty(cut.FindAll("[data-abom-held-convert-all]"));
         Assert.DoesNotContain("held until", cut.Find("[data-abom-run-summary]").TextContent);

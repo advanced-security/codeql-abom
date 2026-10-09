@@ -18,7 +18,12 @@ const (
 
 // DependencyEdgeFilter restricts a traversal to edges that mean "uses", written once so the
 // aggregates cannot disagree about what a dependency is. Requires the edge table aliased `e`.
-const DependencyEdgeFilter = `e.edge_kind <> '` + EdgeKindJobNeedsJob + `'`
+const DependencyEdgeFilter = `e.edge_kind` + notOrdering
+
+// dependencyKind is DependencyEdgeFilter over a kind read from elsewhere, such as a sighting's own.
+func dependencyKind(kind string) string { return kind + notOrdering }
+
+const notOrdering = ` <> '` + EdgeKindJobNeedsJob + `'`
 
 // EdgeKinds is the vocabulary a reader may filter by, kept beside the filter that applies it.
 func EdgeKinds() []string {

@@ -226,6 +226,25 @@ func (s *Store) AuthoringSessions(request int64) ([]AuthoringSession, error) {
 	return out, rows.Err()
 }
 
+// RunningAuthoringSessions maps each request an agent is working on to its running session.
+func (s *Store) RunningAuthoringSessions() (map[int64]int64, error) {
+	rows, err := s.db.Query(`SELECT request_id, row_id FROM abom_authoring_session WHERE state = ?`,
+		SessionRunning)
+	if err != nil {
+		return nil, fmt.Errorf("reading the sessions under way: %w", err)
+	}
+	defer rows.Close()
+	out := map[int64]int64{}
+	for rows.Next() {
+		var request, session int64
+		if err := rows.Scan(&request, &session); err != nil {
+			return nil, fmt.Errorf("scanning a session under way: %w", err)
+		}
+		out[request] = session
+	}
+	return out, rows.Err()
+}
+
 func reported(n sql.NullInt64) *int64 {
 	if !n.Valid {
 		return nil

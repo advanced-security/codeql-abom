@@ -625,12 +625,11 @@ func (s *Supervisor) recordSpend(stats expand.Stats, progress []frontier.DepthPr
 		Cycle:     st.Cycle,
 		StartedAt: started.UTC().Format(time.RFC3339Nano),
 		Millis:    s.now().Sub(started).Milliseconds(),
-		// A repository is built and evaluated once per analysis, so those are the analysis count
-		// rather than separately instrumented counters. Fetches is not: a checkout served from
-		// the cache costs nothing, and a settled unit that still had to clone costs one, so it is
-		// counted where the clone happens.
+		// Evaluations are once per analysis, so they are the analysis count. Fetches and builds
+		// are not: a checkout served from the cache costs nothing, and neither does a database
+		// code scanning supplied or the database cache held, so each is counted where it happens.
 		Fetches:     stats.Fetched,
-		Builds:      stats.Processed,
+		Builds:      stats.Built,
 		Evaluations: stats.Processed,
 		Probes:      st.Rechecked - s.lastRechecked,
 		TreeReads:   stats.TreeReads,
@@ -639,6 +638,8 @@ func (s *Supervisor) recordSpend(stats expand.Stats, progress []frontier.DepthPr
 		Settled:     stats.Items,
 		Discovered:  stats.Discovered,
 		Drifted:     st.Drifted - s.lastDrifted,
+		CodeScanning: &store.CycleCodeScanning{Databases: stats.CodeScanning.Databases,
+			Analyses: stats.CodeScanning.Analyses, Refused: stats.CodeScanning.Refused},
 	}
 	spend.ShallowestIncomplete, spend.HasOutstanding = frontier.ShallowestIncomplete(progress)
 	s.lastRechecked, s.lastDrifted = st.Rechecked, st.Drifted

@@ -12,7 +12,19 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/authoring"
 	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/store"
+	"github.com/advanced-security/codeql-abom/internal/supervisor"
 )
+
+// discoveryHoldsCodeQL says why an action that runs CodeQL must wait for the crawl, or is empty.
+func (s *Server) discoveryHoldsCodeQL(action string) string {
+	if s.Discovery == nil {
+		return ""
+	}
+	if state := s.Discovery.Status().State; state != supervisor.StatePaused && state != supervisor.StateStopped {
+		return fmt.Sprintf("discovery is %s, and %s runs CodeQL; pause discovery first", state, action)
+	}
+	return ""
+}
 
 // ASTPrinter prints the tree of fixtures in a test database, and says which CodeQL printed it.
 type ASTPrinter interface {

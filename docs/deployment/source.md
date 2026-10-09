@@ -57,8 +57,10 @@ gh codeql install-stub "$HOME/.local/bin"
 Add `$HOME/.local/bin` to `PATH` if it is not already there. The extension does not download Linux
 arm64 builds: on that platform, download the pinned version's `linux-arm64` distribution from the
 [CodeQL installation guide](https://docs.github.com/en/code-security/codeql-cli/getting-started-with-the-codeql-cli/setting-up-the-codeql-cli)
-and put its `codeql` executable on `PATH`. Follow that guide's Apple Silicon prerequisites on
-macOS. CodeQL needs glibc on Linux; Alpine/musl is not supported.
+and put its `codeql` executable on `PATH`. On Apple silicon that guide asks for Xcode's command-line
+tools and Rosetta 2; ABOM needs only the first, because it traces no build and the Actions extractor
+runs natively. Rosetta is needed only for `make quality`'s C# check, since CodeQL ships its C#
+extractor for macOS as an x86-64 binary. CodeQL needs glibc on Linux; Alpine/musl is not supported.
 
 Confirm the version and the Actions extractor:
 

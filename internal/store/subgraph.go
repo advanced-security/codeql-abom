@@ -198,7 +198,7 @@ func (s *Store) declaredLinks(mode string) (declaredLinks, error) {
 	}
 	rows, err := s.db.Query(`
 		SELECT row_id, src_node_row_id, dst_node_row_id, edge_kind, COALESCE(ref_value, '')
-		  FROM ` + table + ` ORDER BY 1, 3, 5`)
+		  FROM ` + table + ` ORDER BY 1, 3, 5, 2, 4`)
 	if err != nil {
 		return out, fmt.Errorf("reading what each line declared: %w", err)
 	}

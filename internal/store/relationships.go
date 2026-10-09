@@ -234,8 +234,9 @@ func (s *Store) relationshipsPageQuery(q RelationshipsQuery, table string) (stri
 	}
 
 	// The identity breaks every tie, or two pages of an unstable order repeat a row and skip
-	// another; a line declaring two things is two rows, so its identity is what it declared too.
-	identity := `e.edge_key, dst.node_key, e.ref_value`
+	// another; a line declaring two things is two rows, so its identity is what it declared too,
+	// the node declaring it included.
+	identity := `e.edge_key, dst.node_key, e.ref_value, src.node_key`
 	ordering := ` ORDER BY src.node_key, dst.node_key, e.file_path, e.start_line, ` + identity
 	if column, ok := relationshipSorts[q.Sort]; ok {
 		direction := " ASC"

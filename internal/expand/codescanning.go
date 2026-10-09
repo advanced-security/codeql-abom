@@ -2,6 +2,7 @@ package expand
 
 import (
 	"archive/zip"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -54,8 +55,12 @@ type reuseCounter struct {
 	counts ReuseCounts
 }
 
-// count records one answer from code scanning: taken when reason is empty, refused otherwise.
+// count records one answer from code scanning: taken when reason is empty, refused otherwise. A nil
+// counter counts nothing.
 func (c *reuseCounter) count(what, reason string) {
+	if c == nil {
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	switch {
@@ -121,18 +126,36 @@ func plural(n int, one, many string) string {
 	return many
 }
 
-// downloadDatabase puts code scanning's database at dbDir if it is the one a build by cli would make.
-func (e *Expander) downloadDatabase(ctx context.Context, repository string, tree Tree, dbDir, cli string) bool {
+// CodeScanningUnasked says why the crawl asks code scanning for nothing, and is empty when it asks.
+func (e *Expander) CodeScanningUnasked() string {
+	switch {
+	case e.CodeScanning == nil:
+		return cmp.Or(e.CodeScanningOff, "nothing in this process reads code scanning")
+	case indexFiltersInherited():
+		return "LGTM_INDEX_FILTERS is set where ABOM runs, so every database ABOM builds indexes files " +
+			"code scanning's do not, and neither code scanning's databases nor its analyses answer for them"
+	}
+	return ""
+}
+
+// indexFiltersInherited says the environment widens every database ABOM builds and none of GitHub's.
+func indexFiltersInherited() bool { return os.Getenv("LGTM_INDEX_FILTERS") != "" }
+
+// downloadDatabase puts code scanning's database at dbDir if it is the one a build by cli would make,
+// counting the answer into counts.
+func (e *Expander) downloadDatabase(
+	ctx context.Context, repository string, tree Tree, dbDir, cli string, counts *reuseCounter,
+) bool {
 	// A round that does not know its CodeQL cannot match a database, and inherited index filters
 	// reach ABOM's builds and not GitHub's, so either way asking spends a download on nothing.
-	if e.CodeScanning == nil || cli == "" || os.Getenv("LGTM_INDEX_FILTERS") != "" {
+	if e.CodeScanning == nil || cli == "" || indexFiltersInherited() {
 		return false
 	}
 	reason := e.tryDownload(ctx, repository, tree, dbDir, cli)
 	if ctx.Err() != nil {
 		return false
 	}
-	e.reuse.count("database", reason)
+	counts.count("database", reason)
 	return reason == ""
 }
 

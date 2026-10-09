@@ -102,6 +102,7 @@ file paths. Reporting build-time work as though this organization ran it would o
 | **Unanalyzed** | Known to exist, nothing has looked |
 | **Nothing to analyze** | Looked, and there was no database or no workflow |
 | **Not claimed** (queued) | Queued for a repository nothing owned reaches any more. The crawl does not analyze it and it holds no depth open, until a prune removes it |
+| **Waiting for code scanning** | A push to a repository you own, held until code scanning's own analysis of that commit is reported or its wait runs out, so its database and findings can be taken rather than built. Still unanalyzed, and counted as outstanding |
 | **Missing** (from a full listing) | A declared repository the last full listing of its account did not name. No longer yours, and nothing removed for it; what only it reached is what the prune offers. Only a full listing can say it, and only one can say nothing is missing |
 
 A reader must be able to tell "we have not looked" from "there was nothing to look at", because
@@ -177,24 +178,27 @@ evidence. Neither a lock context nor a query's source substitutes for this datab
 | **Evaluated by** | Who produced an evaluation's result for the rule: ABOM, or *code scanning analysis N* where the repository's own code scanning analysis of the same commit ran the rule. A rule id names one query whatever pack or suite ran it, so the CodeQL version and pack shown are then that analysis's, and no query version is recorded |
 | **Lane** | What ran that is not one query: a whole suite invoked in one call, or several queries in one evaluation |
 | **Stage** | How far a version has been taken: `dev`, `test`, `extended-test`, `review`, `deploy` |
-| **Step** | One of seven marks inside `dev` and `test`: target, help, expected results, test database, AST, compiles, tests. Pending, failed, warning or passing. Pending is grey and is never a failure: nothing has been shown yet |
+| **Step** | One of seven marks inside `dev` and `test`: target, help, expected results, test database, AST, compiles, tests. A done step says what was done: chosen, written, extracted, printed, compiles, pass. Otherwise failed, unconfirmed or not yet. Not yet is grey and is never a failure |
+| **Outcome** | Where a request stands as a whole, read from its steps: an agent working on it (and the first step not yet passed), a failed or unconfirmed step, not started, unfinished at a step, or ready |
 | **Mark** (in a fixture) | `# $ Alert` on a line the query must report. A marked line it does not report is a **missing** result, and an unmarked line it reports an **unexpected** one |
 | **Failed first** | A version's tests failed on a marked result, over the fixtures a later version passes on. Without it the tests step is a warning |
 | **CodeQL *x*** | The CodeQL a test, a tree or a run was recorded under. A mark recorded under another reads as stale, and *not recorded* is not a version |
-| **Request** | What a query should catch or stop catching, with a `COMPLIANT` and a `NON_COMPLIANT` example. Open, in progress, done or declined |
+| **Request** | What a query should catch or stop catching, with at least one `COMPLIANT` and one `NON_COMPLIANT` example. Open, in progress, done or declined. A query id the catalog holds asks to **improve** it; any other valid id asks to **create** it |
+| **Linked example** | An example read from a GitHub link to lines, kept with the commit it was read at, so it does not change when the branch moves |
+| **Rule tag** / **not rule tag** | Keep, or drop, findings of rules declaring this exact tag, such as `external/cwe/cwe-829`. Matched exactly and case-sensitively, never as a prefix. A request's CVE and CWE references become such tags |
 | **Selected by you** / **decided by the agent** | Who chose a request's target. Empty means the agent decides |
 | **False alarm** / **missed detection** | Evidence on a request: a finding that should not have fired, or a repository where nothing fired that should have |
 | **Session** | An agent writing the query a request asks for, started by a person. Running, finished, stopped, failed or interrupted |
 | **What it did** | A session's timeline: every tool call, allowed or refused, and why |
 | **Refused** | A tool call that ABOM's bounds did not let run, or a run that could not start. Either says why |
 | **Tree** | What `PrintAST` printed over a test database, in a session or by ABOM when somebody asked. It is the evidence for the AST step while the fixtures are unchanged |
-| **Accepted** / **rejected** | An operator's decision about what a query reported. Accepting makes it the expected result; a rejection's reason is handed to the next session |
+| **Expected results** | The `.expected` a query's test compares against, written by the agent from the help and the fixtures' marks before the query. Never the query's own output |
 | **Draft** | A request an agent drafted from a run's picked results. Nobody has filed it until a person saves it |
 | **AI units** | What a session spent, as the Copilot CLI reported it. Absent where it reported nothing |
 | **Run** | A request to analyze chosen query versions over chosen repositories' databases, or over every repository a scope lists. Drafted on the Inventory or the CodeQL page, one draft for both; from the CodeQL page, over a named scope, whose name the run keeps beside the question it resolved to |
 | **Still to do** | What a run under way has not reached in this start: waiting, running, or finished only before this start began. Listed first, the one running at the head |
 | ***About x left*** | A run's time remaining: its own finished members' pace times what is still to do. Absent until one of them finishes, and never forecast before Run |
-| **Held but not built by this CodeQL** | A database on disk that another CodeQL built, or that records none. Counted before Run as one the run builds, not as one it has |
+| **Ready to query** / **the run builds first** / **never analyzed** | Before Run, whether each repository's database is already on disk, built by this CodeQL, or must be extracted. One another CodeQL built is counted with those the run builds. One ABOM has never analyzed names no commit, so the run tries its default branch, which may hold nothing to analyze |
 | **Findings on** / **findings off** | A run's one setting: whether what its queries report is stored as findings or held. Suggested from what its queries are — on only when every one is a version a pack published or a suite promoted — and overridden by one switch |
 | **Held** | What a run with findings off reported, kept apart from findings under an evaluation no skip reads. It states first how many of the scope's repositories it covers |
 | **Convert** | Make findings of what a held run kept — all of it, one repository, or chosen results — recording who did it and from which run |

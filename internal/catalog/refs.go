@@ -25,6 +25,9 @@ type RefAnswer struct {
 	Commit string
 	// Unread says why there is no commit. It is never evidence the reference stayed put.
 	Unread string
+	// Missing says GitHub read the repository and holds no such reference, which is evidence that
+	// it is gone; every other unread answer is evidence of nothing.
+	Missing bool
 }
 
 // RefBatch is one query's answers, in the order asked, and what GitHub charged and reported.
@@ -119,7 +122,7 @@ func (c *Client) ResolveRefs(ctx context.Context, qs []RefQuestion) (RefBatch, e
 		return out, nil
 	}
 	query, vars, asked := refQuery(qs)
-	data, errs, err := c.postRefs(ctx, query, vars, &out)
+	data, errs, err := c.postRefs(ctx, query, vars, "", &out)
 	if err != nil {
 		return out, err
 	}
@@ -158,9 +161,9 @@ func answerFor(q RefQuestion, a refAlias, data map[string]json.RawMessage, errs 
 		return RefAnswer{Commit: strings.ToLower(obj.OID)}
 	}
 	if q.Ref == "" {
-		return RefAnswer{Unread: name + " has no default branch"}
+		return RefAnswer{Unread: name + " has no default branch", Missing: true}
 	}
-	return RefAnswer{Unread: fmt.Sprintf("%s has no branch or tag named %s", name, q.Ref)}
+	return RefAnswer{Unread: fmt.Sprintf("%s has no branch or tag named %s", name, q.Ref), Missing: true}
 }
 
 // reasonAt is what GitHub said went wrong at a repository alias, or at one field beneath it.
@@ -176,8 +179,9 @@ func reasonAt(errs []refError, repo, field string) string {
 	return ""
 }
 
-// postRefs fails the whole query only on an error naming no path; one naming a path is that alias's alone.
-func (c *Client) postRefs(ctx context.Context, query string, vars map[string]any,
+// postRefs fails the whole query only on an error naming no path; one naming a path is that alias's
+// alone. owner is whose credential reads it; "" is the designated installation.
+func (c *Client) postRefs(ctx context.Context, query string, vars map[string]any, owner string,
 	batch *RefBatch) (map[string]json.RawMessage, []refError, error) {
 	payload, err := json.Marshal(struct {
 		Query     string         `json:"query"`
@@ -193,8 +197,9 @@ func (c *Client) postRefs(ctx context.Context, query string, vars map[string]any
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	// A batch spans owners, so with an App the designated installation reads it; private repositories answer unread.
-	if _, err := c.authorize(ctx, req, "", false); err != nil {
+	// A batch spanning owners is read by the designated installation, where private repositories
+	// answer unread; a query of one repository is read as its owner.
+	if _, err := c.authorize(ctx, req, owner, false); err != nil {
 		return nil, nil, err
 	}
 	if err := c.Pace.Wait(ctx); err != nil {

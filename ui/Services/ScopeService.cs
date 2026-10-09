@@ -19,7 +19,7 @@ public sealed class ScopeService
         new(StringComparer.Ordinal)
         {
             "view", "direction", "from", "status", "hops", "tab", "unit",
-            "groupBy", "use3d", "collapsed", "stableLayout",
+            "groupBy", "use3d", "collapsed", "stableLayout", "finding", "asset", "assetKind",
         };
 
     public ViewSpec Spec { get; private set; } = new();

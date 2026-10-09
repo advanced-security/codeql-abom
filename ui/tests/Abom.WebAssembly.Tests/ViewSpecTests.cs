@@ -229,7 +229,7 @@ public class ViewSpecTests
     [Fact]
     public void EveryTermGoWritesIsOneThisReadsAndWritesBackIdentically()
     {
-        var text = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "testdata", "every-term.txt")).Trim();
+        var text = File.ReadAllText(Path.Join(AppContext.BaseDirectory, "testdata", "every-term.txt")).Trim();
         Assert.Equal(text, ViewSpec.Parse(text).ToQueryString());
     }
 

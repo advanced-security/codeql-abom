@@ -2,6 +2,7 @@ package expand
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/advanced-security/codeql-abom/internal/frontier"
 	"github.com/advanced-security/codeql-abom/internal/store"
@@ -29,7 +30,7 @@ func SeedFrontier(s *store.Store, q *frontier.Queue) (int, error) {
 		JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 		JOIN repository r ON r.row_id = e.repository_row_id
 		WHERE ` + store.OwnedRepositoryFilter + `
-		  AND n.is_external = 1 AND n.owner IS NOT NULL AND n.repo IS NOT NULL
+		  AND ` + dependencyTarget + `
 		GROUP BY n.node_key, n.owner, n.repo, n.path, COALESCE(e.ref_value, '')`)
 	if err != nil {
 		return 0, fmt.Errorf("reading seed dependencies: %w", err)
@@ -43,6 +44,7 @@ func SeedFrontier(s *store.Store, q *frontier.Queue) (int, error) {
 			&it.DiscoveredFrom, &it.Ref); err != nil {
 			return 0, fmt.Errorf("scanning seed dependency: %w", err)
 		}
+		fromKey(&it)
 		it.Depth = 1
 		items = append(items, it)
 	}
@@ -51,4 +53,29 @@ func SeedFrontier(s *store.Store, q *frontier.Queue) (int, error) {
 	}
 
 	return q.Enqueue(items)
+}
+
+// dependencyTarget is what a crawl queues from an edge `e` to a node `n`: an external action or
+// workflow with an owner, or an owned repository's own action or workflow named by a remote
+// reference. That node is the owned repository's — internal, with no owner, its repo the full
+// name — and it still runs at the reference that names it, so it is queued at that reference.
+const dependencyTarget = `((n.is_external = 1 AND n.owner IS NOT NULL AND n.repo IS NOT NULL)
+	OR (n.is_external = 0 AND COALESCE(e.ref_value, '') <> '' AND e.ref_raw LIKE '%_/_%@_%'
+	    AND e.ref_raw NOT LIKE './%' AND e.ref_raw NOT LIKE '../%' AND e.ref_raw NOT LIKE '$/%'
+	    AND e.ref_raw NOT LIKE 'docker://%'))`
+
+// fromKey fills an owned target's owner, repository and path from its key, which its node does
+// not carry.
+func fromKey(it *frontier.Item) {
+	if it.Owner != "" {
+		return
+	}
+	parts := strings.SplitN(it.NodeKey, "/", 3)
+	if len(parts) < 2 {
+		return
+	}
+	it.Owner, it.Repo, it.Subpath = parts[0], parts[1], ""
+	if len(parts) == 3 {
+		it.Subpath = parts[2]
+	}
 }

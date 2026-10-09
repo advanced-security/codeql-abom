@@ -29,6 +29,7 @@
             new("nothing", "with nothing to analyze", State.Count("nothing")),
             new("running", "being analyzed", State.Count("running")),
             new("retrying", "retrying", State.Count("retrying")),
+            new("waiting", "waiting for code scanning", State.Count("waiting")),
             new("queued", "queued", State.Count("queued")),
             new("unavailable", "unavailable", State.Count("unavailable")),
         }.Where(s => s.Count > 0);

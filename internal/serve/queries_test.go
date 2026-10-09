@@ -92,10 +92,9 @@ func TestAMalformedAdvanceIsAnErrorRatherThanANoOp(t *testing.T) {
 // fakeTester answers like `codeql test run`: the run fails if any test it was handed fails, at the
 // earliest stage any of them stopped.
 type fakeTester struct {
-	failing  map[string]string // test file name -> the stage it stops at
-	ran      [][]string
-	accepted [][]string
-	during   func()
+	failing map[string]string // test file name -> the stage it stops at
+	ran     [][]string
+	during  func()
 	// unreadable is what reading CodeQL's version fails with, as it does where none is installed.
 	unreadable error
 	// calls is what the tester was asked to do, in order: "install" or "run".
@@ -123,22 +122,6 @@ func (f *fakeTester) Version(context.Context) (string, error) {
 		return "", f.unreadable
 	}
 	return fakeCLI, nil
-}
-
-// AcceptTests does what `codeql test accept` does: each test's .actual becomes its .expected.
-func (f *fakeTester) AcceptTests(_ context.Context, tests []string) error {
-	f.accepted = append(f.accepted, tests)
-	for _, test := range tests {
-		base := strings.TrimSuffix(test, ".qlref")
-		body, err := os.ReadFile(base + ".actual")
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(base+".expected", body, 0o644); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (f *fakeTester) InstallPack(context.Context) error {

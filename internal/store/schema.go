@@ -108,6 +108,16 @@ CREATE TABLE IF NOT EXISTS abom_query_run_rule (
   PRIMARY KEY (query_run_id, rule_id)
 );
 
+-- The tags a rule declared in the SARIF of one evaluation, one row each, read out of
+-- documentation_json so a CWE is matched exactly rather than as a substring of the JSON. Keyed by
+-- run because a rule's tags belong to the version that reported the finding.
+CREATE TABLE IF NOT EXISTS abom_query_run_rule_tag (
+  query_run_id INTEGER NOT NULL,
+  rule_id      TEXT NOT NULL,
+  tag          TEXT NOT NULL,
+  PRIMARY KEY (query_run_id, rule_id, tag)
+) WITHOUT ROWID;
+
 -- What one closure database was built from, keyed by the digest its runs carry: an owned
 -- repository at the commit its regular analysis describes, and each callee staged beside it at
 -- the commit the closure selected. The digest hashes these inputs, never the database, which is
@@ -230,6 +240,11 @@ CREATE TABLE IF NOT EXISTS abom_edge_sighting (
   ref_raw         TEXT,
   ref_value       TEXT,
   pin_comment     TEXT,
+  -- The declaration's kind and the job or step declaring it, which are each commit's as the target
+  -- is: one location is a needs: at one commit and a uses: at another, and code moves between
+  -- jobs without moving its line.
+  edge_kind       TEXT,
+  src_node_row_id INTEGER REFERENCES abom_node(row_id),
   PRIMARY KEY (edge_row_id, query_run_id)
 );
 
@@ -757,6 +772,10 @@ var droppedColumns = []struct{ table, column string }{
 var addedColumns = []struct{ table, column, decl string }{
 	// Zero for older rows is true: no build before this one read a tree.
 	{"abom_cycle_spend", "tree_reads", "INTEGER NOT NULL DEFAULT 0"},
+	// NULL on a cycle recorded before what code scanning supplied was kept.
+	{"abom_cycle_spend", "databases_taken", "INTEGER"},
+	{"abom_cycle_spend", "analyses_taken", "INTEGER"},
+	{"abom_cycle_spend", "code_scanning_refused", "TEXT"},
 	{"abom_query_run_rule", "documentation_json", "TEXT"},
 	{"abom_blast_radius", "refs_in_use", "INTEGER"},
 	{"abom_blast_radius", "dependent_steps", "INTEGER"},
@@ -788,6 +807,8 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_frontier", "requeued_for", "TEXT"},
 	// NULL, not read, on every row queued before pushes were compared.
 	{"abom_frontier", "dependencies_moved", "INTEGER"},
+	// NULL on every row queued before a push could wait for code scanning: nothing held them.
+	{"abom_frontier", "awaiting_code_scanning", "TEXT"},
 	{"repository", "origin", "TEXT NOT NULL DEFAULT 'seed'"},
 	// Nullable on purpose. NULL is "nobody enumerated this repository", which a gate has to be
 	// able to tell apart from a branch it knows the name of.
@@ -856,6 +877,12 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_submission", "package_digest", "TEXT"},
 	// Bumped by compaction, which deletes rows and so ends the meaning of every row-id cursor.
 	{"abom_graph_generation", "epoch", "INTEGER NOT NULL DEFAULT 0"},
+	// NULL on parts recorded before sampling: every built check read everything it could.
+	{"abom_check_part", "population", "INTEGER"},
+	{"abom_check_part", "bound", "REAL"},
+	// Zero on rows filed before sampling, which exhaustive checks filed and close by their part.
+	{"abom_check_disagreement", "sampled", "INTEGER NOT NULL DEFAULT 0"},
+	{"abom_check_disagreement", "settled_run_row_id", "INTEGER"},
 	// Every generation before this was a rebuild, which is what 0 says.
 	{"abom_graph_generation", "reach_incremental", "INTEGER NOT NULL DEFAULT 0"},
 	// Derivable from rows already stored, so existing edges are filled by
@@ -882,6 +909,19 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_query_request", "target_source", "TEXT"},
 	{"abom_query_request", "source_run_id", "INTEGER"},
 	{"abom_query_request", "target_detail", "TEXT"},
+	// A request kept before these asked for no title, slug, guidance or metadata, and the empty
+	// value says so; target_decision and the security severity are nullable because nobody
+	// deciding, and asking for no severity, are not values.
+	{"abom_query_request", "title", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_query_request", "slug", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_query_request", "recommendation", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_query_request", "target_decision", "TEXT"},
+	{"abom_query_request", "meta_description", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_query_request", "meta_precision", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_query_request", "meta_problem_severity", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_query_request", "meta_security_severity", "REAL"},
+	// Nullable: a request closed before this kept no steps, which is not having closed on none.
+	{"abom_query_request", "closed_steps", "TEXT"},
 	// A member recorded before this has no way back to its findings, which reads as not evaluated
 	// rather than as having found none.
 	{"abom_analysis_member", "query_run_id", "INTEGER"},
@@ -914,6 +954,10 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_edge_sighting", "ref_raw", "TEXT"},
 	{"abom_edge_sighting", "ref_value", "TEXT"},
 	{"abom_edge_sighting", "pin_comment", "TEXT"},
+	// NULL on every sighting written before they kept their declaration's kind and source, until
+	// Migrate fills them.
+	{"abom_edge_sighting", "edge_kind", "TEXT"},
+	{"abom_edge_sighting", "src_node_row_id", "INTEGER REFERENCES abom_node(row_id)"},
 	{"abom_held_result", "provider", "TEXT NOT NULL DEFAULT ''"},
 	{"abom_held_result", "security_severity", "REAL"},
 	{"abom_policy_simulation", "advisories", "INTEGER"},

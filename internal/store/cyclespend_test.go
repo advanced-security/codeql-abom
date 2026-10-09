@@ -1,6 +1,7 @@
 package store
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -142,5 +143,82 @@ func TestAFreshDatabaseReportsNoCyclesRatherThanZeroSpend(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("got %d cycles from a database that has never run one", len(got))
+	}
+}
+
+// What code scanning supplied is what saved a build or an evaluation, so a cycle keeps it beside
+// what it spent, refusals included, or Settings cannot say why a database was built anyway.
+func TestACycleKeepsWhatCodeScanningSuppliedAndWhyItRefusedTheRest(t *testing.T) {
+	s := newTestStore(t)
+	took := CycleCodeScanning{Databases: 2, Analyses: 1,
+		Refused: map[string]int{"database: another commit": 3, "analysis: no analysis": 1}}
+	if err := s.RecordCycle(CycleSpend{Cycle: 1, StartedAt: "2026-10-07T00:00:00Z", Builds: 3,
+		CodeScanning: &took}); err != nil {
+		t.Fatalf("RecordCycle: %v", err)
+	}
+	if err := s.RecordCycle(CycleSpend{Cycle: 2, StartedAt: "2026-10-07T00:01:00Z",
+		CodeScanning: &CycleCodeScanning{Refused: map[string]int{}}}); err != nil {
+		t.Fatalf("RecordCycle: %v", err)
+	}
+
+	got, err := s.RecentCycles(2)
+	if err != nil {
+		t.Fatalf("RecentCycles: %v", err)
+	}
+	if len(got) != 2 || got[1].CodeScanning == nil || !reflect.DeepEqual(*got[1].CodeScanning, took) {
+		t.Fatalf("the first cycle reads back %+v, want %+v", got, took)
+	}
+	if c := got[0].CodeScanning; c == nil || c.Databases != 0 || c.Analyses != 0 || c.Refused == nil ||
+		len(c.Refused) != 0 {
+		t.Errorf("a cycle code scanning supplied nothing in reads back %+v, want zero and no refusal", c)
+	}
+}
+
+// A cycle recorded before ABOM kept what code scanning supplied says nothing about it, which is not
+// a cycle that took nothing; totals count only the cycles that kept it, and say how many those are.
+func TestCycleTotalsCountWhatCodeScanningSuppliedOnlyWhereItWasKept(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.RecordCycle(CycleSpend{Cycle: 1, StartedAt: "2026-10-06T00:00:00Z", Builds: 4}); err != nil {
+		t.Fatalf("RecordCycle: %v", err)
+	}
+	for i, c := range []CycleCodeScanning{
+		{Databases: 1, Refused: map[string]int{"database: another commit": 2}},
+		{Databases: 1, Analyses: 2, Refused: map[string]int{"database: another commit": 1, "database: no database": 4}},
+	} {
+		if err := s.RecordCycle(CycleSpend{Cycle: i + 2, StartedAt: "2026-10-07T00:00:00Z",
+			CodeScanning: &c}); err != nil {
+			t.Fatalf("RecordCycle: %v", err)
+		}
+	}
+
+	got, err := s.RecentCycles(3)
+	if err != nil {
+		t.Fatalf("RecentCycles: %v", err)
+	}
+	if got[2].CodeScanning != nil {
+		t.Errorf("a cycle recorded without it reads back %+v, want nothing recorded", got[2].CodeScanning)
+	}
+	total, err := s.CycleTotals()
+	if err != nil {
+		t.Fatalf("CycleTotals: %v", err)
+	}
+	want := CycleCodeScanning{Databases: 2, Analyses: 2,
+		Refused: map[string]int{"database: another commit": 3, "database: no database": 4}}
+	if total.Cycles != 3 || total.CodeScanningCycles != 2 || !reflect.DeepEqual(total.CodeScanning, want) {
+		t.Errorf("totals read %d cycles, %d keeping code scanning's answers, and %+v; want 3, 2 and %+v",
+			total.Cycles, total.CodeScanningCycles, total.CodeScanning, want)
+	}
+}
+
+// A fresh database has kept nothing from code scanning, which an empty refusal list says without
+// becoming null for a client reading it.
+func TestAFreshDatabaseTotalsNoCodeScanningAnswers(t *testing.T) {
+	s := newTestStore(t)
+	total, err := s.CycleTotals()
+	if err != nil {
+		t.Fatalf("CycleTotals: %v", err)
+	}
+	if total.CodeScanningCycles != 0 || total.CodeScanning.Refused == nil {
+		t.Errorf("a fresh database totals %+v, want no cycles and an empty refusal list", total)
 	}
 }

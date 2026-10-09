@@ -40,6 +40,27 @@ func TestASessionIsStartedOnlyOnARequestThatExists(t *testing.T) {
 	}
 }
 
+// The request list says which requests an agent is working on without reading each one's sessions.
+func TestTheRequestsUnderWayAreReadInOneGo(t *testing.T) {
+	s := newTestStore(t)
+	working, session := aSessionOn(t, s)
+	ended, done := aSessionOn(t, s)
+	if err := s.EndAuthoringSession(done, SessionFinished, "done"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.RunningAuthoringSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[working] != session {
+		t.Errorf("running %v, want only request %d with session %d", got, working, session)
+	}
+	if _, ok := got[ended]; ok {
+		t.Errorf("request %d reads running after its session ended", ended)
+	}
+}
+
 // What a session spends arrives one model call at a time, so a stopped session still says what it
 // cost; a figure the CLI never reported stays absent rather than reading as zero.
 func TestASessionAddsUpWhatItSpentAsTheCLIReportsIt(t *testing.T) {

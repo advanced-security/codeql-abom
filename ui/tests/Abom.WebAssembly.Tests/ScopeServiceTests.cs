@@ -83,6 +83,21 @@ public class ScopeServiceTests
     }
 
     /// <summary>
+    /// Inventory writes the finding it opened, and the asset whose findings it lists, into its own
+    /// address; a link carrying them must keep its scope rather than be refused for them.
+    /// </summary>
+    [Fact]
+    public void TheFindingOpenIsNotPartOfTheScope()
+    {
+        var scope = new ScopeService();
+
+        Assert.True(scope.ReadFrom("?unit=findings&rules=acme%2Frule&finding=7&asset=octo%2Fapp&assetKind=repository"));
+
+        Assert.Null(scope.LastError);
+        Assert.Equal("rules=acme%2Frule", scope.ToQueryString());
+    }
+
+    /// <summary>
     /// A predicate that quietly ignored a typo would match everything, so an unknown term is an
     /// error naming itself rather than a parameter to skip.
     /// </summary>

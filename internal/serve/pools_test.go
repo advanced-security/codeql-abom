@@ -83,8 +83,19 @@ func TestTheMeterEndpointListsEveryPoolAndNoSpendWhereNothingWasSpent(t *testing
 			t.Errorf("%s in %s has no rate set and reports %d", p.Pool, p.Unit, *p.PerHour)
 		}
 	}
-	if got := body.find(t, work.PoolConsistency, work.UnitWorkerSeconds); got.Unmetered == "" {
+	if got := body.find(t, work.PoolCopilot, work.UnitCopilot); got.Unmetered == "" {
 		t.Error("a pool nothing in this build draws on has to say so")
+	}
+	// The checker draws on its own pools, which have no queue for an estimate to drain.
+	for _, unit := range []string{work.UnitWorkerSeconds, work.UnitREST, work.UnitGraphQL} {
+		got := body.find(t, work.PoolConsistency, unit)
+		if got.Unmetered != "" {
+			t.Errorf("the checker's %s pool says %q, and the checker draws on it", unit, got.Unmetered)
+		}
+		if got.Estimate != nil || got.NoEstimate == "" {
+			t.Errorf("the checker's %s pool estimates %+v and says %q, want why it has no estimate",
+				unit, got.Estimate, got.NoEstimate)
+		}
 	}
 	// An event's follow-up reads GitHub through a client of its own, so this pool is metered.
 	if got := body.find(t, work.PoolEvents, work.UnitREST); got.Unmetered != "" {
@@ -106,6 +117,22 @@ func TestTheMeterReportsSpendAndWhatGitHubLastReported(t *testing.T) {
 	}
 	if got.Spend.Reported == nil || got.Spend.Reported.Remaining != 4993 {
 		t.Errorf("GitHub's last reported remaining is shown beside the spend; got %+v", got.Spend.Reported)
+	}
+}
+
+// The checker runs as a process of its own and reads its rates from the store, so one set here is
+// what paces it.
+func TestARateOnTheCheckersPoolIsRecordedForTheChecker(t *testing.T) {
+	srv, s := pooledServer(t)
+
+	rec := putPool(srv, `{"pool":"consistency checker","unit":"GraphQL points","perHour":120}`, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a rate on the checker's GraphQL pool answered %d: %s", rec.Code, rec.Body.String())
+	}
+	rates, err := s.PoolRates()
+	if err != nil || len(rates) != 1 || rates[0].Pool != work.PoolConsistency ||
+		rates[0].Unit != work.UnitGraphQL || rates[0].PerHour != 120 {
+		t.Errorf("the rates recorded are %+v (%v), want the checker's 120 GraphQL points an hour", rates, err)
 	}
 }
 
@@ -146,7 +173,7 @@ func TestARateIsGuardedAndRefusedWhereItWouldLimitNothing(t *testing.T) {
 		want    int
 	}{
 		{"without the control header", `{"pool":"fetching","unit":"git requests","perHour":60}`, false, http.StatusForbidden},
-		{"on a pool nothing draws on", `{"pool":"consistency checker","unit":"worker-seconds","perHour":60}`, true, http.StatusBadRequest},
+		{"on a pool nothing draws on", `{"pool":"Copilot agents","unit":"Copilot credits","perHour":60}`, true, http.StatusBadRequest},
 		{"on a pool that does not exist", `{"pool":"fetching","unit":"GraphQL points","perHour":60}`, true, http.StatusBadRequest},
 		{"at zero, which would hold the work for ever", `{"pool":"fetching","unit":"git requests","perHour":0}`, true, http.StatusBadRequest},
 		{"with a burst below one", `{"pool":"fetching","unit":"git requests","perHour":60,"burst":0}`, true, http.StatusBadRequest},

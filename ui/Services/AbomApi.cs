@@ -499,6 +499,38 @@ public sealed class AbomApi(HttpClient http)
         }
     }
 
+    /// <summary>
+    /// Deletes a request with its sessions and their timelines; files a session wrote stay in the
+    /// pack. A refusal says why, such as a session still working it.
+    /// </summary>
+    public Task<(QueryRequestList? List, string? Refusal)> DeleteQueryRequestAsync(
+        long request, CancellationToken ct = default) =>
+        ControlAsync<QueryRequestList>(HttpMethod.Delete, $"api/query-requests/{request}", null, ct);
+
+    /// <summary>
+    /// Whether an agent session could start and, for each thing it needs, why not. Fresh probes
+    /// each CLI again rather than trusting what the server last read.
+    /// </summary>
+    public async Task<AuthoringReadiness?> GetAuthoringReadinessAsync(bool fresh = false, CancellationToken ct = default) =>
+        await GetAsync<AuthoringReadiness>(fresh ? "api/authoring/readiness?fresh=1" : "api/authoring/readiness", ct);
+
+    /// <summary>
+    /// Names the executable a tool runs, checked by the server first; empty returns it to the
+    /// flag or environment default.
+    /// </summary>
+    public Task<(AuthoringReadiness? Readiness, string? Refusal)> SetToolPathAsync(
+        string tool, string path, string by, CancellationToken ct = default) =>
+        ControlAsync<AuthoringReadiness>(HttpMethod.Put, $"api/authoring/tools/{Uri.EscapeDataString(tool)}",
+            new { path, by }, ct);
+
+    /// <summary>
+    /// What a linked example reads as, read by the server from GitHub without keeping anything. A
+    /// refusal says why the link cannot be read.
+    /// </summary>
+    public Task<(RequestExample? Example, string? Refusal)> ReadRequestExampleAsync(
+        RequestExample example, CancellationToken ct = default) =>
+        ControlAsync<RequestExample>("api/query-requests/example", example, ct);
+
     /// <summary>One run with every member, which is where a reader sees what it could not cover.</summary>
     public async Task<AnalysisRun?> GetAnalysisRunAsync(long id, CancellationToken ct = default) =>
         await GetAsync<AnalysisRun>($"api/runs/{id}", ct);
@@ -537,6 +569,11 @@ public sealed class AbomApi(HttpClient http)
     public async Task<IReadOnlyList<AuthoringAst>> GetQueryAstsAsync(string queryId, CancellationToken ct = default) =>
         (await GetAsync<AuthoringAstList>($"api/queries/asts?query={Uri.EscapeDataString(queryId)}", ct))?.Asts ?? [];
 
+    /// <summary>The files a step of a query on disk was read from, as they are now.</summary>
+    public async Task<StepShown?> GetQueryStepAsync(string queryId, string step, CancellationToken ct = default) =>
+        await GetAsync<StepShown>(
+            $"api/queries/step?query={Uri.EscapeDataString(queryId)}&step={Uri.EscapeDataString(step)}", ct);
+
     /// <summary>
     /// Has ABOM print a query's tree over its test database, keeping who asked; a refusal names
     /// what stands in the way, such as a database older than its fixtures.
@@ -544,18 +581,6 @@ public sealed class AbomApi(HttpClient http)
     public Task<(QueryCatalog? Catalog, string? Refusal)> PrintQueryAstAsync(
         string queryId, string queryVersion, string by, CancellationToken ct = default) =>
         ControlAsync<QueryCatalog>("api/queries/ast", new { queryId, queryVersion, by }, ct);
-
-    /// <summary>What a request's target last reported, for reading against the request's examples.</summary>
-    public async Task<ReviewState?> GetReviewAsync(long request, CancellationToken ct = default) =>
-        await GetAsync<ReviewState>($"api/query-requests/{request}/review", ct);
-
-    /// <summary>
-    /// Approves or rejects the report that was read. An approval makes it the expected result and
-    /// ABOM then runs the tests; a refusal says what stood in the way.
-    /// </summary>
-    public Task<(ReviewState? State, string? Refusal)> ReviewAsync(
-        long request, string verdict, string reason, string by, string digest, CancellationToken ct = default) =>
-        ControlAsync<ReviewState>($"api/query-requests/{request}/review", new { verdict, reason, by, digest }, ct);
 
     /// <summary>The sessions drafting a request from a run's picked results, each with its newest draft.</summary>
     public async Task<DraftSessionList?> GetDraftsAsync(long run, CancellationToken ct = default) =>
@@ -571,9 +596,13 @@ public sealed class AbomApi(HttpClient http)
         ControlAsync<DraftSessionList>($"api/runs/{run}/drafts/stop", null, ct);
 
     /// <summary>A guarded POST whose refusal is the reader's to read.</summary>
-    private async Task<(T? Answer, string? Refusal)> ControlAsync<T>(string path, object? body, CancellationToken ct)
+    private Task<(T? Answer, string? Refusal)> ControlAsync<T>(string path, object? body, CancellationToken ct) =>
+        ControlAsync<T>(HttpMethod.Post, path, body, ct);
+
+    private async Task<(T? Answer, string? Refusal)> ControlAsync<T>(
+        HttpMethod method, string path, object? body, CancellationToken ct)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, path);
+        using var request = new HttpRequestMessage(method, path);
         request.Headers.Add("X-Abom-Control", "1");
         if (body is not null)
         {

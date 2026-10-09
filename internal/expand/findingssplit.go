@@ -70,9 +70,11 @@ func (e *Expander) answerFromCodeScanning(
 	return own, takenAnalysis{path: theirs, from: from}, true, nil
 }
 
-// answerable reports whether an analysis could answer for the lane: an owned repository's.
+// answerable reports whether an analysis could answer for the lane: an owned repository's, read from
+// the files ABOM's own build indexes.
 func (e *Expander) answerable(repository string, planned tierPlan) bool {
-	if e.CodeScanning == nil || len(planned.findingsRules) == 0 || len(planned.findingsPaths) != len(planned.findingsRules) {
+	if e.CodeScanning == nil || indexFiltersInherited() || len(planned.findingsRules) == 0 ||
+		len(planned.findingsPaths) != len(planned.findingsRules) {
 		return false
 	}
 	// Analyses need code scanning read, which the App holds only where it is installed.

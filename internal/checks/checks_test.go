@@ -1,6 +1,7 @@
 package checks
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -120,7 +121,7 @@ func derivedFixture(t *testing.T) *store.Store {
 
 func run(t *testing.T, s *store.Store) []store.CheckRun {
 	t.Helper()
-	runs, err := Run(s, "test-build", t.TempDir())
+	runs, err := (&Checker{Store: s, Build: "test-build", Dir: t.TempDir()}).Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -313,30 +314,9 @@ func TestCheck9CatchesEachPlantedViolation(t *testing.T) {
 				SELECT n.row_id, r.row_id, 1 FROM abom_node_live n, repository r
 				 WHERE n.node_key = 'actions/cache' AND r.repository_full_name = 'vendor/act'`)
 		}},
-		{"9d", "octo/app:ci.yml:9:9", func(t *testing.T, s *store.Store) {
-			// The same line, analyzed at a second commit, naming a job rather than an action.
-			id, err := s.RecordQueryRun(store.QueryRun{AnalysisMode: store.AnalysisModeRegular,
-				QueryID: "abom/edges", Repository: "octo/app", DBCommit: "a2"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			app, err := s.UpsertRepository("octo/app", "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			w := store.NewWriter(s, 0)
-			if err := w.AddNode(store.Node{Key: "octo/app/.github/workflows/ci.yml:deploy",
-				Kind: "job", RepositoryID: app, ContainerKey: "octo/app/.github/workflows/ci.yml",
-				JobID: "deploy"}); err != nil {
-				t.Fatal(err)
-			}
-			if err := w.Flush(); err != nil {
-				t.Fatal(err)
-			}
-			exec(t, s, `INSERT INTO abom_edge_sighting (edge_row_id, query_run_id, dst_node_row_id)
-				SELECT e.row_id, ?, n.row_id FROM abom_edge_live e, abom_node_live n
-				 WHERE e.edge_key = 'octo/app:ci.yml:9:9'
-				   AND n.node_key = 'octo/app/.github/workflows/ci.yml:deploy'`, id)
+		{"9d", "octo/app:ci.yml:9:9@a2", func(t *testing.T, s *store.Store) {
+			// The same line, analyzed at a second commit, kept as a step's use of a job.
+			jobAtASecondCommit(t, s, store.EdgeKindStepUsesAction)
 		}},
 		{"9e", "octo/app@a9", func(t *testing.T, s *store.Store) {
 			// A branch the queue calls done at a commit nothing analyzed.
@@ -373,6 +353,62 @@ func TestCheck9CatchesEachPlantedViolation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// jobAtASecondCommit has octo/app's ci.yml line 9 name a job at commit a2, sighted with kind, which
+// is "" for a sighting written before sightings kept their declaration's kind.
+func jobAtASecondCommit(t *testing.T, s *store.Store, kind string) {
+	t.Helper()
+	id, err := s.RecordQueryRun(store.QueryRun{AnalysisMode: store.AnalysisModeRegular,
+		QueryID: "abom/edges", Repository: "octo/app", DBCommit: "a2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := s.UpsertRepository("octo/app", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := store.NewWriter(s, 0)
+	if err := w.AddNode(store.Node{Key: "octo/app/.github/workflows/ci.yml:deploy",
+		Kind: "job", RepositoryID: app, ContainerKey: "octo/app/.github/workflows/ci.yml",
+		JobID: "deploy"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	exec(t, s, `INSERT INTO abom_edge_sighting (edge_row_id, query_run_id, dst_node_row_id, edge_kind)
+		SELECT e.row_id, ?, n.row_id, NULLIF(?, '') FROM abom_edge_live e, abom_node_live n
+		 WHERE e.edge_key = 'octo/app:ci.yml:9:9'
+		   AND n.node_key = 'octo/app/.github/workflows/ci.yml:deploy'`, id, kind)
+}
+
+// A line that is a `uses:` at one commit and a `needs:` at another is two declarations, each of
+// its own kind, so a walked line changing kind is no violation. One sighted before sightings kept
+// their kind reads the kind its target implies once the database is opened, as every copy the
+// checker reads is.
+func TestALineThatChangedBetweenAUseAndANeedsIsNoViolation(t *testing.T) {
+	s := derivedFixture(t)
+	jobAtASecondCommit(t, s, "")
+	if err := s.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+
+	parts, err := invariants(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range parts {
+		if !strings.HasPrefix(p.Part, "9d ") {
+			continue
+		}
+		if p.Compared == 0 || len(p.Disagreements) != 0 {
+			t.Errorf("%q compared %d and reports %+v, want every declaration read and none of "+
+				"them a violation", p.Part, p.Compared, p.Disagreements)
+		}
+		return
+	}
+	t.Errorf("check 9 reported no 9d among %d parts", len(parts))
 }
 
 // contents reads every table outside the checker's own, and the schema, as sorted text.

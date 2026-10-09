@@ -147,6 +147,9 @@ public sealed record DiscoveryStatus
     public string WorkDir { get; init; } = string.Empty;
     public int ClaimsPerCycle { get; init; }
 
+    /// <summary>Why the crawl asks code scanning for nothing; empty when it asks.</summary>
+    public string CodeScanningUnasked { get; init; } = string.Empty;
+
     /// <summary>Alive and claiming, or about to: an idle loop still picks up expiring retries.</summary>
     public bool IsRunning => State is "working" or "idle" or "pausing";
 
@@ -204,8 +207,8 @@ public sealed record DiscoveryState
 
     public int Count(string state) => Frontier.TryGetValue(state, out var n) ? n : 0;
 
-    /// <summary>Queued, retrying, or running dependencies.</summary>
-    public int Unresolved => Count("queued") + Count("retrying") + Running;
+    /// <summary>Queued, retrying, waiting for code scanning, or running dependencies.</summary>
+    public int Unresolved => Count("queued") + Count("retrying") + Count("waiting") + Running;
 }
 
 public sealed record FrontierItem
@@ -227,6 +230,9 @@ public sealed record FrontierItem
     public string Reason { get; init; } = string.Empty;
     public string ClaimedAt { get; init; } = string.Empty;
     public string NextAttemptAt { get; init; } = string.Empty;
+
+    /// <summary>The pushed commit this row waits for code scanning to analyze; empty when not held.</summary>
+    public string AwaitingCodeScanning { get; init; } = string.Empty;
 
     /// <summary>Empty when nothing has ever analyzed this.</summary>
     public string AnalyzedAt { get; init; } = string.Empty;
@@ -264,6 +270,7 @@ public sealed record FrontierItem
     /// <summary>UI state that distinguishes fresh queued work from retries.</summary>
     public string State => Status switch
     {
+        "pending" when AwaitingCodeScanning.Length > 0 => "waiting",
         "pending" when Attempts > 0 => "retrying",
         "pending" => "queued",
         _ => Status,
@@ -996,6 +1003,9 @@ public sealed record NodeFigure
     public FigureCounts Counts { get; init; } = new();
     /// <summary>The page's terms it was cut under, as a reader reads them.</summary>
     public IReadOnlyList<string> Terms { get; init; } = [];
+
+    /// <summary>What the page says under the heading. The drawing describes it and does not paint it.</summary>
+    public IReadOnlyList<string> Caption { get; init; } = [];
     public string Direction { get; init; } = "LR";
     public string Graphviz { get; init; } = string.Empty;
 }
@@ -1488,6 +1498,9 @@ public sealed record QueueStages
     public int Explore { get; init; }
     public int Refresh { get; init; }
 
+    /// <summary>Pushes held for code scanning's own analysis of them, claimed once it is reported.</summary>
+    public int Waiting { get; init; }
+
     /// <summary>Queued for repositories nothing owned reaches: never claimed, holding no depth open.</summary>
     public int Unreached { get; init; }
 }
@@ -1544,6 +1557,18 @@ public sealed record CycleSpend
 
     public int ShallowestIncomplete { get; init; }
     public bool HasOutstanding { get; init; }
+
+    /// <summary>What code scanning supplied in the cycle; null for a cycle recorded before ABOM kept
+    /// it, which is not a cycle it supplied nothing in.</summary>
+    public CycleCodeScanning? CodeScanning { get; init; }
+}
+
+/// <summary>What code scanning supplied, and why each refusal was made, in the cycle log's words.</summary>
+public sealed record CycleCodeScanning
+{
+    public int Databases { get; init; }
+    public int Analyses { get; init; }
+    public IReadOnlyDictionary<string, int> Refused { get; init; } = new Dictionary<string, int>();
 }
 
 /// <summary>Every recorded cycle summed, so "under budget" has something to check against.</summary>
@@ -1558,6 +1583,10 @@ public sealed record CycleTotal
     public int TreeReads { get; init; }
     public int Analyzed { get; init; }
     public int Discovered { get; init; }
+
+    /// <summary>What code scanning supplied across the <see cref="CodeScanningCycles"/> that kept it.</summary>
+    public CycleCodeScanning CodeScanning { get; init; } = new();
+    public int CodeScanningCycles { get; init; }
 }
 
 /// <summary>
@@ -2322,9 +2351,32 @@ public sealed record MemberFindings
 public sealed record QueryRequest
 {
     public long RowId { get; init; }
+
+    /// <summary>A one-line name; empty on a request filed before requests had one.</summary>
+    public string Title { get; init; } = string.Empty;
+
+    /// <summary>The request's lasting id, lower-case words joined by hyphens; set once.</summary>
+    public string Slug { get; init; } = string.Empty;
     public string Description { get; init; } = string.Empty;
+
+    /// <summary>The first example on each side, kept for readers that read only one.</summary>
     public string Compliant { get; init; } = string.Empty;
     public string NonCompliant { get; init; } = string.Empty;
+
+    /// <summary>Every example, in the order given; at least one on each side.</summary>
+    public IReadOnlyList<RequestExample> Examples { get; init; } = [];
+    public string Recommendation { get; init; } = string.Empty;
+    public IReadOnlyList<RequestReference> References { get; init; } = [];
+
+    /// <summary>The tags the CVE and CWE references imply, worked out by the server.</summary>
+    public IReadOnlyList<string> ReferenceTags { get; init; } = [];
+    public RequestedMetadata Metadata { get; init; } = new();
+
+    /// <summary>
+    /// <c>improve</c> where the named query is in the operator's pack, <c>create</c> where it is a
+    /// new id; empty where the agent decides.
+    /// </summary>
+    public string TargetDecision { get; init; } = string.Empty;
 
     /// <summary>The query the request is about; empty for one that does not exist yet.</summary>
     public string QueryId { get; init; } = string.Empty;
@@ -2348,6 +2400,28 @@ public sealed record QueryRequest
 
     /// <summary>(a) the target, then (b) through (g) for the target's working copy.</summary>
     public IReadOnlyList<AuthoringStep> Steps { get; init; } = [];
+
+    /// <summary>Where the request stands as a whole; null where the server did not say.</summary>
+    public RequestOutcome? Outcome { get; init; }
+}
+
+/// <summary>A request's one answer to where it stands, read by the server from its steps.</summary>
+public sealed record RequestOutcome
+{
+    /// <summary>
+    /// <c>working</c>, <c>failed</c>, <c>attention</c>, <c>unfinished</c>, <c>unstarted</c> or
+    /// <c>ready</c>.
+    /// </summary>
+    public string State { get; init; } = string.Empty;
+    public string Headline { get; init; } = string.Empty;
+    public string Detail { get; init; } = string.Empty;
+
+    /// <summary>The step it was read from; empty where no one step decides it.</summary>
+    public string Step { get; init; } = string.Empty;
+
+    /// <summary><see cref="Passed"/> of <see cref="Total"/> steps have passed.</summary>
+    public int Passed { get; init; }
+    public int Total { get; init; }
 }
 
 /// <summary>
@@ -2369,12 +2443,56 @@ public sealed record RequestEvidence
     public string Kind { get; init; } = string.Empty;
 }
 
-/// <summary>The requests, and the words the server accepts for their kind and status.</summary>
+/// <summary>
+/// One example of a request. A pasted one has only <see cref="Text"/>; a linked one was read by
+/// the server from <see cref="Url"/> at <see cref="Commit"/>, so its text is GitHub's.
+/// </summary>
+public sealed record RequestExample
+{
+    /// <summary><c>compliant</c> or <c>non-compliant</c>.</summary>
+    public string Side { get; init; } = string.Empty;
+    public string Text { get; init; } = string.Empty;
+    public string Url { get; init; } = string.Empty;
+    public string Repository { get; init; } = string.Empty;
+    public string Path { get; init; } = string.Empty;
+    public string Ref { get; init; } = string.Empty;
+    public string Commit { get; init; } = string.Empty;
+    public int StartLine { get; init; }
+    public int EndLine { get; init; }
+}
+
+/// <summary>A CVE, CWE or GHSA id, or an https link, as the server spelled it.</summary>
+public sealed record RequestReference
+{
+    /// <summary><c>cve</c>, <c>cwe</c>, <c>ghsa</c> or <c>url</c>; empty until the server reads it.</summary>
+    public string Kind { get; init; } = string.Empty;
+    public string Value { get; init; } = string.Empty;
+}
+
+/// <summary>The metadata a request proposes for a new query; empty values propose nothing.</summary>
+public sealed record RequestedMetadata
+{
+    public string Description { get; init; } = string.Empty;
+    public string Precision { get; init; } = string.Empty;
+    public string ProblemSeverity { get; init; } = string.Empty;
+
+    /// <summary>Null proposes none, which is not a severity of zero.</summary>
+    public double? SecuritySeverity { get; init; }
+    public IReadOnlyList<string> Tags { get; init; } = [];
+}
+
+/// <summary>The requests, and the words the server accepts for their fields.</summary>
 public sealed record QueryRequestList
 {
     public IReadOnlyList<QueryRequest> Requests { get; init; } = [];
     public IReadOnlyList<string> Kinds { get; init; } = [];
     public IReadOnlyList<string> Statuses { get; init; } = [];
+
+    /// <summary>Values <c>@precision</c> takes, the empty one first.</summary>
+    public IReadOnlyList<string> Precisions { get; init; } = [];
+
+    /// <summary>Values <c>@problem.severity</c> takes, the empty one first.</summary>
+    public IReadOnlyList<string> Severities { get; init; } = [];
 }
 
 /// <summary>
@@ -2444,6 +2562,46 @@ public sealed record AuthoringSessionList
     public IReadOnlyList<AuthoringFlight> InFlight { get; init; } = [];
 }
 
+/// <summary>One thing an agent session needs, and whether this server has it.</summary>
+public sealed record ReadinessCheck
+{
+    /// <summary><c>pack</c>, <c>codeql</c>, <c>copilot</c>, <c>qlmcp</c>, <c>token</c> or <c>codeql-free</c>.</summary>
+    public string Key { get; init; } = string.Empty;
+    public string Name { get; init; } = string.Empty;
+
+    /// <summary><c>ready</c> or <c>problem</c>.</summary>
+    public string State { get; init; } = string.Empty;
+    public string Path { get; init; } = string.Empty;
+
+    /// <summary>Where the path came from: a flag, an environment variable, PATH or Settings.</summary>
+    public string Source { get; init; } = string.Empty;
+
+    /// <summary>Empty where nothing could be read, which is not a version.</summary>
+    public string Version { get; init; } = string.Empty;
+    public string Reason { get; init; } = string.Empty;
+    public string Remedy { get; init; } = string.Empty;
+
+    /// <summary>A path saved in Settings that this process runs only after a restart.</summary>
+    public string Saved { get; init; } = string.Empty;
+    public bool Settable { get; init; }
+
+    public bool IsReady => State == "ready";
+}
+
+/// <summary>
+/// Whether an agent session could start. Not known is a server that checks nothing, which is not
+/// the same as one where everything is ready.
+/// </summary>
+public sealed record AuthoringReadiness
+{
+    public bool Known { get; init; }
+    public bool Ready { get; init; }
+    public IReadOnlyList<ReadinessCheck> Checks { get; init; } = [];
+
+    /// <summary>What would refuse a session; null where nothing would or the server cannot say.</summary>
+    public ReadinessCheck? FirstProblem => Known && !Ready ? Checks.FirstOrDefault(c => !c.IsReady) : null;
+}
+
 /// <summary>One hook invocation in a session, as the gate decided or saw it.</summary>
 public sealed record AuthoringEvent
 {
@@ -2502,55 +2660,19 @@ public sealed record AuthoringAstList
     public IReadOnlyList<AuthoringAst> Asts { get; init; } = [];
 }
 
-/// <summary>What one of the target's tests last reported, beside what it is expected to report.</summary>
-public sealed record ReviewTest
+/// <summary>What one step of a query on disk was read from; <see cref="Absent"/> says why there is nothing.</summary>
+public sealed record StepShown
 {
-    public string Test { get; init; } = string.Empty;
-
-    /// <summary>Null where the test has reported nothing to compare.</summary>
-    public string? Actual { get; init; }
-    public string? Expected { get; init; }
-
-    /// <summary>Why the report describes a query or fixtures that have since changed.</summary>
-    public string Stale { get; init; } = string.Empty;
+    public string Step { get; init; } = string.Empty;
+    public IReadOnlyList<StepFile> Files { get; init; } = [];
+    public string Absent { get; init; } = string.Empty;
 }
 
-/// <summary>An operator's decision about a report, with the report they read.</summary>
-public sealed record AuthoringReview
+public sealed record StepFile
 {
-    public long RowId { get; init; }
-    public string QueryId { get; init; } = string.Empty;
-    public string QueryVersion { get; init; } = string.Empty;
-    public string Actual { get; init; } = string.Empty;
-
-    /// <summary><c>approved</c> or <c>rejected</c>.</summary>
-    public string Verdict { get; init; } = string.Empty;
-    public string Reason { get; init; } = string.Empty;
-    public string ReviewedBy { get; init; } = string.Empty;
-    public string ReviewedAt { get; init; } = string.Empty;
-}
-
-/// <summary>What a request's target reported, and what has been decided about its reports.</summary>
-public sealed record ReviewState
-{
-    public string QueryId { get; init; } = string.Empty;
-    public string QueryVersion { get; init; } = string.Empty;
-    public IReadOnlyList<ReviewTest> Tests { get; init; } = [];
-
-    /// <summary>Names the report as read; an approval sends it back.</summary>
-    public string Digest { get; init; } = string.Empty;
-    public bool Reviewable { get; init; }
-    public string Reason { get; init; } = string.Empty;
-
-    /// <summary>
-    /// Why this report can be rejected but not accepted: it lists failed expectations, which an
-    /// accepted report would make pass. Empty where accepting it is allowed.
-    /// </summary>
-    public string CannotAccept { get; init; } = string.Empty;
-    public IReadOnlyList<AuthoringReview> Reviews { get; init; } = [];
-
-    /// <summary>What ABOM's own test run said, on the answer to an approval.</summary>
-    public string Tested { get; init; } = string.Empty;
+    public string Path { get; init; } = string.Empty;
+    public string Body { get; init; } = string.Empty;
+    public bool Truncated { get; init; }
 }
 
 /// <summary>A request an agent drafted from a run's picked results, which nobody has filed.</summary>

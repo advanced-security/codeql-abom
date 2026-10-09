@@ -13,8 +13,10 @@ import (
 )
 
 const (
-	// DefaultLimit is the most nodes one figure draws, by the operator's decision.
-	DefaultLimit = 25
+	// DefaultLimit is the most nodes one figure draws. 300 is the largest size the placement
+	// search held: fan-in, fan-out and mixed, no overlapping boxes, callers and callees on their
+	// own sides, in about 50ms. A larger closure is cut before dot runs, and the page says so.
+	DefaultLimit = 300
 	// DefaultMaxVersions bounds the page's own versions, so a key used at many leaves room for
 	// what runs them.
 	DefaultMaxVersions = 12

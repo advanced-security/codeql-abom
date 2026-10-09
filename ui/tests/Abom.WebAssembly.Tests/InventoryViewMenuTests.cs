@@ -139,8 +139,8 @@ public class InventoryViewMenuTests : AbomTestContext
 
         page.WaitForAssertion(() => Assert.Equal(disabled,
             page.Find("[data-abom-view='unpinned']").ClassList.Contains("mud-disabled")));
-        var reason = page.Find("[data-abom-view-reason='unpinned']").GetAttribute("title") ?? "";
+        var reason = page.Find("[data-abom-view='unpinned']").Closest("[data-abom-tip]")?.GetAttribute("data-abom-tip") ?? "";
         if (disabled) Assert.Contains("Reference style: tag", reason);
-        else Assert.Equal("", reason);
+        else Assert.DoesNotContain("cannot", reason);
     }
 }

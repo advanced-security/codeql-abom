@@ -12,7 +12,7 @@ import (
 func invariants(s *store.Store) ([]store.CheckPart, error) {
 	var out []store.CheckPart
 	for _, read := range []func(*store.Store) (store.CheckPart, error){
-		dependencyTotals, rollups, startingPointsOnly, kindChanges, unobservedCommits,
+		dependencyTotals, rollups, startingPointsOnly, kindAgreement, unobservedCommits,
 		relationshipLines,
 	} {
 		p, err := read(s)
@@ -104,32 +104,24 @@ func startingPointsOnly(s *store.Store) (store.CheckPart, error) {
 	return p, nil
 }
 
-// kindChanges is 9d: a sighting omits its location's kind, so a walked change is a mixture.
-func kindChanges(s *store.Store) (store.CheckPart, error) {
-	p := store.CheckPart{Part: "9d no walked location changes between a job and a non-job"}
-	k, err := s.KindChanges()
+// kindAgreement is 9d: a `needs:` names a job and a `uses:` never does, so a declaration read with
+// a kind its target contradicts was given another commit's kind, as every sighting was before they
+// kept their own.
+func kindAgreement(s *store.Store) (store.CheckPart, error) {
+	p := store.CheckPart{Part: "9d every declaration's kind agrees with its target"}
+	k, err := s.KindAgreement()
 	if err != nil {
 		return p, err
 	}
-	p.Compared = k.Walked
-	unwalked := 0
-	for _, c := range k.Changes {
-		if !c.Walked {
-			unwalked++
-			continue
+	p.Compared = k.Declarations
+	for _, c := range k.Contradictions {
+		subject := c.Location
+		if c.Commit != "" {
+			subject += "@" + c.Commit
 		}
-		disagree(&p, c.Location, "9d target kind across commits",
-			"one location in "+c.Repository, c.Targets)
+		disagree(&p, subject, "9d declaration kind against its target",
+			c.Kind+" in "+c.Repository, "names "+c.TargetKind+" "+c.Target)
 	}
-	notWalked := map[string]int{}
-	if n := k.Unwalked - unwalked; n > 0 {
-		notWalked["excluded by rule: no starting point walks what declares it"] = n
-	}
-	if unwalked > 0 {
-		notWalked["excluded by rule: changes between a job and a non-job, and no starting point "+
-			"walks what declares it"] = unwalked
-	}
-	skip(&p, notWalked)
 	return p, nil
 }
 

@@ -37,6 +37,10 @@ reach.
    dependents according to the query, and the set difference in both directions. Depends on 1.
 3. **Report the comparison where a reader can see it.** A disagreement nobody looks at is not a
    check. Depends on 2.
+4. **Run it continuously, as check 6.** The consistency checker runs the walk over sampled owned
+   repositories, on its own pool and CodeQL capacity, and files what disagrees as its other checks
+   do: a question with its reproduction, never a correction. `codeql-abom check` already lists
+   check 6 as planned here. Depends on 2.
 
 ## The constraints that must not be broken
 

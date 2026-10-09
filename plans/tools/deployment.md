@@ -273,7 +273,7 @@ matrix. A missing label fails its cell rather than dropping the platform.
 | UI image and Deployment | Published WebAssembly, an unprivileged static server and same-origin API proxy. No SDK or .NET server runtime; no UI asset ConfigMap. |
 | API/coordinator image and replicated Deployment | Scope, admission, scheduling, ledger decisions, ingestion, aggregation and persistent custom-query workspace, over PostgreSQL. Exactly one replica holds the scheduling lease at a time; the others serve reads. Include only tools needed for its remaining non-CodeQL duties. |
 | Event receiver Deployment | Verifies each enterprise App delivery's signature before parsing and appends it to the durable event log the [event processor](../../docs/architecture.md#the-pipeline) reads. Scaled on its own; holds no GitHub write credential and no CodeQL. |
-| Consistency checker Deployment | The [graph consistency checker](graph-consistency-checker.md): reads a replica, writes only its own tables, spends only its own pools. Its agent sessions use the optional authoring profile's confinement. |
+| Consistency checker Deployment | The [consistency checker](../../docs/architecture.md#how-it-is-tested): reads a replica, writes only its own tables, spends only its own pools. An investigating agent, if `plans/next.md` decides for one, would use the optional authoring profile's confinement. |
 | CodeQL worker image and Jobs | Existing ABOM binary with a typed worker entry point, verified CodeQL distribution, required query assets and runtime tools. Fetch, extract, evaluate, decode and return artifacts. No live-store access. |
 | Optional authoring worker profile | Worker-derived image with pinned authoring tools, separate credentials, existing confinement and time/credit limits. Disabled by default. |
 | External artifact service | Immutable job inputs, outputs and retained databases under an installation-specific S3 prefix. It is not the store. |
@@ -416,9 +416,10 @@ organization-wide crawl merely to validate the instructions.
    start the server from the archive root.
 3. **Qualify the platform floors.** Linux archives are built on Ubuntu 22.04 images and record
    their newest glibc symbol; macOS archives target 12.0, Go's own floor. Run each archive on its
-   recorded floor with the pinned CodeQL, including the Rosetta and Xcode requirements on Apple
-   silicon, before any floor appears in release documentation. The candidates' archives are
-   enough to start on.
+   recorded floor with the pinned CodeQL, including the Xcode requirements on Apple silicon, before
+   any floor appears in release documentation. Serving and analyzing need no Rosetta there, since
+   ABOM traces no build and the Actions extractor is native; the floor run is what confirms it. The
+   candidates' archives are enough to start on.
 4. **Exercise the actual download path.** Document download, provenance/checksum verification,
    extraction into a versioned user-writable prefix, PATH setup, configuration and startup.
    Use appropriate Linux/macOS verification commands and an expected repository/workflow with

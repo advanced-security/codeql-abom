@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -32,7 +33,8 @@ type Sessions struct {
 	Libraries []string
 	// WorkDir holds each session's home while it runs.
 	WorkDir string
-	// Agent runs a session; nil refuses every start with the reason.
+	// Agent runs a session; nil refuses every start with the reason. Change it while serving
+	// through SetAgent.
 	Agent Agent
 	// Model is recorded on each session.
 	Model string
@@ -51,10 +53,24 @@ type Sessions struct {
 	// nil installs nothing.
 	Prepare func(context.Context) error
 
-	mu   sync.Mutex
-	live map[int64]*live
+	agentMu sync.RWMutex
+	mu      sync.Mutex
+	live    map[int64]*live
 	// drafting is the sessions drafting from a run, by run.
 	drafting map[int64]*live
+}
+
+// SetAgent changes what runs the next session; one already under way keeps its own.
+func (s *Sessions) SetAgent(a Agent) {
+	s.agentMu.Lock()
+	defer s.agentMu.Unlock()
+	s.Agent = a
+}
+
+func (s *Sessions) agent() Agent {
+	s.agentMu.RLock()
+	defer s.agentMu.RUnlock()
+	return s.Agent
 }
 
 // DefaultLimit bounds a session nobody configured a limit for.
@@ -87,7 +103,7 @@ func (s *Sessions) Start(request int64, by string) (store.AuthoringSession, erro
 }
 
 func (s *Sessions) start(request int64, by string) (store.AuthoringSession, <-chan struct{}, error) {
-	if s.Agent == nil {
+	if s.agent() == nil {
 		return store.AuthoringSession{}, nil, ErrNoAgent
 	}
 	req, err := s.requestNamed(request)
@@ -117,7 +133,8 @@ func (s *Sessions) start(request int64, by string) (store.AuthoringSession, <-ch
 	if err != nil {
 		return s.failStarted(id, unlock, detail, err)
 	}
-	bounds = bounds.Guard(s.firstChange(request))
+	guard := s.firstChange(request)
+	bounds = bounds.Guard(guard)
 
 	gate := NewGate(bounds, s.recorder(id))
 	if err := gate.KeepPrinted(scratch, s.keeper(id, request)); err != nil {
@@ -127,10 +144,6 @@ func (s *Sessions) start(request int64, by string) (store.AuthoringSession, <-ch
 		return s.Store.AddAuthoringSpend(id, store.AuthoringSpend{InputTokens: sp.InputTokens,
 			OutputTokens: sp.OutputTokens, NanoAIU: sp.NanoAIU})
 	})
-	reviews, err := s.Store.AuthoringReviews(request)
-	if err != nil {
-		return s.failStarted(id, unlock, err.Error(), err)
-	}
 	limit := s.limit()
 	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	l := &live{session: id, gate: gate, cancel: cancel}
@@ -140,10 +153,11 @@ func (s *Sessions) start(request int64, by string) (store.AuthoringSession, <-ch
 		Home:      home,
 		Scratch:   scratch,
 		Workspace: bounds.Workspace(),
-		Prompt:    prompt(req, reviews),
+		Prompt:    prompt(req),
 		Rules:     rules(bounds, s.Libraries, req.QueryID),
 		Gate:      gate,
 		Tools:     s.tools(ctx, request, gate),
+		Next:      s.next(request, gate, guard),
 	}
 	done := s.launchAuthoring(startedAuthoring{
 		id: id, request: request, dir: dir, limit: limit, ctx: ctx, cancel: cancel, live: l,
@@ -236,7 +250,11 @@ func (s *Sessions) run(ctx context.Context, setup Setup) (final string, err erro
 			err = fmt.Errorf("the session failed: %v", r)
 		}
 	}()
-	return s.Agent.Run(ctx, setup)
+	agent := s.agent()
+	if agent == nil {
+		return "", ErrNoAgent
+	}
+	return agent.Run(ctx, setup)
 }
 
 func (s *Sessions) outcome(ctx context.Context, l *live, limit time.Duration, final string, err error) (string, string) {
@@ -351,11 +369,12 @@ func (s *Sessions) codeQL(ctx context.Context) (string, error) {
 	return s.Version(ctx)
 }
 
-// firstChange keeps the target query as it is until ABOM has recorded its tests failing on a result
-// the fixtures mark, over the fixtures as they are.
+// firstChange keeps the target query as it is until everything it is judged by is on record: its
+// help, its .expected, its tests failing on a result the fixtures mark, and a tree printed from
+// the fixtures as they are.
 //
 // Once the query has changed there is nothing left to hold: the first change could only get past
-// this with the failure on record.
+// this with all of them on record.
 func (s *Sessions) firstChange(request int64) func() string {
 	var mu sync.Mutex
 	var start string
@@ -384,25 +403,132 @@ func (s *Sessions) firstChange(request int64) func() string {
 			released = true
 			return ""
 		}
-		fixtures, err := authoring.DigestFixtures(s.Workspace, q.Tests)
+		why, err := s.unjudged(q)
 		if err != nil {
 			return err.Error()
 		}
-		tests, err := s.Store.QueryTestsOf(q.ID)
-		if err != nil {
-			return err.Error()
-		}
-		for _, t := range tests {
-			if fixtures != "" && t.QueryVersion == q.Version && t.FixturesDigest == fixtures &&
-				authoring.FailedOnMarks(t) {
-				released = true
-				return ""
-			}
-		}
+		released = why == ""
+		return why
+	}
+}
+
+// unjudged names the first link missing from what a query is judged by, empty when none is.
+func (s *Sessions) unjudged(q authoring.Query) (string, error) {
+	steps, err := s.progress(context.Background(), q)
+	if err != nil {
+		return "", err
+	}
+	if st := steps[StepHelp]; st.State != authoring.Passing {
+		return "the query stays as it is until its help says what it reports: " + st.Detail +
+			"; write the help from the request first", nil
+	}
+	if st := steps[StepExpected]; st.State != authoring.Passing {
+		return "the query stays as it is until its .expected says what it must report: " + st.Detail +
+			"; write it from the help and the fixtures' # $ Alert marks", nil
+	}
+	fixtures, err := authoring.DigestFixtures(s.Workspace, q.Tests)
+	if err != nil {
+		return "", err
+	}
+	tests, err := s.Store.QueryTestsOf(q.ID)
+	if err != nil {
+		return "", err
+	}
+	if !slices.ContainsFunc(tests, func(t store.QueryTest) bool {
+		return fixtures != "" && t.QueryVersion == q.Version && t.FixturesDigest == fixtures &&
+			authoring.FailedOnMarks(t)
+	}) {
 		return fmt.Sprintf("the query stays as it is until its tests have failed on a result its fixtures "+
 			"mark: mark each line the query must report with # $ Alert, then call %s, which runs them "+
-			"against the query as it stands and records the failure", ToolTest)
+			"against the query as it stands and records the failure", ToolTest), nil
 	}
+	if st := steps[StepAST]; st.State != authoring.Passing {
+		return "the query stays as it is until PrintAST has printed these fixtures: " + st.Detail +
+			"; run codeql_query_run with queryName PrintAST, queryLanguage actions, the test database " +
+			"and sourceFiles naming the fixtures", nil
+	}
+	return "", nil
+}
+
+// progress is a query's steps by name, read from the files and the evidence on record now.
+func (s *Sessions) progress(ctx context.Context, q authoring.Query) (map[string]authoring.Step, error) {
+	cli, err := s.codeQL(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tests, err := s.Store.QueryTestsOf(q.ID)
+	if err != nil {
+		return nil, err
+	}
+	printed, err := s.Store.NewestASTs()
+	if err != nil {
+		return nil, err
+	}
+	steps, err := authoring.Progress(s.Workspace, q,
+		authoring.Evidence{CLI: cli, Tests: tests, Printed: printed[q.ID]})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]authoring.Step, len(steps))
+	for _, st := range steps {
+		out[st.Step] = st
+	}
+	return out, nil
+}
+
+// next is what an idle agent is told: the first thing not done, recorded on the timeline. It is
+// empty when nothing is left, or when the agent would be told the same about the same files again.
+func (s *Sessions) next(request int64, gate *Gate, guard func() string) func(context.Context) string {
+	var last string
+	return func(ctx context.Context) string {
+		nudge, files := s.nudge(ctx, request, gate, guard)
+		if nudge == "" || nudge+files == last {
+			return ""
+		}
+		last = nudge + files
+		gate.Say(nudge)
+		return nudge
+	}
+}
+
+// nudge is the first thing not done for a request, and the query and tests it was read from.
+func (s *Sessions) nudge(ctx context.Context, request int64, gate *Gate, guard func() string) (string, string) {
+	if !gate.Bounds().bound() {
+		return fmt.Sprintf("Not finished: no query is chosen. Call %s, then %s.", ToolCatalog, ToolTarget), ""
+	}
+	req, err := s.requestNamed(request)
+	if err != nil {
+		return "", ""
+	}
+	q, found, err := authoring.Find(s.Workspace, req.QueryID)
+	if err != nil || !found {
+		return "", ""
+	}
+	digest, err := authoring.DigestTests(s.Workspace, q.Tests)
+	if err != nil {
+		return "", ""
+	}
+	files := q.Version + " " + digest
+	if why := guard(); why != "" {
+		return "Not finished: " + why + ".", files
+	}
+	steps, err := s.progress(ctx, q)
+	if err != nil {
+		return "", ""
+	}
+	for _, st := range []struct{ step, do string }{
+		{StepHelp, "Write the help from the request"},
+		{StepExpected, "Write the .expected from the help and the fixtures' marks"},
+		{StepAST, "Print the fixtures with PrintAST"},
+		{StepCompiles, "Write the query so it compiles; check it with codeql_query_compile, then call " + ToolTest},
+		{StepTests, "Write the query so its tests pass: read the .actual beside the test, change the " +
+			"query, compile it, and call " + ToolTest + " again"},
+	} {
+		if got := steps[st.step]; got.State != authoring.Passing {
+			return fmt.Sprintf("Not finished: %s is %s: %s. %s.", st.step, got.State, got.Detail, st.do), files
+		}
+	}
+	return "", files
 }
 
 func (s *Sessions) requestNamed(id int64) (store.QueryRequest, error) {
@@ -452,11 +578,67 @@ func (s *Sessions) bounds(req store.QueryRequest) (Bounds, error) {
 	if req.QueryID == "" {
 		return b, nil
 	}
+	if err := s.layOutAsked(req); err != nil {
+		return Bounds{}, err
+	}
 	query, tests, err := s.locate(req.QueryID)
 	if err != nil {
 		return Bounds{}, err
 	}
 	return b.Bind(query, tests)
+}
+
+// layOutAsked lays out the new query an operator asked for, the first time a session works it.
+func (s *Sessions) layOutAsked(req store.QueryRequest) error {
+	if req.TargetSource != store.TargetOperator || req.TargetDecision != store.DecisionCreate {
+		return nil
+	}
+	if _, found, err := authoring.Find(s.Workspace, req.QueryID); err != nil || found {
+		return err
+	}
+	name := queryFileName(req.QueryID)
+	if !customql.ValidQueryName(name) {
+		return fmt.Errorf("%s cannot be laid out: %q, from the last part of its id, is not a file name "+
+			"such as CheckoutTagPin", req.QueryID, name)
+	}
+	if taken, err := s.taken(req.QueryID, name); err != nil || taken != "" {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("%s cannot be laid out: %s", req.QueryID, taken)
+	}
+	_, _, err := customql.ScaffoldQuery(s.Workspace, name, req.QueryID, req.RowID, requested(req))
+	return err
+}
+
+// queryFileName is the file a new query is laid out in, from the last part of its id:
+// acme/checkout-tag-pin is CheckoutTagPin.
+func queryFileName(id string) string {
+	var out strings.Builder
+	for word := range strings.SplitSeq(id[strings.LastIndex(id, "/")+1:], "-") {
+		if word != "" {
+			out.WriteString(strings.ToUpper(word[:1]) + word[1:])
+		}
+	}
+	return out.String()
+}
+
+// requested is what a request asks its new query to declare, with the tags its references imply.
+func requested(r store.QueryRequest) customql.Requested {
+	tags := slices.Clone(r.Metadata.Tags)
+	for _, t := range r.ReferenceTags {
+		if !slices.Contains(tags, t) {
+			tags = append(tags, t)
+		}
+	}
+	refs := []string{}
+	for _, ref := range r.References {
+		refs = append(refs, ref.Value)
+	}
+	return customql.Requested{Title: r.Title, Description: r.Metadata.Description,
+		Precision: r.Metadata.Precision, ProblemSeverity: r.Metadata.ProblemSeverity,
+		SecuritySeverity: r.Metadata.SecuritySeverity, Tags: tags, Recommendation: r.Recommendation,
+		References: refs}
 }
 
 // locate finds a query in the pack by id, and the one test directory that is its alone, laying
@@ -531,9 +713,9 @@ func (s *Sessions) tools(ctx context.Context, request int64, gate *Gate) []copil
 		answering(func(c targetChoice) (string, error) { return s.decide(request, gate, c) }))
 	test := copilot.DefineTool(ToolTest,
 		"Runs the target query's own tests through ABOM, which records what they said. Call it once "+
-			"the fixtures mark each line the query must report with # $ Alert, before changing the "+
-			"query: its first change waits until these tests have failed because those results are "+
-			"missing. It also extracts the test database.",
+			"the help, the fixtures marking each line the query must report with # $ Alert, and the "+
+			".expected are written, before changing the query: its first change waits until these "+
+			"tests have failed because those results are missing. It also extracts the test database.",
 		answering(func(struct{}) (string, error) { return s.testTarget(ctx, request, gate) }))
 	catalog.SkipPermission, target.SkipPermission, test.SkipPermission = true, true, true
 	return []copilot.Tool{catalog, target, test}
@@ -662,11 +844,15 @@ func (s *Sessions) decide(request int64, gate *Gate, c targetChoice) (string, er
 			}
 			return "", errors.New(taken)
 		}
+		req, err := s.requestNamed(request)
+		if err != nil {
+			return "", err
+		}
 		if err := s.Store.DecideTarget(request, c.QueryID, c.Rationale); err != nil {
 			return "", err
 		}
-		var err error
-		if query, tests, err = customql.ScaffoldQuery(s.Workspace, c.Name, c.QueryID, request); err != nil {
+		if query, tests, err = customql.ScaffoldQuery(s.Workspace, c.Name, c.QueryID, request,
+			requested(req)); err != nil {
 			return "", err
 		}
 	default:
@@ -741,39 +927,85 @@ func rules(b Bounds, libraries []string, target string) string {
 			"query already in your pack, or create a new one with a new id and file name. Nothing can "+
 			"be written until you have decided.\n\n", ToolCatalog, ToolTarget)
 	}
-	out.WriteString("You may write the target query, its help in a .md file beside it, and Actions " +
-		"YAML fixtures under its test directory: workflows under .github/workflows there, or action " +
-		"metadata. create writes a new file and refuses one that exists; change a file with edit. " +
-		"The .qlref, the .expected and .actual files, the test database and every manifest " +
-		"belong to ABOM and the CLI.\n\n")
-	out.WriteString("Work test-first, in this order:\n" +
-		"1. Write fixtures from the request's examples. Mark each line the query must report with a " +
-		"trailing # $ Alert comment, and leave the compliant example unmarked. A result meets a mark " +
-		"on the line its location ends on, so report the value on that line, such as a uses step's " +
-		"getCalleeNode(), not the step or job around it, whose location runs on to the next item.\n" +
-		"2. Call " + ToolTest + ". ABOM runs the tests against the query as it stands and records " +
-		"the result, which must fail because the marked results are missing. The query cannot change " +
-		"until ABOM has recorded that failure.\n" +
-		"3. Run codeql_query_run with queryName PrintAST, queryLanguage actions, database set to the " +
+	out.WriteString("You may write the target query, its help in a .md file beside it, its .expected, and " +
+		"Actions YAML fixtures under its test directory: workflows under .github/workflows there, or " +
+		"action metadata. create writes a new file and refuses one that exists; change a file with edit. " +
+		"The .qlref, the .actual, the test database and every manifest belong to ABOM and the CLI.\n\n")
+	out.WriteString("Work test-first, in this order. The query cannot change until 1 to 5 are done.\n" +
+		"1. Write the help in these sections and no others: a # title, ## Overview (what the query " +
+		"reports and why it matters), ## Recommendation (how to fix it), ## Example (the request's " +
+		"examples, non-compliant then compliant) and ## References. Where it was laid out from the " +
+		"request, replace every " + customql.HelpUnwritten + " with what that section should say.\n" +
+		"2. Write one fixture per example of the request, each its own workflow file. Then give " +
+		"every case and edge case the query detects at least one non-compliant fixture and at least " +
+		"one compliant fixture; add more only where each tests something the others do not. Mark each line " +
+		"the query must report with a trailing # $ Alert comment, and leave the compliant examples " +
+		"unmarked. A result meets a mark on the line its location ends on, so report the value on that " +
+		"line, such as a uses step's getCalleeNode(), not the step or job around it, whose location " +
+		"runs on to the next item.\n" +
+		"3. Write the .expected beside the .qlref: one row per marked line, as " +
+		"| <file>:<startLine>:<startColumn>:<endLine>:<endColumn> | <element> | <message> |, with the " +
+		"message the help says the query reports. Columns are 1-based and the end column is inclusive. " +
+		"It is what the query must produce; the query's own output never decides it.\n" +
+		"4. Call " + ToolTest + ". ABOM runs the tests against the query as it stands and records " +
+		"the result, which must fail because the marked results are missing. It also extracts the test " +
+		"database.\n" +
+		"5. Run codeql_query_run with queryName PrintAST, queryLanguage actions, database set to the " +
 		"test database and sourceFiles naming your fixture files, and read which classes model them.\n" +
-		"4. Write the query, and compile it with codeql_query_compile.\n" +
-		"5. Call " + ToolTest + " again and read the .actual beside the test; repeat 4 and 5 until it " +
-		"has no testFailures: every marked line reported, and nothing else.\n" +
-		"6. Write the help.\n" +
-		"7. Ask for the output to be accepted with codeql_test_accept. An operator reads it against " +
-		"the request before it becomes the expected result, and this session does not accept it. " +
-		"After the answer, stop, and report what each step produced.\n")
+		"6. Write the query, and compile it with codeql_query_compile until it compiles.\n" +
+		"7. Call " + ToolTest + " and read the .actual beside the test; change the query and repeat " +
+		"until the tests pass. Change the .expected only where it misstates a location or an element, " +
+		"never to take a result the help does not ask for or drop one it does.\n" +
+		"8. Stop, and report in a few lines what passes and what does not.\n" +
+		"Keep the help current through every step. When the fixtures, the tree or the query's results " +
+		"show you something a reader needs, such as a case the query reports or leaves alone, why it " +
+		"matters, or a better fix, edit the section it belongs in. Keep each section short and in the " +
+		"same form; say what is true of the query, not what you tried. Edit it to make it accurate, " +
+		"never to narrow what the request asks the query to report.\n")
 	return out.String()
 }
 
-// prompt is the request as the operator wrote it, and their newest rejection of what an earlier
-// session produced, fenced so none of it reads as an instruction of ABOM's.
-func prompt(r store.QueryRequest, reviews []store.AuthoringReview) string {
+// prompt is the request as the operator wrote it, fenced so none of it reads as an instruction of
+// ABOM's.
+func prompt(r store.QueryRequest) string {
 	var out strings.Builder
-	fmt.Fprintf(&out, "Request %d, as the operator wrote it.\n\nWhat to detect:\n%s\n\n", r.RowID,
-		fence(r.Description, "text"))
-	fmt.Fprintf(&out, "Compliant example, which must not be reported:\n%s\n\n", fence(r.Compliant, "yaml"))
-	fmt.Fprintf(&out, "Non-compliant example, which must be reported:\n%s\n\n", fence(r.NonCompliant, "yaml"))
+	fmt.Fprintf(&out, "Request %d, as the operator wrote it.\n\n", r.RowID)
+	if r.Title != "" {
+		fmt.Fprintf(&out, "Title:\n%s\n\n", fence(r.Title, "text"))
+	}
+	fmt.Fprintf(&out, "What to detect:\n%s\n\n", fence(r.Description, "text"))
+	for _, side := range []struct{ name, kind, must string }{
+		{"Compliant", store.ExampleCompliant, "must not be reported"},
+		{"Non-compliant", store.ExampleNonCompliant, "must be reported"},
+	} {
+		var examples []store.RequestExample
+		for _, e := range r.Examples {
+			if e.Side == side.kind {
+				examples = append(examples, e)
+			}
+		}
+		for i, e := range examples {
+			fmt.Fprintf(&out, "%s example %d of %d, which %s", side.name, i+1, len(examples), side.must)
+			if link := permalink(e); link != "" {
+				fmt.Fprintf(&out, ", lines %d to %d of %s in %s, read at %s", e.StartLine, e.EndLine, e.Path,
+					e.Repository, link)
+			}
+			fmt.Fprintf(&out, ":\n%s\n\n", fence(e.Text, "yaml"))
+		}
+	}
+	if r.Recommendation != "" {
+		fmt.Fprintf(&out, "How to fix what it reports:\n%s\n\n", fence(r.Recommendation, "text"))
+	}
+	if len(r.References) > 0 {
+		refs := make([]string, 0, len(r.References))
+		for _, ref := range r.References {
+			refs = append(refs, ref.Value)
+		}
+		fmt.Fprintf(&out, "References:\n%s\n\n", fence(strings.Join(refs, "\n"), "text"))
+	}
+	if declared := metadataAsked(r); declared != "" {
+		fmt.Fprintf(&out, "The query is asked to declare:\n%s\n\n", fence(declared, "text"))
+	}
 	switch r.Kind {
 	case store.RequestMissed:
 		out.WriteString("It asks about something the query should report and does not.\n")
@@ -786,13 +1018,35 @@ func prompt(r store.QueryRequest, reviews []store.AuthoringReview) string {
 		fmt.Fprintf(&out, "It was asked from run %d, with %d result(s) picked as evidence.\n", r.SourceRunID,
 			len(r.Evidence))
 	}
-	if len(reviews) > 0 && reviews[0].Verdict == store.ReviewRejected {
-		fmt.Fprintf(&out, "\nAn operator read what %s reported after an earlier session and rejected it, "+
-			"saying:\n%s\n\nWhat it reported then:\n%s\n\nChange the query or its fixtures so that the next "+
-			"report answers that.\n", reviews[0].QueryID, fence(reviews[0].Reason, "text"),
-			fence(reviews[0].Actual, "text"))
-	}
 	return out.String()
+}
+
+// permalink is where a linked example was read: its file at the commit, not the ref that may move.
+func permalink(e store.RequestExample) string {
+	u, err := url.Parse(e.URL)
+	if e.URL == "" || err != nil {
+		return ""
+	}
+	return (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: "/" + e.Repository + "/blob/" + e.Commit + "/" + e.Path,
+		Fragment: fmt.Sprintf("L%d-L%d", e.StartLine, e.EndLine)}).String()
+}
+
+// metadataAsked is the QLDoc a request asks for, one tag a line, empty when it asks for none.
+func metadataAsked(r store.QueryRequest) string {
+	want := requested(r)
+	var lines []string
+	for _, field := range []struct{ tag, value string }{
+		{"@description", want.Description}, {"@precision", want.Precision},
+		{"@problem.severity", want.ProblemSeverity}, {"@tags", strings.Join(want.Tags, " ")},
+	} {
+		if field.value != "" {
+			lines = append(lines, field.tag+" "+field.value)
+		}
+	}
+	if s := want.SecuritySeverity; s != nil {
+		lines = append(lines, fmt.Sprintf("@security-severity %.1f", *s))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // fence wraps text in a code fence longer than any run of backticks inside it.

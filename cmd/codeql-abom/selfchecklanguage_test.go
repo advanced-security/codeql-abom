@@ -47,3 +47,26 @@ func TestSelfcheckAcceptsALanguageWithItsOwnSuite(t *testing.T) {
 		t.Errorf("suite = %q, want the suite that was asked for", cfg.suite)
 	}
 }
+
+// CodeQL sizes its own default from the machine, and on a hosted runner that left the C# suite
+// 692 MiB of heap. The workflow states the budget instead, as code scanning's own action does, and
+// a budget nobody stated is still CodeQL's to choose.
+func TestSelfcheckGivesCodeQLTheMemoryItIsTold(t *testing.T) {
+	cfg, err := parseSelfcheck([]string{"--ram=14336"}, io.Discard)
+	if err != nil {
+		t.Fatalf("parseSelfcheck: %v", err)
+	}
+	if r := selfcheckRunner(cfg); r.RAMMB != 14336 {
+		t.Errorf("CodeQL was given %d MB, want the 14336 asked for", r.RAMMB)
+	}
+	cfg, err = parseSelfcheck(nil, io.Discard)
+	if err != nil {
+		t.Fatalf("parseSelfcheck: %v", err)
+	}
+	if r := selfcheckRunner(cfg); r.RAMMB != 0 {
+		t.Errorf("with no --ram CodeQL was given %d MB, want it left to CodeQL", r.RAMMB)
+	}
+	if _, err := parseSelfcheck([]string{"--ram=-1"}, io.Discard); err == nil {
+		t.Error("a negative budget was accepted, and would be passed over in silence")
+	}
+}

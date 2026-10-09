@@ -120,14 +120,16 @@ public class InventoryHonestyTests : AbomTestContext
         page.WaitForAssertion(() =>
         {
             // The reason, not a framework class name: what a reader needs is which term this
-            // surface cannot apply and where it is answered. It sits beside the chip rather than
-            // on it, because a disabled chip shows no title.
-            var reason = page.Find("[data-abom-view-reason='crossings']").GetAttribute("title") ?? "";
+            // surface cannot apply and where it is answered.
+            var reason = Tip(page, "crossings");
             Assert.Contains("Boundary: cross-owner", reason);
             Assert.Contains("Relationships and the Explorer can", reason);
         });
-        Assert.Empty(page.Find("[data-abom-view-reason='owned']").GetAttribute("title") ?? "");
+        Assert.DoesNotContain("cannot", Tip(page, "owned"));
     }
+
+    private static string Tip(IRenderedComponent<Pages.Inventory> page, string view) =>
+        page.Find($"[data-abom-view='{view}']").Closest("[data-abom-tip]")?.GetAttribute("data-abom-tip") ?? "";
 
     /// <summary>
     /// The document is a rendering of the scope, exported from the scope. A link that dropped it

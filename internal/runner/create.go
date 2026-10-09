@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -49,33 +50,62 @@ func (r *Runner) createDatabase(
 		return fmt.Errorf("creating database parent: %w", err)
 	}
 
-	args := []string{
-		"database", "create",
-		"--language=" + language,
-		"--source-root=" + srcDir,
-		"--overwrite",
-	}
-	if r.Threads > 0 {
-		args = append(args, fmt.Sprintf("--threads=%d", r.Threads))
-	}
-	if r.RAMMB > 0 {
-		args = append(args, fmt.Sprintf("--ram=%d", r.RAMMB))
-	}
-	if r.CodeScanningConfig != "" {
-		args = append(args, "--codescanning-config="+r.CodeScanningConfig)
-	}
-	args = append(args, dbDir)
-
 	release, err := r.Lock.Acquire(ctx)
 	if err != nil {
 		return err
 	}
 	defer release()
 
-	cmd := exec.CommandContext(ctx, r.codeql(), args...)
+	var env []string
 	if len(includes) > 0 {
-		cmd.Env = append(os.Environ(), "LGTM_INDEX_FILTERS="+indexFilters(includes))
+		env = append(os.Environ(), "LGTM_INDEX_FILTERS="+indexFilters(includes))
 	}
+	for _, args := range r.createSteps(srcDir, dbDir, language) {
+		if err := r.runCreateStep(ctx, srcDir, args, env); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// untracedAutobuild names the languages whose extractor has no build mode none and whose
+// autobuilder extracts the source itself, which the extractor's tracing configuration leaves
+// untraced anyway.
+var untracedAutobuild = map[string]bool{"go": true}
+
+// createSteps is the CLI invocations that build a database without tracing a build. Tracing
+// relaunches the build through a copy of a system shell, which an arm64 Mac without Rosetta cannot
+// start, and nothing ABOM analyzes needs a traced build to be read.
+func (r *Runner) createSteps(srcDir, dbDir, language string) [][]string {
+	var limits, config []string
+	if r.Threads > 0 {
+		limits = append(limits, fmt.Sprintf("--threads=%d", r.Threads))
+	}
+	if r.RAMMB > 0 {
+		limits = append(limits, fmt.Sprintf("--ram=%d", r.RAMMB))
+	}
+	if r.CodeScanningConfig != "" {
+		config = []string{"--codescanning-config=" + r.CodeScanningConfig}
+	}
+	source := []string{"--language=" + language, "--source-root=" + srcDir}
+
+	if untracedAutobuild[language] {
+		return [][]string{
+			slices.Concat([]string{"database", "init"}, source,
+				[]string{"--build-mode=autobuild", "--overwrite"}, config, []string{dbDir}),
+			slices.Concat([]string{"database", "trace-command", "--no-tracing", "--use-build-mode"},
+				limits, []string{dbDir}),
+			slices.Concat([]string{"database", "finalize"}, limits, []string{dbDir}),
+		}
+	}
+	return [][]string{slices.Concat([]string{"database", "create"}, source,
+		[]string{"--build-mode=none", "--overwrite"}, limits, config, []string{dbDir})}
+}
+
+// runCreateStep runs one invocation, telling a tree with nothing to extract from a failure.
+func (r *Runner) runCreateStep(ctx context.Context, srcDir string, args, env []string) error {
+	cmd := exec.CommandContext(ctx, r.codeql(), args...)
+	cmd.Env = env
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
@@ -84,10 +114,11 @@ func (r *Runner) createDatabase(
 		if isNoSourceMessage(msg) {
 			return fmt.Errorf("%s: %w", srcDir, ErrNoSourceCode)
 		}
+		step := "codeql " + strings.Join(args[:2], " ")
 		if msg == "" {
-			return fmt.Errorf("codeql database create %s: %w", srcDir, err)
+			return fmt.Errorf("%s %s: %w", step, srcDir, err)
 		}
-		return fmt.Errorf("codeql database create %s: %w: %s", srcDir, err, msg)
+		return fmt.Errorf("%s %s: %w: %s", step, srcDir, err, msg)
 	}
 	return nil
 }

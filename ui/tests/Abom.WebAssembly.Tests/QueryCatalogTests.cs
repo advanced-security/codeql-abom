@@ -69,7 +69,7 @@ public class QueryCatalogTests : AbomTestContext
 
         var stage = page.Find("[data-abom-query-stage]");
         Assert.Contains("review", stage.TextContent);
-        Assert.Contains("operator", stage.GetAttribute("title") ?? "");
+        Assert.Contains("operator", stage.QuerySelector("[data-abom-tip]")?.GetAttribute("data-abom-tip") ?? "");
     }
 
     /// <summary>
@@ -617,7 +617,7 @@ public class QueryCatalogTests : AbomTestContext
 
         page.WaitForAssertion(() =>
             Assert.Contains("mud-disabled", page.Find("[data-abom-view='unpinned']").ClassName));
-        var reason = page.Find("[data-abom-view-reason='unpinned']").GetAttribute("title") ?? "";
+        var reason = page.Find("[data-abom-view='unpinned']").Closest("[data-abom-tip]")?.GetAttribute("data-abom-tip") ?? "";
         Assert.Contains("A run cannot narrow by", reason);
         Assert.Contains("Reference style: tag", reason);
         Assert.DoesNotContain(Sent, r => r.Url.Contains("api/databases"));
@@ -646,6 +646,30 @@ public class QueryCatalogTests : AbomTestContext
 
         page.WaitForAssertion(() =>
             Assert.Contains(Sent, r => r.Method == "POST" && r.Url.EndsWith("api/runs?view=owned")));
+    }
+
+    /// <summary>
+    /// The draft is read in the order it is filled in: what runs, what it runs on and its size,
+    /// what becomes of its results, and only then Run, so Run never sits before the scope it needs.
+    /// </summary>
+    [Fact]
+    public void TheDraftReadsInTheOrderItIsFilledInWithRunLast()
+    {
+        var page = Drafting();
+        page.Find("[data-abom-view='owned']").Click();
+        page.WaitForAssertion(() => page.Find("[data-abom-run-section=scope] [data-abom-run-size]"));
+
+        var draft = page.Find("[data-abom-run-draft]");
+        var sections = draft.QuerySelectorAll("[data-abom-run-section]").Select(s => s.GetAttribute("data-abom-run-section"));
+        Assert.Equal(["queries", "scope", "results"], sections);
+        Assert.NotNull(draft.QuerySelector("[data-abom-run-section=queries] [data-abom-run-picked]"));
+        Assert.NotNull(draft.QuerySelector("[data-abom-run-section=scope] [data-abom-run-scope]"));
+        Assert.NotNull(draft.QuerySelector("[data-abom-run-section=scope] [data-abom-views]"));
+        Assert.NotNull(draft.QuerySelector("[data-abom-run-section=results] [data-abom-run-findings]"));
+
+        var buttons = draft.QuerySelectorAll("button").ToList();
+        Assert.Same(draft.QuerySelector("[data-abom-run-go]"), buttons[^1]);
+        Assert.Same(draft.QuerySelector("[data-abom-run-discard]"), buttons[^2]);
     }
 
     /// The draft names the scope it is over, and says what that scope holds on hover as the chip did.
@@ -755,5 +779,29 @@ public class QueryCatalogTests : AbomTestContext
         Assert.Equal("actions-queries@0.6.35", cell.TextContent.Replace(" ", "").Trim());
         var headers = page.FindAll("[data-abom-queries-table] thead th").Select(h => h.TextContent.Trim());
         Assert.DoesNotContain("Pack version", headers);
+    }
+
+    /// <summary>
+    /// The band and the declared level are two lines, each kept whole: side by side in a narrow
+    /// column they wrapped onto four and set the height of every row.
+    /// </summary>
+    [Fact]
+    public void TheSeverityCellStacksTheBandOverTheDeclaredLevel()
+    {
+        var page = Render("""
+            {"queries":[
+              {"queryId":"actions/unpinned-tag","queryVersion":"u1aa22bb33cc4","pack":"codeql/actions-queries",
+               "packVersion":"0.6.35","cliVersion":"2.27.0","source":"upstream","stage":"",
+               "stagedBy":"","stagedAt":"","runs":1,"repositories":1,
+               "firstRunAt":"2026-09-22T16:00:00Z","lastRunAt":"2026-09-22T16:00:00Z",
+               "metadata":{"problem.severity":"warning","security-severity":"5.0"},"band":"medium"}
+            ],"stages":["dev","test","extended-test","review","deploy"]}
+            """);
+
+        var cell = page.Find("[data-abom-query-band='actions/unpinned-tag']");
+        Assert.Contains("flex-column", cell.ClassList);
+        var level = cell.Children.Last();
+        Assert.Equal("warning \u00b7 5.0", level.TextContent.Trim());
+        Assert.Contains("abom-nowrap", level.ClassList);
     }
 }

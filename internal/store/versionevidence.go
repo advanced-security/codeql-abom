@@ -128,6 +128,7 @@ const (
 	QueueAnalyzed    = "analyzed"
 	QueueQueued      = "queued"
 	QueueRetrying    = "retrying"
+	QueueWaiting     = "waiting"
 	QueueRunning     = "running"
 	QueueUnavailable = "unavailable"
 )
@@ -136,8 +137,8 @@ const (
 // answer was never queued, which is not the same as queued and waiting.
 func (s *Store) QueueStatesOf(key string) (map[string]string, error) {
 	out := map[string]string{}
-	rows, err := s.db.Query(`SELECT COALESCE(ref, ''), status, COALESCE(attempts, 0)
-		FROM abom_frontier WHERE node_key = ?`, key)
+	rows, err := s.db.Query(`SELECT COALESCE(ref, ''), status, COALESCE(attempts, 0),
+		awaiting_code_scanning IS NOT NULL FROM abom_frontier WHERE node_key = ?`, key)
 	if err != nil {
 		return nil, fmt.Errorf("reading the queue for %q: %w", key, err)
 	}
@@ -145,12 +146,15 @@ func (s *Store) QueueStatesOf(key string) (map[string]string, error) {
 	for rows.Next() {
 		var ref, status string
 		var attempts int
-		if err := rows.Scan(&ref, &status, &attempts); err != nil {
+		var held bool
+		if err := rows.Scan(&ref, &status, &attempts, &held); err != nil {
 			return nil, fmt.Errorf("scanning a queue row: %w", err)
 		}
 		switch {
 		case status == StatusDone:
 			out[ref] = QueueAnalyzed
+		case status == StatusPending && held:
+			out[ref] = QueueWaiting
 		case status == StatusPending && attempts > 0:
 			out[ref] = QueueRetrying
 		case status == StatusPending:

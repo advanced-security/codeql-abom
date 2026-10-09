@@ -58,8 +58,8 @@ public sealed class NamedScopesTests : AbomTestContext
     private static bool Disabled(IRenderedComponent<Shared.NamedScopes> control, string name) =>
         control.Find($"[data-abom-view='{name}']").ClassList.Contains("mud-disabled");
 
-    private static string Reason(IRenderedComponent<Shared.NamedScopes> control, string name) =>
-        control.Find($"[data-abom-view-reason='{name}']").GetAttribute("title") ?? "";
+    private static string Tip(IRenderedComponent<Shared.NamedScopes> control, string name) =>
+        control.Find($"[data-abom-view='{name}']").Closest("[data-abom-tip]")?.GetAttribute("data-abom-tip") ?? "";
 
     /// <summary>
     /// A scope this page would refuse is disabled here with the terms it cannot apply named, and
@@ -71,7 +71,7 @@ public sealed class NamedScopesTests : AbomTestContext
         var control = Control("repositories");
 
         control.WaitForAssertion(() => Assert.True(Disabled(control, "unpinned")));
-        var reason = Reason(control, "unpinned");
+        var reason = Tip(control, "unpinned");
         Assert.Contains("Repositories cannot narrow by", reason);
         Assert.Contains("Reference style: tag", reason);
         Assert.Contains("Actions, Relationships and the Explorer can", reason);
@@ -84,7 +84,7 @@ public sealed class NamedScopesTests : AbomTestContext
         var control = Control("inventory");
 
         control.WaitForAssertion(() => Assert.False(Disabled(control, "unpinned")));
-        Assert.Equal("", Reason(control, "unpinned"));
+        Assert.DoesNotContain("cannot", Tip(control, "unpinned"));
     }
 
     /// <summary>
@@ -98,9 +98,9 @@ public sealed class NamedScopesTests : AbomTestContext
 
         control.WaitForAssertion(() => Assert.False(Disabled(control, "unpinned")));
         Assert.Equal("What a workflow references by a tag or branch rather than a commit SHA.",
-            control.Find("[data-abom-view='unpinned']").GetAttribute("title"));
+            Tip(control, "unpinned"));
         Assert.Equal("Keeps Source: upstream.",
-            control.Find("[data-abom-view='upstream-rules']").GetAttribute("title"));
+            Tip(control, "upstream-rules"));
     }
 
     /// And a scope this page cannot open still says what it holds, before why it is disabled.
@@ -110,7 +110,7 @@ public sealed class NamedScopesTests : AbomTestContext
         var control = Control("repositories");
 
         control.WaitForAssertion(() => Assert.True(Disabled(control, "unpinned")));
-        var reason = Reason(control, "unpinned");
+        var reason = Tip(control, "unpinned");
         Assert.StartsWith("What a workflow references by a tag or branch rather than a commit SHA.", reason);
         Assert.Contains("Repositories cannot narrow by", reason);
     }
@@ -125,7 +125,7 @@ public sealed class NamedScopesTests : AbomTestContext
         var control = Control("workflows");
 
         control.WaitForAssertion(() => Assert.True(Disabled(control, "coverage-gaps")));
-        var reason = Reason(control, "coverage-gaps");
+        var reason = Tip(control, "coverage-gaps");
         Assert.Contains("“Has: unanalyzed”", reason);
         Assert.DoesNotContain("flags=", reason);
     }
@@ -140,7 +140,7 @@ public sealed class NamedScopesTests : AbomTestContext
         var control = Control("inventory");
 
         control.WaitForAssertion(() => Assert.True(Disabled(control, "unreadable")));
-        Assert.Contains("cannot read", Reason(control, "unreadable"));
+        Assert.Contains("cannot read", Tip(control, "unreadable"));
     }
 
     /// The graph refuses a source, so the Explorer does not open a scope carrying one.
@@ -150,8 +150,8 @@ public sealed class NamedScopesTests : AbomTestContext
         var control = Control("graph");
 
         control.WaitForAssertion(() => Assert.True(Disabled(control, "upstream-rules")));
-        Assert.Contains("The Explorer cannot narrow by", Reason(control, "upstream-rules"));
-        Assert.Contains("Actions can", Reason(control, "upstream-rules"));
+        Assert.Contains("The Explorer cannot narrow by", Tip(control, "upstream-rules"));
+        Assert.Contains("Actions can", Tip(control, "upstream-rules"));
     }
 
     /// Choosing a scope hands it to the page, which knows what else loading it means there.

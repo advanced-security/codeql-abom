@@ -190,6 +190,29 @@ func TestAMemberWhoseDatabaseCannotBeBuiltSaysWhy(t *testing.T) {
 	}
 }
 
+// A repository read in full that holds nothing to analyze is a reading, not a failure: a run
+// over an organization would otherwise report every repository without workflows as failed.
+func TestAMemberWithNothingToAnalyzeIsNotAFailure(t *testing.T) {
+	h, e, id, _ := executorHarness(t)
+	h.fetchErr["octo/absent"] = &NothingToAnalyze{Why: "octo/absent has no workflows or action manifest"}
+
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	absent := membersByRepository(t, h.store, id)["octo/absent"]
+	if absent.Status != store.AnalysisNothing {
+		t.Errorf("a member with nothing to analyze is %q (%s), want %q",
+			absent.Status, absent.Detail, store.AnalysisNothing)
+	}
+	if absent.Detail != "octo/absent has no workflows or action manifest" {
+		t.Errorf("the member says %q, want what the reading found", absent.Detail)
+	}
+	if absent.Counted {
+		t.Error("a member nothing ran against reports a count")
+	}
+}
+
 // A run covers the scope it names: a member with no database gets one built the way the crawl
 // builds one, and its results name the database they came from.
 func TestAMemberWithNoDatabaseIsBuiltAndThenAnalyzed(t *testing.T) {
@@ -262,6 +285,46 @@ func TestABuiltDatabaseIsKeptForTheNextRun(t *testing.T) {
 	}
 	if again := membersByRepository(t, h.store, id)["octo/absent"]; again.Status != store.AnalysisSucceeded {
 		t.Errorf("the member run again is %q, want %q", again.Status, store.AnalysisSucceeded)
+	}
+}
+
+// A run that reuses a database nothing recorded records it, or the inventory goes on asking for a
+// build the run just proved unnecessary, and the ceiling never counts what the database occupies.
+func TestARunRecordsADatabaseItReusedFromDiskWithNoRecord(t *testing.T) {
+	h, e, id, _ := executorHarness(t)
+	delete(h.fetchErr, "octo/absent")
+	h.retainCheckouts()
+	h.retainDatabases()
+	if err := e.Run(context.Background(), id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	forgotten := h.forgetRetainedDatabases()
+	if len(forgotten) != 1 {
+		t.Fatalf("the run retained %d databases, want the one it built", len(forgotten))
+	}
+
+	editQuery(t, e)
+	built := h.databasesBuilt()
+	// A new run, as the inventory drafts one: a repository with no row is buildable.
+	again := runOver(t, h.store, store.AnalysisModeRegular, []store.ScopedDatabase{{
+		DatabaseIdentity: store.DatabaseIdentity{Repository: "octo/absent", Commit: absentCommit,
+			SourceFilter: "f0", Mode: store.AnalysisModeRegular},
+		Status: store.DatabaseBuildable,
+	}}, nil)
+	if err := e.Run(context.Background(), again); err != nil {
+		t.Fatalf("Run again: %v", err)
+	}
+	if h.databasesBuilt() != built {
+		t.Fatalf("running again built %d databases, want the one on disk reused", h.databasesBuilt()-built)
+	}
+	was := forgotten[0]
+	now, ok, err := h.store.RetainedDatabaseAt(was.DatabaseIdentity)
+	if err != nil || !ok {
+		t.Fatalf("the reused database is still not on record (%v)", err)
+	}
+	if now.Path != was.Path || now.Bytes != was.Bytes || now.CLIVersion != "2.26.4" {
+		t.Errorf("recorded at %s, %d bytes, CodeQL %q; want %s, %d bytes, the 2.26.4 that built it",
+			now.Path, now.Bytes, now.CLIVersion, was.Path, was.Bytes)
 	}
 }
 

@@ -2,8 +2,9 @@
 
 **Status:** every walk and every one-version view reads what each commit declared at the commits
 that are live — a dependency at what references resolve to, a starting point's own workflows at its
-default and protected branches — and reach and exposure are derived for what changed; one reader,
-owned-scope membership, still reads the row.
+default and protected branches, and a declaration's kind and declaring step with its target — and
+reach and exposure are derived for what changed; one reader, owned-scope membership, still reads
+the row, and an upstream repository's own CI is still read at every commit a consumer resolves to.
 
 ## Why this exists
 
@@ -71,17 +72,9 @@ them.
 
 ## The constraints that must not be broken
 
-**A sighting does not carry its location's kind or source.** The upsert keeps the first writer's
-`edge_kind` and source node, so a location that changed between `needs:` and `uses:` holds a
-mixture. On the crawled organization that is **4 of 10,981** locations sighted at more than one
-commit, all in `github/codeql-action`'s own CI, none reachable from a starting point. The other 520
-whose target changed kind went between an action, a composite action and an image, which are all
-still a step's `uses:`. If a location in a repository a starting point reaches ever changes kind,
-sightings carry it.
-
-**A commit's declarations are its own.** Nothing reads a target, reference or pin comment for one
-commit from a row another commit wrote. A sighting without recorded content is unknown, and unknown
-adds no route — it is never a guess filled from the row.
+**A commit's declarations are its own.** Nothing reads a target, reference, pin comment, kind or
+declaring step for one commit from a row another commit wrote. A sighting without recorded content
+is unknown, and unknown adds no route — it is never a guess filled from the row.
 
 **A commit nothing resolves to is not walked.** History is kept for the ledger and walked by
 nothing: what a deleted step or an abandoned release declared is not what anybody runs.

@@ -348,7 +348,10 @@ func usersPerRef(table string) string {
 func refStatesQuery(table string) string {
 	return `
 	WITH users AS (` + usersPerRef(table) + `)
-	SELECT f.node_key, f.ref, f.status, f.status = 'done',
+	SELECT f.node_key, f.ref,
+	       CASE WHEN f.status = 'pending' AND f.awaiting_code_scanning IS NOT NULL THEN 'waiting'
+	            ELSE f.status END,
+	       f.status = 'done',
 	       f.depth, f.score,
 	       COALESCE(u.cnt, 0),
 	       COALESCE(f.analyzed_at, ''), LOWER(COALESCE(f.resolved_sha, ''))

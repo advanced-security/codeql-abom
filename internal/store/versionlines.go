@@ -134,7 +134,7 @@ func (s *Store) linesNaming(node int64, repositories []string, standing map[stri
 			  JOIN abom_edge_regular e ON e.repository_row_id = r.row_id
 			  JOIN abom_edge_sighting sg ON sg.edge_row_id = e.row_id AND sg.dst_node_row_id = ?1
 			 WHERE LOWER(r.repository_full_name) IN (SELECT repository FROM counted)
-			   AND `+DependencyEdgeFilter+`
+			   AND `+dependencyKind("COALESCE(sg.edge_kind, e.edge_kind)")+`
 		)
 		SELECT l.edge_row_id, l.repository, LOWER(q.repository), LOWER(q.db_commit),
 		       sg.dst_node_row_id IS NOT NULL, COALESCE(sg.dst_node_row_id = ?1, 0),

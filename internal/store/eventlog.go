@@ -294,16 +294,19 @@ type QueueRow struct {
 	Reason      string
 	CheckedAt   string
 	Expedited   bool
+	// NextAttemptAt is when the row may next be claimed: a retry's backoff, or a hold's ceiling.
+	NextAttemptAt string
 }
 
 // queueRowColumns and scanQueueRow read a QueueRow, so a single row and a reference's rows agree.
 const queueRowColumns = `node_key, ref, COALESCE(owner, ''), COALESCE(repo, ''), status, depth,
-	COALESCE(resolved_sha, ''), COALESCE(reason, ''), COALESCE(checked_at, ''), expedited_at IS NOT NULL`
+	COALESCE(resolved_sha, ''), COALESCE(reason, ''), COALESCE(checked_at, ''), expedited_at IS NOT NULL,
+	COALESCE(next_attempt_at, '')`
 
 func scanQueueRow(row interface{ Scan(...any) error }) (QueueRow, error) {
 	var r QueueRow
 	err := row.Scan(&r.NodeKey, &r.Ref, &r.Owner, &r.Repo, &r.Status, &r.Depth, &r.ResolvedSHA,
-		&r.Reason, &r.CheckedAt, &r.Expedited)
+		&r.Reason, &r.CheckedAt, &r.Expedited, &r.NextAttemptAt)
 	return r, err
 }
 

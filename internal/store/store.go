@@ -104,6 +104,7 @@ var createTables = []struct {
 	{"the printed tree table", authoringASTDDL},
 	{"the review table", authoringReviewDDL},
 	{"the request draft table", requestDraftDDL},
+	{"the tool path table", toolPathDDL},
 	{"the enumeration state table", enumerationStateDDL},
 	{"the repository property table", repositoryPropertyDDL},
 	{"the property schema table", propertySchemaDDL},
@@ -136,18 +137,8 @@ func (s *Store) Migrate() error {
 			return fmt.Errorf("creating %s: %w", t.what, err)
 		}
 	}
-	for _, c := range addedColumns {
-		has, err := s.hasColumn(c.table, c.column)
-		if err != nil {
-			return err
-		}
-		if has {
-			continue
-		}
-		stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", c.table, c.column, c.decl)
-		if _, err := s.db.Exec(stmt); err != nil {
-			return fmt.Errorf("adding %s.%s: %w", c.table, c.column, err)
-		}
+	if err := s.addColumns(func(string) bool { return true }); err != nil {
+		return err
 	}
 	// After the additive pass, so a column this drops can never be one that pass just added.
 	for _, c := range droppedColumns {
@@ -199,6 +190,10 @@ func (s *Store) Migrate() error {
 	if _, err := s.db.Exec(draftSessionIndexDDL); err != nil {
 		return fmt.Errorf("indexing drafting sessions: %w", err)
 	}
+	// After the column pass, which gives a request table from before slugs the column.
+	if _, err := s.db.Exec(requestSlugIndexDDL); err != nil {
+		return fmt.Errorf("indexing request slugs: %w", err)
+	}
 	// And the rest of them, for the same reason, once there is no bulk load to slow down.
 	// `CreateIndexes` is called by the seed build alone, so every other database — one being
 	// served, expanded or read by the CLI — otherwise carries only the indexes it was built with.
@@ -212,8 +207,15 @@ func (s *Store) Migrate() error {
 	if err := s.createViews(); err != nil {
 		return err
 	}
+	// After the views, whose back-fill gives a row's own run a sighting that names no kind.
+	if err := s.fillDeclarationKinds(); err != nil {
+		return err
+	}
 	// After the views, which back-fill the sightings this reads.
 	if err := s.backfillRunRules(); err != nil {
+		return err
+	}
+	if err := s.backfillRuleTags(); err != nil {
 		return err
 	}
 	// Before seeding, so a binding that only needs renaming still counts as configured and the
@@ -269,6 +271,27 @@ func (s *Store) dropStaleDerivedTables() error {
 	// way to verify them retroactively.
 	if _, err := s.db.Exec(`DROP TABLE IF EXISTS abom_owned_org`); err != nil {
 		return fmt.Errorf("dropping abom_owned_org: %w", err)
+	}
+	return nil
+}
+
+// addColumns adds each column in addedColumns whose table keep names and which the table lacks.
+func (s *Store) addColumns(keep func(table string) bool) error {
+	for _, c := range addedColumns {
+		if !keep(c.table) {
+			continue
+		}
+		has, err := s.hasColumn(c.table, c.column)
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", c.table, c.column, c.decl)
+		if _, err := s.db.Exec(stmt); err != nil {
+			return fmt.Errorf("adding %s.%s: %w", c.table, c.column, err)
+		}
 	}
 	return nil
 }

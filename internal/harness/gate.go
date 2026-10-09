@@ -37,7 +37,6 @@ const (
 const (
 	DecisionAllowed   = "allowed"
 	DecisionRefused   = "refused"
-	DecisionReview    = "review"
 	DecisionSucceeded = "succeeded"
 	DecisionFailed    = "failed"
 	DecisionNoted     = "noted"
@@ -164,10 +163,7 @@ func (g *Gate) PreToolUse(in copilot.PreToolUseHookInput, _ copilot.HookInvocati
 	if err := g.keep(e, v); err != nil {
 		return deny(unrecorded(err)), nil
 	}
-	switch {
-	case v.Review:
-		return &copilot.PreToolUseHookOutput{PermissionDecision: "ask", PermissionDecisionReason: v.Reason}, nil
-	case v.Allowed:
+	if v.Allowed {
 		return nil, nil
 	}
 	return deny(v.Reason), nil
@@ -188,11 +184,7 @@ func (g *Gate) Permission(req copilot.PermissionRequest, _ copilot.PermissionInv
 	if err := g.keep(e, v); err != nil {
 		return reject(unrecorded(err)), nil
 	}
-	switch {
-	case v.Review:
-		return reject(v.Reason + "; nothing is accepted in this session, and an operator decides on " +
-			"the request"), nil
-	case !v.Allowed:
+	if !v.Allowed {
 		return reject(v.Reason), nil
 	}
 	if _, ok := req.(*rpc.PermissionRequestMCP); ok {
@@ -296,6 +288,11 @@ func (g *Gate) Observe(e copilot.SessionEvent) {
 	}
 }
 
+// Say records what ABOM told the agent, beside what the agent said.
+func (g *Gate) Say(text string) {
+	_ = g.keep(Event{Hook: HookMessage, Tool: "abom", Decision: DecisionNoted, Detail: clip(text)}, Verdict{})
+}
+
 // Spend is what one model call cost, each figure nil where the CLI did not report it.
 type Spend struct {
 	InputTokens  *int64
@@ -364,10 +361,7 @@ func (g *Gate) keep(e Event, v Verdict) error {
 }
 
 func decisionOf(v Verdict) string {
-	switch {
-	case v.Review:
-		return DecisionReview
-	case v.Allowed:
+	if v.Allowed {
 		return DecisionAllowed
 	}
 	return DecisionRefused

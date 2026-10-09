@@ -9,7 +9,6 @@ import (
 
 	"github.com/advanced-security/codeql-abom/internal/harness"
 	"github.com/advanced-security/codeql-abom/internal/store"
-	"github.com/advanced-security/codeql-abom/internal/supervisor"
 )
 
 // Authoring runs agent sessions on query requests.
@@ -38,13 +37,11 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 			"start it with --custom-ql-dir")
 		return
 	}
-	if s.Discovery != nil {
-		// A session holds CodeQL for its whole length, so a crawl that is on would stall under it.
-		if state := s.Discovery.Status().State; state != supervisor.StatePaused && state != supervisor.StateStopped {
-			writeError(w, http.StatusConflict, fmt.Sprintf("discovery is %s, and a session holds CodeQL "+
-				"for as long as it works; pause discovery first", state))
-			return
-		}
+	// A session holds CodeQL for its whole length, so a crawl that is on would stall under it.
+	if state := s.crawlHoldingCodeQL(); state != "" {
+		writeError(w, http.StatusConflict, fmt.Sprintf("discovery is %s, and a session holds CodeQL "+
+			"for as long as it works; pause discovery first", state))
+		return
 	}
 	var body struct {
 		By string `json:"by"`

@@ -35,11 +35,12 @@ navigation bar of every page, because it is the one thing here that runs with no
 The rate limit is read from every response — not only from the 403 that means it has already run
 out — and requests are spaced only once the budget is genuinely running low. Each kind of work —
 enumeration, event follow-up, reference polling, fetching, the recheck sweep, advisory reads, lock
-verification, analysis — draws from a pool of its own, in the unit its provider charges, at a rate
-and burst the operator sets in Settings. A pool records what the provider charged (GraphQL's
-`cost`, a REST answer except a 304, a git request, a worker-second), never a difference of a shared
-counter; with no rate set and no exhaustion reported it holds nothing back. Beside each meter is a
-freshness estimate derived from the rate and the work queued behind it, worded as that.
+verification, analysis, the consistency checker — draws from a pool of its own, in the unit its
+provider charges, at a rate and burst the operator sets in Settings. A pool records what the
+provider charged (GraphQL's `cost`, a REST answer except a 304, a git request, a worker-second),
+never a difference of a shared counter; with no rate set and no exhaustion reported it holds nothing
+back. Beside each meter is a freshness estimate derived from the rate and the work queued behind it,
+worded as that.
 
 **ABOM can be a GitHub App, reading with the least it needs.** `codeql-abom app create` opens a
 local page that posts a manifest to GitHub; the operator creates the App there, and ABOM keeps its
@@ -94,7 +95,8 @@ decides nothing:
   advisories refreshed once their floor allows; every other ecosystem's is ignored. A completed
   workflow run is kept with the reusable workflows it called, at their commits. Code scanning
   switched on or off, or a code scanning run finishing, re-asks whether GitHub holds the
-  repository's actions database. The App's deletion is recorded as the fact it is.
+  repository's actions database, and releases a push [waiting for
+  it](#what-produces-the-data) there. The App's deletion is recorded as the fact it is.
 
 External references that can move are polled in batches, ordered by how many starting points run
 the version that would move, under their own pool; a commit pin is never asked. A reference is
@@ -253,18 +255,18 @@ through the inline-expectations postprocess, so `# $ Alert` on a fixture line is
 marked line the query does not report is a missing result, and an unmarked one it reports is
 unexpected. The stub ABOM scaffolds reports nothing, so its first run fails on the marks. The tests
 step passes only once an earlier version failed on a marked result over the same fixtures, and a
-session's first edit to its query waits for that run. Accepting a report that lists failed
-expectations would make the test pass, because the CLI compares text, so such an `.expected` fails
-its step and the review refuses to accept one.
+session's first edit to its query waits for that run. An `.expected` that lists failed expectations
+fails its step: the CLI compares text, so it would make the test pass.
 
 ```mermaid
 flowchart LR
-    FIX["fixture<br/># $ Alert"] --> STUB["stub query<br/>reports nothing"]
+    FIX["fixture<br/># $ Alert"] --> EXP[".expected written<br/>from the help and the marks"]
+    EXP --> STUB["stub query<br/>reports nothing"]
     STUB -->|"codeql test run"| MISS["1 expected result missing<br/>kept per version and CLI"]
     MISS -->|"the query may now change"| REAL["the query written"]
-    REAL -->|"report accepted by a person"| PASS["passes: version X failed first"]
-    ACC["a report listing<br/>failed expectations"] -. "accepting it would pass" .-> PASS
-    style ACC fill:#3d2d1d
+    REAL -->|"codeql test run"| PASS["passes: version X failed first"]
+    ACC["the query's own output<br/>made the .expected"] -. "never" .-> PASS
+    style ACC fill:#3d1d1d
 ```
 
 **One `codeql/actions-all` answers for authoring and execution.** ABOM's packs, the operator's
@@ -276,7 +278,7 @@ dependencies were never installed, even when the package cache holds every one. 
 compiles in the operator's pack, ABOM runs `codeql pack install` in it and then in its test pack,
 wherever either has no `codeql-pack.lock.yml`:
 
-- before a Test, and before an approval's test run;
+- before a Test;
 - before a run or a crawl round digests one of the pack's queries, because the lock is part of what
   a pack digest covers;
 - when a session starts, before the agent has control, since a session cannot install packs.
@@ -290,7 +292,7 @@ session ends failed with it before its agent starts.
 
 ```mermaid
 flowchart LR
-    ACT["Test, approval,<br/>run, round, session"] --> Q{"a lock in the pack<br/>and its test pack?"}
+    ACT["Test, run,<br/>round, session"] --> Q{"a lock in the pack<br/>and its test pack?"}
     Q -->|"both"| GO["compile"]
     Q -->|"either missing"| INS["codeql pack install<br/>under the CodeQL lock"]
     INS -->|"installed"| GO
@@ -303,6 +305,13 @@ flowchart LR
 *decided by the agent*. A request asked from a run carries the picked results as evidence — a
 finding that should not have fired, or a repository where nothing fired that should have — each
 checked against the run and the query when it is filed.
+
+**A linked example is read once, at save, at a commit.** Only a GitHub blob URL is accepted,
+optionally naming lines; ABOM never fetches any other address. Its ref resolves to a commit, the
+file is read at that commit, and the text a client sends for a link is never trusted. A request
+that any session names is never deleted, because the timeline is not rewritten; it is resubmitted
+as a copy and declined. A closed request keeps the progress it was closed on, so a later request
+for the same query does not repaint it.
 
 **An agent can write the query a request asks for, inside bounds ABOM sets.** A person starts a
 session from the request. ABOM drives the Copilot CLI through the Copilot SDK, with ql-mcp as the
@@ -318,16 +327,22 @@ crawls. Its timeline, what it spent and every tree `PrintAST` printed are kept, 
 shown on the request. What the agent says it did is never a mark. Every step is re-derived from the
 files and from ABOM's own records.
 
-**No session writes `.expected`; an operator's approval does, through ABOM.** The request shows what
-the query reported beside its two examples. Approving it:
+**Nothing makes the query's own output its expected result.** `codeql test accept` is refused at
+both hooks, and no person accepts a report either. The agent writes, in order, the help, a marked
+fixture for each example, and the `.expected` those marks call for. The query stays as it is until a
+test run has failed on the marks and `PrintAST` has printed the fixtures. Only the query is held
+back: the help is edited whenever the work teaches something a reader needs, but never to narrow
+what the request asks. A session continues past an idle turn while a step is not passing, told
+which and why, and ends when nothing is left or nothing changed since it was last told. A tree
+digests the fixtures alone, so a corrected `.expected` leaves the AST step current.
 
-1. records who approved which report, before anything changes;
-2. runs `codeql test accept` for the tests that reported it;
-3. runs the version's own tests, so compiling and passing come from ABOM's run and never the agent's.
-
-The approval names the report as it was read, so a report that changed since is refused. A
-rejection keeps its reason, and the next session starts from it. A tree digests the fixtures alone,
-so accepting a report leaves the AST step current.
+**What a session needs is checked before it is offered.** The query pack, the CodeQL CLI, the
+Copilot CLI, ql-mcp, a GitHub token and CodeQL free of a crawl are each ready or named with a
+remedy, and starting is held back with the first problem. Settings can name the CodeQL and Copilot
+executables; a saved path is run before it is kept, and is used ahead of the flag or environment
+variable that names the default. It must be an absolute path to a file of the tool's own name, which
+no other account can change: the server runs it as itself, so a page that anyone reaching the
+server can submit chooses which copy of a tool runs, never which program.
 
 **ABOM prints a query's tree itself, so a query written by hand can earn every step.** A custom
 catalog row's AST mark runs `PrintAST` from `advanced-security/ql-mcp-actions-tools-src` 2.27.1,
@@ -357,6 +372,8 @@ every reader taught about a second source. A member with no database gets one bu
 crawl builds one, at the commit on record or, where nothing names one, at the default branch, and is
 recorded at the database it was analyzed against. Only what the crawl would build is built: a
 regular database, for a repository ABOM tracks, since ingesting any other would enter it as a seed.
+A member whose commit holds no workflow or action manifest, or that has no commit, has *nothing to
+analyze*, which is neither a failure nor a result; a member that could not be read is failed.
 A member whose evaluation is already stored under the same run key is skipped and carries that
 answer, naming the run that produced it; editing a query changes its version, so tuning is never
 skipped, and a pack is digested afresh for every run, every round and every requeue, so one edited
@@ -381,16 +398,27 @@ has not run has no count rather than a zero. A lane of one query is that query a
 version, not a hash of a one-element set. Attribution to nodes runs once, when a run completes,
 because the join is over the whole table.
 
+**No database waits on a build.** ABOM never traces a build. Every database it creates is extracted
+from source alone, `--build-mode=none`, except Go's, whose extractor has no such mode: the one Go
+database, ABOM's own in `make quality`, comes from Go's autobuilder run without the tracer, since
+it extracts the packages itself. That is the build mode this repository's Default Setup uses for
+each of its languages. Tracing would relaunch a build through re-signed copies of system binaries,
+which an Apple silicon Mac cannot start without Rosetta.
+
 **A database is extracted once, not once per question.** Retained CodeQL databases are keyed on the
 tuple a run is keyed on, so the cache and the ledger cannot disagree about which database answered.
 Retention is opt-in until its occupancy over a full crawl is measured. Reuse skips the extraction
 and never the analysis: whether a query needs to run again stays a ledger decision.
 
 **What code scanning already computed is taken, and recorded as what produced it.** Before
-building, the crawl asks code scanning for the repository's actions database. It stands in for the
+building, the crawl asks code scanning for the repository's actions database, at analysis time and
+through the shared response cache, so an unchanged answer costs no primary quota and nothing
+answers from memory after a push. It stands in for the
 build only when it records the commit being analyzed and ABOM's CodeQL, and its source archive holds
 exactly the checkout's files under the extractor's default filters, so it carries the identity
 ABOM's own build would have had and is retained like one, because ABOM's own queries then run on it.
+Any repository's database qualifies, a public one read through the installation the App reads
+public repositories with.
 
 An owned repository's code scanning analysis of the same commit answers for every rule of the
 findings lane it ran, whether ABOM took the database or built its own. **A rule id names one query
@@ -406,7 +434,26 @@ Its threat model is not compared, since
 each rule records what produced it: ABOM's rules their query version and pack, code scanning's the
 analysis, the pack release and the CodeQL it ran, and no query version. A result taken from an older
 release is that release's result, and says so. Anything that cannot be established is evaluated as
-before, and each cycle's log line says what code scanning supplied and why it refused the rest.
+before.
+
+Each cycle keeps what code scanning supplied and why it refused the rest, beside the databases
+CodeQL built — counted where a build ran, never inferred from what was analyzed — and Settings
+shows the last round and the total across the rounds that kept it. A round recorded before these
+were kept says nothing about code scanning rather than that it supplied nothing. Nothing is asked
+while `LGTM_INDEX_FILTERS` is set in the server's environment, because ABOM's own builds then index
+files code scanning's do not, nor under `--code-scanning-reuse=false`, and Settings says which.
+
+**A push to an owned default branch waits for code scanning's own analysis of it.** Default setup
+finishes about a minute after a push, while the crawl would claim it within seconds and build
+beside a database still at the previous commit. Where the repository's default setup reads
+Actions, and no completed default setup run at the pushed commit is on record, the pushed row
+waits — `waiting`, still outstanding work — until a completed `dynamic/github-code-scanning/codeql`
+run at that commit is delivered, whatever its conclusion; setup that stops reading Actions, or an
+operator asking for the repository by name, releases it too. `--code-scanning-wait`, ten minutes,
+is the ceiling after which ABOM builds anyway. Only the default branch waits, since code scanning's
+database and default setup's analysis follow it, and a server that takes nothing from code scanning
+never waits. The wait is decided before the commit's content is read, so a push that changes no
+indexed file waits as well, and then settles as already on record without a build.
 
 **Every owned repository's code scanning setup is read and classified.** A listing reads each owned
 repository's default setup and CodeQL databases, and where it can matter its newest CodeQL analyses,
@@ -501,7 +548,7 @@ Everything is one SQLite file. `internal/store` is the only package that writes 
 | `abom_frontier` | The work queue, keyed by dependency and reference, carrying depth and state |
 | `abom_database_catalog` | Which repositories have a CodeQL database |
 | `abom_tier_suite`, `abom_tier_configured`, `abom_suite_query` | Which queries run against which tier |
-| `abom_cycle_spend` | What each crawl cycle cost |
+| `abom_cycle_spend` | What each crawl cycle cost, the databases it built, and what code scanning supplied and refused |
 
 A dependency Git could not fetch is `unavailable` and stays so: Git reports a missing credential
 and a missing repository alike, so nothing retries it on its own. An operator's retry, for all of
@@ -525,6 +572,12 @@ prune removes it, and Settings says how many there are. A row keeps two clocks: 
 an analysis settled it, and `checked_at` when a probe last asked where its reference is. Nothing
 else writes either, so "probed since it was analyzed" is a measurement rather than a coincidence of
 one write.
+
+**A push waiting for code scanning is pending, with a hold.** The row names the pushed commit in
+`awaiting_code_scanning` and the ceiling in `next_attempt_at`, so every claim and every wake honors
+the wait as it honors a retry's backoff, and every count of outstanding work still counts it.
+Readers show it as `waiting`, after `retrying` and before `queued`, and listed at its place in the
+claim order as a retry is; a claim, a result or a failure clears it.
 
 **A commit whose declarations are not known is met again, a cycle's claim at a time.** Before it
 claims, each cycle puts back analyzed dependencies standing at a commit [recorded before sightings
@@ -574,15 +627,25 @@ as written, never in its place:
   reference resolved to, and a caller's lock binds the route to that caller.
 
 **Each commit's declarations are its own.** An edge is keyed by the location that declares it, so
-two analyzed commits declaring different things there share one row, which holds the last writer's.
-Every regular run's sighting keeps what its own commit declared — target, reference, pin comment —
-and both walks read a dependency's children from the sightings at the commit they stand at, never
-from the row. A sighting recorded before content was kept is known only for the run that wrote the
+two analyzed commits declaring different things there share one row, which holds the last writer's
+declaration whole — target, kind and declaring step together. A use written as a YAML alias is
+declared at the alias, not at the anchor it names, so each expanded use is its own edge. Every regular run's sighting keeps
+what its own commit declared — target, reference, pin comment, what kind of declaration it is and
+which job or step declares it — and every reader takes all of them from the sightings at the commit
+it stands at, never from the row: a line that was a `needs:` at one commit and a `uses:` at another
+is each at its own commit. A sighting written before it kept its kind reads the kind its target
+implies — a `needs:` names a job — filled once when the database is opened. A sighting recorded
+before content was kept is known only for the run that wrote the
 row; any other says its commit declared something there and not what, and adds no route rather than
 borrowing the row's. Walks stand only at live commits — those a reference resolves to; every
 analyzed commit of a repository nothing resolves — and a commit settled as identical to an analyzed
 one reads that commit's sightings. Blast radius takes the same walk, so a repository counts toward a
 dependency only through the releases it runs; both declared scopes stay component-level by design.
+
+**An owned repository used as an action is a dependency at the reference that uses it.** Its node
+is the owned repository's own — internal, never styled as somebody else's — but a reference with a
+ref to it from a workflow is queued at that ref like any dependency, and the submission closure
+roots at it, so reach and the closure stand at the same commit.
 
 **A starting point's own CI runs at its branches, not at its releases.** A repository's own triggered
 workflows count as a starting point's only at its starting commits: the default branch, and each
@@ -752,7 +815,9 @@ what it invoked, in which shape, over which commit, under which CodeQL and what 
 `abom_query_run_rule` gives the version, pack and **source** of the rule's own query in that
 evaluation: `upstream`, `abom`, `custom`, or `mixed` where two packs supplied one rule id at once.
 Where code scanning's analysis answered the rule, the trace names that analysis, and its pack
-release and CodeQL stand in place of the evaluation's.
+release and CodeQL stand in place of the evaluation's. GitHub serves its own rendering of that
+SARIF, rules under each pack's tool component and without `problem.severity` or `kind`, so a taken
+rule's stored documentation is GitHub's descriptor for it.
 One defect reported through two copies of a rule answers to both. An evaluation recorded before its
 rules were kept is named only where that is exact — one pack supplied everything it ran, so every
 rule it reported is that pack's, and the version is known only when it ran that one query. A lane
@@ -834,12 +899,15 @@ flowchart LR
 | `abom_suite_query` | What a round's resolution found in each suite: query id, version, kind and the pack that supplied it |
 | `abom_query_stage` | How far somebody has taken a query version, and who advanced it |
 | `abom_query_test` | What that version's own tests made of it under one CodeQL, the stage they reached, how many marked results were missed or unexpected, and digests of the test files and of the fixtures alone, which is what the `test` stage reads |
-| `abom_query_request` | What somebody asked a query to catch or stop catching, with a `COMPLIANT` and a `NON_COMPLIANT` example, the target and who chose it |
+| `abom_query_request` | What somebody asked a query to catch or stop catching: a title and unique slug, the target and who chose it, a recommendation, the metadata asked for, and the progress it was closed on |
+| `abom_query_request_example`, `abom_query_request_reference`, `abom_query_request_tag` | A request's examples in order, each pasted or linked — a link keeps the commit, lines and text read at save — its references (CVE, CWE, GHSA, URL), and the `@tags` it asks for |
 | `abom_query_request_evidence` | The run results a request was asked from: a false alarm names a finding or a result a held run kept, a missed detection a repository |
 | `abom_authoring_session` | An agent session somebody started on a request, or on a run's picked results to draft one. Whether it finished, was stopped, failed or was interrupted by a restart, and what it spent as the CLI reported it |
 | `abom_authoring_event` | Every tool call a session made or was refused, recorded before it ran, with the decision and the reason. Append-only |
 | `abom_authoring_ast` | What `PrintAST` printed over a query's test database, by a session or by ABOM at somebody's asking, with a digest of the fixtures it was printed from and the CodeQL that printed it. Append-only |
-| `abom_authoring_review` | An operator's approval or rejection of what a query reported, with the report as they read it. Append-only |
+| `abom_authoring_review` | An operator's approval or rejection of what a query reported, recorded while a person accepted reports; the server no longer writes it. Append-only |
+| `abom_query_run_rule_tag` | The tags each rule declared in one evaluation, so a finding matches the tags of the run that reported it |
+| `abom_tool_path` | The CodeQL or Copilot executable somebody chose in Settings, and who |
 | `abom_request_draft` | A request a drafting session proposed, which nobody has filed. Append-only |
 | `abom_analysis_run`, `abom_analysis_member`, `abom_analysis_query` | A run somebody asked for: which versions, which scope and the named scope it was chosen by, the CodeQL it ran under, when each start began, why it could not start when it could not, and what became of every repository in it. A member names the evaluation that reported its findings, so they can be listed one at a time |
 | `abom_held_result` | What a run with findings off kept in each repository, one row per result, carrying every column a finding does and apart from `abom_finding` |
@@ -970,11 +1038,11 @@ ingested edges all land without one.
 
 **A details page draws what runs it and what it runs.** Two directed walks over `uses:`
 relationships from the page's versions, cut from the Explorer's projection; what runs it starts
-where *What `uses:` this* rows start, under the same terms. At most 25 nodes are drawn, each
+where *What `uses:` this* rows start, under the same terms. At most 300 nodes are drawn, each
 connected to the page's node — its versions, then what you own, then the rest, nearest first — and
-the figure says what it left out. Graphviz places it and the server draws the SVG, so the page, the
-download and the print are one drawing, byte-identical within a Graphviz version. `serve` requires
-Graphviz.
+the page says what it left out. The drawing does not paint that, and it does not name Graphviz or
+which side is which. Graphviz places it and the server draws the SVG, so the page, the download
+and the print are one drawing, byte-identical within a Graphviz version. `serve` requires Graphviz.
 
 **A run is asked over repositories somebody chose.** The selection travels as `repositories=`,
 which resolves each name to its retained database, one it could be rebuilt from, or a named gap —
@@ -1305,9 +1373,23 @@ as a correction. The checks that spend nothing run exhaustively: the incremental
 a wholesale rebuild, reach, exposure and the submission closure against each other on every owned
 repository, and graph-wide invariants such as each reach rollup equalling its breakdown and reach
 naming only starting points. Both recomputes run on `VACUUM INTO` snapshots, so the checker writes
-nothing but its own `abom_check_*` tables. Results are keyed by ABOM build, so a trend shows when a
-disagreement started; `/api/checks` lists every planned check, and one that does not run says so
-rather than reporting zero.
+nothing but its own `abom_check_*` tables and its own pools' meter. The checks that read GitHub are
+sampled and spend only the checker's pools: what each commit the queue stands at declared, as the
+graph reads it, against that commit's own indexed files read with a YAML walk of the checker's own
+and GitHub's parsers of a `uses:` and of an action's metadata; where each reference the queue
+resolved points now; and each owned repository's default and protected branch heads against the
+commits it stands at. A commit whose declarations were recorded before sightings kept content is
+counted as not known, never compared, and so is anything GitHub would not answer — a tree it would
+not list whole, a file it would not give, a reference it would not resolve: unread is never
+agreement on zero. Each run reads the open disagreements again, then what
+changed most recently, then a random baseline per stratum whose 95% bound is stated rather than
+reported as correct, and a sampled disagreement closes only when a later run reads it and agrees; a
+move the queue already holds for work is classed staleness, and one it holds settled is classed
+unnoticed; a declaration either reading lacks is classed extraction, and the same value read as
+another target normalization. Results are keyed by ABOM build, so a trend shows when a disagreement
+started. It reports and never gates: no disagreement blocks a build or a release, and none is
+written into a table the graph reads. `/api/checks` lists every check, and one that does not run
+names the plan that builds it rather than reporting zero.
 
 **Two sets of data, two jobs, not interchangeable.** A crawled organization answers *did this
 change the real numbers*, and only exists where somebody has a token and has waited. The shared

@@ -101,6 +101,9 @@ type Stats struct {
 	// TreeReads counts the listings this round read to recognize a commit's content without a
 	// clone, each one a request against GitHub's API whether or not it settled anything.
 	TreeReads int
+	// Built counts the databases CodeQL built for this round, where the build ran: never one code
+	// scanning supplied or the database cache held.
+	Built int
 	// CodeScanning is what code scanning supplied this round, and why it did not supply the rest.
 	CodeScanning ReuseCounts
 }
@@ -132,6 +135,8 @@ type Expander struct {
 	Databases *DatabaseCache
 	// CodeScanning stands in for builds, and an owned repository's findings lane, where it holds ABOM's own result.
 	CodeScanning CodeScanning
+	// CodeScanningOff says why CodeScanning is nil where the operator turned it off.
+	CodeScanningOff string
 	// Resolver expands Options.Suite. Only needed when a suite is used.
 	Resolver Resolver
 	// Analyzer runs the findings lane. Only needed when a suite holds findings-shaped queries.
@@ -154,7 +159,9 @@ type Expander struct {
 	fetches atomic.Int64
 	// treeReads counts tree listings the same way.
 	treeReads atomic.Int64
-	// reuse counts what code scanning supplied, and why not, the same way.
+	// builds counts the databases a round's analyses built, where CodeQL built them.
+	builds atomic.Int64
+	// reuse counts what code scanning supplied to the crawl's rounds, and why not, the same way.
 	reuse reuseCounter
 	// configs remembers briefly what each configuration file said, shared by every repository naming it.
 	configs configMemo
@@ -262,6 +269,7 @@ func (e *Expander) Run(ctx context.Context, opts Options) (Stats, error) {
 	stats.Reused = int(e.Cache.Hits() - before.reused)
 	stats.Fetched = int(e.fetches.Load() - before.fetched)
 	stats.TreeReads = int(e.treeReads.Load() - before.treeReads)
+	stats.Built = int(e.builds.Load() - before.built)
 	stats.CodeScanning = e.ReuseCounts().since(before.codeScanning)
 	return stats, nil
 }
@@ -270,6 +278,7 @@ type expanderCounts struct {
 	reused       int64
 	fetched      int64
 	treeReads    int64
+	built        int64
 	codeScanning ReuseCounts
 }
 
@@ -288,7 +297,7 @@ func (e *Expander) trimBetweenRounds() {
 func (e *Expander) roundCounts() expanderCounts {
 	return expanderCounts{
 		reused: e.Cache.Hits(), fetched: e.fetches.Load(), treeReads: e.treeReads.Load(),
-		codeScanning: e.ReuseCounts(),
+		built: e.builds.Load(), codeScanning: e.ReuseCounts(),
 	}
 }
 
@@ -863,9 +872,12 @@ func (e *Expander) analyzeTree(
 		SourceFilter: e.sourceFilter(),
 		Mode:         store.AnalysisModeRegular,
 	}
-	dbDir, staged, source, err := e.databaseFor(ctx, id, dbDir, tree, planned.cliVersion)
+	dbDir, staged, source, err := e.databaseFor(ctx, id, dbDir, tree, planned.cliVersion, &e.reuse)
 	if err != nil {
 		return work.Prepared{}, err
+	}
+	if source == dbBuilt {
+		e.builds.Add(1)
 	}
 	reused := source == dbHeld
 
@@ -921,9 +933,10 @@ const (
 // databaseFor produces the database to analyze: the cache's, else code scanning's where a build would match it, else a build.
 //
 // Reuse skips extraction, never analysis: whether a query still has to run is the ledger's call,
-// and a database being on disk says nothing about it.
+// and a database being on disk says nothing about it. What code scanning answered is counted into
+// counts, which is nil for an analysis run: a round reports only what it was itself given.
 func (e *Expander) databaseFor(
-	ctx context.Context, id store.DatabaseIdentity, roundDB string, tree Tree, cli string,
+	ctx context.Context, id store.DatabaseIdentity, roundDB string, tree Tree, cli string, counts *reuseCounter,
 ) (string, string, dbSource, error) {
 	if held, ok := e.Databases.Reuse(id, cli); ok {
 		return held, "", dbHeld, nil
@@ -938,7 +951,7 @@ func (e *Expander) databaseFor(
 			return "", "", dbBuilt, err
 		}
 	}
-	if e.downloadDatabase(ctx, id.Repository, tree, dbDir, cli) {
+	if e.downloadDatabase(ctx, id.Repository, tree, dbDir, cli, counts) {
 		return dbDir, staged, dbDownloaded, nil
 	}
 	if err := e.Builder.CreateDatabase(ctx, tree.Dir, dbDir, "actions"); err != nil {
@@ -1063,14 +1076,30 @@ func (e *Expander) recordDatabase(p work.Prepared, at revision, planned tierPlan
 	}
 	id := at.database()
 	if p.DatabaseReused {
-		_, err := e.Store.UseDatabase(id)
-		return err
+		return e.useHeld(id, p.DatabasePath, planned.cliVersion)
 	}
 	_, err := e.Store.RetainDatabase(store.RetainedDatabase{
 		DatabaseIdentity: id,
 		Path:             p.DatabasePath,
 		Bytes:            p.DatabaseBytes,
 		CLIVersion:       planned.cliVersion,
+	})
+	return err
+}
+
+// useHeld moves a held database's recency, and records one found on disk with no row: unrecorded,
+// the ceiling cannot count it and the inventory keeps asking for a build.
+func (e *Expander) useHeld(id store.DatabaseIdentity, path, cli string) error {
+	recorded, err := e.Store.UseDatabase(id)
+	if err != nil || recorded {
+		return err
+	}
+	size, err := treeBytes(path)
+	if err != nil {
+		return err
+	}
+	_, err = e.Store.RetainDatabase(store.RetainedDatabase{
+		DatabaseIdentity: id, Path: path, Bytes: size, CLIVersion: cli,
 	})
 	return err
 }
@@ -1267,7 +1296,7 @@ func discoveriesOf(
 		JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 		JOIN repository r ON r.row_id = e.repository_row_id
 		WHERE r.repository_full_name = ?
-		  AND n.is_external = 1 AND n.owner IS NOT NULL AND n.repo IS NOT NULL
+		  AND `+dependencyTarget+`
 		GROUP BY n.node_key, COALESCE(e.ref_value, '')`, full)
 	if err != nil {
 		return nil, fmt.Errorf("reading discoveries for %s: %w", full, err)
@@ -1280,6 +1309,7 @@ func discoveriesOf(
 		if err := rows.Scan(&it.NodeKey, &it.Owner, &it.Repo, &it.Subpath, &it.Ref); err != nil {
 			return nil, err
 		}
+		fromKey(&it)
 		it.Depth = depth + 1
 		it.DiscoveredFrom = full
 		it.SupplyChain = frontier.SupplyChainBuild
