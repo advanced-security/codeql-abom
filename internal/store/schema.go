@@ -800,6 +800,7 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_frontier", "checked_at", "TEXT"},
 	{"abom_frontier", "analysis_count", "INTEGER NOT NULL DEFAULT 0"},
 	{"abom_frontier", "claimed_at", "TEXT"},
+	{"abom_frontier", "claim_id", "TEXT"},
 	// Existing rows predate the distinction and were all enqueued under a rule that required an
 	// external reference, so runtime is the right answer for them rather than a guess.
 	{"abom_frontier", "supply_chain", "TEXT NOT NULL DEFAULT 'runtime'"},

@@ -179,7 +179,7 @@ func (s *Store) PropertyBreakdown(name string) (PropertyBreakdown, error) {
 	if err := s.db.QueryRow(`
 SELECT COUNT(DISTINCT r.repository_full_name)
   FROM repository r
-  JOIN abom_repository_property p ON p.repository_full_name = r.repository_full_name
+  JOIN abom_repository_property p ON p.repository_full_name = r.repository_full_name COLLATE NOCASE
  WHERE p.property_name = ?
    AND `+ownedFullName("r.repository_full_name"), name).Scan(&out.WithValue); err != nil {
 		return out, err
@@ -193,7 +193,7 @@ SELECT COUNT(DISTINCT r.repository_full_name)
 SELECT p.value, COUNT(DISTINCT r.repository_full_name) AS n,
        COUNT(DISTINCT CASE WHEN f.status = 'done' THEN r.repository_full_name END) AS analyzed
   FROM repository r
-  JOIN abom_repository_property p ON p.repository_full_name = r.repository_full_name
+  JOIN abom_repository_property p ON p.repository_full_name = r.repository_full_name COLLATE NOCASE
   LEFT JOIN abom_frontier f
          ON f.depth = 0 AND f.ref = '' AND f.owner || '/' || f.repo = r.repository_full_name
  WHERE p.property_name = ?

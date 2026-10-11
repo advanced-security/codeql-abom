@@ -101,7 +101,7 @@ func TestMigrateReadsTheTagsOfRuleDocumentationRecordedBeforeTheTable(t *testing
 	}
 }
 
-func TestATagIsLookedUpByRunAndRuleRatherThanScanned(t *testing.T) {
+func TestSQLiteTagIsLookedUpByRunAndRuleRatherThanScanned(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.CreateIndexes(); err != nil {
 		t.Fatalf("CreateIndexes: %v", err)

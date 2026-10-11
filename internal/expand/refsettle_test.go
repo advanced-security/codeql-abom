@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/advanced-security/codeql-abom/internal/frontier"
+	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
 // A dependency claimed at a reference must come out of the queue when its analysis finishes.
@@ -52,7 +53,7 @@ func TestACompletedRowRecordsTheReferenceItAnalyzed(t *testing.T) {
 	h.run(10)
 
 	var analyzed string
-	if err := h.expander.Store.DB().QueryRow(
+	if err := h.expander.Store.(*store.Store).DB().QueryRow(
 		`SELECT COALESCE(analyzed_ref, '') FROM abom_frontier
 		 WHERE node_key = 'actions/checkout' AND ref = ?`, sha).Scan(&analyzed); err != nil {
 		t.Fatalf("reading the analyzed ref: %v", err)
@@ -78,7 +79,7 @@ func TestAQueryRunRecordsTheReferenceItAnalyzed(t *testing.T) {
 	h.run(10)
 
 	var refs int
-	if err := h.expander.Store.DB().QueryRow(`
+	if err := h.expander.Store.(*store.Store).DB().QueryRow(`
 		SELECT COUNT(*) FROM abom_query_run_ref r
 		JOIN abom_query_run q ON q.row_id = r.query_run_id
 		WHERE q.repository = 'actions/checkout' AND r.ref = 'v4'`).Scan(&refs); err != nil {
@@ -113,7 +114,7 @@ func TestASecondRefToAnAlreadyAnalyzedCommitIsStillRecorded(t *testing.T) {
 	h.run(10)
 
 	var refs int
-	if err := h.expander.Store.DB().QueryRow(`
+	if err := h.expander.Store.(*store.Store).DB().QueryRow(`
 		SELECT COUNT(DISTINCT r.ref) FROM abom_query_run_ref r
 		JOIN abom_query_run q ON q.row_id = r.query_run_id
 		WHERE q.repository = 'actions/checkout'`).Scan(&refs); err != nil {
@@ -136,7 +137,7 @@ func TestAnalysisIsNeverAttributedToTheZeroBatch(t *testing.T) {
 	h.run(10)
 
 	var name string
-	err := h.expander.Store.DB().QueryRow(
+	err := h.expander.Store.(*store.Store).DB().QueryRow(
 		`SELECT repository_full_name FROM repository WHERE repository_full_name IN ('/', '')`).
 		Scan(&name)
 	if err == nil {

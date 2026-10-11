@@ -10,15 +10,15 @@ for (const [unit, endpoint, identity, kind] of [
     ['repositories', 'repositories', 'fullName', 'repository'],
 ]) {
     test(`${unit} findings open in place with a matching total under scope=${scope}`, on(`/inventory?unit=${unit}`), async ({ page, request }) => {
-        const response = await request.get(`/api/${endpoint}?top=200&scope=${scope}`);
+        const response = await request.get(`/api/${endpoint}?top=30&scope=${scope}`);
         expect(response.ok()).toBeTruthy();
         const asset = (await response.json()).items.find(item => item.findings > 0);
-        test.skip(!asset, 'no asset in this unit has attributed findings');
+        test.skip(!asset, 'no asset on the first page has attributed findings');
         const key = asset[identity];
         await page.goto(`/inventory?unit=${unit}&scope=${scope}`);
         await ready(page);
         const control = page.locator(`[data-abom-review-asset=${JSON.stringify(key)}]`);
-        test.skip(await control.count() === 0, 'the selected asset is beyond the first page');
+        await expect(control, 'the API-selected first-page asset renders its findings control').toBeVisible();
         await control.click();
         const drawer = page.locator('[data-abom-asset-review]');
         await expect(drawer).toBeVisible();

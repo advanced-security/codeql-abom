@@ -255,7 +255,7 @@ func TestARunNamingRepositoriesStillNarrowsBySource(t *testing.T) {
 // Asked per finding, a source has to be key lookups — the finding's sightings, the evaluation
 // each names for its shape, then the rule it ran — never a scan of every rule every evaluation
 // recorded.
-func TestASourceIsLookedUpThroughTheFindingsOwnSightings(t *testing.T) {
+func TestSQLiteSourceIsLookedUpThroughTheFindingsOwnSightings(t *testing.T) {
 	s := newTestStore(t)
 	clause, args := sourceClause("f", AnalysisModeRegular, []string{QuerySourceUpstream})
 	rows, err := s.db.Query("EXPLAIN QUERY PLAN SELECT f.row_id FROM abom_finding f WHERE "+clause, args...)

@@ -28,7 +28,7 @@ func (r *repeated) Set(v string) error { *r = append(*r, v); return nil }
 func runOwned(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("own", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to the ABOM SQLite database (required)")
+	dbPath := databaseFlag(fs)
 	var orgs, users, includes repeated
 	fs.Var(&orgs, "org", "organization you own (repeatable)")
 	fs.Var(&users, "user", "your own user account (repeatable; opt-in, never assumed)")
@@ -45,13 +45,13 @@ func runOwned(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return errors.New("own: --db is required")
 	}
 
-	s, err := store.Open(*dbPath, store.Options{})
+	s, err := store.OpenBackend(*dbPath, store.Options{})
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", *dbPath, err)
+		return fmt.Errorf("opening %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
 	defer s.Close()
 	if err := s.Migrate(); err != nil {
-		return fmt.Errorf("migrating %s: %w", *dbPath, err)
+		return fmt.Errorf("migrating %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
 
 	switch {

@@ -16,7 +16,7 @@ import (
 
 // lockVerifier runs GitHub's lock verification against a repository's current commit, fetched
 // fresh: the same path for the command and the server.
-func lockVerifier(s *store.Store, tokens ghapp.TokenSource) *lockverify.Service {
+func lockVerifier(s store.Backend, tokens ghapp.TokenSource) *lockverify.Service {
 	checkout := &expand.Checkout{Timeout: 5 * time.Minute, Tokens: tokens}
 	return &lockverify.Service{
 		Store: s,
@@ -31,7 +31,7 @@ func lockVerifier(s *store.Store, tokens ghapp.TokenSource) *lockverify.Service 
 func runVerifyLock(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("verify-lock", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to the ABOM SQLite database (required)")
+	dbPath := databaseFlag(fs)
 	repository := fs.String("repository", "", "owner/name whose current commit to verify (required)")
 	network := fs.Bool("network", false,
 		"re-verify every pin against GitHub rather than only checking coverage offline")
@@ -42,13 +42,13 @@ func runVerifyLock(ctx context.Context, args []string, stdout, stderr io.Writer)
 		fs.Usage()
 		return errors.New("verify-lock: --db and --repository are required")
 	}
-	s, err := store.Open(*dbPath, store.Options{})
+	s, err := store.OpenBackend(*dbPath, store.Options{})
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", *dbPath, err)
+		return fmt.Errorf("opening %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
 	defer s.Close()
 	if err := s.Migrate(); err != nil {
-		return fmt.Errorf("migrating %s: %w", *dbPath, err)
+		return fmt.Errorf("migrating %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
 
 	mode := lockverify.ModeLocal

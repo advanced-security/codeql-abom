@@ -262,7 +262,7 @@ func TestALineThatMovedBetweenJobsIsDeclaredByTheStepThatHeldItAtEachCommit(t *t
 // sighting's or else its row's, the declaring node lost the type an index needs, and the closure
 // scanned every declaration on record once per step: check 8 ran for minutes on the crawled
 // organization instead of seconds.
-func TestTheSubmissionClosureFindsWhatADependencyDeclaredByTheNodeDeclaringIt(t *testing.T) {
+func TestSQLiteSubmissionClosureFindsWhatADependencyDeclaredByTheNodeDeclaringIt(t *testing.T) {
 	s := newTestStore(t)
 	// The test store defers indexes, as a bulk load does; a served or crawling one has them all.
 	if err := s.CreateIndexes(); err != nil {

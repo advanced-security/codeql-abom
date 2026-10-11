@@ -114,9 +114,9 @@ type Stats struct {
 // the database build are the expensive steps and several actions often share one repository.
 type Expander struct {
 	Queue    *frontier.Queue
-	Store    *store.Store
+	Store    store.Backend
 	Ingester *ingest.Ingester
-	Writer   *store.Writer
+	Writer   store.GraphWriter
 	Fetcher  Fetcher
 	// Probe resolves a reference without fetching it, so the commit that decides whether any
 	// work is outstanding is known before a clone is paid for. Nil fetches first, as before.
@@ -982,14 +982,33 @@ func (e *Expander) keepDatabase(
 }
 
 func (e *Expander) consume(
-	_ context.Context, b batch, p work.Prepared, opts Options, planned tierPlan, stats *Stats,
-) (int, error) {
+	ctx context.Context, b batch, p work.Prepared, opts Options, planned tierPlan, stats *Stats,
+) (count int, result error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	if p.AlreadyRecorded {
 		stats.Skipped++
 		if err := e.attachRefs(b, p, planned); err != nil {
 			return 0, err
 		}
 		return 0, e.settle(b, p, opts, stats)
+	}
+	finish, recorded, err := e.beginReceipt(b, p, opts, planned)
+	if err != nil {
+		return 0, err
+	}
+	if recorded {
+		p.AlreadyRecorded = true
+		stats.Skipped++
+		if err := e.attachRefs(b, p, planned); err != nil {
+			return 0, err
+		}
+		return 0, e.settle(b, p, opts, stats)
+	}
+	complete := true
+	if finish != nil {
+		defer func() { result = errors.Join(result, finish(result == nil && complete)) }()
 	}
 	// The repository is being analyzed because something depends on it, not because it is
 	// under review, so its own CI must not register as dependency pressure.
@@ -1013,11 +1032,15 @@ func (e *Expander) consume(
 	// dependency edges already written for this repository, so these are reported and skipped
 	// rather than aborting the round.
 	for queryID, path := range p.Extra {
-		e.report(at.repository, queryID, e.ingestExtra(queryID, path, at, planned))
+		err := e.ingestExtra(queryID, path, at, planned)
+		complete = complete && err == nil
+		e.report(at.repository, queryID, err)
 	}
 
 	if p.SarifPath != "" || p.TakenSarifPath != "" {
-		e.report(at.repository, "findings", e.ingestFindings(p, at, planned))
+		err := e.ingestFindings(p, at, planned)
+		complete = complete && err == nil
+		e.report(at.repository, "findings", err)
 	}
 
 	if err := e.Writer.Flush(); err != nil {
@@ -1199,7 +1222,7 @@ func (e *Expander) enqueueDiscoveries(b batch, analyzed string) (int, error) {
 
 // ReclassifySupplyChain re-derives how every queued dependency is classified from the whole
 // graph, and is what lets a tightened rule reach a corpus that is already built.
-func ReclassifySupplyChain(s *store.Store, q *frontier.Queue) (int, error) {
+func ReclassifySupplyChain(s store.Backend, q *frontier.Queue) (int, error) {
 	chain, err := (&graph.Builder{Store: s}).ClassifyDependencies()
 	if err != nil {
 		return 0, err
@@ -1213,7 +1236,7 @@ func ReclassifySupplyChain(s *store.Store, q *frontier.Queue) (int, error) {
 // counts as a dependency reaches an existing database only when something is re-analyzed — and
 // on a drained queue nothing ever is. Enqueue ignores what it already holds, so this settles to
 // zero once the rule and the stored graph agree.
-func SweepDiscoveries(s *store.Store, q *frontier.Queue) (int, error) {
+func SweepDiscoveries(s store.Backend, q *frontier.Queue) (int, error) {
 	chain, err := (&graph.Builder{Store: s}).ClassifyDependencies()
 	if err != nil {
 		return 0, err
@@ -1222,29 +1245,8 @@ func SweepDiscoveries(s *store.Store, q *frontier.Queue) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	rows, err := s.DB().Query(`
-		SELECT r.repository_full_name, COALESCE(MIN(f.depth), 0)
-		FROM repository r
-		LEFT JOIN abom_frontier f ON f.owner || '/' || f.repo = r.repository_full_name
-		GROUP BY r.repository_full_name`)
+	sources, err := s.DiscoverySources()
 	if err != nil {
-		return 0, fmt.Errorf("listing analyzed repositories: %w", err)
-	}
-	type source struct {
-		full  string
-		depth int
-	}
-	var sources []source
-	for rows.Next() {
-		var src source
-		if err := rows.Scan(&src.full, &src.depth); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		sources = append(sources, src)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
 		return 0, err
 	}
 
@@ -1253,10 +1255,10 @@ func SweepDiscoveries(s *store.Store, q *frontier.Queue) (int, error) {
 		// The sweep re-applies the discovery rule to everything analyzed, which before the
 		// boundary meant every repository in the table — including the 895 upstream ones nothing
 		// owned reaches.
-		if !closure.Contains(src.full) {
+		if !closure.Contains(src.Repository) {
 			continue
 		}
-		items, err := discoveriesOf(s, chain, src.full, src.depth, "")
+		items, err := discoveriesOf(s, chain, src.Repository, src.Depth, "")
 		if err != nil {
 			return added, err
 		}
@@ -1287,39 +1289,21 @@ func SweepDiscoveries(s *store.Store, q *frontier.Queue) (int, error) {
 // rather than instead of it: every reader that describes the source as written is keyed on the
 // declared ref, and an unlocked consumer of the same pin still runs what the tag names.
 func discoveriesOf(
-	s *store.Store, chain *graph.SupplyChain, full string, depth int, analyzed string,
+	s store.Backend, chain *graph.SupplyChain, full string, depth int, analyzed string,
 ) ([]frontier.Item, error) {
-	rows, err := s.DB().Query(`
-		SELECT n.node_key, COALESCE(n.owner,''), COALESCE(n.repo,''), COALESCE(n.path,''),
-		       COALESCE(e.ref_value, '')
-		FROM abom_edge_regular e
-		JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
-		JOIN repository r ON r.row_id = e.repository_row_id
-		WHERE r.repository_full_name = ?
-		  AND `+dependencyTarget+`
-		GROUP BY n.node_key, COALESCE(e.ref_value, '')`, full)
+	items, err := s.DependenciesToQueue(full)
 	if err != nil {
-		return nil, fmt.Errorf("reading discoveries for %s: %w", full, err)
+		return nil, err
 	}
-	defer rows.Close()
-
-	var items []frontier.Item
-	for rows.Next() {
-		var it frontier.Item
-		if err := rows.Scan(&it.NodeKey, &it.Owner, &it.Repo, &it.Subpath, &it.Ref); err != nil {
-			return nil, err
-		}
-		fromKey(&it)
+	for i := range items {
+		it := &items[i]
+		fromKey(it)
 		it.Depth = depth + 1
 		it.DiscoveredFrom = full
 		it.SupplyChain = frontier.SupplyChainBuild
 		if runtime, _ := chain.Of(it.NodeKey); runtime {
 			it.SupplyChain = frontier.SupplyChainRuntime
 		}
-		items = append(items, it)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 
 	sort.Slice(items, func(i, j int) bool { return items[i].NodeKey < items[j].NodeKey })

@@ -26,7 +26,7 @@ type Reader interface {
 
 // Comparer carries out a recorded comparison.
 type Comparer struct {
-	Store *store.Store
+	Store store.Backend
 	Read  Reader
 	// Parallel is how many repositories are read at once; zero reads four.
 	Parallel int

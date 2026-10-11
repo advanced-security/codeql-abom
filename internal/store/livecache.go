@@ -132,6 +132,13 @@ func (s *Store) declaredEdgeTable(mode string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if s.db.postgres {
+		if err := s.postgresDeclarations(name, mode, answers); err != nil {
+			return "", err
+		}
+		c.tables[name] = true
+		return table, nil
+	}
 	for _, statement := range []struct {
 		sql  string
 		args []any
@@ -162,6 +169,11 @@ func (s *Store) declaredEdgeTable(mode string) (string, error) {
 }
 
 func (s *Store) connectionState() (connectionState, error) {
+	if s.db.postgres {
+		var revision int64
+		err := s.db.QueryRow(`SELECT revision FROM abom_store_revision WHERE singleton = 1`).Scan(&revision)
+		return connectionState{conn: s.db, changes: revision}, err
+	}
 	ctx := context.Background()
 	conn, err := s.db.Conn(ctx)
 	if err != nil {

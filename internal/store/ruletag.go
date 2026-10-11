@@ -1,7 +1,6 @@
 package store
 
 import (
-	"database/sql"
 	"fmt"
 	"strings"
 )
@@ -14,7 +13,7 @@ const tagsFromDocumentation = `
 	WHERE json_valid(r.documentation_json) AND j.type = 'text' AND `
 
 // refreshRuleTags rewrites one recorded rule's tags from its documentation as it now stands.
-func refreshRuleTags(tx *sql.Tx, run int64, rule string) error {
+func refreshRuleTags(tx *transaction, run int64, rule string) error {
 	if _, err := tx.Exec(`DELETE FROM abom_query_run_rule_tag WHERE query_run_id = ? AND rule_id = ?`,
 		run, rule); err != nil {
 		return fmt.Errorf("clearing the tags of %s: %w", rule, err)

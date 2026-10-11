@@ -265,12 +265,23 @@ func frontierWhere(status string) (string, []any) {
 // asked for, then what was never analyzed by depth with commits being re-observed ahead of it,
 // then references that moved since they were analyzed, the stalest first. Among moved references,
 // one whose direct Actions dependencies dependency review saw move goes first.
-const FrontierClaimOrder = `expedited_at IS NULL,
+var FrontierClaimOrder = `expedited_at IS NULL,
 	requeued_for IS 'moved',
 	CASE WHEN requeued_for IS 'moved' THEN dependencies_moved IS NOT 1 END,
-	CASE WHEN requeued_for IS 'moved' THEN COALESCE(analyzed_at, '') END,
+	CASE WHEN requeued_for IS 'moved' THEN COALESCE(` + frontierTimestampOrder("analyzed_at") + `, '') END,
 	CASE WHEN requeued_for IS 'reobserve' THEN -1 ELSE depth END,
-	score DESC, enqueued_at ASC`
+	score DESC, ` + frontierTimestampOrder("enqueued_at") + ` ASC,
+	node_key COLLATE BINARY, ref COLLATE BINARY`
+
+// Queue timestamps are UTC. Pad only the sort key, preserving both nanoseconds and stored output.
+func frontierTimestampOrder(column string) string {
+	return `(CASE WHEN LENGTH(` + column + `) >= 20 AND SUBSTR(` + column + `, -1) = 'Z'
+		THEN SUBSTR(` + column + `, 1, 19) || '.' ||
+		     SUBSTR((CASE WHEN SUBSTR(` + column + `, 20, 1) = '.'
+		                  THEN SUBSTR(` + column + `, 21, LENGTH(` + column + `) - 21) ELSE '' END) ||
+		            '000000000', 1, 9) || 'Z'
+		ELSE ` + column + ` END)`
+}
 
 // frontierSnapshotQuery is separate from the read so its plan can be asserted: whether this walks
 // the edge table once per queue row is a structural property, not something a stopwatch decides.
@@ -289,7 +300,7 @@ func frontierSnapshotQuery(table, status string, limit int) (string, []any) {
 	// Same order Claim takes, so the queue reads as what happens next rather than as a ranking
 	// the crawl is about to ignore. `ref` closes the order: a dependency queued at several
 	// references ties on everything before it, and a tie under LIMIT returns an arbitrary subset.
-	query += ` ORDER BY ` + FrontierClaimOrder + `, node_key, ref`
+	query += ` ORDER BY ` + FrontierClaimOrder
 	if limit > 0 {
 		query += ` LIMIT ?`
 		args = append(args, limit)

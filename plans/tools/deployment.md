@@ -36,7 +36,7 @@ without demoting that work or waiting for the ranked list to finish.
 | Kubernetes | Use a custom Helm chart, separate UI and coordinator components, and independent analysis Jobs. Linux amd64 and arm64 are the image targets. |
 | Infrastructure layout | Multi-stage Dockerfiles under `infra/docker/`; chart under `infra/k8s/helm/codeql-abom/`; focused deployment tests under `infra/tests/`. |
 | Registry | Publish application images and the packaged OCI Helm chart to the repository's GHCR namespace. |
-| Database | An external PostgreSQL the chart does not provision, behind the store interface [store-backends](../db/store-backends.md) defines, so coordinators can be replicated and readers scaled out; SQLite remains the single-binary store. No worker opens the store; no data is migrated from SQLite. |
+| Database | An external PostgreSQL the chart does not provision, behind the [shared store contract](../../docs/architecture.md#the-graph--a-projection-of-the-evidence), with fenced coordinator ownership and independent readers; SQLite remains the single-binary store. No worker opens the store; no data is migrated from SQLite. |
 | Artifacts | Require an existing external S3-compatible service and pre-created private bucket. Do not bundle an object-store subchart, including for local installations. |
 | Initial access | Trusted local/private clusters, with loopback-only port-forward to the UI. No public ingress, NodePort or LoadBalancer exposure in the supported initial profile. |
 | Feature coverage | Offload all CodeQL-backed features, including resolution, analysis, query tests and AST. AI authoring is an optional, separately credentialed worker profile. |
@@ -271,7 +271,7 @@ matrix. A missing label fails its cell rather than dropping the platform.
 | Component | Responsibility and contents |
 | --- | --- |
 | UI image and Deployment | Published WebAssembly, an unprivileged static server and same-origin API proxy. No SDK or .NET server runtime; no UI asset ConfigMap. |
-| API/coordinator image and replicated Deployment | Scope, admission, scheduling, ledger decisions, ingestion, aggregation and persistent custom-query workspace, over PostgreSQL. Exactly one replica holds the scheduling lease at a time; the others serve reads. Include only tools needed for its remaining non-CodeQL duties. |
+| API/coordinator image and replicated Deployment | Scope, admission, scheduling, ledger decisions, ingestion, aggregation and persistent custom-query workspace, over PostgreSQL. Exactly one process holds the scheduling lease; explicit reader-only instances serve reads. Qualify coordinator restart/takeover and routing controls to the current owner. Include only tools needed for its remaining non-CodeQL duties. |
 | Event receiver Deployment | Verifies each enterprise App delivery's signature before parsing and appends it to the durable event log the [event processor](../../docs/architecture.md#the-pipeline) reads. Scaled on its own; holds no GitHub write credential and no CodeQL. |
 | Consistency checker Deployment | The [consistency checker](../../docs/architecture.md#how-it-is-tested): reads a replica, writes only its own tables, spends only its own pools. An investigating agent, if `plans/next.md` decides for one, would use the optional authoring profile's confinement. |
 | CodeQL worker image and Jobs | Existing ABOM binary with a typed worker entry point, verified CodeQL distribution, required query assets and runtime tools. Fetch, extract, evaluate, decode and return artifacts. No live-store access. |
@@ -287,7 +287,10 @@ The Kubernetes coordinator must execute every enabled CodeQL-backed workflow wit
 executable on its filesystem or `PATH`. This includes metadata resolution, dependency installation,
 query testing and AST, not just the longest analysis calls. Keep cheap non-CodeQL graph/store work
 local to the coordinators unless separately justified. The store's backends and the rules that keep
-concurrent writers correct are [store-backends](../db/store-backends.md)'s; this plan consumes them.
+concurrent writers correct are [implemented contracts](../../docs/deployment/configuration.md#database-backends);
+this plan consumes them. A competing coordinator currently refuses startup: orchestration must
+retry after lease expiry, not assume an in-process standby promotes itself. Route mutations and
+live execution endpoints to the lease holder, and preserve consistency cookies across readers.
 
 ### Job identity and artifact transport
 

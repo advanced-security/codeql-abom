@@ -1,6 +1,7 @@
 package frontier
 
 import (
+	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,6 +21,15 @@ func newQueue(t *testing.T) (*Queue, *store.Store) {
 		t.Fatalf("Migrate: %v", err)
 	}
 	return &Queue{Store: s, MaxDepth: 5}, s
+}
+
+func sqliteDB(t *testing.T, q *Queue) *sql.DB {
+	t.Helper()
+	s, ok := q.Store.(*store.Store)
+	if !ok {
+		t.Fatal("this fixture requires SQLite")
+	}
+	return s.DB().DB
 }
 
 // item mirrors what SeedFrontier produces: a key, and the account and repository it addresses.

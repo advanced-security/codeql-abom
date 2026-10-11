@@ -68,7 +68,7 @@ func (s *Store) remediation(
 		       COALESCE(a.summary,''), a.cvss_v3_score, a.epss_percentage,
 		       COUNT(DISTINCT CASE WHEN e.hops = 1 THEN e.repository_row_id END),
 		       COUNT(DISTINCT CASE WHEN e.hops > 1 THEN e.repository_row_id END),
-		       GROUP_CONCAT(DISTINCT n.node_key),
+		       GROUP_CONCAT(DISTINCT n.node_key ORDER BY n.node_key),
 		       MAX(CASE WHEN p.first_patched_version IS NOT NULL
 		                 AND p.first_patched_version <> '' THEN 1 ELSE 0 END)
 		FROM abom_exposure e

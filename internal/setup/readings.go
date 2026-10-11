@@ -24,7 +24,7 @@ type Reading struct {
 
 // Classify reads every repository's class, keeping only class when one is named. The counts are
 // always of everything, so a narrowed list still says how big the whole is.
-func Classify(s *store.Store, class string) (Readings, error) {
+func Classify(s store.Backend, class string) (Readings, error) {
 	classes, err := s.SetupClasses()
 	if err != nil {
 		return Readings{}, err

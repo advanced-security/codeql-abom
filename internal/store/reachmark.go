@@ -63,7 +63,7 @@ func (s *Store) ReadReachMark() (ReachMark, bool, error) {
 }
 
 // ClearReachMark makes the next derivation rebuild, in a transaction rewriting reach unmarked.
-func ClearReachMark(tx *sql.Tx) error {
+func ClearReachMark(tx *transaction) error {
 	for _, table := range []string{"abom_reach_mark", "abom_reach_input"} {
 		if _, err := tx.Exec(`DELETE FROM ` + table); err != nil {
 			return fmt.Errorf("clearing %s: %w", table, err)
@@ -73,7 +73,7 @@ func ClearReachMark(tx *sql.Tx) error {
 }
 
 // MarkReach records what tx's derivation read: every input when whole, else those named.
-func MarkReach(tx *sql.Tx, version string, inputs map[int64]ReachInput, whole bool) error {
+func MarkReach(tx *transaction, version string, inputs map[int64]ReachInput, whole bool) error {
 	if whole {
 		if _, err := tx.Exec(`DELETE FROM abom_reach_input`); err != nil {
 			return fmt.Errorf("clearing what reach was derived from: %w", err)

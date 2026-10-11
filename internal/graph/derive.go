@@ -2,7 +2,6 @@ package graph
 
 import (
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -107,12 +106,12 @@ func (b *Builder) Rebuild() (Derivation, error) {
 	d.Rows += facts
 
 	// Only now: a failure above leaves no mark, and the next derivation rebuilds.
-	tx, err := b.Store.DB().Begin()
+	tx, err := b.Store.BeginDerivation()
 	if err != nil {
-		return d, fmt.Errorf("beginning transaction: %w", err)
+		return d, err
 	}
-	defer tx.Rollback()
-	if err := store.MarkReach(tx, b.markVersion(), m.reachInputs(targets), true); err != nil {
+	defer func() { _ = tx.Rollback() }()
+	if err := tx.MarkReach(b.markVersion(), m.reachInputs(targets), true); err != nil {
 		return d, err
 	}
 	return d, tx.Commit()
@@ -148,11 +147,11 @@ func (b *Builder) Derive() (Derivation, error) {
 	}
 	c.through = m.walksThrough(moved)
 
-	tx, err := b.Store.DB().Begin()
+	tx, err := b.Store.BeginDerivation()
 	if err != nil {
-		return d, fmt.Errorf("beginning transaction: %w", err)
+		return d, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	reach, err := b.deriveReach(tx, m, c)
 	if err != nil {
@@ -164,13 +163,13 @@ func (b *Builder) Derive() (Derivation, error) {
 	}
 	d = d.plus(reach).plus(exposure)
 	// Every edge: one ingested at a commit nothing walks still gets the fact the rebuild gives it.
-	facts, err := store.DeriveAdvisoryRoutes(tx)
+	facts, err := tx.DeriveAdvisoryRoutes()
 	if err != nil {
 		return d, err
 	}
 	d.Rows += facts
 	if len(c.changed) > 0 {
-		if err := store.MarkReach(tx, b.markVersion(), c.changed, false); err != nil {
+		if err := tx.MarkReach(b.markVersion(), c.changed, false); err != nil {
 			return d, err
 		}
 	}
@@ -185,28 +184,24 @@ type change struct {
 }
 
 // deriveReach rewrites reach whose walk may stand at a change, retracting what nothing references.
-func (b *Builder) deriveReach(tx *sql.Tx, m *model, c change) (Derivation, error) {
+func (b *Builder) deriveReach(tx store.DerivationWriter, m *model, c change) (Derivation, error) {
 	var d Derivation
-	w, err := prepareReachWriter(tx)
-	if err != nil {
+	if err := tx.PrepareReach(); err != nil {
 		return d, err
 	}
-	defer w.close()
 	for _, node := range slices.Sorted(maps.Keys(c.through)) {
 		if c.was[node].Walk == "" && c.now[node].Walk == "" {
 			continue
 		}
-		for _, table := range reachTables {
-			res, err := tx.Exec(`DELETE FROM `+table+` WHERE node_row_id = ?`, node)
-			if err != nil {
-				return d, fmt.Errorf("retracting %s for node %d: %w", table, node, err)
-			}
-			d.Rows += affectedRows(res)
+		n, err := tx.DeleteReach(node)
+		if err != nil {
+			return d, err
 		}
+		d.Rows += n
 		if c.now[node].Walk == "" {
 			continue
 		}
-		n, err := w.write(node, m.reachOf(node, b.MaxDepth))
+		n, err = tx.WriteReach(node, storedReach(m.reachOf(node, b.MaxDepth)))
 		if err != nil {
 			return d, err
 		}
@@ -216,7 +211,7 @@ func (b *Builder) deriveReach(tx *sql.Tx, m *model, c change) (Derivation, error
 }
 
 // deriveExposure rewrites exposure whose walk may stand at a change or whose advisories changed.
-func (b *Builder) deriveExposure(tx *sql.Tx, m *model, c change) (Derivation, error) {
+func (b *Builder) deriveExposure(tx store.DerivationWriter, m *model, c change) (Derivation, error) {
 	var d Derivation
 	exposed := map[int64]bool{}
 	for node := range c.through {
@@ -229,17 +224,15 @@ func (b *Builder) deriveExposure(tx *sql.Tx, m *model, c change) (Derivation, er
 			exposed[node] = true
 		}
 	}
-	stmt, err := prepareExposureWriter(tx)
-	if err != nil {
+	if err := tx.PrepareExposure(); err != nil {
 		return d, err
 	}
-	defer stmt.Close()
 	for _, node := range slices.Sorted(maps.Keys(exposed)) {
-		res, err := tx.Exec(`DELETE FROM abom_exposure WHERE node_row_id = ?`, node)
+		n, err := tx.DeleteExposure(node)
 		if err != nil {
-			return d, fmt.Errorf("retracting exposure through node %d: %w", node, err)
+			return d, err
 		}
-		d.Rows += affectedRows(res)
+		d.Rows += n
 		// Nothing references a node with no walk input, so its walk would find nobody.
 		if c.now[node].Walk == "" || len(c.advisories[node]) == 0 {
 			continue
@@ -247,7 +240,7 @@ func (b *Builder) deriveExposure(tx *sql.Tx, m *model, c change) (Derivation, er
 		routes := m.exposureOf(node, b.MaxDepth)
 		d.Walked++
 		for _, ghsa := range c.advisories[node] {
-			n, err := writeExposureOf(stmt, node, ghsa, routes)
+			n, err := tx.WriteExposure(node, ghsa, storedExposure(routes))
 			if err != nil {
 				return d, err
 			}

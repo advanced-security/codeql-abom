@@ -16,6 +16,7 @@ import (
 
 	"github.com/advanced-security/codeql-abom/internal/catalog"
 	"github.com/advanced-security/codeql-abom/internal/compare"
+	"github.com/advanced-security/codeql-abom/internal/coordination"
 	"github.com/advanced-security/codeql-abom/internal/declare"
 	"github.com/advanced-security/codeql-abom/internal/enumerate"
 	"github.com/advanced-security/codeql-abom/internal/events"
@@ -54,7 +55,7 @@ func wireTrees(ctx context.Context, loop *supervisor.Supervisor, apiURL string, 
 }
 
 func wireEnumeration(
-	loop *supervisor.Supervisor, srv *serve.Server, s *store.Store, every time.Duration,
+	loop *supervisor.Supervisor, srv *serve.Server, s store.Backend, every time.Duration,
 ) {
 	if every <= 0 {
 		return
@@ -87,7 +88,7 @@ func wireEnumeration(
 }
 
 // prepareQueue puts initial owned, discovered and priority work in the queue.
-func prepareQueue(s *store.Store, queue *frontier.Queue, stdout, stderr io.Writer) {
+func prepareQueue(s store.Backend, queue *frontier.Queue, stdout, stderr io.Writer) {
 	if seeded, err := expand.SeedOwnedRepositories(s, queue); err != nil {
 		fmt.Fprintf(stderr, "serve: queueing owned repositories: %v\n", err)
 	} else if seeded > 0 {
@@ -112,7 +113,7 @@ func prepareQueue(s *store.Store, queue *frontier.Queue, stdout, stderr io.Write
 }
 
 // reclaimAbandonedWork settles claims left by a stopped server before serving.
-func reclaimAbandonedWork(s *store.Store, queue *frontier.Queue, stdout, stderr io.Writer) {
+func reclaimAbandonedWork(s store.Backend, queue *frontier.Queue, stdout, stderr io.Writer) {
 	if n, err := queue.ReclaimOrphaned(); err != nil {
 		fmt.Fprintf(stderr, "serve: reclaiming abandoned work: %v\n", err)
 	} else if n > 0 {
@@ -137,7 +138,7 @@ func reclaimAbandonedWork(s *store.Store, queue *frontier.Queue, stdout, stderr 
 }
 
 // migratePolicyScopes writes retired policy scopes into predicates for this grouping key.
-func migratePolicyScopes(s *store.Store, unitProperty string, stdout, stderr io.Writer) {
+func migratePolicyScopes(s store.Backend, unitProperty string, stdout, stderr io.Writer) {
 	report, err := s.MigratePolicyScopes(unitProperty)
 	if err != nil {
 		fmt.Fprintf(stderr, "serve: migrating policy scopes: %v\n", err)
@@ -161,7 +162,7 @@ func migratePolicyScopes(s *store.Store, unitProperty string, stdout, stderr io.
 // shouldResume reports whether discovery starts with the server.
 //
 // `--expand` starts it; otherwise a prior crawl resumes only when resume-on-start is set.
-func shouldResume(s *store.Store, autostart bool, stdout, stderr io.Writer) bool {
+func shouldResume(s store.Backend, autostart bool, stdout, stderr io.Writer) bool {
 	if autostart {
 		return true
 	}
@@ -190,7 +191,7 @@ func shouldResume(s *store.Store, autostart bool, stdout, stderr io.Writer) bool
 }
 
 // seedDeclaration applies an untracked local declaration only when the database holds none.
-func seedDeclaration(s *store.Store, path string, stderr io.Writer) error {
+func seedDeclaration(s store.Backend, path string, stderr io.Writer) error {
 	accounts, err := declare.Load(path)
 	if err != nil {
 		return fmt.Errorf("serve: %w", err)
@@ -230,7 +231,7 @@ func webhookSecret(path string) ([]byte, error) {
 
 // receiveEvents turns on the receiver and its processor when a secret is set; the sweep is untouched.
 func receiveEvents(
-	ctx context.Context, srv *serve.Server, s *store.Store, loop *supervisor.Supervisor,
+	ctx context.Context, srv *serve.Server, s store.Backend, loop *supervisor.Supervisor,
 	reader *catalog.Client, secret []byte, installations func(), codeScanningWait time.Duration,
 	stdout io.Writer,
 ) {
@@ -246,7 +247,7 @@ func receiveEvents(
 // newProcessor hands the processor only the asks this loop can answer, and reads GitHub through
 // the event follow-up reader.
 func newProcessor(
-	s *store.Store, loop *supervisor.Supervisor, reader *catalog.Client, installations func(),
+	s store.Backend, loop *supervisor.Supervisor, reader *catalog.Client, installations func(),
 	codeScanningWait time.Duration, stdout io.Writer,
 ) *events.Processor {
 	processor := &events.Processor{
@@ -285,7 +286,10 @@ func nudge(ch chan<- struct{}) func() {
 }
 
 type serveConfig struct {
-	dbPath string
+	dbPath        string
+	readReplica   string
+	replicaMaxLag time.Duration
+	readerOnly    bool
 	// graphviz is the version every figure is drawn with, read once at startup.
 	graphviz       string
 	declareFile    string
@@ -314,7 +318,7 @@ type serveConfig struct {
 }
 
 // runServe answers interface queries over HTTP until the context is canceled.
-func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) (result error) {
 	cfg, err := parseServeArgs(args, stderr)
 	if err != nil {
 		return err
@@ -327,6 +331,9 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	fmt.Fprintf(stdout, "serve: drawing with Graphviz %s\n", graphviz)
 	cfg.graphviz = graphviz
+	if cfg.readerOnly {
+		return runReader(ctx, cfg, stdout, stderr)
+	}
 	if reason := volatileDatabase(cfg.dbPath); reason != "" {
 		fmt.Fprintf(stderr, "serve: %s\n", reason)
 	}
@@ -336,6 +343,12 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return err
 	}
 	defer s.Close()
+
+	ctx, s, release, err := coordination.Hold(ctx, s)
+	if err != nil {
+		return fmt.Errorf("serve: acquiring coordinator ownership: %w", err)
+	}
+	defer func() { result = errors.Join(result, release()) }()
 
 	app, err := readerApp(cfg.appDir, cfg.appPublicReads, cfg.apiURL)
 	if err != nil {
@@ -361,6 +374,14 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	srv, err := newConfiguredServer(ctx, cfg, s, loop, tokens, stderr)
 	if err != nil {
 		return err
+	}
+	if cfg.readReplica != "" {
+		reader, err := openReadReplica(cfg, s)
+		if err != nil {
+			return err
+		}
+		defer reader.Close()
+		srv.SetReplica(reader, cfg.replicaMaxLag)
 	}
 	resync := make(chan struct{}, 1)
 	receiveEvents(ctx, srv, s, loop, eventsClient(ctx, cfg.apiURL, s, tokens, processPools),
@@ -402,7 +423,12 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 func parseServeArgs(args []string, stderr io.Writer) (serveConfig, error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to the ABOM SQLite database (required)")
+	dbPath := databaseFlag(fs)
+	readReplica := fs.String("read-replica", os.Getenv("ABOM_READ_REPLICA"),
+		"PostgreSQL standby URL for pure API reads (defaults to ABOM_READ_REPLICA)")
+	replicaMaxLag := fs.Duration("replica-max-lag", 0,
+		"maximum measured standby lag for ordinary reads; zero requires catch-up, writes read back from primary")
+	readerOnly := fs.Bool("reader-only", false, "serve read-only APIs without acquiring a coordinator lease or starting work")
 	declareFile := fs.String("declare-file", declare.DefaultFileName,
 		"local file declaring owned accounts, applied only when nothing is declared")
 	addr := fs.String("addr", "localhost:8080", "address to listen on")
@@ -492,12 +518,24 @@ func parseServeArgs(args []string, stderr io.Writer) (serveConfig, error) {
 		fs.Usage()
 		return serveConfig{}, errors.New("serve: --db is required")
 	}
+	if *replicaMaxLag < 0 {
+		return serveConfig{}, errors.New("replica-max-lag must not be negative")
+	}
+	if *readerOnly && d.autostart {
+		return serveConfig{}, errors.New("a reader-only instance cannot start discovery")
+	}
+	if *readReplica != "" && (!store.IsPostgresTarget(*dbPath) || !store.IsPostgresTarget(*readReplica)) {
+		return serveConfig{}, errors.New("read replicas require PostgreSQL primary and standby URLs")
+	}
 	secret, err := webhookSecret(*webhookSecretFile)
 	if err != nil {
 		return serveConfig{}, err
 	}
 	return serveConfig{
 		dbPath:         *dbPath,
+		readReplica:    *readReplica,
+		replicaMaxLag:  *replicaMaxLag,
+		readerOnly:     *readerOnly,
 		declareFile:    *declareFile,
 		addr:           *addr,
 		uiDir:          *uiDir,
@@ -520,14 +558,14 @@ func parseServeArgs(args []string, stderr io.Writer) (serveConfig, error) {
 	}, nil
 }
 
-func openServeStore(cfg serveConfig, stdout, stderr io.Writer) (*store.Store, error) {
-	s, err := store.Open(cfg.dbPath, store.Options{})
+func openServeStore(cfg serveConfig, stdout, stderr io.Writer) (store.Backend, error) {
+	s, err := store.OpenBackend(cfg.dbPath, store.Options{})
 	if err != nil {
-		return nil, fmt.Errorf("opening %s: %w", cfg.dbPath, err)
+		return nil, fmt.Errorf("opening %s: %w", store.DatabaseLabel(cfg.dbPath), err)
 	}
 	if err := s.Migrate(); err != nil {
 		_ = s.Close()
-		return nil, fmt.Errorf("migrating %s: %w", cfg.dbPath, err)
+		return nil, fmt.Errorf("migrating %s: %w", store.DatabaseLabel(cfg.dbPath), err)
 	}
 	migratePolicyScopes(s, cfg.groupProperty, stdout, stderr)
 	if err := seedDeclaration(s, cfg.declareFile, stderr); err != nil {
@@ -537,7 +575,7 @@ func openServeStore(cfg serveConfig, stdout, stderr io.Writer) (*store.Store, er
 	return s, nil
 }
 
-func primeServedStore(s *store.Store, queue *frontier.Queue, stdout, stderr io.Writer) {
+func primeServedStore(s store.Backend, queue *frontier.Queue, stdout, stderr io.Writer) {
 	if _, err := s.LinkFindingsToNodes(); err != nil {
 		fmt.Fprintf(stderr, "serve: attributing findings: %v\n", err)
 	}
@@ -549,7 +587,7 @@ func primeServedStore(s *store.Store, queue *frontier.Queue, stdout, stderr io.W
 }
 
 func newConfiguredServer(
-	ctx context.Context, cfg serveConfig, s *store.Store, loop *supervisor.Supervisor,
+	ctx context.Context, cfg serveConfig, s store.Backend, loop *supervisor.Supervisor,
 	tokens ghapp.TokenSource, stderr io.Writer,
 ) (*serve.Server, error) {
 	srv := &serve.Server{

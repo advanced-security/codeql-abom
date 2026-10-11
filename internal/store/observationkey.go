@@ -35,23 +35,23 @@ const observationColumns = `row_id, query_run_id, subject_kind, subject_key, nam
 // migrateObservationFactKey re-keys observations from runs to facts.
 // The newest duplicate survives because `loadConditions` lets the highest row id win.
 // SQLite cannot alter a UNIQUE constraint, hence the rebuild.
-func (s *Store) migrateObservationFactKey() error {
+func (s *Store) migrateObservationFactKey() (bool, error) {
 	keyed, err := s.observationsKeyedByFact()
 	if err != nil || keyed {
-		return err
+		return false, err
 	}
 
 	tx, err := s.db.Begin()
 	if err != nil {
-		return fmt.Errorf("beginning the observation rebuild: %w", err)
+		return false, fmt.Errorf("beginning the observation rebuild: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.Exec(`ALTER TABLE abom_observation RENAME TO abom_observation_old`); err != nil {
-		return fmt.Errorf("setting the old observations aside: %w", err)
+		return false, fmt.Errorf("setting the old observations aside: %w", err)
 	}
 	if _, err := tx.Exec(observationDDL); err != nil {
-		return fmt.Errorf("creating the re-keyed observation table: %w", err)
+		return false, fmt.Errorf("creating the re-keyed observation table: %w", err)
 	}
 	// A GROUP BY rollup avoids a correlated MAX per row during open.
 	if _, err := tx.Exec(`INSERT INTO abom_observation (` + observationColumns + `)
@@ -62,24 +62,19 @@ func (s *Store) migrateObservationFactKey() error {
 		        FROM abom_observation_old
 		       GROUP BY subject_kind, subject_key, name, COALESCE(value, '')) k
 		  ON k.newest = o.row_id`); err != nil {
-		return fmt.Errorf("deduplicating observations: %w", err)
+		return false, fmt.Errorf("deduplicating observations: %w", err)
 	}
 	if _, err := tx.Exec(`DROP TABLE abom_observation_old`); err != nil {
-		return fmt.Errorf("dropping the old observations: %w", err)
+		return false, fmt.Errorf("dropping the old observations: %w", err)
 	}
 	// The index went with the old table, and both readers depend on one.
 	if _, err := tx.Exec(observationIndexDDL); err != nil {
-		return fmt.Errorf("recreating the observation index: %w", err)
+		return false, fmt.Errorf("recreating the observation index: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return err
+		return false, err
 	}
-	// Outside the transaction because VACUUM cannot run in one; otherwise dropped rows stay
-	// on the freelist after the one-time rebuild.
-	if _, err := s.db.Exec(`VACUUM`); err != nil {
-		return fmt.Errorf("reclaiming the space the rebuild freed: %w", err)
-	}
-	return nil
+	return true, nil
 }
 
 // observationsKeyedByFact reports whether the table is already keyed on the fact rather than on

@@ -55,9 +55,9 @@ type Pipeline struct {
 	Source   DatabaseSource
 	Runner   QueryRunner
 	Decode   Decoder
-	Store    *store.Store
+	Store    store.Backend
 	Ingester *ingest.Ingester
-	Writer   *store.Writer
+	Writer   store.GraphWriter
 	Config   Config
 	OnEvent  func(work.Event)
 }

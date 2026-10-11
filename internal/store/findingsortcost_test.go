@@ -9,7 +9,7 @@ import (
 // measured on the crawled organization (2,069 workflows, 11,968 finding-node rows): it scanned
 // every finding-node row, including those of nodes the unit never lists, and ran in 24 ms against
 // the lookup's 10 ms. Asserted as a plan, since a small corpus hides the difference.
-func TestOrderingByFindingsLooksUpEachRowRatherThanScanningFindings(t *testing.T) {
+func TestSQLiteOrderingByFindingsLooksUpEachRowRatherThanScanningFindings(t *testing.T) {
 	s := newTestStore(t)
 	// The test store defers indexes as a bulk load does; a serving store has them.
 	if err := s.CreateIndexes(); err != nil {

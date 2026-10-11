@@ -280,8 +280,8 @@ func enqueueWithStatus(t *testing.T, s *Store, nodeKey, status string) {
 	owner, repo, _ := splitRepository(nodeKey)
 	if _, err := s.db.Exec(
 		`INSERT INTO abom_frontier (node_key, owner, repo, depth, status, enqueued_at)
-		 VALUES (?, ?, ?, 0, ?, datetime('now'))`,
-		nodeKey, owner, repo, status); err != nil {
+		 VALUES (?, ?, ?, 0, ?, ?)`,
+		nodeKey, owner, repo, status, now()); err != nil {
 		t.Fatalf("enqueueing %q: %v", nodeKey, err)
 	}
 }
@@ -292,8 +292,8 @@ func enqueueRef(t *testing.T, s *Store, nodeKey, ref string, depth int, status s
 	owner, repo, _ := splitRepository(nodeKey)
 	if _, err := s.db.Exec(
 		`INSERT INTO abom_frontier (node_key, ref, owner, repo, depth, status, enqueued_at)
-		 VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
-		nodeKey, ref, owner, repo, depth, status); err != nil {
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		nodeKey, ref, owner, repo, depth, status, now()); err != nil {
 		t.Fatalf("enqueueing %q@%s: %v", nodeKey, ref, err)
 	}
 }
@@ -305,8 +305,8 @@ func enqueueAnalyzed(t *testing.T, s *Store, nodeKey, ref, analyzedAt string) {
 	if _, err := s.db.Exec(
 		`INSERT INTO abom_frontier
 		     (node_key, ref, owner, repo, depth, status, enqueued_at, analyzed_at)
-		 VALUES (?, ?, ?, ?, 1, 'done', datetime('now'), ?)`,
-		nodeKey, ref, owner, repo, analyzedAt); err != nil {
+		 VALUES (?, ?, ?, ?, 1, 'done', ?, ?)`,
+		nodeKey, ref, owner, repo, now(), analyzedAt); err != nil {
 		t.Fatalf("enqueueing %q@%s: %v", nodeKey, ref, err)
 	}
 }

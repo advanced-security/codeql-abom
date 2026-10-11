@@ -9,7 +9,7 @@ import (
 
 // A bounded inventory must drive from reach pairs, not test every node.
 // This asserts the plan rather than the clock so small corpora cannot hide the shape.
-func TestABoundedInventoryDrivesFromTheReachPairsRatherThanScanningNodes(t *testing.T) {
+func TestSQLiteBoundedInventoryDrivesFromTheReachPairsRatherThanScanningNodes(t *testing.T) {
 	s := newTestStore(t)
 
 	scope := RepositoryScope{Include: []viewspec.PropertyMatch{

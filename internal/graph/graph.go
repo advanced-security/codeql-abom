@@ -5,7 +5,6 @@
 package graph
 
 import (
-	"database/sql"
 	"fmt"
 	"strings"
 
@@ -14,7 +13,7 @@ import (
 
 // Builder computes graph aggregates over a store.
 type Builder struct {
-	Store *store.Store
+	Store store.Backend
 	// MaxDepth bounds traversal. Zero means unlimited; cycles terminate regardless because
 	// nodes are visited once.
 	MaxDepth int
@@ -40,16 +39,6 @@ type edgeLock struct {
 	commit   string
 	consumer int64
 	own      bool
-}
-
-type loadedNode struct {
-	id        int64
-	key       string
-	kind      string
-	repo      sql.NullInt64
-	container sql.NullInt64
-	external  bool
-	job       string
 }
 
 // model is the in-memory projection of the graph used for traversal.
@@ -128,63 +117,47 @@ func newModel() *model {
 	}
 }
 
-func (m *model) loadSeedRepositories(s *store.Store) error {
-	repos, err := s.DB().Query(
-		`SELECT row_id FROM repository WHERE origin = ?`, store.OriginSeed)
+func (m *model) loadSeedRepositories(s store.Backend) error {
+	repos, err := s.SeedRepositoryIDs()
 	if err != nil {
-		return fmt.Errorf("loading repositories: %w", err)
+		return err
 	}
-	for repos.Next() {
-		var id int64
-		if err := repos.Scan(&id); err != nil {
-			repos.Close()
-			return fmt.Errorf("scanning repository: %w", err)
-		}
+	for _, id := range repos {
 		m.seedRepo[id] = true
 	}
-	repos.Close()
-	return repos.Err()
+	return nil
 }
 
-func (m *model) loadNodes(s *store.Store) error {
-	nodes, err := s.DB().Query(
-		`SELECT row_id, node_key, node_kind, repository_row_id, container_node_row_id, is_external,
-		        COALESCE(job_id, '')
-		   FROM abom_node_live`)
+func (m *model) loadNodes(s store.Backend) error {
+	nodes, err := s.TraversalNodes()
 	if err != nil {
-		return fmt.Errorf("loading nodes: %w", err)
+		return err
 	}
-	defer nodes.Close()
-
-	for nodes.Next() {
-		var n loadedNode
-		if err := nodes.Scan(&n.id, &n.key, &n.kind, &n.repo, &n.container, &n.external, &n.job); err != nil {
-			return fmt.Errorf("scanning node: %w", err)
-		}
+	for _, n := range nodes {
 		m.addNode(n)
 	}
-	return nodes.Err()
+	return nil
 }
 
-func (m *model) addNode(n loadedNode) {
-	m.kindOf[n.id] = n.kind
-	m.keyOf[n.id] = n.key
-	if n.external {
-		m.isExternal[n.id] = true
+func (m *model) addNode(n store.TraversalNode) {
+	m.kindOf[n.ID] = n.Kind
+	m.keyOf[n.ID] = n.Key
+	if n.External {
+		m.isExternal[n.ID] = true
 	}
-	if n.repo.Valid {
-		m.repoOf[n.id] = n.repo.Int64
+	if n.RepositoryID != nil {
+		m.repoOf[n.ID] = *n.RepositoryID
 	}
-	if n.container.Valid {
-		m.container[n.id] = n.container.Int64
-		if n.job != "" {
-			m.jobOf[n.id] = fmt.Sprintf("%d/%s", n.container.Int64, n.job)
+	if n.ContainerID != nil {
+		m.container[n.ID] = *n.ContainerID
+		if n.Job != "" {
+			m.jobOf[n.ID] = fmt.Sprintf("%d/%s", *n.ContainerID, n.Job)
 		}
 	}
 }
 
 // loadEdges reads what each declaring location said, at the commits a walk may stand at.
-func (m *model) loadEdges(s *store.Store) error {
+func (m *model) loadEdges(s store.Backend) error {
 	live, err := s.LiveCommits()
 	if err != nil {
 		return err
@@ -215,54 +188,37 @@ func (m *model) loadEdges(s *store.Store) error {
 
 // loadStarts records, for each repository under review, the commits it stands at as a starting
 // point: starting, as store.StartingCommits says.
-func (m *model) loadStarts(s *store.Store, starting map[string]map[string][]string) error {
-	rows, err := s.DB().Query(`SELECT row_id, LOWER(repository_full_name) FROM repository
-		WHERE origin = ?`, store.OriginSeed)
+func (m *model) loadStarts(s store.Backend, starting map[string]map[string][]string) error {
+	rows, err := s.TraversalRepositories(true)
 	if err != nil {
-		return fmt.Errorf("loading repositories under review: %w", err)
+		return err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var id int64
-		var name string
-		if err := rows.Scan(&id, &name); err != nil {
-			return fmt.Errorf("scanning a repository under review: %w", err)
-		}
-		commits, ok := starting[name]
+	for _, r := range rows {
+		commits, ok := starting[r.Name]
 		if !ok {
 			continue
 		}
-		m.starts[id] = make(map[string]bool, len(commits))
+		m.starts[r.ID] = make(map[string]bool, len(commits))
 		for commit := range commits {
-			m.starts[id][commit] = true
+			m.starts[r.ID][commit] = true
 		}
 	}
-	return rows.Err()
+	return nil
 }
 
 // loadLocks records what the current locks select for each edge they govern, with whose lock.
-func (m *model) loadLocks(s *store.Store) error {
+func (m *model) loadLocks(s store.Backend) error {
 	governed, err := s.LockGovernedEdges()
 	if err != nil || len(governed) == 0 {
 		return err
 	}
-	rows, err := s.DB().Query(`SELECT row_id, LOWER(repository_full_name) FROM repository`)
+	rows, err := s.TraversalRepositories(false)
 	if err != nil {
-		return fmt.Errorf("loading repositories: %w", err)
+		return err
 	}
 	repositories := map[string]int64{}
-	for rows.Next() {
-		var id int64
-		var name string
-		if err := rows.Scan(&id, &name); err != nil {
-			rows.Close()
-			return fmt.Errorf("scanning a repository: %w", err)
-		}
-		repositories[name] = id
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
+	for _, r := range rows {
+		repositories[r.Name] = r.ID
 	}
 	for _, g := range governed {
 		consumer, ok := repositories[strings.ToLower(g.Consumer)]
@@ -282,24 +238,15 @@ func (m *model) loadLocks(s *store.Store) error {
 //
 // Only what was measured: a reference with no recorded commit constrains nothing, because an
 // unanalyzed version is something ABOM has no reading of rather than a version with no children.
-func (m *model) loadResolutions(s *store.Store) error {
-	rows, err := s.DB().Query(`
-		SELECT node_key, COALESCE(ref, ''), resolved_sha
-		  FROM abom_frontier
-		 WHERE COALESCE(resolved_sha, '') <> ''`)
+func (m *model) loadResolutions(s store.Backend) error {
+	rows, err := s.FrontierResolutions()
 	if err != nil {
-		return fmt.Errorf("loading reference resolutions: %w", err)
+		return err
 	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var key, ref, sha string
-		if err := rows.Scan(&key, &ref, &sha); err != nil {
-			return fmt.Errorf("scanning reference resolution: %w", err)
-		}
-		m.resolved[key+"\x00"+ref] = strings.ToLower(sha)
+	for _, r := range rows {
+		m.resolved[r.Key+"\x00"+r.Ref] = strings.ToLower(r.SHA)
 	}
-	return rows.Err()
+	return nil
 }
 
 // loadConditions attaches each step's `if:` to the traversal, so a route can say what stands
@@ -307,25 +254,17 @@ func (m *model) loadResolutions(s *store.Store) error {
 //
 // Ordered by row id so the most recent statement about a step wins deterministically; several
 // runs of the same query against different commits may each have said something.
-func (m *model) loadConditions(s *store.Store) error {
-	rows, err := s.DB().Query(store.ConditionObservationsQuery,
-		store.SubjectNode, store.ObservationCondition)
+func (m *model) loadConditions(s store.Backend) error {
+	rows, err := s.StepConditions()
 	if err != nil {
-		return fmt.Errorf("loading step conditions: %w", err)
+		return err
 	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var id int64
-		var condition string
-		if err := rows.Scan(&id, &condition); err != nil {
-			return fmt.Errorf("scanning step condition: %w", err)
-		}
-		if condition != "" {
-			m.conditionOf[id] = condition
+	for _, c := range rows {
+		if c.Condition != "" {
+			m.conditionOf[c.ID] = c.Condition
 		}
 	}
-	return rows.Err()
+	return nil
 }
 
 // Reach is the set of things that transitively depend on a node.
@@ -415,31 +354,26 @@ func (b *Builder) BuildBlastRadius() error {
 // writeBlastRadius rewrites all reach from m, unmarked until exposure and its edge fact agree.
 func (b *Builder) writeBlastRadius(m *model) (Derivation, error) {
 	var d Derivation
-	tx, err := b.Store.DB().Begin()
+	tx, err := b.Store.BeginDerivation()
 	if err != nil {
-		return d, fmt.Errorf("beginning transaction: %w", err)
+		return d, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
-	if err := store.ClearReachMark(tx); err != nil {
+	if err := tx.ClearReachMark(); err != nil {
 		return d, err
 	}
-	// One walk writes all three, so they are cleared together. Names are constants, never input.
-	for _, table := range reachTables {
-		res, err := tx.Exec(`DELETE FROM ` + table)
-		if err != nil {
-			return d, fmt.Errorf("clearing %s: %w", table, err)
-		}
-		d.Rows += affectedRows(res)
-	}
-	w, err := prepareReachWriter(tx)
+	n, err := tx.ClearReach()
 	if err != nil {
 		return d, err
 	}
-	defer w.close()
+	d.Rows += n
+	if err := tx.PrepareReach(); err != nil {
+		return d, err
+	}
 
 	for _, target := range m.referenceable {
-		n, err := w.write(target, m.reachOf(target, b.MaxDepth))
+		n, err := tx.WriteReach(target, storedReach(m.reachOf(target, b.MaxDepth)))
 		if err != nil {
 			return d, err
 		}
@@ -448,81 +382,15 @@ func (b *Builder) writeBlastRadius(m *model) (Derivation, error) {
 	return d, tx.Commit()
 }
 
-// reachTables are what one reach walk writes.
-var reachTables = []string{"abom_blast_radius", "abom_node_reach", "abom_node_version_reach"}
-
-func affectedRows(res sql.Result) int {
-	n, err := res.RowsAffected()
-	if err != nil {
-		return 0
-	}
-	return int(n)
-}
-
-// reachWriter writes one node's reach. The walk already knows which repositories it found and at
-// which version, so each breakdown costs one insert per row rather than a second traversal.
-type reachWriter struct {
-	rollup, repositories, versions *sql.Stmt
-}
-
-func prepareReachWriter(tx *sql.Tx) (*reachWriter, error) {
-	w := &reachWriter{}
-	var err error
-	if w.rollup, err = tx.Prepare(`
-		INSERT INTO abom_blast_radius (node_row_id, dependent_repos, dependent_steps, dependent_jobs,
-			dependent_workflows, max_depth, refs_in_use)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`); err != nil {
-		return nil, fmt.Errorf("preparing the blast radius insert: %w", err)
-	}
-	if w.repositories, err = tx.Prepare(
-		`INSERT INTO abom_node_reach (node_row_id, repository_row_id, hops, steps, jobs, workflows)
-		 VALUES (?, ?, ?, ?, ?, ?)`); err != nil {
-		w.close()
-		return nil, fmt.Errorf("preparing the reach insert: %w", err)
-	}
-	if w.versions, err = tx.Prepare(`INSERT INTO abom_node_version_reach
-		(node_row_id, commit_sha, repository_row_id, hops) VALUES (?, ?, ?, ?)`); err != nil {
-		w.close()
-		return nil, fmt.Errorf("preparing the reach-by-version insert: %w", err)
-	}
-	return w, nil
-}
-
-func (w *reachWriter) close() {
-	for _, stmt := range []*sql.Stmt{w.rollup, w.repositories, w.versions} {
-		if stmt != nil {
-			stmt.Close()
-		}
-	}
-}
-
-// write stores one node's reach and counts rows. A repository's members are its own; totals sum.
-func (w *reachWriter) write(target int64, r Reach) (int, error) {
-	var steps, jobs, workflows int
-	rows := 0
+func storedReach(r Reach) store.ReachWrite {
+	out := store.ReachWrite{Repositories: map[int64]store.ReachCounts{},
+		Versions: r.Versions, MaxDepth: r.MaxDepth, RefsInUse: len(r.References)}
 	for repo, hops := range r.Repositories {
 		d := r.Dependents[repo]
-		steps, jobs, workflows = steps+len(d.Steps), jobs+len(d.Jobs), workflows+len(d.Workflows)
-		if _, err := w.repositories.Exec(target, repo, hops,
-			len(d.Steps), len(d.Jobs), len(d.Workflows)); err != nil {
-			return rows, fmt.Errorf("writing reach for node %d: %w", target, err)
-		}
-		rows++
+		out.Repositories[repo] = store.ReachCounts{Hops: hops, Steps: len(d.Steps),
+			Jobs: len(d.Jobs), Workflows: len(d.Workflows)}
 	}
-	if _, err := w.rollup.Exec(target, len(r.Repositories), steps, jobs, workflows,
-		r.MaxDepth, len(r.References)); err != nil {
-		return rows, fmt.Errorf("writing blast radius for node %d: %w", target, err)
-	}
-	rows++
-	for commit, repos := range r.Versions {
-		for repo, hops := range repos {
-			if _, err := w.versions.Exec(target, commit, repo, hops); err != nil {
-				return rows, fmt.Errorf("writing reach for node %d at %q: %w", target, commit, err)
-			}
-			rows++
-		}
-	}
-	return rows, nil
+	return out
 }
 
 // Dependents returns the repositories that would be affected by a change to a node.
@@ -530,11 +398,9 @@ func (w *reachWriter) write(target int64, r Reach) (int, error) {
 // This is the on-demand counterpart to the stored counts, used to answer "which repositories
 // does a version bump touch" from the graph in memory, without reading the stored breakdown.
 func (b *Builder) Dependents(nodeKey string) ([]string, error) {
-	var target int64
-	err := b.Store.DB().QueryRow(
-		`SELECT row_id FROM abom_node_live WHERE node_key = ?`, nodeKey).Scan(&target)
+	target, err := b.Store.NodeID(nodeKey)
 	if err != nil {
-		return nil, fmt.Errorf("resolving %q: %w", nodeKey, err)
+		return nil, err
 	}
 
 	m, err := b.load()
@@ -546,25 +412,18 @@ func (b *Builder) Dependents(nodeKey string) ([]string, error) {
 		return nil, nil
 	}
 
-	rows, err := b.Store.DB().Query(
-		`SELECT row_id, repository_full_name FROM repository ORDER BY repository_full_name`)
+	rows, err := b.Store.OrderedRepositories()
 	if err != nil {
-		return nil, fmt.Errorf("loading repositories: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
 
 	var out []string
-	for rows.Next() {
-		var id int64
-		var name string
-		if err := rows.Scan(&id, &name); err != nil {
-			return nil, err
-		}
-		if _, reaches := reach.Repositories[id]; reaches {
-			out = append(out, name)
+	for _, r := range rows {
+		if _, reaches := reach.Repositories[r.ID]; reaches {
+			out = append(out, r.Name)
 		}
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // RebuildAggregates recomputes the passes that clear their table and derive it again. Their

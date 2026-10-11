@@ -8,7 +8,7 @@ import (
 // The graph node query must not re-read the frontier once per node.
 // The guard asserts the plan shape, not elapsed time, so corpus size cannot hide the cost.
 // Correlation inside a materialized CTE is allowed because it runs before the per-node pass.
-func TestTheGraphNodeQueryDoesNotRereadTheFrontierPerNode(t *testing.T) {
+func TestSQLiteGraphNodeQueryDoesNotRereadTheFrontierPerNode(t *testing.T) {
 	for _, shape := range []struct {
 		name string
 		opts FullGraphOptions

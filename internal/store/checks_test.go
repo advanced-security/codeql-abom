@@ -192,7 +192,7 @@ func TestASampledPartReportsItsPopulationAndBoundAndAnExhaustiveOneNeither(t *te
 
 // The checker migrates only its own tables on the database it reads, so a column added to them has
 // to reach tables an older build created there without the migration a serving process runs.
-func TestMigrateChecksAddsNewColumnsToCheckTablesAnOlderBuildCreated(t *testing.T) {
+func TestSQLiteMigrateChecksAddsNewColumnsToCheckTablesAnOlderBuildCreated(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "abom.db"), Options{})
 	if err != nil {
 		t.Fatal(err)

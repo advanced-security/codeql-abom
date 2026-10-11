@@ -12,7 +12,7 @@ import (
 // Service is what a server offers for writing default setup: previews from any server, and
 // approvals and batches only from one started with write targets.
 type Service struct {
-	Store  *store.Store
+	Store  store.Backend
 	Runner *Runner
 	// Targets and Accounts are the server's write guard: repositories named one by one, and
 	// accounts whose declared repositories may all be written. Neither means nothing is written.

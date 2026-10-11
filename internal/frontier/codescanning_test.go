@@ -34,7 +34,7 @@ func claimed(t *testing.T, q *Queue) []string {
 func held(t *testing.T, q *Queue, k Key) string {
 	t.Helper()
 	var commit *string
-	if err := q.Store.DB().QueryRow(`SELECT awaiting_code_scanning FROM abom_frontier
+	if err := sqliteDB(t, q).QueryRow(`SELECT awaiting_code_scanning FROM abom_frontier
 		WHERE node_key = ? AND ref = ?`, k.NodeKey, k.Ref).Scan(&commit); err != nil {
 		t.Fatalf("reading the hold on %s: %v", k.NodeKey, err)
 	}

@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS abom_frontier (
   -- When the item was handed to a worker. A crash cannot update a row, so this is the only
   -- evidence that distinguishes work in progress from work abandoned mid-flight.
   claimed_at      TEXT,
+  claim_id        TEXT,
   -- When someone asked for this specific dependency ahead of the ranking. Named "expedited"
   -- rather than "pinned" because a pinned reference already means a SHA-pinned uses: clause
   -- everywhere else here, and the two would read as the same thing.
@@ -71,7 +72,7 @@ CREATE INDEX IF NOT EXISTS idx_frontier_check  ON abom_frontier(status, checked_
 // `addedColumns`, which does not match the DDL.
 const frontierColumns = `node_key, ref, owner, repo, subpath, depth, status, attempts, score,
 	cost_estimate, reason, discovered_from, enqueued_at, next_attempt_at, completed_at,
-	claimed_at, expedited_at, analyzed_ref, resolved_sha, analyzed_at, checked_at,
+	claimed_at, claim_id, expedited_at, analyzed_ref, resolved_sha, analyzed_at, checked_at,
 	analysis_count, supply_chain, requeued_for, dependencies_moved, awaiting_code_scanning`
 
 // migrateFrontierRefKey re-keys the queue from the dependency to the dependency at a reference.

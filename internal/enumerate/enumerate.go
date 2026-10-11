@@ -132,7 +132,7 @@ type ReadRepository func(ctx context.Context, fullName string) (catalog.Listing,
 
 // Options is one enumeration run.
 type Options struct {
-	Store *store.Store
+	Store store.Backend
 	Read  Read
 	// Schema is read once per account, not per repository. Without it the bucket a repository
 	// lands in by choosing nothing looks like a unit somebody joined.
@@ -361,7 +361,7 @@ func (o Options) remember(owner string, listing catalog.Listing) error {
 // record writes one account's repositories, counting each as new, promoted, or already known, and
 // names the ones the declaration covers.
 func record(
-	s *store.Store, account store.DeclaredAccount, listing catalog.Listing, report *Report, at time.Time,
+	s store.Backend, account store.DeclaredAccount, listing catalog.Listing, report *Report, at time.Time,
 ) (AccountEnumeration, []string, error) {
 	one := AccountEnumeration{
 		Owner:            account.Owner,
@@ -519,7 +519,7 @@ func schemaOrReason(
 // A truncated answer is treated the same way, because half a dividing line places a repository
 // somewhere the organization did not.
 func recordProperties(
-	s *store.Store, repository catalog.Repository, read bool, one *AccountEnumeration,
+	s store.Backend, repository catalog.Repository, read bool, one *AccountEnumeration,
 ) error {
 	if !read {
 		return nil

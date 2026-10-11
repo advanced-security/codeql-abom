@@ -104,7 +104,7 @@ func TestNeverProbedRowsAreOfferedBeforeAlreadyProbedOnes(t *testing.T) {
 		}
 	}
 	// The valuable one has been probed; the humble one never has.
-	if _, err := q.Store.DB().Exec(
+	if _, err := sqliteDB(t, q).Exec(
 		`UPDATE abom_frontier SET score = 100 WHERE node_key = 'actions/valuable'`); err != nil {
 		t.Fatalf("scoring: %v", err)
 	}
@@ -191,7 +191,7 @@ func enqueueOne(t *testing.T, q *Queue, key, ref string) {
 func freshness(t *testing.T, q *Queue, key, ref string) (analyzed, checked string) {
 	t.Helper()
 	var a, c any
-	if err := q.Store.DB().QueryRow(
+	if err := sqliteDB(t, q).QueryRow(
 		`SELECT analyzed_at, checked_at FROM abom_frontier WHERE node_key = ? AND ref = ?`,
 		key, ref).Scan(&a, &c); err != nil {
 		t.Fatalf("reading freshness of %s@%s: %v", key, ref, err)

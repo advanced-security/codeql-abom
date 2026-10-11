@@ -179,7 +179,7 @@ func TestDeletingASavedViewRemovesIt(t *testing.T) {
 // A view kept while `scope=owned` meant what the declared repositories hold and what they run asked
 // the closure, and must go on asking it now that `owned` means only what they hold. Rewritten once:
 // a view kept since asks the strict question, and rewriting it again would widen it.
-func TestAViewKeptBeforeOwnershipWasStrictKeepsAskingTheClosure(t *testing.T) {
+func TestSQLiteViewKeptBeforeOwnershipWasStrictKeepsAskingTheClosure(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "abom.db"), Options{BulkLoad: true})
 	if err != nil {
 		t.Fatalf("Open: %v", err)

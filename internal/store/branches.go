@@ -126,7 +126,7 @@ const protectedBranchRow = `node_key = ? AND depth = 0 AND ref <> ''`
 // dependency also names, which is somebody's dependency still and keeps the depth its referrer
 // gives it.
 func queueProtectedBranches(
-	tx *sql.Tx, id int64, fullName, defaultBranch string, branches []string,
+	tx *transaction, id int64, fullName, defaultBranch string, branches []string,
 ) (BranchQueue, error) {
 	var out BranchQueue
 	want := map[string]bool{}
@@ -184,7 +184,7 @@ func queueProtectedBranches(
 }
 
 // protectedBranchRows names the references a repository is queued at as protected branches.
-func protectedBranchRows(tx *sql.Tx, fullName string) ([]string, error) {
+func protectedBranchRows(tx *transaction, fullName string) ([]string, error) {
 	rows, err := tx.Query(
 		`SELECT ref FROM abom_frontier WHERE `+protectedBranchRow+` ORDER BY ref`, fullName)
 	if err != nil {
@@ -207,7 +207,7 @@ func protectedBranchRows(tx *sql.Tx, fullName string) ([]string, error) {
 //
 // A kept row takes its depth from the queue rows of the repositories naming it, one hop further;
 // a referrer with no row of its own is a source, which puts the dependency at depth 1.
-func dequeueProtectedBranch(tx *sql.Tx, fullName, ref string) (bool, error) {
+func dequeueProtectedBranch(tx *transaction, fullName, ref string) (bool, error) {
 	var named bool
 	var referrer sql.NullInt64
 	if err := tx.QueryRow(`

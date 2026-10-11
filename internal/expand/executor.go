@@ -23,7 +23,7 @@ import (
 // started. It shares the CodeQL lock with the crawl rather than racing it: every `codeql`
 // invocation on this machine contends for one compilation cache.
 type Executor struct {
-	Store    *store.Store
+	Store    store.Backend
 	Resolver Resolver
 	Analyzer Analyzer
 	// Ingester is what makes a run's results mean anything to the rest of ABOM. Without it the

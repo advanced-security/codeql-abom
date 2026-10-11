@@ -8,8 +8,9 @@ name: Copilot Setup Steps
 # Installing a tool is not the same as being able to use it. The agent runs behind a firewall
 # once these steps finish, so anything `make verify` would otherwise fetch on first use has to be
 # fetched here: the CodeQL packs its query tests resolve, the NuGet packages the bUnit project
-# restores, and the browser the end-to-end suite drives. A job that goes green having installed
-# five tools and warmed none of their caches still leaves the agent stuck on the first command.
+# restores, the browser the end-to-end suite drives, and the PostgreSQL image the store suite runs
+# in. A job that goes green having installed five tools and warmed none of their caches still
+# leaves the agent stuck on the first command.
 
 on:
   push:
@@ -22,6 +23,8 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'Makefile'
+      # Pins the PostgreSQL image the setup pulls.
+      - 'scripts/with-postgres.py'
       - '**/codeql-pack.yml'
       - '**/codeql-pack.lock.yml'
       - 'ui/Abom.WebAssembly.csproj'
@@ -39,6 +42,7 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'Makefile'
+      - 'scripts/with-postgres.py'
       - '**/codeql-pack.yml'
       - '**/codeql-pack.lock.yml'
       - 'ui/Abom.WebAssembly.csproj'
@@ -138,6 +142,11 @@ jobs:
       - name: Copilot Setup - Install Graphviz
         run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends graphviz
 
+      # `make test` runs the store suite in the PostgreSQL image the harness pins, and pulls it on
+      # first use. The probe starts that image and removes its container; the image stays cached.
+      - name: Copilot Setup - Pull the PostgreSQL test image
+        run: python3 scripts/with-postgres.py probe
+
       - name: Copilot Setup - Verify the toolchain
         run: |
           echo "go:            $(go version)"
@@ -146,6 +155,7 @@ jobs:
           echo "codeql:        $(codeql version --format=terse)"
           echo "golangci-lint: $(golangci-lint --version)"
           echo "graphviz:      $(dot -V 2>&1)"
+          echo "docker:        $(docker version --format '{{.Server.Version}}')"
           echo "actions-lock:  $(gh extension list | awk '/actions-lock/ {print $4}')"
 
       # Proving the caches are warm, not just that the tools exist. Each of these is something

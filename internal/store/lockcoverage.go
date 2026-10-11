@@ -337,7 +337,7 @@ func (s *Store) HasLockCoverage(repository, commit, reader string) (bool, error)
 	if repository == "" || commit == "" {
 		return false, nil
 	}
-	var found int
+	var found bool
 	err := s.db.QueryRow(`
 		SELECT EXISTS(
 		  SELECT 1 FROM abom_lock_coverage
@@ -347,7 +347,7 @@ func (s *Store) HasLockCoverage(repository, commit, reader string) (bool, error)
 	if err != nil {
 		return false, fmt.Errorf("reading lock coverage for %s at %s: %w", repository, commit, err)
 	}
-	return found == 1, nil
+	return found, nil
 }
 
 // readByCurrentReader holds for a repository-level reading this reader need not repeat. No

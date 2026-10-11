@@ -73,7 +73,7 @@ type Tool struct {
 
 // Toolchain checks and changes what sessions run on.
 type Toolchain struct {
-	Store *store.Store
+	Store store.Backend
 	// Pack is the operator's query pack; empty means none was configured.
 	Pack string
 	// CodeQL with an empty Path runs codeql from PATH.

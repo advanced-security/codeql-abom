@@ -13,7 +13,7 @@ import (
 //	actions/checkout               external, belongs to nobody
 func unitGraphFixture(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "abom.db"), Options{BulkLoad: true})
+	s, err := openTestStore(t, filepath.Join(t.TempDir(), "abom.db"), Options{BulkLoad: true})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

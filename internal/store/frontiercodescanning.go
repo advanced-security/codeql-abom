@@ -1,4 +1,4 @@
-package frontier
+package store
 
 import (
 	"fmt"
@@ -32,7 +32,12 @@ func (q *Queue) ReleaseCodeScanningHolds(repository string) ([]Key, error) {
 }
 
 func (q *Queue) release(which string, args ...any) ([]Key, error) {
-	rows, err := q.Store.DB().Query(`
+	tx, err := q.Store.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.Query(`
 		UPDATE abom_frontier SET awaiting_code_scanning = NULL, next_attempt_at = NULL
 		WHERE status = 'pending' AND LOWER(owner || '/' || repo) = LOWER(?) `+which+`
 		RETURNING node_key, ref`, args...)
@@ -48,5 +53,11 @@ func (q *Queue) release(which string, args ...any) ([]Key, error) {
 		}
 		out = append(out, k)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return out, tx.Commit()
 }

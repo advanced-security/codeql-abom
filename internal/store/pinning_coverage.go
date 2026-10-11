@@ -175,7 +175,7 @@ func (s *Store) PinningLevel(scope, parent string, f PinningFilter, limit int) (
 	case PinningByRepo:
 		key, label, parentColumn, group = "repo_key", "SUBSTR(repo_key, INSTR(repo_key, '/') + 1)", "owner_key", "repo_key"
 	case PinningByWorkflow:
-		key, label, parentColumn, group = "workflow_key", "file_path", "repo_key", "workflow_key"
+		key, label, parentColumn, group = "workflow_key", "file_path", "repo_key", "workflow_key, file_path"
 	case PinningByReference:
 		key, label, parentColumn, group = "target_key", "target_key", "workflow_key", "target_key, ref_value"
 	default:

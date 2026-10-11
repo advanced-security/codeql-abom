@@ -207,7 +207,7 @@ func (s *Store) RepositoriesInScope(owned bool, sc RepositoryScope) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	where := `WHERE 1` + bound
+	where := `WHERE true` + bound
 	if owned {
 		where += ` AND ` + ownedFullName("r.repository_full_name")
 	}

@@ -20,7 +20,7 @@ func bindOldStyle(t *testing.T, s *Store, tier, suite string) {
 
 func reopen(t *testing.T, path string) *Store {
 	t.Helper()
-	s, err := Open(path, Options{})
+	s, err := openTestStore(t, path, Options{})
 	if err != nil {
 		t.Fatalf("reopening: %v", err)
 	}

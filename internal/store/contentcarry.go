@@ -15,7 +15,7 @@ func (s *Store) HasCommitContentLabeled(repository, label, except string) (bool,
 	if repository == "" || label == "" {
 		return false, nil
 	}
-	var found int
+	var found bool
 	err := s.db.QueryRow(`
 		SELECT EXISTS(
 		  SELECT 1 FROM abom_commit_content
@@ -25,7 +25,7 @@ func (s *Store) HasCommitContentLabeled(repository, label, except string) (bool,
 	if err != nil {
 		return false, fmt.Errorf("looking for content of %s labeled %s: %w", repository, label, err)
 	}
-	return found == 1, nil
+	return found, nil
 }
 
 // CarryLockReading gives a commit the lock reading of another commit of the same repository whose

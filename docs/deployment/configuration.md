@@ -66,6 +66,54 @@ does not establish coherent host routing for Git and `gh`. Do not treat the flag
 GHES deployment option. Keep submission targets unset during onboarding; reading a repository is
 not authority to publish a dependency snapshot or alert to it.
 
+## Database backends
+
+`--db` accepts a SQLite path or a PostgreSQL URL and defaults to `ABOM_DB`. Keep connection
+passwords in the environment rather than process arguments:
+
+```bash
+export ABOM_DB="$(cat /secure/abom-primary-dsn)"
+./bin/codeql-abom serve --addr 127.0.0.1:8099 --app-dir /secure/github-app
+```
+
+A PostgreSQL deployment starts from its own crawl; ABOM does not import a SQLite database into it.
+The coordinator initializes its schema and needs schema-owner permissions. A network database has
+no adjacent directory, so name a configured GitHub App with `--app-dir` rather than expecting it to
+be discovered beside the URL. Use verified TLS for non-loopback database connections. Application
+errors redact connection passwords and URL parameters.
+
+One coordinator holds the database-backed discovery lease. It renews the lease while running and
+cancels work if ownership is lost; fenced transactions reject writes from a former owner. A
+second coordinator must wait or retry after the lease expires, not reclaim the first one's work.
+Successful ingestion attempts have durable, content-bound receipts so replay cannot import them
+twice or change their evidence.
+The lease lasts 30 seconds and is renewed every 10 seconds. A database copy can contain a live
+lease from its source; wait for that copied lease to expire before starting a coordinator on it.
+Startup refuses a competing coordinator; it does not turn that process into an automatic standby.
+Run readers explicitly and let process orchestration retry coordinator startup after a failure.
+
+### Read replicas
+
+An optional `ABOM_READ_REPLICA` or `--read-replica` names a physical PostgreSQL standby belonging
+to the same database and schema. Graph and inventory reads use it when eligible. Responses state
+`X-Abom-Read-Source` and `X-Abom-Replica-Lag-Ms`; unknown or excessive lag uses the primary rather
+than pretending the replica is current. The default `--replica-max-lag=0` requires WAL catch-up;
+an operator may explicitly allow a bounded lag for ordinary reads.
+
+Controls and their immediate responses use the primary. A control response sets an HTTP-only
+consistency cookie: subsequent reads stay on the primary until the standby has replayed that
+write. Cookie-aware API clients preserve the same guarantee as the browser.
+
+`serve --reader-only` starts an independently scalable API reader without running migrations,
+acquiring the coordinator lease, receiving events, or starting analysis. Give it read-only
+database credentials and an already initialized schema. It refuses mutation requests; route
+controls and live execution/authoring endpoints to the coordinator. Data reads may use the
+standby while consistent readbacks use its read-only connection to the primary.
+
+Consistency checks use native, isolated snapshots on either backend. PostgreSQL checks require
+permission to create and remove their temporary schemas; they do not convert the graph into a
+SQLite file or mutate the source while deriving comparisons.
+
 ## Ownership
 
 Declare ownership in **Settings**, as [source setup](source.md#start-and-declare-your-scope)
@@ -148,7 +196,7 @@ environment variables that the executable automatically interprets:
 | Make override | Default relative to the checkout | Purpose |
 | --- | --- | --- |
 | `ABOM_TMP` | `.abom/` | Parent of the default runtime paths; not all of its contents are disposable. |
-| `ABOM_DB` | `.abom/db/abom.db` | Durable SQLite database, with its adjacent WAL and shared-memory files. |
+| `ABOM_DB` | `.abom/db/abom.db` | Durable SQLite path or PostgreSQL URL; supply URL credentials through the environment. |
 | `ABOM_WORK` | `.abom/work/` | Checkout and analysis work area; may also contain run/authoring artifacts. |
 | `ABOM_UI` | `.abom/ui/` | Generated published UI; `make start` rebuilds it. |
 | `ABOM_LOG` | `.abom/logs/serve.log` | Background-server output. |

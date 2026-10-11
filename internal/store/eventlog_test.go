@@ -220,7 +220,7 @@ func TestAQueueRowIsReadAsRecorded(t *testing.T) {
 }
 
 // Every other write shares this one connection, so the append's FULL sync must not outlive it.
-func TestAppendingADeliveryLeavesTheConnectionAtItsUsualSync(t *testing.T) {
+func TestSQLiteAppendingADeliveryLeavesTheConnectionAtItsUsualSync(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "abom.db"), Options{})
 	if err != nil {
 		t.Fatalf("Open: %v", err)

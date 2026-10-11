@@ -253,38 +253,7 @@ func (s *Store) pruneOutsideClosure(inClosure []string, act bool) (PruneReport, 
 // nextGeneration records a generation for a change that is not an ingestion, so a client can be
 // told about it through the same cursor it already polls.
 func (s *Store) nextGeneration(bumpEpoch bool) (int64, error) {
-	var nodeMark, edgeMark sql.NullInt64
-	if err := s.db.QueryRow(
-		`SELECT MAX(row_id) FROM abom_node`).Scan(&nodeMark); err != nil {
-		return 0, fmt.Errorf("reading the node watermark: %w", err)
-	}
-	if err := s.db.QueryRow(
-		`SELECT MAX(row_id) FROM abom_edge`).Scan(&edgeMark); err != nil {
-		return 0, fmt.Errorf("reading the edge watermark: %w", err)
-	}
-	var containMark sql.NullInt64
-	if err := s.db.QueryRow(
-		`SELECT MAX(row_id) FROM abom_containment`).Scan(&containMark); err != nil {
-		return 0, fmt.Errorf("reading the containment watermark: %w", err)
-	}
-	epoch, err := s.currentEpoch()
-	if err != nil {
-		return 0, err
-	}
-	// A new row rather than an update, so a cursor pointing at the previous generation still
-	// reads the previous epoch and can be told its row ids no longer mean anything.
-	if bumpEpoch {
-		epoch++
-	}
-	res, err := s.db.Exec(`
-		INSERT INTO abom_graph_generation
-			(node_watermark, edge_watermark, containment_watermark, created_at, reach_rebuilt, epoch)
-		VALUES (?, ?, ?, ?, 0, ?)`,
-		nodeMark.Int64, edgeMark.Int64, containMark.Int64, now(), epoch)
-	if err != nil {
-		return 0, fmt.Errorf("recording a generation: %w", err)
-	}
-	return res.LastInsertId()
+	return s.recordGraphGeneration(GraphRebuild{}, bumpEpoch, false)
 }
 
 // reviveNamedBy brings back every removed node that one of the given live edges names, or that any
@@ -329,14 +298,16 @@ func (s *Store) reviveWhatLiveEdgesName() error {
 //
 // The table is a constant at every call site, never user input.
 func (s *Store) removedSince(table string, since int64) ([]string, error) {
-	key := "node_key"
+	key, kind := "node_key", "node"
 	if table == "abom_edge" {
-		key = "edge_key"
+		key, kind = "edge_key", "edge"
 	}
 	return queryAll(s, "reading removals", func(r *sql.Rows) (string, error) {
 		var k string
 		return k, r.Scan(&k)
-	}, `SELECT `+key+` FROM `+table+` WHERE removed_generation > ? ORDER BY row_id`, since)
+	}, `SELECT `+key+` FROM `+table+` WHERE removed_at IS NOT NULL
+		AND row_id IN (SELECT object_id FROM abom_graph_change WHERE object_kind = ? AND sequence > ?)
+		ORDER BY row_id`, kind, since)
 }
 
 // Tombstoned counts nodes removed from view and still on disk.
@@ -429,6 +400,9 @@ func repeated(args []any, times int) []any {
 // inList renders a lower-cased SQL IN list, because GitHub treats account names
 // case-insensitively and so must this.
 func inList(names []string) (string, []any) {
+	if len(names) == 0 {
+		return "(SELECT CAST(NULL AS TEXT) WHERE false)", []any{}
+	}
 	args := make([]any, 0, len(names))
 	marks := make([]string, 0, len(names))
 	for _, n := range names {

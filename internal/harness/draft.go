@@ -185,7 +185,7 @@ func (s *Sessions) StopDraft(run int64) bool {
 
 // drafter is what a drafting session may read and keep: the picks, and their repositories' source.
 type drafter struct {
-	store     *store.Store
+	store     store.Backend
 	workspace string
 	session   int64
 	run       int64

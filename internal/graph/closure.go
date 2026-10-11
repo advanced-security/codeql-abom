@@ -1,7 +1,6 @@
 package graph
 
 import (
-	"fmt"
 	"sort"
 
 	"github.com/advanced-security/codeql-abom/internal/store"
@@ -69,7 +68,7 @@ func (b *Builder) OwnedClosure() (*Closure, error) {
 
 // OwnedClosureNames is the owned closure as the discovery queue reads it, walked afresh on every
 // call so a declaration or an analysis moves the bound at once.
-func OwnedClosureNames(s *store.Store) func() ([]string, error) {
+func OwnedClosureNames(s store.Backend) func() ([]string, error) {
 	return func() ([]string, error) {
 		c, err := (&Builder{Store: s}).OwnedClosure()
 		if err != nil {
@@ -106,30 +105,14 @@ func (b *Builder) ClosureFrom(roots []string) (*Closure, error) {
 	// Edges by containing repository to the repository each target belongs to. The target's
 	// owner and repo come from the node rather than its repository_row_id, which a node first
 	// seen as somebody else's dependency does not have.
-	rows, err := b.Store.DB().Query(`
-		SELECT r.repository_full_name, dst.owner || '/' || dst.repo
-		FROM abom_edge_regular e
-		JOIN abom_node_live dst ON dst.row_id = e.dst_node_row_id
-		JOIN repository r ON r.row_id = e.repository_row_id
-		WHERE ` + store.DependencyEdgeFilter + `
-		  AND dst.owner IS NOT NULL AND dst.repo IS NOT NULL
-		  AND dst.owner <> '' AND dst.repo <> ''
-		GROUP BY r.repository_full_name, dst.owner || '/' || dst.repo`)
+	rows, err := b.Store.RepositoryDependencies()
 	if err != nil {
-		return nil, fmt.Errorf("loading dependency edges: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
 
 	dependsOn := map[string][]string{}
-	for rows.Next() {
-		var from, to string
-		if err := rows.Scan(&from, &to); err != nil {
-			return nil, fmt.Errorf("scanning a dependency edge: %w", err)
-		}
-		dependsOn[from] = append(dependsOn[from], to)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("loading dependency edges: %w", err)
+	for _, d := range rows {
+		dependsOn[d.From] = append(dependsOn[d.From], d.To)
 	}
 
 	queue := make([]string, 0, len(roots))

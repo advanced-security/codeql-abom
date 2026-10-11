@@ -23,7 +23,7 @@ import (
 func runDiscover(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("discover", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to the ABOM SQLite database (required)")
+	dbPath := databaseFlag(fs)
 	org := fs.String("org", "", "GitHub organization to enumerate (required)")
 	language := fs.String("language", "actions", "CodeQL language to look for a database in")
 	apiURL := fs.String("api-url", defaultAPIURL(), "GitHub API base URL")
@@ -36,13 +36,13 @@ func runDiscover(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		return errors.New("discover: --db and --org are required")
 	}
 
-	s, err := store.Open(*dbPath, store.Options{BulkLoad: true})
+	s, err := store.OpenBackend(*dbPath, store.Options{BulkLoad: true})
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", *dbPath, err)
+		return fmt.Errorf("opening %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
 	defer s.Close()
 	if err := s.Migrate(); err != nil {
-		return fmt.Errorf("migrating %s: %w", *dbPath, err)
+		return fmt.Errorf("migrating %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
 
 	tokens, err := dbReaderTokens(*dbPath)
@@ -143,7 +143,7 @@ var githubPace = work.NewLimiter(0)
 
 // githubClient reads GitHub on this database's behalf, remembering validators in it so that asking
 // again about something unchanged costs a round trip and no primary quota.
-func githubClient(ctx context.Context, apiURL string, s *store.Store, tokens ghapp.TokenSource) *catalog.Client {
+func githubClient(ctx context.Context, apiURL string, s store.Backend, tokens ghapp.TokenSource) *catalog.Client {
 	c := newReader(ctx, apiURL, tokens)
 	c.Cache = s.ResponseCache()
 	c.Pace = githubPace
@@ -154,7 +154,7 @@ func githubClient(ctx context.Context, apiURL string, s *store.Store, tokens gha
 
 // eventsClient reads GitHub for the event processor. Following up an event is work of its own, so
 // what it reads — all of it REST — is charged to the event follow-up pool, not enumeration's.
-func eventsClient(ctx context.Context, apiURL string, s *store.Store, tokens ghapp.TokenSource,
+func eventsClient(ctx context.Context, apiURL string, s store.Backend, tokens ghapp.TokenSource,
 	pools *work.TokenPools) *catalog.Client {
 	c := newReader(ctx, apiURL, tokens)
 	c.Cache = s.ResponseCache()
@@ -168,7 +168,7 @@ func eventsClient(ctx context.Context, apiURL string, s *store.Store, tokens gha
 // Refused rather than ignored: a misspelled route that silently fell back to the default would put
 // the reader on a route they did not choose while the flag says otherwise.
 func readClient(
-	ctx context.Context, apiURL string, s *store.Store, route string, tokens ghapp.TokenSource,
+	ctx context.Context, apiURL string, s store.Backend, route string, tokens ghapp.TokenSource,
 ) (*catalog.Client, error) {
 	switch route {
 	case "", catalog.RouteGraphQL, catalog.RouteREST:

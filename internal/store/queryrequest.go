@@ -279,7 +279,7 @@ func (r QueryRequest) checkEvidenceRow(e RequestEvidence) error {
 
 // evidenceShown refuses picked results the run did not show: a run that never ran the query, a
 // repository it never evaluated, or a finding that member's evaluation did not report.
-func evidenceShown(tx *sql.Tx, r QueryRequest) error {
+func evidenceShown(tx *transaction, r QueryRequest) error {
 	if r.SourceRunID == 0 {
 		return nil
 	}
@@ -307,7 +307,7 @@ func evidenceShown(tx *sql.Tx, r QueryRequest) error {
 
 // pickShown refuses one pick the run did not show. A held run shows what it kept, and a member it
 // counted is one it evaluated even when a store from before held evaluations links none.
-func pickShown(tx *sql.Tx, queryID string, held bool, e RequestEvidence) error {
+func pickShown(tx *transaction, queryID string, held bool, e RequestEvidence) error {
 	switch {
 	case held && e.FindingRowID != 0:
 		return fmt.Errorf("run %d held what it found, so it stored no finding %d to cite",

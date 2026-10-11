@@ -215,8 +215,11 @@ func TestOwnershipCannotBeDeclared(t *testing.T) {
 
 	// The table that let an account be typed in must not survive alongside the verified one.
 	var n int
-	if err := s.DB().QueryRow(
-		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'abom_owned_org'`).
+	query := `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'abom_owned_org'`
+	if s.db.postgres {
+		query = `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'abom_owned_org'`
+	}
+	if err := s.DB().QueryRow(query).
 		Scan(&n); err != nil {
 		t.Fatalf("looking for the declaration table: %v", err)
 	}

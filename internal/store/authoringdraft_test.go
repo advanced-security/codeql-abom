@@ -22,7 +22,7 @@ CREATE TABLE abom_authoring_session (
 
 // A store that kept sessions before spend and drafts existed opens and gains their columns, rather
 // than failing to migrate on the first index that names one.
-func TestASessionTableFromBeforeSpendAndDraftsGainsTheirColumns(t *testing.T) {
+func TestSQLiteSessionTableFromBeforeSpendAndDraftsGainsTheirColumns(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "abom.db")
 	raw, err := sql.Open("sqlite3", path)
 	if err != nil {

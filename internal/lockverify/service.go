@@ -30,7 +30,7 @@ var (
 
 // Service runs a verification somebody asked for, within the budget, and keeps the answer.
 type Service struct {
-	Store *store.Store
+	Store store.Backend
 	// Fetch materializes owner/repo at commit into dest, which exists and is empty.
 	Fetch  func(ctx context.Context, dest, owner, repo, commit string) error
 	Runner Runner

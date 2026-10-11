@@ -151,7 +151,7 @@ func hopsOf(repos map[int64]int, names map[int64]string) string {
 }
 
 // ClosureAgreement holds each repository's reach and exposure to its closure, computed in SQL.
-func ClosureAgreement(s *store.Store, repositories []string) ([]store.CheckPart, error) {
+func ClosureAgreement(s store.Backend, repositories []string) ([]store.CheckPart, error) {
 	reached, exposed, err := s.RepositoryReach()
 	if err != nil {
 		return nil, err

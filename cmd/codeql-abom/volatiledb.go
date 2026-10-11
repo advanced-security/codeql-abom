@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
 // systemClearedRoots are the shared temporary directories an operating system empties on its own
@@ -17,6 +19,9 @@ var systemClearedRoots = []string{"/tmp", "/private/tmp", "/var/tmp", "/private/
 // reports success, so a crawl written to a cleared directory comes back later as an empty corpus
 // with no error, no event and nothing in the log to explain it.
 func volatileDatabase(path string) string {
+	if store.IsPostgresTarget(path) {
+		return ""
+	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return ""

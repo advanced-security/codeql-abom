@@ -40,11 +40,13 @@ func runApp(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 // appDir resolves the App directory: named outright, or beside the database it serves.
 func appDir(fs *flag.FlagSet) func() (string, error) {
 	dir := fs.String("dir", "", "directory holding the App's identity and key (default: github-app beside --db)")
-	db := fs.String("db", "", "ABOM database the App directory sits beside")
+	db := databaseFlag(fs)
 	return func() (string, error) {
 		switch {
 		case *dir != "":
 			return *dir, nil
+		case store.IsPostgresTarget(*db):
+			return "", errors.New("a PostgreSQL database has no local App directory; name one with --dir")
 		case *db != "":
 			return ghapp.DefaultDir(*db), nil
 		}
@@ -212,7 +214,7 @@ func runAppInstallations(ctx context.Context, args []string, stdout, stderr io.W
 	fs := flag.NewFlagSet("app installations", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dirFlag := fs.String("dir", "", "directory holding the App's identity and key (default: github-app beside --db)")
-	dbPath := fs.String("db", "", "ABOM database to record the installations in (required)")
+	dbPath := databaseFlag(fs)
 	apiURL := fs.String("api-url", defaultAPIURL(), "GitHub API base URL")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -228,7 +230,7 @@ func runAppInstallations(ctx context.Context, args []string, stdout, stderr io.W
 	if err != nil {
 		return fmt.Errorf("app installations: %w", err)
 	}
-	s, err := store.Open(*dbPath, store.Options{})
+	s, err := store.OpenBackend(*dbPath, store.Options{})
 	if err != nil {
 		return fmt.Errorf("app installations: %w", err)
 	}

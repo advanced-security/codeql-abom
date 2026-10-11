@@ -13,6 +13,7 @@ ABOM_WORK ?= $(ABOM_TMP)/work
 ABOM_QL   ?= $(ABOM_TMP)/ql/custom
 # Built CodeQL databases are kept here, so a run queries them again rather than extracting anew.
 ABOM_DATABASES ?= $(ABOM_TMP)/databases
+db-absolute = $(if $(filter postgres://% postgresql://%,$(1)),$(1),$(abspath $(1)))
 
 # Extra server flags; `ABOM_SERVE_FLAGS=--expand` starts discovery.
 ABOM_SERVE_FLAGS ?=
@@ -32,21 +33,20 @@ LDFLAGS := -X main.codeqlVersion=$(CODEQL_VERSION) $(if $(ABOM_VERSION),-X main.
 # What every platform's archive shares: the published interface, its notices and its SDK.
 ABOM_RELEASE ?= $(ABOM_TMP)/release
 
-.PHONY: bench build check-corrupt corpus check-release-version check-versions clean e2e e2e-corpus e2e-corpus-run e2e-run \
+.PHONY: backend-test bench build check-corrupt corpus check-release-version check-versions clean e2e e2e-corpus e2e-corpus-run e2e-run \
 	fmt itest js lint logs package pins publish ql \
-	quality release-archive release-ui restart selfcheck serve start status stop style test ui \
+	quality release-archive release-ui restart script-test selfcheck serve start status stop style test ui \
 	ui-test verify vet
 
 .DEFAULT_GOAL := build
 
-verify: check-corrupt check-versions check-release-version pins fmt vet lint test js style ql ui ui-test e2e
+verify: check-corrupt check-versions check-release-version pins fmt vet lint test script-test js style ql ui ui-test e2e
 
 ## bench: time the store read paths against a real corpus.
 ABOM_BENCH_DB ?= $(ABOM_TMP)/bench.db
 bench:
 	@if [ ! -f "$(ABOM_BENCH_DB)" ]; then \
-		echo "bench: no corpus at $(ABOM_BENCH_DB); take one with"; \
-		echo "  sqlite3 -readonly \"file:$(ABOM_DB)?immutable=1\" \".backup $(ABOM_BENCH_DB)\""; \
+		echo "bench: set ABOM_BENCH_DB to an isolated corpus snapshot"; \
 	fi
 	@ABOM_BENCH_DB="$(ABOM_BENCH_DB)" go test ./internal/... -run '^$$' -bench . -benchmem
 
@@ -72,9 +72,9 @@ ABOM_CORPUS_DB ?= $(ABOM_TMP)/corpus/abom.db
 ABOM_CORPUS_QL ?= $(ABOM_TMP)/corpus/ql
 corpus:
 	@if [ "$(abspath $(ABOM_CORPUS_DB))" = "$(abspath $(ABOM_DB))" ]; then \
-		echo "corpus: refusing to overwrite $(ABOM_DB), which is the working database."; exit 1; \
+		echo "corpus: refusing to overwrite the configured working database."; exit 1; \
 	fi
-	@go run ./cmd/abom-corpus --db "$(ABOM_CORPUS_DB)" --queries "$(ABOM_CORPUS_QL)"
+	@ABOM_DB="$(ABOM_CORPUS_DB)" go run ./cmd/abom-corpus --queries "$(ABOM_CORPUS_QL)"
 
 ## e2e: drive the published interface in a real browser.
 ABOM_E2E_DIR   ?= $(ABOM_TMP)/e2e
@@ -91,19 +91,20 @@ ABOM_E2E_CHANNEL ?=
 ABOM_E2E_QL ?=
 ## e2e-corpus: the same suite against the shared data set rather than an empty database.
 e2e-corpus: corpus
-	@$(MAKE) e2e ABOM_E2E_DB="$(abspath $(ABOM_CORPUS_DB))" ABOM_E2E_QL="$(abspath $(ABOM_CORPUS_QL))"
+	@ABOM_E2E_DB="$(call db-absolute,$(ABOM_CORPUS_DB))" ABOM_E2E_QL="$(abspath $(ABOM_CORPUS_QL))" $(MAKE) e2e
 
 ## e2e-run, e2e-corpus-run: run against existing binary, UI and database.
 e2e-corpus-run:
-	@if [ ! -f "$(ABOM_CORPUS_DB)" ]; then \
-		echo "e2e-corpus-run: no database at $(ABOM_CORPUS_DB); 'make corpus' builds it."; \
+	@case "$(ABOM_CORPUS_DB)" in postgres://*|postgresql://*) ;; *) \
+	if [ ! -f "$(ABOM_CORPUS_DB)" ]; then \
+		echo "e2e-corpus-run: no fixture database; 'make corpus' builds it."; \
 		echo "e2e-corpus-run: the server would otherwise make an empty one, and every"; \
 		echo "e2e-corpus-run: populated assertion would skip and be reported as a pass."; exit 1; \
-	fi
+	fi ;; esac
 	@if [ ! -f "$(ABOM_CORPUS_QL)/qlpack.yml" ]; then \
 		echo "e2e-corpus-run: no query pack at $(ABOM_CORPUS_QL); 'make corpus' lays it out."; exit 1; \
 	fi
-	@$(MAKE) e2e-run ABOM_E2E_DB="$(abspath $(ABOM_CORPUS_DB))" ABOM_E2E_QL="$(abspath $(ABOM_CORPUS_QL))"
+	@ABOM_E2E_DB="$(call db-absolute,$(ABOM_CORPUS_DB))" ABOM_E2E_QL="$(abspath $(ABOM_CORPUS_QL))" $(MAKE) e2e-run
 
 ## `e2e` builds, then runs; recursion keeps `make -j e2e` from starting too early.
 e2e: build publish
@@ -111,9 +112,9 @@ e2e: build publish
 
 e2e-run:
 	@if [ "$(abspath $(ABOM_E2E_DB))" = "$(abspath $(ABOM_DB))" ]; then \
-		echo "e2e: refusing to run against $(ABOM_DB), which is the working database."; \
+		echo "e2e: refusing to run against the configured working database."; \
 		echo "e2e: take a copy first, and note that cp does not read the WAL:"; \
-		echo "  sqlite3 \"$(ABOM_DB)\" \".backup $(ABOM_TMP)/copy.db\""; exit 1; \
+		echo "  use a backend-native snapshot rather than the live store"; exit 1; \
 	fi
 	@if [ ! -d ui/tests/e2e/node_modules ]; then \
 		echo "e2e: installing the harness into ui/tests/e2e"; \
@@ -139,6 +140,14 @@ fmt:
 ## js: test browser code that Go and Razor checks do not see.
 js:
 	@node --test ui/wwwroot/js/*.test.js ui/tests/e2e/*.test.mjs ui/tools/*.test.mjs && echo "js: ok"
+
+## script-test: test development harness lifecycle without starting a database.
+script-test:
+	@python3 -m unittest discover -s scripts -p 'test_*.py'
+
+## backend-test: run the store suite and replica routing on isolated Docker PostgreSQL alone.
+backend-test:
+	@python3 scripts/with-postgres.py test
 
 # Part of `verify`; missing golangci-lint is reported directly.
 lint:
@@ -244,7 +253,7 @@ selfcheck:
 ## serve: run in the foreground, for watching it work. `make start` for the background.
 serve: build publish
 	@mkdir -p "$(ABOM_WORK)" "$(dir $(ABOM_DB))" "$(dir $(ABOM_LOG))"
-	@$(BIN) serve --db "$(ABOM_DB)" --addr "$(ABOM_ADDR)" \
+	@ABOM_DB="$(ABOM_DB)" $(BIN) serve --addr "$(ABOM_ADDR)" \
 		--ui-dir "$(ABOM_UI)/wwwroot" --work-dir "$(ABOM_WORK)" --custom-ql-dir "$(ABOM_QL)" \
 		--database-cache-dir "$(ABOM_DATABASES)" $(ABOM_SERVE_FLAGS)
 
@@ -260,7 +269,7 @@ start: build publish
 		echo "start: use 'make restart', or 'make stop' first"; exit 1; \
 	fi
 	@mkdir -p "$(ABOM_WORK)" "$(dir $(ABOM_DB))" "$(dir $(ABOM_LOG))"
-	@$(BIN) serve --db "$(ABOM_DB)" --addr "$(ABOM_ADDR)" \
+	@ABOM_DB="$(ABOM_DB)" $(BIN) serve --addr "$(ABOM_ADDR)" \
 		--ui-dir "$(ABOM_UI)/wwwroot" --work-dir "$(ABOM_WORK)" --custom-ql-dir "$(ABOM_QL)" \
 		--database-cache-dir "$(ABOM_DATABASES)" $(ABOM_SERVE_FLAGS) \
 		>> "$(ABOM_LOG)" 2>&1 & echo $$! > "$(ABOM_PID)"
@@ -319,12 +328,12 @@ check-release-version:
 	@./scripts/check-release-version.sh
 
 ## test: run Go tests under $(ABOM_TMP) because checkout tests need git.
-test:
+test: script-test
 	@if ! command -v git >/dev/null 2>&1; then \
 		echo "git is not installed, and the checkout tests need it"; exit 1; \
 	fi
 	@mkdir -p "$(ABOM_TMP)/gotest"
-	@TMPDIR="$(ABOM_TMP)/gotest" go test ./... -count=1 -race
+	@TMPDIR="$(ABOM_TMP)/gotest" python3 scripts/with-postgres.py suite
 
 ## ui: catch Razor syntax errors that Go checks cannot see.
 ui:

@@ -27,7 +27,7 @@ import (
 func runCheck(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to the ABOM SQLite database (required)")
+	dbPath := databaseFlag(fs)
 	every := fs.Duration("every", 0, "run the checks again at this interval until interrupted; "+
 		"0 runs them once")
 	external := fs.Bool("external", true, "run the checks that read GitHub, 1, 3 and 4; false leaves them "+
@@ -44,9 +44,9 @@ func runCheck(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		fs.Usage()
 		return errors.New("check: --db is required")
 	}
-	s, err := store.Open(*dbPath, store.Options{})
+	s, err := store.OpenBackend(*dbPath, store.Options{})
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", *dbPath, err)
+		return fmt.Errorf("opening %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
 	defer s.Close()
 

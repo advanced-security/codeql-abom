@@ -14,7 +14,7 @@ func (c fixedChain) Of(nodeKey string) (runtime, known bool) {
 func chainOf(t *testing.T, q *Queue, key string) string {
 	t.Helper()
 	var chain string
-	if err := q.Store.DB().QueryRow(
+	if err := sqliteDB(t, q).QueryRow(
 		`SELECT supply_chain FROM abom_frontier WHERE node_key = ?`, key).Scan(&chain); err != nil {
 		t.Fatalf("reading supply_chain for %s: %v", key, err)
 	}

@@ -13,7 +13,7 @@ import (
 //	octo-org/app    ci.yml ──▶ octo-org/shared build.yml ─▶ actions/checkout
 func subgraphFixture(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "abom.db"), Options{BulkLoad: true})
+	s, err := openTestStore(t, filepath.Join(t.TempDir(), "abom.db"), Options{BulkLoad: true})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -415,7 +415,7 @@ func TestSubgraphWithoutAFocusCoversEveryRepository(t *testing.T) {
 }
 
 func TestSubgraphWithoutAFocusIsNeverNil(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "abom.db"), Options{BulkLoad: true})
+	s, err := openTestStore(t, filepath.Join(t.TempDir(), "abom.db"), Options{BulkLoad: true})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -596,7 +596,7 @@ func TestFullGraphDoesNotConnectRepositoriesDirectlyToSteps(t *testing.T) {
 }
 
 func TestFullGraphCollectionsAreNeverNil(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "abom.db"), Options{BulkLoad: true})
+	s, err := openTestStore(t, filepath.Join(t.TempDir(), "abom.db"), Options{BulkLoad: true})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

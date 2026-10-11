@@ -11,7 +11,7 @@ import (
 )
 
 // pruneHistory prunes what retention no longer keeps now and then every period until ctx ends, saying what it removed.
-func pruneHistory(ctx context.Context, s *store.Store, every time.Duration, now func() time.Time, log io.Writer) {
+func pruneHistory(ctx context.Context, s store.Backend, every time.Duration, now func() time.Time, log io.Writer) {
 	days := int(store.HistoryRetention / (24 * time.Hour))
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()

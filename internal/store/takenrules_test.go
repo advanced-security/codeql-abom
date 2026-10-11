@@ -56,7 +56,7 @@ func TestARuleTakenFromCodeScanningIsTracedToWhatProducedIt(t *testing.T) {
 }
 
 // An expansion runs for weeks, so a database from before rules kept their producer gains it in place.
-func TestAnUpgradedDatabaseTracesATakenRule(t *testing.T) {
+func TestSQLiteUpgradedDatabaseTracesATakenRule(t *testing.T) {
 	s := migratedLegacyStore(t)
 	if err := s.SetOwnedScope([]DeclaredAccount{{Owner: "octo-org", Kind: AccountOrganization, Enabled: true}},
 		DeclaredByCLI); err != nil {

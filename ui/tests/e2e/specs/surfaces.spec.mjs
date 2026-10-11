@@ -225,6 +225,7 @@ test.describe('Inventory reprojects one scope', () => {
 
         await page.goto('/inventory');
         await ready(page);
+        await expect(page.locator('.mud-table-body .mud-table-row a').first()).toBeVisible();
 
         const asked = page.waitForRequest((r) => r.url().includes('sort=findings'));
         await page

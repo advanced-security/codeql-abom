@@ -20,12 +20,15 @@ func TestRowCollectionPreservesOrderEmptySetsAndErrors(t *testing.T) {
 		want                 []int
 	}{
 		{"ordered", "SELECT 3 UNION ALL SELECT 1", "", []int{3, 1}},
-		{"empty", "SELECT 1 WHERE 0", "", []int{}},
+		{"empty", "SELECT 1 WHERE false", "", []int{}},
 		{"query fails", "SELECT absent FROM no_table", "collecting numbers", nil},
 		{"iteration fails", "SELECT 1 UNION ALL SELECT abs(-9223372036854775808)", "integer overflow", nil},
 		{"scan fails", "SELECT 'not a number'", "invalid syntax", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if s.db.postgres && tc.name == "iteration fails" {
+				tc.problem = "out of range"
+			}
 			got, err := queryAll(s, "collecting numbers", scan, tc.query)
 			if tc.problem != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.problem) {

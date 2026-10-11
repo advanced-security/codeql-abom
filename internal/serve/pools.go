@@ -115,7 +115,7 @@ func (s *Server) FlushPools() {
 
 // RecordPoolSpend writes what a process's pools spent since they were last drained, where every
 // meter is read, putting back what could not be written.
-func RecordPoolSpend(s *store.Store, pools *work.TokenPools) error {
+func RecordPoolSpend(s store.Backend, pools *work.TokenPools) error {
 	drained := pools.Drain()
 	rows := make([]store.PoolSpend, 0, len(drained))
 	for _, d := range drained {

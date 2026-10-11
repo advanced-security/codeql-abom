@@ -64,7 +64,7 @@ func TestAClientCannotAssertItsOwnProvenance(t *testing.T) {
 
 // An unknown source must stay unknown. Labeling pre-existing rows `cli` would invent precisely the
 // provenance this is meant to establish.
-func TestARowThatPredatesTheColumnClaimsNoProvenance(t *testing.T) {
+func TestSQLiteRowThatPredatesTheColumnClaimsNoProvenance(t *testing.T) {
 	s := migratedLegacyStoreWith(t, func(s *Store) {
 		if _, err := s.db.Exec(`
 			INSERT INTO abom_owned_scope (owner, kind, enabled, includes_only, declared_at)
@@ -215,8 +215,12 @@ func TestEveryTableAddedColumnsNamesExistsWhenThePassRuns(t *testing.T) {
 
 	for _, c := range addedColumns {
 		var name string
+		query := `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`
+		if s.db.postgres {
+			query = `SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?`
+		}
 		err := s.db.QueryRow(
-			`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, c.table,
+			query, c.table,
 		).Scan(&name)
 		if err != nil {
 			t.Errorf("addedColumns names %s.%s, but that table does not exist after Migrate: %v",

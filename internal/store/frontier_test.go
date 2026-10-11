@@ -215,3 +215,28 @@ func TestTheQueueSeparatesWorkHeldForCodeScanning(t *testing.T) {
 		}
 	}
 }
+
+// Queuing a dependency again adds no work, and a claimed one is not handed out a second time while
+// it is being analyzed.
+func TestAQueuedDependencyIsClaimedOnceAndSettles(t *testing.T) {
+	q := newTestStore(t).Frontier(FrontierOptions{})
+	item := Item{NodeKey: "acme/action", Owner: "acme", Repo: "action", Ref: "v1", Depth: 1}
+	for _, want := range []int{1, 0} {
+		if n, err := q.Enqueue([]Item{item}); err != nil || n != want {
+			t.Fatalf("enqueue=%d, %v; want %d", n, err, want)
+		}
+	}
+	items, err := q.Claim(1)
+	if err != nil || len(items) != 1 || items[0].NodeKey != item.NodeKey {
+		t.Fatalf("claim=%+v, %v", items, err)
+	}
+	if second, err := q.Claim(1); err != nil || len(second) != 0 {
+		t.Fatalf("claimed twice: %+v, %v", second, err)
+	}
+	if err := q.Complete(item.Key(), Resolution{}); err != nil {
+		t.Fatal(err)
+	}
+	if counts, err := q.Stats(); err != nil || counts[StatusDone] != 1 {
+		t.Fatalf("completed queue=%v, %v", counts, err)
+	}
+}

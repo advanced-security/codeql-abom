@@ -134,7 +134,7 @@ func (w *Writer) flushNodes() error {
 	}
 	revived := false
 
-	if err := w.inTx(func(tx *sql.Tx) error {
+	if err := w.inTx(func(tx *transaction) error {
 		var err error
 		if revived, err = anyRemoved(tx, "abom_node", "node_key", keys); err != nil {
 			return err
@@ -198,7 +198,7 @@ func (w *Writer) reloadAfterRevival(revived bool) error {
 // anyRemoved reports whether any of keys names a tombstoned row of table.
 //
 // table and column are constants at every call site, never input.
-func anyRemoved(tx *sql.Tx, table, column string, keys []string) (bool, error) {
+func anyRemoved(tx *transaction, table, column string, keys []string) (bool, error) {
 	list, err := json.Marshal(keys)
 	if err != nil {
 		return false, err
@@ -223,7 +223,7 @@ func (w *Writer) flushEdges() error {
 		keys[i] = e.Key
 	}
 
-	if err := w.inTx(func(tx *sql.Tx) error {
+	if err := w.inTx(func(tx *transaction) error {
 		var err error
 		if revived, err = anyRemoved(tx, "abom_edge", "edge_key", keys); err != nil {
 			return err
@@ -309,7 +309,7 @@ func (w *Writer) flushEdges() error {
 	return nil
 }
 
-func writeEdge(tx *sql.Tx, statement *sql.Stmt, edge Edge, sourceID, targetID int64) (bool, error) {
+func writeEdge(tx *transaction, statement *statement, edge Edge, sourceID, targetID int64) (bool, error) {
 	if err := guardEdgeAnalysisMode(tx, edge, targetID); err != nil {
 		return false, err
 	}
@@ -391,7 +391,7 @@ func (s *Store) fillDeclarationKinds() error {
 	return err
 }
 
-func (w *Writer) inTx(fn func(*sql.Tx) error) error {
+func (w *Writer) inTx(fn func(*transaction) error) error {
 	tx, err := w.store.db.Begin()
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)

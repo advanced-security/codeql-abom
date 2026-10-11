@@ -244,11 +244,11 @@ func CoveredBy(accounts []DeclaredAccount, owner, repo string, values []Property
 // its aliases are its own so they cannot shadow a caller's, and fullName must be qualified.
 func coveredByProperty(account, fullName string) string {
 	return `EXISTS (SELECT 1 FROM abom_owned_property_clause_honored scope_clause
-		 WHERE scope_clause.owner = ` + account + `
+		 WHERE scope_clause.owner = ` + account + ` COLLATE NOCASE
 		   AND NOT EXISTS (SELECT 1 FROM abom_owned_property_term scope_term
 		                    WHERE scope_term.clause_id = scope_clause.id
 		                      AND NOT EXISTS (SELECT 1 FROM abom_repository_property scope_value
-		                                       WHERE scope_value.repository_full_name = ` + fullName + `
+		                                       WHERE scope_value.repository_full_name = ` + fullName + ` COLLATE NOCASE
 		                                         AND scope_value.property_name = scope_term.property_name
 		                                         AND scope_value.value = scope_term.value)))`
 }
@@ -266,7 +266,7 @@ var ownedFrontierRow = `EXISTS (
 	                      AND LOWER(i.repo) = LOWER(abom_frontier.repo))
 	        OR ` + coveredByProperty("o.owner", "abom_frontier.owner || '/' || abom_frontier.repo") + `))
 	AND NOT EXISTS (SELECT 1 FROM abom_repository_absence absent
-	                 WHERE absent.repository = abom_frontier.owner || '/' || abom_frontier.repo)`
+	                 WHERE absent.repository = (abom_frontier.owner || '/' || abom_frontier.repo) COLLATE NOCASE)`
 
 // ownedFullName renders the predicate against a column holding `owner/name`. Built rather than
 // written out three times, so the tier, the queue view and the node users cannot drift into
@@ -274,7 +274,7 @@ var ownedFrontierRow = `EXISTS (
 // names is not the operator's, whatever the declaration says about the account.
 func ownedFullName(col string) string {
 	return `(` + declaredFullName(col) + ` AND NOT EXISTS (
-		SELECT 1 FROM abom_repository_absence absent WHERE absent.repository = ` + col + `))`
+		SELECT 1 FROM abom_repository_absence absent WHERE absent.repository = ` + col + ` COLLATE NOCASE))`
 }
 
 // declaredFullName is what a declaration covers, missing or not, which is what a listing of the
@@ -453,11 +453,12 @@ func (s *Store) PropertyScopeMatches(owner string, terms []PropertyTerm) (int, e
 	}
 	query := `SELECT COUNT(*) FROM repository r
 		WHERE LOWER(SUBSTR(r.repository_full_name, 1, INSTR(r.repository_full_name, '/') - 1)) = LOWER(?)
-		  AND NOT EXISTS (SELECT 1 FROM abom_repository_absence a WHERE a.repository = r.repository_full_name)`
+		  AND NOT EXISTS (SELECT 1 FROM abom_repository_absence a
+		                  WHERE a.repository = r.repository_full_name COLLATE NOCASE)`
 	args := []any{owner}
 	for _, t := range terms {
 		query += ` AND EXISTS (SELECT 1 FROM abom_repository_property v
-			WHERE v.repository_full_name = r.repository_full_name AND v.property_name = ? AND v.value = ?)`
+			WHERE v.repository_full_name = r.repository_full_name COLLATE NOCASE AND v.property_name = ? AND v.value = ?)`
 		args = append(args, t.Name, t.Value)
 	}
 	var n int
@@ -496,7 +497,7 @@ func holdReason(owner string, terms []PropertyTerm, schema map[string]PropertyDe
 	return "", false
 }
 
-func clearOwnedScope(tx *sql.Tx) error {
+func clearOwnedScope(tx *transaction) error {
 	for _, stmt := range []string{`DELETE FROM abom_owned_property_term`,
 		`DELETE FROM abom_owned_property_clause`, `DELETE FROM abom_owned_include`,
 		`DELETE FROM abom_owned_scope`} {
@@ -507,7 +508,7 @@ func clearOwnedScope(tx *sql.Tx) error {
 	return nil
 }
 
-func insertOwnedScope(tx *sql.Tx, accounts []DeclaredAccount, by, at string) error {
+func insertOwnedScope(tx *transaction, accounts []DeclaredAccount, by, at string) error {
 	seen := map[string]bool{}
 	for _, a := range accounts {
 		owner := strings.TrimSpace(a.Owner)
@@ -523,7 +524,7 @@ func insertOwnedScope(tx *sql.Tx, accounts []DeclaredAccount, by, at string) err
 	return nil
 }
 
-func insertOwnedAccount(tx *sql.Tx, owner string, a DeclaredAccount, by, at string) error {
+func insertOwnedAccount(tx *transaction, owner string, a DeclaredAccount, by, at string) error {
 	if _, err := tx.Exec(`
 		INSERT INTO abom_owned_scope (owner, kind, enabled, includes_only, declared_by, declared_at)
 		VALUES (?, ?, ?, ?, ?, ?)`,

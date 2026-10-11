@@ -11,7 +11,7 @@ import (
 )
 
 // pollExternalReferences polls only while discovery runs, since nothing claims a requeued reference while it is paused.
-func pollExternalReferences(ctx context.Context, cfg serveConfig, s *store.Store, loop *supervisor.Supervisor,
+func pollExternalReferences(ctx context.Context, cfg serveConfig, s store.Backend, loop *supervisor.Supervisor,
 	stdout io.Writer) {
 	p := &poll.Poller{
 		Store: s, Queue: loop.Queue, Resolve: githubClient(ctx, cfg.apiURL, s, cfg.tokens),

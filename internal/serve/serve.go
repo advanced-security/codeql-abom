@@ -36,7 +36,10 @@ import (
 
 // Server answers interface queries from an ABOM database.
 type Server struct {
-	Store *store.Store
+	Store         store.Backend
+	Replica       *Server
+	MaxReplicaLag time.Duration
+	ReadOnly      bool
 	// Graphviz is the version that places every layout and figure, which a figure's bytes depend on.
 	// Empty in a server nobody started through serve, which reads it itself.
 	Graphviz string
@@ -187,7 +190,21 @@ type Server struct {
 
 // Handler builds the routing tree.
 func (s *Server) Handler() http.Handler {
-	return gzipped(s.observe(s.routes()))
+	var handler http.Handler = s.routes()
+	if s.Replica != nil {
+		handler = s.routeReplica(handler, s.Replica.routes())
+	}
+	if s.ReadOnly {
+		read := handler
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				writeError(w, http.StatusForbidden, "This instance only serves reads; send controls to the coordinator.")
+				return
+			}
+			read.ServeHTTP(w, r)
+		})
+	}
+	return gzipped(s.observe(handler))
 }
 
 // routes is the tree itself, before the middleware that wraps it. Separate so a test can ask what

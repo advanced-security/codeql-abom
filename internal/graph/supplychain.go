@@ -1,8 +1,6 @@
 package graph
 
 import (
-	"fmt"
-
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
@@ -47,41 +45,17 @@ func (b *Builder) ClassifyDependencies() (*SupplyChain, error) {
 	// name, and what the callee's own edges hang from once that repository is analyzed. The
 	// repository comes from the edge rather than the node because a node upsert never revises
 	// repository_row_id, so a container first seen as somebody else's dependency has none.
-	rows, err := b.Store.DB().Query(`
-		SELECT COALESCE(src.container_node_row_id, src.row_id), e.dst_node_row_id,
-		       dst.node_key, r.origin
-		FROM abom_edge_regular e
-		JOIN abom_node_live src ON src.row_id = e.src_node_row_id
-		JOIN abom_node_live dst ON dst.row_id = e.dst_node_row_id
-		JOIN repository r ON r.row_id = e.repository_row_id
-		WHERE ` + store.DependencyEdgeFilter)
+	calls, err := b.Store.DependencyCalls()
 	if err != nil {
-		return nil, fmt.Errorf("loading dependency calls: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
-
-	type call struct {
-		container int64
-		dst       int64
-		key       string
-	}
-	var calls []call
 	calledBy := map[int64][]int64{}
 	seeded := map[int64]bool{}
-	for rows.Next() {
-		var c call
-		var origin string
-		if err := rows.Scan(&c.container, &c.dst, &c.key, &origin); err != nil {
-			return nil, fmt.Errorf("scanning dependency call: %w", err)
+	for _, c := range calls {
+		calledBy[c.Container] = append(calledBy[c.Container], c.Target)
+		if c.Origin == store.OriginSeed {
+			seeded[c.Container] = true
 		}
-		calls = append(calls, c)
-		calledBy[c.container] = append(calledBy[c.container], c.dst)
-		if origin == store.OriginSeed {
-			seeded[c.container] = true
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("loading dependency calls: %w", err)
 	}
 
 	reached := make(map[int64]bool, len(seeded))
@@ -104,7 +78,7 @@ func (b *Builder) ClassifyDependencies() (*SupplyChain, error) {
 
 	byKey := make(map[string]bool, len(calls))
 	for _, c := range calls {
-		byKey[c.key] = byKey[c.key] || reached[c.container]
+		byKey[c.Key] = byKey[c.Key] || reached[c.Container]
 	}
 	return &SupplyChain{byKey: byKey}, nil
 }

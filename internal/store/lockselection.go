@@ -111,12 +111,12 @@ func (s *Store) LockSelectedDependencies(repository, analyzed string) ([]LockSel
 // Nothing at all when no lock has been read, without walking anything: the corpus this was
 // measured on holds no lock, and every reader asking pays for this.
 func (s *Store) LockGovernedEdges() ([]LockGoverned, error) {
-	var any int
+	var any bool
 	if err := s.db.QueryRow(
 		`SELECT EXISTS(SELECT 1 FROM abom_lock_dependency)`).Scan(&any); err != nil {
 		return nil, fmt.Errorf("asking whether any lock was read: %w", err)
 	}
-	if any == 0 {
+	if !any {
 		return []LockGoverned{}, nil
 	}
 	rows, err := s.db.Query(lockGovernedQuery(everyRepository) + `
@@ -172,7 +172,7 @@ func lockGovernedQuery(scope lockScope) string {
 	         LOWER(SUBSTR(r.repository_full_name, INSTR(r.repository_full_name, '/') + 1))
 	  FROM repository r
 	  WHERE INSTR(r.repository_full_name, '/') > 0
-	    AND (EXISTS (SELECT 1 FROM abom_lock_workflow_pin w WHERE w.repository = r.repository_full_name)
+	    AND (EXISTS (SELECT 1 FROM abom_lock_workflow_pin w WHERE w.repository = r.repository_full_name COLLATE NOCASE)
 	         OR EXISTS (SELECT 1 FROM abom_lock_dependency d
 	                    WHERE d.owner = LOWER(SUBSTR(r.repository_full_name, 1, INSTR(r.repository_full_name, '/') - 1))
 	                      AND d.repo = LOWER(SUBSTR(r.repository_full_name, INSTR(r.repository_full_name, '/') + 1))))`
@@ -192,7 +192,7 @@ func lockGovernedQuery(scope lockScope) string {
 	  CROSS JOIN abom_edge_regular e ON e.repository_row_id = sc.row_id
 	  CROSS JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 	  WHERE e.edge_kind = 'step-uses-action' AND n.is_external = 0
-	    AND EXISTS (SELECT 1 FROM abom_lock_workflow_pin w WHERE w.repository = sc.full_name)
+	    AND EXISTS (SELECT 1 FROM abom_lock_workflow_pin w WHERE w.repository = sc.full_name COLLATE NOCASE)
 	  UNION
 	  -- CROSS JOIN fixes the order: outward from what is reached, never inward from every
 	  -- internal node the corpus holds.
@@ -212,7 +212,7 @@ func lockGovernedQuery(scope lockScope) string {
 	FROM scoped sc
 	CROSS JOIN abom_edge_regular e ON e.repository_row_id = sc.row_id
 	CROSS JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
-	JOIN abom_lock_workflow_pin w ON w.repository = sc.full_name AND w.workflow_path = e.file_path
+	JOIN abom_lock_workflow_pin w ON w.repository = sc.full_name COLLATE NOCASE AND w.workflow_path = e.file_path
 	JOIN current_root c ON c.repository = LOWER(w.repository) AND c.commit_sha = LOWER(w.commit_sha)
 	JOIN abom_lock_dependency d
 	  ON d.repository = w.repository AND d.commit_sha = w.commit_sha AND d.pin_key = w.pin_key
@@ -226,7 +226,7 @@ func lockGovernedQuery(scope lockScope) string {
 	CROSS JOIN abom_edge_regular e ON e.src_node_row_id = s.row_id
 	CROSS JOIN abom_node_live n ON n.row_id = e.dst_node_row_id
 	JOIN abom_lock_workflow_pin w
-	  ON w.repository = reach.full_name AND w.workflow_path = reach.workflow_path
+	  ON w.repository = reach.full_name COLLATE NOCASE AND w.workflow_path = reach.workflow_path
 	JOIN current_root c ON c.repository = LOWER(w.repository) AND c.commit_sha = LOWER(w.commit_sha)
 	JOIN abom_lock_dependency d
 	  ON d.repository = w.repository AND d.commit_sha = w.commit_sha AND d.pin_key = w.pin_key

@@ -12,7 +12,7 @@ const readingReference = "3 where the reference points"
 
 // references is check 3: each reference the queue resolved, against where it points now. An owned
 // repository's own branches are check 4's, which compares them as one set of live commits.
-func (c *Checker) references(ctx context.Context, s *store.Store) ([]store.CheckPart, error) {
+func (c *Checker) references(ctx context.Context, s store.Backend) ([]store.CheckPart, error) {
 	claims, err := s.QueueClaims()
 	if err != nil {
 		return nil, err

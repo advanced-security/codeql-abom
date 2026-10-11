@@ -108,7 +108,7 @@ func TestAFactWithNoValueStillDeduplicates(t *testing.T) {
 
 // Observation reads must use indexes. The two reads filter different columns, so one index cannot
 // serve both: `ObservationsOf` asks by subject, the traversal asks by attribute name.
-func TestTheObservationReadsAreIndexedRatherThanScanned(t *testing.T) {
+func TestSQLiteObservationReadsAreIndexedRatherThanScanned(t *testing.T) {
 	s := newTestStore(t)
 
 	for _, read := range []struct {
@@ -132,7 +132,7 @@ func TestTheObservationReadsAreIndexedRatherThanScanned(t *testing.T) {
 }
 
 // Existing databases must be re-keyed in place, keeping the newest duplicate row.
-func TestMigratingAnOldObservationTableDeduplicatesItKeepingTheNewest(t *testing.T) {
+func TestSQLiteMigratingAnOldObservationTableDeduplicatesItKeepingTheNewest(t *testing.T) {
 	s := newTestStore(t)
 
 	if _, err := s.db.Exec(`DROP TABLE abom_observation`); err != nil {
@@ -203,7 +203,7 @@ func TestMigratingAnOldObservationTableDeduplicatesItKeepingTheNewest(t *testing
 }
 
 // The rebuild must return freed pages; SQLite otherwise leaves them on the freelist.
-func TestTheObservationRebuildReturnsTheSpaceItFrees(t *testing.T) {
+func TestSQLiteObservationRebuildReturnsTheSpaceItFrees(t *testing.T) {
 	s := newTestStore(t)
 
 	if _, err := s.db.Exec(`DROP TABLE abom_observation`); err != nil {

@@ -9,7 +9,7 @@ import (
 // selected asks it about the whole corpus. The lock tables hold every entry of every locked
 // commit read, so a scan of any of them is a cost that grows with the corpus rather than with
 // the question, and each has to be reached by its key.
-func TestLockSelectionReachesEveryLockTableByItsKey(t *testing.T) {
+func TestSQLiteLockSelectionReachesEveryLockTableByItsKey(t *testing.T) {
 	s := newTestStore(t)
 	// The test store defers indexes, as a bulk load does; a served or crawling one has them all,
 	// and the plan that matters is the one it gets.

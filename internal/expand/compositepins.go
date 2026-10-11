@@ -16,7 +16,7 @@ import (
 // This is the ceiling on transitive discovery: a child edge is attributable to a consumer only
 // when the parent was analyzed at the reference that consumer pinned, so until these are read the
 // submission reports a supply chain shallower than the one that exists.
-func ExpediteCompositePins(s *store.Store, q *frontier.Queue) (int, error) {
+func ExpediteCompositePins(s store.Backend, q *frontier.Queue) (int, error) {
 	pins, err := s.UnanalyzedCompositePins()
 	if err != nil {
 		return 0, fmt.Errorf("reading unanalyzed composite pins: %w", err)

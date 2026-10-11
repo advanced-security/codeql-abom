@@ -92,9 +92,18 @@ func (s *Store) Containment() ([]Containment, error) { return s.containmentSince
 // Row ids are the cursor, and only the difference is ever written, so a holding that has not
 // changed keeps its row id and is not re-sent.
 func (s *Store) containmentSince(since int64) ([]Containment, error) {
+	return s.readContainment("row_id > ?", since)
+}
+
+func (s *Store) containmentChangedSince(since int64) ([]Containment, error) {
+	return s.readContainment(`row_id IN (SELECT object_id FROM abom_graph_change
+		WHERE object_kind = 'containment' AND sequence > ?)`, since)
+}
+
+func (s *Store) readContainment(where string, since int64) ([]Containment, error) {
 	rows, err := s.db.Query(
 		`SELECT owner_key, held_key, edge_kind FROM abom_containment
-		  WHERE row_id > ? ORDER BY row_id`, since)
+		  WHERE `+where+` ORDER BY row_id`, since)
 	if err != nil {
 		return nil, fmt.Errorf("reading containment: %w", err)
 	}

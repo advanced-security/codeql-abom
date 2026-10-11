@@ -528,7 +528,10 @@ outside the closure, kept until somebody accepts the prune that says what removi
 
 ## The data model
 
-Everything is one SQLite file. `internal/store` is the only package that writes SQL.
+Persistence is a SQLite file for a single-binary installation or a PostgreSQL database for
+separately deployed coordinators and readers. `internal/store` is the only package that writes SQL.
+Both backends preserve the same evidence, NULL semantics and derived answers. PostgreSQL starts
+from its own crawl, not an import of a SQLite database.
 
 ### Ownership and identity
 
@@ -782,13 +785,34 @@ with no `uses:` attaches to no node, which is the attribution gap regular findin
 
 ### The graph — a projection of the evidence
 
+**One persistence boundary, two relational backends.** Production consumers use
+`store.Backend` and typed writer, frontier, cache and derivation-transaction contracts. SQL and
+driver state stay in `internal/store`; graph traversal receives measured inputs and persists its
+results through the contracts. Guards reject concrete storage bypasses and SQL outside the store.
+The shared semantic suite runs against SQLite and Docker PostgreSQL; SQLite planner and historical
+file-migration tests remain explicitly backend-specific.
+
+One coordinator holds a renewable database-clock lease. Every fenced write checks ownership in
+its transaction, so a former coordinator cannot publish buffered work after takeover. Durable
+claim IDs and content-bound ingestion receipts distinguish an unfinished attempt from a committed
+replay. Constraints deduplicate evidence; a publication lock orders concurrent transactions.
+
+Read-only API instances require an initialized store and do not acquire the scheduler lease.
+Eligible graph and inventory reads may use a physical PostgreSQL standby, with the source and lag
+reported in response headers. Unknown or excessive lag falls back to the primary; a control
+response's consistency cookie keeps subsequent reads there until the standby has replayed the
+write. Deployment and credential requirements are in
+[configuration](deployment/configuration.md#database-backends).
+
 | Table | |
 | --- | --- |
 | `abom_node`, `abom_edge` | Actions, workflows, repositories and images, and the `uses:` relationships between them |
 | `abom_edge_sighting` | Each run that observed a shared edge, and what that run's commit declared there, without creating a second edge identity. No recorded target is unknown, never the row's |
 | `abom_containment` | What holds what — a repository's own files, an account's repositories. A table of its own because containment is drawn rather than declared |
 | `abom_observation` | Facts a query stated about a subject, keyed by the statement rather than the run. Every job-level fact — permissions, triggers, runner, privilege — attaches to a `job` node, never to the workflow above it |
-| `abom_graph_generation` | Generation and epoch, so a client can ask for a delta. Nodes, edges and containment each keep their own watermark |
+| `abom_graph_generation` | Measurement context and epoch, including the committed watermark through which reach was measured |
+| `abom_commit_sequence`, `abom_graph_change` | Commit-ordered publication and the latest change to each graph object; node birth sequences distinguish unmeasured from measured zero |
+| `abom_coordination_lease`, `abom_ingest_receipt` | Scheduler ownership and content-bound ingestion attempts, fenced by the lease's monotonically increasing token |
 | `abom_surface` | A denormalized read model that is **declared and not written to**. The observation table is the only source for these facts |
 
 An edge carries its own identity and four derived facts. `edge_key` is the source location that
@@ -953,12 +977,14 @@ that found it. `abom_query_run` and `abom_finding` survive a prune, so the graph
 a removed node can legitimately come back.
 
 **The graph tables are append-only.** Removal is a tombstone (`removed_at`), and only compaction
-deletes. That keeps row ids monotonic, which is what makes a delta cursor valid at all.
+deletes. Delta cursors follow a sequence advanced inside the committing transaction, not row IDs:
+a lower-ID row committed later and an update to an existing edge must both reach an open reader.
+The change log keeps the latest change per object, so its size is bounded by the graph.
 
 **A tombstone yields to the world.** A run that names a removed node or observes a removed edge
 again brings it back, row id and all, and so does opening a database that holds a live edge under a
-removed node. A page that saw the removal could never get it back through a delta, since its row id
-is below the watermark, so a revival bumps the epoch and every open cursor reloads.
+removed node. Topology changes that cannot be represented as a complete delta invalidate earlier
+cursors and force a reload; compaction also advances the epoch.
 
 ## Reachability
 

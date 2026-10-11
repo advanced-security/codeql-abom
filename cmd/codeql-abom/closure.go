@@ -34,13 +34,13 @@ func runClosure(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	}
 	defer cleanup()
 
-	s, err := store.Open(cfg.dbPath, store.Options{})
+	s, err := store.OpenBackend(cfg.dbPath, store.Options{})
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", cfg.dbPath, err)
+		return fmt.Errorf("opening %s: %w", store.DatabaseLabel(cfg.dbPath), err)
 	}
 	defer s.Close()
 	if err := s.Migrate(); err != nil {
-		return fmt.Errorf("migrating %s: %w", cfg.dbPath, err)
+		return fmt.Errorf("migrating %s: %w", store.DatabaseLabel(cfg.dbPath), err)
 	}
 
 	roots := []string(cfg.roots)
@@ -92,7 +92,7 @@ func parseClosureArgs(args []string, stderr io.Writer) (closureConfig, error) {
 	var cfg closureConfig
 	fs := flag.NewFlagSet("closure", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.StringVar(&cfg.dbPath, "db", "", "path to the ABOM SQLite database (required)")
+	dbPath := databaseFlag(fs)
 	fs.StringVar(&cfg.codeqlPath, "codeql", "", "codeql CLI to invoke (default: codeql on PATH)")
 	fs.StringVar(&cfg.workDir, "work-dir", "", "scratch directory for closure trees (default: a temp dir)")
 	fs.StringVar(&cfg.cacheDir, "cache-dir", "",
@@ -105,6 +105,7 @@ func parseClosureArgs(args []string, stderr io.Writer) (closureConfig, error) {
 	if err := fs.Parse(args); err != nil {
 		return closureConfig{}, err
 	}
+	cfg.dbPath = *dbPath
 	if cfg.dbPath == "" {
 		fs.Usage()
 		return closureConfig{}, errors.New("closure: --db is required")

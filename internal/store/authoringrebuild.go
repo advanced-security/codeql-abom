@@ -65,7 +65,7 @@ func (s *Store) migrateAuthoringOwners() error {
 
 // rebuildTable swaps a table for one of the same name with body's columns, copying every row. The
 // new table takes the old one's name, so what references it keeps pointing at it.
-func rebuildTable(tx *sql.Tx, table, body, columns string) error {
+func rebuildTable(tx *transaction, table, body, columns string) error {
 	for _, stmt := range []string{
 		`CREATE TABLE ` + table + `_rebuilt ` + body,
 		`INSERT INTO ` + table + `_rebuilt (` + columns + `) SELECT ` + columns + ` FROM ` + table,

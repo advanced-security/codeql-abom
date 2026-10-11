@@ -26,7 +26,7 @@ var ErrBusy = errors.New("CodeQL is in use by a crawl, a run or a test on this m
 
 // Sessions starts authoring sessions, one per request, and keeps each one's timeline.
 type Sessions struct {
-	Store *store.Store
+	Store store.Backend
 	// Workspace is the operator's pack, the only place a session writes.
 	Workspace string
 	// Libraries are read-only roots a query is written against: the CodeQL package cache.

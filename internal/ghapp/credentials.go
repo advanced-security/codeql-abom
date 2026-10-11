@@ -16,6 +16,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
 // Owner-only files beside the database, never in it; the client secret is not kept because nothing reads it.
@@ -66,7 +68,12 @@ type Rotation struct {
 }
 
 // DefaultDir is the App directory beside the database it serves.
-func DefaultDir(dbPath string) string { return filepath.Join(filepath.Dir(dbPath), "github-app") }
+func DefaultDir(dbPath string) string {
+	if store.IsPostgresTarget(dbPath) {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(dbPath), "github-app")
+}
 
 // KeyFile is where the App's private key lives.
 func KeyFile(dir string) string { return filepath.Join(dir, keyFile) }
@@ -76,6 +83,9 @@ func WebhookSecretFile(dir string) string { return filepath.Join(dir, secretFile
 
 // Configured reports whether dir holds an App.
 func Configured(dir string) bool {
+	if dir == "" {
+		return false
+	}
 	_, err := os.Stat(filepath.Join(dir, appFile))
 	return err == nil
 }

@@ -8,7 +8,7 @@ import (
 // Every other index waits for CreateIndexes, which runs after bulk loading and never on a server
 // that only reads. Suite provenance joins each queue row to the runs on its commit, so without
 // this index the Discovery page scans the whole run table once per row.
-func TestRunIdentityIsIndexedForTheProvenanceJoin(t *testing.T) {
+func TestSQLiteRunIdentityIsIndexedForTheProvenanceJoin(t *testing.T) {
 	s := newTestStore(t)
 
 	rows, err := s.DB().Query(`

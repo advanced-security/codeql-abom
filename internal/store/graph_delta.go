@@ -136,7 +136,7 @@ func (s *Store) GraphVersion() (GraphVersion, error) {
 	out := GraphVersion{}
 	var created, reach sql.NullString
 	err := s.db.QueryRow(`
-		SELECT COALESCE(MAX(generation), 0),
+		SELECT (SELECT value FROM abom_commit_sequence WHERE singleton = 1),
 		       MAX(created_at),
 		       MAX(CASE WHEN reach_rebuilt = 1 THEN created_at END)
 		FROM abom_graph_generation`).Scan(&out.Generation, &created, &reach)
@@ -161,50 +161,72 @@ func (s *Store) GraphVersion() (GraphVersion, error) {
 
 // RecordGraphGeneration marks the graph as it stands now, returning the new generation.
 func (s *Store) RecordGraphGeneration(r GraphRebuild) (int64, error) {
+	return s.recordGraphGeneration(r, false, true)
+}
+
+func (s *Store) recordGraphGeneration(r GraphRebuild, bumpEpoch, measured bool) (int64, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	sequence, err := s.nextCommitWatermark(tx, bumpEpoch)
+	if err != nil {
+		return 0, err
+	}
 	var nodeMark, edgeMark sql.NullInt64
-	if err := s.db.QueryRow(`SELECT MAX(row_id) FROM abom_node_live`).Scan(&nodeMark); err != nil {
+	if err := tx.QueryRow(`SELECT MAX(row_id) FROM abom_node_live`).Scan(&nodeMark); err != nil {
 		return 0, fmt.Errorf("reading node watermark: %w", err)
 	}
-	if err := s.db.QueryRow(`SELECT MAX(row_id) FROM abom_edge_regular`).Scan(&edgeMark); err != nil {
+	if err := tx.QueryRow(`SELECT MAX(row_id) FROM abom_edge_regular`).Scan(&edgeMark); err != nil {
 		return 0, fmt.Errorf("reading edge watermark: %w", err)
 	}
 	var containMark sql.NullInt64
-	if err := s.db.QueryRow(
+	if err := tx.QueryRow(
 		`SELECT MAX(row_id) FROM abom_containment`).Scan(&containMark); err != nil {
 		return 0, fmt.Errorf("reading containment watermark: %w", err)
 	}
 	// Carried forward rather than left to the column default. A generation written at 0 after a
 	// compaction has bumped the epoch can never match the current one, so the delta answers reset
 	// for the life of the database and every open page reloads the whole payload on every poll.
-	epoch, err := s.currentEpoch()
+	epoch, err := s.currentEpoch(tx)
 	if err != nil {
 		return 0, err
+	}
+	if bumpEpoch {
+		epoch++
 	}
 
 	var ms any
 	if r.Duration > 0 {
 		ms = r.Duration.Milliseconds()
 	}
-	res, err := s.db.Exec(`
+	query := `
 		INSERT INTO abom_graph_generation
-			(node_watermark, edge_watermark, containment_watermark, created_at, reach_rebuilt,
-			 rebuild_ms, rebuilt_nodes, rebuilt_edges, epoch, reach_incremental)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		nodeMark.Int64, edgeMark.Int64, containMark.Int64, now(), r.ReachRebuilt,
-		ms, r.Nodes, r.Edges, epoch, r.ReachRebuilt && r.Incremental)
-	if err != nil {
+			(generation, node_watermark, edge_watermark, containment_watermark, created_at,
+			 reach_rebuilt, epoch, commit_watermark`
+	args := []any{sequence, nodeMark.Int64, edgeMark.Int64, containMark.Int64, now(), r.ReachRebuilt, epoch, sequence}
+	if measured {
+		query += `, rebuild_ms, rebuilt_nodes, rebuilt_edges, reach_incremental`
+		args = append(args, ms, r.Nodes, r.Edges, r.ReachRebuilt && r.Incremental)
+	}
+	query += `) VALUES (` + placeholders(len(args)) + `)`
+	if _, err := tx.Exec(query, args...); err != nil {
 		return 0, fmt.Errorf("recording graph generation: %w", err)
 	}
-	return res.LastInsertId()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return sequence, nil
 }
 
 // currentEpoch is the epoch new generations belong to, which only the compaction advances.
 //
 // One reader for both writers: a second copy of this query is how the two drifted apart in the
 // first place, with the compaction naming the column and the ingestion path leaving it defaulted.
-func (s *Store) currentEpoch() (int64, error) {
+func (s *Store) currentEpoch(tx *transaction) (int64, error) {
 	var epoch int64
-	if err := s.db.QueryRow(
+	if err := tx.QueryRow(
 		`SELECT COALESCE(MAX(epoch), 0) FROM abom_graph_generation`).Scan(&epoch); err != nil {
 		return 0, fmt.Errorf("reading the epoch: %w", err)
 	}
@@ -244,7 +266,7 @@ func (s *Store) GraphDelta(since int64, opts FullGraphOptions) (GraphDelta, erro
 		return out, err
 	}
 	out.Nodes = attachOwners(nodes)
-	held, err := s.containmentSince(cursor.containMark)
+	held, err := s.containmentChangedSince(cursor.commitMark)
 	if err != nil {
 		return out, err
 	}
@@ -274,30 +296,18 @@ func (s *Store) GraphDelta(since int64, opts FullGraphOptions) (GraphDelta, erro
 }
 
 type graphDeltaCursor struct {
-	nodeMark, edgeMark, containMark int64
+	commitMark int64
 }
 
 func (s *Store) graphDeltaCursor(since int64) (graphDeltaCursor, bool, error) {
-	var cursor graphDeltaCursor
-	var epoch int64
-	err := s.db.QueryRow(`
-		SELECT node_watermark, edge_watermark, containment_watermark, epoch
-		  FROM abom_graph_generation
-		 WHERE generation = ?`, since).Scan(
-		&cursor.nodeMark, &cursor.edgeMark, &cursor.containMark, &epoch)
-	if err == sql.ErrNoRows {
-		return cursor, true, nil
-	}
+	cursor := graphDeltaCursor{commitMark: since}
+	var current, resetAt int64
+	err := s.db.QueryRow(`SELECT value, reset_at FROM abom_commit_sequence WHERE singleton = 1`).
+		Scan(&current, &resetAt)
 	if err != nil {
 		return cursor, false, fmt.Errorf("reading generation %d: %w", since, err)
 	}
-	// Compaction deletes rows, so a cursor from before it names row ids that no longer mean what
-	// the client thinks. Nothing short of a reload is honest here.
-	current, err := s.currentEpoch()
-	if err != nil {
-		return cursor, false, err
-	}
-	return cursor, current != epoch, nil
+	return cursor, since <= 0 || since < resetAt || since > current, nil
 }
 
 func (s *Store) attachGraphRemovals(out *GraphDelta, since int64) error {
@@ -308,6 +318,16 @@ func (s *Store) attachGraphRemovals(out *GraphDelta, since int64) error {
 	if out.RemovedEdges, err = s.removedSince("abom_edge", since); err != nil {
 		return err
 	}
+	changed, err := queryAll(s, "reading changed declarations", func(r *sql.Rows) (string, error) {
+		var key string
+		return key, r.Scan(&key)
+	}, `SELECT edge_key FROM abom_edge_any_mode WHERE row_id IN (
+		SELECT object_id FROM abom_graph_change WHERE object_kind = 'edge' AND sequence > ?)
+		ORDER BY row_id`, since)
+	if err != nil {
+		return err
+	}
+	out.RemovedEdges = append(out.RemovedEdges, changed...)
 	return nil
 }
 
@@ -321,18 +341,19 @@ func graphDeltaDisplay(opts FullGraphOptions) string {
 func (s *Store) graphDeltaArrivals(
 	display string, cursor graphDeltaCursor, opts FullGraphOptions,
 ) ([]GraphNode, []GraphEdge, error) {
-	nodes, index, err := s.graphNodes(display, cursor.nodeMark, opts)
+	opts.changedSince = &cursor.commitMark
+	nodes, index, err := s.graphNodes(display, 0, opts)
 	if err != nil {
 		return nil, nil, err
 	}
 	if err := s.attachRules(display, index, opts.Mode); err != nil {
 		return nil, nil, err
 	}
-	edges, err := s.graphEdges(display, cursor.edgeMark, opts)
+	edges, err := s.graphEdges(display, 0, opts)
 	if err != nil {
 		return nil, nil, err
 	}
-	return nodes, edges, nil
+	return s.splitNodesByRef(nodes, edges)
 }
 
 // graphMetrics carries the counts that change for nodes the client already holds. Nothing records

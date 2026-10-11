@@ -10,7 +10,7 @@ import (
 func TestAPoolRateSurvivesReopeningAndClearingRemovesIt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "abom.db")
 	open := func() *Store {
-		s, err := Open(path, Options{})
+		s, err := openTestStore(t, path, Options{})
 		if err != nil {
 			t.Fatal(err)
 		}

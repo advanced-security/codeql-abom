@@ -69,7 +69,7 @@ func eventSecret(app *ghapp.App, dir string, given []byte) ([]byte, error) {
 
 // syncInstallations records the App's installations now, on every tick, and whenever an installation event wakes it.
 func syncInstallations(
-	ctx context.Context, app *ghapp.App, s *store.Store, every time.Duration, wake <-chan struct{}, log io.Writer,
+	ctx context.Context, app *ghapp.App, s store.Backend, every time.Duration, wake <-chan struct{}, log io.Writer,
 ) {
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()

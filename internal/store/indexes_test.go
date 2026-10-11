@@ -22,8 +22,11 @@ func declaredIn(ddl ...string) []string {
 
 func presentIndexes(t *testing.T, s *Store) map[string]bool {
 	t.Helper()
-	rows, err := s.DB().Query(
-		`SELECT name FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL`)
+	query := `SELECT name FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL`
+	if s.db.postgres {
+		query = `SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()`
+	}
+	rows, err := s.DB().Query(query)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +48,7 @@ func presentIndexes(t *testing.T, s *Store) map[string]bool {
 
 func migrated(t *testing.T, opts Options) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "abom.db"), opts)
+	s, err := openTestStore(t, filepath.Join(t.TempDir(), "abom.db"), opts)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

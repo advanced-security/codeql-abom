@@ -23,7 +23,7 @@ import (
 // corpus takes far longer than anyone will sit and watch. The loop therefore has to survive its
 // own failures, hand abandoned work back, and keep saying what it is doing.
 type Supervisor struct {
-	Store     *store.Store
+	Store     store.Backend
 	Queue     *frontier.Queue
 	Expander  *expand.Expander
 	Rechecker *expand.Rechecker

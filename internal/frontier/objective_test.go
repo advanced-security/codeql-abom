@@ -18,7 +18,7 @@ func TestTheShallowestOutstandingWorkIsClaimedFirst(t *testing.T) {
 		t.Fatalf("Enqueue: %v", err)
 	}
 	// The deep one looks far more valuable, which under the old ordering was enough to jump it.
-	if _, err := q.Store.DB().Exec(
+	if _, err := sqliteDB(t, q).Exec(
 		`UPDATE abom_frontier SET score = 1000 WHERE node_key = 'deep/valuable'`); err != nil {
 		t.Fatalf("scoring: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestScoreStillDecidesWithinOneDepth(t *testing.T) {
 			t.Fatalf("Enqueue: %v", err)
 		}
 	}
-	if _, err := q.Store.DB().Exec(
+	if _, err := sqliteDB(t, q).Exec(
 		`UPDATE abom_frontier SET score = 1000 WHERE node_key = 'b/valuable'`); err != nil {
 		t.Fatalf("scoring: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestAnExpeditedItemOutranksTheObjective(t *testing.T) {
 			t.Fatalf("Enqueue: %v", err)
 		}
 	}
-	if _, err := q.Store.DB().Exec(
+	if _, err := sqliteDB(t, q).Exec(
 		`UPDATE abom_frontier SET expedited_at = '2026-09-07T00:00:00Z'
 		  WHERE node_key = 'deep/urgent'`); err != nil {
 		t.Fatalf("expediting: %v", err)
@@ -192,7 +192,7 @@ func TestUnavailableWorkDoesNotMakeADepthPermanentlyIncomplete(t *testing.T) {
 		if _, err := q.Enqueue([]Item{it}); err != nil {
 			t.Fatalf("Enqueue: %v", err)
 		}
-		if _, err := q.Store.DB().Exec(
+		if _, err := sqliteDB(t, q).Exec(
 			`UPDATE abom_frontier SET status = ? WHERE node_key = ?`,
 			spec.status, spec.key); err != nil {
 			t.Fatalf("setting status: %v", err)
@@ -216,7 +216,7 @@ func pastCeiling(t *testing.T, q *Queue, key string, depth, attempts int) {
 	if _, err := q.Enqueue([]Item{it}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
-	if _, err := q.Store.DB().Exec(`
+	if _, err := sqliteDB(t, q).Exec(`
 		UPDATE abom_frontier
 		   SET attempts = ?, reason = 'exit status 32', next_attempt_at = '2999-01-01T00:00:00Z'
 		 WHERE node_key = ?`, attempts, key); err != nil {

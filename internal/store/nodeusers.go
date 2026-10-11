@@ -129,7 +129,7 @@ func (s *Store) readNodeUsers(out *NodeUsers, budget int) error {
 // countNodeUsers totals the whole set, which is not len(Repos) once a budget has bitten.
 func (s *Store) countNodeUsers(out *NodeUsers) error {
 	err := s.db.QueryRow(`
-		SELECT COUNT(*), COALESCE(SUM(seed), 0), COALESCE(SUM(owned), 0) FROM (
+		SELECT COUNT(*), COALESCE(SUM(CAST(seed AS INTEGER)), 0), COALESCE(SUM(CAST(owned AS INTEGER)), 0) FROM (
 			SELECT r.origin = ? AS seed,
 			       `+ownedFullName("r.repository_full_name")+` AS owned
 			FROM abom_edge_regular e

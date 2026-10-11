@@ -2,6 +2,7 @@ package store
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -85,6 +86,9 @@ func migratedLegacyStore(t *testing.T) *Store {
 // table can only be tested against one that already holds rows.
 func migratedLegacyStoreWith(t *testing.T, seed func(*Store)) *Store {
 	t.Helper()
+	if !strings.HasPrefix(t.Name(), "TestSQLite") {
+		t.Fatal("a historical SQLite schema fixture requires an explicit TestSQLite test name")
+	}
 
 	s, err := Open(filepath.Join(t.TempDir(), "abom.db"), Options{})
 	if err != nil {
@@ -104,7 +108,7 @@ func migratedLegacyStoreWith(t *testing.T, seed func(*Store)) *Store {
 	return s
 }
 
-func TestAnUpgradedDatabaseAcceptsTheFullRunIdentity(t *testing.T) {
+func TestSQLiteUpgradedDatabaseAcceptsTheFullRunIdentity(t *testing.T) {
 	s := migratedLegacyStore(t)
 
 	run := QueryRun{AnalysisMode: AnalysisModeRegular,
@@ -131,7 +135,7 @@ func TestAnUpgradedDatabaseAcceptsTheFullRunIdentity(t *testing.T) {
 	}
 }
 
-func TestAnUpgradedDatabaseAcceptsResolvedSuiteContents(t *testing.T) {
+func TestSQLiteUpgradedDatabaseAcceptsResolvedSuiteContents(t *testing.T) {
 	s := migratedLegacyStore(t)
 
 	queries := []SuiteQuery{{
@@ -154,7 +158,7 @@ func TestAnUpgradedDatabaseAcceptsResolvedSuiteContents(t *testing.T) {
 	}
 }
 
-func TestAnUpgradedDatabaseAcceptsAResultHash(t *testing.T) {
+func TestSQLiteUpgradedDatabaseAcceptsAResultHash(t *testing.T) {
 	s := migratedLegacyStore(t)
 
 	repoID, err := s.UpsertRepository("octo/app", "")
@@ -181,7 +185,7 @@ func TestAnUpgradedDatabaseAcceptsAResultHash(t *testing.T) {
 	}
 }
 
-func TestAnUpgradedDatabaseCanExpediteAQueuedItem(t *testing.T) {
+func TestSQLiteUpgradedDatabaseCanExpediteAQueuedItem(t *testing.T) {
 	s := migratedLegacyStore(t)
 
 	if _, err := s.db.Exec(`
@@ -201,7 +205,7 @@ func TestAnUpgradedDatabaseCanExpediteAQueuedItem(t *testing.T) {
 // dependency. Re-keying it needs a table rebuild, and a rebuild is where rows go missing: this
 // upgrades a legacy database with work already in it and checks every row and every column
 // survived, then that the new key admits a second reference for the same dependency.
-func TestUpgradingReKeysTheQueueWithoutLosingWork(t *testing.T) {
+func TestSQLiteUpgradingReKeysTheQueueWithoutLosingWork(t *testing.T) {
 	s := migratedLegacyStoreWith(t, func(s *Store) {
 		if _, err := s.db.Exec(`
 			INSERT INTO abom_frontier

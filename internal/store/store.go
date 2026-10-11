@@ -1,4 +1,4 @@
-// Package store persists the ABOM graph and its supporting vulnerability data in SQLite.
+// Package store persists the ABOM graph and supporting evidence in SQLite or PostgreSQL.
 //
 // The design target is an organization of 20,000+ repositories, which implies millions of edge
 // rows. Two choices follow from that and are load-bearing rather than incidental: indexes are
@@ -9,18 +9,24 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
-// Store owns the database handle and the schema lifecycle.
+// Store shares relational semantics across dialects; production consumers use Backend.
 type Store struct {
-	db       *sql.DB
+	db       *database
 	bulkMode bool
+	dsn      string
+	borrowed bool
 }
 
 // Options tunes how the database is opened.
 type Options struct {
+	// ReadOnly opens an existing schema without permitting migrations or persisted writes.
+	ReadOnly bool
 	// BulkLoad trades crash durability for insert throughput. Safe for ingestion runs, which
 	// are restartable from the ingest ledger, and not safe for a long-lived serving database.
 	BulkLoad bool
@@ -33,9 +39,20 @@ type Options struct {
 // resident during multi-million row loads.
 const DefaultCacheSizeKB = 256 * 1024
 
-// Open opens (creating if needed) the database at path and applies connection tuning.
+// Open opens SQLite directly for backend-specific tests; production uses OpenBackend.
 func Open(path string, opts Options) (*Store, error) {
-	db, err := sql.Open("sqlite3", path+"?_busy_timeout=30000&_foreign_keys=on")
+	dsn := path + "?_busy_timeout=30000&_foreign_keys=on&_txlock=immediate"
+	if opts.ReadOnly {
+		if !strings.HasPrefix(path, "file:") {
+			path = (&url.URL{Scheme: "file", Path: path, OmitHost: true}).String()
+		}
+		separator := "?"
+		if strings.Contains(path, "?") {
+			separator = "&"
+		}
+		dsn = path + separator + "mode=ro&_busy_timeout=30000&_foreign_keys=on&_txlock=deferred"
+	}
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", path, err)
 	}
@@ -44,7 +61,14 @@ func Open(path string, opts Options) (*Store, error) {
 	// feeding this store, not in competing writers.
 	db.SetMaxOpenConns(1)
 
-	s := &Store{db: db, bulkMode: opts.BulkLoad}
+	s := &Store{db: &database{DB: db, readOnly: opts.ReadOnly}, bulkMode: opts.BulkLoad, dsn: path}
+	if opts.ReadOnly {
+		if err := db.Ping(); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("opening read-only database: %w", err)
+		}
+		return s, nil
+	}
 	if err := s.applyPragmas(opts); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -77,8 +101,8 @@ func (s *Store) applyPragmas(opts Options) error {
 	return nil
 }
 
-// DB exposes the handle for read paths and analytics that need raw SQL.
-func (s *Store) DB() *sql.DB { return s.db }
+// DB is fixture access, never part of the production contract.
+func (s *Store) DB() *database { return s.db }
 
 // createTables are the CREATE TABLE statements that follow the main schema, in the order they run.
 //
@@ -118,11 +142,21 @@ var createTables = []struct {
 	{"the workflow run table", workflowRunDDL},
 	{"the code scanning setup tables", setupDDL},
 	{"the default setup write tables", setupWriteDDL},
+	{"the coordinator lease and receipt tables", coordinationDDL},
 }
 
 // Migrate creates all tables and adds any columns introduced since the database was created.
 // It is safe to call on an existing database.
 func (s *Store) Migrate() error {
+	if s.db.readOnly {
+		return fmt.Errorf("migrations are unavailable on a read-only backend")
+	}
+	if s.db.fence != nil {
+		return fmt.Errorf("migrations require the primary store, not a leased writer")
+	}
+	if s.db.postgres {
+		return s.migratePostgres()
+	}
 	if err := s.dropStaleDerivedTables(); err != nil {
 		return err
 	}
@@ -158,7 +192,8 @@ func (s *Store) Migrate() error {
 	if err := s.migrateFrontierRefKey(); err != nil {
 		return err
 	}
-	if err := s.migrateObservationFactKey(); err != nil {
+	rebuiltObservations, err := s.migrateObservationFactKey()
+	if err != nil {
 		return err
 	}
 	if err := s.migrateAuthoringOwners(); err != nil {
@@ -170,6 +205,19 @@ func (s *Store) Migrate() error {
 	if err := s.migrateEvidenceKey(); err != nil {
 		return err
 	}
+	if err := s.finishMigration(); err != nil {
+		return err
+	}
+	if rebuiltObservations {
+		// Later view/trigger migrations can free pages too; reclaim only after all of them.
+		if _, err := s.db.Exec(`VACUUM`); err != nil {
+			return fmt.Errorf("reclaiming the space the observation rebuild freed: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) finishMigration() error {
 	if err := s.reviveWhatLiveEdgesName(); err != nil {
 		return err
 	}
@@ -223,7 +271,10 @@ func (s *Store) Migrate() error {
 	if err := s.migrateSuiteNames(); err != nil {
 		return err
 	}
-	return s.seedTierSuites()
+	if err := s.seedTierSuites(); err != nil {
+		return err
+	}
+	return s.installChangeFeed()
 }
 
 // createViews builds every view, in the order each reads the one before it.
@@ -297,6 +348,13 @@ func (s *Store) addColumns(keep func(table string) bool) error {
 }
 
 func (s *Store) hasColumn(table, column string) (bool, error) {
+	if s.db.postgres {
+		var exists bool
+		err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM information_schema.columns
+			WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?)`,
+			table, column).Scan(&exists)
+		return exists, err
+	}
 	rows, err := s.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
 	if err != nil {
 		return false, fmt.Errorf("inspecting %s: %w", table, err)
@@ -329,6 +387,18 @@ func (s *Store) CreateIndexes() error {
 //
 // VACUUM rewrites the database, so it must run after indexes exist, not before.
 func (s *Store) Optimize() error {
+	if s.db.postgres {
+		if s.db.readOnly || s.db.fence != nil {
+			return fmt.Errorf("optimizing requires a writable, unleased primary backend")
+		}
+		// PostgreSQL VACUUM cannot run in a transaction; it publishes no graph mutation.
+		for _, stmt := range []string{"ANALYZE", "VACUUM"} {
+			if _, err := s.db.DB.Exec(stmt); err != nil {
+				return fmt.Errorf("running %s: %w", stmt, err)
+			}
+		}
+		return nil
+	}
 	for _, stmt := range []string{"ANALYZE", "VACUUM"} {
 		if _, err := s.db.Exec(stmt); err != nil {
 			return fmt.Errorf("running %s: %w", stmt, err)
@@ -340,6 +410,12 @@ func (s *Store) Optimize() error {
 // Close flushes the write-ahead log back into the main database file before closing, so the
 // resulting file is self-contained and safe to compress and ship.
 func (s *Store) Close() error {
+	if s.borrowed {
+		return nil
+	}
+	if s.db.postgres || s.db.readOnly {
+		return s.db.Close()
+	}
 	if _, err := s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 		// The checkpoint failure is the one worth reporting; closing is best effort after it.
 		_ = s.db.Close()

@@ -198,7 +198,7 @@ func TestARelationshipListingNarrowsByReferenceStyle(t *testing.T) {
 // A page is cut by the database, and both ends of a relationship are looked up by key rather than
 // found by reading the node table once per edge. On a fixture every shape answers instantly, so
 // this asserts the plan.
-func TestAPageOfRelationshipsIsCutByTheDatabase(t *testing.T) {
+func TestSQLitePageOfRelationshipsIsCutByTheDatabase(t *testing.T) {
 	s := edgeFactsFixture(t)
 	derive(t, s)
 
