@@ -90,21 +90,14 @@ ownership by repository property, which the operator ranked ahead of them, is bu
    policy verdict. What is owed is a scope beyond one policy, an exclusion that actually stops work,
    an exception that hides a result while the work still runs and records, and a screen that refuses
    to write either without a reason and a review date.
-2. **[A container image is not an account](db/container-images.md)** — `uses: docker://alpine:3.20`
-   is parsed correctly, marked external and given no owner, and the graph then groups it by
-   splitting its key on the first slash — which for `docker://` is the second character of `//`.
-   Every container image in the corpus is drawn inside a boundary labelled `docker:`, an account
-   nobody can be a member of and nobody can declare. The same fall-through once had ABOM reporting
-   third-party dependencies on an account named `$`, so the fix is to refuse the branch rather than
-   to correct its output. Cheap, visible, and startable against the corpus that exists.
-3. **[Use GitHub's tooling to keep workflow locks current](tools/actions-lock.md)** — ranked here
+2. **[Use GitHub's tooling to keep workflow locks current](tools/actions-lock.md)** — ranked here
   for the compatibility matrix and supported-workflow documentation that can start locally.
   Record the pinned toolchain and existing evidence without treating this repository's observed
   enforcement as proof for other platforms or nested pins. New enforcement experiments and an
   observed Dependabot update of workflow and lock need an approved target, coordinated with
   [the native coverage crosscheck](api/dependency-graph-crosscheck.md). GitHub owns generation
   and verification, not a second ABOM pinning tool.
-4. **[Measure native Actions coverage before filling a gap](api/dependency-graph-crosscheck.md)** -
+3. **[Measure native Actions coverage before filling a gap](api/dependency-graph-crosscheck.md)** -
   the isolated source-extraction comparison at identical commits runs continuously against GitHub's
   own parsers as the checker's check 1; native lock evidence and the reference action's parser are
   still to compare over the same trees, and need no submission or live test target.
@@ -112,7 +105,7 @@ ownership by repository property, which the operator ranked ahead of them, is bu
   approved clean target, without historical custom submissions masquerading as native data.
   A default-branch SBOM cannot replace a pinned revision. Publication expansion waits for a
   concrete residual gap; this comparison does not promise one exists.
-5. **[A gate that blocks, and can say whose rule it was](api/verdict-gate.md)** — ABOM can apply
+4. **[A gate that blocks, and can say whose rule it was](api/verdict-gate.md)** — ABOM can apply
     declared policy to an organization's recorded transitive dependency evidence.
     **The policy half is built** — drafted, simulated, adopted, waived and auditable — so what
     remains is the base-versus-head closure diff, the verdict endpoint and the check run, over
@@ -124,19 +117,19 @@ ownership by repository property, which the operator ranked ahead of them, is bu
     is built: findings or advisories, how an owned repository reaches either, and other policies
     by name. Its verdict-only client
     remains deferred in [api/abom-check.md](api/abom-check.md).
-6. **[A commit-pinned action can still be named as a version](db/version-resolution.md)** - measured
+5. **[A commit-pinned action can still be named as a version](db/version-resolution.md)** - measured
     crawl mappings already feed versions into the existing submission path. Remaining lookup fills
     version-evidence gaps, including native lock refs whose release association is unverified;
     it never substitutes a live tag for the commit a [lock selects](../docs/architecture.md#locks). Direct-pin publication and upstream aliases remain deferred until [the native coverage
     crosscheck](api/dependency-graph-crosscheck.md) establishes a native gap.
-7. **[A finding that stops being reported is never removed](db/finding-lifecycle.md)** — unblocked.
+6. **[A finding that stops being reported is never removed](db/finding-lifecycle.md)** — unblocked.
     The sweep has only run where nothing was sighted, so it has proved nothing. The crawled
     organization holds **10,192 finding sightings**, so the tombstone and the `_live` view can be
     exercised against a finding that really does stop being reported. **First, the report judges a finding by runs of
     its suite rather than of its rule**, and never by a crawl lane: on a copy of the verification
     store, two on-demand runs of one query each over 15 repositories moved it from 313 findings to
     712, 396 of the new ones for rules neither run evaluated.
-8. **[The same graph draws a different picture every time](ui/graph-layout.md)** — a decision a
+7. **[The same graph draws a different picture every time](ui/graph-layout.md)** — a decision a
     reader has to settle rather than work, and a defect that is work. The browser draws where the
     engine placed it, **fitted to the nodes it is actually drawing**, and names which layout is on
     screen; the view refuses above **300 nodes** without explicit approval and there is **no
@@ -154,7 +147,7 @@ ownership by repository property, which the operator ranked ahead of them, is bu
     line, five nodes across 26,887 × 233. [The closure figure](ui/closure-figure.md)'s placement,
     which lays out a subset alone, is built for it to use. A third: a key ending in a backslash
     comes back from Graphviz under another name, so the export never places it.
-9. **[Remediation summarizes two things into their more reassuring halves](ui/remediation-honesty.md)**
+8. **[Remediation summarizes two things into their more reassuring halves](ui/remediation-honesty.md)**
     — down to one half, and that half turns out to be **latent rather than live**. The
     strip-versus-table gap is closed: the advisories unit carries an `unreached` count and states
     it under the table, so **3 reaching you** and **8 reaching nothing** are both on screen and sum
@@ -162,7 +155,7 @@ ownership by repository property, which the operator ranked ahead of them, is bu
     ranges include **no fix published**, with 5 repositories sitting in exactly that range — and it
     reaches **no column today**. That makes it cheaper to settle, not safer to ignore: the field is
     on the model, and the next surface wanting a Fix column will find it and believe it.
-10. **[A backup is a command, not a thing everybody is told to remember](db/backup-and-restore.md)**
+9. **[A backup is a command, not a thing everybody is told to remember](db/backup-and-restore.md)**
     — the correct incantation is written in the working-style instructions, printed by `make e2e`
     when it refuses the working database, and implemented nowhere. Getting it wrong raises no error:
     `cp` does not read the WAL, so the baseline is silently missing recent commits and a change that
@@ -171,36 +164,34 @@ ownership by repository property, which the operator ranked ahead of them, is bu
     is a correctness fix rather than an ergonomic one is the epoch — a restore moves generation
     history backwards underneath every connected client, and nothing currently tells them to
     reload.
-11. **[Code quality, measured by our own tool](tools/code-quality.md)** — the gate holds new
+10. **[Code quality, measured by our own tool](tools/code-quality.md)** — the gate holds new
     findings at zero in all five analyses. What is left is complexity: **125 production functions
     over 10, total excess 362**, most between 11 and 16. The worst are `Store.Migrate`,
     `findingReviewPlan` and `Supervisor.cycle`; the first and last wait on tests they do not have
     yet. Cleanup rather than risk reduction, which is why it sits here.
-12. **[The crawl says what it is doing, wherever a reader is](ui/crawl-visibility.md)** — down to
+11. **[The crawl says what it is doing, wherever a reader is](ui/crawl-visibility.md)** — down to
     how Settings is grouped. The state, the queue, a problem marker and the refresh interval are on
     the bar of every page, a restart starts nothing unless somebody configured it to, and the suite
     binding is chosen on the CodeQL page and stated in Settings. What is left is that Settings
     holds four unrelated decisions in one scroll, and that an on-demand run is visible only on the
     CodeQL page's Runs tab while it spends the same cores.
-13. **[An action remembers its upstream without becoming it](db/fork-provenance.md)** — forks and
+12. **[An action remembers its upstream without becoming it](db/fork-provenance.md)** — forks and
     naming-convention mirrors need attributed upstream context without replacing the declared
     dependency or inventing a `uses:` edge. Same-host identity collection can start independently;
     cross-host lookup consumes [GitHub hosts](api/github-hosts.md), and version explanations
     consume measured evidence from [version resolution](db/version-resolution.md).
-14. **[A repository lookup names its host and its credential](api/github-hosts.md)** — Git, REST
+13. **[A repository lookup names its host and its credential](api/github-hosts.md)** — Git, REST
     and `gh` currently choose destinations separately. Start with a shared host/identity contract
     and two-host tests, preserving declared ownership and destination-scoped credentials.
     Coordinate cache identity with the [checkout cache](db/checkout-cache.md), which keys a fetch by
     commit and sparse filter and carries no host in that key; advertising enterprise-host support
     still requires an authorized environment, not only mocks.
-15. **[Record the container references Actions actually declares](db/container-inventory.md)** —
+14. **[Record the container references Actions actually declares](db/container-inventory.md)** —
     job/service images, Docker action metadata and referenced Dockerfile `FROM` declarations are a
     broader inventory than the existing `docker://` edges. Begin with a literal-source coverage
     spike and the shared adapter contract; full dynamic/dataflow resolution is not a prerequisite.
-    [Container images](db/container-images.md) stays the small grouping correction. No image
-    execution, package scanning or GitHub
-    container-alert claim is included.
-16. **[Reach is computed one way, and nothing checks it](ql/reachability-crosscheck.md)** —
+    No image execution, package scanning or GitHub container-alert claim is included.
+15. **[Reach is computed one way, and nothing checks it](ql/reachability-crosscheck.md)** —
     unblocked by closure databases, and ranked last because nothing a reader sees moves until its
     third item reports the comparison. A CodeQL walk over each owned repository's closure is a
     second derivation of reach sharing no code with the Go walk. A closure stages callables only,
@@ -437,7 +428,7 @@ measurement makes it urgent.
   populated and becomes the fast path for the job and workflow columns, or dropped.** Until then the
   observation table is the only source, and a reader of the schema has no way to tell.
 - **`org:$` is a parse artifact presented to a reader as an account.** An unexpanded `${{ }}`
-  expression promoted to an owner; `org:docker:` carries a trailing colon.
+  expression promoted to an owner.
   [`db/unresolved-references.md`](db/unresolved-references.md) owns the root cause and does not
   mention that it reaches the graph as an organization. Name them as synthetic, or stop promoting
   them.

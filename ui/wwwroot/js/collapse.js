@@ -1,16 +1,23 @@
 // Folding each group into a single node, and the merged edges between groups.
 
-import { groupOf, edgeClass, ungroupedName } from './topology.js';
+import { groupOf, edgeClass, ungroupedName, keyOf } from './topology.js';
 
 /** Builds one node per group, merging the edges between them. */
 export function collapseGroups(it, nodes, links) {
     const by = it.groupBy && it.groupBy !== 'none' ? it.groupBy : 'owner';
     const groups = new Map();
+    const members = new Map();
+    const ungrouped = [];
 
     for (const n of nodes) {
-        // One named bucket rather than a group per node: an ungrouped node standing alone would
-        // make a collapsed view look identical to an expanded one.
-        const name = groupOf(n, by) || ungroupedName(by);
+        const membership = groupOf(n, by);
+        if (!membership && (by === 'owner' || by === 'repo')) {
+            n.groupKey = n.key;
+            members.set(n.key, n);
+            ungrouped.push(n);
+            continue;
+        }
+        const name = membership || ungroupedName(by);
         let g = groups.get(name);
         if (!g) {
             g = {
@@ -43,6 +50,7 @@ export function collapseGroups(it, nodes, links) {
         if (!n.isExternal) g.isExternal = false;
         if (n.x !== undefined) { g.x += n.x; g.y += n.y; g.z += n.z || 0; }
         n.groupKey = g.key;
+        members.set(n.key, g);
     }
     for (const g of groups.values()) {
         g.x /= g.members; g.y /= g.members; g.z /= g.members;
@@ -51,8 +59,8 @@ export function collapseGroups(it, nodes, links) {
     const merged = new Map();
     for (const e of links) {
         if (!e.shown) continue;
-        const s = groups.get(groupOf(nodeByKey(nodes, e.source), by) || ungroupedName(by));
-        const t = groups.get(groupOf(nodeByKey(nodes, e.target), by) || ungroupedName(by));
+        const s = members.get(keyOf(e.source));
+        const t = members.get(keyOf(e.target));
         if (!s || !t || s === t) continue;
         const id = `${s.key}>${t.key}`;
         const existing = merged.get(id);
@@ -66,14 +74,7 @@ export function collapseGroups(it, nodes, links) {
             cls, shown: !it.edgeClasses || it.edgeClasses.has(cls),
         });
     }
-    return { nodes: [...groups.values()], links: [...merged.values()] };
-}
-
-function nodeByKey(nodes, key) {
-    if (!nodes.byKey) {
-        nodes.byKey = new Map(nodes.map(n => [n.key, n]));
-    }
-    return nodes.byKey.get(key) || { key };
+    return { nodes: [...groups.values(), ...ungrouped], links: [...merged.values()] };
 }
 
 /**

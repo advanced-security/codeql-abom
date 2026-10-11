@@ -18,6 +18,65 @@ import { withAlpha, coverageColor } from './appearance.js';import { hullOf, infl
 
 // Pure decisions behind the view: edge classes, node size, and grouping.
 
+test('accountless references have no repository, account, anchor or boundary', () => {
+    const nodes = [
+        { key: 'docker://alpine:3.20', kind: 'docker_image' },
+        { key: 'docker://registry.local:5000/tools/build', kind: 'docker_image' },
+        { key: 'unrecognized/reference', kind: 'unknown' },
+        { key: '$/action', kind: 'unknown' },
+    ].map((n, i) => ({ ...n, isExternal: true, sx: i * 200, sy: 0 }));
+    for (const n of nodes) {
+        assert.equal(repoOf(n), '', n.key);
+        assert.equal(orgOf(n), '', n.key);
+        for (const by of ['owner', 'repo']) {
+            assert.equal(groupOf(n, by), '', n.key);
+            assert.equal(anchorKey(n, by), '', n.key);
+        }
+    }
+    const regions = settledRegions(nodes, 'owner');
+    assert.equal(regions.groups, 0);
+    assert.equal(regions.shapes.length, 0);
+    assert.equal(regions.accountless, nodes.length);
+    assert.equal(regionCaption(0, 0, 'owner', 0, regions.accountless),
+        'grouped by owner · 4 nodes have no account boundary');
+    assert.equal(regionCaption(2, 1, 'owner', 0, 1),
+        'grouped by owner · 1 of 2 interleave with other groups and are not drawn'
+        + ' · 1 node has no account boundary');
+});
+
+test('collapsing accounts keeps accountless dependencies and their relationships distinct', () => {
+    const nodes = [
+        { key: 'docker/build-push-action', kind: 'action', owner: 'docker' },
+        { key: 'docker://alpine:3.20', kind: 'docker_image' },
+        { key: 'docker://registry.local:5000/tools/build', kind: 'docker_image' },
+    ];
+    const links = nodes.slice(1).map(n => ({
+        source: nodes[0].key, target: n.key, shown: true, count: 1,
+    }));
+    for (const by of ['owner', 'repo']) {
+        const folded = collapseGroups({ groupBy: by }, nodes, links);
+        const images = folded.nodes.filter(n => n.kind === 'docker_image');
+        assert.deepEqual(images.map(n => n.key), nodes.slice(1).map(n => n.key));
+        assert.equal(folded.nodes.length, 3);
+        assert.equal(folded.links.length, 2);
+        const keys = new Set(folded.nodes.map(n => n.key));
+        for (const e of folded.links) {
+            assert.ok(keys.has(e.source));
+            assert.ok(keys.has(e.target));
+            assert.ok(images.some(n => n.key === e.target));
+        }
+        assert.ok(folded.nodes.every(n => n.owner !== 'docker:'));
+    }
+});
+
+test('a parsed mixed-case owner keeps the dependency key canonical grouping', () => {
+    const node = { key: 'octo/action@v1', kind: 'action', owner: 'Octo' };
+    assert.equal(orgOf(node), 'octo');
+    assert.equal(repoOf(node), 'octo/action@v1');
+    assert.equal(anchorKey(node, 'owner'), 'org:octo');
+    assert.equal(orgOf({ key: 'org:Octo', kind: 'org', owner: 'Octo' }), 'Octo');
+});
+
 test('an edge is classified by the closest true relationship', () => {
     const a = { key: 'octo/app/.github/workflows/ci.yml', repository: 'octo/app' };
     const b = { key: 'octo/app/.github/actions/build', repository: 'octo/app' };
@@ -32,8 +91,8 @@ test('an edge is classified by the closest true relationship', () => {
 
 test('an owner node compares by its account and not by a repository it does not have', () => {
     const org = { key: 'org:actions', kind: 'org', owner: 'actions' };
-    const action = { key: 'actions/checkout' };
-    const foreign = { key: 'docker/build-push-action' };
+    const action = { key: 'actions/checkout', owner: 'actions' };
+    const foreign = { key: 'docker/build-push-action', owner: 'docker' };
 
     assert.equal(orgOf(org), 'actions');
     assert.equal(repoOf(org), '', 'an account owns repositories rather than being one');
@@ -56,7 +115,7 @@ test('a stored boundary is preferred over deriving one again in the browser', ()
 // Containment and merged collapsed edges have no stored boundary, so they fall back to endpoints.
 test('an edge with no stored boundary still gets one from its endpoints', () => {
     const org = { key: 'org:actions', kind: 'org', owner: 'actions' };
-    const action = { key: 'actions/checkout' };
+    const action = { key: 'actions/checkout', owner: 'actions' };
 
     assert.equal(boundaryClass('', org, action), 'sameOwner');
     assert.equal(boundaryClass(undefined, org, action), 'sameOwner');

@@ -6,9 +6,8 @@
 
 `uses: docker://...` is already an ABOM node, edge and bill-of-materials component. It is not the
 whole container dependency surface: jobs and services name images, and Docker action metadata can
-name an image or a Dockerfile whose `FROM` declarations name more. The existing
-[container-images.md](container-images.md) fixes account grouping only; it must remain a small
-correction rather than acquiring all of this work.
+name an image or a Dockerfile whose `FROM` declarations name more. The
+[accountless image model](../../docs/architecture.md) does not provide this broader inventory.
 
 The checkout's sparse patterns include workflow content and action manifests, not every referenced
 Dockerfile. A parser cannot distinguish no base-image declarations from a file never fetched unless
@@ -60,7 +59,6 @@ waiting for its dynamic/dataflow resolution; any new adapter must declare its so
 record whether those inputs were fetched. Enabling it requires the relevant re-fetch/re-analysis,
 not treating older analyses as if they covered containers.
 
-The existing account-grouping correction remains [container-images.md](container-images.md).
 This work does not execute builds or images, pull layers, inspect installed packages, evaluate
 shell commands or Actions conditions, scan registries, or infer vulnerability from image identity.
 It does not promise Dependency Graph alerts or submit container packages to GitHub.

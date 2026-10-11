@@ -13,19 +13,39 @@ namespace Abom.WebAssembly.Tests;
 /// </summary>
 public sealed class ExplorerPresentationTests : AbomTestContext
 {
-    private void StubGraphModule()
+    private void StubGraphModule(Explorer.Counts? counts = null)
     {
         var module = JSInterop.SetupModule("./js/graph.js");
         module.Setup<bool>("create", _ => true).SetResult(true);
         module.Setup<Explorer.LoadResult>("loadFull", _ => true)
               .SetResult(new Explorer.LoadResult(0, 0, [], false, 0));
         module.Setup<Explorer.Counts>("applyFilters", _ => true)
-              .SetResult(new Explorer.Counts(0, 0, 0, 0));
+              .SetResult(counts ?? new Explorer.Counts(0, 0, 0, 0));
         foreach (var name in new[]
                  { "setPalette", "setAnimate", "setGroupBy", "setCollapsed", "setView" })
         {
             module.SetupVoid(name, _ => true).SetVoidResult();
         }
+    }
+
+    [Theory]
+    [InlineData("owner")]
+    [InlineData("repo")]
+    public void AccountlessImagesKeepTheirLegendAndAreNotCountedAsGroups(string grouping)
+    {
+        Answer("api/owned-scope", "[{\"owner\":\"octo-org\"}]");
+        StubGraphModule(new Explorer.Counts(4, 0, 0, 4));
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!
+            .NavigateTo($"/explore?kinds=docker_image&groupBy={grouping}&collapsed=true");
+
+        var page = Render<Explorer>();
+
+        page.WaitForAssertion(() =>
+        {
+            Assert.Single(page.FindAll("input[aria-label='Show Docker image nodes']"));
+            Assert.DoesNotContain("docker image", string.Join(" ", page.FindAll(".abom-key-note").Select(n => n.TextContent)));
+            Assert.Contains("<b>4 nodes</b> after grouping", page.Markup);
+        });
     }
 
     /// <summary>
