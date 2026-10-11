@@ -362,7 +362,7 @@ func (s *Store) referencesTo(nodeKey, mode string) ([]string, error) {
 		JOIN repository r ON r.row_id = e.repository_row_id
 		WHERE n.node_key = ? AND r.origin = ?
 		GROUP BY e.ref_value
-		ORDER BY COUNT(*) DESC`, nodeKey, OriginSeed)
+		ORDER BY COUNT(*) DESC, COALESCE(e.ref_value, '') COLLATE BINARY`, nodeKey, OriginSeed)
 	if err != nil {
 		return nil, fmt.Errorf("reading references to %q: %w", nodeKey, err)
 	}
@@ -416,7 +416,7 @@ func (s *Store) ExposuresByRepository(limit int, sc RepositoryScope) ([]Exposure
 		JOIN repository r ON r.row_id = e.repository_row_id
 		JOIN abom_node_live n ON n.row_id = e.node_row_id
 		JOIN abom_advisory a ON a.ghsa_id = e.ghsa_id
-		WHERE 1`+bound+`
+		WHERE true`+bound+`
 		ORDER BY e.hops ASC, r.repository_full_name, e.ghsa_id`, bindings...)
 	if err != nil {
 		return nil, fmt.Errorf("reading exposures: %w", err)

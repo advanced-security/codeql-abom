@@ -20,7 +20,7 @@ import (
 func runRefresh(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("refresh", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to the ABOM SQLite database (required)")
+	dbPath := databaseFlag(fs)
 	maxDepth := fs.Int("max-depth", 0, "stop the reach walk at this many hops; 0 means no limit")
 	optimize := fs.Bool("optimize", false,
 		"also update the query planner's statistics and compact the file")
@@ -32,14 +32,14 @@ func runRefresh(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		return errors.New("refresh: --db is required")
 	}
 
-	s, err := store.Open(*dbPath, store.Options{})
+	s, err := store.OpenBackend(*dbPath, store.Options{})
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", *dbPath, err)
+		return fmt.Errorf("opening %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
 	defer s.Close()
 	// Migrating first also builds any index the schema has gained since this database was made.
 	if err := s.Migrate(); err != nil {
-		return fmt.Errorf("migrating %s: %w", *dbPath, err)
+		return fmt.Errorf("migrating %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
 
 	before, err := aggregateCounts(s)
@@ -74,15 +74,6 @@ var aggregateTables = []string{
 	"abom_blast_radius", "abom_node_reach", "abom_node_version_reach", "abom_exposure",
 }
 
-func aggregateCounts(s *store.Store) (map[string]int, error) {
-	out := make(map[string]int, len(aggregateTables))
-	for _, name := range aggregateTables {
-		var n int
-		// The table name is from the constant above, never from input.
-		if err := s.DB().QueryRow("SELECT COUNT(*) FROM " + name).Scan(&n); err != nil {
-			return nil, fmt.Errorf("counting %s: %w", name, err)
-		}
-		out[name] = n
-	}
-	return out, nil
+func aggregateCounts(s store.Backend) (map[string]int, error) {
+	return s.AggregateCounts()
 }

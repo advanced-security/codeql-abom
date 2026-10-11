@@ -44,7 +44,7 @@ func (o *authoringOptions) register(fs *flag.FlagSet) {
 // says how to build the agent for a Copilot CLI named later.
 //
 // Handed the runner the crawl holds, so a session takes the same lock a crawl and a run take.
-func newAuthoring(s *store.Store, o authoringOptions, sup *supervisor.Supervisor, stderr io.Writer,
+func newAuthoring(s store.Backend, o authoringOptions, sup *supervisor.Supervisor, stderr io.Writer,
 ) (*harness.Sessions, func(cli string) harness.Agent) {
 	dir := runner.CustomPackRoot()
 	if dir == "" {
@@ -95,7 +95,7 @@ func newAuthoring(s *store.Store, o authoringOptions, sup *supervisor.Supervisor
 
 // newToolchain reports what sessions need, putting a CLI path saved in Settings ahead of the flag
 // or environment that named the default, so the crawl and sessions start on the saved one.
-func newToolchain(s *store.Store, cfg *serveConfig, stderr io.Writer) *toolchain.Toolchain {
+func newToolchain(s store.Backend, cfg *serveConfig, stderr io.Writer) *toolchain.Toolchain {
 	codeql := toolchain.Tool{Path: cfg.discovery.codeqlPath}
 	if codeql.Path != "" {
 		codeql.Source = "--codeql"

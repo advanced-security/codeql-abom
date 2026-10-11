@@ -14,6 +14,7 @@ on:
       # Fixtures are test input. Without them a regenerated fixture changes what every test
       # asserts and nothing re-runs to say so.
       - '**/testdata/**'
+      - 'scripts/**'
       - '.github/workflows/build-and-test-go.yml'
       - 'go.mod'
       - 'go.sum'
@@ -23,6 +24,7 @@ on:
     paths:
       - '**/*.go'
       - '**/testdata/**'
+      - 'scripts/**'
       - '.github/workflows/build-and-test-go.yml'
       - 'go.mod'
       - 'go.sum'
@@ -62,6 +64,9 @@ jobs:
       - name: Build and Test - Install Graphviz
         run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends graphviz
 
+      # Docker is a requirement too: the store suite also runs on PostgreSQL, a primary and a
+      # physical standby in containers, and fails rather than skips without a daemon. Ubuntu
+      # runners have one; a macOS runner does not.
       - name: Build and Test - Run tests
         run: make test
 
@@ -75,6 +80,7 @@ jobs:
             echo ""
             echo "- No corrupted writes"
             echo "- gofmt clean, go vet clean"
-            echo "- \`go test ./... -race\` passed"
+            echo "- \`go test ./... -race\` passed with the store on SQLite"
+            echo "- The store suite passed again on isolated PostgreSQL, and replica routing against its physical standby"
             echo "- Binary builds"
           } >> "$GITHUB_STEP_SUMMARY"

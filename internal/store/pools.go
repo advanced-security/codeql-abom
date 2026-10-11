@@ -143,13 +143,13 @@ func (s *Store) AddPoolSpend(rows []PoolSpend) error {
 			(pool, unit, bucket, requests, charged, reported_remaining, reported_limit, reported_reset_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(pool, unit, bucket) DO UPDATE SET
-			requests = requests + excluded.requests,
-			charged = charged + excluded.charged,
+			requests = abom_pool_spend.requests + excluded.requests,
+			charged = abom_pool_spend.charged + excluded.charged,
 			reported_limit = CASE WHEN excluded.reported_remaining IS NULL
-			                      THEN reported_limit ELSE excluded.reported_limit END,
+			                      THEN abom_pool_spend.reported_limit ELSE excluded.reported_limit END,
 			reported_reset_at = CASE WHEN excluded.reported_remaining IS NULL
-			                         THEN reported_reset_at ELSE excluded.reported_reset_at END,
-			reported_remaining = COALESCE(excluded.reported_remaining, reported_remaining)`)
+			                         THEN abom_pool_spend.reported_reset_at ELSE excluded.reported_reset_at END,
+			reported_remaining = COALESCE(excluded.reported_remaining, abom_pool_spend.reported_remaining)`)
 	if err != nil {
 		return fmt.Errorf("recording pool spend: %w", err)
 	}

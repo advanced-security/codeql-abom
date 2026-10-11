@@ -64,7 +64,7 @@ const codeScanningRuns = "dynamic/github-code-scanning/"
 
 // Processor settles the log in order; every action re-reads its subject, so a repeat is harmless.
 type Processor struct {
-	Store *store.Store
+	Store store.Backend
 	Queue *frontier.Queue
 	// Probe is the recheck's remote probe. It, not the payload, says whether a branch moved.
 	Probe expand.RefProbe

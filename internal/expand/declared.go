@@ -22,7 +22,7 @@ const cannotRead = "Declared metadata cannot be read: "
 // declare another severity, and reading that instead reports a score under a version that never
 // declared it.
 func ReadDeclarations(
-	ctx context.Context, st *store.Store, cli Resolver, unread []store.CatalogQuery,
+	ctx context.Context, st store.Backend, cli Resolver, unread []store.CatalogQuery,
 ) (map[string]string, error) {
 	unreadable := map[string]string{}
 	if len(unread) == 0 {

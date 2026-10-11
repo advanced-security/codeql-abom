@@ -10,7 +10,7 @@ import (
 
 // wireCodeScanning lets the crawl take code scanning's databases and analyses wherever they are
 // ABOM's own result, unless the operator turned that off, which the crawl then says.
-func wireCodeScanning(ctx context.Context, loop *supervisor.Supervisor, s *store.Store, cfg serveConfig) {
+func wireCodeScanning(ctx context.Context, loop *supervisor.Supervisor, s store.Backend, cfg serveConfig) {
 	if !cfg.discovery.codeScanningReuse {
 		loop.Expander.CodeScanningOff = "this server was started with --code-scanning-reuse=false"
 		return

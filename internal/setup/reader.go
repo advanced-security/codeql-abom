@@ -28,7 +28,7 @@ type Catalog interface {
 
 // Reader reads and records what GitHub says about code scanning setup.
 type Reader struct {
-	Store   *store.Store
+	Store   store.Backend
 	Catalog Catalog
 	Now     func() time.Time
 }

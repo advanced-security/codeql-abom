@@ -28,6 +28,17 @@ development tools. AI authoring and explicit lock verification have
 [optional dependencies](configuration.md#optional-features). Native platform qualification is still
 pending, so this is not a promise that every Linux distribution or macOS version works.
 
+The complete development gate requires a running Docker daemon, not a host PostgreSQL install.
+`make test` runs the application suite on SQLite, including replica routing against a physical
+standby, then the store suite again on PostgreSQL. The pinned PostgreSQL primary and physical
+standby use disposable data and dynamically assigned loopback ports; the harness removes only its
+own containers afterward. `make backend-test` runs only the PostgreSQL half: the store suite and
+the paused-standby readback test. An unavailable daemon is an error, never a skipped backend.
+A plain `go test` outside the harness runs the store suite on SQLite and skips the standby test.
+`make script-test`
+tests the harness lifecycle without starting containers; `python3 scripts/with-postgres.py probe`
+checks the Docker runtime and wire protocol only.
+
 CodeQL has its own use and distribution terms. Access to a repository or membership in an
 organization is not a license grant. Use ABOM only for analysis you are authorized to perform;
 ABOM does not currently enforce base-repository Code Scanning eligibility.

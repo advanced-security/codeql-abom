@@ -123,7 +123,7 @@ func (f FindingSelector) asksFindings() bool {
 func propertyClause(column string, name string, values []string) (string, []any) {
 	list, args := inList(values)
 	return `EXISTS (SELECT 1 FROM abom_repository_property p
-	                 WHERE p.repository_full_name = ` + column + `
+	                 WHERE p.repository_full_name = ` + column + ` COLLATE NOCASE
 	                   AND p.property_name = ?
 	                   AND p.value IN ` + list + `)`, append([]any{name}, args...)
 }
@@ -246,8 +246,8 @@ func newFindingMatchQuery(sel FindingSelector) findingMatchQuery {
 		JOIN abom_finding_node fn ON fn.finding_row_id = f.row_id
 		JOIN abom_node_live n ON n.row_id = fn.node_row_id
 		LEFT JOIN repository fr ON fr.row_id = f.repository_row_id` + reach,
-		where:      []string{"1"},
-		unprovided: []string{"1", "COALESCE(f.provider, '') = ''"},
+		where:      []string{"true"},
+		unprovided: []string{"true", "COALESCE(f.provider, '') = ''"},
 	}
 }
 

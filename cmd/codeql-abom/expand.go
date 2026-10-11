@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/advanced-security/codeql-abom/internal/coordination"
 	"github.com/advanced-security/codeql-abom/internal/expand"
 	"github.com/advanced-security/codeql-abom/internal/frontier"
 	"github.com/advanced-security/codeql-abom/internal/ghapp"
@@ -112,7 +113,7 @@ type expandAllConfig struct {
 
 // runExpandAll follows dependencies out from the seed repositories until the frontier is empty,
 // then refreshes every aggregate the graph reports on.
-func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) (result error) {
 	cfg, err := parseExpandAllArgs(args, stderr)
 	if err != nil {
 		return err
@@ -129,6 +130,11 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return err
 	}
 	defer s.Close()
+	ctx, s, releaseLease, err := coordination.Hold(ctx, s)
+	if err != nil {
+		return fmt.Errorf("expand: acquiring coordinator ownership: %w", err)
+	}
+	defer func() { result = errors.Join(result, releaseLease()) }()
 
 	if cfg.tokens, err = dbReaderTokens(cfg.dbPath); err != nil {
 		return fmt.Errorf("expand-all: %w", err)
@@ -161,14 +167,14 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	return finishExpandAll(s, queue)
 }
 
-func openExpandAllStore(cfg expandAllConfig) (*store.Store, error) {
-	s, err := store.Open(cfg.dbPath, store.Options{BulkLoad: true})
+func openExpandAllStore(cfg expandAllConfig) (store.Backend, error) {
+	s, err := store.OpenBackend(cfg.dbPath, store.Options{BulkLoad: true})
 	if err != nil {
-		return nil, fmt.Errorf("opening %s: %w", cfg.dbPath, err)
+		return nil, fmt.Errorf("opening %s: %w", store.DatabaseLabel(cfg.dbPath), err)
 	}
 	if err := s.Migrate(); err != nil {
 		_ = s.Close()
-		return nil, fmt.Errorf("migrating %s: %w", cfg.dbPath, err)
+		return nil, fmt.Errorf("migrating %s: %w", store.DatabaseLabel(cfg.dbPath), err)
 	}
 	return s, nil
 }
@@ -194,7 +200,7 @@ func reportExpandAllSummary(stdout io.Writer, total expand.Stats, cache *expand.
 	}
 }
 
-func finishExpandAll(s *store.Store, queue *frontier.Queue) error {
+func finishExpandAll(s store.Backend, queue *frontier.Queue) error {
 	if err := (&graph.Builder{Store: s}).BuildAll(); err != nil {
 		return fmt.Errorf("expand-all: rebuilding aggregates: %w", err)
 	}
@@ -210,7 +216,7 @@ func finishExpandAll(s *store.Store, queue *frontier.Queue) error {
 func parseExpandAllArgs(args []string, stderr io.Writer) (expandAllConfig, error) {
 	fs := flag.NewFlagSet("expand-all", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to the ABOM SQLite database (required)")
+	dbPath := databaseFlag(fs)
 	queryPath := fs.String("query", defaultEdgesQuery, "edges query to run against each database")
 	queryID := fs.String("query-id", defaultEdgesQueryID, "ledger identity for the query")
 	codeqlPath := fs.String("codeql", "", "codeql CLI to invoke (default: codeql on PATH)")
@@ -260,7 +266,7 @@ func parseExpandAllArgs(args []string, stderr io.Writer) (expandAllConfig, error
 	}, nil
 }
 
-func prepareExpandAllQueue(s *store.Store, queue *frontier.Queue, stdout io.Writer) error {
+func prepareExpandAllQueue(s store.Backend, queue *frontier.Queue, stdout io.Writer) error {
 	reclaimed, err := queue.ReclaimStale(staleClaimLease)
 	if err != nil {
 		return fmt.Errorf("expand-all: reclaiming abandoned work: %w", err)
@@ -290,12 +296,12 @@ func prepareExpandAllQueue(s *store.Store, queue *frontier.Queue, stdout io.Writ
 // newExpander is the expander a command analyzes with, the checkout cache it holds, and what
 // closes its CodeQL processes. A closure has no queue and passes nil.
 func newExpander(
-	s *store.Store, queue *frontier.Queue, cfg expandAllConfig, stdout io.Writer,
+	s store.Backend, queue *frontier.Queue, cfg expandAllConfig, stdout io.Writer,
 ) (*expand.Expander, *expand.CheckoutCache, func(), error) {
 	pace := processPools.Pool(work.PoolFetching, work.UnitGit)
 	pace.Configure(cfg.rateLimitPerHour, 1)
 
-	w := store.NewWriter(s, 0)
+	w := s.NewWriter(0)
 	server := &runner.CLIServer{CodeQLPath: cfg.codeqlPath}
 	evaluator := &runner.QueryServer{CodeQLPath: cfg.codeqlPath}
 	cleanup := func() {
@@ -339,7 +345,7 @@ func newExpander(
 }
 
 func runExpandRounds(
-	ctx context.Context, e *expand.Expander, opts expand.Options, s *store.Store, queue *frontier.Queue,
+	ctx context.Context, e *expand.Expander, opts expand.Options, s store.Backend, queue *frontier.Queue,
 ) (expand.Stats, error) {
 	var total expand.Stats
 	for round := 0; round < maxExpandRounds; round++ {
@@ -369,7 +375,7 @@ func runExpandRounds(
 //
 // Commonality is only partly known when a dependency is first discovered, so a score means
 // nothing until reach has been derived from the edges ingested so far.
-func rank(s *store.Store, queue *frontier.Queue) error {
+func rank(s store.Backend, queue *frontier.Queue) error {
 	if err := (&graph.Builder{Store: s}).BuildBlastRadius(); err != nil {
 		return fmt.Errorf("recomputing reach: %w", err)
 	}

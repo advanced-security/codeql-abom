@@ -21,7 +21,7 @@ type fetcher func(ctx context.Context, packages []string) ([]advisory.Advisory, 
 //
 // Unauthenticated it would be 60 requests an hour, which an organization-sized package list
 // exhausts in one pass, so a gh login is used when the environment provides no token.
-func newAdvisor(s *store.Store, tokens ghapp.TokenSource, logTo io.Writer) func(context.Context) (int, error) {
+func newAdvisor(s store.Backend, tokens ghapp.TokenSource, logTo io.Writer) func(context.Context) (int, error) {
 	client := &advisory.Client{
 		Tokens: tokens,
 		Pace:   processPools.Pool(work.PoolAdvisories, work.UnitREST),
@@ -38,7 +38,7 @@ func newAdvisor(s *store.Store, tokens ghapp.TokenSource, logTo io.Writer) func(
 //
 // The package list is re-read every time rather than captured, because the point of running
 // this on a cycle that ingested is that the set of packages has just changed.
-func advisorFor(s *store.Store, fetch fetcher, logTo io.Writer) func(context.Context) (int, error) {
+func advisorFor(s store.Backend, fetch fetcher, logTo io.Writer) func(context.Context) (int, error) {
 	return func(ctx context.Context) (int, error) {
 		packages, err := s.AdvisoryPackages()
 		if err != nil {

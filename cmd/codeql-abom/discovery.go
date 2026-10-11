@@ -77,7 +77,7 @@ func (o discoveryOptions) codeqlThreads() int {
 // CodeQL lock. Two runners would each hold their own, and a run would contend with the crawl for
 // one local compilation cache while both believed they had it.
 func newRunExecutor(
-	s *store.Store, sup *supervisor.Supervisor, logTo io.Writer,
+	s store.Backend, sup *supervisor.Supervisor, logTo io.Writer,
 ) *expand.Executor {
 	return &expand.Executor{
 		Store:    s,
@@ -111,7 +111,7 @@ func runnableSuites() []string {
 }
 
 // crawlQueue is the discovery queue a crawl claims from, kept inside the owned closure.
-func crawlQueue(s *store.Store, maxDepth int) *frontier.Queue {
+func crawlQueue(s store.Backend, maxDepth int) *frontier.Queue {
 	return &frontier.Queue{Store: s, MaxDepth: maxDepth, Closure: graph.OwnedClosureNames(s)}
 }
 
@@ -120,7 +120,7 @@ func crawlQueue(s *store.Store, maxDepth int) *frontier.Queue {
 // It is built whether or not it will autostart, because the interface can start it later and a
 // button that has nothing behind it is worse than no button.
 func newSupervisor(
-	s *store.Store, opts discoveryOptions, tokens ghapp.TokenSource, logTo io.Writer,
+	s store.Backend, opts discoveryOptions, tokens ghapp.TokenSource, logTo io.Writer,
 ) (*supervisor.Supervisor, error) {
 	dir := opts.workDir
 	if dir == "" {
@@ -139,7 +139,7 @@ func newSupervisor(
 	}
 	fetching := processPools.Pool(work.PoolFetching, work.UnitGit)
 
-	w := store.NewWriter(s, 0)
+	w := s.NewWriter(0)
 	// The crawl runs for hours, so both the small commands and the BQRS lane are worth a JVM that
 	// stays up. Neither is closed here: the supervisor outlives this function and the CLI exits
 	// when the process does.
@@ -233,7 +233,7 @@ var processPools = work.NewTokenPools()
 
 // configurePools applies the rates the operator saved, and the flag's rate to fetching and probing
 // where none was saved. A pool with neither has no rate, which leaves its work alone.
-func configurePools(pools *work.TokenPools, s *store.Store, gitPerHour int) error {
+func configurePools(pools *work.TokenPools, s store.Backend, gitPerHour int) error {
 	rates, err := s.PoolRates()
 	if err != nil {
 		return fmt.Errorf("reading the pools' rates: %w", err)
@@ -298,7 +298,7 @@ func logDiscoveryFailures(w io.Writer) func(work.Event) {
 //
 // It runs at every start rather than once, because the answer changes: a CLI gets installed, a
 // disk fills up, and the operator is told either way instead of watching a loop do nothing.
-func preflight(s *store.Store, codeqlPath, queryPath, workDir string) func() *supervisor.Problem {
+func preflight(s store.Backend, codeqlPath, queryPath, workDir string) func() *supervisor.Problem {
 	return func() *supervisor.Problem {
 		// First, because it is the one thing here the operator configures rather than installs,
 		// and because a crawl with no declared scope is what built a corpus of 204 repositories

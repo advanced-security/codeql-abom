@@ -18,7 +18,7 @@ func BoundTo(names []string) QueueBound {
 // prefixes the owner and repo columns, as "abom_frontier." does where a join makes them ambiguous.
 func (b QueueBound) Admits(qualifier string) (string, []any) {
 	if !b.bounded {
-		return "1", nil
+		return "true", nil
 	}
 	// A list of strings always encodes.
 	list, _ := json.Marshal(b.names)

@@ -13,7 +13,7 @@ import (
 //	octo-org/other    business_id=7  analyzed
 func unitCoverageFixture(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "abom.db"), Options{BulkLoad: true})
+	s, err := openTestStore(t, filepath.Join(t.TempDir(), "abom.db"), Options{BulkLoad: true})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

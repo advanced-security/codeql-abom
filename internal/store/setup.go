@@ -126,18 +126,18 @@ WITH facts AS (
          dc.has_database, dc.commit_oid AS database_commit, dc.updated_at AS database_updated_at,
          dc.checked_at AS database_checked_at,
          (SELECT MIN(p.value) FROM abom_repository_property p
-           WHERE p.repository_full_name = r.repository_full_name
+           WHERE p.repository_full_name = r.repository_full_name COLLATE NOCASE
              AND p.property_name = 'github-codeql-config-file') AS config_file
     FROM repository r
-    LEFT JOIN abom_repository_absence a ON a.repository = r.repository_full_name
-    LEFT JOIN abom_listed_repository lr ON lr.repository = r.repository_full_name
-    LEFT JOIN abom_setup_reading sr ON sr.repository = r.repository_full_name
-    LEFT JOIN abom_setup_analyses sa ON sa.repository = r.repository_full_name
-    LEFT JOIN abom_configuration_attachment ca ON ca.repository = r.repository_full_name
+    LEFT JOIN abom_repository_absence a ON a.repository = r.repository_full_name COLLATE NOCASE
+    LEFT JOIN abom_listed_repository lr ON lr.repository = r.repository_full_name COLLATE NOCASE
+    LEFT JOIN abom_setup_reading sr ON sr.repository = r.repository_full_name COLLATE NOCASE
+    LEFT JOIN abom_setup_analyses sa ON sa.repository = r.repository_full_name COLLATE NOCASE
+    LEFT JOIN abom_configuration_attachment ca ON ca.repository = r.repository_full_name COLLATE NOCASE
     LEFT JOIN abom_security_configuration sc
            ON sc.account = ca.account AND sc.configuration_id = ca.configuration_id
     LEFT JOIN abom_configuration_read cr
-           ON cr.account = SUBSTR(r.repository_full_name, 1, INSTR(r.repository_full_name, '/') - 1)
+           ON cr.account = SUBSTR(r.repository_full_name, 1, INSTR(r.repository_full_name, '/') - 1) COLLATE NOCASE
     LEFT JOIN abom_database_catalog dc
            ON dc.repository = r.repository_full_name AND dc.language = 'actions'
    WHERE r.origin = 'seed'

@@ -10,7 +10,7 @@ import (
 // This is `usedByCount` a second time, in a second place. The plan is asserted rather than the
 // clock: a stopwatch flakes, and it would also pass on a corpus whose edge table happens to be
 // small. The cost is structural, so the plan is where it can be seen.
-func TestTheReferenceStateQueryDoesNotWalkTheEdgeTablePerQueueRow(t *testing.T) {
+func TestSQLiteReferenceStateQueryDoesNotWalkTheEdgeTablePerQueueRow(t *testing.T) {
 	s := newTestStore(t)
 	table, err := s.declaredEdgeTable(AnalysisModeRegular)
 	if err != nil {

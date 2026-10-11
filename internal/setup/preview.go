@@ -30,7 +30,7 @@ type PreviewRequest struct {
 
 // Preview classifies every repository the request covers from what was last read, and records the
 // body each write would send. It asks GitHub nothing: it is the simulation a batch is approved from.
-func Preview(s *store.Store, req PreviewRequest, allowed func(string) bool, now time.Time) (store.SetupPreview, error) {
+func Preview(s store.Backend, req PreviewRequest, allowed func(string) bool, now time.Time) (store.SetupPreview, error) {
 	classes, err := s.SetupClasses(req.Repositories...)
 	if err != nil {
 		return store.SetupPreview{}, err

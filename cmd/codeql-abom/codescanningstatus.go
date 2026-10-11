@@ -192,7 +192,7 @@ func orAll(view string) string {
 func runCodeScanningStatus(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("code-scanning status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to the ABOM SQLite database (required)")
+	dbPath := databaseFlag(fs)
 	class := fs.String("class", "", "list only this class")
 	asJSON := fs.Bool("json", false, "print the readings as JSON, as the API answers them")
 	if err := fs.Parse(args); err != nil {
@@ -205,13 +205,13 @@ func runCodeScanningStatus(args []string, stdout, stderr io.Writer) error {
 	if *class != "" && !slices.Contains(store.SetupClassOrder, *class) {
 		return fmt.Errorf("code-scanning status: class %q is not one of %v", *class, store.SetupClassOrder)
 	}
-	s, err := store.Open(*dbPath, store.Options{})
+	s, err := store.OpenBackend(*dbPath, store.Options{})
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", *dbPath, err)
+		return fmt.Errorf("opening %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
 	defer s.Close()
 	if err := s.Migrate(); err != nil {
-		return fmt.Errorf("migrating %s: %w", *dbPath, err)
+		return fmt.Errorf("migrating %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
 	readings, err := setup.Classify(s, *class)
 	if err != nil {
@@ -243,7 +243,7 @@ func runCodeScanningStatus(args []string, stdout, stderr io.Writer) error {
 
 // codeScanningWrites is the default setup write service. Reads stay the App's; the one write is made
 // with the operator's own token, and only to the repositories and accounts the flags name.
-func codeScanningWrites(ctx context.Context, cfg serveConfig, s *store.Store, reader setup.Reader) *setup.Service {
+func codeScanningWrites(ctx context.Context, cfg serveConfig, s store.Backend, reader setup.Reader) *setup.Service {
 	sv := &setup.Service{Store: s, Targets: splitTargets(cfg.enableTargets), Accounts: splitTargets(cfg.enableAccounts)}
 	if len(sv.Targets)+len(sv.Accounts) > 0 {
 		patcher := &setup.Patcher{BaseURL: cfg.apiURL, Token: githubToken(ctx), Allowed: sv.Allowed()}

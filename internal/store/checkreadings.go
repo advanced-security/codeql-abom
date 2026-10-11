@@ -6,8 +6,11 @@ import (
 	"strings"
 )
 
-// SnapshotInto writes a consistent copy of the database to path, through the write-ahead log.
+// SnapshotInto is SQLite file access for fixtures; production uses the portable SnapshotStore.
 func (s *Store) SnapshotInto(path string) error {
+	if s.db.postgres {
+		return fmt.Errorf("PostgreSQL cannot produce a SQLite file snapshot; use SnapshotStore")
+	}
 	if _, err := s.db.Exec(`VACUUM INTO ?`, path); err != nil {
 		return fmt.Errorf("copying the database to %s: %w", path, err)
 	}
@@ -182,8 +185,8 @@ type RollupLevel struct {
 	Node, Level string
 	// HasRow is false where only the breakdown names the node.
 	HasRow bool
-	// Each side is invalid where it does not store the level.
-	Rollup, Breakdown sql.NullInt64
+	// Each side is absent where it does not store the level.
+	Rollup, Breakdown *int64
 }
 
 // RollupLevels pairs each abom_blast_radius level with its abom_node_reach count or sum.
@@ -237,7 +240,7 @@ func (s *Store) RollupLevels() ([]RollupLevel, error) {
 				break
 			}
 			out = append(out, RollupLevel{Node: n.key, Level: names[i], HasRow: n.hasRow,
-				Rollup: p.rollup, Breakdown: p.breakdown})
+				Rollup: reported(p.rollup), Breakdown: reported(p.breakdown)})
 		}
 	}
 	return out, nil
@@ -379,7 +382,7 @@ func (s *Store) LiveCommitEvidence() ([]LiveCommitEvidence, error) {
 		  FROM live l
 		  LEFT JOIN answer a ON a.repository = l.repository AND a.commit_sha = l.commit_sha
 		  LEFT JOIN analyzed an ON an.repository = l.repository
-		 GROUP BY l.repository, l.commit_sha
+		 GROUP BY l.repository, l.commit_sha, l.outstanding, an.commits
 		 ORDER BY 1`)
 }
 

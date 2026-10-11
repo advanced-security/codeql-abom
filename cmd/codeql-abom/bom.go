@@ -20,7 +20,7 @@ import (
 func runBOM(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("bom", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to the ABOM SQLite database (required)")
+	dbPath := databaseFlag(fs)
 	format := fs.String("format", "native",
 		"native, cyclonedx, spdx or summary; native is the only one that can carry provenance")
 	out := fs.String("out", "", "write to this file instead of standard output")
@@ -35,13 +35,13 @@ func runBOM(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		return errors.New("bom: --db is required")
 	}
 
-	s, err := store.Open(*dbPath, store.Options{})
+	s, err := store.OpenBackend(*dbPath, store.Options{})
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", *dbPath, err)
+		return fmt.Errorf("opening %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
 	defer s.Close()
 	if err := s.Migrate(); err != nil {
-		return fmt.Errorf("migrating %s: %w", *dbPath, err)
+		return fmt.Errorf("migrating %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
 
 	// Boundaries are filled by a derivation the serving path runs and this one otherwise never

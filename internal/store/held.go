@@ -48,7 +48,7 @@ func (s *Store) RecordHeldMemberResult(
 // linksItsOwnKind refuses a member linked to an evaluation of the other kind. A findings run linked
 // to a held evaluation would list sightings nobody wrote; a held run linked to a full one would let
 // the next run skip on an answer whose findings are held.
-func linksItsOwnKind(tx *sql.Tx, runID int64, runHeld bool, evaluation int64, id DatabaseIdentity) error {
+func linksItsOwnKind(tx *transaction, runID int64, runHeld bool, evaluation int64, id DatabaseIdentity) error {
 	if evaluation == 0 {
 		return nil
 	}
@@ -69,7 +69,7 @@ func linksItsOwnKind(tx *sql.Tx, runID int64, runHeld bool, evaluation int64, id
 }
 
 // replaceHeld replaces rather than adds, or analyzing again would list each result twice.
-func replaceHeld(tx *sql.Tx, runID int64, id DatabaseIdentity, held []Finding) error {
+func replaceHeld(tx *transaction, runID int64, id DatabaseIdentity, held []Finding) error {
 	if _, err := tx.Exec(`
 		DELETE FROM abom_held_result
 		WHERE run_id = ? AND repository = ? AND db_commit = ?
@@ -139,7 +139,7 @@ func (s *Store) memberHeld(
 	return out, rows.Err()
 }
 
-func runIsHeld(tx *sql.Tx, runID int64) (bool, error) {
+func runIsHeld(tx *transaction, runID int64) (bool, error) {
 	var held bool
 	err := tx.QueryRow(`SELECT held FROM abom_analysis_run WHERE row_id = ?`, runID).Scan(&held)
 	if err == sql.ErrNoRows {

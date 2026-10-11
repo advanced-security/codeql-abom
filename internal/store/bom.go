@@ -256,7 +256,7 @@ func (s *Store) repositoriesWithValue(name, value string) (map[string]bool, erro
 	rows, err := s.db.Query(`
 SELECT r.repository_full_name
   FROM repository r
-  JOIN abom_repository_property p ON p.repository_full_name = r.repository_full_name
+  JOIN abom_repository_property p ON p.repository_full_name = r.repository_full_name COLLATE NOCASE
  WHERE p.property_name = ? AND p.value = ?
    AND `+ownedFullName("r.repository_full_name"), name, value)
 	if err != nil {

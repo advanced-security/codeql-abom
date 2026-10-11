@@ -85,7 +85,7 @@ func validateConversionRequest(repository string, ids []int64, by string) error 
 	return nil
 }
 
-func conversionFindings(tx *sql.Tx, runID int64, rows []heldRow) ([]Finding, error) {
+func conversionFindings(tx *transaction, runID int64, rows []heldRow) ([]Finding, error) {
 	repositories := map[string]int64{}
 	var findings []Finding
 	for _, r := range rows {
@@ -98,7 +98,7 @@ func conversionFindings(tx *sql.Tx, runID int64, rows []heldRow) ([]Finding, err
 	return findings, nil
 }
 
-func heldFinding(tx *sql.Tx, runID int64, repositories map[string]int64, r heldRow) (Finding, error) {
+func heldFinding(tx *transaction, runID int64, repositories map[string]int64, r heldRow) (Finding, error) {
 	if !r.evaluation.Valid {
 		return Finding{}, fmt.Errorf("run %d held %s's results before it recorded the evaluation that "+
 			"reported them, so they cannot be traced; run it again with findings off to convert them",
@@ -113,7 +113,7 @@ func heldFinding(tx *sql.Tx, runID int64, repositories map[string]int64, r heldR
 	return f, nil
 }
 
-func repositoryRowID(tx *sql.Tx, repositories map[string]int64, repository string) (int64, error) {
+func repositoryRowID(tx *transaction, repositories map[string]int64, repository string) (int64, error) {
 	if id, ok := repositories[repository]; ok {
 		return id, nil
 	}
@@ -127,7 +127,7 @@ func repositoryRowID(tx *sql.Tx, repositories map[string]int64, repository strin
 	return id, nil
 }
 
-func recordHeldConversions(tx *sql.Tx, runID int64, written []int64, by string) (Conversion, error) {
+func recordHeldConversions(tx *transaction, runID int64, written []int64, by string) (Conversion, error) {
 	var out Conversion
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, finding := range written {
@@ -148,7 +148,7 @@ func recordHeldConversions(tx *sql.Tx, runID int64, written []int64, by string) 
 
 // heldRows reads the held results a conversion asked for, refusing a repository the run does not
 // cover and a result it did not hold there.
-func heldRows(tx *sql.Tx, runID int64, repository string, ids []int64) ([]heldRow, error) {
+func heldRows(tx *transaction, runID int64, repository string, ids []int64) ([]heldRow, error) {
 	if repository != "" {
 		var members int
 		if err := tx.QueryRow(`SELECT COUNT(*) FROM abom_analysis_member WHERE run_id = ? AND repository = ?`,

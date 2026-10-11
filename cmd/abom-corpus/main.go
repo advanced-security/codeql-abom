@@ -23,7 +23,7 @@ import (
 )
 
 func main() {
-	dbPath := flag.String("db", "", "path to write (required)")
+	dbPath := flag.String("db", os.Getenv("ABOM_DB"), "SQLite path or empty PostgreSQL URL (required; defaults to ABOM_DB)")
 	fixtures := flag.String("fixtures", "testdata/corpus/fixtures", "recorded CodeQL output")
 	// The states a component catalog would otherwise exist to draw. A database nobody can build is
 	// the only reason to keep a second rendering of every component alive.
@@ -74,6 +74,21 @@ func build(dbPath, fixtures, queries string, without map[string]bool) error {
 	}
 	defer s.Close()
 
+	if store.IsPostgresTarget(dbPath) {
+		summary, err := s.Summary()
+		if err != nil {
+			return err
+		}
+		owned, err := s.OwnedScope()
+		if err != nil {
+			return err
+		}
+		if summary.Nodes != 0 || summary.Edges != 0 || summary.Findings != 0 ||
+			summary.SeedRepos != 0 || summary.UpstreamRepos != 0 || len(owned) != 0 {
+			return fmt.Errorf("refusing to replay fixtures into a populated PostgreSQL database")
+		}
+	}
+
 	repos, err := recorded(fixtures)
 	if err != nil {
 		return err
@@ -107,6 +122,9 @@ func build(dbPath, fixtures, queries string, without map[string]bool) error {
 }
 
 func resetCorpusDatabase(dbPath string) error {
+	if store.IsPostgresTarget(dbPath) {
+		return nil
+	}
 	for _, suffix := range []string{"", "-wal", "-shm"} {
 		if err := os.Remove(dbPath + suffix); err != nil && !os.IsNotExist(err) {
 			return err
@@ -115,10 +133,10 @@ func resetCorpusDatabase(dbPath string) error {
 	return os.MkdirAll(filepath.Dir(dbPath), 0o755)
 }
 
-func openCorpusStore(dbPath string) (*store.Store, error) {
-	s, err := store.Open(dbPath, store.Options{})
+func openCorpusStore(dbPath string) (store.Backend, error) {
+	s, err := store.OpenBackend(dbPath, store.Options{})
 	if err != nil {
-		return nil, fmt.Errorf("opening %q: %w", dbPath, err)
+		return nil, fmt.Errorf("opening %q: %w", store.DatabaseLabel(dbPath), err)
 	}
 	if err := s.Migrate(); err != nil {
 		_ = s.Close()
@@ -128,7 +146,7 @@ func openCorpusStore(dbPath string) (*store.Store, error) {
 }
 
 func ingestFixtureRepositories(
-	s *store.Store, fixtures string, repos []string, without map[string]bool,
+	s store.Backend, fixtures string, repos []string, without map[string]bool,
 ) error {
 	for _, r := range repos {
 		if err := ingestRepository(s, fixtures, r, without); err != nil {
@@ -138,14 +156,14 @@ func ingestFixtureRepositories(
 	return nil
 }
 
-func recordCorpusAdvisories(s *store.Store, fixtures string, without map[string]bool) error {
+func recordCorpusAdvisories(s store.Backend, fixtures string, without map[string]bool) error {
 	if without["advisories"] {
 		return nil
 	}
 	return recordAdvisories(s, filepath.Join(filepath.Dir(fixtures), "advisories.json"))
 }
 
-func rebuildCorpusGraph(s *store.Store) error {
+func rebuildCorpusGraph(s store.Backend) error {
 	if _, err := s.ClassifyEdgeBoundaries(); err != nil {
 		return fmt.Errorf("classifying boundaries: %w", err)
 	}
@@ -205,7 +223,7 @@ var propertyScopes = []store.PropertyClause{
 
 // recordPropertyScopeFacts writes what a listing and a schema read would have, after the
 // declaration, which is the order they arrive in.
-func recordPropertyScopeFacts(s *store.Store) error {
+func recordPropertyScopeFacts(s store.Backend) error {
 	if err := s.ReplacePropertySchema(propertyScopedAccount, []store.PropertyDefinition{
 		{Name: "team", ValueType: "single_select", ValuesEditableBy: store.PropertyEditableByOrganization},
 		{Name: "review-tier", ValueType: "single_select", ValuesEditableBy: store.PropertyEditableByOrganization,
@@ -226,7 +244,7 @@ func recordPropertyScopeFacts(s *store.Store) error {
 	return s.RecordPropertyJudgement(propertyScopedAccount, 0)
 }
 
-func ingestRepository(s *store.Store, fixtures, full string, without map[string]bool) error {
+func ingestRepository(s store.Backend, fixtures, full string, without map[string]bool) error {
 	if _, err := s.InsertOwnedRepository(full); err != nil {
 		return fmt.Errorf("recording ownership: %w", err)
 	}
@@ -245,7 +263,7 @@ func ingestRepository(s *store.Store, fixtures, full string, without map[string]
 	}
 
 	dir := filepath.Join(fixtures, strings.ReplaceAll(full, "/", "__"))
-	w := store.NewWriter(s, 0)
+	w := s.NewWriter(0)
 	ing := ingest.New(s, w)
 
 	edges, err := os.Open(filepath.Join(dir, "edges.json"))
@@ -323,7 +341,7 @@ func ingestRepository(s *store.Store, fixtures, full string, without map[string]
 //
 // Absent rather than empty is a legitimate corpus: an operator who has never refreshed advisories
 // has none, and that has to stay buildable. A malformed one is not, so it is reported.
-func recordAdvisories(s *store.Store, path string) error {
+func recordAdvisories(s store.Backend, path string) error {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
 		return nil
@@ -365,31 +383,14 @@ func recorded(fixtures string) ([]string, error) {
 //
 // The path is quoted rather than interpolated: it arrives from a flag, and a newline in it would
 // otherwise forge a line that reads like the tool's own.
-func report(w io.Writer, s *store.Store, dbPath string) error {
-	for _, c := range []struct{ label, query string }{
-		{"repositories", `SELECT COUNT(*) FROM repository`},
-		{"owned", `SELECT COUNT(*) FROM repository WHERE origin = 'seed'`},
-		{"nodes", `SELECT COUNT(*) FROM abom_node_live`},
-		{"edges", `SELECT COUNT(*) FROM abom_edge_regular`},
-		{"findings", `SELECT COUNT(*) FROM abom_finding_regular`},
-		{"findings on a node", `SELECT COUNT(DISTINCT fn.finding_row_id) FROM abom_finding_node fn
-			JOIN abom_finding_regular f ON f.row_id = fn.finding_row_id`},
-		{"advisories", `SELECT COUNT(*) FROM abom_advisory`},
-		// Reaching is the number that decides whether the unit draws anything, and it is the one
-		// that was silently zero while the data set grew.
-		{"advisories reaching", `SELECT COUNT(DISTINCT a.ghsa_id) FROM abom_advisory a
-			JOIN abom_advisory_package p ON p.advisory_row_id = a.row_id
-			JOIN abom_node_live n ON n.owner || '/' || n.repo = p.package_name`},
-		{"job facts", `SELECT COUNT(*) FROM abom_observation`},
-		{"privileged jobs",
-			`SELECT COUNT(*) FROM abom_observation WHERE name = 'privileged' AND value = 'true'`},
-	} {
-		var n int
-		if err := s.DB().QueryRow(c.query).Scan(&n); err != nil {
-			return fmt.Errorf("counting %s: %w", c.label, err)
-		}
-		fmt.Fprintf(w, "%-20s %5d\n", c.label, n)
+func report(w io.Writer, s store.Backend, dbPath string) error {
+	counts, err := s.CorpusCounts()
+	if err != nil {
+		return err
 	}
-	fmt.Fprintf(w, "corpus: %q\n", dbPath)
+	for _, c := range counts {
+		fmt.Fprintf(w, "%-20s %5d\n", c.Label, c.Count)
+	}
+	fmt.Fprintf(w, "corpus: %q\n", store.DatabaseLabel(dbPath))
 	return nil
 }

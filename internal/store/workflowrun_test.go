@@ -255,7 +255,7 @@ func TestNoRecordedRunsIsAnEmptyListNotNull(t *testing.T) {
 
 // Check 5 samples the newest runs and /api/checks reads the frame through the one connection every read
 // waits on, so each walks an index rather than the table and a sort.
-func TestTheNewestRunsAndTheRunFrameAreReadFromIndexes(t *testing.T) {
+func TestSQLiteNewestRunsAndTheRunFrameAreReadFromIndexes(t *testing.T) {
 	s := newTestStore(t)
 	recent := explain(t, s, recentWorkflowRunsQuery, 10)
 	if strings.Contains(recent, "TEMP B-TREE") || !strings.Contains(recent, "idx_workflow_run_recent") {

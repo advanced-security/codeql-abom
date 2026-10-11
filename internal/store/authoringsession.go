@@ -254,9 +254,9 @@ func (s *Store) AddAuthoringSpend(session int64, spent AuthoringSpend) error {
 	res, err := s.db.Exec(`
 		UPDATE abom_authoring_session SET
 		  model_calls = COALESCE(model_calls, 0) + 1,
-		  input_tokens = CASE WHEN ?1 IS NULL THEN input_tokens ELSE COALESCE(input_tokens, 0) + ?1 END,
-		  output_tokens = CASE WHEN ?2 IS NULL THEN output_tokens ELSE COALESCE(output_tokens, 0) + ?2 END,
-		  nano_aiu = CASE WHEN ?3 IS NULL THEN nano_aiu ELSE COALESCE(nano_aiu, 0) + ?3 END
+		  input_tokens = CASE WHEN CAST(?1 AS BIGINT) IS NULL THEN input_tokens ELSE COALESCE(input_tokens, 0) + ?1 END,
+		  output_tokens = CASE WHEN CAST(?2 AS BIGINT) IS NULL THEN output_tokens ELSE COALESCE(output_tokens, 0) + ?2 END,
+		  nano_aiu = CASE WHEN CAST(?3 AS BIGINT) IS NULL THEN nano_aiu ELSE COALESCE(nano_aiu, 0) + ?3 END
 		WHERE row_id = ?4`,
 		spent.InputTokens, spent.OutputTokens, spent.NanoAIU, session)
 	if err != nil {

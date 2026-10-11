@@ -18,7 +18,7 @@ func protectedFixture(t *testing.T) *Store {
 	}
 	if _, err := s.db.Exec(`
 		INSERT INTO abom_frontier (node_key, ref, owner, repo, depth, status, enqueued_at, resolved_sha)
-		VALUES ('acme/service', '', 'acme', 'service', 0, 'done', datetime('now'), 'm1')`); err != nil {
+		VALUES ('acme/service', '', 'acme', 'service', 0, 'done', ?, 'm1')`, now()); err != nil {
 		t.Fatalf("queueing the default branch: %v", err)
 	}
 	declaredAt(t, s, "acme/service", "m1", ".github/workflows/ci.yml", 10, "actions/checkout", "v4")
@@ -70,7 +70,7 @@ func declaredAt(t *testing.T, s *Store, repository, commit, file string, line in
 func analyzedAt(t *testing.T, s *Store, nodeKey, ref, commit string) {
 	t.Helper()
 	res, err := s.db.Exec(`UPDATE abom_frontier SET status = 'done', resolved_sha = ?,
-		analyzed_at = datetime('now') WHERE node_key = ? AND ref = ?`, commit, nodeKey, ref)
+		analyzed_at = ? WHERE node_key = ? AND ref = ?`, commit, now(), nodeKey, ref)
 	if err != nil {
 		t.Fatalf("completing %s@%s: %v", nodeKey, ref, err)
 	}

@@ -10,7 +10,7 @@ import (
 // LIMIT does not bound the work because ORDER BY evaluates the select list before discarding rows.
 // Assert the plan rather than the clock. `selectSuites` stays correlated on purpose, so this
 // checks specifically for correlated edge-table reads.
-func TestTheFrontierQueryDoesNotWalkTheEdgeTablePerQueueRow(t *testing.T) {
+func TestSQLiteFrontierQueryDoesNotWalkTheEdgeTablePerQueueRow(t *testing.T) {
 	s := newTestStore(t)
 	table, err := s.declaredEdgeTable(AnalysisModeRegular)
 	if err != nil {

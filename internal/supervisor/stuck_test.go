@@ -8,6 +8,7 @@ import (
 
 	"github.com/advanced-security/codeql-abom/internal/expand"
 	"github.com/advanced-security/codeql-abom/internal/frontier"
+	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
 type countingProbe struct{ asked int }
@@ -21,7 +22,7 @@ func (p *countingProbe) Resolve(context.Context, string, string, string) (string
 func stuckAtDepthZero(t *testing.T, sup *Supervisor) {
 	t.Helper()
 	queueOne(t, sup, "octo/bootcamp", 0)
-	if _, err := sup.Store.DB().Exec(`
+	if _, err := sup.Store.(*store.Store).DB().Exec(`
 		UPDATE abom_frontier
 		   SET attempts = ?, reason = 'exit status 32', next_attempt_at = '2999-01-01T00:00:00Z'
 		 WHERE node_key = 'octo/bootcamp'`, frontier.DefaultStuckAfter); err != nil {

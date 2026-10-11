@@ -202,7 +202,7 @@ func (s *Store) CycleTotals() (CycleTotal, error) {
 	refusals, err := queryAll(s, "totalling code scanning's refusals", func(r *sql.Rows) (refusal, error) {
 		var k refusal
 		return k, r.Scan(&k.reason, &k.count)
-	}, `SELECT j.key, SUM(j.value) FROM abom_cycle_spend c, json_each(c.code_scanning_refused) j
+	}, `SELECT j.key, SUM(CAST(j.value AS INTEGER)) FROM abom_cycle_spend c, json_each(c.code_scanning_refused) j
 	     WHERE c.code_scanning_refused IS NOT NULL GROUP BY j.key`)
 	if err != nil {
 		return t, err

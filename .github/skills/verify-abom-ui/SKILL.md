@@ -51,6 +51,15 @@ make corpus            # replays recorded CodeQL output; offline, and what CI us
 make e2e-corpus-run    # the populated half, spec-for-spec what CI runs
 ```
 
+**Booted is not loaded.** `ready(page)` waits for Blazor, not a grid's first response. Choose
+test subjects from the API's actual first page, then wait for their controls to appear; never
+skip because an immediate DOM count is zero. PostgreSQL exposed eight such false skips with
+the same findings SQLite rendered. Wait for a data row before exercising column sorting.
+
+Concurrent browser runs need separate `ABOM_UI` publish directories and Playwright `--output`
+directories. Publishing replaces the assets: sharing a directory with `make verify` produced
+mid-test 404s that looked like a backend defect.
+
 While changing one page, run only the tests that visit it. Each test is tagged with the pages and
 parts it visits, so a page selects all of its parts and a part selects itself:
 

@@ -17,7 +17,7 @@ import (
 // treatment from a dependency: it is checked out and analyzed by the same loop. Depth 0 is what
 // distinguishes it, and claiming is depth-first, so the operator's own work precedes every hop of
 // anybody's supply chain.
-func SeedOwnedRepositories(s *store.Store, q *frontier.Queue) (int, error) {
+func SeedOwnedRepositories(s store.Backend, q *frontier.Queue) (int, error) {
 	owned, err := s.OwnedRepositories()
 	if err != nil {
 		return 0, fmt.Errorf("reading owned repositories: %w", err)

@@ -241,7 +241,7 @@ func TestAnExtendedEdgeStaysOutOfTheRegularGraph(t *testing.T) {
 // finding would lose the multi-mode correctness the tests above protect.
 //
 // Assert the plan rather than the clock, so small fixtures cannot hide a scan-shaped query.
-func TestModeCostsARowidLookupRatherThanAScan(t *testing.T) {
+func TestSQLiteModeCostsARowidLookupRatherThanAScan(t *testing.T) {
 	s := newTestStore(t)
 
 	for _, view := range []string{"abom_edge_regular", "abom_finding_regular"} {

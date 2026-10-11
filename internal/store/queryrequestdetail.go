@@ -280,7 +280,7 @@ func (m RequestedMetadata) check() error {
 }
 
 // slugFree refuses a slug another request is already named by.
-func slugFree(tx *sql.Tx, slug string, self int64) error {
+func slugFree(tx *transaction, slug string, self int64) error {
 	if slug == "" {
 		return nil
 	}
@@ -296,7 +296,7 @@ func slugFree(tx *sql.Tx, slug string, self int64) error {
 }
 
 // keepRequestDetails replaces a request's examples, references and tags with r's.
-func keepRequestDetails(tx *sql.Tx, id int64, r QueryRequest) error {
+func keepRequestDetails(tx *transaction, id int64, r QueryRequest) error {
 	for _, table := range []string{"abom_query_request_example", "abom_query_request_reference",
 		"abom_query_request_tag"} {
 		if _, err := tx.Exec(`DELETE FROM `+table+` WHERE request_id = ?`, id); err != nil {

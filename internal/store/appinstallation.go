@@ -141,7 +141,7 @@ func (s *Store) RecordInstallationSync(sync InstallationSync) error {
 	return tx.Commit()
 }
 
-func recordInstallation(tx *sql.Tx, inst AppInstallation, at string) error {
+func recordInstallation(tx *transaction, inst AppInstallation, at string) error {
 	state, reason, detail := InstallationInstalled, "", ""
 	listRead := inst.RepositorySelection == "selected" && inst.RepositoriesUnread == "" && !inst.Suspended
 	switch {

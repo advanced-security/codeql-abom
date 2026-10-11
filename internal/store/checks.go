@@ -176,7 +176,8 @@ func (s *Store) RecordCheckRun(run CheckRun) (int64, error) {
 		}
 		for _, k := range p.Skipped {
 			if _, err := tx.Exec(`INSERT INTO abom_check_skip (run_row_id, part, reason, count)
-				VALUES (?, ?, ?, ?) ON CONFLICT DO UPDATE SET count = count + excluded.count`,
+				VALUES (?, ?, ?, ?) ON CONFLICT(run_row_id, part, reason) DO UPDATE
+				SET count = abom_check_skip.count + excluded.count`,
 				id, p.Part, k.Reason, k.Count); err != nil {
 				return 0, fmt.Errorf("recording what part %q skipped: %w", p.Part, err)
 			}

@@ -3,10 +3,9 @@ package checks
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/catalog"
@@ -63,7 +62,7 @@ type GitHub interface {
 
 // Checker runs every built check once on copies of Store, filing each run into it.
 type Checker struct {
-	Store *store.Store
+	Store store.Backend
 	Build string
 	// Dir is where the copies are made.
 	Dir string
@@ -88,29 +87,21 @@ func (c *Checker) rng() *rand.Rand {
 }
 
 // Run runs every built check once on copies of the store made under Dir, filing each run into it.
-func (c *Checker) Run(ctx context.Context) ([]store.CheckRun, error) {
+func (c *Checker) Run(ctx context.Context) (runs []store.CheckRun, result error) {
 	src := c.Store
 	if err := src.MigrateChecks(); err != nil {
 		return nil, err
 	}
-	tmp, err := os.MkdirTemp(c.Dir, "abom-check-")
-	if err != nil {
-		return nil, fmt.Errorf("making a place for the copies: %w", err)
-	}
-	defer os.RemoveAll(tmp)
-
 	if err := c.Capacity.Wait(ctx); err != nil {
 		return nil, err
 	}
 	started := time.Now()
-	incremental, wholesale, err := copies(src, tmp)
+	incremental, wholesale, cleanup, err := copies(src, c.Dir)
 	if err != nil {
 		return nil, err
 	}
-	defer incremental.Close()
-	defer wholesale.Close()
+	defer func() { result = errors.Join(result, cleanup()) }()
 
-	var runs []store.CheckRun
 	file := func(check int, at time.Time, parts []store.CheckPart, err error) error {
 		if err != nil {
 			parts = []store.CheckPart{{Part: fmt.Sprintf("check %d", check),
@@ -164,7 +155,7 @@ func (c *Checker) Run(ctx context.Context) ([]store.CheckRun, error) {
 	}
 	for _, check := range []struct {
 		number int
-		read   func(context.Context, *store.Store) ([]store.CheckPart, error)
+		read   func(context.Context, store.Backend) ([]store.CheckPart, error)
 	}{{1, c.declarations}, {3, c.references}, {4, c.liveCommits}} {
 		at, err := next()
 		if err != nil {
@@ -183,34 +174,16 @@ func (c *Checker) Run(ctx context.Context) ([]store.CheckRun, error) {
 }
 
 // copies takes the second copy from the first, so both start from one state whatever src commits.
-func copies(src *store.Store, dir string) (incremental, wholesale *store.Store, err error) {
-	open := func(path string) (*store.Store, error) {
-		s, err := store.Open(path, store.Options{})
-		if err != nil {
-			return nil, err
-		}
-		if err := s.Migrate(); err != nil {
-			s.Close()
-			return nil, err
-		}
-		return s, nil
+func copies(src store.Backend, dir string) (store.Backend, store.Backend, func() error, error) {
+	incremental, first, err := src.SnapshotStore(dir)
+	if err != nil {
+		return nil, nil, nil, err
 	}
-	a, b := filepath.Join(dir, "incremental.db"), filepath.Join(dir, "wholesale.db")
-	if err := src.SnapshotInto(a); err != nil {
-		return nil, nil, err
+	wholesale, second, err := incremental.SnapshotStore(dir)
+	if err != nil {
+		return nil, nil, nil, errors.Join(err, first())
 	}
-	if incremental, err = open(a); err != nil {
-		return nil, nil, err
-	}
-	if err := incremental.SnapshotInto(b); err != nil {
-		incremental.Close()
-		return nil, nil, err
-	}
-	if wholesale, err = open(b); err != nil {
-		incremental.Close()
-		return nil, nil, err
-	}
-	return incremental, wholesale, nil
+	return incremental, wholesale, func() error { return errors.Join(second(), first()) }, nil
 }
 
 // settle counts and classes disagreements as the store will; nothing compared leaves no count.
@@ -235,7 +208,7 @@ func settle(check int, parts []store.CheckPart) []store.CheckPart {
 }
 
 // derivations is check 7: production's incremental path on one copy, its rebuild on the other.
-func derivations(incremental, wholesale *store.Store) ([]store.CheckPart, error) {
+func derivations(incremental, wholesale store.Backend) ([]store.CheckPart, error) {
 	_, refused := (&graph.Builder{Store: incremental}).Derive()
 	if _, err := (&graph.Builder{Store: wholesale}).Rebuild(); err != nil {
 		return nil, fmt.Errorf("the wholesale recompute failed: %w", err)
@@ -264,7 +237,7 @@ func derivations(incremental, wholesale *store.Store) ([]store.CheckPart, error)
 }
 
 // agreement is check 8: reach against the exposure walk, and against each owned closure.
-func agreement(s *store.Store) ([]store.CheckPart, error) {
+func agreement(s store.Backend) ([]store.CheckPart, error) {
 	walk, err := (&graph.Builder{Store: s}).ExposureWalkAgreement()
 	if err != nil {
 		return nil, err

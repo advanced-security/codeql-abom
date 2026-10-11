@@ -12,8 +12,8 @@ func resolvedAt(t *testing.T, s *Store, nodeKey, ref string, depth int, commit s
 	owner, repo, _ := splitRepository(nodeKey)
 	if _, err := s.db.Exec(`INSERT INTO abom_frontier (node_key, ref, owner, repo, depth, status,
 	                                                   enqueued_at, resolved_sha)
-		VALUES (?, ?, ?, ?, ?, 'done', datetime('now'), ?)`,
-		nodeKey, ref, owner, repo, depth, commit); err != nil {
+		VALUES (?, ?, ?, ?, ?, 'done', ?, ?)`,
+		nodeKey, ref, owner, repo, depth, now(), commit); err != nil {
 		t.Fatalf("queueing %s@%s: %v", nodeKey, ref, err)
 	}
 }

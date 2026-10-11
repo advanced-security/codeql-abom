@@ -387,7 +387,7 @@ func declarationsAtCommits(mode string, upstreamCI bool) string {
 	// Materialized, or each observation re-reads the JSON rather than an index built on it once.
 	return `live_answer(repository, commit_sha, answer, starting) AS MATERIALIZED (
 	SELECT json_extract(j.value, '$.r'), json_extract(j.value, '$.c'), json_extract(j.value, '$.a'),
-	       COALESCE(json_extract(j.value, '$.s'), 0)
+	       COALESCE(CAST(json_extract(j.value, '$.s') AS INTEGER), 0)
 	  FROM json_each(?) j
 ),
 triggered_workflow(row_id) AS (` + triggeredWorkflows + `),

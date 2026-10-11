@@ -19,7 +19,7 @@ import (
 func runAccounts(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("accounts", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to the ABOM SQLite database (required)")
+	dbPath := databaseFlag(fs)
 	refresh := fs.Bool("refresh", false, "ask gh who you are and which accounts you belong to")
 	forget := fs.Bool("forget", false, "discard the stored identity")
 	suggest := fs.Bool("suggest", false, "list accounts holding repositories in scope")
@@ -31,13 +31,13 @@ func runAccounts(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		return errors.New("accounts: --db is required")
 	}
 
-	s, err := store.Open(*dbPath, store.Options{})
+	s, err := store.OpenBackend(*dbPath, store.Options{})
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", *dbPath, err)
+		return fmt.Errorf("opening %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
 	defer s.Close()
 	if err := s.Migrate(); err != nil {
-		return fmt.Errorf("migrating %s: %w", *dbPath, err)
+		return fmt.Errorf("migrating %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
 
 	if *forget {
@@ -69,7 +69,7 @@ func runAccounts(ctx context.Context, args []string, stdout, stderr io.Writer) e
 }
 
 // verifyIdentity asks gh who the operator is and records what it establishes.
-func verifyIdentity(ctx context.Context, s *store.Store) error {
+func verifyIdentity(ctx context.Context, s store.Backend) error {
 	id, err := ghauth.Verify(ctx, ghauth.Exec)
 	if err != nil {
 		return err
@@ -104,7 +104,7 @@ func writeAccounts(w io.Writer, v store.Verification) {
 //
 // Read rather than re-verified: starting the server must not depend on a network, and silence
 // about an unverified identity would leave every "yours" figure on every page unexplained.
-func writeIdentityBanner(w io.Writer, s *store.Store) {
+func writeIdentityBanner(w io.Writer, s store.Backend) {
 	v, err := s.Accounts()
 	if err != nil || len(v.Accounts) == 0 {
 		fmt.Fprintln(w, "serve: no accounts verified, so every figure is reported undivided; "+

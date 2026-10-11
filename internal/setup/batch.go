@@ -21,7 +21,7 @@ type Patch interface {
 // Runner works an approved preview's batch one repository at a time, reading each write back
 // before counting it done.
 type Runner struct {
-	Store  *store.Store
+	Store  store.Backend
 	Reader Reader
 	Patch  Patch
 	// Pace waits for the pool to allow the next write; nil writes as fast as the loop turns.

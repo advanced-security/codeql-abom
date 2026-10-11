@@ -251,7 +251,7 @@ func (s *Store) EvictDatabasesOver(budget int64) ([]RetainedDatabase, error) {
 
 // nextUseSeq is the counter eviction orders by. See the column's comment for why the timestamp
 // beside it cannot serve.
-func nextUseSeq(tx *sql.Tx) (int64, error) {
+func nextUseSeq(tx *transaction) (int64, error) {
 	var seq int64
 	if err := tx.QueryRow(
 		`SELECT COALESCE(MAX(used_seq), 0) + 1 FROM abom_local_database`).Scan(&seq); err != nil {

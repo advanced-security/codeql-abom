@@ -36,7 +36,7 @@ type declaredOutcome struct {
 
 // declarations is check 1: what each commit the queue stands at declared, as the graph reads it,
 // against that commit's own files read by a parser that shares nothing with the extraction.
-func (c *Checker) declarations(ctx context.Context, s *store.Store) ([]store.CheckPart, error) {
+func (c *Checker) declarations(ctx context.Context, s store.Backend) ([]store.CheckPart, error) {
 	commits, err := s.DeclaredCommits()
 	if err != nil {
 		return nil, err
@@ -109,7 +109,7 @@ func (c *Checker) declarations(ctx context.Context, s *store.Store) ([]store.Che
 // compareCommit reads one commit's indexed files from GitHub, charging the checker's GraphQL pool,
 // and compares what they declare with what the graph says the commit declared. Reasons it gives
 // for an unread commit name no subject, so a run's skips stay countable.
-func (c *Checker) compareCommit(ctx context.Context, s *store.Store, d store.DeclaredCommit) (declaredOutcome, error) {
+func (c *Checker) compareCommit(ctx context.Context, s store.Backend, d store.DeclaredCommit) (declaredOutcome, error) {
 	tree, err := c.GitHub.Tree(ctx, d.Repository, d.Commit)
 	if ctx.Err() != nil {
 		return declaredOutcome{}, ctx.Err()

@@ -65,7 +65,7 @@ func TestATermWithNoCorpusDerivedValuesIsRefusedRatherThanAnsweredEmpty(t *testi
 // list rather than relabelled, and are invisible unless this number travels with it.
 func TestAValueListSaysHowManyRowsItCannotSpeakFor(t *testing.T) {
 	s := matchFixture(t)
-	if _, err := s.DB().Exec(`UPDATE abom_finding SET provider = '' WHERE rowid % 2 = 0`); err != nil {
+	if _, err := s.DB().Exec(`UPDATE abom_finding SET provider = '' WHERE row_id % 2 = 0`); err != nil {
 		t.Fatalf("clearing providers: %v", err)
 	}
 

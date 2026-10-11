@@ -18,7 +18,7 @@ import (
 func runPrune(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to the ABOM SQLite database (required)")
+	dbPath := databaseFlag(fs)
 	apply := fs.Bool("apply", false, "mark what is outside the declared scope, rather than explaining it")
 	compact := fs.Bool("compact", false,
 		"delete what has already been marked; every open page reloads afterwards")
@@ -30,13 +30,13 @@ func runPrune(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return errors.New("prune: --db is required")
 	}
 
-	s, err := store.Open(*dbPath, store.Options{})
+	s, err := store.OpenBackend(*dbPath, store.Options{})
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", *dbPath, err)
+		return fmt.Errorf("opening %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
 	defer s.Close()
 	if err := s.Migrate(); err != nil {
-		return fmt.Errorf("migrating %s: %w", *dbPath, err)
+		return fmt.Errorf("migrating %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
 
 	if *compact {

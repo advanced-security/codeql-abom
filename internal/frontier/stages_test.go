@@ -24,7 +24,7 @@ func moved(t *testing.T, q *Queue, key string, depth int, analyzedAt string) Ite
 	if err := q.Complete(it.Key(), Resolution{Ref: "v1", SHA: "old"}); err != nil {
 		t.Fatalf("Complete %s: %v", key, err)
 	}
-	if _, err := q.Store.DB().Exec(
+	if _, err := sqliteDB(t, q).Exec(
 		`UPDATE abom_frontier SET analyzed_at = ? WHERE node_key = ?`, analyzedAt, key); err != nil {
 		t.Fatalf("dating %s: %v", key, err)
 	}
@@ -67,7 +67,7 @@ func TestTheStalestMovedReferenceIsRefreshedFirst(t *testing.T) {
 	q, _ := newQueue(t)
 	moved(t, q, "a/recent", 1, "2026-06-01T00:00:00Z")
 	moved(t, q, "b/stale", 2, "2026-01-01T00:00:00Z")
-	if _, err := q.Store.DB().Exec(
+	if _, err := sqliteDB(t, q).Exec(
 		`UPDATE abom_frontier SET score = 1000 WHERE node_key = 'a/recent'`); err != nil {
 		t.Fatalf("scoring: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestACommitBeingReobservedGoesWithTheFirstStage(t *testing.T) {
 	if err := q.Complete(it.Key(), Resolution{Ref: "v1", SHA: "c1"}); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	if _, err := q.Store.DB().Exec(`UPDATE abom_frontier SET status = 'pending',
+	if _, err := sqliteDB(t, q).Exec(`UPDATE abom_frontier SET status = 'pending',
 		requeued_for = 'reobserve' WHERE node_key = 'a/reobserved'`); err != nil {
 		t.Fatalf("putting back: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestSettlingForgetsWhyARowWasRequeued(t *testing.T) {
 			if err := settle(q, it.Key()); err != nil {
 				t.Fatalf("settling: %v", err)
 			}
-			if _, err := q.Store.DB().Exec(
+			if _, err := sqliteDB(t, q).Exec(
 				`UPDATE abom_frontier SET status = 'pending' WHERE node_key = 'a/moved'`); err != nil {
 				t.Fatalf("requeueing: %v", err)
 			}
@@ -163,8 +163,8 @@ func TestAReleasedRefreshIsStillARefresh(t *testing.T) {
 func TestAStuckRefreshIsCountedOnceAsStuck(t *testing.T) {
 	q, _ := newQueue(t)
 	moved(t, q, "a/moved", 1, "2026-01-01T00:00:00Z")
-	if _, err := q.Store.DB().Exec(`UPDATE abom_frontier SET attempts = ?
-		WHERE node_key = 'a/moved'`, q.stuckAfter()); err != nil {
+	if _, err := sqliteDB(t, q).Exec(`UPDATE abom_frontier SET attempts = ?
+		WHERE node_key = 'a/moved'`, q.StuckAfterAttempts()); err != nil {
 		t.Fatal(err)
 	}
 

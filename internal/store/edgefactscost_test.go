@@ -8,7 +8,7 @@ import (
 // A recursive step that cannot reach a unit's nodes by an index reads every edge for every unit it
 // takes: on the crawled organization that was 16.6 s for 759 units with a finding behind them, all
 // of it holding the store's one connection, and webhook deliveries waited 21 s to be recorded.
-func TestEdgeFactClosuresReachAUnitsNodesByIndex(t *testing.T) {
+func TestSQLiteEdgeFactClosuresReachAUnitsNodesByIndex(t *testing.T) {
 	s := newTestStore(t)
 	// As a serving database has them: the test store defers indexes as a bulk load does.
 	if err := s.CreateIndexes(); err != nil {

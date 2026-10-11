@@ -35,7 +35,7 @@ type liveOutcome struct {
 
 // liveCommits is check 4: each owned repository's live commits — its default branch and its
 // protected branches, as its depth-0 queue rows stand — against those branches' heads now.
-func (c *Checker) liveCommits(ctx context.Context, s *store.Store) ([]store.CheckPart, error) {
+func (c *Checker) liveCommits(ctx context.Context, s store.Backend) ([]store.CheckPart, error) {
 	owned, err := s.OwnedRepositories()
 	if err != nil {
 		return nil, err
@@ -130,7 +130,7 @@ func (c *Checker) liveCommits(ctx context.Context, s *store.Store) ([]store.Chec
 }
 
 // abomSide reads what ABOM holds of one owned repository's live commits.
-func abomSide(s *store.Store, name string, rows []store.QueueClaim) (*liveSide, error) {
+func abomSide(s store.Backend, name string, rows []store.QueueClaim) (*liveSide, error) {
 	owner, repo, _ := strings.Cut(name, "/")
 	side := &liveSide{name: name, owner: owner, repo: repo, protected: map[string]store.QueueClaim{}}
 	var err error

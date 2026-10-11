@@ -14,7 +14,7 @@ var vestigialRepositoryColumns = []string{"result_count", "artifact_size_in_byte
 // Every other migration in this store is additive, which is safe by construction. This one is not,
 // and a `DROP COLUMN` that SQLite implements as a table rewrite can lose data no fresh-database
 // test would miss.
-func TestDroppingVestigialColumnsKeepsEveryRepositoryRow(t *testing.T) {
+func TestSQLiteDroppingVestigialColumnsKeepsEveryRepositoryRow(t *testing.T) {
 	s := migratedLegacyStoreWith(t, func(s *Store) {
 		if _, err := s.db.Exec(`
 			CREATE TABLE repository (
@@ -68,7 +68,7 @@ func TestDroppingVestigialColumnsKeepsEveryRepositoryRow(t *testing.T) {
 
 // A database created today must not gain the columns back through the CREATE TABLE.
 func TestAFreshDatabaseHasNoVestigialRepositoryColumns(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "abom.db"), Options{})
+	s, err := openTestStore(t, filepath.Join(t.TempDir(), "abom.db"), Options{})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

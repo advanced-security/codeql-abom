@@ -1,7 +1,6 @@
 package store
 
 import (
-	"database/sql"
 	"fmt"
 )
 
@@ -189,7 +188,7 @@ func nodeModeFilter(mode string) string {
 	}
 }
 
-func guardEdgeAnalysisMode(tx *sql.Tx, edge Edge, targetID int64) error {
+func guardEdgeAnalysisMode(tx *transaction, edge Edge, targetID int64) error {
 	var conflict bool
 	err := tx.QueryRow(`WITH incoming(mode) AS (
 		SELECT COALESCE((SELECT analysis_mode FROM abom_query_run WHERE row_id = ?), 'regular')
@@ -222,7 +221,7 @@ func guardEdgeAnalysisMode(tx *sql.Tx, edge Edge, targetID int64) error {
 // run of another shape. A delta selects edges newer than the cursor's watermark, so neither
 // reaches a graph somebody already has open — it has to be told to load again instead. A first
 // observation broadens nothing: its row is newer than every cursor, so the delta carries it.
-func edgeModeBroadens(tx *sql.Tx, edge Edge) (bool, error) {
+func edgeModeBroadens(tx *transaction, edge Edge) (bool, error) {
 	if edge.QueryRunID <= 0 {
 		return false, nil
 	}
@@ -247,7 +246,7 @@ func edgeModeBroadens(tx *sql.Tx, edge Edge) (bool, error) {
 // recordEdgeSighting records that this run saw the edge, and what its commit declared there: the
 // declaration's kind, the job or step declaring it, its target and its reference. Run again for the
 // same run, it refreshes the content rather than keeping a stale reading.
-func recordEdgeSighting(tx *sql.Tx, edge Edge, sourceID, targetID int64) error {
+func recordEdgeSighting(tx *transaction, edge Edge, sourceID, targetID int64) error {
 	_, err := tx.Exec(`INSERT INTO abom_edge_sighting
 		  (edge_row_id, query_run_id, edge_kind, src_node_row_id, dst_node_row_id, ref_raw, ref_value,
 		   pin_comment)

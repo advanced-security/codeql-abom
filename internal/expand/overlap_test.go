@@ -89,7 +89,7 @@ func TestARunAndACrawlRoundOverlappingProduceWhatEitherWouldAlone(t *testing.T) 
 
 	_, e, id := overlapFixture(t)
 	runTheRun(t, e, id)
-	ran, _ := findingRows(t, e.Store)
+	ran, _ := findingRows(t, e.Store.(*store.Store))
 	if len(crawled) == 0 || len(ran) == 0 {
 		t.Fatalf("the crawl stored %d findings and the run %d; the comparison proves nothing",
 			len(crawled), len(ran))

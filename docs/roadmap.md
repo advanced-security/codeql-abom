@@ -269,21 +269,22 @@ it, and a screen that refuses to write either without a reason.
 
 ## Scale
 
-The interface is legible at the sizes an operator actually arrives at, and the endpoints behind it
-answer in well under a second at the sizes measured so far. The known ceilings are the browser's
+The interface is legible at the sizes an operator actually arrives at, and the measured SQLite
+endpoints answer in well under a second. Those timings do not qualify PostgreSQL. The known
+ceilings are the browser's
 node count, the edge facts recomputed wholesale with each rebuild, and that boundaries and relationships
 cannot yet be drawn at once — the layout does not separate accounts well enough, so the reader
 chooses between them and the canvas says which it is showing. None is urgent; all are measured
 rather than guessed, and all have to be re-measured against a real organization rather than carried
 forward as remembered numbers. `plans/db/data-efficiency.md`
 
-An enterprise adds two ceilings that are architectural rather than measured: every derivation still
-reads the whole graph to find what changed, and one embedded database owned by one process is the
-only writer and the only reader. Reach and exposure are derived for what changed, with the wholesale
-recompute kept as the oracle that checks them, and the enterprise deployment runs PostgreSQL behind the same store
-interface, so coordinators can be replicated and readers scaled out while the single binary keeps
-SQLite. Efficiency at that scale is measured on real organizations as they become available, never
-extrapolated from this one. `plans/db/store-backends.md`
+An enterprise still has a derivation ceiling: finding what changed reads the whole graph. Reach and
+exposure are derived for the changed inputs, with the wholesale recompute kept as the oracle that
+checks them. PostgreSQL now shares the store contract with SQLite, with fenced coordinator
+ownership and independent readers; that removes the requirement that every reader share the
+single-binary process, not the need to measure its queries. Distributed analysis and orchestration
+remain in the [deployment plan](../plans/tools/deployment.md). Efficiency at enterprise scale is
+measured on real organizations as they become available, never extrapolated from this corpus.
 
 ## Deliberately not on the roadmap
 

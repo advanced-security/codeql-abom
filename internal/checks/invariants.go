@@ -9,9 +9,9 @@ import (
 )
 
 // invariants is check 9, one part per invariant, read on the rebuilt copy so all six see one state.
-func invariants(s *store.Store) ([]store.CheckPart, error) {
+func invariants(s store.Backend) ([]store.CheckPart, error) {
 	var out []store.CheckPart
-	for _, read := range []func(*store.Store) (store.CheckPart, error){
+	for _, read := range []func(store.Backend) (store.CheckPart, error){
 		dependencyTotals, rollups, startingPointsOnly, kindAgreement, unobservedCommits,
 		relationshipLines,
 	} {
@@ -36,7 +36,7 @@ func skip(p *store.CheckPart, counts map[string]int) {
 }
 
 // dependencyTotals is 9a: the Dashboard's count links to the Actions unit, so both are one number.
-func dependencyTotals(s *store.Store) (store.CheckPart, error) {
+func dependencyTotals(s store.Backend) (store.CheckPart, error) {
 	p := store.CheckPart{Part: "9a the Dashboard's dependency count is the Actions unit's total"}
 	summary, err := s.Summary()
 	if err != nil {
@@ -55,7 +55,7 @@ func dependencyTotals(s *store.Store) (store.CheckPart, error) {
 }
 
 // rollups is 9b: each reach rollup against the breakdown a grouping recounts it from.
-func rollups(s *store.Store) (store.CheckPart, error) {
+func rollups(s store.Backend) (store.CheckPart, error) {
 	p := store.CheckPart{Part: "9b each reach rollup is the sum of its breakdown"}
 	levels, err := s.RollupLevels()
 	if err != nil {
@@ -68,16 +68,16 @@ func rollups(s *store.Store) (store.CheckPart, error) {
 		case !l.HasRow:
 			p.Compared++
 			disagree(&p, l.Node, reading, "no abom_blast_radius row",
-				fmt.Sprintf("%d abom_node_reach rows", l.Breakdown.Int64))
-		case !l.Rollup.Valid:
+				fmt.Sprintf("%d abom_node_reach rows", *l.Breakdown))
+		case l.Rollup == nil:
 			unstored["the rollup does not store "+l.Level]++
-		case !l.Breakdown.Valid:
+		case l.Breakdown == nil:
 			unstored["the breakdown does not store "+l.Level+" for every repository"]++
 		default:
 			p.Compared++
-			if l.Rollup.Int64 != l.Breakdown.Int64 {
-				disagree(&p, l.Node, reading, fmt.Sprintf("%s = %d", l.Level, l.Rollup.Int64),
-					fmt.Sprintf("the breakdown sums to %d", l.Breakdown.Int64))
+			if *l.Rollup != *l.Breakdown {
+				disagree(&p, l.Node, reading, fmt.Sprintf("%s = %d", l.Level, *l.Rollup),
+					fmt.Sprintf("the breakdown sums to %d", *l.Breakdown))
 			}
 		}
 	}
@@ -86,7 +86,7 @@ func rollups(s *store.Store) (store.CheckPart, error) {
 }
 
 // startingPointsOnly is 9c: upstream repositories are not dependents.
-func startingPointsOnly(s *store.Store) (store.CheckPart, error) {
+func startingPointsOnly(s store.Backend) (store.CheckPart, error) {
 	p := store.CheckPart{Part: "9c reach names only starting points"}
 	total, rows, err := s.ReachOutsideStartingPoints()
 	if err != nil {
@@ -107,7 +107,7 @@ func startingPointsOnly(s *store.Store) (store.CheckPart, error) {
 // kindAgreement is 9d: a `needs:` names a job and a `uses:` never does, so a declaration read with
 // a kind its target contradicts was given another commit's kind, as every sighting was before they
 // kept their own.
-func kindAgreement(s *store.Store) (store.CheckPart, error) {
+func kindAgreement(s store.Backend) (store.CheckPart, error) {
 	p := store.CheckPart{Part: "9d every declaration's kind agrees with its target"}
 	k, err := s.KindAgreement()
 	if err != nil {
@@ -126,7 +126,7 @@ func kindAgreement(s *store.Store) (store.CheckPart, error) {
 }
 
 // unobservedCommits is 9e: no live commit whose declarations are unknown goes unreported.
-func unobservedCommits(s *store.Store) (store.CheckPart, error) {
+func unobservedCommits(s store.Backend) (store.CheckPart, error) {
 	p := store.CheckPart{Part: "9e every live commit with unknown declarations is reported"}
 	evidence, err := s.LiveCommitEvidence()
 	if err != nil {
@@ -176,7 +176,7 @@ func unobservedCommits(s *store.Store) (store.CheckPart, error) {
 }
 
 // relationshipLines is 9f: Relationships accounts for every line in scope, listed or undeclared.
-func relationshipLines(s *store.Store) (store.CheckPart, error) {
+func relationshipLines(s store.Backend) (store.CheckPart, error) {
 	p := store.CheckPart{Part: "9f relationship lines and lines without a declaration are the lines in scope"}
 	page, err := s.RelationshipsPage(store.RelationshipsQuery{Limit: 1})
 	if err != nil {

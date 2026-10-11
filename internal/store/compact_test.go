@@ -144,7 +144,16 @@ func TestCompactionLeavesNoDanglingReferences(t *testing.T) {
 		t.Fatalf("Compact: %v", err)
 	}
 
-	rows, err := s.DB().Query(`PRAGMA foreign_key_check`)
+	query := `PRAGMA foreign_key_check`
+	if s.db.postgres {
+		// PostgreSQL enforces committed foreign keys; also refuse disabled or unvalidated ones.
+		query = `SELECT c.conrelid::regclass::text, NULL::bigint, c.confrelid::regclass::text, c.oid::bigint
+			FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
+			WHERE n.nspname = current_schema() AND c.contype = 'f'
+			  AND (NOT c.convalidated OR EXISTS (SELECT 1 FROM pg_trigger t
+			       WHERE t.tgconstraint = c.oid AND t.tgenabled = 'D'))`
+	}
+	rows, err := s.DB().Query(query)
 	if err != nil {
 		t.Fatalf("foreign_key_check: %v", err)
 	}

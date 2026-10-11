@@ -100,7 +100,7 @@ func keyBeforeAnalysisMode(q QueryRun) string {
 // repository's own sparse checkout, so every row already on a database is regular. This is the
 // deliberate exception to not back-filling provenance, and it is safe only while no second
 // database shape can have written anything.
-func TestAnUpgradedDatabaseCallsEveryExistingRunRegular(t *testing.T) {
+func TestSQLiteUpgradedDatabaseCallsEveryExistingRunRegular(t *testing.T) {
 	s := migratedLegacyStoreWith(t, func(s *Store) {
 		if _, err := s.db.Exec(`
 			INSERT INTO abom_query_run (run_key, query_id, repository, ran_at)
@@ -222,7 +222,6 @@ func TestEveryWriterStatesTheShapeItBuilt(t *testing.T) {
 
 	// findings.go is the writer itself; the struct literal in question is its own signature.
 	allowed := map[string]bool{"internal/store/findings.go": true}
-	builds := regexp.MustCompile(`(?s)QueryRun\{[^}]*\}`)
 
 	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -243,11 +242,12 @@ func TestEveryWriterStatesTheShapeItBuilt(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		for _, literal := range builds.FindAllString(string(body), -1) {
-			if strings.Contains(literal, "AnalysisMode") {
-				continue
-			}
-			t.Errorf("%s builds a QueryRun without stating its analysis mode:\n%s", rel, literal)
+		missing, err := queryRunsMissingMode(path, body)
+		if err != nil {
+			return err
+		}
+		for _, position := range missing {
+			t.Errorf("%s:%d builds a QueryRun without stating its analysis mode", rel, position.Line)
 		}
 		return nil
 	})

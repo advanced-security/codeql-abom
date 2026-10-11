@@ -25,7 +25,7 @@ CREATE TABLE abom_query_test (
 
 // Where a test stopped and which tests it ran are what the authoring steps are read from, so both
 // survive being stored, including on a database that recorded tests before either was kept.
-func TestARecordedTestKeepsWhereItStoppedAndWhatItRan(t *testing.T) {
+func TestSQLiteRecordedTestKeepsWhereItStoppedAndWhatItRan(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "abom.db"), Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +118,7 @@ func TestATestResultBelongsToTheCodeQLThatRanIt(t *testing.T) {
 
 // A store that keyed a result by version alone is rebuilt, so a second CodeQL's answer adds a row
 // instead of overwriting the first one's.
-func TestAQueryTestTableKeyedByVersionAloneIsRebuiltWithTheCodeQLInTheKey(t *testing.T) {
+func TestSQLiteQueryTestTableKeyedByVersionAloneIsRebuiltWithTheCodeQLInTheKey(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "abom.db"), Options{})
 	if err != nil {
 		t.Fatal(err)

@@ -196,7 +196,7 @@ func TestARequestsTargetSaysWhoChoseIt(t *testing.T) {
 
 // A request kept before its target's chooser was recorded reads as not recorded, not as chosen by
 // the operator.
-func TestARequestKeptBeforeTargetsWereAttributedSaysNobodyIsRecorded(t *testing.T) {
+func TestSQLiteRequestKeptBeforeTargetsWereAttributedSaysNobodyIsRecorded(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "abom.db"), Options{})
 	if err != nil {
 		t.Fatal(err)

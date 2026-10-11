@@ -25,7 +25,7 @@ type Tests func(ctx context.Context, tests []string) (runner.TestResult, error)
 //
 // ABOM never forms the opinion itself: `codeql test run` compiles the query, runs it against a
 // database built from the fixture tree and compares the output to the checked-in `.expected`.
-func RecordTests(ctx context.Context, st *store.Store, run Tests, root string, q Query, cli string) (runner.TestResult, error) {
+func RecordTests(ctx context.Context, st store.Backend, run Tests, root string, q Query, cli string) (runner.TestResult, error) {
 	digest, err := DigestTests(root, q.Tests)
 	if err != nil {
 		return runner.TestResult{}, err

@@ -413,7 +413,7 @@ func recordQueries(path string) error {
 
 // replayer builds from a recording, through the same functions the server records with.
 type replayer struct {
-	st       *store.Store
+	st       store.Backend
 	rec      recording
 	next     int
 	requests map[string]int64
@@ -609,7 +609,7 @@ func clearQueries(dir string) error {
 
 // seedQueries lays the corpus query directory out in dir from the recording beside the fixtures,
 // with the requests that asked for its queries, the session that worked one and what it printed.
-func seedQueries(s *store.Store, fixtures, dir string) error {
+func seedQueries(s store.Backend, fixtures, dir string) error {
 	// Replaced rather than merged, as the database is: files left from another build would be
 	// read as the operator's.
 	if err := clearQueries(dir); err != nil {
@@ -640,7 +640,7 @@ func readQueryRecording(fixtures string) (recording, error) {
 	return rec, nil
 }
 
-func seedQueryRequests(s *store.Store) error {
+func seedQueryRequests(s store.Backend) error {
 	for i, q := range corpusQueries {
 		id, err := seedQueryRequest(s, q)
 		if err != nil {
@@ -660,7 +660,7 @@ func seedQueryRequests(s *store.Store) error {
 	return err
 }
 
-func seedQueryRequest(s *store.Store, q corpusQuery) (int64, error) {
+func seedQueryRequest(s store.Backend, q corpusQuery) (int64, error) {
 	r := store.QueryRequest{Description: q.description, Compliant: q.compliant,
 		NonCompliant: q.noncompliant, Kind: store.RequestMissed, RequestedBy: seededBy}
 	if q.agent == "" {
@@ -673,7 +673,7 @@ func seedQueryRequest(s *store.Store, q corpusQuery) (int64, error) {
 	return id, nil
 }
 
-func replayQueryRecording(s *store.Store, rec recording, dir string) error {
+func replayQueryRecording(s store.Backend, rec recording, dir string) error {
 	p := &replayer{st: s, rec: rec, requests: map[string]int64{}}
 	if _, err := customql.Scaffold(dir, rec.CLIVersion); err != nil {
 		return err

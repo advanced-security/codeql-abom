@@ -76,8 +76,14 @@ func TestSchemaHasNoVerdictColumns(t *testing.T) {
 		"is_vulnerable", "severity_class", "risk_level", "is_exempt",
 	}
 
-	rows, err := s.DB().Query(
-		`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'abom_%'`)
+	tablesQuery := `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'abom_%'`
+	columnsQuery := `SELECT name FROM pragma_table_info(?)`
+	if s.db.postgres {
+		tablesQuery = `SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()
+			AND table_type = 'BASE TABLE' AND table_name LIKE 'abom_%'`
+		columnsQuery = `SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ?`
+	}
+	rows, err := s.DB().Query(tablesQuery)
 	if err != nil {
 		t.Fatalf("listing tables: %v", err)
 	}
@@ -99,7 +105,7 @@ func TestSchemaHasNoVerdictColumns(t *testing.T) {
 	}
 
 	for _, table := range tables {
-		cols, err := s.DB().Query(`SELECT name FROM pragma_table_info(?)`, table)
+		cols, err := s.DB().Query(columnsQuery, table)
 		if err != nil {
 			t.Fatalf("reading columns of %s: %v", table, err)
 		}

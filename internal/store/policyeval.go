@@ -393,7 +393,7 @@ func (s *Store) unattributedFor(
 	if len(spec.Rules) == 0 && spec.Mode == "" {
 		return nil, []string{}, nil
 	}
-	clause, args := "1", []any{}
+	clause, args := "true", []any{}
 	if len(spec.Rules) > 0 {
 		clause, args = ruleClause("f.rule_id", spec.Rules)
 	}

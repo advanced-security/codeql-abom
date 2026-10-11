@@ -291,23 +291,16 @@ type repository struct {
 	owned        bool
 }
 
-func repositoryNames(s *store.Store) (map[int64]repository, error) {
-	rows, err := s.DB().Query(`SELECT r.row_id, r.repository_full_name, COALESCE(r.origin, ''), ` +
-		store.OwnedRepositoryFilter + ` FROM repository r`)
+func repositoryNames(s store.Backend) (map[int64]repository, error) {
+	rows, err := s.RepositoryMembership()
 	if err != nil {
-		return nil, fmt.Errorf("naming repositories: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
 	out := map[int64]repository{}
-	for rows.Next() {
-		var id int64
-		var r repository
-		if err := rows.Scan(&id, &r.name, &r.origin, &r.owned); err != nil {
-			return nil, fmt.Errorf("scanning a repository: %w", err)
-		}
-		out[id] = r
+	for _, r := range rows {
+		out[r.ID] = repository{name: r.Name, origin: r.Origin, owned: r.Owned}
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (m *model) nodeNamed(key string) (int64, bool) {

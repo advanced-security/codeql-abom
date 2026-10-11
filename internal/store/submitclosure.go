@@ -104,14 +104,14 @@ own AS (
 	SELECT o.* FROM observed o
 	  JOIN repository r ON r.row_id = o.repository_row_id
 	 WHERE r.repository_full_name = ?1
-	   AND (?4 IS NULL OR o.commit_sha IN (SELECT j.value FROM json_each(?4) j))
+	   AND (CAST(?4 AS TEXT) IS NULL OR o.commit_sha IN (SELECT j.value FROM json_each(?4) j))
 ),
 closure(manifest, node_row, node_key, owner, repo, subpath, ref, locked, pin, depth, parent_key) AS (
 	SELECT o.file_path, n.row_id, n.node_key, ` + rootOwner + `, ` + rootRepo + `,
 	       ` + rootPath + `, o.ref, COALESCE(lc.commit_sha, ''),
 	       COALESCE(lc.commit_sha, (SELECT LOWER(f.resolved_sha) FROM abom_frontier f
 	                                 WHERE f.node_key = n.node_key AND f.ref = o.ref)),
-	       0, ''
+	       0, '' COLLATE BINARY
 	  FROM own o
 	  JOIN abom_node_live n ON n.row_id = o.dst_node_row_id
 	  LEFT JOIN lock_choice lc ON lc.edge_row_id = o.edge_row_id
@@ -125,7 +125,7 @@ closure(manifest, node_row, node_key, owner, repo, subpath, ref, locked, pin, de
 	       ` + rootPath + `, o.ref, COALESCE(lc.commit_sha, ''),
 	       COALESCE(lc.commit_sha, (SELECT LOWER(f.resolved_sha) FROM abom_frontier f
 	                                 WHERE f.node_key = n.node_key AND f.ref = o.ref)),
-	       1, ''
+	       1, '' COLLATE BINARY
 	  FROM own o
 	  JOIN abom_node_live n ON n.row_id = o.dst_node_row_id
 	  LEFT JOIN lock_choice lc ON lc.edge_row_id = o.edge_row_id

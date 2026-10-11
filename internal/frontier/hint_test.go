@@ -26,7 +26,7 @@ func reviewed(t *testing.T, q *Queue, it Item, moved bool) {
 func hintOf(t *testing.T, q *Queue, key string) sql.NullBool {
 	t.Helper()
 	var got sql.NullBool
-	if err := q.Store.DB().QueryRow(
+	if err := sqliteDB(t, q).QueryRow(
 		`SELECT dependencies_moved FROM abom_frontier WHERE node_key = ?`, key).Scan(&got); err != nil {
 		t.Fatalf("reading %s: %v", key, err)
 	}

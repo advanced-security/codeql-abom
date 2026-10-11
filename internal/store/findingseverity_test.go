@@ -47,7 +47,7 @@ func TestTheStoreBandsAScoreExactlyAsTheLanguageDoes(t *testing.T) {
 	for _, v := range []*float64{nil, score(0), score(0.1), score(3.9), score(4), score(6.9),
 		score(7), score(8.9), score(9), score(10)} {
 		var got string
-		if err := s.DB().QueryRow(`SELECT `+bandSQL("x")+` FROM (SELECT ? AS x)`, v).
+		if err := s.DB().QueryRow(`SELECT `+bandSQL("x")+` FROM (SELECT CAST(? AS DOUBLE PRECISION) AS x) values_to_band`, v).
 			Scan(&got); err != nil {
 			t.Fatalf("banding %v: %v", v, err)
 		}

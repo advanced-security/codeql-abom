@@ -23,7 +23,7 @@ CREATE TABLE abom_authoring_ast (
 
 // A store that kept sessions and trees before drafts and ABOM's own trees existed is rebuilt to hold
 // them, and keeps every session, event and tree it had, each still pointing at its own.
-func TestTablesFromBeforeDraftsAndABOMsTreesAreRebuiltKeepingWhatTheyHeld(t *testing.T) {
+func TestSQLiteTablesFromBeforeDraftsAndABOMsTreesAreRebuiltKeepingWhatTheyHeld(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "abom.db")
 	s, err := Open(path, Options{})
 	if err != nil {

@@ -27,7 +27,7 @@ const defaultEdgesQueryID = "abom/edges"
 func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("build", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to the ABOM SQLite database (required)")
+	dbPath := databaseFlag(fs)
 	language := fs.String("language", "actions", "CodeQL language of the databases to fetch")
 	queryPath := fs.String("query", defaultEdgesQuery, "edges query to run against each database")
 	queryID := fs.String("query-id", defaultEdgesQueryID, "ledger identity for the query")
@@ -52,13 +52,13 @@ func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	defer cleanup()
 
-	s, err := store.Open(*dbPath, store.Options{BulkLoad: true})
+	s, err := store.OpenBackend(*dbPath, store.Options{BulkLoad: true})
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", *dbPath, err)
+		return fmt.Errorf("opening %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
 	defer s.Close()
 	if err := s.Migrate(); err != nil {
-		return fmt.Errorf("migrating %s: %w", *dbPath, err)
+		return fmt.Errorf("migrating %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
 
 	repos, err := s.CatalogRepositories(*language)
@@ -74,7 +74,7 @@ func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	if err != nil {
 		return fmt.Errorf("build: %w", err)
 	}
-	w := store.NewWriter(s, 0)
+	w := s.NewWriter(0)
 	p := &pipeline.Pipeline{
 		Source:   githubClient(ctx, *apiURL, s, tokens),
 		Runner:   &runner.Runner{CodeQLPath: *codeqlPath, Lock: runner.SharedLock()},
@@ -125,7 +125,7 @@ func workingDirectory(dir, pattern string) (string, func(), error) {
 
 // finalizeStore builds indexes and refreshes planner statistics after bulk loading, per
 // Store.CreateIndexes' own contract: call once loading has finished, not while it is ongoing.
-func finalizeStore(s *store.Store) error {
+func finalizeStore(s store.Backend) error {
 	if err := s.CreateIndexes(); err != nil {
 		return fmt.Errorf("creating indexes: %w", err)
 	}

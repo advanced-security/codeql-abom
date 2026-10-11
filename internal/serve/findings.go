@@ -1,7 +1,6 @@
 package serve
 
 import (
-	"database/sql"
 	"errors"
 	"net/http"
 	"strconv"
@@ -63,7 +62,7 @@ func (s *Server) findingReview(w http.ResponseWriter, r *http.Request) {
 	}
 	query.FindingID = id
 	details, err := s.Store.FindingReviewDetails(query, evaluation)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "This finding or evaluation is not recorded in the selected scope.")
 		return
 	}

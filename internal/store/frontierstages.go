@@ -1,4 +1,4 @@
-package frontier
+package store
 
 import (
 	"database/sql"
@@ -7,8 +7,6 @@ import (
 	"math"
 	"strings"
 	"time"
-
-	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
 // The objective's stages, in the order the crawl claims from them.
@@ -26,8 +24,8 @@ const (
 	StageWaiting = "waiting"
 )
 
-// Stages is the pending work split by the stage that claims it.
-type Stages struct {
+// QueueStages is the pending work split by the stage that claims it.
+type QueueStages struct {
 	// Next names the stage the next claim draws from, and is empty when nothing is claimable now.
 	Next      string `json:"next"`
 	Expedited int    `json:"expedited"`
@@ -50,8 +48,8 @@ const stageOfRow = `CASE
 	ELSE '` + StageExplore + `' END`
 
 // Stages reports the pending work inside the closure by stage, and what the closure does not reach.
-func (q *Queue) Stages() (Stages, error) {
-	var out Stages
+func (q *Queue) Stages() (QueueStages, error) {
+	var out QueueStages
 	progress, err := q.Completeness()
 	if err != nil {
 		return out, err
@@ -107,7 +105,7 @@ func (q *Queue) Stages() (Stages, error) {
 	err = q.Store.DB().QueryRow(`
 		SELECT `+stageOfRow+` FROM abom_frontier
 		WHERE status = ? AND (next_attempt_at IS NULL OR next_attempt_at <= ?) AND `+inside+`
-		ORDER BY `+store.FrontierClaimOrder+`
+		ORDER BY `+FrontierClaimOrder+`
 		LIMIT 1`, append([]any{working, StatusPending, now}, bound...)...).Scan(&out.Next)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return out, fmt.Errorf("reading the next stage: %w", err)
@@ -136,12 +134,12 @@ func (q *Queue) Inside() (func(repository string) bool, error) {
 // closure every row is inside.
 func (q *Queue) bound() (string, []any, error) {
 	if q.Closure == nil {
-		return "1", nil, nil
+		return "true", nil, nil
 	}
 	names, err := q.Closure()
 	if err != nil {
 		return "", nil, fmt.Errorf("reading the owned closure: %w", err)
 	}
-	inside, args := store.BoundTo(names).Admits("")
+	inside, args := BoundTo(names).Admits("")
 	return inside, args, nil
 }

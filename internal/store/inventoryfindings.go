@@ -207,7 +207,9 @@ func (s *Store) findingReviewItems(q FindingReviewQuery, plan findingReviewPlan)
 		COALESCE(NULLIF(json_extract(documented.documentation_json, '$.helpMarkdown'), ''), json_extract(documented.documentation_json, '$.helpText'), '') <> '',
 		recorded.evidence_json IS NOT NULL
 		FROM `+from+` WHERE `+plan.where+`
-		GROUP BY f.row_id
+		GROUP BY f.row_id, f.rule_id, fr.repository_full_name, f.file_path, f.start_line, f.message,
+		         f.severity, f.security_severity, f.provider, qr.row_id, qr.db_commit, qr.ran_at,
+		         documented.documentation_json, recorded.evidence_json
 		ORDER BY CASE WHEN f.security_severity >= 9 THEN 0 WHEN f.security_severity >= 7 THEN 1
 		WHEN f.security_severity >= 4 THEN 2 WHEN f.security_severity > 0 THEN 3 ELSE 4 END,
 		MAX(COALESCE(b.dependent_repos, 0)) DESC, f.rule_id, fr.repository_full_name,

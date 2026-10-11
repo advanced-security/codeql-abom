@@ -2,21 +2,83 @@ package store
 
 import (
 	"errors"
+	"fmt"
+	"net/url"
+	"os"
 	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 )
 
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "abom.db"), Options{BulkLoad: true})
+	s, err := openTestStore(t, filepath.Join(t.TempDir(), "abom.db"), Options{BulkLoad: true})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+
 	t.Cleanup(func() { s.Close() })
 	if err := s.Migrate(); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	return s
+}
+
+var postgresTestSchema atomic.Uint64
+var postgresTestTargets sync.Map
+
+func openTestStore(t *testing.T, path string, opts Options) (*Store, error) {
+	t.Helper()
+	dsn := os.Getenv("ABOM_TEST_POSTGRES_DSN")
+	backend := os.Getenv("ABOM_TEST_STORE_BACKEND")
+	if backend != "" && backend != "sqlite" && backend != "postgres" {
+		t.Fatalf("unknown ABOM_TEST_STORE_BACKEND %q", backend)
+	}
+	if strings.HasPrefix(t.Name(), "TestSQLite") || backend == "sqlite" {
+		return Open(path, opts)
+	}
+	if dsn == "" {
+		if backend == "postgres" {
+			t.Fatal("ABOM_TEST_STORE_BACKEND=postgres requires ABOM_TEST_POSTGRES_DSN")
+		}
+		return Open(path, opts)
+	}
+	if prior, ok := postgresTestTargets.Load(path); ok {
+		return openPostgres(prior.(string), opts)
+	}
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := fmt.Sprintf("store_test_%d_%d", os.Getpid(), postgresTestSchema.Add(1))
+	admin, err := openPostgres(dsn, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.db.DB.Exec(`CREATE SCHEMA "` + schema + `"`); err != nil {
+		_ = admin.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		postgresTestTargets.Delete(path)
+		_, err := admin.db.DB.Exec(`DROP SCHEMA "` + schema + `" CASCADE`)
+		if err != nil {
+			t.Error(err)
+		}
+		_ = admin.Close()
+	})
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	postgresTestTargets.Store(path, u.String())
+	s, err := openPostgres(u.String(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return s, nil
 }
 
 // adder writes one node through w, failing the test at the first error.
@@ -44,13 +106,18 @@ func TestMigrateIsIdempotent(t *testing.T) {
 // CreateIndexes at all — running the Discovery page's provenance join as a full table scan.
 func TestIndexesAreNotCreatedByMigrateOnTheTablesItLoadsInBulk(t *testing.T) {
 	s := newTestStore(t)
+	indexCount := `SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'`
+	indexTableCount := indexCount + ` AND tbl_name = ?`
+	if s.db.postgres {
+		indexCount = `SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname LIKE 'idx_%'`
+		indexTableCount = indexCount + ` AND tablename = ?`
+	}
 
 	bulk := []string{"abom_edge", "abom_node", "abom_finding", "abom_finding_node"}
 	for _, table := range bulk {
 		var count int
 		if err := s.DB().QueryRow(
-			`SELECT COUNT(*) FROM sqlite_master
-			 WHERE type='index' AND name LIKE 'idx_%' AND tbl_name = ?`, table).
+			indexTableCount, table).
 			Scan(&count); err != nil {
 			t.Fatalf("counting indexes on %s: %v", table, err)
 		}
@@ -64,7 +131,7 @@ func TestIndexesAreNotCreatedByMigrateOnTheTablesItLoadsInBulk(t *testing.T) {
 		t.Fatalf("CreateIndexes: %v", err)
 	}
 	if err := s.DB().QueryRow(
-		`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'`).
+		indexCount).
 		Scan(&count); err != nil {
 		t.Fatalf("counting indexes: %v", err)
 	}

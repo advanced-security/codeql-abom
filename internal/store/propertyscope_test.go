@@ -353,7 +353,7 @@ func TestRedeclaringReplacesThePropertyScopes(t *testing.T) {
 
 // The property test runs inside every ownership read, so it must look values and terms up by key.
 // A scan here costs a pass over every value on record for every repository a read considers.
-func TestThePropertyTestSearchesByKeyRatherThanScanning(t *testing.T) {
+func TestSQLitePropertyTestSearchesByKeyRatherThanScanning(t *testing.T) {
 	s := propertyStore(t)
 	declare(t, s, restricted(nil, []PropertyTerm{{"team", "a"}, {"region", "emea"}}))
 

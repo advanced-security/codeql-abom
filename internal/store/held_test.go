@@ -303,7 +303,7 @@ func TestAHeldEvaluationNeverMakesAFindingStale(t *testing.T) {
 }
 
 // A predicting-era store migrates runs and results to held names in place.
-func TestAStoreThatPredictedIsMigratedToHeldResultsInPlace(t *testing.T) {
+func TestSQLiteStoreThatPredictedIsMigratedToHeldResultsInPlace(t *testing.T) {
 	s := newTestStore(t)
 	id, err := s.CreateAnalysisRun(heldRequest(s))
 	if err != nil {
@@ -499,7 +499,7 @@ func TestHeldEvidenceIsOnlyWhatTheRunHeld(t *testing.T) {
 }
 
 // Migrated evidence keeps what was filed and can then hold two picks in one repository.
-func TestEvidenceKeptBeforeHeldResultsIsMigratedInPlace(t *testing.T) {
+func TestSQLiteEvidenceKeptBeforeHeldResultsIsMigratedInPlace(t *testing.T) {
 	s := newTestStore(t)
 	runID, fired := pickedRun(t, s)
 	if _, err := s.SaveQueryRequest(pickedRequest(runID,

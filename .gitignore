@@ -56,6 +56,9 @@ ui/tests/e2e/blob-report/
 [Bb]in/
 [Oo]bj/
 
+## Python script tests
+/scripts/__pycache__/
+
 ## Everything this repository writes at runtime: the working corpus, logs, scratch, the published
 ## interface, the Go test framework's TMPDIR, and the prebuilt databases `make itest` reuses.
 ##
@@ -70,4 +73,3 @@ ui/tests/e2e/blob-report/
 ## Temporary by nature
 *.swo
 *.swp
-

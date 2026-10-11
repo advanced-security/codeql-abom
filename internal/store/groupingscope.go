@@ -49,7 +49,7 @@ func (s *Store) restrictClause(sc RepositoryScope, column string) (string, []any
 	if len(names) == 0 {
 		// A grouping nobody is in answers nothing. Falling through to no restriction would report
 		// the whole organization under the name of a part of it.
-		return "0", nil, nil
+		return "false", nil, nil
 	}
 	list, args := inList(names)
 	return "LOWER(" + column + ") IN " + list, args, nil

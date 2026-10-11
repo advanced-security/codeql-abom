@@ -94,11 +94,15 @@ func (s *Store) AppendDelivery(d EventDelivery) (bool, error) {
 	}
 	defer func() { _ = conn.Close() }()
 	// The sender treats the return as safe, so the commit must survive power loss; NORMAL does not.
-	if _, err := conn.ExecContext(ctx, `PRAGMA synchronous = FULL`); err != nil {
+	synchronous, restore := `PRAGMA synchronous = FULL`, `PRAGMA synchronous = NORMAL`
+	if s.db.postgres {
+		synchronous, restore = `SET synchronous_commit = on`, `RESET synchronous_commit`
+	}
+	if _, err := conn.ExecContext(ctx, synchronous); err != nil {
 		return false, fmt.Errorf("recording delivery %s: %w", d.DeliveryID, err)
 	}
 	// Left at FULL the connection only writes more slowly, which is no reason to refuse a delivery.
-	defer func() { _, _ = conn.ExecContext(ctx, `PRAGMA synchronous = NORMAL`) }()
+	defer func() { _, _ = conn.ExecContext(ctx, restore) }()
 
 	res, err := conn.ExecContext(ctx, `
 		INSERT INTO abom_event_delivery (delivery_id, event, received_at, payload)

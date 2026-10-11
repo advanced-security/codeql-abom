@@ -268,7 +268,7 @@ func (s *Store) AddFindings(findings []Finding) (int, error) {
 }
 
 // addFindings writes findings and their sightings inside tx, returning each one's row in order.
-func addFindings(tx *sql.Tx, findings []Finding) ([]int64, error) {
+func addFindings(tx *transaction, findings []Finding) ([]int64, error) {
 	// Provenance is refreshed and identity is not: a finding seen again is the same finding, but
 	// the run that reproduced it is newer evidence than the one that first saw it. Ignoring the
 	// conflict outright left 2,759 corpus findings unable to name any run at all, 2,377 of them
@@ -303,7 +303,7 @@ func addFindings(tx *sql.Tx, findings []Finding) ([]int64, error) {
 	// so without this relation "is it still reported" is unanswerable.
 	sighting, err := tx.Prepare(`
 		INSERT INTO abom_finding_sighting (finding_row_id, query_run_id, evidence_json)
-		VALUES (?, ?, ?) ON CONFLICT DO UPDATE SET
+		VALUES (?, ?, ?) ON CONFLICT(finding_row_id, query_run_id) DO UPDATE SET
 			evidence_json = COALESCE(excluded.evidence_json, abom_finding_sighting.evidence_json)`)
 	if err != nil {
 		return nil, fmt.Errorf("preparing sighting insert: %w", err)
@@ -353,8 +353,8 @@ type runRule struct {
 // ruleDocs records a rule's documentation for a run, and re-reads its tags only when the
 // documentation differs from what this batch last recorded.
 type ruleDocs struct {
-	tx     *sql.Tx
-	stmt   *sql.Stmt
+	tx     *transaction
+	stmt   *statement
 	tagged map[runRule]string
 }
 

@@ -81,7 +81,7 @@ func TestCompletingAnItemSpendsItsExpediting(t *testing.T) {
 	}
 
 	var marked int
-	if err := q.Store.DB().QueryRow(
+	if err := sqliteDB(t, q).QueryRow(
 		`SELECT COUNT(*) FROM abom_frontier WHERE expedited_at IS NOT NULL`).Scan(&marked); err != nil {
 		t.Fatalf("reading expedited_at: %v", err)
 	}

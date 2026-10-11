@@ -28,7 +28,7 @@ type Resolver interface {
 
 // Poller asks about external references at its pool's pace, independent of the crawl's progress.
 type Poller struct {
-	Store   *store.Store
+	Store   store.Backend
 	Queue   *frontier.Queue
 	Resolve Resolver
 	// Pool is what polling spends, in GraphQL points. Nil spends without limit or record.

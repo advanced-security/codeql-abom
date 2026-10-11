@@ -25,7 +25,7 @@ type Source interface {
 // Discoverer populates the database catalog.
 type Discoverer struct {
 	Source      Source
-	Store       *store.Store
+	Store       store.Backend
 	Language    string
 	Concurrency int
 	OnEvent     func(work.Event)

@@ -117,9 +117,9 @@ type edgePart struct {
 	kind     string
 	boundary string
 	refStyle string
-	advisory sql.NullBool
-	finding  sql.NullBool
-	depth    sql.NullInt64
+	advisory *bool
+	finding  *bool
+	depth    *int64
 	// commits are the commits in use that declared this, which decide the version of a split
 	// dependency an edge out of it hangs from.
 	commits []string
@@ -181,9 +181,16 @@ func (e *GraphEdge) collectLockedCommits() {
 }
 
 type graphEdgeFacts struct {
-	advisory sql.NullBool
-	finding  sql.NullBool
-	depth    sql.NullInt64
+	advisory *bool
+	finding  *bool
+	depth    *int64
+}
+
+func sameOptional[T comparable](a, b *T) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 func (e *GraphEdge) summarizeSharedFacts() graphEdgeFacts {
@@ -194,13 +201,13 @@ func (e *GraphEdge) summarizeSharedFacts() graphEdgeFacts {
 		e.Kind = shared(e, edgeFactKind, e.Kind, p.kind)
 		e.Boundary = shared(e, edgeFactBoundary, e.Boundary, p.boundary)
 		e.RefStyle = shared(e, edgeFactRefStyle, e.RefStyle, p.refStyle)
-		if facts.advisory != p.advisory {
+		if !sameOptional(facts.advisory, p.advisory) {
 			e.mix(edgeFactAdvisory)
 		}
-		if facts.finding != p.finding {
+		if !sameOptional(facts.finding, p.finding) {
 			e.mix(edgeFactFinding)
 		}
-		if facts.depth != p.depth {
+		if !sameOptional(facts.depth, p.depth) {
 			e.mix(edgeFactDepth)
 		}
 	}
@@ -208,14 +215,14 @@ func (e *GraphEdge) summarizeSharedFacts() graphEdgeFacts {
 }
 
 func (e *GraphEdge) applySharedFacts(facts graphEdgeFacts) {
-	if facts.advisory.Valid && !e.IsMixed(edgeFactAdvisory) {
-		e.AdvisoryRoute = &facts.advisory.Bool
+	if facts.advisory != nil && !e.IsMixed(edgeFactAdvisory) {
+		e.AdvisoryRoute = facts.advisory
 	}
-	if facts.finding.Valid && !e.IsMixed(edgeFactFinding) {
-		e.FindingRoute = &facts.finding.Bool
+	if facts.finding != nil && !e.IsMixed(edgeFactFinding) {
+		e.FindingRoute = facts.finding
 	}
-	if facts.depth.Valid && !e.IsMixed(edgeFactDepth) {
-		hops := int(facts.depth.Int64)
+	if facts.depth != nil && !e.IsMixed(edgeFactDepth) {
+		hops := int(*facts.depth)
 		e.OwnedDepth = &hops
 	}
 }
@@ -261,6 +268,7 @@ type Graph struct {
 
 // FullGraphOptions selects what the whole-corpus view contains.
 type FullGraphOptions struct {
+	changedSince *int64
 	// IncludeSteps keeps every individual `uses:` line rather than folding it into the
 	// workflow or composite action that holds it. Roughly 23k nodes against 3.6k.
 	IncludeSteps bool
@@ -558,7 +566,7 @@ func scopeFilter(opts FullGraphOptions, column string) string {
 	case opts.GroupFiltered:
 		// A filter nobody matches shows nothing. Falling through to the whole corpus would answer a
 		// question about some repositories with everybody's.
-		return " AND 0"
+		return " AND false"
 	}
 	return out
 }
@@ -605,9 +613,13 @@ const frontierState = `(SELECT CASE
 // Only nodes that appear as an edge target get a row, so a missing row usually means nothing
 // references this node and its reach is genuinely zero. It means "not measured" only for a node
 // that arrived after the last rebuild, which is what the watermark separates.
-const reachKnown = `(b.node_row_id IS NOT NULL OR n.row_id <= COALESCE((
+const reachKnown = `(b.node_row_id IS NOT NULL OR (n.row_id <= COALESCE((
 	SELECT node_watermark FROM abom_graph_generation
-	WHERE reach_rebuilt = 1 ORDER BY generation DESC LIMIT 1), 0))`
+	WHERE reach_rebuilt = 1 ORDER BY generation DESC LIMIT 1), 0)
+	AND n.row_id NOT IN (
+		SELECT object_id FROM abom_graph_change WHERE object_kind = 'node' AND created_sequence > COALESCE((
+			SELECT commit_watermark FROM abom_graph_generation
+			WHERE reach_rebuilt = 1 ORDER BY generation DESC LIMIT 1), 0))))`
 
 // FullGraph has no node budget. The interface loads it once and every filter afterwards runs
 // against it in the browser, so the cost is paid on arrival rather than on every interaction.
@@ -729,6 +741,10 @@ const rolledFrontierState = `(CASE
 // is a structural property, not something a stopwatch should be asked about.
 func graphNodesQuery(display string, since int64, opts FullGraphOptions) (string, []any) {
 	cte, args := scopeParts(opts)
+	changed := "row_id > ?"
+	if opts.changedSince != nil {
+		changed, since = "row_id IN ("+changedNodeRows+")", *opts.changedSince
+	}
 	return `WITH ` + display + cte + frontierRollup + advisoryRollup + groupingRollup + `
 		SELECT n.node_key, n.node_kind, COALESCE(r.repository_full_name, ''),
 		       COALESCE(r.origin, ''), ` + ownedNode + `, COALESCE(n.path, ''), COALESCE(c.node_key, ''),
@@ -748,8 +764,8 @@ func graphNodesQuery(display string, since int64, opts FullGraphOptions) (string
 		LEFT JOIN abom_blast_radius b ON b.node_row_id = n.row_id
 		LEFT JOIN fstate fs ON fs.mk = n.node_key
 		LEFT JOIN adv ON adv.pkg = n.owner || '/' || n.repo
-		LEFT JOIN grouping u ON u.repo = r.repository_full_name
-		WHERE n.row_id IN (SELECT shown FROM disp WHERE row_id > ?)` + visibleWorkflowNode +
+		LEFT JOIN grouping u ON u.repo = r.repository_full_name COLLATE NOCASE
+		WHERE n.row_id IN (SELECT shown FROM disp WHERE ` + changed + `)` + visibleWorkflowNode +
 		scopeFilter(opts, "n.node_key") + nodeModeFilter(opts.Mode), append(args, opts.GroupProperty, since)
 }
 
@@ -854,6 +870,11 @@ func (s *Store) graphEdges(display string, since int64, opts FullGraphOptions) (
 		return nil, err
 	}
 	cte, args := scopeParts(opts)
+	changed := "e.row_id > ?"
+	if opts.changedSince != nil {
+		changed = `ds.shown IN (SELECT shown FROM disp WHERE row_id IN (` + changedEdgeSources + `))`
+		since = *opts.changedSince
+	}
 	rows, err := s.db.Query(`WITH `+display+cte+`
 		SELECT sn.node_key, dn.node_key, e.edge_kind, COALESCE(e.ref_value, ''),
 		       COALESCE(e.boundary, ''), e.edge_key, COALESCE(e.ref_style, ''),
@@ -863,7 +884,7 @@ func (s *Store) graphEdges(display string, since int64, opts FullGraphOptions) (
 		JOIN disp dd ON dd.row_id = e.dst_node_row_id
 		JOIN abom_node_live sn ON sn.row_id = ds.shown
 		JOIN abom_node_live dn ON dn.row_id = dd.shown
-		WHERE ds.shown <> dd.shown AND e.row_id > ?`+
+		WHERE ds.shown <> dd.shown AND `+changed+
 		boundaryFilter(opts.Boundary)+edgeKindFilter(opts.EdgeKinds)+
 		scopeFilter(opts, "sn.node_key")+scopeFilter(opts, "dn.node_key"),
 		append(args, since)...)

@@ -69,12 +69,12 @@ func (o Options) locate(path string) (Located, error) {
 
 // Ingester writes graph rows for one repository at a time.
 type Ingester struct {
-	store  *store.Store
-	writer *store.Writer
+	store  store.Backend
+	writer store.GraphWriter
 }
 
 // New returns an Ingester bound to a store and its batched writer.
-func New(s *store.Store, w *store.Writer) *Ingester {
+func New(s store.Backend, w store.GraphWriter) *Ingester {
 	return &Ingester{store: s, writer: w}
 }
 

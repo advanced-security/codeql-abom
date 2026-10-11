@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS abom_http_cache (
 type HTTPCache struct{ s *Store }
 
 // ResponseCache returns a validator cache backed by this database.
-func (s *Store) ResponseCache() *HTTPCache { return &HTTPCache{s: s} }
+func (s *Store) ResponseCache() ResponseCache { return &HTTPCache{s: s} }
 
 // Lookup returns the validator and body held for url.
 func (c *HTTPCache) Lookup(url string) (string, []byte, bool) {

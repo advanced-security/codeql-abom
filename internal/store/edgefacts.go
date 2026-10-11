@@ -1,7 +1,6 @@
 package store
 
 import (
-	"database/sql"
 	"fmt"
 )
 
@@ -46,7 +45,7 @@ const advisoryRoutes = `
 route(src_key, dst_key) AS MATERIALIZED (
 	SELECT a.value, b.value
 	  FROM abom_exposure ex, json_each(ex.path) a, json_each(ex.path) b
-	 WHERE b.key = a.key + 1
+	 WHERE CAST(b.key AS INTEGER) = CAST(a.key AS INTEGER) + 1
 )`
 
 // advisoryRouteFact is the one edge fact read from exposure, shared so both derivations agree.
@@ -60,7 +59,7 @@ const advisoryRouteFact = `CASE
 END`
 
 // DeriveAdvisoryRoutes is DeriveEdgeFacts' advisory fact alone, in tx; the others read no exposure.
-func DeriveAdvisoryRoutes(tx *sql.Tx) (int, error) {
+func DeriveAdvisoryRoutes(tx *transaction) (int, error) {
 	res, err := tx.Exec(`WITH ` + edgeUnits + `, ` + advisoryRoutes + `,
 		facts(row_id, advisory_route) AS (SELECT e.row_id, ` + advisoryRouteFact + ` FROM edge e)
 		UPDATE abom_edge

@@ -156,7 +156,7 @@ func (r reachIn) keep() (string, []any) {
 	}
 	return ` AND n.row_id IN (SELECT nr.node_row_id FROM abom_node_reach nr
 		          JOIN repository rr ON rr.row_id = nr.repository_row_id
-		         WHERE 1` + r.bound + `)`, r.args
+		         WHERE true` + r.bound + `)`, r.args
 }
 
 // over aggregates the breakdown of the node's reach within the scope, correlated to `n`, among the
@@ -199,7 +199,7 @@ func (r reachIn) levels(property string) (string, []any) {
 	}
 	parts = append(parts, `(CASE WHEN `+reachKnown+` THEN `+r.over(`COUNT(DISTINCT (
 			SELECT MIN(p.value) FROM abom_repository_property p
-			 WHERE p.repository_full_name = rr.repository_full_name AND p.property_name = ?))`,
+			 WHERE p.repository_full_name = rr.repository_full_name COLLATE NOCASE AND p.property_name = ?))`,
 		` AND `+ownedFullName("rr.repository_full_name"))+` END) AS dependent_groups`)
 	// The property is bound inside the aggregate, ahead of the scope's own arguments.
 	return strings.Join(parts, ", "), append(append(args, property), r.args...)
@@ -295,7 +295,7 @@ var inventorySorts = map[string]string{
 	"nodeKey": "n.node_key",
 	"kind":    "n.node_kind",
 	// In the words the column shows: owned, a starting point nobody declared, upstream, external.
-	"origin":             `(CASE WHEN owned THEN 0 WHEN origin = 'seed' THEN 1 WHEN origin = 'upstream' THEN 2 ELSE 3 END)`,
+	"origin":             `(CASE WHEN ` + ownedNode + ` = 1 THEN 0 WHEN r.origin = 'seed' THEN 1 WHEN r.origin = 'upstream' THEN 2 ELSE 3 END)`,
 	"dependentRepos":     "dependent_repos",
 	"dependentSteps":     "dependent_steps",
 	"dependentJobs":      "dependent_jobs",

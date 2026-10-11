@@ -14,16 +14,20 @@ import (
 func TestTheDeltaAnswersTheSameQuestionTheFullGraphDid(t *testing.T) {
 	srv, s := newServer(t)
 
-	// Taken before anything is written, so the delta that follows carries the whole seeded graph.
-	// A cursor recorded afterwards sits past every row and produces an empty delta, which would
-	// let this pass without ever exercising the leak.
+	// Keep the scope stable: changing ownership now deliberately resets a commit cursor.
+	for _, name := range []string{"octo-org/app", "stranger/thing"} {
+		if _, err := s.UpsertRepository(name, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	declareOcto(t, s)
+	// Taken before graph facts arrive, so the delta must exercise filtering rather than be empty.
 	since, err := s.RecordGraphGeneration(store.GraphRebuild{})
 	if err != nil {
 		t.Fatalf("recording a generation: %v", err)
 	}
 
 	seedGraph(t, s)
-	declareOcto(t, s)
 	outside(t, s, "stranger/thing")
 
 	owned := decode[store.Graph](t, get(t, srv, "/api/graph/full?scope=owned"))

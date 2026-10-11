@@ -178,7 +178,7 @@ func validatedAnalysisRequest(req AnalysisRequest) (string, error) {
 	return mode, nil
 }
 
-func insertAnalysisRun(tx *sql.Tx, req AnalysisRequest, mode string) (int64, error) {
+func insertAnalysisRun(tx *transaction, req AnalysisRequest, mode string) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := tx.Exec(`
 		INSERT INTO abom_analysis_run
@@ -196,7 +196,7 @@ func insertAnalysisRun(tx *sql.Tx, req AnalysisRequest, mode string) (int64, err
 	return id, nil
 }
 
-func insertAnalysisQueries(tx *sql.Tx, id int64, queries []AnalysisQuery) error {
+func insertAnalysisQueries(tx *transaction, id int64, queries []AnalysisQuery) error {
 	for _, q := range queries {
 		if _, err := tx.Exec(`
 			INSERT OR IGNORE INTO abom_analysis_query (run_id, query_id, query_version)
@@ -207,7 +207,7 @@ func insertAnalysisQueries(tx *sql.Tx, id int64, queries []AnalysisQuery) error 
 	return nil
 }
 
-func insertAnalysisDatabaseMembers(tx *sql.Tx, id int64, databases []ScopedDatabase, mode string) error {
+func insertAnalysisDatabaseMembers(tx *transaction, id int64, databases []ScopedDatabase, mode string) error {
 	for _, d := range databases {
 		status, detail := databaseMemberStatus(d, mode)
 		if err := insertMember(tx, id, d.DatabaseIdentity, status, detail, d.Path); err != nil {
@@ -235,7 +235,7 @@ func databaseMemberStatus(d ScopedDatabase, mode string) (string, string) {
 	return status, detail
 }
 
-func insertAnalysisGapMembers(tx *sql.Tx, id int64, gaps []DatabaseGap, mode string) error {
+func insertAnalysisGapMembers(tx *transaction, id int64, gaps []DatabaseGap, mode string) error {
 	for _, g := range gaps {
 		identity := DatabaseIdentity{Repository: g.Repository, Mode: mode}
 		status, detail, err := gapMember(tx, g, mode)
@@ -251,7 +251,7 @@ func insertAnalysisGapMembers(tx *sql.Tx, id int64, gaps []DatabaseGap, mode str
 
 // gapMember decides whether the run builds a repository nothing has analyzed: only one ABOM
 // tracks, since ingesting any other would enter it as a seed, and only in the crawl's own shape.
-func gapMember(tx *sql.Tx, g DatabaseGap, mode string) (string, string, error) {
+func gapMember(tx *transaction, g DatabaseGap, mode string) (string, string, error) {
 	var tracked int
 	if err := tx.QueryRow(`SELECT COUNT(*) FROM repository WHERE repository_full_name = ?`,
 		g.Repository).Scan(&tracked); err != nil {
@@ -268,7 +268,7 @@ func gapMember(tx *sql.Tx, g DatabaseGap, mode string) (string, string, error) {
 }
 
 func insertMember(
-	tx *sql.Tx, runID int64, id DatabaseIdentity, status, detail, path string,
+	tx *transaction, runID int64, id DatabaseIdentity, status, detail, path string,
 ) error {
 	_, err := tx.Exec(`
 		INSERT OR IGNORE INTO abom_analysis_member
@@ -397,7 +397,7 @@ func (s *Store) setMember(runID int64, id DatabaseIdentity, r MemberResult) erro
 	return nil
 }
 
-func updateMember(tx *sql.Tx, runID int64, id DatabaseIdentity, r MemberResult) error {
+func updateMember(tx *transaction, runID int64, id DatabaseIdentity, r MemberResult) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	started, finished := nullable(""), nullable("")
 	if r.Status == AnalysisRunning {
@@ -438,7 +438,7 @@ func updateMember(tx *sql.Tx, runID int64, id DatabaseIdentity, r MemberResult) 
 }
 
 // replaceMemberResults replaces rather than adds, or a re-run would double every count.
-func replaceMemberResults(tx *sql.Tx, runID int64, id DatabaseIdentity, byQuery map[string]int) error {
+func replaceMemberResults(tx *transaction, runID int64, id DatabaseIdentity, byQuery map[string]int) error {
 	if _, err := tx.Exec(`
 		DELETE FROM abom_analysis_result
 		WHERE run_id = ? AND repository = ? AND db_commit = ?

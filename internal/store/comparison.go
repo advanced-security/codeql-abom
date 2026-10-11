@@ -346,7 +346,7 @@ func countedComparisonMembers(members []AnalysisMember) int {
 	return counted
 }
 
-func insertComparison(tx *sql.Tx, runID int64, by, cliVersion string) (int64, error) {
+func insertComparison(tx *transaction, runID int64, by, cliVersion string) (int64, error) {
 	res, err := tx.Exec(`
 		INSERT INTO abom_comparison (run_id, requested_by, state, created_at, cli_version)
 		VALUES (?, ?, ?, ?, ?)`,
@@ -363,7 +363,7 @@ func insertComparison(tx *sql.Tx, runID int64, by, cliVersion string) (int64, er
 }
 
 func insertComparisonMembers(
-	tx *sql.Tx, id int64, members []AnalysisMember, unlinked map[DatabaseIdentity]bool,
+	tx *transaction, id int64, members []AnalysisMember, unlinked map[DatabaseIdentity]bool,
 ) error {
 	for _, m := range members {
 		status, reason, detail, results := comparisonMemberRecord(m, unlinked[m.DatabaseIdentity])
@@ -527,7 +527,7 @@ func (s *Store) RecordComparisonMember(id int64, r ComparisonRecord) error {
 	return nil
 }
 
-func insertCompared(tx *sql.Tx, id int64, r ComparisonRecord) error {
+func insertCompared(tx *transaction, id int64, r ComparisonRecord) error {
 	result, err := tx.Prepare(`
 		INSERT INTO abom_comparison_result
 			(comparison_id, repository, analyzed_commit, source_filter, rule_id, file_path,

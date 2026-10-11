@@ -137,7 +137,7 @@ func (s *Store) linesNaming(node int64, repositories []string, standing map[stri
 			   AND `+dependencyKind("COALESCE(sg.edge_kind, e.edge_kind)")+`
 		)
 		SELECT l.edge_row_id, l.repository, LOWER(q.repository), LOWER(q.db_commit),
-		       sg.dst_node_row_id IS NOT NULL, COALESCE(sg.dst_node_row_id = ?1, 0),
+		       sg.dst_node_row_id IS NOT NULL, COALESCE(CAST(sg.dst_node_row_id = ?1 AS INTEGER), 0),
 		       COALESCE(sg.ref_value, '')
 		  FROM lines l
 		  JOIN abom_edge_sighting sg ON sg.edge_row_id = l.edge_row_id
@@ -190,7 +190,7 @@ func (s *Store) findingsOnLineCommits(states map[lineAt]lineState) (map[lineAt][
 		   AND f.file_path = e.file_path AND f.start_line = e.start_line
 		  JOIN abom_finding_sighting fs ON fs.finding_row_id = f.row_id
 		  JOIN abom_query_run fq ON fq.row_id = fs.query_run_id AND fq.analysis_mode = 'regular'
-		 WHERE e.row_id IN (SELECT value FROM json_each(?)) AND COALESCE(fq.db_commit, '') <> ''`,
+		 WHERE e.row_id IN (SELECT CAST(value AS BIGINT) FROM json_each(?)) AND COALESCE(fq.db_commit, '') <> ''`,
 		string(ids))
 	if err != nil {
 		return nil, fmt.Errorf("reading the findings on lines: %w", err)
