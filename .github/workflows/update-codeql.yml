@@ -190,9 +190,11 @@ jobs:
           # v0.1.6
           ACTIONS_LOCK_COMMIT: 047fddf38163b304f1e6ef5649f5ac1646edc6a3
         run: |
-          git clone --no-checkout https://github.com/github/gh-actions-lock \
-            "$RUNNER_TEMP/gh-actions-lock"
-          git -C "$RUNNER_TEMP/gh-actions-lock" checkout --detach "$ACTIONS_LOCK_COMMIT"
+          mkdir -p "$RUNNER_TEMP/gh-actions-lock"
+          git -C "$RUNNER_TEMP/gh-actions-lock" init
+          git -C "$RUNNER_TEMP/gh-actions-lock" remote add origin https://github.com/github/gh-actions-lock
+          git -C "$RUNNER_TEMP/gh-actions-lock" fetch --depth 1 origin "$ACTIONS_LOCK_COMMIT"
+          git -C "$RUNNER_TEMP/gh-actions-lock" checkout --detach FETCH_HEAD
           go build -C "$RUNNER_TEMP/gh-actions-lock" -o gh-actions-lock ./cmd/gh-actions-lock
           cd "$RUNNER_TEMP/gh-actions-lock" && gh extension install .
 
