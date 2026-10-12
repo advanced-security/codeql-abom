@@ -78,7 +78,7 @@ func TestDiagnosticsAreAbsentWithoutTheFlag(t *testing.T) {
 
 	for _, path := range []string{"/api/metrics", "/debug/pprof/"} {
 		rec := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		srv.Handler().ServeHTTP(rec, localRequest(http.MethodGet, path, nil))
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("%s answered %d without --diagnostics, want 404", path, rec.Code)
 		}
@@ -101,7 +101,7 @@ func TestTheDeltaReportsWhetherItWasHonoredOrReset(t *testing.T) {
 
 	// A cursor the server never issued is refused, which is correct and must be counted.
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/graph/delta?since=999", nil))
+	h.ServeHTTP(rec, localRequest(http.MethodGet, "/api/graph/delta?since=999", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/api/graph/delta answered %d, want 200: %s", rec.Code, rec.Body.String())
 	}
@@ -109,14 +109,14 @@ func TestTheDeltaReportsWhetherItWasHonoredOrReset(t *testing.T) {
 	// And one it did issue is honored. Both halves, so a counter that increments the wrong field
 	// cannot pass by only ever being asked about the other one.
 	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+	h.ServeHTTP(rec, localRequest(http.MethodGet,
 		fmt.Sprintf("/api/graph/delta?since=%d", generation), nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/api/graph/delta answered %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 
 	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/metrics", nil))
+	h.ServeHTTP(rec, localRequest(http.MethodGet, "/api/metrics", nil))
 	var got struct {
 		Delta struct {
 			Honored int64 `json:"honored"`
@@ -142,10 +142,10 @@ func TestDiagnosticsAnswerWhenTheFlagIsSet(t *testing.T) {
 	h := srv.Handler()
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/summary", nil))
+	h.ServeHTTP(rec, localRequest(http.MethodGet, "/api/summary", nil))
 
 	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/metrics", nil))
+	h.ServeHTTP(rec, localRequest(http.MethodGet, "/api/metrics", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/api/metrics answered %d with --diagnostics, want 200", rec.Code)
 	}
@@ -154,7 +154,7 @@ func TestDiagnosticsAnswerWhenTheFlagIsSet(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil))
+	h.ServeHTTP(rec, localRequest(http.MethodGet, "/debug/pprof/", nil))
 	if rec.Code != http.StatusOK {
 		t.Errorf("/debug/pprof/ answered %d with --diagnostics, want 200", rec.Code)
 	}

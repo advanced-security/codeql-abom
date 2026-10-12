@@ -21,7 +21,7 @@ var pageSurfaces = []string{
 func namedViews(t *testing.T, srv *Server) []NamedView {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/views", nil))
+	srv.Handler().ServeHTTP(rec, localRequest(http.MethodGet, "/api/views", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/api/views answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -117,7 +117,7 @@ func TestWhatTheCatalogSaysAPageRefusesIsWhatItsEndpointRefuses(t *testing.T) {
 	for _, v := range namedViews(t, srv) {
 		for surface, path := range endpoints {
 			rec := httptest.NewRecorder()
-			srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path+v.Predicate, nil))
+			srv.Handler().ServeHTTP(rec, localRequest(http.MethodGet, path+v.Predicate, nil))
 			refused := v.Refuses[surface]
 			switch {
 			case len(refused) == 0 && rec.Code != http.StatusOK:

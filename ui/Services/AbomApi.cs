@@ -27,7 +27,7 @@ public sealed class AbomApi(HttpClient http)
     /// <summary>Re-asks gh who the operator is. A POST because it runs a subprocess.</summary>
     public async Task<AccountIdentity> RefreshAccountsAsync(CancellationToken ct = default)
     {
-        using var response = await http.PostAsync("api/accounts/refresh", content: null, ct);
+        using var response = await SendControlRequestAsync(HttpMethod.Post, "api/accounts/refresh", null, ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<AccountIdentity>(Json, ct)
                ?? new AccountIdentity();
@@ -264,7 +264,7 @@ public sealed class AbomApi(HttpClient http)
         string predicate, IReadOnlyList<AnalysisQueryRef> queries, string by,
         bool held, CancellationToken ct = default) =>
         ReadRefusableAsync<AnalysisRun>("api/runs",
-            () => http.PostAsJsonAsync("api/runs?" + predicate, new { queries, by, held }, ct),
+            () => SendControlRequestAsync(HttpMethod.Post, "api/runs?" + predicate, new { queries, by, held }, ct),
             "this run", ct);
 
     /// <summary>What has been asked for, newest first.</summary>
@@ -292,9 +292,9 @@ public sealed class AbomApi(HttpClient http)
         QueryRequest request, CancellationToken ct = default)
     {
         var path = request.RowId == 0 ? "api/query-requests" : $"api/query-requests/{request.RowId}";
-        return ReadRefusableAsync<QueryRequestList>(path, () => request.RowId == 0
-                ? http.PostAsJsonAsync(path, request, ct)
-                : http.PutAsJsonAsync(path, request, ct), "this request", ct);
+        return ReadRefusableAsync<QueryRequestList>(path,
+            () => SendControlRequestAsync(request.RowId == 0 ? HttpMethod.Post : HttpMethod.Put, path, request, ct),
+            "this request", ct);
     }
 
     /// <summary>
@@ -431,10 +431,16 @@ public sealed class AbomApi(HttpClient http)
     private async Task<T?> SendControlAsync<T>(
         HttpMethod method, string path, object? body, CancellationToken ct)
     {
-        using var request = ControlRequest(method, path, body);
-        using var response = await http.SendAsync(request, ct);
+        using var response = await SendControlRequestAsync(method, path, body, ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<T>(Json, ct);
+    }
+
+    private async Task<HttpResponseMessage> SendControlRequestAsync(
+        HttpMethod method, string path, object? body, CancellationToken ct)
+    {
+        using var request = ControlRequest(method, path, body);
+        return await http.SendAsync(request, ct);
     }
 
     /// <summary>What one member of a run reported for one query, so results can be picked by name.</summary>
@@ -480,7 +486,7 @@ public sealed class AbomApi(HttpClient http)
     public Task<(AnalysisRun? Run, string? Refusal)> ExecuteAnalysisRunAsync(
         long id, CancellationToken ct = default) =>
         ReadRefusableAsync<AnalysisRun>($"api/runs/{id}/start",
-            () => http.PostAsync($"api/runs/{id}/start", content: null, ct), "to start this run", ct);
+            () => SendControlRequestAsync(HttpMethod.Post, $"api/runs/{id}/start", null, ct), "to start this run", ct);
 
     /// <summary>
     /// Records that somebody moved a version to a stage, answering the catalog the move produced.
@@ -491,7 +497,8 @@ public sealed class AbomApi(HttpClient http)
     public Task<(QueryCatalog? Catalog, string? Refusal)> AdvanceQueryStageAsync(
         string queryId, string version, string stage, string by, CancellationToken ct = default) =>
         ReadRefusableAsync<QueryCatalog>("api/queries/stage",
-            () => http.PostAsJsonAsync("api/queries/stage", new { queryId, queryVersion = version, stage, by }, ct),
+            () => SendControlRequestAsync(HttpMethod.Post, "api/queries/stage",
+                new { queryId, queryVersion = version, stage, by }, ct),
             "this advance", ct);
 
     /// <summary>

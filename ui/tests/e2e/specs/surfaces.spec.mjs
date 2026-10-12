@@ -544,9 +544,19 @@ test.describe('a scope an operator kept', () => {
         await page.goto('/explore');
         await ready(page);
         await page.locator(chip).click();
-        await expect.poll(() => predicateOf(page.url()), 'the Explorer holds it too').toBe(kept.predicate);
-        await expect.poll(() => new URL(page.url()).searchParams.get('view')).toBe('priority');
-        expect(new URL(page.url()).searchParams.get('hops'), 'drawn the way it was kept').toBe('2');
+        // Restoring the picture updates the address asynchronously, one control at a time.
+        await expect.poll(() => {
+            const url = new URL(page.url());
+            return {
+                predicate: predicateOf(url.href),
+                view: url.searchParams.get('view'),
+                hops: url.searchParams.get('hops'),
+            };
+        }, 'the Explorer holds the complete stored question and picture').toEqual({
+            predicate: kept.predicate,
+            view: 'priority',
+            hops: '2',
+        });
 
         await page.locator(`[data-abom-forget-view='${name}']`).click();
         await expect(page.locator(chip)).toHaveCount(0, { timeout: 15_000 });

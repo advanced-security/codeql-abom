@@ -243,6 +243,19 @@ The local service has neither browser-user authentication nor built-in TLS. `X-A
 loopback Host checks and `--allow-remote-control` are not user identities. Do not expose it through
 a public listener or proxy as part of source setup.
 
+Every request, including reads and diagnostics, requires a loopback Host by default. A hostname
+that resolves to loopback is not enough, and forwarded headers do not grant access.
+`--allow-remote-control` explicitly relaxes that Host restriction for reads and controls; it does
+not remove the control-header or cross-site checks, or let a `--reader-only` instance accept writes.
+
+API mutations and linked-source reads require `X-Abom-Control: 1`. The ownership and dependency
+snapshot previews are read-only POSTs and need no control header, but still enforce the Host
+boundary. Only `POST /api/events/github` uses its webhook HMAC in place of these request checks;
+the webhook status and other event routes are not exempt.
+
+`make security-test` exercises these boundaries and deployed-suite input validation without
+external services. It also runs in the Go Self Audit job and before `make selfcheck`.
+
 Installation and analysis need outbound access to the repositories, GitHub APIs and package
 registries they use. Optional authoring needs its provider endpoints as well. Proxy and custom-CA
 requirements apply to each tool; a successful API read does not prove Git or CodeQL can connect.

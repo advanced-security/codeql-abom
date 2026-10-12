@@ -32,7 +32,10 @@ The complete development gate requires a running Docker daemon, not a host Postg
 `make test` runs the application suite on SQLite, including replica routing against a physical
 standby, then the store suite again on PostgreSQL. The pinned PostgreSQL primary and physical
 standby use disposable data and dynamically assigned loopback ports; the harness removes only its
-own containers afterward. `make backend-test` runs only the PostgreSQL half: the store suite and
+own containers afterward. Primary readiness requires TCP: the image's temporary, socket-only
+initialization server is stopped before the service starts, so it cannot authorize standby setup
+or test execution. Replication-setup errors retain PostgreSQL's stderr in the test log.
+`make backend-test` runs only the PostgreSQL half: the store suite and
 the paused-standby readback test. An unavailable daemon is an error, never a skipped backend.
 A plain `go test` outside the harness runs the store suite on SQLite and skips the standby test.
 `make script-test`

@@ -82,7 +82,7 @@ func TestAnUndeclaredScopeIsAnAnswerRatherThanAServerFault(t *testing.T) {
 	srv, _ := newServer(t)
 
 	res := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/api/bom", nil))
+	srv.Handler().ServeHTTP(res, localRequest(http.MethodGet, "/api/bom", nil))
 
 	if res.Code >= 500 {
 		t.Errorf("an undeclared scope was reported as a server fault (%d): %s",
@@ -144,7 +144,7 @@ func getBOM(t *testing.T, target string) (string, *httptest.ResponseRecorder) {
 	}
 
 	res := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(res, httptest.NewRequest(http.MethodGet, target, nil))
+	srv.Handler().ServeHTTP(res, localRequest(http.MethodGet, target, nil))
 	return res.Body.String(), res
 }
 

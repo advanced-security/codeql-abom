@@ -64,6 +64,70 @@ class DockerRunnerTests(unittest.TestCase):
         self.assertNotIn(["contract-suite"], calls)
         self.assertEqual(calls[-1], ["docker", "rm", "--force", "--volumes", "abc123"])
 
+    def test_socket_only_initialization_is_not_ready_for_standby_setup(self):
+        for becomes_ready in (True, False):
+            with self.subTest(tcp_becomes_ready=becomes_ready):
+                calls = []
+                listening = False
+
+                def execute(args, **kwargs):
+                    calls.append(args)
+                    if args[:2] == ["docker", "run"]:
+                        return subprocess.CompletedProcess(args, 0, stdout="abc123\n")
+                    if args[:4] == ["docker", "exec", "abc123", "pg_isready"]:
+                        tcp = "--host" in args and args[args.index("--host") + 1] == "127.0.0.1"
+                        return subprocess.CompletedProcess(args, 0 if listening or not tcp else 2)
+                    if args[:2] == ["docker", "port"]:
+                        return subprocess.CompletedProcess(args, 0, stdout="127.0.0.1:54321\n")
+                    if args[0] == "contract-suite":
+                        self.assertTrue(listening, "contracts started against the initialization server")
+                    return subprocess.CompletedProcess(args, 0, stdout="")
+
+                def finish_initialization(_seconds):
+                    nonlocal listening
+                    listening = becomes_ready
+
+                def start_standby(primary, _password):
+                    if not listening:
+                        raise subprocess.CalledProcessError(2, [
+                            "docker", "exec", primary, "psql", "-U", "abom_test",
+                            "-d", "postgres", "-c", "SELECT pg_reload_conf();",
+                        ])
+                    return "def456", "127.0.0.1:54322"
+
+                with patch.object(runner.subprocess, "run", side_effect=execute), \
+                        patch.object(runner.time, "sleep", side_effect=finish_initialization), \
+                        patch.object(runner, "READY_ATTEMPTS", 2), \
+                        patch.object(runner, "replica", side_effect=start_standby) as standby:
+                    if becomes_ready:
+                        self.assertEqual(runner.run([(None, ["contract-suite"])], replicas=True), 0)
+                        standby.assert_called_once()
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "did not become ready"):
+                            runner.run([(None, ["contract-suite"])], replicas=True)
+                        standby.assert_not_called()
+                        self.assertNotIn(["contract-suite"], calls)
+
+                probes = [args for args in calls if "pg_isready" in args]
+                self.assertEqual(len(probes), 2)
+                for args in probes:
+                    self.assertEqual(args[args.index("--port") + 1], "5432")
+                self.assertEqual(calls[-1], ["docker", "rm", "--force", "--volumes", "abc123"])
+
+    def test_primary_reload_errors_are_not_hidden_from_the_ci_log(self):
+        def execute(args, **kwargs):
+            if args[:2] == ["docker", "inspect"]:
+                return subprocess.CompletedProcess(args, 0, stdout="172.17.0.2\n")
+            if "SELECT pg_reload_conf();" in args:
+                self.assertFalse(kwargs.get("capture_output", False))
+                self.assertIsNone(kwargs.get("stderr"))
+                raise subprocess.CalledProcessError(2, args)
+            return subprocess.CompletedProcess(args, 0, stdout="")
+
+        with patch.object(runner.subprocess, "run", side_effect=execute):
+            with self.assertRaises(subprocess.CalledProcessError):
+                runner.replica("abc123", "test-password")
+
     def test_an_existing_database_target_is_not_replaced(self):
         with patch.dict(os.environ, {"ABOM_TEST_POSTGRES_DSN": "postgresql://existing"}), \
                 patch.object(runner.subprocess, "run") as execute:

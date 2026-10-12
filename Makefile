@@ -35,7 +35,7 @@ ABOM_RELEASE ?= $(ABOM_TMP)/release
 
 .PHONY: backend-test bench build check-corrupt corpus check-release-version check-versions clean e2e e2e-corpus e2e-corpus-run e2e-run \
 	fmt itest js lint logs package pins publish ql \
-	quality release-archive release-ui restart script-test selfcheck serve start status stop style test ui \
+	quality release-archive release-ui restart script-test security-test selfcheck serve start status stop style test ui \
 	ui-test verify vet
 
 .DEFAULT_GOAL := build
@@ -245,8 +245,13 @@ quality: selfcheck
 	@go run ./cmd/codeql-abom selfcheck --language=python --source-root=scripts \
 		--suite advanced-security/abom-python-quality-src:codeql-suites/abom-python-quality.qls
 
-## selfcheck: run our own analysis over our own workflows.
-selfcheck:
+## security-test: enforce the HTTP and deployed-query trust boundaries without external services.
+security-test:
+	@go test ./internal/serve ./internal/customql \
+		-run '^(TestHTTPBoundary|TestQueryLifecycle|TestDeployedSuite)' -count=1
+
+## selfcheck: run security regressions and our own analysis over our own workflows.
+selfcheck: security-test
 	@go run ./cmd/codeql-abom selfcheck \
 		--suite advanced-security/abom-actions-selfcheck-src:codeql-suites/abom-selfcheck.qls
 

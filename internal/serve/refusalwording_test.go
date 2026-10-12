@@ -27,7 +27,7 @@ func TestARefusalCarriesNoGoNamespace(t *testing.T) {
 		"/api/bom?boundary=cross-owner",
 	} {
 		rec := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, url, nil))
+		srv.Handler().ServeHTTP(rec, localRequest(http.MethodGet, url, nil))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("%s answered %d, so it refused nothing: %s", url, rec.Code, rec.Body.String())
 		}
@@ -43,7 +43,7 @@ func TestTheListingRefusalNamesTheFilterWithoutRoutingAdvice(t *testing.T) {
 
 	for _, url := range []string{"/api/actions?boundary=cross-owner", "/api/relationships?flags=findings"} {
 		rec := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, url, nil))
+		srv.Handler().ServeHTTP(rec, localRequest(http.MethodGet, url, nil))
 		body := rec.Body.String()
 		if !strings.Contains(body, "Not applied here:") {
 			t.Errorf("%s did not use the concise refusal: %s", url, strings.TrimSpace(body))

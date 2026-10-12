@@ -13,7 +13,7 @@ import (
 
 func postPolicy(t *testing.T, srv *Server, path, body string, out any) int {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req := localRequest(http.MethodPost, path, strings.NewReader(body))
 	req.Host = "127.0.0.1:8080"
 	req.Header.Set(controlHeader, "1")
 	rec := httptest.NewRecorder()
@@ -29,7 +29,7 @@ func postPolicy(t *testing.T, srv *Server, path, body string, out any) int {
 func getPolicyJSON(t *testing.T, srv *Server, path string, out any) int {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	srv.Handler().ServeHTTP(rec, localRequest(http.MethodGet, path, nil))
 	if out != nil && rec.Body.Len() > 0 {
 		if err := json.Unmarshal(rec.Body.Bytes(), out); err != nil {
 			t.Fatalf("decoding %s: %v", rec.Body.String(), err)
@@ -150,7 +150,7 @@ func TestWritingAPolicyIsControlGuarded(t *testing.T) {
 	for _, path := range []string{
 		"/api/policies/p/simulate", "/api/policies/p/adopt", "/api/policies/p/waivers",
 	} {
-		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader("{}"))
+		req := localRequest(http.MethodPost, path, strings.NewReader("{}"))
 		req.RemoteAddr = "203.0.113.7:9999"
 		rec := httptest.NewRecorder()
 		srv.Handler().ServeHTTP(rec, req)

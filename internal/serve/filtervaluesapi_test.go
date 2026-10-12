@@ -136,7 +136,7 @@ func TestValuesEndpointIsReadOnly(t *testing.T) {
 	s, _ := newServer(t)
 
 	rec := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rec, httptest.NewRequest("POST", "/api/filters/rules/values", nil))
+	s.Handler().ServeHTTP(rec, localRequest("POST", "/api/filters/rules/values", nil))
 	if rec.Code == 200 {
 		t.Error("a write reached the values endpoint")
 	}

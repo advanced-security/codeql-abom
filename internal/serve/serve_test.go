@@ -2,6 +2,7 @@ package serve
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -12,6 +13,15 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/graph"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
+
+func localRequest(method, target string, body io.Reader) *http.Request {
+	r := httptest.NewRequest(method, target, body)
+	// httptest's implicit example.com Host does not represent a local ABOM client.
+	if strings.HasPrefix(target, "/") {
+		r.Host = "127.0.0.1:8080"
+	}
+	return r
+}
 
 func newServer(t *testing.T) (*Server, *store.Store) {
 	t.Helper()
@@ -29,7 +39,7 @@ func newServer(t *testing.T) (*Server, *store.Store) {
 func get(t *testing.T, srv *Server, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	srv.Handler().ServeHTTP(rec, localRequest(http.MethodGet, path, nil))
 	return rec
 }
 

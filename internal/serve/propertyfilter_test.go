@@ -23,7 +23,7 @@ func TestTheGraphAppliesAPropertyRatherThanRefusingIt(t *testing.T) {
 	srv, _ := unitServer(t)
 
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(
+	srv.Handler().ServeHTTP(rec, localRequest(
 		http.MethodGet, "/api/graph/full?properties=business_id:3", nil))
 
 	if rec.Code != http.StatusOK {
@@ -37,7 +37,7 @@ func TestTheDeltaAcceptsWhatTheGraphAccepts(t *testing.T) {
 	srv, _ := unitServer(t)
 
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(
+	srv.Handler().ServeHTTP(rec, localRequest(
 		http.MethodGet, "/api/graph/delta?since=0&properties=business_id:3", nil))
 
 	if rec.Code != http.StatusOK {
@@ -50,7 +50,7 @@ func TestTheSetEndpointAcceptsAProperty(t *testing.T) {
 	srv, _ := unitServer(t)
 
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(
+	srv.Handler().ServeHTTP(rec, localRequest(
 		http.MethodGet, "/api/match?properties=business_id:3", nil))
 
 	if rec.Code != http.StatusOK {
@@ -64,7 +64,7 @@ func TestAPropertyTermWithNoKeyIsRefusedByTheEndpoint(t *testing.T) {
 	srv, _ := unitServer(t)
 
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/match?properties=3", nil))
+	srv.Handler().ServeHTTP(rec, localRequest(http.MethodGet, "/api/match?properties=3", nil))
 
 	if rec.Code == http.StatusOK {
 		t.Fatal("a property term carrying no key was answered rather than refused")
@@ -77,7 +77,7 @@ func TestTheDocumentRefusesAParameterItDoesNotApply(t *testing.T) {
 
 	for _, query := range []string{"units=3", "severity=error", "notAParameter=1"} {
 		rec := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/bom?"+query, nil))
+		srv.Handler().ServeHTTP(rec, localRequest(http.MethodGet, "/api/bom?"+query, nil))
 
 		if rec.Code == http.StatusOK {
 			t.Errorf("/api/bom?%s was answered; it applies no such filter", query)
@@ -95,7 +95,7 @@ func TestTheDocumentStillAcceptsItsOwnParameters(t *testing.T) {
 	srv, _ := unitServer(t)
 
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(
+	srv.Handler().ServeHTTP(rec, localRequest(
 		http.MethodGet, "/api/bom?root=octo-org/app&format=native&download=true", nil))
 
 	if rec.Code == http.StatusBadRequest {
@@ -113,7 +113,7 @@ func TestThePinningEndpointsRefuseAMalformedProperty(t *testing.T) {
 		"/api/pinning/totals?properties=3",
 	} {
 		rec := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		srv.Handler().ServeHTTP(rec, localRequest(http.MethodGet, path, nil))
 
 		if rec.Code == http.StatusOK {
 			t.Errorf("%s was answered; the term carries no key", path)

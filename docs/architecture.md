@@ -231,6 +231,10 @@ anybody presses. Each step is derived from evidence on
 disk or in `abom_query_test`, served by the API and never computed in the browser. ABOM computes
 readiness and never advances anything itself.
 
+An advance must name an actual catalog query and version. Malformed IDs, empty versions and
+unlisted versions are refused before probing CodeQL, recording a stage or rewriting a suite.
+The deployed suite is YAML-encoded from validated IDs, not interpolated from stored strings.
+
 | Step | Evidence |
 | --- | --- |
 | Target | the operator's selection of an existing id, or the agent's recorded decision |
@@ -1400,6 +1404,12 @@ markup and state, `make e2e` (Playwright) for geometry and the real API contract
 a screenshot pass for density, colour and hierarchy. A green layer says nothing about the others —
 bUnit has no CSS engine, so a grid overflowing by 288px is green everywhere until a browser lays
 it out.
+
+**Application-specific security boundaries have behavioral regressions.** `make security-test`
+enumerates the API routes and checks the default Host boundary, control requirements, signed
+webhook exception, read-only instances and query lifecycle/deployment validation. It runs in
+the Go Self Audit job and before `make selfcheck`, alongside the upstream CodeQL suites rather
+than pretending their generic models cover these application contracts.
 
 **ABOM checks its own graph.** `codeql-abom check` compares what ABOM stored with an independent
 reading of the same thing, and files every disagreement as a question with its reproduction, never

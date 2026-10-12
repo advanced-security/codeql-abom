@@ -16,7 +16,7 @@ import (
 )
 
 func verifyRequest(body string) *http.Request {
-	r := httptest.NewRequest(http.MethodPost, "/api/locks/verify", strings.NewReader(body))
+	r := localRequest(http.MethodPost, "/api/locks/verify", strings.NewReader(body))
 	r.Host = "127.0.0.1:8080"
 	r.Header.Set(controlHeader, "1")
 	r.Header.Set("Content-Type", "application/json")
@@ -102,7 +102,7 @@ func TestTheHistoryIsReadWithoutRunningAnything(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/locks/verifications?repository=octo/app", nil))
+	srv.Handler().ServeHTTP(rec, localRequest(http.MethodGet, "/api/locks/verifications?repository=octo/app", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
