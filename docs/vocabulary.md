@@ -4,6 +4,15 @@ One word per notion, chosen once and used everywhere. `checkVocabulary` in
 `ui/tools/check-style.mjs` fails the build on the retired spellings, so this is a build step rather
 than a convention.
 
+## Learning
+
+**Tutorial** enables a read-only walkthrough of existing pages. **Completed** in the home
+learning checklist means the walkthrough was finished, never that the operational task was
+performed. Missing data is explained in the current step without inventing evidence.
+The **ABOM Tutorials** section on Home and Settings uses play and restart controls;
+titles can also resume an unfinished lesson in the current tab. Acknowledgement dismisses the
+first-visit welcome.
+
 ## Ownership
 
 Three notions, and only one of them means responsibility.
@@ -25,19 +34,16 @@ flowchart LR
 | **A member of** | `abom_account` | What `gh` reports. Decides nothing on its own. |
 | **Reached** | The graph | Whatever the declared scope depends on, at any depth. |
 
-`repository.origin` records how a row entered the corpus. It is provenance of the data, and is
-never rendered as an ownership claim.
+**Origin** distinguishes your declared repositories from other recorded dependencies.
+Only the ownership declaration establishes what is yours; the filter displays these labels
+rather than internal storage values.
 
-**Origin** says whose a node is, in four words. The declaration decides first; where it does not
-cover the node's repository, provenance does. The `origins` filter takes the same values, and a
-starting point you declared answers both `owned` and `seed`.
-
-| Word | Value | Means |
-| --- | --- | --- |
-| **owned** | `owned` | Your declaration covers the repository it lives in |
-| **starting point** | `seed` | Seeded, and nobody declared its repository |
-| **upstream** | `upstream` | In a repository fetched only to resolve what the starting points run |
-| **external** | `external` | Belongs to no repository: what a reference names, rather than what a repository holds |
+| Word | Means |
+| --- | --- |
+| **owned** | Your declaration covers the repository it lives in |
+| **starting point** | A directly recorded repository outside your ownership declaration |
+| **upstream** | In a repository read to resolve another repository's dependencies |
+| **external** | A referenced item not recorded inside a repository |
 
 **What you own** is the `owned` scope: only what your declared repositories hold, so every row and
 node it lists reads *owned*. **Yours and what it runs** is the `supply-chain` scope: that, and

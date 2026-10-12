@@ -16,6 +16,7 @@ DOCS -->|"direction"| VISION["Vision and roadmap"]
 | First source installation | tools, query packs, authentication, startup | [Source setup](deployment/source.md) |
 | Configuring ABOM | credentials, ownership, paths, optional features | [Configuration](deployment/configuration.md) |
 | Running the local service | lifecycle, backups, batch commands, troubleshooting | [Operations](deployment/operations.md) |
+| Learning the interface | read-only walkthroughs, QLaaS development and investigations | [Tutorials](tutorials.md) |
 | Understanding the system | pipeline, data model, invariants | [Architecture](architecture.md) |
 | Understanding labels and claims | shared terminology | [Vocabulary](vocabulary.md) |
 | Understanding its purpose | audience and native GitHub capabilities | [Value proposition](abom-value-proposition.md) |

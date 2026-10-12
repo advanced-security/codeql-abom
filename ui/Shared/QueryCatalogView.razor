@@ -125,7 +125,8 @@ else
                             HeaderClass="abom-identity-col" CellClass="abom-identity-col">
                 <HeaderTemplate><HeaderTip Tip="The query's identifier, with its authoring steps while it is being written.">Query</HeaderTip></HeaderTemplate>
                 <CellTemplate>
-                    <div class="abom-query-id" data-abom-query-id="@context.Item.QueryId">
+                    <div class="abom-query-id" data-abom-query-id="@context.Item.QueryId"
+                         data-abom-query-working="@(context.Item.Working && !context.Item.Discovery && !context.Item.Lane ? "true" : "false")">
                         @context.Item.QueryId
                     </div>
                     @* Under the id rather than in the action column, which would widen every row for one. *@

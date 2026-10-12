@@ -1,0 +1,359 @@
+@implements IAsyncDisposable
+@inject TutorialService Tutorial
+@inject AbomApi Api
+@inject IJSRuntime Js
+@inject NavigationManager Nav
+@inject ThemeService Theme
+@using System.Globalization
+
+@if (Tutorial.Notice.Length > 0)
+{
+    <div class="abom-tutorial-notice" role="status" data-abom-tutorial-notice>@Tutorial.Notice</div>
+}
+@if (Tutorial.ShowWelcome)
+{
+    <aside class="abom-tutorial-welcome mud-paper" aria-labelledby="abom-tutorial-welcome-title" data-abom-tutorial-welcome>
+        <h2 id="abom-tutorial-welcome-title" class="mud-typography mud-typography-subtitle1">Welcome to ABOM</h2>
+        <p>Start with Settings, coverage and CodeQL, then explore the Inventory. Tutorials do not change your data.</p>
+        <div class="d-flex flex-wrap gap-2">
+            <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                       Disabled="@StartBlocked" title="Start the overview tutorial."
+                       OnClick="@(() => Tutorial.StartAsync("orientation"))" data-abom-tutorial-orientation>Start overview</MudButton>
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" title="Dismiss the welcome without starting a tutorial."
+                       OnClick="@(() => Tutorial.SetEnabledAsync(false))" data-abom-tutorial-ack>Not now</MudButton>
+        </div>
+        @if (StartBlocked)
+        {
+            <p role="status">@Tutorial.StartRefusal</p>
+        }
+    </aside>
+}
+@if (Tutorial.Active is { } lesson && Tutorial.Step is { } step)
+{
+    <div class="abom-tutorial-layer" data-abom-tutorial-layer>
+        <svg class="abom-tutorial-scrim" aria-hidden="true" width="100%" height="100%">
+            <defs>
+                <mask id="abom-tutorial-mask">
+                    <rect width="100%" height="100%" fill="white" />
+                    <rect data-abom-tutorial-hole rx="6" fill="black" />
+                </mask>
+            </defs>
+            <rect width="100%" height="100%" mask="url(#abom-tutorial-mask)"
+                  fill="@Theme.TutorialScrim" class="abom-tutorial-shade" />
+        </svg>
+        @if (ShowsPreview)
+        {
+            <section class="abom-tutorial-preview mud-paper" data-abom-tutorial-preview aria-label="Read-only tutorial example">
+                <p class="abom-tutorial-preview-label">Read-only example</p>
+                @if (step.Preview is "form" or "improve-form")
+                {
+                    <QueryRequestForm Request="@_preview" Catalog="@_catalog" ReadOnly="true" />
+                }
+                else if (IsMark(step.Preview))
+                {
+                    <div class="d-flex align-center gap-2">
+                        <MudIcon Icon="@AuthoringSteps.IconOf(step.Preview)" Size="Size.Large" />
+                        <h2 class="mud-typography mud-typography-h6">@AuthoringSteps.LabelOf(step.Preview)</h2>
+                    </div>
+                    <dl class="abom-tutorial-states">
+                        @foreach (var state in new[] { "passing", "failed", "warning", "pending" })
+                        {
+                            <dt><MudIcon Icon="@AuthoringSteps.IconOf(step.Preview)"
+                                         Color="@AuthoringSteps.ColorOf(step.Preview, state)" Size="Size.Small" />
+                                @AuthoringSteps.StateText(step.Preview, state)</dt>
+                            <dd>@StateMeaning(state)</dd>
+                        }
+                    </dl>
+                }
+                else
+                {
+                    <h2 class="mud-typography mud-typography-h6">@step.Title</h2>
+                    <p>@(step.Detail.Length > 0 ? step.Detail : step.Text)</p>
+                }
+            </section>
+        }
+        <aside class="abom-tutorial-coach mud-paper" role="dialog" aria-labelledby="abom-tutorial-heading"
+               aria-describedby="abom-tutorial-copy" data-abom-tutorial-coach
+               data-abom-tutorial-step="@step.Id" data-abom-tutorial-ready="@_state" tabindex="-1">
+            <div class="abom-tutorial-progress-row">
+                <span class="abom-tutorial-wheel" role="progressbar" data-abom-tutorial-progress
+                      aria-label="Tutorial steps completed" aria-valuemin="0"
+                      aria-valuenow="@Tutorial.StepIndex" aria-valuemax="@lesson.Steps.Count"
+                      aria-valuetext="@($"Step {Tutorial.StepIndex + 1} of {lesson.Steps.Count}")">
+                    <svg viewBox="0 0 40 40" aria-hidden="true">
+                        <circle cx="20" cy="20" r="17" class="abom-tutorial-wheel-track" />
+                        <circle cx="20" cy="20" r="17" pathLength="100" class="abom-tutorial-wheel-value"
+                                stroke-dasharray="@($"{(100.0 * Tutorial.StepIndex / lesson.Steps.Count).ToString(CultureInfo.InvariantCulture)} 100")"
+                                transform="rotate(-90 20 20)" />
+                    </svg>
+                    <span aria-hidden="true">@(Tutorial.StepIndex + 1)</span>
+                </span>
+                <div class="abom-tutorial-position" aria-live="polite">
+                    <span>@lesson.Title</span>
+                    <span>Step @(Tutorial.StepIndex + 1) of @lesson.Steps.Count · @(lesson.Steps.Count - Tutorial.StepIndex - 1) after this</span>
+                </div>
+            </div>
+            <h2 id="abom-tutorial-heading" class="mud-typography mud-typography-subtitle1" tabindex="-1">@step.Title</h2>
+            <p id="abom-tutorial-copy">@step.Text</p>
+            @if (step.Detail.Length > 0 && !ShowsPreview)
+            {
+                <details class="abom-tutorial-more">
+                    <summary>More detail</summary>
+                    <p>@step.Detail</p>
+                </details>
+            }
+            @if (_state == "missing")
+            {
+                <p role="status" data-abom-tutorial-missing>@MissingText</p>
+            }
+            else if (_state == "loading")
+            {
+                <p role="status" class="mud-text-secondary">Waiting for the page...</p>
+            }
+            <div class="abom-tutorial-controls">
+                <button type="button" disabled="@(Tutorial.StepIndex == 0)" @onclick="Tutorial.Back"
+                        title="Return to the previous tutorial step." data-abom-tutorial-back>Back</button>
+                @if (Tutorial.LastStep)
+                {
+                    <button type="button" disabled="@(!CanContinue)" @onclick="Finish"
+                            title="Finish this tutorial." data-abom-tutorial-finish>Finish tutorial</button>
+                }
+                else
+                {
+                    <button type="button" disabled="@(!CanContinue)" @onclick="Next"
+                            title="Continue to the next tutorial step." data-abom-tutorial-next>Next</button>
+                }
+                <button type="button" @onclick="@(() => Tutorial.ExitAsync())"
+                        title="Exit this tutorial." data-abom-tutorial-exit>Exit tutorial</button>
+            </div>
+            @if (Tutorial.LastStep)
+            {
+                <section class="abom-tutorial-related" aria-label="Suggested next tutorials">
+                    <h3 class="mud-typography mud-typography-subtitle2">Suggested next</h3>
+                    @foreach (var related in lesson.Related.Select(id => TutorialLessons.All.Single(l => l.Id == id)))
+                    {
+                        <Tip Text="@related.Description">
+                            <button type="button" class="abom-tutorial-link" disabled="@(!CanContinue)"
+                                    @onclick="@(() => Tutorial.FinishAndStartAsync(related.Id))"
+                                    data-abom-tutorial-related="@related.Id">@related.Title</button>
+                        </Tip>
+                    }
+                    <p class="mud-text-secondary">Selecting one finishes this tutorial and starts the next.</p>
+                </section>
+            }
+            <p class="abom-tutorial-position">Escape to exit</p>
+        </aside>
+    </div>
+}
+
+@code {
+    public sealed record Activation(string Kind, string Href, string Value);
+    private sealed record Selection(string NodeAddress, string Query, long Finding, string Branch, QueryCatalog? Catalog);
+    private readonly Dictionary<string, Selection> _selections = [];
+    private string _nodeAddress = "";
+    private string _query = "";
+    private long _finding;
+    private string _branch = "advisory";
+    private string _state = "loading";
+    private string _missing = "";
+    private string? _shownLesson;
+    private TutorialStep? _shownStep;
+    private QueryCatalog? _catalog;
+    private QueryRequest _preview = new();
+    private bool _refreshTarget;
+    private bool _disposed;
+    private int _generation;
+    private DotNetObjectReference<TutorialHost>? _self;
+
+    private bool StartBlocked => Tutorial.StartRefusal.Length > 0;
+    private bool CanContinue => _state == "missing" || _state == "ready" && ActionKind.Length == 0;
+    private bool ShowsPreview => Tutorial.Step is { Preview.Length: > 0 } step &&
+        !(step.Preview == "improve-form" && _query.Length == 0);
+    private string MissingText => _missing.Length > 0 ? _missing
+        : Tutorial.Step?.Empty is { Length: > 0 } empty ? empty
+        : "This section is not available in the current view. Continue to the next topic.";
+    private string ActionKind => Tutorial.Step?.Action switch
+    {
+        "evidence" => _branch == "finding" ? "finding" : "node",
+        "finding-asset" => _branch == "finding" ? "node" : "",
+        "reference" => "node",
+        { } action => action,
+        _ => "",
+    };
+    private string Target => Tutorial.Step?.Target switch
+    {
+        "$evidence-link" => _branch == "finding" ? "[data-abom-review-finding]" : "[data-abom-advisory-action]",
+        "$evidence-detail-target" => _branch == "finding" ? "[data-abom-finding-detail]" : "[data-abom-node-versions]",
+        { } target => target,
+        _ => "",
+    };
+    private string ActionSelector => Tutorial.Step?.Action switch
+    {
+        "evidence-tab" => "[data-abom-unit='findings'], [data-abom-unit='advisories']",
+        "finding-asset" when _branch == "finding" => "[data-abom-finding-asset]",
+        _ => ActionKind.Length > 0 ? Target : "",
+    };
+
+    protected override void OnInitialized() => Tutorial.Changed += Refresh;
+    private void Refresh() => InvokeAsync(StateHasChanged);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_disposed) return;
+        if (Tutorial.Active is null)
+        {
+            if (_shownStep is not null)
+            {
+                if (_shownLesson is not null)
+                    _selections[_shownLesson] = new(_nodeAddress, _query, _finding, _branch, _catalog);
+                _shownStep = null;
+                _shownLesson = null;
+                _generation++;
+                await Js.InvokeVoidAsync("abomTutorial.end");
+            }
+            return;
+        }
+        if (_shownStep != Tutorial.Step || _shownLesson != Tutorial.Active.Id)
+        {
+            if (_shownLesson != Tutorial.Active.Id)
+            {
+                _shownLesson = Tutorial.Active.Id;
+                _nodeAddress = _query = "";
+                _finding = 0;
+                _catalog = null;
+                _branch = "advisory";
+                if (Tutorial.StepIndex > 0 && _selections.TryGetValue(_shownLesson, out var kept))
+                {
+                    _nodeAddress = kept.NodeAddress;
+                    _query = kept.Query;
+                    _finding = kept.Finding;
+                    _branch = kept.Branch;
+                    _catalog = kept.Catalog;
+                }
+            }
+            _shownStep = Tutorial.Step;
+            _generation++;
+            _state = "loading";
+            _missing = "";
+            Tutorial.Navigate(ResolveRoute(Tutorial.Step!.Route));
+            _preview = new QueryRequest
+            {
+                Title = "Example request",
+                QueryId = Tutorial.Step.Preview == "improve-form" ? _query : "",
+                Description = "Report workflows that grant broad write permissions.",
+                Compliant = "permissions: read-all",
+                NonCompliant = "permissions: write-all",
+                Recommendation = "Grant only the token permissions this workflow needs.",
+                Kind = Tutorial.Step.Preview == "improve-form" ? "both" : "missed",
+            };
+            _refreshTarget = true;
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+        if (_refreshTarget)
+        {
+            _refreshTarget = false;
+            _self ??= DotNetObjectReference.Create(this);
+            await Js.InvokeVoidAsync("abomTutorial.show", Target, _self, _generation, ActionSelector, ActionKind);
+        }
+    }
+
+    private string ResolveRoute(string route)
+    {
+        if (route == "$query")
+        {
+            if (_query.Length == 0) _missing = "No custom query was opened. Continue to see how an improvement request is prepared.";
+            return "/codeql?tab=catalog" + (_query.Length > 0 ? "&query=" + Uri.EscapeDataString(_query) : "");
+        }
+        if (route == "$node" || route == "$evidence-detail" && _branch == "advisory")
+        {
+            if (_nodeAddress.Length > 0) return _nodeAddress;
+            _missing = "No linked Action was opened. Continue to the next topic.";
+            return "/" + Nav.ToBaseRelativePath(Nav.Uri);
+        }
+        if (route == "$evidence-detail")
+            return "/inventory?unit=findings" + (_finding > 0 ? "&finding=" + _finding : "");
+        return route == "$evidence" ? "/inventory?unit=" + (_branch == "finding" ? "findings" : "advisories") : route;
+    }
+
+    [JSInvokable]
+    public Task TargetChanged(int generation, string state) => InvokeAsync(() =>
+    {
+        if (generation != _generation || _disposed) return;
+        _state = _missing.Length > 0 ? "missing" : state;
+        StateHasChanged();
+    });
+
+    [JSInvokable]
+    public async Task<bool> Activate(int generation, Activation action)
+    {
+        if (_disposed || generation != _generation || action.Kind != ActionKind || Tutorial.Active is null)
+            return false;
+        var accepted = false;
+        await InvokeAsync(async () =>
+        {
+            if (action.Kind == "node" && Uri.TryCreate(Nav.Uri, UriKind.Absolute, out var current) &&
+                Uri.TryCreate(current, action.Href, out var destination) &&
+                destination.AbsoluteUri.StartsWith(Nav.BaseUri, StringComparison.Ordinal) &&
+                Nav.ToBaseRelativePath(destination.AbsoluteUri).StartsWith("node/", StringComparison.Ordinal))
+            {
+                _nodeAddress = "/" + Nav.ToBaseRelativePath(destination.AbsoluteUri);
+                accepted = true;
+            }
+            else if (action.Kind == "evidence-tab" && action.Value is "findings" or "advisories")
+            {
+                _branch = action.Value == "findings" ? "finding" : "advisory";
+                _nodeAddress = "";
+                _finding = 0;
+                accepted = true;
+            }
+            else if (action.Kind == "finding" && long.TryParse(action.Value, out var finding) && finding > 0)
+            {
+                _finding = finding;
+                _nodeAddress = "";
+                accepted = true;
+            }
+            else if (action.Kind == "query" && action.Value.Length > 0)
+            {
+                var catalog = await Api.GetQueryCatalogAsync();
+                if (_disposed || generation != _generation) return;
+                if (Api.LastError is not null)
+                {
+                    Tutorial.Report("The query catalog could not be read: " + Api.LastError);
+                    return;
+                }
+                if (catalog.Queries.Any(q => q.QueryId == action.Value && q.Working && !q.Discovery && !q.Lane))
+                {
+                    _query = action.Value;
+                    _catalog = catalog;
+                    accepted = true;
+                }
+            }
+            if (accepted) Tutorial.Next();
+            else Tutorial.Report("That tutorial target is no longer available. Try the highlighted control again.");
+        });
+        return accepted;
+    }
+
+    [JSInvokable]
+    public Task Escape() => InvokeAsync(() => Tutorial.ExitAsync());
+    private void Next() { if (CanContinue) Tutorial.Next(); }
+    private Task Finish() => CanContinue ? Tutorial.FinishAsync() : Task.CompletedTask;
+    private static bool IsMark(string kind) => kind is "target" or "help" or "expected" or "database" or "ast" or "compiles" or "tests";
+    private static string StateMeaning(string state) => state switch
+    {
+        "passing" => "This check passed, or the target was chosen.",
+        "failed" => "The check failed; read its result.",
+        "warning" => "The evidence is stale or unconfirmed.",
+        _ => "No result is recorded yet.",
+    };
+
+    public async ValueTask DisposeAsync()
+    {
+        _disposed = true;
+        _generation++;
+        Tutorial.Changed -= Refresh;
+        await Js.InvokeVoidAsync("abomTutorial.end");
+        _self?.Dispose();
+    }
+}

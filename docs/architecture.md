@@ -5,6 +5,15 @@ What the system currently does, in the order it does it, and the rules that shap
 interface and API use, see [the vocabulary](vocabulary.md). For where it is going, see
 [the vision](vision.md). For what is not built yet, see [the roadmap](roadmap.md).
 
+## Learning without changing the evidence
+
+The [Tutorial walkthroughs](tutorials.md) connect the existing pages without performing their
+write operations. One browser-local service owns acknowledgement, completion, a fixed step list
+and same-tab resume state. A shared request handler refuses non-read requests during a walkthrough.
+The spotlight permits only the highlighted read-only UI action and tutorial controls.
+Form previews never submit; missing data is explained in the same step, not replaced with synthetic evidence. Tutorial completion cannot
+earn a query stage or establish a security verdict, and no Demo dataset is required.
+
 ## The pipeline
 
 ```mermaid
@@ -140,7 +149,7 @@ adds what they run, directly or through another action. A dependency's repositor
 project's own CI, which is fetched and is never yours; admitted whole, it was 1,874 of the 1,991
 workflows the crawled organization's closure listed. A property filter on the Explorer draws its
 group's repositories the way `supply-chain` does. What depends on a listed action is counted over
-the declared repositories reaching it, never every starting point, since a seed another account
+the declared repositories reaching it, never every starting point, since a repository another account
 holds is not yours to count.
 
 **Analysis is queued per dependency *and* reference.** `actions/checkout@v4` and
@@ -375,7 +384,7 @@ ingests its results into the tables the crawl writes — a result that landed an
 every reader taught about a second source. A member with no database gets one built the way the
 crawl builds one, at the commit on record or, where nothing names one, at the default branch, and is
 recorded at the database it was analyzed against. Only what the crawl would build is built: a
-regular database, for a repository ABOM tracks, since ingesting any other would enter it as a seed.
+regular database, for a repository ABOM tracks, since ingesting any other would make it a new directly recorded repository.
 A member whose commit holds no workflow or action manifest, or that has no commit, has *nothing to
 analyze*, which is neither a failure nor a result; a member that could not be read is failed.
 A member whose evaluation is already stored under the same run key is skipped and carries that
@@ -527,7 +536,7 @@ that does not reach it, and a read that failed, record nothing. Its ledger and i
 stay. What it alone reached is what no longer belongs, which the prune in Settings states and offers
 to take out of view — it is never removed inside an enumeration, which runs on a timer, because a
 listing can under-report without failing: one read without a token found 91 of 181 repositories
-and said nothing. A seeded repository no declared account covers is treated the same way: it is
+and said nothing. A directly recorded repository no declared account covers is treated the same way: it is
 outside the closure, kept until somebody accepts the prune that says what removing it takes.
 
 ## The data model
@@ -1458,7 +1467,7 @@ stub nobody has worked on to one that failed first and passes. Their requests in
 agent's finished session worked, with the calls the gate refused and the tree it printed. The
 test runs and the tree are replayed from what CodeQL recorded, through the same functions the
 server records with; the recording is refused when it describes other files than the ones laid
-out. So a seeded session needs no agent, and the pack needs no CLI.
+out. So a recorded example session needs no agent, and the pack needs no CLI.
 
 ## What the design refuses
 

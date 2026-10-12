@@ -166,7 +166,7 @@ roots, not a prohibition on following their dependencies. Personal accounts requ
 `--user` declaration; they are never assumed. Use the interface for changes while serving rather
 than opening a second database writer.
 
-An optional untracked `abom.local.json` in the working directory can seed an empty declaration:
+An optional untracked `abom.local.json` in the working directory can initialize an empty declaration:
 
 ```json
 {
@@ -184,8 +184,8 @@ Only include the `includes` or `properties` property when you intend that restri
 `properties` entry is the object `--property` takes. `--declare-file` selects
 another file. This is a declaration channel, not a general application configuration file. It is
 read at startup, missing files are allowed, and malformed files are refused. A valid file does not
-replace an existing declaration. Clearing the declaration while leaving a seed file configured
-can seed it again at the next startup. Like `own`, a seeded declaration lists nothing until
+replace an existing declaration. Clearing the declaration while leaving this file configured
+can restore it at the next startup. Like `own`, a file-based declaration lists nothing until
 discovery starts.
 
 ## Paths and startup

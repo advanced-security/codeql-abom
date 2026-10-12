@@ -5,6 +5,8 @@
 @inject AbomApi Api
 @inject AccountService Accounts
 @inject PromptMemory Prompts
+@inject TutorialService Tutorial
+@implements IDisposable
 
 <PageTitle>Settings — ABOM</PageTitle>
 
@@ -15,6 +17,8 @@
     can change and what you cannot &mdash; both halves, always. <code>gh</code> is asked whether
     you still have the access you claim; it never decides what is yours.
 </PageHeader>
+
+<TutorialChecklist />
 
 @if (Accounts.Declared is null)
 {
@@ -978,10 +982,8 @@ else
 
 <MudText Typo="Typo.subtitle2" Class="mt-8 mb-1">Accounts holding repositories discovery started from</MudText>
 <MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
-    Seeded repositories, not analyzed ones &mdash; an account can hold every one of its seeds with
-    nothing analyzed yet, which is what the figures above report. Holding one does not make an
-    account yours either: <code>actions</code> owns <code>actions/cache</code>, which arrives as a
-    seed, and that is why it appears here and why belonging is checked rather than assumed.
+    These accounts hold repositories known to ABOM. This does not mean you own them or that they
+    have been analyzed.
 </MudText>
 
 @if (_candidates is null)
@@ -1116,6 +1118,20 @@ else
         _draft.Select(d => d.ToAccount()).ToList();
 
     private bool Dirty => Canonical(DraftAccounts) != Canonical(Accounts.Declared ?? []);
+    private IDisposable? _tutorialEdit;
+
+    private void ProtectOwnershipEdit()
+    {
+        if (Dirty)
+            _tutorialEdit ??= Tutorial.BlockStart("Save or discard the ownership edit before starting a tutorial.");
+        else
+        {
+            _tutorialEdit?.Dispose();
+            _tutorialEdit = null;
+        }
+    }
+
+    public void Dispose() => _tutorialEdit?.Dispose();
 
     private static string Canonical(IEnumerable<DeclaredAccount> accounts) =>
         string.Join(";", accounts
@@ -1170,7 +1186,7 @@ else
         SeedDraft();
         // The page's first action, not a GET's side effect: nothing on record means the reader has
         // never been asked about, and asking once per visit keeps a broken gh from re-running.
-        if (Accounts.NothingOnRecord && !Accounts.CheckAttempted)
+        if (!Tutorial.IsReadOnly && Accounts.NothingOnRecord && !Accounts.CheckAttempted)
         {
             _ = CheckOnArrival();
         }
@@ -1178,7 +1194,7 @@ else
         _staleness = await Api.GetStalenessAsync();
         // Only a finished check that could measure and found something opens this. A check still
         // running, or one that had no closure to measure against, says nothing at all.
-        _stalePrompt = (_staleness?.HasSomethingToRemove ?? false) && !Prompts.Dismissed(_staleness!.CheckedAt);
+        _stalePrompt = !Tutorial.IsReadOnly && (_staleness?.HasSomethingToRemove ?? false) && !Prompts.Dismissed(_staleness!.CheckedAt);
     }
 
     // Only what it removes: a prompt reading "0 nodes and 0 edges" left the 4 it did remove unsaid.
@@ -1240,6 +1256,7 @@ else
             });
         }
         _preview = null;
+        ProtectOwnershipEdit();
     }
 
     private async Task Declare(string owner, string kind)
@@ -1389,7 +1406,7 @@ else
     private ScopeEditor? ScopeEditorOf(string owner) => _scopeEditors.GetValueOrDefault(owner);
 
     // Read from the stored declaration rather than copied into the draft, so a judgement made after
-    // the draft was seeded, such as enumeration reading the schema, is what the line shows.
+    // the draft was created, such as enumeration reading the schema, is what the line shows.
     private PropertyClause? SavedClause(string owner, IReadOnlyList<PropertyTerm> clause) =>
         Accounts.Declared?.FirstOrDefault(a => string.Equals(a.Owner, owner, StringComparison.OrdinalIgnoreCase))
             ?.Properties.FirstOrDefault(c => ClauseKey(c.Terms) == ClauseKey(clause));
@@ -1515,6 +1532,7 @@ else
 
     private async Task Changed()
     {
+        ProtectOwnershipEdit();
         _saved = false;
         _saveError = null;
         await RefreshPreview();

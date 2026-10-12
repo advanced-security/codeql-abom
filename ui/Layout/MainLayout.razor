@@ -2,6 +2,7 @@
 @implements IDisposable
 @inject ThemeService Theme
 @inject FollowService Follow
+@inject TutorialService Tutorial
 
 <MudThemeProvider @ref="_themeProvider" Theme="Theme.Theme" IsDarkMode="Theme.IsDark" />
 <MudPopoverProvider />
@@ -10,10 +11,10 @@
 
 <MudLayout>
     @* One bar owns the whole navigation so grids and graphs keep the page width. *@
-    <MudAppBar Elevation="1">
+    <MudAppBar Elevation="1" Class="abom-appbar">
         <Brand MarkColor="@Theme.MarkColor" />
 
-        <nav class="abom-nav ml-8 d-flex align-center">
+        <nav class="abom-nav d-flex align-center">
             <MudButton Href="/codeql" Variant="Variant.Text" Color="Color.Inherit"
                        DropShadow="false" StartIcon="@Icons.Material.Outlined.ManageSearch"
                        title="Open the CodeQL page for query packs, suites and analysis configuration."
@@ -48,6 +49,8 @@
     </MudMainContent>
 </MudLayout>
 
+<TutorialHost />
+
 @code {
     private MudThemeProvider _themeProvider = default!;
     private bool _systemPrefersDark;
@@ -79,6 +82,7 @@
         await Theme.InitialiseAsync(_systemPrefersDark);
         await _themeProvider.WatchSystemDarkModeAsync(OnSystemPreferenceChanged);
         await Follow.InitializeAsync();
+        await Tutorial.InitializeAsync();
         StateHasChanged();
     }
 

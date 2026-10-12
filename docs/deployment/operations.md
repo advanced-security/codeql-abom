@@ -91,7 +91,7 @@ the machine's CodeQL package cache.
 ## Batch CLI reference
 
 The service is the supported first-run path. The batch commands run the same stages by hand, with
-the server stopped, and seed from a different source:
+the server stopped, and import from a different source:
 
 ```bash
 ./bin/codeql-abom discover --org YOUR_ORG --db .abom/db/abom.db
@@ -102,7 +102,7 @@ the server stopped, and seed from a different source:
 ```
 
 `discover` records which repositories in the organization already have a GitHub code scanning
-database for Actions, and `build` downloads and ingests those databases. That seeds from what code
+database for Actions, and `build` downloads and ingests those databases. That imports what code
 scanning has built, not from the declared accounts' repository listing, and needs permission to
 read those databases. `expand-all` follows dependencies from what is recorded. `refresh`
 recomputes derived tables without crawling; it is not a migration or restore. Retain checkouts

@@ -6,6 +6,7 @@
 @inject NavigationManager Nav
 @inject FollowService Follow
 @inject ScopeService Scope
+@inject TutorialService Tutorial
 
 <PageTitle>Explorer — ABOM</PageTitle>
 
@@ -1678,7 +1679,10 @@
 
         // Replaced rather than pushed: the address mirrors what is on screen, and now that every
         // control syncs, pushing would cost a press of Back for each checkbox touched.
-        Nav.NavigateTo($"/explore?{query}", new NavigationOptions { ReplaceHistoryEntry = true });
+        if (Tutorial.IsReadOnly)
+            Tutorial.Navigate($"/explore?{query}");
+        else
+            Nav.NavigateTo($"/explore?{query}", new NavigationOptions { ReplaceHistoryEntry = true });
     }
 
     /// <summary>The portable half of what is on screen. Presentation is deliberately absent.</summary>

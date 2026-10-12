@@ -9,13 +9,15 @@
 @inject FollowService Follow
 @inject ThemeService Theme
 
-@if (_state.Available)
+@if (_loaded)
 {
     @* The state attribute carries the word; the bar does not print it. The icon says which way the
        control goes, its color says whether anything is running, and the words stay in the
        accessible name so a reader who needs them can still get them. *@
     <div class="abom-crawl d-flex align-center" data-abom-crawl
-         data-abom-crawl-state="@_state.Status.State">
+         data-abom-crawl-state="@(_error is not null ? "unknown" : _state.Available ? _state.Status.State : "unavailable")">
+        @if (_state.Available)
+        {
         <MudTooltip Text="@ToggleHint">
             <span>
                 <MudIconButton Icon="@ToggleIcon" Color="@ToggleColor" Size="Size.Small"
@@ -23,6 +25,15 @@
                                aria-label="@ToggleHint" data-abom-crawl-toggle />
             </span>
         </MudTooltip>
+        }
+        else
+        {
+            <MudTooltip Text="@UnavailableHint">
+                <span role="img" aria-label="@UnavailableHint" data-abom-crawl-unavailable>
+                    <MudIcon Icon="@Icons.Material.Outlined.Visibility" Size="Size.Small" />
+                </span>
+            </MudTooltip>
+        }
 
         @if (Total > 0)
         {
@@ -68,6 +79,9 @@
 @code {
     private DiscoveryState _state = new();
     private bool _busy;
+    private bool _loaded;
+    private string UnavailableHint => _error is not null ? $"Discovery status could not be read: {_error}"
+        : "Discovery controls are unavailable on this instance. This is the recorded queue, not a live crawl state.";
     private string? _error;
     private Timer? _timer;
     private TimeSpan _beat;
@@ -154,6 +168,7 @@
         // A read that failed returns an empty result rather than throwing, so the transport's own
         // account is the only thing separating "no crawl here" from "could not ask".
         _error = Api.LastError;
+        _loaded = true;
         ApplyFollow();
         StateHasChanged();
     }

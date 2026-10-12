@@ -11,7 +11,7 @@ namespace Abom.WebAssembly.Services;
 /// Responses are not cached: the database changes while an expansion runs, and a
 /// stale coverage figure would misreport how much is known.
 /// </summary>
-public sealed class AbomApi(HttpClient http)
+public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
 {
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -260,12 +260,24 @@ public sealed class AbomApi(HttpClient http)
     /// The predicate travels in the query string so the server reads it with the same code the
     /// graph and the gate read it with; a second way to express a scope is a second policy engine.
     /// </summary>
-    public Task<(AnalysisRun? Run, string? Refusal)> StartAnalysisRunAsync(
+    public async Task<(AnalysisRun? Run, string? Refusal)> StartAnalysisRunAsync(
         string predicate, IReadOnlyList<AnalysisQueryRef> queries, string by,
-        bool held, CancellationToken ct = default) =>
-        ReadRefusableAsync<AnalysisRun>("api/runs",
+        bool held, CancellationToken ct = default)
+    {
+        var result = await ReadRefusableAsync<AnalysisRun>("api/runs",
             () => SendControlRequestAsync(HttpMethod.Post, "api/runs?" + predicate, new { queries, by, held }, ct),
             "this run", ct);
+        WatchRun(result.Answer);
+        return result;
+    }
+
+    private void WatchRun(AnalysisRun? run)
+    {
+        if (run is not { State: "pending" or "running" }) return;
+        tutorial?.WatchWork($"run:{run.RowId}", "Finish or cancel the run on CodeQL / Runs before starting a tutorial.",
+            async token => (await GetAnalysisRunAsync(run.RowId, token)) is { } current
+                ? current.State is "pending" or "running" : null);
+    }
 
     /// <summary>What has been asked for, newest first.</summary>
     public async Task<IReadOnlyList<AnalysisRun>> GetAnalysisRunsAsync(
@@ -341,9 +353,16 @@ public sealed class AbomApi(HttpClient http)
     /// Starts an agent session on a request. A refusal names what stands in the way, such as
     /// discovery holding CodeQL, so it is returned rather than thrown.
     /// </summary>
-    public Task<(AuthoringSession? Session, string? Refusal)> StartAuthoringSessionAsync(
-        long request, string by, CancellationToken ct = default) =>
-        ControlAsync<AuthoringSession>($"api/query-requests/{request}/sessions", new { by }, ct);
+    public async Task<(AuthoringSession? Session, string? Refusal)> StartAuthoringSessionAsync(
+        long request, string by, CancellationToken ct = default)
+    {
+        var result = await ControlAsync<AuthoringSession>($"api/query-requests/{request}/sessions", new { by }, ct);
+        if (result.Answer is { State: "running" } session)
+            tutorial?.WatchWork($"session:{session.RowId}", "Finish or stop the authoring session on CodeQL / Requests before starting a tutorial.",
+                async token => (await GetAuthoringSessionsAsync(request, token))?.Sessions
+                    .FirstOrDefault(s => s.RowId == session.RowId) is { } current ? current.State == "running" : null);
+        return result;
+    }
 
     /// <summary>Stops the session working a request.</summary>
     public Task<(AuthoringSessionList? List, string? Refusal)> StopAuthoringSessionAsync(
@@ -385,9 +404,16 @@ public sealed class AbomApi(HttpClient http)
         await GetAsync<DraftSessionList>($"api/runs/{run}/drafts", ct);
 
     /// <summary>Starts an agent drafting a request from what was picked; nothing is filed by it.</summary>
-    public Task<(AuthoringSession? Session, string? Refusal)> StartDraftAsync(
-        long run, string queryId, IReadOnlyList<RequestEvidence> evidence, string by, CancellationToken ct = default) =>
-        ControlAsync<AuthoringSession>($"api/runs/{run}/drafts", new { queryId, by, evidence }, ct);
+    public async Task<(AuthoringSession? Session, string? Refusal)> StartDraftAsync(
+        long run, string queryId, IReadOnlyList<RequestEvidence> evidence, string by, CancellationToken ct = default)
+    {
+        var result = await ControlAsync<AuthoringSession>($"api/runs/{run}/drafts", new { queryId, by, evidence }, ct);
+        if (result.Answer is { State: "running" } session)
+            tutorial?.WatchWork($"session:{session.RowId}", "Finish or stop the request draft before starting a tutorial.",
+                async token => (await GetDraftsAsync(run, token))?.Drafts
+                    .FirstOrDefault(s => s.RowId == session.RowId) is { } current ? current.State == "running" : null);
+        return result;
+    }
 
     /// <summary>Stops the session drafting from a run.</summary>
     public Task<(DraftSessionList? List, string? Refusal)> StopDraftAsync(long run, CancellationToken ct = default) =>
@@ -475,18 +501,29 @@ public sealed class AbomApi(HttpClient http)
         await GetAsync<Comparison>($"api/comparisons/{id}", ct);
 
     /// <summary>Asks for a run's results to be set against the alerts GitHub holds now.</summary>
-    public Task<(Comparison? Comparison, string? Refusal)> StartComparisonAsync(
-        long run, string by, CancellationToken ct = default) =>
-        ControlAsync<Comparison>($"api/runs/{run}/comparisons", new { by }, ct);
+    public async Task<(Comparison? Comparison, string? Refusal)> StartComparisonAsync(
+        long run, string by, CancellationToken ct = default)
+    {
+        var result = await ControlAsync<Comparison>($"api/runs/{run}/comparisons", new { by }, ct);
+        if (result.Answer is { State: "running" or "pending" } comparison)
+            tutorial?.WatchWork($"comparison:{comparison.RowId}", "Wait for the comparison on CodeQL / Runs before starting a tutorial.",
+                async token => (await GetComparisonAsync(comparison.RowId, token)) is { } current
+                    ? current.State is "pending" or "running" : null);
+        return result;
+    }
 
     public async Task<FindingTrace?> GetFindingTraceAsync(long id, CancellationToken ct = default) =>
         await GetAsync<FindingTrace>($"api/findings/{id}", ct);
 
     /// <summary>Carries out a recorded run, answering as soon as it has started.</summary>
-    public Task<(AnalysisRun? Run, string? Refusal)> ExecuteAnalysisRunAsync(
-        long id, CancellationToken ct = default) =>
-        ReadRefusableAsync<AnalysisRun>($"api/runs/{id}/start",
+    public async Task<(AnalysisRun? Run, string? Refusal)> ExecuteAnalysisRunAsync(
+        long id, CancellationToken ct = default)
+    {
+        var result = await ReadRefusableAsync<AnalysisRun>($"api/runs/{id}/start",
             () => SendControlRequestAsync(HttpMethod.Post, $"api/runs/{id}/start", null, ct), "to start this run", ct);
+        WatchRun(result.Answer);
+        return result;
+    }
 
     /// <summary>
     /// Records that somebody moved a version to a stage, answering the catalog the move produced.
