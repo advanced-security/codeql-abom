@@ -5,7 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // DeploySuite is the suite a tier binds to run what the operator has deployed.
@@ -31,11 +32,15 @@ func WriteDeployed(dir string, queryIDs []string) error {
 	if dir == "" {
 		return fmt.Errorf("custom queries: no directory named")
 	}
+	body, err := deployedSuite(queryIDs)
+	if err != nil {
+		return err
+	}
 	path := filepath.Join(dir, filepath.FromSlash(DeploySuitePath))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("custom queries: preparing the suite directory: %w", err)
 	}
-	if err := os.WriteFile(path, []byte(deployedSuite(queryIDs)), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		return fmt.Errorf("custom queries: writing the deployed suite: %w", err)
 	}
 	return nil
@@ -43,11 +48,14 @@ func WriteDeployed(dir string, queryIDs []string) error {
 
 // deployedSuite renders the suite. Sorted and de-duplicated so the file is byte-identical for the
 // same set, which is what keeps a rewrite that changed nothing out of the operator's diff.
-func deployedSuite(queryIDs []string) string {
+func deployedSuite(queryIDs []string) (string, error) {
 	seen := map[string]bool{}
 	ids := make([]string, 0, len(queryIDs))
 	for _, id := range queryIDs {
-		if id == "" || seen[id] {
+		if !ValidQueryID(id) {
+			return "", fmt.Errorf("custom queries: %q is not a query id such as acme/checkout-tag-pin", id)
+		}
+		if seen[id] {
 			continue
 		}
 		seen[id] = true
@@ -55,19 +63,18 @@ func deployedSuite(queryIDs []string) string {
 	}
 	sort.Strings(ids)
 
-	var b strings.Builder
-	b.WriteString("# Written by ABOM from the query versions at the deploy stage. Edits are lost.\n")
+	directives := []map[string]any{{"queries": ".", "from": Pack}}
 	if len(ids) == 0 {
 		// A suite with no selection would run the whole pack, which is the opposite of what an
 		// empty deploy set means.
-		b.WriteString("- queries: .\n  from: " + Pack + "\n")
-		b.WriteString("- exclude:\n    id: /.*/\n")
-		return b.String()
+		directives = append(directives, map[string]any{"exclude": map[string]string{"id": "/.*/"}})
+	} else {
+		directives = append(directives, map[string]any{"include": map[string][]string{"id": ids}})
 	}
-	b.WriteString("- queries: .\n  from: " + Pack + "\n")
-	b.WriteString("- include:\n    id:\n")
-	for _, id := range ids {
-		b.WriteString("      - " + id + "\n")
+	body, err := yaml.Marshal(directives)
+	if err != nil {
+		return "", fmt.Errorf("custom queries: encoding the deployed suite: %w", err)
 	}
-	return b.String()
+	return "# Written by ABOM from the query versions at the deploy stage. Edits are lost.\n" +
+		string(body), nil
 }

@@ -425,21 +425,23 @@ func (s *Server) writeRequeued(w http.ResponseWriter, got expand.Selection) {
 // form post into a request this server never sees.
 const controlHeader = "X-Abom-Control"
 
-// allowControl guards the endpoints that start subprocesses.
-//
-// Starting discovery makes this process clone repositories and run CodeQL, so a page on another
-// origin must not be able to trigger it, and neither must a host that was never meant to reach
-// it. Read endpoints are deliberately not guarded: they expose the same data the interface
-// already shows.
-func (s *Server) allowControl(w http.ResponseWriter, r *http.Request) bool {
+func (s *Server) allowHost(w http.ResponseWriter, r *http.Request) bool {
 	if !s.AllowRemoteControl && !isLoopback(r.Host) {
 		writeError(w, http.StatusForbidden,
-			"discovery is controlled only over a loopback address; "+
+			"ABOM is accessible only over a loopback address; "+
 				"restart with --allow-remote-control to change that")
 		return false
 	}
+	return true
+}
+
+// allowControl protects state changes and operations using the operator's credentials.
+func (s *Server) allowControl(w http.ResponseWriter, r *http.Request) bool {
+	if !s.allowHost(w, r) {
+		return false
+	}
 	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
-		writeError(w, http.StatusForbidden, "cross-site requests cannot control discovery")
+		writeError(w, http.StatusForbidden, "cross-site requests cannot control ABOM")
 		return false
 	}
 	if r.Header.Get(controlHeader) == "" {

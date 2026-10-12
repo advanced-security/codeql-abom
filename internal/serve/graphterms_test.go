@@ -17,7 +17,7 @@ func TestTheGraphRefusesATermNeitherSideApplies(t *testing.T) {
 		if path == "/api/graph/delta?since=0" {
 			sep = "&"
 		}
-		srv.Handler().ServeHTTP(rec, httptest.NewRequest(
+		srv.Handler().ServeHTTP(rec, localRequest(
 			http.MethodGet, path+sep+"repositories=octo-org%2Fapp", nil))
 
 		if rec.Code != http.StatusBadRequest {
@@ -36,7 +36,7 @@ func TestTheGraphReportsWhatItHandedToTheClient(t *testing.T) {
 	srv, _ := unitServer(t)
 
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(
+	srv.Handler().ServeHTTP(rec, localRequest(
 		http.MethodGet, "/api/graph/full?rules=actions%2F*&kinds=action&scope=owned", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
@@ -65,7 +65,7 @@ func TestAServerAppliedPredicateReportsNoClientWork(t *testing.T) {
 	srv, _ := unitServer(t)
 
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(
+	srv.Handler().ServeHTTP(rec, localRequest(
 		http.MethodGet, "/api/graph/full?scope=owned&steps=true", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
@@ -88,7 +88,7 @@ func TestTheGraphSaysWhichFlagsItLeftToTheClient(t *testing.T) {
 		"flags=unanalyzed&scope=owned": false,
 	} {
 		rec := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/graph/full?"+query, nil))
+		srv.Handler().ServeHTTP(rec, localRequest(http.MethodGet, "/api/graph/full?"+query, nil))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s: status %d: %s", query, rec.Code, rec.Body.String())
 		}

@@ -13,7 +13,7 @@ import (
 func putPolicy(t *testing.T, srv *Server, name, predicate string) (int, string) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{"name": name, "predicate": predicate})
-	req := httptest.NewRequest(http.MethodPut, "/api/policies", strings.NewReader(string(body)))
+	req := localRequest(http.MethodPut, "/api/policies", strings.NewReader(string(body)))
 	req.Host = "127.0.0.1:8080"
 	req.Header.Set(controlHeader, "1")
 	rec := httptest.NewRecorder()
@@ -90,7 +90,7 @@ func TestTheMatchEndpointRefusesWhatHasNoSingleAnswer(t *testing.T) {
 		"policies=a":                             "policies",
 	} {
 		rec := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/match?"+query, nil))
+		srv.Handler().ServeHTTP(rec, localRequest(http.MethodGet, "/api/match?"+query, nil))
 		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("%s answered %d %s, want 400 naming %q", query, rec.Code, rec.Body.String(), want)
 		}
@@ -136,7 +136,7 @@ func TestTheAdvisoriesUnitNarrowsByPublishedSeverity(t *testing.T) {
 func TestAListRefusingATermNamesTheFilter(t *testing.T) {
 	srv, _ := advisoryServer(t)
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+	srv.Handler().ServeHTTP(rec, localRequest(http.MethodGet,
 		"/api/actions?advisorySeverity=high", nil))
 	if rec.Code != http.StatusBadRequest || rec.Body.String() != "{\"error\":\"Not applied here: advisorySeverity.\"}\n" {
 		t.Errorf("answered %d %s, want the concise refusal", rec.Code, rec.Body.String())

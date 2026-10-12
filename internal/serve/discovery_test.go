@@ -55,7 +55,7 @@ func (f *fakeDiscovery) RequeueRepository(name string) (expand.Selection, error)
 }
 
 func controlRequest(target string) *http.Request {
-	r := httptest.NewRequest(http.MethodPost, target, nil)
+	r := localRequest(http.MethodPost, target, nil)
 	r.Host = "127.0.0.1:8080"
 	r.Header.Set(controlHeader, "1")
 	return r
@@ -69,7 +69,7 @@ func TestAFailedRequestIsRecordedServerSide(t *testing.T) {
 	s.Log = &log
 
 	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/nothing-here", nil))
+	s.Handler().ServeHTTP(w, localRequest(http.MethodGet, "/api/nothing-here", nil))
 
 	if !strings.Contains(log.String(), "/api/nothing-here") {
 		t.Errorf("log = %q, want the failing request recorded", log.String())
@@ -83,7 +83,7 @@ func TestSuccessfulRequestsAreNotLogged(t *testing.T) {
 	s.Log = &log
 
 	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/summary", nil))
+	s.Handler().ServeHTTP(w, localRequest(http.MethodGet, "/api/summary", nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
@@ -136,7 +136,7 @@ func TestDiscoveryControlRequiresItsHeader(t *testing.T) {
 	loop := &fakeDiscovery{}
 	s.Discovery = loop
 
-	r := httptest.NewRequest(http.MethodPost, "/api/discovery/start", nil)
+	r := localRequest(http.MethodPost, "/api/discovery/start", nil)
 	r.Host = "127.0.0.1:8080"
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
@@ -155,7 +155,7 @@ func TestRequeueingATierIsGuardedLikeStarting(t *testing.T) {
 	s, _ := newServer(t)
 	s.Discovery = &fakeDiscovery{}
 
-	r := httptest.NewRequest(http.MethodPost, "/api/discovery/requeue/direct", nil)
+	r := localRequest(http.MethodPost, "/api/discovery/requeue/direct", nil)
 	r.Host = "127.0.0.1:8080"
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
@@ -275,7 +275,7 @@ func TestRequeueingStaleWorkIsGuardedLikeStarting(t *testing.T) {
 	loop := &fakeDiscovery{}
 	s.Discovery = loop
 
-	r := httptest.NewRequest(http.MethodPost, "/api/discovery/requeue-stale", nil)
+	r := localRequest(http.MethodPost, "/api/discovery/requeue-stale", nil)
 	r.Host = "127.0.0.1:8080"
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
@@ -418,7 +418,7 @@ func TestRetryingUnavailableWorkIsGuardedLikeStarting(t *testing.T) {
 	s.Discovery = &fakeDiscovery{}
 	seedUnavailable(t, store, "octo", "private")
 
-	r := httptest.NewRequest(http.MethodPost, "/api/discovery/retry-unavailable", nil)
+	r := localRequest(http.MethodPost, "/api/discovery/retry-unavailable", nil)
 	r.Host = "127.0.0.1:8080"
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
@@ -495,7 +495,7 @@ func TestDiscoveryStatusIsReadableWithoutTheControlGuard(t *testing.T) {
 	s.Discovery = &fakeDiscovery{}
 
 	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/discovery/status", nil))
+	s.Handler().ServeHTTP(w, localRequest(http.MethodGet, "/api/discovery/status", nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
@@ -508,7 +508,7 @@ func TestDiscoveryStatusAnswersWhenNoLoopIsConfigured(t *testing.T) {
 	s, _ := newServer(t)
 
 	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/discovery/status", nil))
+	s.Handler().ServeHTTP(w, localRequest(http.MethodGet, "/api/discovery/status", nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())

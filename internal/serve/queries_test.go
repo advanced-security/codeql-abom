@@ -43,7 +43,7 @@ func readCatalog(t *testing.T, s *Server) catalogAnswer {
 func advance(t *testing.T, s *Server, body string) int {
 	t.Helper()
 	w := httptest.NewRecorder()
-	s.advanceQuery(w, httptest.NewRequest("POST", "/api/queries/stage", bytes.NewBufferString(body)))
+	s.advanceQuery(w, boundaryRequest(http.MethodPost, "/api/queries/stage", body, true))
 	return w.Code
 }
 
@@ -525,7 +525,7 @@ func advanceTo(t *testing.T, s *Server, id, version, stage string) *httptest.Res
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
-	s.advanceQuery(w, httptest.NewRequest("POST", "/api/queries/stage", bytes.NewReader(body)))
+	s.advanceQuery(w, boundaryRequest(http.MethodPost, "/api/queries/stage", string(body), true))
 	return w
 }
 

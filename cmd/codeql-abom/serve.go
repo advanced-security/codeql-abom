@@ -434,7 +434,7 @@ func parseServeArgs(args []string, stderr io.Writer) (serveConfig, error) {
 	addr := fs.String("addr", "localhost:8080", "address to listen on")
 	uiDir := fs.String("ui-dir", "", "directory containing the published interface (optional)")
 	allowRemote := fs.Bool("allow-remote-control", false,
-		"let a non-loopback client start discovery, which runs git and codeql on this machine")
+		"allow non-loopback request hosts for reads and controls; this does not authenticate callers")
 	diagnostics := fs.Bool("diagnostics", false,
 		"expose /api/metrics and /debug/pprof/ for local performance analysis")
 	apiURL := fs.String("api-url", defaultAPIURL(), "GitHub API base URL")

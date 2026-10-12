@@ -30,7 +30,7 @@ const pushBody = `{"ref":"refs/heads/main","before":"a00000000000000000000000000
 func deliver(t *testing.T, srv *Server, body []byte, signature, id, event, contentType string,
 ) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/api/events/github", bytes.NewReader(body))
+	req := localRequest(http.MethodPost, "/api/events/github", bytes.NewReader(body))
 	req.Header.Set("Content-Type", contentType)
 	if signature != "" {
 		req.Header.Set("X-Hub-Signature-256", signature)

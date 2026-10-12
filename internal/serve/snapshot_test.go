@@ -26,8 +26,9 @@ func TestPreviewDoesNotSubmit(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost,
+	req := localRequest(http.MethodPost,
 		"/api/repositories/advanced-security/codeql-abom-test1/snapshot/preview", nil)
+
 	s.Handler().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -58,8 +59,9 @@ func TestSubmitRequiresTheControlHeader(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost,
+	req := localRequest(http.MethodPost,
 		"/api/repositories/advanced-security/codeql-abom-test1/snapshot/submit", nil)
+
 	s.Handler().ServeHTTP(rec, req)
 
 	if rec.Code == http.StatusOK {
@@ -85,8 +87,9 @@ func TestSubmitReportsWhyATargetWasRefused(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost,
+	req := localRequest(http.MethodPost,
 		"/api/repositories/advanced-security/production/snapshot/submit", nil)
+
 	req.Header.Set(controlHeader, "1")
 	s.Handler().ServeHTTP(rec, req)
 
@@ -112,8 +115,9 @@ func TestSubmitSaysWhichCommitsMustBeAnalyzedAgainBeforeItWillWrite(t *testing.T
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost,
+	req := localRequest(http.MethodPost,
 		"/api/repositories/advanced-security/codeql-abom-test1/snapshot/submit", nil)
+
 	req.Header.Set(controlHeader, "1")
 	s.Handler().ServeHTTP(rec, req)
 

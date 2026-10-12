@@ -11,7 +11,7 @@ import (
 func readUnits(t *testing.T, srv *Server, query string) propertiesView {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/properties"+query, nil))
+	srv.Handler().ServeHTTP(rec, localRequest("GET", "/api/properties"+query, nil))
 	var out propertiesView
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decoding %s: %v", rec.Body.String(), err)

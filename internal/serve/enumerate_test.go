@@ -133,7 +133,7 @@ func TestAnAccountThatHoldsNothingIsReported(t *testing.T) {
 // operator's rate limit, so it is held to the same control gate as the rest.
 func TestEnumerationIsControlGuarded(t *testing.T) {
 	srv, _ := newServer(t)
-	req := httptest.NewRequest(http.MethodPost, "/api/owned-scope/enumerate", nil)
+	req := localRequest(http.MethodPost, "/api/owned-scope/enumerate", nil)
 	req.RemoteAddr = "203.0.113.7:9999"
 	rec := httptest.NewRecorder()
 

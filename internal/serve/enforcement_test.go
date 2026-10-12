@@ -14,7 +14,7 @@ func TestAPolicyIsRefusedTheTermsTheSetEndpointRefuses(t *testing.T) {
 	predicate := "kinds=action&steps=true&minReach=5&rules=actions%2F*"
 
 	match := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(match, httptest.NewRequest(http.MethodGet, "/api/match?"+predicate, nil))
+	srv.Handler().ServeHTTP(match, localRequest(http.MethodGet, "/api/match?"+predicate, nil))
 	if match.Code != http.StatusBadRequest {
 		t.Fatalf("/api/match answered %d; the fixture no longer exercises a refused predicate",
 			match.Code)
@@ -40,7 +40,7 @@ func TestTheSetEndpointRefusesTheTermsItSilentlyDropped(t *testing.T) {
 
 	for _, term := range []string{"scope=owned", "q=checkout", "flags=unanalyzed"} {
 		rec := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, httptest.NewRequest(
+		srv.Handler().ServeHTTP(rec, localRequest(
 			http.MethodGet, "/api/match?rules=actions%2F*&"+term, nil))
 
 		if rec.Code != http.StatusBadRequest {
@@ -55,7 +55,7 @@ func TestAFullyEnforceablePredicateIsStillAccepted(t *testing.T) {
 	srv, _ := unitServer(t)
 
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(
+	srv.Handler().ServeHTTP(rec, localRequest(
 		http.MethodGet, "/api/match?rules=actions%2F*&severity=error&properties=business_id%3A3", nil))
 	if rec.Code != http.StatusOK {
 		t.Errorf("status %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
@@ -75,7 +75,7 @@ func policyRequest(predicate string) *http.Request {
 }
 
 func policyBody(body string) *http.Request {
-	r := httptest.NewRequest(http.MethodPut, "/api/policies", strings.NewReader(body))
+	r := localRequest(http.MethodPut, "/api/policies", strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("X-Abom-Control", "1")
 	// Control endpoints answer only over loopback, and httptest addresses the request to example.com.

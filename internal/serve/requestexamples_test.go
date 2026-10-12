@@ -210,8 +210,8 @@ func TestALinkedExampleThatCannotBeReadIsRefusedSayingWhy(t *testing.T) {
 func TestALinkedExampleCanBeReadBeforeItIsKept(t *testing.T) {
 	s, _ := filesServer(t)
 	w := httptest.NewRecorder()
-	s.readRequestExample(w, httptest.NewRequest("POST", "/api/query-requests/example",
-		bytes.NewBufferString(`{"side":"non-compliant","url":"`+ciLink+`"}`)))
+	s.readRequestExample(w, boundaryRequest(http.MethodPost, "/api/query-requests/example",
+		`{"side":"non-compliant","url":"`+ciLink+`"}`, true))
 	if w.Code != http.StatusOK {
 		t.Fatalf("answered %d: %s", w.Code, w.Body.String())
 	}

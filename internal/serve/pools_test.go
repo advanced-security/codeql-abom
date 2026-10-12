@@ -57,7 +57,7 @@ func pooledServer(t *testing.T) (*Server, *store.Store) {
 
 func putPool(srv *Server, body string, guarded bool) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPut, "/api/pools", strings.NewReader(body))
+	req := localRequest(http.MethodPut, "/api/pools", strings.NewReader(body))
 	req.Host = "127.0.0.1:8080"
 	if guarded {
 		req.Header.Set(controlHeader, "1")

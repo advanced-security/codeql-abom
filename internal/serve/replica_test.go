@@ -36,7 +36,7 @@ func TestReplicaRoutingReportsLagAndPreservesReadYourWrites(t *testing.T) {
 	s := &Server{Store: primary, Replica: &Server{Store: replica}, MaxReplicaLag: 3 * time.Second}
 	handler := s.Handler()
 	read := func(cookie *http.Cookie) *httptest.ResponseRecorder {
-		request := httptest.NewRequest(http.MethodGet, "/api/summary", nil)
+		request := localRequest(http.MethodGet, "/api/summary", nil)
 		if cookie != nil {
 			request.AddCookie(cookie)
 		}
@@ -83,7 +83,7 @@ func TestReplicaModeMarksWritesForPrimaryReadback(t *testing.T) {
 	primary := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	replica := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Fatal("a write reached the replica") })
 	response := httptest.NewRecorder()
-	s.routeReplica(primary, replica).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/control", nil))
+	s.routeReplica(primary, replica).ServeHTTP(response, localRequest(http.MethodPost, "/api/control", nil))
 	cookies := response.Result().Cookies()
 	if len(cookies) != 1 || cookies[0].Name != primaryReadCookie || cookies[0].Value != "1" {
 		t.Fatal("a write did not establish read-your-writes routing")
@@ -93,7 +93,7 @@ func TestReplicaModeMarksWritesForPrimaryReadback(t *testing.T) {
 func TestReaderInstancesCannotStartMutatingHandlers(t *testing.T) {
 	s := &Server{ReadOnly: true, AllowRemoteControl: true}
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/discovery/start", nil)
+	request := localRequest(http.MethodPost, "/api/discovery/start", nil)
 	request.Header.Set("X-Abom-Control", "1")
 	s.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusForbidden {
@@ -133,8 +133,9 @@ func TestPhysicalReplicaReportsLagAndKeepsAControlsOwnWriteVisible(t *testing.T)
 	s := &Server{Store: primary, AllowRemoteControl: true}
 	s.SetReplica(replica, time.Hour)
 	handler := s.Handler()
-	write := httptest.NewRequest(http.MethodPut, "/api/views/replica-readback",
+	write := localRequest(http.MethodPut, "/api/views/replica-readback",
 		strings.NewReader(`{"predicate":"scope=owned"}`))
+
 	write.Header.Set("X-Abom-Control", "1")
 	write.Header.Set("Content-Type", "application/json")
 	written := httptest.NewRecorder()
@@ -147,7 +148,7 @@ func TestPhysicalReplicaReportsLagAndKeepsAControlsOwnWriteVisible(t *testing.T)
 		t.Fatal("the control response did not establish read consistency")
 	}
 	read := func(cookie bool) *httptest.ResponseRecorder {
-		request := httptest.NewRequest(http.MethodGet, "/api/views", nil)
+		request := localRequest(http.MethodGet, "/api/views", nil)
 		if cookie {
 			request.AddCookie(cookies[0])
 		}

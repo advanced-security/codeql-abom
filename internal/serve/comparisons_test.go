@@ -203,7 +203,7 @@ func TestReviewIsRefusedUntilCompared(t *testing.T) {
 func httptestPost(t *testing.T, s *Server, path, body string) int {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req := localRequest(http.MethodPost, path, strings.NewReader(body))
 	req.Host = "127.0.0.1:8080"
 	s.Handler().ServeHTTP(rec, req)
 	return rec.Code
@@ -241,7 +241,7 @@ func TestARunIsNotAnalyzedAgainWhileItIsComparedNorComparedWhileItRuns(t *testin
 		t.Fatal("could not hold the comparison")
 	}
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/runs/"+strconv.FormatInt(run.RowID, 10)+"/start", nil)
+	req := localRequest(http.MethodPost, "/api/runs/"+strconv.FormatInt(run.RowID, 10)+"/start", nil)
 	req.SetPathValue("id", strconv.FormatInt(run.RowID, 10))
 	s.executeRun(w, req)
 	if w.Code != http.StatusConflict {

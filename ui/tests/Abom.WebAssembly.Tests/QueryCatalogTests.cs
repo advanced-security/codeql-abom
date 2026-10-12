@@ -271,6 +271,24 @@ public class QueryCatalogTests : AbomTestContext
         ],"stages":["dev","test"]}
         """;
 
+    [Theory]
+    [InlineData("", "", "No version was recorded")]
+    [InlineData("", "deploy", "No version was recorded")]
+    [InlineData("v1", "", "")]
+    public void AQueryWithoutARecordedVersionCannotBeAdvanced(string version, string stage, string reason)
+    {
+        var page = Render(OperatorWritten
+            .Replace("\"queryVersion\":\"9b5327ab01d7\"", $"\"queryVersion\":\"{version}\"")
+            .Replace("\"stage\":\"\"", $"\"stage\":\"{stage}\""));
+        var menu = page.FindAll("[data-abom-query-advance]")
+            .Single(m => m.Closest("tr")!.TextContent.Contains("acme/self-hosted-runner"));
+        Assert.Equal(version.Length == 0, menu.QuerySelector("button")!.HasAttribute("disabled"));
+        if (reason.Length > 0)
+        {
+            Assert.Contains(reason, menu.Closest("[data-abom-tip]")!.GetAttribute("data-abom-tip"));
+        }
+    }
+
     /// <summary>
     /// Tests live beside the query, so only the working copy of a query the operator wrote has any
     /// to run. An upstream rule carries no Test action at all: its tests belong to the pack that

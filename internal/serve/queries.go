@@ -274,6 +274,9 @@ func (s *Server) workingCopy() ([]store.WorkingQuery, map[string][]authoring.Ste
 // `extended-test` unless every step of the version on disk is passing, which is what makes the
 // first two rungs of the ladder earned rather than pressed.
 func (s *Server) advanceQuery(w http.ResponseWriter, r *http.Request) {
+	if !s.allowControl(w, r) {
+		return
+	}
 	var body struct {
 		QueryID string `json:"queryId"`
 		Version string `json:"queryVersion"`
@@ -282,6 +285,15 @@ func (s *Server) advanceQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "the request body is not the expected JSON")
+		return
+	}
+	refusal, err := s.queryVersionRefusal(body.QueryID, body.Version)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if refusal != "" {
+		writeError(w, http.StatusBadRequest, refusal)
 		return
 	}
 	if body.Stage == store.StageExtendedTest {
@@ -312,6 +324,27 @@ func (s *Server) advanceQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeCatalog(w)
+}
+
+func (s *Server) queryVersionRefusal(id, version string) (string, error) {
+	if !customql.ValidQueryID(id) || version == "" {
+		return "advancing a query requires a valid query id and a nonempty version", nil
+	}
+	_, working, err := s.workingQueries()
+	if err != nil {
+		return "", err
+	}
+	catalog, err := s.Store.QueryCatalog(working...)
+	if err != nil {
+		return "", err
+	}
+	for _, q := range catalog {
+		if !q.Lane && q.QueryID == id && q.QueryVersion == version {
+			return "", nil
+		}
+	}
+	return fmt.Sprintf("%s@%s is not a query version in the catalog; reload before advancing it",
+		id, version), nil
 }
 
 // Why a version may not enter extended-test, before its own steps are read. The catalog states

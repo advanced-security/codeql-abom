@@ -42,7 +42,7 @@ type readinessAnswer struct {
 func readReadiness(t *testing.T, s *Server, query string) readinessAnswer {
 	t.Helper()
 	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/api/authoring/readiness"+query, nil))
+	s.Handler().ServeHTTP(w, localRequest("GET", "/api/authoring/readiness"+query, nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("readiness answered %d: %s", w.Code, w.Body.String())
 	}
@@ -89,7 +89,7 @@ func TestADiscoveryHoldingCodeQLIsReportedBeforeASessionIsRefused(t *testing.T) 
 }
 
 func setTool(s *Server, tool, body string, control bool) *httptest.ResponseRecorder {
-	r := httptest.NewRequest("PUT", "/api/authoring/tools/"+tool, bytes.NewBufferString(body))
+	r := localRequest("PUT", "/api/authoring/tools/"+tool, bytes.NewBufferString(body))
 	r.Host = "127.0.0.1:8080"
 	if control {
 		r.Header.Set(controlHeader, "1")
