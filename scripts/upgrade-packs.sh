@@ -42,7 +42,7 @@ OPTIONS:
     --language <lang>  Upgrade packs only for the specified language
                        Valid values: ${VALID_LANGUAGES[*]}
     --repin            Only re-pin each suite's \`version:\` from the lock files
-                       and check versions; does not run CodeQL. Honours --language.
+                       and check versions; does not run CodeQL. Honors --language.
     -h, --help         Show this help message
 
 By default, the script upgrades packs for all languages.
@@ -98,17 +98,13 @@ fi
 ## registry (an upstream publishing gap outside this repository's control).
 SKIPPED_PACKS=()
 
+## Without a token the CLI reports an unpublished pack as "Could not create access credentials" (a 403).
 is_unpublished_dependency_error() {
 	local output="$1"
-	echo "${output}" | grep -qi "not found in the registry"
+	echo "${output}" | grep -qiE "not found in the registry|Could not create access credentials"
 }
 
-is_registry_auth_error() {
-	local output="$1"
-	echo "${output}" | grep -qi "Could not create access credentials"
-}
-
-## Rewrites `key: value` in place for the first matching line, leaving comments and order alone.
+## Replaces the first line starting `key:` with `key: value`, so a comment on that line is lost.
 set_scalar() {
 	local file=$1 key=$2 value=$3
 	awk -v k="$key" -v v="$value" '
@@ -139,12 +135,6 @@ run_pack_upgrade() {
 	fi
 	echo "  ❌ codeql pack upgrade failed for ${pack_dir}:" >&2
 	echo "${output}" >&2
-	## Not treated as a skip: a missing token must not leave packs silently stale.
-	if is_registry_auth_error "${output}"; then
-		echo "  ↳ The package registry could not authenticate this request. Set GITHUB_TOKEN" >&2
-		echo "    (read:packages) or CODEQL_REGISTRIES_AUTH and re-run; if one is already set, a" >&2
-		echo "    dependency of ${pack_dir} may not be published yet." >&2
-	fi
 	return 1
 }
 

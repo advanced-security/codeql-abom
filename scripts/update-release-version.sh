@@ -155,7 +155,8 @@ validate_cli_version() {
 			return 0
 		fi
 		echo "  ❌ Base version ${base_version} does not match installed CodeQL CLI (${installed_version})" >&2
-		echo "    - Install the correct CLI: gh codeql set-version ${base_version}" >&2
+		## gh-codeql runs what .codeql-version names, so `gh codeql set-version` cannot fix this.
+		echo "    - From the repository root, pin and install it, then re-run: gh codeql set-local-version v${base_version}" >&2
 		echo "    - Skip validation with --skip-cli-validation (not recommended)" >&2
 		return 1
 	fi
@@ -290,6 +291,9 @@ done
 cd "${REPO_ROOT}"
 
 if [[ "${CHECK_MODE}" == true ]]; then
+	if [[ -n "${NEW_VERSION}" ]]; then
+		validate_version "${NEW_VERSION}"
+	fi
 	check_versions "${NEW_VERSION}"
 	exit $?
 fi
