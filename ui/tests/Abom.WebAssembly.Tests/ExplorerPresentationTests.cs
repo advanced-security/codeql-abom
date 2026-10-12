@@ -48,6 +48,22 @@ public sealed class ExplorerPresentationTests : AbomTestContext
         });
     }
 
+    [Fact]
+    public async Task DockerImageLegendRemainsVisibleAtWorkflowFoldDepth()
+    {
+        Answer("api/owned-scope", "[{\"owner\":\"octo-org\"}]");
+        StubGraphModule();
+        ArriveWithAScope();
+
+        var page = Render<Explorer>();
+        page.WaitForAssertion(() => Assert.NotEmpty(JSInterop.Invocations["loadFull"]));
+        await page.InvokeAsync(() =>
+            page.Instance.ApplyPresentation(Presentation.Parse("groupBy=workflow&collapsed=true")));
+
+        page.WaitForAssertion(() =>
+            Assert.Single(page.FindAll("input[aria-label='Show Docker image nodes']")));
+    }
+
     /// <summary>
     /// Distance in the Priority view is the advisories unit's rank, so an action carrying the
     /// first-ranked advisory sits closest in even where a lower-ranked one reaches more.

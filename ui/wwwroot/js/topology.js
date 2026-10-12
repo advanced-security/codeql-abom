@@ -18,7 +18,8 @@ export function repoOf(node) {
     if (node.repository) return node.repository;
     if (node.kind === 'org' || !node.owner) return '';
     const parts = (node.key || '').split('/');
-    return parts[0] === node.owner.toLowerCase() && parts[1] ? `${parts[0]}/${parts[1]}` : '';
+    const owner = parts[0].toLowerCase();
+    return owner === node.owner.toLowerCase() && parts[1] ? `${owner}/${parts[1]}` : '';
 }
 
 export function orgOf(node) {

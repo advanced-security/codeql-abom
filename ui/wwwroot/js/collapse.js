@@ -59,9 +59,13 @@ export function collapseGroups(it, nodes, links) {
     const merged = new Map();
     for (const e of links) {
         if (!e.shown) continue;
-        const s = members.get(keyOf(e.source));
-        const t = members.get(keyOf(e.target));
-        if (!s || !t || s === t) continue;
+        const sourceKey = keyOf(e.source), targetKey = keyOf(e.target);
+        const s = members.get(sourceKey);
+        const t = members.get(targetKey);
+        if (!s || !t) {
+            throw new Error(`Cannot fold shown link ${sourceKey} -> ${targetKey}: missing endpoint node`);
+        }
+        if (s === t) continue;
         const id = `${s.key}>${t.key}`;
         const existing = merged.get(id);
         if (existing) { existing.count += e.count || 1; continue; }

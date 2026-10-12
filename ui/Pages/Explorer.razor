@@ -731,8 +731,7 @@
 
     // A row below the fold has no node of its own on the canvas, so leaving it in the key made
     // folding look like it had done nothing.
-    private bool IsRowShown(KindRow row) => FoldDepth is not int depth ||
-        (row.Kind == "docker_image" ? _groupBy != "workflow" : row.Depth <= depth);
+    private bool IsRowShown(KindRow row) => FoldDepth is not int depth || row.Depth <= depth;
 
     private List<string> FoldedKinds =>
         KindTree.Where(r => !IsRowShown(r)).Select(r => r.Kind).Distinct().ToList();

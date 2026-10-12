@@ -81,6 +81,13 @@ test('a parsed mixed-case owner keeps the dependency key canonical grouping', ()
     assert.equal(edgeClass(org, node), 'sameOwner');
 });
 
+test('repository grouping canonicalizes a mixed-case owner in the node key', () => {
+    const node = { key: 'Octo/action@v1', kind: 'action', owner: 'Octo' };
+
+    assert.equal(repoOf(node), 'octo/action@v1');
+    assert.equal(groupOf(node, 'repo'), 'octo/action@v1');
+});
+
 test('accountless node counts use only nodes without recorded ownership', () => {
     const nodes = [
         { key: 'org:octo', kind: 'org', owner: 'octo' },
@@ -90,6 +97,16 @@ test('accountless node counts use only nodes without recorded ownership', () => 
 
     assert.equal(accountlessNodeCount(nodes, 'owner'), 1);
     assert.equal(accountlessNodeCount(nodes, 'repo'), 0);
+});
+
+test('folding refuses a shown link whose endpoint is missing from the node set', () => {
+    const nodes = [{ key: 'octo/app', repository: 'octo/app' }];
+    const links = [{ source: 'octo/app', target: 'actions/checkout', shown: true }];
+
+    assert.throws(
+        () => collapseGroups({ groupBy: 'repo' }, nodes, links),
+        /shown link.*actions\/checkout.*missing endpoint/i,
+    );
 });
 
 test('an edge is classified by the closest true relationship', () => {
