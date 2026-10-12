@@ -672,6 +672,7 @@ export function applyFilters(elementId, spec) {
  */
 function withholdRender(it) {
     it.graph.graphData({ nodes: [], links: [] });
+    it.accountless = 0;
     // Nothing on screen matches the filter, so approval has to take the full render path.
     it.seeded = false;
     it.renderedSig = null;
@@ -737,6 +738,16 @@ export function visibleSignature(visible) {
  */
 export function needsRender(it) {
     return !!it.dirty || !it.seeded || it.visibleSig !== it.renderedSig || !!it.collapsed;
+}
+
+/** Counts nodes without a recorded account without allocating an intermediate array. */
+export function accountlessNodeCount(nodes, by) {
+    if (by !== 'owner') return 0;
+    let count = 0;
+    for (const node of nodes) {
+        if (!orgOf(node)) count++;
+    }
+    return count;
 }
 
 /** The nodes and links handed to the simulation: what is visible, never the whole corpus. */
@@ -836,6 +847,7 @@ function render(it) {
         nodes = collapsed.nodes;
         links = collapsed.links;
     }
+    it.accountless = accountlessNodeCount(nodes, 'owner');
     it.renderedSig = it.visibleSig;
     // A new node set is a new layout, so the view is moving again until the engine says otherwise.
     it.engineStopped = false;
@@ -1181,7 +1193,7 @@ export function create(elementId, use3d, dotNetRef) {
         hopsOf: null, view: 'neighborhood', palette: null,
         emphasis: null,
         maxPriority: 1, pendingFit: false, running: true, seeded: false, visible: null,
-        subset: false, renderedFor: null, groupBy: 'owner', collapsed: false,
+        subset: false, renderedFor: null, groupBy: 'owner', collapsed: false, accountless: 0,
         id: elementId, particleTimer: null, particlePhase: 0,
         animate: previous ? previous.animate !== false : true,
         // Proved at runtime rather than assumed: the graph library bundles its own THREE, so
@@ -1609,8 +1621,9 @@ function overlaps(a, b) {
  * refusal above still applies to it: `dot` separates the clusters of the graph it was handed, and
  * a browser filter drawing a subset of that graph is a different picture.
  */
-export function regionShapes(projected, by, totals = new Map(), floor = REGION_FLOOR, boxes = null) {
-    if (!by || by === 'none') return { shapes: [], groups: 0, refused: 0 };
+export function regionShapes(projected, by, totals = new Map(), floor = REGION_FLOOR, boxes = null,
+    accountless = accountlessNodeCount(projected, by)) {
+    if (!by || by === 'none') return { shapes: [], groups: 0, refused: 0, accountless };
 
     const byX = [...projected].sort((a, b) => a.sx - b.sx);
     const shapes = [];
@@ -1637,11 +1650,7 @@ export function regionShapes(projected, by, totals = new Map(), floor = REGION_F
     // Widest first, so a small region sitting inside a large one is drawn on top of it rather than
     // under it, where its boundary would be the one nobody can see.
     shapes.sort((a, b) => b.area - a.area);
-    return { shapes, groups, refused, accountless: accountlessNodes(projected, by) };
-}
-
-function accountlessNodes(nodes, by) {
-    return by === 'owner' ? nodes.filter(n => !orgOf(n)).length : 0;
+    return { shapes, groups, refused, accountless };
 }
 
 /**
@@ -1704,8 +1713,9 @@ export function viewCaption(grouped, layout, pins) {
  * returned a shape set inconsistent with the containers it then painted, and two nodes ended up
  * inside a boundary they do not belong to.
  */
-export function settledRegions(projected, by, totals = new Map(), floor = REGION_FLOOR, boxes = null) {
-    const all = regionShapes(projected, by, totals, floor, boxes);
+export function settledRegions(projected, by, totals = new Map(), floor = REGION_FLOOR, boxes = null,
+    accountless = accountlessNodeCount(projected, by)) {
+    const all = regionShapes(projected, by, totals, floor, boxes, accountless);
     let shapes = all.shapes;
 
     for (;;) {
@@ -1800,14 +1810,13 @@ export function nearestTo(points, pointer, radius) {
  * stroke carries the meaning and the fill only hints at extent.
  */
 function drawRegions(ctx, it, projected, p) {
-    const accountless = accountlessNodes(it.graph.graphData().nodes, it.groupBy);
+    const accountless = it.groupBy === 'owner' ? it.accountless : 0;
     if (!it.groupBy || it.groupBy === 'none' || it.collapsed) {
         return { shapes: [], groups: 0, refused: 0, drawn: new Set(), accountless };
     }
 
     const totals = groupSizes(it.all ? it.all.nodes : [], it.groupBy);
-    const result = settledRegions(projected, it.groupBy, totals, undefined, it.layoutBoxes);
-    result.accountless = accountless;
+    const result = settledRegions(projected, it.groupBy, totals, undefined, it.layoutBoxes, accountless);
     const focused = hoveredRegion(result.shapes, it.pointer);
 
     for (const s of result.shapes) {

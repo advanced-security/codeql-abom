@@ -22,8 +22,7 @@ export function repoOf(node) {
 }
 
 export function orgOf(node) {
-    if (node.repository) return node.repository.split('/')[0];
-    if (node.kind === 'org') return node.owner || '';
+    if (node.repository) return node.repository.split('/')[0].toLowerCase();
     return (node.owner || '').toLowerCase();
 }
 
@@ -74,7 +73,7 @@ export function boundaryClass(stored, s, t) {
 export function groupOf(node, by) {
     switch (by) {
         case 'owner':
-            return node.kind === 'org' ? (node.owner || '') : orgOf(node);
+            return orgOf(node);
         case 'repo':
             return node.kind === 'org' ? '' : repoOf(node);
         case 'grouping':

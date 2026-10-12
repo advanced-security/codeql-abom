@@ -9,7 +9,8 @@ import {
     simulationSet, visibleSignature, restLevel, REST_DELAY, REST_FPS, fullyAnalyzed, labelFor,
     graphHeight, visibilityGate, zoomTarget, refitNeeded, labelTiers, leafLabel,
     haloAlpha, nodeContext, regionLabelParts, regionLabelSpot, regionShapes, regionCaption,
-    drawnAsRegion, nodeBrief, clampToCanvas, shortRef, isDarkBackground, settledRegions, buttonMap,
+    drawnAsRegion, nodeBrief, clampToCanvas, shortRef, isDarkBackground, settledRegions,
+    accountlessNodeCount, buttonMap,
     containmentIntoRegion, hoveredRegion, fitDistance, coreBounds, gravityForce, spreadFor, seedAt,
     fitMargin, nearestTo, withDependencies, clickAction, scopeFilters, isClick, answersScope,
     focusKeys, viewCaption, drawDecision, DRAW_CEILING, answersOrigins,
@@ -74,7 +75,21 @@ test('a parsed mixed-case owner keeps the dependency key canonical grouping', ()
     assert.equal(orgOf(node), 'octo');
     assert.equal(repoOf(node), 'octo/action@v1');
     assert.equal(anchorKey(node, 'owner'), 'org:octo');
-    assert.equal(orgOf({ key: 'org:Octo', kind: 'org', owner: 'Octo' }), 'Octo');
+    const org = { key: 'org:Octo', kind: 'org', owner: 'Octo' };
+    assert.equal(orgOf(org), 'octo');
+    assert.equal(groupOf(org, 'owner'), 'octo');
+    assert.equal(edgeClass(org, node), 'sameOwner');
+});
+
+test('accountless node counts use only nodes without recorded ownership', () => {
+    const nodes = [
+        { key: 'org:octo', kind: 'org', owner: 'octo' },
+        { key: 'octo/app', repository: 'octo/app' },
+        { key: 'docker://alpine:3.20', kind: 'docker_image' },
+    ];
+
+    assert.equal(accountlessNodeCount(nodes, 'owner'), 1);
+    assert.equal(accountlessNodeCount(nodes, 'repo'), 0);
 });
 
 test('an edge is classified by the closest true relationship', () => {
@@ -1854,6 +1869,15 @@ test('one line says how the view is grouped and how much of it is missing', () =
     assert.equal(regionCaption(2, 0, 'owner'), 'grouped by owner');
     assert.equal(regionCaption(2, 0, 'repo'), 'grouped by repository');
     assert.equal(regionCaption(2, 0, 'grouping'), 'grouped by grouping');
+});
+
+test('settled boundaries carry the full accountless count explicitly', () => {
+    const projected = [placed('docker://alpine:3.20', 0, 0)];
+
+    const regions = settledRegions(projected, 'owner', new Map(), undefined, null, 12);
+
+    assert.equal(regions.accountless, 12,
+        'the caption count includes nodes outside the projected canvas');
 });
 
 // A boundary drawn without a name must be counted.
