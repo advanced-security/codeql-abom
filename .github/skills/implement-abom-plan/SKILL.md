@@ -367,6 +367,10 @@ status theatre.
   and after a write; creating its temporary tables must not move the database-state cache key.
 - A version's displayed user count is not the component's stored blast radius. Removing upstream
   CI can change the former while the latter and scope membership stay identical; measure both.
+- Account grouping has stored holdings and browser grouping, anchors and folds. Compare both on
+  the corpus: parsed owners can preserve casing that canonical dependency keys do not.
+- A node left individual by a fold still needs its legend row, and the count cannot call every
+  drawn node a group. Count accountless nodes over the view, not just the points inside the camera.
 
 ## Adding a consistency check
 

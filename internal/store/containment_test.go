@@ -206,6 +206,61 @@ func TestRemovingAHoldingForcesOpenPagesToReload(t *testing.T) {
 	}
 }
 
+func TestRegroupingImagesRemovesStoredAccountsAndInvalidatesTheCursor(t *testing.T) {
+	s := newTestStore(t)
+	w := NewWriter(s, 0)
+	seedGraph(t, s, w)
+	image := "docker://registry.local:5000/tools/build"
+	if err := w.AddNode(Node{Key: image, Kind: "docker_image", IsExternal: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	deriveContainment(t, s)
+	held, err := s.Containment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := Containment{OwnerKey: "org:docker:", HeldKey: image, Kind: EdgeKindOrgContains}
+	if _, err := s.storeContainment(append(held, stale)); err != nil {
+		t.Fatal(err)
+	}
+	generation, err := s.RecordGraphGeneration(GraphRebuild{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deriveContainment(t, s)
+	for k := range storedContainment(t, s) {
+		if k[0] == stale.OwnerKey {
+			t.Errorf("refresh retained fabricated account: %v", k)
+		}
+	}
+	delta, err := s.GraphDelta(generation, FullGraphOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !delta.Reset {
+		t.Error("an open view can retain the removed image account")
+	}
+	g, err := s.FullGraph(FullGraphOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]bool{}
+	for _, n := range g.Nodes {
+		keys[n.Key] = true
+	}
+	if !keys[image] || keys[stale.OwnerKey] {
+		t.Errorf("image/account presence = %v/%v, want true/false", keys[image], keys[stale.OwnerKey])
+	}
+	for _, e := range g.Edges {
+		if !keys[e.Source] || !keys[e.Target] {
+			t.Errorf("relationship outside the graph: %+v", e)
+		}
+	}
+}
+
 // And a cycle that removes nothing must not reload every open page for nothing.
 func TestDerivingContainmentAgainDoesNotForceAReload(t *testing.T) {
 	s := newTestStore(t)

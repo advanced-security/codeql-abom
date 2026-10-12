@@ -672,6 +672,7 @@ export function applyFilters(elementId, spec) {
  */
 function withholdRender(it) {
     it.graph.graphData({ nodes: [], links: [] });
+    it.accountless = 0;
     // Nothing on screen matches the filter, so approval has to take the full render path.
     it.seeded = false;
     it.renderedSig = null;
@@ -737,6 +738,16 @@ export function visibleSignature(visible) {
  */
 export function needsRender(it) {
     return !!it.dirty || !it.seeded || it.visibleSig !== it.renderedSig || !!it.collapsed;
+}
+
+/** Counts nodes without a recorded account without allocating an intermediate array. */
+export function accountlessNodeCount(nodes, by) {
+    if (by !== 'owner') return 0;
+    let count = 0;
+    for (const node of nodes) {
+        if (!orgOf(node)) count++;
+    }
+    return count;
 }
 
 /** The nodes and links handed to the simulation: what is visible, never the whole corpus. */
@@ -836,6 +847,7 @@ function render(it) {
         nodes = collapsed.nodes;
         links = collapsed.links;
     }
+    it.accountless = accountlessNodeCount(nodes, 'owner');
     it.renderedSig = it.visibleSig;
     // A new node set is a new layout, so the view is moving again until the engine says otherwise.
     it.engineStopped = false;
@@ -1181,7 +1193,7 @@ export function create(elementId, use3d, dotNetRef) {
         hopsOf: null, view: 'neighborhood', palette: null,
         emphasis: null,
         maxPriority: 1, pendingFit: false, running: true, seeded: false, visible: null,
-        subset: false, renderedFor: null, groupBy: 'owner', collapsed: false,
+        subset: false, renderedFor: null, groupBy: 'owner', collapsed: false, accountless: 0,
         id: elementId, particleTimer: null, particlePhase: 0,
         animate: previous ? previous.animate !== false : true,
         // Proved at runtime rather than assumed: the graph library bundles its own THREE, so
@@ -1478,8 +1490,9 @@ function drawLabels(it) {
 
     // Before any label, so nothing is drawn over the one line that says what is missing.
     drawCaption(ctx, viewCaption(
-        it.groupBy && it.groupBy !== 'none' && !it.collapsed
-            ? regionCaption(regions.groups, regions.refused, it.groupBy, it.regionNamesUnplaced) : '',
+        it.groupBy && it.groupBy !== 'none' && (!it.collapsed || regions.accountless)
+            ? regionCaption(regions.groups, regions.refused, it.groupBy,
+                it.regionNamesUnplaced, regions.accountless) : '',
         it.layout, it.pinned), p, taken);
     // Restored after it: a node label is centred on its node, and the note draws left-aligned.
     ctx.textAlign = 'center';
@@ -1608,8 +1621,9 @@ function overlaps(a, b) {
  * refusal above still applies to it: `dot` separates the clusters of the graph it was handed, and
  * a browser filter drawing a subset of that graph is a different picture.
  */
-export function regionShapes(projected, by, totals = new Map(), floor = REGION_FLOOR, boxes = null) {
-    if (!by || by === 'none') return { shapes: [], groups: 0, refused: 0 };
+export function regionShapes(projected, by, totals = new Map(), floor = REGION_FLOOR, boxes = null,
+    accountless = accountlessNodeCount(projected, by)) {
+    if (!by || by === 'none') return { shapes: [], groups: 0, refused: 0, accountless };
 
     const byX = [...projected].sort((a, b) => a.sx - b.sx);
     const shapes = [];
@@ -1636,7 +1650,7 @@ export function regionShapes(projected, by, totals = new Map(), floor = REGION_F
     // Widest first, so a small region sitting inside a large one is drawn on top of it rather than
     // under it, where its boundary would be the one nobody can see.
     shapes.sort((a, b) => b.area - a.area);
-    return { shapes, groups, refused };
+    return { shapes, groups, refused, accountless };
 }
 
 /**
@@ -1650,7 +1664,7 @@ export function regionShapes(projected, by, totals = new Map(), floor = REGION_F
  * The refusal rides on the same line because a withheld boundary a reader cannot see is worse than
  * the boundary itself: the control claims to be grouping and the canvas shows less than there is.
  */
-export function regionCaption(groups, refused, by, unnamed = 0) {
+export function regionCaption(groups, refused, by, unnamed = 0, accountless = 0) {
     const level = LEVEL_WORD[by] || by;
     let line = `grouped by ${level}`;
     if (refused) {
@@ -1663,6 +1677,11 @@ export function regionCaption(groups, refused, by, unnamed = 0) {
         line += unnamed === 1
             ? ' \u00b7 1 has no room for its name'
             : ` \u00b7 ${unnamed} have no room for their names`;
+    }
+    if (accountless) {
+        line += accountless === 1
+            ? ' \u00b7 1 node has no account boundary'
+            : ` \u00b7 ${accountless} nodes have no account boundary`;
     }
     return line;
 }
@@ -1694,8 +1713,9 @@ export function viewCaption(grouped, layout, pins) {
  * returned a shape set inconsistent with the containers it then painted, and two nodes ended up
  * inside a boundary they do not belong to.
  */
-export function settledRegions(projected, by, totals = new Map(), floor = REGION_FLOOR, boxes = null) {
-    const all = regionShapes(projected, by, totals, floor, boxes);
+export function settledRegions(projected, by, totals = new Map(), floor = REGION_FLOOR, boxes = null,
+    accountless = accountlessNodeCount(projected, by)) {
+    const all = regionShapes(projected, by, totals, floor, boxes, accountless);
     let shapes = all.shapes;
 
     for (;;) {
@@ -1706,7 +1726,8 @@ export function settledRegions(projected, by, totals = new Map(), floor = REGION
             return !painted.some(p => !own.has(p) && containsPoint(s.hull, { x: p.sx, y: p.sy }));
         });
         if (safe.length === shapes.length) {
-            return { shapes, groups: all.groups, refused: all.groups - shapes.length, drawn };
+            return { shapes, groups: all.groups, refused: all.groups - shapes.length,
+                accountless: all.accountless, drawn };
         }
         shapes = safe;
     }
@@ -1789,12 +1810,13 @@ export function nearestTo(points, pointer, radius) {
  * stroke carries the meaning and the fill only hints at extent.
  */
 function drawRegions(ctx, it, projected, p) {
+    const accountless = it.groupBy === 'owner' ? it.accountless : 0;
     if (!it.groupBy || it.groupBy === 'none' || it.collapsed) {
-        return { shapes: [], groups: 0, refused: 0, drawn: new Set() };
+        return { shapes: [], groups: 0, refused: 0, drawn: new Set(), accountless };
     }
 
     const totals = groupSizes(it.all ? it.all.nodes : [], it.groupBy);
-    const result = settledRegions(projected, it.groupBy, totals, undefined, it.layoutBoxes);
+    const result = settledRegions(projected, it.groupBy, totals, undefined, it.layoutBoxes, accountless);
     const focused = hoveredRegion(result.shapes, it.pointer);
 
     for (const s of result.shapes) {
