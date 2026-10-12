@@ -1,6 +1,6 @@
 # Practice safely in a startup-only Demo instance
 
-**Status:** planned; the local scripted foundation precedes an ephemeral Codespaces profile with real Copilot authoring.
+**Status:** a marked, loopback-only Demo runs real CodeQL over fictional repositories with Copilot authoring behind an egress allowlist; its Codespaces profile is built and awaits qualification in a real Codespace, and comparisons, linked examples and scripted authoring are not built.
 
 ## Why this exists
 
@@ -41,18 +41,12 @@ disables agent authoring with a reason; it never silently substitutes the script
 
 ## Startup contract and durable identity
 
-Proposed explicit CLI contract:
-
-1. `codeql-abom demo init --dir <demo-root>` creates a dedicated workspace from bundled demo
-   sources/recordings. It refuses nonempty/unmarked destinations and never overwrites a normal
-   database. `demo reset --dir <demo-root>` acts only on a stopped, marked demo.
-2. `codeql-abom serve --demo --demo-dir <demo-root> --addr <demo-address> --ui-dir <assets>`
-   serves that instance. The root determines database, local query pack and work directories;
-   conflicting flags and arbitrary production path overrides are refused.
-
-The initial authoring profile is scripted. Stage 6 adds an explicit startup selection such as
-`--demo-authoring=copilot`, coupled to a validated Codespaces demo manifest and simulated provider.
-It is not a runtime tool-path switch or permission to attach a production GitHub reader.
+Built (see [Demo](../../docs/demo.md)): `codeql-abom demo init --dir <root> [--replace]
+[--pack-locks <dir>]` and `codeql-abom demo serve --dir <root>`, a subcommand rather than a
+`serve --demo` flag so an ordinary server's flags are refused by construction. `demo egress` is the
+allowlisting proxy. `--replace` acts only on a directory holding a demo manifest; nothing yet proves
+the server is stopped first (pending 4). Copilot authoring is selected by `--copilot-cli`, an
+installed `--ql-mcp` and `--egress-proxy` together; without the proxy it is unavailable.
 
 Store a typed dataset marker through `internal/store`, the only SQL owner. A small workspace
 manifest records dataset ID, corpus/scenario format version, toolchain contract, permitted
@@ -128,9 +122,8 @@ Extend existing corpus sources and generation, then derive a **demo profile** fr
 fixture corpus. Keep one canonical source/fixture location under repository-root `testdata/`,
 not copies per package. Preserve ordinary empty/populated CI profiles and structural assertions.
 
-[`cmd/abom-corpus`](../../cmd/abom-corpus/main.go) is currently a development-only `package main`.
-Extract only reusable builder/profile operations into a narrow internal corpus package, keeping
-the command a thin caller and adding demo initialization as another. Installed Demo must not
+The builder now lives in [`internal/corpus`](../../internal/corpus/build.go); `cmd/abom-corpus`
+and `demo init` are thin callers. Installed Demo must not
 spawn `go run`, require a source checkout or duplicate the builder. Pass a validated empty demo
 destination; do not expose the builder's current unconditional SQLite reset to arbitrary paths.
 
@@ -163,7 +156,7 @@ can have their own catalog entries, never masquerade as the exercise's beginning
 ### Generation and qualification
 
 - Change source trees and regenerate BQRS/SARIF with the CodeQL CLI; never hand-edit output.
-- Correct [`queries.go`](../../cmd/abom-corpus/queries.go)'s obsolete `layAccept` teaching sequence
+- Correct [`queries.go`](../../internal/corpus/queries.go)'s obsolete `layAccept` teaching sequence
   and completion wording. Generate expected results from fixture marks before query changes.
   Intentionally bad expectations are labelled refusal examples, not recommended workflow.
 - Regenerate [`authoring.json`](../../testdata/corpus/authoring.json) through `--record-queries`
@@ -250,29 +243,29 @@ It never publishes, enables code scanning, creates alerts or implies offline dis
 
 ## Pending
 
-1. **Corpus qualification, test-first.** Extract the reusable builder,
-   extend shared sources/authoring recorder, add the profile/manifest, regenerate on a quiet
-   machine and qualify exact scenarios and release-bundle provenance. Coordinate the narrow
-   obsolete-flow correction with [query requests](../ui/codeql-requests.md), leaving unrelated
-   refinements alone. Uses the [Tutorial foundation](../../docs/tutorials.md); no pending dependency.
-2. **Startup and policy, test-first.** Add marker/manifest, init/reset commands, startup validation,
-   immutable capabilities and local-only composition before external wiring. Test the route
-   allowlist, deny-by-default behavior, credential boundary and path confinement. Depends on 1.
-3. **Execution and provenance, test-first.** Add scripted Agent, confined local database provider
-   and recorded comparison reader. Preserve earned stages and fail-first; carry provenance
-   through store -> API -> C# model -> UI. Depends on 2.
-4. **Practice UI, test-first.** Add permanent banner, scenario selection and Practice adapters
-   for all six lessons, separate outcomes and explicit Repeat/restart/reset behavior.
-   Depends on 3 and Tutorial.
-5. **Package and qualify.** Bundle qualified sources/recordings; document prerequisites,
-   initialization/start, persistence/reset and replacing the demo database with a normal setup.
-   Drive full exercises and isolation using release-like assets. Depends on 4.
-6. **Prebuilt, ephemeral Demo Codespaces with real Copilot.** Add the dedicated dev container,
-   GitHub-managed prebuild configuration, loopback simulated GitHub provider, actual SDK-backed
-   QLaaS profile, private forwarding and disposable per-user lifecycle described below.
-   Qualify creation from the prebuild with two independent users, genuine new requests and
-   CodeQL findings, and zero reuse/publication of either user's modified data. Depends on 1-5;
-   repository/organization prebuild, billing and policy administration are explicit prerequisites.
+1. **Qualify the Codespaces profile in a real Codespace.** Needs the operator: merge, configure the
+   prebuild for `.devcontainer/demo/devcontainer.json`, and create Codespaces from it. Establish, by
+   observation: `capAdd: NET_ADMIN` and `xt_owner` work, so `start-demo.sh`'s `confine` proof passes;
+   the Copilot CLI honors `HTTPS_PROXY` with `NODE_USE_ENV_PROXY=1`; which hosts a session needs,
+   read from the egress log (`api.github.com` is not allowed, and if `/copilot_internal` is needed
+   the flow is unsupported until a path-checking proxy exists); which token types the SDK accepts;
+   whether the forwarded port arrives with the forwarded or a loopback `Host`; that zero retention
+   reads back on the created Codespace; and that two users' Codespaces share nothing. Pin the base
+   image by digest and verify the CodeQL archive's checksum.
+2. **Comparison provenance, test-first.** Fictional repositories are never scanned, so Demo wires no
+   comparer and review is unreachable. Add `demo-simulated` provenance through store, API, model and
+   UI, admitted only in a marked store, before any simulated alert can satisfy a gate.
+3. **Linked examples.** The catalog reads them through dynamically built GraphQL; serve them in Demo
+   with a local file reader over the bare repositories rather than a GraphQL simulator.
+4. **Practice and reset.** Practice adapters for the remaining four lessons; Repeat that starts a
+   fresh exercise; a held lock so `demo init --replace` refuses a running server; a Playwright
+   harness that starts `demo serve` so Demo specs run in CI.
+5. **Scripted profile and scenario qualification.** The workstation profile without Copilot: the
+   deterministic agent, a scenario manifest naming exact rows, FP/FN starting states, the obsolete
+   `layAccept` sequence in [`queries.go`](../../internal/corpus/queries.go), and licensing review of
+   corpus material. The Demo currently serves the whole development corpus.
+6. **Release bundle.** `demo init` reads `testdata/corpus` from a checkout; bundle qualified sources
+   so an installed release initializes a Demo without one.
 
 ## The constraints that must not be broken
 

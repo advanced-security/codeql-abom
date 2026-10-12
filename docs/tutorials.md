@@ -22,7 +22,7 @@ completion, not a saved request, passing query, deployment or resolved vulnerabi
 | Investigate an advisory or finding | Attributed evidence, references, direct/transitive callers and coverage limits |
 | See what depends on an Action | Owned or third-party Actions, versions, users and dependency context |
 
-Tutorials use the current dataset and do not require Demo data. If an item is missing, the
+Tutorials use the current dataset and do not require [Demo](demo.md) data; in a Demo their progress is kept per dataset. If an item is missing, the
 current step says so and lets you continue without inventing a result or adding extra steps.
 The progress wheel uses the fixed lesson length shown from the start. Suggested next tutorials
 appear on the last step; choosing one finishes this lesson and starts the named lesson.

@@ -14,6 +14,7 @@ builder.Services.AddScoped(sp => new HttpClient(new TutorialRequestHandler(sp.Ge
     InnerHandler = new HttpClientHandler(),
 }) { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
 builder.Services.AddScoped<AbomApi>();
+builder.Services.AddScoped<InstanceService>();
 builder.Services.AddScoped<ThemeService>();
 builder.Services.AddScoped<AccountService>();
 // Shared so every surface reads and acts on the same scope.

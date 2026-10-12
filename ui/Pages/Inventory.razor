@@ -3,6 +3,7 @@
 @inject AbomApi Api
 @inject NavigationManager Nav
 @inject ScopeService Scope
+@inject InstanceService Instance
 @inject ThemeService Theme
 @inject AccountService Accounts
 @inject RunDraft Draft
@@ -1064,6 +1065,7 @@ else if (_unit != UnitFindings && _countedUnit == _unit)
     {
         get
         {
+            if (Instance.IsDemo) return "This Demo does not download practice data.";
             // Not read yet is not the same as nothing applies. Refusing on an empty catalog would
             // disable the export for a moment on every load, for a reason that is not true.
             if (_filterTerms.Count == 0) return string.Empty;

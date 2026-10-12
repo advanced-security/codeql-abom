@@ -3,6 +3,7 @@
 @inject ThemeService Theme
 @inject FollowService Follow
 @inject TutorialService Tutorial
+@inject InstanceService Instance
 
 <MudThemeProvider @ref="_themeProvider" Theme="Theme.Theme" IsDarkMode="Theme.IsDark" />
 <MudPopoverProvider />
@@ -43,6 +44,7 @@
     </MudAppBar>
 
     <MudMainContent>
+        <DemoBanner />
         <MudContainer MaxWidth="MaxWidth.False" Class="pa-4">
             @Body
         </MudContainer>
@@ -82,7 +84,8 @@
         await Theme.InitialiseAsync(_systemPrefersDark);
         await _themeProvider.WatchSystemDarkModeAsync(OnSystemPreferenceChanged);
         await Follow.InitializeAsync();
-        await Tutorial.InitializeAsync();
+        var instance = await Instance.LoadAsync();
+        await Tutorial.InitializeAsync(instance.IsDemo ? instance.Dataset : null);
         StateHasChanged();
     }
 

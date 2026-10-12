@@ -8,6 +8,7 @@
 @inject AbomApi Api
 @inject FollowService Follow
 @inject ThemeService Theme
+@inject InstanceService Instance
 
 @if (_loaded)
 {
@@ -81,7 +82,9 @@
     private bool _busy;
     private bool _loaded;
     private string UnavailableHint => _error is not null ? $"Discovery status could not be read: {_error}"
-        : "Discovery controls are unavailable on this instance. This is the recorded queue, not a live crawl state.";
+        : Instance.IsDemo
+            ? "A Demo does not run discovery. This is the recorded queue of its practice data, not a live crawl."
+            : "Discovery controls are unavailable on this instance. This is the recorded queue, not a live crawl state.";
     private string? _error;
     private Timer? _timer;
     private TimeSpan _beat;
@@ -159,6 +162,7 @@
     protected override async Task OnInitializedAsync()
     {
         Follow.Changed += OnFollowChanged;
+        await Instance.LoadAsync();
         await Load();
     }
 

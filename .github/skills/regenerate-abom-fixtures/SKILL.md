@@ -87,7 +87,7 @@ go run ./cmd/abom-corpus --record-queries testdata/corpus/authoring.json
 
 `scripts/regenerate-corpus-fixtures.sh` runs this last. It installs both scaffolded packs first,
 because an unlocked pack does not compile, and strips the scratch path from the tree. The queries,
-fixtures and steps live in `corpusQueries` in `cmd/abom-corpus`. Change them there and record
+fixtures and steps live in `corpusQueries` in `internal/corpus`. Change them there and record
 again: a build refuses a recording made over other files, naming this script.
 
 `internal/runner/testdata/testrun-*.json` are `codeql test run --format=json` output, captured over

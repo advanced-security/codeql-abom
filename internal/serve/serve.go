@@ -107,6 +107,11 @@ type Server struct {
 	// AllowRemoteControl permits non-loopback request Hosts, for reads as well as controls.
 	// It is not authentication; an exposed server needs its own trusted network boundary.
 	AllowRemoteControl bool
+	// AllowedHosts are names admitted beside loopback, exactly as listed, such as the one a
+	// Codespace forwards the interface under.
+	AllowedHosts []string
+	// Instance is what this server is, fixed at startup; the zero value is an ordinary instance.
+	Instance Instance
 	// Log receives failed requests. Nil discards them, which leaves a 500 visible only to the
 	// client that hit it.
 	Log io.Writer
@@ -195,7 +200,7 @@ func (s *Server) Handler() http.Handler {
 	if s.Replica != nil {
 		handler = s.routeReplica(handler, s.Replica.routes())
 	}
-	handler = s.guardRequests(routes, handler)
+	handler = s.guardRequests(routes, s.demoPolicy(routes, handler))
 	if s.ReadOnly {
 		read := handler
 		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -240,6 +245,7 @@ func (s *Server) routes() *http.ServeMux {
 	}
 
 	mux.HandleFunc("GET /api/summary", s.summary)
+	mux.HandleFunc("GET /api/instance", s.instance)
 	mux.HandleFunc("GET /api/remediation", reading(s.remediation,
 		"top", "offset", "sort", "desc", "view", "properties", "notProperties",
 		"advisorySeverity", "reached"))

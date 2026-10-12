@@ -34,6 +34,7 @@ public abstract class AbomTestContext : BunitContext
             InnerHandler = _handler,
         }) { BaseAddress = new Uri("http://localhost/") });
         Services.AddSingleton<AbomApi>();
+        Services.AddSingleton<InstanceService>();
         Services.AddSingleton<ThemeService>();
         Services.AddSingleton<AccountService>();
         Services.AddSingleton<ScopeService>();

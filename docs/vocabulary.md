@@ -13,6 +13,10 @@ The **ABOM Tutorials** section on Home and Settings uses play and restart contro
 titles can also resume an unfinished lesson in the current tab. Acknowledgement dismisses the
 first-visit welcome.
 
+**Demo** is an instance serving **synthetic training data**: fictional repositories on a
+**simulated GitHub**, with **real CodeQL results** computed over them. **Practice in this Demo**
+ends a query lesson and opens the page to do its steps for real. Demo is never a toggle.
+
 ## Ownership
 
 Three notions, and only one of them means responsibility.

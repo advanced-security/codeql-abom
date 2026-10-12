@@ -27,7 +27,11 @@ public sealed class TutorialService(IJSRuntime js, NavigationManager nav, ScopeS
     private IReadOnlyList<string> _returnSelection = [];
     private bool _initializing;
 
-    public string StorageKey => "abom.tutorial.v1:" + nav.BaseUri;
+    private string _dataset = "";
+
+    // A Demo's progress belongs to its dataset, so a new Demo, or the operator's own instance at
+    // the same address, starts with nothing marked done.
+    public string StorageKey => "abom.tutorial.v1:" + nav.BaseUri + (_dataset.Length > 0 ? "#demo:" + _dataset : "");
     public bool Initialized { get; private set; }
     public bool Acknowledged => _preferences.Acknowledged;
     public bool Enabled { get; private set; }
@@ -42,10 +46,11 @@ public sealed class TutorialService(IJSRuntime js, NavigationManager nav, ScopeS
         (requests.Request is not null || runs.Queries.Count > 0 ? "Finish or discard your draft before starting a tutorial." : "");
     public event Action? Changed;
 
-    public async Task InitializeAsync()
+    public async Task InitializeAsync(string? demoDataset = null)
     {
         if (Initialized || _initializing) return;
         _initializing = true;
+        _dataset = demoDataset ?? "";
         nav.LocationChanged += LocationChanged;
         runs.Changed += DraftChanged;
         try

@@ -77,17 +77,17 @@ func (o discoveryOptions) codeqlThreads() int {
 // CodeQL lock. Two runners would each hold their own, and a run would contend with the crawl for
 // one local compilation cache while both believed they had it.
 func newRunExecutor(
-	s store.Backend, sup *supervisor.Supervisor, logTo io.Writer,
+	s store.Backend, x *expand.Expander, workDir string, logTo io.Writer,
 ) *expand.Executor {
 	return &expand.Executor{
 		Store:    s,
-		Resolver: sup.Expander.Resolver,
-		Analyzer: sup.Expander.Analyzer,
-		Ingester: sup.Expander.Ingester,
-		Crawl:    sup.Expander,
+		Resolver: x.Resolver,
+		Analyzer: x.Analyzer,
+		Ingester: x.Ingester,
+		Crawl:    x,
 		Suites:   runnableSuites(),
-		WorkDir:  filepath.Join(sup.Options.WorkDir, "runs"),
-		Install:  sup.Expander.Install,
+		WorkDir:  filepath.Join(workDir, "runs"),
+		Install:  x.Install,
 		OnEvent: func(repository, stage string, err error) {
 			if err != nil {
 				fmt.Fprintf(logTo, "run: %s %s: %v\n", repository, stage, err)

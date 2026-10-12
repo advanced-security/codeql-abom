@@ -34,8 +34,13 @@ func (r *Runner) InstallPackHeld(ctx context.Context) error {
 func (r *Runner) installPack(ctx context.Context, lock bool) error {
 	// Nothing to install takes no lock: a Test or a run of an installed pack must not queue behind
 	// a crawl to find that out.
-	if len(unlockedPacks(CustomPackRoot())) == 0 {
+	unlocked := unlockedPacks(CustomPackRoot())
+	if len(unlocked) == 0 {
 		return nil
+	}
+	if r.Offline {
+		return fmt.Errorf("%s has no lock file, and this server installs nothing from a registry; "+
+			"provision its locks before serving", strings.Join(unlocked, " and "))
 	}
 	if lock {
 		release, err := r.Lock.Acquire(ctx)

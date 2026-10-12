@@ -518,6 +518,20 @@ public class QueryRequestsTests : AbomTestContext
         Assert.Equal("/settings#agent-tools", cut.Find("[data-abom-readiness-settings]").GetAttribute("href"));
     }
 
+    /// <summary>
+    /// A server that keeps the tools it started with, such as a Demo, refuses a saved path, so the
+    /// panel must not send the reader to Settings to set one.
+    /// </summary>
+    [Fact]
+    public void AServerWithFixedToolsOffersNoPathToSet()
+    {
+        Answer("api/authoring/readiness", CopilotMissing.Replace("\"settable\":true", "\"settable\":false"));
+        var cut = Render(One);
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-abom-readiness-problem]")));
+        Assert.Empty(cut.FindAll("[data-abom-readiness-settings]"));
+    }
+
     [Fact]
     public void NothingIsSaidWhenEverythingASessionNeedsIsThere()
     {

@@ -4,6 +4,7 @@
 @implements IDisposable
 @inject AbomApi Api
 @inject ThemeService Theme
+@inject InstanceService Instance
 
 @if (Side && !Expanded)
 {
@@ -54,7 +55,7 @@
             }
         </div>
         <div class="abom-figure-actions">
-            @if (_figure is not null)
+            @if (_figure is not null && !Instance.IsDemo)
             {
                 <MudLink Href="@DownloadHref" download="@($"abom-{Key.Replace('/', '_')}.svg")" Typo="Typo.caption"
                          Class="abom-icon-link" title="Download this drawing as an SVG file, in the light palette."

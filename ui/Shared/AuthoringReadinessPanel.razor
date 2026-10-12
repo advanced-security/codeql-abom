@@ -120,9 +120,13 @@ else if (_readiness is { Known: true, Ready: false } blocked)
             }
         </ul>
         <div class="d-flex align-center gap-3">
-            <Tip Text="Open Settings, where the CodeQL and Copilot CLI paths are set and every check is listed.">
-                <MudLink Href="/settings#agent-tools" Typo="Typo.body2" data-abom-readiness-settings>Set CLI paths in Settings</MudLink>
-            </Tip>
+            @* A server that keeps the tools it started with offers no path to set. *@
+            @if (blocked.Checks.Any(c => c.Settable))
+            {
+                <Tip Text="Open Settings, where the CodeQL and Copilot CLI paths are set and every check is listed.">
+                    <MudLink Href="/settings#agent-tools" Typo="Typo.body2" data-abom-readiness-settings>Set CLI paths in Settings</MudLink>
+                </Tip>
+            }
             <Tip Text="Ask the server to run each CLI again now, rather than repeating what it last read.">
                 <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Refresh"
                            Disabled="_checking" OnClick="Recheck" data-abom-readiness-recheck>Check again</MudButton>

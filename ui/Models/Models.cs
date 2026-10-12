@@ -2855,3 +2855,16 @@ public sealed record SetupLedgerPage : IPage<SetupWrite>
     public IReadOnlyList<SetupWrite> Items { get; init; } = [];
     public int Total { get; init; }
 }
+
+/// <summary>What the server is, fixed when it started; never chosen by the browser.</summary>
+public sealed record InstanceInfo
+{
+    public string Mode { get; init; } = "normal";
+    public string Dataset { get; init; } = "";
+    public string Scenario { get; init; } = "";
+    public string Authoring { get; init; } = "";
+    public string AuthoringReason { get; init; } = "";
+    public string Repositories { get; init; } = "";
+
+    public bool IsDemo => Mode == "demo";
+}

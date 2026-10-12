@@ -1,0 +1,29 @@
+{
+  "name": "ABOM Demo: fictional repositories on a simulated GitHub",
+  "build": { "dockerfile": "Dockerfile" },
+  "features": {
+    "ghcr.io/devcontainers/features/go:1": { "version": "1.26" },
+    "ghcr.io/devcontainers/features/dotnet:2": { "version": "10.0" },
+    "ghcr.io/devcontainers/features/node:1": { "version": "24.21.0" }
+  },
+  "capAdd": ["NET_ADMIN"],
+  "remoteUser": "vscode",
+  "onCreateCommand": "bash .devcontainer/demo/on-create.sh",
+  "updateContentCommand": "bash .devcontainer/demo/update-content.sh",
+  "postStartCommand": "bash .devcontainer/demo/post-start.sh",
+  "forwardPorts": [8099],
+  "portsAttributes": {
+    "8099": { "label": "ABOM Demo", "onAutoForward": "openBrowserOnce" }
+  },
+  "otherPortsAttributes": { "onAutoForward": "ignore" },
+  "hostRequirements": { "cpus": 4, "memory": "8gb", "storage": "32gb" },
+  "customizations": {
+    "codespaces": { "openFiles": ["docs/demo.md"] },
+    "vscode": {
+      "settings": {
+        "remote.autoForwardPorts": false,
+        "git.autofetch": false
+      }
+    }
+  }
+}

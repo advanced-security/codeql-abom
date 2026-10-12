@@ -47,6 +47,8 @@ type LifecycleStore interface {
 	SnapshotStore(dir string) (Backend, func() error, error)
 	NewWriter(batchSize int) GraphWriter
 	ResponseCache() ResponseCache
+	MarkDemo(DemoDataset) error
+	DemoDataset() (DemoDataset, bool, error)
 }
 
 // GraphWriter buffers ingestion through the backend, retaining local/shared node cache semantics.

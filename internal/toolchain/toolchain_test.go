@@ -300,3 +300,26 @@ func TestLoadPutsASavedPathAheadOfFlagsAndEnvironment(t *testing.T) {
 		t.Errorf("a tool nobody set in Settings changed: %+v", tc.CodeQL)
 	}
 }
+
+// A Demo fixes its tools at startup and reads its credential from its own setup, so readiness must
+// neither offer a path it refuses to save nor send the user to gh, which a Demo never asks.
+func TestAFixedToolchainOffersNoPathAndDescribesItsOwnCredential(t *testing.T) {
+	p := newPlace(t)
+	tc := p.chain(t)
+	tc.Fixed = true
+	tc.Credential = Credential{Name: "Copilot credential", Source: "Demo setup",
+		Remedy: "run copilot-login.sh in the Codespace terminal"}
+	tc.Token = func(context.Context) error { return errors.New("no Copilot credential has been supplied") }
+	got := byKey(tc.Checks(context.Background(), false))
+	if got[KeyCodeQL].Settable || got[KeyCopilot].Settable {
+		t.Errorf("a fixed toolchain offers a path: %+v / %+v", got[KeyCodeQL], got[KeyCopilot])
+	}
+	token := got[KeyToken]
+	if token.Name != "Copilot credential" || token.Source != "Demo setup" ||
+		strings.Contains(token.Reason+token.Remedy, "gh") || !strings.Contains(token.Remedy, "copilot-login.sh") {
+		t.Errorf("the credential check reads %+v", token)
+	}
+	if err := tc.SetTool(context.Background(), "copilot", got[KeyCopilot].Path, "test"); err == nil {
+		t.Error("a fixed toolchain saved a tool path")
+	}
+}

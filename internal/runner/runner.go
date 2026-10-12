@@ -32,6 +32,9 @@ type Runner struct {
 	// Lock serializes the invocations that share CodeQL's compilation cache. Nil means none,
 	// which is right for a one-shot command with nothing to contend with.
 	Lock *Lock
+	// Offline refuses to install a pack without a lock: installing reaches a registry even when
+	// every dependency is cached, and a Demo must reach none.
+	Offline bool
 	// Server answers the small commands from one long-lived JVM. Nil runs every command as its
 	// own process, which is what a one-shot invocation wants.
 	Server *CLIServer

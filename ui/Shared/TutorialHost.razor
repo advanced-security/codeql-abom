@@ -4,6 +4,7 @@
 @inject IJSRuntime Js
 @inject NavigationManager Nav
 @inject ThemeService Theme
+@inject InstanceService Instance
 @using System.Globalization
 
 @if (Tutorial.Notice.Length > 0)
@@ -15,6 +16,11 @@
     <aside class="abom-tutorial-welcome mud-paper" aria-labelledby="abom-tutorial-welcome-title" data-abom-tutorial-welcome>
         <h2 id="abom-tutorial-welcome-title" class="mud-typography mud-typography-subtitle1">Welcome to ABOM</h2>
         <p>Start with Settings, coverage and CodeQL, then explore the Inventory. Tutorials do not change your data.</p>
+        @if (Instance.IsDemo)
+        {
+            <p data-abom-tutorial-demo>This Demo serves fictional repositories and computes real CodeQL results
+                over them. Take a tutorial first, then practice the same steps here for real.</p>
+        }
         <div class="d-flex flex-wrap gap-2">
             <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
                        Disabled="@StartBlocked" title="Start the overview tutorial."
@@ -126,6 +132,17 @@
                 <button type="button" @onclick="@(() => Tutorial.ExitAsync())"
                         title="Exit this tutorial." data-abom-tutorial-exit>Exit tutorial</button>
             </div>
+            @if (Tutorial.LastStep && Instance.IsDemo && PracticeAddress(lesson.Id) is { } practice)
+            {
+                <section class="abom-tutorial-practice" aria-label="Practice in this Demo">
+                    <h3 class="mud-typography mud-typography-subtitle2">Practice in this Demo</h3>
+                    <p>Do these steps for real on the fictional repositories. Nothing leaves this instance.</p>
+                    <button type="button" disabled="@(!CanContinue)" @onclick="@(() => Practice(practice))"
+                            title="Finish this tutorial and open the page to practice on." data-abom-tutorial-practice>
+                        @(lesson.Id == "new-rule" ? "Request a rule for real" : "Improve a query for real")
+                    </button>
+                </section>
+            }
             @if (Tutorial.LastStep)
             {
                 <section class="abom-tutorial-related" aria-label="Suggested next tutorials">
@@ -339,6 +356,21 @@
     public Task Escape() => InvokeAsync(() => Tutorial.ExitAsync());
     private void Next() { if (CanContinue) Tutorial.Next(); }
     private Task Finish() => CanContinue ? Tutorial.FinishAsync() : Task.CompletedTask;
+
+    // Only the query lessons have something to practice that a walkthrough could not do.
+    private static string? PracticeAddress(string lesson) => lesson switch
+    {
+        "new-rule" => "/codeql?tab=requests",
+        "improve-rule" => "/codeql?tab=catalog",
+        _ => null,
+    };
+
+    private async Task Practice(string address)
+    {
+        if (!CanContinue) return;
+        await Tutorial.FinishAsync();
+        Nav.NavigateTo(address);
+    }
     private static bool IsMark(string kind) => kind is "target" or "help" or "expected" or "database" or "ast" or "compiles" or "tests";
     private static string StateMeaning(string state) => state switch
     {

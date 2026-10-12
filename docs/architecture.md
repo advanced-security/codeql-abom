@@ -14,6 +14,20 @@ The spotlight permits only the highlighted read-only UI action and tutorial cont
 Form previews never submit; missing data is explained in the same step, not replaced with synthetic evidence. Tutorial completion cannot
 earn a query stage or establish a security verdict, and no Demo dataset is required.
 
+## Practicing on fictional repositories
+
+A [Demo](demo.md) is a startup mode, not a setting: `codeql-abom demo serve` serves one marked
+workspace, and the store refuses that database to every ordinary command, as `demo serve` refuses
+an unmarked one. The workspace holds the corpus replayed into a new dataset, its query pack, and a
+bare Git repository per fictional repository, committed at a fixed date so each Codespace builds
+the same commits. A loopback-only provider serves those repositories through Git's own read-only
+HTTP backend and the REST reads a run makes, refuses writes and names outside the dataset, and
+answers code scanning as GitHub does for a repository nobody scanned. Runs then build real
+databases through the ordinary checkout and executor. The server is composed only of local
+backends; it confines its environment, refuses non-loopback HTTP from its own clients, admits
+only the practice controls it names, and withholds downloads. Copilot authoring is enabled only
+behind an egress proxy that tunnels to Copilot's hosts alone.
+
 ## The pipeline
 
 ```mermaid

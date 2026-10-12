@@ -58,6 +58,10 @@ public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
         CancellationToken ct = default) =>
         await GetListAsync<OwnerCandidate>("api/owner-candidates", ct);
 
+    /// <summary>What this server is: an ordinary instance, or a Demo over practice data.</summary>
+    public async Task<InstanceInfo?> GetInstanceAsync(CancellationToken ct = default) =>
+        await GetAsync<InstanceInfo>("api/instance", ct);
+
     public async Task<DiscoveryState> GetDiscoveryAsync(CancellationToken ct = default) =>
         await GetAsync<DiscoveryState>("api/discovery/status", ct) ?? new DiscoveryState();
 

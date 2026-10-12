@@ -426,7 +426,7 @@ func (s *Server) writeRequeued(w http.ResponseWriter, got expand.Selection) {
 const controlHeader = "X-Abom-Control"
 
 func (s *Server) allowHost(w http.ResponseWriter, r *http.Request) bool {
-	if !s.AllowRemoteControl && !isLoopback(r.Host) {
+	if !s.AllowRemoteControl && !isLoopback(r.Host) && !s.allowedHost(r.Host) {
 		writeError(w, http.StatusForbidden,
 			"ABOM is accessible only over a loopback address; "+
 				"restart with --allow-remote-control to change that")

@@ -598,7 +598,7 @@ func newConfiguredServer(
 		Pools:        processPools,
 		RecheckFloor: cmp.Or(loop.RecheckTTL, supervisor.DefaultRecheckTTL),
 	}
-	srv.Executor = newRunExecutor(s, loop, stderr)
+	srv.Executor = newRunExecutor(s, loop.Expander, loop.Options.WorkDir, stderr)
 	if tester, ok := loop.Expander.Resolver.(serve.QueryTester); ok {
 		srv.Tester, srv.QueryDir = tester, runner.CustomPackRoot()
 	}
@@ -610,7 +610,7 @@ func newConfiguredServer(
 			return expand.ReadDeclarations(ctx, s, resolver, unread)
 		}
 	}
-	if sessions, agentFor := newAuthoring(s, cfg.authoring, loop, stderr); sessions != nil {
+	if sessions, agentFor := newAuthoring(s, cfg.authoring, loop.Expander, loop.Options.WorkDir, stderr); sessions != nil {
 		srv.Authoring = sessions
 		if cfg.toolchain != nil {
 			cfg.toolchain.ApplyCopilot = func(cli string) { sessions.SetAgent(agentFor(cli)) }

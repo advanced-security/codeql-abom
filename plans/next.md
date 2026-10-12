@@ -83,15 +83,13 @@ The checks still unbuilt live in
 the plans that own what they depend on, and `codeql-abom check` names each one's plan. Declaring
 ownership by repository property, which the operator ranked ahead of them, is built.
 
-1. **[Practice safely in a startup-only Demo instance](tools/demo-mode.md)** — build on the
-   [read-only tutorials](../docs/tutorials.md), which never require Demo. Extend the existing generated
-   corpus into a dedicated training profile, then permit guided local practice through scripted
-   authoring, genuine CodeQL tests/runs and labelled recorded comparisons. A subsequent prebuilt
-   Codespaces stage adds actual Copilot SDK authoring against a loopback-only simulated GitHub
-   provider, with private access and disposable per-user data that is never reused in prebuilds.
-   Demo has its own marked database and workspace, is selected at startup, never live-switches,
-   offers no sharing/export assistance, and permits no real GitHub API traffic except the
-   qualified Copilot calls.
+1. **[Practice safely in a startup-only Demo instance](tools/demo-mode.md)** — a marked Demo
+   now serves fictional repositories from a loopback-only simulated GitHub, builds real CodeQL
+   databases and results from them, and enables Copilot authoring only behind an egress allowlist;
+   [`.devcontainer/demo`](../.devcontainer/demo/devcontainer.json) is its ephemeral Codespace. Next:
+   qualify that Codespace for real (firewall proof, which hosts Copilot needs, token type, forwarded
+   host, zero retention), then comparison provenance, linked examples, practice for the remaining
+   lessons, and the scripted offline profile.
 2. **[Hiding something is a decision somebody signs](db/exclusions-and-exceptions.md)** — every
    organization carries things it has decided not to look at and things it has decided not to act on
    yet. `abom_policy_waiver` already models both, with a required reason, an author, and an expiry

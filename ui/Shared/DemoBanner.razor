@@ -1,0 +1,49 @@
+@* A Demo is a fact about the server, so it is stated on every page and cannot be dismissed. *@
+@implements IDisposable
+@inject InstanceService Instance
+
+@if (Instance.IsDemo)
+{
+    <div class="abom-demo-banner" role="note" aria-label="Demo instance" data-abom-demo-banner>
+        <MudIcon Icon="@Icons.Material.Outlined.School" Size="Size.Small" />
+        <strong class="abom-demo-title">Demo — synthetic training data</strong>
+        <span class="abom-demo-facts">
+            <span data-abom-demo-fact="codeql">Real CodeQL results</span>
+            <span data-abom-demo-fact="repositories">Fictional repositories on a simulated GitHub</span>
+            <Tip Text="@AuthoringHint">
+                <span data-abom-demo-fact="authoring">@AuthoringText</span>
+            </Tip>
+        </span>
+        <MudSpacer />
+        <Tip Text="@AboutText" Placement="Placement.Bottom">
+            <span class="abom-demo-leave" tabindex="0" data-abom-demo-leave>
+                <MudIcon Icon="@Icons.Material.Outlined.Info" Size="Size.Small" />About this Demo
+            </span>
+        </Tip>
+    </div>
+}
+
+@code {
+    private string AuthoringText => Instance.Info.Authoring == "copilot"
+        ? "Real Copilot authoring"
+        : "Copilot authoring unavailable";
+
+    private string AboutText =>
+        $"Real CodeQL results over fictional repositories on a simulated GitHub. {AuthoringText}. " +
+        "This instance reaches no real repository, and nothing here is exported or shared. " +
+        "To stop using Demo, stop this instance and start ABOM on your own database.";
+
+    private string AuthoringHint => Instance.Info.Authoring == "copilot"
+        ? "Authoring sessions run the real Copilot agent over this Demo's own query pack."
+        : $"Authoring sessions cannot start here: {Instance.Info.AuthoringReason}.";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Instance.Changed += Changed;
+        await Instance.LoadAsync();
+    }
+
+    private void Changed() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Instance.Changed -= Changed;
+}

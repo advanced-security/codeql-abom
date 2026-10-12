@@ -33,6 +33,9 @@ type Options struct {
 
 	// CacheSizeKB is the page cache size. Negative values are interpreted by SQLite as KiB.
 	CacheSizeKB int
+
+	// Demo admits a database marked as Demo practice data, which every other open refuses.
+	Demo bool
 }
 
 // DefaultCacheSizeKB gives SQLite a 256 MiB page cache, which keeps the b-tree interior pages
@@ -67,9 +70,11 @@ func Open(path string, opts Options) (*Store, error) {
 			_ = db.Close()
 			return nil, fmt.Errorf("opening read-only database: %w", err)
 		}
-		return s, nil
+	} else if err := s.applyPragmas(opts); err != nil {
+		_ = db.Close()
+		return nil, err
 	}
-	if err := s.applyPragmas(opts); err != nil {
+	if err := s.refuseDemo(opts); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -143,6 +148,7 @@ var createTables = []struct {
 	{"the code scanning setup tables", setupDDL},
 	{"the default setup write tables", setupWriteDDL},
 	{"the coordinator lease and receipt tables", coordinationDDL},
+	{"the demo dataset marker", demoDatasetDDL},
 }
 
 // Migrate creates all tables and adds any columns introduced since the database was created.

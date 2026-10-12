@@ -237,3 +237,25 @@ func TestWithoutAnOperatorsPackNothingIsInstalled(t *testing.T) {
 		t.Errorf("the CLI was asked %v with no pack configured", calls)
 	}
 }
+
+// An offline runner, such as a Demo's, must never reach a registry: installing contacts one even
+// when every dependency is cached, so an unlocked pack is refused, by name, without running the CLI.
+func TestAnOfflineRunnerRefusesAnUnlockedPackWithoutAskingTheCLI(t *testing.T) {
+	root := scaffoldedPack(t)
+	stub, _ := stubCodeQL(t, installingCLI)
+	r := &Runner{CodeQLPath: stub, Lock: &Lock{}, Offline: true}
+
+	err := r.InstallPack(context.Background())
+	if err == nil || !strings.Contains(err.Error(), root) || !strings.Contains(err.Error(), "lock") {
+		t.Fatalf("InstallPack offline: %v, want a refusal naming %s and its lock", err, root)
+	}
+	if calls := invocations(t, stub); len(calls) != 0 {
+		t.Fatalf("an offline runner asked the CLI %v", calls)
+	}
+	for _, dir := range []string{root, filepath.Join(root, "test")} {
+		write(t, filepath.Join(dir, "codeql-pack.lock.yml"), "lockVersion: 1.0.0\ndependencies: {}\ncompiled: false\n")
+	}
+	if err := r.InstallPack(context.Background()); err != nil {
+		t.Fatalf("an offline runner refused a locked pack: %v", err)
+	}
+}
