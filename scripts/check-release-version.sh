@@ -2,7 +2,7 @@
 #
 # Proves a pre-release suffix reaches ABOM's own pack versions and nothing else.
 #
-# Runs release-version.sh and then bump-pack-versions.sh --repin in a scratch copy, for release
+# Runs release-version.sh and then upgrade-packs.sh --repin in a scratch copy, for release
 # candidates, `-next.N` builds and the release itself. The CLI pin, the upstream pack pins in
 # manifests, suites and lock files, and the ql-mcp releases ABOM names are all someone else's
 # regular releases; a suffix on any of them names something that was never published. Then it
@@ -61,8 +61,8 @@ for version in "v$cli-rc1" "v$cli-rc.2" "v$cli-next.1" "v$cli-next.2" "v$cli"; d
 		bad "release-version.sh $version failed: $(cat "$scratch/.err")"
 		continue
 	fi
-	if ! ./scripts/bump-pack-versions.sh --repin >/dev/null 2>"$scratch/.err"; then
-		bad "bump-pack-versions.sh --repin failed after $version: $(cat "$scratch/.err")"
+	if ! ./scripts/upgrade-packs.sh --repin >/dev/null 2>"$scratch/.err"; then
+		bad "upgrade-packs.sh --repin failed after $version: $(cat "$scratch/.err")"
 	fi
 	while IFS= read -r manifest; do
 		got=$(awk '/^version:/ {print $2; exit}' "$manifest")
@@ -76,9 +76,6 @@ done
 
 if ./scripts/release-version.sh "v9.9.9-rc1" >/dev/null 2>&1; then
 	bad "a release of a CLI other than the pinned one was accepted"
-fi
-if ./scripts/bump-pack-versions.sh "9.9.9-rc1" >/dev/null 2>&1; then
-	bad "bump-pack-versions.sh accepted a version of a CLI other than the pinned one"
 fi
 while IFS= read -r manifest; do
 	got=$(awk '/^version:/ {print $2; exit}' "$manifest")
@@ -121,7 +118,10 @@ done < <(manifests)
 # Consistent everywhere is still wrong: the CLI pin names a release of the CodeQL CLI.
 cp .codeql-version "$scratch/.saved"
 echo "v$cli-rc1" >.codeql-version
-./scripts/bump-pack-versions.sh "$cli-rc1" >/dev/null 2>&1 || true
+while IFS= read -r manifest; do
+	sed -i.bak "s/^version:.*/version: $cli-rc1/" "$manifest"
+	rm -f "$manifest.bak"
+done < <(manifests)
 sed -i.bak "s/\(toolsPackName + \"@\)[0-9.]*\"/\1$cli-rc1\"/" internal/runner/printast.go
 sed -i.bak "s/\(codeql-development-mcp-server@\)[0-9.]*/\1$cli-rc1/" internal/harness/copilot.go
 rm -f internal/runner/printast.go.bak internal/harness/copilot.go.bak

@@ -69,6 +69,22 @@ jobs:
             echo "needed=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Detect - Summary
+        env:
+          CURRENT: ${{ steps.check.outputs.current }}
+          LATEST: ${{ steps.check.outputs.latest }}
+          NEEDED: ${{ steps.check.outputs.needed }}
+        run: |
+          {
+            echo "## CodeQL CLI Update Check"
+            echo ""
+            if [ "${NEEDED}" = "true" ]; then
+              echo "Update available: ${CURRENT} -> ${LATEST}"
+            else
+              echo "CodeQL CLI is already up to date at ${CURRENT}."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # On the nightly schedule an upgrade branch may already carry review commits on top of the
   # bot's push. Re-running would force over them, so the run stops instead.
   existing-branch:
@@ -86,8 +102,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: 'codeql/upgrade-to-v${{ needs.detect.outputs.latest }}'
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
             echo "Manual dispatch, so the branch check is skipped."
             echo "exists=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -97,6 +114,22 @@ jobs:
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Branch - Summary
+        env:
+          BRANCH: 'codeql/upgrade-to-v${{ needs.detect.outputs.latest }}'
+          EXISTS: ${{ steps.look.outputs.exists }}
+        run: |
+          {
+            echo "## Upgrade Branch Preflight"
+            echo ""
+            if [ "${EXISTS}" = "true" ]; then
+              echo "Branch \`${BRANCH}\` already exists, so the pipeline stops to preserve its commits."
+              echo "Dispatch this workflow manually to force a refresh."
+            else
+              echo "Branch \`${BRANCH}\` does not exist, so the pipeline proceeds."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   upgrade:
     name: Upgrade and Open a Pull Request
@@ -112,6 +145,7 @@ jobs:
       - name: Upgrade - Checkout repository
         uses: actions/checkout@v7.0.1
 
+      # setup-codeql installs whatever .codeql-version names, so the pin moves first.
       - name: Upgrade - Pin the new CLI version
         env:
           LATEST: ${{ needs.detect.outputs.latest }}
@@ -130,20 +164,14 @@ jobs:
         with:
           global-json-file: global.json
 
-      - name: Upgrade - Bump every pack to the new CLI version
+      - name: Upgrade - Update version in all files
         env:
           LATEST: ${{ needs.detect.outputs.latest }}
-        run: ./scripts/bump-pack-versions.sh "${LATEST}"
+        run: ./scripts/update-release-version.sh "${LATEST}"
 
-      - name: Upgrade - Upgrade pack dependencies and re-pin the suites
-        run: |
-          # Not a bare `codeql pack upgrade` loop: that is a no-op against an exact pin, because
-          # the pin already satisfies its own constraint. It leaves every version agreeing with
-          # every other version and all of them stale, which check-versions and make verify both
-          # pass. --upgrade-deps forces resolution; --repin then fixes the `version:` inside each
-          # .qls, which codeql pack upgrade never looks at.
-          ./scripts/bump-pack-versions.sh --upgrade-deps
-          ./scripts/bump-pack-versions.sh --repin
+      - name: Upgrade - Upgrade CodeQL pack dependencies
+        id: packs
+        run: ./scripts/upgrade-packs.sh
 
       # Graphviz is a requirement: serve refuses to start without it, and the layout and figure
       # tests fail rather than skip.
@@ -163,10 +191,32 @@ jobs:
 
             - `.codeql-version` pinned to the new release
             - every pack under `ql/` bumped to match, since a pack tracks the CLI it is compiled for
-            - pack dependencies upgraded and lock files refreshed
-            - the `version:` pins inside the suites re-pinned from the lock files, which
-              `codeql pack upgrade` does not do
+            - the ql-mcp pins in `internal/runner/printast.go` and `internal/harness/copilot.go`
+              moved to the matching ql-mcp release
+            - upstream pack dependencies upgraded and lock files refreshed
+            - the `version:` pins inside the suites re-pinned from the lock files, and
+              `customql.ActionsAll` kept in step with `ql/actions/lib`
             - `make verify` passed, including `check-versions`
+
+            ${{ steps.packs.outputs.skipped && format('**Partial upgrade:** `{0}` kept their previous pins because a dependency is not yet published to the registry. Dispatch this workflow again once it is.', steps.packs.outputs.skipped) || '' }}
           commit-message: 'Upgrade CodeQL CLI to v${{ needs.detect.outputs.latest }}'
           branch: 'codeql/upgrade-to-v${{ needs.detect.outputs.latest }}'
           delete-branch: true
+
+      - name: Upgrade - Summary
+        env:
+          CURRENT: ${{ needs.detect.outputs.current }}
+          LATEST: ${{ needs.detect.outputs.latest }}
+          SKIPPED: ${{ steps.packs.outputs.skipped }}
+        run: |
+          {
+            echo "## CodeQL CLI Update Summary"
+            echo ""
+            echo "Upgraded CodeQL CLI: ${CURRENT} -> ${LATEST}"
+            echo ""
+            if [ -n "${SKIPPED}" ]; then
+              echo "Packs left on their previous pins (unpublished dependency): \`${SKIPPED}\`"
+              echo ""
+            fi
+            ./scripts/update-release-version.sh --check "${LATEST}"
+          } >> "$GITHUB_STEP_SUMMARY"

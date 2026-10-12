@@ -68,12 +68,26 @@ if [ "$mode" = name ]; then
 	echo "release-version: $tag is a release of CodeQL $cli"
 	exit 0
 fi
+manifests=(ql/*/lib/codeql-pack.yml ql/*/*/src/codeql-pack.yml ql/*/*/test/codeql-pack.yml)
 if [ "$mode" = set ]; then
-	./scripts/bump-pack-versions.sh "$semver" >/dev/null
+	## Every manifest is checked before any is rewritten, so a refusal leaves the tree untouched.
+	for manifest in "${manifests[@]}"; do
+		[ -e "$manifest" ] || continue
+		count=$(grep -c '^version:' "$manifest" || true)
+		if [ "$count" -ne 1 ]; then
+			echo "release-version: $manifest has $count top-level version: lines, not 1" >&2
+			exit 1
+		fi
+	done
+	for manifest in "${manifests[@]}"; do
+		[ -e "$manifest" ] || continue
+		sed -i.bak "s/^version:.*/version: $semver/" "$manifest"
+		rm -f "$manifest.bak"
+	done
 fi
 
 fail=0
-for manifest in ql/*/lib/codeql-pack.yml ql/*/*/src/codeql-pack.yml ql/*/*/test/codeql-pack.yml; do
+for manifest in "${manifests[@]}"; do
 	[ -e "$manifest" ] || continue
 	version=$(awk '/^version:/ {print $2; exit}' "$manifest")
 	if [ "$version" != "$semver" ]; then
