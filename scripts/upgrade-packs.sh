@@ -222,13 +222,18 @@ pack_dirs() {
 
 ## The pack customql scaffolds for operators pins the same codeql/actions-all as ql/actions/lib.
 sync_customql_actions_all() {
-	local lib_pin current
+	local lib_pin current matches
 	lib_pin=$(awk '$1 == "codeql/actions-all:" {print $2; exit}' ql/actions/lib/codeql-pack.yml)
-	current=$(sed -n 's/^const ActionsAll = "\([^"]*\)".*/\1/p' "${CUSTOMQL_GO}" | head -1)
-	if [[ -z "${lib_pin}" || -z "${current}" ]]; then
-		echo "  ❌ could not read codeql/actions-all from ql/actions/lib or ${CUSTOMQL_GO}" >&2
+	if [[ -z "${lib_pin}" ]]; then
+		echo "  ❌ could not read codeql/actions-all from ql/actions/lib/codeql-pack.yml" >&2
 		return 1
 	fi
+	matches=$(grep -c '^const ActionsAll = "' "${CUSTOMQL_GO}" || true)
+	if [[ "${matches}" -ne 1 ]]; then
+		echo "  ❌ expected exactly one 'const ActionsAll = \"' in ${CUSTOMQL_GO}, found ${matches}" >&2
+		return 1
+	fi
+	current=$(sed -n 's/^const ActionsAll = "\([^"]*\)".*/\1/p' "${CUSTOMQL_GO}")
 	if [[ "${lib_pin}" == "${current}" ]]; then
 		echo "  ✅ ${CUSTOMQL_GO}: ActionsAll ${current} (already current)"
 		return 0
