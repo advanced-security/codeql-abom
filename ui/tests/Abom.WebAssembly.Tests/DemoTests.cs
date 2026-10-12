@@ -132,4 +132,53 @@ public class DemoTests : AbomTestContext
         cut.WaitForAssertion(() =>
             Assert.Contains("Demo", cut.Find("[data-abom-crawl-unavailable]").GetAttribute("aria-label")));
     }
+
+    // An upstream Action is listed in a Demo but its repository is never served. Choosing it must say
+    // so, and offer the Demo's repositories that use it, which is where an Actions query looks.
+    [Fact]
+    public async Task ChoosingAnUpstreamActionInADemoOffersTheRepositoriesThatUseIt()
+    {
+        await Loaded(DemoInstance);
+        Answer("api/views", "[]");
+        Answer("api/queries", """{"queries":[],"stages":["dev"]}""");
+        Answer("api/accounts", """{"authenticated":true,"login":"demo-practitioner","accounts":[]}""");
+        Answer("api/node/actions/checkout/-/uses", """
+            {"key":"actions/checkout","items":[
+              {"repository":"acme-corp/payments","origin":"seed","owned":true,"reference":"v4"},
+              {"repository":"acme-corp/storefront","origin":"seed","owned":true,"reference":"v4"},
+              {"repository":"acme-corp/payments","origin":"seed","owned":true,"reference":"v3"}],
+             "total":3,"hiddenUpstream":0,"unanalyzed":0}
+            """);
+        Answer("api/databases?repositories=actions%2Fcheckout", """
+            {"databases":[],"gaps":[],"mode":"regular",
+             "unresolved":"actions/checkout is not in this Demo's simulated GitHub, so no run can build it",
+             "outside":[{"repository":"actions/checkout","reason":"not a repository in this Demo's simulated GitHub"}]}
+            """);
+        Answer("api/databases", """
+            {"databases":[],"gaps":[{"repository":"acme-corp/payments","reason":""},
+              {"repository":"acme-corp/storefront","reason":""}],"mode":"regular","unresolved":"","outside":[]}
+            """);
+        Answer("api/actions", """
+            {"items":[{"nodeKey":"actions/checkout","kind":"action","owner":"actions","repo":"checkout","origin":"",
+              "dependentRepos":2,"dependentSteps":4,"distinctRefs":2,"findings":0,
+              "severity":{"critical":0,"high":0,"medium":0,"low":0,"unknown":0},"advisories":0,
+              "analyzed":false,"refs":["v4"]}],"total":1}
+            """);
+        Services.GetService<Bunit.TestDoubles.BunitNavigationManager>()!.NavigateTo("/inventory");
+        var page = Render<Pages.Inventory>();
+        page.WaitForAssertion(() => page.Find("[data-abom-action='run-queries']"));
+        page.Find("[data-abom-action='run-queries']").Click();
+        page.WaitForAssertion(() => page.Find("[data-abom-run-choose='actions/checkout'] input").Change(true));
+
+        page.WaitForAssertion(() => Assert.Contains("actions/checkout",
+            page.Find("[data-abom-run-size]").TextContent));
+        page.Find("[data-abom-run-users]").Click();
+
+        page.WaitForAssertion(() =>
+        {
+            Assert.Contains("2 chosen repositories", page.Find("[data-abom-run-chosen]").TextContent);
+            Assert.Contains(Sent, r => r.Url.Contains("api/databases?repositories=acme-corp%2Fpayments,acme-corp%2Fstorefront"));
+        });
+        Assert.Empty(page.FindAll("[data-abom-run-users]"));
+    }
 }

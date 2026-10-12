@@ -112,6 +112,9 @@ type Server struct {
 	AllowedHosts []string
 	// Instance is what this server is, fixed at startup; the zero value is an ordinary instance.
 	Instance Instance
+	// Served reports whether a run can fetch a repository. Nil fetches any; a Demo's names only
+	// the fictional repositories its simulated GitHub holds.
+	Served func(repository string) bool
 	// Log receives failed requests. Nil discards them, which leaves a 500 visible only to the
 	// client that hit it.
 	Log io.Writer

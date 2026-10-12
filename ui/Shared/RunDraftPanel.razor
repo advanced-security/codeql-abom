@@ -57,6 +57,12 @@
                     <MudText Typo="Typo.caption" Color="Color.Warning" data-abom-run-size>@sizeRefused</MudText>
                 }
             </div>
+            @if (_size is { Outside.Count: > 0 } outside && outside.Databases.Count + outside.Gaps.Count > 0)
+            {
+                <MudText Typo="Typo.caption" Color="Color.Warning" data-abom-run-outside>
+                    Left out, because this instance cannot fetch @(string.Join(", ", outside.Outside.Select(o => o.Repository))).
+                </MudText>
+            }
             @ChildContent
         </div>
     </div>
@@ -105,6 +111,9 @@
 
     /// <summary>Raised when the draft is put away, by Cancel or by a run it started.</summary>
     [Parameter] public EventCallback Closed { get; set; }
+
+    /// <summary>Told which chosen repositories this instance cannot fetch, each time the scope resolves.</summary>
+    [Parameter] public EventCallback<IReadOnlyList<string>> OutsideFound { get; set; }
 
     private IReadOnlyList<CatalogQuery> _runnable = [];
     private string? _runRefusal;
@@ -212,6 +221,7 @@
         }
         _size = set;
         _sizeRefusal = refusal;
+        await OutsideFound.InvokeAsync(set?.Outside.Select(o => o.Repository).ToList() ?? []);
     }
 
     // Counts of what the server resolved, never a claim about what the run will make of them.

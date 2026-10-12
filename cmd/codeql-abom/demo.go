@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -94,6 +95,7 @@ type demoServeConfig struct {
 	hosts     []string
 	tokenFile string
 	egress    string
+	egressCA  string
 	authoring authoringOptions
 }
 
@@ -111,6 +113,8 @@ func parseDemoServeArgs(args []string, stderr io.Writer) (demoServeConfig, error
 		"file holding the Copilot credential sessions use (default: secrets/copilot-token in the workspace)")
 	fs.StringVar(&cfg.egress, "egress-proxy", "",
 		"proxy every child process reaches the network through, such as `codeql-abom demo egress` (default: none)")
+	fs.StringVar(&cfg.egressCA, "egress-ca", "",
+		"certificate the egress proxy presents for the hosts it reads, which children trust (from demo egress --ca-out)")
 	fs.StringVar(&cfg.authoring.copilotCLI, "copilot-cli", os.Getenv("COPILOT_CLI_PATH"),
 		"Copilot CLI that runs authoring sessions (default: $COPILOT_CLI_PATH; off when empty)")
 	fs.StringVar(&cfg.authoring.qlmcp, "ql-mcp", "",
@@ -136,6 +140,15 @@ func parseDemoServeArgs(args []string, stderr io.Writer) (demoServeConfig, error
 		return cfg, errors.New("demo serve: --ql-mcp must name an installed ql-mcp; " +
 			"a Demo does not download one while it runs")
 	}
+	if cfg.egressCA != "" {
+		if cfg.egress == "" {
+			return cfg, errors.New("demo serve: --egress-ca is trusted only through the --egress-proxy that presents it")
+		}
+		b, err := os.ReadFile(cfg.egressCA)
+		if block, _ := pem.Decode(b); err != nil || block == nil || block.Type != "CERTIFICATE" {
+			return cfg, fmt.Errorf("demo serve: %s holds no certificate", cfg.egressCA)
+		}
+	}
 	for _, h := range strings.Split(*hosts, ",") {
 		if h = strings.TrimSpace(h); h != "" {
 			cfg.hosts = append(cfg.hosts, h)
@@ -156,7 +169,7 @@ func runDemoServe(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	if err := confineEnvironment(os.Environ(), filepath.Join(cfg.dir, "home"), os.Setenv, os.Unsetenv); err != nil {
 		return fmt.Errorf("demo serve: %w", err)
 	}
-	if err := proxyChildren(cfg.egress, os.Setenv); err != nil {
+	if err := proxyChildren(cfg.egress, cfg.egressCA, os.Setenv); err != nil {
 		return fmt.Errorf("demo serve: %w", err)
 	}
 	http.DefaultTransport = loopbackOnly(http.DefaultTransport)
@@ -234,6 +247,10 @@ func newDemoServer(cfg demoServeConfig, ws demo.Workspace, provider string, stde
 		ReadProperties: func(context.Context, string) ([]ghauth.PropertyDefinition, []ghauth.RepositoryProperties, error) {
 			return nil, nil, errDemoIdentity
 		},
+		Served: func(repository string) bool {
+			_, ok := ws.Manifest.Has(repository)
+			return ok
+		},
 		Executor: newRunExecutor(s, x, l.Work(), stderr),
 		Tester:   r, QueryDir: runner.CustomPackRoot(),
 		ReadDeclarations: func(ctx context.Context, unread []store.CatalogQuery) (map[string]string, error) {
@@ -253,7 +270,8 @@ func newDemoServer(cfg demoServeConfig, ws demo.Workspace, provider string, stde
 		Token:   func(ctx context.Context) error { _, err := token(ctx); return err },
 		Fixed:   true,
 		Credential: toolchain.Credential{Name: "Copilot credential", Source: "Demo setup",
-			Remedy: "run .devcontainer/demo/copilot-login.sh in the Codespace terminal; the next session reads it"},
+			Remedy: "run make demo-login from the ABOM directory, or .devcontainer/demo/copilot-login.sh " +
+				"in a Codespace; the next session reads it"},
 	}
 	srv.Instance.Authoring, srv.Instance.AuthoringReason = "unavailable", "no Copilot CLI was named"
 	switch {
@@ -323,9 +341,15 @@ func confineEnvironment(environ []string, home string, set func(k, v string) err
 }
 
 // proxyChildren sends every child's network traffic through the egress proxy, loopback excepted.
-func proxyChildren(proxy string, set func(k, v string) error) error {
+func proxyChildren(proxy, ca string, set func(k, v string) error) error {
 	if proxy == "" {
 		return nil
+	}
+	if ca != "" {
+		// Node adds this to its roots; the authority can sign only the hosts the proxy reads.
+		if err := set("NODE_EXTRA_CA_CERTS", ca); err != nil {
+			return err
+		}
 	}
 	host, _, err := net.SplitHostPort(strings.TrimPrefix(proxy, "http://"))
 	if ip := net.ParseIP(host); err != nil || ip == nil || !ip.IsLoopback() || !strings.HasPrefix(proxy, "http://") {
@@ -367,6 +391,9 @@ func runDemoEgress(ctx context.Context, args []string, stdout, stderr io.Writer)
 	addr := fs.String("addr", "127.0.0.1:8098", "loopback address to listen on")
 	allow := fs.String("allow", strings.Join(demo.CopilotHosts, ","),
 		"comma-separated hosts tunnels may reach; a leading dot allows a suffix")
+	caOut := fs.String("ca-out", "",
+		"write the certificate this proxy presents for api.github.com here, and forward only Copilot's "+
+			"paths there; without it, api.github.com is refused")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -379,6 +406,23 @@ func runDemoEgress(ctx context.Context, args []string, stdout, stderr io.Writer)
 			hosts = append(hosts, h)
 		}
 	}
+	e := &demo.Egress{Allow: hosts, Log: stdout}
+	if *caOut != "" {
+		inspected := make([]string, 0, len(demo.CopilotPaths))
+		for host := range demo.CopilotPaths {
+			inspected = append(inspected, host)
+		}
+		authority, err := demo.NewAuthority(inspected)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(*caOut, authority.CertPEM(), 0o644); err != nil {
+			return fmt.Errorf("demo egress: %w", err)
+		}
+		e.Inspect, e.Authority = demo.CopilotPaths, authority
+		fmt.Fprintf(stdout, "demo egress: reads %s and forwards only Copilot's paths there\n",
+			strings.Join(inspected, ", "))
+	}
 	fmt.Fprintf(stdout, "demo egress: tunnels from %s reach only %s\n", *addr, strings.Join(hosts, ", "))
-	return demo.ListenEgress(ctx, *addr, &demo.Egress{Allow: hosts, Log: stdout})
+	return demo.ListenEgress(ctx, *addr, e)
 }

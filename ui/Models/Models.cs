@@ -2234,6 +2234,9 @@ public sealed record DatabaseSet
     public IReadOnlyList<DatabaseGap> Gaps { get; init; } = [];
     public string Mode { get; init; } = string.Empty;
     public string Unresolved { get; init; } = string.Empty;
+
+    /// <summary>Repositories the scope reached that this instance cannot fetch, left out and named.</summary>
+    public IReadOnlyList<DatabaseGap> Outside { get; init; } = [];
 }
 
 /// <summary>One result a member of a run reported.</summary>

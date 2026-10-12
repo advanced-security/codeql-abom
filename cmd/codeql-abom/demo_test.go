@@ -102,6 +102,10 @@ func TestDemoServerIsComposedOnlyFromLocalBackends(t *testing.T) {
 			t.Errorf("a Demo server was given %s", name)
 		}
 	}
+	// A run reaches only what the simulated GitHub holds; an upstream Action is named, never fetched.
+	if srv.Served == nil || !srv.Served("acme-corp/payments") || srv.Served("actions/checkout") {
+		t.Error("a Demo run is not bounded to the dataset's repositories")
+	}
 	// Nil here would fall back to the gh CLI and the operator's own credential.
 	if srv.Verify == nil || srv.ListRepositories == nil || srv.ReadProperties == nil {
 		t.Fatal("a Demo server leaves an identity read to fall back to gh")
@@ -208,5 +212,35 @@ func TestDemoAuthoringNeedsTheEgressProxy(t *testing.T) {
 		if c.want == "unavailable" && (srv.Authoring != nil || !strings.Contains(srv.Instance.AuthoringReason, "egress")) {
 			t.Errorf("without egress: sessions %v, reason %q", srv.Authoring != nil, srv.Instance.AuthoringReason)
 		}
+	}
+}
+
+// A child trusts the egress authority only when it is told to, and only alongside the proxy that
+// presents it; neither alone is a configuration a Demo accepts.
+func TestDemoChildrenTrustTheEgressAuthorityOnlyThroughTheProxy(t *testing.T) {
+	root := demoWorkspace(t)
+	ca := filepath.Join(t.TempDir(), "egress-ca.pem")
+	authority, err := demo.NewAuthority([]string{"api.github.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ca, authority.CertPEM(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseDemoServeArgs([]string{"--dir", root, "--egress-ca", ca}, &bytes.Buffer{}); err == nil {
+		t.Error("an egress authority was accepted without the proxy that presents it")
+	}
+	notPEM := filepath.Join(t.TempDir(), "x.pem")
+	_ = os.WriteFile(notPEM, []byte("nothing"), 0o644)
+	if _, err := parseDemoServeArgs([]string{"--dir", root, "--egress-proxy", "http://127.0.0.1:8091",
+		"--egress-ca", notPEM}, &bytes.Buffer{}); err == nil {
+		t.Error("a file holding no certificate was accepted as the egress authority")
+	}
+	env := map[string]string{}
+	if err := proxyChildren("http://127.0.0.1:8091", ca, func(k, v string) error { env[k] = v; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if env["NODE_EXTRA_CA_CERTS"] != ca || env["HTTPS_PROXY"] != "http://127.0.0.1:8091" {
+		t.Errorf("children were given %v", env)
 	}
 }

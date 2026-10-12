@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
 // servedPatterns reads every route serve.go registers, so a route added later is covered here
@@ -146,5 +148,51 @@ func TestOnlyTheExactForwardedHostIsAdmitted(t *testing.T) {
 		if rec.Code != want {
 			t.Errorf("Host %s answered %d, want %d", host, rec.Code, want)
 		}
+	}
+}
+
+// A Demo's simulated GitHub holds only its fictional repositories. An upstream Action the Inventory
+// lists is named there, never served, so a run over it is named as outside rather than attempted
+// and failed, and a run over nothing else is refused with that reason.
+func TestADemoRunLeavesOutAndNamesRepositoriesItCannotServe(t *testing.T) {
+	srv := demoServer(t)
+	srv.Served = func(repository string) bool { return repository == "acme-corp/payments" }
+
+	set := decode[store.DatabaseSet](t, get(t, srv,
+		"/api/databases?repositories=acme-corp%2Fpayments,actions%2Fcheckout"))
+	var members []string
+	for _, d := range set.Databases {
+		members = append(members, d.Repository)
+	}
+	for _, g := range set.Gaps {
+		members = append(members, g.Repository)
+	}
+	if !slices.Equal(members, []string{"acme-corp/payments"}) {
+		t.Errorf("members %v, want only the served repository", members)
+	}
+	if len(set.Outside) != 1 || set.Outside[0].Repository != "actions/checkout" || set.Outside[0].Reason == "" {
+		t.Errorf("outside %+v, want actions/checkout named with a reason", set.Outside)
+	}
+
+	only := decode[store.DatabaseSet](t, get(t, srv, "/api/databases?repositories=actions%2Fcheckout"))
+	if len(only.Databases)+len(only.Gaps) != 0 || !strings.Contains(only.Unresolved, "actions/checkout") {
+		t.Errorf("a scope wholly outside resolved to %+v", only)
+	}
+	r := localRequest(http.MethodPost, "/api/runs?repositories=actions%2Fcheckout",
+		strings.NewReader(`{"queries":[{"queryId":"acme/q","queryVersion":"v"}],"by":"t"}`))
+	r.Header.Set("X-Abom-Control", "1")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, r)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "actions/checkout") {
+		t.Errorf("a run wholly outside answered %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// An ordinary server fetches any repository, so nothing is ever outside its scope.
+func TestAnOrdinaryRunHasNothingOutside(t *testing.T) {
+	srv, _ := newServer(t)
+	set := decode[store.DatabaseSet](t, get(t, srv, "/api/databases?repositories=actions%2Fcheckout"))
+	if len(set.Outside) != 0 || len(set.Databases)+len(set.Gaps) != 1 {
+		t.Errorf("an ordinary resolution %+v", set)
 	}
 }

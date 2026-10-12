@@ -11,6 +11,9 @@ including findings about private code that cannot travel the public advisory rou
 **ABOM is unreleased. Building from source is the only supported installation.** GitHub Release
 downloads and Helm deployment are not available.
 
+To try ABOM without an organization, run a [Demo](docs/demo.md) from an archive of this
+repository: `make demo-check`, then `make demo`.
+
 1. Follow [source setup](docs/deployment/source.md) to install the prerequisites, CodeQL and its
    query packs, and to confirm GitHub and Git access to your organization.
 2. From the checkout, run `make start` and open <http://127.0.0.1:8099>.

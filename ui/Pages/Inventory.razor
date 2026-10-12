@@ -105,7 +105,7 @@
 
 @if (_choosing && UnitRunsQueries(_unit))
 {
-    <RunDraftPanel Predicate="@RunPredicate" Closed="StopChoosing">
+    <RunDraftPanel Predicate="@RunPredicate" Closed="StopChoosing" OutsideFound="@(o => _outside = o)">
         <Scope>
             @* Where the rows are repositories, "all" is the scope itself rather than every page of
                names. The reason sits on the span: a disabled checkbox fires no tooltip. *@
@@ -123,6 +123,16 @@
                     ? CountText.Of(_total, "repository in this scope", "repositories in this scope")
                     : CountText.Of(_chosen.Count, "chosen repository", "chosen repositories"))</strong>
             </MudText>
+            @* A Demo lists upstream Actions it never serves; an Actions query looks where they are used. *@
+            @if (Instance.IsDemo && !_all && _outside.Count > 0)
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
+                           StartIcon="@Icons.Material.Outlined.SwapHoriz" Disabled="_findingUsers"
+                           title="Replace what this Demo does not hold with its repositories that use it."
+                           OnClick="ChooseUsers" data-abom-run-users>
+                    Use the repositories that use @(_outside.Count == 1 ? "it" : "them")
+                </MudButton>
+            }
         </Scope>
     </RunDraftPanel>
 }
@@ -204,7 +214,7 @@
             <CellTemplate>
                 @if (RepositoryOf(context.Item) is { Length: > 0 } repository)
                 {
-                    @ChooseBox(repository)
+                    @ChooseBox(repository, context.Item.NodeKey)
                 }
             </CellTemplate>
         </TemplateColumn>
@@ -1352,25 +1362,62 @@ else if (_unit != UnitFindings && _countedUnit == _unit)
     private static string? RepositoryOf(ActionSummary a) =>
         a.Owner.Length > 0 && a.Repo.Length > 0 ? $"{a.Owner}/{a.Repo}" : null;
 
-    private RenderFragment ChooseBox(string repository) => __builder =>
+    // Repositories a run here cannot fetch, as the run's own resolution reported them.
+    private IReadOnlyList<string> _outside = [];
+    private bool _findingUsers;
+    // The node each chosen row named, since an action's users are asked of the node, not its repository.
+    private readonly Dictionary<string, HashSet<string>> _chosenNodes = new(StringComparer.OrdinalIgnoreCase);
+
+    // Every repository using what was chosen and cannot be fetched, read across all pages.
+    private async Task ChooseUsers()
+    {
+        _findingUsers = true;
+        var users = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var repository in _outside)
+        {
+            var nodes = _chosenNodes.TryGetValue(repository, out var named) ? named : [repository];
+            foreach (var node in nodes)
+            {
+                for (var offset = 0; ; offset += 200)
+                {
+                    var (usesPage, _) = await Api.GetNodeUsesAsync(node, string.Empty, 200, offset, null, false);
+                    if (usesPage is null) break;
+                    foreach (var use in usesPage.Items) users.Add(use.Repository);
+                    if (usesPage.Items.Count == 0 || offset + usesPage.Items.Count >= usesPage.Total) break;
+                }
+            }
+        }
+        foreach (var repository in _outside) Choose(repository, false);
+        foreach (var user in users) Choose(user, true);
+        _outside = [];
+        _findingUsers = false;
+    }
+
+    private RenderFragment ChooseBox(string repository, string? node = null) => __builder =>
     {
         <span data-abom-run-choose="@repository">
             <MudCheckBox T="bool" Dense="true" Size="Size.Small" Color="Color.Primary"
                          Value="@(_all || _chosen.Contains(repository))" Disabled="@_all"
-                         ValueChanged="@((bool on) => Choose(repository, on))"
+                         ValueChanged="@((bool on) => Choose(repository, on, node))"
                          aria-label="@($"Choose {repository}")" />
         </span>
     };
 
-    private void Choose(string repository, bool on)
+    private void Choose(string repository, bool on, string? node = null)
     {
         if (on)
         {
             _chosen.Add(repository);
+            if (node is { Length: > 0 })
+            {
+                if (!_chosenNodes.TryGetValue(repository, out var nodes)) _chosenNodes[repository] = nodes = [];
+                nodes.Add(node);
+            }
         }
         else
         {
             _chosen.Remove(repository);
+            _chosenNodes.Remove(repository);
         }
     }
 
@@ -1381,6 +1428,8 @@ else if (_unit != UnitFindings && _countedUnit == _unit)
     {
         _choosing = false;
         _chosen.Clear();
+        _chosenNodes.Clear();
+        _outside = [];
         _all = false;
     }
 

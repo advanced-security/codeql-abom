@@ -58,12 +58,16 @@ fi
 
 authoring=()
 if confine; then
-	setsid "$bin" demo egress --addr "127.0.0.1:$egress_port" >>"$logs/egress.log" 2>&1 &
+	rm -f "$logs/egress-ca.pem"
+	setsid "$bin" demo egress --addr "127.0.0.1:$egress_port" --ca-out "$logs/egress-ca.pem" \
+		>>"$logs/egress.log" 2>&1 &
 	echo $! >"$logs/egress.pid"
+	for _ in $(seq 1 10); do [ -s "$logs/egress-ca.pem" ] && break; sleep 0.5; done
 	copilot=$(command -v copilot || true)
 	qlmcp=$(command -v codeql-development-mcp-server || true)
 	if [ -n "$copilot" ] && [ -n "$qlmcp" ]; then
-		authoring=(--copilot-cli "$copilot" --ql-mcp "$qlmcp" --egress-proxy "http://127.0.0.1:$egress_port")
+		authoring=(--copilot-cli "$copilot" --ql-mcp "$qlmcp" --egress-proxy "http://127.0.0.1:$egress_port"
+			--egress-ca "$logs/egress-ca.pem")
 	fi
 else
 	echo "start-demo: the Demo could not be confined to loopback, so Copilot authoring stays off" |
