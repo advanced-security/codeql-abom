@@ -164,6 +164,10 @@ func (e *Egress) forward(req *http.Request, host, target string, upstream http.R
 	e.record("allowed %s %s%s: %d", req.Method, host, path, resp.StatusCode)
 	// The client spoke HTTP/1.1 to this proxy, whatever upstream answered in.
 	resp.Proto, resp.ProtoMajor, resp.ProtoMinor = "HTTP/1.1", 1, 1
+	// Without a length, HTTP/1.1 ends a body at close, and this connection stays open.
+	if resp.ContentLength < 0 && len(resp.TransferEncoding) == 0 {
+		resp.TransferEncoding = []string{"chunked"}
+	}
 	return resp
 }
 

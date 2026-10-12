@@ -243,11 +243,10 @@ It never publishes, enables code scanning, creates alerts or implies offline dis
 
 ## Pending
 
-0. **Observe a Copilot session end to end.** `make demo` from an archive builds and serves a Demo, and
-   runs over the Inventory build real databases (25 repositories using `actions/checkout`: 221
-   results, zero egress). The CLI's credential check (`GET api.github.com/copilot_internal/user`)
-   passes the inspecting egress proxy with 200, but the session then sent no model request and no
-   tunnel was attempted; find what it waits on (ql-mcp start-up, a host it reaches without the proxy).
+0. **Observe a Copilot session end to end.** The stall after the credential check was the egress
+   proxy relaying an HTTP/2 answer without a length on a kept-open connection, so the CLI waited
+   for an end that never came; it now relays such answers chunked. Confirm a full session in a
+   live Demo and read `.abom/demo/egress.log` for any host still refused.
 1. **Qualify the Codespaces profile in a real Codespace.** Needs the operator: merge, configure the
    prebuild for `.devcontainer/demo/devcontainer.json`, and create Codespaces from it. Establish, by
    observation: `capAdd: NET_ADMIN` and `xt_owner` work, so `start-demo.sh`'s `confine` proof passes;

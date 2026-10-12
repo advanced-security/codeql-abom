@@ -134,7 +134,7 @@ setup() {
 answering() { curl -fsS -o /dev/null --max-time 2 "http://$addr/api/instance" 2>/dev/null; }
 
 serve() {
-	local cli copilot qlmcp args egress_pid=""
+	local cli copilot qlmcp args egress_pid="" token
 	setup
 	answering && die "something already answers on http://$addr; stop it, or set ABOM_DEMO_ADDR"
 	cli=$(codeql_cli) || die "CodeQL ${pin%.*}.x is not installed; run make demo-check"
@@ -154,8 +154,12 @@ serve() {
 		[ -s "$dir/egress-ca.pem" ] || die "the egress proxy did not start; see $dir/egress.log"
 		args+=(--copilot-cli "$copilot" --ql-mcp "$qlmcp" --egress-proxy "http://$egress"
 			--egress-ca "$dir/egress-ca.pem" --authoring-credits "$credits")
+		if [ ! -s "$dir/secrets/copilot-token" ] && token=$(gh auth token 2>/dev/null) && [ -n "$token" ]; then
+			(umask 077 && printf '%s\n' "$token" >"$dir/secrets/copilot-token")
+			say "Copilot uses your gh sign-in; make demo-login replaces it"
+		fi
 		[ -s "$dir/secrets/copilot-token" ] ||
-			say "Copilot authoring needs a credential: run make demo-login in another terminal"
+			say "Copilot authoring needs a credential: run gh auth login, or make demo-login"
 	else
 		say "Copilot authoring is off: install the Copilot CLI and ql-mcp (make demo-check says how)"
 	fi

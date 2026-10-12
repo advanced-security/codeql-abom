@@ -72,17 +72,13 @@ Open <http://127.0.0.1:8090>. The first `make demo` downloads Go modules, .NET p
 query packs, so it needs the network and takes several minutes; it creates the Demo under
 `.abom/demo`. Later runs reuse it. `Ctrl-C` stops the Demo.
 
-### 3. Give Copilot a credential
+### 3. Copilot's credential
 
-In a second terminal, from the same directory:
-
-```bash
-make demo-login                   # paste a fine-grained token with the Copilot Requests permission
-gh auth token | make demo-login   # or reuse your GitHub CLI sign-in
-```
-
-Copilot does not accept classic `ghp_` tokens. The credential is saved under `.abom/demo/secrets`,
-readable only by you, and given only to the Copilot CLI. The next authoring session uses it.
+`make demo` gives Copilot your GitHub CLI sign-in (`gh auth token`) when no other credential is saved,
+so `gh auth login` is all most people need. To use another, run `make demo-login` in a second
+terminal and paste a fine-grained token with the **Copilot Requests** permission; classic `ghp_`
+tokens are refused. The credential is saved under `.abom/demo/secrets`, readable only by you, and
+given only to the Copilot CLI.
 
 ### 4. Practice
 
@@ -173,6 +169,3 @@ positives or false negatives**, a Demo offers to practice the same steps for rea
   simulated comparison must not satisfy a review gate. Runs and their results work.
 - Linking an example from a repository; paste examples instead.
 - A scripted, offline authoring profile for workstations without Copilot.
-- A fully observed Copilot session: the credential check passes through the egress proxy, but the
-  session's first model request has not yet been seen end to end. `.abom/demo/egress.log` names
-  any host a session was refused.

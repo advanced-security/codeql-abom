@@ -215,3 +215,42 @@ func TestEgressAnswersInTheProtocolTheClientSpoke(t *testing.T) {
 		t.Fatalf("answered %d over %s, want 200 over HTTP/1.1", resp.StatusCode, resp.Proto)
 	}
 }
+
+// An HTTP/2 answer streamed without a length is relayed as one that ends: written to be read until
+// the connection closes, on a connection the proxy keeps open, a client waits on it forever.
+func TestEgressRelaysAnAnswerOfUnknownLengthSoItEnds(t *testing.T) {
+	upstream := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("part one,"))
+		w.(http.Flusher).Flush()
+		_, _ = w.Write([]byte("part two"))
+	}))
+	upstream.EnableHTTP2 = true
+	upstream.StartTLS()
+	defer upstream.Close()
+	_, port, _ := net.SplitHostPort(strings.TrimPrefix(upstream.URL, "https://"))
+	authority, err := NewAuthority([]string{"localhost"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := egressProxy(t, &Egress{
+		Inspect: map[string][]string{"localhost": {"/copilot_internal/"}}, Authority: authority, Ports: []string{port},
+		Upstream: &http.Transport{ForceAttemptHTTP2: true, TLSClientConfig: &tls.Config{
+			RootCAs: certPool(upstream.Certificate()), ServerName: "example.com"}},
+	})
+	trusted := x509.NewCertPool()
+	trusted.AppendCertsFromPEM(authority.CertPEM())
+	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{
+		Proxy: http.ProxyURL(proxy), TLSClientConfig: &tls.Config{RootCAs: trusted},
+	}}
+	for i := range 2 {
+		resp, err := client.Get("https://localhost:" + port + "/copilot_internal/user")
+		if err != nil {
+			t.Fatalf("request %d: %v", i, err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil || string(body) != "part one,part two" {
+			t.Fatalf("request %d read %q, %v", i, body, err)
+		}
+	}
+}
