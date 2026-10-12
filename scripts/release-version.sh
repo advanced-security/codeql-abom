@@ -69,7 +69,11 @@ if [ "$mode" = name ]; then
 	exit 0
 fi
 if [ "$mode" = set ]; then
-	./scripts/bump-pack-versions.sh "$semver" >/dev/null
+	for manifest in ql/*/lib/codeql-pack.yml ql/*/*/src/codeql-pack.yml ql/*/*/test/codeql-pack.yml; do
+		[ -e "$manifest" ] || continue
+		sed -i.bak "s/^version:.*/version: $semver/" "$manifest"
+		rm -f "$manifest.bak"
+	done
 fi
 
 fail=0

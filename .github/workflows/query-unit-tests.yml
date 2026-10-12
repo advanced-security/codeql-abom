@@ -14,6 +14,7 @@ on:
       - 'internal/harness/copilot.go'
       - 'internal/runner/printast.go'
       - 'scripts/*version*.sh'
+      - 'scripts/upgrade-packs.sh'
   push:
     branches: ['main']
     paths:
@@ -25,6 +26,7 @@ on:
       - 'internal/harness/copilot.go'
       - 'internal/runner/printast.go'
       - 'scripts/*version*.sh'
+      - 'scripts/upgrade-packs.sh'
 
 permissions:
   contents: read
