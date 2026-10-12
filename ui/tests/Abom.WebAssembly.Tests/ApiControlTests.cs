@@ -61,6 +61,7 @@ public sealed class ApiControlTests
     [InlineData("retry", "/api/discovery/retry-unavailable", "POST")]
     [InlineData("prune", "/api/prune/apply", "POST")]
     [InlineData("enumerate", "/api/owned-scope/enumerate", "POST")]
+    [InlineData("refresh", "/api/accounts/refresh", "POST")]
     public async Task ThrowingControlsNeverTurnARefusalIntoSuccess(string action, string path, string method)
     {
         using var handler = new Handler(request =>
@@ -83,6 +84,7 @@ public sealed class ApiControlTests
             "retry" => api.RetryUnavailableAsync(ct),
             "prune" => api.PruneAsync(false, ct),
             "enumerate" => api.EnumerateOwnedScopeAsync(ct),
+            "refresh" => api.RefreshAccountsAsync(ct),
             _ => throw new InvalidOperationException(action),
         });
     }
@@ -97,18 +99,19 @@ public sealed class ApiControlTests
     };
 
     [Theory]
-    [InlineData("run", "api/runs", "POST")]
-    [InlineData("execute", "api/runs/7/start", "POST")]
-    [InlineData("advance", "api/queries/stage", "POST")]
-    [InlineData("request", "api/query-requests", "POST")]
-    [InlineData("databases", "api/databases?scope=owned", "GET")]
-    [InlineData("page", "api/actions?top=1&offset=0", "GET")]
-    public async Task UnguardedRequestsKeepTransportErrorsSeparateFromRefusals(
-        string action, string path, string method)
+    [InlineData("run", "api/runs", "POST", true)]
+    [InlineData("execute", "api/runs/7/start", "POST", true)]
+    [InlineData("advance", "api/queries/stage", "POST", true)]
+    [InlineData("request", "api/query-requests", "POST", true)]
+    [InlineData("edit-request", "api/query-requests/7", "PUT", true)]
+    [InlineData("databases", "api/databases?scope=owned", "GET", false)]
+    [InlineData("page", "api/actions?top=1&offset=0", "GET", false)]
+    public async Task RefusableRequestsCarryTheirGuardWithoutLosingTransportErrors(
+        string action, string path, string method, bool guarded)
     {
         using var handler = new Handler(request =>
         {
-            Assert.False(request.Headers.Contains("X-Abom-Control"));
+            Assert.Equal(guarded, request.Headers.Contains("X-Abom-Control"));
             Assert.Equal(method, request.Method.Method);
             throw new HttpRequestException("offline");
         });
@@ -121,6 +124,7 @@ public sealed class ApiControlTests
             "execute" => (await api.ExecuteAnalysisRunAsync(7, ct)).Refusal,
             "advance" => (await api.AdvanceQueryStageAsync("acme/test", "v1", "test", "operator", ct)).Refusal,
             "request" => (await api.SaveQueryRequestAsync(new QueryRequest(), ct)).Refusal,
+            "edit-request" => (await api.SaveQueryRequestAsync(new QueryRequest { RowId = 7 }, ct)).Refusal,
             "databases" => (await api.GetDatabasesAsync("scope=owned", ct)).Refusal,
             "page" => (await api.GetPageAsync<object>("api/actions", "", 1, 0, null, false, ct)).Refusal,
             _ => throw new InvalidOperationException(action),

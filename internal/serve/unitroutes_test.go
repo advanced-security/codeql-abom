@@ -30,7 +30,7 @@ func TestAUnitsRouteAcceptsEveryTermItsUnitApplies(t *testing.T) {
 			}
 			query := url.Values{term.Name: {sampleValue(term, surface)}}.Encode()
 			rec := httptest.NewRecorder()
-			srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path+"?"+query, nil))
+			srv.Handler().ServeHTTP(rec, localRequest(http.MethodGet, path+"?"+query, nil))
 			if strings.Contains(rec.Body.String(), "Not applied here") {
 				t.Errorf("%s?%s is refused by the route, but the %s unit applies %s: %s",
 					path, query, surface, term.Name, rec.Body.String())

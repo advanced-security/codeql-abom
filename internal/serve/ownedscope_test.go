@@ -134,7 +134,7 @@ func TestThePreviewLeavesTheDeclarationAlone(t *testing.T) {
 func preview(t *testing.T, srv *Server, body string) ScopePreview {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/owned-scope/preview", strings.NewReader(body))
+	req := localRequest(http.MethodPost, "/api/owned-scope/preview", strings.NewReader(body))
 	srv.Handler().ServeHTTP(rec, req)
 	return decode[ScopePreview](t, rec)
 }

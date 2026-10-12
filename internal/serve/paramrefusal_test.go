@@ -41,7 +41,7 @@ func TestAnEndpointRefusesAParameterItDoesNotApply(t *testing.T) {
 				continue
 			}
 			rec := httptest.NewRecorder()
-			srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path+"?"+param, nil))
+			srv.Handler().ServeHTTP(rec, localRequest(http.MethodGet, path+"?"+param, nil))
 
 			if rec.Code != http.StatusBadRequest {
 				t.Errorf("%s?%s answered %d; it applies no such parameter",
@@ -69,7 +69,7 @@ func TestTheReportsThatApplyAGroupingAcceptIt(t *testing.T) {
 				query = extra + "&" + term
 			}
 			rec := httptest.NewRecorder()
-			srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path+"?"+query, nil))
+			srv.Handler().ServeHTTP(rec, localRequest(http.MethodGet, path+"?"+query, nil))
 			if rec.Code != http.StatusOK {
 				t.Errorf("%s?%s answered %d, want %d: %s",
 					path, query, rec.Code, http.StatusOK, rec.Body.String())
@@ -91,7 +91,7 @@ func TestTheNodeListingAcceptsTheFindingsTermsItApplies(t *testing.T) {
 		"provider=codeql",
 	} {
 		rec := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/actions?"+term, nil))
+		srv.Handler().ServeHTTP(rec, localRequest(http.MethodGet, "/api/actions?"+term, nil))
 		if rec.Code != http.StatusOK {
 			t.Errorf("/api/actions?%s answered %d, want %d: %s",
 				term, rec.Code, http.StatusOK, rec.Body.String())
@@ -107,7 +107,7 @@ func TestTheNodeListingAppliesRepositoriesWithTheSetPathsMeaning(t *testing.T) {
 	srv, _ := unitServer(t)
 
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(
+	srv.Handler().ServeHTTP(rec, localRequest(
 		http.MethodGet, "/api/actions?repositories=octo-org%2Fapp", nil))
 
 	if rec.Code != http.StatusOK {
@@ -133,7 +133,7 @@ func TestEveryEndpointStillAcceptsItsOwnParameters(t *testing.T) {
 		"/api/graph?focus=actions/checkout&hops=1&max=10&direction=dependencies&granularity=action&expand=false",
 	} {
 		rec := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		srv.Handler().ServeHTTP(rec, localRequest(http.MethodGet, path, nil))
 
 		if rec.Code == http.StatusBadRequest {
 			t.Errorf("%s was refused its own parameters: %s", path, rec.Body.String())
@@ -147,7 +147,7 @@ func TestAKnownParameterStillHasToParse(t *testing.T) {
 	srv, _ := unitServer(t)
 
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/frontier?top=lots", nil))
+	srv.Handler().ServeHTTP(rec, localRequest(http.MethodGet, "/api/frontier?top=lots", nil))
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("top=lots answered %d; a malformed number is not the default", rec.Code)

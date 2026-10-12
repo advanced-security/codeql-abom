@@ -97,7 +97,7 @@ func authoringServer(t *testing.T) (*Server, *store.Store, *fakeAuthoring, int64
 
 func sessionPost(t *testing.T, s *Server, path, body string, control bool) *httptest.ResponseRecorder {
 	t.Helper()
-	r := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
+	r := localRequest(http.MethodPost, path, bytes.NewBufferString(body))
 	r.Host = "127.0.0.1:8080"
 	if control {
 		r.Header.Set(controlHeader, "1")
@@ -110,7 +110,7 @@ func sessionPost(t *testing.T, s *Server, path, body string, control bool) *http
 func sessionGet(t *testing.T, s *Server, path string, out any) int {
 	t.Helper()
 	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+	s.Handler().ServeHTTP(w, localRequest(http.MethodGet, path, nil))
 	if w.Code == http.StatusOK && out != nil {
 		if err := json.Unmarshal(w.Body.Bytes(), out); err != nil {
 			t.Fatalf("decoding %s: %v\n%s", path, err, w.Body.String())

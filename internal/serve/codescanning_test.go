@@ -135,7 +135,7 @@ func TestAPreviewIsTheViewsRepositoriesAndChangesNothing(t *testing.T) {
 func TestWritingIsControlledAndRefusedWhereTheServerWritesNothing(t *testing.T) {
 	srv, _ := writesServer(t)
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/code-scanning/previews", strings.NewReader(`{}`)))
+	srv.Handler().ServeHTTP(rec, localRequest(http.MethodPost, "/api/code-scanning/previews", strings.NewReader(`{}`)))
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("a preview without the control header answered %d, want 403", rec.Code)
 	}

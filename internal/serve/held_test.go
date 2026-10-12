@@ -31,7 +31,7 @@ func publishUnpinnedTag(t *testing.T, st *store.Store) {
 func control(t *testing.T, srv *Server, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req := localRequest(http.MethodPost, path, strings.NewReader(body))
 	req.Host = "127.0.0.1:8080"
 	req.Header.Set(controlHeader, "1")
 	srv.Handler().ServeHTTP(rec, req)

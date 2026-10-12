@@ -97,7 +97,7 @@ func TestThePreviewJudgesACandidatePropertyScope(t *testing.T) {
 	put(t, srv, "/api/owned-scope", `[{"owner":"acme","kind":"organization","enabled":true}]`)
 
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/owned-scope/preview",
+	srv.Handler().ServeHTTP(rec, localRequest(http.MethodPost, "/api/owned-scope/preview",
 		strings.NewReader(teamA)))
 	var preview struct {
 		RootsNow, RootsNext, NotJudged int
@@ -231,8 +231,9 @@ func TestACandidateScopeIsCountedAgainstWhatGitHubSaysNow(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := controlRequest("/api/accounts/acme/properties")
 	req.Body = http.NoBody
-	req = httptest.NewRequest(http.MethodPost, "/api/accounts/acme/properties", strings.NewReader(
+	req = localRequest(http.MethodPost, "/api/accounts/acme/properties", strings.NewReader(
 		`{"clauses":[[{"name":"team","value":"a"}],[{"name":"team","value":"a"},{"name":"business_id","value":"7"}]]}`))
+
 	req.Host = "127.0.0.1:8080"
 	req.Header.Set(controlHeader, "1")
 	srv.Handler().ServeHTTP(rec, req)
@@ -332,7 +333,7 @@ func TestThePreviewNamesACandidateScopeThatIsHeld(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/owned-scope/preview",
+	srv.Handler().ServeHTTP(rec, localRequest(http.MethodPost, "/api/owned-scope/preview",
 		strings.NewReader(teamA)))
 	var preview struct {
 		RootsNext int `json:"rootsNext"`

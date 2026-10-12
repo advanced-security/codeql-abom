@@ -18,7 +18,7 @@ func TestRenewRequiresTheControlHeader(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/submissions/renew", nil)
+	req := localRequest(http.MethodPost, "/api/submissions/renew", nil)
 	s.Handler().ServeHTTP(rec, req)
 
 	if rec.Code == http.StatusOK {
@@ -89,7 +89,7 @@ func TestRenewSaysWhenTheBuildCannotDoIt(t *testing.T) {
 	s := &Server{AllowRemoteControl: true}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/submissions/renew", nil)
+	req := localRequest(http.MethodPost, "/api/submissions/renew", nil)
 	req.Header.Set(controlHeader, "1")
 	s.Handler().ServeHTTP(rec, req)
 
@@ -127,7 +127,7 @@ func renewServer(t *testing.T, states map[string]SnapshotPreview, fail map[strin
 func renewVia(t *testing.T, s *Server) RenewalReport {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/submissions/renew", nil)
+	req := localRequest(http.MethodPost, "/api/submissions/renew", nil)
 	req.Header.Set(controlHeader, "1")
 	s.Handler().ServeHTTP(rec, req)
 

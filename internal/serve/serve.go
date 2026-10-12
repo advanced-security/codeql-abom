@@ -104,8 +104,8 @@ type Server struct {
 	// and nothing else, so a repository the operator never approved cannot be written to by a
 	// batch pass that was aimed at something else.
 	ApprovedTargets func() []string
-	// AllowRemoteControl lets a non-loopback client start discovery. Off by default because
-	// starting it makes this process clone repositories and run CodeQL.
+	// AllowRemoteControl permits non-loopback request Hosts, for reads as well as controls.
+	// It is not authentication; an exposed server needs its own trusted network boundary.
 	AllowRemoteControl bool
 	// Log receives failed requests. Nil discards them, which leaves a 500 visible only to the
 	// client that hit it.
@@ -190,10 +190,12 @@ type Server struct {
 
 // Handler builds the routing tree.
 func (s *Server) Handler() http.Handler {
-	var handler http.Handler = s.routes()
+	routes := s.routes()
+	var handler http.Handler = routes
 	if s.Replica != nil {
 		handler = s.routeReplica(handler, s.Replica.routes())
 	}
+	handler = s.guardRequests(routes, handler)
 	if s.ReadOnly {
 		read := handler
 		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -205,6 +207,27 @@ func (s *Server) Handler() http.Handler {
 		})
 	}
 	return gzipped(s.observe(handler))
+}
+
+func (s *Server) guardRequests(routes *http.ServeMux, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, pattern := routes.Handler(r)
+		// Only this exact route authenticates the raw body instead of the browser request.
+		if pattern == "POST /api/events/github" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !s.allowHost(w, r) {
+			return
+		}
+		read := r.Method == http.MethodGet || r.Method == http.MethodHead ||
+			pattern == "POST /api/owned-scope/preview" ||
+			pattern == "POST /api/repositories/{owner}/{name}/snapshot/preview"
+		if !read && strings.HasPrefix(pattern, r.Method+" /api/") && !s.allowControl(w, r) {
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // routes is the tree itself, before the middleware that wraps it. Separate so a test can ask what

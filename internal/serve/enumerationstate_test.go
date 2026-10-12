@@ -14,7 +14,7 @@ import (
 func readScope(t *testing.T, srv *Server) []declaredAccountView {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/owned-scope", nil))
+	srv.Handler().ServeHTTP(rec, localRequest("GET", "/api/owned-scope", nil))
 	var out []declaredAccountView
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decoding %s: %v", rec.Body.String(), err)

@@ -29,6 +29,7 @@ on:
       - 'scripts/**'
       - 'ui/**'
       - 'go.mod'
+      - 'Makefile'
   push:
     branches: ['main']
     paths:
@@ -40,6 +41,7 @@ on:
       - 'scripts/**'
       - 'ui/**'
       - 'go.mod'
+      - 'Makefile'
   schedule:
     # Weekly: a query pack update can start flagging code that has not itself changed.
     - cron: '0 7 * * 1'
@@ -101,6 +103,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Self Audit - Security regressions
+        if: matrix.language == 'go'
+        run: make security-test
 
       # Most languages are extracted from source using build-mode none (BMN), just as
       # Default Setup reads this repository, with Go by its own autobuilder without a

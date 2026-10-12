@@ -264,10 +264,11 @@ else
                     @if (context.Item.Stage.Length == 0)
                     {
                         <span class="abom-stage" data-abom-query-unstaged>
-                            <Tip Text="Put this version in a stage. Nobody has yet.">
+                            <Tip Text="@(AdvanceRefusal(context.Item) is { Length: > 0 } refusal
+                                ? refusal : "Put this version in a stage. Nobody has yet.")">
                                 <MudMenu Label="not staged" EndIcon="@Icons.Material.Filled.ArrowDropDown"
                                          Size="Size.Small" Variant="Variant.Text" Dense="true"
-                                         Disabled="@(!CanAdvance)" Class="abom-stage-menu"
+                                         Disabled="@(AdvanceRefusal(context.Item).Length > 0)" Class="abom-stage-menu"
                                          data-abom-query-advance>
                                     @StageItems(context.Item)
                                 </MudMenu>
@@ -277,10 +278,11 @@ else
                     else
                     {
                         <span class="abom-stage" data-abom-query-stage="@context.Item.Stage">
-                            <Tip Text="@StagedTitle(context.Item)">
+                            <Tip Text="@(AdvanceRefusal(context.Item) is { Length: > 0 } refusal
+                                ? refusal : StagedTitle(context.Item))">
                                 <MudMenu Label="@context.Item.Stage" EndIcon="@Icons.Material.Filled.ArrowDropDown"
                                          Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
-                                         Dense="true" Disabled="@(!CanAdvance)" Class="abom-stage-menu"
+                                         Dense="true" Disabled="@(AdvanceRefusal(context.Item).Length > 0)" Class="abom-stage-menu"
                                          data-abom-query-advance>
                                     @StageItems(context.Item)
                                 </MudMenu>
@@ -473,6 +475,12 @@ else
     private static string StagedTitle(CatalogQuery q) => "Move this version to another stage. " + (q.StagedBy.Length == 0
         ? $"It is in the {q.Stage} stage."
         : $"Put in the {q.Stage} stage by {q.StagedBy}, {TimeText.DayAndTime(q.StagedAt)}.");
+
+    private string AdvanceRefusal(CatalogQuery query) =>
+        !CanAdvance ? "Sign in to advance a query version."
+        : query.Lane ? "This is a whole suite, not a query version to advance."
+        : query.QueryVersion.Length == 0 ? "No version was recorded, so there is no query version to advance."
+        : string.Empty;
 
     private async Task Advance(CatalogQuery query, string stage)
     {

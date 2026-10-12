@@ -194,6 +194,9 @@ func (s *Server) readExamples(ctx context.Context, body *store.QueryRequest) (in
 
 // readRequestExample reads one linked example without keeping it, so the form can show it.
 func (s *Server) readRequestExample(w http.ResponseWriter, r *http.Request) {
+	if !s.allowControl(w, r) {
+		return
+	}
 	var body store.RequestExample
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "the request body is not the expected JSON")

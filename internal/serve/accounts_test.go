@@ -17,7 +17,7 @@ import (
 func post(t *testing.T, srv *Server, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, path, nil)
+	req := localRequest(http.MethodPost, path, nil)
 	srv.Handler().ServeHTTP(rec, req)
 	return rec
 }
@@ -25,7 +25,7 @@ func post(t *testing.T, srv *Server, path string) *httptest.ResponseRecorder {
 func put(t *testing.T, srv *Server, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPut, path, strings.NewReader(body))
+	req := localRequest(http.MethodPut, path, strings.NewReader(body))
 	// Changing what discovery will crawl is a control operation, so it carries what one needs.
 	req.Host = "127.0.0.1:8080"
 	req.Header.Set(controlHeader, "1")
@@ -75,7 +75,7 @@ func TestVerifyingRecordsTheAccountsItEstablished(t *testing.T) {
 		ghauth.Account{Owner: "octo-org", Kind: "organization", Role: "admin"},
 	)
 
-	refreshed := decode[identityView](t, post(t, srv, "/api/accounts/refresh"))
+	refreshed := decode[identityView](t, postControl(t, srv, "/api/accounts/refresh"))
 	if !refreshed.Authenticated || refreshed.Login != "octocat" {
 		t.Fatalf("refresh reported %+v", refreshed)
 	}
@@ -126,7 +126,7 @@ func TestAFailedRefreshSaysHowToFixItRatherThanReportingNoAccounts(t *testing.T)
 	srv, s := newServer(t)
 	seedGraph(t, s)
 	srv.Verify = verifies(ghauth.Account{Owner: "octo-org", Kind: "organization", Role: "member"})
-	if rec := post(t, srv, "/api/accounts/refresh"); rec.Code != http.StatusOK {
+	if rec := postControl(t, srv, "/api/accounts/refresh"); rec.Code != http.StatusOK {
 		t.Fatalf("seeding a verification: status %d", rec.Code)
 	}
 
@@ -135,7 +135,7 @@ func TestAFailedRefreshSaysHowToFixItRatherThanReportingNoAccounts(t *testing.T)
 			Reason: "gh is not authenticated.", Remedy: "Run: gh auth login",
 		}
 	}
-	got := decode[identityView](t, post(t, srv, "/api/accounts/refresh"))
+	got := decode[identityView](t, postControl(t, srv, "/api/accounts/refresh"))
 
 	if got.Problem == nil {
 		t.Fatal("a failed refresh reported no problem, so nothing tells the operator what to do")

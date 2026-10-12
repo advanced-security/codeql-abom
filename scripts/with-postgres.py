@@ -71,9 +71,11 @@ def run(runs, replicas=False):
         raise RuntimeError("Docker did not return a container ID for the PostgreSQL test instance")
     standby = None
     try:
+        # The entrypoint's temporary Unix-socket server shuts down before the TCP service starts.
         for _ in range(READY_ATTEMPTS):
             ready = subprocess.run([
                 "docker", "exec", container, "pg_isready",
+                "--host", "127.0.0.1", "--port", "5432",
                 "--username", "abom_test", "--dbname", "abom_test",
             ], capture_output=True, timeout=10)
             if ready.returncode == 0:
@@ -123,7 +125,7 @@ def replica(primary, password):
                    input="\nhost replication abom_test 0.0.0.0/0 scram-sha-256\n",
                    text=True, check=True, timeout=10)
     subprocess.run(["docker", "exec", primary, "psql", "-U", "abom_test", "-d", "postgres",
-                    "-c", "SELECT pg_reload_conf();"], check=True, capture_output=True, timeout=10)
+                    "-c", "SELECT pg_reload_conf();"], check=True, stdout=subprocess.DEVNULL, timeout=10)
     name = "abom-replica-test-" + uuid.uuid4().hex
     environment = dict(os.environ, PGPASSWORD=password, PG_PRIMARY_HOST=address)
     try:
