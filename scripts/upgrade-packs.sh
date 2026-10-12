@@ -42,7 +42,7 @@ OPTIONS:
     --language <lang>  Upgrade packs only for the specified language
                        Valid values: ${VALID_LANGUAGES[*]}
     --repin            Only re-pin each suite's \`version:\` from the lock files
-                       and check versions; does not run CodeQL
+                       and check versions; does not run CodeQL. Honours --language.
     -h, --help         Show this help message
 
 By default, the script upgrades packs for all languages.
@@ -89,6 +89,9 @@ if [[ -n "${LANGUAGE}" ]]; then
 		echo "Valid languages: ${VALID_LANGUAGES[*]}" >&2
 		exit 1
 	fi
+	LANG_GLOB="${LANGUAGE}"
+else
+	LANG_GLOB="*"
 fi
 
 ## Packs skipped because a transitive dependency is not yet published to the
@@ -97,14 +100,19 @@ SKIPPED_PACKS=()
 
 is_unpublished_dependency_error() {
 	local output="$1"
-	echo "${output}" | grep -qiE "not found in the registry|Could not create access credentials"
+	echo "${output}" | grep -qi "not found in the registry"
+}
+
+is_registry_auth_error() {
+	local output="$1"
+	echo "${output}" | grep -qi "Could not create access credentials"
 }
 
 ## Rewrites `key: value` in place for the first matching line, leaving comments and order alone.
 set_scalar() {
 	local file=$1 key=$2 value=$3
 	awk -v k="$key" -v v="$value" '
-		$0 ~ "^" k ":" && !done { print k ": " v; done = 1; next }
+		!done && index($0, k ":") == 1 { print k ": " v; done = 1; next }
 		{ print }
 	' "$file" >"$file.tmp"
 	mv "$file.tmp" "$file"
@@ -131,6 +139,12 @@ run_pack_upgrade() {
 	fi
 	echo "  ❌ codeql pack upgrade failed for ${pack_dir}:" >&2
 	echo "${output}" >&2
+	## Not treated as a skip: a missing token must not leave packs silently stale.
+	if is_registry_auth_error "${output}"; then
+		echo "  ↳ The package registry could not authenticate this request. Set GITHUB_TOKEN" >&2
+		echo "    (read:packages) or CODEQL_REGISTRIES_AUTH and re-run; if one is already set, a" >&2
+		echo "    dependency of ${pack_dir} may not be published yet." >&2
+	fi
 	return 1
 }
 
@@ -227,6 +241,7 @@ sync_customql_actions_all() {
 ## `codeql pack upgrade` never looks inside a suite, so each suite's `version:` is
 ## re-pinned from its pack's lock file, and the manifest dependency follows it.
 repin_suites() {
+	local lang_glob="$1"
 	local suite pack_dir lock dep version
 	while IFS= read -r suite; do
 		pack_dir="${suite}"
@@ -237,38 +252,38 @@ repin_suites() {
 		[[ -f "${lock}" ]] || continue
 
 		## `from:` names the pack; the `version:` on the next line is what needs re-pinning.
-		awk -v lock="${lock}" '
+		awk -v lockfile="${lock}" '
+			FILENAME == lockfile {
+				if (pending != "" && $1 == "version:") { locked[pending] = $2 }
+				pending = (NF == 1 && $1 ~ /:$/) ? substr($1, 1, length($1) - 1) : ""
+				next
+			}
 			/^[[:space:]]*from:/ { from = $2 }
 			/^[[:space:]]*version:/ && from != "" {
-				cmd = "awk -v p=\"" from ":\" \x27$1 == p {getline; print $2; exit}\x27 " lock
-				cmd | getline locked
-				close(cmd)
-				if (locked != "") { sub(/version:.*/, "version: " locked) }
+				if (from in locked) { sub(/version:.*/, "version: " locked[from]) }
 				from = ""
 			}
 			{ print }
-		' "${suite}" >"${suite}.tmp"
+		' "${lock}" "${suite}" >"${suite}.tmp"
 		mv "${suite}.tmp" "${suite}"
 
 		while read -r dep version; do
 			set_scalar "${pack_dir}/codeql-pack.yml" "  ${dep}" "${version}"
 		done < <(awk '/^[[:space:]]*from:/ {f=$2; next}
 		              /^[[:space:]]*version:/ && f != "" {print f, $2; f=""}' "${suite}")
-	done < <(find ql -name '*.qls')
+	done < <(find ql -path "ql/${lang_glob}/*" -name '*.qls' | sort)
 	./scripts/check-versions.sh
 }
 
 if [[ "${REPIN_ONLY}" == true ]]; then
-	repin_suites
+	repin_suites "${LANG_GLOB}"
 	exit 0
 fi
 
 if [[ -n "${LANGUAGE}" ]]; then
 	echo "Upgrading packs for language: ${LANGUAGE}"
-	LANG_GLOB="${LANGUAGE}"
 else
 	echo "Upgrading packs for all languages..."
-	LANG_GLOB="*"
 fi
 
 PACK_DIRS=$(pack_dirs "${LANG_GLOB}")
@@ -288,7 +303,7 @@ fi
 
 echo ""
 echo "INFO: Re-pinning suites from the lock files..."
-repin_suites
+repin_suites "${LANG_GLOB}"
 
 echo ""
 if [[ ${#SKIPPED_PACKS[@]} -gt 0 ]]; then
@@ -299,6 +314,10 @@ if [[ ${#SKIPPED_PACKS[@]} -gt 0 ]]; then
 	for skipped in "${SKIPPED_PACKS[@]}"; do
 		echo "      - ${skipped}"
 	done
+	## Lets update-codeql.yml name a partial upgrade in the pull request.
+	if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+		echo "skipped=${SKIPPED_PACKS[*]}" >>"${GITHUB_OUTPUT}"
+	fi
 else
 	echo "✅ All CodeQL pack lock files upgraded successfully."
 fi

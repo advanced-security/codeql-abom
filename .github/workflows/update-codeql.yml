@@ -170,6 +170,7 @@ jobs:
         run: ./scripts/update-release-version.sh "${LATEST}"
 
       - name: Upgrade - Upgrade CodeQL pack dependencies
+        id: packs
         run: ./scripts/upgrade-packs.sh
 
       # Graphviz is a requirement: serve refuses to start without it, and the layout and figure
@@ -196,6 +197,8 @@ jobs:
             - the `version:` pins inside the suites re-pinned from the lock files, and
               `customql.ActionsAll` kept in step with `ql/actions/lib`
             - `make verify` passed, including `check-versions`
+
+            ${{ steps.packs.outputs.skipped && format('**Partial upgrade:** `{0}` kept their previous pins because a dependency is not yet published to the registry. Dispatch this workflow again once it is.', steps.packs.outputs.skipped) || '' }}
           commit-message: 'Upgrade CodeQL CLI to v${{ needs.detect.outputs.latest }}'
           branch: 'codeql/upgrade-to-v${{ needs.detect.outputs.latest }}'
           delete-branch: true
@@ -204,11 +207,16 @@ jobs:
         env:
           CURRENT: ${{ needs.detect.outputs.current }}
           LATEST: ${{ needs.detect.outputs.latest }}
+          SKIPPED: ${{ steps.packs.outputs.skipped }}
         run: |
           {
             echo "## CodeQL CLI Update Summary"
             echo ""
             echo "Upgraded CodeQL CLI: ${CURRENT} -> ${LATEST}"
             echo ""
+            if [ -n "${SKIPPED}" ]; then
+              echo "Packs left on their previous pins (unpublished dependency): \`${SKIPPED}\`"
+              echo ""
+            fi
             ./scripts/update-release-version.sh --check "${LATEST}"
           } >> "$GITHUB_STEP_SUMMARY"
