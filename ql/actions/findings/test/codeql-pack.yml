@@ -1,5 +1,5 @@
 name: advanced-security/abom-actions-findings-test
-version: 2.27.1
+version: 2.27.2
 dependencies:
   advanced-security/abom-actions-findings-src: ${workspace}
 extractor: actions
