@@ -11,20 +11,20 @@ export function seed(key) {
     return (h >>> 0) / 4294967295;
 }
 
-/** The repository a node belongs to. An external action carries it in its own key. */
+/** The repository a node belongs to, or the parsed account's dependency repository. */
 export function repoOf(node) {
     // An explicit repository wins over the shape of the node: a collapsed group is drawn as an
     // account but can stand for a repository, and it has to compare as the one it stands for.
     if (node.repository) return node.repository;
-    if (node.kind === 'org') return '';
+    if (node.kind === 'org' || !node.owner) return '';
     const parts = (node.key || '').split('/');
-    return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : (node.key || '');
+    const owner = parts[0].toLowerCase();
+    return owner === node.owner.toLowerCase() && parts[1] ? `${owner}/${parts[1]}` : '';
 }
 
 export function orgOf(node) {
-    // An account node names its owner directly; everything else carries it as a path segment.
-    if (node.kind === 'org') return node.owner || (node.key || '').replace(/^org:/, '');
-    return repoOf(node).split('/')[0];
+    if (node.repository) return node.repository.split('/')[0].toLowerCase();
+    return (node.owner || '').toLowerCase();
 }
 
 /**
@@ -68,15 +68,13 @@ export function boundaryClass(stored, s, t) {
 /**
  * What a node is grouped under.
  *
- * Derived from the node's own key, with one exception: a repository grouping is a property of a
- * repository inside the owned organization, so it cannot be parsed out of a key and arrives
- * labeled on the node instead. A node with no grouping has none — it is never inherited from
- * whatever reached it.
+ * Account and repository membership require recorded identity. A property grouping arrives
+ * labeled on the node. None is inherited from whatever reached it.
  */
 export function groupOf(node, by) {
     switch (by) {
         case 'owner':
-            return node.kind === 'org' ? (node.owner || '') : orgOf(node);
+            return orgOf(node);
         case 'repo':
             return node.kind === 'org' ? '' : repoOf(node);
         case 'grouping':

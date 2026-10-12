@@ -1,6 +1,63 @@
 package store
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
+
+func TestAccountlessNodesNeverCreateAccountsOrHoldings(t *testing.T) {
+	nodes := []GraphNode{
+		{Key: "docker://alpine:3.20", Kind: "docker_image", IsExternal: true},
+		{Key: "docker://registry.local:5000/tools/build", Kind: "docker_image", IsExternal: true},
+		{Key: "unrecognized/reference", Kind: "unknown", IsExternal: true},
+		{Key: "$/action", Kind: "unknown", IsExternal: true},
+	}
+	before := append([]GraphNode(nil), nodes...)
+	got := attachOwners(append([]GraphNode(nil), nodes...))
+	if len(ownerNodes(got)) != 0 {
+		t.Errorf("accountless nodes synthesized accounts: %+v", ownerNodes(got))
+	}
+	if held := containmentOf(nodes); len(held) != 0 {
+		t.Errorf("accountless nodes acquired holdings: %+v", held)
+	}
+	for _, want := range before {
+		found := false
+		for _, n := range got {
+			if n.Key == want.Key {
+				found = true
+				if !reflect.DeepEqual(n, want) {
+					t.Errorf("ungrouping changed the node: got %+v, want %+v", n, want)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("ungrouping dropped %s", want.Key)
+		}
+	}
+}
+
+func TestAnImageDoesNotJoinTheRealDockerAccount(t *testing.T) {
+	nodes := []GraphNode{
+		{Key: "docker/build-push-action", Kind: "action", IsExternal: true, Owner: "docker"},
+		{Key: "docker://docker", Kind: "docker_image", IsExternal: true},
+	}
+	orgs := ownerNodes(attachOwners(nodes))
+	if len(orgs) != 1 || orgs["docker"].Key != "org:docker" {
+		t.Errorf("accounts = %+v, want only the real docker account", orgs)
+	}
+	want := []Containment{{OwnerKey: "org:docker", HeldKey: "docker/build-push-action", Kind: EdgeKindOrgContains}}
+	if got := containmentOf(nodes); !reflect.DeepEqual(got, want) {
+		t.Errorf("holdings = %+v, want %+v", got, want)
+	}
+}
+
+func TestContainmentCannotDrawAnAccountAbsentFromTheProjection(t *testing.T) {
+	nodes := []GraphNode{{Key: "docker://alpine:3.20", Kind: "docker_image", IsExternal: true}}
+	held := []Containment{{OwnerKey: "org:docker:", HeldKey: nodes[0].Key, Kind: EdgeKindOrgContains}}
+	if edges := containmentEdges(nodes, held); len(edges) != 0 {
+		t.Errorf("stale containment drew edges from an absent account: %+v", edges)
+	}
+}
 
 func ownerNodes(nodes []GraphNode) map[string]GraphNode {
 	out := map[string]GraphNode{}
