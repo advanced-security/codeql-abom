@@ -58,6 +58,7 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-dotnet@v6.0.0'
         - 'actions/setup-go@v7.0.0'
+        - 'actions/setup-node@v7.0.0'
         - 'peter-evans/create-pull-request@v8.1.1'
 dependencies:
     'actions/attest-build-provenance@v4.2.2':
