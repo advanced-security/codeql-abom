@@ -101,15 +101,7 @@ func ownerOf(n *GraphNode) string {
 		}
 		return owner
 	case n.IsExternal:
-		if n.Owner != "" {
-			return n.Owner
-		}
-		// Docker images and anything else without a parsed owner keep their first segment.
-		owner, _, ok := strings.Cut(n.Key, "/")
-		if !ok {
-			return ""
-		}
-		return owner
+		return n.Owner
 	default:
 		return ""
 	}

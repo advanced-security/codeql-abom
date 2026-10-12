@@ -478,7 +478,7 @@
             @* Grouping removes nothing, so the groups are not "hidden" — but a filter running
                underneath a fold still is, and omitting it reported a filtered view as whole. *@
             <span>
-                <b>@CountText.Of(_counts.Nodes, "group", "groups")</b> by @GroupByLabel,
+                <b>@CountText.Of(_counts.Nodes, "node", "nodes")</b> after grouping by @GroupByLabel,
                 gathered from @CountText.Of(_counts.Total, "node", "nodes")
                 @if (_counts.Hidden > 0)
                 {
@@ -685,7 +685,7 @@
         new("composite_action", 2),
         new("step", 3),
         new("action", 2),
-        new("docker_image", 2),
+        new("docker_image", 0),
     ];
 
     /// <summary>The grouping each foldable kind folds its contents into.</summary>
@@ -733,9 +733,8 @@
     // folding look like it had done nothing.
     private bool IsRowShown(KindRow row) => FoldDepth is not int depth || row.Depth <= depth;
 
-    private List<string> FoldedKinds => FoldDepth is not int depth
-        ? []
-        : KindTree.Where(r => r.Depth > depth).Select(r => r.Kind).Distinct().ToList();
+    private List<string> FoldedKinds =>
+        KindTree.Where(r => !IsRowShown(r)).Select(r => r.Kind).Distinct().ToList();
 
     /// <summary>What opening the current fold one rung would show.</summary>
     private string NextStepLabel => FinerFold(_groupBy) is { } finer
