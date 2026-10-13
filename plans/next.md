@@ -88,8 +88,9 @@ ownership by repository property, which the operator ranked ahead of them, is bu
    databases and results from them, and enables Copilot authoring only behind an egress allowlist;
    [the repository's default dev container](../.devcontainer/devcontainer.json) is its ephemeral
    Codespace. Next: say when a session's credit limit stops it, qualify that Codespace for real
-   (firewall, hosts, token type, forwarded host, zero retention), then comparison provenance, linked
-   examples, practice for the remaining lessons, and the scripted offline profile.
+   (the Demo starting, forwarded host, hosts, token type, zero retention), admit the Demo's user to
+   its own loopback services only, then comparison provenance, linked examples, practice for the
+   remaining lessons, and the scripted offline profile.
 2. **[Hiding something is a decision somebody signs](db/exclusions-and-exceptions.md)** — every
    organization carries things it has decided not to look at and things it has decided not to act on
    yet. `abom_policy_waiver` already models both, with a required reason, an author, and an expiry

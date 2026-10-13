@@ -6,9 +6,13 @@
 #   start-demo.sh --fresh   discard it and start a new dataset
 #   start-demo.sh --stop    stop it, keeping the exercise for the next start
 set -euo pipefail
+# The Demo's user reads what this script's user writes, such as the egress proxy's certificate, so
+# whoever starts it must not decide through their umask whether it can.
+umask 022
 
 root=/tmp/abom-demo
 logs=/tmp/abom-demo-logs
+ca=$logs/egress-ca.pem
 port=8099
 egress_port=8098
 bin=/opt/abom-demo/codeql-abom
@@ -23,6 +27,10 @@ as_demo() {
 	sudo -u abom-demo -H env -i PATH="$PATH" HOME=/home/abom-demo LANG=C.UTF-8 \
 		sh -c 'umask 007; exec "$@"' sh "$@"
 }
+
+# demo serve refuses to start over a certificate its user cannot read, so authoring is offered only
+# once the Demo's user has read the whole certificate.
+readable_by_demo() { as_demo grep -q 'END CERTIFICATE' "$1" 2>/dev/null; }
 
 stop() {
 	for name in serve egress; do
@@ -61,6 +69,7 @@ confine() {
 }
 
 mkdir -p "$logs"
+chmod 0755 "$logs"
 stop
 if [ "${1:-}" = "--stop" ]; then
 	echo "start-demo: the Demo is stopped; .devcontainer/start-demo.sh starts it again"
@@ -78,14 +87,24 @@ ABOM_DEMO_ROOT="$root" bash "$here/copilot-login.sh" --if-signed-in ||
 
 authoring=()
 if confine; then
-	rm -f "$logs/egress-ca.pem"
-	setsid "$bin" demo egress --addr "127.0.0.1:$egress_port" --ca-out "$logs/egress-ca.pem" \
+	rm -f "$ca"
+	setsid "$bin" demo egress --addr "127.0.0.1:$egress_port" --ca-out "$ca" \
 		>>"$logs/egress.log" 2>&1 &
 	echo $! >"$logs/egress.pid"
-	for _ in $(seq 1 10); do [ -s "$logs/egress-ca.pem" ] && break; sleep 0.5; done
-	if [ -x "$tools/copilot" ] && [ -x "$tools/codeql-development-mcp-server" ]; then
+	for _ in $(seq 1 20); do
+		# A default ACL on the directory overrides the umask, so the certificate is opened here.
+		if [ -s "$ca" ]; then chmod 0644 "$ca" 2>/dev/null || :; fi
+		readable_by_demo "$ca" && break
+		sleep 0.5
+	done
+	if ! readable_by_demo "$ca"; then
+		echo "start-demo: the Demo's user cannot read the egress proxy's certificate" \
+			"($(stat -c '%a %U %n' "$logs" "$ca" 2>&1 | paste -sd ';' -)), so Copilot authoring stays off" |
+			tee -a "$logs/serve.log"
+		stop
+	elif [ -x "$tools/copilot" ] && [ -x "$tools/codeql-development-mcp-server" ]; then
 		authoring=(--copilot-cli "$tools/copilot" --ql-mcp "$tools/codeql-development-mcp-server"
-			--egress-proxy "http://127.0.0.1:$egress_port" --egress-ca "$logs/egress-ca.pem"
+			--egress-proxy "http://127.0.0.1:$egress_port" --egress-ca "$ca"
 			--authoring-credits "$credits")
 	fi
 else

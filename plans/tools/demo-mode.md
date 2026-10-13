@@ -45,7 +45,7 @@ Built (see [Demo](../../docs/demo.md)): `codeql-abom demo init --dir <root> [--r
 [--pack-locks <dir>]` and `codeql-abom demo serve --dir <root>`, a subcommand rather than a
 `serve --demo` flag so an ordinary server's flags are refused by construction. `demo egress` is the
 allowlisting proxy. `--replace` acts only on a directory holding a demo manifest; nothing yet proves
-the server is stopped first (pending 4). Copilot authoring is selected by `--copilot-cli`, an
+the server is stopped first (pending 5). Copilot authoring is selected by `--copilot-cli`, an
 installed `--ql-mcp` and `--egress-proxy` together; without the proxy it is unavailable.
 
 Store a typed dataset marker through `internal/store`, the only SQL owner. A small workspace
@@ -251,31 +251,36 @@ It never publishes, enables code scanning, creates alerts or implies offline dis
    its limit ends a session and record that as the session's end. Then observe a session that
    writes and tests a query, and read the egress log for any host refused.
 1. **Qualify the Codespaces profile in a real Codespace.** Needs the operator: merge, configure the
-   prebuild for `.devcontainer/devcontainer.json`, and create Codespaces from it. A local dev
-   container of the same image already confines the Demo, refuses its lookups and runs the QLaaS
-   loop, also when run as a Codespace runs it (`--network host`, a DNS resolver on loopback, Dev
-   Containers CLI 0.83.3); a session in it needed only `api.github.com/copilot_internal/user` and
-   `*.githubcopilot.com`. What is left is what only a Codespace shows: the owner match works on the
-   VM's kernel, so `confine` passes; the environment `postStartCommand` gets names the forwarded
-   address (`start-demo.sh` says whether it did, and `status.sh` checks the Demo admits it); a
-   browser's requests through the forwarded port carry that address as their `Host`; what else
-   listens on the VM's loopback, which the firewall still admits, and whether any of it reaches
-   beyond the VM; the egress log names no other host; a fine-grained token with Copilot Requests
-   authors as gh's own sign-in does; zero retention reads back on the created Codespace; and two
-   users' Codespaces share nothing.
-2. **Comparison provenance, test-first.** Fictional repositories are never scanned, so Demo wires no
+   prebuild for `.devcontainer/devcontainer.json`, and create Codespaces from it. A Codespace of
+   this configuration already builds in about seven minutes without a prebuild, confines the Demo's
+   user on the VM's kernel, refuses its lookups and connections, and names its forwarded address to
+   `postStartCommand`. A local dev container run as a Codespace runs it (`--network host`, a DNS
+   resolver on loopback, Dev Containers CLI 0.83.3) also runs the QLaaS loop, and a session in one
+   needed only `api.github.com/copilot_internal/user` and `*.githubcopilot.com`. What is left is what
+   only a Codespace shows: the Demo starts there; a browser's requests through the forwarded port
+   carry that address as their `Host`; the egress log names no other host; a fine-grained token with
+   Copilot Requests authors as gh's own sign-in does; zero retention reads back on the created
+   Codespace; and two users' Codespaces share nothing.
+2. **Admit the Demo's user to its own loopback services only.** In a Codespace the VM's loopback
+   also holds the Codespaces agent on 16634–16636, a service on port 2000 of every interface, five
+   VS Code ports and the resolver, and the firewall admits the Demo's user to all of them but the
+   resolver. Either admit only the ports the Demo serves and dials, which needs fixed ports for the
+   simulated GitHub and for anything the SDK listens on, and conntrack for the replies to the
+   forwarded port; or run the Demo in a network namespace of its own, with relays for its port and
+   the egress proxy.
+3. **Comparison provenance, test-first.** Fictional repositories are never scanned, so Demo wires no
    comparer and review is unreachable. Add `demo-simulated` provenance through store, API, model and
    UI, admitted only in a marked store, before any simulated alert can satisfy a gate.
-3. **Linked examples.** The catalog reads them through dynamically built GraphQL; serve them in Demo
+4. **Linked examples.** The catalog reads them through dynamically built GraphQL; serve them in Demo
    with a local file reader over the bare repositories rather than a GraphQL simulator.
-4. **Practice and reset.** Practice adapters for the remaining four lessons; Repeat that starts a
+5. **Practice and reset.** Practice adapters for the remaining four lessons; Repeat that starts a
    fresh exercise; a held lock so `demo init --replace` refuses a running server; a Playwright
    harness that starts `demo serve` so Demo specs run in CI.
-5. **Scripted profile and scenario qualification.** The workstation profile without Copilot: the
+6. **Scripted profile and scenario qualification.** The workstation profile without Copilot: the
    deterministic agent, a scenario manifest naming exact rows, FP/FN starting states, the obsolete
    `layAccept` sequence in [`queries.go`](../../internal/corpus/queries.go), and licensing review of
    corpus material. The Demo currently serves the whole development corpus.
-6. **Release bundle.** `demo init` reads `testdata/corpus` from a checkout; bundle qualified sources
+7. **Release bundle.** `demo init` reads `testdata/corpus` from a checkout; bundle qualified sources
    so an installed release initializes a Demo without one.
 
 ## The constraints that must not be broken
@@ -409,12 +414,13 @@ Use only trusted baseline commits for that configuration, not users' exercise br
 Coordinate licensing and redistribution with [deployment](deployment.md)'s pre-release policy;
 do not silently change the repository license.
 
-### What the container shares with its VM
+### How a Codespace runs the container
 
 A Codespace starts the dev container with `--network host`, so the container is on its VM's own
 network and the Demo's firewall rules land in the VM's tables, where they outlive the container: a
-rebuild finds them in place, so `confine` refills its own chain and adds its jump only once. Three
-rules follow, and `scripts/test_devcontainer.py` holds each one:
+rebuild finds them in place, so `confine` refills its own chain and adds its jump only once. It runs
+`postStartCommand` in a pass of its own, and that pass left what the start wrote unreadable to the
+Demo's user. Four rules follow, and `scripts/test_devcontainer.py` holds each one:
 
 - **The Demo's user ID is outside the system range.** The owner rule matches that ID across the VM,
   and a system ID could belong to one of the VM's own services, such as its resolver.
@@ -424,6 +430,11 @@ rules follow, and `scripts/test_devcontainer.py` holds each one:
 - **Every download during creation is retried, and every step names itself.** A blocking lifecycle
   command (`onCreateCommand`, `updateContentCommand`) that fails leaves a recovery container holding
   none of the tools, and the creation log is all its user has to read.
+- **What the Demo's user reads is opened to it explicitly.** The start sets its own umask, opens the
+  log directory and the egress certificate, and offers authoring only once the Demo's user has read
+  the certificate, so a fault there leaves authoring off rather than the Demo down. Whether that
+  pass applied a stricter umask or a default ACL on `/tmp` is not established; the start holds
+  against both.
 
 ### Per-Codespace lifecycle
 

@@ -1,5 +1,7 @@
 # The Demo Codespace image: the system packages ABOM needs, and the user the Demo runs as. Versioned
 # tools are installed by on-create.sh, at the versions the checkout names.
+# Pinned as tag@digest so Dependabot can follow the tag. Codespaces' Dev Containers CLI 0.83.3 logs
+# "Could not parse image name" for that form, then pulls and reads the image anyway.
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04@sha256:d94c97dd9cacf183d0a6fd12a8e87b526e9e928307674ae9c94139139c0c6eae
 
 RUN apt-get update \

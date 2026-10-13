@@ -156,6 +156,32 @@ class ConfigurationTests(unittest.TestCase):
     def test_each_start_gives_the_demo_an_existing_sign_in(self):
         self.assertIn("copilot-login.sh\" --if-signed-in", (DEVCONTAINER / "start-demo.sh").read_text())
 
+    # The Demo's user reads what the start writes, such as the egress proxy's certificate. In a
+    # Codespace it could not, so whoever starts the script must not decide that through their umask.
+    def test_what_the_start_writes_is_readable_by_the_demo_user_whoever_starts_it(self):
+        lines = (DEVCONTAINER / "start-demo.sh").read_text().splitlines()
+        umask = [i for i, line in enumerate(lines) if line.strip() == "umask 022"]
+        logs = [i for i, line in enumerate(lines) if line.strip() == 'mkdir -p "$logs"']
+        self.assertTrue(umask, "the start leaves its umask to whoever runs it")
+        self.assertTrue(logs, "the start no longer makes its log directory")
+        self.assertLess(umask[0], logs[0], "the start writes before it sets its umask")
+        self.assertIn('chmod 0755 "$logs"', lines, "a directory an earlier start made keeps its mode")
+        # A default ACL on the directory decides a new file's mode instead of the umask.
+        self.assertRegex("\n".join(lines), r'chmod 0644 "\$ca"', "the certificate's mode is left to inheritance")
+
+    # demo serve refuses to start over a certificate its user cannot read, so a fault on the authoring
+    # path took the whole Demo down rather than leaving authoring off.
+    def test_authoring_is_offered_only_once_the_demo_user_reads_the_certificate(self):
+        script = (DEVCONTAINER / "start-demo.sh").read_text()
+        self.assertRegex(script, r"readable_by_demo\(\) \{[^}]*\bas_demo\b[^}]*CERTIFICATE[^}]*\}")
+        lines = script.splitlines()
+        checks = [i for i, line in enumerate(lines)
+                  if 'readable_by_demo "$ca"' in line and line.lstrip().startswith(("if ", "elif "))]
+        offers = [i for i, line in enumerate(lines) if "authoring=(--copilot-cli" in line]
+        self.assertTrue(checks, "nothing checks the certificate as the Demo's user before offering authoring")
+        self.assertTrue(offers)
+        self.assertLess(checks[0], offers[0])
+
 
 class CopilotLoginTests(unittest.TestCase):
     """copilot-login.sh hands the Demo the user's own GitHub sign-in, never the Codespace's token."""
