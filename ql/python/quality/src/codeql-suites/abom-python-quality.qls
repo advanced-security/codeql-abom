@@ -9,4 +9,4 @@
 # cache last downloaded. A baseline that moves on its own cannot be a baseline.
 - import: codeql-suites/python-security-and-quality.qls
   from: codeql/python-queries
-  version: 1.8.11
+  version: 1.8.12

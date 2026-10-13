@@ -19,7 +19,7 @@ const toolsPackName = "advanced-security/ql-mcp-actions-tools-src"
 
 // ToolsPack is that pack, pinned, so a tree ABOM prints and one a session printed come from the
 // same query.
-const ToolsPack = toolsPackName + "@2.27.1"
+const ToolsPack = toolsPackName + "@2.27.2"
 
 // printASTSources names the data extension that tells PrintAST which fixtures to print.
 const printASTSources = "abom/print-ast-sources"

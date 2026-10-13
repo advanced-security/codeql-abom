@@ -20,4 +20,4 @@
 # so the set of rules ABOM attributes could change with no commit here.
 - queries: experimental
   from: codeql/actions-queries
-  version: 0.6.36
+  version: 0.6.37

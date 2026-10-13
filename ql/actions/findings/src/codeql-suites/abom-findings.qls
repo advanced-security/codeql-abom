@@ -13,7 +13,7 @@
 # so the set of rules ABOM attributes could change with no commit here.
 - import: codeql-suites/actions-all.qls
   from: codeql/actions-queries
-  version: 0.6.36
+  version: 0.6.37
 
 # The nine `experimental/` queries stay in. Precision is a property of the rule, and a consumer
 # filtering on rule id can always drop them — whereas a finding never collected cannot be
