@@ -95,6 +95,22 @@ coverage is measured. Existing guarded manual submission is retained, not automa
 | [`docs/`](docs/architecture.md) | How it works, why it exists, and where it is going |
 | [`plans/`](plans/next.md) | What is next, and the reasoning behind it |
 
+## Requirements
+
+ABOM runs on macOS or on Linux with glibc, and needs these on `PATH`:
+
+- Git, GNU Make, curl and a C compiler, because SQLite needs CGO
+- Go 1.21 or later, which downloads the toolchain the [Makefile](Makefile) pins
+- The .NET 10 SDK, which builds the interface
+- The GitHub CLI, signed in to an account that can read your organization
+- The CodeQL CLI at the version in [`.codeql-version`](.codeql-version)
+- Graphviz, whose `dot` draws the interface's figures
+
+[Source setup](docs/deployment/source.md#prerequisites) says how to install each one.
+[Optional features](docs/deployment/configuration.md#optional-features), such as Copilot authoring,
+need more. Development also needs Python 3, Node, Playwright, golangci-lint and a running Docker
+daemon.
+
 ## Development
 
 ```bash
@@ -102,8 +118,15 @@ make verify      # corruption, gofmt, vet, lint, Go tests, browser tests, querie
 make selfcheck   # run our own analysis over our own workflows
 ```
 
-Requires Go (see `go.mod`), .NET 10, Node, and the CodeQL CLI at the version in
-`.codeql-version`.
+## Background
+
+The [roadmap](docs/roadmap.md) says where ABOM is going next, [plans/next.md](plans/next.md) ranks
+the work under way, and [issues](https://github.com/advanced-security/codeql-abom/issues) track
+bugs and feature requests.
+
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+This project is released with a [Contributor Code of Conduct](CODE_OF_CONDUCT.md), and by
+participating in it you agree to abide by its terms.
 
 ## Acknowledgements
 
@@ -123,4 +146,20 @@ also informs the capability comparison before any expansion of ABOM's publisher.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+This project is licensed under the terms of the GitHub CodeQL Terms and Conditions. Please refer to
+the [LICENSE](./LICENSE) file for the full terms.
+
+## Maintainers
+
+ABOM is maintained by GitHub's CodeQL Expert Services team. [CODEOWNERS](CODEOWNERS) lists the
+maintainers who review changes.
+
+## Support
+
+Report bugs and request features in
+[issues](https://github.com/advanced-security/codeql-abom/issues), after searching for an existing
+one, and ask questions in
+[Discussions](https://github.com/advanced-security/codeql-abom/discussions). ABOM is under active
+development and maintained by GitHub staff, who will do their best to respond in a timely manner.
+Support is limited to these channels, as [SUPPORT.md](SUPPORT.md) says. Report a security
+vulnerability as [SECURITY.md](SECURITY.md) describes, never in a public issue.
